@@ -1,0 +1,127 @@
+{
+  "legacyMain": "e96069ce2a403588ca2129b1ebb943f7bb0972a6",
+  "requirement": "PRD sections 8-10 and supplied repository AGENTS private security reporting",
+  "coverageBoundary": "Existing intake owns durable private receipt and authorization intent. Case decisions remain in cases.md. Backend screening, routing, and forwarding completion fences lack an executable successor.",
+  "proposedUnit": "spec/security/intakeScreening.md",
+  "missingTransitions": [
+    "Link an already committed submission, report bytes digest and immutable report version to the screening request. Take a running claim under revision CAS and increment the revision.",
+    "Allow expired-running, queued and unavailable retry. A stale screen result cannot mutate current version or schedule analysis or write routing notices.",
+    "Same-project exact duplicate holds privately before any model call. A validated overlap becomes needs-information. Coarse reporter-facing language cannot leak older report identity or summaries.",
+    "An authorized current security maintainer may record a version-checked private forward or request-information override. Preserve per-report routing once and the private notice authority at commit.",
+    "A held or information-requested report may append new private bytes under a revision check while preserving the original report and case receipt. A replacement clears only the current screening/routing projection.",
+    "Forwarding send, listing reconciliation and exact receipt retrieval each require the same unexpired submission/session/reporter grant. A failed or uncertain forward preserves the report and its private review. Existing intake boils receipt verification and no-send evidence down to booleans."
+  ],
+  "policyBoundary": "The pinned PRD section 8 explicitly specifies Surplus-only private screening and forbids report execution. Section 5 broader fallback wording also names private-report analysis. Exact pinned application has fixed Surplus-only screening. Preserve that route pending authoritative policy clarification if a distinction is needed.",
+  "anchors": [
+    {
+      "path": "backend/security/report-intake.ts",
+      "sha256": "560978be97005fa3b8f8404224add91a6c3eeb3c4b8aa803a07eb374adc7be07",
+      "entries": [
+        {
+          "line": 70,
+          "anchor": "async function matchingEvidenceDigest"
+        },
+        {
+          "line": 168,
+          "anchor": "function intakeQualified"
+        },
+        {
+          "line": 174,
+          "anchor": "function screeningRecoverable"
+        },
+        {
+          "line": 471,
+          "anchor": "async function routedNotice"
+        },
+        {
+          "line": 534,
+          "anchor": "async function screenStoredReport"
+        },
+        {
+          "line": 580,
+          "anchor": "const claimedRevision"
+        },
+        {
+          "line": 649,
+          "anchor": "const overlap ="
+        },
+        {
+          "line": 1218,
+          "anchor": "export async function actStoredIntake"
+        },
+        {
+          "line": 1427,
+          "anchor": "export async function approvedReportForForward"
+        }
+      ]
+    },
+    {
+      "path": "backend/security/analysis.ts",
+      "sha256": "51dca7422c7766b65e4a014ef622ab6aecbcf0f40f7d8cc227eb2ad57a90405e",
+      "entries": [
+        {
+          "line": 270,
+          "anchor": "There is no fallback provider"
+        },
+        {
+          "line": 283,
+          "anchor": "export function surplusSecurityAnalyzer"
+        },
+        {
+          "line": 421,
+          "anchor": "export async function latestCaseAnalysis"
+        },
+        {
+          "line": 522,
+          "anchor": "export async function runCaseAnalysis"
+        },
+        {
+          "line": 527,
+          "anchor": "Automatic screening owns one report version"
+        }
+      ]
+    },
+    {
+      "path": "backend/security/intake-grant.ts",
+      "sha256": "d4b7bba02c5fa46f380275a7060c939c18615c31f9556ff7392a560f2ffb2e3f",
+      "entries": [
+        {
+          "line": 36,
+          "anchor": "export "
+        }
+      ]
+    },
+    {
+      "path": "backend/security/submissions.ts",
+      "sha256": "371a98e9159dc145e9e638788b6faa94c402f068f9dde40e0d61944ff5a13e01",
+      "entries": [
+        {
+          "line": 746,
+          "anchor": "async function sendSubmission"
+        },
+        {
+          "line": 1000,
+          "anchor": "async function reconcileSubmission"
+        }
+      ]
+    },
+    {
+      "path": "backend/security/report-intake.test.ts",
+      "sha256": "e024d218f5e2812d5179cb9c126e71d0cae535f30c08ceffd87bd9ba2801b7ee",
+      "entries": [
+        {
+          "line": 1277,
+          "anchor": "stale"
+        },
+        {
+          "line": 288,
+          "anchor": "duplicate"
+        },
+        {
+          "line": 129,
+          "anchor": "override"
+        }
+      ]
+    }
+  ]
+}
