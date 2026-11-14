@@ -58,7 +58,7 @@ per hosted-runner vCPU; the worker count changes no explored state space.
 
 Manual diagnostics may select space-separated model names with
 `gh workflow run formal.yml --ref BRANCH -f models="MODEL_NAME OTHER_MODEL" -f shards='[1]'`.
-The defaults are `all` and six shards. Each shard must contain a model, so small
+The defaults are `all` and 16 shards. Each shard must contain a model, so small
 diagnostics select one shard. A focused result covers only the selected models; trusted
 branch releases still require every model and retain the same native controls,
 source bindings and report checks.

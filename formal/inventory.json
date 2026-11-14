@@ -41,7 +41,7 @@
     },
     {
       "path": ".github/workflows/formal.yml",
-      "sha256": "f1b62495beffcf7d982e0f99d3a3da348d5e891277ec615492da989106cb8d58",
+      "sha256": "32323a5feec7184bdb5a76b910dc85952641ffb05a6dc77dce52ebfb78b46085",
       "models": [
         "formal/models/release/ci_coverage.qnt",
         "formal/models/release/release_proof_gate.qnt",
@@ -3451,12 +3451,12 @@
     },
     {
       "path": "scripts/ci-scope.mjs",
-      "sha256": "ed630caa5ce334eede36daf91542726cbe7fd5b9b9e9f9895835f33ec1bfe7a9",
+      "sha256": "85c36691c631f03a327ecdc252efdb075decddfdfee4deca3e0f92d07e1659a4",
       "models": [
         "formal/models/release/ci_browser_runtime.qnt",
         "formal/models/release/ci_coverage.qnt"
       ],
-      "candidateLines": [104, 153, 159, 160, 175],
+      "candidateLines": [104, 159, 165, 166, 181],
       "review": "mapped-abstraction"
     },
     {

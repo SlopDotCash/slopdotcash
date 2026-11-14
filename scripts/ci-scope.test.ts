@@ -64,7 +64,9 @@ for (const ref of ["refs/heads/main", "refs/heads/development"]) {
       expect(values.evm).toBe("true");
       expect(values.solana).toBe("true");
       expect(values.formal_models).toBe("all");
-      expect(JSON.parse(values.formal_shards)).toEqual([1, 2, 3, 4, 5, 6]);
+      expect(JSON.parse(values.formal_shards)).toEqual(
+        Array.from({ length: 16 }, (_, index) => index + 1),
+      );
       expect(values.lemmascript).toBe("true");
     } finally {
       rmSync(directory, { force: true, recursive: true });

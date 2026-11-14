@@ -10,7 +10,7 @@ on:
         default: all
       shards:
         type: string
-        default: "[1, 2, 3, 4, 5, 6]"
+        default: "[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]"
   workflow_dispatch:
     inputs:
       models:
@@ -20,7 +20,7 @@ on:
       shards:
         description: "JSON shard array; use [1] for a small focused diagnostic run"
         type: string
-        default: "[1, 2, 3, 4, 5, 6]"
+        default: "[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]"
 
 permissions:
   contents: read
@@ -124,7 +124,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shard: ${{ fromJSON(inputs.shards || '[1, 2, 3, 4, 5, 6]') }}
+        shard: ${{ fromJSON(inputs.shards || '[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]') }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
