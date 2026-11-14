@@ -12,6 +12,8 @@ const IDENTITY = "https://identity.slop.cash/v1/oauth/authorize";
 const NOW = new Date("2026-10-28T17:00:00.000Z");
 const BASE_VAULT = "0x6c1297c3b96a00347cb501f572cb5811c2a8ed36";
 const SOLANA_VAULT = "6NhxSaed6SF3uCAgzQViCZixETGpvxuFzo5eRGiaGM7";
+// Ethereum mainnet execution stays off (mainnet-execution.mjs).
+const ETHEREUM_VAULT = "0x1111111111111111111111111111111111111111";
 
 function registry() {
   return {
@@ -278,7 +280,7 @@ test("a request that exceeds the bound times out as a failure, without retry", a
 });
 
 test("an inactive network's old snapshot passes, but it must still exist", async () => {
-  const solana = (observedAt: string | undefined) => ({
+  const ethereum = (observedAt: string | undefined) => ({
     projectId: "eliza",
     snapshots:
       observedAt === undefined
@@ -286,9 +288,9 @@ test("an inactive network's old snapshot passes, but it must still exist", async
         : [
             {
               projectId: "eliza",
-              network: "solana-mainnet",
-              chain: "solana",
-              vault: SOLANA_VAULT,
+              network: "ethereum",
+              chain: "ethereum",
+              vault: ETHEREUM_VAULT,
               observedAt,
             },
           ],
@@ -304,10 +306,10 @@ test("an inactive network's old snapshot passes, but it must still exist", async
     escrow: {
       deployments: [
         {
-          network: "solana-mainnet",
+          network: "ethereum",
           factory: "",
-          vault: SOLANA_VAULT,
-          asset: "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+          vault: ETHEREUM_VAULT,
+          asset: "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48",
         },
       ],
     },
@@ -315,14 +317,14 @@ test("an inactive network's old snapshot passes, but it must still exist", async
   const route = (observedAt: string | undefined) => ({
     [`${ORIGIN}/api/v1/projects`]: { body: withEliza },
     [`${ORIGIN}/api/v1/payments/projects/eliza/vault`]: {
-      body: solana(observedAt),
+      body: ethereum(observedAt),
     },
   });
   const old = await run(route("2026-10-28T13:34:34.541Z"));
   expect(old.failed).toEqual([]);
   const missing = await run(route(undefined));
   expect(missing.failed.map((r) => r.check)).toEqual([
-    `vault eliza solana-mainnet ${SOLANA_VAULT}`,
+    `vault eliza ethereum ${ETHEREUM_VAULT}`,
   ]);
 });
 

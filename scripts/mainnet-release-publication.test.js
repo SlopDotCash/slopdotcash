@@ -14,6 +14,10 @@ import { bashCommand } from "./bash-command";
 const sha = "a".repeat(40);
 const account = "b".repeat(32);
 const name = "slop-payments-base-mainnet-attester";
+const robinhoodName = "slop-payments-robinhood-mainnet-attester";
+const solanaName = "slop-payments-solana-mainnet-attester";
+// Mainnets on in mainnet-execution.mjs (Ethereum stays off).
+const enabledNetworks = ["base-mainnet", "robinhood-mainnet", "solana-mainnet"];
 
 test("supersession is a clean no-op only before service publication", async () => {
   const root = await mkdtemp(join(tmpdir(), "slop-release-supersession-"));
@@ -285,7 +289,7 @@ test("absent Base bootstrap gets exact version proof before Pages receives capab
         return {
           status: 1,
           stdout: "",
-          stderr: `A request to the Cloudflare API (/accounts/${account}/workers/scripts/${name}/deployments) failed. [code: 10007]`,
+          stderr: `A request to the Cloudflare API (/accounts/${account}/workers/scripts/${args[3]}/deployments) failed. [code: 10007]`,
         };
       if (args[0] === "deploy") return ok({});
       if (args[0] === "versions")
@@ -307,7 +311,7 @@ test("absent Base bootstrap gets exact version proof before Pages receives capab
     await publishMainnetRelease({ directory, sha, provider });
     await assembleMainnetBindings({ directory, sha, path });
     const pages = JSON.parse(await readFile(path, "utf8"));
-    expect(JSON.parse(pages.vars.PAYMENT_NETWORKS)).toEqual(["base-mainnet"]);
+    expect(JSON.parse(pages.vars.PAYMENT_NETWORKS)).toEqual(enabledNetworks);
     expect(pages.services).toEqual([
       { binding: "SLOP_IDENTITY", service: "slop-identity" },
       {
@@ -318,6 +322,31 @@ test("absent Base bootstrap gets exact version proof before Pages receives capab
       {
         binding: "MONTHLY_RELEASE_BASE",
         service: name,
+        entrypoint: "MonthlyReserveRelease",
+      },
+      {
+        binding: "BINDING_RECOVERY_ROBINHOOD",
+        service: robinhoodName,
+        entrypoint: "BindingRecovery",
+      },
+      {
+        binding: "MONTHLY_RELEASE_ROBINHOOD",
+        service: robinhoodName,
+        entrypoint: "MonthlyReserveRelease",
+      },
+      {
+        binding: "SOLANA_IDENTITY_ATTESTER",
+        service: solanaName,
+        entrypoint: "SolanaBinding",
+      },
+      {
+        binding: "SECURITY_SOLANA_IDENTITY_ATTESTER",
+        service: solanaName,
+        entrypoint: "SolanaBinding",
+      },
+      {
+        binding: "MONTHLY_RELEASE_SOLANA",
+        service: solanaName,
         entrypoint: "MonthlyReserveRelease",
       },
     ]);
@@ -407,6 +436,8 @@ test("unreadable secret-list JSON is retried before a pinned attester can be pre
       sha,
       registry: [project],
       provider: async (args) => {
+        // The other enabled networks have existing empty-pin services.
+        if (args[0] === "deployments" && args[3] !== name) return ok([]);
         expect(args.slice(0, 2)).toEqual(["secret", "list"]);
         reads++;
         if (reads <= 2)
@@ -480,6 +511,8 @@ test("reviewed stop republishes an existing disabled-network attester without ex
     ).toEqual([
       ["base-mainnet", true],
       ["ethereum", false],
+      ["robinhood-mainnet", true],
+      ["solana-mainnet", true],
     ]);
     await publishMainnetRelease({ directory, sha, provider });
     const deploys = requests.filter((args) => args[0] === "deploy");
@@ -504,7 +537,7 @@ test("reviewed stop republishes an existing disabled-network attester without ex
     );
     await assembleMainnetBindings({ directory, sha, path });
     const pages = JSON.parse(await readFile(path, "utf8"));
-    expect(JSON.parse(pages.vars.PAYMENT_NETWORKS)).toEqual(["base-mainnet"]);
+    expect(JSON.parse(pages.vars.PAYMENT_NETWORKS)).toEqual(enabledNetworks);
     expect(pages.services).toEqual([
       { binding: "SLOP_IDENTITY", service: "slop-identity" },
     ]);
@@ -512,12 +545,13 @@ test("reviewed stop republishes an existing disabled-network attester without ex
 });
 
 test("a disabled-network vault does not bootstrap a missing attester or hide lookup errors", async () => {
+  const stoppedName = "slop-payments-ethereum-attester";
   const project = await pinnedProject("ethereum");
   await fixture(async ({ directory, path }) => {
     const provider = async (args) => {
       if (args[0] !== "deployments" || args[1] !== "list")
         throw new Error("Disabled network must not deploy");
-      if (args[3] === name) return ok([]);
+      if (args[3] !== stoppedName) return ok([]);
       return {
         status: 1,
         stdout: "",
@@ -544,7 +578,7 @@ test("a disabled-network vault does not bootstrap a missing attester or hide loo
         sha,
         registry: [project],
         provider: async (args) =>
-          args[3] === name
+          args[3] !== stoppedName
             ? ok([])
             : { status: 1, stdout: "", stderr: "Unauthorized" },
       }),
