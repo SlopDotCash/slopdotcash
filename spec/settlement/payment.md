@@ -6,7 +6,7 @@ PRD sections 3, 6, 8 and 10 require exact reconciliation before paid. One instan
 
 ### An approved obligation retains its immutable amount and purpose
 
-The sponsor approval that creates an obligation is modeled in private-case specifications. A purpose binds its permitted payment rail. Full-award cases use DirectFull and cannot use a standard bounty vault. Discovered by the proof: before admission, its empty state contains no amount, destination or signed attempt, so it cannot be held or resumed as an approved obligation. Configuring the obligation supplies the approved amount and purpose. Ordinary amounts use the fixed 2% fee. Private standard awards use the exact 75/25 split. The standard bounty vault is the private-standard rail owned here. The [direct standard award journal](./directBounty.md) owns independent EVM payment legs and the atomic Solana transfer. An approved full-award case requires its separately released payment rail.
+The sponsor approval that creates an obligation is modeled in private-case specifications. A purpose binds its permitted payment rail. Full-award cases use DirectFull and cannot use a standard bounty vault. Discovered by the proof: before admission, its empty state contains no amount, destination or signed attempt, so it cannot be held or resumed as an approved obligation. Configuring the obligation supplies the approved amount and purpose. Ordinary amounts use the fixed 2% fee. Private standard awards use the exact 75/25 split. The standard bounty vault is the private-standard rail owned here. The [direct standard award journal](./directBounty.md) owns independent EVM payment legs and the atomic Solana transfer. An approved full-award case requires its separately released payment rail. No full-award payment path exists yet (Slop AGENTS, 28 October 2026). Only the platform owner releases it, with a recorded owner decision, the reviewed revision that implements it and its qualification run; a project owner cannot. Until then the full-award obligation stays held.
 
 ```quint
 import money as M from "./money"
@@ -36,12 +36,17 @@ pure def configure(p: Payment, purpose: Purpose, rail: PaymentRail, gross: M::Am
   val principal = if (purpose == Ordinary) M::ordinaryNetAmount(gross) else if (purpose == PrivateStandard) M::privateResearcherAmount(gross) else gross
   { ...p, configured: true, purpose: purpose, rail: rail,
     target: { ...p.target, scope: if (rail == StandardBountyVault) D::PrivateBounty else D::Ordinary }, feeRecipient: if (purpose == PrivateFull) "" else "fees", gross: gross, fee: fee, principal: principal }
-pure def canReleaseFullRail(p: Payment, approved: bool, released: bool, qualified: bool, by: str): bool =
+type RailRelease = { rail: PaymentRail, decision: str, reviewedRevision: int, qualificationRun: str }
+pure def canReleaseFullRail(p: Payment, release: RailRelease, by: str): bool =
   p.phase != Paid and p.configured and p.purpose == PrivateFull and not(p.fullRailReleased)
-    and approved and released and qualified and by == "owner"
-pure def releaseFullRail(p: Payment, approved: bool, released: bool, qualified: bool, by: str): Payment =
+    and release.rail == DirectFull and release.decision != "" and release.reviewedRevision > 0
+    and release.qualificationRun != "" and by == "platform-owner"
+pure def releaseFullRail(p: Payment, release: RailRelease, by: str): Payment =
   { ...p, fullRailReleased: true }
-pure val byValues = Set("recipient", "owner", "wrong")
+pure val byValues = Set("recipient", "owner", "platform-owner", "wrong")
+pure val releaseValues = Set({ rail: DirectFull, decision: "owner-decision", reviewedRevision: 1, qualificationRun: "run" },
+  { rail: DirectFull, decision: "", reviewedRevision: 1, qualificationRun: "run" },
+  { rail: StandardBountyVault, decision: "owner-decision", reviewedRevision: 1, qualificationRun: "run" })
 pure val recipientValues = Set("wallet", "wrong")
 pure val principalValues = Set(List(0), List(1), List(3), List(4), List(98), List(99), List(100))
 pure val feeValues = Set(List(0), List(1), List(2), List(3), List(25))
@@ -158,7 +163,7 @@ pure def sometimesHeld(p: Payment): bool = p.phase == Held
 
 ### Private fee schedules are exact and purpose-bound
 
-These library predicates are used by the case-to-obligation admission boundary. Full-award approval never reserves a 75/25 vault. A payment rail must be approved, released and qualified separately.
+These library predicates are used by the case-to-obligation admission boundary. Full-award approval never reserves a 75/25 vault. A full-award payment rail must be released by the platform owner's recorded decision, implemented by a reviewed revision and qualified by a recorded run.
 
 ```quint
 pure def validSplit(purpose: Purpose, gross: M::Amount, principal: M::Amount, fee: M::Amount): bool =
@@ -173,8 +178,10 @@ pure def railMatchesPurpose(purpose: Purpose, rail: PaymentRail): bool =
   if (purpose == Ordinary) rail == OrdinaryVault
   else if (purpose == PrivateStandard) rail == StandardBountyVault or rail == DirectStandard
   else rail == DirectFull
-pure def fullRailAdmission(purpose: Purpose, usesSplitVault: bool, approved: bool, released: bool, qualified: bool): bool =
-  if (purpose == PrivateFull) not(usesSplitVault) and approved and released and qualified else true
+pure def railReleased(release: RailRelease): bool = release.rail == DirectFull and release.decision != ""
+  and release.reviewedRevision > 0 and release.qualificationRun != ""
+pure def fullRailAdmission(purpose: Purpose, rail: PaymentRail, release: RailRelease): bool =
+  if (purpose == PrivateFull) rail == DirectFull and railReleased(release) else true
 ```
 
 ### Simulation samples exercise missing, matching and conflicting evidence

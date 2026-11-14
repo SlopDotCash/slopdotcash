@@ -8,7 +8,10 @@ PRD section 6 permits one bounded attester approval for a current owner's reques
 
 ```quint
 import money as M from "./money"
-type ReleasePhase = Reserved | Checked | Approved | OwnerSigned | Released
+type ReleasePhase = Absent | Reserved | Checked | Approved | OwnerSigned | Released
+type RetainedAllocation = { root: str, allocationRoot: str, allocationTotal: M::Amount, reserve: M::Amount, free: M::Amount,
+  settled: M::Amount, released: M::Amount, leafCount: int, retainedLeaves: int, height: int }
+type UpgradeQualification = { implementation: str, reviewedImplementation: str, height: int }
 type ReleaseReceipt = { attempt: int, root: str, height: int, releasedAmount: M::Amount,
   settledAmount: M::Amount, finalized: bool, succeeded: bool }
 type FailedReleaseReceipt = { attempt: int, root: str, height: int, canonicalFailure: bool }
@@ -17,19 +20,52 @@ type ReserveRelease = { phase: ReleasePhase, root: str, allocationRoot: str, ori
   allocationTotal: M::Amount, settledAmount: M::Amount, free: M::Amount, evidenceHeight: int, observedHeight: int,
   ownerRevision: int, requestRevision: int, signedAttempt: int, retiredAttempts: List[RetiredReleaseAttempt],
   finalizedHeight: int, observedAfterSignature: bool, upgradeQualified: bool }
-pure val initial: ReserveRelease = { phase: Reserved, root: "root", allocationRoot: "root",
-  originalReserve: List(6), originalFree: M::zero, hasSettled: false,
-  reserved: List(6), allocationTotal: List(5), settledAmount: M::zero, free: M::zero, evidenceHeight: 0, observedHeight: 0,
+pure val initial: ReserveRelease = { phase: Absent, root: "", allocationRoot: "",
+  originalReserve: M::zero, originalFree: M::zero, hasSettled: false,
+  reserved: M::zero, allocationTotal: M::zero, settledAmount: M::zero, free: M::zero, evidenceHeight: 0, observedHeight: 0,
   ownerRevision: 1, requestRevision: 0, signedAttempt: 0, retiredAttempts: List(), finalizedHeight: 0, observedAfterSignature: false, upgradeQualified: false }
 pure val byValues = Set("owner", "attester", "wrong")
+pure val retainedSample: RetainedAllocation = { root: "root", allocationRoot: "root", allocationTotal: List(5), reserve: List(6),
+  free: M::zero, settled: M::zero, released: M::zero, leafCount: 2, retainedLeaves: 2, height: 1 }
+pure val evidenceValues = Set(retainedSample, { ...retainedSample, allocationTotal: List(6) }, { ...retainedSample, settled: List(1) },
+  { ...retainedSample, retainedLeaves: 1 }, { ...retainedSample, height: 2 }, { ...retainedSample, released: List(6) })
+pure val qualificationValues = Set({ implementation: "v2", reviewedImplementation: "v2", height: 1 },
+  { implementation: "v1", reviewedImplementation: "v2", height: 1 })
 pure val rootValues = Set("root", "wrong")
 pure val totalValues = Set(List(5), List(6), List(7))
 pure val amountValues = Set(List(1), List(6))
 ```
 
+### Only complete, untouched, finalized retained evidence admits an allocation
+
+Before admission there is no allocation, so check, approval and signature
+refuse. Admission needs the complete retained allocation (every leaf of its
+admitted root), its finalized reserve and free balance read at the latest
+observed height, and no settled or released gross. Missing, stale, partly
+settled or already released evidence leaves the allocation absent.
+
+```quint
+pure def canAdmitRetained(r: ReserveRelease, evidence: RetainedAllocation): bool =
+  r.phase == Absent and evidence.root != "" and evidence.allocationRoot == evidence.root
+    and evidence.leafCount > 0 and evidence.retainedLeaves == evidence.leafCount
+    and M::validAmount(evidence.allocationTotal) and M::validAmount(evidence.reserve) and M::positiveAmount(evidence.reserve)
+    and M::validAmount(evidence.free) and M::validAmount(evidence.settled) and M::validAmount(evidence.released)
+    and not(M::positiveAmount(evidence.settled)) and not(M::positiveAmount(evidence.released))
+    and evidence.height > 0 and evidence.height == r.observedHeight
+pure def admitRetained(r: ReserveRelease, evidence: RetainedAllocation): ReserveRelease =
+  { ...r, phase: Reserved, root: evidence.root, allocationRoot: evidence.allocationRoot, allocationTotal: evidence.allocationTotal,
+    originalReserve: evidence.reserve, reserved: evidence.reserve, originalFree: evidence.free, free: evidence.free }
+pure def alwaysAbsentEmpty(r: ReserveRelease): bool = r.phase == Absent implies
+  r.root == "" and r.signedAttempt == 0 and r.requestRevision == 0 and not(r.hasSettled)
+    and M::equalAmounts(r.reserved, M::zero) and M::equalAmounts(r.free, M::zero) and r.retiredAttempts.length() == 0
+```
+
 ### Current authority and fresh complete wrong-total evidence permit approval
 
-A healthy total, partial settlement, mismatching root or stale owner request refuses release. Evidence freshness means equality with the latest finalized height observed for this operation, whose freshness policy remains the chain adapter's explicit contract. A newer
+A healthy total, partial settlement, mismatching root or stale owner request refuses release. The
+release capability exists only after a finalized read shows the vault running
+the reviewed release-capable implementation recorded in the project's
+deployment pin; neither the owner nor the attester can assert it. Evidence freshness means equality with the latest finalized height observed for this operation, whose freshness policy remains the chain adapter's explicit contract. A newer
 height invalidates a pre-signature review. After the owner signs, a newer
 height preserves the signed attempt and its bound evidence.
 
@@ -37,9 +73,13 @@ height preserves the signed attempt and its bound evidence.
 pure def canObserve(r: ReserveRelease, height: int): bool = r.phase != Released and height > r.observedHeight
 pure def observe(r: ReserveRelease, height: int): ReserveRelease =
   if (r.signedAttempt > 0) { ...r, observedHeight: height, observedAfterSignature: true }
+  else if (r.phase == Absent) { ...r, observedHeight: height }
   else { ...r, phase: Reserved, observedHeight: height, evidenceHeight: 0, requestRevision: 0 }
-pure def canQualifyUpgrade(r: ReserveRelease, by: str): bool = r.phase == Reserved and by == "owner"
-pure def qualifyUpgrade(r: ReserveRelease, by: str): ReserveRelease = { ...r, upgradeQualified: true }
+pure def canQualifyUpgrade(r: ReserveRelease, qualification: UpgradeQualification): bool =
+  not(r.upgradeQualified) and r.phase != Released and qualification.implementation != ""
+    and qualification.implementation == qualification.reviewedImplementation
+    and qualification.height > 0 and qualification.height <= r.observedHeight
+pure def qualifyUpgrade(r: ReserveRelease, qualification: UpgradeQualification): ReserveRelease = { ...r, upgradeQualified: true }
 pure def canCheck(r: ReserveRelease, root: str, total: M::Amount, height: int, requestRevision: int, by: str): bool =
   r.phase == Reserved and r.signedAttempt == 0 and not(r.hasSettled) and r.upgradeQualified and by == "owner" and requestRevision > 0 and requestRevision == r.ownerRevision
     and root == r.root and root == r.allocationRoot and M::equalAmounts(total, r.allocationTotal)
@@ -96,16 +136,16 @@ pure def retireFailedAttempt(r: ReserveRelease, failure: FailedReleaseReceipt): 
       evidenceHeight: r.evidenceHeight, failureHeight: failure.height }) }
 pure def canChangeOwner(r: ReserveRelease, revision: int): bool = r.phase != Released and revision > r.ownerRevision
 pure def changeOwner(r: ReserveRelease, revision: int): ReserveRelease =
-  if (r.signedAttempt > 0) { ...r, ownerRevision: revision }
+  if (r.signedAttempt > 0 or r.phase == Absent) { ...r, ownerRevision: revision }
   else { ...r, phase: Reserved, ownerRevision: revision, requestRevision: 0, evidenceHeight: 0 }
-pure def canSettlePart(r: ReserveRelease, amount: M::Amount): bool = r.phase != Released and M::validAmount(amount) and M::positiveAmount(amount) and M::compareAmounts(amount, r.reserved) <= 0
+pure def canSettlePart(r: ReserveRelease, amount: M::Amount): bool = r.phase != Released and r.phase != Absent and M::validAmount(amount) and M::positiveAmount(amount) and M::compareAmounts(amount, r.reserved) <= 0
 pure def settlePart(r: ReserveRelease, amount: M::Amount): ReserveRelease =
   { ...r, phase: Reserved, hasSettled: true, reserved: M::subtractAmounts(r.reserved, amount), settledAmount: M::addAmounts(r.settledAmount, amount),
     requestRevision: if (r.signedAttempt > 0) r.requestRevision else 0,
     evidenceHeight: if (r.signedAttempt > 0) r.evidenceHeight else 0 }
 pure def alwaysNoSettlementOnRelease(r: ReserveRelease): bool = r.phase == Released implies M::equalAmounts(r.settledAmount, M::zero)
 pure def alwaysWholeRelease(r: ReserveRelease): bool = r.phase == Released implies M::equalAmounts(r.reserved, M::zero) and M::equalAmounts(r.free, M::addAmounts(r.originalFree, r.originalReserve))
-pure def alwaysBoundApproval(r: ReserveRelease): bool = r.phase != Reserved implies
+pure def alwaysBoundApproval(r: ReserveRelease): bool = (r.phase != Reserved and r.phase != Absent) implies
   r.requestRevision > 0 and r.requestRevision <= r.ownerRevision and r.evidenceHeight > 0 and r.root == r.allocationRoot
     and not(M::equalAmounts(r.allocationTotal, r.originalReserve)) and not(r.hasSettled) and M::equalAmounts(r.settledAmount, M::zero)
 pure def alwaysSignedIdentity(r: ReserveRelease): bool =
@@ -163,7 +203,7 @@ pure def alwaysConserved(r: ReserveRelease): bool =
   M::equalAmounts(M::addAmounts(M::addAmounts(r.free, r.reserved), r.settledAmount),
     M::addAmounts(r.originalFree, r.originalReserve))
 pure def stepOriginalTermsRetained(before: ReserveRelease, after: ReserveRelease): bool =
-  before.originalReserve == after.originalReserve and before.originalFree == after.originalFree
+  before.phase != Absent implies before.originalReserve == after.originalReserve and before.originalFree == after.originalFree
     and before.root == after.root and before.allocationRoot == after.allocationRoot
     and before.allocationTotal == after.allocationTotal
 pure def stepSettlementHistoryRetained(before: ReserveRelease, after: ReserveRelease): bool =
@@ -193,6 +233,7 @@ pure val failureValues = Set(
   { attempt: 1, root: "root", height: 2, canonicalFailure: false })
 pure val weight_observe = 10
 pure val weight_qualifyUpgrade = 20
+pure val weight_admitRetained = 25
 pure val weight_check = 25
 pure val weight_approve = 25
 pure val weight_ownerSign = 25

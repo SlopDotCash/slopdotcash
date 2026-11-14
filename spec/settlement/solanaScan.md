@@ -52,15 +52,19 @@ frozen prior cursor and the saved oldest signature as RPC bounds. The model's
 `oldestFirst` is the verified ordering of the new page, so prepending it to the
 existing list represents taking the greatest staged page number first. The
 real page limit is 1,000. A short page, including an empty response, completes
-discovery. Full pages may be resumed after restart. Newly arriving signatures
+discovery. Full pages may be resumed after restart; simulation includes a
+full 1,000-signature page so the resume path is reached. Newly arriving signatures
 above the first page belong to a future interval. Failed or malformed reads
 leave all checkpoints untouched. Interval generation and revision are compared
 atomically with page insert and progress, including for an empty result.
 
 ```quint
 type PageCoverage = FullPage | ShortPage | UnavailablePage
-pure val coverageValues = Set(ShortPage, UnavailablePage)
-pure val oldestFirstValues = Set(List(), List("a"), List("b", "c"))
+pure val tenSignatures = List("f0", "f1", "f2", "f3", "f4", "f5", "f6", "f7", "f8", "f9")
+pure val hundredSignatures = tenSignatures.foldl(List(), (acc, ignored) => acc.concat(tenSignatures))
+pure val fullPageSample = tenSignatures.foldl(List(), (acc, ignored) => acc.concat(hundredSignatures))
+pure val coverageValues = Set(FullPage, ShortPage, UnavailablePage)
+pure val oldestFirstValues = Set(List(), List("a"), List("b", "c")).union(Set(fullPageSample))
 pure val generationValues = Set(1, 2, 3)
 pure val revisionValues = Set(0, 1, 2, 3, 4)
 pure def validPage(oldestFirst: List[str], coverage: PageCoverage): bool =
@@ -118,6 +122,7 @@ pure def stepNeverRewinds(before: Scan, after: Scan): bool = after.generation >=
 pure def stepFrozenBoundary(before: Scan, via: str, after: Scan): bool =
   (via != "openInterval" and via != "closeInterval") implies after.frozenUntil == before.frozenUntil
 pure def sometimesStaged(s: Scan): bool = s.phase == Processing and s.pending.length() > 0
+pure def sometimesFullPageResumes(s: Scan): bool = s.phase == Discovering and s.pending.length() >= 1000
 pure def sometimesCheckpointed(s: Scan): bool = s.phase == Processing and s.cursor != ""
 pure def sometimesClosedAfterProgress(s: Scan): bool = s.phase == Idle and s.cursor != ""
 ```
