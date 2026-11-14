@@ -153,6 +153,7 @@ const INSTALL_FILES = new Set([
   "makefile",
   "makefile.pl",
   "justfile",
+  ".justfile",
   "install.sh",
   "postinstall.js",
   "preinstall.js",
@@ -164,6 +165,7 @@ const INSTALL_FILES = new Set([
   "tox.toml",
   "devcontainer.json",
   "gnumakefile",
+  "bsdmakefile",
   "dockerfile",
   "containerfile",
   "jenkinsfile",
@@ -193,6 +195,7 @@ const INSTALL_FILES = new Set([
   "module.bazel",
   "workspace",
   "workspace.bazel",
+  "workspace.bzlmod",
   "docker-bake.hcl",
   "docker-bake.override.hcl",
   "makefile.inc",
@@ -225,8 +228,14 @@ const MSBUILD_RECIPE = new RegExp(
 const ANT_BUILD_XML = /(?:^|\/)build\.xml$/iu;
 /** node-gyp loads these directly; other names are install scripts only via `includes`. */
 const GYP_SOURCE = new RegExp(String.raw`\.(?:${GYP_EXTENSION})$`, "iu");
+/**
+ * Shell suffixes the pipe-to-shell rule already executes. `.sh`, `.bash`
+ * and `.zsh` were already here. A file with one of these suffixes is
+ * source even without a shebang; `install`, `setup` and `bootstrap`
+ * names in this family are install scripts.
+ */
 const SOURCE_EXTENSIONS =
-  /\.(?:[cm]?[jt]sx?|py|rb|go|rs|java|kt|kts|swift|c|cc|cpp|h|hpp|cs|php|sh|bash|zsh|ps1|psm1|bat|cmd|lua|pl|r|scala|sol|move|vue|svelte|astro|toml|ya?ml|json|gradle|nix|mk)$/iu;
+  /\.(?:[cm]?[jt]sx?|py|rb|go|rs|java|kt|kts|swift|c|cc|cpp|h|hpp|cs|php|sh|bash|zsh|ksh|dash|ash|fish|csh|tcsh|ps1|psm1|bat|cmd|lua|pl|r|scala|sol|move|vue|svelte|astro|toml|ya?ml|json|gradle|nix|mk)$/iu;
 const EXECUTABLE_BINARIES =
   /\.(?:node|wasm|so|dylib|dll|exe|jar|pyc|class|bin|a|o)$/iu;
 const ARCHIVES = /\.(?:zip|tar|tgz|gz|bz2|xz|7z|rar|whl|gem|crate)$/iu;
@@ -306,7 +315,7 @@ export function surfacesOf(path: string): ScanSurface[] {
     inDirectory(lower, ".husky") ||
     inDirectory(lower, ".devcontainer") ||
     inDirectory(lower, ".vscode") ||
-    /(?:^|\/)(?:install|setup|bootstrap)[^/]*\.(?:sh|ps1|bat|cmd|py|js|mjs)$/u.test(
+    /(?:^|\/)(?:install|setup|bootstrap)[^/]*\.(?:sh|bash|zsh|ksh|dash|ash|fish|csh|tcsh|ps1|bat|cmd|py|js|mjs)$/u.test(
       lower,
     )
   )
@@ -1720,8 +1729,10 @@ export function inspectRepository(input: {
           (surfaces.length === 0 && declaresInterpreter(file.bytes)) ||
           gypIncludes.has(file.path) ||
           cmakeIncludes.has(file.path)) &&
-        (/\.(?:sh|bash|zsh)$/iu.test(file.logicalPath ?? file.path) ||
-          /^#![^\n]*\b(?:ba|da|k|z)?sh(?:\s|$)/u.test(text))
+        (/\.(?:sh|bash|zsh|ksh|dash|ash|fish|csh|tcsh)$/iu.test(
+          file.logicalPath ?? file.path,
+        ) ||
+          /^#![^\n]*\b(?:ba|da|k|a|z|fi|t?c)?sh(?:\s|$)/u.test(text))
       )
         commands.push(text);
       return commands.map((text) => ({ path: file.path, text, directory }));
