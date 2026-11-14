@@ -2295,27 +2295,31 @@
     },
     {
       "path": "spec/fees/buybackRpc.md",
-      "sha256": "f8ea1a1536aef031c93da3c816a7b771d663003581522853b7863a3671937883",
+      "sha256": "7a41c92a6359f79a3aee2d62e09eb6e3d313c8a88a3702373a520c8a94e3485b",
       "module": "fees__buybackRpc",
       "stories": [
         {
           "heading": "Story: Observe whether the configured Robinhood RPC can serve finalized state",
-          "line": 8
+          "line": 13
         }
       ],
       "rules": [
         {
           "heading": "Story: Observe whether the configured Robinhood RPC can serve finalized state / Only a live Robinhood buyback recovery tick can report the diagnostic",
-          "line": 10,
+          "line": 15,
           "definitions": [
             "BuybackRpcScope",
             "runProbe",
-            "lawInactiveProbeOmitted"
+            "lawInactiveProbeOmitted",
+            "RecoveryCounts",
+            "DiagnosticSummary",
+            "recoverySummary",
+            "lawObservationPreservesCounts"
           ]
         },
         {
           "heading": "Story: Observe whether the configured Robinhood RPC can serve finalized state / A verified observation binds the exact chain, block and contract read",
-          "line": 26,
+          "line": 38,
           "definitions": [
             "FinalizedBlock",
             "DestinationRead",
@@ -2330,11 +2334,30 @@
             "observedBlock",
             "observedRpc",
             "scopeValues",
+            "countsValues",
             "rpcValues"
+          ]
+        },
+        {
+          "heading": "Story: Observe whether the configured Robinhood RPC can serve finalized state / Operator qualification checks the expected Worker and an independent finalized block",
+          "line": 103,
+          "definitions": [
+            "HeightWitness",
+            "IndependentRead",
+            "bindsHeight",
+            "coveredByFinality",
+            "qualifiedBlock",
+            "rpcQualified",
+            "lawQualificationBindsIndependentEvidence",
+            "lawUncorroboratedProbeCannotQualify",
+            "independentMatch",
+            "independentValues"
           ]
         }
       ],
-      "imports": [],
+      "imports": [
+        "settlement__money"
+      ],
       "references": []
     },
     {

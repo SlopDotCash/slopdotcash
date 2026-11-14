@@ -306,11 +306,12 @@ reporting requirement.
   Snapshot writes recheck the registered deployment and reject regressions in
   each cumulative counter. Solana checks its genesis before reading totals.
   All 62 obligations proved.
-  [Vault snapshot results](validation/source-coverage/vault-snapshots.json)
-- A live Robinhood buyback tick can report the exact finalized RPC observation
-  in its private summary. This diagnostic leaves accounting and signer
-  authority alone. All three obligations proved.
-  [RPC diagnostic results](validation/source-coverage/buyback-rpc-rule-coverage.json)
+  [Vault snapshot results](validation/source-coverage/vault-snapshots.json) · [Solana main promotion](validation/source-coverage/solana-main-promotion.json)
+- A live Robinhood buyback recovery tick can report the exact finalized RPC
+  observation in its private summary. The promoted checks verify the expected
+  Worker revision and exact block against an independent trusted RPC. All six
+  obligations passed, including omission from receipt-only runs.
+  [RPC proof](validation/active-proof/finance/buyback-rpc-main-proof.json) · [Promotion source comparison](validation/active-proof/finance/buyback-rpc-main-source.json)
 - Referrals and buyback preserve filing identity, posting history and the
   pinned bridged quantity. The repaired models replayed 210 traces. The
   distributor proof discharged all 146 obligations against its recorded
