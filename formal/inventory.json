@@ -1682,15 +1682,16 @@
     },
     {
       "path": "contracts/solana/adapter.ts",
-      "sha256": "949c1c0ef8d2d5baa93e9cf0a60a26b3274e6b446f26f86fcea0b27fc9fb7b48",
+      "sha256": "ddcdf520792de627eaf9a278b596e1c71bc0802932560c9a1b56729d122269e0",
       "models": [
         "formal/models/payments/chain_evidence.qnt",
+        "formal/models/payments/solana_scan_checkpoint.qnt",
         "formal/models/payments/vault_initial_snapshot.qnt"
       ],
       "candidateLines": [
-        47, 68, 73, 75, 184, 200, 227, 235, 254, 262, 276, 286, 304, 347, 366,
-        375, 420, 427, 428, 431, 685, 691, 694, 696, 701, 725, 866, 867, 895,
-        924, 937, 945, 952, 981, 996
+        47, 68, 73, 75, 184, 200, 227, 235, 254, 275, 288, 298, 316, 359, 378,
+        387, 432, 439, 440, 443, 697, 703, 706, 708, 713, 737, 878, 879, 907,
+        936, 949, 957, 964, 993, 1008
       ],
       "review": "mapped-abstraction"
     },
@@ -3710,9 +3711,9 @@
     },
     {
       "path": "scripts/escrow-acceptance/solana-local.ts",
-      "sha256": "1fa7a232735d6a13a2d68f86ab1e2467cf50b13464cbbdede215bba76e637f25",
+      "sha256": "99261a1cfdb1e858014f2c4a1e730fd64f85d1f4170a3db2ae6cd1886d1d66fe",
       "models": ["formal/models/contracts/local_solana_acceptance.qnt"],
-      "candidateLines": [58, 59, 60, 61, 72, 117, 207],
+      "candidateLines": [58, 59, 60, 61, 72, 117, 210],
       "review": "mapped-abstraction"
     },
     {
@@ -3983,7 +3984,7 @@
     },
     {
       "path": "scripts/payment-keeper/keeper.ts",
-      "sha256": "97d22cd5cb3b50bbc9378966d991558c6b022b13e86e119dd282145567b0063a",
+      "sha256": "32f6d994e16e5529a8fcc1f060ff87e3c091e340d3f9bbe9dcd96135843447ba",
       "models": [
         "formal/models/payments/operator_keeper.qnt",
         "formal/models/payments/operator_keeper_diagnostics.qnt",
@@ -3992,8 +3993,8 @@
         "formal/models/rewards/monthly_execution_recovery.qnt"
       ],
       "candidateLines": [
-        103, 104, 128, 143, 144, 265, 328, 435, 445, 453, 459, 493, 505, 517,
-        544, 551, 557, 565, 586, 590, 591, 593, 602, 611
+        103, 104, 128, 143, 144, 265, 328, 437, 447, 455, 461, 495, 507, 519,
+        546, 553, 559, 567, 588, 592, 593, 595, 604, 613
       ],
       "review": "mapped-abstraction"
     },
@@ -7893,18 +7894,19 @@
     },
     {
       "path": "workers/payments/index.ts",
-      "sha256": "1c9e2ea8e9eb57ec3f3a9e358f3ab6b09869edc90b9680377e358cc2a49e6218",
+      "sha256": "f601a441c6da64bf28ef6551fb2e9b9012d3d2f4adb2711fd469c99915e28486",
       "models": [
         "formal/models/payments/payment_reopen_landing.qnt",
         "formal/models/payments/payment_unsigned_retirement.qnt",
+        "formal/models/payments/solana_scan_checkpoint.qnt",
         "formal/models/payments/vault_initial_snapshot.qnt",
         "formal/models/rewards/monthly_commit_cursor.qnt",
         "formal/models/rewards/monthly_reserve.qnt"
       ],
       "candidateLines": [
-        66, 93, 110, 113, 119, 120, 124, 151, 161, 165, 167, 171, 173, 184, 185,
-        187, 189, 191, 197, 200, 203, 207, 219, 220, 222, 223, 228, 278, 325,
-        336, 357, 365, 368, 399, 479, 579, 580, 639, 640
+        67, 103, 120, 123, 129, 130, 134, 161, 171, 175, 177, 181, 183, 194,
+        195, 197, 199, 201, 207, 210, 213, 217, 229, 230, 232, 233, 238, 288,
+        335, 346, 367, 375, 378, 409, 489, 587, 588, 647, 648
       ],
       "review": "mapped-abstraction"
     },
@@ -7926,7 +7928,7 @@
     },
     {
       "path": "workers/payments/scanner.ts",
-      "sha256": "859e9352f0a7a9dd5ad62dbfb45a511d9fee3d039ca57d6fe9eae327c700b5c5",
+      "sha256": "e2fecc7acd891cd55b954f3027da78bb8f2c8320dae2741329eac62168ac049e",
       "models": [
         "formal/models/payments/chain_range_scan.qnt",
         "formal/models/payments/evm_scan_checkpoint.qnt",
@@ -7934,8 +7936,8 @@
         "formal/models/payments/solana_scan_checkpoint.qnt"
       ],
       "candidateLines": [
-        23, 55, 56, 60, 61, 64, 65, 81, 103, 133, 158, 167, 181, 193, 215, 231,
-        238, 252, 274, 286, 291, 296
+        27, 59, 60, 64, 65, 68, 69, 85, 107, 138, 163, 172, 186, 198, 220, 236,
+        243, 257, 279, 291, 296, 301
       ],
       "review": "mapped-abstraction"
     },
@@ -13281,16 +13283,21 @@
     },
     {
       "path": "formal/models/payments/solana_scan_checkpoint.qnt",
-      "sha256": "e177ef84b4944110ba13d2e745bfdc497e176e3f3fb163aeb79e5c25fa3d7a89",
+      "sha256": "324fcf3762a164dbc0a14449f347560c78374f33d600378c2e47effaf7f2505c",
       "sources": [
+        "contracts/solana/adapter.ts",
         "migrations/0012_solana_scan_backlog.sql",
+        "workers/payments/index.ts",
         "workers/payments/scanner.ts"
       ],
       "scenarios": [
         "discoveryBeforeProcessingTest",
         "laterArrivalOutsideIntervalTest",
+        "missingClusterRefusesDiscoveryTest",
         "restartKeepsVerifiedPrefixTest",
-        "staleCheckpointCannotRewindTest"
+        "staleCheckpointCannotRewindTest",
+        "unpinnedClusterCannotChangeDiscoveryOrProcessingTest",
+        "wrongClusterRefusesProcessingTest"
       ]
     },
     {

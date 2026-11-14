@@ -31,6 +31,7 @@ import {
   verifyEvmDeployment,
 } from "../../contracts/evm/adapter";
 import {
+  assertSolanaGenesis,
   readVaultTotals as readSolanaVaultTotals,
   solanaPaymentAdapter,
 } from "../../contracts/solana/adapter";
@@ -75,6 +76,15 @@ export interface PaymentsWorkerEnvironment {
    */
   MONTHLY_PAYMENT_SCHEDULE?: string;
 }
+
+function paymentSolanaGenesis(env: PaymentsWorkerEnvironment, network: string) {
+  const pins = JSON.parse(env.PAYMENT_SOLANA_GENESIS ?? "{}") as Partial<
+    Record<string, unknown>
+  >;
+  const pin = pins?.[network];
+  return typeof pin === "string" && pin.length > 0 ? pin : undefined;
+}
+
 /** The served networks' reviewed vaults, read from the D1 project registry. */
 export function registryDeployments(env: PaymentsWorkerEnvironment) {
   return loadRegistryPaymentDeployments(
@@ -549,9 +559,7 @@ export async function ingestPaymentEvent(
     deployment.rotationDelaySeconds &&
     deployment.rotationAuthority
   ) {
-    const genesis = (
-      JSON.parse(env.PAYMENT_SOLANA_GENESIS ?? "{}") as Record<string, string>
-    )[deployment.network];
+    const genesis = paymentSolanaGenesis(env, deployment.network);
     if (!genesis) throw new Error("Solana genesis trust root unavailable");
     adapter = solanaPaymentAdapter({
       ...deployment,
@@ -652,7 +660,14 @@ export async function syncRegistryVaults(env: PaymentsWorkerEnvironment) {
       env.PAYMENTS_DB,
       deployments,
       rpcUrls,
-      readDeploymentVaultTotals,
+      async (deployment, rpcUrl) => {
+        if (chainFamily(deployment.chain) === "solana")
+          await assertSolanaGenesis({
+            rpcUrl,
+            genesisHash: paymentSolanaGenesis(env, deployment.network),
+          });
+        return readDeploymentVaultTotals(deployment, rpcUrl);
+      },
     );
   } catch (error) {
     failures.push(error);
@@ -671,7 +686,10 @@ export async function syncRegistryVaults(env: PaymentsWorkerEnvironment) {
       else
         await scanSolanaPayments(
           env.PAYMENTS_DB,
-          deployment,
+          {
+            ...deployment,
+            genesisHash: paymentSolanaGenesis(env, deployment.network),
+          },
           rpcUrls[deployment.network],
           index,
         );
