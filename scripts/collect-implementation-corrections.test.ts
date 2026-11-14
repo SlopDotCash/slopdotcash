@@ -9,8 +9,13 @@ import {
   type PointAward,
   pointKey,
 } from "../src/lib/points";
+import { applyPointsImplementationCorrections } from "../src/lib/points-implementation-corrections";
 import { findProject } from "../src/lib/projects.mjs";
 import { collectTargetRepositories } from "../src/lib/repositories.mjs";
+import {
+  fixture as valueFixture,
+  repository as valueRepository,
+} from "../tests/value-binary-fixture";
 import {
   CollectionBudgetExhausted,
   CorrectionEvidenceCache,
@@ -2553,4 +2558,230 @@ test("resumed months keep a later month's verified author link like an uninterru
   expect(resumed.receipt.ownershipComplete).toBe(true);
   expect(linkedAuthor(resumed)).toBe("bob");
   expect(resumed.receipt.manifestDigest).toBe(fresh.receipt.manifestDigest);
+});
+
+function relatedHistoricalFixture(
+  original: "empty" | "bound" | "ambiguous" | "wrong-head",
+) {
+  const f = valueFixture({ textOnly: true, direct: true });
+  const base = transport();
+  const rateLimit = {
+    cost: 1,
+    limit: 5000,
+    remaining: 4900,
+    resetAt: "2026-02-01T01:00:00Z",
+  };
+  const accepted = fixture();
+  const repository = "elizaOS/asi";
+  const path = `/repos/${repository}`;
+  const url = `https://github.com/${repository}/pull/2`;
+  const merged = accepted.mergedAt;
+  Object.assign(accepted, {
+    url,
+    number: 2,
+    headRefOid: f.pull.head.sha,
+    additions: 1,
+    deletions: 0,
+  });
+  Object.assign(accepted.commits.nodes[0].commit, {
+    oid: f.pull.head.sha,
+    author: { user: null },
+  });
+  const originalId = "PR_original";
+  const bound = original === "bound" || original === "wrong-head";
+  const originalUrl = `https://github.com/${repository}/pull/1`;
+  const pull = (number: number) => ({
+    ...f.pull,
+    number,
+    node_id: number === 2 ? accepted.id : originalId,
+    html_url: number === 2 ? url : originalUrl,
+    merged_at: number === 2 ? merged : null,
+    closed_at: number === 2 ? merged : "2026-01-14T00:00:00Z",
+    merge_commit_sha: number === 2 ? f.pull.merge_commit_sha : null,
+    merged_by: number === 2 ? f.pull.merged_by : null,
+    comments: number === 1 && bound ? 1 : 0,
+    head: number === 1 && original === "wrong-head" ? { sha } : f.pull.head,
+    changed_files: number === 1 && original === "empty" ? 0 : 1,
+    commits: number === 1 && original === "empty" ? 0 : 1,
+  });
+  const reference = (number: number) => ({
+    source: {
+      __typename: "PullRequest",
+      id: number === 2 ? accepted.id : originalId,
+      number,
+      url: `https://github.com/${repository}/pull/${number}`,
+      repository: { nameWithOwner: repository, isPrivate: false },
+    },
+  });
+  const calls = new Set<string>();
+  const call = Object.assign(
+    async (input: RequestInfo | URL, init?: RequestInit) => {
+      const endpoint = new URL(String(input));
+      if (endpoint.pathname === "/graphql") {
+        const { query, variables } = JSON.parse(String(init?.body));
+        if (query.includes("LeaderboardSearchReferences"))
+          return Response.json({
+            data: {
+              search: {
+                issueCount: 1,
+                pageInfo: { hasNextPage: false, endCursor: null },
+                nodes: [accepted],
+              },
+              rateLimit,
+            },
+          });
+        if (query.includes("LeaderboardOutcomeCommitLines"))
+          return Response.json({
+            data: {
+              nodes: [
+                {
+                  __typename: "Commit",
+                  id: "C_source",
+                  oid: f.pull.head.sha,
+                  additions: 1,
+                  deletions: 0,
+                  repository: { id: accepted.repository.id },
+                },
+              ],
+              rateLimit,
+            },
+          });
+        if (query.includes("CROSS_REFERENCED_EVENT"))
+          return Response.json({
+            data: {
+              repository: {
+                pullRequest: {
+                  id: variables.number === 2 ? accepted.id : originalId,
+                  timelineItems: {
+                    nodes: [reference(variables.number === 2 ? 1 : 2)],
+                    pageInfo: { hasNextPage: false, endCursor: null },
+                  },
+                },
+              },
+              rateLimit,
+            },
+          });
+        return base.call(input, init);
+      }
+      const full = endpoint.pathname + endpoint.search;
+      calls.add(full);
+      if (full === path)
+        return Response.json({
+          id: 42,
+          node_id: accepted.repository.id,
+          private: false,
+        });
+      if (full === `${path}/pulls/1`) return Response.json(pull(1));
+      if (full === `${path}/pulls/2`) return Response.json(pull(2));
+      if (full.includes("/issues/1/comments?") && bound)
+        return Response.json([
+          {
+            node_id: "IC_retained",
+            html_url: `${originalUrl}#issuecomment-1`,
+            body: "Retained changes from #2.",
+            user: f.pull.merged_by,
+            created_at: "2026-01-15T01:00:00Z",
+            updated_at: "2026-01-15T01:00:00Z",
+          },
+        ]);
+      if (original === "empty" && /\/pulls\/1\/(commits|files)\?/u.test(full))
+        return Response.json([]);
+      const remapped = full
+        .replace(path, `/repos/${valueRepository.id}`)
+        .replace(/\/(pulls|issues)\/2(?=\/|$)/u, "/$1/1");
+      const evidence = await f.client.get<unknown>(remapped);
+      if (/\/pulls\/[12]\/commits\?/u.test(full) && Array.isArray(evidence))
+        for (const commit of evidence) commit.author = null;
+      return Response.json(evidence);
+    },
+    { preconnect: fetch.preconnect },
+  );
+  return { call, calls, url };
+}
+
+async function collectRelatedHistoricalSource(
+  original: Parameters<typeof relatedHistoricalFixture>[0],
+) {
+  const network = relatedHistoricalFixture(original);
+  const journal = baseline([{ ...award(), sourceUrl: network.url }]);
+  const result = await collectImplementationCorrections(
+    {
+      projects: ["asi"],
+      directory: await directory(),
+      month: "2026-01",
+      before: "2026-01-31T00:00:00.000Z",
+    },
+    {
+      journal,
+      registry: registry(),
+      token: "fixture-token",
+      transport: network.call,
+      now: new Date("2026-01-31T23:59:59Z"),
+    },
+  );
+  return { journal, result, calls: network.calls };
+}
+
+test("an unrelated zero-commit reference does not poison the complete historical manifest", async () => {
+  const { journal, result, calls } =
+    await collectRelatedHistoricalSource("empty");
+  expect(
+    calls.has("/repos/elizaOS/asi/pulls/1/commits?per_page=100&page=1"),
+  ).toBe(true);
+  expect(result.receipt.completeProofs).toBe(1);
+  const candidate = result.manifest.candidates[0];
+  const reconciled = applyPointsImplementationCorrections(
+    journal,
+    result.manifest,
+    [{ candidateId: candidate.id, eligible: false }],
+    result.manifest.generatedAt,
+    new Map(),
+  );
+  expect(reconciled.journal).toBe(journal);
+  expect(candidate.sourceIds).toEqual(["PR_source"]);
+  expect(candidate.proof).toMatchObject({
+    status: "complete",
+    sources: [{ sourceId: "PR_source", commits: [{ author: null }] }],
+  });
+});
+
+test("a verified retained original stays in the historical manifest and an ambiguous copy stays held", async () => {
+  const { result, journal } = await collectRelatedHistoricalSource("bound");
+  expect(result.receipt.completeProofs).toBe(1);
+  const candidate = result.manifest.candidates[0];
+  expect(candidate.sourceIds).toEqual(["PR_original", "PR_source"]);
+  expect(candidate.proof).toMatchObject({
+    status: "complete",
+    sources: [
+      {
+        sourceId: "PR_source",
+        commits: [{ retainedCopy: { originalSourceId: "PR_original" } }],
+      },
+      { sourceId: "PR_original" },
+    ],
+  });
+  expect(
+    applyPointsImplementationCorrections(
+      journal,
+      result.manifest,
+      [{ candidateId: candidate.id, eligible: false }],
+      result.manifest.generatedAt,
+      new Map(),
+    ).journal,
+  ).toBe(journal);
+  const ambiguous = await collectRelatedHistoricalSource("ambiguous");
+  expect(ambiguous.result.receipt.completeProofs).toBe(0);
+  expect(ambiguous.result.manifest.candidates[0].proof).toMatchObject({
+    status: "held",
+  });
+  expect(ambiguous.result.receipt.limitations).toContainEqual({
+    id: candidate.id,
+    reason: "Retained-copy evidence is incomplete or ambiguous",
+  });
+  const wrongHead = await collectRelatedHistoricalSource("wrong-head");
+  expect(wrongHead.result.receipt.completeProofs).toBe(0);
+  expect(wrongHead.result.receipt.limitations).toContainEqual({
+    id: candidate.id,
+    reason: "Retained original commit census does not reach the source head",
+  });
 });

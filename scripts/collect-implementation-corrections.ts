@@ -1242,7 +1242,28 @@ async function ordinaryRetainedProof(
       }),
     "Retained accepted commit lines differ from the canonical census",
   );
-  return converted;
+  // References are inputs to ambiguity checks. Only actual retained bindings
+  // extend the correction proof beyond the canonical accepted commit census.
+  const originalIds = new Set(
+    accepted.commits.flatMap((commit) =>
+      commit.retainedCopy ? [commit.retainedCopy.originalSourceId] : [],
+    ),
+  );
+  if (!originalIds.size) return [plain];
+
+  const boundSources = converted.filter((source) =>
+    originalIds.has(source.sourceId),
+  );
+  requireThat(
+    boundSources.length === originalIds.size &&
+      boundSources.every(
+        (source) =>
+          source.commits.length > 0 &&
+          source.commits.at(-1)?.sha === source.headSha,
+      ),
+    "Retained original commit census does not reach the source head",
+  );
+  return [accepted, ...boundSources];
 }
 
 export interface CollectionOptions {
