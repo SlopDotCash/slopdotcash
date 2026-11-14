@@ -35,19 +35,20 @@ observation followed by release occurred in three traces. The definitive
 failure retirement transition occurred 18 times.
 [Focused simulation](reserve-release-signed-verification.json) · [Coverage](reserve-release-signed-coverage.json)
 
-The focused Vibestack proof discharged 140 of 146 obligations with zero
+The focused Vibestack proof discharged 141 of 146 obligations with zero
 errors and zero resource exhaustion. It proved failure retirement, fresh
-attempt identity and bound approval. For approval, numeric equality is
-transitive even when amounts encode different numbers of trailing zero
-limbs. The proof compares the zero-padded limbs without changing the guards.
-Six obligations remain open. They cover whole release and valid or conserved
-amounts after finalization, valid or conserved amounts after partial
-settlement, and a generic step obligation that depends on the open
-transition obligations. [Current Dafny output](reserve-release-bound-approval-dafny.log)
+attempt identity, bound approval and whole release. The approval proof
+establishes numeric equality across trailing zero limbs. The finalization
+proof uses that lemma reflexively on the whole resulting free balance and the
+zero reserve. Five obligations remain open. They cover valid and conserved
+amounts after finalization and partial settlement, and a generic step
+obligation that depends on the open transition obligations.
+[Current Dafny output](reserve-release-whole-release-dafny.log)
 
-Earlier runs of the same model discharged 139 obligations with just the fresh
-attempt proof and 138 with the generated proof alone.
-[Fresh attempt proof](reserve-release-owner-sign-dafny.log) · [Baseline Dafny output](reserve-release-current-dafny.log)
+Earlier proofs of the same model discharged 140 obligations through bound
+approval, 139 through fresh attempt identity and 138 with the generated proof
+alone.
+[Bound approval proof](reserve-release-bound-approval-dafny.log) · [Fresh attempt proof](reserve-release-owner-sign-dafny.log) · [Baseline Dafny output](reserve-release-current-dafny.log)
 
 The pre-retry model at hash
 `7d83230662ec2fc283e2c6989eaca8c2f15caf8963a2f28aa540183714b04f4a`

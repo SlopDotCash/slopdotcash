@@ -111,3 +111,33 @@ lemma CompareFoldZero(f: (settlement__money_CompareFold, int) -> settlement__mon
     CompareFoldZero(f, same, f(acc, xs[0]), xs[1..]);
   }
 }
+
+lemma finalize_ensures(r: ReserveRelease, receipt: ReleaseReceipt)
+  ensures (inv(r) ==> canFinalize(r, receipt) ==> alwaysSignedIdentity(finalize(r, receipt)))
+  ensures (inv(r) ==> canFinalize(r, receipt) ==> alwaysLiveAttemptFresh(finalize(r, receipt)))
+  ensures (inv(r) ==> canFinalize(r, receipt) ==> alwaysFinalizedHeight(finalize(r, receipt)))
+  ensures (inv(r) ==> canFinalize(r, receipt) ==> alwaysObservedAfterSignature(finalize(r, receipt)))
+  ensures (inv(r) ==> canFinalize(r, receipt) ==> alwaysNoSettlementOnRelease(finalize(r, receipt)))
+  ensures (inv(r) ==> canFinalize(r, receipt) ==> alwaysWholeRelease(finalize(r, receipt)))
+  ensures (inv(r) ==> canFinalize(r, receipt) ==> alwaysBoundApproval(finalize(r, receipt)))
+  ensures (inv(r) ==> canFinalize(r, receipt) ==> alwaysUntouchedBalances(finalize(r, receipt)))
+  ensures (inv(r) ==> canFinalize(r, receipt) ==> alwaysSettlementHistory(finalize(r, receipt)))
+  ensures (inv(r) ==> canFinalize(r, receipt) ==> alwaysOwnerRevision(finalize(r, receipt)))
+  ensures (inv(r) ==> canFinalize(r, receipt) ==> alwaysValidAmounts(finalize(r, receipt)))
+  ensures (inv(r) ==> canFinalize(r, receipt) ==> alwaysConserved(finalize(r, receipt)))
+  ensures (inv(r) ==> canFinalize(r, receipt) ==> stepAttemptHistoryRetained(r, finalize(r, receipt)))
+  ensures (inv(r) ==> canFinalize(r, receipt) ==> stepSignedAttemptRetained(r, finalize(r, receipt)))
+  ensures (inv(r) ==> canFinalize(r, receipt) ==> stepOriginalTermsRetained(r, finalize(r, receipt)))
+  ensures (inv(r) ==> canFinalize(r, receipt) ==> stepSettlementHistoryRetained(r, finalize(r, receipt)))
+{
+  if inv(r) && canFinalize(r, receipt) {
+    assert !r.hasSettled;
+    assert r.free == r.originalFree && r.reserved == r.originalReserve;
+    var released := finalize(r, receipt);
+    var total := settlement__money_addAmounts(r.originalFree, r.originalReserve);
+    assert released.reserved == settlement__money_zero && released.free == total;
+    AmountEqualLimb(settlement__money_zero, settlement__money_zero);
+    AmountEqualLimb(total, total);
+    assert alwaysWholeRelease(released);
+  }
+}
