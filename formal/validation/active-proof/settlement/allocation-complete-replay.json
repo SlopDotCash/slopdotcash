@@ -1,0 +1,33 @@
+{
+  "sourceHashes": {
+    "spec/settlement/money.md": "65d72012c72c335adddbb78d3934687c0fce7442ad51b5404090130af42a4c5b",
+    "spec/settlement/allocation.md": "86989f799605147fdd0aaaaadf4fef0df980b2e5f6eecf0c9a982fd08bb4afc2",
+    "spec/settlement/monthly.md": "aba4e09eef3906bb5a541514ea91c75252e5f7f34b85c30dfde7cb3762549f69"
+  },
+  "independentBigIntAllocations": 42,
+  "monthly": {
+    "seed": 401,
+    "traces": 150,
+    "maxSteps": 30,
+    "transitions": {
+      "setAutomatic": 268,
+      "reachCutoff": 150,
+      "propose": 150,
+      "freeze": 112,
+      "registerWallet": 172,
+      "fund": 148,
+      "setCap": 143,
+      "adjust": 26,
+      "pay": 44,
+      "autoFreeze": 38
+    },
+    "reached": {
+      "sometimesWalletlessReserve": 12,
+      "sometimesIndependentPayment": 13,
+      "sometimesCompleted": 31,
+      "sometimesEmptyMonth": 33
+    },
+    "replayed": true,
+    "again": "seed 256037182680674; to simulate again: pnpm exec quint run gen/settlement__monthly.run.qnt --main settlement__monthly_run --step step --invariant inv --max-samples 150 --max-steps 30 --mbt --seed 256037182680674"
+  }
+}

@@ -1,0 +1,7 @@
+
+  allocation_complete_witness
+    ok uint256AllocationKeepsTheLastUnitTest passed 1 test(s)
+    ok unequalRemaindersOverrideActorOrderTest passed 1 test(s)
+    ok onlyZeroPoolPermitsEmptyRecipientsTest passed 1 test(s)
+
+  3 passing (760ms)

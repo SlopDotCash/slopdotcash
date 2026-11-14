@@ -35,11 +35,10 @@ pure def weightedPortion(total: M::Amount, weightedRecipient: Weight, denominato
   val divided = M::divideAmounts(M::multiplyAmounts(total, weightedRecipient.weight), denominator)
   { actor: weightedRecipient.actor, floor: divided.quotient, remainder: divided.remainder }
 pure def portionTotal(portions: List[Portion]): M::Amount = portions.foldl(M::zero, (sum, p) => M::addAmounts(sum, p.floor))
+pure def portionBefore(a: Portion, b: Portion): bool =
+  M::compareAmounts(a.remainder, b.remainder) > 0 or (M::equalAmounts(a.remainder, b.remainder) and a.actor < b.actor)
 pure def remainderRank(rankedPortion: Portion, portions: List[Portion]): M::Amount =
-  portions.foldl(M::zero, (rank, other) =>
-    if (M::compareAmounts(other.remainder, rankedPortion.remainder) > 0
-      or (M::equalAmounts(other.remainder, rankedPortion.remainder) and other.actor < rankedPortion.actor))
-      M::addAmounts(rank, List(1)) else rank)
+  portions.foldl(M::zero, (rank, other) => if (portionBefore(other, rankedPortion)) M::addAmounts(rank, List(1)) else rank)
 
 ```
 
