@@ -479,7 +479,7 @@ describe("project registry API", () => {
         expect(actor.githubId).toBe(APPLICANT.githubId);
         expect(input.automatic).toBe(false);
         expect(transactionId).toBe(deployment.deploymentTransaction);
-        return deployment;
+        return { deployment, evidence: "finalized" };
       },
     };
     const registered = await call(
@@ -560,7 +560,7 @@ describe("project registry API", () => {
       review: async () => {
         throw Error("unused");
       },
-      register: async () => deployment,
+      register: async () => ({ deployment, evidence: "finalized" }),
     };
     const registered = await call(
       "POST",
@@ -1297,7 +1297,7 @@ describe("project registry API", () => {
         expect(input.payoutPolicy).toBe("security-bounty");
         expect(transactionId).toBe(deployment.deploymentTransaction);
         verificationReads++;
-        return deployment;
+        return { deployment, evidence: "finalized" };
       },
     };
     const registration = {

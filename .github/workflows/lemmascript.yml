@@ -1,6 +1,10 @@
 name: LemmaScript contracts
 
 on:
+  # Every proof, every night, on the default branch (PRD section 12,
+  # STATE-05): it does not depend on any release.
+  schedule:
+    - cron: "11 5 * * *"
   workflow_call:
     inputs:
       proofs:

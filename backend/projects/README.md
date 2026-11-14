@@ -56,7 +56,7 @@ points and profiles still validate.
 | `GET /api/v1/project-account-bans` | public, edge cached | GitHub ID and earliest start time of each active account ban, for the score generator; no reason, evidence, project or login |
 | `GET /api/v1/project-github/owned-repositories` | session | The signed-in maintainer's public repositories |
 | `GET /api/v1/project-vaults/:id` | session, steward or repository admin | Lists served setup networks and the current revision |
-| `POST /api/v1/project-vaults/:id` | session, steward or repository admin, confirmed wallet | Reviews an unsigned ordinary-vault creation or registers its finalized transaction |
+| `POST /api/v1/project-vaults/:id` | session, steward or repository admin, confirmed wallet | Reviews an unsigned ordinary-vault creation or registers its finalized transaction. Before finality, a verified ordinary EVM token creation in a canonical block answers `pending` with a `provisional` deployment; nothing is registered |
 | `GET /api/v1/project-github/repositories/:owner/:name` | session | Public repository facts for `/projects/new` and repositories added on the manage page |
 | `GET /api/v1/project-revisions/:id/:revision` | public, immutable | One revision's exact stored `manifestText` and digest, for generated-skill installers |
 | `GET /api/v1/project-session` | public | GitHub identity and admin flag, or `null` when signed out |
@@ -501,7 +501,12 @@ Slop verifies that factory's current code and compatibility. On Solana it
 verifies the program bytes, upgrade authority and pinned Config. Registration
 verifies the exact finalized transaction, project
 digest, owner, asset, purpose, code and monthly setting before appending one
-revision. Retry returns the registered vault. An unknown send stays pending
+revision. Retry returns the registered vault. Before finality, an ordinary
+EVM token creation that passes the same checks at its own canonical block is
+answered as `pending` with a `provisional` deployment, so the owner can fund
+the vault while it is confirmed; no revision, deployment or snapshot is
+written, and a replaced block answers plain `pending` again
+(`PROVISIONAL_VAULT_ANSWER` in `vault-setup.ts` turns this answer off). An unknown send stays pending
 until the owner recovers its transaction hash; it never sends again by itself.
 An owner with one current confirmed wallet on the selected network can review
 an existing vault and recover registration without a connected browser wallet.
