@@ -954,11 +954,11 @@
       ],
       "actions": {
         "init": {
-          "status": "partial-model",
-          "reason": "Starts idle, but successor tracks one reconciliation stage run rather than durable-object request slots and histories.",
+          "status": "modeled-projection",
+          "reason": "An inactive object instance has no shared run and no initialized durable registry/attempt.",
           "successors": [
             {
-              "path": "spec/settlement/keeperScan.md",
+              "path": "spec/settlement/keeperLifecycle.md",
               "definitions": [
                 "initial"
               ]
@@ -966,13 +966,13 @@
           ]
         },
         "configure": {
-          "status": "partial-model",
-          "reason": "RPC identity and job modes modeled, without an object instance\u2019s captured configuration tuple and durable registry binding.",
+          "status": "modeled-projection",
+          "reason": "Captures job mode, validity, registry and selected projects before starting this instance.",
           "successors": [
             {
-              "path": "spec/settlement/keeperRpc.md",
+              "path": "spec/settlement/keeperLifecycle.md",
               "definitions": [
-                "initial"
+                "configure"
               ]
             },
             {
@@ -984,31 +984,53 @@
           ]
         },
         "request": {
-          "status": "missing-transition",
-          "reason": "No public versus wrong internal route versus protected direct/cron discriminator at keeper entrypoint.",
-          "successors": []
-        },
-        "dispatch": {
-          "status": "missing-transition",
-          "reason": "No admission sharing one active core promise across valid overlapping request slots.",
-          "successors": []
-        },
-        "selectMode": {
-          "status": "partial-model",
-          "reason": "Run mode network admission modeled. Direct off and scheduled off outcomes remain separate transport responses in legacy.",
+          "status": "modeled-projection",
+          "reason": "Public and wrong internal routes terminate as no work. Cron off returns before config checks. Invalid cron refuses dispatch.",
           "successors": [
             {
-              "path": "spec/operations/paymentJobs.md",
+              "path": "spec/settlement/keeperLifecycle.md",
               "definitions": [
-                "canBegin"
+                "request"
+              ]
+            }
+          ]
+        },
+        "dispatch": {
+          "status": "modeled-projection",
+          "reason": "Current-instance request attaches to unique live run; idle slot allocates next run identity.",
+          "successors": [
+            {
+              "path": "spec/settlement/keeperLifecycle.md",
+              "definitions": [
+                "canDispatch",
+                "dispatch",
+                "sometimesCoalesced"
+              ]
+            }
+          ]
+        },
+        "selectMode": {
+          "status": "modeled-projection",
+          "reason": "Off settles empty, invalid settles a redacted failure, live and dry modes continue to identity.",
+          "successors": [
+            {
+              "path": "spec/settlement/keeperLifecycle.md",
+              "definitions": [
+                "selectMode"
               ]
             }
           ]
         },
         "identity": {
-          "status": "partial-model",
-          "reason": "RPC preflight checks exact chain, current endpoint and immutable identity. Registry identity mismatch against retained object journal is not an instance transition.",
+          "status": "modeled-projection",
+          "reason": "Journal initialization and restart preserve exact registry identity; storage failure or mismatch settles a failure.",
           "successors": [
+            {
+              "path": "spec/settlement/keeperLifecycle.md",
+              "definitions": [
+                "checkIdentity"
+              ]
+            },
             {
               "path": "spec/settlement/keeperRpc.md",
               "definitions": [
@@ -1024,235 +1046,614 @@
           ]
         },
         "indexReads": {
-          "status": "partial-model",
-          "reason": "A receipt callback indexes before returning to scan. Dry-run persistence of observations is not tied to instance/run mode.",
+          "status": "modeled-projection",
+          "reason": "A working dry or execute mode may persist observed evidence; exact per-receipt verifier is another unit.",
           "successors": [
+            {
+              "path": "spec/settlement/keeperLifecycle.md",
+              "definitions": [
+                "indexReads"
+              ]
+            },
             {
               "path": "spec/settlement/keeperScan.md",
               "definitions": [
+                "verifyReceipt",
                 "indexReceipt"
               ]
             }
           ]
         },
         "stageAttempt": {
-          "status": "missing-transition",
-          "reason": "No keeper staged signed attempt tied to a run and execute mode before durable transaction.",
-          "successors": []
-        },
-        "commitAttempt": {
-          "status": "missing-transition",
-          "reason": "No atomic signer journal/nonce/native liability storage transaction with documented rollback.",
-          "successors": []
-        },
-        "broadcast": {
-          "status": "missing-transition",
-          "reason": "No keeper instance binding from staged attempt to durable commit and explicit restart rebroadcast.",
-          "successors": []
-        },
-        "gasEvidence": {
-          "status": "missing-transition",
-          "reason": "Keeper lifecycle settlement of durable native fee liability is not tied to restart run and journal owner.",
-          "successors": []
-        },
-        "itemFailure": {
-          "status": "partial-model",
-          "reason": "Per-network failure isolation exists, but partial core execution can contain failed items independently of its response transport.",
+          "status": "modeled-projection",
+          "reason": "Current execute run may stage one representative exact signed byte identity under an independently verified authorization.",
           "successors": [
             {
-              "path": "spec/operations/paymentJobs.md",
+              "path": "spec/settlement/keeperLifecycle.md",
               "definitions": [
-                "settleRead",
-                "settleExecution"
+                "canStageAttempt",
+                "stageAttempt"
+              ]
+            }
+          ]
+        },
+        "commitAttempt": {
+          "status": "modeled-projection",
+          "reason": "Storage atomically commits bytes, nonce and pending gas. Failure drops only staged bytes and retains earlier journal.",
+          "successors": [
+            {
+              "path": "spec/settlement/keeperLifecycle.md",
+              "definitions": [
+                "commitAttempt",
+                "alwaysCommitIsAtomic"
+              ]
+            }
+          ]
+        },
+        "broadcast": {
+          "status": "modeled-projection",
+          "reason": "All broadcasts require already committed exact bytes, current execute run and open native gas liability.",
+          "successors": [
+            {
+              "path": "spec/settlement/keeperLifecycle.md",
+              "definitions": [
+                "canBroadcast",
+                "broadcast"
+              ]
+            }
+          ]
+        },
+        "gasEvidence": {
+          "status": "modeled-projection",
+          "reason": "Exact finalized native charge releases gas only; unavailable evidence records partial and keeps reserve.",
+          "successors": [
+            {
+              "path": "spec/settlement/keeperLifecycle.md",
+              "definitions": [
+                "recordGasEvidence",
+                "alwaysSeparateGasTerminal"
+              ]
+            }
+          ]
+        },
+        "itemFailure": {
+          "status": "modeled-projection",
+          "reason": "Independent core failure affects terminal disposition without erasing prior work.",
+          "successors": [
+            {
+              "path": "spec/settlement/keeperLifecycle.md",
+              "definitions": [
+                "itemFailure"
               ]
             }
           ]
         },
         "finish": {
-          "status": "partial-model",
-          "reason": "All network outcomes produce a summary, with no distinction between core settled vs response awaiting delivery.",
+          "status": "modeled-projection",
+          "reason": "Settle core result and free next-run slot before response delivery.",
           "successors": [
             {
-              "path": "spec/operations/paymentJobs.md",
+              "path": "spec/settlement/keeperLifecycle.md",
               "definitions": [
-                "report"
+                "finish",
+                "settleRun"
               ]
             }
           ]
         },
         "fatal": {
-          "status": "partial-model",
-          "reason": "A keeper scan captures normalized failure stage; no shared fatal core-run outcome for multiple request slots.",
+          "status": "modeled-projection",
+          "reason": "Core failure gets one settled redacted delivery outcome without erasing journal.",
           "successors": [
             {
-              "path": "spec/settlement/keeperScan.md",
+              "path": "spec/settlement/keeperLifecycle.md",
               "definitions": [
-                "recordFailure"
+                "fatal",
+                "deliver"
               ]
             }
           ]
         },
         "deliver": {
-          "status": "missing-transition",
-          "reason": "No deferred requester delivery and malformed response boundary independent of settled core work.",
-          "successors": []
+          "status": "modeled-projection",
+          "reason": "Waiting request receives only its captured settled run, or loses delivery without altering durable state.",
+          "successors": [
+            {
+              "path": "spec/settlement/keeperLifecycle.md",
+              "definitions": [
+                "canDeliver",
+                "deliver",
+                "responseRow"
+              ]
+            }
+          ]
         },
         "inspectScheduled": {
-          "status": "missing-transition",
-          "reason": "No cron-specific response parsing, partial-work acknowledgement or malformed terminal reporting.",
-          "successors": []
+          "status": "modeled-projection",
+          "reason": "Scheduled caller checks body, distinguishes partial and malformed responses from completion.",
+          "successors": [
+            {
+              "path": "spec/settlement/keeperLifecycle.md",
+              "definitions": [
+                "canInspectScheduled",
+                "inspectScheduled"
+              ]
+            }
+          ]
         },
         "restart": {
-          "status": "missing-transition",
-          "reason": "No ephemeral instance rollover clearing uncommitted work but retaining signed bytes, nonce and native hold.",
-          "successors": []
+          "status": "modeled-projection",
+          "reason": "New config can change, staging and waiting lost core stop, completed responses and durable bytes remain.",
+          "successors": [
+            {
+              "path": "spec/settlement/keeperLifecycle.md",
+              "definitions": [
+                "restart",
+                "stepRestartRetainsDurableState"
+              ]
+            }
+          ]
         },
         "step": {
           "status": "generated-harness",
-          "reason": "Legacy finite multiple-request and restart dispatcher.",
+          "reason": "Legacy scheduling/stutter dispatcher. Vibestack generated dispatcher chooses new model actions.",
           "successors": []
         },
         "core": {
           "status": "generated-harness",
-          "reason": "Scenario macro for mode selection and object-journal identity preflight.",
-          "successors": []
+          "reason": "Scenario macro selects mode and checks journal identity before core work.",
+          "successors": [
+            {
+              "path": "spec/settlement/keeperLifecycle.md",
+              "definitions": [
+                "selectMode",
+                "checkIdentity"
+              ]
+            }
+          ]
         },
         "executing": {
           "status": "generated-harness",
-          "reason": "Scenario macro for dispatch then execute admission.",
-          "successors": []
+          "reason": "Scenario macro uses approved execute config and current internal request to start work.",
+          "successors": [
+            {
+              "path": "spec/settlement/keeperLifecycle.md",
+              "definitions": [
+                "configure",
+                "request",
+                "dispatch",
+                "selectMode",
+                "checkIdentity"
+              ]
+            }
+          ]
         },
         "committed": {
           "status": "generated-harness",
-          "reason": "Scenario macro for atomic commitment of signer journal and accounting reservations.",
-          "successors": []
+          "reason": "Scenario macro stages and atomically commits exact signed bytes, nonce and gas.",
+          "successors": [
+            {
+              "path": "spec/settlement/keeperLifecycle.md",
+              "definitions": [
+                "stageAttempt",
+                "commitAttempt"
+              ]
+            }
+          ]
         }
       },
       "scenarios": {
         "publicRouteCannotReachKeeperTest": {
-          "status": "missing-transition",
-          "reason": "Public route exclusion must precede acquiring object/core ownership.",
-          "successors": []
-        },
-        "wrongInternalRouteDoesNoWorkTest": {
-          "status": "missing-transition",
-          "reason": "Exact internal path gating needs to precede object work.",
-          "successors": []
-        },
-        "offCronDoesNotValidateConfigurationTest": {
-          "status": "missing-transition",
-          "reason": "Off cron no-op must return without config validation or journal selection.",
-          "successors": []
-        },
-        "directOffTickReturnsEmptyResultTest": {
-          "status": "missing-transition",
-          "reason": "Direct off request needs an empty success with no core work; scheduler off guard alone cannot project its response.",
-          "successors": []
-        },
-        "invalidCronConfigurationStartsNoObjectWorkTest": {
-          "status": "missing-transition",
-          "reason": "Invalid scheduled config must never acquire a Durable Object run.",
-          "successors": []
-        },
-        "invalidDirectConfigurationIsRedacted503Test": {
-          "status": "missing-transition",
-          "reason": "Direct invalid configuration is explicitly redacted 503 rather than a signer invocation.",
-          "successors": []
-        },
-        "overlappingRequestsShareOneCoreRunTest": {
-          "status": "missing-transition",
-          "reason": "Independent waiters need stable shared core run identity.",
-          "successors": []
-        },
-        "settledPromiseDoesNotWaitForResponseDeliveryTest": {
-          "status": "missing-transition",
-          "reason": "Core run can end and admit new work before old requester delivery.",
-          "successors": []
-        },
-        "dryRunMayPersistReadStateWithoutSigningTest": {
-          "status": "missing-transition",
-          "reason": "Persist receipt index and identity in DryRun while all signing admissions refuse.",
-          "successors": []
-        },
-        "dryRunCannotPrepareSignedAttemptTest": {
-          "status": "partial-model",
-          "reason": "Mode gate prevents reaching signing-capable execution.",
+          "status": "modeled-projection",
+          "reason": "Public route returns 404 before shared run allocation.",
           "successors": [
             {
-              "path": "spec/operations/paymentJobs.md",
+              "path": "spec/settlement/keeperLifecycle.md",
               "definitions": [
-                "canStartExecution",
-                "alwaysDryNoSigning"
+                "request",
+                "canDispatch"
+              ]
+            }
+          ]
+        },
+        "wrongInternalRouteDoesNoWorkTest": {
+          "status": "modeled-projection",
+          "reason": "Wrong object route returns 404 without dispatch.",
+          "successors": [
+            {
+              "path": "spec/settlement/keeperLifecycle.md",
+              "definitions": [
+                "request",
+                "canDispatch"
+              ]
+            }
+          ]
+        },
+        "offCronDoesNotValidateConfigurationTest": {
+          "status": "modeled-projection",
+          "reason": "Off cron return precedes validating config or journal.",
+          "successors": [
+            {
+              "path": "spec/settlement/keeperLifecycle.md",
+              "definitions": [
+                "request"
+              ]
+            }
+          ]
+        },
+        "directOffTickReturnsEmptyResultTest": {
+          "status": "modeled-projection",
+          "reason": "Direct off may reach object but its core returns no work and HTTP 200.",
+          "successors": [
+            {
+              "path": "spec/settlement/keeperLifecycle.md",
+              "definitions": [
+                "selectMode",
+                "deliver"
+              ]
+            }
+          ]
+        },
+        "invalidCronConfigurationStartsNoObjectWorkTest": {
+          "status": "modeled-projection",
+          "reason": "Bad configuration before scheduled dispatch becomes explicit error.",
+          "successors": [
+            {
+              "path": "spec/settlement/keeperLifecycle.md",
+              "definitions": [
+                "request"
+              ]
+            }
+          ]
+        },
+        "invalidDirectConfigurationIsRedacted503Test": {
+          "status": "modeled-projection",
+          "reason": "A direct invalid core delivery is redacted HTTP 503.",
+          "successors": [
+            {
+              "path": "spec/settlement/keeperLifecycle.md",
+              "definitions": [
+                "selectMode",
+                "responseRow",
+                "deliver"
+              ]
+            }
+          ]
+        },
+        "overlappingRequestsShareOneCoreRunTest": {
+          "status": "modeled-projection",
+          "reason": "Current waiters share run identity and consume independently.",
+          "successors": [
+            {
+              "path": "spec/settlement/keeperLifecycle.md",
+              "definitions": [
+                "dispatch",
+                "sometimesCoalesced",
+                "deliver"
+              ]
+            }
+          ]
+        },
+        "settledPromiseDoesNotWaitForResponseDeliveryTest": {
+          "status": "modeled-projection",
+          "reason": "Settled core clears live slot while previous requester may still wait.",
+          "successors": [
+            {
+              "path": "spec/settlement/keeperLifecycle.md",
+              "definitions": [
+                "finish",
+                "dispatch",
+                "deliver"
+              ]
+            }
+          ]
+        },
+        "dryRunMayPersistReadStateWithoutSigningTest": {
+          "status": "modeled-projection",
+          "reason": "Dry run indexes observations but cannot prepare a signed attempt.",
+          "successors": [
+            {
+              "path": "spec/settlement/keeperLifecycle.md",
+              "definitions": [
+                "indexReads",
+                "canStageAttempt"
+              ]
+            }
+          ]
+        },
+        "dryRunCannotPrepareSignedAttemptTest": {
+          "status": "modeled-projection",
+          "reason": "Only Execute mode admits staging.",
+          "successors": [
+            {
+              "path": "spec/settlement/keeperLifecycle.md",
+              "definitions": [
+                "canStageAttempt"
               ]
             }
           ]
         },
         "stagedSigningDoesNotAuthorizeBroadcastTest": {
-          "status": "missing-transition",
-          "reason": "Durable transaction, not candidate bytes or stage alone, must gate broadcast.",
-          "successors": []
+          "status": "modeled-projection",
+          "reason": "Staging alone leaves broadcast denied.",
+          "successors": [
+            {
+              "path": "spec/settlement/keeperLifecycle.md",
+              "definitions": [
+                "stageAttempt",
+                "canBroadcast"
+              ]
+            }
+          ]
         },
         "failedTransactionRollsBackNonceAndLiabilityTest": {
-          "status": "missing-transition",
-          "reason": "Signed bytes, nonce, and fee hold commit or roll back atomically.",
-          "successors": []
+          "status": "modeled-projection",
+          "reason": "Failed storage commit leaves all durable components unchanged and marks partial.",
+          "successors": [
+            {
+              "path": "spec/settlement/keeperLifecycle.md",
+              "definitions": [
+                "commitAttempt"
+              ]
+            }
+          ]
         },
         "instanceLossDiscardsOnlyUncommittedAttemptTest": {
-          "status": "missing-transition",
-          "reason": "Restart drops ephemeral staging without erasing committed journal.",
-          "successors": []
+          "status": "modeled-projection",
+          "reason": "Restart abandons staged content and interrupted waiters.",
+          "successors": [
+            {
+              "path": "spec/settlement/keeperLifecycle.md",
+              "definitions": [
+                "stageAttempt",
+                "restart"
+              ]
+            }
+          ]
         },
         "committedAttemptSurvivesRestartTest": {
-          "status": "missing-transition",
-          "reason": "Committed journal and fee liability survive across instance restart and authorize exact replay.",
-          "successors": []
+          "status": "modeled-projection",
+          "reason": "Committed bytes, nonce and gas survive exact registry recheck.",
+          "successors": [
+            {
+              "path": "spec/settlement/keeperLifecycle.md",
+              "definitions": [
+                "commitAttempt",
+                "restart",
+                "checkIdentity",
+                "broadcast"
+              ]
+            }
+          ]
         },
         "unknownSendReusesJournalAfterRestartTest": {
-          "status": "missing-transition",
-          "reason": "Unknown send retains exactly same serialized bytes through restart.",
-          "successors": []
+          "status": "modeled-projection",
+          "reason": "An unknown send retains exact bytes for restart replay.",
+          "successors": [
+            {
+              "path": "spec/settlement/keeperLifecycle.md",
+              "definitions": [
+                "broadcast",
+                "restart",
+                "sometimesReplayed"
+              ]
+            }
+          ]
         },
         "changedProjectSelectionKeepsSameLiabilityTest": {
-          "status": "missing-transition",
-          "reason": "Changing project selection leaves stable normalized network/gas-wallet object identity and pending attempts.",
-          "successors": []
+          "status": "modeled-projection",
+          "reason": "Project selection is not journal identity and does not release gas.",
+          "successors": [
+            {
+              "path": "spec/settlement/keeperLifecycle.md",
+              "definitions": [
+                "restart",
+                "checkIdentity"
+              ]
+            }
+          ]
         },
         "changedRegistryCannotReuseJournalTest": {
-          "status": "missing-transition",
-          "reason": "Changed registry identity refuses reusing a previously committed journal.",
-          "successors": []
+          "status": "modeled-projection",
+          "reason": "A different registry under same object fails durable identity admission.",
+          "successors": [
+            {
+              "path": "spec/settlement/keeperLifecycle.md",
+              "definitions": [
+                "restart",
+                "checkIdentity",
+                "deliver"
+              ]
+            }
+          ]
         },
         "stoppingNewInstanceKeepsUnknownAttemptTest": {
-          "status": "missing-transition",
-          "reason": "Off replacement instance stops work without dropping existing signed unknown outcome.",
-          "successors": []
+          "status": "modeled-projection",
+          "reason": "Restart to Off keeps pending durable attempt and disables scheduler work.",
+          "successors": [
+            {
+              "path": "spec/settlement/keeperLifecycle.md",
+              "definitions": [
+                "restart",
+                "request",
+                "stepRestartRetainsDurableState"
+              ]
+            }
+          ]
         },
         "partialFailureIsHttp200ButScheduledFailureTest": {
-          "status": "missing-transition",
-          "reason": "Direct receipt and scheduled validation need distinct interpretations of a partial summary.",
-          "successors": []
+          "status": "modeled-projection",
+          "reason": "Scheduled response validation distinguishes partial HTTP 200 from success.",
+          "successors": [
+            {
+              "path": "spec/settlement/keeperLifecycle.md",
+              "definitions": [
+                "itemFailure",
+                "finish",
+                "deliver",
+                "inspectScheduled"
+              ]
+            }
+          ]
         },
         "lostResponseDoesNotUndoSignedAttemptTest": {
-          "status": "missing-transition",
-          "reason": "Durable commit remains when requester response fails.",
-          "successors": []
+          "status": "modeled-projection",
+          "reason": "Lost requester delivery neither rolls back bytes nor releases native liability.",
+          "successors": [
+            {
+              "path": "spec/settlement/keeperLifecycle.md",
+              "definitions": [
+                "deliver",
+                "stepRetainCommittedBytes"
+              ]
+            }
+          ]
         },
         "settledResponseCanArriveAfterInstanceReplacementTest": {
-          "status": "missing-transition",
-          "reason": "Response captured after core settlement can arrive after an instance restarts.",
-          "successors": []
+          "status": "modeled-projection",
+          "reason": "Finished response history remains separate from abandoned in-flight work.",
+          "successors": [
+            {
+              "path": "spec/settlement/keeperLifecycle.md",
+              "definitions": [
+                "restart",
+                "deliver",
+                "stepRestartRetainsDurableState"
+              ]
+            }
+          ]
         },
         "unavailableGasEvidenceKeepsLiabilityTest": {
-          "status": "missing-transition",
-          "reason": "Unavailable evidence cannot release a signed send native-fee hold.",
-          "successors": []
+          "status": "modeled-projection",
+          "reason": "A missing exact charge preserves fee reserve.",
+          "successors": [
+            {
+              "path": "spec/settlement/keeperLifecycle.md",
+              "definitions": [
+                "recordGasEvidence"
+              ]
+            }
+          ]
         },
         "exactGasEvidenceReleasesOnlyGasLiabilityTest": {
-          "status": "missing-transition",
-          "reason": "Exact finalized gas result consumes only its own liability and leaves attempt history.",
-          "successors": []
+          "status": "modeled-projection",
+          "reason": "Exact charge resolves only native hold, and retains signed content and nonce history.",
+          "successors": [
+            {
+              "path": "spec/settlement/keeperLifecycle.md",
+              "definitions": [
+                "recordGasEvidence",
+                "stepRetainCommittedBytes"
+              ]
+            }
+          ]
         }
-      }
+      },
+      "sourceBindings": [
+        {
+          "path": "workers/operator-keeper/index.ts",
+          "sha256": "a52933a9123833ab13c10663c1fbe6cab69fb8daf428b65af81c53649d9a4547",
+          "anchors": [
+            {
+              "line": 131,
+              "anchor": "private async tick"
+            },
+            {
+              "line": 145,
+              "anchor": "async fetch(request"
+            },
+            {
+              "line": 150,
+              "anchor": "this.running ??="
+            },
+            {
+              "line": 167,
+              "anchor": "async scheduled"
+            },
+            {
+              "line": 14,
+              "anchor": "idFromName("
+            }
+          ]
+        },
+        {
+          "path": "workers/operator-keeper/storage.ts",
+          "sha256": "df4a4af5f015790d922ea44e3bed0e3ee364c2a0d818a536a45825b4dfdaf652",
+          "anchors": [
+            {
+              "line": 5,
+              "anchor": "initializeKeeperSchema"
+            },
+            {
+              "line": 53,
+              "anchor": "storage.transaction(callback)"
+            }
+          ]
+        },
+        {
+          "path": "scripts/payment-keeper/keeper.ts",
+          "sha256": "188959981875144d819a0d6a73495b34ba48622cdd1f061b1b0db524864370b7",
+          "anchors": [
+            {
+              "line": 136,
+              "anchor": "store.journal.transaction"
+            },
+            {
+              "line": 368,
+              "anchor": "reconcileGas("
+            }
+          ]
+        },
+        {
+          "path": "scripts/payment-keeper/storage.ts",
+          "sha256": "e35ee7f391fb65cbda40d088f4d47e2d8958305e6ae70c8651d66dc557d8e6e1",
+          "anchors": [
+            {
+              "line": 54,
+              "anchor": "The host must include every db write"
+            },
+            {
+              "line": 81,
+              "anchor": "transaction: (callback)"
+            }
+          ]
+        },
+        {
+          "path": "scripts/payment-keeper/signer.ts",
+          "sha256": "2345d4dbd8bf677d817725f8994b389cec504b531496d2edd8f4ce871942cf7f",
+          "anchors": [
+            {
+              "line": 8,
+              "anchor": "export "
+            }
+          ]
+        },
+        {
+          "path": "scripts/payment-keeper/budget.ts",
+          "sha256": "8301544417ebeeedd3c6329f833f53e15e8503a71c29888666d8cfd9e8698c14",
+          "anchors": [
+            {
+              "line": 61,
+              "anchor": "function reserve"
+            },
+            {
+              "line": 122,
+              "anchor": "Unknown sends keep"
+            },
+            {
+              "line": 289,
+              "anchor": "Receipt evidence releases only"
+            }
+          ]
+        },
+        {
+          "path": "scripts/payment-keeper/evm.integration.ts",
+          "sha256": "a21ac326dabf89a378a9b32eb17fc4f65750e375cfc600f82f19d2e9e254ce0b",
+          "anchors": []
+        }
+      ],
+      "successorSha256": "8e273428614145ef40a3de37089c0f1080a55ffbbb178d7a65dca499c22e38e4",
+      "boundary": "Deployment/runtime comparison remains open. This one-row lifecycle has no actual signer bytes, nonce value, balanced gas ledger, multi-attempt replacement ladder or crash-conformance claim."
     }
   ]
 }

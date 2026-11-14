@@ -14,6 +14,7 @@ PRD sections 2, 3, 6, 8, 10, 11 and 12 govern these financial state machines. Ru
 - [Signer limits and binding cancellation](./signer.md)
 - [Operator keeper RPC selection](./keeperRpc.md)
 - [Operator keeper reconciliation stages](./keeperScan.md)
+- [Durable operator keeper lifecycle](./keeperLifecycle.md)
 - [Operator keeper diagnostic projection](./keeperDiagnostics.md)
 - [Separate contributor allocation](./contributorAllocation.md)
 - [Deferred referrals](./referrals.md)

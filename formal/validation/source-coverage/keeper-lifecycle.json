@@ -1,0 +1,530 @@
+{
+  "scope": "Focused models and generated replay. Actual Durable Object instancing, SQLite atomicity, chain receipt checks and signer authorization adapters require application conformance.",
+  "legacyMain": "6b3b9d0b979f0608d87941f1146056a98513ffcf",
+  "sourceInputs": [
+    {
+      "path": "spec/settlement/keeperLifecycle.md",
+      "sha256": "8e273428614145ef40a3de37089c0f1080a55ffbbb178d7a65dca499c22e38e4"
+    }
+  ],
+  "results": {
+    "settlement__keeperLifecycle": {
+      "simulation": {
+        "command": "seed 41915419930637; to simulate again: pnpm exec quint run gen/settlement__keeperLifecycle.run.qnt --main settlement__keeperLifecycle_run --step step --invariant inv --max-samples 500 --max-steps 40 --mbt --seed 41915419930637",
+        "replayed": 25
+      },
+      "witnesses": {
+        "sometimesCoalesced": {
+          "check": "seed 41915419930637; to simulate again: pnpm exec quint run gen/settlement__keeperLifecycle.run.qnt --main settlement__keeperLifecycle_run --step step --invariant inv --max-samples 500 --max-steps 40 --mbt --seed 41915419930637",
+          "events": [
+            {
+              "type": "configure",
+              "config": {
+                "mode": "DryRun",
+                "configValid": true,
+                "registry": 1,
+                "projectSelection": 1
+              }
+            },
+            {
+              "type": "configure",
+              "config": {
+                "mode": "Off",
+                "configValid": true,
+                "registry": 1,
+                "projectSelection": 1
+              }
+            },
+            {
+              "type": "configure",
+              "config": {
+                "mode": "Execute",
+                "configValid": false,
+                "registry": 1,
+                "projectSelection": 1
+              }
+            },
+            {
+              "type": "configure",
+              "config": {
+                "mode": "Execute",
+                "configValid": true,
+                "registry": 1,
+                "projectSelection": 1
+              }
+            },
+            {
+              "type": "request",
+              "requestId": 2,
+              "caller": "WrongInternalRoute"
+            },
+            {
+              "type": "request",
+              "requestId": 1,
+              "caller": "Cron"
+            },
+            {
+              "type": "request",
+              "requestId": 3,
+              "caller": "Cron"
+            },
+            {
+              "type": "dispatch",
+              "requestId": 3
+            },
+            {
+              "type": "dispatch",
+              "requestId": 1
+            },
+            {
+              "type": "selectMode",
+              "runId": 1
+            },
+            {
+              "type": "checkIdentity",
+              "runId": 1,
+              "storageWorks": true
+            },
+            {
+              "type": "stageAttempt",
+              "runId": 1,
+              "bytes": 2,
+              "authorized": true
+            },
+            {
+              "type": "commitAttempt",
+              "runId": 1,
+              "storageCommitted": false
+            },
+            {
+              "type": "itemFailure",
+              "runId": 1
+            },
+            {
+              "type": "indexReads",
+              "runId": 1
+            },
+            {
+              "type": "finish",
+              "runId": 1
+            },
+            {
+              "type": "deliver",
+              "requestId": 1,
+              "received": true
+            },
+            {
+              "type": "inspectScheduled",
+              "requestId": 1,
+              "bodyValid": false
+            },
+            {
+              "type": "restart",
+              "instance": 3,
+              "config": {
+                "mode": "Off",
+                "configValid": true,
+                "registry": 1,
+                "projectSelection": 1
+              }
+            },
+            {
+              "type": "deliver",
+              "requestId": 3,
+              "received": false
+            }
+          ]
+        },
+        "sometimesCommitted": {
+          "check": "seed 41915419930637; to simulate again: pnpm exec quint run gen/settlement__keeperLifecycle.run.qnt --main settlement__keeperLifecycle_run --step step --invariant inv --max-samples 500 --max-steps 40 --mbt --seed 41915419930637",
+          "events": [
+            {
+              "type": "configure",
+              "config": {
+                "mode": "Execute",
+                "configValid": false,
+                "registry": 1,
+                "projectSelection": 1
+              }
+            },
+            {
+              "type": "configure",
+              "config": {
+                "mode": "DryRun",
+                "configValid": true,
+                "registry": 1,
+                "projectSelection": 1
+              }
+            },
+            {
+              "type": "configure",
+              "config": {
+                "mode": "Execute",
+                "configValid": true,
+                "registry": 1,
+                "projectSelection": 1
+              }
+            },
+            {
+              "type": "request",
+              "requestId": 3,
+              "caller": "Cron"
+            },
+            {
+              "type": "dispatch",
+              "requestId": 3
+            },
+            {
+              "type": "request",
+              "requestId": 2,
+              "caller": "WrongInternalRoute"
+            },
+            {
+              "type": "selectMode",
+              "runId": 1
+            },
+            {
+              "type": "request",
+              "requestId": 1,
+              "caller": "InternalTick"
+            },
+            {
+              "type": "checkIdentity",
+              "runId": 1,
+              "storageWorks": true
+            },
+            {
+              "type": "dispatch",
+              "requestId": 1
+            },
+            {
+              "type": "stageAttempt",
+              "runId": 1,
+              "bytes": 1,
+              "authorized": true
+            },
+            {
+              "type": "commitAttempt",
+              "runId": 1,
+              "storageCommitted": true
+            },
+            {
+              "type": "broadcast",
+              "runId": 1,
+              "bytes": 1
+            },
+            {
+              "type": "finish",
+              "runId": 1
+            },
+            {
+              "type": "restart",
+              "instance": 3,
+              "config": {
+                "mode": "Off",
+                "configValid": true,
+                "registry": 1,
+                "projectSelection": 1
+              }
+            },
+            {
+              "type": "deliver",
+              "requestId": 1,
+              "received": false
+            },
+            {
+              "type": "deliver",
+              "requestId": 3,
+              "received": true
+            },
+            {
+              "type": "inspectScheduled",
+              "requestId": 3,
+              "bodyValid": true
+            }
+          ]
+        },
+        "sometimesReplayed": {
+          "check": "seed 204485542023919; to simulate again: pnpm exec quint run gen/settlement__keeperLifecycle.run.qnt --main settlement__keeperLifecycle_run --step step --invariant never_sometimesReplayed --max-samples 1200 --max-steps 20 --mbt --seed 204485542023919",
+          "events": [
+            {
+              "type": "request",
+              "requestId": 3,
+              "caller": "WrongInternalRoute"
+            },
+            {
+              "type": "restart",
+              "instance": 3,
+              "config": {
+                "mode": "Execute",
+                "configValid": true,
+                "registry": 2,
+                "projectSelection": 1
+              }
+            },
+            {
+              "type": "request",
+              "requestId": 2,
+              "caller": "Cron"
+            },
+            {
+              "type": "dispatch",
+              "requestId": 2
+            },
+            {
+              "type": "selectMode",
+              "runId": 1
+            },
+            {
+              "type": "checkIdentity",
+              "runId": 1,
+              "storageWorks": true
+            },
+            {
+              "type": "request",
+              "requestId": 1,
+              "caller": "PublicRoute"
+            },
+            {
+              "type": "stageAttempt",
+              "runId": 1,
+              "bytes": 1,
+              "authorized": true
+            },
+            {
+              "type": "commitAttempt",
+              "runId": 1,
+              "storageCommitted": true
+            },
+            {
+              "type": "broadcast",
+              "runId": 1,
+              "bytes": 1
+            },
+            {
+              "type": "indexReads",
+              "runId": 1
+            },
+            {
+              "type": "indexReads",
+              "runId": 1
+            },
+            {
+              "type": "broadcast",
+              "runId": 1,
+              "bytes": 1
+            }
+          ]
+        },
+        "sometimesGasSettled": {
+          "check": "seed 137340200393011; to simulate again: pnpm exec quint run gen/settlement__keeperLifecycle.run.qnt --main settlement__keeperLifecycle_run --step step --invariant never_sometimesGasSettled --max-samples 1200 --max-steps 20 --mbt --seed 137340200393011",
+          "events": [
+            {
+              "type": "configure",
+              "config": {
+                "mode": "Execute",
+                "configValid": false,
+                "registry": 1,
+                "projectSelection": 1
+              }
+            },
+            {
+              "type": "restart",
+              "instance": 3,
+              "config": {
+                "mode": "Execute",
+                "configValid": true,
+                "registry": 2,
+                "projectSelection": 1
+              }
+            },
+            {
+              "type": "request",
+              "requestId": 1,
+              "caller": "Cron"
+            },
+            {
+              "type": "dispatch",
+              "requestId": 1
+            },
+            {
+              "type": "request",
+              "requestId": 2,
+              "caller": "WrongInternalRoute"
+            },
+            {
+              "type": "selectMode",
+              "runId": 1
+            },
+            {
+              "type": "request",
+              "requestId": 3,
+              "caller": "InternalTick"
+            },
+            {
+              "type": "dispatch",
+              "requestId": 3
+            },
+            {
+              "type": "checkIdentity",
+              "runId": 1,
+              "storageWorks": true
+            },
+            {
+              "type": "stageAttempt",
+              "runId": 1,
+              "bytes": 1,
+              "authorized": true
+            },
+            {
+              "type": "commitAttempt",
+              "runId": 1,
+              "storageCommitted": true
+            },
+            {
+              "type": "indexReads",
+              "runId": 1
+            },
+            {
+              "type": "recordGasEvidence",
+              "runId": 1,
+              "bytes": 1,
+              "exactFinalizedCharge": true
+            }
+          ]
+        },
+        "sometimesPartial": {
+          "check": "seed 41915419930637; to simulate again: pnpm exec quint run gen/settlement__keeperLifecycle.run.qnt --main settlement__keeperLifecycle_run --step step --invariant inv --max-samples 500 --max-steps 40 --mbt --seed 41915419930637",
+          "events": [
+            {
+              "type": "restart",
+              "instance": 2,
+              "config": {
+                "mode": "Off",
+                "configValid": true,
+                "registry": 1,
+                "projectSelection": 1
+              }
+            },
+            {
+              "type": "restart",
+              "instance": 3,
+              "config": {
+                "mode": "Execute",
+                "configValid": true,
+                "registry": 2,
+                "projectSelection": 1
+              }
+            },
+            {
+              "type": "request",
+              "requestId": 2,
+              "caller": "Cron"
+            },
+            {
+              "type": "request",
+              "requestId": 3,
+              "caller": "Cron"
+            },
+            {
+              "type": "dispatch",
+              "requestId": 3
+            },
+            {
+              "type": "selectMode",
+              "runId": 1
+            },
+            {
+              "type": "checkIdentity",
+              "runId": 1,
+              "storageWorks": true
+            },
+            {
+              "type": "request",
+              "requestId": 1,
+              "caller": "Cron"
+            },
+            {
+              "type": "stageAttempt",
+              "runId": 1,
+              "bytes": 2,
+              "authorized": true
+            },
+            {
+              "type": "commitAttempt",
+              "runId": 1,
+              "storageCommitted": false
+            },
+            {
+              "type": "finish",
+              "runId": 1
+            },
+            {
+              "type": "deliver",
+              "requestId": 3,
+              "received": true
+            },
+            {
+              "type": "dispatch",
+              "requestId": 1
+            },
+            {
+              "type": "selectMode",
+              "runId": 2
+            },
+            {
+              "type": "dispatch",
+              "requestId": 2
+            },
+            {
+              "type": "checkIdentity",
+              "runId": 2,
+              "storageWorks": false
+            },
+            {
+              "type": "inspectScheduled",
+              "requestId": 3,
+              "bodyValid": true
+            },
+            {
+              "type": "deliver",
+              "requestId": 2,
+              "received": false
+            },
+            {
+              "type": "deliver",
+              "requestId": 1,
+              "received": true
+            }
+          ]
+        }
+      },
+      "proof": {
+        "total": 66,
+        "unproved": [],
+        "exhausted": [],
+        "resting": {},
+        "errors": []
+      }
+    }
+  },
+  "directed": [
+    "public and wrong-route refused",
+    "off cron skips config",
+    "direct off result",
+    "invalid direct redaction",
+    "invalid cron no run",
+    "two callers coalesce",
+    "settled core frees slot independent of delivery",
+    "dry read-only",
+    "staged cannot broadcast",
+    "transaction failure rolls back whole journal",
+    "instance loss drops only staging",
+    "durable exact bytes reused after project-selection change",
+    "changed registry refuses",
+    "partial 200 cron failed",
+    "gas hold survives unavailable receipt and only exact match consumes it",
+    "lost response preserves journal",
+    "settled response after restart"
+  ]
+}
