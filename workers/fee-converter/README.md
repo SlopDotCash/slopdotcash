@@ -862,7 +862,8 @@ supports current-state fee estimation and receipt recovery, and provides
    The run checks the bound D1 journal for unresolved live sends, in-transit
    bridge deposits and Robinhood signed gas reservations. It compares the
    candidate's finalized contract probe to an independent chain block, then
-   uploads and verifies the same Worker with just that secret replaced. Pages,
+   uploads and verifies the same Worker as the immediate successor, with just
+   that secret replaced. Pages,
    other services and the cron are outside this dispatch. The source, active
    version and journal checks are point-in-time. Leave manual fee-converter
    uploads, settings changes and deployments idle during this dispatch. A

@@ -101,6 +101,16 @@ test("candidate code, D1 and nonsecret settings match and secret names are retai
   const after = { ...candidate, resources: structuredClone(resources) };
   after.resources.bindings.reverse();
   expect(() => requireSameWorker(before, after, sha)).not.toThrow();
+  expect(() => requireSameWorker(before, { ...after, number: 3 }, sha)).toThrow(
+    "immediate successor",
+  );
+  expect(() =>
+    requireSameWorker(
+      { ...before, number: 1.5 },
+      { ...after, number: 2.5 },
+      sha,
+    ),
+  ).toThrow("immediate successor");
   expect(() =>
     requireSameWorker(
       before,

@@ -4403,12 +4403,12 @@
     },
     {
       "path": "scripts/release-robinhood-rpc.ts",
-      "sha256": "ebce9a0bd71a4c758f493b1e7f81546560f71bd3cb77d053d8e4044583513c43",
+      "sha256": "5847325ecafefc98a3cd0cce902c2cc43e097366ad7d60080101ef8e0c15d687",
       "models": ["formal/models/release/release_publication.qnt"],
       "candidateLines": [
-        57, 60, 63, 70, 76, 77, 78, 79, 80, 202, 206, 226, 228, 233, 234, 235,
-        236, 237, 238, 321, 324, 327, 405, 425, 426, 428, 431, 456, 457, 458,
-        463, 498, 534
+        57, 60, 63, 70, 76, 77, 78, 79, 80, 209, 213, 233, 235, 240, 241, 242,
+        243, 244, 245, 328, 331, 334, 412, 432, 433, 435, 438, 463, 464, 465,
+        470, 505, 541
       ],
       "review": "mapped-abstraction"
     },
@@ -14105,7 +14105,7 @@
     },
     {
       "path": "formal/models/release/release_publication.qnt",
-      "sha256": "36503ad56f8b4f7e0f4d0d4f11d663be249c2eabdd371a410b44afe2e862fe6f",
+      "sha256": "5ad631eb7230f1290ed2883ce0fb12623b9f3691af8a3985369ef15fbde1c789",
       "sources": [
         ".github/workflows/deploy.yml",
         "scripts/dist-manifest.mjs",

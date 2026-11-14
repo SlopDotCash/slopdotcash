@@ -27,7 +27,8 @@
 // sourceMatches is an existing workflow recheck's retained observation, not a
 // continuous lock on live main or a new check between file preparation/upload.
 // The opt-in Robinhood child never shares the normal service-write branch.
-// Its data/RPC and identity predicates model bounded observations, not a lock
+// Its data/RPC and identity predicates (including immediate version succession)
+// model bounded observations, not a lock
 // on the fee journal or guarantees about Cloudflare and the chain.
 // An enabled normal release checks RPC inheritance before service writes. A
 // later change can still stop the fee-converter upload at its own boundary.

@@ -137,6 +137,13 @@ export function requireSameWorker(
   after: Version,
   sha: string,
 ) {
+  check(
+    Number.isSafeInteger(before.number) &&
+      before.number > 0 &&
+      Number.isSafeInteger(after.number) &&
+      after.number === before.number + 1,
+    "The candidate is not the immediate successor of the pinned fee-converter version.",
+  );
   const original = before.resources;
   const uploaded = after.resources;
   check(
