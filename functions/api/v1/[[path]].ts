@@ -41,6 +41,7 @@ import {
 import { rpcTokenMetadataReader } from "../../../backend/projects/token-metadata";
 import { ownerVaultSetupService } from "../../../backend/projects/vault-setup";
 import { handleReferralClaims } from "../../../backend/referrals/claims";
+import { handleReferralCode } from "../../../backend/referrals/codes";
 import { handleReferralsApi } from "../../../backend/referrals/handler";
 import { githubAdvisoryReader } from "../../../backend/security/advisories";
 import { surplusSecurityAnalyzer } from "../../../backend/security/analysis";
@@ -474,6 +475,14 @@ export async function onRequest(context: PagesContext): Promise<Response> {
     now,
   });
   if (referralClaims !== null) return referralClaims;
+  const referralCode = await handleReferralCode(request, {
+    db,
+    sessionActor,
+    teamGithubIds: new Set([...adminGithubIds, ...moderatorGithubIds]),
+    github: { fetch: send, token: env.SLOP_GITHUB_READ_TOKEN, apiOrigin },
+    now,
+  });
+  if (referralCode !== null) return referralCode;
   const referralsResponse = await handleReferralsApi(request, { db });
   if (referralsResponse !== null) return referralsResponse;
   const feeConversionsResponse = await handleFeeConversionsApi(request, {
