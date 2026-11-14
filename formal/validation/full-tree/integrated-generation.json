@@ -116,7 +116,7 @@
     "formal/validation/finance/reserve-release-signed-verification.json",
     "formal/validation/points/targeted.json",
     "formal/validation/finance/recovery-current.json",
-    "formal/validation/journeys/closure-directed.json"
+    "formal/validation/journeys/closure-final.json"
   ],
   "qualification": "Generation and VibeLang typechecks passed on the assembled specification tree. The check results do not claim live Slop implementation, a single complete current-tree proof run, or acceptance.",
   "tests": {
@@ -136,8 +136,8 @@
     "executableUnits": 61,
     "baselineReplayUnitsCarriedForward": 51,
     "focusedReplayUnits": 10,
-    "replayedTraces": 23809,
-    "method": "Carry baseline replay only for unchanged executable Markdown. Replace the earlier reserve-release destination-recovery and Slopbot closure unit results and add seven new units using the named focused reports. The three changed navigation indexes generate identical Quint apart from comments. Count retained ordinary and local reachability replays, excluding supplemental Points and keeper targeted witness runs."
+    "replayedTraces": 23816,
+    "method": "Carry baseline replay only for unchanged executable Markdown. Replace the earlier reserve-release, destination-recovery and Slopbot closure unit results and add seven new units using the named focused reports. The three changed navigation indexes generate identical Quint apart from comments. Count retained ordinary replays and retained local and Slopbot reachability replays, excluding supplemental Points and keeper targeted witness runs."
   },
   "templateConformance": {
     "result": "passed",

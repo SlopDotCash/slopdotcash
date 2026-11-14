@@ -182,7 +182,7 @@ lists the definitions without standalone comparison.
 [Full-tree simulation and replay](validation/full-tree/model-simulation-replay.json)
 
 The assembled 71-document tree generated successfully and passed both VibeLang
-typechecks. Baseline and focused results together replayed 23,809 traces across
+typechecks. Baseline and focused results together replayed 23,816 traces across
 all 61 current executable models. The integrated report lists the inputs
 carried forward and the focused substitutions. The template tool suite passed
 34 tests and the greeting app passed three. The greeting's conformance driver
@@ -267,8 +267,10 @@ a label. A confirmed maintainer action, superseded source, upheld appeal or
 verified reopen resolves the hold. Restricted projects can receive the
 approved security comment and confirmed scam label. The new model passed 46
 directed cases, including late or missing notice evidence, changed source,
-pre-window and exact-deadline labeling, and the label-removal race.
-[Slopbot closure witnesses](validation/journeys/closure-directed.json)
+pre-window and exact-deadline labeling, and the label-removal race. All 137
+obligations proved. Quint reached all seven goals and generated TypeScript
+agreed on 100 general traces and four directed reachability traces.
+[Slopbot closure verification](validation/journeys/closure-final.json)
 
 ## Guard diagnostics
 
