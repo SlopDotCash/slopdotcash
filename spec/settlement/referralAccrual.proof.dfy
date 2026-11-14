@@ -788,9 +788,7 @@ lemma configure_ensures(a: Accrual, tokenUnit: seq<int>, verified: bool, by_: st
     settlement__money_lawEqualReflexive_ensures([1]);
     assert alwaysRatesValid(after);
     FoldTotalEmpty(after);
-    assert settlement__money_smallAmount(2000000) == [0, 0, 2, 0, 0, 0];
-    assert settlement__money_validAmount(settlement__money_smallAmount(2000000));
-    settlement__money_lawMultiplyValid_ensures(after.tokenUnit, settlement__money_smallAmount(2000000));
+    ValidPoolAndProjectCaps(after);
     settlement__money_lawZeroOrder_ensures(poolCap(after));
     assert alwaysCaps(after);
   }
