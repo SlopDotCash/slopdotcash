@@ -14,7 +14,7 @@
     },
     {
       "path": ".github/workflows/deploy.yml",
-      "sha256": "e9d198e6293b3323d81ffad293b22117dfa0a43c64b67d1e352eb5201d9d1754",
+      "sha256": "4485f292377d2b2d5d06a29bcacad6e8775f28f1f37d3ceff5e04aca93f3d46f",
       "models": [
         "formal/models/release/ci_browser_evidence.qnt",
         "formal/models/release/ci_browser_runtime.qnt",
@@ -23,10 +23,10 @@
         "formal/models/release/release_publication.qnt"
       ],
       "candidateLines": [
-        28, 38, 111, 213, 251, 252, 309, 343, 399, 476, 591, 597, 665, 668, 694,
-        695, 716, 728, 794, 1024, 1052, 1091, 1182, 1288, 1290, 1291, 1495,
-        1578, 1731, 1733, 1763, 1871, 1893, 1964, 1975, 2000, 2071, 2084, 2097,
-        2106, 2107, 2108
+        32, 42, 115, 230, 268, 269, 326, 360, 416, 493, 608, 614, 682, 685, 711,
+        712, 733, 745, 811, 1041, 1069, 1134, 1225, 1331, 1333, 1334, 1538,
+        1621, 1774, 1776, 1806, 1915, 1937, 2008, 2019, 2044, 2115, 2128, 2141,
+        2150, 2151, 2152
       ],
       "review": "mapped-abstraction"
     },
@@ -4416,6 +4416,17 @@
       "sha256": "3faf9b0d1aebdb8e0a11e1afffbf25186485f3167d512605b1585611acd5c365",
       "models": ["formal/models/payments/deployment_plan.qnt"],
       "candidateLines": [97, 100],
+      "review": "mapped-abstraction"
+    },
+    {
+      "path": "scripts/release-robinhood-rpc.ts",
+      "sha256": "746b05625c8fe769b0a664194f4ebeb1b0288c676a9287cefca35475408e2f70",
+      "models": ["formal/models/release/release_publication.qnt"],
+      "candidateLines": [
+        57, 60, 63, 70, 76, 77, 78, 79, 80, 209, 213, 233, 235, 240, 241, 242,
+        243, 244, 245, 328, 331, 334, 412, 432, 433, 435, 438, 463, 464, 465,
+        470, 501, 541
+      ],
       "review": "mapped-abstraction"
     },
     {
@@ -14146,25 +14157,29 @@
     },
     {
       "path": "formal/models/release/release_publication.qnt",
-      "sha256": "1f1ce8fe6aff92942c260dc08638b122c8e633c8f06363692b5e210bdd5617f8",
+      "sha256": "5ad631eb7230f1290ed2883ce0fb12623b9f3691af8a3985369ef15fbde1c789",
       "sources": [
         ".github/workflows/deploy.yml",
         "scripts/dist-manifest.mjs",
         "scripts/prepare-publication.mjs",
         "scripts/prepare-site.mjs",
         "scripts/release-notify.mjs",
+        "scripts/release-robinhood-rpc.ts",
         "scripts/select-pages-deployment.mjs",
         "scripts/verify-staging-deployment.mjs",
         "src/lib/verified-selection.ts"
       ],
       "scenarios": [
         "ambiguousUploadKeepsExternalWriteWithoutPromotionTest",
+        "changedRpcInheritanceStillStopsUploadTest",
         "cleanupFailureDoesNotValidateOrPromoteTest",
         "deployErrorDoesNotInventRollbackOrConfirmationTest",
+        "disabledConverterDoesNotRequireInheritanceTest",
         "disabledSlopbotDoesNotNeedOrMutateItsSecretTest",
         "earlierWritesRemainPartialOnSecretRefusalTest",
         "emptyKeyAllocationStillNeedsExitCleanupTest",
         "exactReleaseTest",
+        "inheritedRpcMismatchStopsBeforeWritesTest",
         "metadataReadNeedsSecretFileCleanupTest",
         "missingProtectedSecretNeverUploadsTest",
         "missingVersionBindingCannotPromoteTest",
@@ -14172,6 +14187,13 @@
         "pendingProofCannotQualifyTest",
         "retainedSnapshotIsExplicitTest",
         "retainedSnapshotNeedsManualTest",
+        "rpcRotationAdvancedSourceCannotPromoteTest",
+        "rpcRotationAmbiguousDeployRemainsUncertainTest",
+        "rpcRotationCannotWriteOtherServicesTest",
+        "rpcRotationChangedVersionCannotPromoteTest",
+        "rpcRotationMissingPreflightCannotUploadTest",
+        "rpcRotationNeedsManualMainTest",
+        "rpcRotationOnlyPublishesCandidateTest",
         "sourceAdvanceAfterUploadIsPartialTest",
         "stagingRetainedSnapshotQualifiesTest",
         "supersededBeforeWriteTest",
