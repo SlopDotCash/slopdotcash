@@ -60,6 +60,7 @@ import {
   useProjectSession,
 } from "./lib/project-api";
 import { findProject, PROJECTS } from "./lib/projects.mjs";
+import { validReferralCode } from "./lib/referral-code";
 import { useAction } from "./lib/use-action";
 import { type DataState, useSnapshot } from "./lib/use-snapshot";
 import { useUtcDay } from "./lib/use-time-boundary";
@@ -74,6 +75,7 @@ import {
 import "./account-design.css";
 import { ContributionPointTiers } from "./PointsRules";
 import { ProfileActivity, useProfiles } from "./Profiles";
+import { ReferralCode } from "./ReferralCode";
 
 const EarningsPage = lazy(() =>
   import("./Earnings").then((module) => ({ default: module.EarningsPage })),
@@ -98,6 +100,8 @@ interface Membership {
   public: boolean;
   welcome: number;
   socialPoints?: number;
+  /** The member's referral link name in use, if they chose one. */
+  referralCode?: string | null;
 }
 type State =
   | { status: "loading" }
@@ -194,6 +198,9 @@ function member(value: unknown): Membership {
     !/^[A-Za-z0-9][A-Za-z0-9-]{0,38}$/.test(m.actor.login) ||
     ![0, 5].includes(m.welcome) ||
     (m.socialPoints !== undefined && ![0, 10].includes(m.socialPoints)) ||
+    (m.referralCode !== undefined &&
+      m.referralCode !== null &&
+      !validReferralCode(m.referralCode)) ||
     typeof m.public !== "boolean" ||
     !Number.isFinite(Date.parse(m.joinedAt))
   )
@@ -973,7 +980,7 @@ export function LoginPage() {
   );
 }
 export function AccountPage() {
-  const { me, session, signoutRevision } = usePoints();
+  const { me, session, signoutRevision, setMe } = usePoints();
   const [accountAttempt, setAccountAttempt] = useState(0);
   const accountSession = useProjectSession(
     `${me?.actor.id ?? "signed-out"}:${signoutRevision}:${accountAttempt}`,
@@ -1102,6 +1109,21 @@ export function AccountPage() {
           ) : (
             <p role="status">Checking your account…</p>
           )}
+        </section>
+      ) : null}
+      {me !== null ? (
+        <section
+          id="referral"
+          className="points-panel"
+          aria-labelledby="referral-heading"
+        >
+          <h2 id="referral-heading">Referral link</h2>
+          <ReferralCode
+            key={me.actor.id}
+            githubId={pointsActor}
+            code={me.referralCode ?? null}
+            onSaved={(referralCode) => setMe({ ...me, referralCode })}
+          />
         </section>
       ) : null}
     </main>
