@@ -3486,15 +3486,15 @@
     },
     {
       "path": "scripts/collect-implementation-corrections.ts",
-      "sha256": "7be5b6844d5e753405af0a3042b67eed462430008c4f5a184c7e08c363321d4e",
+      "sha256": "99bcf19ceefd81a490245c76809b18c6d13ea94ca3af893613925b4bc0da9685",
       "models": [
         "formal/models/points/historical_discussion_evidence.qnt",
         "formal/models/points/historical_implementation_allocation.qnt"
       ],
       "candidateLines": [
         4, 11, 13, 83, 163, 240, 246, 249, 254, 264, 280, 286, 302, 303, 313,
-        316, 413, 459, 480, 505, 544, 551, 661, 672, 837, 1204, 1724, 1783,
-        1819, 1844, 1872, 1874
+        316, 413, 459, 480, 505, 544, 551, 661, 672, 837, 1204, 1727, 1786,
+        1822, 1847, 1875, 1877
       ],
       "review": "mapped-abstraction"
     },
