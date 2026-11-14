@@ -74,7 +74,7 @@ try {
         const account = (scenario === "wrong-account" ? "1" : "0").repeat(32);
         return {
           status: 1,
-          stderr: `A request to the Cloudflare API (/accounts/${account}/workers/scripts/${config.name}/deployments) failed. [code: ${scenario === "auth" ? "10000" : "10007"}]`,
+          stderr: `A request to the Cloudflare API (/accounts/${account}/workers/scripts/${args[3]}/deployments) failed. [code: ${scenario === "auth" ? "10000" : "10007"}]`,
         };
       }
       if (args[0] === "deploy") return { status: 0, stdout: "" };
@@ -130,10 +130,14 @@ try {
       });
       const pages = JSON.parse(await readFile(path, "utf8"));
       assert.deepEqual(pages.env.preview.services, []);
+      // Base, Robinhood Chain and Solana mainnet are on; Ethereum is off.
       assert.deepEqual(JSON.parse(pages.vars.PAYMENT_NETWORKS), [
         "base-mainnet",
+        "robinhood-mainnet",
+        "solana-mainnet",
       ]);
-      assert.equal(pages.services.length, scenario === "existing" ? 0 : 2);
+      // Two Base, two Robinhood Chain and three Solana entrypoints.
+      assert.equal(pages.services.length, scenario === "existing" ? 0 : 7);
       if (scenario === "absent")
         assert.deepEqual(pages.services[0], {
           binding: "BINDING_RECOVERY",
