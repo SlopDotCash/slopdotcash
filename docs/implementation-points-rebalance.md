@@ -84,3 +84,10 @@ Retain the campaign manifest, raw response digests, complete source inventory,
 aggregate reconciliation receipt and verified deployment identity. Report held
 and protected coverage separately from changed allocations; neither means a
 contributor received the revised Points.
+
+For a routine fresh release that reaches its collection deadline, wait for the
+run to finish and confirm it retained a `leaderboard-discussions-<attempt>`
+artifact. Dispatch `deploy.yml` on current main with
+`discussion_resume_run=<run-id>` and `use_published_data=false`. Checkpoints
+expire after two days. This input is for live leaderboard collection only;
+use `resume_run` in the historical workflow for the frozen campaign above.

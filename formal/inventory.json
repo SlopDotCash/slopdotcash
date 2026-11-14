@@ -14,7 +14,7 @@
     },
     {
       "path": ".github/workflows/deploy.yml",
-      "sha256": "13bd3b806c5d526776da2ec1ca603622ca589ead62b39316b8c4799bc25ab5c2",
+      "sha256": "04ddbeeaf726b928757f8c88b4637da8174c14cb572b940f1a354bbce1abde6b",
       "models": [
         "formal/models/release/ci_browser_evidence.qnt",
         "formal/models/release/ci_browser_runtime.qnt",
@@ -23,10 +23,10 @@
         "formal/models/release/release_publication.qnt"
       ],
       "candidateLines": [
-        25, 35, 67, 169, 201, 206, 207, 261, 315, 392, 505, 511, 579, 582, 608,
-        609, 630, 642, 708, 938, 966, 1005, 1096, 1202, 1204, 1205, 1409, 1492,
-        1645, 1647, 1677, 1785, 1807, 1878, 1889, 1914, 1985, 1998, 2011, 2020,
-        2021, 2022
+        32, 42, 115, 230, 268, 269, 326, 360, 416, 493, 608, 614, 682, 685, 711,
+        712, 733, 745, 811, 1041, 1069, 1134, 1225, 1331, 1333, 1334, 1538,
+        1621, 1774, 1776, 1806, 1915, 1937, 2008, 2019, 2044, 2115, 2128, 2141,
+        2150, 2151, 2152
       ],
       "review": "mapped-abstraction"
     },
@@ -3485,14 +3485,14 @@
     },
     {
       "path": "scripts/collect-implementation-corrections.ts",
-      "sha256": "5d7a69f260cd926506ab3314535270680529a07b22246327b8e69d2ca5a06b4e",
+      "sha256": "d34eccb25c2e49eb2890aae21dc679f942924bfbc22e3eee42e4b5b14817895f",
       "models": [
         "formal/models/points/historical_implementation_allocation.qnt"
       ],
       "candidateLines": [
         4, 11, 13, 77, 157, 234, 240, 243, 248, 258, 274, 280, 296, 297, 307,
-        310, 393, 439, 460, 485, 522, 529, 636, 647, 812, 1093, 1608, 1667,
-        1703, 1728, 1756, 1758
+        310, 393, 439, 460, 485, 522, 529, 636, 647, 812, 1093, 1643, 1702,
+        1738, 1763, 1791, 1793
       ],
       "review": "mapped-abstraction"
     },
@@ -3842,7 +3842,7 @@
     },
     {
       "path": "scripts/generate-leaderboard.ts",
-      "sha256": "890f46db96ba447085c8c843e52eb696144c3db453ea777a0f98c21732899ecb",
+      "sha256": "91125d6d6bb1bfa52d585f45fa2c9391e74ab73bbc9a599e05b25e363f0e7a57",
       "models": [
         "formal/models/points/commit_line_cache.qnt",
         "formal/models/points/github_budget_window.qnt",
@@ -3854,15 +3854,15 @@
         "formal/models/ui/ui_score_selection.qnt"
       ],
       "candidateLines": [
-        29, 184, 195, 204, 284, 296, 298, 301, 493, 581, 602, 638, 669, 734,
-        766, 856, 889, 898, 907, 926, 1016, 1212, 1447, 1509, 1517, 1575, 1628,
-        1631, 1824, 1833, 1838, 1845, 1928, 1929, 2076, 2077, 2134, 2160, 2188,
-        2190, 2194, 2228, 2231, 2232, 2235, 2237, 2248, 2275, 2484, 2487, 2736,
-        2856, 2977, 2990, 3001, 3002, 3189, 3190, 3381, 3397, 3409, 3416, 3442,
-        3452, 3456, 3460, 3464, 3519, 3538, 3565, 3582, 3616, 3617, 3619, 3635,
-        3652, 3653, 3654, 3663, 3668, 3848, 4206, 4228, 4237, 4287, 4322, 4328,
-        4335, 4404, 4490, 4648, 4872, 4882, 4884, 4897, 4927, 4929, 4930, 4934,
-        4938, 4994, 5048, 5099, 5102, 5117
+        29, 184, 195, 204, 284, 296, 298, 301, 495, 583, 604, 640, 671, 736,
+        768, 858, 891, 900, 909, 928, 1018, 1214, 1449, 1511, 1519, 1577, 1630,
+        1633, 1826, 1835, 1840, 1847, 1930, 1931, 2078, 2079, 2136, 2162, 2190,
+        2192, 2196, 2230, 2233, 2234, 2237, 2239, 2250, 2277, 2486, 2489, 2738,
+        2858, 2979, 2992, 3003, 3004, 3191, 3192, 3383, 3399, 3411, 3418, 3444,
+        3454, 3458, 3462, 3466, 3521, 3540, 3567, 3584, 3618, 3619, 3621, 3637,
+        3654, 3655, 3656, 3665, 3670, 3850, 4208, 4230, 4239, 4289, 4324, 4330,
+        4337, 4406, 4492, 4650, 4890, 4900, 4902, 4915, 4946, 4948, 4949, 4953,
+        4957, 5013, 5067, 5118, 5121, 5157
       ],
       "review": "mapped-abstraction"
     },
@@ -3897,11 +3897,19 @@
       "review": "mapped-abstraction"
     },
     {
+      "path": "scripts/github-discussion-cache.ts",
+      "sha256": "cf3e5b0229723a69bc831ab6d4205f5b5cb8e1faea600e0db2b2835f3eb329a5",
+      "models": ["formal/models/points/github_ingestion_read.qnt"],
+      "candidateLines": [8, 10, 31, 69, 91, 189, 282, 287, 292, 295],
+      "review": "mapped-abstraction"
+    },
+    {
       "path": "scripts/github-ingestion-read.ts",
-      "sha256": "a815f4564f6fbbea121f39c2832f49c4e44f242af4eccf767780979143099f1b",
+      "sha256": "f305345f6dbf48ededc9c85e1dcce82d6b12dfe77289dee3a5760767e87ce9bb",
       "models": ["formal/models/points/github_ingestion_read.qnt"],
       "candidateLines": [
-        32, 65, 86, 88, 106, 126, 166, 181, 190, 212, 222, 228
+        37, 70, 91, 93, 111, 149, 219, 239, 249, 254, 260, 269, 291, 301, 310,
+        316
       ],
       "review": "mapped-abstraction"
     },
@@ -4402,6 +4410,17 @@
       "review": "mapped-abstraction"
     },
     {
+      "path": "scripts/release-robinhood-rpc.ts",
+      "sha256": "746b05625c8fe769b0a664194f4ebeb1b0288c676a9287cefca35475408e2f70",
+      "models": ["formal/models/release/release_publication.qnt"],
+      "candidateLines": [
+        57, 60, 63, 70, 76, 77, 78, 79, 80, 209, 213, 233, 235, 240, 241, 242,
+        243, 244, 245, 328, 331, 334, 412, 432, 433, 435, 438, 463, 464, 465,
+        470, 501, 541
+      ],
+      "review": "mapped-abstraction"
+    },
+    {
       "path": "scripts/release-vetting-backup.mjs",
       "sha256": "f16755854113f6b3f6e3a4c9ff891184d6bc912c0f44501d490a495a934bb46a",
       "models": ["formal/models/release/service_release_identity.qnt"],
@@ -4435,6 +4454,13 @@
       "sha256": "90447c198be71652be8de404703f087dca9631a4b833f3751e172ef13c981249",
       "models": ["formal/models/api/operator_intake_renewal.qnt"],
       "candidateLines": [23, 24, 25, 30, 33, 52, 53],
+      "review": "mapped-abstraction"
+    },
+    {
+      "path": "scripts/restore-leaderboard-discussions.py",
+      "sha256": "fbad1d73552db5cf098be1cd0365a8f58839fbdee92f92e5e1c14022ef817baa",
+      "models": ["formal/models/points/github_ingestion_read.qnt"],
+      "candidateLines": [56, 160, 173],
       "review": "mapped-abstraction"
     },
     {
@@ -13505,15 +13531,21 @@
     },
     {
       "path": "formal/models/points/github_ingestion_read.qnt",
-      "sha256": "29feafe43b55620b874394569d681926c42de6040413e0fdbc078fffad7d0396",
+      "sha256": "0acbfdc0fb6729ca71188c9c5fedfe6322e0eea9e8c9aa34fda20032a2d0f9ca",
       "sources": [
+        "scripts/github-discussion-cache.ts",
         "scripts/github-ingestion-read.ts",
+        "scripts/restore-leaderboard-discussions.py",
         "workers/slopbot/github.ts"
       ],
       "scenarios": [
         "authorizationDoesNotRetryTest",
+        "confirmedCheckpointReadTest",
+        "mismatchedValidatorCannotReplayTest",
+        "mismatchedValidatorReadsLiveTest",
         "readResumesAfterLimitTest",
         "repeatedLimitFailsTest",
+        "timedOutCheckpointCannotPublishTest",
         "writeDoesNotRetryTest"
       ]
     },
@@ -14094,25 +14126,29 @@
     },
     {
       "path": "formal/models/release/release_publication.qnt",
-      "sha256": "1f1ce8fe6aff92942c260dc08638b122c8e633c8f06363692b5e210bdd5617f8",
+      "sha256": "5ad631eb7230f1290ed2883ce0fb12623b9f3691af8a3985369ef15fbde1c789",
       "sources": [
         ".github/workflows/deploy.yml",
         "scripts/dist-manifest.mjs",
         "scripts/prepare-publication.mjs",
         "scripts/prepare-site.mjs",
         "scripts/release-notify.mjs",
+        "scripts/release-robinhood-rpc.ts",
         "scripts/select-pages-deployment.mjs",
         "scripts/verify-staging-deployment.mjs",
         "src/lib/verified-selection.ts"
       ],
       "scenarios": [
         "ambiguousUploadKeepsExternalWriteWithoutPromotionTest",
+        "changedRpcInheritanceStillStopsUploadTest",
         "cleanupFailureDoesNotValidateOrPromoteTest",
         "deployErrorDoesNotInventRollbackOrConfirmationTest",
+        "disabledConverterDoesNotRequireInheritanceTest",
         "disabledSlopbotDoesNotNeedOrMutateItsSecretTest",
         "earlierWritesRemainPartialOnSecretRefusalTest",
         "emptyKeyAllocationStillNeedsExitCleanupTest",
         "exactReleaseTest",
+        "inheritedRpcMismatchStopsBeforeWritesTest",
         "metadataReadNeedsSecretFileCleanupTest",
         "missingProtectedSecretNeverUploadsTest",
         "missingVersionBindingCannotPromoteTest",
@@ -14120,6 +14156,13 @@
         "pendingProofCannotQualifyTest",
         "retainedSnapshotIsExplicitTest",
         "retainedSnapshotNeedsManualTest",
+        "rpcRotationAdvancedSourceCannotPromoteTest",
+        "rpcRotationAmbiguousDeployRemainsUncertainTest",
+        "rpcRotationCannotWriteOtherServicesTest",
+        "rpcRotationChangedVersionCannotPromoteTest",
+        "rpcRotationMissingPreflightCannotUploadTest",
+        "rpcRotationNeedsManualMainTest",
+        "rpcRotationOnlyPublishesCandidateTest",
         "sourceAdvanceAfterUploadIsPartialTest",
         "stagingRetainedSnapshotQualifiesTest",
         "supersededBeforeWriteTest",

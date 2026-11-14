@@ -1131,7 +1131,39 @@ async function ordinaryRetainedProof(
       }),
     "Retained accepted commit lines differ from the canonical census",
   );
-  return converted;
+  // References are inputs to ambiguity checks. Only actual retained bindings
+  // extend the correction proof beyond the canonical accepted commit census.
+  const commits = plain.commits.map((commit, index) => {
+    const { author, files, retainedCopy } = accepted.commits[index];
+    // A null observation cannot erase an independently resolved author.
+    if (author || retainedCopy)
+      requireThat(
+        author?.id === commit.author?.id &&
+          author?.kind === commit.author?.kind,
+        "Retained accepted commit author differs from the canonical census",
+      );
+    return retainedCopy ? { ...commit, files, retainedCopy } : commit;
+  });
+  const originalIds = new Set(
+    commits.flatMap((commit) =>
+      commit.retainedCopy ? [commit.retainedCopy.originalSourceId] : [],
+    ),
+  );
+  if (!originalIds.size) return [plain];
+
+  const boundSources = converted.filter((source) =>
+    originalIds.has(source.sourceId),
+  );
+  requireThat(
+    boundSources.length === originalIds.size &&
+      boundSources.every(
+        (source) =>
+          source.commits.length > 0 &&
+          source.commits.at(-1)?.sha === source.headSha,
+      ),
+    "Retained original commit census does not reach the source head",
+  );
+  return [{ ...plain, commits }, ...boundSources];
 }
 
 export interface CollectionOptions {
@@ -1437,12 +1469,15 @@ async function collectWithEvidenceCache(
           to: interval.to,
           outcomes,
         };
-        if (part)
+        if (part) {
           requireThat(
             part.digest === digest(encode(payload)),
             "Cached census differs from reconstructed raw evidence",
           );
-        else {
+          // Keep the loader's shared commit records, as a fresh pass does, so
+          // a later month's verified author link still repairs this month.
+          part = { ...part, outcomes };
+        } else {
           part = { ...payload, digest: digest(encode(payload)) };
           await atomicJson(partPath, part);
         }
