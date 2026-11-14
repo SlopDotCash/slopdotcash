@@ -19,7 +19,7 @@ afterEach(async () => {
 const html =
   "<!doctype html><html><body><main>é Release</main></body></html>\n";
 const tag =
-  '<script defer src="https://static.cloudflareinsights.com/beacon.min.js" data-cf-beacon=\'{"token":"230b277fc6fe4a279c8b06cf7e569719","spa":true}\'></script>';
+  '<script defer src="https://static.cloudflareinsights.com/beacon.min.js" data-cf-beacon=\'{"token":"230b277fc6fe4a279c8b06cf7e569719","spa":true,"send":{"to":"/cdn-cgi/rum"}}\'></script>';
 
 async function fixture() {
   const root = await mkdtemp(join(tmpdir(), "slop-analytics-bytes-"));
@@ -141,7 +141,7 @@ test("the Function keeps apex normalization, existing tags and non-GET bodies un
   );
 });
 
-test("the published policy allows the script and report hosts of the Function-added tag and no other analytics host", async () => {
+test("the Function-added tag reports to the site's own origin, the only report target the published policy allows", async () => {
   const policy = (
     await readFile(new URL("../public/_headers", import.meta.url), "utf8")
   )
@@ -159,21 +159,21 @@ test("the published policy allows the script and report hosts of the Function-ad
       }),
   );
   const scriptOrigin = new URL(tag.match(/ src="([^"]+)"/u)[1]).origin;
+  const beacon = JSON.parse(tag.match(/ data-cf-beacon='([^']+)'/u)[1]);
+  expect(Object.keys(beacon).sort()).toEqual(["send", "spa", "token"]);
+  // A tag without `send.to` posts to https://cloudflareinsights.com, which
+  // this policy blocks and Cloudflare refuses for a site on automatic setup.
+  expect(beacon.send).toEqual({ to: "/cdn-cgi/rum" });
+  expect(sources["connect-src"]).toContain("'self'");
   expect(sources["script-src"]).toEqual(["'self'", scriptOrigin]);
-  // Cloudflare documents that a manually embedded tag, which is what the
-  // Function adds, reports to this host and not to the site's own origin.
-  // Without it the browser blocks every report from a Function-served page.
-  expect(sources["connect-src"]).toContain("https://cloudflareinsights.com");
+  // The script host is the only analytics source anywhere in the policy.
   expect(
     Object.entries(sources).flatMap(([name, values]) =>
       values
         .filter((value) => value.includes("cloudflareinsights"))
         .map((value) => `${name} ${value}`),
     ),
-  ).toEqual([
-    `script-src ${scriptOrigin}`,
-    "connect-src https://cloudflareinsights.com",
-  ]);
+  ).toEqual([`script-src ${scriptOrigin}`]);
 });
 
 test("the workflow CLI emits the same exact rendered bytes and refuses an unbound local index", async () => {

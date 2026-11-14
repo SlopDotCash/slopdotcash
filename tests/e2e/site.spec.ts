@@ -1464,9 +1464,6 @@ test("serves byte-consistent bootstrap and read-only site artifacts", {
     deployment.api,
     deployment.identity,
     "https://api.github.com",
-    // Report host of the Web Analytics tag the Pages Function adds on the
-    // production apex (PRD section 9). No other deployment renders the tag.
-    "https://cloudflareinsights.com",
   ]);
 
   const siteOrigin = baseURL ?? "http://127.0.0.1:4466";
