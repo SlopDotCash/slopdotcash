@@ -113,5 +113,18 @@
     "formal/validation/finance/reserve-release-signed-verification.json",
     "formal/validation/points/targeted.json"
   ],
-  "qualification": "Generation and VibeLang typechecks passed on the assembled specification tree. The check results do not claim live Slop implementation, a single complete current-tree proof run, or acceptance."
+  "qualification": "Generation and VibeLang typechecks passed on the assembled specification tree. The check results do not claim live Slop implementation, a single complete current-tree proof run, or acceptance.",
+  "tests": {
+    "root": {
+      "command": "pnpm exec vitest run",
+      "passed": 34,
+      "output": "integrated-root-tests.log"
+    },
+    "templateApp": {
+      "command": "pnpm --filter @repo/app test",
+      "passed": 3,
+      "output": "integrated-app-tests.log"
+    },
+    "firstRootAttempt": "An isolated-worktree dependency link for packages/design-system was missing. The design lint test failed. After linking the installed package dependencies, the focused rerun and full suite both passed."
+  }
 }

@@ -181,6 +181,12 @@ sampled traces and definitions with available standalone inputs. The report
 lists the definitions without standalone comparison.
 [Full-tree simulation and replay](validation/full-tree/model-simulation-replay.json)
 
+The assembled 71-document tree generated successfully and passed both VibeLang
+typechecks. The template tool suite passed 34 tests and the greeting app passed
+three. The scratch checkout initially lacked its design-package dependency
+link. After restoring the installed dependency link, the full rerun passed.
+[Integrated generation and test results](validation/full-tree/integrated-generation.json)
+
 The proof stage took its input after the verified wallet and money helpers
 were installed. The two phase manifests bind the model and proof inputs to
 those separate observation times. The baseline stage predates the later model refinements.

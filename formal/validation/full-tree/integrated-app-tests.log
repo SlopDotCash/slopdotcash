@@ -1,0 +1,16 @@
+
+> @repo/app@0.1.0 test /private/tmp/slop-spec-final-integration/apps/app
+> vitest run
+
+generated tests: 1 written, 0 unchanged, 0 removed, 0 skipped
+generated tests: 0 written, 1 unchanged, 0 removed, 0 skipped
+
+ RUN  v5.1.0 /private/tmp/slop-spec-final-integration/apps/app
+
+ ✓ |node| .cache/generated/tests/src/greeter.schema.test.ts (2 tests) 330ms
+ ✓ |node| test/app.test.vibe (1 test) 155ms
+
+ Test Files  2 passed (2)
+      Tests  3 passed (3)
+   Start at  01:52:41
+   Duration  7.47s (transform 55%, import 40%, tests 5%)
