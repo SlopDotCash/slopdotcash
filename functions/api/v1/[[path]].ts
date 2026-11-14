@@ -49,6 +49,7 @@ import { defaultDirectPaymentConfiguration } from "../../../backend/security/dir
 import {
   githubAdvisoryClient,
   githubAppAdvisoryToken,
+  githubAppIdentityReader,
   githubAppReportingReader,
   githubInstallationCheck,
 } from "../../../backend/security/github-advisories";
@@ -383,6 +384,7 @@ export async function onRequest(context: PagesContext): Promise<Response> {
     reportingRead: app
       ? githubAppReportingReader(app)
       : async () => ({ kind: "unavailable" }),
+    identityRead: app ? githubAppIdentityReader(app) : null,
     advisories: app
       ? githubAdvisoryReader({
           fetch: send,
