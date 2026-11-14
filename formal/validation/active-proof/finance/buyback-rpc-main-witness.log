@@ -1,0 +1,8 @@
+
+  buyback_rpc_main_witness
+    ok reportsExactBlockFromLiveRecoveryOnlyTest passed 1 test(s)
+    ok wrongChainMovedBlockOrUnavailableReadKeepsExistingSummaryTest passed 1 test(s)
+    ok expectedWorkerAndIndependentEndpointAreRequiredTest passed 1 test(s)
+    ok neighboringHeightsAboveSafeIntegerNeverRoundTogetherTest passed 1 test(s)
+
+  4 passing (1008ms)

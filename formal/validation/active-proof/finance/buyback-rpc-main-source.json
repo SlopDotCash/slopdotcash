@@ -1,0 +1,57 @@
+{
+  "sourceMain": "ee1a4b2cd2672245537928380e425f5bd9ecb994",
+  "promotedCommit": "90932a2e4cc76fe77bd77faa3ebed5e6134255f3",
+  "previousDevelopment": "0d0f0817a439df03cc022bf7aeed4bbe64ef4c65",
+  "sources": [
+    {
+      "path": "workers/fee-converter/evm.ts",
+      "sha256": "00ba730dd67be90a1c493a3508a5001f56087735b41e4587fdff82708bc84b84",
+      "unchangedFromPreviouslyModeledDevelopment": true,
+      "responsibility": "Probe chain, finalized height and hash, exact DLN zero-order read, canonical reread, generic unavailable."
+    },
+    {
+      "path": "workers/fee-converter/buyback.ts",
+      "sha256": "9c99922657b795f0b0e1497386de34abbf30d77a34e42b165695a0e9572be3dc",
+      "unchangedFromPreviouslyModeledDevelopment": true,
+      "responsibility": "Only live Robinhood recovery execution attaches the diagnostic after retaining its summary counts."
+    },
+    {
+      "path": "workers/fee-converter/core.ts",
+      "sha256": "08eeeca03ba2c73e6fde9a59ca18fbd267bbc2a88048641ca02e45fe15371370",
+      "unchangedFromPreviouslyModeledDevelopment": true,
+      "responsibility": "Receipt-only ticks do not invoke the recovery market hook."
+    },
+    {
+      "path": "workers/fee-converter/README.md",
+      "sha256": "d2a31bd267828c448c74f19f91753391d4f45c599fa5c998c5754bbf99246b8b",
+      "unchangedFromPreviouslyModeledDevelopment": true,
+      "responsibility": "Private result from expected Worker revision, plus independent trusted Robinhood chain ID, block identity and finalized-head confirmation."
+    },
+    {
+      "path": "workers/fee-converter/buyback.test.ts",
+      "sha256": "8d5d7ddf25f80ce4f58ab36875a1e9a9b2d74940ea1978a644297c5ae61e4bd4",
+      "unchangedFromPreviouslyModeledDevelopment": true,
+      "responsibility": "Exact RPC sequence, private result, changed-block and latest-only failures, separate receipt/dry/off scope, unchanged fee-conversion journal."
+    },
+    {
+      "path": "formal/models/fees/buyback_market.qnt",
+      "sha256": "cf7919a1735d2888bd8aa7f8a6b376dd58a29d58e19f25d35309df1df5ffbacb",
+      "unchangedFromPreviouslyModeledDevelopment": true,
+      "responsibility": "Commentary documents the read-only probe. Existing financial state transitions and tests remain unchanged."
+    }
+  ],
+  "modelSourceHashes": {
+    "spec/fees/buybackRpc.md": "7a41c92a6359f79a3aee2d62e09eb6e3d313c8a88a3702373a520c8a94e3485b",
+    "spec/settlement/money.md": "65d72012c72c335adddbb78d3934687c0fce7442ad51b5404090130af42a4c5b"
+  },
+  "proof": "formal/validation/active-proof/finance/buyback-rpc-main-proof.json",
+  "replay": "formal/validation/active-proof/finance/buyback-rpc-main-replay.json",
+  "directed": "formal/validation/active-proof/finance/buyback-rpc-main-witness.qnt",
+  "legacy": {
+    "typechecked": true,
+    "namedTests": 11,
+    "seed": "0x3599",
+    "log": "formal/validation/active-proof/finance/buyback-rpc-main-legacy-quint.log"
+  },
+  "externalEvidence": "Runtime RPC trust and exact decimal-to-limb decoding remain adapter obligations. A verified live recovery diagnostic alone leaves operator readiness unqualified. This local verification did not run worker tests or a live RPC."
+}

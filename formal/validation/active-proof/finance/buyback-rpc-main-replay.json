@@ -1,0 +1,23 @@
+{
+  "sourceHashes": {
+    "spec/settlement/money.md": "65d72012c72c335adddbb78d3934687c0fce7442ad51b5404090130af42a4c5b",
+    "spec/fees/buybackRpc.md": "7a41c92a6359f79a3aee2d62e09eb6e3d313c8a88a3702373a520c8a94e3485b"
+  },
+  "seed": 18268,
+  "traces": 100,
+  "maxSteps": 12,
+  "replayed": true,
+  "laws": {
+    "lawObservationPreservesCounts": 114,
+    "lawVerifiedFactsExact": 92,
+    "lawInactiveProbeOmitted": 96,
+    "lawActiveProbeRefusal": 92,
+    "lawUncorroboratedProbeCannotQualify": 105,
+    "lawQualificationBindsIndependentEvidence": 86
+  },
+  "derived": {
+    "scopeOmissions": 4,
+    "independentQualification": 4
+  },
+  "command": "seed 206942350284760; to simulate again: pnpm exec quint run gen/fees__buybackRpc.run.qnt --main fees__buybackRpc_run --step probe --invariant inv --max-samples 160 --max-steps 12 --mbt --seed 206942350284760"
+}
