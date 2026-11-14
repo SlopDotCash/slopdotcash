@@ -1,0 +1,142 @@
+{
+  "runStartSnapshotMatchesAllCurrentInputs": false,
+  "modelSnapshot": "model-simulation-replay.json",
+  "proofStageInputs": "proof-stage-inputs.json",
+  "templateInputs": "template-inputs.json",
+  "modelInputs": 64,
+  "proofInputs": 10,
+  "startedAt": "2026-11-14T05:19:54.893Z",
+  "finishedAt": "2026-11-14T08:10:09.655Z",
+  "specifications": 64,
+  "stories": 82,
+  "rules": 272,
+  "stages": {
+    "model": {
+      "passed": 64
+    },
+    "always": {
+      "passed": 54
+    },
+    "sometimes": {
+      "passed": 200
+    },
+    "replay": {
+      "passed": 54
+    },
+    "types": {
+      "passed": 2
+    },
+    "proof": {
+      "passed": 53,
+      "failed": 12
+    },
+    "tests": {
+      "passed": 2
+    },
+    "traces": {
+      "passed": 1
+    },
+    "review": {
+      "failed": 63,
+      "passed": 2
+    }
+  },
+  "provedObligations": 2284,
+  "unprovedObligations": 64,
+  "proofErrors": 4,
+  "proofUnits": 65,
+  "replayedTraces": 23556,
+  "proofUnitsWithObligations": 51,
+  "unresolvedProofs": [
+    {
+      "unit": "settlement__money.ts",
+      "status": "unproved",
+      "obligations": 9,
+      "unproved": 4,
+      "detail": "lawDivisionRemainder: (lawDivisionRemainder(a, b) == true)\n      lawDivisionReconstructs: (lawDivisionReconstructs(a, b) == true)   [the prover ran out of resources]\n      lawFullPrivateConservation: (lawFullPrivateConservation(a) == true)\n      lawFullOrdinaryConservation: (lawFullOrdinaryConservation(a) == true)"
+    },
+    {
+      "unit": "fees__buyback.ts",
+      "status": "error",
+      "obligations": null,
+      "unproved": null,
+      "detail": "activate_ensures: Dafny did not check isolated0_activate_ensures, its copy verified again\n      recordIncome_ensures: Dafny did not check isolated1_recordIncome_ensures, its copy verified again\n      order_ensures: Dafny did not check isolated2_order_ensures, its copy verified again\n      broadcast_ensures: Dafny did not check isolated3_broadcast_ensures, its copy verified again\n      observeArrival_ensures: Dafny did not check isolated4_observeArrival_ensures, its copy verified again\n      observeRefund_ensures: Dafny did not check isolated5_observeRefund_ensures, its copy verified again\n      purchase_ensures: Dafny did not check isolated6_purchase_ensures, its copy verified again\n      commitBurn_ensures: Dafny did not check isolated7_commitBurn_ensures, its copy verified again\n      finalizeBurn_ensures: Dafny did not check isolated8_finalizeBurn_ensures, its copy verified again\n      continueCycle_ensures: Dafny did not check isolated9_continueCycle_ensures, its copy verified again\n      selectSource_ensures: Dafny did not check isolated10_selectSource_ensures, its copy verified again\n      reserveLocalShare_ensures: Dafny did not check isolated11_reserveLocalShare_ensures, its copy verified again\n      receiveSlopFee_ensures: Dafny did not check isolated12_receiveSlopFee_ensures, its copy verified again\n      initialHolds_ensures: Dafny did not check isolated13_initialHolds_ensures, its copy verified again\n      the definitions verified again gave no verdict: fees__buyback.isolated.dfy(507,230): Related location: this proposition could not be proved /  / dafny ran for more than 60 minutes and was stopped"
+    },
+    {
+      "unit": "settlement__allocation.ts",
+      "status": "unproved",
+      "obligations": 2,
+      "unproved": 2,
+      "detail": "lawAllocationConserves: (lawAllocationConserves(total, weights) == true)   [the prover ran out of resources]\n      lawSingleRecipient: (lawSingleRecipient(total, actor) == true)   [the prover ran out of resources]"
+    },
+    {
+      "unit": "settlement__vault.ts",
+      "status": "unproved",
+      "obligations": 30,
+      "unproved": 15,
+      "detail": "deposit: (inv(v) ==> canDeposit(v, amount, asset, receipt, finalized) ==> alwaysConserved(deposit(v, amount, asset, receipt, finalized)))\n      deposit: (inv(v) ==> canDeposit(v, amount, asset, receipt, finalized) ==> alwaysValidAmounts(deposit(v, amount, asset, receipt, finalized)))\n      reserve: (inv(v) ==> canReserve(v, amount, recipient, obligation) ==> alwaysConserved(reserve(v, amount, recipient, obligation)))\n      reserve: (inv(v) ==> canReserve(v, amount, recipient, obligation) ==> alwaysValidAmounts(reserve(v, amount, recipient, obligation)))\n      reserve: (inv(v) ==> canReserve(v, amount, recipient, obligation) ==> alwaysReservationMatches(reserve(v, amount, recipient, obligation)))\n      reserve: (inv(v) ==> canReserve(v, amount, recipient, obligation) ==> alwaysReservationTotal(reserve(v, amount, recipient, obligation)))\n      reserve: (inv(v) ==> canReserve(v, amount, recipient, obligation) ==> alwaysReservationIdentity(reserve(v, amount, recipient, obligation)))\n      payReserved: (inv(v) ==> canPayReserved(v, amount, vault, asset, recipient, obligation, receipt, finalizedHeight) ==> alwaysConserved(payReserved(v, amount, vault, asset, recipient, obligation, receipt, finalizedHeight)))\n      payReserved: (inv(v) ==> canPayReserved(v, amount, vault, asset, recipient, obligation, receipt, finalizedHeight) ==> alwaysValidAmounts(payReserved(v, amount, vault, asset, recipient, obligation, receipt, finalizedHeight)))\n      payReserved: (inv(v) ==> canPayReserved(v, amount, vault, asset, recipient, obligation, receipt, finalizedHeight) ==> alwaysReservationMatches(payReserved(v, amount, vault, asset, recipient, obligation, receipt, finalizedHeight)))\n      payReserved: (inv(v) ==> canPayReserved(v, amount, vault, asset, recipient, obligation, receipt, finalizedHeight) ==> alwaysReservationTotal(payReserved(v, amount, vault, asset, recipient, obligation, receipt, finalizedHeight)))\n      payReserved: (inv(v) ==> canPayReserved(v, amount, vault, asset, recipient, obligation, receipt, finalizedHeight) ==> alwaysReservationIdentity(payReserved(v, amount, vault, asset, recipient, obligation, receipt, finalizedHeight)))\n      refund: (inv(v) ==> canRefund(v, amount, destination, receipt, finalizedHeight, by_) ==> alwaysConserved(refund(v, amount, destination, receipt, finalizedHeight, by_)))\n      refund: (inv(v) ==> canRefund(v, amount, destination, receipt, finalizedHeight, by_) ==> alwaysValidAmounts(refund(v, amount, destination, receipt, finalizedHeight, by_)))\n      step: inv(step(current, event, by_))   [rests on deposit: (inv(v) ==> canDeposit(v, amount, asset, receipt, finalized) ==> alwaysConserved(deposit(v, amount, asset, receipt, finalized)))]"
+    },
+    {
+      "unit": "settlement__payment.ts",
+      "status": "unproved",
+      "obligations": 90,
+      "unproved": 3,
+      "detail": "configure: (inv(p) ==> canConfigure(p, purpose, rail, gross) ==> alwaysCorrectFee(configure(p, purpose, rail, gross)))\n      configure: (inv(p) ==> canConfigure(p, purpose, rail, gross) ==> alwaysConserved(configure(p, purpose, rail, gross)))\n      step: inv(step(current, event, by_))   [rests on configure: (inv(p) ==> canConfigure(p, purpose, rail, gross) ==> alwaysCorrectFee(configure(p, purpose, rail, gross)))]"
+    },
+    {
+      "unit": "settlement__composition.ts",
+      "status": "unproved",
+      "obligations": 38,
+      "unproved": 6,
+      "detail": "deposit: (inv(s) ==> canDeposit(s, amount, asset, receipt, finalized) ==> alwaysChildRules(deposit(s, amount, asset, receipt, finalized)))   [the prover ran out of resources]\n      configure: (inv(s) ==> canConfigure(s, purpose, rail, gross) ==> alwaysChildRules(configure(s, purpose, rail, gross)))   [the prover ran out of resources]\n      reserve: (inv(s) ==> canReserve(s) ==> alwaysChildRules(reserve(s)))\n      reconcile: (inv(s) ==> canReconcile(s, evidence) ==> alwaysChildRules(reconcile(s, evidence)))   [the prover ran out of resources]\n      reconcile: (inv(s) ==> canReconcile(s, evidence) ==> alwaysPaidConsumesReserve(reconcile(s, evidence)))   [the prover ran out of resources]\n      step: inv(step(current, event, by_))   [rests on deposit: (inv(s) ==> canDeposit(s, amount, asset, receipt, finalized) ==> alwaysChildRules(deposit(s, amount, asset, receipt, finalized)))]"
+    },
+    {
+      "unit": "settlement__monthly.ts",
+      "status": "unproved",
+      "obligations": 73,
+      "unproved": 5,
+      "detail": "propose: (inv(m) ==> canPropose(m, amount, weights, closed, complete, eligibility) ==> alwaysAllocationConserved(propose(m, amount, weights, closed, complete, eligibility)))   [the prover ran out of resources]\n      adjust: (inv(m) ==> canAdjust(m, shares, revision, by_) ==> alwaysAllocationConserved(adjust(m, shares, revision, by_)))\n      setCap: (inv(m) ==> canSetCap(m, cap, by_) ==> alwaysAllocationConserved(setCap(m, cap, by_)))\n      fund: (inv(m) ==> canFund(m, available) ==> alwaysCompletedPaid(fund(m, available)))\n      step: inv(step(current, event, by_))   [rests on propose: (inv(m) ==> canPropose(m, amount, weights, closed, complete, eligibility) ==> alwaysAllocationConserved(propose(m, amount, weights, closed, complete, eligibility)))]"
+    },
+    {
+      "unit": "settlement__recovery.ts",
+      "status": "error",
+      "obligations": null,
+      "unproved": null,
+      "detail": "consent_ensures: non-function expression (of type int) is called with parameters: (inv(r) ==> canConsent(r, wallet, consent, by_) ==> alwaysSuccessorRetired(consent(r, wallet, consent, by_)))\n      consent_ensures: non-function expression (of type int) is called with parameters: (inv(r) ==> canConsent(r, wallet, consent, by_) ==> alwaysPaidCanonical(consent(r, wallet, consent, by_)))\n      consent_ensures: non-function expression (of type int) is called with parameters: (inv(r) ==> canConsent(r, wallet, consent, by_) ==> stepPaidUnchanged(r, consent(r, wallet, consent, by_)))\n      dafny audit: settlement__recovery.dfy(44,92): Error: non-function expression (of type int) is called with parameters\n      dafny audit: settlement__recovery.dfy(45,89): Error: non-function expression (of type int) is called with parameters\n      dafny audit: settlement__recovery.dfy(46,90): Error: non-function expression (of type int) is called with parameters\n      dafny audit: dafny audit gave no verdict: settlement__recovery.dfy(45,89): Error: non-function expression (of type int) is called with parameters / settlement__recovery.dfy(46,90): Error: non-function expression (of type int) is called with parameters / 3 resolution/type errors detected in settlement__recovery.dfy"
+    },
+    {
+      "unit": "settlement__referralAccrual.ts",
+      "status": "error",
+      "obligations": null,
+      "unproved": null,
+      "detail": "configure_ensures: Dafny stopped after 600 s of wall-clock time (machine load), not a verdict\n      enableDryRun_ensures: Dafny stopped after 600 s of wall-clock time (machine load), not a verdict\n      fileMonth_ensures: Dafny stopped after 600 s of wall-clock time (machine load), not a verdict\n      accrueNext_ensures: Dafny stopped after 600 s of wall-clock time (machine load), not a verdict"
+    },
+    {
+      "unit": "settlement__referralDistributor.ts",
+      "status": "unproved",
+      "obligations": 146,
+      "unproved": 22,
+      "detail": "tick: (inv(d) ==> canTick(d, timestamp) ==> stepClaimsRetained(d, tick(d, timestamp)))\n      transferOwnership: (inv(d) ==> canTransferOwnership(d, newOwner, by_) ==> stepClaimsRetained(d, transferOwnership(d, newOwner, by_)))\n      acceptOwnership: (inv(d) ==> canAcceptOwnership(d, by_) ==> stepClaimsRetained(d, acceptOwnership(d, by_)))\n      setPoster: (inv(d) ==> canSetPoster(d, newPoster, by_) ==> stepClaimsRetained(d, setPoster(d, newPoster, by_)))\n      pause: (inv(d) ==> canPause(d, by_) ==> stepClaimsRetained(d, pause(d, by_)))\n      unpause: (inv(d) ==> canUnpause(d, by_) ==> stepClaimsRetained(d, unpause(d, by_)))\n      deposit: (inv(d) ==> canDeposit(d, amount, token, receipt, finalized) ==> alwaysMoneyValid(deposit(d, amount, token, receipt, finalized)))\n      deposit: (inv(d) ==> canDeposit(d, amount, token, receipt, finalized) ==> alwaysConserved(deposit(d, amount, token, receipt, finalized)))\n      deposit: (inv(d) ==> canDeposit(d, amount, token, receipt, finalized) ==> stepClaimsRetained(d, deposit(d, amount, token, receipt, finalized)))\n      postRoot: (inv(d) ==> canPostRoot(d, index, root, total, by_) ==> alwaysSequentialEpochs(postRoot(d, index, root, total, by_)))\n      postRoot: (inv(d) ==> canPostRoot(d, index, root, total, by_) ==> stepClaimsRetained(d, postRoot(d, index, root, total, by_)))\n      voidLast: (inv(d) ==> canVoidLast(d, index, by_) ==> alwaysSequentialEpochs(voidLast(d, index, by_)))\n      voidLast: (inv(d) ==> canVoidLast(d, index, by_) ==> stepClaimsRetained(d, voidLast(d, index, by_)))\n      claim: (inv(d) ==> canClaim(d, wallet, cumulative, proofRoot, verified, transferExact, by_) ==> alwaysMoneyValid(claim(d, wallet, cumulative, proofRoot, verified, transferExact, by_)))\n      claim: (inv(d) ==> canClaim(d, wallet, cumulative, proofRoot, verified, transferExact, by_) ==> alwaysConserved(claim(d, wallet, cumulative, proofRoot, verified, transferExact, by_)))\n      claim: (inv(d) ==> canClaim(d, wallet, cumulative, proofRoot, verified, transferExact, by_) ==> alwaysPaidMatchesClaims(claim(d, wallet, cumulative, proofRoot, verified, transferExact, by_)))\n      claim: (inv(d) ==> canClaim(d, wallet, cumulative, proofRoot, verified, transferExact, by_) ==> alwaysUniqueClaims(claim(d, wallet, cumulative, proofRoot, verified, transferExact, by_)))\n      claim: (inv(d) ==> canClaim(d, wallet, cumulative, proofRoot, verified, transferExact, by_) ==> stepClaimsRetained(d, claim(d, wallet, cumulative, proofRoot, verified, transferExact, by_)))\n      rescue: (inv(d) ==> canRescue(d, destination, transferExact, by_) ==> alwaysMoneyValid(rescue(d, destination, transferExact, by_)))\n      rescue: (inv(d) ==> canRescue(d, destination, transferExact, by_) ==> alwaysConserved(rescue(d, destination, transferExact, by_)))\n      rescue: (inv(d) ==> canRescue(d, destination, transferExact, by_) ==> stepClaimsRetained(d, rescue(d, destination, transferExact, by_)))\n      step: inv(step(current, event, by_))   [rests on tick: (inv(d) ==> canTick(d, timestamp) ==> stepClaimsRetained(d, tick(d, timestamp)))]"
+    },
+    {
+      "unit": "settlement__referralPublication.ts",
+      "status": "error",
+      "obligations": null,
+      "unproved": null,
+      "detail": "isolated0_prepare_ensures: Dafny stopped after 600 s of wall-clock time (machine load), not a verdict\n      isolated10_claim_ensures: Dafny stopped after 600 s of wall-clock time (machine load), not a verdict\n      prepare_ensures: Dafny did not check isolated0_prepare_ensures, its copy verified again\n      submit_ensures: Dafny did not check isolated1_submit_ensures, its copy verified again\n      loseObservation_ensures: Dafny did not check isolated2_loseObservation_ensures, its copy verified again\n      retransmit_ensures: Dafny did not check isolated3_retransmit_ensures, its copy verified again\n      observeDay_ensures: Dafny did not check isolated4_observeDay_ensures, its copy verified again\n      setPostingPaused_ensures: Dafny did not check isolated5_setPostingPaused_ensures, its copy verified again\n      journal_ensures: Dafny did not check isolated6_journal_ensures, its copy verified again\n      discardPrepared_ensures: Dafny did not check isolated7_discardPrepared_ensures, its copy verified again\n      finalize_ensures: Dafny did not check isolated8_finalize_ensures, its copy verified again\n      finalizeFailure_ensures: Dafny did not check isolated9_finalizeFailure_ensures, its copy verified again\n      claim_ensures: Dafny did not check isolated10_claim_ensures, its copy verified again\n      voidRoot_ensures: Dafny did not check isolated11_voidRoot_ensures, its copy verified again\n      acknowledgeVoid_ensures: Dafny did not check isolated12_acknowledgeVoid_ensures, its copy verified again\n      invalidateCache_ensures: Dafny did not check isolated13_invalidateCache_ensures, its copy verified again\n      refreshCache_ensures: Dafny did not check isolated14_refreshCache_ensures, its copy verified again\n      the definitions verified again gave no verdict: settlement__referralPublication.isolated.dfy(2220,73): Error: Verification of 'isolated10_claim_ensures' timed out after 600 seconds. (the limit can be increased using --verification-time-limit) /  / dafny ran for more than 60 minutes and was stopped"
+    },
+    {
+      "unit": "settlement__reserveRelease.ts",
+      "status": "unproved",
+      "obligations": 74,
+      "unproved": 7,
+      "detail": "check: (inv(r) ==> canCheck(r, root, total, height, requestRevision, by_) ==> alwaysBoundApproval(check(r, root, total, height, requestRevision, by_)))\n      finalize: (inv(r) ==> canFinalize(r, height, releasedAmount, settledAmount) ==> alwaysWholeRelease(finalize(r, height, releasedAmount, settledAmount)))\n      finalize: (inv(r) ==> canFinalize(r, height, releasedAmount, settledAmount) ==> alwaysValidAmounts(finalize(r, height, releasedAmount, settledAmount)))\n      finalize: (inv(r) ==> canFinalize(r, height, releasedAmount, settledAmount) ==> alwaysConserved(finalize(r, height, releasedAmount, settledAmount)))\n      settlePart: (inv(r) ==> canSettlePart(r, amount) ==> alwaysValidAmounts(settlePart(r, amount)))\n      settlePart: (inv(r) ==> canSettlePart(r, amount) ==> alwaysConserved(settlePart(r, amount)))\n      step: inv(step(current, event, by_))   [rests on check: (inv(r) ==> canCheck(r, root, total, height, requestRevision, by_) ==> alwaysBoundApproval(check(r, root, total, height, requestRevision, by_)))]"
+    }
+  ],
+  "otherFailures": [],
+  "reviewIncompleteRules": [],
+  "acceptance": false,
+  "sourceInputsAtEachStageMatchBaseline": true,
+  "rawReport": "baseline-check.json",
+  "baselineCommit": "e51a6b55a75f91644176e6a3ad60fc0970e20797"
+}

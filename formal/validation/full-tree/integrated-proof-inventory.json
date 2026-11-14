@@ -1,6 +1,6 @@
 {
   "status": "partial",
-  "qualification": "Counts the baseline and focused exact-source unit results once. The old closure, reserve release and destination recovery proofs are replaced by results for the current models. Navigation index changes carry no obligations. Unproved clauses and missing verdicts remain open.",
+  "qualification": "Counts each exact-source unit once across the completed baseline run and later focused checks. Changed closure, reserve release and destination recovery units use current results. The remaining three units reached verifier time limits and have no complete obligation verdict. The current generation and replay reports bind the assembled source.",
   "provedObligations": 2644,
   "unprovedObligations": 62,
   "unitsWithCounts": 69,
@@ -156,13 +156,15 @@
     },
     {
       "unit": "fees__buyback.ts",
-      "evidence": "formal/validation/full-tree/proof-checkpoint.json",
+      "evidence": "formal/validation/full-tree/baseline-summary.json",
       "total": null,
       "proved": null,
       "unproved": null,
-      "errors": null,
+      "errors": 15,
       "resourceExhausted": null,
-      "boundedAttempt": "formal/validation/finance/buyback-proof.json"
+      "boundedAttempt": "formal/validation/finance/buyback-proof.json",
+      "verdict": "timed-out",
+      "proofLog": "formal/validation/full-tree/baseline-proof-logs/fees__buyback.log"
     },
     {
       "unit": "fees__conversion.ts",
@@ -490,12 +492,14 @@
     },
     {
       "unit": "settlement__referralAccrual.ts",
-      "evidence": "formal/validation/full-tree/proof-checkpoint.json",
+      "evidence": "formal/validation/full-tree/baseline-summary.json",
       "total": null,
       "proved": null,
       "unproved": null,
-      "errors": null,
-      "resourceExhausted": null
+      "errors": 4,
+      "resourceExhausted": null,
+      "verdict": "timed-out",
+      "proofLog": "formal/validation/full-tree/baseline-proof-logs/settlement__referralAccrual.log"
     },
     {
       "unit": "settlement__referralDistributor.ts",
@@ -517,12 +521,14 @@
     },
     {
       "unit": "settlement__referralPublication.ts",
-      "evidence": "formal/validation/full-tree/proof-checkpoint.json",
+      "evidence": "formal/validation/full-tree/baseline-summary.json",
       "total": null,
       "proved": null,
       "unproved": null,
-      "errors": null,
-      "resourceExhausted": null
+      "errors": 18,
+      "resourceExhausted": null,
+      "verdict": "timed-out",
+      "proofLog": "formal/validation/full-tree/baseline-proof-logs/settlement__referralPublication.log"
     },
     {
       "unit": "settlement__signer.ts",
@@ -659,5 +665,6 @@
       "errors": 0,
       "resourceExhausted": 0
     }
-  ]
+  ],
+  "canonicalBaseline": "formal/validation/full-tree/baseline-summary.json"
 }

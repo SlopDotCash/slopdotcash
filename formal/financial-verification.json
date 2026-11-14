@@ -1,5 +1,5 @@
 {
-  "status": "focused-results-with-baseline-proof-checkpoint",
+  "status": "recorded-proofs-with-unproved-and-time-limited-units",
   "sourceHashes": {
     "spec/settlement/allocation.md": "99109245ea3ba1f19fdbf75802b578c0d57940418c213b847188553ff404531f",
     "spec/settlement/composition.md": "81e874de4b53d9638648530a91cf3862c9c2e9e79715f2d95393f99ad8e1bb4c",
@@ -323,7 +323,7 @@
     ],
     "meaning": "Unproved obligations remain unaccepted. Whole-application proof completeness is not established.",
     "scope": "Focused source-bound proof results. The baseline full-tree report and later model evidence apply to the source snapshots named in each report.",
-    "fullTreeReport": "formal/validation/full-tree/proof-checkpoint.json",
+    "fullTreeReport": "formal/validation/full-tree/baseline-check.json",
     "historicalResults": [
       {
         "unit": "settlement__money.ts",
@@ -349,8 +349,9 @@
         "currentSourceSha256": "cb766a9b5b99f5509da5478ca15ecbe1c77a09127956d9524e7447c7d0939978"
       }
     ],
-    "fullTreeReportStatus": "Partial baseline proof snapshot. It tracks exact model inputs and all available completed proof units. Later reserve evidence is separate.",
-    "buybackAttempt": "formal/validation/finance/buyback-proof.json"
+    "fullTreeReportStatus": "Completed baseline command with timed-out verifier units and one generated-name resolution error. The current recovery model fixed that error and proved all obligations.",
+    "buybackAttempt": "formal/validation/finance/buyback-proof.json",
+    "integratedProofInventory": "formal/validation/full-tree/integrated-proof-inventory.json"
   },
   "reachabilityProbes": {
     "status": "passed-on-recorded-snapshot",

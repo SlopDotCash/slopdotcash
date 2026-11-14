@@ -10,7 +10,7 @@ The retained PRD bytes match that pinned source and the pinned main revision.
 The user confirmed that new-project automatic closure starts unchecked.
 
 On 14 November, the PRD blob also matched the fetched `development` tip
-`85e831856386d212f8e321897eb48d898b254e9e`. The `main` tip had advanced to
+`d6c44489cd5a4ff687f1ef406991aaf9b28b7b64`. The `main` tip had advanced to
 `8d14a9692b998ee3f4479725b6323125f11f11be` with three added and three changed
 model files. The model inventory and its legacy test results apply to the
 pinned migration snapshot. All six later files also passed direct Quint
@@ -191,24 +191,21 @@ lacked its design-package dependency link. After restoring the installed
 link, the full rerun passed.
 [Integrated generation and test results](validation/full-tree/integrated-generation.json)
 
-The proof stage took its input after the verified wallet and money helpers
-were installed. The two phase manifests bind the model and proof inputs to
-those separate observation times. The baseline stage predates the later
-model refinements. The retained checkpoint captured 61 of 65 proof units with
-2,284 discharged obligations and 64 open obligations. Four units had no
-completed cached result at that checkpoint. A separate exact-source buyback
-proof reached Vibestack's 60-minute tool timeout during isolated assertion
-checking and produced no unit verdict. The baseline reserve result is
-superseded by the signed-attempt correction below.
-[Buyback proof attempt](validation/finance/buyback-proof.json)
-[Proof stage inputs](validation/full-tree/proof-stage-inputs.json) · [Template inputs](validation/full-tree/template-inputs.json) · [Proof checkpoint](validation/full-tree/proof-checkpoint.json)
+The baseline full-tree command ran validation through tests and conformance.
+The two input manifests identify the model and proof bytes at their respective
+stages. The baseline tool reported 2,284 proved and 64 unproved obligations.
+Dafny reached time limits on buyback, referral accrual and referral publication.
+Its fourth error was a generated name collision in destination recovery, since
+corrected and fully proved. Baseline review reported no story without rules
+or rule without Quint.
+[Baseline summary](validation/full-tree/baseline-summary.json) · [Raw baseline results](validation/full-tree/baseline-check.json) · [Proof inputs](validation/full-tree/proof-stage-inputs.json)
 
-The exact-source proof inventory includes each baseline or focused unit once.
-It records 2,644 discharged obligations and 62 open clauses across 69 of 72
-units. Buyback, referral accrual and referral publication lack a complete unit
-verdict in that inventory. The current proof result takes precedence where the
-underlying model changed. Sign-off and all open obligations remain pending.
-[Current proof inventory](validation/full-tree/integrated-proof-inventory.json)
+The integrated proof inventory counts exact-source results once across the
+baseline and focused runs. It records 2,644 discharged and 62 open obligations
+across 69 of 72 units. The three timed-out units have no complete verdict.
+The reports retain the exact clauses and raw diagnostics. Specification review
+and approval remain pending.
+[Current proof inventory](validation/full-tree/integrated-proof-inventory.json) · [Review status](validation/full-tree/integrated-review.json)
 
 ## Additional source refinements
 
