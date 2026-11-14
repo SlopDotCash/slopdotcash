@@ -482,7 +482,8 @@
         "spec/points/corrections.md",
         "spec/points/publication.md",
         "spec/points/recovery.md",
-        "spec/frontend/rankedSnapshot.md"
+        "spec/frontend/rankedSnapshot.md",
+        "spec/points/quotaRecovery.md"
       ],
       "status": "source-preserved-domain-mapped",
       "implementationEvidence": "pending-implementation"
@@ -780,7 +781,8 @@
         "spec/operations/release.md",
         "spec/governance.md",
         "docs/migration.md",
-        "spec/operations/releaseCoverage.md"
+        "spec/operations/releaseCoverage.md",
+        "spec/points/quotaRecovery.md"
       ],
       "status": "source-preserved-domain-mapped",
       "implementationEvidence": "pending-implementation"

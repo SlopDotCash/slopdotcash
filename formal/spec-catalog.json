@@ -5167,7 +5167,7 @@
     },
     {
       "path": "spec/points/index.md",
-      "sha256": "024bd09ca3fa72b072c89592a925acadd1f05860cf0bbdf9b7d1b49d390fa496",
+      "sha256": "d805f39e48df82b4be8c52a4fedfc69aafaa485d389c05924671a6f7b5845c28",
       "module": "points",
       "stories": [],
       "rules": [],
@@ -5202,12 +5202,16 @@
           "line": 13
         },
         {
-          "target": "./recovery.md",
+          "target": "./quotaRecovery.md",
           "line": 14
         },
         {
-          "target": "./publication.md",
+          "target": "./recovery.md",
           "line": 15
+        },
+        {
+          "target": "./publication.md",
+          "line": 16
         }
       ]
     },
@@ -5366,6 +5370,165 @@
         {
           "target": "./journal.md",
           "line": 7
+        }
+      ]
+    },
+    {
+      "path": "spec/points/quotaRecovery.md",
+      "sha256": "8decf25ca7c4163c0ea34b3041c45c7983f18a42d31826bd70bcbdb3308df8d8",
+      "module": "points__quotaRecovery",
+      "stories": [
+        {
+          "heading": "Story: Preserve the same campaign while live quota recovers",
+          "line": 16
+        }
+      ],
+      "rules": [
+        {
+          "heading": "Story: Preserve the same campaign while live quota recovers / Only trusted production runs can restore the original campaign",
+          "line": 18,
+          "definitions": [
+            "RunAuthority",
+            "Artifact",
+            "Scope",
+            "Replay",
+            "mayCollect",
+            "mayRestore",
+            "unboundScope",
+            "frozenSearchPageSize",
+            "validScope",
+            "scopeValid",
+            "lawCrossRepositoryArtifactRefused",
+            "lawDifferentCutoffRefused",
+            "lawLegacyKeepsPageSize"
+          ]
+        },
+        {
+          "heading": "Story: Preserve the same campaign while live quota recovers / Quota waits use the strictest safe observation from the drained pass",
+          "line": 63,
+          "definitions": [
+            "Stop",
+            "Hint",
+            "Refusal",
+            "noRefusal",
+            "later",
+            "futureHint",
+            "isPrimary",
+            "isGraphLimit",
+            "isSecondary",
+            "quotaRefusal",
+            "combineRefusal",
+            "lawUnsafeResetDoesNotAuthorizeWait",
+            "lawParallelResetUsesLatest"
+          ]
+        },
+        {
+          "heading": "Story: Preserve the same campaign while live quota recovers / Each new request spends the invocation budget once and each response is retained",
+          "line": 106,
+          "definitions": [
+            "Phase",
+            "RequestKind",
+            "Request",
+            "Attempt",
+            "Reply",
+            "Run",
+            "newInvocation",
+            "productionBudget",
+            "productionDuration",
+            "initial",
+            "Admission",
+            "canAdmit",
+            "admit",
+            "canRequest",
+            "request",
+            "canReuse",
+            "reuse",
+            "canObserve",
+            "observe",
+            "canReachBudget",
+            "reachBudget",
+            "canFailRead",
+            "failRead",
+            "canTick",
+            "tick"
+          ]
+        },
+        {
+          "heading": "Story: Preserve the same campaign while live quota recovers / Resume requires progress or a bounded number of refusals before the deadline",
+          "line": 172,
+          "definitions": [
+            "canDrain",
+            "drain",
+            "canResume",
+            "resume",
+            "canTimeout",
+            "timeout",
+            "lawBudgetStopsWithoutWait",
+            "lawThirdNoProgressCheckpoints",
+            "lawCannotWakeAtDeadline"
+          ]
+        },
+        {
+          "heading": "Story: Preserve the same campaign while live quota recovers / Only exact manifest and receipt from an uninterrupted pass allow reconciliation",
+          "line": 204,
+          "definitions": [
+            "Output",
+            "Choice",
+            "matchesOutput",
+            "canFinish",
+            "finish",
+            "mayReconcile",
+            "stepCampaignStaysFrozen",
+            "alwaysBudget",
+            "alwaysManifestOnlyAfterCollection",
+            "stepUsageNeverDecreases",
+            "stepRawEvidenceRetained",
+            "lawInterruptedCannotFinish",
+            "lawStaleAuthorityCannotReconcile",
+            "lawIncompleteCannotApply",
+            "sometimesWaiting",
+            "sometimesResumed",
+            "sometimesCheckpoint",
+            "sometimesCollected"
+          ]
+        },
+        {
+          "heading": "Story: Preserve the same campaign while live quota recovers / Simulation samples include successful reads, quota windows and budget refusal",
+          "line": 252,
+          "definitions": [
+            "authorityValues",
+            "artifactValues",
+            "scopeSample",
+            "replayValues",
+            "entryValues",
+            "savedValues",
+            "oldValues",
+            "seenValues",
+            "readValues",
+            "cachedKeyValues",
+            "exactBytesValues",
+            "noHint",
+            "attemptValues",
+            "replyValues",
+            "timeValues",
+            "outputValues",
+            "choiceValues"
+          ]
+        }
+      ],
+      "imports": [],
+      "references": [
+        {
+          "target": "./census.md",
+          "line": 10
+        },
+        {
+          "target": "./corrections.md",
+          "line": 11
+        },
+        {
+          "target": "./recovery.md",
+          "line": 12
         }
       ]
     },
