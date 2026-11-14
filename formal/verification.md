@@ -236,7 +236,9 @@ page view traffic to the site's own origin.
   and PR-opened evidence uses its own authenticated run. Those two units
   discharged all 113 obligations. The session exchange discharged 107 more,
   including expiry, assertion consumption, lost responses and actor identity.
-  [Command proof](validation/source-coverage/command-completion.json) · [Skill authority proof](validation/source-coverage/skill-authority.json) · [Local receipt](validation/source-coverage/local-receipt.json) · [Run evidence](validation/source-coverage/run-evidence.json) · [Session exchange](validation/source-coverage/session-exchange.json)
+  Installation discharged all 152 obligations, including same-byte updates,
+  owned cleanup, and a committed target whose readback failed.
+  [Command proof](validation/source-coverage/command-completion.json) · [Skill authority proof](validation/source-coverage/skill-authority.json) · [Local receipt](validation/source-coverage/local-receipt.json) · [Run evidence](validation/source-coverage/run-evidence.json) · [Session exchange](validation/source-coverage/session-exchange.json) · [Installation proof](validation/source-coverage/installation-lifecycle.json)
 - Report details clear on account changes and support independently mounted
   siblings. Snapshot consumers cannot detach another lease or have a stale
   response overwrite a newer request. All 67 obligations proved.

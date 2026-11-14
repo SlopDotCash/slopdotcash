@@ -1071,7 +1071,7 @@
       "actions": {
         "init": {
           "status": "modeled-projection",
-          "reason": "Starts with no active version, process lock or staged target.",
+          "reason": "The installation model records this stage or refusal with the owning process invocation. Filesystem, authority, and output are shell conformance.",
           "successors": [
             {
               "path": "spec/contributor/installation.md",
@@ -1083,20 +1083,19 @@
         },
         "begin": {
           "status": "modeled-projection",
-          "reason": "Only unlocked alive process with valid revision and permission can begin. Ordinary and explicit rollback choose distinct revision guards.",
+          "reason": "The installation model records this stage or refusal with the owning process invocation. Filesystem, authority, and output are shell conformance.",
           "successors": [
             {
               "path": "spec/contributor/installation.md",
               "definitions": [
-                "canBegin",
                 "begin"
               ]
             }
           ]
         },
         "stageArchive": {
-          "status": "partial-model",
-          "reason": "Download separates verification admission, but per-invocation work roots and staged archive cleanup are absent.",
+          "status": "modeled-projection",
+          "reason": "The installation model records this stage or refusal with the owning process invocation. Filesystem, authority, and output are shell conformance.",
           "successors": [
             {
               "path": "spec/contributor/installation.md",
@@ -1107,44 +1106,48 @@
           ]
         },
         "verifyBytes": {
-          "status": "partial-model",
-          "reason": "Canonical tree and approved digest are checked, but equal rendered bytes versus equal pair identity have no distinct state.",
+          "status": "modeled-projection",
+          "reason": "The installation model records this stage or refusal with the owning process invocation. Filesystem, authority, and output are shell conformance.",
           "successors": [
             {
               "path": "spec/contributor/installation.md",
               "definitions": [
-                "canVerify",
                 "verify"
               ]
             }
           ]
         },
         "noChange": {
-          "status": "missing-transition",
-          "reason": "No byte-identical no-change outcome preserving active template identity.",
-          "successors": []
-        },
-        "retain": {
-          "status": "partial-model",
-          "reason": "Selected pair is appended, with no retained-directory reuse versus physical move outcome.",
+          "status": "modeled-projection",
+          "reason": "The installation model records this stage or refusal with the owning process invocation. Filesystem, authority, and output are shell conformance.",
           "successors": [
             {
               "path": "spec/contributor/installation.md",
               "definitions": [
-                "verify",
-                "retainedPair"
+                "recordUnchanged"
+              ]
+            }
+          ]
+        },
+        "retain": {
+          "status": "modeled-projection",
+          "reason": "The installation model records this stage or refusal with the owning process invocation. Filesystem, authority, and output are shell conformance.",
+          "successors": [
+            {
+              "path": "spec/contributor/installation.md",
+              "definitions": [
+                "retain"
               ]
             }
           ]
         },
         "prepareLink": {
           "status": "modeled-projection",
-          "reason": "Only retained verified target under a live lock may prepare relative-link activation.",
+          "reason": "The installation model records this stage or refusal with the owning process invocation. Filesystem, authority, and output are shell conformance.",
           "successors": [
             {
               "path": "spec/contributor/installation.md",
               "definitions": [
-                "canPrepareLink",
                 "prepareLink"
               ]
             }
@@ -1152,12 +1155,11 @@
         },
         "activate": {
           "status": "modeled-projection",
-          "reason": "Publication commits active target only under verified atomic relative rename.",
+          "reason": "The installation model records this stage or refusal with the owning process invocation. Filesystem, authority, and output are shell conformance.",
           "successors": [
             {
               "path": "spec/contributor/installation.md",
               "definitions": [
-                "canCommit",
                 "commit"
               ]
             }
@@ -1165,32 +1167,31 @@
         },
         "confirmReadback": {
           "status": "modeled-projection",
-          "reason": "Current committed target requires readback before complete.",
+          "reason": "The installation model records this stage or refusal with the owning process invocation. Filesystem, authority, and output are shell conformance.",
           "successors": [
             {
               "path": "spec/contributor/installation.md",
               "definitions": [
-                "canConfirm",
                 "confirm"
               ]
             }
           ]
         },
         "printSuccess": {
-          "status": "partial-model",
-          "reason": "Completion and readback are represented, but success output and subsequent cleanup are not independently modeled.",
+          "status": "modeled-projection",
+          "reason": "The installation model records this stage or refusal with the owning process invocation. Filesystem, authority, and output are shell conformance.",
           "successors": [
             {
               "path": "spec/contributor/installation.md",
               "definitions": [
-                "confirm"
+                "emitActivation"
               ]
             }
           ]
         },
         "failure": {
-          "status": "partial-model",
-          "reason": "Generic failure preserves active version, but no per-phase primary diagnostic and cleanup ordering.",
+          "status": "modeled-projection",
+          "reason": "The installation model records this stage or refusal with the owning process invocation. Filesystem, authority, and output are shell conformance.",
           "successors": [
             {
               "path": "spec/contributor/installation.md",
@@ -1201,8 +1202,8 @@
           ]
         },
         "linkFailure": {
-          "status": "partial-model",
-          "reason": "Phase can fail without committing, but temporary-link ownership/cleanup choice is missing.",
+          "status": "modeled-projection",
+          "reason": "The installation model records this stage or refusal with the owning process invocation. Filesystem, authority, and output are shell conformance.",
           "successors": [
             {
               "path": "spec/contributor/installation.md",
@@ -1214,45 +1215,43 @@
         },
         "readbackFailure": {
           "status": "modeled-projection",
-          "reason": "Failure after commit leaves active pair at the committed target.",
+          "reason": "The installation model records this stage or refusal with the owning process invocation. Filesystem, authority, and output are shell conformance.",
           "successors": [
             {
               "path": "spec/contributor/installation.md",
               "definitions": [
-                "commit",
                 "recordFailure"
               ]
             }
           ]
         },
         "cleanup": {
-          "status": "partial-model",
-          "reason": "A failure flag is retained, but cleanup actions cannot record per-invocation roots, staged candidate removal or separate cleanup error.",
+          "status": "modeled-projection",
+          "reason": "The installation model records this stage or refusal with the owning process invocation. Filesystem, authority, and output are shell conformance.",
           "successors": [
             {
               "path": "spec/contributor/installation.md",
               "definitions": [
-                "recordFailure"
+                "cleanup"
               ]
             }
           ]
         },
         "finish": {
-          "status": "partial-model",
-          "reason": "Lock held through readback, but no separate command exit and cleanup result.",
+          "status": "modeled-projection",
+          "reason": "The installation model records this stage or refusal with the owning process invocation. Filesystem, authority, and output are shell conformance.",
           "successors": [
             {
               "path": "spec/contributor/installation.md",
               "definitions": [
-                "confirm",
-                "recordFailure"
+                "finish"
               ]
             }
           ]
         },
         "permission": {
-          "status": "partial-model",
-          "reason": "Permission is an evidence input at begin/verification rather than an idle authority observation.",
+          "status": "modeled-projection",
+          "reason": "The installation model records this stage or refusal with the owning process invocation. Filesystem, authority, and output are shell conformance.",
           "successors": [
             {
               "path": "spec/contributor/installation.md",
@@ -1272,159 +1271,303 @@
       "scenarios": {
         "olderTemplateNewerPolicyTest": {
           "status": "modeled-projection",
-          "reason": "Template ancestry is ignored. Ordinary registry revision cannot decrease.",
+          "reason": "The focused evidence exercises the corresponding version, unchanged-byte, failure, readback or owned-cleanup behavior.",
           "successors": [
             {
               "path": "spec/contributor/installation.md",
               "definitions": [
-                "canBegin"
+                "begin",
+                "verify",
+                "recordUnchanged",
+                "retain",
+                "commit",
+                "confirm",
+                "recordFailure",
+                "cleanup",
+                "finish"
               ]
             }
           ]
         },
         "explicitRollbackTest": {
           "status": "modeled-projection",
-          "reason": "Retained pair and current permission recheck precede rollback commit.",
+          "reason": "The focused evidence exercises the corresponding version, unchanged-byte, failure, readback or owned-cleanup behavior.",
           "successors": [
             {
               "path": "spec/contributor/installation.md",
               "definitions": [
-                "canBegin",
-                "canVerify",
-                "commit"
+                "begin",
+                "verify",
+                "recordUnchanged",
+                "retain",
+                "commit",
+                "confirm",
+                "recordFailure",
+                "cleanup",
+                "finish"
               ]
             }
           ]
         },
         "interruptedActivationTest": {
           "status": "modeled-projection",
-          "reason": "Process loss before atomic commit leaves original active pair.",
+          "reason": "The focused evidence exercises the corresponding version, unchanged-byte, failure, readback or owned-cleanup behavior.",
           "successors": [
             {
               "path": "spec/contributor/installation.md",
               "definitions": [
-                "processDies",
-                "recoverProcess",
-                "alwaysUncommittedRetainsActive"
+                "begin",
+                "verify",
+                "recordUnchanged",
+                "retain",
+                "commit",
+                "confirm",
+                "recordFailure",
+                "cleanup",
+                "finish"
               ]
             }
           ]
         },
         "cleanupFailureAfterCommitTest": {
-          "status": "partial-model",
-          "reason": "Failure leaves committed target, but successful readback followed by cleanup failure remains conflated.",
+          "status": "modeled-projection",
+          "reason": "The focused evidence exercises the corresponding version, unchanged-byte, failure, readback or owned-cleanup behavior.",
           "successors": [
             {
               "path": "spec/contributor/installation.md",
               "definitions": [
+                "begin",
+                "verify",
+                "recordUnchanged",
+                "retain",
                 "commit",
-                "recordFailure"
+                "confirm",
+                "recordFailure",
+                "cleanup",
+                "finish"
               ]
             }
           ]
         },
         "cleanupFailureThenSameVersionRetryTest": {
-          "status": "partial-model",
-          "reason": "Retry allowed after failure. Same pair reuse/no-change does not have its own effect path.",
+          "status": "modeled-projection",
+          "reason": "The focused evidence exercises the corresponding version, unchanged-byte, failure, readback or owned-cleanup behavior.",
           "successors": [
             {
               "path": "spec/contributor/installation.md",
               "definitions": [
-                "canBegin",
-                "verify"
+                "begin",
+                "verify",
+                "recordUnchanged",
+                "retain",
+                "commit",
+                "confirm",
+                "recordFailure",
+                "cleanup",
+                "finish"
               ]
             }
           ]
         },
         "readbackFailureLeavesCommittedTargetTest": {
           "status": "modeled-projection",
-          "reason": "Readback failure cannot roll back an already activated pair.",
+          "reason": "The focused evidence exercises the corresponding version, unchanged-byte, failure, readback or owned-cleanup behavior.",
           "successors": [
             {
               "path": "spec/contributor/installation.md",
               "definitions": [
+                "begin",
+                "verify",
+                "recordUnchanged",
+                "retain",
                 "commit",
-                "recordFailure"
+                "confirm",
+                "recordFailure",
+                "cleanup",
+                "finish"
               ]
             }
           ]
         },
         "readbackFailureThenVerifiedRetryTest": {
-          "status": "partial-model",
-          "reason": "Re-verification allowed but retained reuse and a retry readback without re-publication are absent.",
+          "status": "modeled-projection",
+          "reason": "The focused evidence exercises the corresponding version, unchanged-byte, failure, readback or owned-cleanup behavior.",
           "successors": [
             {
               "path": "spec/contributor/installation.md",
               "definitions": [
-                "canBegin",
+                "begin",
                 "verify",
-                "confirm"
+                "recordUnchanged",
+                "retain",
+                "commit",
+                "confirm",
+                "recordFailure",
+                "cleanup",
+                "finish"
               ]
             }
           ]
         },
         "rollbackReadbackFailureKeepsRollbackCommitTest": {
           "status": "modeled-projection",
-          "reason": "A committed older retained target stays active on later failure.",
+          "reason": "The focused evidence exercises the corresponding version, unchanged-byte, failure, readback or owned-cleanup behavior.",
           "successors": [
             {
               "path": "spec/contributor/installation.md",
               "definitions": [
+                "begin",
+                "verify",
+                "recordUnchanged",
+                "retain",
                 "commit",
-                "recordFailure"
+                "confirm",
+                "recordFailure",
+                "cleanup",
+                "finish"
               ]
             }
           ]
         },
         "failedTemporaryLinkCleanupRetainsOnlyOwnedArtifactsTest": {
-          "status": "missing-transition",
-          "reason": "No owned artifact collection or selective cleanup.",
-          "successors": []
-        },
-        "retryReusesRetainedVersionTest": {
-          "status": "partial-model",
-          "reason": "Retains pair history but appends the same pair rather than modeling physical reuse.",
+          "status": "modeled-projection",
+          "reason": "The focused evidence exercises the corresponding version, unchanged-byte, failure, readback or owned-cleanup behavior.",
           "successors": [
             {
               "path": "spec/contributor/installation.md",
               "definitions": [
+                "begin",
                 "verify",
-                "retainedPair"
+                "recordUnchanged",
+                "retain",
+                "commit",
+                "confirm",
+                "recordFailure",
+                "cleanup",
+                "finish"
+              ]
+            }
+          ]
+        },
+        "retryReusesRetainedVersionTest": {
+          "status": "modeled-projection",
+          "reason": "The focused evidence exercises the corresponding version, unchanged-byte, failure, readback or owned-cleanup behavior.",
+          "successors": [
+            {
+              "path": "spec/contributor/installation.md",
+              "definitions": [
+                "begin",
+                "verify",
+                "recordUnchanged",
+                "retain",
+                "commit",
+                "confirm",
+                "recordFailure",
+                "cleanup",
+                "finish"
               ]
             }
           ]
         },
         "unchangedBytesKeepOriginalIdentityTest": {
-          "status": "missing-transition",
-          "reason": "No exact rendered-byte equality/no-change branch.",
-          "successors": []
-        },
-        "refusalBeforeStagingCreatesNoTemporaryArtifactsTest": {
-          "status": "partial-model",
-          "reason": "Pre-begin permission is gated, but there are no modeled roots/artifacts to assert untouched.",
+          "status": "modeled-projection",
+          "reason": "The focused evidence exercises the corresponding version, unchanged-byte, failure, readback or owned-cleanup behavior.",
           "successors": [
             {
               "path": "spec/contributor/installation.md",
               "definitions": [
-                "canBegin"
+                "begin",
+                "verify",
+                "recordUnchanged",
+                "retain",
+                "commit",
+                "confirm",
+                "recordFailure",
+                "cleanup",
+                "finish"
+              ]
+            }
+          ]
+        },
+        "refusalBeforeStagingCreatesNoTemporaryArtifactsTest": {
+          "status": "modeled-projection",
+          "reason": "The focused evidence exercises the corresponding version, unchanged-byte, failure, readback or owned-cleanup behavior.",
+          "successors": [
+            {
+              "path": "spec/contributor/installation.md",
+              "definitions": [
+                "begin",
+                "verify",
+                "recordUnchanged",
+                "retain",
+                "commit",
+                "confirm",
+                "recordFailure",
+                "cleanup",
+                "finish"
               ]
             }
           ]
         },
         "cleanupFailurePreservesEarlierErrorTest": {
-          "status": "missing-transition",
-          "reason": "Missing primary error and later cleanup diagnostic distinction.",
-          "successors": []
+          "status": "modeled-projection",
+          "reason": "The focused evidence exercises the corresponding version, unchanged-byte, failure, readback or owned-cleanup behavior.",
+          "successors": [
+            {
+              "path": "spec/contributor/installation.md",
+              "definitions": [
+                "begin",
+                "verify",
+                "recordUnchanged",
+                "retain",
+                "commit",
+                "confirm",
+                "recordFailure",
+                "cleanup",
+                "finish"
+              ]
+            }
+          ]
         },
         "readbackAndCleanupFailureKeepsPrimaryTest": {
-          "status": "missing-transition",
-          "reason": "Missing readback failure priority over cleanup error.",
-          "successors": []
+          "status": "modeled-projection",
+          "reason": "The focused evidence exercises the corresponding version, unchanged-byte, failure, readback or owned-cleanup behavior.",
+          "successors": [
+            {
+              "path": "spec/contributor/installation.md",
+              "definitions": [
+                "begin",
+                "verify",
+                "recordUnchanged",
+                "retain",
+                "commit",
+                "confirm",
+                "recordFailure",
+                "cleanup",
+                "finish"
+              ]
+            }
+          ]
         },
         "noChangeCleanupFailureDoesNotClaimNewActivationTest": {
-          "status": "missing-transition",
-          "reason": "Missing byte-identity no-change, readback and cleanup outcomes.",
-          "successors": []
+          "status": "modeled-projection",
+          "reason": "The focused evidence exercises the corresponding version, unchanged-byte, failure, readback or owned-cleanup behavior.",
+          "successors": [
+            {
+              "path": "spec/contributor/installation.md",
+              "definitions": [
+                "begin",
+                "verify",
+                "recordUnchanged",
+                "retain",
+                "commit",
+                "confirm",
+                "recordFailure",
+                "cleanup",
+                "finish"
+              ]
+            }
+          ]
         }
       }
     },

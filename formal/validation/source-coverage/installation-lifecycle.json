@@ -1,0 +1,986 @@
+{
+  "sourceMain": "6b3b9d0b979f0608d87941f1146056a98513ffcf",
+  "source": "spec/contributor/installation.md",
+  "sourceHash": "df513238dfda0c0092810c4b0efc34702ecdaed46b7c462377c6f5c9f5b1edb9",
+  "proofSourceSha256": "134b239bb98201cc2a8a064a5157084004dc0e042e57eb99ca74ad3b0fa27d3d",
+  "proof": {
+    "generatedDafnySha256": "12aadcf96ab710731e34af2dfa84eb9452c0c25e0feab07f0bd0cf40d6816d76",
+    "total": 152,
+    "unproved": [],
+    "exhausted": [],
+    "resting": {},
+    "errors": []
+  },
+  "simulation": {
+    "command": "seed 173545134277817; to simulate again: pnpm exec quint run gen/contributor__installation.run.qnt --main contributor__installation_run --step step --invariant inv --max-samples 450 --max-steps 38 --mbt --seed 173545134277817",
+    "replayed": 29
+  },
+  "witnesses": {
+    "sometimesInstalled": {
+      "command": "seed 173545134277817; to simulate again: pnpm exec quint run gen/contributor__installation.run.qnt --main contributor__installation_run --step step --invariant inv --max-samples 450 --max-steps 38 --mbt --seed 173545134277817",
+      "events": [
+        {
+          "type": "begin",
+          "template": 2,
+          "revision": 2,
+          "rollback": false,
+          "permitted": true
+        },
+        {
+          "type": "download",
+          "immutableUrl": true,
+          "completeTree": true
+        },
+        {
+          "type": "verify",
+          "canonicalTree": true,
+          "approvedDigest": true,
+          "sameRenderedBytes": true,
+          "permitted": true,
+          "sameBytes": false
+        },
+        {
+          "type": "retain"
+        },
+        {
+          "type": "processDies"
+        },
+        {
+          "type": "recoverProcess"
+        },
+        {
+          "type": "begin",
+          "template": 1,
+          "revision": 2,
+          "rollback": false,
+          "permitted": true
+        },
+        {
+          "type": "download",
+          "immutableUrl": true,
+          "completeTree": true
+        },
+        {
+          "type": "verify",
+          "canonicalTree": true,
+          "approvedDigest": true,
+          "sameRenderedBytes": true,
+          "permitted": true,
+          "sameBytes": false
+        },
+        {
+          "type": "retain"
+        },
+        {
+          "type": "processDies"
+        },
+        {
+          "type": "recoverProcess"
+        },
+        {
+          "type": "begin",
+          "template": 2,
+          "revision": 1,
+          "rollback": false,
+          "permitted": true
+        },
+        {
+          "type": "recordFailure",
+          "temporaryLinkRemoved": true
+        },
+        {
+          "type": "finish",
+          "succeeds": true
+        },
+        {
+          "type": "begin",
+          "template": 2,
+          "revision": 2,
+          "rollback": false,
+          "permitted": true
+        },
+        {
+          "type": "download",
+          "immutableUrl": true,
+          "completeTree": true
+        },
+        {
+          "type": "verify",
+          "canonicalTree": true,
+          "approvedDigest": true,
+          "sameRenderedBytes": true,
+          "permitted": true,
+          "sameBytes": false
+        },
+        {
+          "type": "retain"
+        },
+        {
+          "type": "prepareLink"
+        },
+        {
+          "type": "commit",
+          "relativeLink": true,
+          "atomicRename": true
+        },
+        {
+          "type": "confirm",
+          "exactReadback": true
+        },
+        {
+          "type": "authorizeLocal",
+          "completeLocalTree": true,
+          "provenanceMatches": true,
+          "schemaValid": true
+        },
+        {
+          "type": "emitActivation"
+        },
+        {
+          "type": "authorizeLocal",
+          "completeLocalTree": true,
+          "provenanceMatches": true,
+          "schemaValid": true
+        },
+        {
+          "type": "cleanup",
+          "succeeds": true
+        },
+        {
+          "type": "finish",
+          "succeeds": true
+        },
+        {
+          "type": "begin",
+          "template": 1,
+          "revision": 2,
+          "rollback": false,
+          "permitted": true
+        },
+        {
+          "type": "download",
+          "immutableUrl": true,
+          "completeTree": true
+        },
+        {
+          "type": "verify",
+          "canonicalTree": true,
+          "approvedDigest": true,
+          "sameRenderedBytes": true,
+          "permitted": true,
+          "sameBytes": false
+        },
+        {
+          "type": "retain"
+        },
+        {
+          "type": "authorizeLocal",
+          "completeLocalTree": true,
+          "provenanceMatches": true,
+          "schemaValid": true
+        },
+        {
+          "type": "authorizeLocal",
+          "completeLocalTree": true,
+          "provenanceMatches": true,
+          "schemaValid": true
+        },
+        {
+          "type": "recordFailure",
+          "temporaryLinkRemoved": false
+        },
+        {
+          "type": "authorizeLocal",
+          "completeLocalTree": true,
+          "provenanceMatches": true,
+          "schemaValid": true
+        },
+        {
+          "type": "cleanup",
+          "succeeds": false
+        },
+        {
+          "type": "authorizeLocal",
+          "completeLocalTree": true,
+          "provenanceMatches": true,
+          "schemaValid": true
+        },
+        {
+          "type": "finish",
+          "succeeds": true
+        }
+      ]
+    },
+    "sometimesLocalAuthorized": {
+      "command": "seed 173545134277817; to simulate again: pnpm exec quint run gen/contributor__installation.run.qnt --main contributor__installation_run --step step --invariant inv --max-samples 450 --max-steps 38 --mbt --seed 173545134277817",
+      "events": [
+        {
+          "type": "begin",
+          "template": 2,
+          "revision": 1,
+          "rollback": false,
+          "permitted": true
+        },
+        {
+          "type": "download",
+          "immutableUrl": true,
+          "completeTree": true
+        },
+        {
+          "type": "verify",
+          "canonicalTree": true,
+          "approvedDigest": true,
+          "sameRenderedBytes": true,
+          "permitted": true,
+          "sameBytes": false
+        },
+        {
+          "type": "retain"
+        },
+        {
+          "type": "recordFailure",
+          "temporaryLinkRemoved": false
+        },
+        {
+          "type": "processDies"
+        },
+        {
+          "type": "recoverProcess"
+        },
+        {
+          "type": "begin",
+          "template": 1,
+          "revision": 1,
+          "rollback": false,
+          "permitted": true
+        },
+        {
+          "type": "download",
+          "immutableUrl": true,
+          "completeTree": true
+        },
+        {
+          "type": "verify",
+          "canonicalTree": true,
+          "approvedDigest": true,
+          "sameRenderedBytes": true,
+          "permitted": true,
+          "sameBytes": false
+        },
+        {
+          "type": "processDies"
+        },
+        {
+          "type": "recoverProcess"
+        },
+        {
+          "type": "begin",
+          "template": 2,
+          "revision": 2,
+          "rollback": false,
+          "permitted": true
+        },
+        {
+          "type": "recordFailure",
+          "temporaryLinkRemoved": false
+        },
+        {
+          "type": "processDies"
+        },
+        {
+          "type": "recoverProcess"
+        },
+        {
+          "type": "begin",
+          "template": 2,
+          "revision": 2,
+          "rollback": false,
+          "permitted": true
+        },
+        {
+          "type": "download",
+          "immutableUrl": true,
+          "completeTree": true
+        },
+        {
+          "type": "verify",
+          "canonicalTree": true,
+          "approvedDigest": true,
+          "sameRenderedBytes": true,
+          "permitted": true,
+          "sameBytes": false
+        },
+        {
+          "type": "retain"
+        },
+        {
+          "type": "prepareLink"
+        },
+        {
+          "type": "commit",
+          "relativeLink": true,
+          "atomicRename": true
+        },
+        {
+          "type": "confirm",
+          "exactReadback": true
+        },
+        {
+          "type": "emitActivation"
+        },
+        {
+          "type": "cleanup",
+          "succeeds": true
+        },
+        {
+          "type": "finish",
+          "succeeds": false
+        },
+        {
+          "type": "begin",
+          "template": 2,
+          "revision": 1,
+          "rollback": true,
+          "permitted": true
+        },
+        {
+          "type": "download",
+          "immutableUrl": true,
+          "completeTree": true
+        },
+        {
+          "type": "verify",
+          "canonicalTree": true,
+          "approvedDigest": true,
+          "sameRenderedBytes": true,
+          "permitted": true,
+          "sameBytes": false
+        },
+        {
+          "type": "retain"
+        },
+        {
+          "type": "processDies"
+        },
+        {
+          "type": "authorizeLocal",
+          "completeLocalTree": true,
+          "provenanceMatches": true,
+          "schemaValid": true
+        },
+        {
+          "type": "authorizeLocal",
+          "completeLocalTree": true,
+          "provenanceMatches": true,
+          "schemaValid": true
+        },
+        {
+          "type": "authorizeLocal",
+          "completeLocalTree": true,
+          "provenanceMatches": true,
+          "schemaValid": true
+        },
+        {
+          "type": "recoverProcess"
+        },
+        {
+          "type": "begin",
+          "template": 2,
+          "revision": 1,
+          "rollback": true,
+          "permitted": true
+        },
+        {
+          "type": "processDies"
+        },
+        {
+          "type": "recoverProcess"
+        }
+      ]
+    },
+    "sometimesRecovered": {
+      "command": "seed 173545134277817; to simulate again: pnpm exec quint run gen/contributor__installation.run.qnt --main contributor__installation_run --step step --invariant inv --max-samples 450 --max-steps 38 --mbt --seed 173545134277817",
+      "events": [
+        {
+          "type": "begin",
+          "template": 2,
+          "revision": 1,
+          "rollback": false,
+          "permitted": true
+        },
+        {
+          "type": "download",
+          "immutableUrl": true,
+          "completeTree": true
+        },
+        {
+          "type": "verify",
+          "canonicalTree": true,
+          "approvedDigest": true,
+          "sameRenderedBytes": true,
+          "permitted": true,
+          "sameBytes": false
+        },
+        {
+          "type": "retain"
+        },
+        {
+          "type": "recordFailure",
+          "temporaryLinkRemoved": false
+        },
+        {
+          "type": "processDies"
+        },
+        {
+          "type": "recoverProcess"
+        },
+        {
+          "type": "begin",
+          "template": 1,
+          "revision": 1,
+          "rollback": false,
+          "permitted": true
+        },
+        {
+          "type": "download",
+          "immutableUrl": true,
+          "completeTree": true
+        },
+        {
+          "type": "verify",
+          "canonicalTree": true,
+          "approvedDigest": true,
+          "sameRenderedBytes": true,
+          "permitted": true,
+          "sameBytes": false
+        },
+        {
+          "type": "processDies"
+        },
+        {
+          "type": "recoverProcess"
+        },
+        {
+          "type": "begin",
+          "template": 2,
+          "revision": 2,
+          "rollback": false,
+          "permitted": true
+        },
+        {
+          "type": "recordFailure",
+          "temporaryLinkRemoved": false
+        },
+        {
+          "type": "processDies"
+        },
+        {
+          "type": "recoverProcess"
+        },
+        {
+          "type": "begin",
+          "template": 2,
+          "revision": 2,
+          "rollback": false,
+          "permitted": true
+        },
+        {
+          "type": "download",
+          "immutableUrl": true,
+          "completeTree": true
+        },
+        {
+          "type": "verify",
+          "canonicalTree": true,
+          "approvedDigest": true,
+          "sameRenderedBytes": true,
+          "permitted": true,
+          "sameBytes": false
+        },
+        {
+          "type": "retain"
+        },
+        {
+          "type": "prepareLink"
+        },
+        {
+          "type": "commit",
+          "relativeLink": true,
+          "atomicRename": true
+        },
+        {
+          "type": "confirm",
+          "exactReadback": true
+        },
+        {
+          "type": "emitActivation"
+        },
+        {
+          "type": "cleanup",
+          "succeeds": true
+        },
+        {
+          "type": "finish",
+          "succeeds": false
+        },
+        {
+          "type": "begin",
+          "template": 2,
+          "revision": 1,
+          "rollback": true,
+          "permitted": true
+        },
+        {
+          "type": "download",
+          "immutableUrl": true,
+          "completeTree": true
+        },
+        {
+          "type": "verify",
+          "canonicalTree": true,
+          "approvedDigest": true,
+          "sameRenderedBytes": true,
+          "permitted": true,
+          "sameBytes": false
+        },
+        {
+          "type": "retain"
+        },
+        {
+          "type": "processDies"
+        },
+        {
+          "type": "authorizeLocal",
+          "completeLocalTree": true,
+          "provenanceMatches": true,
+          "schemaValid": true
+        },
+        {
+          "type": "authorizeLocal",
+          "completeLocalTree": true,
+          "provenanceMatches": true,
+          "schemaValid": true
+        },
+        {
+          "type": "authorizeLocal",
+          "completeLocalTree": true,
+          "provenanceMatches": true,
+          "schemaValid": true
+        },
+        {
+          "type": "recoverProcess"
+        },
+        {
+          "type": "begin",
+          "template": 2,
+          "revision": 1,
+          "rollback": true,
+          "permitted": true
+        },
+        {
+          "type": "processDies"
+        },
+        {
+          "type": "recoverProcess"
+        }
+      ]
+    },
+    "sometimesUnchanged": {
+      "command": "seed 173545134277817; to simulate again: pnpm exec quint run gen/contributor__installation.run.qnt --main contributor__installation_run --step step --invariant inv --max-samples 450 --max-steps 38 --mbt --seed 173545134277817",
+      "events": [
+        {
+          "type": "begin",
+          "template": 1,
+          "revision": 2,
+          "rollback": false,
+          "permitted": true
+        },
+        {
+          "type": "download",
+          "immutableUrl": true,
+          "completeTree": true
+        },
+        {
+          "type": "verify",
+          "canonicalTree": true,
+          "approvedDigest": true,
+          "sameRenderedBytes": true,
+          "permitted": true,
+          "sameBytes": false
+        },
+        {
+          "type": "retain"
+        },
+        {
+          "type": "prepareLink"
+        },
+        {
+          "type": "commit",
+          "relativeLink": true,
+          "atomicRename": true
+        },
+        {
+          "type": "confirm",
+          "exactReadback": true
+        },
+        {
+          "type": "authorizeLocal",
+          "completeLocalTree": true,
+          "provenanceMatches": true,
+          "schemaValid": true
+        },
+        {
+          "type": "processDies"
+        },
+        {
+          "type": "recoverProcess"
+        },
+        {
+          "type": "begin",
+          "template": 2,
+          "revision": 2,
+          "rollback": false,
+          "permitted": true
+        },
+        {
+          "type": "download",
+          "immutableUrl": true,
+          "completeTree": true
+        },
+        {
+          "type": "processDies"
+        },
+        {
+          "type": "authorizeLocal",
+          "completeLocalTree": true,
+          "provenanceMatches": true,
+          "schemaValid": true
+        },
+        {
+          "type": "authorizeLocal",
+          "completeLocalTree": true,
+          "provenanceMatches": true,
+          "schemaValid": true
+        },
+        {
+          "type": "recoverProcess"
+        },
+        {
+          "type": "begin",
+          "template": 2,
+          "revision": 2,
+          "rollback": false,
+          "permitted": true
+        },
+        {
+          "type": "download",
+          "immutableUrl": true,
+          "completeTree": true
+        },
+        {
+          "type": "verify",
+          "canonicalTree": true,
+          "approvedDigest": true,
+          "sameRenderedBytes": true,
+          "permitted": true,
+          "sameBytes": false
+        },
+        {
+          "type": "retain"
+        },
+        {
+          "type": "recordFailure",
+          "temporaryLinkRemoved": true
+        },
+        {
+          "type": "processDies"
+        },
+        {
+          "type": "recoverProcess"
+        },
+        {
+          "type": "begin",
+          "template": 2,
+          "revision": 2,
+          "rollback": true,
+          "permitted": true
+        },
+        {
+          "type": "authorizeLocal",
+          "completeLocalTree": true,
+          "provenanceMatches": true,
+          "schemaValid": true
+        },
+        {
+          "type": "download",
+          "immutableUrl": true,
+          "completeTree": true
+        },
+        {
+          "type": "processDies"
+        },
+        {
+          "type": "recoverProcess"
+        },
+        {
+          "type": "begin",
+          "template": 1,
+          "revision": 2,
+          "rollback": false,
+          "permitted": true
+        },
+        {
+          "type": "download",
+          "immutableUrl": true,
+          "completeTree": true
+        },
+        {
+          "type": "verify",
+          "canonicalTree": true,
+          "approvedDigest": true,
+          "sameRenderedBytes": true,
+          "permitted": true,
+          "sameBytes": true
+        },
+        {
+          "type": "recordUnchanged"
+        },
+        {
+          "type": "cleanup",
+          "succeeds": true
+        },
+        {
+          "type": "finish",
+          "succeeds": true
+        },
+        {
+          "type": "begin",
+          "template": 2,
+          "revision": 2,
+          "rollback": true,
+          "permitted": true
+        },
+        {
+          "type": "recordFailure",
+          "temporaryLinkRemoved": false
+        },
+        {
+          "type": "finish",
+          "succeeds": true
+        },
+        {
+          "type": "begin",
+          "template": 2,
+          "revision": 2,
+          "rollback": true,
+          "permitted": true
+        }
+      ]
+    },
+    "sometimesCommittedAndUnverified": {
+      "command": "seed 173545134277817; to simulate again: pnpm exec quint run gen/contributor__installation.run.qnt --main contributor__installation_run --step step --invariant inv --max-samples 450 --max-steps 38 --mbt --seed 173545134277817",
+      "events": [
+        {
+          "type": "begin",
+          "template": 2,
+          "revision": 1,
+          "rollback": false,
+          "permitted": true
+        },
+        {
+          "type": "download",
+          "immutableUrl": true,
+          "completeTree": true
+        },
+        {
+          "type": "verify",
+          "canonicalTree": true,
+          "approvedDigest": true,
+          "sameRenderedBytes": true,
+          "permitted": true,
+          "sameBytes": false
+        },
+        {
+          "type": "retain"
+        },
+        {
+          "type": "processDies"
+        },
+        {
+          "type": "recoverProcess"
+        },
+        {
+          "type": "begin",
+          "template": 2,
+          "revision": 1,
+          "rollback": false,
+          "permitted": true
+        },
+        {
+          "type": "download",
+          "immutableUrl": true,
+          "completeTree": true
+        },
+        {
+          "type": "verify",
+          "canonicalTree": true,
+          "approvedDigest": true,
+          "sameRenderedBytes": true,
+          "permitted": true,
+          "sameBytes": false
+        },
+        {
+          "type": "retain"
+        },
+        {
+          "type": "prepareLink"
+        },
+        {
+          "type": "commit",
+          "relativeLink": true,
+          "atomicRename": true
+        },
+        {
+          "type": "processDies"
+        },
+        {
+          "type": "authorizeLocal",
+          "completeLocalTree": true,
+          "provenanceMatches": true,
+          "schemaValid": true
+        },
+        {
+          "type": "authorizeLocal",
+          "completeLocalTree": true,
+          "provenanceMatches": true,
+          "schemaValid": true
+        },
+        {
+          "type": "recoverProcess"
+        },
+        {
+          "type": "begin",
+          "template": 1,
+          "revision": 1,
+          "rollback": false,
+          "permitted": true
+        },
+        {
+          "type": "authorizeLocal",
+          "completeLocalTree": true,
+          "provenanceMatches": true,
+          "schemaValid": true
+        },
+        {
+          "type": "recordFailure",
+          "temporaryLinkRemoved": true
+        },
+        {
+          "type": "finish",
+          "succeeds": false
+        },
+        {
+          "type": "authorizeLocal",
+          "completeLocalTree": true,
+          "provenanceMatches": true,
+          "schemaValid": true
+        },
+        {
+          "type": "begin",
+          "template": 2,
+          "revision": 2,
+          "rollback": false,
+          "permitted": true
+        },
+        {
+          "type": "download",
+          "immutableUrl": true,
+          "completeTree": true
+        },
+        {
+          "type": "verify",
+          "canonicalTree": true,
+          "approvedDigest": true,
+          "sameRenderedBytes": true,
+          "permitted": true,
+          "sameBytes": false
+        },
+        {
+          "type": "retain"
+        },
+        {
+          "type": "prepareLink"
+        },
+        {
+          "type": "commit",
+          "relativeLink": true,
+          "atomicRename": true
+        },
+        {
+          "type": "confirm",
+          "exactReadback": true
+        },
+        {
+          "type": "emitActivation"
+        },
+        {
+          "type": "processDies"
+        },
+        {
+          "type": "recoverProcess"
+        },
+        {
+          "type": "begin",
+          "template": 2,
+          "revision": 2,
+          "rollback": true,
+          "permitted": true
+        },
+        {
+          "type": "authorizeLocal",
+          "completeLocalTree": true,
+          "provenanceMatches": true,
+          "schemaValid": true
+        },
+        {
+          "type": "processDies"
+        },
+        {
+          "type": "recoverProcess"
+        },
+        {
+          "type": "begin",
+          "template": 2,
+          "revision": 1,
+          "rollback": true,
+          "permitted": true
+        },
+        {
+          "type": "download",
+          "immutableUrl": true,
+          "completeTree": true
+        },
+        {
+          "type": "verify",
+          "canonicalTree": true,
+          "approvedDigest": true,
+          "sameRenderedBytes": true,
+          "permitted": true,
+          "sameBytes": false
+        }
+      ]
+    }
+  },
+  "directed": [
+    "old template with newer verified registry revision",
+    "current revision equal bytes retains original link",
+    "explicit rollback with captured verified target",
+    "interruption keeps committed version",
+    "precommit link and staging cleanup preserve first failure and owner paths",
+    "verified readback and cleanup failure retain committed target",
+    "postcommit readback failure leaves recovery path",
+    "retry reuses verified retained version",
+    "refusal creates no staging artifacts",
+    "no-change failure never emits activation"
+  ]
+}
