@@ -688,7 +688,54 @@
         "sometimesGraceExpired"
       ],
       "unreached": []
+    },
+    {
+      "unit": "operations__localValidator",
+      "series": [
+        {
+          "kind": "step",
+          "command": "seed 226659898924283; to simulate again: pnpm exec quint run gen/operations__localValidator.run.qnt --main operations__localValidator_run --step step --invariant inv --max-samples 1000 --max-steps 30 --mbt --seed 226659898924283",
+          "samples": 1000,
+          "replayed": 200
+        },
+        {
+          "kind": "probe",
+          "command": "seed 242986908699783; to simulate again: pnpm exec quint run gen/operations__localValidator.run.qnt --main operations__localValidator_run --step probe --invariant inv --max-samples 1000 --max-steps 20 --mbt --seed 242986908699783",
+          "samples": 1000,
+          "replayed": 200
+        },
+        {
+          "kind": "reachability",
+          "goal": "sometimesBothShellStagesComplete",
+          "command": "seed 273983485323807; to simulate again: pnpm exec quint run gen/operations__localValidator.run.qnt --main operations__localValidator_run --step step --invariant never_sometimesBothShellStagesComplete --max-samples 5000 --max-steps 50 --mbt --seed 273983485323807",
+          "reached": true,
+          "replayed": 1
+        }
+      ],
+      "events": [
+        "cancelStart",
+        "finishStage",
+        "recognizeReady",
+        "recordFunding",
+        "recordLedgerCleanup",
+        "recordStop",
+        "recordTests",
+        "startStage"
+      ],
+      "goals": [
+        "sometimesAcceptanceComplete",
+        "sometimesBothShellStagesComplete",
+        "sometimesRetainedFailure"
+      ],
+      "unreached": []
     }
   ],
-  "proofs": []
+  "proofs": [],
+  "quintWitness": {
+    "command": "pnpm exec quint test formal/validation/journeys/local-validator-witness.qnt --seed 0 --max-samples 1 --match '^(independentShellStagesTest|localDeadlineAndOwnedEscalationTest|primaryFailuresAndLedgerRemovalTest)$'",
+    "passed": 3,
+    "path": "local-validator-witness.qnt",
+    "sha256": "aad53fd1d9912dfe4ccc75240cc4267a1e9e15dd469637f361b879d1830880f4",
+    "log": "local-validator-witness.log"
+  }
 }
