@@ -311,6 +311,14 @@ page view traffic to the site's own origin.
   before each provider call. It replayed 18 generated traces and passed 18
   directed groups for retained responses and publication fences.
   [Inference results](validation/source-coverage/slopbot-value-inference.json) · [Source crosswalk](validation/source-coverage/slopbot-value-inference-crosswalk.json)
+- Slopbot webhook delivery discharged all 50 obligations. Separate retained
+  value and reopen records fence changed payloads even when an ordinary
+  delivery receipt may be released after a lost acknowledgement.
+  [Webhook proof and replays](validation/source-coverage/slopbot-webhook-delivery.json)
+- Private report screening discharged all 39 obligations and reached all
+  five named outcomes. Directed checks covered claim takeover, exact duplicate
+  evidence, stale completion, version replacement and private routing.
+  [Screening proof and replays](validation/source-coverage/private-report-screening.json)
 - The direct standard private-award journal discharged all 101 obligations.
   Five native Quint witnesses distinguish retained EVM legs from the atomic
   Solana transfer and exercise receipt replay and recovery.
