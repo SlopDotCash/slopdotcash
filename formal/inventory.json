@@ -3485,14 +3485,14 @@
     },
     {
       "path": "scripts/collect-implementation-corrections.ts",
-      "sha256": "4caca8aa45d5536a120d121a5e8d7d74f85370b8f5473b476b6d011e86ecfbd2",
+      "sha256": "640aa615b18fe3516f8cc0f07f22e37af1e9236109a7b64f6ad9677cd49e2356",
       "models": [
         "formal/models/points/historical_implementation_allocation.qnt"
       ],
       "candidateLines": [
         4, 11, 13, 77, 157, 234, 240, 243, 248, 258, 274, 280, 296, 297, 307,
-        310, 393, 439, 460, 485, 522, 529, 636, 647, 812, 1093, 1611, 1670,
-        1706, 1731, 1759, 1761
+        310, 393, 439, 460, 485, 522, 529, 636, 647, 812, 1093, 1632, 1691,
+        1727, 1752, 1780, 1782
       ],
       "review": "mapped-abstraction"
     },
