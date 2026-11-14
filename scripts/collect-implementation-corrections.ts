@@ -1133,8 +1133,19 @@ async function ordinaryRetainedProof(
   );
   // References are inputs to ambiguity checks. Only actual retained bindings
   // extend the correction proof beyond the canonical accepted commit census.
+  const commits = plain.commits.map((commit, index) => {
+    const { author, files, retainedCopy } = accepted.commits[index];
+    // A null observation cannot erase an independently resolved author.
+    if (author || retainedCopy)
+      requireThat(
+        author?.id === commit.author?.id &&
+          author?.kind === commit.author?.kind,
+        "Retained accepted commit author differs from the canonical census",
+      );
+    return retainedCopy ? { ...commit, files, retainedCopy } : commit;
+  });
   const originalIds = new Set(
-    accepted.commits.flatMap((commit) =>
+    commits.flatMap((commit) =>
       commit.retainedCopy ? [commit.retainedCopy.originalSourceId] : [],
     ),
   );
@@ -1152,7 +1163,7 @@ async function ordinaryRetainedProof(
       ),
     "Retained original commit census does not reach the source head",
   );
-  return [accepted, ...boundSources];
+  return [{ ...plain, commits }, ...boundSources];
 }
 
 export interface CollectionOptions {
