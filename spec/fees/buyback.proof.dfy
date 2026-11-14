@@ -91,6 +91,9 @@ lemma order_ensures(b: Buyback, orderRequest: BridgeOrder)
     settlement__money_lawAdditionValid_ensures(b.committed, settlement__money_smallAmount(orderRequest.amount));
     settlement__half_lawHalfValid_ensures(b.income);
     settlement__money_lawPositiveAddition_ensures(b.committed, settlement__money_smallAmount(orderRequest.amount));
+    var amount := settlement__money_smallAmount(orderRequest.amount);
+    settlement__money_lawAddCommutative_ensures(b.committed, amount);
+    settlement__money_lawAddMonotone_ensures(amount, b.committed);
   }
 }
 
@@ -139,6 +142,10 @@ lemma observeRefund_ensures(b: Buyback, order: int, amount: int, beneficiary: st
     SmallAmountNonnegativeValid(b.orderAmount);
     settlement__money_lawSubtractionValid_ensures(b.committed, settlement__money_smallAmount(b.orderAmount));
     settlement__half_lawHalfValid_ensures(b.income);
+    var amount := settlement__money_smallAmount(b.orderAmount);
+    var half := settlement__half_half(b.income).quotient;
+    settlement__money_lawSubtractionAtMost_ensures(b.committed, amount);
+    settlement__money_lawNumericOrderTransitive_ensures(after.committed, b.committed, half);
   }
 }
 
@@ -162,7 +169,12 @@ lemma purchase_ensures(b: Buyback, purchaseRequest: PurchaseQuote)
     settlement__half_lawHalfValid_ensures(b.acquired);
     settlement__half_lawHalfValid_ensures(after.acquired);
     settlement__money_lawPositiveAddition_ensures(b.acquired, purchaseRequest.acquired);
+    settlement__money_lawAddMonotone_ensures(b.acquired, purchaseRequest.acquired);
+    settlement__money_lawNumericOrderTotal_ensures(b.acquired, after.acquired);
     settlement__half_lawHalfOrder_ensures(b.acquired, after.acquired);
+    var oldHalf := settlement__half_half(b.acquired).quotient;
+    var newHalf := settlement__half_half(after.acquired).quotient;
+    settlement__money_lawNumericOrderTransitive_ensures(b.burnCommitted, oldHalf, newHalf);
   }
 }
 
@@ -182,6 +194,13 @@ lemma finalizeBurn_ensures(b: Buyback, quantity: seq<int>, height: int, finalize
     settlement__money_lawSubtractionValid_ensures(b.burnCommitted, b.burned);
     settlement__money_lawAdditionValid_ensures(b.burned, quantity);
     settlement__money_lawEqualOrder_ensures(quantity, due, b.burnCommitted);
+    settlement__money_lawNumericOrderTotal_ensures(b.burnCommitted, b.burned);
+    settlement__money_lawSubtractionReconstructs_ensures(b.burnCommitted, b.burned);
+    settlement__money_lawAddCongruence_ensures(quantity, due, b.burned);
+    settlement__money_lawAddCommutative_ensures(due, b.burned);
+    settlement__money_lawEqualSubstitution_ensures(after.burned, settlement__money_addAmounts(due, b.burned), b.burnCommitted);
+    settlement__money_lawEqualOrder_ensures(after.burned, b.burnCommitted, b.burnCommitted);
+    settlement__money_lawEqualReflexive_ensures(b.burnCommitted);
   }
 }
 
@@ -249,7 +268,12 @@ lemma recordIncome_ensures(b: Buyback, receipt: int, incomeAmount: seq<int>, rec
     settlement__half_lawHalfValid_ensures(b.income);
     settlement__half_lawHalfValid_ensures(after.income);
     settlement__money_lawPositiveAddition_ensures(b.income, incomeAmount);
+    settlement__money_lawAddMonotone_ensures(b.income, incomeAmount);
+    settlement__money_lawNumericOrderTotal_ensures(b.income, after.income);
     settlement__half_lawHalfOrder_ensures(b.income, after.income);
+    var oldHalf := settlement__half_half(b.income).quotient;
+    var newHalf := settlement__half_half(after.income).quotient;
+    settlement__money_lawNumericOrderTransitive_ensures(b.committed, oldHalf, newHalf);
   }
 }
 
@@ -263,11 +287,25 @@ lemma commitBurn_ensures(b: Buyback, quantity: seq<int>, value: int, destination
   ensures (inv(b) ==> canCommitBurn(b, quantity, value, destination, tokenPaused) ==> stepIncomeMonotonic(b, commitBurn(b, quantity, value, destination, tokenPaused)))
 {
   if inv(b) && canCommitBurn(b, quantity, value, destination, tokenPaused) {
+    var after := commitBurn(b, quantity, value, destination, tokenPaused);
     settlement__money_lawAdditionValid_ensures(b.burnCommitted, quantity);
     settlement__money_lawEqualReflexive_ensures(b.income);
     settlement__money_lawEqualReflexive_ensures(b.acquired);
     settlement__half_lawHalfValid_ensures(b.acquired);
     settlement__money_lawPositiveAddition_ensures(b.burnCommitted, quantity);
+    var half := settlement__half_half(b.acquired).quotient;
+    var due := settlement__money_subtractAmounts(half, b.burnCommitted);
+    settlement__money_lawSubtractionValid_ensures(half, b.burnCommitted);
+    settlement__money_lawNumericOrderTotal_ensures(half, b.burnCommitted);
+    settlement__money_lawSubtractionReconstructs_ensures(half, b.burnCommitted);
+    settlement__money_lawAddCongruence_ensures(quantity, due, b.burnCommitted);
+    settlement__money_lawAddCommutative_ensures(due, b.burnCommitted);
+    settlement__money_lawEqualSubstitution_ensures(after.burnCommitted, settlement__money_addAmounts(due, b.burnCommitted), half);
+    settlement__money_lawEqualOrder_ensures(after.burnCommitted, half, half);
+    settlement__money_lawEqualReflexive_ensures(half);
+    settlement__money_lawAddMonotone_ensures(b.burnCommitted, quantity);
+    settlement__money_lawNumericOrderTotal_ensures(after.burnCommitted, b.burnCommitted);
+    settlement__money_lawNumericOrderTransitive_ensures(b.burned, b.burnCommitted, after.burnCommitted);
   }
 }
 
@@ -295,7 +333,13 @@ lemma receiveSlopFee_ensures(b: Buyback, receipt: int, quantity: seq<int>, recei
     settlement__money_lawEqualReflexive_ensures(after.localSlopCommitted);
     settlement__money_lawPositiveAddition_ensures(b.localSlopIncome, quantity);
     settlement__money_lawPositiveAddition_ensures(b.acquired, share);
+    settlement__money_lawAddMonotone_ensures(b.acquired, share);
+    settlement__money_lawNumericOrderTotal_ensures(b.acquired, after.acquired);
     settlement__half_lawHalfOrder_ensures(b.localSlopIncome, after.localSlopIncome);
     settlement__half_lawHalfOrder_ensures(b.acquired, after.acquired);
+    settlement__money_lawAddMonotone_ensures(b.localSlopIncome, quantity);
+    var oldHalf := settlement__half_half(b.acquired).quotient;
+    var newHalf := settlement__half_half(after.acquired).quotient;
+    settlement__money_lawNumericOrderTransitive_ensures(b.burnCommitted, oldHalf, newHalf);
   }
 }

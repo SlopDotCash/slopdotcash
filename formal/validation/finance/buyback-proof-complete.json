@@ -1,0 +1,56 @@
+{
+  "specHashes": {
+    "spec/settlement/money.md": "4a0d4ea094817e47a835d3c022fdcf4c57cabaf0de60b502ddeaa151d99785e2",
+    "spec/settlement/money.proof.dfy": "d41fdad29b4f1c0125f101feaeef21e5f99342f152fade10576983dbf11d90b3",
+    "spec/settlement/half.md": "295d7fe379d149205880a3f738a5c8628ba17fadb0f90fb791bdd943256ed521",
+    "spec/settlement/half.proof.dfy": "36ba8dc21e4ae05e143bf718b0770677eb1e9fe3d628c0f2c45c6683e387121e",
+    "spec/fees/buyback.md": "805bf185354dc70865ee85f8d8ffcb08882c18f79cfe4e0380f932c7ecb0d999",
+    "spec/fees/buyback.proof.dfy": "551a1aeebf317001c4c38d0d2ef58f9862df5a24072cde66d8eb667a7d42db78"
+  },
+  "results": [
+    {
+      "unit": "settlement__money.ts",
+      "sourceHashes": {
+        "spec/settlement/money.md": "4a0d4ea094817e47a835d3c022fdcf4c57cabaf0de60b502ddeaa151d99785e2",
+        "spec/settlement/money.proof.dfy": "d41fdad29b4f1c0125f101feaeef21e5f99342f152fade10576983dbf11d90b3"
+      },
+      "generatedDafnySha256": "57b000fc689552625365d6259aeb5a77a94650fdb6310536edce6265379ada51",
+      "total": 36,
+      "unproved": [],
+      "exhausted": [],
+      "resting": {},
+      "errors": [],
+      "reusedVerifiedResult": "/tmp/slop-active-money-value-division5"
+    },
+    {
+      "unit": "settlement__half.ts",
+      "total": 2,
+      "unproved": [],
+      "exhausted": [],
+      "errors": [],
+      "resting": {},
+      "proofDafnySha256": "b120ec592e383b0448de526f6d93728e616d881ae7b38e02f5d03406bf0ae9d5",
+      "proofSource": {
+        "file": "spec/settlement/half.proof.dfy",
+        "sha256": "36ba8dc21e4ae05e143bf718b0770677eb1e9fe3d628c0f2c45c6683e387121e"
+      },
+      "checkedImportedLemmas": 36
+    },
+    {
+      "unit": "fees__buyback.ts",
+      "total": 94,
+      "unproved": [],
+      "exhausted": [],
+      "errors": [],
+      "resting": {},
+      "proofDafnySha256": "b71cdd3f19e92998d641ccd5372f35f534bfe23d8ef4139b43e6ad2f4922e0b6",
+      "proofSource": {
+        "file": "spec/fees/buyback.proof.dfy",
+        "sha256": "551a1aeebf317001c4c38d0d2ef58f9862df5a24072cde66d8eb667a7d42db78"
+      },
+      "checkedImportedLemmas": 38
+    }
+  ],
+  "proofLog": "formal/validation/finance/buyback-proof-complete.log",
+  "proofLogSha256": "59f976d2cabe682feae76916b0554e718dc565cfc5c0ab6309d99b9d0fab642d"
+}
