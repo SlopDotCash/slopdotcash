@@ -1059,7 +1059,7 @@
           ]
         }
       ],
-      "successorSha256": "a93b78a4370702981dcf11b7e9f348b045e5bd91a057985b286da1a960d79fec",
+      "successorSha256": "c122f31d9b7c0ba7eea803c8fb74112142c54646408bc99f79ab080415b229ad",
       "boundary": "Exact chain, executor and wallet evidence are supplied by canonical owners. The source-settled scanner route must compose with the financial owner. Payment canReconcile and alwaysPaidEvidence currently require a retained attempt and current recipient. A native D1 conflicting concurrent paid-event integration test and canonical atomic adapter are outside this projected proof."
     },
     {

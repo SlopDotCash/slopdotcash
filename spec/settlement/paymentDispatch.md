@@ -176,7 +176,7 @@ identical signed-byte retry or the executor's separate expiry procedure.
 
 ```quint
 pure def canRecoverExecutor(d: Dispatch, observed: ExecutorObservation): bool =
-  d.queue != Indexed and observed.target == d.target and observed.key != "" and attempt(d, observed.key).key != ""
+  d.admitted and d.queue != Indexed and observed.target == d.target and observed.key != "" and attempt(d, observed.key).key != ""
 pure def acceptJournalSubmission(observed: ExecutorObservation, a: Attempt, d: Dispatch): Dispatch =
   val unique = d.attempts.every(other => other.key == a.key or other.tx != observed.tx)
   val matches = observed.tx != "" and unique and (a.tx == "" or a.tx == observed.tx) and active(a)
