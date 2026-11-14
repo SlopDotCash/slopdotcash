@@ -226,8 +226,9 @@ page view traffic to the site's own origin.
 - Referral names retain the original immutable account after replacement and
   at the five-name lifetime cap. The browser scopes each save to one mounted
   lifetime. All 33 obligations proved, 60 traces replayed, and five reachability
-  goals were witnessed.
-  [Referral settings and registry results](validation/source-coverage/referral-links.json)
+  goals were witnessed. The later bare referral path adds two proved laws
+  for opening Settings without a lookup and refusing unsafe methods.
+  [Referral route update](validation/source-coverage/referral-link-route.json) · [Referral settings and registry results](validation/source-coverage/referral-links.json)
 - Contributor command completion preserves the first failure through both
   cleanup boundaries. Skill authority has bounded transport retries and
   separate static, contributor and reviewer admission. All 50 obligations

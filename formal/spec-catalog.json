@@ -589,7 +589,7 @@
     },
     {
       "path": "spec/backend/referralCodes.md",
-      "sha256": "af1028c0208db33bcdb2ecbbe9b297087f44be9389e61437b2ad2073180296c2",
+      "sha256": "95f29063884c9d3ddb4c8d095c3263563a416fd36a8cf47141668469cb7dbdfe",
       "module": "backend__referralCodes",
       "stories": [
         {
@@ -655,6 +655,7 @@
             "linkRoute",
             "lawBareReferralIgnoresLookup",
             "lawUnsafeReferralCannotRedirect",
+            "isMethodDenied",
             "sValues",
             "keyValues",
             "membershipValues"

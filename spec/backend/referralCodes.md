@@ -132,3 +132,34 @@ pure def destination(s: LinkRegistry, safeMethod: bool, key: str, syntaxValid: b
         and activeKey(s, member.actor) == key) FormWithRef({ login: member.login }) else Form
   }
 ```
+
+### The referral path without a name opens Settings without a database read
+
+PRD section 11 at `78eed5564d796119d82ae541c36b0c770263dc5f` adds a route
+for `/referral` and `/referral/`. Both open same-origin `/account#referral`
+with no database lookup. Other referral paths use the named-link policy
+above, including its generic project form and unavailable outcomes. Other
+routes fall through. Only GET and HEAD can redirect.
+
+```quint
+type ReferralPath = BareReferral | NamedReferral | OutsideReferral
+type ReferralRoute = FallThrough | ReferralSettings | RedirectResult({ result: Redirect })
+pure def linkRoute(s: LinkRegistry, route: ReferralPath, safeMethod: bool, key: str, syntaxValid: bool, membership: Lookup): ReferralRoute =
+  if (route == OutsideReferral) FallThrough
+  else if (not(safeMethod)) RedirectResult({ result: MethodDenied })
+  else if (route == BareReferral) ReferralSettings
+  else RedirectResult({ result: destination(s, safeMethod, key, syntaxValid, membership) })
+pure def lawBareReferralIgnoresLookup(s: LinkRegistry, key: str, syntaxValid: bool, membership: Lookup): bool =
+  val selected = linkRoute(s, BareReferral, true, key, syntaxValid, membership)
+  match selected { | ReferralSettings => true | _ => false }
+pure def lawUnsafeReferralCannotRedirect(s: LinkRegistry, route: ReferralPath, key: str, syntaxValid: bool, membership: Lookup): bool =
+  val selected = linkRoute(s, route, false, key, syntaxValid, membership)
+  route != OutsideReferral implies match selected {
+    | RedirectResult(redirect) => isMethodDenied(redirect.result)
+    | _ => false
+  }
+pure def isMethodDenied(result: Redirect): bool = match result { | MethodDenied => true | _ => false }
+pure val sValues = Set(initial)
+pure val keyValues = Set("", "alpha")
+pure val membershipValues = Set(MemberAbsent, ReadUnavailable, MemberFound({ actor: "alice-id", login: "alice" }))
+```
