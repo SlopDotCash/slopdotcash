@@ -220,6 +220,27 @@ lemma FinalizedGasUsesHeldAllowance(p: Publication, after: Publication, cost: Ga
   assert spentGas(after) == spentGas(p) + (if cost.day == p.day then cost.actual else 0);
 }
 
+lemma RootAmountsAndPinsRetained(before: Publication, after: Publication)
+  requires alwaysRootCap(before) && alwaysRootWalletPinned(before)
+  requires after.tokenUnit == before.tokenUnit && after.pins == before.pins
+  requires |after.roots| == |before.roots|
+  requires forall i :: 0 <= i < |after.roots| ==> after.roots[i].total == before.roots[i].total && after.roots[i].entries == before.roots[i].entries
+  ensures alwaysRootCap(after) && alwaysRootWalletPinned(after)
+{
+  forall root | root in after.roots ensures
+    settlement__money_compareAmounts(root.total, settlement__money_multiplyAmounts(after.tokenUnit, settlement__money_smallAmount(2000000))) <= 0 &&
+    (forall entry :: entry in root.entries ==> settlement__referralAccrual_entryWalletPinned(after.pins, entry)) {
+    var i :| 0 <= i < |after.roots| && after.roots[i] == root;
+    var prior := before.roots[i];
+    assert prior in before.roots;
+    assert prior.total == root.total && prior.entries == root.entries;
+    assert settlement__money_compareAmounts(prior.total, settlement__money_multiplyAmounts(before.tokenUnit, settlement__money_smallAmount(2000000))) <= 0;
+    forall entry | entry in prior.entries ensures settlement__referralAccrual_entryWalletPinned(after.pins, entry) {
+      assert settlement__referralAccrual_entryWalletPinned(before.pins, entry);
+    }
+  }
+}
+
 lemma FileFromLedger(p: Publication, a: settlement__referralAccrual_Accrual)
   requires |nextFiling(p, a).entries| > 0
   ensures nextFiling(p, a) in a.filings
@@ -619,6 +640,12 @@ lemma voidRoot_ensures(p: Publication, rootId: int, receipt: int, height: int, f
   if inv(p) && canVoidRoot(p, rootId, receipt, height, finalized, by_) {
     var after := voidRoot(p, rootId, receipt, height, finalized, by_);
     SameClaims(p, after);
+    assert |after.roots| == |p.roots|;
+    forall i | 0 <= i < |after.roots| ensures after.roots[i].total == p.roots[i].total && after.roots[i].entries == p.roots[i].entries {
+      var root := p.roots[i];
+      assert after.roots[i] == (if root.id == rootId then root.(voided := true, voidAcknowledged := false) else root);
+    }
+    RootAmountsAndPinsRetained(p, after);
   }
 }
 
