@@ -212,6 +212,9 @@ Bun.serve({
               REGISTRY_DB: db,
               PAYMENT_NETWORKS: JSON.stringify([servedNetwork]),
               PAYMENT_RPC_URLS: JSON.stringify({ [servedNetwork]: rpcUrl }),
+              PAYMENT_SOLANA_GENESIS: JSON.stringify({
+                [servedNetwork]: ESCROW_NETWORKS[servedNetwork].genesisHash,
+              }),
               // This zero-award fixture exercises the real scanner, not payouts.
               EVM_PAYMENT_EXECUTOR: {
                 fetch: async () => {
