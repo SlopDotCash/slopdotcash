@@ -102,8 +102,11 @@ pure def lawDigestMismatchRefused(m: PartsManifest, read: List[ReadPart], wholeD
 ```quint
 pure val xValues = Set({ status: 200, primaryDelay: 0, retryAfter: 0 }, { status: 429, primaryDelay: 0, retryAfter: 0 },
   { status: 403, primaryDelay: 0, retryAfter: 0 }, { status: 403, primaryDelay: 5000, retryAfter: 0 },
-  { status: 429, primaryDelay: 0, retryAfter: 200000 })
-pure val atValues = Set(1000, 5000, 60000, 120000, 180000, 240000, 1000000)
+  { status: 429, primaryDelay: 0, retryAfter: 200000 }, { status: 429, primaryDelay: 0, retryAfter: 1000 })
+pure val atValues = Set(1000, 2000, 3000, 4000, 5000, 60000, 1000000)
+pure val weight_retry = 10
+pure val weight_tick = 10
+pure val weight_respond = 5
 pure val statusValues = Set(403, 429)
 pure val primaryDelayValues = Set(0, 5000)
 pure val retryAfterValues = Set(0, 1000)
