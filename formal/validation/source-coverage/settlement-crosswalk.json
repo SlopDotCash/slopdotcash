@@ -769,11 +769,11 @@
       ],
       "actions": {
         "init": {
-          "status": "missing-transition",
-          "reason": "Current vault balances lack separate registered and latest-observed snapshot records. Record absence is not zero.",
+          "status": "modeled-projection",
+          "reason": "First immutable registry revision, two independently absent observations and no requests.",
           "successors": [
             {
-              "path": "spec/settlement/vault.md",
+              "path": "spec/settlement/vaultSnapshots.md",
               "definitions": [
                 "initial"
               ]
@@ -781,162 +781,561 @@
           ]
         },
         "begin": {
-          "status": "missing-transition",
-          "reason": "Missing registration request capture of current expected revision and prior registered identity.",
-          "successors": []
-        },
-        "beginRecovery": {
-          "status": "missing-transition",
-          "reason": "Missing trusted-main ordinary Solana-only repair admission for a registered vault with no snapshot.",
-          "successors": []
-        },
-        "register": {
-          "status": "partial-model",
-          "reason": "Creation check registers a finalized matching EVM creation, with no expected immutable revision or replay path for the same tx.",
+          "status": "modeled-projection",
+          "reason": "Capture current revision and recognize existing normalized exact transaction and network in its payout purpose.",
           "successors": [
             {
-              "path": "spec/frontend/provisionalVault.md",
+              "path": "spec/settlement/vaultSnapshots.md",
               "definitions": [
-                "checkCreation"
+                "beginRegistration"
+              ]
+            }
+          ]
+        },
+        "beginRecovery": {
+          "status": "modeled-projection",
+          "reason": "Trusted ordinary Solana mainnet selection requires registration and absence of a retained observation.",
+          "successors": [
+            {
+              "path": "spec/settlement/vaultSnapshots.md",
+              "definitions": [
+                "canBeginRecovery",
+                "beginRecovery"
+              ]
+            }
+          ]
+        },
+        "register": {
+          "status": "modeled-projection",
+          "reason": "Recognize exact retained transaction first, otherwise require finalized matching creation and compare-and-append against current immutable revision.",
+          "successors": [
+            {
+              "path": "spec/settlement/vaultSnapshots.md",
+              "definitions": [
+                "beginRegistration",
+                "checkCreation",
+                "commitRegistration"
               ]
             }
           ]
         },
         "totals": {
-          "status": "missing-transition",
-          "reason": "Missing exact finalized vault totals, reviewed identity reconciliation and unavailable response after registration.",
-          "successors": []
-        },
-        "priorRead": {
-          "status": "missing-transition",
-          "reason": "Missing immutable-scoped latest prior read and older block/lower cumulative count classification.",
-          "successors": []
-        },
-        "observationFails": {
-          "status": "partial-model",
-          "reason": "Creation read unavailable is visible and preserves UI state. Failure of post-registration totals or storage lookup is not modeled.",
+          "status": "modeled-projection",
+          "reason": "Consume exact finalized vault and asset read after chain trust check where required.",
           "successors": [
             {
-              "path": "spec/frontend/provisionalVault.md",
+              "path": "spec/settlement/vaultSnapshots.md",
               "definitions": [
-                "checkCreation"
+                "pinGenesis",
+                "checkGenesis",
+                "canReadTotals",
+                "readTotals"
+              ]
+            }
+          ]
+        },
+        "priorRead": {
+          "status": "modeled-projection",
+          "reason": "Check current scoped prior row before permitting a second authoritative compare at write time.",
+          "successors": [
+            {
+              "path": "spec/settlement/vaultSnapshots.md",
+              "definitions": [
+                "readPrior"
+              ]
+            }
+          ]
+        },
+        "observationFails": {
+          "status": "modeled-projection",
+          "reason": "Post-registration RPC, prior-read or write failures preserve immutably registered deployment.",
+          "successors": [
+            {
+              "path": "spec/settlement/vaultSnapshots.md",
+              "definitions": [
+                "observationFails"
               ]
             }
           ]
         },
         "write": {
-          "status": "missing-transition",
-          "reason": "Missing monotonic conditional snapshot write with separate durable success and lost response. Free balance can decrease independently of cumulative counters.",
-          "successors": []
+          "status": "modeled-projection",
+          "reason": "Atomic latest-row guard orders block and observation time, preserves old service fee and rejects decrease of each full-width cumulative counter. Uncertain replies may leave a committed row.",
+          "successors": [
+            {
+              "path": "spec/settlement/vaultSnapshots.md",
+              "definitions": [
+                "writable",
+                "write"
+              ]
+            }
+          ]
         },
         "step": {
           "status": "generated-harness",
-          "reason": "Legacy finite dispatch and stuttering, preserved for source evidence.",
-          "successors": []
+          "reason": "Generated successor dispatch and legacy finite harness stutter.",
+          "successors": [
+            {
+              "path": "spec/settlement/vaultSnapshots.md",
+              "definitions": [
+                "initial",
+                "write"
+              ]
+            }
+          ]
         },
         "ready": {
           "status": "generated-harness",
-          "reason": "Legacy test macro combines begin/register; authority linkage remains missing.",
-          "successors": []
+          "reason": "Legacy test pairs request capture with registry admission. Successor separates creation evidence and final immutable append.",
+          "successors": [
+            {
+              "path": "spec/settlement/vaultSnapshots.md",
+              "definitions": [
+                "beginRegistration",
+                "checkCreation",
+                "commitRegistration"
+              ]
+            }
+          ]
         },
         "observed": {
           "status": "generated-harness",
-          "reason": "Legacy test macro combines totals/priorRead; future projection needs both observations.",
-          "successors": []
+          "reason": "Legacy macro pairs totals and prior read. Solana successor additionally checks configured genesis root first.",
+          "successors": [
+            {
+              "path": "spec/settlement/vaultSnapshots.md",
+              "definitions": [
+                "pinGenesis",
+                "checkGenesis",
+                "readTotals",
+                "readPrior"
+              ]
+            }
+          ]
         }
       },
       "scenarios": {
         "registrationSeedsSnapshotTest": {
-          "status": "missing-transition",
-          "reason": "Need post-registration first snapshot from exact matching finalized counters, independent of registration.",
-          "successors": []
+          "status": "modeled-projection",
+          "reason": "The first exact finalized row can be stored only after canonical registration.",
+          "successors": [
+            {
+              "path": "spec/settlement/vaultSnapshots.md",
+              "definitions": [
+                "commitRegistration",
+                "readTotals",
+                "readPrior",
+                "write"
+              ]
+            }
+          ]
         },
         "unavailableReadRetainsRegistrationTest": {
-          "status": "missing-transition",
-          "reason": "Need retained registration and explicit 503 unavailable observation without synthesizing a snapshot.",
-          "successors": []
+          "status": "modeled-projection",
+          "reason": "Unavailable read returns 503 while retaining the registered deployment.",
+          "successors": [
+            {
+              "path": "spec/settlement/vaultSnapshots.md",
+              "definitions": [
+                "commitRegistration",
+                "observationFails"
+              ]
+            }
+          ]
         },
         "identityRefusalNeverSeedsTest": {
-          "status": "missing-transition",
-          "reason": "Need exact observed vault chain/genesis/program/config/project/asset/purpose predicate before seed.",
-          "successors": []
+          "status": "modeled-projection",
+          "reason": "Wrong network, vault or Solana project PDA, asset or reviewed identity cannot progress to an observation write.",
+          "successors": [
+            {
+              "path": "spec/settlement/vaultSnapshots.md",
+              "definitions": [
+                "exactObservation",
+                "readTotals"
+              ]
+            }
+          ]
         },
         "retrySeedsWithoutAnotherRevisionTest": {
-          "status": "missing-transition",
-          "reason": "Need idempotent repeat registered tx and retry snapshot without revision append.",
-          "successors": []
+          "status": "modeled-projection",
+          "reason": "Same network and creation transaction retry may seed with no new registry revision, even with a stale expected revision.",
+          "successors": [
+            {
+              "path": "spec/settlement/vaultSnapshots.md",
+              "definitions": [
+                "beginRegistration",
+                "write"
+              ]
+            }
+          ]
         },
         "failedWriteRetainsRegistrationTest": {
-          "status": "missing-transition",
-          "reason": "Need independent rollback boundary from failed snapshot to persisted immutable registration.",
-          "successors": []
+          "status": "modeled-projection",
+          "reason": "Explicit write failure preserves registry and does not create an observation.",
+          "successors": [
+            {
+              "path": "spec/settlement/vaultSnapshots.md",
+              "definitions": [
+                "write",
+                "stepWritePreservesRegistry"
+              ]
+            }
+          ]
         },
         "lostWriteReplyDoesNotProveMissingSnapshotTest": {
-          "status": "missing-transition",
-          "reason": "Need lost response after successful durable write and positive fresh read reconciliation.",
-          "successors": []
+          "status": "modeled-projection",
+          "reason": "A successful conditional write with lost acknowledgment leaves an observable row and returns 503.",
+          "successors": [
+            {
+              "path": "spec/settlement/vaultSnapshots.md",
+              "definitions": [
+                "write"
+              ]
+            }
+          ]
         },
         "racingOlderBlockCannotReplaceNewerTest": {
-          "status": "missing-transition",
-          "reason": "Need atomic current observation compare at commit, not captured prior only.",
-          "successors": []
+          "status": "modeled-projection",
+          "reason": "Commit compares the latest row and returns older when newer finalized block wins.",
+          "successors": [
+            {
+              "path": "spec/settlement/vaultSnapshots.md",
+              "definitions": [
+                "isOlder",
+                "writable",
+                "write"
+              ]
+            }
+          ]
         },
         "racingSameBlockOlderTimeCannotReplaceTest": {
-          "status": "missing-transition",
-          "reason": "Need exact same-block timestamp order.",
-          "successors": []
+          "status": "modeled-projection",
+          "reason": "A same-block older observation instant does not replace a newer row.",
+          "successors": [
+            {
+              "path": "spec/settlement/vaultSnapshots.md",
+              "definitions": [
+                "isOlder",
+                "writable",
+                "write"
+              ]
+            }
+          ]
         },
         "racingLowerCounterRefusesTest": {
-          "status": "missing-transition",
-          "reason": "Need monotonic exact per-asset cumulative counters, separate from balances.",
-          "successors": []
+          "status": "modeled-projection",
+          "reason": "A decrease of any cumulative counter refuses across calls that shared the same earlier row.",
+          "successors": [
+            {
+              "path": "spec/settlement/vaultSnapshots.md",
+              "definitions": [
+                "countersAdvance",
+                "writable",
+                "write"
+              ]
+            }
+          ]
         },
         "privateAndOrdinaryStoresRemainSeparateTest": {
-          "status": "missing-transition",
-          "reason": "Need purpose-scoped independent registration/snapshot writers.",
-          "successors": []
+          "status": "modeled-projection",
+          "reason": "Each payout purpose owns an independently scoped registered deployment and snapshot row.",
+          "successors": [
+            {
+              "path": "spec/settlement/vaultSnapshots.md",
+              "definitions": [
+                "setDeployment",
+                "alwaysObservationScoped",
+                "write"
+              ]
+            }
+          ]
         },
         "registrationRefusalCreatesNoSnapshotTest": {
-          "status": "missing-transition",
-          "reason": "Need dependency from snapshot writer to committed registry generation.",
-          "successors": []
+          "status": "modeled-projection",
+          "reason": "A wrong transaction or unverified creation never admits a deployment.",
+          "successors": [
+            {
+              "path": "spec/settlement/vaultSnapshots.md",
+              "definitions": [
+                "checkCreation",
+                "canReadTotals",
+                "canWrite"
+              ]
+            }
+          ]
         },
         "priorReadFailureKeepsImmutableRegistrationTest": {
-          "status": "missing-transition",
-          "reason": "Need post-registration read/storage error continuation retaining registration.",
-          "successors": []
+          "status": "modeled-projection",
+          "reason": "A failure after exact totals preserves the immutable registry append.",
+          "successors": [
+            {
+              "path": "spec/settlement/vaultSnapshots.md",
+              "definitions": [
+                "observationFails",
+                "stepRegistrationIsImmutable"
+              ]
+            }
+          ]
         },
         "missingSnapshotRecoveryNeverAppendsRevisionTest": {
-          "status": "missing-transition",
-          "reason": "Need trusted registered ordinary Solana-mainnet repair with no revision write.",
-          "successors": []
+          "status": "modeled-projection",
+          "reason": "Trusted repair uses the registered row and the same observation writer with no registry mutation.",
+          "successors": [
+            {
+              "path": "spec/settlement/vaultSnapshots.md",
+              "definitions": [
+                "beginRecovery",
+                "write",
+                "stepWritePreservesRegistry"
+              ]
+            }
+          ]
         },
         "recoveryCannotSelectRetainedSnapshotTest": {
-          "status": "missing-transition",
-          "reason": "Need only-missing snapshot repair guard and no replacement of newer existing.",
-          "successors": []
+          "status": "modeled-projection",
+          "reason": "A preexisting row prevents selection. A selected repair still uses the canonical conditional guard if a normal writer wins first.",
+          "successors": [
+            {
+              "path": "spec/settlement/vaultSnapshots.md",
+              "definitions": [
+                "canBeginRecovery",
+                "writable",
+                "write"
+              ]
+            }
+          ]
         },
         "recoveryRefusesUnregisteredDeploymentTest": {
-          "status": "missing-transition",
-          "reason": "Need registered identity in recovery entrypoint.",
-          "successors": []
+          "status": "modeled-projection",
+          "reason": "Missing registration cannot authorize an observation or repair.",
+          "successors": [
+            {
+              "path": "spec/settlement/vaultSnapshots.md",
+              "definitions": [
+                "canBeginRead",
+                "canBeginRecovery"
+              ]
+            }
+          ]
         },
         "recoveryDoesNotSelectPrivateBountyTest": {
-          "status": "missing-transition",
-          "reason": "Need standalone recovery ordinary-vault scope and separate bounty service.",
-          "successors": []
+          "status": "modeled-projection",
+          "reason": "Trusted repair only selects the ordinary registry and observation scope.",
+          "successors": [
+            {
+              "path": "spec/settlement/vaultSnapshots.md",
+              "definitions": [
+                "canBeginRecovery",
+                "beginRecovery"
+              ]
+            }
+          ]
         },
         "untrustedRecoveryCannotWriteTest": {
-          "status": "missing-transition",
-          "reason": "Need trusted workflow, exact main checkout and event bound to recovery path.",
-          "successors": []
+          "status": "modeled-projection",
+          "reason": "The trusted release workflow evidence gate precedes repair selection.",
+          "successors": [
+            {
+              "path": "spec/settlement/vaultSnapshots.md",
+              "definitions": [
+                "canBeginRecovery"
+              ]
+            }
+          ]
         },
         "racingRegistrationDoesNotAppendTwiceTest": {
-          "status": "missing-transition",
-          "reason": "Need expected-revision compare and one-time canonical registration.",
-          "successors": []
+          "status": "modeled-projection",
+          "reason": "Concurrent first requests with one captured revision cannot append twice. Fresh exact replay may retry observation.",
+          "successors": [
+            {
+              "path": "spec/settlement/vaultSnapshots.md",
+              "definitions": [
+                "beginRegistration",
+                "commitRegistration"
+              ]
+            }
+          ]
         }
-      }
+      },
+      "sourceBindings": [
+        {
+          "path": "backend/projects/handler.ts",
+          "sha256": "39686b61d5d4ab0ed1e891e6486f8cfea03b98d7bb8d381855ac62c43b18ec0f",
+          "anchors": [
+            {
+              "line": 1476,
+              "anchor": "d.deploymentTransaction === transactionId"
+            },
+            {
+              "line": 1517,
+              "anchor": "const stored = await deps.persistence.getRevisionText"
+            },
+            {
+              "line": 1568,
+              "anchor": "const deployment = await deps.vaultSetup.register"
+            },
+            {
+              "line": 1585,
+              "anchor": "await deps.vaultSetup.observe(updated"
+            }
+          ]
+        },
+        {
+          "path": "backend/projects/vault-setup.ts",
+          "sha256": "8feb7d085ff0a4ecadfe37cfd749ec8776a5910b10161dac903675d2f4a30053",
+          "anchors": [
+            {
+              "line": 73,
+              "anchor": "export async function readRegisteredVaultTotals"
+            },
+            {
+              "line": 489,
+              "anchor": "async observe(project, deployment, payoutPolicy)"
+            },
+            {
+              "line": 501,
+              "anchor": "securityPaymentDatabase(deps.db)"
+            },
+            {
+              "line": 510,
+              "anchor": "\"vault_snapshot_unavailable\""
+            }
+          ]
+        },
+        {
+          "path": "backend/payments/vault-snapshots.ts",
+          "sha256": "1e8f8bbc7a3834b589e3457bc8d3da36e8b2b769ac5e0ac8039c0145a8c371cf",
+          "anchors": [
+            {
+              "line": 28,
+              "anchor": "const CUMULATIVE"
+            },
+            {
+              "line": 35,
+              "anchor": "const CURRENT"
+            },
+            {
+              "line": 117,
+              "anchor": "firstDecreasedCounter(incomingCounters"
+            },
+            {
+              "line": 130,
+              "anchor": "const monotonicCounters"
+            },
+            {
+              "line": 142,
+              "anchor": "ON CONFLICT(project_id,network,vault)"
+            },
+            {
+              "line": 159,
+              "anchor": "result.meta?.changes !== 1"
+            }
+          ]
+        },
+        {
+          "path": "workers/payments/deployments.ts",
+          "sha256": "207caeb93e20adb2880c3aea26db81f4c8f557c1beccd4dc2c91f98fb34ccce2",
+          "anchors": [
+            {
+              "line": 55,
+              "anchor": "export async function loadRegistryPaymentDeployments"
+            },
+            {
+              "line": 116,
+              "anchor": "A payment vault cannot be shared between registry programs"
+            }
+          ]
+        },
+        {
+          "path": "backend/security/payment-database.ts",
+          "sha256": "2081788fc171b889c5527796f69760f7fa7505d70598354989dac49c0c98ea9e",
+          "anchors": [
+            {
+              "line": 6,
+              "anchor": "export function securityPaymentDatabase"
+            }
+          ]
+        },
+        {
+          "path": "scripts/recover-vault-observations.ts",
+          "sha256": "727d79eba94520c48704f367c8c774752cf651be11efff21548d60589cd6bd2a",
+          "anchors": [
+            {
+              "line": 13,
+              "anchor": "requireTrustedObservationRecovery("
+            },
+            {
+              "line": 98,
+              "anchor": "loadRegistryPaymentDeployments(db, [\"solana-mainnet\"])"
+            },
+            {
+              "line": 110,
+              "anchor": "if (prior) {"
+            },
+            {
+              "line": 114,
+              "anchor": "await storeVaultSnapshot("
+            }
+          ]
+        }
+      ],
+      "development": "0d0f0817a439df03cc022bf7aeed4bbe64ef4c65",
+      "developmentBindings": [
+        {
+          "path": "backend/projects/handler.ts",
+          "sha256": "d7b50e2db234ce8a2d6c3814ccef1b534c7ee79e30bc051ecb255fde73c8bf79",
+          "anchors": [
+            {
+              "line": 1577,
+              "anchor": "if (verified.evidence !== \"finalized\")"
+            }
+          ]
+        },
+        {
+          "path": "workers/payments/index.ts",
+          "sha256": "f601a441c6da64bf28ef6551fb2e9b9012d3d2f4adb2711fd469c99915e28486",
+          "anchors": [
+            {
+              "line": 665,
+              "anchor": "await assertSolanaGenesis({"
+            },
+            {
+              "line": 84,
+              "anchor": "const pin = "
+            }
+          ]
+        },
+        {
+          "path": "contracts/solana/adapter.ts",
+          "sha256": "ddcdf520792de627eaf9a278b596e1c71bc0802932560c9a1b56729d122269e0",
+          "anchors": [
+            {
+              "line": 262,
+              "anchor": "export async function assertSolanaGenesis"
+            },
+            {
+              "line": 281,
+              "anchor": "await assertSolanaGenesis(config)"
+            }
+          ]
+        },
+        {
+          "path": "workers/payments/solana-progress.workflow.mjs",
+          "sha256": "60602b70da2e944b39c52a44a391bff4224116910502783b15a87a0ab3c1fa57",
+          "anchors": [
+            {
+              "line": 216,
+              "anchor": "assert.deepEqual(methods, [])"
+            },
+            {
+              "line": 223,
+              "anchor": "assert.deepEqual(methods.splice(0), [\"getGenesisHash\", \"getGenesisHash\"])"
+            }
+          ]
+        }
+      ],
+      "successorSha256": "6be41ba1b57b67145b1776d3e03946f2d94dc711cae347416260612aa3b1ba1b",
+      "boundary": "One project, one immutable ordinary and one private deployment. D1, finalized RPC and authorization conformance remain external. Solana discovery checkpoint ownership is separate. Registry-wide duplicate deployment rejection, block-range, timestamp and canonical string decoding are adapter responsibilities."
     },
     {
       "legacyModel": "formal/models/payments/operator_keeper_lifecycle.qnt",
