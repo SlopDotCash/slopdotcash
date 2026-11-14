@@ -1,0 +1,15 @@
+{
+  "baseline": "85e831856386d212f8e321897eb48d898b254e9e",
+  "developmentTip": "d6c44489cd5a4ff687f1ef406991aaf9b28b7b64",
+  "prdSha256": "b3a8651f7f76e82844d01ede99676de7854f59de0774880dff80be89cc1a0c5b",
+  "prdMatches": true,
+  "modelDelta": [
+    {
+      "path": "formal/models/fees/buyback_market.qnt",
+      "baselineSha256": "795e954ea79fdb6a549a9623349332dea3dd7031ac661365e4133bdede83d7b9",
+      "currentSha256": "cf7919a1735d2888bd8aa7f8a6b376dd58a29d58e19f25d35309df1df5ffbacb",
+      "quintDefinitionsChanged": false
+    }
+  ],
+  "qualification": "Development changed three comment lines describing the finalized RPC observation after live recovery. Those lines assign no modeled state change. The retained PRD is byte-identical."
+}
