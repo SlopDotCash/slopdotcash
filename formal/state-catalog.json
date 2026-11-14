@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "meaning": "Declared lifecycle candidates. This intentionally incomplete syntactic census cannot find every implicit state, establish reachability, or prove source/model correspondence. Review the open work listed in formal/README.md as well.",
-  "inventorySha256": "ba4984122899222ad619cbf546825105863061027fcf597ea41368a12e4089ef",
+  "inventorySha256": "1b6eb1ddaa961431d6227f5d37df0d3ec8610ad00020a9643936f8998c14e70b",
   "states": [
     {
       "path": "backend/fee-conversions/handler.ts",
@@ -107,7 +107,7 @@
     },
     {
       "path": "backend/projects/handler.ts",
-      "line": 2458,
+      "line": 2463,
       "name": "mode",
       "kind": "string-union",
       "values": ["apply", "preview"],
@@ -133,6 +133,7 @@
         "formal/models/ui/ui_project_publication_lifetime.qnt",
         "formal/models/ui/ui_security_settings_lifetime.qnt",
         "formal/models/ui/ui_setup_check_lifetime.qnt",
+        "formal/models/ui/ui_vault_provisional_funding.qnt",
         "formal/models/vetting/vetting_admission_clearance.qnt",
         "formal/models/vetting/vetting_repository_clearance.qnt"
       ],
@@ -141,7 +142,7 @@
     },
     {
       "path": "backend/projects/handler.ts",
-      "line": 2662,
+      "line": 2667,
       "name": "mode",
       "kind": "string-union",
       "values": ["apply", "preview"],
@@ -167,6 +168,7 @@
         "formal/models/ui/ui_project_publication_lifetime.qnt",
         "formal/models/ui/ui_security_settings_lifetime.qnt",
         "formal/models/ui/ui_setup_check_lifetime.qnt",
+        "formal/models/ui/ui_vault_provisional_funding.qnt",
         "formal/models/vetting/vetting_admission_clearance.qnt",
         "formal/models/vetting/vetting_repository_clearance.qnt"
       ],
@@ -2108,6 +2110,32 @@
       "review": "candidate-only"
     },
     {
+      "path": "scripts/payment-keeper/keeper.ts",
+      "line": 136,
+      "name": "KeeperFailureStage",
+      "kind": "string-union",
+      "values": [
+        "authority-read",
+        "award-state",
+        "gas-reconcile",
+        "monthly-state",
+        "payment-evidence",
+        "payment-index",
+        "payment-scan",
+        "preflight",
+        "signer-role"
+      ],
+      "models": [
+        "formal/models/payments/operator_keeper.qnt",
+        "formal/models/payments/operator_keeper_diagnostics.qnt",
+        "formal/models/payments/operator_keeper_lifecycle.qnt",
+        "formal/models/payments/stored_binding_broadcast_authority.qnt",
+        "formal/models/rewards/monthly_execution_recovery.qnt"
+      ],
+      "lexicallyUnmentionedValues": [],
+      "review": "candidate-only"
+    },
+    {
       "path": "scripts/prior-cycle-accrual.ts",
       "line": 37,
       "name": "PriorCycleNotReadyReason",
@@ -2838,13 +2866,14 @@
     },
     {
       "path": "src/VaultActions.tsx",
-      "line": 370,
+      "line": 406,
       "name": "result",
       "kind": "string-union",
       "values": [
         "approval-confirmed",
         "failed",
         "finalized",
+        "no-vault",
         "not-sent",
         "pending",
         "received"
@@ -2856,6 +2885,7 @@
         "formal/models/ui/ui_vault_auto_check.qnt",
         "formal/models/ui/ui_vault_batched_deposit.qnt",
         "formal/models/ui/ui_vault_prompt_ownership.qnt",
+        "formal/models/ui/ui_vault_provisional_funding.qnt",
         "formal/models/ui/ui_vault_recovery.qnt"
       ],
       "lexicallyUnmentionedValues": ["finalized"],
@@ -2908,16 +2938,24 @@
     },
     {
       "path": "src/lib/evm-vault-actions.ts",
-      "line": 355,
+      "line": 379,
       "name": "status",
       "kind": "string-union",
-      "values": ["failed", "finalized", "not-sent", "pending", "received"],
+      "values": [
+        "failed",
+        "finalized",
+        "no-vault",
+        "not-sent",
+        "pending",
+        "received"
+      ],
       "models": [
         "formal/models/contracts/evm_owner_action.qnt",
         "formal/models/ui/ui_monthly_setting_recovery.qnt",
         "formal/models/ui/ui_vault_auto_check.qnt",
         "formal/models/ui/ui_vault_batched_deposit.qnt",
-        "formal/models/ui/ui_vault_prompt_ownership.qnt"
+        "formal/models/ui/ui_vault_prompt_ownership.qnt",
+        "formal/models/ui/ui_vault_provisional_funding.qnt"
       ],
       "lexicallyUnmentionedValues": [],
       "review": "candidate-only"
@@ -3449,7 +3487,7 @@
     },
     {
       "path": "workers/fee-converter/buyback.ts",
-      "line": 149,
+      "line": 160,
       "name": "outcome",
       "kind": "string-union",
       "values": ["arrived", "refunded"],
@@ -3465,7 +3503,7 @@
     },
     {
       "path": "workers/fee-converter/buyback.ts",
-      "line": 211,
+      "line": 223,
       "name": "mode",
       "kind": "string-union",
       "values": ["dry_run", "live"],
@@ -3481,7 +3519,7 @@
     },
     {
       "path": "workers/fee-converter/buyback.ts",
-      "line": 217,
+      "line": 229,
       "name": "mode",
       "kind": "string-union",
       "values": ["dry_run", "live"],
@@ -3497,7 +3535,7 @@
     },
     {
       "path": "workers/fee-converter/buyback.ts",
-      "line": 318,
+      "line": 330,
       "name": "state",
       "kind": "string-union",
       "values": ["no_route", "pending", "quoted", "skipped"],
@@ -3662,13 +3700,15 @@
     },
     {
       "path": "workers/operator-keeper/index.ts",
-      "line": 52,
+      "line": 65,
       "name": "mode",
       "kind": "string-union",
       "values": ["dry_run", "execute", "off"],
       "models": [
         "formal/models/payments/operator_keeper.qnt",
-        "formal/models/payments/operator_keeper_lifecycle.qnt"
+        "formal/models/payments/operator_keeper_diagnostics.qnt",
+        "formal/models/payments/operator_keeper_lifecycle.qnt",
+        "formal/models/payments/operator_keeper_rpc.qnt"
       ],
       "lexicallyUnmentionedValues": [],
       "review": "candidate-only"

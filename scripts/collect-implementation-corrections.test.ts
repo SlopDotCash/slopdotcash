@@ -1,4 +1,4 @@
-import { afterEach, expect, test } from "bun:test";
+import { afterEach, expect, spyOn, test } from "bun:test";
 import { createHash } from "node:crypto";
 import { mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -12,9 +12,11 @@ import {
 import { findProject } from "../src/lib/projects.mjs";
 import { collectTargetRepositories } from "../src/lib/repositories.mjs";
 import {
+  CollectionBudgetExhausted,
   CorrectionEvidenceCache,
   censusMonths,
   collectImplementationCorrections,
+  collectWithQuotaResume,
   immutableBytes,
   inventoryCorrectionPools,
   parseCollectionArguments,
@@ -306,6 +308,267 @@ test("complete canonical census derives first acceptance and resumes from raw ev
   );
 });
 
+test("resume reconstructs the complete repository plan from cached canonical preflight evidence", async () => {
+  const dir = await directory();
+  const network = transport();
+  const options = {
+    projects: ["asi"],
+    before: "2026-01-31T00:00:00.000Z",
+    directory: dir,
+    month: "2026-01",
+  };
+  const dependencies = {
+    journal: baseline(),
+    registry: registry(),
+    token: "private-test-token",
+    transport: network.call,
+    now: new Date("2026-01-31T23:59:59Z"),
+  };
+  const first = await collectImplementationCorrections(options, dependencies);
+  const path = join(dir, "campaign.json");
+  const original = await readFile(path, "utf8");
+  const calls = network.requests();
+  const resumed = await collectImplementationCorrections(options, dependencies);
+  expect(resumed.receipt.manifestDigest).toBe(first.receipt.manifestDigest);
+  expect(network.requests()).toBe(calls);
+  type FrozenCampaign = {
+    through: string;
+    repositories: {
+      nodeId: string;
+      createdAt: string;
+      months: ReturnType<typeof censusMonths>;
+    }[];
+  };
+  for (const mutate of [
+    (campaign: FrozenCampaign) => {
+      campaign.repositories = [];
+    },
+    (campaign: FrozenCampaign) => {
+      campaign.repositories.push(structuredClone(campaign.repositories[0]));
+    },
+    (campaign: FrozenCampaign) => {
+      campaign.repositories[0].months = [];
+    },
+    (campaign: FrozenCampaign) => {
+      const plan = campaign.repositories[0];
+      plan.createdAt = "2026-01-02T00:00:00Z";
+      plan.months = censusMonths(plan.createdAt, campaign.through);
+    },
+    (campaign: FrozenCampaign) => {
+      campaign.repositories[0].nodeId = "R_changed";
+    },
+  ]) {
+    const changed = JSON.parse(original);
+    mutate(changed);
+    await writeFile(path, JSON.stringify(changed));
+    await expect(
+      collectImplementationCorrections(options, dependencies),
+    ).rejects.toThrow("Campaign repository scope or monthly partition");
+    expect(network.requests()).toBe(calls);
+  }
+  await writeFile(path, original);
+  for (const name of await readdir(join(dir, "attempts"))) {
+    const attempt = JSON.parse(
+      await readFile(join(dir, "attempts", name), "utf8"),
+    );
+    if (!attempt.body?.includes("CorrectionRepository")) continue;
+    const key = createHash("sha256")
+      .update(
+        JSON.stringify({
+          url: attempt.url,
+          method: attempt.method,
+          body: attempt.body,
+        }),
+      )
+      .digest("hex");
+    await rm(join(dir, "requests", `${key}.json`));
+  }
+  await expect(
+    collectImplementationCorrections(options, dependencies),
+  ).rejects.toThrow("Cached census is missing raw request evidence");
+  expect(network.requests()).toBe(calls);
+});
+
+test("a complete census supplies source proofs without another metadata or statistics pass", async () => {
+  const dir = await directory();
+  const base = transport();
+  const operations: string[] = [];
+  const network = Object.assign(
+    async (input: RequestInfo | URL, init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body));
+      const operation = /query\s+(\w+)/u.exec(body.query)?.[1] ?? "unknown";
+      operations.push(operation);
+      if (operation === "CorrectionMetadata")
+        throw new Error("Complete census must not re-read PR metadata");
+      return base.call(input, init);
+    },
+    { preconnect: fetch.preconnect },
+  );
+  const options = {
+    projects: ["asi"],
+    directory: dir,
+    month: "2026-01",
+    before: "2026-01-31T00:00:00.000Z",
+  };
+  const deps = {
+    journal: baseline(),
+    registry: registry(),
+    token: "private-test-token",
+    transport: network,
+    now: new Date("2026-01-31T23:59:59Z"),
+  };
+  const result = await collectImplementationCorrections(options, deps);
+  expect(result.receipt.completeProofs).toBe(1);
+  expect(result.receipt.sourceFactsCollected).toBe(1);
+  expect(
+    operations.filter(
+      (operation) => operation === "LeaderboardOutcomeCommitLines",
+    ),
+  ).toHaveLength(1);
+  expect(operations).not.toContain("CorrectionMetadata");
+  const count = operations.length;
+  const repeated = await collectImplementationCorrections(options, deps);
+  expect(operations).toHaveLength(count);
+  expect(repeated.receipt.manifestDigest).toBe(result.receipt.manifestDigest);
+});
+
+test("complete census reuse holds absent or mismatched recorded sources", async () => {
+  for (const mismatch of ["absent", "url", "occurredAt"] as const) {
+    const dir = await directory();
+    const base = transport();
+    const network = Object.assign(
+      async (input: RequestInfo | URL, init?: RequestInit) => {
+        const body = JSON.parse(String(init?.body));
+        if (body.query.includes("CorrectionMetadata"))
+          throw new Error("Complete census must not re-read metadata");
+        if (!body.query.includes("LeaderboardSearchReferences"))
+          return base.call(input, init);
+        const node = fixture();
+        if (mismatch === "absent") node.id = "PR_other";
+        if (mismatch === "url")
+          node.url = "https://github.com/SlopDotCash/asi/pull/2";
+        if (mismatch === "occurredAt") node.mergedAt = "2026-01-16T00:00:00Z";
+        return Response.json({
+          data: {
+            search: {
+              issueCount: 1,
+              pageInfo: { hasNextPage: false, endCursor: null },
+              nodes: [node],
+            },
+            rateLimit: {
+              cost: 1,
+              limit: 5000,
+              remaining: 4900,
+              resetAt: "2026-02-01T00:00:00Z",
+            },
+          },
+        });
+      },
+      { preconnect: fetch.preconnect },
+    );
+    const result = await collectImplementationCorrections(
+      {
+        projects: ["asi"],
+        directory: dir,
+        month: "2026-01",
+        before: "2026-01-31T00:00:00.000Z",
+      },
+      {
+        journal: baseline(),
+        registry: registry(),
+        token: "private-test-token",
+        transport: network,
+        now: new Date("2026-01-31T23:59:59Z"),
+      },
+    );
+    expect(result.receipt.ownershipComplete).toBe(true);
+    expect(result.manifest.candidates[0].proof.status).toBe("held");
+  }
+});
+
+test("an empty accepted commit list holds only that source while another source remains complete", async () => {
+  const dir = await directory();
+  const base = transport();
+  const emptyAward: PointAward = {
+    ...award(),
+    sourceId: "PR_empty",
+    sourceUrl: "https://github.com/SlopDotCash/asi/pull/2",
+    workUnitId: "history_PR_empty",
+    key: pointKey("asi", actor.id, "merged-pull-request", "PR_empty"),
+  };
+  const network = Object.assign(
+    async (input: RequestInfo | URL, init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body));
+      if (body.query.includes("CorrectionMetadata"))
+        throw new Error("Complete census must not re-read metadata");
+      if (!body.query.includes("LeaderboardSearchReferences"))
+        return base.call(input, init);
+      const empty = {
+        ...fixture(),
+        id: "PR_empty",
+        number: 2,
+        url: emptyAward.sourceUrl,
+        commits: {
+          totalCount: 0,
+          pageInfo: { hasNextPage: false, endCursor: null },
+          nodes: [],
+        },
+      };
+      return Response.json({
+        data: {
+          search: {
+            issueCount: 2,
+            pageInfo: { hasNextPage: false, endCursor: null },
+            nodes: [fixture(), empty],
+          },
+          rateLimit: {
+            cost: 1,
+            limit: 5000,
+            remaining: 4900,
+            resetAt: "2026-02-01T00:00:00Z",
+          },
+        },
+      });
+    },
+    { preconnect: fetch.preconnect },
+  );
+  const options = {
+    projects: ["asi"],
+    directory: dir,
+    month: "2026-01",
+    before: "2026-01-31T00:00:00.000Z",
+  };
+  const deps = {
+    journal: baseline([award(), emptyAward]),
+    registry: registry(),
+    token: "private-test-token",
+    transport: network,
+    now: new Date("2026-01-31T23:59:59Z"),
+  };
+  const result = await collectImplementationCorrections(options, deps);
+  expect(result.receipt.ownershipComplete).toBe(true);
+  expect(result.receipt.completeProofs).toBe(1);
+  expect(result.receipt.heldProofs).toBe(1);
+  expect(
+    result.manifest.candidates.find(
+      (candidate) => candidate.sourceId === "PR_source",
+    )?.proof.status,
+  ).toBe("complete");
+  const empty = result.manifest.candidates.find(
+    (candidate) => candidate.sourceId === "PR_empty",
+  );
+  if (!empty) throw new Error("Empty source was omitted from the inventory");
+  expect(empty?.proof.status).toBe("held");
+  expect(result.receipt.limitations).toContainEqual({
+    id: empty.id,
+    reason: "accepted-source-commit-list-empty",
+  });
+  const calls = base.requests();
+  const repeated = await collectImplementationCorrections(options, deps);
+  expect(base.requests()).toBe(calls);
+  expect(repeated.receipt.manifestDigest).toBe(result.receipt.manifestDigest);
+});
+
 test("linked ordinary attribution uses the canonical accepted source even when the merge object is unavailable", async () => {
   const dir = await directory(),
     network = transport("");
@@ -449,6 +712,618 @@ test("a request-budget stop retains raw progress and the next invocation complet
   expect(resumed.receipt.ownershipComplete).toBe(true);
   expect(resumed.receipt.completeProofs).toBe(1);
   expect(resumed.receipt.cacheHits).toBeGreaterThan(0);
+});
+
+test("resumed attempts in one millisecond retain distinct immutable evidence", async () => {
+  const dir = await directory();
+  const clock = spyOn(Date, "now").mockReturnValue(1794620000000);
+  let calls = 0;
+  const transport = Object.assign(
+    async () => {
+      calls++;
+      return calls === 1
+        ? Response.json({ error: "unavailable" }, { status: 503 })
+        : Response.json({ restored: true });
+    },
+    { preconnect: fetch.preconnect },
+  );
+  const url = "https://api.github.com/repos/SlopDotCash/asi/pulls/1";
+  try {
+    const first = new CorrectionEvidenceCache(dir, transport);
+    expect((await first.fetch(url)).status).toBe(503);
+    const resumed = new CorrectionEvidenceCache(dir, transport);
+    expect(await (await resumed.fetch(url)).json()).toEqual({ restored: true });
+    expect(await (await resumed.fetch(url)).json()).toEqual({ restored: true });
+    expect(calls).toBe(2);
+    const attempts = await readdir(join(dir, "attempts"));
+    expect(attempts).toHaveLength(2);
+    const retained = await Promise.all(
+      attempts.map(async (name) => {
+        const attempt = JSON.parse(
+          await readFile(join(dir, "attempts", name), "utf8"),
+        );
+        const bytes = await readFile(join(dir, "objects", attempt.bodyDigest));
+        expect(createHash("sha256").update(bytes).digest("hex")).toBe(
+          attempt.bodyDigest,
+        );
+        return attempt.status;
+      }),
+    );
+    expect(retained.sort()).toEqual([200, 503]);
+  } finally {
+    clock.mockRestore();
+  }
+});
+
+test("GitHub quota failures retain raw attempts without caching them or swallowing other failures", async () => {
+  const failures: {
+    url: string;
+    init: RequestInit;
+    body: unknown;
+    status: number;
+    headers: HeadersInit;
+  }[] = [
+    {
+      url: "https://api.github.com/repos/SlopDotCash/asi/pulls/1",
+      init: {},
+      body: { message: "API rate limit exceeded" },
+      status: 403,
+      headers: { "x-ratelimit-remaining": "0" },
+    },
+    {
+      url: "https://api.github.com/repos/SlopDotCash/asi/pulls/1",
+      init: {},
+      body: { message: "Too many requests" },
+      status: 429,
+      headers: {},
+    },
+    {
+      url: "https://api.github.com/repos/SlopDotCash/asi/pulls/1",
+      init: {},
+      body: { message: "You have exceeded a secondary rate limit" },
+      status: 403,
+      headers: {},
+    },
+    {
+      url: "https://api.github.com/graphql",
+      init: {
+        method: "POST",
+        body: JSON.stringify({ query: "query Sample { node }" }),
+      },
+      body: { data: null, errors: [{ type: "RATE_LIMITED" }] },
+      status: 200,
+      headers: {},
+    },
+  ];
+  for (const failure of failures) {
+    const dir = await directory();
+    let requests = 0;
+    const transport = Object.assign(
+      async () => {
+        requests++;
+        return requests === 1
+          ? Response.json(failure.body, {
+              status: failure.status,
+              headers: failure.headers,
+            })
+          : Response.json({ data: { node: null } });
+      },
+      { preconnect: fetch.preconnect },
+    );
+    const cache = new CorrectionEvidenceCache(dir, transport);
+    await expect(cache.fetch(failure.url, failure.init)).rejects.toBeInstanceOf(
+      CollectionBudgetExhausted,
+    );
+    const attempts = await readdir(join(dir, "attempts"));
+    expect(attempts).toHaveLength(1);
+    const retained = JSON.parse(
+      await readFile(join(dir, "attempts", attempts[0]), "utf8"),
+    );
+    expect(retained.status).toBe(failure.status);
+    expect(
+      JSON.parse(
+        await readFile(join(dir, "objects", retained.bodyDigest), "utf8"),
+      ),
+    ).toEqual(failure.body);
+    await expect(cache.fetch(failure.url, failure.init)).rejects.toBeInstanceOf(
+      CollectionBudgetExhausted,
+    );
+    expect(requests).toBe(1);
+    expect(() => cache.assertUninterrupted()).toThrow(
+      CollectionBudgetExhausted,
+    );
+    const resumed = new CorrectionEvidenceCache(dir, transport);
+    expect(
+      await (await resumed.fetch(failure.url, failure.init)).json(),
+    ).toEqual({ data: { node: null } });
+    await resumed.fetch(failure.url, failure.init);
+    expect(requests).toBe(2);
+    expect(resumed.cacheHits).toBe(1);
+  }
+  for (const [url, status, headers] of [
+    ["https://api.github.com/repos/SlopDotCash/asi/pulls/1", 403, {}],
+    [
+      "https://api.github.com/repos/SlopDotCash/asi/pulls/1",
+      403,
+      { "x-ratelimit-remaining": "1" },
+    ],
+    ["https://api.github.com/repos/SlopDotCash/asi/pulls/1", 404, {}],
+    ["https://api.github.com/repos/SlopDotCash/asi/pulls/1", 503, {}],
+    ["https://slop.cash/api/v1/points/journal", 429, {}],
+  ] as const) {
+    const cache = new CorrectionEvidenceCache(
+      await directory(),
+      Object.assign(
+        async () =>
+          Response.json({ error: "unavailable" }, { status, headers }),
+        { preconnect: fetch.preconnect },
+      ),
+    );
+    expect((await cache.fetch(url)).status).toBe(status);
+  }
+});
+
+test("retained-source quota and budget interruptions survive caught discovery errors", async () => {
+  const dir = await directory();
+  const base = transport();
+  let quotaAvailable = false;
+  let timelineQuotaAvailable = false;
+  let outgoingQuotaAvailable = false;
+  let outgoingRequests = 0;
+  let pullRequests = 0;
+  let requests = 0;
+  const network = Object.assign(
+    async (input: RequestInfo | URL, init?: RequestInit) => {
+      requests++;
+      const url = new URL(String(input));
+      if (url.pathname.endsWith("/asi/pulls/1")) {
+        pullRequests++;
+        if (!quotaAvailable)
+          return Response.json(
+            { message: "API rate limit exceeded" },
+            { status: 403, headers: { "x-ratelimit-remaining": "0" } },
+          );
+        return Response.json({
+          node_id: "PR_source",
+          number: 1,
+          body: "Fix #2 and #3",
+          head: { sha },
+          merged_at: when,
+          comments: 0,
+          review_comments: 0,
+        });
+      }
+      if (url.pathname !== "/graphql") return Response.json([]);
+      const body = JSON.parse(String(init?.body));
+      if (body.query.includes("issueOrPullRequest")) {
+        outgoingRequests++;
+        if (!outgoingQuotaAvailable)
+          return Response.json(
+            { message: "Too many requests" },
+            { status: 429 },
+          );
+        return Response.json({
+          data: {
+            repository: {
+              isPrivate: false,
+              nameWithOwner: "elizaOS/asi",
+              issueOrPullRequest: { __typename: "Issue" },
+            },
+          },
+        });
+      }
+      if (body.query.includes("CROSS_REFERENCED_EVENT")) {
+        if (!timelineQuotaAvailable)
+          return Response.json({
+            data: null,
+            errors: [{ type: "RATE_LIMITED" }],
+          });
+        return Response.json({
+          data: {
+            repository: {
+              pullRequest: {
+                id: "PR_source",
+                timelineItems: {
+                  nodes: [],
+                  pageInfo: { hasNextPage: false, endCursor: null },
+                },
+              },
+            },
+          },
+        });
+      }
+      if (body.query.includes("LeaderboardSearchReferences")) {
+        const pull = fixture();
+        (pull.commits.nodes[0].commit.author as { user: unknown }).user = null;
+        return Response.json({
+          data: {
+            search: {
+              issueCount: 1,
+              pageInfo: { hasNextPage: false, endCursor: null },
+              nodes: [pull],
+            },
+            rateLimit: {
+              cost: 1,
+              limit: 5000,
+              remaining: 4900,
+              resetAt: "2026-02-01T01:00:00Z",
+            },
+          },
+        });
+      }
+      return base.call(input, init);
+    },
+    { preconnect: fetch.preconnect },
+  );
+  const options = {
+    projects: ["asi"],
+    before: "2026-01-31T00:00:00.000Z",
+    directory: dir,
+    month: "2026-01",
+  };
+  const dependencies = {
+    journal: baseline(),
+    registry: registry(),
+    token: "private-test-token",
+    transport: network,
+    now: new Date("2026-01-31T23:59:59Z"),
+  };
+  await expect(
+    collectImplementationCorrections(options, dependencies),
+  ).rejects.toBeInstanceOf(CollectionBudgetExhausted);
+  await expect(readFile(join(dir, "manifest.json"), "utf8")).rejects.toThrow();
+  expect(pullRequests).toBe(1);
+  const censusRequests = base.requests();
+  quotaAvailable = true;
+  await expect(
+    collectImplementationCorrections(options, dependencies),
+  ).rejects.toBeInstanceOf(CollectionBudgetExhausted);
+  await expect(readFile(join(dir, "manifest.json"), "utf8")).rejects.toThrow();
+  timelineQuotaAvailable = true;
+  await expect(
+    collectImplementationCorrections(options, dependencies),
+  ).rejects.toBeInstanceOf(CollectionBudgetExhausted);
+  await expect(readFile(join(dir, "manifest.json"), "utf8")).rejects.toThrow();
+  expect(outgoingRequests).toBe(1);
+  outgoingQuotaAvailable = true;
+  await expect(
+    collectImplementationCorrections(
+      { ...options, requestBudget: 1 },
+      dependencies,
+    ),
+  ).rejects.toBeInstanceOf(CollectionBudgetExhausted);
+  await expect(readFile(join(dir, "manifest.json"), "utf8")).rejects.toThrow();
+  expect(outgoingRequests).toBe(2);
+  const resumed = await collectImplementationCorrections(options, dependencies);
+  expect(resumed.receipt.ownershipComplete).toBe(true);
+  expect(resumed.receipt.completeProofs).toBe(1);
+  expect(resumed.receipt.heldProofs).toBe(0);
+  expect(base.requests()).toBe(censusRequests);
+  expect(pullRequests).toBe(2);
+  const completedRequests = requests;
+  const replayed = await collectImplementationCorrections(
+    options,
+    dependencies,
+  );
+  expect(requests).toBe(completedRequests);
+  expect(replayed.receipt.manifestDigest).toBe(resumed.receipt.manifestDigest);
+});
+
+test("opt-in quota resume replays the same campaign across shared REST and GraphQL windows", async () => {
+  const dir = await directory();
+  const base = transport();
+  const now = new Date("2026-01-31T23:59:59Z");
+  let clock = now.getTime();
+  const delays: number[] = [];
+  let comparisons = 0;
+  let timelineReads = 0;
+  let initialCensusReads = 0;
+  let totalReads = 0;
+  let sourceGraphqlCost = 0;
+  const network = Object.assign(
+    async (input: RequestInfo | URL, init?: RequestInit) => {
+      totalReads++;
+      const url = new URL(String(input));
+      if (url.pathname.endsWith("/asi/pulls/1")) {
+        comparisons++;
+        if (comparisons === 1)
+          return Response.json(
+            { message: "API rate limit exceeded" },
+            {
+              status: 403,
+              headers: {
+                "x-ratelimit-remaining": "0",
+                "x-ratelimit-reset": String(Math.floor(clock / 1000) + 5),
+              },
+            },
+          );
+        if (comparisons === 2)
+          return Response.json(
+            { message: "Secondary rate limit" },
+            { status: 403, headers: { "retry-after": "10" } },
+          );
+        return Response.json({
+          node_id: "PR_source",
+          number: 1,
+          body: "Fix",
+          head: { sha },
+          merged_at: when,
+          comments: 0,
+          review_comments: 0,
+        });
+      }
+      if (url.pathname !== "/graphql") return Response.json([]);
+      const { query } = JSON.parse(String(init?.body));
+      if (query.includes("CROSS_REFERENCED_EVENT")) {
+        timelineReads++;
+        if (timelineReads === 1) {
+          sourceGraphqlCost += 3;
+          return Response.json({
+            errors: [{ type: "RATE_LIMITED" }],
+            data: {
+              rateLimit: {
+                cost: 3,
+                resetAt: new Date(clock + 4_000).toISOString(),
+              },
+            },
+          });
+        }
+        return Response.json({
+          data: {
+            repository: {
+              pullRequest: {
+                id: "PR_source",
+                timelineItems: {
+                  nodes: [],
+                  pageInfo: { hasNextPage: false, endCursor: null },
+                },
+              },
+            },
+          },
+        });
+      }
+      if (query.includes("LeaderboardSearchReferences")) {
+        initialCensusReads++;
+        sourceGraphqlCost++;
+        const pull = fixture();
+        (pull.commits.nodes[0].commit.author as { user: unknown }).user = null;
+        return Response.json({
+          data: {
+            search: {
+              issueCount: 1,
+              pageInfo: { hasNextPage: false, endCursor: null },
+              nodes: [pull],
+            },
+            rateLimit: {
+              cost: 1,
+              limit: 5000,
+              remaining: 4900,
+              resetAt: "2026-02-01T01:00:00Z",
+            },
+          },
+        });
+      }
+      const response = await base.call(input, init);
+      const value = await response.clone().json();
+      sourceGraphqlCost += value.data?.rateLimit?.cost ?? 0;
+      return response;
+    },
+    { preconnect: fetch.preconnect },
+  );
+  const options = {
+    projects: ["asi"],
+    before: "2026-01-31T00:00:00.000Z",
+    directory: dir,
+    month: "2026-01",
+    resumeForSeconds: 300,
+  };
+  const dependencies = {
+    journal: baseline(),
+    registry: registry(),
+    token: "private-test-token",
+    transport: network,
+    now,
+  };
+  const result = await collectWithQuotaResume(options, dependencies, {
+    now: () => clock,
+    wait: async (ms) => {
+      await expect(
+        readFile(join(dir, "manifest.json"), "utf8"),
+      ).rejects.toThrow();
+      delays.push(ms);
+      clock += ms;
+    },
+  });
+  expect(delays).toEqual([7_000, 12_000, 6_000]);
+  expect(result.receipt.ownershipComplete).toBe(true);
+  expect(result.receipt.completeProofs).toBe(1);
+  expect(result.receipt.heldProofs).toBe(0);
+  expect(result.receipt.through).toBe(now.toISOString());
+  expect(result.receipt.requests).toBe(totalReads);
+  expect(result.receipt.reportedGraphqlCost).toBe(sourceGraphqlCost);
+  expect(sourceGraphqlCost).toBeGreaterThan(3);
+  expect(initialCensusReads).toBe(1);
+  expect(comparisons).toBe(3);
+  expect(timelineReads).toBe(2);
+  const replay = await collectImplementationCorrections(options, dependencies);
+  expect(replay.receipt.manifestDigest).toBe(result.receipt.manifestDigest);
+  expect(replay.receipt.requests).toBe(0);
+  expect(replay.receipt.reportedGraphqlCost).toBe(0);
+});
+
+test("quota resume checkpoints on deadline, unusable reset, repeated refusal and cumulative budget", async () => {
+  for (const scenario of [
+    "deadline",
+    "reset",
+    "refusal",
+    "budget",
+    "unrelated",
+  ] as const) {
+    const dir = await directory();
+    const waitFor = 120;
+    let clock = Date.parse("2026-01-31T23:59:59Z");
+    let attempts = 0;
+    const delays: number[] = [];
+    const network = Object.assign(
+      async () => {
+        attempts++;
+        if (scenario === "unrelated") throw new Error("Malformed source data");
+        return Response.json(
+          { message: "API rate limit exceeded" },
+          {
+            status: 403,
+            headers: {
+              "x-ratelimit-remaining": "0",
+              "x-ratelimit-reset":
+                scenario === "reset"
+                  ? "bad"
+                  : String(
+                      Math.floor(clock / 1000) +
+                        (scenario === "deadline" ? waitFor : 1),
+                    ),
+            },
+          },
+        );
+      },
+      { preconnect: fetch.preconnect },
+    );
+    const options = {
+      projects: ["asi"],
+      directory: dir,
+      month: "2026-01",
+      resumeForSeconds: 60,
+      requestBudget: scenario === "budget" ? 2 : 30,
+    };
+    const dependencies = {
+      journal: baseline(),
+      registry: registry(),
+      token: "private-test-token",
+      transport: network,
+    };
+    await expect(
+      collectWithQuotaResume(options, dependencies, {
+        now: () => clock,
+        wait: async (ms) => {
+          delays.push(ms);
+          clock += ms;
+        },
+      }),
+    ).rejects.toThrow(
+      scenario === "unrelated"
+        ? "GitHub GraphQL network request failed"
+        : "GitHub API quota exhausted",
+    );
+    expect(attempts).toBe(
+      scenario === "refusal" ? 3 : scenario === "budget" ? 2 : 1,
+    );
+    expect(delays.length).toBe(attempts - 1);
+    await expect(
+      readFile(join(dir, "manifest.json"), "utf8"),
+    ).rejects.toThrow();
+  }
+});
+
+test("parallel quota reads wait for the strictest reset and stop when no request entries persist", async () => {
+  for (const unknownPrimaryReset of [false, true]) {
+    const dir = await directory();
+    const base = transport();
+    const now = new Date("2026-01-31T23:59:59Z");
+    let clock = now.getTime();
+    let siblingReads = 0;
+    const delays: number[] = [];
+    const network = Object.assign(
+      async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = new URL(String(input));
+        if (url.pathname.endsWith("/asi/pulls/1"))
+          return Response.json({
+            node_id: "PR_source",
+            number: 1,
+            body: "Fix",
+            head: { sha },
+            merged_at: when,
+            comments: 0,
+            review_comments: 0,
+          });
+        if (url.pathname !== "/graphql") {
+          siblingReads++;
+          if (url.pathname.endsWith("/reviews"))
+            return Response.json(
+              { message: "Secondary rate limit" },
+              { status: 403, headers: { "retry-after": "5" } },
+            );
+          await Bun.sleep(30);
+          return Response.json(
+            { message: "API rate limit exceeded" },
+            {
+              status: 403,
+              headers: {
+                "x-ratelimit-remaining": "0",
+                "x-ratelimit-reset": unknownPrimaryReset
+                  ? "invalid"
+                  : String(Math.floor(clock / 1_000) + 20),
+              },
+            },
+          );
+        }
+        if (
+          JSON.parse(String(init?.body)).query.includes(
+            "LeaderboardSearchReferences",
+          )
+        ) {
+          const pull = fixture();
+          (pull.commits.nodes[0].commit.author as { user: unknown }).user =
+            null;
+          return Response.json({
+            data: {
+              search: {
+                issueCount: 1,
+                pageInfo: { hasNextPage: false, endCursor: null },
+                nodes: [pull],
+              },
+              rateLimit: {
+                cost: 1,
+                limit: 5000,
+                remaining: 4900,
+                resetAt: "2026-02-01T01:00:00Z",
+              },
+            },
+          });
+        }
+        return base.call(input, init);
+      },
+      { preconnect: fetch.preconnect },
+    );
+    await expect(
+      collectWithQuotaResume(
+        {
+          projects: ["asi"],
+          before: "2026-01-31T00:00:00.000Z",
+          directory: dir,
+          month: "2026-01",
+          resumeForSeconds: 300,
+        },
+        {
+          journal: baseline(),
+          registry: registry(),
+          token: "private-test-token",
+          transport: network,
+          now,
+        },
+        {
+          now: () => clock,
+          wait: async (ms) => {
+            delays.push(ms);
+            clock += ms;
+          },
+        },
+      ),
+    ).rejects.toBeInstanceOf(CollectionBudgetExhausted);
+    expect(delays).toEqual(unknownPrimaryReset ? [] : [22_000, 22_000, 22_000]);
+    expect(siblingReads).toBe(unknownPrimaryReset ? 3 : 12);
+    await expect(
+      readFile(join(dir, "manifest.json"), "utf8"),
+    ).rejects.toThrow();
+  }
 });
 
 test("CLI rejects invalid calendar months", () => {

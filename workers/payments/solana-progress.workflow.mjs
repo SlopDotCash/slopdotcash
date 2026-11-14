@@ -7,7 +7,10 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { base58 } from "@scure/base";
 import { convertV4MiniflareOptions, Miniflare } from "miniflare";
-import { assertEscrowPolicy } from "../../src/lib/escrow-policy.mjs";
+import {
+  assertEscrowPolicy,
+  ESCROW_NETWORKS,
+} from "../../src/lib/escrow-policy.mjs";
 import { assertProjectDefinition } from "../../src/lib/project-schema.mjs";
 import { applyRepositoryMigrations } from "../../tests/miniflare-d1.mjs";
 import { applicationManifest } from "../../tests/project-application-manifest.ts";
@@ -22,7 +25,10 @@ const signatures = Array.from({ length: 103 }, (_, i) =>
 );
 const stamp = "2026-10-29T00:00:00.000Z";
 const submittedId = base58.encode(new Uint8Array(64).fill(250));
+const genesisHash = ESCROW_NETWORKS["solana-devnet"].genesisHash;
 const calls = [];
+const methods = [];
+let observedGenesis = genesisHash;
 let hold = true;
 let pauseSignature = signatures[1];
 let failedSignature = null;
@@ -38,11 +44,27 @@ const rpc = createServer(async (request, response) => {
   const chunks = [];
   for await (const chunk of request) chunks.push(chunk);
   const input = JSON.parse(Buffer.concat(chunks).toString());
+  methods.push(input.method);
+  if (
+    input.method === "getGenesisHash" ||
+    input.method === "getSignaturesForAddress"
+  ) {
+    response.writeHead(200, { "content-type": "application/json" }).end(
+      JSON.stringify({
+        jsonrpc: "2.0",
+        id: 1,
+        result: input.method === "getGenesisHash" ? observedGenesis : [],
+      }),
+    );
+    return;
+  }
   if (input.method !== "getTransaction") {
     response.writeHead(503).end("Unrelated fixture RPC unavailable");
     return;
   }
-  calls.push(input.params[0]);
+  // The separate failed-attempt reconciler also reads its submitted receipt.
+  // Track only scanner reads, which request parsed transactions.
+  if (input.params[1].encoding === "jsonParsed") calls.push(input.params[0]);
   assert.equal(input.params[1].commitment, "finalized");
   if (input.params[0] === failedSignature) {
     response.writeHead(503).end("Current transaction unavailable");
@@ -84,6 +106,7 @@ export default {async fetch(request,env){
   try {await payments.scheduled(null,{
     PAYMENTS_DB:db,REGISTRY_DB:db,PAYMENT_NETWORKS:'["solana-devnet"]',
     PAYMENT_RPC_URLS:${JSON.stringify(JSON.stringify({ "solana-devnet": rpcUrl }))},
+    PAYMENT_SOLANA_GENESIS: new URL(request.url).pathname === "/missing-genesis" ? "{}" : ${JSON.stringify(JSON.stringify({ "solana-devnet": genesisHash }))},
     SOLANA_PAYMENT_EXECUTOR:{async fetch(request){return Response.json({transactionId:${JSON.stringify(submittedId)},submitted:true});}}
   });return Response.json({complete:true,queries,batches});}
   catch(error){return Response.json({error:String(error),queries,batches},{status:503});}
@@ -172,6 +195,53 @@ export default {async fetch(request,env){
         "INSERT INTO projects(id,status,revision,manifest,manifest_sha256,created_at,updated_at) VALUES('progress','paused',1,?,?,?,?)",
       )
       .bind(text, hash, stamp, stamp),
+  ]);
+  const scanState = async () => ({
+    scan: await db.prepare("SELECT * FROM payment_solana_scans").first(),
+    page: await db.prepare("SELECT * FROM payment_solana_scan_pages").first(),
+    cursor: await db.prepare("SELECT * FROM payment_chain_cursors").first(),
+    snapshot: await db.prepare("SELECT * FROM vault_snapshots").first(),
+  });
+  const initial = await scanState();
+  assert.deepEqual(initial, {
+    scan: null,
+    page: null,
+    cursor: null,
+    snapshot: null,
+  });
+  const scheduled = (path) => runtime.dispatchFetch(`http://local/${path}`);
+  const missing = await scheduled("missing-genesis");
+  assert.equal(missing.status, 503);
+  await missing.text();
+  assert.deepEqual(methods, []);
+  assert.deepEqual(await scanState(), initial);
+
+  observedGenesis = ESCROW_NETWORKS["solana-mainnet"].genesisHash;
+  const wrong = await scheduled("wrong-genesis");
+  assert.equal(wrong.status, 503);
+  await wrong.text();
+  assert.deepEqual(methods.splice(0), ["getGenesisHash", "getGenesisHash"]);
+  assert.deepEqual(await scanState(), initial);
+
+  observedGenesis = genesisHash;
+  await (await scheduled("valid-empty-history")).text();
+  const empty = await scanState();
+  assert.equal(empty.scan.ready, 1);
+  assert.equal(empty.scan.next_page, 0);
+  assert.equal(empty.page, null);
+  assert.equal(empty.cursor, null);
+  assert.equal(empty.snapshot, null);
+  assert.deepEqual(methods.splice(0), [
+    "getGenesisHash",
+    "getAccountInfo",
+    "getGenesisHash",
+    "getSignaturesForAddress",
+  ]);
+  await (await scheduled("clear-empty-history")).text();
+  assert.deepEqual(await scanState(), initial);
+  methods.length = 0;
+
+  await db.batch([
     db
       .prepare(
         "INSERT INTO wallet_claims(id,github_user_id,github_login,wallet_address,source,source_body_sha256,observed_at,record_sha256,supersedes_claim_id,created_at,chain) VALUES('claim','101','fixture',?,'d1_registry',?,?,?,NULL,?,'solana')",
@@ -199,9 +269,6 @@ export default {async fetch(request,env){
         stamp,
       ),
     db
-      .prepare("INSERT INTO payment_outbox VALUES(?,'ready',NULL,NULL,?)")
-      .bind(obligation, stamp),
-    db
       .prepare(
         "INSERT INTO payment_chain_cursors VALUES('progress','solana-devnet','preceding-cursor',?)",
       )
@@ -219,6 +286,16 @@ export default {async fetch(request,env){
         ),
       ),
   ]);
+  const staged = await scanState();
+  observedGenesis = ESCROW_NETWORKS["solana-mainnet"].genesisHash;
+  await (await scheduled("wrong-genesis-with-staged-page")).text();
+  assert.deepEqual(methods.splice(0), ["getGenesisHash", "getGenesisHash"]);
+  assert.deepEqual(await scanState(), staged);
+  observedGenesis = genesisHash;
+  await db
+    .prepare("INSERT INTO payment_outbox VALUES(?,'ready',NULL,NULL,?)")
+    .bind(obligation, stamp)
+    .run();
   const state = async () => ({
     cursor: (
       await db.prepare("SELECT position FROM payment_chain_cursors").first()

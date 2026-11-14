@@ -188,7 +188,93 @@ export function censusMonths(
 }
 
 /** A budget checkpoint is explicit and safely resumable, never a partial pass. */
-export class CollectionBudgetExhausted extends Error {}
+export class CollectionBudgetExhausted extends Error {
+  constructor(
+    readonly kind: "quota" | "request-budget",
+    readonly newRequests: number,
+    readonly reportedGraphqlCost: number,
+    readonly retryAtMs?: number,
+    readonly savedRequests = 0,
+  ) {
+    super(
+      kind === "quota"
+        ? "GitHub API quota exhausted; wait for quota recovery and rerun the same baseline-bound campaign"
+        : "Request budget reached; rerun the same baseline-bound campaign",
+    );
+  }
+}
+
+interface GithubQuotaPayload {
+  message?: unknown;
+  errors?: unknown[];
+  data?: { rateLimit?: { cost: number; resetAt?: unknown } };
+}
+
+type CollectionInterruption = {
+  kind: CollectionBudgetExhausted["kind"];
+  retryAtMs?: number;
+};
+
+function collectionStop(error: unknown): CollectionBudgetExhausted | null {
+  const seen = new Set<Error>();
+  while (error instanceof Error && !seen.has(error)) {
+    if (error instanceof CollectionBudgetExhausted) return error;
+    seen.add(error);
+    error = error.cause;
+  }
+  return null;
+}
+
+function githubQuotaStop(
+  response: Response,
+  graphql: boolean,
+  payload: GithubQuotaPayload | undefined,
+  now: number,
+): { retryAtMs?: number } | null {
+  const retryAfter = response.headers.get("retry-after");
+  const retrySeconds =
+    retryAfter && /^\d+$/u.test(retryAfter) ? Number(retryAfter) : NaN;
+  const retryAt = now + retrySeconds * 1_000;
+  const validRetryAfter = Number.isSafeInteger(retryAt);
+  const primary =
+    (response.status === 403 || response.status === 429) &&
+    response.headers.get("x-ratelimit-remaining") === "0";
+  const secondary =
+    response.status === 403 &&
+    (validRetryAfter ||
+      (typeof payload?.message === "string" &&
+        /secondary rate limit|abuse detection/iu.test(payload.message)));
+  const graphqlLimited =
+    response.status === 200 &&
+    graphql &&
+    Array.isArray(payload?.errors) &&
+    payload.errors.some(
+      (error) =>
+        typeof error === "object" &&
+        error !== null &&
+        "type" in error &&
+        error.type === "RATE_LIMITED",
+    );
+  if (!primary && !graphqlLimited && response.status !== 429 && !secondary)
+    return null;
+  const reset = response.headers.get("x-ratelimit-reset");
+  const headerReset =
+    (primary || graphqlLimited) && reset && /^\d+$/u.test(reset)
+      ? Number(reset) * 1_000
+      : NaN;
+  const graphReset =
+    graphqlLimited && typeof payload?.data?.rateLimit?.resetAt === "string"
+      ? Date.parse(payload.data.rateLimit.resetAt)
+      : NaN;
+  const future = (time: number) =>
+    Number.isSafeInteger(time + 2_000) && time >= now;
+  if (primary && !future(headerReset)) return {};
+  const times = [retryAt, headerReset, graphReset].filter(future);
+  if (times.length) return { retryAtMs: Math.max(...times) + 2_000 };
+  if (response.status === 429 || graphqlLimited || secondary)
+    return { retryAtMs: now + 60_000 };
+  return {};
+}
 
 interface CachedResponse {
   status: number;
@@ -251,139 +337,199 @@ export class CorrectionEvidenceCache {
   allowRequests = true;
   cacheHits = 0;
   reportedGraphqlCost = 0;
+  private interruption: CollectionInterruption | null = null;
+  private readonly inFlight = new Set<Promise<Response>>();
+  private readonly savedRequests = new Set<string>();
   constructor(
     readonly directory: string,
     readonly transport: typeof fetch,
     readonly requestBudget = 2000,
+    readonly now = Date.now,
   ) {}
+  get stop(): CollectionBudgetExhausted | null {
+    return this.interruption ? this.stopError(this.interruption) : null;
+  }
+  private stopError(interruption: CollectionInterruption) {
+    return new CollectionBudgetExhausted(
+      interruption.kind,
+      this.requests,
+      this.reportedGraphqlCost,
+      interruption.retryAtMs,
+      this.savedRequests.size,
+    );
+  }
+  assertUninterrupted(): void {
+    const stop = this.stop;
+    if (stop) throw stop;
+  }
+  async settleReads(): Promise<void> {
+    await Promise.allSettled(this.inFlight);
+  }
+  private interrupt(
+    kind: CollectionBudgetExhausted["kind"],
+    retryAtMs?: number,
+  ): never {
+    const existing = this.interruption;
+    let interruption = existing ?? { kind, retryAtMs };
+    if (kind === "request-budget") {
+      interruption = { kind };
+    } else if (existing?.kind === "quota") {
+      interruption = {
+        kind,
+        retryAtMs:
+          retryAtMs === undefined || existing.retryAtMs === undefined
+            ? undefined
+            : Math.max(retryAtMs, existing.retryAtMs),
+      };
+    }
+    this.interruption = interruption;
+    throw this.stopError(interruption);
+  }
   readonly fetch: typeof fetch = Object.assign(
-    async (input: RequestInfo | URL, init: RequestInit = {}) => {
-      const request = input instanceof Request ? input : null;
-      const url = new URL(request?.url ?? String(input));
-      const method = (init.method ?? request?.method ?? "GET").toUpperCase();
-      const body = typeof init.body === "string" ? init.body : "";
-      requireThat(
-        !url.username && !url.password && !url.hash,
-        "Credential-bearing URL refused",
-      );
-      const github = url.origin === "https://api.github.com";
-      const feed =
-        url.origin === "https://slopbot.slop.cash" ||
-        url.origin === "https://slop.cash";
-      requireThat(
-        (github &&
-          (method === "GET" ||
-            (method === "POST" &&
-              url.pathname === "/graphql" &&
-              !/\bmutation\b/u.test(JSON.parse(body).query)))) ||
-          (feed && method === "GET"),
-        "Only canonical read-only source requests are permitted",
-      );
-      const key = digest(encode({ url: url.href, method, body }));
-      const path = resolve(this.directory, "requests", `${key}.json`);
-      const cached = await readJson<CachedResponse>(path);
-      if (cached) {
-        const bytes = await readFile(
-          resolve(this.directory, "objects", cached.bodyDigest),
-        );
-        requireThat(
-          digest(bytes) === cached.bodyDigest,
-          "Cached response digest mismatch",
-        );
-        this.cacheHits += 1;
-        return new Response(bytes, {
-          status: cached.status,
-          headers: cached.headers,
-        });
-      }
-      requireThat(
-        this.allowRequests,
-        "Cached census is missing raw request evidence",
-      );
-      if (this.requests >= this.requestBudget)
-        throw new CollectionBudgetExhausted(
-          "Request budget reached; rerun the same baseline-bound campaign",
-        );
-      this.requests += 1;
-      const response = await this.transport(input, init);
-      const bytes = new Uint8Array(await response.arrayBuffer());
-      const bodyDigest = digest(bytes);
-      const headers = Object.fromEntries(
-        [
-          "content-type",
-          "x-github-request-id",
-          "x-ratelimit-limit",
-          "x-ratelimit-remaining",
-          "x-ratelimit-reset",
-          "retry-after",
-        ].flatMap((name) => {
-          const value = response.headers.get(name);
-          return value === null ? [] : [[name, value]];
-        }),
-      );
-      let parsed:
-        | { errors?: unknown[]; data?: { rateLimit?: { cost: number } } }
-        | undefined;
-      try {
-        parsed = JSON.parse(new TextDecoder().decode(bytes));
-      } catch {
-        /* Retain non-JSON failures exactly. */
-      }
-      this.reportedGraphqlCost += parsed?.data?.rateLimit?.cost ?? 0;
-      await immutableBytes(
-        resolve(this.directory, "objects", bodyDigest),
-        bytes,
-      );
-      await immutableBytes(
-        resolve(
-          this.directory,
-          "attempts",
-          `${Date.now()}-${this.requests}-${key}.json`,
-        ),
-        new TextEncoder().encode(
-          encode({
-            url: url.href,
-            method,
-            body,
-            status: response.status,
-            headers,
-            bodyDigest,
-          }),
-        ),
-      );
-      const validJson = typeof parsed === "object" && parsed !== null;
-      const completeGraphql =
-        url.pathname !== "/graphql" ||
-        (typeof parsed?.data === "object" && parsed.data !== null);
-      const graphqlRequest =
-        method === "POST" && url.pathname === "/graphql"
-          ? JSON.parse(body)
-          : null;
-      const recoverableStatistics = graphqlRequest
-        ? commitStatisticsFailure(
-            graphqlRequest.query,
-            parsed,
-            graphqlRequest.variables ?? {},
-          )
-        : null;
-      if (
-        response.ok &&
-        validJson &&
-        completeGraphql &&
-        (!parsed?.errors || recoverableStatistics)
-      )
-        await atomicJson(path, {
-          status: response.status,
-          headers,
-          bodyDigest,
-        });
-      return new Response(bytes, {
-        status: response.status,
-        headers: response.headers,
-      });
+    (input: RequestInfo | URL, init?: RequestInit) => {
+      const read = this.fetchEvidence(input, init);
+      this.inFlight.add(read);
+      const remove = () => {
+        this.inFlight.delete(read);
+      };
+      void read.then(remove, remove);
+      return read;
     },
     { preconnect: globalThis.fetch.preconnect },
   );
+  private async fetchEvidence(
+    input: RequestInfo | URL,
+    init: RequestInit = {},
+  ) {
+    this.assertUninterrupted();
+    const request = input instanceof Request ? input : null;
+    const url = new URL(request?.url ?? String(input));
+    const method = (init.method ?? request?.method ?? "GET").toUpperCase();
+    const body = typeof init.body === "string" ? init.body : "";
+    requireThat(
+      !url.username && !url.password && !url.hash,
+      "Credential-bearing URL refused",
+    );
+    const github = url.origin === "https://api.github.com";
+    const feed =
+      url.origin === "https://slopbot.slop.cash" ||
+      url.origin === "https://slop.cash";
+    requireThat(
+      (github &&
+        (method === "GET" ||
+          (method === "POST" &&
+            url.pathname === "/graphql" &&
+            !/\bmutation\b/u.test(JSON.parse(body).query)))) ||
+        (feed && method === "GET"),
+      "Only canonical read-only source requests are permitted",
+    );
+    const key = digest(encode({ url: url.href, method, body }));
+    const path = resolve(this.directory, "requests", `${key}.json`);
+    const cached = await readJson<CachedResponse>(path);
+    if (cached) {
+      const bytes = await readFile(
+        resolve(this.directory, "objects", cached.bodyDigest),
+      );
+      requireThat(
+        digest(bytes) === cached.bodyDigest,
+        "Cached response digest mismatch",
+      );
+      this.cacheHits += 1;
+      return new Response(bytes, {
+        status: cached.status,
+        headers: cached.headers,
+      });
+    }
+    requireThat(
+      this.allowRequests,
+      "Cached census is missing raw request evidence",
+    );
+    this.assertUninterrupted();
+    if (this.requests >= this.requestBudget) this.interrupt("request-budget");
+    const attempt = ++this.requests;
+    const response = await this.transport(input, init);
+    const bytes = new Uint8Array(await response.arrayBuffer());
+    const bodyDigest = digest(bytes);
+    const headers = Object.fromEntries(
+      [
+        "content-type",
+        "x-github-request-id",
+        "x-ratelimit-limit",
+        "x-ratelimit-remaining",
+        "x-ratelimit-reset",
+        "retry-after",
+      ].flatMap((name) => {
+        const value = response.headers.get(name);
+        return value === null ? [] : [[name, value]];
+      }),
+    );
+    let parsed: GithubQuotaPayload | undefined;
+    try {
+      parsed = JSON.parse(new TextDecoder().decode(bytes));
+    } catch {
+      /* Retain non-JSON failures exactly. */
+    }
+    this.reportedGraphqlCost += parsed?.data?.rateLimit?.cost ?? 0;
+    await immutableBytes(resolve(this.directory, "objects", bodyDigest), bytes);
+    await immutableBytes(
+      resolve(
+        this.directory,
+        "attempts",
+        `${this.now()}-${attempt}-${key}-${randomUUID()}.json`,
+      ),
+      new TextEncoder().encode(
+        encode({
+          url: url.href,
+          method,
+          body,
+          status: response.status,
+          headers,
+          bodyDigest,
+        }),
+      ),
+    );
+    if (github) {
+      const quota = githubQuotaStop(
+        response,
+        url.pathname === "/graphql",
+        parsed,
+        this.now(),
+      );
+      if (quota) this.interrupt("quota", quota.retryAtMs);
+    }
+    const validJson = typeof parsed === "object" && parsed !== null;
+    const completeGraphql =
+      url.pathname !== "/graphql" ||
+      (typeof parsed?.data === "object" && parsed.data !== null);
+    const graphqlRequest =
+      method === "POST" && url.pathname === "/graphql"
+        ? JSON.parse(body)
+        : null;
+    const recoverableStatistics = graphqlRequest
+      ? commitStatisticsFailure(
+          graphqlRequest.query,
+          parsed,
+          graphqlRequest.variables ?? {},
+        )
+      : null;
+    if (
+      response.ok &&
+      validJson &&
+      completeGraphql &&
+      (!parsed?.errors || recoverableStatistics)
+    ) {
+      await atomicJson(path, {
+        status: response.status,
+        headers,
+        bodyDigest,
+      });
+      this.savedRequests.add(key);
+    }
+    return new Response(bytes, {
+      status: response.status,
+      headers: response.headers,
+    });
+  }
 }
 
 /** Keep cached rate snapshots outside the live client's budget accounting. */
@@ -996,12 +1142,14 @@ export interface CollectionOptions {
   candidateMonth?: string;
   before?: string;
   requestBudget?: number;
+  resumeForSeconds?: number;
 }
 export interface CollectionDependencies {
   journal?: PointsJournal;
   token?: string;
   transport?: typeof fetch;
   now?: Date;
+  quotaNow?: () => number;
   registry?: Awaited<ReturnType<typeof fetchProjectRegistry>>;
 }
 interface RepositoryPlan {
@@ -1028,12 +1176,48 @@ interface CensusPart {
   digest: string;
 }
 
-/** All public candidates are emitted, including held, unchanged and unselected
- * pools. A bounded sample can collect facts, but cannot assert ownership.
- */
 export async function collectImplementationCorrections(
   options: CollectionOptions,
   dependencies: CollectionDependencies = {},
+) {
+  return collectPass(options, dependencies);
+}
+
+async function collectPass(
+  options: CollectionOptions,
+  dependencies: CollectionDependencies,
+  priorUsage?: { requests: number; reportedGraphqlCost: number },
+) {
+  const cache = new CorrectionEvidenceCache(
+    resolve(options.directory),
+    dependencies.transport ?? fetch,
+    options.requestBudget,
+    dependencies.quotaNow,
+  );
+  try {
+    return await collectWithEvidenceCache(
+      options,
+      dependencies,
+      cache,
+      priorUsage,
+    );
+  } catch (error) {
+    const stop = collectionStop(error);
+    // A Promise.all rejection can leave sibling source reads in progress.
+    // The next pass may replay their evidence only after those reads settle.
+    await cache.settleReads();
+    throw stop ? (cache.stop ?? stop) : error;
+  }
+}
+
+/** All public candidates are emitted, including held, unchanged and unselected
+ * pools. A bounded sample can collect facts, but cannot assert ownership.
+ */
+async function collectWithEvidenceCache(
+  options: CollectionOptions,
+  dependencies: CollectionDependencies,
+  cache: CorrectionEvidenceCache,
+  priorUsage = { requests: 0, reportedGraphqlCost: 0 },
 ) {
   requireThat(
     options.projects.length > 0 &&
@@ -1063,7 +1247,7 @@ export async function collectImplementationCorrections(
   const currentJournal = dependencies.journal ?? (await loadPublishedPoints());
   requireThat(currentJournal, "Published baseline journal unavailable");
   assertPointsJournal(currentJournal);
-  const directory = resolve(options.directory);
+  const { directory } = cache;
   let campaign = await readJson<Campaign>(resolve(directory, "campaign.json"));
   let journal = currentJournal;
   if (campaign) {
@@ -1101,11 +1285,6 @@ export async function collectImplementationCorrections(
     "Only active canonical-registry projects may be collected",
   );
   const baseline = createPointsCorrectionBaseline(journal);
-  const cache = new CorrectionEvidenceCache(
-    directory,
-    dependencies.transport ?? fetch,
-    options.requestBudget,
-  );
   const token = dependencies.token ?? (await resolveGitHubToken());
   // The cache is outside the live client's accounting, so replaying old raw
   // observations cannot reset the current quota to an older, larger balance.
@@ -1113,6 +1292,17 @@ export async function collectImplementationCorrections(
   const executor = cachedExecutor(client, cache);
   const github = GitHubClient.forToken(token, cache.fetch);
   const registryDigest = digest(encode(registry));
+  const through =
+    campaign?.through ??
+    new Date(
+      Math.floor((dependencies.now ?? new Date()).getTime() / 1000) * 1000,
+    ).toISOString();
+  requireThat(
+    canonicalTime(through) === through &&
+      (!campaign ||
+        (campaign.schemaVersion === "1" && campaign.through === through)),
+    "Campaign schema or collection time is invalid",
+  );
   if (campaign) {
     requireThat(
       typeof campaign.before === "string" &&
@@ -1129,11 +1319,13 @@ export async function collectImplementationCorrections(
         campaign.registryDigest === registryDigest,
       "Campaign baseline or canonical registry changed; use a new campaign directory",
     );
-  } else {
-    const through = new Date(
-      Math.floor((dependencies.now ?? new Date()).getTime() / 1000) * 1000,
-    ).toISOString();
-    const plans: RepositoryPlan[] = [];
+  }
+  const plans: RepositoryPlan[] = [];
+  // Rebuild the frozen scope under the current collector, including when a
+  // reviewed main ancestor produced the checkpoint. Never replace its original
+  // repository observation with a live read during resume.
+  cache.allowRequests = campaign === null;
+  try {
     for (const repository of repositories) {
       const data = await executor.execute(PREFLIGHT, {
         owner: repository.owner,
@@ -1145,6 +1337,9 @@ export async function collectImplementationCorrections(
           live.nameWithOwner.toLowerCase() ===
             `${repository.owner}/${repository.name}`.toLowerCase() &&
           typeof live.id === "string" &&
+          typeof live.createdAt === "string" &&
+          Number.isFinite(Date.parse(live.createdAt)) &&
+          Date.parse(live.createdAt) <= Date.parse(through) &&
           (repository.expectedNodeId === null ||
             live.id === repository.expectedNodeId),
         "Canonical public repository identity unavailable",
@@ -1156,6 +1351,15 @@ export async function collectImplementationCorrections(
         months: censusMonths(live.createdAt, through),
       });
     }
+  } finally {
+    cache.allowRequests = true;
+  }
+  if (campaign) {
+    requireThat(
+      encode(campaign.repositories) === encode(plans),
+      "Campaign repository scope or monthly partition differs from its raw evidence",
+    );
+  } else {
     campaign = {
       schemaVersion: "1",
       baseline,
@@ -1297,6 +1501,9 @@ export async function collectImplementationCorrections(
       ),
       "Sample contains a source outside the positive pool inventory",
     );
+  const outcomesById = new Map(
+    allOutcomes.map((outcome) => [outcome.id, outcome]),
+  );
   const reads = new Map<string, SourceRead>();
   for (const plan of campaign.repositories) {
     const targets = selected
@@ -1306,6 +1513,65 @@ export async function collectImplementationCorrections(
           repositoryIdFromUrl(c.sourceUrl).toLowerCase() ===
           plan.repository.id.toLowerCase(),
       );
+    if (ownershipComplete) {
+      // The canonical census already parsed every accepted PR and hydrated its
+      // complete immutable commit list. Reuse those raw-verified observations
+      // rather than repeating the same metadata and statistics requests.
+      for (const candidate of targets) {
+        const outcome = outcomesById.get(candidate.sourceId);
+        if (!outcome) {
+          limitations.set(candidate.sourceId, "source-unavailable");
+          continue;
+        }
+        if (
+          outcome.url !== candidate.sourceUrl ||
+          canonicalTime(outcome.mergedAt) !== candidate.occurredAt
+        ) {
+          limitations.set(
+            candidate.sourceId,
+            "accepted-source-no-longer-matches-recorded-pool",
+          );
+          continue;
+        }
+        requireThat(
+          outcome.id === candidate.sourceId &&
+            repositoryIdFromUrl(outcome.url).toLowerCase() ===
+              plan.repository.id.toLowerCase() &&
+            typeof outcome.headRefOid === "string" &&
+            /^[a-f0-9]{40}$/u.test(outcome.headRefOid) &&
+            outcome.commits !== null,
+          "Complete census source identity or commit evidence is invalid",
+        );
+        if (outcome.commits.length === 0) {
+          limitations.set(
+            candidate.sourceId,
+            "accepted-source-commit-list-empty",
+          );
+          continue;
+        }
+        requireThat(
+          outcome.commits.at(-1)?.oid === outcome.headRefOid &&
+            new Set(outcome.commits.map((commit) => commit.oid)).size ===
+              outcome.commits.length &&
+            outcome.commits.every(
+              (commit) =>
+                /^[a-f0-9]{40}$/u.test(commit.oid) &&
+                Number.isSafeInteger(commit.parentCount) &&
+                Number(commit.parentCount) >= 0 &&
+                Number.isSafeInteger(commit.additions) &&
+                Number(commit.additions) >= 0 &&
+                Number.isSafeInteger(commit.deletions) &&
+                Number(commit.deletions) >= 0,
+            ),
+          "Complete census source identity or commit evidence is invalid",
+        );
+        reads.set(candidate.sourceId, {
+          outcome,
+          repositoryNodeId: plan.nodeId,
+        });
+      }
+      continue;
+    }
     const loaded = await readSources(
       executor,
       targets,
@@ -1321,7 +1587,6 @@ export async function collectImplementationCorrections(
     }
     for (const [id, value] of loaded.held) limitations.set(id, value);
   }
-  const outcomesById = new Map(allOutcomes.map((o) => [o.id, o]));
   for (const pool of selected) {
     const candidate = pool.candidate;
     const read = reads.get(candidate.sourceId);
@@ -1336,21 +1601,13 @@ export async function collectImplementationCorrections(
       );
       continue;
     }
-    const census = outcomesById.get(candidate.sourceId);
-    requireThat(
-      census &&
-        census.headRefOid === read.outcome.headRefOid &&
-        census.mergedAt === read.outcome.mergedAt &&
-        encode(census.commits) === encode(read.outcome.commits),
-      "Selected source differs from complete ownership census",
-    );
     if (candidate.kind === "work-unit") continue;
     try {
       const sources = await ordinaryRetainedProof(github, read, owners);
       candidate.sourceIds = sources.map((s) => s.sourceId).sort();
       candidate.proof = { status: "complete", censusDigest, sources };
     } catch (error) {
-      if (error instanceof CollectionBudgetExhausted) throw error;
+      cache.assertUninterrupted();
       limitations.set(
         candidate.id,
         error instanceof Error
@@ -1393,6 +1650,7 @@ export async function collectImplementationCorrections(
         [],
       );
     } catch (error) {
+      cache.assertUninterrupted();
       if (!(error instanceof ValueFeedUnavailableError)) throw error;
       for (const pool of grouped)
         limitations.set(pool.candidate.id, "grouped-history-feed-unavailable");
@@ -1457,7 +1715,7 @@ export async function collectImplementationCorrections(
           })),
         };
       } catch (error) {
-        if (error instanceof CollectionBudgetExhausted) throw error;
+        cache.assertUninterrupted();
         limitations.set(
           candidate.id,
           error instanceof Error ? error.message : "grouped-proof-incomplete",
@@ -1499,15 +1757,74 @@ export async function collectImplementationCorrections(
       .length,
     heldProofs: pools.filter((p) => p.candidate.proof.status === "held").length,
     sourceFactsCollected: reads.size,
-    requests: cache.requests,
+    requests: priorUsage.requests + cache.requests,
     cacheHits: cache.cacheHits,
-    reportedGraphqlCost: cache.reportedGraphqlCost,
+    reportedGraphqlCost:
+      priorUsage.reportedGraphqlCost + cache.reportedGraphqlCost,
     limitations: [...limitations].map(([id, reason]) => ({ id, reason })),
     manifestDigest: digest(encode(manifest)),
   };
+  // Optional discovery helpers may catch errors; an interrupted pass cannot publish.
+  cache.assertUninterrupted();
   await atomicJson(resolve(directory, "manifest.json"), manifest);
   await atomicJson(resolve(directory, "collection-receipt.json"), receipt);
   return { manifest, receipt };
+}
+
+/** Opt-in command runner; each pass rebuilds the campaign from retained evidence. */
+export async function collectWithQuotaResume(
+  options: CollectionOptions,
+  dependencies: CollectionDependencies = {},
+  runtime: {
+    now: () => number;
+    wait: (ms: number) => Promise<unknown>;
+  } = { now: Date.now, wait: (ms) => Bun.sleep(ms) },
+) {
+  if (options.resumeForSeconds === undefined)
+    return collectImplementationCorrections(options, dependencies);
+  const started = runtime.now();
+  const deadline = started + options.resumeForSeconds * 1_000;
+  const scopedDependencies = {
+    ...dependencies,
+    now: dependencies.now ?? new Date(started),
+    quotaNow: runtime.now,
+  };
+  let remaining = options.requestBudget ?? 2000;
+  const usage = { requests: 0, reportedGraphqlCost: 0 };
+  let consecutiveQuotaRefusals = 0;
+  for (;;) {
+    try {
+      return await collectPass(
+        { ...options, requestBudget: remaining },
+        scopedDependencies,
+        usage,
+      );
+    } catch (error) {
+      if (!(error instanceof CollectionBudgetExhausted)) throw error;
+      usage.requests += error.newRequests;
+      usage.reportedGraphqlCost += error.reportedGraphqlCost;
+      const deferred = new CollectionBudgetExhausted(
+        error.kind,
+        usage.requests,
+        usage.reportedGraphqlCost,
+        error.retryAtMs,
+      );
+      if (error.kind !== "quota" || error.retryAtMs === undefined)
+        throw deferred;
+      remaining -= error.newRequests;
+      consecutiveQuotaRefusals =
+        error.savedRequests === 0 ? consecutiveQuotaRefusals + 1 : 0;
+      const now = runtime.now();
+      const next = Math.max(now + 2_000, error.retryAtMs);
+      if (remaining <= 0 || consecutiveQuotaRefusals >= 3 || next >= deadline)
+        throw deferred;
+      console.warn(
+        `Historical evidence checkpoint saved after ${usage.requests} requests; resuming after GitHub quota at ${new Date(next).toISOString()}`,
+      );
+      await runtime.wait(next - now);
+      if (runtime.now() >= deadline) throw deferred;
+    }
+  }
 }
 
 export function parseCollectionArguments(
@@ -1536,6 +1853,14 @@ export function parseCollectionArguments(
         Number.isSafeInteger(result.requestBudget) && result.requestBudget > 0,
         "Invalid request budget",
       );
+    } else if (argument === "--resume-for-seconds") {
+      result.resumeForSeconds = Number(value);
+      requireThat(
+        Number.isSafeInteger(result.resumeForSeconds) &&
+          result.resumeForSeconds > 0 &&
+          result.resumeForSeconds <= 18_000,
+        "Invalid quota resume duration (maximum five hours)",
+      );
     } else throw new Error(`Unknown argument: ${argument}`);
   }
   requireThat(
@@ -1555,15 +1880,26 @@ export function parseCollectionArguments(
 }
 
 if (import.meta.main) {
-  const result = await collectImplementationCorrections(
-    parseCollectionArguments(process.argv.slice(2)),
-  );
-  const { limitations, missingMonths, ...summary } = result.receipt;
-  console.log(
-    JSON.stringify({
-      ...summary,
-      missingMonthCount: missingMonths.length,
-      limitationCount: limitations.length,
-    }),
-  );
+  const options = parseCollectionArguments(process.argv.slice(2));
+  try {
+    const result = await collectWithQuotaResume(options);
+    const { limitations, missingMonths, ...summary } = result.receipt;
+    console.log(
+      JSON.stringify({
+        ...summary,
+        missingMonthCount: missingMonths.length,
+        limitationCount: limitations.length,
+      }),
+    );
+  } catch (error) {
+    if (
+      options.resumeForSeconds === undefined ||
+      !(error instanceof CollectionBudgetExhausted)
+    )
+      throw error;
+    console.error(
+      `${error.message} (${error.newRequests} requests, ${error.reportedGraphqlCost} reported GraphQL points in this invocation)`,
+    );
+    process.exitCode = 75;
+  }
 }
