@@ -77,6 +77,7 @@
     "spec/backend/wallets.proof.dfy": "8ef7e5b862c5abe51bc4cc0a0479c9f2f104fdcd6d6b5ead0389f64351b7e052",
     "spec/points/allocation.proof.dfy": "348bb1203aa9f8b2023774aedb79212a5a2d6f37b45a2cf41cd41f91536ea0a6",
     "spec/points/census.proof.dfy": "940d1cb80009e4b3e7031a1dfb2b85c63736461826475a0e9ff480bab965714a",
+    "spec/points/corrections.proof.dfy": "08965dabede4668a59ebc01c1dc30cc0f445a94ea451029ceba5b04af4765e70",
     "spec/points/penalties.proof.dfy": "045b02ca2fbf0567bd296ec5848e12049505ddcde66e4cc7f8aa11967825aa7d",
     "spec/points/publication.proof.dfy": "a2f830a454cc7b7dfe58f69ada3ff414cdff948ea55d6cd9fc526dfb33ea102f",
     "spec/points/reviews.proof.dfy": "04fd8c91e7617f3964c9e79f0063e6e1c9a7aca7f110f706ef018dbe0afaa00e",
@@ -146,5 +147,8 @@
     "journeys": 1,
     "evidence": "integrated-template-conformance.json"
   },
-  "generationAndTypecheckCommit": "0eba208feb4e880e6933bce65bc65b7fca3063fc"
+  "generationAndTypecheckCommit": "0eba208feb4e880e6933bce65bc65b7fca3063fc",
+  "laterProofInputs": {
+    "spec/points/corrections.proof.dfy": "formal/validation/points/corrections-proof.json"
+  }
 }

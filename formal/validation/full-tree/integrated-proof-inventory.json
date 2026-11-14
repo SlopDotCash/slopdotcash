@@ -1,8 +1,8 @@
 {
   "status": "partial",
   "qualification": "Counts the baseline and focused exact-source unit results once. The old closure, reserve release and destination recovery proofs are replaced by results for the current models. Navigation index changes carry no obligations. Unproved clauses and missing verdicts remain open.",
-  "provedObligations": 2639,
-  "unprovedObligations": 67,
+  "provedObligations": 2642,
+  "unprovedObligations": 64,
   "unitsWithCounts": 69,
   "unitsWithoutCounts": [
     "fees__buyback.ts",
@@ -652,10 +652,10 @@
     },
     {
       "unit": "points__corrections.ts",
-      "evidence": "formal/validation/points/baseline-proof.json",
+      "evidence": "formal/validation/points/corrections-proof.json",
       "total": 18,
-      "proved": 15,
-      "unproved": 3,
+      "proved": 18,
+      "unproved": 0,
       "errors": 0,
       "resourceExhausted": 0
     }

@@ -204,7 +204,7 @@ superseded by the signed-attempt correction below.
 [Proof stage inputs](validation/full-tree/proof-stage-inputs.json) · [Template inputs](validation/full-tree/template-inputs.json) · [Proof checkpoint](validation/full-tree/proof-checkpoint.json)
 
 The exact-source proof inventory includes each baseline or focused unit once.
-It records 2,639 discharged obligations and 67 open clauses across 69 of 72
+It records 2,642 discharged obligations and 64 open clauses across 69 of 72
 units. Buyback, referral accrual and referral publication lack a complete unit
 verdict in that inventory. The current proof result takes precedence where the
 underlying model changed. Sign-off and all open obligations remain pending.
@@ -220,11 +220,10 @@ manifest as replay after revocation. Targeted Quint simulation and TypeScript
 replay reached all nine goals, and nine directed assertions passed. The
 publication proof establishes all 37 obligations, including exact-prefix
 transitivity across canonical and public state changes. Historical corrections
-proved 15 of 18 obligations, including all transition rules. The three open
-laws concern concrete protection-race, aggregate-weight and replay witnesses.
-The attempted proof did not close their shared filter lemma. The directed
-checks passed all three.
-[Points evidence](validation/points/targeted.json) · [Publication proof](validation/points/publication-proof.json) · [Correction proof results](validation/points/baseline-proof.json)
+proved all 18 obligations after adding a checked filter and exact 30-Point
+allocation proof. The proofs cover the protection race, unchanged aggregate
+weight and replay after revocation.
+[Points evidence](validation/points/targeted.json) · [Publication proof](validation/points/publication-proof.json) · [Correction proof](validation/points/corrections-proof.json)
 
 The local Solana stages require a fresh owned validator receipt for each
 shell stage and a confirmed local funding result before tests. The command
