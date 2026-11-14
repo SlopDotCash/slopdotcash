@@ -1,0 +1,43 @@
+{
+  "unit": "settlement__referralDistributor.ts",
+  "total": 146,
+  "unproved": [],
+  "exhausted": [],
+  "errors": [],
+  "resting": {},
+  "proofDafnySha256": "d4b51ad805dad0f969b0e67d748a145db93bfbb44ad3f7f688802d3375e11951",
+  "proofSource": {
+    "file": "spec/settlement/referralDistributor.proof.dfy",
+    "sha256": "91fb202584ab94b6d687d348e3f950ab08c0da32562be45bc49555b1717d4458"
+  },
+  "checkedImportedLemmas": 27,
+  "specHashes": {
+    "spec/settlement/money.md": "801d269c4fa02d62cac4d5d37412d831793daf16aff7a751c07e10a5ce383f4b",
+    "spec/settlement/money.proof.dfy": "14d6ad9a6d3faa11f32a2abbc1bc9470c247161cbd9fe64fa06af38df1ed8922",
+    "spec/settlement/referralDistributor.md": "9806b4cd07201302c90313cb2ed894c2ee0b7ef953c8bcc0abf1b1da9d75e673",
+    "spec/settlement/referralDistributor.proof.dfy": "91fb202584ab94b6d687d348e3f950ab08c0da32562be45bc49555b1717d4458"
+  },
+  "dependency": {
+    "unit": "settlement__money.ts",
+    "total": 31,
+    "unproved": [
+      "lawDivisionRemainder: (lawDivisionRemainder(a, b) == true)",
+      "lawDivisionReconstructs: (lawDivisionReconstructs(a, b) == true)",
+      "lawFullPrivateConservation: (lawFullPrivateConservation(a) == true)",
+      "lawFullOrdinaryConservation: (lawFullOrdinaryConservation(a) == true)"
+    ],
+    "exhausted": [
+      "lawDivisionReconstructs: (lawDivisionReconstructs(a, b) == true)"
+    ],
+    "errors": [],
+    "resting": {},
+    "proofDafnySha256": "7ed318924ed9b3b8babb474e1c3a001549ee489e59c1467d0a2b86c1b10737d3",
+    "proofSource": {
+      "file": "spec/settlement/money.proof.dfy",
+      "sha256": "14d6ad9a6d3faa11f32a2abbc1bc9470c247161cbd9fe64fa06af38df1ed8922"
+    },
+    "checkedImportedLemmas": 0
+  },
+  "proofLogSha256": "48da4bd225fdb9963db9eb2babe712ad392684df2718652219c47647d54d813c",
+  "note": "Canonical Vibestack proof imports checked money obligations only."
+}

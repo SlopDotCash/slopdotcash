@@ -106,6 +106,287 @@ lemma SameClaims(before: Distributor, after: Distributor)
   }
 }
 
+
+// Each retained amount is a valid base-unit vector. The liquid, paid and
+// rescued categories partition deposits.
+lemma RotateAddedAmounts(first: seq<int>, second: seq<int>, third: seq<int>)
+  requires settlement__money_validAmount(first) && settlement__money_validAmount(second) && settlement__money_validAmount(third)
+  ensures settlement__money_equalAmounts(settlement__money_addAmounts(settlement__money_addAmounts(first, second), third),
+    settlement__money_addAmounts(settlement__money_addAmounts(first, third), second))
+{
+  var left := settlement__money_addAmounts(settlement__money_addAmounts(first, second), third);
+  var right := settlement__money_addAmounts(settlement__money_addAmounts(first, third), second);
+  var inner := settlement__money_addAmounts(first, settlement__money_addAmounts(second, third));
+  settlement__money_lawAddAssociative_ensures(first, second, third);
+  settlement__money_lawAddAssociative_ensures(first, third, second);
+  settlement__money_lawAddCommutative_ensures(second, third);
+  settlement__money_lawEqualSymmetric_ensures(right, inner);
+  settlement__money_lawEqualSubstitution_ensures(left, inner, right);
+}
+
+lemma ShiftDeposit(d: Distributor, amount: seq<int>)
+  requires alwaysMoneyValid(d) && alwaysConserved(d) && settlement__money_validAmount(amount)
+  ensures settlement__money_equalAmounts(settlement__money_addAmounts(d.deposited, amount),
+    settlement__money_addAmounts(settlement__money_addAmounts(settlement__money_addAmounts(d.balance, amount), d.paid), d.rescued))
+{
+  var balance := d.balance;
+  var paid := d.paid;
+  var rescued := d.rescued;
+  var combined := settlement__money_addAmounts(balance, paid);
+  var oldTotal := settlement__money_addAmounts(combined, rescued);
+  var credited := settlement__money_addAmounts(balance, amount);
+  var moved := settlement__money_addAmounts(combined, amount);
+  var middle := settlement__money_addAmounts(moved, rescued);
+  var subtotal := settlement__money_addAmounts(oldTotal, amount);
+  var deposited := settlement__money_addAmounts(d.deposited, amount);
+  var creditedCombined := settlement__money_addAmounts(credited, paid);
+  var end := settlement__money_addAmounts(creditedCombined, rescued);
+  settlement__money_lawAdditionValid_ensures(balance, paid);
+  settlement__money_lawAdditionValid_ensures(combined, rescued);
+  settlement__money_lawAdditionValid_ensures(balance, amount);
+  settlement__money_lawAdditionValid_ensures(combined, amount);
+  settlement__money_lawAdditionValid_ensures(credited, paid);
+  settlement__money_lawAddCongruence_ensures(d.deposited, oldTotal, amount);
+  RotateAddedAmounts(combined, rescued, amount);
+  RotateAddedAmounts(balance, paid, amount);
+  settlement__money_lawAddCongruence_ensures(moved, creditedCombined, rescued);
+  settlement__money_lawEqualSubstitution_ensures(deposited, subtotal, middle);
+  settlement__money_lawEqualSubstitution_ensures(deposited, middle, end);
+}
+
+lemma RescueConserves(d: Distributor)
+  requires alwaysMoneyValid(d) && alwaysConserved(d)
+  ensures settlement__money_equalAmounts(d.deposited,
+    settlement__money_addAmounts(settlement__money_addAmounts(settlement__money_zero, d.paid), settlement__money_addAmounts(d.rescued, d.balance)))
+{
+  var balance := d.balance;
+  var paid := d.paid;
+  var rescued := d.rescued;
+  var combined := settlement__money_addAmounts(balance, paid);
+  var oldTotal := settlement__money_addAmounts(combined, rescued);
+  var emptied := settlement__money_addAmounts(settlement__money_zero, paid);
+  var moved := settlement__money_addAmounts(rescued, balance);
+  settlement__money_lawZeroIdentity_ensures(paid);
+  settlement__money_lawAddCommutative_ensures(paid, settlement__money_zero);
+  settlement__money_lawAdditionValid_ensures(rescued, balance);
+  settlement__money_lawAdditionValid_ensures(settlement__money_zero, paid);
+  settlement__money_lawEqualSymmetric_ensures(emptied, paid);
+  settlement__money_lawAddCongruence_ensures(emptied, paid, moved);
+  settlement__money_lawAddCommutative_ensures(balance, paid);
+  settlement__money_lawAddCommutative_ensures(balance, rescued);
+  settlement__money_lawAddAssociative_ensures(paid, balance, rescued);
+  var reciprocal := settlement__money_addAmounts(paid, moved);
+  var after := settlement__money_addAmounts(emptied, moved);
+  settlement__money_lawEqualSymmetric_ensures(after, reciprocal);
+  settlement__money_lawEqualSubstitution_ensures(oldTotal, reciprocal, after);
+  settlement__money_lawEqualSubstitution_ensures(d.deposited, oldTotal, after);
+}
+
+lemma ClaimConserves(d: Distributor, delta: seq<int>)
+  requires alwaysMoneyValid(d) && alwaysConserved(d) && settlement__money_validAmount(delta)
+  requires settlement__money_compareAmounts(d.balance, delta) >= 0
+  ensures settlement__money_equalAmounts(d.deposited,
+    settlement__money_addAmounts(settlement__money_addAmounts(settlement__money_subtractAmounts(d.balance, delta), settlement__money_addAmounts(d.paid, delta)), d.rescued))
+{
+  var balance := d.balance;
+  var paid := d.paid;
+  var reduced := settlement__money_subtractAmounts(balance, delta);
+  var credited := settlement__money_addAmounts(paid, delta);
+  var reconstructed := settlement__money_addAmounts(reduced, delta);
+  var oldTotal := settlement__money_addAmounts(settlement__money_addAmounts(balance, paid), d.rescued);
+  var redistributed := settlement__money_addAmounts(reduced, credited);
+  var moved := settlement__money_addAmounts(reconstructed, paid);
+  var beforePair := settlement__money_addAmounts(balance, paid);
+  settlement__money_lawSubtractionValid_ensures(balance, delta);
+  settlement__money_lawAdditionValid_ensures(reduced, delta);
+  settlement__money_lawAdditionValid_ensures(paid, delta);
+  settlement__money_lawAdditionValid_ensures(reduced, credited);
+  settlement__money_lawAdditionValid_ensures(balance, paid);
+  settlement__money_lawSubtractionReconstructs_ensures(balance, delta);
+  settlement__money_lawAddCommutative_ensures(paid, delta);
+  settlement__money_lawAddAssociative_ensures(reduced, delta, paid);
+  settlement__money_lawAddCongruence_ensures(reconstructed, balance, paid);
+  settlement__money_lawEqualSymmetric_ensures(moved, redistributed);
+  settlement__money_lawEqualSubstitution_ensures(redistributed, moved, beforePair);
+  settlement__money_lawAddCongruence_ensures(redistributed, beforePair, d.rescued);
+  var newTotal := settlement__money_addAmounts(redistributed, d.rescued);
+  settlement__money_lawEqualSymmetric_ensures(newTotal, oldTotal);
+  settlement__money_lawEqualSubstitution_ensures(d.deposited, oldTotal, newTotal);
+}
+
+// Removing one exact wallet changes a cumulative sum by that claim alone.
+lemma ClaimSumValid(claims: seq<AddressClaim>, total: seq<int>)
+  requires settlement__money_validAmount(total)
+  requires forall c :: c in claims ==> settlement__money_validAmount(c.cumulative)
+  ensures settlement__money_validAmount(Std.Collections.Seq.FoldLeft((total: settlement__money_Amount, c: AddressClaim) => settlement__money_addAmounts(total, c.cumulative), total, claims))
+  decreases |claims|
+{
+  if |claims| > 0 {
+    assert claims[0] in claims;
+    assert forall c :: c in claims[1..] ==> c in claims;
+    settlement__money_lawAdditionValid_ensures(total, claims[0].cumulative);
+    ClaimSumValid(claims[1..], settlement__money_addAmounts(total, claims[0].cumulative));
+  }
+}
+
+lemma ClaimSumKeepsIncrement(claims: seq<AddressClaim>, base: seq<int>, amount: seq<int>)
+  requires settlement__money_validAmount(base) && settlement__money_validAmount(amount)
+  requires forall c :: c in claims ==> settlement__money_validAmount(c.cumulative)
+  ensures var sum := (total: settlement__money_Amount, c: AddressClaim) => settlement__money_addAmounts(total, c.cumulative);
+    settlement__money_equalAmounts(Std.Collections.Seq.FoldLeft(sum, settlement__money_addAmounts(base, amount), claims),
+      settlement__money_addAmounts(Std.Collections.Seq.FoldLeft(sum, base, claims), amount))
+  decreases |claims|
+{
+  if |claims| > 0 {
+    var head := claims[0];
+    assert head in claims;
+    assert forall c :: c in claims[1..] ==> c in claims;
+    var sum := (total: settlement__money_Amount, c: AddressClaim) => settlement__money_addAmounts(total, c.cumulative);
+    var left := settlement__money_addAmounts(settlement__money_addAmounts(base, amount), head.cumulative);
+    var right := settlement__money_addAmounts(settlement__money_addAmounts(base, head.cumulative), amount);
+    settlement__money_lawAddAssociative_ensures(base, amount, head.cumulative);
+    settlement__money_lawAddAssociative_ensures(base, head.cumulative, amount);
+    settlement__money_lawAddCommutative_ensures(amount, head.cumulative);
+    var m := settlement__money_addAmounts(base, settlement__money_addAmounts(amount, head.cumulative));
+    settlement__money_lawEqualSymmetric_ensures(right, m);
+    settlement__money_lawEqualSubstitution_ensures(left, m, right);
+    settlement__money_lawAdditionValid_ensures(base, amount);
+    settlement__money_lawAdditionValid_ensures(base, head.cumulative);
+    settlement__money_lawAdditionValid_ensures(settlement__money_addAmounts(base, amount), head.cumulative);
+    settlement__money_lawAdditionValid_ensures(settlement__money_addAmounts(base, head.cumulative), amount);
+    ClaimSumEquivalentSeeds(claims[1..], left, right);
+    ClaimSumKeepsIncrement(claims[1..], settlement__money_addAmounts(base, head.cumulative), amount);
+    settlement__money_lawEqualSubstitution_ensures(Std.Collections.Seq.FoldLeft(sum, left, claims[1..]), Std.Collections.Seq.FoldLeft(sum, right, claims[1..]),
+      settlement__money_addAmounts(Std.Collections.Seq.FoldLeft(sum, settlement__money_addAmounts(base, head.cumulative), claims[1..]), amount));
+  } else {
+    settlement__money_lawEqualReflexive_ensures(settlement__money_addAmounts(base, amount));
+  }
+}
+
+lemma ClaimSumEquivalentSeeds(claims: seq<AddressClaim>, a: seq<int>, b: seq<int>)
+  requires settlement__money_validAmount(a) && settlement__money_validAmount(b) && settlement__money_equalAmounts(a, b)
+  requires forall c :: c in claims ==> settlement__money_validAmount(c.cumulative)
+  ensures var sum := (total: settlement__money_Amount, c: AddressClaim) => settlement__money_addAmounts(total, c.cumulative);
+    settlement__money_equalAmounts(Std.Collections.Seq.FoldLeft(sum, a, claims), Std.Collections.Seq.FoldLeft(sum, b, claims))
+  decreases |claims|
+{
+  if |claims| > 0 {
+    var head := claims[0];
+    assert head in claims;
+    assert forall c :: c in claims[1..] ==> c in claims;
+    settlement__money_lawAddCongruence_ensures(a, b, head.cumulative);
+    settlement__money_lawAdditionValid_ensures(a, head.cumulative);
+    settlement__money_lawAdditionValid_ensures(b, head.cumulative);
+    ClaimSumEquivalentSeeds(claims[1..], settlement__money_addAmounts(a, head.cumulative), settlement__money_addAmounts(b, head.cumulative));
+  }
+}
+
+lemma ClaimSumFiltersWallet(claims: seq<AddressClaim>, wallet: string, total: seq<int>)
+  requires settlement__money_validAmount(total)
+  requires forall c :: c in claims ==> settlement__money_validAmount(c.cumulative)
+  requires |ProofLib.Filter((c: AddressClaim) => c.wallet == wallet, claims)| <= 1
+  ensures var sum := (total: settlement__money_Amount, c: AddressClaim) => settlement__money_addAmounts(total, c.cumulative);
+    var matchClaim := Std.Collections.Seq.FoldLeft((selected: seq<int>, claim: AddressClaim) => (if (claim.wallet == wallet) then claim.cumulative else selected), settlement__money_zero, claims);
+    settlement__money_equalAmounts(Std.Collections.Seq.FoldLeft(sum, total, claims),
+      settlement__money_addAmounts(Std.Collections.Seq.FoldLeft(sum, total, ProofLib.Filter((c: AddressClaim) => c.wallet != wallet, claims)), matchClaim))
+  decreases |claims|
+{
+  var keep := (c: AddressClaim) => c.wallet != wallet;
+  var counted := (c: AddressClaim) => c.wallet == wallet;
+  var sum := (total: settlement__money_Amount, c: AddressClaim) => settlement__money_addAmounts(total, c.cumulative);
+  if |claims| > 0 {
+    var head := claims[0];
+    var tail := claims[1..];
+    assert claims == [head] + tail && head in claims;
+    assert forall c :: c in tail ==> c in claims;
+    ProofLib.FilterCons(keep, claims);
+    ProofLib.FilterCons(counted, claims);
+    if head.wallet == wallet {
+      assert |ProofLib.Filter(counted, tail)| == 0;
+      ProofLib.FilterNone(counted, tail);
+      assert forall c :: c in tail ==> c.wallet != wallet;
+      forall q | 0 <= q < |tail| ensures keep(tail[q]) == true {
+        assert tail[q] in tail;
+      }
+      ProofLib.FilterSamePredicate(keep, (c: AddressClaim) => true, tail);
+      KeepEveryAddressClaim(tail);
+      ClaimLookupWithoutKey(tail, wallet, head.cumulative);
+      assert ProofLib.Filter(keep, claims) == tail;
+      ClaimSumKeepsIncrement(tail, total, head.cumulative);
+    } else {
+      settlement__money_lawAdditionValid_ensures(total, head.cumulative);
+      assert ProofLib.Filter(keep, claims) == [head] + ProofLib.Filter(keep, tail);
+      ClaimSumFiltersWallet(tail, wallet, settlement__money_addAmounts(total, head.cumulative));
+    }
+  } else {
+    ProofLib.FilterNil(keep, claims);
+    settlement__money_lawZeroIdentity_ensures(total);
+    settlement__money_lawEqualSymmetric_ensures(settlement__money_addAmounts(total, settlement__money_zero), total);
+  }
+}
+
+lemma KeepEveryAddressClaim(claims: seq<AddressClaim>)
+  ensures ProofLib.Filter((c: AddressClaim) => true, claims) == claims
+  decreases |claims|
+{
+  if |claims| == 0 {
+    ProofLib.FilterNil((c: AddressClaim) => true, claims);
+  } else {
+    ProofLib.FilterCons((c: AddressClaim) => true, claims);
+    KeepEveryAddressClaim(claims[1..]);
+    assert claims == [claims[0]] + claims[1..];
+  }
+}
+
+lemma ReplaceClaimSum(d: Distributor, wallet: string, cumulative: seq<int>, kept: seq<AddressClaim>)
+  requires alwaysMoneyValid(d) && alwaysUniqueClaims(d) && alwaysPaidMatchesClaims(d)
+  requires settlement__money_validAmount(cumulative) && settlement__money_compareAmounts(cumulative, claimedBy(d, wallet)) >= 0
+  requires kept == ProofLib.Filter((old_: AddressClaim) => (old_.wallet != wallet), d.claims)
+  ensures var sum := (total: settlement__money_Amount, c: AddressClaim) => settlement__money_addAmounts(total, c.cumulative);
+    settlement__money_equalAmounts(settlement__money_addAmounts(d.paid, claimDifference(d, wallet, cumulative)),
+      Std.Collections.Seq.FoldLeft(sum, settlement__money_zero, kept + [AddressClaim(wallet, cumulative)]))
+{
+  var sum := (total: settlement__money_Amount, c: AddressClaim) => settlement__money_addAmounts(total, c.cumulative);
+  var begins := settlement__money_zero;
+  var previous := claimedBy(d, wallet);
+  var delta := claimDifference(d, wallet, cumulative);
+  var baseline := Std.Collections.Seq.FoldLeft(sum, begins, kept);
+  var oldSum := Std.Collections.Seq.FoldLeft(sum, begins, d.claims);
+  if exists c :: c in d.claims && c.wallet == wallet {
+    var c :| c in d.claims && c.wallet == wallet;
+    ClaimLookupUnique(d.claims, c, begins);
+    assert previous == c.cumulative;
+    ProofLib.FilterSamePredicate((c2: AddressClaim) => c2.wallet == wallet, (other: AddressClaim) => (other.wallet == c.wallet), d.claims);
+  } else {
+    ProofLib.FilterNone((c: AddressClaim) => c.wallet == wallet, d.claims);
+    ClaimLookupWithoutKey(d.claims, wallet, begins);
+    assert previous == begins;
+  }
+  assert settlement__money_validAmount(previous);
+  ClaimSumFiltersWallet(d.claims, wallet, begins);
+  assert settlement__money_equalAmounts(oldSum, settlement__money_addAmounts(baseline, previous));
+  ClaimSumValid(d.claims, begins);
+  forall c | c in kept ensures settlement__money_validAmount(c.cumulative) {
+    ProofLib.FilterMember((old_: AddressClaim) => (old_.wallet != wallet), d.claims, c);
+  }
+  ClaimSumValid(kept, begins);
+  settlement__money_lawSubtractionValid_ensures(cumulative, previous);
+  settlement__money_lawSubtractionReconstructs_ensures(cumulative, previous);
+  settlement__money_lawAddCommutative_ensures(delta, previous);
+  settlement__money_lawAdditionValid_ensures(baseline, previous);
+  settlement__money_lawAdditionValid_ensures(previous, delta);
+  settlement__money_lawEqualSubstitution_ensures(d.paid, oldSum, settlement__money_addAmounts(baseline, previous));
+  settlement__money_lawAddCongruence_ensures(d.paid, settlement__money_addAmounts(baseline, previous), delta);
+  settlement__money_lawAddAssociative_ensures(baseline, previous, delta);
+  settlement__money_lawAddCongruence_ensures(settlement__money_addAmounts(previous, delta), cumulative, baseline);
+  var expected := settlement__money_addAmounts(baseline, cumulative);
+  var updated := settlement__money_addAmounts(d.paid, delta);
+  var regrouped := settlement__money_addAmounts(baseline, settlement__money_addAmounts(previous, delta));
+  settlement__money_lawEqualSubstitution_ensures(updated, settlement__money_addAmounts(settlement__money_addAmounts(baseline, previous), delta), regrouped);
+  settlement__money_lawEqualSubstitution_ensures(updated, regrouped, expected);
+  ProofLib.FoldLeftAppend(sum, begins, kept, AddressClaim(wallet, cumulative));
+}
+
 lemma tick_ensures(d: Distributor, timestamp: int)
   ensures (inv(d) ==> canTick(d, timestamp) ==> alwaysUnconfiguredEmpty(tick(d, timestamp)))
   ensures (inv(d) ==> canTick(d, timestamp) ==> alwaysTimeValid(tick(d, timestamp)))
@@ -245,6 +526,7 @@ lemma deposit_ensures(d: Distributor, amount: seq<int>, token: string, receipt: 
     SameClaims(d, after);
     settlement__money_lawAdditionValid_ensures(d.balance, amount);
     settlement__money_lawAdditionValid_ensures(d.deposited, amount);
+    ShiftDeposit(d, amount);
   }
 }
 
@@ -316,6 +598,7 @@ lemma rescue_ensures(d: Distributor, destination: string, transferExact: bool, b
     var after := rescue(d, destination, transferExact, by_);
     SameClaims(d, after);
     settlement__money_lawAdditionValid_ensures(d.rescued, d.balance);
+    RescueConserves(d);
   }
 }
 
@@ -386,5 +669,7 @@ lemma claim_ensures(d: Distributor, wallet: string, cumulative: seq<int>, proofR
     settlement__money_lawSubtractionValid_ensures(d.balance, amount);
     settlement__money_lawAdditionValid_ensures(d.paid, amount);
     assert stepClaimsRetained(d, after);
+    ReplaceClaimSum(d, wallet, cumulative, kept);
+    ClaimConserves(d, amount);
   }
 }
