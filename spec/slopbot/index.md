@@ -4,6 +4,7 @@ PRD sections 5, 7 and 9 govern registered-repository review, useful outcome
 scoring, qualified closure and appeals. Slopbot review remains free.
 
 - [Review and provider recovery](./review.md)
+- [Review claims and late-worker fencing](./reviewLease.md)
 - [Closure eligibility](./closure.md)
 - [Appeals and immutable penalties](./appeals.md)
 

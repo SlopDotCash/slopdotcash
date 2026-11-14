@@ -5323,7 +5323,7 @@
     },
     {
       "path": "spec/settlement/vault.md",
-      "sha256": "b173bd0c43b63a7a2695598ea469c3cb59080c2ca5d86401733460fb751525fb",
+      "sha256": "8b65119c2fa355b37b093cedcc1b862439492c7acde8c712c0968434c93484e2",
       "module": "settlement__vault",
       "stories": [
         {
@@ -5341,6 +5341,8 @@
             "Vault",
             "initial",
             "amountValues",
+            "actorValues",
+            "transactionValues",
             "recipientValues",
             "vaultValues",
             "assetValues",
@@ -5350,7 +5352,7 @@
         },
         {
           "heading": "Story: Deposit and preserve obligations / Only finalized deposits of the configured asset increase free funds",
-          "line": 25,
+          "line": 27,
           "definitions": [
             "canDeposit",
             "deposit"
@@ -5358,7 +5360,7 @@
         },
         {
           "heading": "Story: Deposit and preserve obligations / Reservations require the complete amount and never consume another reserve",
-          "line": 36,
+          "line": 38,
           "definitions": [
             "canReserve",
             "reserve",
@@ -5372,7 +5374,7 @@
         },
         {
           "heading": "Story: Deposit and preserve obligations / Only the fixed refund destination receives free funds",
-          "line": 70,
+          "line": 76,
           "definitions": [
             "canRefund",
             "refund",
@@ -5394,7 +5396,7 @@
         },
         {
           "heading": "Story: Deposit and preserve obligations / Simulation samples exercise missing, matching and conflicting evidence",
-          "line": 102,
+          "line": 108,
           "definitions": [
             "finalizedHeightValues",
             "obligationValues",
@@ -5408,8 +5410,190 @@
       "references": []
     },
     {
+      "path": "spec/settlement/paymentDispatch.md",
+      "sha256": "ee69d737b4b4c093330e3159b1b9c278b3036c0b4d176afb6b6100992e84f005",
+      "module": "settlement__paymentDispatch",
+      "stories": [
+        {
+          "heading": "Story: Dispatch under the current outbox lease",
+          "line": 24
+        },
+        {
+          "heading": "Story: Recover uncertainty without opening a competing transfer",
+          "line": 163
+        },
+        {
+          "heading": "Story: Index the canonical finalized payment independently of callback order",
+          "line": 231
+        }
+      ],
+      "rules": [
+        {
+          "heading": "Story: Dispatch under the current outbox lease / Acquire an exclusive token and retain the captured request identity",
+          "line": 26,
+          "definitions": [
+            "Scope",
+            "Network",
+            "Queue",
+            "AttemptState",
+            "Flow",
+            "Binding",
+            "Target",
+            "Attempt",
+            "DispatchRequest",
+            "Inspection",
+            "FailureEvidence",
+            "Receipt",
+            "ExecutorObservation",
+            "ObservationStatus",
+            "Dispatch",
+            "noBinding",
+            "noTarget",
+            "noAttempt",
+            "noRequest",
+            "noInspection",
+            "noReceipt",
+            "initial",
+            "validTarget",
+            "validBinding",
+            "canAdmit",
+            "admit",
+            "request",
+            "attempt",
+            "inspection",
+            "active",
+            "firstActive",
+            "owns",
+            "putRequest",
+            "putAttempt",
+            "clearLease",
+            "canAdvanceClock",
+            "advanceClock",
+            "canAcquire",
+            "acquire",
+            "canReadClaim",
+            "readClaim",
+            "canPrepare",
+            "prepare",
+            "canReuse",
+            "reuse"
+          ]
+        },
+        {
+          "heading": "Story: Dispatch under the current outbox lease / New wallet authority keeps an uncertain former wallet attempt held",
+          "line": 112,
+          "definitions": [
+            "canAuthorizeWallet",
+            "mayRelease",
+            "authorizeWallet",
+            "canClearCurrentWallet",
+            "clearCurrentWallet",
+            "canPark",
+            "park",
+            "canReturnAmbiguous",
+            "returnAmbiguous",
+            "canReturnSuccess",
+            "returnSuccess"
+          ]
+        },
+        {
+          "heading": "Story: Recover uncertainty without opening a competing transfer / Classify the exact executor journal result",
+          "line": 165,
+          "definitions": [
+            "canRecoverExecutor",
+            "acceptJournalSubmission",
+            "reopenUnseen",
+            "retireUnsigned",
+            "recoverExecutor"
+          ]
+        },
+        {
+          "heading": "Story: Recover uncertainty without opening a competing transfer / A reverted receipt names the attempt observed before the asynchronous read",
+          "line": 202,
+          "definitions": [
+            "canInspectFailure",
+            "inspectFailure",
+            "canSettleFailure",
+            "settleFailure"
+          ]
+        },
+        {
+          "heading": "Story: Index the canonical finalized payment independently of callback order / A scanner receipt commits through the canonical financial owner",
+          "line": 233,
+          "definitions": [
+            "exactReceipt",
+            "canIndexFinalized",
+            "indexFinalized",
+            "alwaysLeaseShape",
+            "alwaysIndexedHasExactReceipt",
+            "alwaysActiveQueueHasObligation",
+            "alwaysClockAndTokenDomain",
+            "stepIndexedIsAbsorbing",
+            "stepTargetIsImmutable",
+            "stepNoReceiptFromDispatch",
+            "sometimesUnknown",
+            "sometimesExternalIndex",
+            "sometimesHeld",
+            "sometimesRetried"
+          ]
+        },
+        {
+          "heading": "Story: Index the canonical finalized payment independently of callback order / Finite inputs exercise overlapping leases, claims and receipts",
+          "line": 292,
+          "definitions": [
+            "ordinaryTarget",
+            "privateTarget",
+            "targetValues",
+            "walletOne",
+            "walletTwo",
+            "bindingValues",
+            "verifiedWalletValues",
+            "verifiedChangeValues",
+            "tokenValues",
+            "keyValues",
+            "txValues",
+            "currentTimeValues",
+            "inspectionIdValues",
+            "paidReceipt",
+            "receiptValues",
+            "reverted",
+            "failureValues",
+            "missingJournal",
+            "observedValues",
+            "weight_admit",
+            "weight_authorizeWallet",
+            "weight_acquire",
+            "weight_readClaim",
+            "weight_prepare",
+            "weight_reuse",
+            "weight_returnAmbiguous",
+            "weight_returnSuccess"
+          ]
+        }
+      ],
+      "imports": [],
+      "references": [
+        {
+          "target": "./payment.md",
+          "line": 8
+        },
+        {
+          "target": "./vault.md",
+          "line": 9
+        },
+        {
+          "target": "./composition.md",
+          "line": 257
+        },
+        {
+          "target": "./payment.md",
+          "line": 258
+        }
+      ]
+    },
+    {
       "path": "spec/settlement/payment.md",
-      "sha256": "ba8914c4bc4077bc5d091336cbd2c59aa44b7cb7e95757bc8acfc49c6e042e1f",
+      "sha256": "8ed715161511f58b5b4fd951868bf2b538447db9d49d77ab657299952f54959b",
       "module": "settlement__payment",
       "stories": [
         {
@@ -5418,7 +5602,7 @@
         },
         {
           "heading": "Story: Preserve policy-specific private awards",
-          "line": 120
+          "line": 157
         }
       ],
       "rules": [
@@ -5429,6 +5613,7 @@
             "Purpose",
             "PaymentRail",
             "PaymentEvidence",
+            "VaultPaymentEvidence",
             "PaymentPhase",
             "Payment",
             "initial",
@@ -5445,15 +5630,15 @@
         },
         {
           "heading": "Story: Pay one obligation exactly once / A destination requires the current account and wallet consent",
-          "line": 45,
+          "line": 50,
           "definitions": [
             "canBind",
             "bind"
           ]
         },
         {
-          "heading": "Story: Pay one obligation exactly once / Journal before submission and retain every uncertain attempt",
-          "line": 54,
+          "heading": "Story: Pay one obligation exactly once / Direct rails journal before submission and retain every uncertain attempt",
+          "line": 59,
           "definitions": [
             "canJournal",
             "journal",
@@ -5472,11 +5657,22 @@
           ]
         },
         {
-          "heading": "Story: Pay one obligation exactly once / Exact finalized evidence is the only transition to paid",
-          "line": 83,
+          "heading": "Story: Pay one obligation exactly once / Direct reconciliation requires a retained exact attempt",
+          "line": 88,
           "definitions": [
             "canReconcile",
-            "reconcile",
+            "reconcile"
+          ]
+        },
+        {
+          "heading": "Story: Pay one obligation exactly once / A reserved vault accepts an exact canonical scanner event",
+          "line": 104,
+          "definitions": [
+            "directRail",
+            "canReserveVault",
+            "reserveVault",
+            "vaultPayoutMatches",
+            "recordVaultPayment",
             "alwaysConserved",
             "alwaysPaidEvidence",
             "stepPaidPermanent",
@@ -5485,6 +5681,8 @@
             "alwaysUnconfiguredEmpty",
             "alwaysAdmittedAttempts",
             "alwaysCorrectRail",
+            "alwaysVaultPhase",
+            "sometimesVaultReserved",
             "sometimesUncertain",
             "sometimesPaid",
             "sometimesPrivate",
@@ -5494,7 +5692,7 @@
         },
         {
           "heading": "Story: Preserve policy-specific private awards / Private fee schedules are exact and purpose-bound",
-          "line": 122,
+          "line": 159,
           "definitions": [
             "validSplit",
             "railMatchesPurpose",
@@ -5503,8 +5701,12 @@
         },
         {
           "heading": "Story: Preserve policy-specific private awards / Simulation samples exercise missing, matching and conflicting evidence",
-          "line": 143,
+          "line": 180,
           "definitions": [
+            "receiptSample",
+            "rValues",
+            "vaultEvidenceSample",
+            "vaultEvidenceValues",
             "attemptValues",
             "consentValues",
             "heightValues",
@@ -5513,97 +5715,99 @@
         }
       ],
       "imports": [
-        "settlement__money"
+        "settlement__money",
+        "settlement__paymentDispatch"
       ],
       "references": []
     },
     {
       "path": "spec/settlement/composition.md",
-      "sha256": "c83b2de7cb627fcbf398c82506206c3058515591890af9674119a84224b9f152",
+      "sha256": "dc0109df85c26a729916235e245ccc3831e64dbbf15e619c8a37fdcf19d460a5",
       "module": "settlement__composition",
       "stories": [
         {
-          "heading": "Story: Consume the exact reserve when its payment becomes paid",
-          "line": 11
+          "heading": "Story: Reserve funds for the immutable contributor",
+          "line": 23
+        },
+        {
+          "heading": "Story: Commit a canonical scanner payout across all three owners",
+          "line": 93
         }
       ],
       "rules": [
         {
-          "heading": "Story: Consume the exact reserve when its payment becomes paid / Vault and payment identities remain the same throughout settlement",
-          "line": 13,
+          "heading": "Story: Reserve funds for the immutable contributor / A verified deposit can fund a walletless award",
+          "line": 25,
           "definitions": [
             "Settlement",
             "FinalizedPayment",
             "initial",
             "hasReserve",
-            "alwaysIdentityMatches"
-          ]
-        },
-        {
-          "heading": "Story: Consume the exact reserve when its payment becomes paid / Verified deposits and destination binding precede reservation",
-          "line": 28,
-          "definitions": [
+            "alwaysIdentityMatches",
+            "alwaysDispatchReserved",
             "canDeposit",
             "deposit",
             "canConfigure",
             "configure",
-            "canBind",
-            "bind",
             "canReserve",
             "reserve"
           ]
         },
         {
-          "heading": "Story: Consume the exact reserve when its payment becomes paid / Every dispatched attempt retains its matching reserve",
-          "line": 52,
+          "heading": "Story: Reserve funds for the immutable contributor / Current and historical consent belong to the shared outbox",
+          "line": 63,
           "definitions": [
-            "canJournal",
-            "journal",
-            "canSubmit",
-            "submit",
-            "canLoseReceipt",
-            "loseReceipt",
-            "canRetransmit",
-            "retransmit",
-            "alwaysDispatchReserved"
+            "DeliveryUpdate",
+            "canUpdateDelivery",
+            "nextDelivery",
+            "updateDelivery"
           ]
         },
         {
-          "heading": "Story: Consume the exact reserve when its payment becomes paid / One exact finalized receipt updates both child records atomically",
-          "line": 68,
+          "heading": "Story: Commit a canonical scanner payout across all three owners / An exact finalized event records one receipt and consumes the matching reserve",
+          "line": 95,
           "definitions": [
             "canReconcile",
             "reconcile",
             "alwaysPaidConsumesReserve",
+            "alwaysCanonicalReceiptAgrees",
             "alwaysChildRules",
-            "sometimesReserved",
+            "sometimesWalletlessReserved",
             "sometimesUncertainReserved",
-            "sometimesPaidTogether"
+            "sometimesPaidTogether",
+            "sometimesPaidWithoutAttempt",
+            "sometimesHistoricalDestination"
           ]
         },
         {
-          "heading": "Story: Consume the exact reserve when its payment becomes paid / Simulation covers exact and conflicting evidence for the same obligation",
-          "line": 99,
+          "heading": "Story: Commit a canonical scanner payout across all three owners / Simulation samples exercise independent actor and wallet identities",
+          "line": 147,
           "definitions": [
             "amountValues",
             "grossValues",
             "assetValues",
-            "recipientValues",
             "receiptValues",
-            "consentValues",
-            "attemptValues",
-            "byValues",
-            "weight_reconcile",
-            "evidenceValues"
+            "updateValues",
+            "ordinaryReceipt",
+            "bountyReceipt",
+            "evidenceValues",
+            "weight_updateDelivery",
+            "weight_reconcile"
           ]
         }
       ],
       "imports": [
         "settlement__vault",
         "settlement__payment",
-        "settlement__money"
+        "settlement__money",
+        "settlement__paymentDispatch"
       ],
-      "references": []
+      "references": [
+        {
+          "target": "./paymentDispatch.md",
+          "line": 67
+        }
+      ]
     },
     {
       "path": "spec/settlement/contributorAllocation.md",
@@ -6237,184 +6441,6 @@
         "settlement__money"
       ],
       "references": []
-    },
-    {
-      "path": "spec/settlement/paymentDispatch.md",
-      "sha256": "c122f31d9b7c0ba7eea803c8fb74112142c54646408bc99f79ab080415b229ad",
-      "module": "settlement__paymentDispatch",
-      "stories": [
-        {
-          "heading": "Story: Dispatch under the current outbox lease",
-          "line": 24
-        },
-        {
-          "heading": "Story: Recover uncertainty without opening a competing transfer",
-          "line": 163
-        },
-        {
-          "heading": "Story: Index the canonical finalized payment independently of callback order",
-          "line": 231
-        }
-      ],
-      "rules": [
-        {
-          "heading": "Story: Dispatch under the current outbox lease / Acquire an exclusive token and retain the captured request identity",
-          "line": 26,
-          "definitions": [
-            "Scope",
-            "Network",
-            "Queue",
-            "AttemptState",
-            "Flow",
-            "Binding",
-            "Target",
-            "Attempt",
-            "DispatchRequest",
-            "Inspection",
-            "FailureEvidence",
-            "Receipt",
-            "ExecutorObservation",
-            "ObservationStatus",
-            "Dispatch",
-            "noBinding",
-            "noTarget",
-            "noAttempt",
-            "noRequest",
-            "noInspection",
-            "noReceipt",
-            "initial",
-            "validTarget",
-            "validBinding",
-            "canAdmit",
-            "admit",
-            "request",
-            "attempt",
-            "inspection",
-            "active",
-            "firstActive",
-            "owns",
-            "putRequest",
-            "putAttempt",
-            "clearLease",
-            "canAdvanceClock",
-            "advanceClock",
-            "canAcquire",
-            "acquire",
-            "canReadClaim",
-            "readClaim",
-            "canPrepare",
-            "prepare",
-            "canReuse",
-            "reuse"
-          ]
-        },
-        {
-          "heading": "Story: Dispatch under the current outbox lease / New wallet authority keeps an uncertain former wallet attempt held",
-          "line": 112,
-          "definitions": [
-            "canAuthorizeWallet",
-            "mayRelease",
-            "authorizeWallet",
-            "canClearCurrentWallet",
-            "clearCurrentWallet",
-            "canPark",
-            "park",
-            "canReturnAmbiguous",
-            "returnAmbiguous",
-            "canReturnSuccess",
-            "returnSuccess"
-          ]
-        },
-        {
-          "heading": "Story: Recover uncertainty without opening a competing transfer / Classify the exact executor journal result",
-          "line": 165,
-          "definitions": [
-            "canRecoverExecutor",
-            "acceptJournalSubmission",
-            "reopenUnseen",
-            "retireUnsigned",
-            "recoverExecutor"
-          ]
-        },
-        {
-          "heading": "Story: Recover uncertainty without opening a competing transfer / A reverted receipt names the attempt observed before the asynchronous read",
-          "line": 202,
-          "definitions": [
-            "canInspectFailure",
-            "inspectFailure",
-            "canSettleFailure",
-            "settleFailure"
-          ]
-        },
-        {
-          "heading": "Story: Index the canonical finalized payment independently of callback order / A scanner receipt commits through the canonical financial owner",
-          "line": 233,
-          "definitions": [
-            "exactReceipt",
-            "canIndexFinalized",
-            "indexFinalized",
-            "alwaysLeaseShape",
-            "alwaysIndexedHasExactReceipt",
-            "alwaysActiveQueueHasObligation",
-            "alwaysClockAndTokenDomain",
-            "stepIndexedIsAbsorbing",
-            "stepTargetIsImmutable",
-            "stepNoReceiptFromDispatch",
-            "sometimesUnknown",
-            "sometimesExternalIndex",
-            "sometimesHeld",
-            "sometimesRetried"
-          ]
-        },
-        {
-          "heading": "Story: Index the canonical finalized payment independently of callback order / Finite inputs exercise overlapping leases, claims and receipts",
-          "line": 295,
-          "definitions": [
-            "ordinaryTarget",
-            "privateTarget",
-            "targetValues",
-            "walletOne",
-            "walletTwo",
-            "bindingValues",
-            "verifiedWalletValues",
-            "verifiedChangeValues",
-            "tokenValues",
-            "keyValues",
-            "txValues",
-            "currentTimeValues",
-            "inspectionIdValues",
-            "paidReceipt",
-            "receiptValues",
-            "reverted",
-            "failureValues",
-            "missingJournal",
-            "observedValues",
-            "weight_admit",
-            "weight_authorizeWallet",
-            "weight_acquire",
-            "weight_readClaim",
-            "weight_prepare",
-            "weight_reuse",
-            "weight_returnAmbiguous",
-            "weight_returnSuccess"
-          ]
-        }
-      ],
-      "imports": [],
-      "references": [
-        {
-          "target": "./payment.md",
-          "line": 8
-        },
-        {
-          "target": "./vault.md",
-          "line": 9
-        },
-        {
-          "target": "./payment.md",
-          "line": 258
-        }
-      ]
     },
     {
       "path": "spec/settlement/recovery.md",
@@ -7668,7 +7694,7 @@
     },
     {
       "path": "spec/slopbot/index.md",
-      "sha256": "5b031dccab9c4b89d8fd473ac15cef55a88fce7fa2864c0ba391fd92ff4d0497",
+      "sha256": "7aba31e478883622dfb6138e9078fe53ef567623add83af779fcfc753c636574",
       "module": "slopbot",
       "stories": [],
       "rules": [],
@@ -7679,12 +7705,16 @@
           "line": 6
         },
         {
-          "target": "./closure.md",
+          "target": "./reviewLease.md",
           "line": 7
         },
         {
-          "target": "./appeals.md",
+          "target": "./closure.md",
           "line": 8
+        },
+        {
+          "target": "./appeals.md",
+          "line": 9
         }
       ]
     },
@@ -7758,6 +7788,60 @@
             "modeValues",
             "nextCentsValues",
             "previousCentsValues"
+          ]
+        }
+      ],
+      "imports": [],
+      "references": []
+    },
+    {
+      "path": "spec/slopbot/reviewLease.md",
+      "sha256": "63a122e86f8e19950c624eb07ba873acaae1a5bb9c28701768265de9c3fb1f01",
+      "module": "slopbot__reviewLease",
+      "stories": [
+        {
+          "heading": "Story: Claim a review and allow only its current owner to finish",
+          "line": 13
+        }
+      ],
+      "rules": [
+        {
+          "heading": "Story: Claim a review and allow only its current owner to finish / An expired claim can be replaced and cannot finalize while waiting for takeover",
+          "line": 15,
+          "definitions": [
+            "ClaimStatus",
+            "PriorStart",
+            "ReviewLease",
+            "initial",
+            "canObserveTime",
+            "observeTime",
+            "ownsClaim",
+            "canClaim",
+            "claim",
+            "canRecordCall",
+            "recordCall"
+          ]
+        },
+        {
+          "heading": "Story: Claim a review and allow only its current owner to finish / A late worker cannot publish a failed, skipped or complete review",
+          "line": 46,
+          "definitions": [
+            "canFinish",
+            "finish",
+            "alwaysHistory",
+            "alwaysComplete",
+            "alwaysExpiryIdentity",
+            "alwaysKnownCall",
+            "stepNoRewind",
+            "stepCompleteRetainsVerdict",
+            "sometimesExpired",
+            "sometimesRetryCompleted",
+            "sometimesSkippedRetryIsFirst",
+            "timeValues",
+            "tokenValues",
+            "expiresValues",
+            "weight_claim",
+            "weight_finish"
           ]
         }
       ],

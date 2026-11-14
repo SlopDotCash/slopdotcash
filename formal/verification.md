@@ -249,12 +249,17 @@ page view traffic to the site's own origin.
   their own network and run identity. All 78 obligations proved.
   [Deposit and job results](validation/source-coverage/deposit-jobs.json)
 - Payment dispatch tracks attempt and lease identity independently of confirmed
-  vault receipts. All 107 obligations proved. The current atomic payment/vault
-  model also discharged all 38 obligations for its retained-attempt path, and
-  the payment lifecycle discharged all 90. The independently verified scanner
-  receipt needs an atomic handoff to the aggregate to cover historical wallet
-  authorization without a local attempt.
-  [Dispatch evidence](validation/source-coverage/payment-dispatch.json) · [Payment proof](validation/active-proof/settlement/payment-complete.json) · [Composition proof](validation/active-proof/settlement/composition-complete.json)
+  vault receipts. A finalized scanner event can atomically settle an actor-owned
+  reserve using a historically authorized wallet without a local attempt.
+  Direct payment rails retain their separate attempt requirements. The exact
+  five-unit dependency set discharged all 324 obligations. Fourteen directed
+  groups and 54 generated replays passed. Native D1 atomicity and overlapping
+  conflicting-event delivery still require conformance.
+  [Dispatch evidence](validation/source-coverage/payment-dispatch.json) · [Canonical settlement proof](validation/source-coverage/canonical-vault-settlement.json)
+- Slopbot review claims expire before takeover. Stale workers cannot record
+  completion, and the new claim preserves retry history. All 26 obligations
+  proved.
+  [Review lease results](validation/source-coverage/review-lease.json)
 - Solana payment discovery verifies the RPC genesis before touching its
   backlog. The frozen interval advances oldest first under a generation and
   revision fence. All 22 obligations proved, and the directed check drained
@@ -277,7 +282,7 @@ page view traffic to the site's own origin.
   allocation discharged all three obligations, including full pool
   conservation for arbitrary-width amounts across eligible recipients.
   A separate BigInt oracle agreed with all 42 directed cases.
-  [Monthly proof](validation/active-proof/settlement/monthly-complete.json) · [Allocation proof](validation/active-proof/settlement/allocation-complete.json) · [Allocation replays](validation/active-proof/settlement/allocation-complete-replay.json)
+  [Monthly proof](validation/active-proof/settlement/monthly-with-complete-allocation.json) · [Allocation proof](validation/active-proof/settlement/allocation-complete.json) · [Allocation replays](validation/active-proof/settlement/allocation-complete-replay.json)
 - Vault registration binds finalized evidence to the exact reviewed creation.
   Snapshot writes recheck the registered deployment and reject regressions in
   each cumulative counter. Solana checks its genesis before reading totals.
