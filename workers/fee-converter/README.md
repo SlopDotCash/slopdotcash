@@ -845,6 +845,43 @@ for the current evidence and its limits.
 7. To stop: land `BUYBACK_MODE = "off"`. Open sends are still reconciled while
    the converter runs. A deposit in transit keeps its share committed.
 
+### Restore the deployed Robinhood RPC
+
+If a normal recovery tick reports `buyback.finalizedRpc.status = "unavailable"`,
+the operator can replace the endpoint under the same live approval and limits.
+First publish the reviewed main source through the normal workflow. Confirm the
+candidate serves finalized and historical contract state on chain 4663,
+supports current-state fee estimation and receipt recovery, and provides
+`eth_sendRawTransaction` for production. The endpoint checks are read-only.
+
+1. In the `slop-production` GitHub environment, set
+   `SLOP_ROBINHOOD_RPC_REPLACEMENT` to the reviewed HTTPS URL. Keep it private.
+2. Dispatch the `slop.cash` workflow on `main` with
+   `rotate_robinhood_rpc_from` set to the exact currently active Worker
+   version UUID. The run requires that same version to be the latest upload.
+   The run checks the bound D1 journal for unresolved live sends, in-transit
+   bridge deposits and Robinhood signed gas reservations. It compares the
+   candidate's finalized contract probe to an independent chain block, then
+   uploads and verifies the same Worker as the immediate successor, with just
+   that secret replaced. Pages,
+   other services and the cron are outside this dispatch. The source, active
+   version and journal checks are point-in-time. Leave manual fee-converter
+   uploads, settings changes and deployments idle during this dispatch. A
+   scheduled run can still create work. Cloudflare reports secret binding
+   names and types. Preservation of their values relies on inheritance from
+   the checked latest upload.
+3. Retain the old and new UUIDs from the run. Observe an ordinary recovery tick
+   on the new version and compare its finalized block with an independent
+   endpoint. The next scheduled run can resume the approved live policy.
+   A successful probe leaves the first funded cycle pending.
+4. If promotion is ambiguous, read the active version before acting. For a
+   reviewed rollback, select the recorded old immutable version at 100%.
+   That version retains the former RPC binding. D1 contents are shared and
+   must be reconciled independently. Normal releases refuse an inactive latest
+   upload with a different rotation marker so they cannot silently inherit a
+   failed or rolled-back replacement. Resolve that upload explicitly before
+   resuming publication.
+
 ### An order nobody fills
 
 A deposited order stays in transit until it is filled or refunded. The Worker
