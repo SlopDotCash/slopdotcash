@@ -56,7 +56,7 @@
     "formal/validation/source-coverage/keeper-lifecycle.json": "7f7f3af9f28356c5c49ec7b919eab679488d7658002ba883ceb1683d15f47554",
     "formal/validation/source-coverage/local-receipt.json": "d1e7919add0d699703872bf17c179affdb6d4ba6cd5ee2dfc46a878a4b2624c5",
     "formal/validation/source-coverage/points-recovery.json": "421f6b1113a5e48196a2c95c598e4d3770e6e78a79f91b773ed5b94bd7c31c7c",
-    "formal/validation/source-coverage/private-forwarding.json": "fae9b708658944b3b21e2fb75c36fafb987bd5cb4f6ed6ee3fc7742f47bc410a",
+    "formal/validation/source-coverage/private-forwarding.json": "30a8491351507c6c8eec8033cc81e33461abc8092b58eb5020f7e7b656f22469",
     "formal/validation/source-coverage/private-intake-receipt-owner.json": "f33fed527c5365c793a88e1f923c202a6413df36b13b6f7376e7ca8283064c34",
     "formal/validation/source-coverage/private-report-screening.json": "3c47d6ae98929c87e645532ed9ada9b5318d83bdb681b5809ab3ab6aa7658f74",
     "formal/validation/source-coverage/provisional-vault.json": "7afeb59c14c93d7dee453de6bc34c01135c9abedb9016c4ad0001bfc3b845719",
@@ -74,100 +74,822 @@
     "formal/validation/source-coverage/solana-scan.json": "ab973a5596a35aaf587342792caf772dfaad5e5cc2c43682049742891a2878d7"
   },
   "slopUnits": [
-    {"unit": "access.ts", "obligations": 14, "transitiveMeaningSha256": "2649dd8a04a0e4c09c813dc4c814db72de692364a340ca5e690bc86444d804d2", "proofSha256": null, "receipt": "formal/validation/full-tree/proof-checkpoint.json", "binding": "transitive meaning and proof digest", "receiptGeneratedDafnySha256": "47cb47f17b69654e616c06d832632f610a0bcd4f23ef36df1f552a870f1bca35"},
-    {"unit": "app.ts", "obligations": 6, "transitiveMeaningSha256": "1d9d73b19fa83406e29ca4d0243a97869ace80ee2cf2806cfef8b3f5cf773ae5", "proofSha256": null, "receipt": "formal/validation/full-tree/proof-checkpoint.json", "binding": "transitive meaning and proof digest", "receiptGeneratedDafnySha256": "f98510253aa2dc4b3164debb4597befbfbfaff7d13559af7c00bbb603b71af11"},
-    {"unit": "backend__email.ts", "obligations": 16, "transitiveMeaningSha256": "855220715d496fbf45704cf79ad237476111fd72fa8de70c2837a1cbd638b3ce", "proofSha256": null, "receipt": "formal/validation/full-tree/proof-checkpoint.json", "binding": "transitive meaning and proof digest", "receiptGeneratedDafnySha256": "b6119a8fc9c99bfa14a25bb4f59b6abaaa23e14f088c5ff6824c4d6ccb6cbd22"},
-    {"unit": "backend__accounts.ts", "obligations": 217, "transitiveMeaningSha256": "5c4d001ece464b811c555ecd7aa872b174e6939c00c11e292739e1a15197c4b4", "proofSha256": null, "receipt": "formal/validation/full-tree/proof-checkpoint.json", "binding": "transitive meaning and proof digest", "receiptGeneratedDafnySha256": "414b67ca8fb6b563b3ee20898119db7fad94099ba8ee5e68c91df94e9cff78fb"},
-    {"unit": "backend__projects.ts", "obligations": 198, "transitiveMeaningSha256": "2c82287145abcaac3afdc617b84846a1b53b33b59128986b2ac7ca2f191964db", "proofSha256": "2ad927f7dfba22ee4002ca93b0ae149484bef68773b770a6a3e8ba084700ba19", "receipt": "formal/validation/full-tree/proof-checkpoint.json", "binding": "transitive meaning and proof digest", "receiptGeneratedDafnySha256": "9430be0fa509b600eb2a9061d155cc6f5e0f9d56d34d72a3f34c1cda9428a790"},
-    {"unit": "backend__listing.ts", "obligations": 15, "transitiveMeaningSha256": "540c924a695a5486a1fbe877b6bde3260a80fc8d7db503c46865119ba1c8981c", "proofSha256": null, "receipt": "formal/validation/full-tree/proof-checkpoint.json", "binding": "transitive meaning and proof digest", "receiptGeneratedDafnySha256": "2add9dec4f2ee3177825955381590b40499fe487292cb5cd11eeca3c0a49bb32"},
-    {"unit": "backend__referralCodes.ts", "obligations": 8, "transitiveMeaningSha256": "62bd9aa45430dfe8ad2b87582dc0bdcee0ab2816ef353592a6dda5b95c69d59e", "proofSha256": "35e47ce235f11301d039fc1def64305c9835235edb5fb047a7659db07eac4adb", "receipt": "formal/validation/source-coverage/referral-link-route.json", "binding": "transitive spec sources and own proof digests", "receiptGeneratedDafnySha256": "7d1d74e9473a131ba04e1a7fbb604ab323fe94a6d674468844c89e48f3bc2a29"},
-    {"unit": "backend__referralProjects.ts", "obligations": 6, "transitiveMeaningSha256": "19c81c1541f234722e5b593c19ca50151919c8f4800f5da5a9dc4736cff829df", "proofSha256": "fc8792316c6b1c5759e091ae5b1a4b34b8cf81b385f5c1246a7d0aeb5292b4de", "receipt": "formal/validation/source-coverage/referred-projects.json", "binding": "transitive spec sources and own proof digests", "receiptGeneratedDafnySha256": "0741694995df543bb8e9464e1c21273427d7bd908d74328976945482fcf09aa8"},
-    {"unit": "backend__wallets.ts", "obligations": 90, "transitiveMeaningSha256": "a4a272c21d32796eb76d6ae54ec393c142c8919c0c062953bf0e96cf8ee6b799", "proofSha256": "8ef7e5b862c5abe51bc4cc0a0479c9f2f104fdcd6d6b5ead0389f64351b7e052", "receipt": "formal/validation/full-tree/proof-checkpoint.json", "binding": "transitive meaning and proof digest", "receiptGeneratedDafnySha256": "c654228229be512b8deef374b74399171c53a0024ea7269e07cfca2be45f45d7"},
-    {"unit": "frontend__navigation.ts", "obligations": 10, "transitiveMeaningSha256": "a6d5e9a01e6ff5e029de6be92c6e81d025f02ef32c51795b9df90e74929cd603", "proofSha256": null, "receipt": "formal/validation/full-tree/proof-checkpoint.json", "binding": "transitive meaning and proof digest", "receiptGeneratedDafnySha256": "b8a7cbe22fea4a5345811f3b76f33efc798777ed481cc85ea9b6827e3d0b2292"},
-    {"unit": "frontend__drafts.ts", "obligations": 18, "transitiveMeaningSha256": "9df6b8604e0a708c8e22b934dfef9f4f9362914d2733381379e95b6810eaa8bd", "proofSha256": null, "receipt": "formal/validation/full-tree/proof-checkpoint.json", "binding": "transitive meaning and proof digest", "receiptGeneratedDafnySha256": "73a2753f424f20d2f7aaae3705bfdf2e6cb07ab5e8b175677c85efcc7149b628"},
-    {"unit": "frontend__reportDetails.ts", "obligations": 2, "transitiveMeaningSha256": "f3abd7edcd4a4e3d8be9c1dce2e3e401fc406c93d941911661d0714614375556", "proofSha256": "604b0906c4bb18e6211967ce3ecd87404d6cf82160335bd98d0c3c9680a85c70", "receipt": "formal/validation/full-tree/current-residual-proofs.json", "binding": "transitive spec sources and own proof digests", "receiptGeneratedDafnySha256": "1f808ab11e608df0d9433f84c65ab0e091f7446a0d3aa32a4834d32812e6b6ca"},
-    {"unit": "composition.ts", "obligations": 42, "transitiveMeaningSha256": "81bf504527373ec76097c9e746ac8a7fe49d52f1395bd1ae0cc42ed9c7402814", "proofSha256": null, "receipt": "formal/validation/full-tree/current-residual-proofs.json", "binding": "transitive meaning and proof digest", "receiptGeneratedDafnySha256": "759a7bc23e0a9688127878485adca37ab49e2d98973cb3de3895c7744d7e1d20"},
-    {"unit": "contributor__commandCompletion.ts", "obligations": 26, "transitiveMeaningSha256": "c856a8d2e0829c6b3672e3d724e29e48f9a3f004fcce633ab8b1ce16c147a086", "proofSha256": null, "receipt": "formal/validation/source-coverage/command-completion.json", "binding": "transitive spec sources and own proof digests", "receiptGeneratedDafnySha256": "b57b754ade6a99e0041f74f5bd78a34ad014905908caa569478b6c5c91c7da79"},
-    {"unit": "contributor__evidence.ts", "obligations": 50, "transitiveMeaningSha256": "9cd86e611979999eda8308846dc640dc2b775f3af71fef6ab3346e2412b68e8c", "proofSha256": null, "receipt": "formal/validation/full-tree/proof-checkpoint.json", "binding": "transitive meaning and proof digest", "receiptGeneratedDafnySha256": "93a2490a3261b10f6274fdd50d4e24429963fb9bb920194cfa78791adf01bfaa"},
-    {"unit": "contributor__installation.ts", "obligations": 152, "transitiveMeaningSha256": "abf367015bda90f7d3ee5cd404370d4d4f428a02d5731a640b9989ed0069631b", "proofSha256": "134b239bb98201cc2a8a064a5157084004dc0e042e57eb99ca74ad3b0fa27d3d", "receipt": "formal/validation/source-coverage/installation-lifecycle.json", "binding": "transitive spec sources and own proof digests", "receiptGeneratedDafnySha256": "12aadcf96ab710731e34af2dfa84eb9452c0c25e0feab07f0bd0cf40d6816d76"},
-    {"unit": "contributor__localReceipt.ts", "obligations": 74, "transitiveMeaningSha256": "ff034181b37db3deb483e8a8bfd67f67cf564a3952305e6a5357ffe39c8f7779", "proofSha256": null, "receipt": "formal/validation/source-coverage/local-receipt.json", "binding": "transitive spec sources and own proof digests", "receiptGeneratedDafnySha256": "89084eb3eac60baee20e1a2a8358ed00f5232bdbcae4fd34253367f861ffa61b"},
-    {"unit": "contributor__runEvidence.ts", "obligations": 39, "transitiveMeaningSha256": "73ea5bdd728c9ec6b28b6c1b665f4fe2e5d2bf8b8e7556a320946bff83f5cbf9", "proofSha256": "ae232b6c6c0f3fb57674a45a68e8eaf7db70582b6da3ce4abb40c7f3d0c361df", "receipt": "formal/validation/source-coverage/run-evidence.json", "binding": "transitive spec sources and own proof digests", "receiptGeneratedDafnySha256": "482cfd6512b7fcfb6b48240e9b65839acfacd3db438147fe3c80f7af4f8f6079"},
-    {"unit": "contributor__sessionExchange.ts", "obligations": 107, "transitiveMeaningSha256": "3ebd64eb2cb8842455ed15748383d67fabfb9df39f015520fbdf15df968d6505", "proofSha256": null, "receipt": "formal/validation/source-coverage/session-exchange.json", "binding": "transitive spec sources and own proof digests", "receiptGeneratedDafnySha256": "347d8dd87ca8beaa73f8a91a5e571378e656029ab02a69b1000fec1e9e75f268"},
-    {"unit": "contributor__skillAuthority.ts", "obligations": 24, "transitiveMeaningSha256": "6e32337f6867489808772258ed9d95838e703b4fbfade04c84412cdd7fef2c29", "proofSha256": null, "receipt": "formal/validation/source-coverage/skill-authority.json", "binding": "transitive spec sources and own proof digests", "receiptGeneratedDafnySha256": "ed0d40a7debb777259f6f79b579535cd4601f63da0c6031c9b1275f60a7e99f5"},
-    {"unit": "contributor__workflow.ts", "obligations": 38, "transitiveMeaningSha256": "dfafe3a70e9d5461c4396ed6654b6781b88c2adeb909145fc49bbad6482e53d5", "proofSha256": null, "receipt": "formal/validation/full-tree/proof-checkpoint.json", "binding": "transitive meaning and proof digest", "receiptGeneratedDafnySha256": "d593bda15ce6db727925e68bfcd20b2f53fe598eb6bb838bb896b9cbdb34084e"},
-    {"unit": "settlement__money.ts", "obligations": 38, "transitiveMeaningSha256": "0a377be78c4f08ea70df2add3ecf8c8d8b2fc2186620c72aa96081f427dc0b38", "proofSha256": "e587ba519b953cf1841085ae1b097e169521cc30d1199116b754a4efb0353bf7", "receipt": "formal/validation/active-proof/money-unit-gap/verification.json", "binding": "transitive spec sources and own proof digests", "receiptGeneratedDafnySha256": "0ddbfce51163214ff9e04257c4ddc430c692af1a9fe8ac645fc250f5a5159196"},
-    {"unit": "settlement__half.ts", "obligations": 2, "transitiveMeaningSha256": "5ded88d3b61881f705a77d109f8ff229abc193a8089225ce75f0f292d5f5d243", "proofSha256": "36ba8dc21e4ae05e143bf718b0770677eb1e9fe3d628c0f2c45c6683e387121e", "receipt": "formal/validation/full-tree/current-financial-proofs.json", "binding": "transitive spec sources and own proof digests", "receiptGeneratedDafnySha256": "cd3e8840dad07957c220c5207a1ea86ef9a04d38c27e3d13aa50f157807d9b58"},
-    {"unit": "fees__buyback.ts", "obligations": 94, "transitiveMeaningSha256": "b0e79dc5f04d3a7ae5e43904078122a9aeb3fdcb823059ab0c0e091a2859cbfd", "proofSha256": "551a1aeebf317001c4c38d0d2ef58f9862df5a24072cde66d8eb667a7d42db78", "receipt": "formal/validation/full-tree/current-financial-proofs.json", "binding": "transitive spec sources and own proof digests", "receiptGeneratedDafnySha256": "6a518a7c083674077392f6ed8d92a4b2a85aed7ad4a8c42fe770cda892e9b5c9"},
-    {"unit": "fees__buybackRpc.ts", "obligations": 3, "transitiveMeaningSha256": "8257266ea1504cc64cd060f88f45516d96cbbb3c2fef027f7c707569f41b8fd3", "proofSha256": null, "receipt": "formal/validation/source-coverage/buyback-rpc-rule-coverage.json", "binding": "transitive spec sources and own proof digests", "receiptGeneratedDafnySha256": "3476b1125cbc5699222e4bb8bbe71c25ab8506bf7b9664d745560de094e385c9"},
-    {"unit": "fees__conversion.ts", "obligations": 114, "transitiveMeaningSha256": "022e558763c47016a393abb0f39a9ee0ed4f3aa8e6c58eae1dbd339b302b12d0", "proofSha256": null, "receipt": "formal/validation/full-tree/proof-checkpoint.json", "binding": "transitive meaning and proof digest", "receiptGeneratedDafnySha256": "e259ca53d79c2a57678348f0b9d1b2f5d302b1722f0e5deb9365b082ae2e4e4b"},
-    {"unit": "settlement__directBounty.ts", "obligations": 101, "transitiveMeaningSha256": "3dbee0d021c5d4a5c1c6b35b9f034b9fbe32467c65d5f373a05585d04c729251", "proofSha256": null, "receipt": "formal/validation/active-proof/settlement/direct-bounty-proof.json", "binding": "transitive spec sources and own proof digests"},
-    {"unit": "fees__directBountyIncome.ts", "obligations": 14, "transitiveMeaningSha256": "3d2638fae9603ae328bf6cf8359e9a3c302d484d70b7441a23194d4825645064", "proofSha256": null, "receipt": "formal/validation/active-proof/finance/direct-bounty-income-proof.json", "binding": "transitive spec sources and own proof digests"},
-    {"unit": "frontend__batchedDeposit.ts", "obligations": 52, "transitiveMeaningSha256": "b091742e1b722f81da09b6f8ac81b8200fd4ae5d18d8b7ad32ceaab3ec50bffc", "proofSha256": null, "receipt": "formal/validation/source-coverage/deposit-jobs.json", "binding": "transitive spec sources and own proof digests"},
-    {"unit": "frontend__directBountyPrompt.ts", "obligations": 92, "transitiveMeaningSha256": "5d5dd2c150998cebecf118d5071dbee57bec0b1255a4680d9993687696ff0aa2", "proofSha256": null, "receipt": "formal/validation/active-proof/frontend/direct-bounty-prompt-proof.json", "binding": "transitive spec sources and own proof digests"},
-    {"unit": "frontend__requests.ts", "obligations": 6, "transitiveMeaningSha256": "7019326c0a18f92bce51ad85014a260bf4f8c6f26eb4b21db44744650b1f6af1", "proofSha256": null, "receipt": "formal/validation/full-tree/proof-checkpoint.json", "binding": "transitive meaning and proof digest", "receiptGeneratedDafnySha256": "b94693ce5e101162b2fdf85de880f62eb86ea47bc7f10f291cede3858d98b4bb"},
-    {"unit": "frontend__presentation.ts", "obligations": 19, "transitiveMeaningSha256": "706e1b8f1898d2c3f03017384b22bfa7b65738dd6578186caba992d7baac2451", "proofSha256": null, "receipt": "formal/validation/full-tree/proof-checkpoint.json", "binding": "transitive meaning and proof digest", "receiptGeneratedDafnySha256": "5ccc8d093168d903880c27cd11c72d8eac4cf3412f810d806bc6b461233f0d02"},
-    {"unit": "frontend__projections.ts", "obligations": 12, "transitiveMeaningSha256": "0019c39cd2c728a910522270e31d2326a2b7209ead7816bb4dcb1b0dcb17643f", "proofSha256": null, "receipt": "formal/validation/full-tree/current-residual-proofs.json", "binding": "transitive meaning and proof digest", "receiptGeneratedDafnySha256": "45df5bb147b7f54e43129cc5673cac91a76910f78c03fe64811c20f38109491b"},
-    {"unit": "frontend__provisionalVault.ts", "obligations": 107, "transitiveMeaningSha256": "a3fc27457cc5bf40da8ccf6e4328e33e6ed232fcc7b166eac2fea5dbb244ebf4", "proofSha256": null, "receipt": "formal/validation/source-coverage/provisional-vault.json", "binding": "transitive spec sources and own proof digests"},
-    {"unit": "frontend__rankedSnapshot.ts", "obligations": 10, "transitiveMeaningSha256": "05f5b055229223408b6f20f797740727eb70385163b6fbeb73427f267fd4a680", "proofSha256": null, "receipt": "formal/validation/source-coverage/ranked-snapshot.json", "binding": "transitive spec sources and own proof digests"},
-    {"unit": "frontend__referralSettings.ts", "obligations": 27, "transitiveMeaningSha256": "2663036e1126e1ab15458a9394270aee1bbac9d90f3b15b9f15c4a2fca1ef83d", "proofSha256": null, "receipt": "formal/validation/source-coverage/referral-link-route.json", "binding": "transitive spec sources and own proof digests", "receiptGeneratedDafnySha256": "007689428666752050a1ea0206c18afbc293a0941b4acfb41ff15ace711110b0"},
-    {"unit": "frontend__snapshotCache.ts", "obligations": 23, "transitiveMeaningSha256": "ee5adf31c4b0f28353c37b70b1fbcdee2d27d944104e717b47f19f6d0228f2ee", "proofSha256": null, "receipt": "formal/validation/source-coverage/browser-ownership.json", "binding": "transitive spec sources and own proof digests"},
-    {"unit": "governance.ts", "obligations": 9, "transitiveMeaningSha256": "445499da1e3957a0a4e7a4a52725e346a020f888b9a871e74f899517f5d202c2", "proofSha256": null, "receipt": "formal/validation/full-tree/proof-checkpoint.json", "binding": "transitive meaning and proof digest", "receiptGeneratedDafnySha256": "49eac746b76eeae2cb4460ff6dc01839f862d4dd812ef88511a66643ff908052"},
-    {"unit": "operations__backup.ts", "obligations": 67, "transitiveMeaningSha256": "a3855918c87e532ae64764e7d584e31a499155a385e52f83f8593a440f6ac67a", "proofSha256": null, "receipt": "formal/validation/full-tree/proof-checkpoint.json", "binding": "transitive meaning and proof digest", "receiptGeneratedDafnySha256": "adb137c3ad3dbe92ea64b89deb9d151a56013b4ce16c2bcae68f99227034c917"},
-    {"unit": "operations__escrowQualification.ts", "obligations": 147, "transitiveMeaningSha256": "7fb165c0e9a95cc1b02b8328c5cae735e68278bc685d54cef00e2e0608b4ae4e", "proofSha256": null, "receipt": "formal/validation/source-coverage/escrow-qualification.json", "binding": "transitive spec sources and own proof digests", "receiptGeneratedDafnySha256": "9aa567cad94edb33b68dc6e66aee2c250871feec80527cce25ff130d81c116a5"},
-    {"unit": "operations__local.ts", "obligations": 8, "transitiveMeaningSha256": "77dbd0c737843b218114c3051b4ae17102132d54dbcc2cd0ce6fe6ceffe2e7b5", "proofSha256": null, "receipt": "formal/validation/full-tree/proof-checkpoint.json", "binding": "transitive meaning and proof digest", "receiptGeneratedDafnySha256": "57813103559feae492634d935ef496244ed1c88074113177e8c150413223add7"},
-    {"unit": "operations__localCommand.ts", "obligations": 26, "transitiveMeaningSha256": "edeabc53bf5b2654f1a3e1f159fe1943455c82c7b547f3570b197697773f7e8a", "proofSha256": null, "receipt": "formal/validation/journeys/local-validator-proof.json", "binding": "transitive spec sources and own proof digests"},
-    {"unit": "operations__localValidator.ts", "obligations": 50, "transitiveMeaningSha256": "c3bb9f71339b4817a2f90f0725def701cb8560d6a2151cf5f0973c5b32b6385c", "proofSha256": null, "receipt": "formal/validation/journeys/local-validator-proof.json", "binding": "transitive spec sources and own proof digests"},
-    {"unit": "operations__notifications.ts", "obligations": 50, "transitiveMeaningSha256": "89ea464d940e2ec8df87c565f5f8000ee9179a010a324174c40fbd5b8b7bc8c1", "proofSha256": null, "receipt": "formal/validation/full-tree/proof-checkpoint.json", "binding": "transitive meaning and proof digest", "receiptGeneratedDafnySha256": "5a4e885b991312f66d82da5016e5d77a633a9c3c0af6835975df5fde213d10d1"},
-    {"unit": "operations__paymentJobs.ts", "obligations": 26, "transitiveMeaningSha256": "105e4bbfab8ac7c94f2d2d68c1299da18f97b2c9f457a779ed54ef9e9102ecfe", "proofSha256": null, "receipt": "formal/validation/source-coverage/deposit-jobs.json", "binding": "transitive spec sources and own proof digests"},
-    {"unit": "operations__releaseCoverage.ts", "obligations": 8, "transitiveMeaningSha256": "47d19a14eadbeb8c0c2fe4dfbc03e34d7c18b3bf5cd6bd36fffceb16e9683062", "proofSha256": null, "receipt": "formal/validation/source-coverage/release-coverage.json", "binding": "transitive spec sources and own proof digests", "receiptGeneratedDafnySha256": "afcb8062d77b960f48af042e22a391b3dfe43a52b55900746b61854900c11110"},
-    {"unit": "operations__release.ts", "obligations": 55, "transitiveMeaningSha256": "4e3dc06138353ee6aa83cb30c2fda8682cd0cc5a46ed3bb835cd82792a0ba482", "proofSha256": null, "receipt": "formal/validation/full-tree/current-residual-proofs.json", "binding": "transitive meaning and proof digest", "receiptGeneratedDafnySha256": "1e3063034f269e50c148c4fa52a46cfbddaf8b924ea6a956866bdbea92cfa456"},
-    {"unit": "points__allocation.ts", "obligations": 4, "transitiveMeaningSha256": "9f26c9dd9326357e940c3bb19165b81aa554bd5758ea30057b110c04415d2891", "proofSha256": "348bb1203aa9f8b2023774aedb79212a5a2d6f37b45a2cf41cd41f91536ea0a6", "receipt": "formal/validation/full-tree/proof-checkpoint.json", "binding": "transitive meaning and proof digest", "receiptGeneratedDafnySha256": "2839fb361b2d8bc9f8323d8ececd7d850b638fdac5d0bb80d641794c9fb1d7d2"},
-    {"unit": "points__authorship.ts", "obligations": 30, "transitiveMeaningSha256": "455be62491615363e304b838701cf1007d24d81c4f2d25b38a85588b8f8f66f6", "proofSha256": null, "receipt": "formal/validation/full-tree/proof-checkpoint.json", "binding": "transitive meaning and proof digest", "receiptGeneratedDafnySha256": "a6afd71b1a4dc9f97e12bf57ded949e66486567dbfdc94af2249652c20285ebe"},
-    {"unit": "points__census.ts", "obligations": 58, "transitiveMeaningSha256": "15ee1bbf33ad9f1a0c2258d0dd3a466cf81eeba03db4a4afc025f8dd865559e7", "proofSha256": "940d1cb80009e4b3e7031a1dfb2b85c63736461826475a0e9ff480bab965714a", "receipt": "formal/validation/full-tree/proof-checkpoint.json", "binding": "transitive meaning and proof digest", "receiptGeneratedDafnySha256": "b9a3760136e7074e3d269cf2755a5f6ee12fc8d66cacbadf54b8e349bd8fb499"},
-    {"unit": "points__journal.ts", "obligations": 26, "transitiveMeaningSha256": "00abce39d798dae5371225f6994d9cfc725fdf115bd86c8437350ef1e9b9292f", "proofSha256": null, "receipt": "formal/validation/full-tree/proof-checkpoint.json", "binding": "transitive meaning and proof digest", "receiptGeneratedDafnySha256": "52843fd27c54f08c00378a77a392e0cfee3f8be84d9cffdf5cbe87b0bff4abb8"},
-    {"unit": "points__corrections.ts", "obligations": 18, "transitiveMeaningSha256": "e62ef08a8b7ef2f31d52abf644a50ba3b97646df6ff38c4b86ef78c6fa25a6bb", "proofSha256": "08965dabede4668a59ebc01c1dc30cc0f445a94ea451029ceba5b04af4765e70", "receipt": "formal/validation/points/corrections-proof.json", "binding": "transitive spec sources and own proof digests"},
-    {"unit": "points__penalties.ts", "obligations": 30, "transitiveMeaningSha256": "165d1544a86b9c13c009d9aca60d6c4b3bce879d38e5638be9aa7cf4889f3af5", "proofSha256": "045b02ca2fbf0567bd296ec5848e12049505ddcde66e4cc7f8aa11967825aa7d", "receipt": "formal/validation/full-tree/proof-checkpoint.json", "binding": "transitive meaning and proof digest", "receiptGeneratedDafnySha256": "2b83fea1fa0b6a16590d1315a14ee7b1b97e0a1802944f145bfce3b99e40f4b8"},
-    {"unit": "points__publication.ts", "obligations": 37, "transitiveMeaningSha256": "79a8c272b47304c67b55f9c83f95d87c611ec383c18e22f8bd4f0522b3471bc1", "proofSha256": "a2f830a454cc7b7dfe58f69ada3ff414cdff948ea55d6cd9fc526dfb33ea102f", "receipt": "formal/validation/points/publication-proof.json", "binding": "transitive spec sources and own proof digests"},
-    {"unit": "points__recovery.ts", "obligations": 9, "transitiveMeaningSha256": "6eedd2f8b960013fe9d793d5e363f7bfede91419afc747d644bcdd2eb41525e8", "proofSha256": "88f480f0654cc40bea99cf03677e7ccf8611deb93a3ca68bbc321d6108edbd29", "receipt": "formal/validation/source-coverage/points-recovery.json", "binding": "transitive spec sources and own proof digests", "receiptGeneratedDafnySha256": "2b4a3a9529e3500335cc1b64240bdf710dfe780b87d6ba0dd05e8faa3fa3a9d0"},
-    {"unit": "points__reviews.ts", "obligations": 12, "transitiveMeaningSha256": "9a68f968ef6a45e7a8dd4f7a79aa8ac7d4d45b4694a310854e6404f49bc51872", "proofSha256": "04fd8c91e7617f3964c9e79f0063e6e1c9a7aca7f110f706ef018dbe0afaa00e", "receipt": "formal/validation/full-tree/proof-checkpoint.json", "binding": "transitive meaning and proof digest", "receiptGeneratedDafnySha256": "9ee9b732586517ea97d12f642735459792b72e5fc85e85179b789832d7b889d0"},
-    {"unit": "security__enforcement.ts", "obligations": 146, "transitiveMeaningSha256": "476803610e638dc6b8725a8b5126d1ea28974a7d5b844f5dbfcc019231bd0511", "proofSha256": "d2746f4084622de405f9b16563c55e53fa610cb1fb49b824f30e7d05137f0a06", "receipt": "formal/validation/full-tree/proof-checkpoint.json", "binding": "transitive meaning and proof digest", "receiptGeneratedDafnySha256": "a9ea52c86e513037f62e791845b484b7a8997c1f656500cb8a102565064fab83"},
-    {"unit": "projectComposition.ts", "obligations": 3, "transitiveMeaningSha256": "72b9785bc38647c9f65a3584b2270df369059e1aacfd1425aed6556ef8ff3c5d", "proofSha256": null, "receipt": "formal/validation/full-tree/proof-checkpoint.json", "binding": "transitive meaning and proof digest", "receiptGeneratedDafnySha256": "46bff1b506ffe29a0b02c46c54d518a68711e32c9c5a02f391e6c463cb83debd"},
-    {"unit": "security__admission.ts", "obligations": 57, "transitiveMeaningSha256": "48ef97599375e00e2cc8fbdfccab0f0f4da5fda564a64315461297888a5c759a", "proofSha256": null, "receipt": "formal/validation/full-tree/proof-checkpoint.json", "binding": "transitive meaning and proof digest", "receiptGeneratedDafnySha256": "d4f4682e24880d23751314b5ce4aabb87133ae4a4565e6ec109f805dc800c93f"},
-    {"unit": "security__cases.ts", "obligations": 130, "transitiveMeaningSha256": "bad648eb0e5b7e988d04035401d269a42e6fbbd9943e535b9e8322ab43c95504", "proofSha256": "86e36cbaf0428605167ff1a23470132b42d5a80ff2ce0bc1e46f29d344ae436d", "receipt": "formal/validation/full-tree/proof-checkpoint.json", "binding": "transitive meaning and proof digest", "receiptGeneratedDafnySha256": "589eaa494b696845e8f4f95ec3cca0c60579c5cb3c34153b9c908b3fa84ac59b"},
-    {"unit": "security__evidence.ts", "obligations": 54, "transitiveMeaningSha256": "ea18ecb12ff8775f4daadaad0bf9209996d246aad336db324791ebc9fb92a47c", "proofSha256": "4e68b3fbe63f32053cef29ad3f2bcde207bdb5409f04b1104c9c4c5580642bf7", "receipt": "formal/validation/full-tree/proof-checkpoint.json", "binding": "transitive meaning and proof digest", "receiptGeneratedDafnySha256": "adf5eb98a2cfba143e756d8a9a72e47fed595ad2ca588b1dd5e2fe46b9cb71ad"},
-    {"unit": "security__screening.ts", "obligations": 39, "transitiveMeaningSha256": "667511adbc11e6821a525ffc21859cf081542d11a418fde574ac90c5eb6e344f", "proofSha256": "af4b8bc53cae54a1b72f5e63ed71aff85553d493c64607a8d0d593d5421a4b20", "receipt": "formal/validation/source-coverage/private-report-screening.json", "binding": "transitive spec sources and own proof digests", "receiptGeneratedDafnySha256": "8ff4a48ffc2315f754dd5c8134df5bf0ee687b2e5c4bc5d25abc6cea0c58789d"},
-    {"unit": "security__forwarding.ts", "obligations": 94, "transitiveMeaningSha256": "7a221b51c085b9ae93f1f4aec2689f63a2c66a3fe6263663154bfa67b65aee83", "proofSha256": "e0fe0c79cf03f6b48a071c747f84d896bf5874fc736fe0001466b24db6136cd4", "receipt": "formal/validation/source-coverage/private-forwarding.json", "binding": "transitive spec sources and own proof digests", "receiptGeneratedDafnySha256": "b0796d689ad4170ac3a4556062376ab22a3bb79761316b2f6f8e247f4f90a31d"},
-    {"unit": "security__intake.ts", "obligations": 23, "transitiveMeaningSha256": "26aa76d99e99704fea88c43c653517789a57ba04044a499b54139bb04125ca73", "proofSha256": null, "receipt": "formal/validation/source-coverage/private-intake-receipt-owner.json", "binding": "transitive meaning and proof digest", "receiptGeneratedDafnySha256": "b9738b54cc69808e9e13a9fbf9372518fe674d9bd268fcb6bdb13cbe81ebddd9"},
-    {"unit": "security__privacy.ts", "obligations": 12, "transitiveMeaningSha256": "160689322e9a461f3cc83e34d024269293a2d882829cc3626c1b7088c1cd74e5", "proofSha256": null, "receipt": "formal/validation/full-tree/proof-checkpoint.json", "binding": "transitive meaning and proof digest", "receiptGeneratedDafnySha256": "9bab6baffb13d6258e5c52b3fdda345476f4cd60b0fd158c992d1761b68530a0"},
-    {"unit": "security__terms.ts", "obligations": 5, "transitiveMeaningSha256": "ffd9782d05b30d3a7275ceb17f78f306fed8ea04332a34511d6de50fb157745d", "proofSha256": null, "receipt": "formal/validation/full-tree/current-residual-proofs.json", "binding": "transitive meaning and proof digest", "receiptGeneratedDafnySha256": "40bae72ddff3b39621a5ca7fdc5ab29b92b6d0b3a6b433816515ae5676c910da"},
-    {"unit": "settlement__allocation.ts", "obligations": 3, "transitiveMeaningSha256": "a0e82ca50002ce9ef8ba14e5af8feecb37e0d77d6888ec3d5b1231729f10e056", "proofSha256": "4c6bc3e4221e1a6092ee910f43497ace565380ea7781d922f2b5e779d6cef862", "receipt": "formal/validation/active-proof/settlement/allocation-complete.json", "binding": "transitive spec sources and own proof digests"},
-    {"unit": "settlement__vault.ts", "obligations": 42, "transitiveMeaningSha256": "8549c0fab74b30c3aaad4f080a6607348dd31c0c460f3d689a183381c389f64a", "proofSha256": "7e83e05d0339feb1d55b0fd614b23749a2d651526efbf39db95586d19fe75082", "receipt": "formal/validation/source-coverage/canonical-vault-settlement.json", "binding": "transitive spec sources and own proof digests", "receiptGeneratedDafnySha256": "16616626015aa2b56e66c72fc1a3f2a1033b14b2a6c06b8ad8824343df17f13c"},
-    {"unit": "settlement__paymentDispatch.ts", "obligations": 107, "transitiveMeaningSha256": "7fb49b5bff71541674f8f4a99e3f68bf59aa67a703bfcafc0ab214efc0b733a0", "proofSha256": null, "receipt": "formal/validation/source-coverage/canonical-vault-settlement.json", "binding": "transitive spec sources and own proof digests", "receiptGeneratedDafnySha256": "7fe58d52d8570937487cb6af931825bcf2772966b0883bf704dce1df9c4d9f9e"},
-    {"unit": "settlement__payment.ts", "obligations": 110, "transitiveMeaningSha256": "fc810d4bfafaf14b570e98b0da7b09b29d83ca99d5e3d52e6de3b377ef9a1f04", "proofSha256": "dd3a6a5570cad57a01d5db407c3214b38ef02fe4cfc2fa15d501eb5e8711e66e", "receipt": "formal/validation/source-coverage/settlement-rail-ownership.json", "binding": "transitive spec sources and own proof digests", "receiptGeneratedDafnySha256": "70589ea5b9fa4d49ce62a17ea34a3bbbe36a49603aab4a2cfa8252da9996ed09"},
-    {"unit": "settlement__composition.ts", "obligations": 27, "transitiveMeaningSha256": "e9ca7335feb67758a062131842ea375b479a00f90bc71a2de037e9efd2d49379", "proofSha256": "c5bf43910e2b876910a59fa4d57e92353625cd2890565d28a975b45a54c2718d", "receipt": "formal/validation/source-coverage/settlement-rail-ownership.json", "binding": "transitive spec sources and own proof digests", "receiptGeneratedDafnySha256": "2188631a9863a1ae2726060e60bd256e865d276ae6d026e4addb3ff1e46f04ae"},
-    {"unit": "settlement__contributorAllocation.ts", "obligations": 32, "transitiveMeaningSha256": "fcf30a1fc5c275842cbe9368f1efc44373d6be3456d190c63275ab165b54cc67", "proofSha256": null, "receipt": "formal/validation/full-tree/current-residual-proofs.json", "binding": "transitive meaning and proof digest", "receiptGeneratedDafnySha256": "3845825467877b4ccce436b787830482a2f8409f66acf68fffeb421f6e0eb241"},
-    {"unit": "settlement__keeperDiagnostics.ts", "obligations": 8, "transitiveMeaningSha256": "00f999db79107266d866ce9f55709016d760b609ce6ef4f76cb4c14ed9162bbb", "proofSha256": "467647db895ea45b5a1a2adc0a2010bf7dbc606f4d1e8fd8bf226f0fc037b482", "receipt": "formal/validation/journeys/keeper-delta-final.json", "binding": "transitive spec sources and own proof digests"},
-    {"unit": "settlement__keeperLifecycle.ts", "obligations": 66, "transitiveMeaningSha256": "677019998adaa8ea0a428985fb0fa86cd2bd677bbe095fa27f9a23c0ddc48ead", "proofSha256": null, "receipt": "formal/validation/source-coverage/keeper-lifecycle.json", "binding": "transitive spec sources and own proof digests"},
-    {"unit": "settlement__keeperRpc.ts", "obligations": 16, "transitiveMeaningSha256": "81f9a5486468e699247898b237b6c53b1d50c9beef105f8584693fb8daf09946", "proofSha256": null, "receipt": "formal/validation/journeys/keeper-delta-final.json", "binding": "transitive spec sources and own proof digests"},
-    {"unit": "settlement__keeperScan.ts", "obligations": 16, "transitiveMeaningSha256": "d711369835ee00fa59b816563e08208035d07175ae6c4e66e738b57ce2d1fbb4", "proofSha256": null, "receipt": "formal/validation/journeys/keeper-delta-final.json", "binding": "transitive spec sources and own proof digests"},
-    {"unit": "settlement__monthly.ts", "obligations": 73, "transitiveMeaningSha256": "18c853083644fad0b2ad2e3aa7f0626f685a09f8f42f799880e7aa163a11a6c9", "proofSha256": "4b1edcdfe299e473623396d076ecd23f3701081a0c3e48bbc2a4697cd7f6baca", "receipt": "formal/validation/active-proof/settlement/monthly-with-complete-allocation.json", "binding": "transitive spec sources and own proof digests"},
-    {"unit": "settlement__recovery.ts", "obligations": 20, "transitiveMeaningSha256": "d5ecf14bd6d852321712eb0e512a9759f4140b96fc17ee178f275708088a68ed", "proofSha256": null, "receipt": "formal/validation/finance/recovery-current.json", "binding": "transitive spec sources and own proof digests"},
-    {"unit": "settlement__referralAccrual.ts", "obligations": 191, "transitiveMeaningSha256": "3051a9db1b72314f72cc642c45f69a4dbbdb41a3d30ed8669bc3cab869139ad1", "proofSha256": "f32c1766b92716912f5c2b881c943255346c08d8f76885e0a3d850ecb1c189e1", "receipt": "formal/validation/finance/referral-accrual-proof-complete.json", "binding": "transitive spec sources and own proof digests", "receiptGeneratedDafnySha256": "7bbdc03fcfa94e48963ad58052ed1c2aedcd9f561f9bfa0cdd868cec86051c93"},
-    {"unit": "settlement__referralDistributor.ts", "obligations": 146, "transitiveMeaningSha256": "348343339f314ff3dbcd871a3e21e0be612efca1286a0946fc641cd0b150e2a4", "proofSha256": "91fb202584ab94b6d687d348e3f950ab08c0da32562be45bc49555b1717d4458", "receipt": "formal/validation/full-tree/current-financial-proofs.json", "binding": "transitive spec sources and own proof digests", "receiptGeneratedDafnySha256": "839a114bb6107632f850a3432a86fa2d065a49b66ae0158b54466c7020f76dfb"},
-    {"unit": "settlement__referrals.ts", "obligations": 6, "transitiveMeaningSha256": "6628e83ea1aa0c0eb59400f2e45fbc427a6d05ebbeebe3d08c16ecc2c64f7b75", "proofSha256": null, "receipt": "formal/validation/full-tree/proof-checkpoint.json", "binding": "transitive meaning and proof digest", "receiptGeneratedDafnySha256": "06b0ddf38b25b23f3a43f58cc303dc33174741c2b3186ff7ccb389e8274a1fb1"},
-    {"unit": "settlement__referralPublication.ts", "obligations": 287, "transitiveMeaningSha256": "dd4329926c1dece1d06d30109db0f0335cb5e3d720723520a0264577027d940b", "proofSha256": "8c700cfee4e742125ef2c7719f03d1c4522082f469f175aa801d94f53287735f", "receipt": "formal/validation/finance/referral-publication-proof-complete.json", "binding": "transitive spec sources and own proof digests", "receiptGeneratedDafnySha256": "a01ea750a88a4f57e160965eeb278372890db52dc1fece8a33ce101e2283932c"},
-    {"unit": "settlement__reserveRelease.ts", "obligations": 146, "transitiveMeaningSha256": "de2bbddc0ae5b614fdef1b0fa2c569fe6c5379e155aac72b56652ac3ba200128", "proofSha256": "3be010e32f84c2c217a463e2310111351b5d05ff323b9af04b868c82a8c81895", "receipt": "formal/validation/full-tree/current-financial-proofs.json", "binding": "transitive spec sources and own proof digests", "receiptGeneratedDafnySha256": "7a8137cea13b4c90cc107e8addd1b414f8fb4a203230133645b5db90542cb3b9"},
-    {"unit": "settlement__signer.ts", "obligations": 19, "transitiveMeaningSha256": "f75ad23872e5a19a3f3746ae8f237763f70b956592681512dd55025f6a78589c", "proofSha256": null, "receipt": "formal/validation/full-tree/proof-checkpoint.json", "binding": "transitive meaning and proof digest", "receiptGeneratedDafnySha256": "0a75085905f87ea02af9a3a5805e60f305e679de6f0fb6b5b1637224d6349846"},
-    {"unit": "settlement__solanaScan.ts", "obligations": 22, "transitiveMeaningSha256": "71c91d1c2c5b571c15e457403039268c5fe66405c8f9dc5e3e4b8194c1aa3419", "proofSha256": null, "receipt": "formal/validation/source-coverage/solana-scan.json", "binding": "transitive spec sources and own proof digests", "receiptGeneratedDafnySha256": "f3e9a7d3950a2f42d858c0b3ba81329ee76ab571aa7b517d1bf14e6831421eb7"},
-    {"unit": "settlement__vaultSnapshots.ts", "obligations": 62, "transitiveMeaningSha256": "50fa64ef21b0c9a4161fec189842943a6e5b7c3e9bd0b2b55a1d22a2fc17eea9", "proofSha256": null, "receipt": "formal/validation/full-tree/current-financial-proofs.json", "binding": "transitive meaning and proof digest", "receiptGeneratedDafnySha256": "386d6806f65bd9637a6968846ea34f8009bb27ee06cd2b0a43540dd32f9ee7c1"},
-    {"unit": "slopbot__appeals.ts", "obligations": 34, "transitiveMeaningSha256": "68594c6b385802b1f0e7ec22b1f55975d165f1f81f242e80af8f406dbeaa06a0", "proofSha256": null, "receipt": "formal/validation/full-tree/proof-checkpoint.json", "binding": "transitive meaning and proof digest", "receiptGeneratedDafnySha256": "2bcd4611e1bf1617b9bd3b517fae2416282944358025a707a152c4135432434a"},
-    {"unit": "slopbot__closure.ts", "obligations": 137, "transitiveMeaningSha256": "a523b7dbfa9c05f19de5a60ccc72f0a1911123251dd53609f54f96ab5c1882fd", "proofSha256": null, "receipt": "formal/validation/journeys/closure-final.json", "binding": "transitive spec sources and own proof digests"},
-    {"unit": "slopbot__review.ts", "obligations": 28, "transitiveMeaningSha256": "8d0d0b08350783f31fb709373306b30ceff9c311e4eea231c76a0df4ea101eef", "proofSha256": null, "receipt": "formal/validation/full-tree/proof-checkpoint.json", "binding": "transitive meaning and proof digest", "receiptGeneratedDafnySha256": "5f323cc6e0e11a680643f46d2c72c1e16fdeb5d964042c3fc8175b1b0832c857"},
-    {"unit": "slopbot__reviewLease.ts", "obligations": 26, "transitiveMeaningSha256": "04d6d8a13063e5ce6533ba4f7c187cee117dcefd41f504254a96d09ff56a0121", "proofSha256": null, "receipt": "formal/validation/source-coverage/review-lease.json", "binding": "transitive spec sources and own proof digests", "receiptGeneratedDafnySha256": "f49f06388d7dd96fde16a62a9b04cd9f0a70ffce7f13541b132720730c671247"},
-    {"unit": "slopbot__valueInference.ts", "obligations": 90, "transitiveMeaningSha256": "2b294422e8bc8625353f91c4179e05999d57770b514dcb836350508254eb2331", "proofSha256": null, "receipt": "formal/validation/source-coverage/slopbot-value-inference.json", "binding": "transitive spec sources and own proof digests"},
-    {"unit": "slopbot__webhookDelivery.ts", "obligations": 50, "transitiveMeaningSha256": "2d6d6c998d10c42ecd811d29023a59ef8b50217d5d88e89cbcacf510971ef361", "proofSha256": null, "receipt": "formal/validation/source-coverage/slopbot-webhook-delivery.json", "binding": "transitive spec sources and own proof digests"}
+    {
+      "unit": "access.ts",
+      "obligations": 14,
+      "transitiveMeaningSha256": "2649dd8a04a0e4c09c813dc4c814db72de692364a340ca5e690bc86444d804d2",
+      "proofSha256": null,
+      "receipt": "formal/validation/full-tree/proof-checkpoint.json",
+      "binding": "transitive meaning and proof digest",
+      "receiptGeneratedDafnySha256": "47cb47f17b69654e616c06d832632f610a0bcd4f23ef36df1f552a870f1bca35"
+    },
+    {
+      "unit": "app.ts",
+      "obligations": 6,
+      "transitiveMeaningSha256": "1d9d73b19fa83406e29ca4d0243a97869ace80ee2cf2806cfef8b3f5cf773ae5",
+      "proofSha256": null,
+      "receipt": "formal/validation/full-tree/proof-checkpoint.json",
+      "binding": "transitive meaning and proof digest",
+      "receiptGeneratedDafnySha256": "f98510253aa2dc4b3164debb4597befbfbfaff7d13559af7c00bbb603b71af11"
+    },
+    {
+      "unit": "backend__email.ts",
+      "obligations": 16,
+      "transitiveMeaningSha256": "855220715d496fbf45704cf79ad237476111fd72fa8de70c2837a1cbd638b3ce",
+      "proofSha256": null,
+      "receipt": "formal/validation/full-tree/proof-checkpoint.json",
+      "binding": "transitive meaning and proof digest",
+      "receiptGeneratedDafnySha256": "b6119a8fc9c99bfa14a25bb4f59b6abaaa23e14f088c5ff6824c4d6ccb6cbd22"
+    },
+    {
+      "unit": "backend__accounts.ts",
+      "obligations": 217,
+      "transitiveMeaningSha256": "5c4d001ece464b811c555ecd7aa872b174e6939c00c11e292739e1a15197c4b4",
+      "proofSha256": null,
+      "receipt": "formal/validation/full-tree/proof-checkpoint.json",
+      "binding": "transitive meaning and proof digest",
+      "receiptGeneratedDafnySha256": "414b67ca8fb6b563b3ee20898119db7fad94099ba8ee5e68c91df94e9cff78fb"
+    },
+    {
+      "unit": "backend__projects.ts",
+      "obligations": 198,
+      "transitiveMeaningSha256": "2c82287145abcaac3afdc617b84846a1b53b33b59128986b2ac7ca2f191964db",
+      "proofSha256": "2ad927f7dfba22ee4002ca93b0ae149484bef68773b770a6a3e8ba084700ba19",
+      "receipt": "formal/validation/full-tree/proof-checkpoint.json",
+      "binding": "transitive meaning and proof digest",
+      "receiptGeneratedDafnySha256": "9430be0fa509b600eb2a9061d155cc6f5e0f9d56d34d72a3f34c1cda9428a790"
+    },
+    {
+      "unit": "backend__listing.ts",
+      "obligations": 15,
+      "transitiveMeaningSha256": "540c924a695a5486a1fbe877b6bde3260a80fc8d7db503c46865119ba1c8981c",
+      "proofSha256": null,
+      "receipt": "formal/validation/full-tree/proof-checkpoint.json",
+      "binding": "transitive meaning and proof digest",
+      "receiptGeneratedDafnySha256": "2add9dec4f2ee3177825955381590b40499fe487292cb5cd11eeca3c0a49bb32"
+    },
+    {
+      "unit": "backend__referralCodes.ts",
+      "obligations": 8,
+      "transitiveMeaningSha256": "62bd9aa45430dfe8ad2b87582dc0bdcee0ab2816ef353592a6dda5b95c69d59e",
+      "proofSha256": "35e47ce235f11301d039fc1def64305c9835235edb5fb047a7659db07eac4adb",
+      "receipt": "formal/validation/source-coverage/referral-link-route.json",
+      "binding": "transitive spec sources and own proof digests",
+      "receiptGeneratedDafnySha256": "7d1d74e9473a131ba04e1a7fbb604ab323fe94a6d674468844c89e48f3bc2a29"
+    },
+    {
+      "unit": "backend__referralProjects.ts",
+      "obligations": 6,
+      "transitiveMeaningSha256": "19c81c1541f234722e5b593c19ca50151919c8f4800f5da5a9dc4736cff829df",
+      "proofSha256": "fc8792316c6b1c5759e091ae5b1a4b34b8cf81b385f5c1246a7d0aeb5292b4de",
+      "receipt": "formal/validation/source-coverage/referred-projects.json",
+      "binding": "transitive spec sources and own proof digests",
+      "receiptGeneratedDafnySha256": "0741694995df543bb8e9464e1c21273427d7bd908d74328976945482fcf09aa8"
+    },
+    {
+      "unit": "backend__wallets.ts",
+      "obligations": 90,
+      "transitiveMeaningSha256": "a4a272c21d32796eb76d6ae54ec393c142c8919c0c062953bf0e96cf8ee6b799",
+      "proofSha256": "8ef7e5b862c5abe51bc4cc0a0479c9f2f104fdcd6d6b5ead0389f64351b7e052",
+      "receipt": "formal/validation/full-tree/proof-checkpoint.json",
+      "binding": "transitive meaning and proof digest",
+      "receiptGeneratedDafnySha256": "c654228229be512b8deef374b74399171c53a0024ea7269e07cfca2be45f45d7"
+    },
+    {
+      "unit": "frontend__navigation.ts",
+      "obligations": 10,
+      "transitiveMeaningSha256": "a6d5e9a01e6ff5e029de6be92c6e81d025f02ef32c51795b9df90e74929cd603",
+      "proofSha256": null,
+      "receipt": "formal/validation/full-tree/proof-checkpoint.json",
+      "binding": "transitive meaning and proof digest",
+      "receiptGeneratedDafnySha256": "b8a7cbe22fea4a5345811f3b76f33efc798777ed481cc85ea9b6827e3d0b2292"
+    },
+    {
+      "unit": "frontend__drafts.ts",
+      "obligations": 18,
+      "transitiveMeaningSha256": "9df6b8604e0a708c8e22b934dfef9f4f9362914d2733381379e95b6810eaa8bd",
+      "proofSha256": null,
+      "receipt": "formal/validation/full-tree/proof-checkpoint.json",
+      "binding": "transitive meaning and proof digest",
+      "receiptGeneratedDafnySha256": "73a2753f424f20d2f7aaae3705bfdf2e6cb07ab5e8b175677c85efcc7149b628"
+    },
+    {
+      "unit": "frontend__reportDetails.ts",
+      "obligations": 2,
+      "transitiveMeaningSha256": "f3abd7edcd4a4e3d8be9c1dce2e3e401fc406c93d941911661d0714614375556",
+      "proofSha256": "604b0906c4bb18e6211967ce3ecd87404d6cf82160335bd98d0c3c9680a85c70",
+      "receipt": "formal/validation/full-tree/current-residual-proofs.json",
+      "binding": "transitive spec sources and own proof digests",
+      "receiptGeneratedDafnySha256": "1f808ab11e608df0d9433f84c65ab0e091f7446a0d3aa32a4834d32812e6b6ca"
+    },
+    {
+      "unit": "composition.ts",
+      "obligations": 42,
+      "transitiveMeaningSha256": "81bf504527373ec76097c9e746ac8a7fe49d52f1395bd1ae0cc42ed9c7402814",
+      "proofSha256": null,
+      "receipt": "formal/validation/full-tree/current-residual-proofs.json",
+      "binding": "transitive meaning and proof digest",
+      "receiptGeneratedDafnySha256": "759a7bc23e0a9688127878485adca37ab49e2d98973cb3de3895c7744d7e1d20"
+    },
+    {
+      "unit": "contributor__commandCompletion.ts",
+      "obligations": 26,
+      "transitiveMeaningSha256": "c856a8d2e0829c6b3672e3d724e29e48f9a3f004fcce633ab8b1ce16c147a086",
+      "proofSha256": null,
+      "receipt": "formal/validation/source-coverage/command-completion.json",
+      "binding": "transitive spec sources and own proof digests",
+      "receiptGeneratedDafnySha256": "b57b754ade6a99e0041f74f5bd78a34ad014905908caa569478b6c5c91c7da79"
+    },
+    {
+      "unit": "contributor__evidence.ts",
+      "obligations": 50,
+      "transitiveMeaningSha256": "9cd86e611979999eda8308846dc640dc2b775f3af71fef6ab3346e2412b68e8c",
+      "proofSha256": null,
+      "receipt": "formal/validation/full-tree/proof-checkpoint.json",
+      "binding": "transitive meaning and proof digest",
+      "receiptGeneratedDafnySha256": "93a2490a3261b10f6274fdd50d4e24429963fb9bb920194cfa78791adf01bfaa"
+    },
+    {
+      "unit": "contributor__installation.ts",
+      "obligations": 152,
+      "transitiveMeaningSha256": "abf367015bda90f7d3ee5cd404370d4d4f428a02d5731a640b9989ed0069631b",
+      "proofSha256": "134b239bb98201cc2a8a064a5157084004dc0e042e57eb99ca74ad3b0fa27d3d",
+      "receipt": "formal/validation/source-coverage/installation-lifecycle.json",
+      "binding": "transitive spec sources and own proof digests",
+      "receiptGeneratedDafnySha256": "12aadcf96ab710731e34af2dfa84eb9452c0c25e0feab07f0bd0cf40d6816d76"
+    },
+    {
+      "unit": "contributor__localReceipt.ts",
+      "obligations": 74,
+      "transitiveMeaningSha256": "ff034181b37db3deb483e8a8bfd67f67cf564a3952305e6a5357ffe39c8f7779",
+      "proofSha256": null,
+      "receipt": "formal/validation/source-coverage/local-receipt.json",
+      "binding": "transitive spec sources and own proof digests",
+      "receiptGeneratedDafnySha256": "89084eb3eac60baee20e1a2a8358ed00f5232bdbcae4fd34253367f861ffa61b"
+    },
+    {
+      "unit": "contributor__runEvidence.ts",
+      "obligations": 39,
+      "transitiveMeaningSha256": "73ea5bdd728c9ec6b28b6c1b665f4fe2e5d2bf8b8e7556a320946bff83f5cbf9",
+      "proofSha256": "ae232b6c6c0f3fb57674a45a68e8eaf7db70582b6da3ce4abb40c7f3d0c361df",
+      "receipt": "formal/validation/source-coverage/run-evidence.json",
+      "binding": "transitive spec sources and own proof digests",
+      "receiptGeneratedDafnySha256": "482cfd6512b7fcfb6b48240e9b65839acfacd3db438147fe3c80f7af4f8f6079"
+    },
+    {
+      "unit": "contributor__sessionExchange.ts",
+      "obligations": 107,
+      "transitiveMeaningSha256": "3ebd64eb2cb8842455ed15748383d67fabfb9df39f015520fbdf15df968d6505",
+      "proofSha256": null,
+      "receipt": "formal/validation/source-coverage/session-exchange.json",
+      "binding": "transitive spec sources and own proof digests",
+      "receiptGeneratedDafnySha256": "347d8dd87ca8beaa73f8a91a5e571378e656029ab02a69b1000fec1e9e75f268"
+    },
+    {
+      "unit": "contributor__skillAuthority.ts",
+      "obligations": 24,
+      "transitiveMeaningSha256": "6e32337f6867489808772258ed9d95838e703b4fbfade04c84412cdd7fef2c29",
+      "proofSha256": null,
+      "receipt": "formal/validation/source-coverage/skill-authority.json",
+      "binding": "transitive spec sources and own proof digests",
+      "receiptGeneratedDafnySha256": "ed0d40a7debb777259f6f79b579535cd4601f63da0c6031c9b1275f60a7e99f5"
+    },
+    {
+      "unit": "contributor__workflow.ts",
+      "obligations": 38,
+      "transitiveMeaningSha256": "dfafe3a70e9d5461c4396ed6654b6781b88c2adeb909145fc49bbad6482e53d5",
+      "proofSha256": null,
+      "receipt": "formal/validation/full-tree/proof-checkpoint.json",
+      "binding": "transitive meaning and proof digest",
+      "receiptGeneratedDafnySha256": "d593bda15ce6db727925e68bfcd20b2f53fe598eb6bb838bb896b9cbdb34084e"
+    },
+    {
+      "unit": "settlement__money.ts",
+      "obligations": 38,
+      "transitiveMeaningSha256": "0a377be78c4f08ea70df2add3ecf8c8d8b2fc2186620c72aa96081f427dc0b38",
+      "proofSha256": "e587ba519b953cf1841085ae1b097e169521cc30d1199116b754a4efb0353bf7",
+      "receipt": "formal/validation/active-proof/money-unit-gap/verification.json",
+      "binding": "transitive spec sources and own proof digests",
+      "receiptGeneratedDafnySha256": "0ddbfce51163214ff9e04257c4ddc430c692af1a9fe8ac645fc250f5a5159196"
+    },
+    {
+      "unit": "settlement__half.ts",
+      "obligations": 2,
+      "transitiveMeaningSha256": "5ded88d3b61881f705a77d109f8ff229abc193a8089225ce75f0f292d5f5d243",
+      "proofSha256": "36ba8dc21e4ae05e143bf718b0770677eb1e9fe3d628c0f2c45c6683e387121e",
+      "receipt": "formal/validation/full-tree/current-financial-proofs.json",
+      "binding": "transitive spec sources and own proof digests",
+      "receiptGeneratedDafnySha256": "cd3e8840dad07957c220c5207a1ea86ef9a04d38c27e3d13aa50f157807d9b58"
+    },
+    {
+      "unit": "fees__buyback.ts",
+      "obligations": 94,
+      "transitiveMeaningSha256": "b0e79dc5f04d3a7ae5e43904078122a9aeb3fdcb823059ab0c0e091a2859cbfd",
+      "proofSha256": "551a1aeebf317001c4c38d0d2ef58f9862df5a24072cde66d8eb667a7d42db78",
+      "receipt": "formal/validation/full-tree/current-financial-proofs.json",
+      "binding": "transitive spec sources and own proof digests",
+      "receiptGeneratedDafnySha256": "6a518a7c083674077392f6ed8d92a4b2a85aed7ad4a8c42fe770cda892e9b5c9"
+    },
+    {
+      "unit": "fees__buybackRpc.ts",
+      "obligations": 3,
+      "transitiveMeaningSha256": "8257266ea1504cc64cd060f88f45516d96cbbb3c2fef027f7c707569f41b8fd3",
+      "proofSha256": null,
+      "receipt": "formal/validation/source-coverage/buyback-rpc-rule-coverage.json",
+      "binding": "transitive spec sources and own proof digests",
+      "receiptGeneratedDafnySha256": "3476b1125cbc5699222e4bb8bbe71c25ab8506bf7b9664d745560de094e385c9"
+    },
+    {
+      "unit": "fees__conversion.ts",
+      "obligations": 114,
+      "transitiveMeaningSha256": "022e558763c47016a393abb0f39a9ee0ed4f3aa8e6c58eae1dbd339b302b12d0",
+      "proofSha256": null,
+      "receipt": "formal/validation/full-tree/proof-checkpoint.json",
+      "binding": "transitive meaning and proof digest",
+      "receiptGeneratedDafnySha256": "e259ca53d79c2a57678348f0b9d1b2f5d302b1722f0e5deb9365b082ae2e4e4b"
+    },
+    {
+      "unit": "settlement__directBounty.ts",
+      "obligations": 101,
+      "transitiveMeaningSha256": "3dbee0d021c5d4a5c1c6b35b9f034b9fbe32467c65d5f373a05585d04c729251",
+      "proofSha256": null,
+      "receipt": "formal/validation/active-proof/settlement/direct-bounty-proof.json",
+      "binding": "transitive spec sources and own proof digests"
+    },
+    {
+      "unit": "fees__directBountyIncome.ts",
+      "obligations": 14,
+      "transitiveMeaningSha256": "3d2638fae9603ae328bf6cf8359e9a3c302d484d70b7441a23194d4825645064",
+      "proofSha256": null,
+      "receipt": "formal/validation/active-proof/finance/direct-bounty-income-proof.json",
+      "binding": "transitive spec sources and own proof digests"
+    },
+    {
+      "unit": "frontend__batchedDeposit.ts",
+      "obligations": 52,
+      "transitiveMeaningSha256": "b091742e1b722f81da09b6f8ac81b8200fd4ae5d18d8b7ad32ceaab3ec50bffc",
+      "proofSha256": null,
+      "receipt": "formal/validation/source-coverage/deposit-jobs.json",
+      "binding": "transitive spec sources and own proof digests"
+    },
+    {
+      "unit": "frontend__directBountyPrompt.ts",
+      "obligations": 92,
+      "transitiveMeaningSha256": "5d5dd2c150998cebecf118d5071dbee57bec0b1255a4680d9993687696ff0aa2",
+      "proofSha256": null,
+      "receipt": "formal/validation/active-proof/frontend/direct-bounty-prompt-proof.json",
+      "binding": "transitive spec sources and own proof digests"
+    },
+    {
+      "unit": "frontend__requests.ts",
+      "obligations": 6,
+      "transitiveMeaningSha256": "7019326c0a18f92bce51ad85014a260bf4f8c6f26eb4b21db44744650b1f6af1",
+      "proofSha256": null,
+      "receipt": "formal/validation/full-tree/proof-checkpoint.json",
+      "binding": "transitive meaning and proof digest",
+      "receiptGeneratedDafnySha256": "b94693ce5e101162b2fdf85de880f62eb86ea47bc7f10f291cede3858d98b4bb"
+    },
+    {
+      "unit": "frontend__presentation.ts",
+      "obligations": 19,
+      "transitiveMeaningSha256": "706e1b8f1898d2c3f03017384b22bfa7b65738dd6578186caba992d7baac2451",
+      "proofSha256": null,
+      "receipt": "formal/validation/full-tree/proof-checkpoint.json",
+      "binding": "transitive meaning and proof digest",
+      "receiptGeneratedDafnySha256": "5ccc8d093168d903880c27cd11c72d8eac4cf3412f810d806bc6b461233f0d02"
+    },
+    {
+      "unit": "frontend__projections.ts",
+      "obligations": 12,
+      "transitiveMeaningSha256": "0019c39cd2c728a910522270e31d2326a2b7209ead7816bb4dcb1b0dcb17643f",
+      "proofSha256": null,
+      "receipt": "formal/validation/full-tree/current-residual-proofs.json",
+      "binding": "transitive meaning and proof digest",
+      "receiptGeneratedDafnySha256": "45df5bb147b7f54e43129cc5673cac91a76910f78c03fe64811c20f38109491b"
+    },
+    {
+      "unit": "frontend__provisionalVault.ts",
+      "obligations": 107,
+      "transitiveMeaningSha256": "a3fc27457cc5bf40da8ccf6e4328e33e6ed232fcc7b166eac2fea5dbb244ebf4",
+      "proofSha256": null,
+      "receipt": "formal/validation/source-coverage/provisional-vault.json",
+      "binding": "transitive spec sources and own proof digests"
+    },
+    {
+      "unit": "frontend__rankedSnapshot.ts",
+      "obligations": 10,
+      "transitiveMeaningSha256": "05f5b055229223408b6f20f797740727eb70385163b6fbeb73427f267fd4a680",
+      "proofSha256": null,
+      "receipt": "formal/validation/source-coverage/ranked-snapshot.json",
+      "binding": "transitive spec sources and own proof digests"
+    },
+    {
+      "unit": "frontend__referralSettings.ts",
+      "obligations": 27,
+      "transitiveMeaningSha256": "2663036e1126e1ab15458a9394270aee1bbac9d90f3b15b9f15c4a2fca1ef83d",
+      "proofSha256": null,
+      "receipt": "formal/validation/source-coverage/referral-link-route.json",
+      "binding": "transitive spec sources and own proof digests",
+      "receiptGeneratedDafnySha256": "007689428666752050a1ea0206c18afbc293a0941b4acfb41ff15ace711110b0"
+    },
+    {
+      "unit": "frontend__snapshotCache.ts",
+      "obligations": 23,
+      "transitiveMeaningSha256": "ee5adf31c4b0f28353c37b70b1fbcdee2d27d944104e717b47f19f6d0228f2ee",
+      "proofSha256": null,
+      "receipt": "formal/validation/source-coverage/browser-ownership.json",
+      "binding": "transitive spec sources and own proof digests"
+    },
+    {
+      "unit": "governance.ts",
+      "obligations": 9,
+      "transitiveMeaningSha256": "445499da1e3957a0a4e7a4a52725e346a020f888b9a871e74f899517f5d202c2",
+      "proofSha256": null,
+      "receipt": "formal/validation/full-tree/proof-checkpoint.json",
+      "binding": "transitive meaning and proof digest",
+      "receiptGeneratedDafnySha256": "49eac746b76eeae2cb4460ff6dc01839f862d4dd812ef88511a66643ff908052"
+    },
+    {
+      "unit": "operations__backup.ts",
+      "obligations": 67,
+      "transitiveMeaningSha256": "a3855918c87e532ae64764e7d584e31a499155a385e52f83f8593a440f6ac67a",
+      "proofSha256": null,
+      "receipt": "formal/validation/full-tree/proof-checkpoint.json",
+      "binding": "transitive meaning and proof digest",
+      "receiptGeneratedDafnySha256": "adb137c3ad3dbe92ea64b89deb9d151a56013b4ce16c2bcae68f99227034c917"
+    },
+    {
+      "unit": "operations__escrowQualification.ts",
+      "obligations": 147,
+      "transitiveMeaningSha256": "7fb165c0e9a95cc1b02b8328c5cae735e68278bc685d54cef00e2e0608b4ae4e",
+      "proofSha256": null,
+      "receipt": "formal/validation/source-coverage/escrow-qualification.json",
+      "binding": "transitive spec sources and own proof digests",
+      "receiptGeneratedDafnySha256": "9aa567cad94edb33b68dc6e66aee2c250871feec80527cce25ff130d81c116a5"
+    },
+    {
+      "unit": "operations__local.ts",
+      "obligations": 8,
+      "transitiveMeaningSha256": "77dbd0c737843b218114c3051b4ae17102132d54dbcc2cd0ce6fe6ceffe2e7b5",
+      "proofSha256": null,
+      "receipt": "formal/validation/full-tree/proof-checkpoint.json",
+      "binding": "transitive meaning and proof digest",
+      "receiptGeneratedDafnySha256": "57813103559feae492634d935ef496244ed1c88074113177e8c150413223add7"
+    },
+    {
+      "unit": "operations__localCommand.ts",
+      "obligations": 26,
+      "transitiveMeaningSha256": "edeabc53bf5b2654f1a3e1f159fe1943455c82c7b547f3570b197697773f7e8a",
+      "proofSha256": null,
+      "receipt": "formal/validation/journeys/local-validator-proof.json",
+      "binding": "transitive spec sources and own proof digests"
+    },
+    {
+      "unit": "operations__localValidator.ts",
+      "obligations": 50,
+      "transitiveMeaningSha256": "c3bb9f71339b4817a2f90f0725def701cb8560d6a2151cf5f0973c5b32b6385c",
+      "proofSha256": null,
+      "receipt": "formal/validation/journeys/local-validator-proof.json",
+      "binding": "transitive spec sources and own proof digests"
+    },
+    {
+      "unit": "operations__notifications.ts",
+      "obligations": 50,
+      "transitiveMeaningSha256": "89ea464d940e2ec8df87c565f5f8000ee9179a010a324174c40fbd5b8b7bc8c1",
+      "proofSha256": null,
+      "receipt": "formal/validation/full-tree/proof-checkpoint.json",
+      "binding": "transitive meaning and proof digest",
+      "receiptGeneratedDafnySha256": "5a4e885b991312f66d82da5016e5d77a633a9c3c0af6835975df5fde213d10d1"
+    },
+    {
+      "unit": "operations__paymentJobs.ts",
+      "obligations": 26,
+      "transitiveMeaningSha256": "105e4bbfab8ac7c94f2d2d68c1299da18f97b2c9f457a779ed54ef9e9102ecfe",
+      "proofSha256": null,
+      "receipt": "formal/validation/source-coverage/deposit-jobs.json",
+      "binding": "transitive spec sources and own proof digests"
+    },
+    {
+      "unit": "operations__releaseCoverage.ts",
+      "obligations": 8,
+      "transitiveMeaningSha256": "47d19a14eadbeb8c0c2fe4dfbc03e34d7c18b3bf5cd6bd36fffceb16e9683062",
+      "proofSha256": null,
+      "receipt": "formal/validation/source-coverage/release-coverage.json",
+      "binding": "transitive spec sources and own proof digests",
+      "receiptGeneratedDafnySha256": "afcb8062d77b960f48af042e22a391b3dfe43a52b55900746b61854900c11110"
+    },
+    {
+      "unit": "operations__release.ts",
+      "obligations": 55,
+      "transitiveMeaningSha256": "4e3dc06138353ee6aa83cb30c2fda8682cd0cc5a46ed3bb835cd82792a0ba482",
+      "proofSha256": null,
+      "receipt": "formal/validation/full-tree/current-residual-proofs.json",
+      "binding": "transitive meaning and proof digest",
+      "receiptGeneratedDafnySha256": "1e3063034f269e50c148c4fa52a46cfbddaf8b924ea6a956866bdbea92cfa456"
+    },
+    {
+      "unit": "points__allocation.ts",
+      "obligations": 4,
+      "transitiveMeaningSha256": "9f26c9dd9326357e940c3bb19165b81aa554bd5758ea30057b110c04415d2891",
+      "proofSha256": "348bb1203aa9f8b2023774aedb79212a5a2d6f37b45a2cf41cd41f91536ea0a6",
+      "receipt": "formal/validation/full-tree/proof-checkpoint.json",
+      "binding": "transitive meaning and proof digest",
+      "receiptGeneratedDafnySha256": "2839fb361b2d8bc9f8323d8ececd7d850b638fdac5d0bb80d641794c9fb1d7d2"
+    },
+    {
+      "unit": "points__authorship.ts",
+      "obligations": 30,
+      "transitiveMeaningSha256": "455be62491615363e304b838701cf1007d24d81c4f2d25b38a85588b8f8f66f6",
+      "proofSha256": null,
+      "receipt": "formal/validation/full-tree/proof-checkpoint.json",
+      "binding": "transitive meaning and proof digest",
+      "receiptGeneratedDafnySha256": "a6afd71b1a4dc9f97e12bf57ded949e66486567dbfdc94af2249652c20285ebe"
+    },
+    {
+      "unit": "points__census.ts",
+      "obligations": 58,
+      "transitiveMeaningSha256": "15ee1bbf33ad9f1a0c2258d0dd3a466cf81eeba03db4a4afc025f8dd865559e7",
+      "proofSha256": "940d1cb80009e4b3e7031a1dfb2b85c63736461826475a0e9ff480bab965714a",
+      "receipt": "formal/validation/full-tree/proof-checkpoint.json",
+      "binding": "transitive meaning and proof digest",
+      "receiptGeneratedDafnySha256": "b9a3760136e7074e3d269cf2755a5f6ee12fc8d66cacbadf54b8e349bd8fb499"
+    },
+    {
+      "unit": "points__journal.ts",
+      "obligations": 26,
+      "transitiveMeaningSha256": "00abce39d798dae5371225f6994d9cfc725fdf115bd86c8437350ef1e9b9292f",
+      "proofSha256": null,
+      "receipt": "formal/validation/full-tree/proof-checkpoint.json",
+      "binding": "transitive meaning and proof digest",
+      "receiptGeneratedDafnySha256": "52843fd27c54f08c00378a77a392e0cfee3f8be84d9cffdf5cbe87b0bff4abb8"
+    },
+    {
+      "unit": "points__corrections.ts",
+      "obligations": 18,
+      "transitiveMeaningSha256": "e62ef08a8b7ef2f31d52abf644a50ba3b97646df6ff38c4b86ef78c6fa25a6bb",
+      "proofSha256": "08965dabede4668a59ebc01c1dc30cc0f445a94ea451029ceba5b04af4765e70",
+      "receipt": "formal/validation/points/corrections-proof.json",
+      "binding": "transitive spec sources and own proof digests"
+    },
+    {
+      "unit": "points__penalties.ts",
+      "obligations": 30,
+      "transitiveMeaningSha256": "165d1544a86b9c13c009d9aca60d6c4b3bce879d38e5638be9aa7cf4889f3af5",
+      "proofSha256": "045b02ca2fbf0567bd296ec5848e12049505ddcde66e4cc7f8aa11967825aa7d",
+      "receipt": "formal/validation/full-tree/proof-checkpoint.json",
+      "binding": "transitive meaning and proof digest",
+      "receiptGeneratedDafnySha256": "2b83fea1fa0b6a16590d1315a14ee7b1b97e0a1802944f145bfce3b99e40f4b8"
+    },
+    {
+      "unit": "points__publication.ts",
+      "obligations": 37,
+      "transitiveMeaningSha256": "79a8c272b47304c67b55f9c83f95d87c611ec383c18e22f8bd4f0522b3471bc1",
+      "proofSha256": "a2f830a454cc7b7dfe58f69ada3ff414cdff948ea55d6cd9fc526dfb33ea102f",
+      "receipt": "formal/validation/points/publication-proof.json",
+      "binding": "transitive spec sources and own proof digests"
+    },
+    {
+      "unit": "points__recovery.ts",
+      "obligations": 9,
+      "transitiveMeaningSha256": "6eedd2f8b960013fe9d793d5e363f7bfede91419afc747d644bcdd2eb41525e8",
+      "proofSha256": "88f480f0654cc40bea99cf03677e7ccf8611deb93a3ca68bbc321d6108edbd29",
+      "receipt": "formal/validation/source-coverage/points-recovery.json",
+      "binding": "transitive spec sources and own proof digests",
+      "receiptGeneratedDafnySha256": "2b4a3a9529e3500335cc1b64240bdf710dfe780b87d6ba0dd05e8faa3fa3a9d0"
+    },
+    {
+      "unit": "points__reviews.ts",
+      "obligations": 12,
+      "transitiveMeaningSha256": "9a68f968ef6a45e7a8dd4f7a79aa8ac7d4d45b4694a310854e6404f49bc51872",
+      "proofSha256": "04fd8c91e7617f3964c9e79f0063e6e1c9a7aca7f110f706ef018dbe0afaa00e",
+      "receipt": "formal/validation/full-tree/proof-checkpoint.json",
+      "binding": "transitive meaning and proof digest",
+      "receiptGeneratedDafnySha256": "9ee9b732586517ea97d12f642735459792b72e5fc85e85179b789832d7b889d0"
+    },
+    {
+      "unit": "security__enforcement.ts",
+      "obligations": 146,
+      "transitiveMeaningSha256": "476803610e638dc6b8725a8b5126d1ea28974a7d5b844f5dbfcc019231bd0511",
+      "proofSha256": "d2746f4084622de405f9b16563c55e53fa610cb1fb49b824f30e7d05137f0a06",
+      "receipt": "formal/validation/full-tree/proof-checkpoint.json",
+      "binding": "transitive meaning and proof digest",
+      "receiptGeneratedDafnySha256": "a9ea52c86e513037f62e791845b484b7a8997c1f656500cb8a102565064fab83"
+    },
+    {
+      "unit": "projectComposition.ts",
+      "obligations": 3,
+      "transitiveMeaningSha256": "72b9785bc38647c9f65a3584b2270df369059e1aacfd1425aed6556ef8ff3c5d",
+      "proofSha256": null,
+      "receipt": "formal/validation/full-tree/proof-checkpoint.json",
+      "binding": "transitive meaning and proof digest",
+      "receiptGeneratedDafnySha256": "46bff1b506ffe29a0b02c46c54d518a68711e32c9c5a02f391e6c463cb83debd"
+    },
+    {
+      "unit": "security__admission.ts",
+      "obligations": 57,
+      "transitiveMeaningSha256": "48ef97599375e00e2cc8fbdfccab0f0f4da5fda564a64315461297888a5c759a",
+      "proofSha256": null,
+      "receipt": "formal/validation/full-tree/proof-checkpoint.json",
+      "binding": "transitive meaning and proof digest",
+      "receiptGeneratedDafnySha256": "d4f4682e24880d23751314b5ce4aabb87133ae4a4565e6ec109f805dc800c93f"
+    },
+    {
+      "unit": "security__cases.ts",
+      "obligations": 130,
+      "transitiveMeaningSha256": "bad648eb0e5b7e988d04035401d269a42e6fbbd9943e535b9e8322ab43c95504",
+      "proofSha256": "86e36cbaf0428605167ff1a23470132b42d5a80ff2ce0bc1e46f29d344ae436d",
+      "receipt": "formal/validation/full-tree/proof-checkpoint.json",
+      "binding": "transitive meaning and proof digest",
+      "receiptGeneratedDafnySha256": "589eaa494b696845e8f4f95ec3cca0c60579c5cb3c34153b9c908b3fa84ac59b"
+    },
+    {
+      "unit": "security__evidence.ts",
+      "obligations": 54,
+      "transitiveMeaningSha256": "ea18ecb12ff8775f4daadaad0bf9209996d246aad336db324791ebc9fb92a47c",
+      "proofSha256": "4e68b3fbe63f32053cef29ad3f2bcde207bdb5409f04b1104c9c4c5580642bf7",
+      "receipt": "formal/validation/full-tree/proof-checkpoint.json",
+      "binding": "transitive meaning and proof digest",
+      "receiptGeneratedDafnySha256": "adf5eb98a2cfba143e756d8a9a72e47fed595ad2ca588b1dd5e2fe46b9cb71ad"
+    },
+    {
+      "unit": "security__screening.ts",
+      "obligations": 39,
+      "transitiveMeaningSha256": "667511adbc11e6821a525ffc21859cf081542d11a418fde574ac90c5eb6e344f",
+      "proofSha256": "af4b8bc53cae54a1b72f5e63ed71aff85553d493c64607a8d0d593d5421a4b20",
+      "receipt": "formal/validation/source-coverage/private-report-screening.json",
+      "binding": "transitive spec sources and own proof digests",
+      "receiptGeneratedDafnySha256": "8ff4a48ffc2315f754dd5c8134df5bf0ee687b2e5c4bc5d25abc6cea0c58789d"
+    },
+    {
+      "unit": "security__forwarding.ts",
+      "obligations": 94,
+      "transitiveMeaningSha256": "7a221b51c085b9ae93f1f4aec2689f63a2c66a3fe6263663154bfa67b65aee83",
+      "proofSha256": "e0fe0c79cf03f6b48a071c747f84d896bf5874fc736fe0001466b24db6136cd4",
+      "receipt": "formal/validation/source-coverage/private-forwarding.json",
+      "binding": "transitive spec sources and own proof digests",
+      "receiptGeneratedDafnySha256": "b0796d689ad4170ac3a4556062376ab22a3bb79761316b2f6f8e247f4f90a31d"
+    },
+    {
+      "unit": "security__intake.ts",
+      "obligations": 23,
+      "transitiveMeaningSha256": "26aa76d99e99704fea88c43c653517789a57ba04044a499b54139bb04125ca73",
+      "proofSha256": null,
+      "receipt": "formal/validation/source-coverage/private-intake-receipt-owner.json",
+      "binding": "transitive meaning and proof digest",
+      "receiptGeneratedDafnySha256": "b9738b54cc69808e9e13a9fbf9372518fe674d9bd268fcb6bdb13cbe81ebddd9"
+    },
+    {
+      "unit": "security__privacy.ts",
+      "obligations": 12,
+      "transitiveMeaningSha256": "160689322e9a461f3cc83e34d024269293a2d882829cc3626c1b7088c1cd74e5",
+      "proofSha256": null,
+      "receipt": "formal/validation/full-tree/proof-checkpoint.json",
+      "binding": "transitive meaning and proof digest",
+      "receiptGeneratedDafnySha256": "9bab6baffb13d6258e5c52b3fdda345476f4cd60b0fd158c992d1761b68530a0"
+    },
+    {
+      "unit": "security__terms.ts",
+      "obligations": 5,
+      "transitiveMeaningSha256": "ffd9782d05b30d3a7275ceb17f78f306fed8ea04332a34511d6de50fb157745d",
+      "proofSha256": null,
+      "receipt": "formal/validation/full-tree/current-residual-proofs.json",
+      "binding": "transitive meaning and proof digest",
+      "receiptGeneratedDafnySha256": "40bae72ddff3b39621a5ca7fdc5ab29b92b6d0b3a6b433816515ae5676c910da"
+    },
+    {
+      "unit": "settlement__allocation.ts",
+      "obligations": 3,
+      "transitiveMeaningSha256": "a0e82ca50002ce9ef8ba14e5af8feecb37e0d77d6888ec3d5b1231729f10e056",
+      "proofSha256": "4c6bc3e4221e1a6092ee910f43497ace565380ea7781d922f2b5e779d6cef862",
+      "receipt": "formal/validation/active-proof/settlement/allocation-complete.json",
+      "binding": "transitive spec sources and own proof digests"
+    },
+    {
+      "unit": "settlement__vault.ts",
+      "obligations": 42,
+      "transitiveMeaningSha256": "8549c0fab74b30c3aaad4f080a6607348dd31c0c460f3d689a183381c389f64a",
+      "proofSha256": "7e83e05d0339feb1d55b0fd614b23749a2d651526efbf39db95586d19fe75082",
+      "receipt": "formal/validation/source-coverage/canonical-vault-settlement.json",
+      "binding": "transitive spec sources and own proof digests",
+      "receiptGeneratedDafnySha256": "16616626015aa2b56e66c72fc1a3f2a1033b14b2a6c06b8ad8824343df17f13c"
+    },
+    {
+      "unit": "settlement__paymentDispatch.ts",
+      "obligations": 107,
+      "transitiveMeaningSha256": "7fb49b5bff71541674f8f4a99e3f68bf59aa67a703bfcafc0ab214efc0b733a0",
+      "proofSha256": null,
+      "receipt": "formal/validation/source-coverage/canonical-vault-settlement.json",
+      "binding": "transitive spec sources and own proof digests",
+      "receiptGeneratedDafnySha256": "7fe58d52d8570937487cb6af931825bcf2772966b0883bf704dce1df9c4d9f9e"
+    },
+    {
+      "unit": "settlement__payment.ts",
+      "obligations": 110,
+      "transitiveMeaningSha256": "fc810d4bfafaf14b570e98b0da7b09b29d83ca99d5e3d52e6de3b377ef9a1f04",
+      "proofSha256": "dd3a6a5570cad57a01d5db407c3214b38ef02fe4cfc2fa15d501eb5e8711e66e",
+      "receipt": "formal/validation/source-coverage/settlement-rail-ownership.json",
+      "binding": "transitive spec sources and own proof digests",
+      "receiptGeneratedDafnySha256": "70589ea5b9fa4d49ce62a17ea34a3bbbe36a49603aab4a2cfa8252da9996ed09"
+    },
+    {
+      "unit": "settlement__composition.ts",
+      "obligations": 27,
+      "transitiveMeaningSha256": "e9ca7335feb67758a062131842ea375b479a00f90bc71a2de037e9efd2d49379",
+      "proofSha256": "c5bf43910e2b876910a59fa4d57e92353625cd2890565d28a975b45a54c2718d",
+      "receipt": "formal/validation/source-coverage/settlement-rail-ownership.json",
+      "binding": "transitive spec sources and own proof digests",
+      "receiptGeneratedDafnySha256": "2188631a9863a1ae2726060e60bd256e865d276ae6d026e4addb3ff1e46f04ae"
+    },
+    {
+      "unit": "settlement__contributorAllocation.ts",
+      "obligations": 32,
+      "transitiveMeaningSha256": "fcf30a1fc5c275842cbe9368f1efc44373d6be3456d190c63275ab165b54cc67",
+      "proofSha256": null,
+      "receipt": "formal/validation/full-tree/current-residual-proofs.json",
+      "binding": "transitive meaning and proof digest",
+      "receiptGeneratedDafnySha256": "3845825467877b4ccce436b787830482a2f8409f66acf68fffeb421f6e0eb241"
+    },
+    {
+      "unit": "settlement__keeperDiagnostics.ts",
+      "obligations": 8,
+      "transitiveMeaningSha256": "00f999db79107266d866ce9f55709016d760b609ce6ef4f76cb4c14ed9162bbb",
+      "proofSha256": "467647db895ea45b5a1a2adc0a2010bf7dbc606f4d1e8fd8bf226f0fc037b482",
+      "receipt": "formal/validation/journeys/keeper-delta-final.json",
+      "binding": "transitive spec sources and own proof digests"
+    },
+    {
+      "unit": "settlement__keeperLifecycle.ts",
+      "obligations": 66,
+      "transitiveMeaningSha256": "677019998adaa8ea0a428985fb0fa86cd2bd677bbe095fa27f9a23c0ddc48ead",
+      "proofSha256": null,
+      "receipt": "formal/validation/source-coverage/keeper-lifecycle.json",
+      "binding": "transitive spec sources and own proof digests"
+    },
+    {
+      "unit": "settlement__keeperRpc.ts",
+      "obligations": 16,
+      "transitiveMeaningSha256": "81f9a5486468e699247898b237b6c53b1d50c9beef105f8584693fb8daf09946",
+      "proofSha256": null,
+      "receipt": "formal/validation/journeys/keeper-delta-final.json",
+      "binding": "transitive spec sources and own proof digests"
+    },
+    {
+      "unit": "settlement__keeperScan.ts",
+      "obligations": 16,
+      "transitiveMeaningSha256": "d711369835ee00fa59b816563e08208035d07175ae6c4e66e738b57ce2d1fbb4",
+      "proofSha256": null,
+      "receipt": "formal/validation/journeys/keeper-delta-final.json",
+      "binding": "transitive spec sources and own proof digests"
+    },
+    {
+      "unit": "settlement__monthly.ts",
+      "obligations": 73,
+      "transitiveMeaningSha256": "18c853083644fad0b2ad2e3aa7f0626f685a09f8f42f799880e7aa163a11a6c9",
+      "proofSha256": "4b1edcdfe299e473623396d076ecd23f3701081a0c3e48bbc2a4697cd7f6baca",
+      "receipt": "formal/validation/active-proof/settlement/monthly-with-complete-allocation.json",
+      "binding": "transitive spec sources and own proof digests"
+    },
+    {
+      "unit": "settlement__recovery.ts",
+      "obligations": 20,
+      "transitiveMeaningSha256": "d5ecf14bd6d852321712eb0e512a9759f4140b96fc17ee178f275708088a68ed",
+      "proofSha256": null,
+      "receipt": "formal/validation/finance/recovery-current.json",
+      "binding": "transitive spec sources and own proof digests"
+    },
+    {
+      "unit": "settlement__referralAccrual.ts",
+      "obligations": 191,
+      "transitiveMeaningSha256": "3051a9db1b72314f72cc642c45f69a4dbbdb41a3d30ed8669bc3cab869139ad1",
+      "proofSha256": "f32c1766b92716912f5c2b881c943255346c08d8f76885e0a3d850ecb1c189e1",
+      "receipt": "formal/validation/finance/referral-accrual-proof-complete.json",
+      "binding": "transitive spec sources and own proof digests",
+      "receiptGeneratedDafnySha256": "7bbdc03fcfa94e48963ad58052ed1c2aedcd9f561f9bfa0cdd868cec86051c93"
+    },
+    {
+      "unit": "settlement__referralDistributor.ts",
+      "obligations": 146,
+      "transitiveMeaningSha256": "348343339f314ff3dbcd871a3e21e0be612efca1286a0946fc641cd0b150e2a4",
+      "proofSha256": "91fb202584ab94b6d687d348e3f950ab08c0da32562be45bc49555b1717d4458",
+      "receipt": "formal/validation/full-tree/current-financial-proofs.json",
+      "binding": "transitive spec sources and own proof digests",
+      "receiptGeneratedDafnySha256": "839a114bb6107632f850a3432a86fa2d065a49b66ae0158b54466c7020f76dfb"
+    },
+    {
+      "unit": "settlement__referrals.ts",
+      "obligations": 6,
+      "transitiveMeaningSha256": "6628e83ea1aa0c0eb59400f2e45fbc427a6d05ebbeebe3d08c16ecc2c64f7b75",
+      "proofSha256": null,
+      "receipt": "formal/validation/full-tree/proof-checkpoint.json",
+      "binding": "transitive meaning and proof digest",
+      "receiptGeneratedDafnySha256": "06b0ddf38b25b23f3a43f58cc303dc33174741c2b3186ff7ccb389e8274a1fb1"
+    },
+    {
+      "unit": "settlement__referralPublication.ts",
+      "obligations": 287,
+      "transitiveMeaningSha256": "dd4329926c1dece1d06d30109db0f0335cb5e3d720723520a0264577027d940b",
+      "proofSha256": "8c700cfee4e742125ef2c7719f03d1c4522082f469f175aa801d94f53287735f",
+      "receipt": "formal/validation/finance/referral-publication-proof-complete.json",
+      "binding": "transitive spec sources and own proof digests",
+      "receiptGeneratedDafnySha256": "a01ea750a88a4f57e160965eeb278372890db52dc1fece8a33ce101e2283932c"
+    },
+    {
+      "unit": "settlement__reserveRelease.ts",
+      "obligations": 146,
+      "transitiveMeaningSha256": "de2bbddc0ae5b614fdef1b0fa2c569fe6c5379e155aac72b56652ac3ba200128",
+      "proofSha256": "3be010e32f84c2c217a463e2310111351b5d05ff323b9af04b868c82a8c81895",
+      "receipt": "formal/validation/full-tree/current-financial-proofs.json",
+      "binding": "transitive spec sources and own proof digests",
+      "receiptGeneratedDafnySha256": "7a8137cea13b4c90cc107e8addd1b414f8fb4a203230133645b5db90542cb3b9"
+    },
+    {
+      "unit": "settlement__signer.ts",
+      "obligations": 19,
+      "transitiveMeaningSha256": "f75ad23872e5a19a3f3746ae8f237763f70b956592681512dd55025f6a78589c",
+      "proofSha256": null,
+      "receipt": "formal/validation/full-tree/proof-checkpoint.json",
+      "binding": "transitive meaning and proof digest",
+      "receiptGeneratedDafnySha256": "0a75085905f87ea02af9a3a5805e60f305e679de6f0fb6b5b1637224d6349846"
+    },
+    {
+      "unit": "settlement__solanaScan.ts",
+      "obligations": 22,
+      "transitiveMeaningSha256": "71c91d1c2c5b571c15e457403039268c5fe66405c8f9dc5e3e4b8194c1aa3419",
+      "proofSha256": null,
+      "receipt": "formal/validation/source-coverage/solana-scan.json",
+      "binding": "transitive spec sources and own proof digests",
+      "receiptGeneratedDafnySha256": "f3e9a7d3950a2f42d858c0b3ba81329ee76ab571aa7b517d1bf14e6831421eb7"
+    },
+    {
+      "unit": "settlement__vaultSnapshots.ts",
+      "obligations": 62,
+      "transitiveMeaningSha256": "50fa64ef21b0c9a4161fec189842943a6e5b7c3e9bd0b2b55a1d22a2fc17eea9",
+      "proofSha256": null,
+      "receipt": "formal/validation/full-tree/current-financial-proofs.json",
+      "binding": "transitive meaning and proof digest",
+      "receiptGeneratedDafnySha256": "386d6806f65bd9637a6968846ea34f8009bb27ee06cd2b0a43540dd32f9ee7c1"
+    },
+    {
+      "unit": "slopbot__appeals.ts",
+      "obligations": 34,
+      "transitiveMeaningSha256": "68594c6b385802b1f0e7ec22b1f55975d165f1f81f242e80af8f406dbeaa06a0",
+      "proofSha256": null,
+      "receipt": "formal/validation/full-tree/proof-checkpoint.json",
+      "binding": "transitive meaning and proof digest",
+      "receiptGeneratedDafnySha256": "2bcd4611e1bf1617b9bd3b517fae2416282944358025a707a152c4135432434a"
+    },
+    {
+      "unit": "slopbot__closure.ts",
+      "obligations": 137,
+      "transitiveMeaningSha256": "a523b7dbfa9c05f19de5a60ccc72f0a1911123251dd53609f54f96ab5c1882fd",
+      "proofSha256": null,
+      "receipt": "formal/validation/journeys/closure-final.json",
+      "binding": "transitive spec sources and own proof digests"
+    },
+    {
+      "unit": "slopbot__review.ts",
+      "obligations": 28,
+      "transitiveMeaningSha256": "8d0d0b08350783f31fb709373306b30ceff9c311e4eea231c76a0df4ea101eef",
+      "proofSha256": null,
+      "receipt": "formal/validation/full-tree/proof-checkpoint.json",
+      "binding": "transitive meaning and proof digest",
+      "receiptGeneratedDafnySha256": "5f323cc6e0e11a680643f46d2c72c1e16fdeb5d964042c3fc8175b1b0832c857"
+    },
+    {
+      "unit": "slopbot__reviewLease.ts",
+      "obligations": 26,
+      "transitiveMeaningSha256": "04d6d8a13063e5ce6533ba4f7c187cee117dcefd41f504254a96d09ff56a0121",
+      "proofSha256": null,
+      "receipt": "formal/validation/source-coverage/review-lease.json",
+      "binding": "transitive spec sources and own proof digests",
+      "receiptGeneratedDafnySha256": "f49f06388d7dd96fde16a62a9b04cd9f0a70ffce7f13541b132720730c671247"
+    },
+    {
+      "unit": "slopbot__valueInference.ts",
+      "obligations": 90,
+      "transitiveMeaningSha256": "2b294422e8bc8625353f91c4179e05999d57770b514dcb836350508254eb2331",
+      "proofSha256": null,
+      "receipt": "formal/validation/source-coverage/slopbot-value-inference.json",
+      "binding": "transitive spec sources and own proof digests"
+    },
+    {
+      "unit": "slopbot__webhookDelivery.ts",
+      "obligations": 50,
+      "transitiveMeaningSha256": "2d6d6c998d10c42ecd811d29023a59ef8b50217d5d88e89cbcacf510971ef361",
+      "proofSha256": null,
+      "receipt": "formal/validation/source-coverage/slopbot-webhook-delivery.json",
+      "binding": "transitive spec sources and own proof digests"
+    }
   ],
   "scaffoldUnits": [
-    {"unit": "apps-app-src-greeting.ts", "obligations": 1, "transitiveMeaningSha256": "e27542eb8a3143267bf52b0355247501d95fb4ea8a9463d65d79b560a3f5b2f7", "proofSha256": "e80553bcafc001f75df5a0aa1b69eb6542007d6acf196efbcc2e06753bdccec9", "receipt": "formal/validation/full-tree/proof-checkpoint.json", "binding": "transitive meaning and proof digest", "receiptGeneratedDafnySha256": "b4d0ce9f6618d14d297f675c671a8ab02c624f3ef3a556e8e0b2daa4eb5aa948"}
+    {
+      "unit": "apps-app-src-greeting.ts",
+      "obligations": 1,
+      "transitiveMeaningSha256": "e27542eb8a3143267bf52b0355247501d95fb4ea8a9463d65d79b560a3f5b2f7",
+      "proofSha256": "e80553bcafc001f75df5a0aa1b69eb6542007d6acf196efbcc2e06753bdccec9",
+      "receipt": "formal/validation/full-tree/proof-checkpoint.json",
+      "binding": "transitive meaning and proof digest",
+      "receiptGeneratedDafnySha256": "b4d0ce9f6618d14d297f675c671a8ab02c624f3ef3a556e8e0b2daa4eb5aa948"
+    }
   ]
 }
