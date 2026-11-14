@@ -21,6 +21,10 @@ on:
         description: "Manual main or development release only: retain the last leaderboard and profiles published by that environment, with their original timestamps"
         type: boolean
         default: false
+      skip_proofs:
+        description: "Manual main or development release only: do not repeat the Quint state-model and LemmaScript proof runs; every other check and all deployment verification still run"
+        type: boolean
+        default: false
 
 concurrency:
   # PR supersessions cancel. Development pushes share one lane: a running
@@ -564,6 +568,8 @@ jobs:
     name: Select affected proofs
     # Pull requests check only the state models and LemmaScript proofs their
     # changes can affect; pushes, manual runs and promotions check all of them.
+    # A manual run that sets skip_proofs repeats neither (PRD section 12,
+    # STATE-05); both inventory checks and every other gate still run.
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     outputs:
@@ -583,6 +589,8 @@ jobs:
           node-version: ${{ env.NODE_VERSION }}
       - name: Select affected proofs
         id: scope
+        env:
+          SKIP_PROOFS: ${{ inputs.skip_proofs == true }}
         run: node scripts/ci-scope.mjs
 
   state-models:
