@@ -4,4 +4,5 @@ PRD sections 6 and 11 govern fee-only services and SLOP buyback. No fee operatio
 
 - [Conversion and native holds](./conversion.md)
 - [Buyback and burn](./buyback.md)
+- [Buyback finalized RPC observation](./buybackRpc.md)
 - [Settlement and signer boundaries](../settlement/)
