@@ -395,6 +395,13 @@
     "scope": "Generated-core journeys and Quint replay for signed-attempt retention and definitive failure recovery.",
     "verification": "formal/validation/finance/reserve-release-signed-verification.json",
     "witnesses": "formal/validation/finance/reserve-release-signed-quint-witness.qnt",
-    "report": "formal/validation/finance/reserve-release-signed-handoff.md"
+    "report": "formal/validation/finance/reserve-release-signed-handoff.md",
+    "proof": {
+      "total": 146,
+      "proved": 138,
+      "unproved": 8,
+      "exhausted": 0,
+      "errors": 0
+    }
   }
 }
