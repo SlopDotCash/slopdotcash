@@ -15,5 +15,35 @@
       "again": "seed 41209515505665; to simulate again: pnpm exec quint run gen/settlement__reserveRelease.run.qnt --main settlement__reserveRelease_run --step step --invariant inv --max-samples 100 --max-steps 25 --mbt --seed 41209515505665"
     }
   ],
-  "proofs": []
+  "proofs": [
+    {
+      "unit": "settlement__reserveRelease.ts",
+      "total": 146,
+      "unproved": [
+        "check: (inv(r) ==> canCheck(r, root, total, height, requestRevision, by_) ==> alwaysBoundApproval(check(r, root, total, height, requestRevision, by_)))",
+        "ownerSign: (inv(r) ==> canOwnerSign(r, attempt, by_) ==> alwaysLiveAttemptFresh(ownerSign(r, attempt, by_)))",
+        "finalize: (inv(r) ==> canFinalize(r, receipt) ==> alwaysWholeRelease(finalize(r, receipt)))",
+        "finalize: (inv(r) ==> canFinalize(r, receipt) ==> alwaysValidAmounts(finalize(r, receipt)))",
+        "finalize: (inv(r) ==> canFinalize(r, receipt) ==> alwaysConserved(finalize(r, receipt)))",
+        "settlePart: (inv(r) ==> canSettlePart(r, amount) ==> alwaysValidAmounts(settlePart(r, amount)))",
+        "settlePart: (inv(r) ==> canSettlePart(r, amount) ==> alwaysConserved(settlePart(r, amount)))",
+        "step: inv(step(current, event, by_))"
+      ],
+      "errors": [],
+      "exhausted": [],
+      "generatedTypeScriptSha256": "db8ec1a99a799e19f4398eb8aedeafcd6d02eeb7d32733ab8c7c868ccf8d21af",
+      "generatedDafnySha256": "1febc95bc32808ee133fd7831b2f301ab73de94b007cd0bba0809aa8a2e68804",
+      "proofFileSha256": null,
+      "proofLibrarySha256": "4c9f8dcbd9918f7d4b282ad9531b4cf0096ea389c015149b1786d0fe4ebd8e29",
+      "toolchain": {
+        "node": "v26.13.1",
+        "dafny": "4.11.0",
+        "z3": "Z3 version 4.15.4 - 64 bit"
+      },
+      "log": "formal/validation/finance/reserve-release-current-dafny.log",
+      "resting": {
+        "step: inv(step(current, event, by_))": "check: (inv(r) ==> canCheck(r, root, total, height, requestRevision, by_) ==> alwaysBoundApproval(check(r, root, total, height, requestRevision, by_)))"
+      }
+    }
+  ]
 }
