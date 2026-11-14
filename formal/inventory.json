@@ -14,7 +14,7 @@
     },
     {
       "path": ".github/workflows/deploy.yml",
-      "sha256": "7b65138d188534ac5dee14bf3d1426f814cc917eeb2edeef0d9e29a63c95aead",
+      "sha256": "13bd3b806c5d526776da2ec1ca603622ca589ead62b39316b8c4799bc25ab5c2",
       "models": [
         "formal/models/release/ci_browser_evidence.qnt",
         "formal/models/release/ci_browser_runtime.qnt",
@@ -23,10 +23,10 @@
         "formal/models/release/release_publication.qnt"
       ],
       "candidateLines": [
-        25, 31, 63, 162, 194, 199, 200, 254, 308, 382, 495, 501, 569, 572, 596,
-        597, 618, 630, 696, 926, 954, 993, 1084, 1190, 1192, 1193, 1397, 1480,
-        1633, 1635, 1665, 1773, 1795, 1866, 1877, 1902, 1973, 1986, 1999, 2008,
-        2009, 2010
+        25, 35, 67, 169, 201, 206, 207, 261, 315, 392, 505, 511, 579, 582, 608,
+        609, 630, 642, 708, 938, 966, 1005, 1096, 1202, 1204, 1205, 1409, 1492,
+        1645, 1647, 1677, 1785, 1807, 1878, 1889, 1914, 1985, 1998, 2011, 2020,
+        2021, 2022
       ],
       "review": "mapped-abstraction"
     },
@@ -3467,12 +3467,12 @@
     },
     {
       "path": "scripts/ci-scope.mjs",
-      "sha256": "adef3b07f2b4f9f9a167b18053d88f00ef3ba1ba0beeebf5c9b1148c2cdda874",
+      "sha256": "a0958646461865675c03c99d9bcb38d68704f6c78d095483ef4abf4e41183bc1",
       "models": [
         "formal/models/release/ci_browser_runtime.qnt",
         "formal/models/release/ci_coverage.qnt"
       ],
-      "candidateLines": [104, 113, 114, 166, 172, 173, 188],
+      "candidateLines": [110, 119, 120, 172, 178, 179, 194],
       "review": "mapped-abstraction"
     },
     {
@@ -13962,7 +13962,7 @@
     },
     {
       "path": "formal/models/release/ci_coverage.qnt",
-      "sha256": "5791a9415b344fd879feb8e42ec962f7e06835ef54fe06f733a7017dff39d75f",
+      "sha256": "c8ed89ba784400cd1e9dfd9fec87223ec164d754e7478dc4a7b42af393c7a9f1",
       "sources": [
         ".github/workflows/deploy.yml",
         ".github/workflows/escrow-tests.yml",
@@ -13974,10 +13974,11 @@
       "scenarios": [
         "developmentCoverageTest",
         "fixtureSelectsChainCoverageTest",
-        "manualRunChecksEveryProofByDefaultTest",
+        "manualRunIsCompleteByDefaultTest",
         "manualRunSkipsOnlyProofsTest",
+        "manualRunSkipsProofsAndBrowserLanesTest",
         "modelSourceSelectsAffectedModelsTest",
-        "pushCannotSkipProofsTest",
+        "pushCannotSkipTest",
         "releaseCoverageTest"
       ]
     },

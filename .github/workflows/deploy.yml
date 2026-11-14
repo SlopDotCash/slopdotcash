@@ -25,6 +25,10 @@ on:
         description: "Manual main or development release only: do not repeat the Quint state-model and LemmaScript proof runs; every other check and all deployment verification still run"
         type: boolean
         default: false
+      skip_browser_tests:
+        description: "Manual main or development release only: run the browser smoke lane instead of the complete browser lanes; every other check and all deployment verification still run"
+        type: boolean
+        default: false
 
 concurrency:
   # PR supersessions cancel. Development pushes share one lane: a running
@@ -78,6 +82,9 @@ jobs:
 
       - name: Select affected CI coverage
         id: scope
+        env:
+          SKIP_PROOFS: ${{ inputs.skip_proofs == true }}
+          SKIP_BROWSER_TESTS: ${{ inputs.skip_browser_tests == true }}
         run: node scripts/ci-scope.mjs
 
       - name: Verify quality checkout
@@ -348,6 +355,9 @@ jobs:
 
       - name: Select affected CI coverage
         id: scope
+        env:
+          SKIP_PROOFS: ${{ inputs.skip_proofs == true }}
+          SKIP_BROWSER_TESTS: ${{ inputs.skip_browser_tests == true }}
         run: node scripts/ci-scope.mjs
 
       - name: Verify check checkout
@@ -569,7 +579,8 @@ jobs:
     # Pull requests check only the state models and LemmaScript proofs their
     # changes can affect; pushes, manual runs and promotions check all of them.
     # A manual run that sets skip_proofs repeats neither (PRD section 12,
-    # STATE-05); both inventory checks and every other gate still run.
+    # STATE-05); both inventory checks and every other gate still run. One that
+    # sets skip_browser_tests runs the browser smoke lane only (PRD section 9).
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     outputs:
@@ -591,6 +602,7 @@ jobs:
         id: scope
         env:
           SKIP_PROOFS: ${{ inputs.skip_proofs == true }}
+          SKIP_BROWSER_TESTS: ${{ inputs.skip_browser_tests == true }}
         run: node scripts/ci-scope.mjs
 
   state-models:
