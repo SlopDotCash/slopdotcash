@@ -253,6 +253,16 @@ function deriveProof(
     proof.sources.map((source) => [source.sourceId, source]),
   );
   let incomplete = false;
+  // A retained decision can include sibling units accepted after this unit's
+  // completion. The unit's own source and claim sources must still precede it;
+  // an ordinary PR keeps the bound on every source.
+  const bounded =
+    "claims" in proof
+      ? new Set([
+          candidate.sourceId,
+          ...proof.claims.map((claim) => claim.sourceId),
+        ])
+      : null;
   for (const source of sources.values()) {
     check(
       node.test(source.sourceId) &&
@@ -262,6 +272,7 @@ function deriveProof(
         typeof source.complete === "boolean" &&
         (source.occurredAt === null || instant(source.occurredAt)) &&
         (source.occurredAt === null ||
+          bounded?.has(source.sourceId) === false ||
           source.occurredAt <= candidate.occurredAt) &&
         sourceRepository(source.sourceUrl, candidate.projectId) ===
           source.repository.toLowerCase(),
