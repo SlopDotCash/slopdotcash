@@ -1,0 +1,162 @@
+{
+  "scope": "Selected legacy account and wallet scenario comparisons against the generated-core journeys. Other transitions and scenarios still require comparison. HTTP, durable storage and OAuth conformance require implementation.",
+  "sourceHashes": {
+    "spec/backend/accounts.md": "ecd464884aa42edf59cf32aa6c738b9341a088be3fb27565bc6a61ffa1f92359",
+    "spec/backend/email.md": "50c35c43e69f5bc394e8b9678c225bd0bcbd6b76219d3b0bfbe36dc97358b28f",
+    "spec/backend/wallets.md": "c2f024263e30cbcdde00fa36d79e44f9ec8687ed0b8b3651c6628899352bc13b"
+  },
+  "comparisons": [
+    {
+      "legacyModel": "reference/slop-main/formal/models/api/api_accounts.qnt",
+      "legacySha256": "933a96ce34d3c4f976ad3a50f70ac5d06f9c04ff1485bec20c061bd015faf9d0",
+      "legacyScenario": "currentSignoutTest",
+      "currentJourneyReport": "formal/validation/journeys/account-closure-directed.json",
+      "currentJourney": "currentSignoutKeepsOtherSession",
+      "comparison": "Targeted sign-out retains a second live session."
+    },
+    {
+      "legacyModel": "reference/slop-main/formal/models/api/api_accounts.qnt",
+      "legacySha256": "933a96ce34d3c4f976ad3a50f70ac5d06f9c04ff1485bec20c061bd015faf9d0",
+      "legacyScenario": "closureTest",
+      "currentJourneyReport": "formal/validation/journeys/account-closure-directed.json",
+      "currentJourney": "closureWithdrawsHouseholdStateAndReopenDoesNotRestoreIt",
+      "comparison": "Closure ends sessions, clears public membership, linkage and consent, and retains financial history."
+    },
+    {
+      "legacyModel": "reference/slop-main/formal/models/api/api_accounts.qnt",
+      "legacySha256": "933a96ce34d3c4f976ad3a50f70ac5d06f9c04ff1485bec20c061bd015faf9d0",
+      "legacyScenario": "reopenTest",
+      "currentJourneyReport": "formal/validation/journeys/account-closure-directed.json",
+      "currentJourney": "closureWithdrawsHouseholdStateAndReopenDoesNotRestoreIt",
+      "comparison": "Explicit reopening issues a fresh live session. X remains disconnected."
+    },
+    {
+      "legacyModel": "reference/slop-main/formal/models/api/api_payment_wallet_protocol.qnt",
+      "legacySha256": "ccba4e7173bc3599c0218012152ea43fd2d9246a0ae0fce489ca3fb84f4916d4",
+      "legacyScenario": "sameWalletRegistrationIsIdempotentTest",
+      "currentJourneyReport": "formal/validation/journeys/wallet-registration-journeys.json",
+      "currentJourney": "CAS registration, conflicting successor and registry readback",
+      "comparison": "Same current registry address reads back the existing claim."
+    },
+    {
+      "legacyModel": "reference/slop-main/formal/models/api/api_payment_wallet_protocol.qnt",
+      "legacySha256": "ccba4e7173bc3599c0218012152ea43fd2d9246a0ae0fce489ca3fb84f4916d4",
+      "legacyScenario": "replacementRetainsClaimHistoryTest",
+      "currentJourneyReport": "formal/validation/journeys/wallet-registration-journeys.json",
+      "currentJourney": "CAS registration, conflicting successor and registry readback",
+      "comparison": "A replacement appends to the predecessor chain."
+    },
+    {
+      "legacyModel": "reference/slop-main/formal/models/api/api_payment_wallet_protocol.qnt",
+      "legacySha256": "ccba4e7173bc3599c0218012152ea43fd2d9246a0ae0fce489ca3fb84f4916d4",
+      "legacyScenario": "foreignActorCannotRegisterOrUseChallengeTest",
+      "currentJourneyReport": "formal/validation/journeys/wallet-registration-journeys.json",
+      "currentJourney": "Proof binds actor, exact challenge message and wallet signature",
+      "comparison": "Wrong actor cannot use the challenge. The registration refusal is exercised by the first wallet journey."
+    },
+    {
+      "legacyModel": "reference/slop-main/formal/models/api/api_payment_wallet_protocol.qnt",
+      "legacySha256": "ccba4e7173bc3599c0218012152ea43fd2d9246a0ae0fce489ca3fb84f4916d4",
+      "legacyScenario": "wrongWalletAndAlteredMessageDoNotConsumeTest",
+      "currentJourneyReport": "formal/validation/journeys/wallet-registration-journeys.json",
+      "currentJourney": "Proof binds actor, exact challenge message and wallet signature",
+      "comparison": "Wrong wallet, wrong message and unverified signature refuse proof admission."
+    },
+    {
+      "legacyModel": "reference/slop-main/formal/models/api/api_payment_wallet_protocol.qnt",
+      "legacySha256": "ccba4e7173bc3599c0218012152ea43fd2d9246a0ae0fce489ca3fb84f4916d4",
+      "legacyScenario": "exactExpiryRefusesNewRequestTest",
+      "currentJourneyReport": "formal/validation/journeys/wallet-registration-journeys.json",
+      "currentJourney": "At expiry a new read refuses but the captured request can consume",
+      "comparison": "A fresh proof read at expiry refuses."
+    },
+    {
+      "legacyModel": "reference/slop-main/formal/models/api/api_payment_wallet_protocol.qnt",
+      "legacySha256": "ccba4e7173bc3599c0218012152ea43fd2d9246a0ae0fce489ca3fb84f4916d4",
+      "legacyScenario": "requestUsesCapturedTimeAcrossAwaitTest",
+      "currentJourneyReport": "formal/validation/journeys/wallet-registration-journeys.json",
+      "currentJourney": "At expiry a new read refuses but the captured request can consume",
+      "comparison": "A valid captured read remains eligible for consumption after clock advancement."
+    },
+    {
+      "legacyModel": "reference/slop-main/formal/models/api/api_payment_wallet_protocol.qnt",
+      "legacySha256": "ccba4e7173bc3599c0218012152ea43fd2d9246a0ae0fce489ca3fb84f4916d4",
+      "legacyScenario": "replacementAfterReadStillConsumesButCannotAuthorizeTest",
+      "currentJourneyReport": "formal/validation/journeys/wallet-registration-journeys.json",
+      "currentJourney": "A successor between proof read and batch prevents old authorization",
+      "comparison": "A stale verified read can consume its challenge. The batch cannot authorize the superseded claim."
+    },
+    {
+      "legacyModel": "reference/slop-main/formal/models/api/api_payment_wallet_protocol.qnt",
+      "legacySha256": "ccba4e7173bc3599c0218012152ea43fd2d9246a0ae0fce489ca3fb84f4916d4",
+      "legacyScenario": "failedBatchRequiresFreshChallengeTest",
+      "currentJourneyReport": "formal/validation/journeys/wallet-registration-journeys.json",
+      "currentJourney": "Failed batch retains consumed evidence and needs a fresh challenge",
+      "comparison": "Failed batch leaves the challenge consumed and a new request needs a fresh challenge."
+    },
+    {
+      "legacyModel": "reference/slop-main/formal/models/api/api_payment_wallet_protocol.qnt",
+      "legacySha256": "ccba4e7173bc3599c0218012152ea43fd2d9246a0ae0fce489ca3fb84f4916d4",
+      "legacyScenario": "simultaneousReplayHasOneConsumptionWinnerTest",
+      "currentJourneyReport": "formal/validation/journeys/wallet-registration-journeys.json",
+      "currentJourney": "Proof binds actor, exact challenge message and wallet signature",
+      "comparison": "Two reads can succeed before consumption, and one consume wins."
+    },
+    {
+      "legacyModel": "reference/slop-main/formal/models/api/api_payment_wallet_protocol.qnt",
+      "legacySha256": "ccba4e7173bc3599c0218012152ea43fd2d9246a0ae0fce489ca3fb84f4916d4",
+      "legacyScenario": "completedReplayIsRefusedTest",
+      "currentJourneyReport": "formal/validation/journeys/wallet-registration-journeys.json",
+      "currentJourney": "Proof binds actor, exact challenge message and wallet signature",
+      "comparison": "A consumed challenge and completed authorization request cannot be replayed."
+    },
+    {
+      "legacyModel": "reference/slop-main/formal/models/api/api_payment_wallet_protocol.qnt",
+      "legacySha256": "ccba4e7173bc3599c0218012152ea43fd2d9246a0ae0fce489ca3fb84f4916d4",
+      "legacyScenario": "oldClaimAndMismatchedChallengeRefusedTest",
+      "currentJourneyReport": "formal/validation/journeys/wallet-registration-journeys.json",
+      "currentJourney": "A successor between proof read and batch prevents old authorization",
+      "comparison": "Old issue and read attempts are refused after a registry successor. The wrong message and wallet are checked in the proof-admission journey."
+    },
+    {
+      "legacyModel": "reference/slop-main/formal/models/api/api_payment_wallet_protocol.qnt",
+      "legacySha256": "ccba4e7173bc3599c0218012152ea43fd2d9246a0ae0fce489ca3fb84f4916d4",
+      "legacyScenario": "newConsentCannotRewriteFirstAuthorizationTest",
+      "currentJourneyReport": "formal/validation/journeys/wallet-registration-journeys.json",
+      "currentJourney": "Prior wallet stays effective and first proof survives a signed successor",
+      "comparison": "Reauthorizing an existing claim retains its original proof."
+    },
+    {
+      "legacyModel": "reference/slop-main/formal/models/api/api_payment_wallet_protocol.qnt",
+      "legacySha256": "ccba4e7173bc3599c0218012152ea43fd2d9246a0ae0fce489ca3fb84f4916d4",
+      "legacyScenario": "unsignedSuccessorRetainsAuthorizedDestinationTest",
+      "currentJourneyReport": "formal/validation/journeys/wallet-registration-journeys.json",
+      "currentJourney": "Prior wallet stays effective and first proof survives a signed successor",
+      "comparison": "The prior signed claim remains effective while the newer registry claim is unsigned."
+    },
+    {
+      "legacyModel": "reference/slop-main/formal/models/api/api_payment_wallet_protocol.qnt",
+      "legacySha256": "ccba4e7173bc3599c0218012152ea43fd2d9246a0ae0fce489ca3fb84f4916d4",
+      "legacyScenario": "signedSuccessorBecomesEffectiveWithoutErasingHistoryTest",
+      "currentJourneyReport": "formal/validation/journeys/wallet-registration-journeys.json",
+      "currentJourney": "Prior wallet stays effective and first proof survives a signed successor",
+      "comparison": "Signing advances the effective payout wallet and preserves earlier proof."
+    },
+    {
+      "legacyModel": "reference/slop-main/formal/models/payments/payment_wallet_registration.qnt",
+      "legacySha256": "d5023fc793181ed1a348c7d636806f89f5870971e790c25c188bd6648c3fec01",
+      "legacyScenario": "historicalSameAddressGetsRegistrySuccessorTest",
+      "currentJourneyReport": "formal/validation/journeys/wallet-registration-journeys.json",
+      "currentJourney": "Historical same-address requires a registry successor",
+      "comparison": "Historic same-address row is kept and ordinary registration adds a registry successor."
+    },
+    {
+      "legacyModel": "reference/slop-main/formal/models/payments/payment_wallet_registration.qnt",
+      "legacySha256": "d5023fc793181ed1a348c7d636806f89f5870971e790c25c188bd6648c3fec01",
+      "legacyScenario": "differentAddressConflictReturns409Test",
+      "currentJourneyReport": "formal/validation/journeys/wallet-registration-journeys.json",
+      "currentJourney": "CAS registration, conflicting successor and registry readback",
+      "comparison": "A stale predecessor with a different address is refused. The transport owns HTTP 409."
+    }
+  ]
+}
