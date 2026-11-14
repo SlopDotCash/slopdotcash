@@ -1,0 +1,114 @@
+{
+  "legacyMain": "e96069ce2a403588ca2129b1ebb943f7bb0972a6",
+  "scope": "Canonical atomic settled-on-chain vault payout. Chain adapter and D1 database runtime conformance remain independent.",
+  "anchors": [
+    {
+      "path": "contracts/evm/src/ProjectEscrow.sol",
+      "sha256": "79d7b63d7db428bb46658267a7719f22786a66aff8a91b86c6b64381cc551f08",
+      "entries": [
+        {
+          "line": 45,
+          "anchor": "struct Award {"
+        },
+        {
+          "line": 683,
+          "anchor": "function recordAward"
+        },
+        {
+          "line": 749,
+          "anchor": "function payableBinding"
+        },
+        {
+          "line": 758,
+          "anchor": "function pay(bytes32"
+        }
+      ]
+    },
+    {
+      "path": "contracts/solana/programs/slop-escrow/src/lib.rs",
+      "sha256": "18e1e42304c5bcb631dfb4dafe2a36a064322736c8fedb54d3aaf5e8d74aff1a",
+      "entries": [
+        {
+          "line": 700,
+          "anchor": "pub fn pay(ctx"
+        },
+        {
+          "line": 764,
+          "anchor": "pub fn pay_native"
+        },
+        {
+          "line": 1518,
+          "anchor": "pub struct Pay<'info>"
+        },
+        {
+          "line": 1538,
+          "anchor": "pub struct PayNative<'info>"
+        },
+        {
+          "line": 1523,
+          "anchor": "binding.actor_id==obligation.actor_id"
+        },
+        {
+          "line": 1543,
+          "anchor": "binding.actor_id==obligation.actor_id"
+        }
+      ]
+    },
+    {
+      "path": "backend/payments/ledger.ts",
+      "sha256": "651666b54866ad0d39e53d4fe812dda21f20f440de8105ac9a3d4c252200f879",
+      "entries": [
+        {
+          "line": 118,
+          "anchor": "export async function indexPaymentEvent"
+        },
+        {
+          "line": 239,
+          "anchor": "Payout destination is not an authorized contributor wallet"
+        },
+        {
+          "line": 325,
+          "anchor": "UPDATE payment_obligations SET state='paid'"
+        },
+        {
+          "line": 332,
+          "anchor": "UPDATE payment_outbox SET state='paid'"
+        },
+        {
+          "line": 339,
+          "anchor": "UPDATE payment_attempts SET state='finalized'"
+        }
+      ]
+    },
+    {
+      "path": "backend/payments/verified-evidence.ts",
+      "sha256": "7618a7ced8cd7e408ba7255e0bf838891b7cf20202e31d409cd8d1b97876470f",
+      "entries": [
+        {
+          "line": 137,
+          "anchor": "export function paymentObligationDecision"
+        },
+        {
+          "line": 24,
+          "anchor": "export function paymentEvidenceMatches"
+        }
+      ]
+    }
+  ],
+  "directed": [
+    "verified deposit required before actor reservation",
+    "walletless reserve and no wallet payout refusal",
+    "exact vault receipt settles with no attempt",
+    "historical destination remains admissible after active wallet replacement",
+    "unresolved and submitted attempts retain reserve",
+    "scanner can win ahead of recorded callback and late metadata cannot change balances",
+    "independent scanner transaction can finalize beside recorded attempt",
+    "matching scanner transaction finalizes its retained dispatch attempt",
+    "wrong obligation, principal, fee, gross, fee recipient, actor, destination and finality refuse",
+    "paid receipt and reserve cannot be rewritten",
+    "private vault purpose restricts receipt scope",
+    "direct standard rail requires its own retained attempt",
+    "direct full rail requires explicit release and a retained attempt",
+    "actor mismatch cannot consume another reserve and concurrent reserve survives"
+  ]
+}

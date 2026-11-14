@@ -254,14 +254,11 @@ change the indexed queue, canonical transaction, or payout amounts. A late
 callback naming the canonical transaction can leave its attempt labeled
 submitted when the scanner had no transaction to associate during indexing.
 
-This is a source-settled vault settlement route. Aggregate composition work
-remains in [Payment](./payment.md). Its `canReconcile` requires an attempt
-in `attempts` and equality with the current recipient, and its
-`alwaysPaidEvidence` requires the canonical reference to be a retained
-attempt. The aggregate must accept the scanner's independently verified
-receipt for vault rails, consume the same durable commit and preserve the
-existing direct-rail journal requirement. No queue state authorizes that
-financial transition.
+The [atomic settlement](./composition.md) applies this receipt alongside
+the actor-owned vault reservation and the financial obligation. [Payment](./payment.md)
+matches its immutable amounts and fee recipient, while the outbox verifies
+historical wallet consent and finalized event identity. The independent direct
+rails require their existing attempt evidence.
 
 ```quint
 pure def exactReceipt(d: Dispatch, receipt: Receipt): bool =

@@ -10,17 +10,21 @@ The sponsor approval that creates an obligation is modeled in private-case speci
 
 ```quint
 import money as M from "./money"
+import paymentDispatch as D from "./paymentDispatch"
 type Purpose = Ordinary | PrivateStandard | PrivateFull
 type PaymentRail = OrdinaryVault | StandardBountyVault | DirectStandard | DirectFull
 type PaymentEvidence = { attempt: int, obligation: int, source: str, asset: str, recipient: str,
   feeRecipient: str, principal: M::Amount, fee: M::Amount, height: int, finalized: bool, succeeded: bool }
-type PaymentPhase = AwaitingWallet | Ready | Journaled | Submitted | Uncertain | Paid | Held
+type VaultPaymentEvidence = { obligation: int, gross: M::Amount, principal: M::Amount,
+  fee: M::Amount, feeRecipient: str, height: int }
+type PaymentPhase = VaultReserved | AwaitingWallet | Ready | Journaled | Submitted | Uncertain | Paid | Held
 type Payment = { configured: bool, phase: PaymentPhase, purpose: Purpose, rail: PaymentRail, feeRecipient: str, obligation: int, vault: str, asset: str,
+  target: D::Target, vaultReceipt: D::Receipt,
   recipient: str, gross: M::Amount, principal: M::Amount, fee: M::Amount, consent: int, request: int,
   attempt: int, attempts: List[int], failedAttempts: List[int], canonical: int, finalizedHeight: int, observedPrincipal: M::Amount,
   observedFee: M::Amount, fullRailReleased: bool }
 pure val initial: Payment = { configured: false, phase: AwaitingWallet, purpose: Ordinary, rail: OrdinaryVault, feeRecipient: "fees", obligation: 1, vault: "vault", asset: "asset",
-  recipient: "", gross: M::zero, principal: M::zero, fee: M::zero, consent: 0, request: 1,
+  target: { ...D::ordinaryTarget, asset: "asset" }, vaultReceipt: D::noReceipt, recipient: "", gross: M::zero, principal: M::zero, fee: M::zero, consent: 0, request: 1,
   attempt: 0, attempts: List(), failedAttempts: List(), canonical: 0, finalizedHeight: 0,
   observedPrincipal: M::zero, observedFee: M::zero, fullRailReleased: false }
 pure val grossValues = Set(List(1), List(4), List(100), List(0, 1))
@@ -30,7 +34,8 @@ pure def canConfigure(p: Payment, purpose: Purpose, rail: PaymentRail, gross: M:
 pure def configure(p: Payment, purpose: Purpose, rail: PaymentRail, gross: M::Amount): Payment =
   val fee = if (purpose == Ordinary) M::ordinaryFeeAmount(gross) else if (purpose == PrivateStandard) M::privateFeeAmount(gross) else M::zero
   val principal = if (purpose == Ordinary) M::ordinaryNetAmount(gross) else if (purpose == PrivateStandard) M::privateResearcherAmount(gross) else gross
-  { ...p, configured: true, purpose: purpose, rail: rail, feeRecipient: if (purpose == PrivateFull) "" else "fees", gross: gross, fee: fee, principal: principal }
+  { ...p, configured: true, purpose: purpose, rail: rail,
+    target: { ...p.target, scope: if (rail == StandardBountyVault) D::PrivateBounty else D::Ordinary }, feeRecipient: if (purpose == PrivateFull) "" else "fees", gross: gross, fee: fee, principal: principal }
 pure def canReleaseFullRail(p: Payment, approved: bool, released: bool, qualified: bool, by: str): bool =
   p.phase != Paid and p.configured and p.purpose == PrivateFull and not(p.fullRailReleased)
     and approved and released and qualified and by == "owner"
@@ -46,17 +51,17 @@ pure val feeValues = Set(List(0), List(1), List(2), List(3), List(25))
 
 ```quint
 pure def canBind(p: Payment, recipient: str, consent: int, by: str): bool =
-  p.phase == AwaitingWallet and p.configured and by == "recipient" and recipient != "" and consent > p.consent
+  p.phase == AwaitingWallet and p.configured and directRail(p.rail) and by == "recipient" and recipient != "" and consent > p.consent
 pure def bind(p: Payment, recipient: str, consent: int, by: str): Payment =
   { ...p, recipient: recipient, consent: consent, phase: Ready }
 ```
 
-### Journal before submission and retain every uncertain attempt
+### Direct rails journal before submission and retain every uncertain attempt
 
 An attempt identifier is a durable journal identity bound to signed bytes outside this machine. Reusing an existing attempt is a retransmission of those same bytes. Replacement authorization is covered by the signer machine. No transition releases an uncertain obligation.
 
 ```quint
-pure def canJournal(p: Payment, attempt: int): bool = p.phase == Ready and attempt > 0
+pure def canJournal(p: Payment, attempt: int): bool = p.phase == Ready and directRail(p.rail) and attempt > 0
   and not(p.attempts.includes(attempt)) and (p.purpose != PrivateFull or p.fullRailReleased)
 pure def journal(p: Payment, attempt: int): Payment =
   { ...p, phase: Journaled, attempt: attempt, attempts: p.attempts.append(attempt) }
@@ -66,9 +71,9 @@ pure def canLoseReceipt(p: Payment): bool = p.phase == Submitted
 pure def loseReceipt(p: Payment): Payment = { ...p, phase: Uncertain }
 pure def canRetransmit(p: Payment): bool = p.phase == Uncertain
 pure def retransmit(p: Payment): Payment = { ...p, phase: Submitted }
-pure def canHold(p: Payment): bool = p.configured and p.phase != Paid and p.phase != Held
+pure def canHold(p: Payment): bool = p.configured and directRail(p.rail) and p.phase != Paid and p.phase != Held
 pure def hold(p: Payment): Payment = { ...p, phase: Held }
-pure def canResume(p: Payment, by: str): bool = p.phase == Held and by == "owner"
+pure def canResume(p: Payment, by: str): bool = p.phase == Held and directRail(p.rail) and by == "owner"
 pure def resume(p: Payment, by: str): Payment =
   { ...p, phase: if (p.recipient == "") AwaitingWallet else
     if (p.attempt == 0 or p.failedAttempts.includes(p.attempt)) Ready else Uncertain }
@@ -80,13 +85,13 @@ pure def recordFailure(p: Payment, attempt: int, height: int, finalized: bool, s
 
 ```
 
-### Exact finalized evidence is the only transition to paid
+### Direct reconciliation requires a retained exact attempt
 
 The observation names the obligation, source, asset, recipient, fee recipient, principal and fee. A confirmed transaction must have succeeded at the required finalized height and use a retained attempt. Discovered by the proof: retained attempts cannot substitute for releasing the full-award payment rail; reconciliation checks that release independently. A partial leg remains recoverable in the external journal and does not satisfy this aggregate transition. Direct private awards additionally retain each paid leg and refuse a duplicate leg through the journal.
 
 ```quint
 pure def canReconcile(p: Payment, evidence: PaymentEvidence): bool =
-  p.phase != Paid and (p.purpose != PrivateFull or p.fullRailReleased) and evidence.attempt > 0 and p.attempts.includes(evidence.attempt) and not(p.failedAttempts.includes(evidence.attempt)) and evidence.obligation == p.obligation
+  directRail(p.rail) and p.phase != Paid and (p.purpose != PrivateFull or p.fullRailReleased) and evidence.attempt > 0 and p.attempts.includes(evidence.attempt) and not(p.failedAttempts.includes(evidence.attempt)) and evidence.obligation == p.obligation
     and evidence.source == p.vault and evidence.asset == p.asset and evidence.recipient == p.recipient and evidence.feeRecipient == p.feeRecipient
     and M::validAmount(evidence.principal) and M::validAmount(evidence.fee)
     and M::equalAmounts(evidence.principal, p.principal) and M::equalAmounts(evidence.fee, p.fee)
@@ -94,22 +99,54 @@ pure def canReconcile(p: Payment, evidence: PaymentEvidence): bool =
 pure def reconcile(p: Payment, evidence: PaymentEvidence): Payment =
   { ...p, phase: Paid, canonical: evidence.attempt, finalizedHeight: evidence.height,
     observedPrincipal: evidence.principal, observedFee: evidence.fee }
+```
+
+### A reserved vault accepts an exact canonical scanner event
+
+Vault authorization stays with the actor and scanner. A callback or a local
+dispatch attempt does not constitute finalized settlement evidence.
+The reserve consumes the immutable contributor and award identity. After
+independent chain verification, settlement records the actual destination and
+transaction from the canonical event. The dispatch machine supplies historical
+authorization and the finalized vault asset in the atomic composition. The
+recording function is used only after both owner guards pass. The financial owner independently
+matches the award amount, asset, principal, fee and fee recipient.
+
+```quint
+pure def directRail(rail: PaymentRail): bool = rail == DirectStandard or rail == DirectFull
+pure def canReserveVault(p: Payment): bool = p.configured and not(directRail(p.rail)) and p.phase == AwaitingWallet
+pure def reserveVault(p: Payment): Payment = { ...p, phase: VaultReserved }
+pure def vaultPayoutMatches(p: Payment, r: D::Receipt, vaultEvidence: VaultPaymentEvidence): bool =
+  p.phase == VaultReserved and not(directRail(p.rail))
+    and r.target == p.target and r.target.vault == p.vault and r.target.asset == p.asset
+    and r.tx != "" and r.destination != "" and vaultEvidence.obligation == p.obligation
+    and r.finalized and r.succeeded and r.observedAsset and vaultEvidence.height > 0 and vaultEvidence.feeRecipient == p.feeRecipient
+    and M::validAmount(vaultEvidence.gross) and M::validAmount(vaultEvidence.principal) and M::validAmount(vaultEvidence.fee)
+    and M::equalAmounts(vaultEvidence.gross, p.gross) and M::equalAmounts(vaultEvidence.principal, p.principal)
+    and M::equalAmounts(vaultEvidence.fee, p.fee)
+pure def recordVaultPayment(r: D::Receipt, vaultEvidence: VaultPaymentEvidence, p: Payment): Payment =
+  { ...p, phase: Paid, vaultReceipt: r, finalizedHeight: vaultEvidence.height,
+    observedPrincipal: vaultEvidence.principal, observedFee: vaultEvidence.fee }
 pure def alwaysConserved(p: Payment): bool = M::equalAmounts(p.gross, M::addAmounts(p.principal, p.fee))
   and M::validAmount(p.gross) and M::validAmount(p.principal) and M::validAmount(p.fee)
-pure def alwaysPaidEvidence(p: Payment): bool = p.phase == Paid implies p.canonical > 0
-  and (p.purpose != PrivateFull or p.fullRailReleased)
-  and p.attempts.includes(p.canonical) and p.finalizedHeight > 0
+pure def alwaysPaidEvidence(p: Payment): bool = p.phase == Paid implies
+  (if (directRail(p.rail)) p.canonical > 0 and p.attempts.includes(p.canonical)
+    else p.vaultReceipt.tx != "" and p.vaultReceipt.destination != "" and p.vaultReceipt.target == p.target
+      and p.vaultReceipt.finalized and p.vaultReceipt.succeeded and p.vaultReceipt.observedAsset)
+  and (p.purpose != PrivateFull or p.fullRailReleased) and p.finalizedHeight > 0
   and M::equalAmounts(p.observedPrincipal, p.principal) and M::equalAmounts(p.observedFee, p.fee)
 pure def stepPaidPermanent(before: Payment, after: Payment): bool = before.phase == Paid implies after == before
 pure def stepObligationPermanent(before: Payment, after: Payment): bool = before.configured implies before.obligation == after.obligation
   and before.gross == after.gross and before.principal == after.principal and before.fee == after.fee
-  and before.vault == after.vault and before.asset == after.asset and before.rail == after.rail and before.feeRecipient == after.feeRecipient
+  and before.target == after.target and before.vault == after.vault and before.asset == after.asset and before.rail == after.rail and before.feeRecipient == after.feeRecipient
 pure def alwaysCorrectFee(p: Payment): bool = p.configured implies validSplit(p.purpose, p.gross, p.principal, p.fee)
 pure def alwaysUnconfiguredEmpty(p: Payment): bool = not(p.configured) implies
   p.phase == AwaitingWallet and p.recipient == "" and p.attempts.length() == 0 and p.failedAttempts.length() == 0
     and p.attempt == 0 and M::equalAmounts(p.gross, M::zero) and M::equalAmounts(p.principal, M::zero) and M::equalAmounts(p.fee, M::zero)
 pure def alwaysAdmittedAttempts(p: Payment): bool = p.attempts.length() > 0 implies p.configured
 pure def alwaysCorrectRail(p: Payment): bool = railMatchesPurpose(p.purpose, p.rail)
+pure def alwaysVaultPhase(p: Payment): bool = p.phase == VaultReserved implies p.configured and not(directRail(p.rail))
+pure def sometimesVaultReserved(p: Payment): bool = p.phase == VaultReserved
 pure def sometimesUncertain(p: Payment): bool = p.phase == Uncertain
 pure def sometimesPaid(p: Payment): bool = p.phase == Paid
 pure def sometimesPrivate(p: Payment): bool = p.configured and p.purpose == PrivateStandard
@@ -146,6 +183,11 @@ These input sets bound simulation only. The generated guards accept every
 value allowed by their declared types and product rules.
 
 ```quint
+pure val receiptSample: D::Receipt = { ...D::paidReceipt, target: initial.target }
+pure val rValues = Set(receiptSample)
+pure val vaultEvidenceSample: VaultPaymentEvidence = { obligation: 1, gross: List(100),
+  principal: List(98), fee: List(2), feeRecipient: "fees", height: 1 }
+pure val vaultEvidenceValues = Set(vaultEvidenceSample, { ...vaultEvidenceSample, fee: List(3) })
 pure val attemptValues = Set(0, 1, 2)
 pure val consentValues = Set(0, 1, 2)
 pure val heightValues = Set(0, 1, 2)
