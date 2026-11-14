@@ -1,7 +1,7 @@
 {
   "commit": "8d14a9692b998ee3f4479725b6323125f11f11be",
   "base": "6b3b9d0b979f0608d87941f1146056a98513ffcf",
-  "scope": "Legacy main model delta observed November 14. Results do not establish successor equivalence. The migration inventory remains pinned to base.",
+  "scope": "Later-main model files are checked at the named revision. The active successors model the delta behaviors listed below. The original model inventory remains pinned separately. Product shell conformance and full transition equivalence remain open.",
   "quint": "0.33.1",
   "commands": [
     "quint typecheck <path>",
@@ -20,8 +20,8 @@
         "output": "solana_validator_callers\n    ok foreignRpcCannotAdmitTestsTest passed 1 test(s)\n    ok twoIndependentStagesRequireTwoCurrentReceiptsTest passed 1 test(s)\n    ok oldStoppedReceiptCannotAdmitSecondStageTest passed 1 test(s)\n    ok acceptanceRemovesLedgerOnlyAfterConfirmedStopTest passed 1 test(s)\n    ok primaryFailureSurvivesCleanupFailureTest passed 1 test(s)\n    ok cleanupFailureCannotPassTest passed 1 test(s)\n    ok canceledStartupStillWaitsForOwnedStopTest passed 1 test(s)\n    ok lateReadyIsNotAStopReceiptTest passed 1 test(s)\n    ok receiptDoesNotReplaceAwaitedStopTest passed 1 test(s)\n    ok badExitCannotPassWithStoppedReceiptTest passed 1 test(s)\n    ok readyReceiptStillRequiresLocalFundingTest passed 1 test(s)\n    ok localAirdropTimeoutStillWaitsForValidatorStopTest passed 1 test(s)\n    ok localAirdropFailureSurvivesValidatorCleanupFailureTest passed 1 test(s)\n    ok eachShellStageRequiresItsOwnFundingTest passed 1 test(s)\n\n  14 passing (6041ms)"
       },
       "subject": "Local validator funding and cleanup sequencing",
-      "candidateSuccessor": "spec/operations/local.md",
-      "review": "Successor needs validator-process and funding conformance for the Solana shell."
+      "candidateSuccessor": "spec/operations/localValidator.md",
+      "review": "Stage-owned readiness, separate shell funding, test admission and awaited cleanup are modeled. Real validator conformance remains open."
     },
     {
       "path": "formal/models/payments/operator_keeper_diagnostics.qnt",
@@ -35,8 +35,9 @@
         "output": "operator_keeper_diagnostics\n    ok successfulAndEmptyResultsStaySilentTest passed 1 test(s)\n    ok emptyRunStaysSilentTest passed 1 test(s)\n    ok unknownValuesCollapseWithoutPrivateDataTest passed 1 test(s)\n    ok identicalFailuresAggregatePositiveCountsTest passed 1 test(s)\n    ok nondeploymentCannotBorrowStageOrRpcCauseTest passed 1 test(s)\n    ok waitingWithoutErrorDoesNotTriggerFailureTest passed 1 test(s)\n    ok spoofedRpcNameRemainsOtherTest passed 1 test(s)\n    ok unavailableSubclassHasPriorityTest passed 1 test(s)\n    ok verifierFailureRetainsEvidenceStageTest passed 1 test(s)\n    ok indexFailureRetainsIndexStageTest passed 1 test(s)\n    ok successfulCallbackRestoresScannerStageTest passed 1 test(s)\n    ok diagnosticDoesNotEraseExistingFailureTest passed 1 test(s)\n\n  12 passing (6122ms)"
       },
       "subject": "Keeper failure-stage classification and safe projection",
-      "candidateSuccessor": "spec/settlement/recovery.md",
-      "review": "Successor model comparison remains open."
+      "candidateSuccessor": "spec/settlement/keeperDiagnostics.md",
+      "review": "Evidence callback, index and scan failures and privacy-safe summaries are modeled. Log and adapter conformance remain open.",
+      "relatedSuccessor": "spec/settlement/keeperScan.md"
     },
     {
       "path": "formal/models/payments/operator_keeper_rpc.qnt",
@@ -50,8 +51,8 @@
         "output": "operator_keeper_rpc\n    ok existingConfigRemainsAvailableTest passed 1 test(s)\n    ok rotationRetainsIdentityAndJournalTest passed 1 test(s)\n    ok removingOverrideRestoresOriginalTest passed 1 test(s)\n    ok emptyOverrideRefusesTest passed 1 test(s)\n    ok malformedOverrideRefusesTest passed 1 test(s)\n    ok insecureOverrideRefusesTest passed 1 test(s)\n    ok wrongChainRefusesTest passed 1 test(s)\n\n  7 passing (2166ms)"
       },
       "subject": "Independent RPC rotation and wrong-chain refusal",
-      "candidateSuccessor": "spec/settlement/signer.md",
-      "review": "Successor model comparison remains open."
+      "candidateSuccessor": "spec/settlement/keeperRpc.md",
+      "review": "Scoped RPC override and exact chain preflight are modeled. Provider and deployment conformance remain open."
     },
     {
       "path": "formal/models/points/historical_implementation_allocation.qnt",
@@ -65,8 +66,8 @@
         "output": "historical_implementation_allocation\n    ok unchangedPoolAndAppendOnlyTest passed 1 test(s)\n    ok incompleteConnectedProofHeldTest passed 1 test(s)\n    ok privateProtectedPoolHeldTest passed 1 test(s)\n    ok protectionRaceBeforeAtomicImportTest passed 1 test(s)\n    ok changedPredecessorRefusesImportTest passed 1 test(s)\n    ok replayAfterRevocationNeverRestoresTest passed 1 test(s)\n    ok protectionBypassNegativeControlTest passed 1 test(s)\n    ok revaluationNegativeControlTest passed 1 test(s)\n    ok replayResurrectionNegativeControlTest passed 1 test(s)\n\n  9 passing (3136ms)"
       },
       "subject": "Historical line-weighted reallocation",
-      "candidateSuccessor": "spec/points/allocation.md",
-      "review": "Compare preserved eligible weights and frozen payment history against the newer legacy scenarios."
+      "candidateSuccessor": "spec/points/corrections.md",
+      "review": "Guarded correction staging and commit preserve the source weight and protected payment history. Transaction conformance remains open."
     },
     {
       "path": "formal/models/points/journal_publication.qnt",
@@ -80,8 +81,8 @@
         "output": "journal_publication\n    ok extendsExactPrefixTest passed 1 test(s)\n    ok reorderIsRejectedTest passed 1 test(s)\n    ok stalePreparedPublicationIsRejectedTest passed 1 test(s)\n    ok interruptedStagePreservesPublicationTest passed 1 test(s)\n    ok duplicateCannotReplaceRecordTest passed 1 test(s)\n\n  5 passing (991ms)"
       },
       "subject": "Stale prepared publication rejection",
-      "candidateSuccessor": "spec/points/journal.md",
-      "review": "Compare appended-history and publication staging semantics."
+      "candidateSuccessor": "spec/points/publication.md",
+      "review": "Public staging checks an exact canonical prefix and rejects stale preparation. Atomic filesystem and storage conformance remain open."
     },
     {
       "path": "formal/models/tooling/formal_process.qnt",
@@ -95,8 +96,8 @@
         "output": "formal_process\n    ok cleanSuccessTest passed 1 test(s)\n    ok timeoutKillsDescendantTest passed 1 test(s)\n    ok exitedLauncherStillOwnsChildTest passed 1 test(s)\n    ok canceledCleanupCannotPassTest passed 1 test(s)\n    ok failureCannotPublishSuccessTest passed 1 test(s)\n    ok cleanupFailureIsExplicitTest passed 1 test(s)\n    ok cooperativeBrowserInterruptClosesServerTest passed 1 test(s)\n    ok uncooperativeBrowserCannotClaimCleanupTest passed 1 test(s)\n    ok normalBrowserClosesManagedServerTest passed 1 test(s)\n    ok forcedBrowserCleanupStopsCapturedGroupTest passed 1 test(s)\n    ok unknownGroupCannotBeKilledTest passed 1 test(s)\n    ok changedGroupCannotBeKilledTest passed 1 test(s)\n    ok normalExitCheckpointRetainsDetachedServerTest passed 1 test(s)\n    ok missingExitCheckpointCannotPassTest passed 1 test(s)\n    ok refusedCheckpointCannotPassTest passed 1 test(s)\n    ok changedNormalExitOwnerCannotBeKilledTest passed 1 test(s)\n    ok changedNormalExitOwnerRefusesSuccessTest passed 1 test(s)\n    ok ownershipReadFailureStillClosesObservedServerTest passed 1 test(s)\n    ok ownershipReadFailureDoesNotAcquireUnknownServerTest passed 1 test(s)\n    ok temporaryRemovalFailureStillReportsTest passed 1 test(s)\n    ok earlierFailureSurvivesTemporaryRemovalFailureTest passed 1 test(s)\n    ok timeoutRetainsLiveResourcesWhenRemovalFailsTest passed 1 test(s)\n    ok timeoutCanRemoveDirectoryWithoutStoppingServerTest passed 1 test(s)\n    ok drainedTimeoutRetainsFailedRemovalTest passed 1 test(s)\n    ok failedSpawnRetainsUnremovedDirectoryTest passed 1 test(s)\n    ok failedSpawnMayRemoveDirectoryTest passed 1 test(s)\n    ok interruptedExitCheckpointClosesRetainedServerTest passed 1 test(s)\n    ok interruptedCheckpointIoFailureClosesObservedServerTest passed 1 test(s)\n    ok refusedCheckpointDuringInterruptCannotPassTest passed 1 test(s)\n    ok localAirdropDeadlineEscalatesAfterGraceTest passed 1 test(s)\n\n  30 passing (13088ms)"
       },
       "subject": "Local airdrop cancellation and owned-process cleanup",
-      "candidateSuccessor": "spec/operations/local.md",
-      "review": "Successor needs conformance with local tooling and process ownership."
+      "candidateSuccessor": "spec/operations/localCommand.md",
+      "review": "The local airdrop command now models interruption, grace, current group ownership and cleanup. Browser-process transition equivalence and shell conformance remain open."
     }
   ]
 }

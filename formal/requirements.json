@@ -91,7 +91,8 @@
       "owners": [
         "spec/governance.md",
         "spec/frontend/projections.md",
-        "spec/backend/listing.md"
+        "spec/backend/listing.md",
+        "spec/points/publication.md"
       ],
       "status": "source-preserved-domain-mapped",
       "implementationEvidence": "pending-implementation"
@@ -375,7 +376,9 @@
       "sourceText": "### Fees and payment evidence\n\nFor ordinary awards and free-fund withdrawals, the fee is `ceil(gross / 50)`: 2%, rounded up. A 100 USDC award pays 98 to the contributor and 2 in fees. A one-base-unit award pays that unit in fees and zero net. Splitting must not reduce the fee.\n\nPay token fees in the same token. Do not charge again at claim or retry. Preserve funded awards' original fees through upgrades. Private bounties use section 8's split instead.\n\nA project-operated or permissionless executor submits payments. Slop operates no payment key or payment relayer. Permissionless vault creation requires the owner's authority; remove the separate service charge.\n\nMark an obligation paid only after finalized evidence reconciles its exact vault or direct-payment source, recipient, principal, fee, and asset. Reject replay, wrong owner, wrong asset, partial completion, failed transfers, duplicates, and overpayment. Keep uncertain attempts until reconciliation; a missing receipt is not failure proof.\n",
       "owners": [
         "spec/settlement/payment.md",
-        "spec/settlement/composition.md"
+        "spec/settlement/composition.md",
+        "spec/settlement/keeperRpc.md",
+        "spec/settlement/keeperDiagnostics.md"
       ],
       "status": "source-preserved-domain-mapped",
       "implementationEvidence": "pending-implementation"
@@ -465,7 +468,9 @@
       "sourceText": "### Historical scoring and source integrity\n\nThe current size and review bands also apply to eligible unpaid work from 1 September through 31 October 2026. Preserve original Points and frozen terms for approved or funded awards, including scheduled and paid awards. Retain source IDs, occurrence times, and eligibility and penalty dates. Append corrections; never rewrite earlier records.\n\nThe September–October census has no special exclusion for team membership or Madyoun's former account unavailability. Normal source verification, sharing, duplicate-credit, participation-ban, funding, and wallet rules still apply. For November 2026, payout-exclusion lists remain empty for `slopdotcash`, `eliza`, `thenetwork`, and `asi`. These exceptions do not change funded awards or later periods.\n\nHold historical Points publication until the complete assessment journal and exact changes reconcile. Require source coverage, duplicate-credit, and funded-history checks before release. Other releases retain prior historical rules. Keep the standard importer and September candidate checks. Held or unassessed pre-November sources keep their earlier Points.\n\nA no-change branch promotion earns no additional Points only when complete, hash-verified trees prove identical base, submitted head, and accepted merge content. Joint evidence must identify an earlier complete accepted source for every imported commit. Missing trees, changed content, unknown commits, or incomplete sources remain unresolved. Preserve original contributors, normal sharing, existing awards, required source review, and the historical publication hold. This rule grants no additional actor credit or branch authority.\n",
       "owners": [
         "spec/points/census.md",
-        "spec/points/journal.md"
+        "spec/points/journal.md",
+        "spec/points/corrections.md",
+        "spec/points/publication.md"
       ],
       "status": "source-preserved-domain-mapped",
       "implementationEvidence": "pending-implementation"
@@ -495,7 +500,8 @@
         "spec/points/census.md",
         "spec/frontend/projections.md",
         "spec/backend/listing.md",
-        "spec/frontend/presentation.md"
+        "spec/frontend/presentation.md",
+        "spec/points/publication.md"
       ],
       "status": "source-preserved-domain-mapped",
       "implementationEvidence": "pending-implementation"
@@ -680,7 +686,11 @@
       "owners": [
         "spec/operations/release.md",
         "spec/frontend/requests.md",
-        "spec/operations/local.md"
+        "spec/operations/local.md",
+        "spec/operations/localCommand.md",
+        "spec/operations/localValidator.md",
+        "spec/settlement/keeperRpc.md",
+        "spec/settlement/keeperDiagnostics.md"
       ],
       "status": "source-preserved-domain-mapped",
       "implementationEvidence": "pending-implementation"
@@ -835,7 +845,13 @@
         "spec/governance.md",
         "formal/README.md",
         "spec/projectComposition.md",
-        "spec/composition.md"
+        "spec/composition.md",
+        "spec/points/corrections.md",
+        "spec/points/publication.md",
+        "spec/operations/localCommand.md",
+        "spec/operations/localValidator.md",
+        "spec/settlement/keeperRpc.md",
+        "spec/settlement/keeperDiagnostics.md"
       ],
       "status": "source-preserved-domain-mapped",
       "implementationEvidence": "pending-implementation"

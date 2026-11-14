@@ -22,7 +22,9 @@ The specification tree defines account and browser ownership, project setup
 and revisions, contributor installation and work, Points, security admission,
 private cases, notifications, releases, settlement and fee handling. Each
 formal rule is catalogued in [spec-catalog.json](spec-catalog.json).
-The tree contains 64 documents, 82 story groups and 272 rule groups.
+The active tree contains 71 documents, 89 story groups and 294 rule groups.
+The initial full-tree run covered 64 of those documents. The later additions
+have their own source-bound checks below.
 The retained source maps cover all 63 PRD sections and all 473 original models.
 
 The frontend owns request identity, stale and unavailable reads, private draft
@@ -172,11 +174,44 @@ amounts. Four laws remain open for division and fee conservation. The
 financial report lists those laws and the dependent obligations.
 [Money proof results](validation/finance/multiply-one-verified/verification.json)
 
-The retained full-tree snapshots record model compilation, invariant simulation,
-reachability and generated TypeScript replay. The preceding run was interrupted
-when the referral inputs were superseded. The focused reports bind the
-completed checks to their exact sources, and list the unproved financial
-obligations. [Interrupted verification snapshot](validation/full-tree/pre-lifecycle-repair-check.json)
+The completed model and simulation stages checked all 64 baseline documents.
+The 54 executable units passed invariant simulation, with 200 reachability and
+guard results and 23,556 generated TypeScript replays. Replay covers the
+sampled traces and definitions with available standalone inputs. The report
+lists the definitions without standalone comparison.
+[Full-tree simulation and replay](validation/full-tree/model-simulation-replay.json)
+
+The proof stage took its input after the verified wallet and money helpers
+were installed. The two phase manifests bind the model and proof inputs to
+those separate observation times. The baseline stage does not incorporate the
+later model refinements.
+[Proof stage inputs](validation/full-tree/proof-stage-inputs.json) · [Template inputs](validation/full-tree/template-inputs.json)
+
+## Additional source refinements
+
+The later-main review made journal publication and historical corrections
+explicit. Publication requires a canonical exact prefix and checks the current
+public revision at commit. Corrections recheck the current predecessor and
+protected financial history in the canonical append and treat an applied
+manifest as replay after revocation. Targeted Quint simulation and TypeScript
+replay reached all nine goals, and nine directed assertions passed.
+[Points evidence](validation/points/targeted.json)
+
+The local Solana stages require a fresh owned validator receipt for each
+shell stage and a confirmed local funding result before tests. The command
+supervisor distinguishes interruption, the grace period, same-group escalation
+and cleanup confirmation. The caller retains the first failure and waits for
+owned validator stop before removing its acceptance ledger. Three named Quint
+witnesses and 65 generated-core events across five journeys passed.
+[Quint witnesses](validation/journeys/local-validator-witness.qnt) · [Generated-core journeys](validation/journeys/local-validator-stages.json)
+
+Keeper reconciliation requires an exact chain preflight for the selected
+endpoint, revision and deployment before any work. Receipt processing records
+whether it failed during scanning, evidence verification or indexing.
+Operational summaries contain fixed labels and aggregated counts, and healthy
+or waiting work stays silent. These models preserve the keeper's identity,
+budget and journal across RPC changes.
+[Keeper rules](../spec/settlement/keeperScan.md)
 
 ## Guard diagnostics
 

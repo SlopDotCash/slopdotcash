@@ -6160,7 +6160,8 @@
         "spec/settlement/referrals.md",
         "spec/settlement/money.md",
         "spec/fees/buyback.md",
-        "spec/fees/conversion.md"
+        "spec/fees/conversion.md",
+        "spec/operations/localValidator.md"
       ]
     },
     {
@@ -11064,7 +11065,8 @@
         "spec/points/allocation.md",
         "spec/points/census.md",
         "spec/points/journal.md",
-        "spec/points/reviews.md"
+        "spec/points/reviews.md",
+        "spec/points/publication.md"
       ]
     },
     {
@@ -16819,7 +16821,8 @@
         "spec/contributor/installation.md",
         "spec/operations/notifications.md",
         "spec/operations/release.md",
-        "spec/governance.md"
+        "spec/governance.md",
+        "spec/operations/localCommand.md"
       ]
     },
     {
