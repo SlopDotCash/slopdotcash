@@ -50,7 +50,7 @@ the run fails on it.
 The four rows not proved hold for the whole contract, not one pure function.
 Neither engine finishes on `ProjectEscrow`: its loops over allocations,
 `keccak256` and `ecrecover` digests, nonlinear calendar arithmetic and token
-calls leave CHC without an invariant and BMC without an answer in hours. The
+calls leave CHC without an invariant, and BMC gave no answer within an hour. The
 conservation identity is also a property of all calls together, and the payment
 bound needs the sum of every unpaid award, which the SMTChecker cannot state
 over a mapping. Foundry's `OpusInvariant` campaign checks both identities after
