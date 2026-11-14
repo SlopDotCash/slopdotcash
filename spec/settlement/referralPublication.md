@@ -107,7 +107,12 @@ Native amounts are integer wei. The 0.0002 ETH transaction ceiling and
 an immutable attempt ID. An uncertain send retains its hold, across day changes,
 until a finalized outcome proves the cost and its actual settlement UTC day.
 Settled costs count only on that day; a late old-day receipt does not become
-new-day spending. Every unresolved maximum remains reserved on every day. The poster cannot transfer tokens.
+new-day spending. Every unresolved maximum remains reserved on every day.
+Discovered by the proof: a receipt could name a day before its journaled
+attempt and bypass the applicable day's gas accounting. Settlement requires
+the matching unresolved journal entry, including its prepared root and hold,
+and a settlement day between the journal day and the current day. The poster
+cannot transfer tokens.
 
 ```quint
 pure def canJournal(p: Publication, control: R::Referral, attempt: int, gas: int, chain: D::Distributor, signer: str): bool =
@@ -148,6 +153,15 @@ conflicting evidence remains Uncertain. A finalized failed send permits a new
 attempt and consumes its actual gas; it never adds a root.
 
 ```quint
+pure def pendingPosting(p: Publication): bool = p.phase == Journaled or p.phase == Submitted or p.phase == Uncertain
+pure def matchesPendingAttempt(p: Publication, journalEntry: Attempt): bool =
+  journalEntry.id > 0 and journalEntry.id == p.currentAttempt and journalEntry.root == p.prepared.id
+    and journalEntry.epoch == p.prepared.epoch and journalEntry.day > 0 and journalEntry.day <= p.day
+    and journalEntry.reservedGas == p.nativeHold
+pure def gasSettlementMatches(p: Publication, attempt: int, actualGas: int, settledDay: int): bool =
+  attempt == p.currentAttempt and not(p.settledGas.some(cost => cost.attempt == attempt))
+    and p.attempts.some(entry => matchesPendingAttempt(p, entry) and entry.day <= settledDay)
+    and actualGas >= 0 and actualGas <= p.nativeHold and settledDay <= p.day
 pure def canFinalize(p: Publication, rootReceipt: RootReceipt): bool =
   (p.phase == Submitted or p.phase == Uncertain) and rootReceipt.attempt == p.currentAttempt
     and rootReceipt.rootId == p.prepared.id and rootReceipt.epoch == p.prepared.epoch
@@ -155,16 +169,16 @@ pure def canFinalize(p: Publication, rootReceipt: RootReceipt): bool =
     and M::equalAmounts(rootReceipt.total, p.prepared.total)
     and rootReceipt.receipt > 0 and not(p.receipts.includes(rootReceipt.receipt)) and rootReceipt.height > 0
     and rootReceipt.finalized and rootReceipt.succeeded
-    and rootReceipt.actualGas >= 0 and rootReceipt.actualGas <= p.nativeHold
-    and rootReceipt.settledDay > 0 and rootReceipt.settledDay <= p.day
+    and gasSettlementMatches(p, rootReceipt.attempt, rootReceipt.actualGas, rootReceipt.settledDay)
 pure def finalize(p: Publication, rootReceipt: RootReceipt): Publication =
   { ...p, phase: Idle, roots: p.roots.append({ ...p.prepared, height: rootReceipt.height }),
     receipts: p.receipts.append(rootReceipt.receipt),
     settledGas: p.settledGas.append({ attempt: rootReceipt.attempt, actual: rootReceipt.actualGas, day: rootReceipt.settledDay }),
     nativeHold: 0, cacheFresh: false }
 pure def canFinalizeFailure(p: Publication, attempt: int, receipt: int, actualGas: int, settledDay: int, finalized: bool, succeeded: bool): bool =
-  (p.phase == Submitted or p.phase == Uncertain) and attempt == p.currentAttempt
-    and receipt > 0 and not(p.receipts.includes(receipt)) and finalized and not(succeeded) and actualGas >= 0 and actualGas <= p.nativeHold and settledDay > 0 and settledDay <= p.day
+  (p.phase == Submitted or p.phase == Uncertain)
+    and receipt > 0 and not(p.receipts.includes(receipt)) and finalized and not(succeeded)
+    and gasSettlementMatches(p, attempt, actualGas, settledDay)
 pure def finalizeFailure(p: Publication, attempt: int, receipt: int, actualGas: int, settledDay: int, finalized: bool, succeeded: bool): Publication =
   { ...p, phase: Prepared, receipts: p.receipts.append(receipt), settledGas: p.settledGas.append({ attempt: attempt, actual: actualGas, day: settledDay }), nativeHold: 0 }
 ```
@@ -235,8 +249,10 @@ pure def claimableFor(p: Publication, actor: int): ClaimableView =
 ### History, native holds and cumulative claims remain bounded
 
 Discovered by the proof: a structurally valid prepared record could otherwise
-contain a wallet different from its retained pin. Preparation, signing and
-reconciliation all retain the same pinned wallets.
+contain a wallet different from its retained pin, and the empty wallet used
+for a missing pin could satisfy an old root's pin check until a real pin was
+added. Prepared and finalized entries use the same nonempty retained wallet
+pins throughout preparation, signing and reconciliation.
 
 A stale cache retains amounts and history, but does not advertise a currently
 claimable amount. Accrued and pending amounts come from the accrual ledger;
@@ -251,18 +267,24 @@ pure def alwaysNativeBounded(p: Publication): bool = spentGas(p) >= 0 and p.nati
   and spentGas(p) + p.nativeHold <= 2000000000000000
 pure def alwaysAttemptGasAccounted(p: Publication): bool = p.attempts.every(attempt =>
   p.settledGas.some(cost => cost.attempt == attempt.id) or
-    ((p.phase == Journaled or p.phase == Submitted or p.phase == Uncertain) and attempt.id == p.currentAttempt and attempt.reservedGas == p.nativeHold))
+    (pendingPosting(p) and matchesPendingAttempt(p, attempt)))
+pure def alwaysUniqueAttempts(p: Publication): bool = p.attempts.every(attempt =>
+  p.attempts.select(other => other.id == attempt.id).length() == 1)
+pure def alwaysPendingAttempt(p: Publication): bool = pendingPosting(p) implies
+  p.attempts.some(attempt => matchesPendingAttempt(p, attempt)
+    and not(p.settledGas.some(cost => cost.attempt == attempt.id)))
 pure def alwaysSettledGasValid(p: Publication): bool = p.day > 0 and p.settledGas.every(cost =>
-  cost.actual >= 0 and cost.actual <= 200000000000000 and cost.day > 0 and cost.day <= p.day)
+  cost.actual >= 0 and cost.actual <= 200000000000000 and cost.day > 0 and cost.day <= p.day
+    and p.attempts.some(attempt => attempt.id == cost.attempt and attempt.day <= cost.day and cost.actual <= attempt.reservedGas)
+    and p.settledGas.select(other => other.attempt == cost.attempt).length() == 1)
 pure def alwaysHoldCeiling(p: Publication): bool = p.nativeHold >= 0 and p.nativeHold <= 200000000000000
 pure def alwaysIdleUnreserved(p: Publication): bool = (p.phase == Idle or p.phase == Prepared) implies p.nativeHold == 0
 pure def alwaysPreparedWalletsPinned(p: Publication): bool = p.phase != Idle implies
-  p.prepared.entries.every(e => e.wallet == A::pinnedWallet(p.pins, e.actor))
+  p.prepared.entries.every(e => A::entryWalletPinned(p.pins, e))
 pure def alwaysPreparedCap(p: Publication): bool = p.phase != Idle implies
   p.prepared.id > 0 and M::validAmount(p.prepared.total)
     and M::compareAmounts(p.prepared.total, M::multiplyAmounts(p.tokenUnit, M::smallAmount(2000000))) <= 0
-pure def alwaysPendingHeld(p: Publication): bool =
-  (p.phase == Journaled or p.phase == Submitted or p.phase == Uncertain) implies p.nativeHold > 0
+pure def alwaysPendingHeld(p: Publication): bool = pendingPosting(p) implies p.nativeHold > 0
 pure def alwaysRootCap(p: Publication): bool = p.roots.every(root =>
   M::compareAmounts(root.total, M::multiplyAmounts(p.tokenUnit, M::smallAmount(2000000))) <= 0)
 pure def alwaysUniqueClaims(p: Publication): bool = p.claims.every(c => p.claims.select(other => other.actor == c.actor).length() == 1)
@@ -270,7 +292,7 @@ pure def alwaysPinsUnique(p: Publication): bool = p.pins.every(pin => pin.wallet
   p.pins.select(other => other.actor == pin.actor).length() == 1 and
   p.pins.select(other => other.wallet == pin.wallet).length() == 1)
 pure def alwaysRootWalletPinned(p: Publication): bool = p.roots.every(root =>
-  root.entries.every(e => e.wallet == A::pinnedWallet(p.pins, e.actor)))
+  root.entries.every(e => A::entryWalletPinned(p.pins, e)))
 pure def stepTokenFixed(before: Publication, after: Publication): bool = before.token != "" implies after.token == before.token
 pure def stepPinsRetained(before: Publication, after: Publication): bool = before.pins.every(pin => after.pins.includes(pin))
 pure def stepAttemptsRetained(before: Publication, after: Publication): bool = before.attempts.every(a => after.attempts.includes(a))

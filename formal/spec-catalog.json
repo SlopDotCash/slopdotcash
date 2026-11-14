@@ -119,102 +119,8 @@
       "references": []
     },
     {
-      "path": "spec/backend/accounts.md",
-      "sha256": "ab40b0f4f77fe0ae324c64fb3e114cfc794a3af799b5e3b9ae0fe213de294907",
-      "module": "backend__accounts",
-      "stories": [
-        {
-          "heading": "Story: Sign in and manage participation",
-          "line": 9
-        }
-      ],
-      "rules": [
-        {
-          "heading": "Story: Sign in and manage participation / The actor identity remains stable through account changes",
-          "line": 14,
-          "definitions": [
-            "Membership",
-            "Account",
-            "newAccount",
-            "initial",
-            "alwaysActorValid",
-            "alwaysRetainedHistory",
-            "lawNewAccountPreservesIdentity",
-            "alwaysSessionEpoch",
-            "alwaysIdentityIds",
-            "alwaysSessionMember"
-          ]
-        },
-        {
-          "heading": "Story: Sign in and manage participation / A verified GitHub sign-in requires the same actor and visibility disclosure",
-          "line": 38,
-          "definitions": [
-            "canSaveReturn",
-            "saveReturn",
-            "canSignIn",
-            "signIn",
-            "canRename",
-            "rename"
-          ]
-        },
-        {
-          "heading": "Story: Sign in and manage participation / Closure invalidates sessions and public membership until explicit reopening",
-          "line": 58,
-          "definitions": [
-            "canClose",
-            "close",
-            "canReopen",
-            "reopen",
-            "canEndSession",
-            "endSession",
-            "alwaysClosedPrivate",
-            "sessionValid"
-          ]
-        },
-        {
-          "heading": "Story: Sign in and manage participation / An optional X identity stays reserved after disconnect",
-          "line": 78,
-          "definitions": [
-            "canConnectX",
-            "connectX",
-            "canDisconnectX",
-            "disconnectX",
-            "alwaysXReservation",
-            "alwaysXVisibility",
-            "stepHistoryIsStable"
-          ]
-        },
-        {
-          "heading": "Story: Sign in and manage participation / Signing in, disconnecting, closing, and reopening remain possible",
-          "line": 102,
-          "definitions": [
-            "sometimesSignedIn",
-            "sometimesClosed",
-            "sometimesDisconnected"
-          ]
-        },
-        {
-          "heading": "Story: Sign in and manage participation / Simulation samples exercise missing, matching and conflicting evidence",
-          "line": 110,
-          "definitions": [
-            "obligationsValues",
-            "historicalPointsValues",
-            "actorIdValues",
-            "byValues",
-            "draftTextValues",
-            "epochValues",
-            "handleValues",
-            "pathValues",
-            "xIdValues"
-          ]
-        }
-      ],
-      "imports": [],
-      "references": []
-    },
-    {
       "path": "spec/backend/email.md",
-      "sha256": "1bc36d8e2b91ff060167a711fa74ab3720f2f5597890e85fefdd95557918a1f6",
+      "sha256": "50c35c43e69f5bc394e8b9678c225bd0bcbd6b76219d3b0bfbe36dc97358b28f",
       "module": "backend__email",
       "stories": [
         {
@@ -228,13 +134,14 @@
           "line": 12,
           "definitions": [
             "Enrollment",
+            "newEnrollment",
             "initial",
             "alwaysEnrollmentTimes"
           ]
         },
         {
           "heading": "Story: Verify a notification address and choose consent / Only the authenticated owner can create a pending verification",
-          "line": 24,
+          "line": 25,
           "definitions": [
             "canEnroll",
             "enroll",
@@ -244,7 +151,7 @@
         },
         {
           "heading": "Story: Verify a notification address and choose consent / Verification is account-bound, single-use, and unexpired",
-          "line": 35,
+          "line": 36,
           "definitions": [
             "canVerify",
             "verify",
@@ -254,14 +161,14 @@
         },
         {
           "heading": "Story: Verify a notification address and choose consent / A changed verified address requires fresh consent",
-          "line": 51,
+          "line": 52,
           "definitions": [
             "stepChangedAddressClearsConsent"
           ]
         },
         {
           "heading": "Story: Verify a notification address and choose consent / Unsubscribe only removes consent and in-app notices remain independent",
-          "line": 62,
+          "line": 63,
           "definitions": [
             "canUnsubscribe",
             "unsubscribe",
@@ -272,8 +179,16 @@
           ]
         },
         {
+          "heading": "Story: Verify a notification address and choose consent / Account closure withdraws both email consents and cancels pending verification",
+          "line": 79,
+          "definitions": [
+            "canCloseEnrollment",
+            "closeEnrollment"
+          ]
+        },
+        {
           "heading": "Story: Verify a notification address and choose consent / Simulation samples exercise missing, matching and conflicting evidence",
-          "line": 78,
+          "line": 95,
           "definitions": [
             "addressValues",
             "byValues",
@@ -284,6 +199,158 @@
         }
       ],
       "imports": [],
+      "references": []
+    },
+    {
+      "path": "spec/backend/accounts.md",
+      "sha256": "ecd464884aa42edf59cf32aa6c738b9341a088be3fb27565bc6a61ffa1f92359",
+      "module": "backend__accounts",
+      "stories": [
+        {
+          "heading": "Story: Sign in and manage participation",
+          "line": 10
+        },
+        {
+          "heading": "Story: Keep mail consent tied to the current account session",
+          "line": 169
+        }
+      ],
+      "rules": [
+        {
+          "heading": "Story: Sign in and manage participation / A session belongs to one immutable account and has its own expiry",
+          "line": 12,
+          "definitions": [
+            "Membership",
+            "SessionStatus",
+            "Session",
+            "Account",
+            "newAccount",
+            "initial",
+            "sessionStatus",
+            "sessionValid",
+            "alwaysActorValid",
+            "alwaysRetainedHistory",
+            "alwaysSessionClock",
+            "alwaysEmailValid",
+            "alwaysSessionsRequireOpenAccount",
+            "alwaysSessionIds",
+            "stepSessionSequenceNeverDecreases",
+            "alwaysPublicMembershipRequiresOpenAccount",
+            "lawNewAccountPreservesIdentity"
+          ]
+        },
+        {
+          "heading": "Story: Sign in and manage participation / Each verified GitHub sign-in keeps other sessions and reveals the approved public identity",
+          "line": 57,
+          "definitions": [
+            "canSaveReturn",
+            "saveReturn",
+            "canSignIn",
+            "signIn",
+            "canRename",
+            "rename",
+            "lawSignInKeepsExistingSession"
+          ]
+        },
+        {
+          "heading": "Story: Sign in and manage participation / Sign-out revokes only the caller's session and expiry uses the trusted clock",
+          "line": 85,
+          "definitions": [
+            "canEndSession",
+            "endSession",
+            "canRevokeSession",
+            "revokeSession",
+            "canAdvanceTime",
+            "advanceTime",
+            "lawSignOutKeepsOtherSession",
+            "lawRevocationKeepsCaller"
+          ]
+        },
+        {
+          "heading": "Story: Sign in and manage participation / Confirmed closure ends every session, disconnects X and withdraws both email consents",
+          "line": 113,
+          "definitions": [
+            "canClose",
+            "close",
+            "canReopen",
+            "reopen",
+            "alwaysClosedPrivate",
+            "lawClosureInvalidatesSession",
+            "stepHistoryIsStable"
+          ]
+        },
+        {
+          "heading": "Story: Sign in and manage participation / An optional X identity stays reserved after disconnect and closure",
+          "line": 146,
+          "definitions": [
+            "canConnectX",
+            "connectX",
+            "canDisconnectX",
+            "disconnectX",
+            "alwaysIdentityIds",
+            "alwaysXReservation",
+            "alwaysXVisibility",
+            "stepXReservationsRetained"
+          ]
+        },
+        {
+          "heading": "Story: Keep mail consent tied to the current account session / Email enrollment and consent use the existing email rules under live session checks",
+          "line": 171,
+          "definitions": [
+            "canEnrollEmail",
+            "enrollEmail",
+            "canVerifyEmail",
+            "verifyEmail",
+            "canSetEmailConsent",
+            "setEmailConsent",
+            "canUnsubscribe",
+            "unsubscribe",
+            "stepSignInPreservesEmail"
+          ]
+        },
+        {
+          "heading": "Story: Keep mail consent tied to the current account session / Multiple sessions, expiry, closure, disconnected X and explicit reopening are reachable",
+          "line": 199,
+          "definitions": [
+            "sometimesTwoSessions",
+            "sometimesTargetedSignOut",
+            "sometimesExpiredSession",
+            "sometimesClosed",
+            "sometimesDisconnected",
+            "sometimesReopened",
+            "weight_signIn",
+            "weight_endSession",
+            "weight_revokeSession",
+            "weight_advanceTime",
+            "weight_close",
+            "weight_reopen",
+            "weight_enrollEmail",
+            "weight_verifyEmail",
+            "weight_setEmailConsent",
+            "obligationsValues",
+            "historicalPointsValues",
+            "actorIdValues",
+            "byValues",
+            "draftTextValues",
+            "handleValues",
+            "confirmationValues",
+            "pathValues",
+            "xIdValues",
+            "sessionIdValues",
+            "currentSessionValues",
+            "targetSessionValues",
+            "otherSessionValues",
+            "expiresAtValues",
+            "nowValues",
+            "firstSession",
+            "twoSessions",
+            "aValues"
+          ]
+        }
+      ],
+      "imports": [
+        "backend__email"
+      ],
       "references": []
     },
     {
@@ -518,76 +585,136 @@
     },
     {
       "path": "spec/backend/wallets.md",
-      "sha256": "bc33a7dd7015e952350eb69ca7f1f87184bfaf0b772403105ac735d6619f3bcd",
+      "sha256": "c2f024263e30cbcdde00fa36d79e44f9ec8687ed0b8b3651c6628899352bc13b",
       "module": "backend__wallets",
       "stories": [
         {
-          "heading": "Story: Replace a payout wallet safely",
-          "line": 9
+          "heading": "Story: Replace a payout wallet without losing the current destination",
+          "line": 12
         }
       ],
       "rules": [
         {
-          "heading": "Story: Replace a payout wallet safely / A wallet binding retains its first proof and each attempted nonce",
+          "heading": "Story: Replace a payout wallet without losing the current destination / Registration appends an immutable successor or returns the current registry row",
           "line": 14,
           "definitions": [
-            "BindingPhase",
-            "WalletBinding",
+            "WalletChain",
+            "ClaimSource",
+            "ClaimSequenceCheck",
+            "emptyClaimSequence",
+            "WalletClaim",
+            "Registration",
+            "Challenge",
+            "PossessionEvidence",
+            "Consumption",
+            "VerifiedRead",
+            "Authorization",
+            "WalletRegistration",
+            "absentClaim",
+            "absentChallenge",
+            "absentRead",
+            "absentAuthorization",
             "initial",
-            "alwaysWalletIds"
+            "claimAt",
+            "currentClaim",
+            "sameRegistryWallet",
+            "canSelectChain",
+            "selectChain",
+            "canRestoreHistorical",
+            "restoreHistorical",
+            "canRegister",
+            "register",
+            "registrationReadback"
           ]
         },
         {
-          "heading": "Story: Replace a payout wallet safely / Only the authenticated account can begin an unused binding attempt",
-          "line": 27,
+          "heading": "Story: Replace a payout wallet without losing the current destination / The server issues an expiring challenge for the exact current registry claim",
+          "line": 71,
           "definitions": [
-            "canBegin",
-            "begin",
-            "canAuthorizeWallet",
-            "authorizeWallet"
+            "challengeLifetime",
+            "challengeFor",
+            "readFor",
+            "consumed",
+            "canObserveTime",
+            "observeTime",
+            "canIssue",
+            "issue",
+            "canReadProof",
+            "readProof"
           ]
         },
         {
-          "heading": "Story: Replace a payout wallet safely / Activation requires account and wallet proof for the exact candidate",
-          "line": 44,
+          "heading": "Story: Replace a payout wallet without losing the current destination / A single consumption wins and authorization rechecks the current claim",
+          "line": 111,
           "definitions": [
-            "canActivate",
-            "activate",
-            "alwaysActiveHasProof",
-            "alwaysUnsignedKeepsWallet"
+            "canConsume",
+            "consume",
+            "ownsConsumption",
+            "alreadyAuthorized",
+            "canCommitAuthorization",
+            "commitAuthorization",
+            "activeAuthorization",
+            "activeWallet",
+            "firstProof",
+            "authorizationReadback",
+            "pendingWallet"
           ]
         },
         {
-          "heading": "Story: Replace a payout wallet safely / An uncertain broadcast keeps both signed attempts until one finalizes",
-          "line": 60,
+          "heading": "Story: Replace a payout wallet without losing the current destination / Claim and proof history remains bound to one partition",
+          "line": 164,
           "definitions": [
-            "canSubmit",
-            "submit",
-            "canMarkUncertain",
-            "markUncertain",
-            "canRequestCancel",
-            "requestCancel",
-            "canReconcile",
-            "reconcile",
+            "alwaysPartitionValid",
+            "alwaysPredecessors",
+            "alwaysClaimsAdmitted",
+            "alwaysAuthorizationAdmitted",
+            "alwaysOneConsumption",
+            "alwaysOneAuthorization",
+            "alwaysAuthorizationIncreases",
+            "stepClaimsRetained",
             "stepFirstProofPersists",
+            "stepAuthorizationsRetained",
+            "stepConsumedRetained",
             "sometimesBound",
-            "sometimesUncertain",
-            "sometimesCancelled"
+            "sometimesPriorStillEffective",
+            "sometimesConsumedButUnsigned"
           ]
         },
         {
-          "heading": "Story: Replace a payout wallet safely / Simulation samples exercise missing, matching and conflicting evidence",
-          "line": 89,
+          "heading": "Story: Replace a payout wallet without losing the current destination / Simulation covers matching messages, stale claims, exact expiry and replay",
+          "line": 203,
           "definitions": [
             "byValues",
-            "nonceValues",
-            "proofIdValues",
-            "walletValues"
+            "walletValues",
+            "digestValues",
+            "timestampValues",
+            "claimValues",
+            "challengeIdValues",
+            "requestIdValues",
+            "messageDigestValues",
+            "registrationValues",
+            "proofValues",
+            "weight_selectChain",
+            "weight_restoreHistorical",
+            "weight_register",
+            "weight_issue",
+            "weight_readProof",
+            "weight_consume",
+            "weight_commitAuthorization"
           ]
         }
       ],
       "imports": [],
-      "references": []
+      "references": [
+        {
+          "target": "../settlement/signer.md",
+          "line": 8
+        },
+        {
+          "target": "../settlement/recovery.md",
+          "line": 170
+        }
+      ]
     },
     {
       "path": "spec/frontend/navigation.md",
@@ -4156,7 +4283,7 @@
     },
     {
       "path": "spec/settlement/referralAccrual.md",
-      "sha256": "19b764dab95a164e54aa14133f24eb53adaf6678f0ee0871f24b8d55d2ea3eef",
+      "sha256": "7d8c666da177c63701fd1e9133fc94d2005aaea41cb3a0fa5fbb0bff4f7ef2b3",
       "module": "settlement__referralAccrual",
       "stories": [
         {
@@ -4265,6 +4392,7 @@
             "alwaysFileTotals",
             "alwaysStagedPrivate",
             "alwaysPinsUnique",
+            "entryWalletPinned",
             "alwaysFileWalletPinned",
             "stepPinsRetained",
             "stepRecordsRetained",
@@ -4278,7 +4406,7 @@
         },
         {
           "heading": "Story: File every closed month once at its historical rate / Simulation distinguishes eligible, excluded and repeated payout evidence",
-          "line": 250,
+          "line": 255,
           "definitions": [
             "dateValues",
             "firstValues",
@@ -4536,7 +4664,7 @@
     },
     {
       "path": "spec/settlement/referralPublication.md",
-      "sha256": "2288ae248dcf6ba7a427542f465e31d3bd0f986fd84b5b90e81e863fd245d9ec",
+      "sha256": "34b7a91a6777b034cf72742ece7d126db85892835213da68d4d367bd9be51b08",
       "module": "settlement__referralPublication",
       "stories": [
         {
@@ -4545,7 +4673,7 @@
         },
         {
           "heading": "Story: Claim immediately without reissuing paid tokens",
-          "line": 172
+          "line": 186
         }
       ],
       "rules": [
@@ -4600,8 +4728,11 @@
         },
         {
           "heading": "Story: Publish one complete cumulative root / Only exact finalized evidence makes a root claimable",
-          "line": 139,
+          "line": 144,
           "definitions": [
+            "pendingPosting",
+            "matchesPendingAttempt",
+            "gasSettlementMatches",
             "canFinalize",
             "finalize",
             "canFinalizeFailure",
@@ -4610,7 +4741,7 @@
         },
         {
           "heading": "Story: Claim immediately without reissuing paid tokens / A claim uses the active root's pinned wallet and cumulative amount",
-          "line": 174,
+          "line": 188,
           "definitions": [
             "canClaim",
             "claim",
@@ -4628,10 +4759,12 @@
         },
         {
           "heading": "Story: Claim immediately without reissuing paid tokens / History, native holds and cumulative claims remain bounded",
-          "line": 235,
+          "line": 249,
           "definitions": [
             "alwaysNativeBounded",
             "alwaysAttemptGasAccounted",
+            "alwaysUniqueAttempts",
+            "alwaysPendingAttempt",
             "alwaysSettledGasValid",
             "alwaysHoldCeiling",
             "alwaysIdleUnreserved",
@@ -4653,7 +4786,7 @@
         },
         {
           "heading": "Story: Claim immediately without reissuing paid tokens / Simulation includes live control, capped accruals and conflicting receipts",
-          "line": 284,
+          "line": 306,
           "definitions": [
             "byValues",
             "signerValues",

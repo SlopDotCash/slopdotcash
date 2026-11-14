@@ -15,9 +15,10 @@ consent independently, and may unsubscribe without gaining account authority.
 type Enrollment = { actor: int, verifiedAddress: str, pendingAddress: str,
   tokenDigest: str, expiresAt: int, consumed: bool, now: int,
   securityConsent: bool, activityConsent: bool, notices: int }
-pure val initial: Enrollment = { actor: 1, verifiedAddress: "", pendingAddress: "",
+pure def newEnrollment(actorId: int): Enrollment = { actor: actorId, verifiedAddress: "", pendingAddress: "",
   tokenDigest: "", expiresAt: 0, consumed: false, now: 0,
   securityConsent: false, activityConsent: false, notices: 0 }
+pure val initial: Enrollment = newEnrollment(1)
 pure def alwaysEnrollmentTimes(e: Enrollment): bool = e.now >= 0 and e.expiresAt >= 0 and e.notices >= 0
 ```
 
@@ -73,6 +74,22 @@ pure def addNotice(e: Enrollment): Enrollment = { ...e, notices: e.notices + 1 }
 pure def sometimesVerified(e: Enrollment): bool = e.verifiedAddress != "" and e.consumed
 pure def sometimesBothConsent(e: Enrollment): bool = e.securityConsent and e.activityConsent
 pure def sometimesIndependentNotice(e: Enrollment): bool = e.notices > 0 and not(e.securityConsent) and not(e.activityConsent)
+```
+
+### Account closure withdraws both email consents and cancels pending verification
+
+The account aggregate calls this transition in the same commit as closure.
+A revoked pending token cannot verify after reopening. The verified destination
+and in-app notice history remain stored. The notification adapter cancels
+queued mail for both withdrawn categories as part of closure and rechecks
+consent before a later send. Withdrawal does not erase provider delivery history.
+
+```quint
+pure def canCloseEnrollment(e: Enrollment, by: int, closureConfirmed: bool): bool =
+  by == e.actor and closureConfirmed
+pure def closeEnrollment(e: Enrollment, by: int, closureConfirmed: bool): Enrollment =
+  { ...e, pendingAddress: "", tokenDigest: "", expiresAt: 0, consumed: false,
+    securityConsent: false, activityConsent: false }
 ```
 
 ### Simulation samples exercise missing, matching and conflicting evidence

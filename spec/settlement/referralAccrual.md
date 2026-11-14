@@ -202,7 +202,10 @@ exact file entries and first-use wallet pins as one atomic operation, including
 in dry-run mode. This follows `workers/referral-accrual/store.ts:258–306`.
 The public projection includes the complete immutable record and cumulative
 referrer totals. A missing wallet changes root inclusion only; it never deletes
-or reallocates accrued tokens. The recorded rate is an integer number of token base units per stablecoin
+or reallocates accrued tokens. Discovered by the proof: the empty wallet used for
+a missing pin could satisfy the historical entry check and then invalidate an
+old file when the actor gained a real pin. Every filed entry has a nonempty
+wallet matching a retained pin. The recorded rate is an integer number of token base units per stablecoin
 micro-unit. Multiplication is exact; no per-payout rounding occurs. This
 matches pinned `workers/referral-accrual/core.ts:365` and `config.ts:73–80`.
 The approved initial rate is three tokens per USDC; configuration refuses a
@@ -236,7 +239,9 @@ pure def alwaysFileTotals(a: Accrual): bool = a.filings.every(file => M::validAm
 pure def alwaysStagedPrivate(a: Accrual): bool = a.phase != Collecting implies a.staged.length() == 0
 pure def alwaysPinsUnique(a: Accrual): bool = a.pins.every(pin => pin.wallet != "" and
   a.pins.select(other => other.actor == pin.actor).length() == 1 and a.pins.select(other => other.wallet == pin.wallet).length() == 1)
-pure def alwaysFileWalletPinned(a: Accrual): bool = a.filings.every(file => file.entries.every(e => e.wallet == pinnedWallet(a.pins, e.actor)))
+pure def entryWalletPinned(pins: List[Wallet], entry: RootEntry): bool =
+  entry.wallet != "" and entry.wallet == pinnedWallet(pins, entry.actor)
+pure def alwaysFileWalletPinned(a: Accrual): bool = a.filings.every(file => file.entries.every(e => entryWalletPinned(a.pins, e)))
 pure def stepPinsRetained(before: Accrual, after: Accrual): bool = before.pins.every(pin => after.pins.includes(pin))
 pure def stepRecordsRetained(before: Accrual, after: Accrual): bool = before.records.every(r => after.records.includes(r))
 pure def stepRatesRetained(before: Accrual, after: Accrual): bool = before.rates.every(r => after.rates.includes(r))
