@@ -58,10 +58,12 @@ per hosted-runner vCPU; the worker count changes no explored state space.
 
 Manual diagnostics may select space-separated model names with
 `gh workflow run formal.yml --ref BRANCH -f models="MODEL_NAME OTHER_MODEL" -f shards='[1]'`.
-The defaults are `all` and six shards. Each shard must contain a model, so small
+The defaults are `all` and 16 shards. Each shard must contain a model, so small
 diagnostics select one shard. A focused result covers only the selected models; trusted
 branch releases still require every model and retain the same native controls,
-source bindings and report checks.
+source bindings and report checks. One exemption (PRD section 12, STATE-05): a
+manual release that sets `skip_proofs` runs the inventory checks only. A
+scheduled run checks every model on the default branch each night.
 
 Type, scenario and simulation stages have a 90-second limit. Finite verification
 normally has a 180-second limit. Explicit resource exceptions in

@@ -14,7 +14,7 @@
     },
     {
       "path": ".github/workflows/deploy.yml",
-      "sha256": "acd00c2aa5b10a5a7c5d35d133d985a9c0b62d0dd7950faaeada90764b243434",
+      "sha256": "4485f292377d2b2d5d06a29bcacad6e8775f28f1f37d3ceff5e04aca93f3d46f",
       "models": [
         "formal/models/release/ci_browser_evidence.qnt",
         "formal/models/release/ci_browser_runtime.qnt",
@@ -23,9 +23,10 @@
         "formal/models/release/release_publication.qnt"
       ],
       "candidateLines": [
-        27, 59, 158, 190, 195, 196, 250, 304, 378, 491, 497, 565, 588, 589, 610,
-        622, 688, 918, 946, 985, 1076, 1182, 1184, 1185, 1389, 1472, 1625, 1627,
-        1657, 1765, 1787, 1858, 1869, 1894, 1965, 1978, 1991, 2000, 2001, 2002
+        32, 42, 115, 230, 268, 269, 326, 360, 416, 493, 608, 614, 682, 685, 711,
+        712, 733, 745, 811, 1041, 1069, 1134, 1225, 1331, 1333, 1334, 1538,
+        1621, 1774, 1776, 1806, 1915, 1937, 2008, 2019, 2044, 2115, 2128, 2141,
+        2150, 2151, 2152
       ],
       "review": "mapped-abstraction"
     },
@@ -41,24 +42,24 @@
     },
     {
       "path": ".github/workflows/formal.yml",
-      "sha256": "f1b62495beffcf7d982e0f99d3a3da348d5e891277ec615492da989106cb8d58",
+      "sha256": "cd4f3e4e5a7ac15e7efdc933917fe766f7405ab85bd6a1a9aae4d22e7f910901",
       "models": [
         "formal/models/release/ci_coverage.qnt",
         "formal/models/release/release_proof_gate.qnt",
         "formal/models/tooling/formal_toolchain.qnt"
       ],
-      "candidateLines": [1, 90, 111, 176, 236, 261, 282, 369, 380],
+      "candidateLines": [1, 5, 95, 116, 181, 241, 266, 287, 374, 385],
       "review": "mapped-abstraction"
     },
     {
       "path": ".github/workflows/lemmascript.yml",
-      "sha256": "dfb9f6c24dcb5729a6ebc8ec93c9836772e6d26f599d9e92813ce91873dc2b7e",
+      "sha256": "20d898b70db2b68edab6d6d13e8dada5512915a6eab73b23938629feb836b666",
       "models": [
         "formal/models/release/ci_coverage.qnt",
         "formal/models/release/release_proof_gate.qnt",
         "formal/models/tooling/formal_toolchain.qnt"
       ],
-      "candidateLines": [],
+      "candidateLines": [5],
       "review": "mapped-abstraction"
     },
     {
@@ -70,11 +71,12 @@
     },
     {
       "path": ".github/workflows/points-implementation-corrections.yml",
-      "sha256": "d0e0fec28b3a4c52a7838377ddbce56fb090198cf25c4c21be096d5bc239b2d1",
+      "sha256": "6077695066c3fa201a0ad3fc473b7e03f3c536b240ce46f5e9631b9b53df9979",
       "models": [
+        "formal/models/points/historical_discussion_evidence.qnt",
         "formal/models/points/historical_implementation_allocation.qnt"
       ],
-      "candidateLines": [70, 98, 172],
+      "candidateLines": [74, 102, 178],
       "review": "mapped-abstraction"
     },
     {
@@ -520,7 +522,7 @@
     },
     {
       "path": "backend/points/handler.ts",
-      "sha256": "be8e92b7e274cf91946b9e776dd3d2318742b8300c88c12a450e609c5e0d655b",
+      "sha256": "e2d6c92f3bd5b0492dbd04fc35eea011c826bd52b82c2f0bd0eca65503276252",
       "models": [
         "formal/models/api/api_accounts.qnt",
         "formal/models/api/identity_consumer_exchange.qnt",
@@ -529,8 +531,8 @@
         "formal/models/vetting/vetting_stream_authority.qnt"
       ],
       "candidateLines": [
-        21, 22, 115, 215, 220, 225, 229, 299, 327, 331, 334, 337, 340, 345, 350,
-        354, 377, 393
+        21, 22, 120, 220, 225, 230, 234, 304, 332, 336, 339, 342, 345, 350, 355,
+        359, 382, 398
       ],
       "review": "mapped-abstraction"
     },
@@ -636,7 +638,7 @@
     },
     {
       "path": "backend/projects/handler.ts",
-      "sha256": "39686b61d5d4ab0ed1e891e6486f8cfea03b98d7bb8d381855ac62c43b18ec0f",
+      "sha256": "d7b50e2db234ce8a2d6c3814ccef1b534c7ee79e30bc051ecb255fde73c8bf79",
       "models": [
         "formal/models/api/api_owner_vault_lifecycle.qnt",
         "formal/models/api/api_project_creation_completion.qnt",
@@ -659,6 +661,7 @@
         "formal/models/ui/ui_project_publication_lifetime.qnt",
         "formal/models/ui/ui_security_settings_lifetime.qnt",
         "formal/models/ui/ui_setup_check_lifetime.qnt",
+        "formal/models/ui/ui_vault_provisional_funding.qnt",
         "formal/models/vetting/vetting_admission_clearance.qnt",
         "formal/models/vetting/vetting_repository_clearance.qnt"
       ],
@@ -667,12 +670,12 @@
         452, 456, 457, 465, 531, 535, 866, 903, 919, 1015, 1029, 1034, 1041,
         1042, 1045, 1048, 1066, 1068, 1070, 1081, 1099, 1106, 1117, 1149, 1150,
         1166, 1172, 1181, 1183, 1188, 1189, 1190, 1191, 1203, 1204, 1205, 1208,
-        1213, 1252, 1311, 1361, 1395, 1413, 1481, 1563, 1574, 1583, 1587, 1607,
-        1649, 1655, 1659, 1677, 1683, 1719, 1727, 1730, 1731, 1781, 1782, 1783,
-        1803, 1848, 1849, 1857, 1877, 1879, 1883, 1894, 1904, 1919, 1925, 1935,
-        1972, 1991, 1995, 2046, 2191, 2195, 2222, 2243, 2244, 2258, 2261, 2266,
-        2267, 2313, 2327, 2345, 2362, 2394, 2403, 2547, 2573, 2724, 2744, 2790,
-        2830, 2841, 2842, 2955, 2963, 2981, 3178
+        1213, 1252, 1311, 1361, 1395, 1413, 1481, 1563, 1574, 1577, 1578, 1588,
+        1592, 1612, 1654, 1660, 1664, 1682, 1688, 1724, 1732, 1735, 1736, 1786,
+        1787, 1788, 1808, 1853, 1854, 1862, 1882, 1884, 1888, 1899, 1909, 1924,
+        1930, 1940, 1977, 1996, 2000, 2051, 2196, 2200, 2227, 2248, 2249, 2263,
+        2266, 2271, 2272, 2318, 2332, 2350, 2367, 2399, 2408, 2552, 2578, 2729,
+        2749, 2795, 2835, 2846, 2847, 2960, 2968, 2986, 3183
       ],
       "review": "mapped-abstraction"
     },
@@ -728,14 +731,15 @@
     },
     {
       "path": "backend/projects/vault-setup.ts",
-      "sha256": "8feb7d085ff0a4ecadfe37cfd749ec8776a5910b10161dac903675d2f4a30053",
+      "sha256": "7bb6102eda0b90d91aad2b8a619c9b9faf1a8f0a34693eff54a02ef95042eee7",
       "models": [
         "formal/models/api/api_owner_vault_lifecycle.qnt",
         "formal/models/contracts/vault_creation.qnt",
         "formal/models/contracts/vault_setup_resolution.qnt",
-        "formal/models/payments/vault_initial_snapshot.qnt"
+        "formal/models/payments/vault_initial_snapshot.qnt",
+        "formal/models/ui/ui_vault_provisional_funding.qnt"
       ],
-      "candidateLines": [107, 372, 511, 582],
+      "candidateLines": [67, 78, 85, 124, 390, 500, 559, 630, 647],
       "review": "mapped-abstraction"
     },
     {
@@ -787,10 +791,17 @@
       "review": "mapped-abstraction"
     },
     {
+      "path": "backend/referrals/codes.ts",
+      "sha256": "0667fd65eb51fb72acbe4801e94af5f918233c7aeb3a388fdc9520531c565a6e",
+      "models": ["formal/models/referrals/referral_code.qnt"],
+      "candidateLines": [143, 151, 159, 217, 220, 246, 247, 255],
+      "review": "mapped-abstraction"
+    },
+    {
       "path": "backend/referrals/handler.ts",
-      "sha256": "44249d4131eefeb6565bb01c5d7182de79c1d200ef3539e5cb5b9235dd6a1ee4",
+      "sha256": "1b5de82ce245f509c8d1d7bd6e1c7588dc4a0fb03a9f598a584a707efdb0955b",
       "models": ["formal/models/referrals/referral_accrual.qnt"],
-      "candidateLines": [97],
+      "candidateLines": [11, 51, 73, 87, 170],
       "review": "mapped-abstraction"
     },
     {
@@ -1391,17 +1402,19 @@
     },
     {
       "path": "contracts/evm/adapter.ts",
-      "sha256": "d9ad1ad8d79bd57c48a76ddd2a7d6dcaaf1f0cce607ee649fe899d7e4b641c25",
+      "sha256": "f6eee7031911c5b3b8bdb3371357a53f19369faf066ce5fc7618c49c11e5f4b6",
       "models": [
         "formal/models/contracts/vault_setup_resolution.qnt",
         "formal/models/payments/chain_evidence.qnt",
-        "formal/models/payments/evm_binding_consent_api.qnt"
+        "formal/models/payments/evm_binding_consent_api.qnt",
+        "formal/models/ui/ui_vault_provisional_funding.qnt"
       ],
       "candidateLines": [
         14, 71, 85, 201, 237, 256, 284, 299, 331, 497, 551, 639, 646, 647, 649,
         650, 974, 977, 986, 992, 996, 1000, 1029, 1072, 1080, 1089, 1097, 1117,
-        1120, 1162, 1234, 1252, 1264, 1269, 1270, 1294, 1320, 1422, 1434, 1478,
-        1480, 1489, 1493, 1495, 1515, 1516
+        1120, 1162, 1234, 1259, 1260, 1270, 1277, 1282, 1283, 1299, 1300, 1302,
+        1314, 1317, 1349, 1375, 1377, 1480, 1487, 1538, 1540, 1549, 1553, 1555,
+        1575, 1576
       ],
       "review": "mapped-abstraction"
     },
@@ -2021,7 +2034,7 @@
     },
     {
       "path": "functions/[[path]].ts",
-      "sha256": "b15107923163f50fad8061b23601adacafa1187480b9609b6e2d317c45d434b3",
+      "sha256": "a38c540f4d1a7c95d22f2cf08d623dc1a0dc394c38439b0829f0cb88143ddbf3",
       "models": ["formal/models/api/project_skill_publication.qnt"],
       "candidateLines": [],
       "review": "mapped-abstraction",
@@ -2029,7 +2042,7 @@
     },
     {
       "path": "functions/api/v1/[[path]].ts",
-      "sha256": "6f7b6e9f6517adcce584bf170ef65efd0a2326767eb79bae3b948f11b0530243",
+      "sha256": "86aabce140b2c3df20520db903cafa9e872031000097c55fc3bf9a5078265fa8",
       "models": [
         "formal/models/api/api_request_composition.qnt",
         "formal/models/api/identity_consumer_exchange.qnt",
@@ -2037,7 +2050,7 @@
         "formal/models/payments/solana_binding_api.qnt",
         "formal/models/vetting/vetting_stream_authority.qnt"
       ],
-      "candidateLines": [519, 520, 556, 569],
+      "candidateLines": [528, 529, 565, 578],
       "review": "mapped-abstraction"
     },
     {
@@ -3310,6 +3323,13 @@
       "review": "mapped-abstraction"
     },
     {
+      "path": "migrations/0124_referral_codes.sql",
+      "sha256": "0b4ff6188f8c8822d2f5e92f5705c6dbdda55d8f69f408d6218bbc2d6d9b401a",
+      "models": ["formal/models/referrals/referral_code.qnt"],
+      "candidateLines": [27, 28, 34, 35],
+      "review": "mapped-abstraction"
+    },
+    {
       "path": "package.json",
       "sha256": "d4829e85818eb386ab656a7e785502d2df48c97ee6ea159c28718561d032c86a",
       "models": ["formal/models/tooling/formal_toolchain.qnt"],
@@ -3448,12 +3468,12 @@
     },
     {
       "path": "scripts/ci-scope.mjs",
-      "sha256": "ed630caa5ce334eede36daf91542726cbe7fd5b9b9e9f9895835f33ec1bfe7a9",
+      "sha256": "a0958646461865675c03c99d9bcb38d68704f6c78d095483ef4abf4e41183bc1",
       "models": [
         "formal/models/release/ci_browser_runtime.qnt",
         "formal/models/release/ci_coverage.qnt"
       ],
-      "candidateLines": [104, 153, 159, 160, 175],
+      "candidateLines": [110, 119, 120, 172, 178, 179, 194],
       "review": "mapped-abstraction"
     },
     {
@@ -3466,14 +3486,15 @@
     },
     {
       "path": "scripts/collect-implementation-corrections.ts",
-      "sha256": "5d7a69f260cd926506ab3314535270680529a07b22246327b8e69d2ca5a06b4e",
+      "sha256": "5abfa2a45cdd0531f1e1f4abe2395f16667330935fea12b836792960866ac696",
       "models": [
+        "formal/models/points/historical_discussion_evidence.qnt",
         "formal/models/points/historical_implementation_allocation.qnt"
       ],
       "candidateLines": [
-        4, 11, 13, 77, 157, 234, 240, 243, 248, 258, 274, 280, 296, 297, 307,
-        310, 393, 439, 460, 485, 522, 529, 636, 647, 812, 1093, 1608, 1667,
-        1703, 1728, 1756, 1758
+        4, 11, 13, 83, 163, 240, 246, 249, 254, 264, 280, 286, 302, 303, 313,
+        316, 413, 459, 480, 505, 544, 551, 661, 672, 837, 1204, 1759, 1818,
+        1854, 1879, 1907, 1909
       ],
       "review": "mapped-abstraction"
     },
@@ -3823,7 +3844,7 @@
     },
     {
       "path": "scripts/generate-leaderboard.ts",
-      "sha256": "890f46db96ba447085c8c843e52eb696144c3db453ea777a0f98c21732899ecb",
+      "sha256": "91125d6d6bb1bfa52d585f45fa2c9391e74ab73bbc9a599e05b25e363f0e7a57",
       "models": [
         "formal/models/points/commit_line_cache.qnt",
         "formal/models/points/github_budget_window.qnt",
@@ -3835,15 +3856,15 @@
         "formal/models/ui/ui_score_selection.qnt"
       ],
       "candidateLines": [
-        29, 184, 195, 204, 284, 296, 298, 301, 493, 581, 602, 638, 669, 734,
-        766, 856, 889, 898, 907, 926, 1016, 1212, 1447, 1509, 1517, 1575, 1628,
-        1631, 1824, 1833, 1838, 1845, 1928, 1929, 2076, 2077, 2134, 2160, 2188,
-        2190, 2194, 2228, 2231, 2232, 2235, 2237, 2248, 2275, 2484, 2487, 2736,
-        2856, 2977, 2990, 3001, 3002, 3189, 3190, 3381, 3397, 3409, 3416, 3442,
-        3452, 3456, 3460, 3464, 3519, 3538, 3565, 3582, 3616, 3617, 3619, 3635,
-        3652, 3653, 3654, 3663, 3668, 3848, 4206, 4228, 4237, 4287, 4322, 4328,
-        4335, 4404, 4490, 4648, 4872, 4882, 4884, 4897, 4927, 4929, 4930, 4934,
-        4938, 4994, 5048, 5099, 5102, 5117
+        29, 184, 195, 204, 284, 296, 298, 301, 495, 583, 604, 640, 671, 736,
+        768, 858, 891, 900, 909, 928, 1018, 1214, 1449, 1511, 1519, 1577, 1630,
+        1633, 1826, 1835, 1840, 1847, 1930, 1931, 2078, 2079, 2136, 2162, 2190,
+        2192, 2196, 2230, 2233, 2234, 2237, 2239, 2250, 2277, 2486, 2489, 2738,
+        2858, 2979, 2992, 3003, 3004, 3191, 3192, 3383, 3399, 3411, 3418, 3444,
+        3454, 3458, 3462, 3466, 3521, 3540, 3567, 3584, 3618, 3619, 3621, 3637,
+        3654, 3655, 3656, 3665, 3670, 3850, 4208, 4230, 4239, 4289, 4324, 4330,
+        4337, 4406, 4492, 4650, 4890, 4900, 4902, 4915, 4946, 4948, 4949, 4953,
+        4957, 5013, 5067, 5118, 5121, 5157
       ],
       "review": "mapped-abstraction"
     },
@@ -3878,11 +3899,19 @@
       "review": "mapped-abstraction"
     },
     {
+      "path": "scripts/github-discussion-cache.ts",
+      "sha256": "cf3e5b0229723a69bc831ab6d4205f5b5cb8e1faea600e0db2b2835f3eb329a5",
+      "models": ["formal/models/points/github_ingestion_read.qnt"],
+      "candidateLines": [8, 10, 31, 69, 91, 189, 282, 287, 292, 295],
+      "review": "mapped-abstraction"
+    },
+    {
       "path": "scripts/github-ingestion-read.ts",
-      "sha256": "60179938a2785a2bd9423688e0ee78a499974834dc9878bc1b498516d89ce0fa",
+      "sha256": "c9718082a07abcf123dac2a34433c0d87fe9217fb56c62cee855aebe8f4dcb6c",
       "models": ["formal/models/points/github_ingestion_read.qnt"],
       "candidateLines": [
-        30, 48, 81, 102, 104, 122, 142, 182, 197, 206, 228, 238, 246
+        35, 53, 86, 107, 109, 127, 165, 235, 255, 265, 270, 276, 285, 307, 317,
+        326, 334
       ],
       "review": "mapped-abstraction"
     },
@@ -3899,6 +3928,13 @@
       "sha256": "96cd3b41a85caf5442d3fa7e84a52a7af67048307bdc30e53bfebc6145c8f85f",
       "models": ["formal/models/points/ingestion_retry.qnt"],
       "candidateLines": [],
+      "review": "mapped-abstraction"
+    },
+    {
+      "path": "scripts/historical-discussion-evidence.ts",
+      "sha256": "ff8fe26a58076a2fee4f15c5832969d526dc5a3c552bd13d2d9549271bd8e4b5",
+      "models": ["formal/models/points/historical_discussion_evidence.qnt"],
+      "candidateLines": [9, 146, 147],
       "review": "mapped-abstraction"
     },
     {
@@ -4383,6 +4419,17 @@
       "review": "mapped-abstraction"
     },
     {
+      "path": "scripts/release-robinhood-rpc.ts",
+      "sha256": "746b05625c8fe769b0a664194f4ebeb1b0288c676a9287cefca35475408e2f70",
+      "models": ["formal/models/release/release_publication.qnt"],
+      "candidateLines": [
+        57, 60, 63, 70, 76, 77, 78, 79, 80, 209, 213, 233, 235, 240, 241, 242,
+        243, 244, 245, 328, 331, 334, 412, 432, 433, 435, 438, 463, 464, 465,
+        470, 501, 541
+      ],
+      "review": "mapped-abstraction"
+    },
+    {
       "path": "scripts/release-vetting-backup.mjs",
       "sha256": "f16755854113f6b3f6e3a4c9ff891184d6bc912c0f44501d490a495a934bb46a",
       "models": ["formal/models/release/service_release_identity.qnt"],
@@ -4416,6 +4463,13 @@
       "sha256": "90447c198be71652be8de404703f087dca9631a4b833f3751e172ef13c981249",
       "models": ["formal/models/api/operator_intake_renewal.qnt"],
       "candidateLines": [23, 24, 25, 30, 33, 52, 53],
+      "review": "mapped-abstraction"
+    },
+    {
+      "path": "scripts/restore-leaderboard-discussions.py",
+      "sha256": "fbad1d73552db5cf098be1cd0365a8f58839fbdee92f92e5e1c14022ef817baa",
+      "models": ["formal/models/points/github_ingestion_read.qnt"],
+      "candidateLines": [56, 160, 173],
       "review": "mapped-abstraction"
     },
     {
@@ -5172,19 +5226,21 @@
     },
     {
       "path": "src/OwnerVaultSetup.tsx",
-      "sha256": "e30106ec392f0fbf2d0a5bbd272c43ca803ef88319a572fc7ba41dc30f7f88c0",
+      "sha256": "3d39a0a6412c320fa2b312a3485f9ba03772ed56443540089266440164ae0012",
       "models": [
         "formal/models/ui/ui_owner_vault_setup.qnt",
         "formal/models/ui/ui_owner_vault_setup_storage.qnt",
         "formal/models/ui/ui_transaction.qnt",
-        "formal/models/ui/ui_vault_auto_register.qnt"
+        "formal/models/ui/ui_vault_auto_register.qnt",
+        "formal/models/ui/ui_vault_provisional_funding.qnt"
       ],
       "candidateLines": [
-        1, 15, 36, 59, 61, 67, 70, 114, 118, 120, 125, 132, 133, 135, 139, 140,
-        141, 142, 143, 144, 147, 148, 149, 150, 160, 161, 163, 165, 234, 236,
-        246, 256, 352, 405, 437, 438, 447, 455, 459, 461, 473, 484, 487, 495,
-        525, 529, 535, 539, 546, 549, 550, 556, 558, 605, 626, 629, 839, 850,
-        872, 877, 892, 907
+        1, 15, 37, 60, 62, 68, 71, 110, 148, 152, 154, 159, 166, 167, 169, 173,
+        174, 175, 176, 177, 178, 181, 182, 183, 184, 186, 188, 190, 200, 201,
+        203, 205, 274, 276, 286, 296, 392, 446, 478, 479, 488, 496, 500, 502,
+        524, 536, 550, 554, 562, 572, 594, 598, 604, 608, 617, 621, 622, 628,
+        630, 679, 700, 703, 913, 924, 947, 952, 967, 980, 983, 1006, 1007, 1008,
+        1011, 1018
       ],
       "review": "mapped-abstraction"
     },
@@ -5238,7 +5294,7 @@
     },
     {
       "path": "src/Points.tsx",
-      "sha256": "e6e257aacaec2be7e2244d9bcd2550404ad709f750fa1b5a0d883fc3eeeac6d0",
+      "sha256": "11b23fc45c28cb4a8ea25babae11a362e2e7a5f299bfbc3aeb636a7d6d38113c",
       "models": [
         "formal/models/ui/ui_calendar_views.qnt",
         "formal/models/ui/ui_email_parent.qnt",
@@ -5250,20 +5306,20 @@
         "formal/models/ui/ui_session.qnt"
       ],
       "candidateLines": [
-        14, 19, 87, 102, 103, 104, 106, 112, 122, 131, 134, 142, 143, 145, 146,
-        162, 164, 211, 212, 213, 216, 217, 218, 219, 236, 242, 249, 257, 267,
-        274, 281, 295, 315, 332, 350, 351, 352, 357, 381, 382, 387, 390, 391,
-        392, 393, 394, 396, 397, 414, 420, 477, 478, 483, 485, 515, 516, 517,
-        519, 521, 524, 533, 535, 537, 539, 541, 544, 545, 549, 551, 553, 563,
-        564, 569, 571, 583, 584, 614, 618, 619, 629, 630, 641, 643, 650, 654,
-        659, 660, 684, 690, 742, 743, 744, 745, 748, 760, 834, 847, 852, 861,
-        931, 952, 958, 968, 977, 982, 984, 987, 993, 994, 1005, 1014, 1022,
-        1024, 1025, 1033, 1036, 1037, 1038, 1039, 1041, 1042, 1045, 1046, 1057,
-        1066, 1090, 1094, 1103, 1125, 1126, 1127, 1136, 1220, 1230, 1235, 1253,
-        1255, 1257, 1260, 1261, 1262, 1264, 1332, 1336, 1438, 1439, 1440, 1470,
-        1471, 1510, 1512, 1513, 1514, 1516, 1523, 1525, 1529, 1531, 1533, 1542,
-        1543, 1549, 1555, 1560, 1569, 1570, 1571, 1572, 1574, 1575, 1578, 1579,
-        1581, 1582, 1586, 1594, 1595, 1596, 1597, 1600, 1604, 1615, 1616, 1621
+        14, 19, 89, 106, 107, 108, 110, 116, 126, 135, 138, 146, 147, 149, 150,
+        166, 168, 218, 219, 220, 223, 224, 225, 226, 243, 249, 256, 264, 274,
+        281, 288, 302, 322, 339, 357, 358, 359, 364, 388, 389, 394, 397, 398,
+        399, 400, 401, 403, 404, 421, 427, 484, 485, 490, 492, 522, 523, 524,
+        526, 528, 531, 540, 542, 544, 546, 548, 551, 552, 556, 558, 560, 570,
+        571, 576, 578, 590, 591, 621, 625, 626, 636, 637, 648, 650, 657, 661,
+        666, 667, 691, 697, 749, 750, 751, 752, 755, 767, 841, 854, 859, 868,
+        938, 959, 965, 975, 984, 989, 991, 994, 1000, 1001, 1012, 1021, 1029,
+        1031, 1032, 1040, 1043, 1044, 1045, 1046, 1048, 1049, 1052, 1053, 1064,
+        1073, 1097, 1101, 1110, 1147, 1148, 1149, 1158, 1242, 1252, 1257, 1275,
+        1277, 1279, 1282, 1283, 1284, 1286, 1354, 1358, 1460, 1461, 1462, 1492,
+        1493, 1532, 1534, 1535, 1536, 1538, 1545, 1547, 1551, 1553, 1555, 1564,
+        1565, 1571, 1577, 1582, 1591, 1592, 1593, 1594, 1596, 1597, 1600, 1601,
+        1603, 1604, 1608, 1616, 1617, 1618, 1619, 1622, 1626, 1637, 1638, 1643
       ],
       "review": "mapped-abstraction"
     },
@@ -5493,6 +5549,13 @@
       "review": "mapped-abstraction"
     },
     {
+      "path": "src/ReferralCode.tsx",
+      "sha256": "684efc816370335b74b0c8b85a3100da7257fb6a42cdb387c03946d7e60e109f",
+      "models": ["formal/models/ui/ui_referral_code.qnt"],
+      "candidateLines": [3, 37, 39, 54, 77, 78, 81, 137],
+      "review": "mapped-abstraction"
+    },
+    {
       "path": "src/RewardAssetFields.tsx",
       "sha256": "9049842d3b52c76f39145d553c08c45e0759a08c5579266239fdc1b4a3b7351a",
       "models": ["formal/models/ui/ui_project_setup.qnt"],
@@ -5606,7 +5669,7 @@
     },
     {
       "path": "src/VaultActions.tsx",
-      "sha256": "5f2038d315fd24fbcacfe777ddb02dfec1fd3bad0a2d6cb06d6d5f41d65066e0",
+      "sha256": "4c10ee5434d67ad9edc96b3f4f736126b150af0701691a8ce96d2d58d1a79942",
       "models": [
         "formal/models/ui/ui_owner_bounty_funds.qnt",
         "formal/models/ui/ui_owner_recovery_lifetime.qnt",
@@ -5614,15 +5677,16 @@
         "formal/models/ui/ui_vault_auto_check.qnt",
         "formal/models/ui/ui_vault_batched_deposit.qnt",
         "formal/models/ui/ui_vault_prompt_ownership.qnt",
+        "formal/models/ui/ui_vault_provisional_funding.qnt",
         "formal/models/ui/ui_vault_recovery.qnt"
       ],
       "candidateLines": [
-        2, 32, 41, 48, 75, 77, 136, 142, 152, 155, 156, 158, 159, 160, 161, 181,
-        183, 187, 224, 246, 306, 353, 354, 357, 366, 368, 370, 375, 376, 377,
-        382, 383, 388, 392, 393, 403, 409, 420, 421, 422, 429, 430, 432, 437,
-        441, 443, 444, 445, 454, 461, 462, 495, 499, 509, 514, 521, 535, 541,
-        542, 543, 544, 548, 550, 588, 602, 629, 645, 650, 653, 660, 663, 670,
-        671, 677, 819
+        2, 32, 41, 48, 75, 77, 132, 141, 150, 156, 166, 169, 170, 172, 173, 174,
+        175, 197, 200, 208, 210, 220, 258, 280, 342, 389, 390, 393, 402, 404,
+        406, 412, 413, 414, 419, 420, 425, 429, 430, 440, 446, 457, 458, 459,
+        466, 467, 469, 474, 478, 480, 481, 482, 491, 498, 499, 532, 540, 550,
+        555, 563, 577, 583, 584, 585, 586, 590, 592, 630, 644, 671, 687, 692,
+        695, 702, 705, 712, 713, 719, 863
       ],
       "review": "mapped-abstraction"
     },
@@ -5854,19 +5918,20 @@
     },
     {
       "path": "src/lib/evm-vault-actions.ts",
-      "sha256": "c4cfe61747fec7adc98da4a35f86a058e09660797fee03a356aa502f880ae7a1",
+      "sha256": "07bf4893af7ac8c792e70e455bb21607adeac699cf7e0db553c91e9d360abdc4",
       "models": [
         "formal/models/contracts/evm_owner_action.qnt",
         "formal/models/ui/ui_monthly_setting_recovery.qnt",
         "formal/models/ui/ui_vault_auto_check.qnt",
         "formal/models/ui/ui_vault_batched_deposit.qnt",
-        "formal/models/ui/ui_vault_prompt_ownership.qnt"
+        "formal/models/ui/ui_vault_prompt_ownership.qnt",
+        "formal/models/ui/ui_vault_provisional_funding.qnt"
       ],
       "candidateLines": [
-        63, 342, 343, 355, 367, 370, 373, 375, 377, 394, 399, 401, 402, 416,
-        427, 467, 469, 471, 472, 496, 501, 502, 511, 522, 539, 547, 548, 549,
-        550, 551, 555, 561, 566, 567, 569, 570, 571, 574, 585, 586, 590, 591,
-        592, 593, 594
+        22, 25, 69, 137, 143, 240, 306, 365, 366, 378, 379, 384, 396, 399, 402,
+        404, 406, 423, 428, 430, 431, 445, 452, 461, 501, 503, 504, 516, 520,
+        521, 543, 548, 549, 558, 569, 586, 594, 595, 596, 597, 598, 602, 617,
+        623, 628, 629, 631, 632, 633, 636, 647, 648, 652, 653, 654, 655, 656
       ],
       "review": "mapped-abstraction"
     },
@@ -6517,6 +6582,13 @@
       "review": "mapped-abstraction"
     },
     {
+      "path": "src/lib/referral-code.ts",
+      "sha256": "c87ba1c8ddd57198e4b50b2d5040bb7147ec8eb229d9f62e9f17091e039ffb6c",
+      "models": ["formal/models/referrals/referral_code.qnt"],
+      "candidateLines": [36],
+      "review": "mapped-abstraction"
+    },
+    {
       "path": "src/lib/repositories.mjs",
       "sha256": "262f8f5eaef8f9477c05a1d9673b605cca96e7461aa47642026985d816a027aa",
       "models": ["formal/models/ui/ui_project_policy.qnt"],
@@ -7061,7 +7133,7 @@
     },
     {
       "path": "src/lib/web-analytics.mjs",
-      "sha256": "71cd8044a1ef9f0cff93b6078b4f28e19949825e8cd77c71344553d2e600d297",
+      "sha256": "96aa2f153796b7565c5ef878c02267c3ca9b22c3ce6290092bf692c7138decac",
       "models": [],
       "candidateLines": [],
       "review": "reviewed-no-independent-state",
@@ -7705,23 +7777,23 @@
     },
     {
       "path": "workers/payment-executor/binding-shared.ts",
-      "sha256": "50c3d1cee85ae20ecfacef34c587adad8a43169597a2c69fd422dd847c212bd3",
+      "sha256": "c1ec4f0f529c097a4928d1f75e13427c94282931cc2c5095380c48c5f3207cdc",
       "models": [
         "formal/models/payments/binding_cancellation.qnt",
         "formal/models/payments/binding_consent_renewal.qnt",
         "formal/models/payments/payment_binding.qnt",
         "formal/models/payments/signed_send.qnt"
       ],
-      "candidateLines": [320, 321],
+      "candidateLines": [321, 322],
       "review": "mapped-abstraction"
     },
     {
       "path": "workers/payment-executor/bootstrap-workflow.mjs",
-      "sha256": "707242679a4a7429e78fbf2169696ab41b523f5ee7450e19c87e830b527fc516",
+      "sha256": "173f6a7e13de315e5b956bc0e4f563799bace9b1f9f5c500010f6c6600a431a3",
       "models": ["formal/models/payments/inactive_attester.qnt"],
       "candidateLines": [
-        3, 37, 56, 73, 76, 80, 83, 95, 97, 113, 167, 179, 182, 200, 214, 216,
-        222, 224, 239, 265, 284, 295, 298, 328, 332, 333, 340
+        3, 37, 56, 73, 76, 80, 83, 95, 97, 113, 171, 183, 186, 204, 218, 220,
+        226, 228, 243, 269, 288, 299, 302, 332, 336, 337, 344
       ],
       "review": "mapped-abstraction"
     },
@@ -7788,7 +7860,7 @@
     },
     {
       "path": "workers/payment-executor/mainnet-execution.mjs",
-      "sha256": "fc7ba1aa1977a92005517ddcd7d937c8f50225a18255903d718947f8e2edc7a5",
+      "sha256": "ed9e1bac1ddeba48c4490bd23ef7741364bcba2b0b7b75169ef6697ab1fd80e3",
       "models": ["formal/models/payments/deployment_plan.qnt"],
       "candidateLines": [],
       "review": "mapped-abstraction"
@@ -8436,12 +8508,15 @@
     },
     {
       "path": "workers/slopbot/value-evidence.ts",
-      "sha256": "3622e480334ddfdc8a5a774a712fe83d5a8e2d21145ce367f5d1854c04a30a28",
+      "sha256": "377760084401d38301f40347da22389ad9b09679b4b7db1a534796a805380fad",
       "models": [
+        "formal/models/points/historical_discussion_evidence.qnt",
         "formal/models/slopbot/bot_evidence_integrity.qnt",
         "formal/models/slopbot/bot_value_dispute_actor.qnt"
       ],
-      "candidateLines": [61, 72, 81, 95, 559, 579, 622, 631, 650, 991, 1010],
+      "candidateLines": [
+        61, 72, 81, 95, 420, 421, 612, 632, 675, 684, 703, 1044, 1063
+      ],
       "review": "mapped-abstraction"
     },
     {
@@ -13468,18 +13543,43 @@
     },
     {
       "path": "formal/models/points/github_ingestion_read.qnt",
-      "sha256": "f0dfd0cad5dcc2f3045c04a8caa2d68e742bd7bc75ce6c146731b0de4956a991",
+      "sha256": "fdc3629501e65b3ed04384f98031b25241095a142281a52fdef4b22059bff295",
       "sources": [
+        "scripts/github-discussion-cache.ts",
         "scripts/github-ingestion-read.ts",
+        "scripts/restore-leaderboard-discussions.py",
         "workers/slopbot/github.ts"
       ],
       "scenarios": [
         "authorizationDoesNotRetryTest",
+        "confirmedCheckpointReadTest",
+        "mismatchedValidatorCannotReplayTest",
+        "mismatchedValidatorReadsLiveTest",
         "readResumesAfterLimitTest",
         "repeatedLimitFailsTest",
         "repeatedSecondaryLimitFailsTest",
         "secondaryLimitMessageResumesTest",
+        "timedOutCheckpointCannotPublishTest",
         "writeDoesNotRetryTest"
+      ]
+    },
+    {
+      "path": "formal/models/points/historical_discussion_evidence.qnt",
+      "sha256": "46f413d41b67007c2b2c31236fbc55a3da58761eaafb2aa9f998e0d10a87c884",
+      "sources": [
+        ".github/workflows/points-implementation-corrections.yml",
+        "scripts/collect-implementation-corrections.ts",
+        "scripts/historical-discussion-evidence.ts",
+        "workers/slopbot/value-evidence.ts"
+      ],
+      "scenarios": [
+        "completeGraphqlPathTest",
+        "disabledPathTest",
+        "incompleteFallbackHoldsTest",
+        "incompleteGraphqlFallsBackTest",
+        "legacyPathTest",
+        "quotaNeverLooksLikeDiscoveryTest",
+        "savedGraphqlReplaysWithNewReadsDisabledTest"
       ]
     },
     {
@@ -13798,6 +13898,25 @@
       ]
     },
     {
+      "path": "formal/models/referrals/referral_code.qnt",
+      "sha256": "05e51c5359091dcda9fd35574b36a63ac7b496872578d9044929b2788586add7",
+      "sources": [
+        "backend/referrals/codes.ts",
+        "migrations/0124_referral_codes.sql",
+        "src/lib/referral-code.ts"
+      ],
+      "scenarios": [
+        "anotherGithubLoginRefusedTest",
+        "limitRefusesANewNameTest",
+        "limitStillAllowsAReturnTest",
+        "otherAccountCannotTakeAReplacedNameTest",
+        "refusedNameChangesNothingTest",
+        "replacedNameStaysWithItsAccountTest",
+        "reservedNameRefusedTest",
+        "teamAccountRefusedTest"
+      ]
+    },
+    {
       "path": "formal/models/referrals/referral_control_plane.qnt",
       "sha256": "39909f02a5035aa5d8dcbcb36c980258904df35c643eaa8789dabd2b3edd093d",
       "sources": ["contracts/evm/src/ReferralDistributor.sol"],
@@ -13908,7 +14027,7 @@
     },
     {
       "path": "formal/models/release/ci_coverage.qnt",
-      "sha256": "69179871c0e91ee413be2ac33f3196ddbe267fcded19568ca2636a16ead1d412",
+      "sha256": "c8ed89ba784400cd1e9dfd9fec87223ec164d754e7478dc4a7b42af393c7a9f1",
       "sources": [
         ".github/workflows/deploy.yml",
         ".github/workflows/escrow-tests.yml",
@@ -13920,7 +14039,11 @@
       "scenarios": [
         "developmentCoverageTest",
         "fixtureSelectsChainCoverageTest",
+        "manualRunIsCompleteByDefaultTest",
+        "manualRunSkipsOnlyProofsTest",
+        "manualRunSkipsProofsAndBrowserLanesTest",
         "modelSourceSelectsAffectedModelsTest",
+        "pushCannotSkipTest",
         "releaseCoverageTest"
       ]
     },
@@ -14036,25 +14159,29 @@
     },
     {
       "path": "formal/models/release/release_publication.qnt",
-      "sha256": "1f1ce8fe6aff92942c260dc08638b122c8e633c8f06363692b5e210bdd5617f8",
+      "sha256": "5ad631eb7230f1290ed2883ce0fb12623b9f3691af8a3985369ef15fbde1c789",
       "sources": [
         ".github/workflows/deploy.yml",
         "scripts/dist-manifest.mjs",
         "scripts/prepare-publication.mjs",
         "scripts/prepare-site.mjs",
         "scripts/release-notify.mjs",
+        "scripts/release-robinhood-rpc.ts",
         "scripts/select-pages-deployment.mjs",
         "scripts/verify-staging-deployment.mjs",
         "src/lib/verified-selection.ts"
       ],
       "scenarios": [
         "ambiguousUploadKeepsExternalWriteWithoutPromotionTest",
+        "changedRpcInheritanceStillStopsUploadTest",
         "cleanupFailureDoesNotValidateOrPromoteTest",
         "deployErrorDoesNotInventRollbackOrConfirmationTest",
+        "disabledConverterDoesNotRequireInheritanceTest",
         "disabledSlopbotDoesNotNeedOrMutateItsSecretTest",
         "earlierWritesRemainPartialOnSecretRefusalTest",
         "emptyKeyAllocationStillNeedsExitCleanupTest",
         "exactReleaseTest",
+        "inheritedRpcMismatchStopsBeforeWritesTest",
         "metadataReadNeedsSecretFileCleanupTest",
         "missingProtectedSecretNeverUploadsTest",
         "missingVersionBindingCannotPromoteTest",
@@ -14062,6 +14189,13 @@
         "pendingProofCannotQualifyTest",
         "retainedSnapshotIsExplicitTest",
         "retainedSnapshotNeedsManualTest",
+        "rpcRotationAdvancedSourceCannotPromoteTest",
+        "rpcRotationAmbiguousDeployRemainsUncertainTest",
+        "rpcRotationCannotWriteOtherServicesTest",
+        "rpcRotationChangedVersionCannotPromoteTest",
+        "rpcRotationMissingPreflightCannotUploadTest",
+        "rpcRotationNeedsManualMainTest",
+        "rpcRotationOnlyPublishesCandidateTest",
         "sourceAdvanceAfterUploadIsPartialTest",
         "stagingRetainedSnapshotQualifiesTest",
         "supersededBeforeWriteTest",
@@ -17722,6 +17856,17 @@
       ]
     },
     {
+      "path": "formal/models/ui/ui_referral_code.qnt",
+      "sha256": "a54dcc058c0ce5d2fbeb63bd2e2e68302a4d05ede128c72de470417b8c1e820a",
+      "sources": ["src/ReferralCode.tsx"],
+      "scenarios": [
+        "accountChangeDropsAnEarlierSaveTest",
+        "earlierSaveCannotAnswerAfterAccountChangeTest",
+        "savedNameShowsAndARefusalKeepsItTest",
+        "secondSaveWaitsForTheFirstTest"
+      ]
+    },
+    {
       "path": "formal/models/ui/ui_referral_read_ownership.qnt",
       "sha256": "5436fa69340a3e13c2159ee391a33236561ddb04f7414931609769cf64db8c94",
       "sources": ["src/ReferralClaims.tsx", "src/lib/pending-attempt.ts"],
@@ -18332,6 +18477,30 @@
         "storageFailureStartsNoWalletTest",
         "unknownWalletKeepsRecoverySlotTest",
         "withdrawalSurvivesDepositRestrictionTest"
+      ]
+    },
+    {
+      "path": "formal/models/ui/ui_vault_provisional_funding.qnt",
+      "sha256": "8b61ecc24e3acb1ee45a88644218c4f25301f5a71d36bb1f2a15f921e5276feb",
+      "sources": [
+        "backend/projects/handler.ts",
+        "backend/projects/vault-setup.ts",
+        "contracts/evm/adapter.ts",
+        "src/OwnerVaultSetup.tsx",
+        "src/VaultActions.tsx",
+        "src/lib/evm-vault-actions.ts"
+      ],
+      "scenarios": [
+        "depositVerifiesBeforeRegistrationTest",
+        "depositWithoutVaultEndsClearlyTest",
+        "droppedCreationHidesFormTest",
+        "fundsBeforeFinalityTest",
+        "promptDefersRegistrationTest",
+        "promptThenRegistrationTest",
+        "reincludedCreationRestoresFormTest",
+        "reloadRestoresFormTest",
+        "revertedCreationOffersNoFormTest",
+        "unregisteredDepositIsNotCountedTest"
       ]
     },
     {

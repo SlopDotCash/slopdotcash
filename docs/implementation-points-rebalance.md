@@ -41,6 +41,14 @@ The frozen baseline, registry and campaign scope must still match. An uploaded
 checkpoint is not its own evidence of completeness. Applying corrections still
 requires the current main checkout and fresh authority and financial checks.
 
+The optional `graphql_discussions=true` input reduces REST comment requests
+for new retained-copy discovery. GitHub's REST PR and reviews still anchor
+the evidence. Before using a GraphQL discussion, the collector checks the PR
+identity and reconciles every comment count with REST. Missing pages, count
+mismatches, and ambiguous references fall back to the original REST reads.
+The retained-copy proof checks the original and accepted patches before
+allocating Points. Resuming a campaign reuses its recorded discussion reads.
+
 ## Private eligibility and recording
 
 The reconcile job uses the production environment and publication lock. It
@@ -84,3 +92,10 @@ Retain the campaign manifest, raw response digests, complete source inventory,
 aggregate reconciliation receipt and verified deployment identity. Report held
 and protected coverage separately from changed allocations; neither means a
 contributor received the revised Points.
+
+For a routine fresh release that reaches its collection deadline, wait for the
+run to finish and confirm it retained a `leaderboard-discussions-<attempt>`
+artifact. Dispatch `deploy.yml` on current main with
+`discussion_resume_run=<run-id>` and `use_published_data=false`. Checkpoints
+expire after two days. This input is for live leaderboard collection only;
+use `resume_run` in the historical workflow for the frozen campaign above.

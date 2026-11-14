@@ -13,6 +13,7 @@ import {
   EVM_ESCROW_EVENT_TOPICS,
   evmVaultKey,
   readEvmMonthlyCommitment,
+  readVaultTotals,
   verifyEvmDeployment,
   verifyEvmFactory,
 } from "../../contracts/evm/adapter";
@@ -1998,6 +1999,294 @@ test("owner creates, registers and funds a vault through the real API", async ({
   } finally {
     await releaseVaultCreationReview(page);
     releaseSetupRejection();
+    server.kill("SIGTERM");
+    rmSync(temporary, { recursive: true, force: true });
+    await info.attach("vault-setup-api.log", {
+      body: output,
+      contentType: "text/plain",
+    });
+  }
+});
+
+test("owner funds a new vault before its creation is finalized", async ({
+  page,
+}, info) => {
+  test.setTimeout(180_000);
+  // A wallet no other test uses: the factory keys a vault by owner, project,
+  // token and purpose, so this owner has no vault yet.
+  const early = mnemonicToAccount(
+    "test test test test test test test test test test test junk",
+    { addressIndex: 5 },
+  );
+  const earlyOwner = early.address.toLowerCase();
+  await rpc("eth_sendTransaction", [
+    {
+      from: owner,
+      to: deployment.asset,
+      gas: "0x100000",
+      data: encodeFunctionData({
+        abi,
+        functionName: "mint",
+        args: [early.address, 100_000_000n],
+      }),
+    },
+  ]);
+  await rpc("anvil_mine", ["0x40"]);
+  const apiPort = anvilPort + 2;
+  const origin = `http://127.0.0.1:${apiPort}`;
+  const temporary = mkdtempSync(join(tmpdir(), "slop-vault-early-"));
+  if (!project.escrow || !deployment.evmUpgrade)
+    throw new Error("Missing project vault policy");
+  const target = {
+    ...project,
+    skill: {
+      ...project.skill,
+      publishAtRoot: false,
+      sourcePath: "skills/project-contributor-template",
+    },
+    reviewSkill: {
+      id: `review-${project.id}-contributions`,
+      sourcePath: "skills/project-reviewer-template",
+    },
+    contribution: CONTRIBUTION,
+    escrow: { ...project.escrow, deployments: [] },
+  };
+  const factory = {
+    network: deployment.network,
+    sourceCommit: deployment.sourceCommit,
+    codeSha256: deployment.codeSha256,
+    factory: deployment.factory,
+    factoryCodeSha256: deployment.factoryCodeSha256,
+    registrar: deployment.registrar,
+    identityAuthority: deployment.identityAuthority,
+    feeRecipient: deployment.feeRecipient,
+    bindingDelaySeconds: deployment.bindingDelaySeconds,
+    evmUpgrade: deployment.evmUpgrade,
+  };
+  const fixturePath = join(temporary, "projects.json");
+  writeFileSync(fixturePath, JSON.stringify({ project: target, factory }));
+  let output = "";
+  const server = spawn(
+    "bun",
+    [
+      "scripts/vault-setup-browser-server.ts",
+      fixturePath,
+      String(apiPort),
+      rpcUrl,
+    ],
+    { cwd: root, stdio: ["ignore", "pipe", "pipe"], env: process.env },
+  );
+  server.stdout?.on("data", (s) => {
+    output += String(s);
+  });
+  server.stderr?.on("data", (s) => {
+    output += String(s);
+  });
+  try {
+    await expect
+      .poll(() => output, { timeout: 30_000 })
+      .toContain("Vault setup API ready");
+    const fixture = async () =>
+      (await page.request.get(`${origin}/__fixture`)).json();
+    const initial = await fixture();
+    const headers = {
+      origin,
+      cookie: `__Host-slop_points=${initial.token}`,
+      "content-type": "application/json",
+    };
+    const api = async (path: string, data: unknown) => {
+      const response = await page.request.post(`${origin}/api/v1/${path}`, {
+        headers,
+        data,
+      });
+      const body = await response.json();
+      expect(response.ok(), JSON.stringify(body)).toBe(true);
+      return body;
+    };
+    const claim = await api("payments/wallets/register", {
+      chain: "base",
+      address: earlyOwner,
+    });
+    const challenge = await api("payments/wallets/challenge", {
+      claimId: claim.claimId,
+    });
+    await api("payments/wallets/authorize", {
+      claimId: claim.claimId,
+      challengeId: challenge.challengeId,
+      signature: await early.signMessage({ message: challenge.message }),
+    });
+    const sends: string[] = [];
+    await page.exposeFunction(
+      "earlyWalletRequest",
+      async (method: string, params: unknown[]) => {
+        if (method === "eth_accounts" || method === "eth_requestAccounts")
+          return [earlyOwner];
+        const result = await rpc(method, params);
+        if (method === "eth_sendTransaction") sends.push(result);
+        return result;
+      },
+    );
+    await page.addInitScript((token) => {
+      // biome-ignore lint/suspicious/noDocumentCookie: Set the same site-session cookie used by the local registry harness.
+      document.cookie = `__Host-slop_points=${token}; Path=/; Secure; SameSite=Strict`;
+      Object.assign(window, {
+        ethereum: {
+          isMetaMask: true,
+          request: ({
+            method,
+            params = [],
+          }: {
+            method: string;
+            params?: unknown[];
+          }) =>
+            (
+              window as unknown as {
+                earlyWalletRequest(m: string, p: unknown[]): Promise<unknown>;
+              }
+            ).earlyWalletRequest(method, params),
+        },
+      });
+    }, initial.token);
+    const failedRequests: string[] = [];
+    page.on("response", (r) => {
+      if (r.url().startsWith(origin) && r.status() >= 400)
+        failedRequests.push(`${r.status()} ${r.url()}`);
+    });
+    await page.goto(`${origin}/projects/${project.slug}/manage`, {
+      waitUntil: "networkidle",
+    });
+    const setup = page.getByRole("region", { name: "Set up project vault" });
+    await setup.getByRole("button", { name: "Connect MetaMask" }).click();
+    const reviewButton = setup.getByRole("button", {
+      name: "Review vault creation",
+      exact: true,
+    });
+    await expect(reviewButton).toBeEnabled();
+    await reviewButton.click();
+    await setup.getByRole("button", { name: "Create vault in wallet" }).click();
+    await expect.poll(() => sends.length).toBe(1);
+    // The creation is mined but far from final. Without a click, the funding
+    // form opens for the vault the server verified at its creation block.
+    const funding = setup.getByRole("region", { name: /Fund or withdraw/ });
+    await expect(funding).toBeVisible({ timeout: 20_000 });
+    await expect(setup.getByRole("status").first()).toContainText(
+      "its creation is not finalized yet. You can fund it below now.",
+    );
+    // Nothing is registered: no revision, no deployment, no payment record.
+    const unregistered = await fixture();
+    expect(unregistered.revisions.n).toBe(1);
+    expect(unregistered.paymentPins).toEqual([]);
+    expect(unregistered.project.manifest.escrow.deployments).toEqual([]);
+    // The setup wallet carries over; only a deposit is offered.
+    await expect(
+      funding.getByRole("radio", { name: "Deposit tokens" }),
+    ).toBeChecked();
+    await expect(
+      funding.getByRole("radio", { name: "Withdraw free funds" }),
+    ).toHaveCount(0);
+    await funding.getByLabel("Token amount").fill("10");
+    await funding
+      .getByRole("button", { name: "Review deposit", exact: true })
+      .click();
+    await funding.getByRole("button", { name: /Approve/ }).click();
+    await expect.poll(() => sends.length).toBe(2);
+    await expect(funding.getByRole("status")).toContainText(
+      "no funds have been deposited yet",
+    );
+    await funding
+      .getByRole("button", { name: "Confirm deposit in wallet" })
+      .click();
+    await expect.poll(() => sends.length).toBe(3);
+    await expect(funding.getByRole("status")).toContainText(
+      "Deposit received in a Base Sepolia (test) block",
+      { timeout: 20_000 },
+    );
+    const actionKey = await page.evaluate(
+      () =>
+        Object.keys(sessionStorage).find((key) =>
+          key.startsWith("slop:vault-action:v1:"),
+        ) ?? "",
+    );
+    const vault = actionKey.split(":")[4];
+    expect(vault).toMatch(/^0x[0-9a-f]{40}$/u);
+    const vaultBalance = async (block: string) =>
+      BigInt(
+        await rpc("eth_call", [
+          {
+            to: deployment.asset,
+            data: encodeFunctionData({
+              abi,
+              functionName: "balanceOf",
+              args: [vault as `0x${string}`],
+            }),
+          },
+          block,
+        ]),
+      );
+    // The tokens are in the vault at the latest block and nothing counts yet.
+    expect(await vaultBalance("latest")).toBe(10_000_000n);
+    expect((await fixture()).revisions.n).toBe(1);
+    await expectAccessible(page);
+    await page.screenshot({
+      path: info.outputPath("owner-vault-funded-before-finality.png"),
+      fullPage: true,
+    });
+    // A reload mid-flow keeps both saved requests. The form returns without a
+    // click and the pending deposit needs only its wallet again.
+    await page.reload({ waitUntil: "networkidle" });
+    await expect(funding).toBeVisible({ timeout: 20_000 });
+    await expect(funding).toContainText("Deposit awaiting verification");
+    await funding.getByRole("button", { name: "Connect MetaMask" }).click();
+    await expect(funding.getByRole("status")).toContainText(
+      "Deposit received in a Base Sepolia (test) block",
+      { timeout: 20_000 },
+    );
+    expect(sends).toHaveLength(3);
+    // Finality arrives. With no further click the vault registers, the page
+    // switches to the registered vault and the deposit is verified.
+    await rpc("anvil_mine", ["0x40"]);
+    await expect(setup).toHaveCount(0, { timeout: 60_000 });
+    await expect
+      .poll(
+        () => page.evaluate((key) => sessionStorage.getItem(key), actionKey),
+        { timeout: 60_000 },
+      )
+      .toBeNull();
+    const registeredFunding = page.getByRole("region", {
+      name: /Fund or withdraw/,
+    });
+    await expect(registeredFunding).toBeVisible();
+    await expect(registeredFunding.getByRole("alert")).toHaveCount(0);
+    await expect(registeredFunding).not.toContainText("awaiting verification");
+    const state = await fixture();
+    expect(state.revisions.n).toBe(2);
+    const created = state.project.manifest.escrow.deployments[0];
+    expect(created.vault).toBe(vault);
+    expect(created.owner).toBe(earlyOwner);
+    expect(created.deploymentTransaction).toBe(sends[0]);
+    expect(state.paymentPins).toHaveLength(1);
+    expect(await vaultBalance("finalized")).toBe(10_000_000n);
+    // The vault's own finalized counters, the only ones the server counts.
+    const totals = await readVaultTotals({
+      rpcUrl,
+      network: "base-sepolia",
+      vault,
+      chainId: 84532n,
+    });
+    expect(totals.totalDeposited).toBe("10000000");
+    expect(totals.freeBalance).toBe("10000000");
+    // The funding wallet carried over: the owner's choices show with no click.
+    await expect(
+      registeredFunding.getByRole("radio", { name: "Withdraw free funds" }),
+    ).toBeVisible();
+    expect(sends).toHaveLength(3);
+    expect(failedRequests).toEqual([]);
+    await expectAccessible(page);
+    await page.screenshot({
+      path: info.outputPath("owner-vault-registered-after-early-deposit.png"),
+      fullPage: true,
+    });
+  } finally {
     server.kill("SIGTERM");
     rmSync(temporary, { recursive: true, force: true });
     await info.attach("vault-setup-api.log", {
