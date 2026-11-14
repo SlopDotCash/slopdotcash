@@ -1,0 +1,67 @@
+{
+  "scope": "Focused canonical model, native bounded simulation and generated replay. Raw APIs, persistence, workflow conformance and production correction remain separate.",
+  "legacyMain": "5ba316a6719a9857ad9c3f64fc417e660e84ecfa",
+  "change": "0806f95fb159f146ff0df137eda6eae1cfe3143d",
+  "sourceInputs": [
+    {
+      "path": "spec/points/quotaRecovery.md",
+      "sha256": "8decf25ca7c4163c0ea34b3041c45c7983f18a42d31826bd70bcbdb3308df8d8"
+    }
+  ],
+  "results": {
+    "points__quotaRecovery": {
+      "simulation": {
+        "command": "seed 49808580594202; to simulate again: pnpm exec quint run gen/points__quotaRecovery.run.qnt --main points__quotaRecovery_run --step step --invariant inv --max-samples 220 --max-steps 25 --mbt --seed 49808580594202",
+        "replayed": 24
+      },
+      "proof": {
+        "total": 68,
+        "unproved": [],
+        "exhausted": [],
+        "resting": {},
+        "errors": [],
+        "generatedDafnySha256": "11ce65fa517b72ac094f48275904047c3756303a7665da654f4ef82313afc921"
+      }
+    }
+  },
+  "legacyInputs": {
+    "scripts/collect-implementation-corrections.ts": "5d7a69f260cd926506ab3314535270680529a07b22246327b8e69d2ca5a06b4e",
+    "scripts/collect-implementation-corrections.test.ts": "869183832826f9afec88a00bec597a96bde15eb8ad3b272712ba0e7ba57691a9",
+    ".github/workflows/points-implementation-corrections.yml": "d0e0fec28b3a4c52a7838377ddbce56fb090198cf25c4c21be096d5bc239b2d1",
+    "scripts/prepare-implementation-corrections.ts": "d44654ff84297c1445aee7095d8961b1c093b93df31681c092108dc4955c4eac"
+  },
+  "alsoVerifiedUnchangedAt": "ee1a4b2cd2672245537928380e425f5bd9ecb994",
+  "references": {
+    "source": [
+      "scripts/collect-implementation-corrections.ts:191\u2013277,335\u2013521,536\u2013633",
+      "scripts/collect-implementation-corrections.ts:1186\u20131213,1247\u20131384,1395\u20131487,1740\u20131825",
+      "scripts/collect-implementation-corrections.test.ts:687\u2013836,1012\u20131327"
+    ],
+    "production": [
+      ".github/workflows/points-implementation-corrections.yml:44\u2013106,115\u2013149,175\u2013184",
+      "scripts/prepare-implementation-corrections.ts:35\u201357,264\u2013325"
+    ]
+  },
+  "witnesses": {
+    "command": "cp formal/validation/source-coverage/points-quota-recovery.witness.qnt gen/pointsQuotaWitness.qnt && pnpm exec quint test gen/pointsQuotaWitness.qnt --main pointsQuotaWitness --seed=5342",
+    "passed": 6
+  },
+  "directedGenerated": [
+    "trusted same repository and exact main history only",
+    "legacy baseline replays original request shape and refuses changed scope or cutoff",
+    "ordinary forbidden reply does not become quota and primary missing reset fails closed",
+    "all sibling reads drain and strictest quota controls wake",
+    "missing primary reset dominates a known sibling reset",
+    "the third consecutive interval without persisted success checkpoints",
+    "sibling success resets the refusal count and replay spends no new budget",
+    "new reads refuse at cumulative budget but exact cache replay still works",
+    "a reset at the deadline or elapsed wait prevents reopening collection",
+    "reconciliation requires this complete manifest and receipt, explicit unbounded apply and coverage"
+  ],
+  "proofLibrarySha256": "4c9f8dcbd9918f7d4b282ad9531b4cf0096ea389c015149b1786d0fe4ebd8e29",
+  "evidenceDigests": {
+    "formal/validation/source-coverage/points-quota-recovery.witness.qnt": "166095dd1e48d651432333fefe514b6ad798054943ac062f17d36ff29fdf1a40",
+    "formal/validation/source-coverage/points-quota-recovery.witness.log": "5b94136d2bd3557b4a02d446b65a2aa0829f5071797bbc6e741c79641c06f16b",
+    "formal/validation/source-coverage/points-quota-recovery.proof.log": "32b16c2c9c4eacaf30f605bf140de8b886cbdb812bc5f84377d8428d5016f224"
+  }
+}
