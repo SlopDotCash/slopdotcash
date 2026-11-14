@@ -33,8 +33,23 @@ import money as M from "./money"
 import referrals as R from "./referrals"
 import referralAccrual as A from "./referralAccrual"
 import referralDistributor as D from "./referralDistributor"
+type EntryComparison = { index: int, matches: bool }
+pure val emptyEntryComparison: EntryComparison = { index: 0, matches: true }
+pure val emptyEntry: A::RootEntry = { actor: 0, wallet: "", amount: M::zero }
+pure def sameEntry(leftEntry: A::RootEntry, rightEntry: A::RootEntry): bool =
+  leftEntry.actor == rightEntry.actor and leftEntry.wallet == rightEntry.wallet
+    and M::validAmount(leftEntry.amount) and M::validAmount(rightEntry.amount)
+    and M::equalAmounts(leftEntry.amount, rightEntry.amount)
+pure def sameEntries(leftEntries: List[A::RootEntry], rightEntries: List[A::RootEntry]): bool =
+  val comparison = leftEntries.foldl(emptyEntryComparison, (acc, entry) =>
+    { index: acc.index + 1, matches: acc.matches and sameEntry(entry, rightEntries.nthOr(acc.index, emptyEntry)) })
+  leftEntries.length() == rightEntries.length() and comparison.matches
 type Root = { id: int, epoch: int, merkleRoot: str, period: int, sourceDigest: str, entries: List[A::RootEntry], total: M::Amount,
   height: int, voided: bool, sealed: bool, voidAcknowledged: bool }
+type RootReceipt = { attempt: int, rootId: int, epoch: int, merkleRoot: str, entries: List[A::RootEntry],
+  total: M::Amount, receipt: int, height: int, actualGas: int, settledDay: int, finalized: bool, succeeded: bool }
+type ClaimReceipt = { actor: int, wallet: str, cumulative: M::Amount, rootId: int,
+  transferred: M::Amount, receipt: int, height: int, finalized: bool }
 type Claim = { actor: int, cumulative: M::Amount }
 type PostingPhase = Idle | Prepared | Journaled | Submitted | Uncertain
 type GasSettlement = { attempt: int, actual: int, day: int }
@@ -66,8 +81,8 @@ pure def canPrepare(p: Publication, control: R::Referral, a: A::Accrual, rootId:
     and A::alwaysUnitValid(a) and A::alwaysCompleteFilings(a) and A::alwaysFileTotals(a) and A::alwaysPinsUnique(a) and A::alwaysFileWalletPinned(a)
     and p.pins.every(pin => a.pins.includes(pin))
     and rootId > 0 and p.roots.every(root => root.id < rootId)
-    and (p.roots.length() == 0 or p.tokenUnit == a.tokenUnit)
-    and chain.tokenUnit == a.tokenUnit and rootVerified and chain.epochs.length() == p.roots.length()
+    and (p.roots.length() == 0 or M::equalAmounts(p.tokenUnit, a.tokenUnit))
+    and M::equalAmounts(chain.tokenUnit, a.tokenUnit) and rootVerified and chain.epochs.length() == p.roots.length()
     and (p.token == "" or chain.token == p.token)
     and p.roots.every(root => not(root.voided) or root.voidAcknowledged)
     and D::canPostRoot(chain, chain.epochs.length(), merkleRoot, nextFiling(p, a).total, signer)
@@ -98,7 +113,7 @@ new-day spending. Every unresolved maximum remains reserved on every day. The po
 pure def canJournal(p: Publication, control: R::Referral, attempt: int, gas: int, chain: D::Distributor, signer: str): bool =
   p.phase == Prepared and not(p.postingPaused) and control.mode == R::Posting and R::alwaysActivationReady(control)
     and D::canPostRoot(chain, p.prepared.epoch, p.prepared.merkleRoot, p.prepared.total, signer)
-    and chain.tokenUnit == p.tokenUnit and chain.token == p.token and chain.epochs.length() == p.roots.length()
+    and M::equalAmounts(chain.tokenUnit, p.tokenUnit) and chain.token == p.token and chain.epochs.length() == p.roots.length()
     and p.roots.every(root => not(root.voided) or root.voidAcknowledged)
     and attempt > 0 and not(p.attempts.some(old => old.id == attempt)) and gas > 0
     and R::posterGasAllowed(gas, spentGas(p) + p.nativeHold + gas)
@@ -123,22 +138,30 @@ pure def setPostingPaused(p: Publication, paused: bool, by: str): Publication = 
 
 ### Only exact finalized evidence makes a root claimable
 
+Entry equality preserves list order and checks each exact actor and wallet,
+while comparing monetary amounts by value. Trailing zero limbs do not change
+an amount or invalidate otherwise identical finalized evidence. Verified
+token-unit scales also compare by monetary value, independently of padding.
 The chain adapter must verify the pinned distributor, network, token, Merkle
 root and every retained entry before emitting this evidence. Missing or
 conflicting evidence remains Uncertain. A finalized failed send permits a new
 attempt and consumes its actual gas; it never adds a root.
 
 ```quint
-pure def canFinalize(p: Publication, attempt: int, rootId: int, epoch: int, merkleRoot: str, entries: List[A::RootEntry],
-  total: M::Amount, receipt: int, height: int, actualGas: int, settledDay: int, finalized: bool, succeeded: bool): bool =
-  (p.phase == Submitted or p.phase == Uncertain) and attempt == p.currentAttempt
-    and rootId == p.prepared.id and epoch == p.prepared.epoch and merkleRoot == p.prepared.merkleRoot and entries == p.prepared.entries and M::equalAmounts(total, p.prepared.total)
-    and receipt > 0 and not(p.receipts.includes(receipt)) and height > 0 and finalized and succeeded
-    and actualGas >= 0 and actualGas <= p.nativeHold and settledDay > 0 and settledDay <= p.day
-pure def finalize(p: Publication, attempt: int, rootId: int, epoch: int, merkleRoot: str, entries: List[A::RootEntry],
-  total: M::Amount, receipt: int, height: int, actualGas: int, settledDay: int, finalized: bool, succeeded: bool): Publication =
-  { ...p, phase: Idle, roots: p.roots.append({ ...p.prepared, height: height }),
-    receipts: p.receipts.append(receipt), settledGas: p.settledGas.append({ attempt: attempt, actual: actualGas, day: settledDay }), nativeHold: 0, cacheFresh: false }
+pure def canFinalize(p: Publication, rootReceipt: RootReceipt): bool =
+  (p.phase == Submitted or p.phase == Uncertain) and rootReceipt.attempt == p.currentAttempt
+    and rootReceipt.rootId == p.prepared.id and rootReceipt.epoch == p.prepared.epoch
+    and rootReceipt.merkleRoot == p.prepared.merkleRoot and sameEntries(rootReceipt.entries, p.prepared.entries)
+    and M::equalAmounts(rootReceipt.total, p.prepared.total)
+    and rootReceipt.receipt > 0 and not(p.receipts.includes(rootReceipt.receipt)) and rootReceipt.height > 0
+    and rootReceipt.finalized and rootReceipt.succeeded
+    and rootReceipt.actualGas >= 0 and rootReceipt.actualGas <= p.nativeHold
+    and rootReceipt.settledDay > 0 and rootReceipt.settledDay <= p.day
+pure def finalize(p: Publication, rootReceipt: RootReceipt): Publication =
+  { ...p, phase: Idle, roots: p.roots.append({ ...p.prepared, height: rootReceipt.height }),
+    receipts: p.receipts.append(rootReceipt.receipt),
+    settledGas: p.settledGas.append({ attempt: rootReceipt.attempt, actual: rootReceipt.actualGas, day: rootReceipt.settledDay }),
+    nativeHold: 0, cacheFresh: false }
 pure def canFinalizeFailure(p: Publication, attempt: int, receipt: int, actualGas: int, settledDay: int, finalized: bool, succeeded: bool): bool =
   (p.phase == Submitted or p.phase == Uncertain) and attempt == p.currentAttempt
     and receipt > 0 and not(p.receipts.includes(receipt)) and finalized and not(succeeded) and actualGas >= 0 and actualGas <= p.nativeHold and settledDay > 0 and settledDay <= p.day
@@ -171,19 +194,19 @@ increasing, including voided epochs. This matches pinned
 `workers/referral-accrual/core.ts:816–889`.
 
 ```quint
-pure def canClaim(p: Publication, actor: int, wallet: str, cumulative: M::Amount,
-  rootId: int, transferred: M::Amount, receipt: int, height: int, finalized: bool): bool =
-    activeRoot(p).id == rootId and rootId > 0 and activeRoot(p).height > 0
-    and activeRoot(p).entries.some(e => e.actor == actor and e.wallet == wallet and M::equalAmounts(e.amount, cumulative))
-    and M::compareAmounts(cumulative, claimedFor(p, actor)) > 0
-    and M::validAmount(cumulative) and M::validAmount(transferred)
-    and M::compareAmounts(M::addAmounts(totalClaimed(p), transferred), activeRoot(p).total) <= 0
-    and M::equalAmounts(transferred, M::subtractAmounts(cumulative, claimedFor(p, actor))) and receipt > 0
-    and not(p.receipts.includes(receipt)) and height > 0 and finalized
-pure def claim(p: Publication, actor: int, wallet: str, cumulative: M::Amount,
-  rootId: int, transferred: M::Amount, receipt: int, height: int, finalized: bool): Publication =
-  { ...p, claims: p.claims.select(c => c.actor != actor).append({ actor: actor, cumulative: cumulative }),
-    receipts: p.receipts.append(receipt), roots: p.roots.listMap(root => if (root.id == rootId) { ...root, sealed: true } else root), cacheFresh: false }
+pure def canClaim(p: Publication, claimReceipt: ClaimReceipt): bool =
+  activeRoot(p).id == claimReceipt.rootId and claimReceipt.rootId > 0 and activeRoot(p).height > 0
+    and activeRoot(p).entries.some(e => e.actor == claimReceipt.actor and e.wallet == claimReceipt.wallet and M::equalAmounts(e.amount, claimReceipt.cumulative))
+    and M::compareAmounts(claimReceipt.cumulative, claimedFor(p, claimReceipt.actor)) > 0
+    and M::validAmount(claimReceipt.cumulative) and M::validAmount(claimReceipt.transferred)
+    and M::compareAmounts(M::addAmounts(totalClaimed(p), claimReceipt.transferred), activeRoot(p).total) <= 0
+    and M::equalAmounts(claimReceipt.transferred, M::subtractAmounts(claimReceipt.cumulative, claimedFor(p, claimReceipt.actor)))
+    and claimReceipt.receipt > 0 and not(p.receipts.includes(claimReceipt.receipt))
+    and claimReceipt.height > 0 and claimReceipt.finalized
+pure def claim(p: Publication, claimReceipt: ClaimReceipt): Publication =
+  { ...p, claims: p.claims.select(c => c.actor != claimReceipt.actor).append({ actor: claimReceipt.actor, cumulative: claimReceipt.cumulative }),
+    receipts: p.receipts.append(claimReceipt.receipt),
+    roots: p.roots.listMap(root => if (root.id == claimReceipt.rootId) { ...root, sealed: true } else root), cacheFresh: false }
 pure def canVoidRoot(p: Publication, rootId: int, receipt: int, height: int, finalized: bool, by: str): bool =
   by == "owner" and p.roots.length() > 0 and p.roots.nthOr(p.roots.length() - 1, emptyRoot).id == rootId
     and not(p.roots.nthOr(p.roots.length() - 1, emptyRoot).sealed)
@@ -260,12 +283,15 @@ pure def sometimesVoided(p: Publication): bool = p.roots.some(root => root.voide
 
 ### Simulation includes live control, capped accruals and conflicting receipts
 
+Receipt samples are coherent records with explicit conflicting variants.
+The literal ledger and chain fixtures were compared as complete state values with the
+same states built through their generated transitions. They avoid rebuilding
+the full history on each simulator draw.
+
 ```quint
 pure val byValues = Set("owner", "operator", "wrong")
 pure val signerValues = Set("poster", "wrong")
 pure val actorValues = Set(3)
-pure val walletValues = Set("wallet", "wrong")
-pure val epochValues = Set(0, 1)
 pure val merkleRootValues = Set("merkle", "wrong", "")
 pure val rootIdValues = Set(1, 2)
 pure val attemptValues = Set(1, 2)
@@ -275,24 +301,40 @@ pure val dayValues = Set(1, 2)
 pure val gasValues = Set(1, 200000000000000, 200000000000001)
 pure val actualGasValues = Set(0, 1)
 pure val heightValues = Set(1, 2)
-pure val cumulativeValues = Set(List(0, 0, 3))
-pure val totalValues = Set(List(0, 0, 3))
-pure val transferredValues = Set(List(0), List(0, 0, 3))
-pure val entriesValues = Set(List({ actor: 3, wallet: "wallet", amount: List(0, 0, 3) }))
+
 ```
 
 ```quint
-pure val reviewedControl = R::activate(R::startWatcher(R::recordFunding(R::dryRun(R::initial, "owner"), 2000000, true, true), true), "owner")
-pure val configuredLedger = A::enableDryRun(A::configure(A::initial, List(0, 0, 1), true, "owner"), true, "owner")
-pure val capturedLedger = A::capture(configuredLedger, 1, 1, 2, 3, true, false, false)
-pure val sourcePayout: A::Payout = { id: 1, project: 1, period: A::firstPeriod, paidAt: { year: 2026, month: 11, day: 1, millis: 0 }, firstPaidAt: { year: 2026, month: 11, day: 1, millis: 0 },
-  gross: List(0, 0, 1), paid: true, stablecoin: true, team: false, banned: false, held: false }
-pure val filedLedger = A::fileMonth(A::accrueNext(A::startMonth(capturedLedger, A::firstPeriod, List(sourcePayout), "source", true, true, true, "run", true)), List({ actor: 3, wallet: "wallet", authorized: true }), "run", true)
+pure val reviewedControl: R::Referral = { mode: R::Posting, reactivationApproved: true, tokenExists: true, fundingFinalized: true, watcherOperating: true }
+pure val filedLedger: A::Accrual = { phase: A::Ready, configured: true, tokenUnit: List(0, 0, 1), attributions: List({ project: 1, applicant: 1, steward: 2, referrer: 3 }), rates: List({ fromPeriod: 24322, numerator: List(3, 0, 0), denominator: List(1) }), records: List({ payout: { id: 1, project: 1, period: 24322, paidAt: { year: 2026, month: 11, day: 1, millis: 0 }, firstPaidAt: { year: 2026, month: 11, day: 1, millis: 0 }, gross: List(0, 0, 1), paid: true, stablecoin: true, team: false, banned: false, held: false }, referrer: 3, eligible: true, rate: { fromPeriod: 24322, numerator: List(3, 0, 0), denominator: List(1) }, computed: List(0, 0, 3, 0, 0), amount: List(0, 0, 3, 0, 0), outcome: A::Accrued }), staged: List(), filings: List({ period: 24322, sourceDigest: "source", sourceCount: 1, recordCount: 1, entries: List({ actor: 3, wallet: "wallet", amount: List(0, 0, 3, 0, 0) }), total: List(0, 0, 3, 0, 0) }), pins: List({ actor: 3, wallet: "wallet", authorized: true }), nextPeriod: 24323, activePeriod: 24322, sourceDigest: "source", sourceCount: 1, leaseRun: "", pending: List() }
+pure val fundedChain: D::Distributor = { configured: true, token: "token", tokenUnit: List(0, 0, 1), epochCap: List(0, 0, 0, 0, 2), postSpacing: 0, owner: "owner", pendingOwner: "", poster: "poster", paused: false, now: 1, deployedAt: 1, lastUnpausedAt: 1, epochs: List(), latestRootClaimed: false, claims: List(), balance: List(0, 0, 0, 0, 2), deposited: List(0, 0, 0, 0, 2), paid: List(0), rescued: List(0), depositReceipts: List(1) }
 pure val controlValues = Set(R::initial, reviewedControl)
 pure val aValues = Set(A::initial, filedLedger)
-```
-
-```quint
-pure val fundedChain = D::deposit(D::deploy(D::initial, "token", List(0, 0, 1), List(0, 0, 0, 0, 2), 0, "owner", "poster", 1), List(0, 0, 0, 0, 2), "token", 1, true)
 pure val chainValues = Set(D::initial, fundedChain)
+pure val rootReceiptValues = Set({ attempt: 1, rootId: 1, epoch: 0, merkleRoot: "merkle", entries: List({ actor: 3, wallet: "wallet", amount: List(0, 0, 3, 0, 0) }), total: List(0, 0, 3, 0, 0), receipt: 1, height: 1, actualGas: 0, settledDay: 1, finalized: true, succeeded: true },
+  { attempt: 1, rootId: 1, epoch: 0, merkleRoot: "wrong", entries: List({ actor: 3, wallet: "wallet", amount: List(0, 0, 3, 0, 0) }), total: List(0, 0, 3, 0, 0), receipt: 1, height: 1, actualGas: 0, settledDay: 1, finalized: true, succeeded: true },
+  { attempt: 2, rootId: 1, epoch: 0, merkleRoot: "merkle", entries: List({ actor: 3, wallet: "wallet", amount: List(0, 0, 3, 0, 0) }), total: List(0, 0, 3, 0, 0), receipt: 1, height: 1, actualGas: 0, settledDay: 1, finalized: true, succeeded: true },
+  { attempt: 2, rootId: 1, epoch: 0, merkleRoot: "wrong", entries: List({ actor: 3, wallet: "wallet", amount: List(0, 0, 3, 0, 0) }), total: List(0, 0, 3, 0, 0), receipt: 1, height: 1, actualGas: 0, settledDay: 1, finalized: true, succeeded: true },
+  { attempt: 1, rootId: 2, epoch: 0, merkleRoot: "merkle", entries: List({ actor: 3, wallet: "wallet", amount: List(0, 0, 3, 0, 0) }), total: List(0, 0, 3, 0, 0), receipt: 1, height: 1, actualGas: 0, settledDay: 1, finalized: true, succeeded: true },
+  { attempt: 1, rootId: 2, epoch: 0, merkleRoot: "wrong", entries: List({ actor: 3, wallet: "wallet", amount: List(0, 0, 3, 0, 0) }), total: List(0, 0, 3, 0, 0), receipt: 1, height: 1, actualGas: 0, settledDay: 1, finalized: true, succeeded: true },
+  { attempt: 2, rootId: 2, epoch: 0, merkleRoot: "merkle", entries: List({ actor: 3, wallet: "wallet", amount: List(0, 0, 3, 0, 0) }), total: List(0, 0, 3, 0, 0), receipt: 1, height: 1, actualGas: 0, settledDay: 1, finalized: true, succeeded: true },
+  { attempt: 2, rootId: 2, epoch: 0, merkleRoot: "wrong", entries: List({ actor: 3, wallet: "wallet", amount: List(0, 0, 3, 0, 0) }), total: List(0, 0, 3, 0, 0), receipt: 1, height: 1, actualGas: 0, settledDay: 1, finalized: true, succeeded: true },
+  { attempt: 1, rootId: 1, epoch: 1, merkleRoot: "merkle", entries: List({ actor: 3, wallet: "wallet", amount: List(0, 0, 3, 0, 0) }), total: List(0, 0, 3, 0, 0), receipt: 1, height: 1, actualGas: 0, settledDay: 1, finalized: true, succeeded: true },
+  { attempt: 1, rootId: 1, epoch: 0, merkleRoot: "merkle", entries: List({ actor: 3, wallet: "wallet", amount: List(0, 0, 3, 0, 0) }), total: List(0, 0, 3, 0, 0), receipt: 1, height: 1, actualGas: 0, settledDay: 1, finalized: false, succeeded: true },
+  { attempt: 1, rootId: 1, epoch: 0, merkleRoot: "merkle", entries: List({ actor: 3, wallet: "wallet", amount: List(0, 0, 3, 0, 0) }), total: List(0, 0, 3, 0, 0), receipt: 1, height: 1, actualGas: 0, settledDay: 1, finalized: true, succeeded: false },
+  { attempt: 1, rootId: 1, epoch: 0, merkleRoot: "merkle", entries: List({ actor: 3, wallet: "wrong", amount: List(0, 0, 3, 0, 0) }), total: List(0, 0, 3, 0, 0), receipt: 1, height: 1, actualGas: 0, settledDay: 1, finalized: true, succeeded: true },
+  { attempt: 1, rootId: 1, epoch: 0, merkleRoot: "merkle", entries: List({ actor: 3, wallet: "wallet", amount: List(0, 0, 3, 0, 0) }), total: List(0), receipt: 1, height: 1, actualGas: 0, settledDay: 1, finalized: true, succeeded: true })
+pure val claimReceiptValues = Set({ actor: 3, wallet: "wallet", cumulative: List(0, 0, 3, 0, 0), rootId: 1, transferred: List(0, 0, 3, 0, 0), receipt: 2, height: 2, finalized: true },
+  { actor: 3, wallet: "wallet", cumulative: List(0, 0, 3, 0, 0), rootId: 2, transferred: List(0, 0, 3, 0, 0), receipt: 2, height: 2, finalized: true },
+  { actor: 3, wallet: "wrong", cumulative: List(0, 0, 3, 0, 0), rootId: 1, transferred: List(0, 0, 3, 0, 0), receipt: 2, height: 2, finalized: true },
+  { actor: 3, wallet: "wallet", cumulative: List(0, 0, 3, 0, 0), rootId: 1, transferred: List(0), receipt: 2, height: 2, finalized: true },
+  { actor: 3, wallet: "wallet", cumulative: List(0, 0, 3, 0, 0), rootId: 1, transferred: List(0, 0, 3, 0, 0), receipt: 2, height: 2, finalized: false })
+pure val weight_prepare = 30
+pure val weight_journal = 30
+pure val weight_submit = 30
+pure val weight_finalize = 30
+pure val weight_claim = 30
+pure val weight_voidRoot = 20
+pure val weight_loseObservation = 10
+pure val weight_retransmit = 10
 ```

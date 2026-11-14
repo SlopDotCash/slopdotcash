@@ -4156,7 +4156,7 @@
     },
     {
       "path": "spec/settlement/referralAccrual.md",
-      "sha256": "015d404a16238f06ffa2122455d77e209e4ec9e12291edbecc298ee8bcd290d0",
+      "sha256": "19b764dab95a164e54aa14133f24eb53adaf6678f0ee0871f24b8d55d2ea3eef",
       "module": "settlement__referralAccrual",
       "stories": [
         {
@@ -4295,7 +4295,13 @@
             "periodValues",
             "sourceDigestValues",
             "rateValues",
-            "payoutsValues"
+            "payoutsValues",
+            "weight_capture",
+            "weight_configure",
+            "weight_enableDryRun",
+            "weight_startMonth",
+            "weight_accrueNext",
+            "weight_fileMonth"
           ]
         }
       ],
@@ -4306,7 +4312,7 @@
     },
     {
       "path": "spec/settlement/referralDistributor.md",
-      "sha256": "a4787831326ae67277b93177fab67d54511b1d1e1949f89ec1638bd4c5c5ab3d",
+      "sha256": "9806b4cd07201302c90313cb2ed894c2ee0b7ef953c8bcc0abf1b1da9d75e673",
       "module": "settlement__referralDistributor",
       "stories": [
         {
@@ -4441,7 +4447,14 @@
             "rootValues",
             "proofRootValues",
             "walletValues",
-            "destinationValues"
+            "destinationValues",
+            "weight_deploy",
+            "weight_deposit",
+            "weight_postRoot",
+            "weight_claim",
+            "weight_voidLast",
+            "weight_tick",
+            "weight_rescue"
           ]
         }
       ],
@@ -4523,7 +4536,7 @@
     },
     {
       "path": "spec/settlement/referralPublication.md",
-      "sha256": "e4ff4db6590953f01b43922bd101004fb5464d636f24fca26ea0b57279aa4fb6",
+      "sha256": "2288ae248dcf6ba7a427542f465e31d3bd0f986fd84b5b90e81e863fd245d9ec",
       "module": "settlement__referralPublication",
       "stories": [
         {
@@ -4532,7 +4545,7 @@
         },
         {
           "heading": "Story: Claim immediately without reissuing paid tokens",
-          "line": 149
+          "line": 172
         }
       ],
       "rules": [
@@ -4540,7 +4553,14 @@
           "heading": "Story: Publish one complete cumulative root / The next immutable filed tree supplies every root entry",
           "line": 14,
           "definitions": [
+            "EntryComparison",
+            "emptyEntryComparison",
+            "emptyEntry",
+            "sameEntry",
+            "sameEntries",
             "Root",
+            "RootReceipt",
+            "ClaimReceipt",
             "Claim",
             "PostingPhase",
             "GasSettlement",
@@ -4560,7 +4580,7 @@
         },
         {
           "heading": "Story: Publish one complete cumulative root / Every signed root reserves gas and journals its exact identity first",
-          "line": 88,
+          "line": 103,
           "definitions": [
             "canJournal",
             "journal",
@@ -4580,7 +4600,7 @@
         },
         {
           "heading": "Story: Publish one complete cumulative root / Only exact finalized evidence makes a root claimable",
-          "line": 124,
+          "line": 139,
           "definitions": [
             "canFinalize",
             "finalize",
@@ -4590,7 +4610,7 @@
         },
         {
           "heading": "Story: Claim immediately without reissuing paid tokens / A claim uses the active root's pinned wallet and cumulative amount",
-          "line": 151,
+          "line": 174,
           "definitions": [
             "canClaim",
             "claim",
@@ -4608,7 +4628,7 @@
         },
         {
           "heading": "Story: Claim immediately without reissuing paid tokens / History, native holds and cumulative claims remain bounded",
-          "line": 212,
+          "line": 235,
           "definitions": [
             "alwaysNativeBounded",
             "alwaysAttemptGasAccounted",
@@ -4633,13 +4653,11 @@
         },
         {
           "heading": "Story: Claim immediately without reissuing paid tokens / Simulation includes live control, capped accruals and conflicting receipts",
-          "line": 261,
+          "line": 284,
           "definitions": [
             "byValues",
             "signerValues",
             "actorValues",
-            "walletValues",
-            "epochValues",
             "merkleRootValues",
             "rootIdValues",
             "attemptValues",
@@ -4649,19 +4667,22 @@
             "gasValues",
             "actualGasValues",
             "heightValues",
-            "cumulativeValues",
-            "totalValues",
-            "transferredValues",
-            "entriesValues",
             "reviewedControl",
-            "configuredLedger",
-            "capturedLedger",
-            "sourcePayout",
             "filedLedger",
+            "fundedChain",
             "controlValues",
             "aValues",
-            "fundedChain",
-            "chainValues"
+            "chainValues",
+            "rootReceiptValues",
+            "claimReceiptValues",
+            "weight_prepare",
+            "weight_journal",
+            "weight_submit",
+            "weight_finalize",
+            "weight_claim",
+            "weight_voidRoot",
+            "weight_loseObservation",
+            "weight_retransmit"
           ]
         }
       ],

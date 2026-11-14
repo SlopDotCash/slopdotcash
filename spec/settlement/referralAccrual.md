@@ -88,7 +88,7 @@ pure def disable(a: Accrual, by: str): Accrual = { ...a, phase: Off }
 pure def canSetRate(a: Accrual, rate: Rate, by: str): bool = a.configured and a.phase != Collecting and by == "owner"
   and rate.fromPeriod >= a.nextPeriod and a.rates.every(old => old.fromPeriod < rate.fromPeriod)
   and M::validAmount(rate.numerator) and M::positiveAmount(rate.numerator)
-  and rate.denominator == List(1)
+  and M::validAmount(rate.denominator) and M::equalAmounts(rate.denominator, List(1))
 pure def setRate(a: Accrual, rate: Rate, by: str): Accrual = { ...a, rates: a.rates.append(rate) }
 pure def rateFor(a: Accrual, period: int): Rate = a.rates.foldl(emptyRate,
   (selected, rate) => if (rate.fromPeriod <= period) rate else selected)
@@ -216,7 +216,7 @@ pure def alwaysUnitValid(a: Accrual): bool = M::validAmount(a.tokenUnit) and
   (a.configured implies M::positiveAmount(a.tokenUnit) and a.rates.length() > 0)
 pure def alwaysRatesValid(a: Accrual): bool = a.rates.every(rate => rate.fromPeriod >= firstPeriod
   and M::validAmount(rate.numerator) and M::positiveAmount(rate.numerator)
-  and rate.denominator == List(1))
+  and M::validAmount(rate.denominator) and M::equalAmounts(rate.denominator, List(1)))
 pure def alwaysNextPeriod(a: Accrual): bool = a.nextPeriod == firstPeriod + a.filings.length()
 pure def alwaysPendingUnique(a: Accrual): bool = a.pending.every(p =>
   a.pending.select(other => other.id == p.id).length() == 1 and not(allRecords(a).some(r => r.payout.id == p.id)))
@@ -269,4 +269,11 @@ pure val payoutsValues = Set(List(),
   List({ id: 1, project: 1, period: firstPeriod, paidAt: { year: 2026, month: 11, day: 1, millis: 0 }, firstPaidAt: { year: 2026, month: 11, day: 1, millis: 0 }, gross: List(0, 0, 1), paid: true, stablecoin: true, team: false, banned: false, held: false }),
   List({ id: 1, project: 1, period: firstPeriod, paidAt: { year: 2026, month: 11, day: 1, millis: 0 }, firstPaidAt: { year: 2026, month: 11, day: 1, millis: 0 }, gross: List(0, 0, 1), paid: true, stablecoin: true, team: false, banned: false, held: false },
     { id: 2, project: 2, period: firstPeriod, paidAt: { year: 2026, month: 11, day: 1, millis: 0 }, firstPaidAt: { year: 2026, month: 11, day: 1, millis: 0 }, gross: List(0, 0, 1), paid: true, stablecoin: true, team: true, banned: false, held: false }))
+// These weights prioritize complete paths; all invalid values remain in the input sets.
+pure val weight_capture = 20
+pure val weight_configure = 15
+pure val weight_enableDryRun = 15
+pure val weight_startMonth = 25
+pure val weight_accrueNext = 30
+pure val weight_fileMonth = 30
 ```

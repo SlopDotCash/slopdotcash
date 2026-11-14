@@ -225,4 +225,12 @@ pure val rootValues = Set("root", "later", "")
 pure val proofRootValues = Set("root", "later", "wrong")
 pure val walletValues = Set("wallet", "wrong")
 pure val destinationValues = Set("owner", "")
+// These weights prioritize complete paths; all invalid values remain in the input sets.
+pure val weight_deploy = 15
+pure val weight_deposit = 20
+pure val weight_postRoot = 25
+pure val weight_claim = 30
+pure val weight_voidLast = 15
+pure val weight_tick = 15
+pure val weight_rescue = 15
 ```
