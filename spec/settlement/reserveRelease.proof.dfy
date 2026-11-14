@@ -172,5 +172,37 @@ lemma settlePart_ensures(r: ReserveRelease, amount: seq<int>)
   if inv(r) && canSettlePart(r, amount) {
     settlement__money_lawAdditionValid_ensures(r.settledAmount, amount);
     settlement__money_lawSubtractionValid_ensures(r.reserved, amount);
+    var rest := settlement__money_subtractAmounts(r.reserved, amount);
+    var restored := settlement__money_addAmounts(rest, amount);
+    var prior := settlement__money_addAmounts(r.free, r.reserved);
+    var head := settlement__money_addAmounts(r.free, rest);
+    var lifted := settlement__money_addAmounts(r.free, restored);
+    var withAmount := settlement__money_addAmounts(head, amount);
+    var oldTotal := settlement__money_addAmounts(prior, r.settledAmount);
+    var newSettlement := settlement__money_addAmounts(r.settledAmount, amount);
+    var newTotal := settlement__money_addAmounts(head, newSettlement);
+    settlement__money_lawNumericOrderTotal_ensures(r.reserved, amount);
+    assert settlement__money_compareAmounts(r.reserved, amount) >= 0;
+    settlement__money_lawSubtractionReconstructs_ensures(r.reserved, amount);
+    settlement__money_lawAdditionValid_ensures(rest, amount);
+    settlement__money_lawAdditionValid_ensures(r.free, r.reserved);
+    settlement__money_lawAdditionValid_ensures(r.free, rest);
+    settlement__money_lawAdditionValid_ensures(r.free, restored);
+    settlement__money_lawAdditionValid_ensures(head, amount);
+    assert settlement__money_equalAmounts(restored, r.reserved);
+    settlement__money_lawAddCongruence_ensures(restored, r.reserved, r.free);
+    assert settlement__money_equalAmounts(lifted, prior) by {
+      settlement__money_lawAddCommutative_ensures(restored, r.free);
+      settlement__money_lawAddCommutative_ensures(r.reserved, r.free);
+    }
+    settlement__money_lawAddAssociative_ensures(r.free, rest, amount);
+    PaddedAmountSubstitution(withAmount, lifted, prior);
+    settlement__money_lawAddCongruence_ensures(withAmount, prior, r.settledAmount);
+    settlement__money_lawAddAssociative_ensures(head, amount, r.settledAmount);
+    settlement__money_lawAddCommutative_ensures(amount, r.settledAmount);
+    settlement__money_lawEqualSymmetric_ensures(newTotal, settlement__money_addAmounts(withAmount, r.settledAmount));
+    PaddedAmountSubstitution(newTotal, settlement__money_addAmounts(withAmount, r.settledAmount), oldTotal);
+    PaddedAmountSubstitution(newTotal, oldTotal, settlement__money_addAmounts(r.originalFree, r.originalReserve));
+    assert alwaysConserved(settlePart(r, amount));
   }
 }
