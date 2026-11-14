@@ -1,0 +1,334 @@
+{
+  "scope": "Focused source comparison for the durable standard private award model and directed witness overlap. A witness link checks an overlapping assertion, not full source equivalence or application conformance.",
+  "development": "cde1f719cda7fc52a0f26dcbbcd524cd2cd7c138",
+  "legacyMain": "6b3b9d0b979f0608d87941f1146056a98513ffcf",
+  "modelSourceHashes": {
+    "spec/settlement/directBounty.md": "57e396faaa8b0ea0d035dbf50b9914bde7a5c5cb12a492eb27c5f078d9e10ab2",
+    "spec/settlement/money.md": "65d72012c72c335adddbb78d3934687c0fce7442ad51b5404090130af42a4c5b"
+  },
+  "generated": {
+    "typescript": "d7c9db69747507027acb7eaa3679552b0941eb320ac1427d5546c6c6c2c1b2d5",
+    "dafny": "cb28313fbfcbc9e5d330ff04966c8f32268e1897906ada4af2570d78b9dc3851"
+  },
+  "proof": {
+    "resultFile": "formal/validation/active-proof/settlement/direct-bounty-proof.json",
+    "obligations": 101,
+    "unproved": []
+  },
+  "simulation": {
+    "resultFile": "formal/validation/active-proof/settlement/direct-bounty-replay.json",
+    "traces": 250,
+    "transitionsReached": 9,
+    "goalsReached": 6
+  },
+  "references": [
+    {
+      "path": "formal/models/payments/bounty_payment.qnt",
+      "sha256": "5bc0044fef8ea9114b6ed8da08c5dae5caa8db683ef18f736317c52a4efc0888",
+      "sourceEntries": [
+        "migrations/0108_private_direct_payments.sql",
+        "migrations/0109_direct_payment_transfer_receipts.sql",
+        "migrations/0112_direct_payment_recovery.sql",
+        "migrations/0113_direct_unpaid_leg_recovery.sql",
+        "backend/security/direct-payments.ts",
+        "backend/security/verified-direct-recovery.ts"
+      ],
+      "successor": {
+        "path": "spec/settlement/directBounty.md",
+        "definitions": [
+          "canAdmit",
+          "canPrepare",
+          "canRecordTransfer",
+          "canRecordPair",
+          "paid",
+          "canRecover"
+        ]
+      },
+      "originalScenarios": {
+        "preparedRun": [],
+        "partialRemainsUnpaidTest": [
+          "walletChangeHoldsOnlyResearcherAndOldFinalizedPayoutStillCountsTest"
+        ],
+        "researcherWaitsForFeeNonceTest": [],
+        "completeTest": [
+          "uniqueCanonicalTransactionAcrossLegsAndLedgersTest"
+        ],
+        "noResendAfterPaidTest": [
+          "walletChangeHoldsOnlyResearcherAndOldFinalizedPayoutStillCountsTest"
+        ],
+        "successorWithoutCancellationRefusedTest": [
+          "feeOnlySuccessorKeepsThePaidResearcherAndOriginalPayerTest"
+        ],
+        "researcherSuccessorAfterCancellationTest": [
+          "renewedConsentAndFinalizedRetirementMustMatchTheUnpaidRequestTest"
+        ],
+        "cancelledResearcherRequestPaysNewWalletOnceTest": [],
+        "paidResearcherLegNotReissuedTest": [
+          "feeOnlySuccessorKeepsThePaidResearcherAndOriginalPayerTest"
+        ],
+        "unpaidFeeLegSuccessorTest": [
+          "feeOnlySuccessorKeepsThePaidResearcherAndOriginalPayerTest"
+        ],
+        "feeLegCannotRedirectTest": [],
+        "lowerNonceBlocksResearcherCancellationTest": [
+          "renewedConsentAndFinalizedRetirementMustMatchTheUnpaidRequestTest"
+        ],
+        "unverifiedLandedLegBlocksSuccessorTest": []
+      },
+      "boundary": [
+        "Shared prepared/partial/paid and recovery outcomes are executable. Wallet execution and cancellation are external to the receipt journal; the browser validates exact pending nonce.",
+        "Source-modeled post-wallet returns and lower pending nonce observations are authenticated adapter inputs."
+      ]
+    },
+    {
+      "path": "formal/models/payments/direct_bounty_journal.qnt",
+      "sha256": "3020aebd3ca62801dace69ab002c49c19fa9bdb71723b435b72d0e204d824dd0",
+      "sourceEntries": [
+        "src/DirectBountyPayment.tsx"
+      ],
+      "successor": null,
+      "originalScenarios": {
+        "lateNonceResultPreservesOtherLegTest": [],
+        "lateResultCannotReplaceNewSameNonceTest": [],
+        "oldRejectionCannotDeleteNewSameNonceTest": [],
+        "duplicateNonceCannotStartSecondPromptTest": [],
+        "failedHashWriteKeepsKnownResultInMemoryTest": [],
+        "failedMarkerWriteCannotOwnPromptTest": [],
+        "checkAfterFailedHashWriteKeepsKnownHashTest": [],
+        "failedCheckWriteKeepsLocalRecoveryTest": [],
+        "localHashCannotReplaceNewerStoredHashTest": [],
+        "localHashCannotAttachToNewReservationTest": [],
+        "noPromptAfterDepartureTest": [],
+        "departedCompletionStillMergesOwnedEvidenceTest": [],
+        "legacyCandidateRemainsProtectedTest": [],
+        "legacyCandidateRefusesNewPromptTest": [],
+        "canonicalFreshIdsReachSameNonceAbaTest": [],
+        "canonicalFreshIdsExhaustAfterThreeTest": [],
+        "clearedInputCannotSubmitStoredCandidateTest": []
+      },
+      "boundary": [
+        "The original unit models synchronous sessionStorage prompt ownership, late wallet results, mounted memory, candidate hashes and ABA replacement. Durable receipts are a different state owner. A browser successor is pending in this evidence snapshot."
+      ]
+    },
+    {
+      "path": "formal/models/payments/security_rail_exclusivity.qnt",
+      "sha256": "fa2120421497b1ab9753a11aca213c3487f6dca6e04ee5ba559110160e1a696e",
+      "sourceEntries": [
+        "migrations/0026_private_security_cases.sql",
+        "migrations/0057_private_security_payments.sql",
+        "migrations/0108_private_direct_payments.sql",
+        "migrations/0109_direct_payment_transfer_receipts.sql",
+        "migrations/0014_direct_payments.sql",
+        "backend/security/handler.ts",
+        "backend/security/payments.ts"
+      ],
+      "successor": {
+        "path": "spec/settlement/directBounty.md",
+        "definitions": [
+          "canAdmit",
+          "canRecordOtherUse",
+          "canRecordTransfer",
+          "canRecordPair"
+        ]
+      },
+      "originalScenarios": {
+        "vaultBlocksDirectForRootCauseTest": [],
+        "directBlocksVaultForRootCauseTest": [],
+        "settlementBlocksDirectPaymentTest": [],
+        "directPaymentBlocksSettlementTest": [],
+        "ordinaryTransferCannotBeReceiptTest": [
+          "uniqueCanonicalTransactionAcrossLegsAndLedgersTest"
+        ],
+        "receiptCannotBeOrdinaryTest": [
+          "uniqueCanonicalTransactionAcrossLegsAndLedgersTest"
+        ],
+        "oneTransactionOneLegTest": [
+          "uniqueCanonicalTransactionAcrossLegsAndLedgersTest"
+        ],
+        "bothLegsPaidTest": [
+          "uniqueCanonicalTransactionAcrossLegsAndLedgersTest"
+        ]
+      },
+      "boundary": [
+        "Transaction ownership and cross-ledger replay are executable in the case projection. Case admission supplies proof of exclusion across vault and direct root causes. The shared store must enact uniqueness atomically across cases."
+      ]
+    },
+    {
+      "path": "formal/models/payments/direct_payer_nonce.qnt",
+      "sha256": "29d61f2772a7e214ffad7826366d2e98cbacd49189567e9b38d197a5c3d6c169",
+      "sourceEntries": [
+        "backend/security/direct-payments.ts",
+        "migrations/0112_direct_payment_recovery.sql",
+        "migrations/0113_direct_unpaid_leg_recovery.sql"
+      ],
+      "successor": {
+        "path": "spec/settlement/directBounty.md",
+        "definitions": [
+          "canPrepare",
+          "freshNonce",
+          "canRecover"
+        ]
+      },
+      "originalScenarios": {
+        "concurrentReadSecondInsertRefusedTest": [],
+        "retryAfterConflictTakesFreshNoncesTest": [],
+        "pendingAboveReservationsTest": [],
+        "successorReservesOnlyChangedLegTest": [
+          "feeOnlySuccessorKeepsThePaidResearcherAndOriginalPayerTest"
+        ],
+        "staleSuccessorReadRefusedTest": [
+          "renewedConsentAndFinalizedRetirementMustMatchTheUnpaidRequestTest"
+        ],
+        "renewalKeepsNoncesTest": []
+      },
+      "boundary": [
+        "Initial nonce adjacency, fee-first planning, renewal without replacing its nonce, greater replacement nonce and unchanged paid leg are executable. Global max pending/reserved and database conflict detection are authenticated atomic reservation inputs."
+      ]
+    },
+    {
+      "path": "formal/models/payments/direct_preparation_completion.qnt",
+      "sha256": "507ff8ad4b54811725948c1502177509f803eba678b8e8df591ce2c1247f4539",
+      "sourceEntries": [
+        "backend/security/direct-payments.ts",
+        "backend/security/handler.ts",
+        "backend/payments/wallet-registration.ts",
+        "migrations/0100_effective_payment_wallets.sql",
+        "migrations/0108_private_direct_payments.sql"
+      ],
+      "successor": {
+        "path": "spec/settlement/directBounty.md",
+        "definitions": [
+          "observeWallets",
+          "observeCaseRevision",
+          "canConsent",
+          "canPrepare",
+          "recordTransfer"
+        ]
+      },
+      "originalScenarios": {
+        "currentPreparationPublishesTest": [],
+        "reporterChangesDuringRpcTest": [],
+        "payerChangesAfterRpcTest": [],
+        "consentForOldClaimDoesNotAuthorizeNewClaimTest": [],
+        "newCurrentClaimCanBePreparedTest": [],
+        "concurrentCaseWriteRefusesPreparationTest": [],
+        "failedBatchDoesNotPublishTest": [],
+        "walletChangeAfterPublicationKeepsFrozenEvidenceTest": [
+          "walletChangeHoldsOnlyResearcherAndOldFinalizedPayoutStillCountsTest"
+        ]
+      },
+      "boundary": [
+        "The successful prepare transition compares captured reporter, payer, consent and case revision at the atomic write. The optional plan computation precedes that write. Planning failure or failed batch leaves no transition and no published request."
+      ]
+    },
+    {
+      "path": "formal/models/payments/direct_recovery_completion.qnt",
+      "sha256": "ce117cf3316f7f03bec853c9382339b3a63364578c77a5cb75896aa4a6458ab1",
+      "sourceEntries": [
+        "backend/security/direct-payments.ts",
+        "backend/security/handler.ts",
+        "backend/payments/wallet-registration.ts",
+        "migrations/0112_direct_payment_recovery.sql",
+        "migrations/0113_direct_unpaid_leg_recovery.sql"
+      ],
+      "successor": {
+        "path": "spec/settlement/directBounty.md",
+        "definitions": [
+          "observeWallets",
+          "observeCaseRevision",
+          "canConsent",
+          "canRecover",
+          "stepPaidLegsUnchanged"
+        ]
+      },
+      "originalScenarios": {
+        "stableSuccessorTest": [
+          "renewedConsentAndFinalizedRetirementMustMatchTheUnpaidRequestTest"
+        ],
+        "walletChangedBeforeSecondReadTest": [],
+        "walletChangedDuringProofTest": [],
+        "currentGenerationChangedTest": [],
+        "caseRevisionChangedTest": [
+          "renewedConsentAndFinalizedRetirementMustMatchTheUnpaidRequestTest"
+        ],
+        "currentAuthorizationRequiredTest": [],
+        "eventMustBelongToRecoveringActorTest": [
+          "feeOnlySuccessorKeepsThePaidResearcherAndOriginalPayerTest"
+        ],
+        "feeOnlyRecoveryPreservesPaidReporterTest": [
+          "feeOnlySuccessorKeepsThePaidResearcherAndOriginalPayerTest"
+        ],
+        "payerChangedDuringProofTest": [],
+        "payerAuthorizationRevokedDuringProofTest": [],
+        "feeOnlyRecoveryRequiresCurrentPayerTest": [],
+        "priorCaseActionsAndGenerationRetainSafetyTest": []
+      },
+      "boundary": [
+        "Recovery compares case revision, generation, original payer identity and valid currently authorized payer address. The reporter needs live exact consent only if replacing the researcher request. Chain verifier internals and case SQL conformance are external."
+      ]
+    },
+    {
+      "path": "formal/models/payments/direct_payment_recovery.qnt",
+      "sha256": "be53e2883d1746a59b34322805f74ddd4e2edd35c9b74ab2b56eceef805a5963",
+      "sourceEntries": [
+        "migrations/0112_direct_payment_recovery.sql",
+        "migrations/0113_direct_unpaid_leg_recovery.sql",
+        "backend/security/direct-payments.ts",
+        "backend/security/verified-direct-recovery.ts"
+      ],
+      "successor": {
+        "path": "spec/settlement/directBounty.md",
+        "definitions": [
+          "canRecover",
+          "recordTransfer",
+          "paid"
+        ]
+      },
+      "originalScenarios": {
+        "absentIsNotRetiredTest": [
+          "feeOnlySuccessorKeepsThePaidResearcherAndOriginalPayerTest"
+        ],
+        "lowerNonceBlocksTest": [
+          "renewedConsentAndFinalizedRetirementMustMatchTheUnpaidRequestTest"
+        ],
+        "successorNeedsFreshGenerationTest": [
+          "feeOnlySuccessorKeepsThePaidResearcherAndOriginalPayerTest"
+        ],
+        "safeReplacementTest": [
+          "renewedConsentAndFinalizedRetirementMustMatchTheUnpaidRequestTest"
+        ]
+      },
+      "boundary": [
+        "Missing retirement or stale generation cannot expose a changed destination. Exact late researcher receipt before replacement remains verifiable. Completion requires the fee too under the standard 75/25 split."
+      ]
+    },
+    {
+      "path": "formal/models/payments/direct_solana_retirement.qnt",
+      "sha256": "5c6eefa51bb06557248ec6fa77b7e9a0290471e091ffca62fa0b2f00132e5881",
+      "sourceEntries": [
+        "backend/security/direct-solana-recovery.ts",
+        "backend/security/direct-payments.ts"
+      ],
+      "successor": {
+        "path": "spec/settlement/directBounty.md",
+        "definitions": [
+          "canRecover",
+          "recordTransfer"
+        ]
+      },
+      "originalScenarios": {
+        "oneLiveMessageBlocksChallengeTest": [],
+        "challengeThenRetainedAbsenceTest": [
+          "everyRetainedSolanaMessageNeedsRetirementEvidenceTest"
+        ],
+        "matchingFailuresRetireTest": [],
+        "providerDisagreementHoldsTest": [],
+        "foundWinsOverIncompleteCoverageTest": [],
+        "malformedRpcOverridesFoundTest": []
+      },
+      "boundary": [
+        "Recovery checks exact job and total coverage of retained message identities. Dual-provider history, retained-page CAS, expiry and signatures remain verifier implementation conformance. A discovered matching transfer enters recordTransfer and cannot constitute certified retirement."
+      ]
+    }
+  ]
+}
