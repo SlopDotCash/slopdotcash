@@ -20,9 +20,9 @@ all 473 original models to the new spec tree. The pinned PRD is preserved in
 New project automatic-closure consent starts unchecked, as the owner confirmed
 for this migration.
 
-The [verification record](formal/verification.md) reports passing checks,
-remaining financial proof obligations and the implementation evidence still
-required. Specification review and acceptance remain open.
+The [verification record](formal/verification.md) links checked proofs,
+Quint replay evidence and remaining legacy equivalence and implementation
+checks. Specification review and acceptance remain open.
 
 ## Set up
 
