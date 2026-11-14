@@ -202,17 +202,19 @@ pure def abandonMonth(a: Accrual, leaseId: str, leaseCurrent: bool): Accrual =
 A missing, expired or replaced D1 lease refuses filing. Unfiled rows are
 private staging state; abandoning a lost lease discards them and leaves every
 prior record and pin unchanged. Each step consumes the first canonical source
-row exactly once. Pending and staged rows exist only during collection. The
-matching lease commits the staged rows,
-exact file entries and first-use wallet pins as one atomic operation, including
+row exactly once. Pending payouts retain a valid gross in integer base units.
+The selected accrual fits both the complete pool cap and the project cap.
+Pending and staged rows exist only during collection. The matching lease
+commits the staged rows, exact file entries and first-use wallet pins
+as one atomic operation, including
 in dry-run mode. This follows `workers/referral-accrual/store.ts:258–306`.
 The public projection includes the complete immutable record and cumulative
 referrer totals. A missing wallet changes root inclusion only; it never deletes
 or reallocates accrued tokens. Discovered by the proof: the empty wallet used for
 a missing pin could satisfy the historical entry check and then invalidate an
 old file when the actor gained a real pin. Every filed entry has a nonempty
-wallet matching a retained pin. The recorded rate is an integer number of token base units per stablecoin
-micro-unit. Multiplication is exact; no per-payout rounding occurs. This
+wallet matching a retained exact actor-and-wallet pair. The recorded rate is
+an integer number of token base units per stablecoin micro-unit. Multiplication is exact; no per-payout rounding occurs. This
 matches pinned `workers/referral-accrual/core.ts:365` and `config.ts:73–80`.
 The approved initial rate is three tokens per USDC; configuration refuses a
 token unit that cannot express that rate exactly.
@@ -228,7 +230,7 @@ pure def alwaysRatesValid(a: Accrual): bool = a.rates.every(rate => rate.fromPer
   and M::validAmount(rate.denominator) and M::equalAmounts(rate.denominator, List(1)))
 pure def alwaysNextPeriod(a: Accrual): bool = a.nextPeriod == firstPeriod + a.filings.length()
 pure def alwaysPendingUnique(a: Accrual): bool = a.pending.every(p =>
-  a.pending.select(other => other.id == p.id).length() == 1 and not(allRecords(a).some(r => r.payout.id == p.id)))
+  M::validAmount(p.gross) and a.pending.select(other => other.id == p.id).length() == 1 and not(allRecords(a).some(r => r.payout.id == p.id)))
 pure def alwaysCaps(a: Accrual): bool = M::compareAmounts(totalAccrued(a), poolCap(a)) <= 0
   and allRecords(a).every(r => M::validAmount(r.amount) and M::compareAmounts(projectAccrued(a, r.payout.project), projectCap(a)) <= 0)
 pure def alwaysUniquePayouts(a: Accrual): bool = allRecords(a).every(r =>
@@ -247,7 +249,7 @@ pure def alwaysStagedPrivate(a: Accrual): bool = a.phase != Collecting implies
 pure def alwaysPinsUnique(a: Accrual): bool = a.pins.every(pin => pin.wallet != "" and
   a.pins.select(other => other.actor == pin.actor).length() == 1 and a.pins.select(other => other.wallet == pin.wallet).length() == 1)
 pure def entryWalletPinned(pins: List[Wallet], entry: RootEntry): bool =
-  entry.wallet != "" and entry.wallet == pinnedWallet(pins, entry.actor)
+  entry.wallet != "" and pins.some(pin => pin.actor == entry.actor and pin.wallet == entry.wallet)
 pure def alwaysFileWalletPinned(a: Accrual): bool = a.filings.every(file => file.entries.every(e => entryWalletPinned(a.pins, e)))
 pure def stepPinsRetained(before: Accrual, after: Accrual): bool = before.pins.every(pin => after.pins.includes(pin))
 pure def stepRecordsRetained(before: Accrual, after: Accrual): bool = before.records.every(r => after.records.includes(r))

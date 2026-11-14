@@ -1,0 +1,61 @@
+{
+  "scratch": "/tmp/slop-referral-modeled-referral-final-live-pins",
+  "specHashes": {
+    "spec/settlement/money.md": "801d269c4fa02d62cac4d5d37412d831793daf16aff7a751c07e10a5ce383f4b",
+    "spec/settlement/referralAccrual.md": "b5bf2ea5825a29e59cc2bd021ed3623fa6f07e5398e803b7dea0b0296254b135",
+    "spec/settlement/referralDistributor.md": "9806b4cd07201302c90313cb2ed894c2ee0b7ef953c8bcc0abf1b1da9d75e673",
+    "spec/settlement/referrals.md": "70f1701d007216eff36152de00b41020a01a772cece96950ef9563a89699a373",
+    "spec/settlement/referralPublication.md": "86d0ccb3e1b1ac54e0d48e6b9901ccb9065154a6894f01812be7dec81839e75a"
+  },
+  "simulations": [
+    {
+      "name": "settlement__referralAccrual",
+      "step": "step",
+      "traces": 35,
+      "goals": [
+        "sometimesFiled",
+        "sometimesExcludedRecorded",
+        "sometimesMultiProject"
+      ],
+      "command": "seed 92704972806062; to simulate again: pnpm exec quint run gen/settlement__referralAccrual.run.qnt --main settlement__referralAccrual_run --step step --invariant inv --max-samples 150 --max-steps 24 --mbt --seed 92704972806062"
+    },
+    {
+      "name": "settlement__referralAccrual",
+      "step": "probe",
+      "traces": 35,
+      "goals": [
+        "sometimesFiled",
+        "sometimesExcludedRecorded",
+        "sometimesMultiProject"
+      ],
+      "command": "seed 258544492233916; to simulate again: pnpm exec quint run gen/settlement__referralAccrual.run.qnt --main settlement__referralAccrual_run --step probe --invariant inv --max-samples 150 --max-steps 24 --mbt --seed 258544492233916"
+    },
+    {
+      "name": "settlement__referralPublication",
+      "step": "step",
+      "traces": 35,
+      "goals": [
+        "sometimesUncertain",
+        "sometimesClaimed",
+        "sometimesVoided"
+      ],
+      "command": "seed 145791273774571; to simulate again: pnpm exec quint run gen/settlement__referralPublication.run.qnt --main settlement__referralPublication_run --step step --invariant inv --max-samples 150 --max-steps 24 --mbt --seed 145791273774571"
+    },
+    {
+      "name": "settlement__referralPublication",
+      "step": "probe",
+      "traces": 35,
+      "goals": [
+        "sometimesUncertain",
+        "sometimesClaimed",
+        "sometimesVoided"
+      ],
+      "command": "seed 221658666227622; to simulate again: pnpm exec quint run gen/settlement__referralPublication.run.qnt --main settlement__referralPublication_run --step probe --invariant inv --max-samples 150 --max-steps 24 --mbt --seed 221658666227622"
+    }
+  ],
+  "directed": {
+    "uniquePinCases": 84,
+    "rejectsEmptyPin": true,
+    "rejectsInvalidPendingGross": true
+  }
+}
