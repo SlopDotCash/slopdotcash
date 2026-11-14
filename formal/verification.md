@@ -22,8 +22,8 @@ The specification tree defines account and browser ownership, project setup
 and revisions, contributor installation and work, Points, security admission,
 private cases, notifications, releases, settlement and fee handling. Each
 formal rule is catalogued in [spec-catalog.json](spec-catalog.json).
-The active tree contains 71 documents, 90 story groups and 296 rule groups.
-The initial full-tree run covered 64 of those documents. The later additions
+The [catalog](spec-catalog.json) records the current document, story and rule
+inventory. The initial full-tree run covered 64 documents. Later additions
 have their own source-bound checks below.
 The retained source maps cover all 63 PRD sections and all 473 original models.
 
@@ -181,9 +181,9 @@ sampled traces and definitions with available standalone inputs. The report
 lists the definitions without standalone comparison.
 [Full-tree simulation and replay](validation/full-tree/model-simulation-replay.json)
 
-The assembled 71-document tree generated successfully and passed both VibeLang
+The assembled 71-document baseline generated successfully and passed both VibeLang
 typechecks. Baseline and focused results together replayed 23,813 traces across
-all 61 current executable models. The integrated report lists the inputs
+all 61 executable models in that baseline. The integrated report lists the inputs
 carried forward and the focused substitutions. The template tool suite passed
 34 tests and the greeting app passed three. The greeting's conformance driver
 also passed a directed journey, five malformed-input cases and 1,000 walks. The scratch checkout initially
@@ -200,12 +200,64 @@ corrected and fully proved. Baseline review reported no story without rules
 or rule without Quint.
 [Baseline summary](validation/full-tree/baseline-summary.json) · [Raw baseline results](validation/full-tree/baseline-check.json) · [Proof inputs](validation/full-tree/proof-stage-inputs.json)
 
-The integrated proof inventory counts exact-source results once across the
-baseline and focused runs. It records 2,644 discharged and 62 open obligations
+The baseline integrated proof inventory counts exact-source results once across
+its full-tree and focused runs. It records 2,644 discharged and 62 open obligations
 across 69 of 72 units. The three timed-out units have no complete verdict.
 The reports retain the exact clauses and raw diagnostics. Specification review
 and approval remain pending.
-[Current proof inventory](validation/full-tree/integrated-proof-inventory.json) · [Review status](validation/full-tree/integrated-review.json)
+[Baseline proof inventory](validation/full-tree/integrated-proof-inventory.json) · [Review status](validation/full-tree/integrated-review.json)
+
+## Continuing proof and source audit
+
+The 14 November source update contains the approved provisional EVM token
+vault policy and member-owned referral names. It also records the requirement
+for the production Pages Function to configure its analytics beacon to send
+page view traffic to the site's own origin.
+[Approved source paragraphs](validation/active-proof/source-policy-delta.json)
+
+- Provisional vault setup checks creation replacement, finality and exact
+  deposit evidence. All 107 obligations proved.
+  [Provisional vault results](validation/source-coverage/provisional-vault.json)
+- Referral names retain the original immutable account after replacement and
+  at the five-name lifetime cap. The browser scopes each save to one mounted
+  lifetime. All 33 obligations proved, 60 traces replayed, and five reachability
+  goals were witnessed.
+  [Referral settings and registry results](validation/source-coverage/referral-links.json)
+- Report details clear on account changes and support independently mounted
+  siblings. Snapshot consumers cannot detach another lease or have a stale
+  response overwrite a newer request. All 67 obligations proved.
+  [Browser ownership results](validation/source-coverage/browser-ownership.json)
+- Batched deposits retain signed intent and recover an uncertain handoff before
+  checking exact chain evidence. Payment jobs scope failures and retries to
+  their own network and run identity. All 78 obligations proved.
+  [Deposit and job results](validation/source-coverage/deposit-jobs.json)
+- Durable keeper requests share one active run. A staged transaction retains
+  exact bytes and its bounded native liability through restart and retry.
+  All 66 obligations proved.
+  [Durable keeper results](validation/source-coverage/keeper-lifecycle.json)
+- Settlements retain exact receipts and amounts by obligation alongside prior
+  unrelated payments. The allocation model applies the approved purpose-specific
+  split. Vault proof now discharges 32 of 42 obligations. The remaining
+  conservation and positivity clauses require additional arithmetic proofs.
+  [Settlement journeys](validation/active-proof/settlement/settlement-history-models.json) · [Vault proof](validation/active-proof/settlement/vault-reservation-effects.json)
+- Shared money has checked digit validity, padded equality and order
+  substitution and commutative addition. Fixed floor-halving checks quotient
+  validity, parity and the exact arithmetic relation at arbitrary width.
+  [Shared money proofs](validation/active-proof/money-order/verification.json) · [Floor halves](validation/finance/half-proof.json)
+- Referrals and buyback preserve filing identity, posting history and the
+  pinned bridged quantity. The repaired models replayed 210 traces. The
+  distributor proof discharged 141 of 146 obligations against its recorded
+  dependency bytes. Buyback also replays exact halving.
+  [Repaired journeys](validation/finance/referral-buyback-repaired-models.json) · [Distributor proof](validation/finance/referral-distributor-proof-progress.json) · [Floor-half replay](validation/finance/buyback-exact-half-replay.json)
+- Reserve release proof discharges 144 of 146 obligations. Exact partial
+  settlement conservation and its dependent step condition remain open.
+  [Reserve proof](validation/active-proof/settlement/reserve-validity-conservation.json)
+
+The structural inventory accounts for all 473 retained models, 5,800 legacy
+actions and 4,962 legacy scenarios. The detailed crosswalks map the reviewed
+subset to exact successor rules and record partial or missing semantics.
+The coverage audit and a newer whole-tree verification are still open.
+[Structural inventory](validation/source-coverage/structural-inventory.json) · [Focused crosswalk](validation/source-coverage/focused-crosswalk.json) · [Settlement crosswalk](validation/source-coverage/settlement-crosswalk.json)
 
 ## Additional source refinements
 

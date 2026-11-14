@@ -1454,8 +1454,36 @@
       "references": []
     },
     {
+      "path": "spec/settlement/half.md",
+      "sha256": "c9c22ee47471408922c6b3dca092ab668a8f500a8559ae43697da4b022a288c8",
+      "module": "settlement__half",
+      "stories": [
+        {
+          "heading": "Story: Split any supported amount into its whole half and remainder",
+          "line": 6
+        }
+      ],
+      "rules": [
+        {
+          "heading": "Story: Split any supported amount into its whole half and remainder / Halving carries one remainder bit between adjacent limbs",
+          "line": 8,
+          "definitions": [
+            "Half",
+            "halfStep",
+            "half",
+            "lawHalfValid",
+            "amountValues"
+          ]
+        }
+      ],
+      "imports": [
+        "settlement__money"
+      ],
+      "references": []
+    },
+    {
       "path": "spec/fees/buyback.md",
-      "sha256": "6581b8900f4f1a293e05cdaa0bd2b194e0b29abb564894dd89c05c22931981c1",
+      "sha256": "709729d6a21d1a204a95c8a15fdb98d8b04497f225b77dd6249ccfedd91eec05",
       "module": "fees__buyback",
       "stories": [
         {
@@ -1464,11 +1492,11 @@
         },
         {
           "heading": "Story: Continue without counting income or burns twice",
-          "line": 115
+          "line": 116
         },
         {
           "heading": "Story: Check bridge-native and direct-receipt boundaries",
-          "line": 146
+          "line": 147
         }
       ],
       "rules": [
@@ -1499,7 +1527,7 @@
         },
         {
           "heading": "Story: Commit each share of fee income once / A bridge order commits only available share and exact approved destinations",
-          "line": 44,
+          "line": 45,
           "definitions": [
             "canOrder",
             "order",
@@ -1509,7 +1537,7 @@
         },
         {
           "heading": "Story: Commit each share of fee income once / An unfilled order stays in transit until fulfillment or refund is proven",
-          "line": 65,
+          "line": 66,
           "definitions": [
             "canObserveArrival",
             "observeArrival",
@@ -1519,7 +1547,7 @@
         },
         {
           "heading": "Story: Commit each share of fee income once / Each proven arrival is spent in full and half the acquired SLOP can burn once",
-          "line": 80,
+          "line": 81,
           "definitions": [
             "canPurchase",
             "purchase",
@@ -1536,7 +1564,7 @@
         },
         {
           "heading": "Story: Continue without counting income or burns twice / A completed cycle preserves cumulative accounting and the journal",
-          "line": 117,
+          "line": 118,
           "definitions": [
             "canContinueCycle",
             "continueCycle",
@@ -1548,7 +1576,7 @@
         },
         {
           "heading": "Story: Check bridge-native and direct-receipt boundaries / Bridge-native spending observes its own network ceilings",
-          "line": 148,
+          "line": 149,
           "definitions": [
             "bridgeNativeAllowed",
             "localFeeShare",
@@ -1564,7 +1592,7 @@
         },
         {
           "heading": "Story: Check bridge-native and direct-receipt boundaries / Simulation samples exercise missing, matching and conflicting evidence",
-          "line": 186,
+          "line": 187,
           "definitions": [
             "alreadyCommittedValues",
             "dayNativeValues",
@@ -1582,9 +1610,15 @@
         }
       ],
       "imports": [
-        "settlement__money"
+        "settlement__money",
+        "settlement__half"
       ],
-      "references": []
+      "references": [
+        {
+          "target": "../settlement/half.md",
+          "line": 47
+        }
+      ]
     },
     {
       "path": "spec/fees/conversion.md",
@@ -4953,36 +4987,8 @@
       "references": []
     },
     {
-      "path": "spec/settlement/half.md",
-      "sha256": "c9c22ee47471408922c6b3dca092ab668a8f500a8559ae43697da4b022a288c8",
-      "module": "settlement__half",
-      "stories": [
-        {
-          "heading": "Story: Split any supported amount into its whole half and remainder",
-          "line": 6
-        }
-      ],
-      "rules": [
-        {
-          "heading": "Story: Split any supported amount into its whole half and remainder / Halving carries one remainder bit between adjacent limbs",
-          "line": 8,
-          "definitions": [
-            "Half",
-            "halfStep",
-            "half",
-            "lawHalfValid",
-            "amountValues"
-          ]
-        }
-      ],
-      "imports": [
-        "settlement__money"
-      ],
-      "references": []
-    },
-    {
       "path": "spec/settlement/index.md",
-      "sha256": "436304b5c1ec4b460cbd30574a4b7115cd2be6ea716d21bafb263116facbdd3d",
+      "sha256": "ad034e97a85a693ab10fe07bb3ea31a874d1f8d0224e4cc533482c751f940e13",
       "module": "settlement",
       "stories": [],
       "rules": [],
@@ -5037,32 +5043,36 @@
           "line": 16
         },
         {
-          "target": "./keeperDiagnostics.md",
+          "target": "./keeperLifecycle.md",
           "line": 17
         },
         {
-          "target": "./contributorAllocation.md",
+          "target": "./keeperDiagnostics.md",
           "line": 18
         },
         {
-          "target": "./referrals.md",
+          "target": "./contributorAllocation.md",
           "line": 19
         },
         {
-          "target": "../fees/",
+          "target": "./referrals.md",
           "line": 20
         },
         {
-          "target": "./referralAccrual.md",
-          "line": 22
+          "target": "../fees/",
+          "line": 21
         },
         {
-          "target": "./referralPublication.md",
+          "target": "./referralAccrual.md",
           "line": 23
         },
         {
-          "target": "./referralDistributor.md",
+          "target": "./referralPublication.md",
           "line": 24
+        },
+        {
+          "target": "./referralDistributor.md",
+          "line": 25
         }
       ]
     },
@@ -5132,6 +5142,150 @@
       ],
       "imports": [],
       "references": []
+    },
+    {
+      "path": "spec/settlement/keeperLifecycle.md",
+      "sha256": "8e273428614145ef40a3de37089c0f1080a55ffbbb178d7a65dca499c22e38e4",
+      "module": "settlement__keeperLifecycle",
+      "stories": [
+        {
+          "heading": "Story: Connect internal requests to one live core run",
+          "line": 20
+        },
+        {
+          "heading": "Story: Preserve a transaction journal across lost instances and retry",
+          "line": 97
+        }
+      ],
+      "rules": [
+        {
+          "heading": "Story: Connect internal requests to one live core run / Public and wrong internal routes cannot start work",
+          "line": 22,
+          "definitions": [
+            "KeeperMode",
+            "Caller",
+            "RequestPhase",
+            "RequestResult",
+            "RunPhase",
+            "RunResult",
+            "Configuration",
+            "RequestRow",
+            "FinishedRun",
+            "LiveRun",
+            "Journal",
+            "Lifecycle",
+            "noRun",
+            "offConfiguration",
+            "noRequest",
+            "noResult",
+            "initial",
+            "requestRow",
+            "updateRequest",
+            "runResult",
+            "configAccepted",
+            "canConfigure",
+            "configure",
+            "canRequest",
+            "request",
+            "canDispatch",
+            "dispatch"
+          ]
+        },
+        {
+          "heading": "Story: Connect internal requests to one live core run / Off and failed preflight settle without invoking a signer",
+          "line": 76,
+          "definitions": [
+            "settleRun",
+            "matchesRun",
+            "canSelectMode",
+            "selectMode",
+            "canCheckIdentity",
+            "checkIdentity"
+          ]
+        },
+        {
+          "heading": "Story: Preserve a transaction journal across lost instances and retry / Native fee liability and nonce become durable with the exact signed bytes",
+          "line": 99,
+          "definitions": [
+            "canIndexReads",
+            "indexReads",
+            "canStageAttempt",
+            "stageAttempt",
+            "canCommitAttempt",
+            "commitAttempt",
+            "canBroadcast",
+            "broadcast",
+            "canRecordGasEvidence",
+            "recordGasEvidence"
+          ]
+        },
+        {
+          "heading": "Story: Preserve a transaction journal across lost instances and retry / Core completion and per-request result delivery have independent lifetimes",
+          "line": 134,
+          "definitions": [
+            "canItemFailure",
+            "itemFailure",
+            "canFinish",
+            "finish",
+            "canFatal",
+            "fatal",
+            "canDeliver",
+            "responseRow",
+            "deliver",
+            "canInspectScheduled",
+            "inspectScheduled"
+          ]
+        },
+        {
+          "heading": "Story: Preserve a transaction journal across lost instances and retry / Restart abandons only ephemeral work and unresolved callers from that instance",
+          "line": 166,
+          "definitions": [
+            "canRestart",
+            "restart",
+            "alwaysCommitIsAtomic",
+            "alwaysSeparateGasTerminal",
+            "stepRetainCommittedBytes",
+            "stepRestartRetainsDurableState",
+            "sometimesCoalesced",
+            "sometimesCommitted",
+            "sometimesReplayed",
+            "sometimesGasSettled",
+            "sometimesPartial",
+            "dryConfig",
+            "executeConfig",
+            "configValues",
+            "requestIdValues",
+            "runIdValues",
+            "instanceValues",
+            "bytesValues",
+            "weight_request",
+            "weight_dispatch",
+            "weight_selectMode",
+            "weight_checkIdentity",
+            "weight_stageAttempt",
+            "weight_commitAttempt",
+            "weight_broadcast",
+            "weight_finish",
+            "weight_deliver",
+            "weight_inspectScheduled"
+          ]
+        }
+      ],
+      "imports": [],
+      "references": [
+        {
+          "target": "./keeperRpc.md",
+          "line": 11
+        },
+        {
+          "target": "./keeperScan.md",
+          "line": 11
+        },
+        {
+          "target": "../operations/paymentJobs.md",
+          "line": 12
+        }
+      ]
     },
     {
       "path": "spec/settlement/keeperRpc.md",
