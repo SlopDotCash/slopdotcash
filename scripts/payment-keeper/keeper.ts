@@ -1,10 +1,13 @@
 import type { MonthlyAuthorization } from "../../backend/payments/monthly-attestation-types";
 import {
+  EvmRpcError,
+  EvmRpcUnavailable,
   readEvmAuthorityRotation,
   verifyPayment,
   verifyReserve,
 } from "../../contracts/evm/adapter";
 import {
+  SolanaRpcUnavailable,
   solanaAuthorityRotation,
   solanaPaymentAdapter,
   verifySolanaDeployment,
@@ -125,7 +128,20 @@ export interface KeeperResult {
   state: string;
   transactionId?: string | null;
   error?: string;
+  failureStage?: KeeperFailureStage;
+  failureCause?: "rpc-unavailable" | "rpc-error" | "other";
 }
+
+export type KeeperFailureStage =
+  | "preflight"
+  | "authority-read"
+  | "signer-role"
+  | "gas-reconcile"
+  | "payment-scan"
+  | "payment-evidence"
+  | "payment-index"
+  | "monthly-state"
+  | "award-state";
 
 /** A publication can replace only an unadmitted execution attempt, never its frozen allocation. */
 async function retainAuthorization(
@@ -320,12 +336,14 @@ export async function runKeeper(
       const item = { projectId: project.id, vault: record.vault };
       const scope = `${project.id}:${record.vault}`;
       const target = { network: config.network, vault: record.vault };
+      let failureStage: KeeperFailureStage = "preflight";
       try {
         const checked =
           network.family === "evm"
             ? await preflightEvmDeployment(common, target)
             : await preflightSolanaDeployment(common, target);
         // Monthly submit also uses this independent gas key. Refuse every reviewed privileged role.
+        failureStage = "authority-read";
         const rotation =
           network.family === "evm"
             ? await readEvmAuthorityRotation({
@@ -354,6 +372,7 @@ export async function runKeeper(
           record.rotationAuthority,
           record.evmUpgrade?.authority,
         ];
+        failureStage = "signer-role";
         if (
           roles.some(
             (role) =>
@@ -365,6 +384,7 @@ export async function runKeeper(
         )
           throw new Error("Keeper signer must have no vault role");
         if (!gasReconciled) {
+          failureStage = "gas-reconcile";
           await reconcileGas(
             deps.store,
             network.family,
@@ -376,6 +396,7 @@ export async function runKeeper(
         }
         const scan =
           network.family === "evm" ? scanEvmPayments : scanSolanaPayments;
+        failureStage = "payment-scan";
         await scan(
           deps.store.scanner,
           {
@@ -386,6 +407,7 @@ export async function runKeeper(
           },
           config.rpcUrl,
           async (event: ScanEvent) => {
+            failureStage = "payment-evidence";
             const evidence =
               network.family === "evm"
                 ? await (event.kind === "paid" ? verifyPayment : verifyReserve)(
@@ -406,6 +428,7 @@ export async function runKeeper(
                       ReturnType<typeof preflightSolanaDeployment>
                     >,
                   ).verifyFinalized(event);
+            failureStage = "payment-index";
             if (event.kind === "reserved")
               deps.store.db
                 .query(
@@ -430,8 +453,10 @@ export async function runKeeper(
                   "Finalized payment has no indexed funded award",
                 );
             }
+            failureStage = "payment-scan";
           },
         );
+        failureStage = "monthly-state";
         if (record.payoutPolicy === "ordinary") {
           for (
             let period = schedule.firstPeriod;
@@ -529,6 +554,7 @@ export async function runKeeper(
             }
           }
         }
+        failureStage = "award-state";
         const awards = deps.store.db
           .query<{ id: string; actor: string }, [string, number]>(
             "SELECT id,actor FROM awards WHERE scope=? AND payment IS NULL ORDER BY checked,id LIMIT ?",
@@ -584,6 +610,14 @@ export async function runKeeper(
           operation: "deployment",
           state: "unavailable",
           error: String(error),
+          failureStage,
+          failureCause:
+            error instanceof EvmRpcUnavailable ||
+            error instanceof SolanaRpcUnavailable
+              ? "rpc-unavailable"
+              : error instanceof EvmRpcError
+                ? "rpc-error"
+                : "other",
         });
       }
     }
