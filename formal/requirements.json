@@ -313,7 +313,8 @@
       "sourceEndLine": 261,
       "sourceText": "### Closure eligibility and consent\n\nAutomatic closure requires all of the following:\n\n- A registered project with saved closure consent and a qualified category.\n- A non-maintainer author who is a Slop member, matched by permanent GitHub ID.\n- The author's authenticated `trace_runs` record for that project.\n- A `pull_request_opened` event naming the exact PR node ID.\n- Required independent confirmation, caps, source checks, and production activation.\n\nA copied marker or footer proves none of these facts. Closure alone does not authorize a penalty.\n\nNew project drafts start with closure selected. Keep the control editable and save an explicit opt-out. Missing saved consent means false. Registration and installation alone are not consent. Do not alter existing projects' consent. No separate `.github/slopbot.json` is required, but preserve existing file opt-outs and category restrictions.\n\nUncertain findings go to the maintainer. After seven days without action, Slopbot may apply the verdict as a label only. An uncertain finding never closes a PR. Preserve maintainer reopen decisions.\n\nOn paused, flagged, or quarantined projects, authorized security review may only comment and apply the scam label. Retired projects receive no review. These projects remain unavailable for contributor work.\n\n",
       "owners": [
-        "spec/slopbot/closure.md"
+        "spec/slopbot/closure.md",
+        "spec/backend/closureConsent.md"
       ],
       "status": "source-preserved-domain-mapped",
       "implementationEvidence": "pending-implementation"

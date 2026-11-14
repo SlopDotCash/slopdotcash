@@ -143,6 +143,13 @@ transitive generated meaning and proof or to the exact complete source
 dependencies. The whole-tree check and legacy-equivalence review remain open.
 [Current proof coverage](validation/full-tree/current-proof-coverage.json)
 
+The later registry composition and project closure-consent checks add 14
+passing obligations in their focused receipts. The new-project setting
+starts unchecked. Current project identity, revision, enforcement and
+clearance govern work discovery and activation. Paused projects with usable
+clearance can still serve generated skill bytes for inspection.
+[Registry proof](validation/source-coverage/project-composition-fences.json) · [Consent proof](validation/source-coverage/project-closure-consent.json)
+
 
 The toolchain uses Node 26.13.1, Quint 0.33.1 and Dafny 4.11.0. Exact commands,
 source hashes, finite budgets, outcomes and retained logs are recorded in the

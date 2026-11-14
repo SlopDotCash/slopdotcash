@@ -9,5 +9,6 @@ verification remain external evidence boundaries for the future shell.
 - [Email enrollment](./email.md)
 - [Public referred project list](./referralProjects.md)
 - [Custom referral name reservations](./referralCodes.md)
+- [Project automatic-closure consent](./closureConsent.md)
 - [Project registration](./projects.md)
 - [Project discovery placement](./listing.md)

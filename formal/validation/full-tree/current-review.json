@@ -1,11 +1,11 @@
 {
   "acceptanceRecorded": false,
-  "specs": 102,
+  "specs": 103,
   "reviewLedgerSha256": "9341019b06604a745ebe0ba4caafcfdfb7c5ec5228e13f7e8615623f92f02bb3",
   "statuses": {
-    "document changed": 101,
-    "new story": 141,
-    "new": 412
+    "document changed": 102,
+    "new story": 142,
+    "new": 418
   },
   "formalizationGaps": []
 }

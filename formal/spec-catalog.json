@@ -354,8 +354,63 @@
       "references": []
     },
     {
+      "path": "spec/backend/closureConsent.md",
+      "sha256": "6bd226d9081642e7835d3a0ffef841ef78afa5b9f44a2fda39997cad616cf7a0",
+      "module": "backend__closureConsent",
+      "stories": [
+        {
+          "heading": "Story: An authorized maintainer may explicitly enable or disable closure",
+          "line": 10
+        }
+      ],
+      "rules": [
+        {
+          "heading": "Story: An authorized maintainer may explicitly enable or disable closure / The new draft starts unchecked and an existing form reflects only its exact saved setting",
+          "line": 12,
+          "definitions": [
+            "SavedConsent",
+            "FundingChoice",
+            "defaultNewDraft",
+            "checkedOnLoad",
+            "newProjectConsent",
+            "lawNewDraftBeginsUnchecked",
+            "lawOnlyPersistedYesChecksExistingForm",
+            "lawNewBountySetupHasNoClosureConsent"
+          ]
+        },
+        {
+          "heading": "Story: An authorized maintainer may explicitly enable or disable closure / A saved change belongs only to the exact current project revision and its current GitHub authority",
+          "line": 32,
+          "definitions": [
+            "ConsentEvidence",
+            "savedEdit",
+            "canAppendConsent",
+            "applyConsent",
+            "lawRefusedWritePreservesConsent",
+            "lawCurrentUncheckedChangeDisablesClosure",
+            "lawUntouchedExistingConsentRetainsMeaning"
+          ]
+        },
+        {
+          "heading": "Story: An authorized maintainer may explicitly enable or disable closure / Samples exercise the current maintainer and stale or crossed revisions",
+          "line": 57,
+          "definitions": [
+            "verifiedEdit",
+            "evidenceValues"
+          ]
+        }
+      ],
+      "imports": [],
+      "references": [
+        {
+          "target": "../slopbot/closure.md",
+          "line": 7
+        }
+      ]
+    },
+    {
       "path": "spec/backend/index.md",
-      "sha256": "b733173a92a944b79de91c759382ab9740918020b13a2f892116c06f5fea86df",
+      "sha256": "df83edf2bf23044d1bd713064fdf72c47b1b40ff987dba1e22b5beae2a3273c2",
       "module": "backend",
       "stories": [],
       "rules": [],
@@ -382,12 +437,16 @@
           "line": 11
         },
         {
-          "target": "./projects.md",
+          "target": "./closureConsent.md",
           "line": 12
         },
         {
-          "target": "./listing.md",
+          "target": "./projects.md",
           "line": 13
+        },
+        {
+          "target": "./listing.md",
+          "line": 14
         }
       ]
     },
@@ -5552,27 +5611,61 @@
     },
     {
       "path": "spec/projectComposition.md",
-      "sha256": "b55841769933ed56a2ea39111e9a37daef3a8f26916463140c29c1ba8f8bb49b",
+      "sha256": "f4e26e8980e54c4aecca85575a15cf473c2b04dc014c7a8d7ae0cb0729d2a0ff",
       "module": "projectComposition",
       "stories": [
         {
-          "heading": "Story: Stop work immediately when any repository loses clearance",
-          "line": 8
+          "heading": "Story: Stop work immediately when a repository or project loses clearance",
+          "line": 15
         }
       ],
       "rules": [
         {
-          "heading": "Story: Stop work immediately when any repository loses clearance / Collection requires both registry availability and matching security clearance",
-          "line": 10,
+          "heading": "Story: Stop work immediately when a repository or project loses clearance / Collection requires an exact current registry and security snapshot",
+          "line": 17,
           "definitions": [
+            "RegistryObservation",
+            "WorkEvidence",
             "sameRepositories",
+            "currentEvidence",
             "mayCollect",
-            "mayPublishSkill",
             "lawSecurityRestrictionStopsCollection",
             "lawRegistryPauseStopsCollection",
-            "lawSkillsRequireCollection",
+            "lawNewRegistryFactsInvalidateCollection"
+          ]
+        },
+        {
+          "heading": "Story: Stop work immediately when a repository or project loses clearance / Skill publication binds the admission observation to the exact template input",
+          "line": 50,
+          "definitions": [
+            "TemplateEvidence",
+            "mayServeSkill",
+            "mayDiscoverSkill",
+            "lawSkillsRequireCurrentInputs",
+            "lawPausedProjectUnavailableToInstall"
+          ]
+        },
+        {
+          "heading": "Story: Stop work immediately when a repository or project loses clearance / Admission-gated writes compare the same revision and generations at commit",
+          "line": 73,
+          "definitions": [
+            "WriteEvidence",
+            "mayCommitRevision",
+            "lawChangedEnforcementFencesEveryWrite",
+            "lawChangedClearanceFencesActivation",
+            "lawLinkedApplicationMustRemainPending"
+          ]
+        },
+        {
+          "heading": "Story: Stop work immediately when a repository or project loses clearance / Simulation covers current, unavailable and stale observations",
+          "line": 99,
+          "definitions": [
+            "r1",
             "projectValues",
-            "securityValues"
+            "securityValues",
+            "evidenceValues",
+            "templateValues",
+            "writeEvidenceValues"
           ]
         }
       ],

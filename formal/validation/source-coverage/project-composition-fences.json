@@ -1,0 +1,41 @@
+{
+  "sourceInputs": {
+    "spec/backend/projects.md": "6c833c593b60a6b649a8f5f09ded528805fa1bd585cb499b0a67e956cfc6f620",
+    "spec/backend/projects.proof.dfy": "2ad927f7dfba22ee4002ca93b0ae149484bef68773b770a6a3e8ba084700ba19",
+    "spec/security/enforcement.md": "f20b596e97a434445c98e45cc71b220cb2711a2c22755ff63ad5e12f30ae809b",
+    "spec/security/enforcement.proof.dfy": "d2746f4084622de405f9b16563c55e53fa610cb1fb49b824f30e7d05137f0a06",
+    "spec/projectComposition.md": "f4e26e8980e54c4aecca85575a15cf473c2b04dc014c7a8d7ae0cb0729d2a0ff"
+  },
+  "units": {
+    "projectComposition.ts": {
+      "total": 8,
+      "unproved": [],
+      "exhausted": [],
+      "resting": {},
+      "errors": [],
+      "meaningSha256": "4c00d7ec15c8b25669b2ca8bbebdcec1570968a89a71f3efd1963ce11a2096dc",
+      "generatedDafnySha256": "03efe79f28268f7331bc9d37de819304975cf72be5e30311cdd62973ba4cdfb4",
+      "proofSource": null
+    }
+  },
+  "qualification": "Vibestack proof on the exact units and imported definitions. No imported proof axioms offered.",
+  "simulation": {
+    "command": "seed 181502076464883; to simulate again: pnpm exec quint run gen/projectComposition.run.qnt --main projectComposition_run --step probe --invariant inv --max-samples 100 --max-steps 12 --mbt --seed 181502076464883",
+    "traces": 24,
+    "directed": [
+      "active collection and discovery",
+      "paused bytes for inspection only",
+      "retirement and flags",
+      "complete repository set in both directions",
+      "each captured identity, digest and generation",
+      "exact template digest",
+      "atomic enforcement, admission and application predicates"
+    ]
+  },
+  "pinnedSources": {
+    "backend/projects/cloudflare-persistence.ts": "3f465e0271811adc5fa976f16b5a6eb243c63a2f654f1b0ce74e14ae3621ea00",
+    "backend/projects/skill-publication.ts": "c4de162e6cc56f97c83e4b2e7b9a62eef89642ea447cd64920cc5e313aad3059",
+    "formal/models/api/api_project_registry.qnt": "07af97bcf98c9d086bae7e1919d9529db5f9c4728701010063ebca953e5f5196"
+  },
+  "main": "ee1a4b2cd2672245537928380e425f5bd9ecb994"
+}
