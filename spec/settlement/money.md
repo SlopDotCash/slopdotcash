@@ -98,6 +98,17 @@ Reordering the operands preserves the exact sum, including its limb sequence.
 pure def lawAddCommutative(a: Amount, b: Amount): bool = addAmounts(a, b) == addAmounts(b, a)
 ```
 
+### Addition is positive exactly when at least one summand is positive
+
+All valid amounts are nonnegative. A positive share therefore makes the
+recipient total positive, even across trailing zero limbs.
+
+```quint
+pure def lawPositiveAddition(a: Amount, b: Amount): bool =
+  (validAmount(a) and validAmount(b)) implies
+    (positiveAmount(addAmounts(a, b)) == (positiveAmount(a) or positiveAmount(b)))
+```
+
 ### Ordinary fees round upward and private splits require exact division
 
 Scalar compatibility helpers retain existing safe-integer callers. Full-width fee and allocation operations below use limb arithmetic. A one-unit ordinary award has zero net. A private 75/25 award requires exact quarter division and never adds the ordinary fee.

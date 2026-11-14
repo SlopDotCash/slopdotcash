@@ -441,3 +441,96 @@ lemma lawAddCommutative_ensures(a: seq<int>, b: seq<int>)
   assert addAmounts(a, b) == (if sum.carry > 0 then sum.digits + [sum.carry] else sum.digits);
   assert addAmounts(b, a) == (if sum.carry > 0 then sum.digits + [sum.carry] else sum.digits);
 }
+
+lemma ComparePositiveFold(f: (CompareFold, int) -> CompareFold, a: seq<int>, start: CompareFold, xs: seq<int>)
+  requires forall acc, d :: f(acc, d).index == acc.index + 1
+  requires forall acc, d :: (f(acc, d).comparison > 0) == (acc.comparison > 0 || (0 <= acc.index < |a| && a[acc.index] > 0))
+  ensures (Std.Collections.Seq.FoldLeft(f, start, xs).comparison > 0) ==
+    (start.comparison > 0 || (exists i :: (start.index <= i < start.index + |xs| && 0 <= i < |a| && a[i] > 0)))
+  decreases |xs|
+{
+  if |xs| > 0 {
+    ComparePositiveFold(f, a, f(start, xs[0]), xs[1..]);
+    assert start.index + |xs| == f(start, xs[0]).index + |xs[1..]|;
+  }
+}
+
+lemma PositiveLimb(a: seq<int>)
+  requires validAmount(a)
+  ensures positiveAmount(a) == (exists i :: (0 <= i < |a| && a[i] > 0))
+{
+  var compare := (acc: CompareFold, ignored: int) => CompareFold((acc.index + 1), (if ((if ((0 <= acc.index) && (acc.index < |a|)) then a[acc.index] else 0) == (if ((0 <= acc.index) && (acc.index < |zero|)) then zero[acc.index] else 0)) then acc.comparison else (if ((if ((0 <= acc.index) && (acc.index < |a|)) then a[acc.index] else 0) > (if ((0 <= acc.index) && (acc.index < |zero|)) then zero[acc.index] else 0)) then 1 else -1)));
+  forall acc: CompareFold, digit: int
+    ensures compare(acc, digit).index == acc.index + 1
+    ensures (compare(acc, digit).comparison > 0) == (acc.comparison > 0 || (0 <= acc.index < |a| && a[acc.index] > 0))
+  {
+    if 0 <= acc.index < |a| { assert a[acc.index] in a; }
+  }
+  assert |a| >= |zero|;
+  assert compareAmounts(a, zero) == Std.Collections.Seq.FoldLeft(compare, CompareFold(0, 0), a).comparison;
+  ComparePositiveFold(compare, a, CompareFold(0, 0), a);
+}
+
+lemma AddPositiveFold(f: (AddFold, int) -> AddFold, a: seq<int>, b: seq<int>, start: AddFold, xs: seq<int>)
+  requires start.carry >= 0
+  requires forall acc: AddFold, d: int :: acc.carry >= 0 ==> (f(acc, d).index == acc.index + 1 && f(acc, d).carry >= 0)
+  requires forall acc: AddFold, d: int :: (acc.carry >= 0 ==> ((f(acc, d).carry > 0 || (exists k :: (0 <= k < |f(acc, d).digits| && f(acc, d).digits[k] > 0))) ==
+    (acc.carry > 0 || (exists k :: (0 <= k < |acc.digits| && acc.digits[k] > 0)) || (0 <= acc.index < |a| && a[acc.index] > 0) || (0 <= acc.index < |b| && b[acc.index] > 0))))
+  ensures var end := Std.Collections.Seq.FoldLeft(f, start, xs);
+    (end.carry > 0 || (exists k :: (0 <= k < |end.digits| && end.digits[k] > 0))) ==
+      (start.carry > 0 || (exists k :: (0 <= k < |start.digits| && start.digits[k] > 0)) ||
+        (exists i :: (start.index <= i < start.index + |xs| &&
+          ((0 <= i < |a| && a[i] > 0) || (0 <= i < |b| && b[i] > 0)))))
+  decreases |xs|
+{
+  if |xs| > 0 {
+    var next := f(start, xs[0]);
+    AddPositiveFold(f, a, b, next, xs[1..]);
+    assert next.index + |xs[1..]| == start.index + |xs|;
+  }
+}
+
+lemma lawPositiveAddition_ensures(a: seq<int>, b: seq<int>)
+  ensures (lawPositiveAddition(a, b) == true)
+{
+  if validAmount(a) && validAmount(b) {
+    var add := (acc: AddFold, ignored: int) => AddFold((acc.index + 1), quotient_settlement__money((((if ((0 <= acc.index) && (acc.index < |a|)) then a[acc.index] else 0) + (if ((0 <= acc.index) && (acc.index < |b|)) then b[acc.index] else 0)) + acc.carry), 1000), (acc.digits + [remainder_settlement__money((((if ((0 <= acc.index) && (acc.index < |a|)) then a[acc.index] else 0) + (if ((0 <= acc.index) && (acc.index < |b|)) then b[acc.index] else 0)) + acc.carry), 1000)]));
+    var longest := if |a| >= |b| then a else b;
+    var start := AddFold(0, 0, []);
+    forall acc: AddFold, digit: int | acc.carry >= 0
+      ensures add(acc, digit).index == acc.index + 1 && add(acc, digit).carry >= 0
+      ensures (add(acc, digit).carry > 0 || (exists k :: (0 <= k < |add(acc, digit).digits| && add(acc, digit).digits[k] > 0))) ==
+        (acc.carry > 0 || (exists k :: (0 <= k < |acc.digits| && acc.digits[k] > 0)) || (0 <= acc.index < |a| && a[acc.index] > 0) || (0 <= acc.index < |b| && b[acc.index] > 0))
+    {
+      var x := if 0 <= acc.index < |a| then a[acc.index] else 0;
+      var y := if 0 <= acc.index < |b| then b[acc.index] else 0;
+      if 0 <= acc.index < |a| { assert a[acc.index] in a; }
+      if 0 <= acc.index < |b| { assert b[acc.index] in b; }
+      var total := x + y + acc.carry;
+      assert total >= 0;
+      assert (total > 0) == (x > 0 || y > 0 || acc.carry > 0);
+      var carry := quotient_settlement__money(total, 1000);
+      var limb := remainder_settlement__money(total, 1000);
+      assert carry == total / 1000 && limb == total % 1000;
+      assert total == carry * 1000 + limb;
+      assert carry >= 0 && 0 <= limb < 1000;
+      assert (total > 0) == (carry > 0 || limb > 0);
+      assert add(acc, digit).digits == acc.digits + [limb];
+      assert |add(acc, digit).digits| == |acc.digits| + 1;
+      assert forall i :: (0 <= i < |acc.digits| ==> add(acc, digit).digits[i] == acc.digits[i]);
+      assert add(acc, digit).digits[|acc.digits|] == limb;
+    }
+    AddPositiveFold(add, a, b, start, longest);
+    var end := Std.Collections.Seq.FoldLeft(add, start, longest);
+    var total := addAmounts(a, b);
+    assert total == (if end.carry > 0 then end.digits + [end.carry] else end.digits);
+    assert (exists k :: (0 <= k < |total| && total[k] > 0)) == (end.carry > 0 || (exists k :: (0 <= k < |end.digits| && end.digits[k] > 0))) by {
+      if end.carry > 0 { assert total[|end.digits|] == end.carry; }
+    }
+    lawAdditionValid_ensures(a, b);
+    PositiveLimb(a);
+    PositiveLimb(b);
+    PositiveLimb(total);
+    assert |longest| >= |a| && |longest| >= |b|;
+  }
+}
