@@ -490,6 +490,8 @@ export interface GenerateOptions {
   retainedReviewAttributions?: ModelAttribution[];
   /** The site this build publishes; staging reads its registry from staging. */
   deploymentTier?: DeploymentTier;
+  /** Trusted production collection can retain public GitHub discussion reads. */
+  discussionCheckpoint?: { directory: string; deadlineMs: number };
   /** Shared only across the one complete-census retry in runGenerator. */
   sourceRecovery?: {
     unavailableSources: UnavailableSource[];
@@ -4835,10 +4837,23 @@ export async function generateLeaderboardFromGitHub(
             Date.parse(current) > Date.parse(latest) ? current : latest,
           );
   let valueRestRequests = 0;
-  const github = GitHubClient.forToken(
-    options.evidenceToken ?? "",
-    githubIngestionReadTransport(),
+  const valueRead = githubIngestionReadTransport(
+    fetch,
+    undefined,
+    undefined,
+    undefined,
+    {
+      discussionCache: options.discussionCheckpoint && {
+        directory: options.discussionCheckpoint.directory,
+        repositories: collections.map(({ repository, preflight }) => ({
+          name: repository.id,
+          nodeId: preflight.id,
+        })),
+      },
+      quotaDeadlineMs: options.discussionCheckpoint?.deadlineMs,
+    },
   );
+  const github = GitHubClient.forToken(options.evidenceToken ?? "", valueRead);
   const { heldWorkUnits, ...valueInputs } = await loadValueInputs(
     {
       get: <T>(path: string) => {
@@ -4862,6 +4877,9 @@ export async function generateLeaderboardFromGitHub(
     dedupedOutcomes,
     onProgress,
   );
+  // Some evidence lookups can record individual gaps. A collector deadline
+  // invalidates the entire attempt even if a helper caught its exception.
+  valueRead.assertNoCheckpoint();
   const censusIds = new Set(
     [...dedupedOutcomes, ...closedUnmergedPullRequests].map(
       (source) => source.id,
@@ -4905,6 +4923,7 @@ export async function generateLeaderboardFromGitHub(
       return github.get<T>(path);
     },
   });
+  valueRead.assertNoCheckpoint();
   // History is a retained read, not GitHub collection. Keep reversals after
   // a PR leaves the rolling census or its project is paused/retired.
   const penalties: NonNullable<LeaderboardInput["penalties"]>[number][] = [];
@@ -5109,6 +5128,27 @@ function progressLine(progress: GenerationProgress): string {
   return `[slop.cash] ${label}: ${progress.completed}/${progress.total}\n`;
 }
 
+function discussionCheckpointFromEnv() {
+  const directory = process.env.SLOP_DISCUSSION_CHECKPOINT;
+  const deadline = process.env.SLOP_DISCUSSION_DEADLINE_MS;
+  if (!directory && !deadline) return undefined;
+  const deadlineMs = Number(deadline);
+  if (
+    process.env.GITHUB_ACTIONS !== "true" ||
+    process.env.GITHUB_REF !== "refs/heads/main" ||
+    !["push", "workflow_dispatch"].includes(
+      process.env.GITHUB_EVENT_NAME ?? "",
+    ) ||
+    !directory ||
+    !Number.isSafeInteger(deadlineMs) ||
+    deadlineMs <= Date.now()
+  )
+    throw new Error(
+      "Invalid trusted production discussion checkpoint settings",
+    );
+  return { directory, deadlineMs };
+}
+
 if (import.meta.main) {
   const arguments_ = parseGenerationArguments(process.argv.slice(2));
   const acceptedReviewHistory = loadAcceptedReviewHistory();
@@ -5125,6 +5165,7 @@ if (import.meta.main) {
   const snapshot = await runGenerator(DEFAULT_OUTPUT_PATH, undefined, {
     ...arguments_,
     deploymentTier: deploymentTier(process.env.VITE_SLOP_ENVIRONMENT),
+    discussionCheckpoint: discussionCheckpointFromEnv(),
     evaluatedContributions: loadEvaluatorAwardEvents(),
     retainedReviewEvents: acceptedReviewHistory.events,
     retainedReviewAttributions: acceptedReviewHistory.attributions,
