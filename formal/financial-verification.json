@@ -349,7 +349,8 @@
         "currentSourceSha256": "cb766a9b5b99f5509da5478ca15ecbe1c77a09127956d9524e7447c7d0939978"
       }
     ],
-    "fullTreeReportStatus": "Partial baseline proof snapshot. It tracks exact model inputs and all available completed proof units. Later reserve evidence is separate."
+    "fullTreeReportStatus": "Partial baseline proof snapshot. It tracks exact model inputs and all available completed proof units. Later reserve evidence is separate.",
+    "buybackAttempt": "formal/validation/finance/buyback-proof.json"
   },
   "reachabilityProbes": {
     "status": "passed-on-recorded-snapshot",

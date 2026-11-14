@@ -1,0 +1,65 @@
+{
+  "snapshot": {
+    "spec/settlement/money.md": "cb766a9b5b99f5509da5478ca15ecbe1c77a09127956d9524e7447c7d0939978",
+    "spec/fees/buyback.md": "d45d97d3353687f3a134c57b10daddd00d73285687035533e9e330d2a548c8e4"
+  },
+  "results": [
+    {
+      "unit": "fees__buyback.ts",
+      "total": 81,
+      "unproved": [
+        "activate: (inv(b) ==> canActivate(b, converterLive, robinhoodEnabled, explicitLimits, by_) ==> stepIncomeMonotonic(b, activate(b, converterLive, robinhoodEnabled, explicitLimits, by_)))",
+        "recordIncome: (inv(b) ==> canRecordIncome(b, receipt, incomeAmount, receivedAt, finalized) ==> alwaysShareBounded(recordIncome(b, receipt, incomeAmount, receivedAt, finalized)))",
+        "recordIncome: (inv(b) ==> canRecordIncome(b, receipt, incomeAmount, receivedAt, finalized) ==> stepIncomeMonotonic(b, recordIncome(b, receipt, incomeAmount, receivedAt, finalized)))",
+        "order: (inv(b) ==> canOrder(b, orderRequest) ==> alwaysWindowLimits(order(b, orderRequest)))",
+        "order: (inv(b) ==> canOrder(b, orderRequest) ==> stepIncomeMonotonic(b, order(b, orderRequest)))",
+        "order: (inv(b) ==> canOrder(b, orderRequest) ==> alwaysShareBounded(order(b, orderRequest)))",
+        "broadcast: (inv(b) ==> canBroadcast(b) ==> stepIncomeMonotonic(b, broadcast(b)))",
+        "observeArrival: (inv(b) ==> canObserveArrival(b, order, amount, receiver, height, finalized) ==> stepIncomeMonotonic(b, observeArrival(b, order, amount, receiver, height, finalized)))",
+        "observeRefund: (inv(b) ==> canObserveRefund(b, order, amount, beneficiary, height, finalized) ==> alwaysShareBounded(observeRefund(b, order, amount, beneficiary, height, finalized)))",
+        "observeRefund: (inv(b) ==> canObserveRefund(b, order, amount, beneficiary, height, finalized) ==> stepIncomeMonotonic(b, observeRefund(b, order, amount, beneficiary, height, finalized)))",
+        "purchase: (inv(b) ==> canPurchase(b, purchaseRequest) ==> alwaysBurnBounded(purchase(b, purchaseRequest)))",
+        "purchase: (inv(b) ==> canPurchase(b, purchaseRequest) ==> alwaysWindowLimits(purchase(b, purchaseRequest)))",
+        "purchase: (inv(b) ==> canPurchase(b, purchaseRequest) ==> stepIncomeMonotonic(b, purchase(b, purchaseRequest)))",
+        "commitBurn: (inv(b) ==> canCommitBurn(b, quantity, value, destination, tokenPaused) ==> alwaysBurnBounded(commitBurn(b, quantity, value, destination, tokenPaused)))",
+        "commitBurn: (inv(b) ==> canCommitBurn(b, quantity, value, destination, tokenPaused) ==> stepIncomeMonotonic(b, commitBurn(b, quantity, value, destination, tokenPaused)))",
+        "step: inv(step(current, event, by_))"
+      ],
+      "exhausted": [
+        "activate: (inv(b) ==> canActivate(b, converterLive, robinhoodEnabled, explicitLimits, by_) ==> stepIncomeMonotonic(b, activate(b, converterLive, robinhoodEnabled, explicitLimits, by_)))",
+        "recordIncome: (inv(b) ==> canRecordIncome(b, receipt, incomeAmount, receivedAt, finalized) ==> alwaysShareBounded(recordIncome(b, receipt, incomeAmount, receivedAt, finalized)))",
+        "recordIncome: (inv(b) ==> canRecordIncome(b, receipt, incomeAmount, receivedAt, finalized) ==> stepIncomeMonotonic(b, recordIncome(b, receipt, incomeAmount, receivedAt, finalized)))",
+        "order: (inv(b) ==> canOrder(b, orderRequest) ==> alwaysWindowLimits(order(b, orderRequest)))",
+        "order: (inv(b) ==> canOrder(b, orderRequest) ==> stepIncomeMonotonic(b, order(b, orderRequest)))",
+        "broadcast: (inv(b) ==> canBroadcast(b) ==> stepIncomeMonotonic(b, broadcast(b)))",
+        "observeArrival: (inv(b) ==> canObserveArrival(b, order, amount, receiver, height, finalized) ==> stepIncomeMonotonic(b, observeArrival(b, order, amount, receiver, height, finalized)))",
+        "observeRefund: (inv(b) ==> canObserveRefund(b, order, amount, beneficiary, height, finalized) ==> alwaysShareBounded(observeRefund(b, order, amount, beneficiary, height, finalized)))",
+        "observeRefund: (inv(b) ==> canObserveRefund(b, order, amount, beneficiary, height, finalized) ==> stepIncomeMonotonic(b, observeRefund(b, order, amount, beneficiary, height, finalized)))",
+        "purchase: (inv(b) ==> canPurchase(b, purchaseRequest) ==> alwaysBurnBounded(purchase(b, purchaseRequest)))",
+        "purchase: (inv(b) ==> canPurchase(b, purchaseRequest) ==> alwaysWindowLimits(purchase(b, purchaseRequest)))",
+        "commitBurn: (inv(b) ==> canCommitBurn(b, quantity, value, destination, tokenPaused) ==> alwaysBurnBounded(commitBurn(b, quantity, value, destination, tokenPaused)))",
+        "commitBurn: (inv(b) ==> canCommitBurn(b, quantity, value, destination, tokenPaused) ==> stepIncomeMonotonic(b, commitBurn(b, quantity, value, destination, tokenPaused)))"
+      ],
+      "errors": [
+        "activate_ensures: Dafny did not check isolated0_activate_ensures, its copy verified again",
+        "recordIncome_ensures: Dafny did not check isolated1_recordIncome_ensures, its copy verified again",
+        "order_ensures: Dafny did not check isolated2_order_ensures, its copy verified again",
+        "broadcast_ensures: Dafny did not check isolated3_broadcast_ensures, its copy verified again",
+        "observeArrival_ensures: Dafny did not check isolated4_observeArrival_ensures, its copy verified again",
+        "observeRefund_ensures: Dafny did not check isolated5_observeRefund_ensures, its copy verified again",
+        "purchase_ensures: Dafny did not check isolated6_purchase_ensures, its copy verified again",
+        "commitBurn_ensures: Dafny did not check isolated7_commitBurn_ensures, its copy verified again",
+        "finalizeBurn_ensures: Dafny did not check isolated8_finalizeBurn_ensures, its copy verified again",
+        "continueCycle_ensures: Dafny did not check isolated9_continueCycle_ensures, its copy verified again",
+        "selectSource_ensures: Dafny did not check isolated10_selectSource_ensures, its copy verified again",
+        "reserveLocalShare_ensures: Dafny did not check isolated11_reserveLocalShare_ensures, its copy verified again",
+        "receiveSlopFee_ensures: Dafny did not check isolated12_receiveSlopFee_ensures, its copy verified again",
+        "initialHolds_ensures: Dafny did not check isolated13_initialHolds_ensures, its copy verified again",
+        "the definitions verified again gave no verdict: fees__buyback.isolated.dfy(397,327): Related location: this proposition could not be proved /  / dafny ran for more than 60 minutes and was stopped"
+      ],
+      "log": "formal/validation/finance/fees__buyback.ts.proof.log"
+    }
+  ],
+  "status": "incomplete-tool-timeout",
+  "qualification": "The isolated Dafny pass reached the standard 60-minute tool timeout. The recorded clauses are partial diagnostics and yield no final proof count or verdict for this unit."
+}
