@@ -29,7 +29,8 @@ pure def canConfigure(p: Payment, purpose: Purpose, rail: PaymentRail, gross: M:
     and (purpose != PrivateStandard or M::privateSplitPossible(gross)) and railMatchesPurpose(purpose, rail)
 pure def configure(p: Payment, purpose: Purpose, rail: PaymentRail, gross: M::Amount): Payment =
   val fee = if (purpose == Ordinary) M::ordinaryFeeAmount(gross) else if (purpose == PrivateStandard) M::privateFeeAmount(gross) else M::zero
-  { ...p, configured: true, purpose: purpose, rail: rail, feeRecipient: if (purpose == PrivateFull) "" else "fees", gross: gross, fee: fee, principal: M::subtractAmounts(gross, fee) }
+  val principal = if (purpose == Ordinary) M::ordinaryNetAmount(gross) else if (purpose == PrivateStandard) M::privateResearcherAmount(gross) else gross
+  { ...p, configured: true, purpose: purpose, rail: rail, feeRecipient: if (purpose == PrivateFull) "" else "fees", gross: gross, fee: fee, principal: principal }
 pure def canReleaseFullRail(p: Payment, approved: bool, released: bool, qualified: bool, by: str): bool =
   p.phase != Paid and p.configured and p.purpose == PrivateFull and not(p.fullRailReleased)
     and approved and released and qualified and by == "owner"

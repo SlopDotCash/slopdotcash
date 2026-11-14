@@ -82,11 +82,13 @@ pure def reconcile(s: Settlement, evidence: FinalizedPayment): Settlement = {
     evidence.payment.recipient, evidence.payment.obligation, evidence.receipt, evidence.payment.height)
 }
 pure def alwaysPaidConsumesReserve(s: Settlement): bool =
-  if (s.payment.phase == P::Paid) not(hasReserve(s)) and M::equalAmounts(s.vault.paid, s.payment.gross)
-  else M::equalAmounts(s.vault.paid, M::zero)
+  if (s.payment.phase == P::Paid) not(hasReserve(s)) and
+    V::settlementMatches(s.vault, s.payment.obligation, s.payment.recipient, s.payment.gross, s.payment.finalizedHeight)
+  else not(V::settlementExists(s.vault, s.payment.obligation))
 pure def alwaysChildRules(s: Settlement): bool =
   V::alwaysConserved(s.vault) and V::alwaysValidAmounts(s.vault) and
   V::alwaysReservationMatches(s.vault) and V::alwaysReservationTotal(s.vault) and V::alwaysReservationIdentity(s.vault) and
+  V::alwaysSettlementHistory(s.vault) and V::alwaysSettlementTotal(s.vault) and
   P::alwaysConserved(s.payment) and P::alwaysPaidEvidence(s.payment) and P::alwaysCorrectFee(s.payment) and P::alwaysCorrectRail(s.payment) and
   P::alwaysUnconfiguredEmpty(s.payment) and P::alwaysAdmittedAttempts(s.payment)
 pure def sometimesReserved(s: Settlement): bool = hasReserve(s)
@@ -101,11 +103,14 @@ pure val amountValues = Set(List(4), List(100))
 pure val grossValues = Set(List(4), List(100))
 pure val assetValues = Set("asset", "wrong")
 pure val recipientValues = Set("wallet", "wrong")
-pure val receiptValues = Set(1, 2)
+pure val receiptValues = Set(1, 2, 4)
 pure val consentValues = Set(0, 1)
 pure val attemptValues = Set(1, 2)
 pure val byValues = Set("recipient", "owner", "wrong")
+pure val weight_reconcile = 12
 pure val evidenceValues = Set(
+  { receipt: 3, payment: { attempt: 1, obligation: 1, source: "vault", asset: "asset", recipient: "wallet", feeRecipient: "fees", principal: List(98), fee: List(2), height: 1, finalized: true, succeeded: true } },
+  { receipt: 3, payment: { attempt: 2, obligation: 1, source: "vault", asset: "asset", recipient: "wallet", feeRecipient: "fees", principal: List(3), fee: List(1), height: 1, finalized: true, succeeded: true } },
   { receipt: 2, payment: { attempt: 1, obligation: 1, source: "vault", asset: "asset", recipient: "wallet", feeRecipient: "fees", principal: List(98), fee: List(2), height: 1, finalized: true, succeeded: true } },
   { receipt: 2, payment: { attempt: 1, obligation: 1, source: "vault", asset: "asset", recipient: "wallet", feeRecipient: "fees", principal: List(3), fee: List(1), height: 1, finalized: true, succeeded: true } },
   { receipt: 2, payment: { attempt: 1, obligation: 1, source: "vault", asset: "wrong", recipient: "wallet", feeRecipient: "fees", principal: List(98), fee: List(2), height: 1, finalized: true, succeeded: true } },
