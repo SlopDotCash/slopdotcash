@@ -3407,7 +3407,7 @@
     },
     {
       "path": "scripts/check-lemmascript.mjs",
-      "sha256": "d72beebc5ebd64e0e9f1792acb3a56850a22bcee96c0edf80a9c6315444bd483",
+      "sha256": "75211ddf0c5dfa6f7dab26735a548a55c767d586189b960378c3d328f659030e",
       "models": [
         "formal/models/tooling/formal_process.qnt",
         "formal/models/tooling/formal_toolchain.qnt",
