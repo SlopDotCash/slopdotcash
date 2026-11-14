@@ -1,18 +1,32 @@
 # Focused referral and lifecycle verification
 
+Current guided verification passed 182 events across 36 cases and reached all
+40 transitions and 11 reachability goals. Both successful and failed receipts
+refuse settlement dates before their journaled attempt. Missing, mismatched and
+already settled journal entries refuse reconciliation. Empty wallets cannot
+stand in for retained pins. A wallet added later leaves an earlier walletless
+file unchanged. The guided report binds the current source hashes.
+[Current guided journeys](referral-repaired-journeys.json) · [Current entry equality](referral-repaired-entry-equality.json)
+
+The repaired accrual and publication models passed Quint simulation and
+generated TypeScript replay on 400 traces across seeds 812 and 813. Each
+model reached every transition and goal under both seeds. Publication recorded
+successful gas settlements after the journal day in 10 traces on seed 812 and
+six on seed 813. [Current weighted simulation](referral-repaired-weighted-goals.json)
+
 The specification at commit 33cbe2e6f preserves exact accrual amounts, ordered
 filings, lifetime wallet pins, publication and claim receipts, expired-lease
 recovery, and the distributor's authority, gas and rescue rules. The comparison
 records the complete pinned referral core, store and contract hashes and the
 owning specifications. [Source comparison](referral-source-audit.json)
 
-The guided journeys exercise 172 events across 33 cases. They reach all 40
+The historical guided journeys exercise 172 events across 33 cases. They reach all 40
 transitions and all 11 reachability goals across the four referral units. They
 verify equivalent monetary padding for a rate denominator, token unit and
 finalized root entries, and refuse different entry order, length, wallet or
 amount. [Guided journeys](referral-journeys.json) · [Entry equality](referral-entry-equality.json)
 
-The weighted simulation uses two fixed seeds with 100 traces of up to 20 events
+The historical weighted simulation uses two fixed seeds with 100 traces of up to 20 events
 per unit and seed. Every transition and goal in the three sampled units was
 reached under both seeds. All six samples passed their invariants and generated
 TypeScript replay. Publication reached Uncertain in 24 and 33 traces, Claimed

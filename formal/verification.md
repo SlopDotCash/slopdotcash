@@ -15,7 +15,7 @@ The specification tree defines account and browser ownership, project setup
 and revisions, contributor installation and work, Points, security admission,
 private cases, notifications, releases, settlement and fee handling. Each
 formal rule is catalogued in [spec-catalog.json](spec-catalog.json).
-The current tree contains 64 documents, 81 story groups and 270 rule groups.
+The tree contains 64 documents, 82 story groups and 272 rule groups.
 The retained source maps cover all 63 PRD sections and all 473 original models.
 
 The frontend owns request identity, stale and unavailable reads, private draft
@@ -64,9 +64,13 @@ Their owning specs include the corresponding explanations and rules.
 - Buyback journal entries are positive and no later than the observed clock;
   future entries cannot silently enter a later rolling window.
 - Referral receipt entries compare ordered actor and wallet identities and
-  monetary values. Structural limb-array equality incorrectly refused a
-  numerically equal amount with trailing zero limbs; the corrected rule
-  still rejects different amounts, wallets, order and entry counts.
+  monetary values. Structural limb-array equality refused numerically equal
+  amounts with trailing zero limbs. The corrected rule accepts that padding and
+  rejects different amounts, wallets, order and entry counts.
+- Referral publication settles gas against the exact unresolved journal entry
+  and its reserved amount. Its settlement day must fall between the journal day
+  and the current UTC day. Filed and prepared entries require a nonempty pinned
+  wallet so a later pin cannot change the meaning of an old entry.
 
 ## Rules reconciled with the source
 
@@ -102,6 +106,21 @@ owns zero-based epochs, funding and spacing checks, role rotation, exact claim
 transfers and the rescue delay. The publication model binds its own record IDs
 to the separate contract epoch and Merkle digest.
 
+The account and wallet review compared the pinned source and legacy transitions
+with the new models. Each session has its own expiry and can end independently.
+Closing an account with typed confirmation ends all sessions, disconnects X,
+withdraws email consent and cancels pending verification. Permanent X reservations,
+wallet authorizations and financial history survive. A new session after
+reopening starts with X disconnected. The separate sign-in visibility transition
+leaves email consent intact.
+
+Wallet registration retains immutable successors and distinguishes the current
+registry claim from the last authorized payout destination. The challenge binds
+the exact claim, message and wallet. A single request consumes it, and the
+authorization transaction checks the claim again after consumption. The model
+includes expiry, a concurrent winner, a failed write and retry after a lost
+response. On-chain binding and reconciliation remain in the signer model.
+
 ## Proofs and checks
 
 The toolchain uses Node 26.13.1, Quint 0.33.1 and Dafny 4.11.0. Exact commands,
@@ -126,20 +145,23 @@ induction or set-membership reasoning through the checked Vibestack proof
 pipeline. Source code, generated core, cache and acceptance files remain
 separate. No proof exception has been accepted for this migration.
 
-The current focused reports establish 763 obligations for the browser,
-account, project, contributor and Points units, and 741 unique obligations
-for security, Slopbot and operations. Historical repeated runs are excluded
-from those totals. The financial signer has 19 proved obligations. General
-full-width arithmetic, allocation and dependent financial invariants retain
-the exact unresolved obligations listed in their report.
+The focused reports count proved obligations once per current source unit.
+The account and email models proved 233 obligations. Their directed journeys
+cover current-session sign-out, targeted revocation, exact expiry, closure
+and reopening, and sign-in consent preservation. The wallet journeys covered
+69 events across seven cases. The repaired referral journeys covered 182
+events across 36 cases, reaching all 40 transitions and 11 goals. Two random
+seeds also reached every transition and goal in the amended referral units,
+including settlement after UTC-day rollover.
 
-The full-tree `pnpm check` passed model parsing, typechecking, invariant
-simulation, reachability and generated TypeScript replay for the reviewed
-snapshot. Its proof stage is still running while these records are being
-assembled. General full-width arithmetic and dependent financial invariants
-remain unproved in the completed isolated attempts. The exact obligations and
-attempts remain in the financial verification record. A prior passing snapshot
-does not certify a later changed model.
+General full-width arithmetic and dependent financial invariants retain the
+unresolved obligations listed in their report.
+
+The retained full-tree snapshots record model compilation, invariant simulation,
+reachability and generated TypeScript replay. The preceding run was interrupted
+when the referral inputs were superseded. The focused reports bind the
+completed checks to their exact sources, and list the unproved financial
+obligations. [Interrupted verification snapshot](validation/full-tree/pre-lifecycle-repair-check.json)
 
 ## Guard diagnostics
 

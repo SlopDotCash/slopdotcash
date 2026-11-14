@@ -43,34 +43,40 @@
     },
     {
       "unit": "backend__accounts.ts",
-      "total": 75,
+      "total": 217,
       "unproved": [],
       "errors": [],
       "exhausted": [],
+      "log": "formal/validation/journeys/account-proof-v2-backend__accounts.ts.log",
       "spec": "spec/backend/accounts.md",
-      "sourceSha256": "ab40b0f4f77fe0ae324c64fb3e114cfc794a3af799b5e3b9ae0fe213de294907",
+      "sourceSha256": "ecd464884aa42edf59cf32aa6c738b9341a088be3fb27565bc6a61ffa1f92359",
       "inputs": {
-        "spec/backend/accounts.md": "ab40b0f4f77fe0ae324c64fb3e114cfc794a3af799b5e3b9ae0fe213de294907",
-        "spec/backend/accounts.proof.dfy": "e8b074b5be700273b52fc33ab042919ca019385be0b3df28cca0618880a30c35"
+        "spec/backend/accounts.md": "ecd464884aa42edf59cf32aa6c738b9341a088be3fb27565bc6a61ffa1f92359",
+        "spec/backend/email.md": "50c35c43e69f5bc394e8b9678c225bd0bcbd6b76219d3b0bfbe36dc97358b28f"
       },
       "sourceCurrent": true,
       "status": "passed",
-      "log": "formal/validation/journeys/backend__accounts.proof.log"
+      "proofFile": null,
+      "proofSha256": null,
+      "proofLibrarySha256": "4c9f8dcbd9918f7d4b282ad9531b4cf0096ea389c015149b1786d0fe4ebd8e29"
     },
     {
       "unit": "backend__email.ts",
-      "spec": "spec/backend/email.md",
-      "sourceSha256": "1bc36d8e2b91ff060167a711fa74ab3720f2f5597890e85fefdd95557918a1f6",
-      "inputs": {
-        "spec/backend/email.md": "1bc36d8e2b91ff060167a711fa74ab3720f2f5597890e85fefdd95557918a1f6"
-      },
-      "total": 14,
+      "total": 16,
       "unproved": [],
       "errors": [],
       "exhausted": [],
+      "log": "formal/validation/journeys/account-proof-v2-backend__email.ts.log",
+      "spec": "spec/backend/email.md",
+      "sourceSha256": "50c35c43e69f5bc394e8b9678c225bd0bcbd6b76219d3b0bfbe36dc97358b28f",
+      "inputs": {
+        "spec/backend/email.md": "50c35c43e69f5bc394e8b9678c225bd0bcbd6b76219d3b0bfbe36dc97358b28f"
+      },
       "sourceCurrent": true,
       "status": "passed",
-      "log": "formal/validation/journeys/backend__email.proof.log"
+      "proofFile": null,
+      "proofSha256": null,
+      "proofLibrarySha256": "4c9f8dcbd9918f7d4b282ad9531b4cf0096ea389c015149b1786d0fe4ebd8e29"
     },
     {
       "unit": "backend__projects.ts",
@@ -99,9 +105,10 @@
       "unproved": [],
       "errors": [],
       "exhausted": [],
-      "sourceCurrent": true,
-      "status": "passed",
-      "log": "formal/validation/journeys/backend__wallets.proof.log"
+      "sourceCurrent": false,
+      "status": "superseded",
+      "log": "formal/validation/journeys/backend__wallets.proof.log",
+      "qualifiedBy": "The wallet challenge and registry model replaced this binding sketch."
     },
     {
       "unit": "composition.ts",
@@ -462,14 +469,49 @@
       "proofSha256": null,
       "proofLibrarySha256": "4c9f8dcbd9918f7d4b282ad9531b4cf0096ea389c015149b1786d0fe4ebd8e29",
       "supersededBy": "formal/validation/journeys/presentation-tickers-frontend__presentation.ts.log"
+    },
+    {
+      "unit": "backend__email.ts",
+      "spec": "spec/backend/email.md",
+      "sourceSha256": "1bc36d8e2b91ff060167a711fa74ab3720f2f5597890e85fefdd95557918a1f6",
+      "inputs": {
+        "spec/backend/email.md": "1bc36d8e2b91ff060167a711fa74ab3720f2f5597890e85fefdd95557918a1f6"
+      },
+      "total": 14,
+      "unproved": [],
+      "errors": [],
+      "exhausted": [],
+      "sourceCurrent": false,
+      "status": "superseded",
+      "log": "formal/validation/journeys/backend__email.proof.log",
+      "supersededBy": "formal/validation/journeys/account-proof-v2-backend__email.ts.log"
+    },
+    {
+      "unit": "backend__accounts.ts",
+      "total": 75,
+      "unproved": [],
+      "errors": [],
+      "exhausted": [],
+      "spec": "spec/backend/accounts.md",
+      "sourceSha256": "ab40b0f4f77fe0ae324c64fb3e114cfc794a3af799b5e3b9ae0fe213de294907",
+      "inputs": {
+        "spec/backend/accounts.md": "ab40b0f4f77fe0ae324c64fb3e114cfc794a3af799b5e3b9ae0fe213de294907",
+        "spec/backend/accounts.proof.dfy": "e8b074b5be700273b52fc33ab042919ca019385be0b3df28cca0618880a30c35"
+      },
+      "sourceCurrent": false,
+      "status": "superseded",
+      "log": "formal/validation/journeys/backend__accounts.proof.log",
+      "supersededBy": "formal/validation/journeys/account-proof-v2-backend__accounts.ts.log"
     }
   ],
   "currentSummary": {
-    "uniqueProofUnits": 23,
-    "provedObligations": 763,
+    "uniqueProofUnits": 22,
+    "provedObligations": 877,
     "unproved": 0,
     "errors": 0,
-    "staleUnits": [],
+    "staleUnits": [
+      "backend__wallets.ts"
+    ],
     "historicalRunsExcluded": true
   }
 }

@@ -9,9 +9,9 @@
     "spec/settlement/monthly.md": "aba4e09eef3906bb5a541514ea91c75252e5f7f34b85c30dfde7cb3762549f69",
     "spec/settlement/payment.md": "cec541e396aaa2f44573af1754b609a3d491f1122eb2faf146e050a47efd7d55",
     "spec/settlement/recovery.md": "521dbaf5984c54f1d084b769ac2c327293e6d45e1dec05433795655cab72ccb7",
-    "spec/settlement/referralAccrual.md": "19b764dab95a164e54aa14133f24eb53adaf6678f0ee0871f24b8d55d2ea3eef",
+    "spec/settlement/referralAccrual.md": "7d8c666da177c63701fd1e9133fc94d2005aaea41cb3a0fa5fbb0bff4f7ef2b3",
     "spec/settlement/referralDistributor.md": "9806b4cd07201302c90313cb2ed894c2ee0b7ef953c8bcc0abf1b1da9d75e673",
-    "spec/settlement/referralPublication.md": "2288ae248dcf6ba7a427542f465e31d3bd0f986fd84b5b90e81e863fd245d9ec",
+    "spec/settlement/referralPublication.md": "34b7a91a6777b034cf72742ece7d126db85892835213da68d4d367bd9be51b08",
     "spec/settlement/referrals.md": "70f1701d007216eff36152de00b41020a01a772cece96950ef9563a89699a373",
     "spec/settlement/reserveRelease.md": "133ee6f6be73b41d1c6ad2f499bce5193791f891bca512d69a84ad7dbc054ee9",
     "spec/settlement/signer.md": "0eb06b5e673bb020ee5fbcc4a775d4e9777cbb4bbc89e127b6bdd6d7739835a9",
@@ -332,11 +332,30 @@
   },
   "referrals": {
     "sourceAudit": "formal/validation/finance/referral-source-audit.json",
-    "journeys": "formal/validation/finance/referral-journeys.json",
+    "journeys": "formal/validation/finance/referral-repaired-journeys.json",
     "checks": "formal/validation/finance/referral-completion.json",
-    "weightedGoals": "formal/validation/finance/referral-weighted-goals.json",
-    "entryEquality": "formal/validation/finance/referral-entry-equality.json",
+    "weightedGoals": "formal/validation/finance/referral-repaired-weighted-goals.json",
+    "entryEquality": "formal/validation/finance/referral-repaired-entry-equality.json",
     "fixtureEquivalence": "formal/validation/finance/referral-fixture-equivalence.json",
-    "handoff": "formal/validation/finance/referral-handoff.md"
+    "handoff": "formal/validation/finance/referral-handoff.md",
+    "historicalJourneys": "formal/validation/finance/referral-journeys.json",
+    "historicalEntryEquality": "formal/validation/finance/referral-entry-equality.json",
+    "guidedStatus": {
+      "status": "passed",
+      "events": 182,
+      "cases": 36,
+      "transitions": 40,
+      "goals": 11
+    },
+    "historicalWeightedGoals": "formal/validation/finance/referral-weighted-goals.json",
+    "weightedStatus": {
+      "status": "passed",
+      "traces": 400,
+      "seeds": [
+        812,
+        813
+      ],
+      "successfulRolloverSettlementTraces": 16
+    }
   }
 }

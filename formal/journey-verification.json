@@ -19,22 +19,24 @@
     {
       "file": "spec/backend/accounts.md",
       "sourceSha256": "de1c413f3720f6dcf8a3e4fdf492894f8b5485ce93fb9f66df80256e525c6356",
-      "currentSourceSha256": "ab40b0f4f77fe0ae324c64fb3e114cfc794a3af799b5e3b9ae0fe213de294907",
+      "currentSourceSha256": "ecd464884aa42edf59cf32aa6c738b9341a088be3fb27565bc6a61ffa1f92359",
       "sourceCurrent": false,
       "parse": true,
       "typecheck": true,
       "generation": true,
-      "error": null
+      "error": null,
+      "supersededBy": "formal/validation/journeys/account-closure-directed.json"
     },
     {
       "file": "spec/backend/email.md",
       "sourceSha256": "1bc36d8e2b91ff060167a711fa74ab3720f2f5597890e85fefdd95557918a1f6",
-      "currentSourceSha256": "1bc36d8e2b91ff060167a711fa74ab3720f2f5597890e85fefdd95557918a1f6",
-      "sourceCurrent": true,
+      "currentSourceSha256": "50c35c43e69f5bc394e8b9678c225bd0bcbd6b76219d3b0bfbe36dc97358b28f",
+      "sourceCurrent": false,
       "parse": true,
       "typecheck": true,
       "generation": true,
-      "error": null
+      "error": null,
+      "supersededBy": "formal/validation/journeys/account-closure-directed.json"
     },
     {
       "file": "spec/backend/index.md",
@@ -59,8 +61,8 @@
     {
       "file": "spec/backend/wallets.md",
       "sourceSha256": "bc33a7dd7015e952350eb69ca7f1f87184bfaf0b772403105ac735d6619f3bcd",
-      "currentSourceSha256": "bc33a7dd7015e952350eb69ca7f1f87184bfaf0b772403105ac735d6619f3bcd",
-      "sourceCurrent": true,
+      "currentSourceSha256": "c2f024263e30cbcdde00fa36d79e44f9ec8687ed0b8b3651c6628899352bc13b",
+      "sourceCurrent": false,
       "parse": true,
       "typecheck": true,
       "generation": true,
@@ -309,9 +311,10 @@
       ],
       "missingEvents": [],
       "sourceSha256": "d0c871de1e686b6e9b16bfddbcc0b3e17393759a4442d8331b6e321e2745e9ec",
-      "currentSourceSha256": "ab40b0f4f77fe0ae324c64fb3e114cfc794a3af799b5e3b9ae0fe213de294907",
+      "currentSourceSha256": "ecd464884aa42edf59cf32aa6c738b9341a088be3fb27565bc6a61ffa1f92359",
       "sourceCurrent": false,
-      "goalCoverage": "not measured by this run because the result formatter failed after successful replay"
+      "goalCoverage": "not measured by this run because the result formatter failed after successful replay",
+      "supersededBy": "formal/validation/journeys/account-closure-directed.json"
     },
     {
       "file": "spec/backend/email.md",
@@ -346,8 +349,9 @@
           "reached": true
         }
       ],
-      "currentSourceSha256": "1bc36d8e2b91ff060167a711fa74ab3720f2f5597890e85fefdd95557918a1f6",
-      "sourceCurrent": true
+      "currentSourceSha256": "50c35c43e69f5bc394e8b9678c225bd0bcbd6b76219d3b0bfbe36dc97358b28f",
+      "sourceCurrent": false,
+      "supersededBy": "formal/validation/journeys/account-closure-directed.json"
     },
     {
       "file": "spec/backend/projects.md",
@@ -400,8 +404,8 @@
       ],
       "missingEvents": [],
       "sourceSha256": "bc33a7dd7015e952350eb69ca7f1f87184bfaf0b772403105ac735d6619f3bcd",
-      "currentSourceSha256": "bc33a7dd7015e952350eb69ca7f1f87184bfaf0b772403105ac735d6619f3bcd",
-      "sourceCurrent": true,
+      "currentSourceSha256": "c2f024263e30cbcdde00fa36d79e44f9ec8687ed0b8b3651c6628899352bc13b",
+      "sourceCurrent": false,
       "goalCoverage": "not measured by this run because the result formatter failed after successful replay"
     },
     {
