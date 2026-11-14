@@ -17,9 +17,9 @@
   ],
   "counts": {
     "files": 753,
-    "functions": 10937,
+    "functions": 10939,
     "selectedContractTargets": 188,
-    "unprovedFunctions": 10749,
+    "unprovedFunctions": 10751,
     "nonTypeScriptFiles": 56
   },
   "limits": [
@@ -780,9 +780,11 @@
 {"name":"handleReferralCode","kind":"FunctionDeclaration","line":175,"sha256":"f13d1e5c70abf5e12be3555369999e744a914c4b2cb6ffd0a66df99dafbce045","status":"unproved","candidate":"requires-effect-or-language-boundary","syntaxFeatures":["await"]},
 {"name":"referralRedirect","kind":"FunctionDeclaration","line":202,"sha256":"1fb2e203a4749fc7a70a6cb55c150926f220d076f0f7bb47fb4a97c56c6fca56","status":"unproved","candidate":"requires-effect-or-language-boundary","syntaxFeatures":["await","runtime-effect"]}
 ]},
-{"path":"backend/referrals/handler.ts","sha256":"44249d4131eefeb6565bb01c5d7182de79c1d200ef3539e5cb5b9235dd6a1ee4","language":"typescript","disposition":"callables-inventoried","functions":[
-{"name":"handleReferralsApi","kind":"FunctionDeclaration","line":38,"sha256":"76f7e54c70ee7b20d4266d274f5459d4a80b646665615ea6401abf244d72a841","status":"unproved","candidate":"requires-effect-or-language-boundary","syntaxFeatures":["await"]},
-{"name":"<ArrowFunction@69>","kind":"ArrowFunction","line":69,"sha256":"10648b90b4834527e35a3a637a7e8475e42d22b9c131babde2f26de16ddb923d","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]}
+{"path":"backend/referrals/handler.ts","sha256":"1b5de82ce245f509c8d1d7bd6e1c7588dc4a0fb03a9f598a584a707efdb0955b","language":"typescript","disposition":"callables-inventoried","functions":[
+{"name":"referredProjects","kind":"FunctionDeclaration","line":57,"sha256":"536582d00fa94fb5f251e4c9d1693d2c62c2852571fee39a6ec6db64d81bdab2","status":"unproved","candidate":"requires-effect-or-language-boundary","syntaxFeatures":["await"]},
+{"name":"<ArrowFunction@85>","kind":"ArrowFunction","line":85,"sha256":"ef30069dfb28071e4a852f425561b1021e78b4b8508e77b76e254fd9ef233703","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
+{"name":"handleReferralsApi","kind":"FunctionDeclaration","line":102,"sha256":"31aaa8f5faf92cdd2733dca09de936a74ef3327de9248fb928172f4f7580c470","status":"unproved","candidate":"requires-effect-or-language-boundary","syntaxFeatures":["await"]},
+{"name":"<ArrowFunction@142>","kind":"ArrowFunction","line":142,"sha256":"10648b90b4834527e35a3a637a7e8475e42d22b9c131babde2f26de16ddb923d","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]}
 ]},
 {"path":"backend/security/advisories.ts","sha256":"edc9f61fbf4fb818fa52b8878af836bb49e54c085a3eab82da96d1b045733a7b","language":"typescript","disposition":"callables-inventoried","functions":[
 {"name":"record","kind":"FunctionDeclaration","line":61,"sha256":"bba2c6be5ec54803085abc021abfa69916122a3f336c93fba32dc7c8ce8e5231","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
