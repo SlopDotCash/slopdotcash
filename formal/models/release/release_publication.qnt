@@ -6,7 +6,9 @@
 // @source src/lib/verified-selection.ts
 // @source scripts/verify-staging-deployment.mjs
 // @source scripts/release-notify.mjs
+// @source scripts/release-robinhood-rpc.ts
 // @evidence scripts/pages-secret-inventory.test.ts
+// @evidence scripts/release-robinhood-rpc.test.ts
 // Source advancement before service writes supersedes; advancement afterward
 // is an explicit partial-publication failure, never a verified release.
 // proofsPass is the successful same-SHA result modeled by release_proof_gate.
@@ -24,21 +26,27 @@
 // promote. This safety model makes no eventual-cleanup or provider guarantee.
 // sourceMatches is an existing workflow recheck's retained observation, not a
 // continuous lock on live main or a new check between file preparation/upload.
+// The opt-in Robinhood child never shares the normal service-write branch.
+// Its data/RPC and identity predicates model bounded observations, not a lock
+// on the fee journal or guarantees about Cloudflare and the chain.
 module release_publication {
   type State = { stage: str, main: bool, manual: bool, retainedData: bool,
     proofs: bool, tested: bool, sourceMatches: bool, workers: bool, pages: bool, verified: bool,
     slopbotEnabled: bool, earlierWorker: bool, secretPhase: str, privateFile: bool,
-    uploaded: bool, secretIncluded: bool, versionValidated: bool, activation: str }
+    uploaded: bool, secretIncluded: bool, versionValidated: bool, activation: str,
+    rpcRotation: str }
   var s: State
   action init = s' = { stage: "new", main: false, manual: false, retainedData: false,
     proofs: false, tested: false, sourceMatches: true, workers: false, pages: false, verified: false,
     slopbotEnabled: true, earlierWorker: false, secretPhase: "none", privateFile: false,
-    uploaded: false, secretIncluded: false, versionValidated: false, activation: "none" }
+    uploaded: false, secretIncluded: false, versionValidated: false, activation: "none", rpcRotation: "normal" }
   pure def failed(value: State): State = value.with("stage",
     if (not(value.pages) and (value.earlierWorker or value.uploaded or value.workers)) "partial-failure" else "failed")
   action disableSlopbot = all { s.stage == "new", s' = s.with("slopbotEnabled", false) }
+  action requestRpcRotation = all { s.stage == "new", s.rpcRotation == "normal",
+    s' = s.with("rpcRotation", "requested") }
   action prepare(main, manual, retainedData) = all {
-    s.stage == "new", retainedData implies manual,
+    s.stage == "new", retainedData implies manual, s.rpcRotation != "normal" implies (main and manual),
     s' = s.with("stage", "prepared").with("main", main).with("manual", manual).with("retainedData", retainedData),
   }
   action proofsPass = all {s.stage == "prepared", s' = s.with("proofs", true)}
@@ -51,9 +59,9 @@ module release_publication {
     s' = s.with("stage", "superseded") }
   // The shared publication step may write other services before Slopbot.
   action publishEarlierWorker = all { s.stage == "tested", s.main, s.sourceMatches,
-    not(s.earlierWorker), s.secretPhase == "none", s' = s.with("earlierWorker", true) }
+    not(s.earlierWorker), s.rpcRotation == "normal", s.secretPhase == "none", s' = s.with("earlierWorker", true) }
   action readExistingInventory(valid: bool): bool = all {
-    s.stage == "tested", s.main, s.sourceMatches, s.slopbotEnabled, s.secretPhase == "none",
+    s.stage == "tested", s.main, s.sourceMatches, s.slopbotEnabled, s.rpcRotation == "normal", s.secretPhase == "none",
     s' = if (valid) s.with("secretPhase", "inventory") else failed(s) }
   action allocateSecretFile = all { s.stage == "tested", s.secretPhase == "inventory",
     s' = s.with("secretPhase", "allocated").with("privateFile", true) }
@@ -61,7 +69,7 @@ module release_publication {
     s.stage == "tested", s.secretPhase == "allocated", s.privateFile,
     s' = if (present) s.with("secretPhase", "prepared") else failed(s) }
   action uploadVersion(included: bool, capturedId: bool): bool = all {
-    s.stage == "tested", s.main, s.sourceMatches, s.secretPhase == "prepared", s.privateFile,
+    s.stage == "tested", s.main, s.sourceMatches, s.rpcRotation == "normal", s.secretPhase == "prepared", s.privateFile,
     s' = if (capturedId) s.with("uploaded", true).with("secretIncluded", included).with("secretPhase", "uploaded")
       else failed(s.with("uploaded", true).with("secretIncluded", included).with("secretPhase", "unidentified")) }
   action cleanupSecretFile = all { s.privateFile,
@@ -77,12 +85,28 @@ module release_publication {
   // An errored deploy may have committed remotely. Never infer rollback or
   // mark that outcome as a confirmed active version without its readback.
   action promoteSlopbot(confirmed: bool): bool = all {
-    s.stage == "tested", s.main, s.sourceMatches, s.slopbotEnabled,
+    s.stage == "tested", s.main, s.sourceMatches, s.slopbotEnabled, s.rpcRotation == "normal",
     s.activation == "none", s.uploaded, s.secretIncluded, s.versionValidated, not(s.privateFile),
     s' = if (confirmed) s.with("activation", "confirmed") else failed(s.with("activation", "uncertain")) }
-  action publishWorkers = all { s.stage == "tested", s.main, s.sourceMatches,
+  action publishWorkers = all { s.stage == "tested", s.main, s.sourceMatches, s.rpcRotation == "normal",
     not(s.slopbotEnabled) or (s.activation == "confirmed" and s.uploaded and s.secretIncluded and s.versionValidated and not(s.privateFile)),
     s' = s.with("stage", "workers").with("workers", true) }
+  action qualifyRpcRotation(ok: bool): bool = all {
+    s.stage == "tested", s.main, s.manual, s.sourceMatches, s.rpcRotation == "requested",
+    s' = if (ok) s.with("rpcRotation", "qualified").with("secretPhase", "inventory") else failed(s) }
+  action uploadRpcRotation(baseStillActiveAndLatest: bool): bool = all {
+    s.stage == "tested", s.sourceMatches, s.rpcRotation == "qualified",
+    s.secretPhase == "prepared", s.privateFile,
+    s' = if (baseStillActiveAndLatest)
+      s.with("rpcRotation", "uploaded").with("uploaded", true).with("secretIncluded", true).with("secretPhase", "uploaded")
+      else failed(s) }
+  action promoteRpcRotation(baseStillActiveAndCandidateLatest: bool, confirmed: bool): bool = all {
+    s.stage == "tested", s.sourceMatches, s.rpcRotation == "uploaded",
+    s.versionValidated, not(s.privateFile),
+    s' = if (baseStillActiveAndCandidateLatest)
+      if (confirmed) s.with("rpcRotation", "confirmed").with("stage", "rpc-confirmed")
+      else failed(s.with("rpcRotation", "uncertain"))
+      else failed(s) }
   action partialFailure = all { Set("tested", "workers").contains(s.stage), not(s.sourceMatches),
     s.earlierWorker or s.uploaded or s.workers,
     s' = s.with("stage", "partial-failure") }
@@ -97,7 +121,7 @@ module release_publication {
       nondet manual = Set(false, true).oneOf()
       nondet retainedData = Set(false, true).oneOf()
       prepare(main, manual, retainedData) },
-    disableSlopbot, proofsPass, qualify, advanceSource, supersede, publishEarlierWorker,
+    requestRpcRotation, disableSlopbot, proofsPass, qualify, advanceSource, supersede, publishEarlierWorker,
     { nondet inventory = Set(false, true).oneOf()
       readExistingInventory(inventory) },
     allocateSecretFile,
@@ -112,6 +136,13 @@ module release_publication {
       validateVersion(identity, names) },
     { nondet confirmed = Set(false, true).oneOf()
       promoteSlopbot(confirmed) },
+    { nondet ready = Set(false, true).oneOf()
+      qualifyRpcRotation(ready) },
+    { nondet prior = Set(false, true).oneOf()
+      uploadRpcRotation(prior) },
+    { nondet prior = Set(false, true).oneOf()
+      nondet confirmed = Set(false, true).oneOf()
+      promoteRpcRotation(prior, confirmed) },
     publishWorkers, partialFailure, publishPages, verifyBytesAndMetadata, providerFailure
   }
 
@@ -125,6 +156,9 @@ module release_publication {
     s.stage == "superseded" implies (not(s.pages) and not(s.workers) and not(s.earlierWorker) and not(s.uploaded)),
     s.stage == "partial-failure" implies ((s.workers or s.earlierWorker or s.uploaded) and not(s.pages) and not(s.verified)),
     s.retainedData implies s.manual,
+    s.rpcRotation != "normal" implies (not(s.earlierWorker) and not(s.workers) and not(s.pages)),
+    s.rpcRotation.in(Set("confirmed", "uncertain")) implies
+      (s.main and s.manual and s.tested and s.uploaded and s.versionValidated and not(s.privateFile)),
   }
   action prepareSecretFile(inventoryOk: bool, protectedKeyPresent: bool): bool =
     if (inventoryOk) readExistingInventory(true).then(allocateSecretFile).then(writeProtectedSecret(protectedKeyPresent))
@@ -178,5 +212,22 @@ module release_publication {
   run emptyKeyAllocationStillNeedsExitCleanupTest = init.then(prepare(true, false, false)).then(proofsPass).then(qualify)
     .then(readExistingInventory(true)).then(allocateSecretFile).then(writeProtectedSecret(false))
     .expect(s.privateFile and s.stage == "failed").then(cleanupSecretFile).expect(not(s.privateFile))
+
+  action rpcRotationIntent = requestRpcRotation.then(prepare(true, true, false)).then(proofsPass).then(qualify)
+  action rpcCandidate = rpcRotationIntent.then(qualifyRpcRotation(true)).then(allocateSecretFile)
+    .then(writeProtectedSecret(true)).then(uploadRpcRotation(true)).then(cleanupSecretFile)
+    .then(validateVersion(true, true))
+  run rpcRotationOnlyPublishesCandidateTest = init.then(rpcCandidate).then(promoteRpcRotation(true, true))
+    .expect(s.rpcRotation == "confirmed" and not(s.workers) and not(s.pages))
+  run rpcRotationMissingPreflightCannotUploadTest = init.then(rpcRotationIntent).then(qualifyRpcRotation(false))
+    .expect(s.stage == "failed" and not(s.uploaded)).then(uploadRpcRotation(true).fail())
+  run rpcRotationChangedVersionCannotPromoteTest = init.then(rpcCandidate).then(promoteRpcRotation(false, true))
+    .expect(s.stage == "partial-failure" and s.rpcRotation == "uploaded")
+  run rpcRotationAdvancedSourceCannotPromoteTest = init.then(rpcCandidate).then(advanceSource)
+    .then(promoteRpcRotation(true, true).fail())
+  run rpcRotationAmbiguousDeployRemainsUncertainTest = init.then(rpcCandidate).then(promoteRpcRotation(true, false))
+    .expect(s.rpcRotation == "uncertain" and not(s.verified))
+  run rpcRotationNeedsManualMainTest = init.then(requestRpcRotation).then(prepare(false, true, false).fail())
+  run rpcRotationCannotWriteOtherServicesTest = init.then(rpcRotationIntent).then(publishEarlierWorker.fail())
 
 }
