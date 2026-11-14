@@ -10,6 +10,7 @@ import {
   readRegistryDatabase,
 } from "../payments/registry-database.mjs";
 import { paymentStack } from "./configure.mjs";
+import { MAINNET_EXECUTION } from "./mainnet-execution.mjs";
 import {
   assembleMainnetBindings,
   prepareMainnetRelease,
@@ -58,6 +59,12 @@ try {
   // Execute the same release helper the protected workflow invokes. Only
   // Cloudflare replies are controlled; configurations and publication files are real.
   const workflow = await readFile(".github/workflows/deploy.yml", "utf8");
+  const enabledNetworks = Object.keys(MAINNET_EXECUTION).filter(
+    (network) => MAINNET_EXECUTION[network],
+  );
+  const siblingAttesters = enabledNetworks
+    .filter((network) => network !== input.network)
+    .map((network) => `slop-payments-${network}-attester`);
   for (const scenario of [
     "absent",
     "existing",
@@ -70,6 +77,10 @@ try {
     const provider = async (args) => {
       calls.push(args);
       if (args[0] === "deployments" && args[1] === "list") {
+        const name = args[args.indexOf("--name") + 1];
+        // Keep the other enabled networks at their existing empty-pin services.
+        if (siblingAttesters.includes(name)) return { status: 0, stdout: "[]" };
+        assert.equal(name, config.name);
         if (scenario === "existing") return { status: 0, stdout: "[]" };
         const account = (scenario === "wrong-account" ? "1" : "0").repeat(32);
         return {
@@ -130,9 +141,10 @@ try {
       });
       const pages = JSON.parse(await readFile(path, "utf8"));
       assert.deepEqual(pages.env.preview.services, []);
-      assert.deepEqual(JSON.parse(pages.vars.PAYMENT_NETWORKS), [
-        "base-mainnet",
-      ]);
+      assert.deepEqual(
+        JSON.parse(pages.vars.PAYMENT_NETWORKS),
+        enabledNetworks,
+      );
       assert.equal(pages.services.length, scenario === "existing" ? 0 : 2);
       if (scenario === "absent")
         assert.deepEqual(pages.services[0], {
@@ -152,6 +164,18 @@ try {
     if (["existing", "auth", "wrong-account"].includes(scenario))
       assert(!calls.some((args) => args[0] === "deploy"));
     assert(!calls.some((args) => args[0] === "secret"));
+    for (const name of siblingAttesters) {
+      const siblingCalls = calls.filter(
+        (args) => args[args.indexOf("--name") + 1] === name,
+      );
+      const expected = ["auth", "wrong-account"].includes(scenario)
+        ? []
+        : [["deployments", "list"]];
+      assert.deepEqual(
+        siblingCalls.map((args) => args.slice(0, 2)),
+        expected,
+      );
+    }
   }
   // The application already accepts the private payment RPC map. Its
   // installation must pass the real Pages release guard without admitting
