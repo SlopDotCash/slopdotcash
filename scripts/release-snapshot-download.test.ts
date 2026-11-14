@@ -56,7 +56,7 @@ for (const [name, event, ref, bootstrap, accepted] of [
     expect(await process.exited).toBe(accepted ? 0 : 1);
   });
 }
-const generation = step("Generate live contribution data");
+const generation = step("Generate live contributor profiles");
 const downloads = generation.match(
   /curl --fail --silent --show-error[^\n]*(?:\n {14}[^\n]*)*/g,
 );
