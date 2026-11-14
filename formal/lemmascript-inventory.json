@@ -17,9 +17,9 @@
   ],
   "counts": {
     "files": 750,
-    "functions": 10923,
+    "functions": 10924,
     "selectedContractTargets": 188,
-    "unprovedFunctions": 10735,
+    "unprovedFunctions": 10736,
     "nonTypeScriptFiles": 56
   },
   "limits": [
@@ -3860,21 +3860,22 @@
 {"path":"scripts/generate-sitemap.ts","sha256":"07f32541fcc2307abcbdeb3984eb764f3d8c2978c44fa3c4796cfe0719ea9463","language":"typescript","disposition":"callables-inventoried","functions":[
 {"name":"<ArrowFunction@13>","kind":"ArrowFunction","line":13,"sha256":"3cd1ea6d30626e514254c698d3959a26fa40938dc2ef11cfda219579fc04f96e","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]}
 ]},
-{"path":"scripts/github-ingestion-read.ts","sha256":"a815f4564f6fbbea121f39c2832f49c4e44f242af4eccf767780979143099f1b","language":"typescript","disposition":"callables-inventoried","functions":[
+{"path":"scripts/github-ingestion-read.ts","sha256":"60179938a2785a2bd9423688e0ee78a499974834dc9878bc1b498516d89ce0fa","language":"typescript","disposition":"callables-inventoried","functions":[
 {"name":"immutableRead","kind":"FunctionDeclaration","line":10,"sha256":"d3dcc58b6c300fc02f0e614adb7c2db19818d453f0e22b615bfd13d8b49189d1","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
-{"name":"replay","kind":"FunctionDeclaration","line":30,"sha256":"fd00f4f0fa24b13b2938e845b4d812e8da5398fa669057f53e1eeeba7d70386b","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
-{"name":"abortable","kind":"FunctionDeclaration","line":38,"sha256":"34e000c6ddf5ad5dfc091e74689ecae3a68bb80e6b9e0228a905649c205cf7ef","status":"unproved","candidate":"requires-effect-or-language-boundary","syntaxFeatures":["await","promise-construction"]},
-{"name":"<ArrowFunction@47>","kind":"ArrowFunction","line":47,"sha256":"222ff9cac9affb64183bb94e789f40cbe3cbc477020503cf4f6c8fdcbafe0a7e","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
-{"name":"<ArrowFunction@48>","kind":"ArrowFunction","line":48,"sha256":"8a0338ea7c1309e3785f188179ebeee07b1585ce4db38ca7fe402d7a5f97cc13","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
-{"name":"readAttempt","kind":"FunctionDeclaration","line":57,"sha256":"1e4a52d262c85ceb18785e5f27d94bf9d36a94d6ded2e89ee7df6109339bd643","status":"unproved","candidate":"requires-effect-or-language-boundary","syntaxFeatures":["await","runtime-effect"]},
-{"name":"<ArrowFunction@66>","kind":"ArrowFunction","line":66,"sha256":"64dfe8b4c8944d016ecf8598bff945303ba9cbf97d171e606f25468cbb4e194e","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
-{"name":"githubPrimaryRateLimitDelay","kind":"FunctionDeclaration","line":100,"sha256":"8ba644b5af1647b0011db513adb849c054a937f97273478c0a1f0ff32931c4b6","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
-{"name":"githubIngestionReadTransport","kind":"FunctionDeclaration","line":119,"sha256":"b2b15bf167402348a5f3fcb5e9c2d9f2cb5d562d58bdb4a12e69e304396e8288","status":"unproved","candidate":"requires-effect-or-language-boundary","syntaxFeatures":["await","library-semantics-review","runtime-effect","throw-unreachable-model"]},
-{"name":"<ArrowFunction@122>","kind":"ArrowFunction","line":122,"sha256":"a0b4823074fdc117e653b262a0375c2a7907ee2410bab676d083219f0e10d4ab","status":"unproved","candidate":"requires-effect-or-language-boundary","syntaxFeatures":["await","promise-construction","runtime-effect"]},
-{"name":"<ArrowFunction@126>","kind":"ArrowFunction","line":126,"sha256":"cd4dc2bfeb992b9fb59b857309cc60781bbcd74a85685e6747671764f79a40e5","status":"unproved","candidate":"requires-effect-or-language-boundary","syntaxFeatures":["runtime-effect"]},
-{"name":"<ArrowFunction@137>","kind":"ArrowFunction","line":137,"sha256":"d2ac41fb9ec34aee9cb18b486bbffe566a3be7e42098ebf7cc9db608321b726b","status":"unproved","candidate":"requires-effect-or-language-boundary","syntaxFeatures":["await","library-semantics-review","runtime-effect"]},
-{"name":"<ArrowFunction@152>","kind":"ArrowFunction","line":152,"sha256":"a8899c884bd9ff135a312c72aba97cdfdf525f2858cb4d012ba7fd7827e2f644","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
-{"name":"<ArrowFunction@159>","kind":"ArrowFunction","line":159,"sha256":"f349c49f82fe23c4d4d9cbef320da33a28651870ab64bfa76957754906349def","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":["library-semantics-review"]}
+{"name":"secondaryRateLimit","kind":"FunctionDeclaration","line":32,"sha256":"6c192ec08120751e052f7f694445ae4572caa43dd5006a4dea4c86d81b813f02","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
+{"name":"replay","kind":"FunctionDeclaration","line":46,"sha256":"fd00f4f0fa24b13b2938e845b4d812e8da5398fa669057f53e1eeeba7d70386b","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
+{"name":"abortable","kind":"FunctionDeclaration","line":54,"sha256":"34e000c6ddf5ad5dfc091e74689ecae3a68bb80e6b9e0228a905649c205cf7ef","status":"unproved","candidate":"requires-effect-or-language-boundary","syntaxFeatures":["await","promise-construction"]},
+{"name":"<ArrowFunction@63>","kind":"ArrowFunction","line":63,"sha256":"222ff9cac9affb64183bb94e789f40cbe3cbc477020503cf4f6c8fdcbafe0a7e","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
+{"name":"<ArrowFunction@64>","kind":"ArrowFunction","line":64,"sha256":"8a0338ea7c1309e3785f188179ebeee07b1585ce4db38ca7fe402d7a5f97cc13","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
+{"name":"readAttempt","kind":"FunctionDeclaration","line":73,"sha256":"1e4a52d262c85ceb18785e5f27d94bf9d36a94d6ded2e89ee7df6109339bd643","status":"unproved","candidate":"requires-effect-or-language-boundary","syntaxFeatures":["await","runtime-effect"]},
+{"name":"<ArrowFunction@82>","kind":"ArrowFunction","line":82,"sha256":"64dfe8b4c8944d016ecf8598bff945303ba9cbf97d171e606f25468cbb4e194e","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
+{"name":"githubPrimaryRateLimitDelay","kind":"FunctionDeclaration","line":116,"sha256":"8ba644b5af1647b0011db513adb849c054a937f97273478c0a1f0ff32931c4b6","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
+{"name":"githubIngestionReadTransport","kind":"FunctionDeclaration","line":135,"sha256":"4c3d0d00c86f04888c7f4d7faf2c0b4b8f9055bdec21d85364a4bf4efd02da86","status":"unproved","candidate":"requires-effect-or-language-boundary","syntaxFeatures":["await","library-semantics-review","runtime-effect","throw-unreachable-model"]},
+{"name":"<ArrowFunction@138>","kind":"ArrowFunction","line":138,"sha256":"a0b4823074fdc117e653b262a0375c2a7907ee2410bab676d083219f0e10d4ab","status":"unproved","candidate":"requires-effect-or-language-boundary","syntaxFeatures":["await","promise-construction","runtime-effect"]},
+{"name":"<ArrowFunction@142>","kind":"ArrowFunction","line":142,"sha256":"cd4dc2bfeb992b9fb59b857309cc60781bbcd74a85685e6747671764f79a40e5","status":"unproved","candidate":"requires-effect-or-language-boundary","syntaxFeatures":["runtime-effect"]},
+{"name":"<ArrowFunction@153>","kind":"ArrowFunction","line":153,"sha256":"9428b955dbb0286d0913771ee5e74f1eb4b9589aff5b88fff73e9d4cf58beb44","status":"unproved","candidate":"requires-effect-or-language-boundary","syntaxFeatures":["await","library-semantics-review","runtime-effect"]},
+{"name":"<ArrowFunction@168>","kind":"ArrowFunction","line":168,"sha256":"a8899c884bd9ff135a312c72aba97cdfdf525f2858cb4d012ba7fd7827e2f644","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
+{"name":"<ArrowFunction@175>","kind":"ArrowFunction","line":175,"sha256":"f349c49f82fe23c4d4d9cbef320da33a28651870ab64bfa76957754906349def","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":["library-semantics-review"]}
 ]},
 {"path":"scripts/github-pagination.ts","sha256":"8f0b5d0457ff8176b5143cfefaa6190292a9dfdae779b5dde8af63d181e9a147","language":"typescript","disposition":"no-function-body","functions":[
 

@@ -113,6 +113,64 @@ for (const headers of forbiddenHeaders) {
   });
 }
 
+// GitHub serves a secondary limit as 403 with remaining primary quota; without
+// Retry-After its documented guidance is to wait at least one minute.
+const secondaryLimitMessages = [
+  "You have exceeded a secondary rate limit. Please wait a few minutes before you try again.",
+  "You have triggered an abuse detection mechanism. Please wait a few minutes before you try again.",
+];
+const remainingQuota = {
+  "x-ratelimit-limit": "5000",
+  "x-ratelimit-remaining": "4321",
+  "x-ratelimit-reset": "4600",
+};
+for (const message of secondaryLimitMessages) {
+  test(`a 403 secondary limit without Retry-After waits one minute: ${message.slice(0, 40)}`, async () => {
+    const f = fixture([
+      () =>
+        Response.json({ message }, { status: 403, headers: remainingQuota }),
+      () => Response.json([{ filename: "source.ts" }]),
+    ]);
+    expect(
+      await f.client.get<{ filename: string }[]>(
+        "/repos/owner/repo/pulls/7/files?per_page=100&page=1",
+      ),
+    ).toEqual([{ filename: "source.ts" }]);
+    expect(f.waits).toEqual([60_000]);
+    expect(f.calls()).toBe(2);
+  });
+}
+
+test("repeated secondary-limit 403 answers stay bounded and keep the GitHub status", async () => {
+  const f = fixture([
+    () =>
+      Response.json(
+        { message: secondaryLimitMessages[0] },
+        { status: 403, headers: remainingQuota },
+      ),
+  ]);
+  await expect(f.client.get("/repos/owner/repo")).rejects.toMatchObject({
+    status: 403,
+  });
+  expect(f.calls()).toBe(5);
+  expect(f.waits).toEqual([60_000, 60_000, 60_000, 60_000]);
+});
+
+test("a JSON 403 that names no rate limit is still an authorization failure", async () => {
+  const f = fixture([
+    () =>
+      Response.json(
+        { message: "Resource not accessible by integration" },
+        { status: 403, headers: remainingQuota },
+      ),
+  ]);
+  await expect(f.client.get("/repos/owner/repo")).rejects.toMatchObject({
+    status: 403,
+  });
+  expect(f.calls()).toBe(1);
+  expect(f.waits).toEqual([]);
+});
+
 test("even a configured client never retries GitHub mutations", async () => {
   const f = fixture([
     () =>
