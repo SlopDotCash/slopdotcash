@@ -266,14 +266,15 @@ page view traffic to the site's own origin.
   split. All 42 vault obligations proved, including conservation and positivity.
   [Settlement journeys](validation/active-proof/settlement/settlement-history-models.json) · [Vault proof](validation/active-proof/settlement/vault-complete.json)
 - Shared money proves exact addition, covered subtraction, and value order for
-  arbitrary-width amounts with zero padding. All 38 obligations proved, including long
-  division bounds and reconstruction, and both fee conservation laws. Fixed
+  arbitrary-width amounts with zero padding. All 38 obligations proved, including
+  long division bounds and reconstruction, and both fee conservation laws. Fixed
   floor-halving proves exact quotient, parity and order independently.
   [Shared money proofs](validation/active-proof/money-unit-gap/verification.json) · [Floor halves](validation/finance/half-proof.json)
-- Monthly settlement discharged all 73 obligations. Allocation proves valid
-  computed shares and whole-pool allocation for a sole eligible recipient.
-  Full conservation across multiple recipients still needs proof.
-  [Monthly proof](validation/active-proof/settlement/monthly-complete.json) · [Share validity](validation/active-proof/settlement/allocation-share-validity.json)
+- Monthly settlement discharged all 73 obligations. Largest-remainder
+  allocation discharged all three obligations, including full pool
+  conservation for arbitrary-width amounts across eligible recipients.
+  A separate BigInt oracle agreed with all 42 directed cases.
+  [Monthly proof](validation/active-proof/settlement/monthly-complete.json) · [Allocation proof](validation/active-proof/settlement/allocation-complete.json) · [Allocation replays](validation/active-proof/settlement/allocation-complete-replay.json)
 - Vault registration binds finalized evidence to the exact reviewed creation.
   Snapshot writes recheck the registered deployment and reject regressions in
   each cumulative counter. Solana checks its genesis before reading totals.

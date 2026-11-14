@@ -589,7 +589,7 @@
     },
     {
       "path": "spec/backend/referralCodes.md",
-      "sha256": "0d1ae80d41ef792ed38461d4945ebc1cab63e9628d317c2e0f0cc46dca660311",
+      "sha256": "af1028c0208db33bcdb2ecbbe9b297087f44be9389e61437b2ad2073180296c2",
       "module": "backend__referralCodes",
       "stories": [
         {
@@ -644,6 +644,20 @@
             "Lookup",
             "Redirect",
             "destination"
+          ]
+        },
+        {
+          "heading": "Story: Follow a referral link to the project form / The referral path without a name opens Settings without a database read",
+          "line": 136,
+          "definitions": [
+            "ReferralPath",
+            "ReferralRoute",
+            "linkRoute",
+            "lawBareReferralIgnoresLookup",
+            "lawUnsafeReferralCannotRedirect",
+            "sValues",
+            "keyValues",
+            "membershipValues"
           ]
         }
       ],
@@ -1196,7 +1210,7 @@
     },
     {
       "path": "spec/contributor/installation.md",
-      "sha256": "85af4397d14f1eba4c0420a17a08a00c2739dadac8bf8af3776f65c6f5c5519a",
+      "sha256": "df513238dfda0c0092810c4b0efc34702ecdaed46b7c462377c6f5c9f5b1edb9",
       "module": "contributor__installation",
       "stories": [
         {
@@ -5246,7 +5260,7 @@
     },
     {
       "path": "spec/settlement/allocation.md",
-      "sha256": "b90cfceec014cc33b742e379db5450a029ca585034f63ebaefac443df450fb92",
+      "sha256": "86989f799605147fdd0aaaaadf4fef0df980b2e5f6eecf0c9a982fd08bb4afc2",
       "module": "settlement__allocation",
       "stories": [
         {
@@ -5275,12 +5289,13 @@
             "floorTotal",
             "weightedPortion",
             "portionTotal",
+            "portionBefore",
             "remainderRank"
           ]
         },
         {
           "heading": "Story: Allocate the complete monthly pool without losing or creating units / The largest remainders receive the remaining units exactly once",
-          "line": 46,
+          "line": 45,
           "definitions": [
             "allocateAmounts",
             "allocatedTotal",
@@ -5294,7 +5309,7 @@
         },
         {
           "heading": "Story: Allocate the complete monthly pool without losing or creating units / Simulation samples exercise missing, matching and conflicting evidence",
-          "line": 77,
+          "line": 76,
           "definitions": [
             "actorValues"
           ]
