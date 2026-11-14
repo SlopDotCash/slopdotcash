@@ -1,32 +1,32 @@
-lemma reserve_ensures(v: Vault, amount: seq<int>, recipient: string, obligation: int)
-  ensures (inv(v) ==> canReserve(v, amount, recipient, obligation) ==> alwaysConserved(reserve(v, amount, recipient, obligation)))
-  ensures (inv(v) ==> canReserve(v, amount, recipient, obligation) ==> alwaysValidAmounts(reserve(v, amount, recipient, obligation)))
-  ensures (inv(v) ==> canReserve(v, amount, recipient, obligation) ==> alwaysReservationMatches(reserve(v, amount, recipient, obligation)))
-  ensures (inv(v) ==> canReserve(v, amount, recipient, obligation) ==> alwaysReservationTotal(reserve(v, amount, recipient, obligation)))
-  ensures (inv(v) ==> canReserve(v, amount, recipient, obligation) ==> alwaysReservationIdentity(reserve(v, amount, recipient, obligation)))
-  ensures (inv(v) ==> canReserve(v, amount, recipient, obligation) ==> alwaysSettlementHistory(reserve(v, amount, recipient, obligation)))
-  ensures (inv(v) ==> canReserve(v, amount, recipient, obligation) ==> alwaysSettlementTotal(reserve(v, amount, recipient, obligation)))
-  ensures (inv(v) ==> canReserve(v, amount, recipient, obligation) ==> stepRetainedObligations(v, reserve(v, amount, recipient, obligation)))
-  ensures (inv(v) ==> canReserve(v, amount, recipient, obligation) ==> stepIdentityFixed(v, reserve(v, amount, recipient, obligation)))
-  ensures (inv(v) ==> canReserve(v, amount, recipient, obligation) ==> stepRetainedSettlements(v, reserve(v, amount, recipient, obligation)))
+lemma reserve_ensures(v: Vault, amount: seq<int>, actor: string, obligation: int)
+  ensures (inv(v) ==> canReserve(v, amount, actor, obligation) ==> alwaysSettlementTotal(reserve(v, amount, actor, obligation)))
+  ensures (inv(v) ==> canReserve(v, amount, actor, obligation) ==> alwaysConserved(reserve(v, amount, actor, obligation)))
+  ensures (inv(v) ==> canReserve(v, amount, actor, obligation) ==> alwaysValidAmounts(reserve(v, amount, actor, obligation)))
+  ensures (inv(v) ==> canReserve(v, amount, actor, obligation) ==> alwaysReservationMatches(reserve(v, amount, actor, obligation)))
+  ensures (inv(v) ==> canReserve(v, amount, actor, obligation) ==> alwaysReservationTotal(reserve(v, amount, actor, obligation)))
+  ensures (inv(v) ==> canReserve(v, amount, actor, obligation) ==> alwaysReservationIdentity(reserve(v, amount, actor, obligation)))
+  ensures (inv(v) ==> canReserve(v, amount, actor, obligation) ==> alwaysSettlementHistory(reserve(v, amount, actor, obligation)))
+  ensures (inv(v) ==> canReserve(v, amount, actor, obligation) ==> stepRetainedSettlements(v, reserve(v, amount, actor, obligation)))
+  ensures (inv(v) ==> canReserve(v, amount, actor, obligation) ==> stepRetainedObligations(v, reserve(v, amount, actor, obligation)))
+  ensures (inv(v) ==> canReserve(v, amount, actor, obligation) ==> stepIdentityFixed(v, reserve(v, amount, actor, obligation)))
 {
-  if inv(v) && canReserve(v, amount, recipient, obligation) {
+  if inv(v) && canReserve(v, amount, actor, obligation) {
     settlement__money_lawSubtractionValid_ensures(v.free, amount);
     settlement__money_lawAdditionValid_ensures(v.reserved, amount);
     settlement__money_lawPositiveAddition_ensures(v.reserved, amount);
-    var added := Reservation(obligation, recipient, amount);
+    var added := Reservation(obligation, actor, amount);
     var oldTotal := Std.Collections.Seq.FoldLeft((total: settlement__money_Amount, r: Reservation) => settlement__money_addAmounts(total, r.amount), settlement__money_zero, v.reservations);
     ValidReservationSum(v.reservations, settlement__money_zero);
     ReservationFoldAppend(v.reservations, settlement__money_zero, added);
     settlement__money_lawAddCongruence_ensures(v.reserved, oldTotal, amount);
     PreserveVaultReserveValue(v, amount);
-    var after := reserve(v, amount, recipient, obligation);
+    var after := reserve(v, amount, actor, obligation);
     ReservationIdentityMeaning(v);
     ReservationIdentityMeaning(after);
     assert forall r :: r in v.reservations ==> r.obligation in v.obligations;
     assert forall r :: r in v.reservations ==> r.obligation != obligation;
     forall r | r in after.reservations
-      ensures r.obligation > 0 && r.obligation in after.obligations && r.recipient != "" &&
+      ensures r.obligation > 0 && r.obligation in after.obligations && r.actor != "" &&
         settlement__money_validAmount(r.amount) && settlement__money_positiveAmount(r.amount) &&
         |ProofLib.Filter((other: Reservation) => (other.obligation == r.obligation), after.reservations)| == 1
     {
@@ -40,7 +40,7 @@ lemma reserve_ensures(v: Vault, amount: seq<int>, recipient: string, obligation:
     SettlementHistoryMeaning(v);
     SettlementHistoryMeaning(after);
     forall r | r in after.settled
-      ensures r.obligation > 0 && r.obligation in after.obligations && r.recipient != "" &&
+      ensures r.obligation > 0 && r.obligation in after.obligations && r.actor != "" && r.recipient != "" && r.transaction != "" &&
         settlement__money_validAmount(r.amount) && settlement__money_positiveAmount(r.amount) &&
         r.receipt > 0 && r.receipt in after.receipts && r.height > 0 &&
         !(exists pending :: pending in after.reservations && pending.obligation == r.obligation) &&
@@ -53,24 +53,24 @@ lemma reserve_ensures(v: Vault, amount: seq<int>, recipient: string, obligation:
   }
 }
 
-lemma payReserved_ensures(v: Vault, amount: seq<int>, vault: string, asset: string, recipient: string, obligation: int, receipt: int, finalizedHeight: int)
-  ensures (inv(v) ==> canPayReserved(v, amount, vault, asset, recipient, obligation, receipt, finalizedHeight) ==> alwaysConserved(payReserved(v, amount, vault, asset, recipient, obligation, receipt, finalizedHeight)))
-  ensures (inv(v) ==> canPayReserved(v, amount, vault, asset, recipient, obligation, receipt, finalizedHeight) ==> alwaysValidAmounts(payReserved(v, amount, vault, asset, recipient, obligation, receipt, finalizedHeight)))
-  ensures (inv(v) ==> canPayReserved(v, amount, vault, asset, recipient, obligation, receipt, finalizedHeight) ==> alwaysReservationMatches(payReserved(v, amount, vault, asset, recipient, obligation, receipt, finalizedHeight)))
-  ensures (inv(v) ==> canPayReserved(v, amount, vault, asset, recipient, obligation, receipt, finalizedHeight) ==> alwaysReservationTotal(payReserved(v, amount, vault, asset, recipient, obligation, receipt, finalizedHeight)))
-  ensures (inv(v) ==> canPayReserved(v, amount, vault, asset, recipient, obligation, receipt, finalizedHeight) ==> alwaysReservationIdentity(payReserved(v, amount, vault, asset, recipient, obligation, receipt, finalizedHeight)))
-  ensures (inv(v) ==> canPayReserved(v, amount, vault, asset, recipient, obligation, receipt, finalizedHeight) ==> alwaysSettlementHistory(payReserved(v, amount, vault, asset, recipient, obligation, receipt, finalizedHeight)))
-  ensures (inv(v) ==> canPayReserved(v, amount, vault, asset, recipient, obligation, receipt, finalizedHeight) ==> alwaysSettlementTotal(payReserved(v, amount, vault, asset, recipient, obligation, receipt, finalizedHeight)))
-  ensures (inv(v) ==> canPayReserved(v, amount, vault, asset, recipient, obligation, receipt, finalizedHeight) ==> stepRetainedObligations(v, payReserved(v, amount, vault, asset, recipient, obligation, receipt, finalizedHeight)))
-  ensures (inv(v) ==> canPayReserved(v, amount, vault, asset, recipient, obligation, receipt, finalizedHeight) ==> stepIdentityFixed(v, payReserved(v, amount, vault, asset, recipient, obligation, receipt, finalizedHeight)))
-  ensures (inv(v) ==> canPayReserved(v, amount, vault, asset, recipient, obligation, receipt, finalizedHeight) ==> stepRetainedSettlements(v, payReserved(v, amount, vault, asset, recipient, obligation, receipt, finalizedHeight)))
+lemma payReserved_ensures(v: Vault, amount: seq<int>, vault: string, asset: string, actor: string, recipient: string, obligation: int, receipt: int, finalizedHeight: int, transaction: string)
+  ensures (inv(v) ==> canPayReserved(v, amount, vault, asset, actor, recipient, obligation, receipt, finalizedHeight, transaction) ==> alwaysSettlementTotal(payReserved(v, amount, vault, asset, actor, recipient, obligation, receipt, finalizedHeight, transaction)))
+  ensures (inv(v) ==> canPayReserved(v, amount, vault, asset, actor, recipient, obligation, receipt, finalizedHeight, transaction) ==> alwaysConserved(payReserved(v, amount, vault, asset, actor, recipient, obligation, receipt, finalizedHeight, transaction)))
+  ensures (inv(v) ==> canPayReserved(v, amount, vault, asset, actor, recipient, obligation, receipt, finalizedHeight, transaction) ==> alwaysValidAmounts(payReserved(v, amount, vault, asset, actor, recipient, obligation, receipt, finalizedHeight, transaction)))
+  ensures (inv(v) ==> canPayReserved(v, amount, vault, asset, actor, recipient, obligation, receipt, finalizedHeight, transaction) ==> alwaysReservationMatches(payReserved(v, amount, vault, asset, actor, recipient, obligation, receipt, finalizedHeight, transaction)))
+  ensures (inv(v) ==> canPayReserved(v, amount, vault, asset, actor, recipient, obligation, receipt, finalizedHeight, transaction) ==> alwaysReservationTotal(payReserved(v, amount, vault, asset, actor, recipient, obligation, receipt, finalizedHeight, transaction)))
+  ensures (inv(v) ==> canPayReserved(v, amount, vault, asset, actor, recipient, obligation, receipt, finalizedHeight, transaction) ==> alwaysReservationIdentity(payReserved(v, amount, vault, asset, actor, recipient, obligation, receipt, finalizedHeight, transaction)))
+  ensures (inv(v) ==> canPayReserved(v, amount, vault, asset, actor, recipient, obligation, receipt, finalizedHeight, transaction) ==> alwaysSettlementHistory(payReserved(v, amount, vault, asset, actor, recipient, obligation, receipt, finalizedHeight, transaction)))
+  ensures (inv(v) ==> canPayReserved(v, amount, vault, asset, actor, recipient, obligation, receipt, finalizedHeight, transaction) ==> stepRetainedSettlements(v, payReserved(v, amount, vault, asset, actor, recipient, obligation, receipt, finalizedHeight, transaction)))
+  ensures (inv(v) ==> canPayReserved(v, amount, vault, asset, actor, recipient, obligation, receipt, finalizedHeight, transaction) ==> stepRetainedObligations(v, payReserved(v, amount, vault, asset, actor, recipient, obligation, receipt, finalizedHeight, transaction)))
+  ensures (inv(v) ==> canPayReserved(v, amount, vault, asset, actor, recipient, obligation, receipt, finalizedHeight, transaction) ==> stepIdentityFixed(v, payReserved(v, amount, vault, asset, actor, recipient, obligation, receipt, finalizedHeight, transaction)))
 {
-  if inv(v) && canPayReserved(v, amount, vault, asset, recipient, obligation, receipt, finalizedHeight) {
+  if inv(v) && canPayReserved(v, amount, vault, asset, actor, recipient, obligation, receipt, finalizedHeight, transaction) {
     settlement__money_lawSubtractionValid_ensures(v.reserved, amount);
     settlement__money_lawAdditionValid_ensures(v.paid, amount);
     var keep := (r: Reservation) => (r.obligation != obligation);
-    var after := payReserved(v, amount, vault, asset, recipient, obligation, receipt, finalizedHeight);
-    var added := SettlementRecord(obligation, recipient, amount, receipt, finalizedHeight);
+    var after := payReserved(v, amount, vault, asset, actor, recipient, obligation, receipt, finalizedHeight, transaction);
+    var added := SettlementRecord(obligation, actor, recipient, amount, receipt, finalizedHeight, transaction);
     assert after.reservations == withoutReservation(v.reservations, obligation);
     RetainedReservations(v.reservations, [], obligation);
     assert after.reservations == ProofLib.Filter(keep, v.reservations);
@@ -78,7 +78,7 @@ lemma payReserved_ensures(v: Vault, amount: seq<int>, vault: string, asset: stri
     ReservationIdentityMeaning(after);
     SettlementHistoryMeaning(v);
     SettlementHistoryMeaning(after);
-    var matched :| matched in v.reservations && matched.obligation == obligation && matched.recipient == recipient && settlement__money_equalAmounts(matched.amount, amount);
+    var matched :| matched in v.reservations && matched.obligation == obligation && matched.actor == actor && settlement__money_equalAmounts(matched.amount, amount);
     assert matched.obligation in v.obligations;
     assert forall other :: other in v.reservations && other.obligation == obligation ==> other == matched by {
       forall other | other in v.reservations && other.obligation == obligation ensures other == matched {
@@ -89,7 +89,7 @@ lemma payReserved_ensures(v: Vault, amount: seq<int>, vault: string, asset: stri
     }
     ComputeVaultPaymentTotals(v, after, matched, amount, obligation, added);
     forall r | r in after.reservations
-      ensures r.obligation > 0 && r.obligation in after.obligations && r.recipient != "" &&
+      ensures r.obligation > 0 && r.obligation in after.obligations && r.actor != "" &&
         settlement__money_validAmount(r.amount) && settlement__money_positiveAmount(r.amount) && r.obligation != obligation &&
         |ProofLib.Filter((other: Reservation) => (other.obligation == r.obligation), after.reservations)| == 1
     {
@@ -98,7 +98,7 @@ lemma payReserved_ensures(v: Vault, amount: seq<int>, vault: string, asset: stri
     }
     assert forall r :: r in v.settled ==> r.obligation != obligation;
     forall r | r in after.settled
-      ensures r.obligation > 0 && r.obligation in after.obligations && r.recipient != "" &&
+      ensures r.obligation > 0 && r.obligation in after.obligations && r.actor != "" && r.recipient != "" && r.transaction != "" &&
         settlement__money_validAmount(r.amount) && settlement__money_positiveAmount(r.amount) &&
         r.receipt > 0 && r.receipt in after.receipts && r.height > 0 &&
         !(exists pending :: pending in after.reservations && pending.obligation == r.obligation) &&
@@ -119,14 +119,14 @@ lemma payReserved_ensures(v: Vault, amount: seq<int>, vault: string, asset: stri
 }
 
 lemma ReservationIdentityMeaning(v: Vault)
-  ensures alwaysReservationIdentity(v) == !(exists r :: (r in v.reservations && !(r.obligation > 0 && r.obligation in v.obligations && r.recipient != "" &&
+  ensures alwaysReservationIdentity(v) == !(exists r :: (r in v.reservations && !(r.obligation > 0 && r.obligation in v.obligations && r.actor != "" &&
     settlement__money_validAmount(r.amount) && settlement__money_positiveAmount(r.amount) &&
     |ProofLib.Filter((other: Reservation) => (other.obligation == r.obligation), v.reservations)| == 1)))
 {
 }
 
 lemma SettlementHistoryMeaning(v: Vault)
-  ensures alwaysSettlementHistory(v) == !(exists r :: (r in v.settled && !(r.obligation > 0 && r.obligation in v.obligations && r.recipient != "" &&
+  ensures alwaysSettlementHistory(v) == !(exists r :: (r in v.settled && !(r.obligation > 0 && r.obligation in v.obligations && r.actor != "" && r.recipient != "" && r.transaction != "" &&
     settlement__money_validAmount(r.amount) && settlement__money_positiveAmount(r.amount) &&
     r.receipt > 0 && r.receipt in v.receipts && r.height > 0 &&
     !(exists pending :: pending in v.reservations && pending.obligation == r.obligation) &&
@@ -185,16 +185,16 @@ lemma NestedReservationFilter(p: Reservation -> bool, q: Reservation -> bool, xs
 }
 
 lemma deposit_ensures(v: Vault, amount: seq<int>, asset: string, receipt: int, finalized: bool)
+  ensures (inv(v) ==> canDeposit(v, amount, asset, receipt, finalized) ==> alwaysSettlementTotal(deposit(v, amount, asset, receipt, finalized)))
   ensures (inv(v) ==> canDeposit(v, amount, asset, receipt, finalized) ==> alwaysConserved(deposit(v, amount, asset, receipt, finalized)))
   ensures (inv(v) ==> canDeposit(v, amount, asset, receipt, finalized) ==> alwaysValidAmounts(deposit(v, amount, asset, receipt, finalized)))
   ensures (inv(v) ==> canDeposit(v, amount, asset, receipt, finalized) ==> alwaysReservationMatches(deposit(v, amount, asset, receipt, finalized)))
   ensures (inv(v) ==> canDeposit(v, amount, asset, receipt, finalized) ==> alwaysReservationTotal(deposit(v, amount, asset, receipt, finalized)))
   ensures (inv(v) ==> canDeposit(v, amount, asset, receipt, finalized) ==> alwaysReservationIdentity(deposit(v, amount, asset, receipt, finalized)))
   ensures (inv(v) ==> canDeposit(v, amount, asset, receipt, finalized) ==> alwaysSettlementHistory(deposit(v, amount, asset, receipt, finalized)))
-  ensures (inv(v) ==> canDeposit(v, amount, asset, receipt, finalized) ==> alwaysSettlementTotal(deposit(v, amount, asset, receipt, finalized)))
+  ensures (inv(v) ==> canDeposit(v, amount, asset, receipt, finalized) ==> stepRetainedSettlements(v, deposit(v, amount, asset, receipt, finalized)))
   ensures (inv(v) ==> canDeposit(v, amount, asset, receipt, finalized) ==> stepRetainedObligations(v, deposit(v, amount, asset, receipt, finalized)))
   ensures (inv(v) ==> canDeposit(v, amount, asset, receipt, finalized) ==> stepIdentityFixed(v, deposit(v, amount, asset, receipt, finalized)))
-  ensures (inv(v) ==> canDeposit(v, amount, asset, receipt, finalized) ==> stepRetainedSettlements(v, deposit(v, amount, asset, receipt, finalized)))
 {
   if inv(v) && canDeposit(v, amount, asset, receipt, finalized) {
     settlement__money_lawAdditionValid_ensures(v.free, amount);
@@ -215,16 +215,16 @@ lemma deposit_ensures(v: Vault, amount: seq<int>, asset: string, receipt: int, f
 }
 
 lemma refund_ensures(v: Vault, amount: seq<int>, destination: string, receipt: int, finalizedHeight: int, by_: string)
+  ensures (inv(v) ==> canRefund(v, amount, destination, receipt, finalizedHeight, by_) ==> alwaysSettlementTotal(refund(v, amount, destination, receipt, finalizedHeight, by_)))
   ensures (inv(v) ==> canRefund(v, amount, destination, receipt, finalizedHeight, by_) ==> alwaysConserved(refund(v, amount, destination, receipt, finalizedHeight, by_)))
   ensures (inv(v) ==> canRefund(v, amount, destination, receipt, finalizedHeight, by_) ==> alwaysValidAmounts(refund(v, amount, destination, receipt, finalizedHeight, by_)))
   ensures (inv(v) ==> canRefund(v, amount, destination, receipt, finalizedHeight, by_) ==> alwaysReservationMatches(refund(v, amount, destination, receipt, finalizedHeight, by_)))
   ensures (inv(v) ==> canRefund(v, amount, destination, receipt, finalizedHeight, by_) ==> alwaysReservationTotal(refund(v, amount, destination, receipt, finalizedHeight, by_)))
   ensures (inv(v) ==> canRefund(v, amount, destination, receipt, finalizedHeight, by_) ==> alwaysReservationIdentity(refund(v, amount, destination, receipt, finalizedHeight, by_)))
   ensures (inv(v) ==> canRefund(v, amount, destination, receipt, finalizedHeight, by_) ==> alwaysSettlementHistory(refund(v, amount, destination, receipt, finalizedHeight, by_)))
-  ensures (inv(v) ==> canRefund(v, amount, destination, receipt, finalizedHeight, by_) ==> alwaysSettlementTotal(refund(v, amount, destination, receipt, finalizedHeight, by_)))
+  ensures (inv(v) ==> canRefund(v, amount, destination, receipt, finalizedHeight, by_) ==> stepRetainedSettlements(v, refund(v, amount, destination, receipt, finalizedHeight, by_)))
   ensures (inv(v) ==> canRefund(v, amount, destination, receipt, finalizedHeight, by_) ==> stepRetainedObligations(v, refund(v, amount, destination, receipt, finalizedHeight, by_)))
   ensures (inv(v) ==> canRefund(v, amount, destination, receipt, finalizedHeight, by_) ==> stepIdentityFixed(v, refund(v, amount, destination, receipt, finalizedHeight, by_)))
-  ensures (inv(v) ==> canRefund(v, amount, destination, receipt, finalizedHeight, by_) ==> stepRetainedSettlements(v, refund(v, amount, destination, receipt, finalizedHeight, by_)))
 {
   if inv(v) && canRefund(v, amount, destination, receipt, finalizedHeight, by_) {
     settlement__money_lawSubtractionValid_ensures(v.free, amount);

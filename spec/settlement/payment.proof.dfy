@@ -1,10 +1,11 @@
 lemma configure_ensures(p: Payment, purpose: Purpose, rail: PaymentRail, gross: seq<int>)
+  ensures (inv(p) ==> canConfigure(p, purpose, rail, gross) ==> alwaysConserved(configure(p, purpose, rail, gross)))
   ensures (inv(p) ==> canConfigure(p, purpose, rail, gross) ==> alwaysPaidEvidence(configure(p, purpose, rail, gross)))
   ensures (inv(p) ==> canConfigure(p, purpose, rail, gross) ==> alwaysCorrectFee(configure(p, purpose, rail, gross)))
   ensures (inv(p) ==> canConfigure(p, purpose, rail, gross) ==> alwaysUnconfiguredEmpty(configure(p, purpose, rail, gross)))
   ensures (inv(p) ==> canConfigure(p, purpose, rail, gross) ==> alwaysAdmittedAttempts(configure(p, purpose, rail, gross)))
   ensures (inv(p) ==> canConfigure(p, purpose, rail, gross) ==> alwaysCorrectRail(configure(p, purpose, rail, gross)))
-  ensures (inv(p) ==> canConfigure(p, purpose, rail, gross) ==> alwaysConserved(configure(p, purpose, rail, gross)))
+  ensures (inv(p) ==> canConfigure(p, purpose, rail, gross) ==> alwaysVaultPhase(configure(p, purpose, rail, gross)))
   ensures (inv(p) ==> canConfigure(p, purpose, rail, gross) ==> stepPaidPermanent(p, configure(p, purpose, rail, gross)))
   ensures (inv(p) ==> canConfigure(p, purpose, rail, gross) ==> stepObligationPermanent(p, configure(p, purpose, rail, gross)))
 {
