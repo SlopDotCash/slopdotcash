@@ -35,14 +35,19 @@ observation followed by release occurred in three traces. The definitive
 failure retirement transition occurred 18 times.
 [Focused simulation](reserve-release-signed-verification.json) · [Coverage](reserve-release-signed-coverage.json)
 
-The focused Vibestack proof of the current model discharged 138 of 146
+The focused Vibestack proof of the current model discharged 139 of 146
 obligations with zero errors and zero resource exhaustion. It proved the
 failure retirement transition, including retention of the attempt history and
-unchanged balances. Eight obligations remain open: bound approval after check,
-fresh attempt identity after signing, whole release and valid/conserved
-amounts after finalization, valid/conserved amounts after partial settlement,
-and generic step preservation. The open generic step obligation depends on
-open transition obligations. [Current Dafny output](reserve-release-current-dafny.log)
+unchanged balances. The proof file shows that the two Boolean folds in the
+signing guard and fresh-attempt invariant are complements. This discharges
+fresh attempt identity after signing. Seven obligations remain open: bound
+approval after check, whole release and valid/conserved amounts after
+finalization, valid/conserved amounts after partial settlement, and generic
+step preservation. The generic step obligation depends on open transition
+obligations. [Current Dafny output](reserve-release-owner-sign-dafny.log)
+
+The same model without the proof file discharged 138 of 146 obligations.
+[Baseline Dafny output](reserve-release-current-dafny.log)
 
 The pre-retry model at hash
 `7d83230662ec2fc283e2c6989eaca8c2f15caf8963a2f28aa540183714b04f4a`
