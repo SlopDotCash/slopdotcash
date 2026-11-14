@@ -6,69 +6,114 @@ bodies have no website or API read route for any role.
 
 ## Story: Read only authorized retained evidence
 
-### Read authorization is scoped, expiring and audited
+### Read authorization comes from the current case roles and is audited before delivery
 
-The representative case belongs to actor 1. Current case reviewers are supplied
-by fresh role lookup. Scanner operator grants expire after fifteen minutes.
-The shell must fence the complete response stream on authority revocation.
+One read concerns one representative received [case](./cases.md). Its
+reporter and the current case roles of the latest verified authority
+snapshot may read the report body: technical approvers, assigned triagers,
+and moderators while an appeal or related-party review is open. Financial
+approvers and website administrators read no body. Scanner evidence is
+readable only by `lalalune` (18633264) and `drew-dot-com` (202660855), whose
+policy `lalalune` owns, through grants that expire after fifteen minutes. A
+read records its audit before any byte is delivered. A role change or grant
+expiry during the response stream aborts it; nothing delivered after
+revocation counts as authorized.
 
 ```quint
+import money as M from "../settlement/money"
+import terms as T from "./terms"
+import cases as C from "./cases"
 type BodyKind = ReportBody | ScannerBody | ContributorTrace
-type ReadAccess = { kind: BodyKind, requester: int, caseOwner: int, caseReviewer: bool, scannerOperator: bool, grantAgeMinutes: int, authorityCurrent: bool, audited: bool, delivered: bool }
-pure val initial: ReadAccess = { kind: ReportBody, requester: 0, caseOwner: 1, caseReviewer: false, scannerOperator: false, grantAgeMinutes: 15, authorityCurrent: false, audited: false, delivered: false }
-pure def scannerActorAllowed(actor: int): bool = actor == 18633264 or actor == 202660855
-pure val byValues = Set(1, 2, 18633264, 202660855)
-pure def canRequestRead(a: ReadAccess, kind: BodyKind, by: int, caseReviewer: bool): bool = by > 0 and not(a.delivered)
-pure def requestRead(a: ReadAccess, kind: BodyKind, by: int, caseReviewer: bool): ReadAccess = { ...a, kind: kind, requester: by, caseReviewer: caseReviewer, scannerOperator: scannerActorAllowed(by), grantAgeMinutes: 0, authorityCurrent: true, audited: false }
-pure def allowed(a: ReadAccess): bool = a.authorityCurrent and a.grantAgeMinutes < 15 and (if (a.kind == ReportBody) a.requester == a.caseOwner or a.caseReviewer else if (a.kind == ScannerBody) a.scannerOperator else false)
-pure def canRecordAudit(a: ReadAccess): bool = allowed(a)
-pure def recordAudit(a: ReadAccess): ReadAccess = { ...a, audited: true }
-pure def canDeliver(a: ReadAccess): bool = allowed(a) and a.audited and not(a.delivered)
-pure def deliver(a: ReadAccess): ReadAccess = { ...a, delivered: true }
-pure def canExpire(a: ReadAccess): bool = not(a.delivered)
-pure def expire(a: ReadAccess): ReadAccess = { ...a, grantAgeMinutes: 15, authorityCurrent: false }
-pure def alwaysAuditedDelivery(a: ReadAccess): bool = a.delivered implies a.audited and allowed(a)
-pure def alwaysNoTraceRead(a: ReadAccess): bool = a.kind == ContributorTrace implies not(a.delivered)
-pure def sometimesReportRead(a: ReadAccess): bool = a.kind == ReportBody and a.delivered
-pure def sometimesScannerRead(a: ReadAccess): bool = a.kind == ScannerBody and a.delivered
+type ReadPhase = Idle | Requested | Audited | Streaming | Delivered | Aborted
+type ReadAccess = { report: C::PrivateCase, kind: BodyKind, requester: int, checkedEpoch: int, grantedAtMinute: int,
+  clockMinute: int, phase: ReadPhase, audits: int }
+pure val scannerOperators = Set(18633264, 202660855)
+pure val receivedCase: C::PrivateCase = C::observeAuthority(C::receive(C::initial, C::SlopReceived, T::standardTerms, C::NewReceipt, M::zero, 1), C::staff)
+pure val initial: ReadAccess = { report: receivedCase, kind: ReportBody, requester: 0, checkedEpoch: 0, grantedAtMinute: 0,
+  clockMinute: 0, phase: Idle, audits: 0 }
+pure def allowed(a: ReadAccess): bool = a.checkedEpoch == a.report.authority.epoch and a.requester > 0
+  and (if (a.kind == ReportBody) C::mayReadBody(a.report, a.requester, a.checkedEpoch)
+    else if (a.kind == ScannerBody) scannerOperators.contains(a.requester) and a.clockMinute - a.grantedAtMinute < 15
+    else false)
+pure def canRequestRead(a: ReadAccess, kind: BodyKind, by: int): bool = by > 0
+  and (a.phase == Idle or a.phase == Delivered or a.phase == Aborted)
+pure def requestRead(a: ReadAccess, kind: BodyKind, by: int): ReadAccess =
+  { ...a, kind: kind, requester: by, checkedEpoch: a.report.authority.epoch, grantedAtMinute: a.clockMinute, phase: Requested }
+pure def canRecordAudit(a: ReadAccess): bool = a.phase == Requested and allowed(a)
+pure def recordAudit(a: ReadAccess): ReadAccess = { ...a, phase: Audited, audits: a.audits + 1 }
+pure def canStartStream(a: ReadAccess): bool = a.phase == Audited and allowed(a)
+pure def startStream(a: ReadAccess): ReadAccess = { ...a, phase: Streaming }
+pure def canFinishStream(a: ReadAccess): bool = a.phase == Streaming and allowed(a)
+pure def finishStream(a: ReadAccess): ReadAccess = { ...a, phase: Delivered }
+pure def canAbortStream(a: ReadAccess): bool = (a.phase == Requested or a.phase == Audited or a.phase == Streaming) and not(allowed(a))
+pure def abortStream(a: ReadAccess): ReadAccess = { ...a, phase: Aborted }
+pure def canAdvanceClock(a: ReadAccess, minutes: int): bool = minutes > 0
+pure def advanceClock(a: ReadAccess, minutes: int): ReadAccess = { ...a, clockMinute: a.clockMinute + minutes }
+pure def canObserveAuthority(a: ReadAccess, snapshot: C::Authority): bool = C::canObserveAuthority(a.report, snapshot)
+pure def observeAuthority(a: ReadAccess, snapshot: C::Authority): ReadAccess = { ...a, report: C::observeAuthority(a.report, snapshot) }
+pure def canAssignTriager(a: ReadAccess, by: int, checkedEpoch: int, actor: int): bool = C::canAssignTriager(a.report, by, checkedEpoch, actor)
+pure def assignTriager(a: ReadAccess, by: int, checkedEpoch: int, actor: int): ReadAccess = { ...a, report: C::assignTriager(a.report, by, checkedEpoch, actor) }
+pure def canRevokeTriager(a: ReadAccess, by: int, checkedEpoch: int, actor: int): bool = C::canRevokeTriager(a.report, by, checkedEpoch, actor)
+pure def revokeTriager(a: ReadAccess, by: int, checkedEpoch: int, actor: int): ReadAccess = { ...a, report: C::revokeTriager(a.report, by, checkedEpoch, actor) }
+pure def alwaysDeliveryWasAuthorized(a: ReadAccess): bool = (a.phase == Audited or a.phase == Streaming) implies a.audits > 0 and a.requester > 0
+pure def alwaysNoTraceRead(a: ReadAccess): bool = a.kind == ContributorTrace implies (a.phase == Idle or a.phase == Requested or a.phase == Aborted)
+pure def stepDeliveredOnlyWhileAuthorized(before: ReadAccess, after: ReadAccess): bool =
+  (after.phase == Delivered and before.phase != Delivered) implies allowed(before) and before.phase == Streaming and before.audits > 0
+pure def stepAuditsRetained(before: ReadAccess, after: ReadAccess): bool = after.audits >= before.audits
+pure def sometimesReportRead(a: ReadAccess): bool = a.kind == ReportBody and a.phase == Delivered and a.requester != 1
+pure def sometimesTriagerRevokedMidStream(a: ReadAccess): bool = a.phase == Aborted and a.kind == ReportBody and a.audits > 0
+pure def sometimesScannerRead(a: ReadAccess): bool = a.kind == ScannerBody and a.phase == Delivered
+pure def sometimesScannerGrantExpired(a: ReadAccess): bool = a.kind == ScannerBody and a.phase == Aborted
 ```
 
-`scannerOperator` is true only for the two policy-authorized operators after
-identity verification. A website administrator has no automatic case role.
-Outputs, logs, analytics, caches and public totals omit private case content,
-counts and financial amounts unless the receiving view has case authority.
+A website administrator has no automatic case role. Outputs, logs,
+analytics, caches and public totals omit private case content, counts and
+financial amounts unless the receiving view has case authority; that
+omission is a shell and frontend obligation verified by conformance, not by
+this machine.
 
-## Story: Retain evidence while any obligation references it
+## Story: Retain private records permanently and scanner evidence by policy
 
-### Content-addressed objects cannot be deleted while retained
+### Only ordinary scanner evidence and scanner access logs ever become deletable
+
+Report bodies, case audit records and contributor traces are permanent.
+Successful admission evidence and any object still referenced are retained.
+Other scanner evidence becomes deletable 90 days after closure. Scanner
+recovery access logs are retained for one year. Private backups are daily and
+retained for 30 days, and restoration requires a verified complete chain
+before activation; the [shared evidence store](./evidence.md) owns those
+steps.
 
 ```quint
-type RetainedObject = { references: int, successfulAdmission: bool, caseOpen: bool, daysAfterClose: int, present: bool }
-pure val emptyObject: RetainedObject = { references: 0, successfulAdmission: false, caseOpen: true, daysAfterClose: 0, present: true }
+type ObjectKind = ReportBodyObject | CaseAuditRecord | TraceObject | ScannerObject | ScannerAccessLog
+type RetainedObject = { kind: ObjectKind, references: int, successfulAdmission: bool, caseOpen: bool, daysAfterClose: int, ageDays: int }
+pure def mayDeleteObject(o: RetainedObject): bool =
+  if (o.kind == ScannerObject) o.references == 0 and not(o.successfulAdmission) and not(o.caseOpen) and o.daysAfterClose >= 90
+  else if (o.kind == ScannerAccessLog) o.ageDays >= 365
+  else false
+pure def lawPrivateRecordsPermanent(o: RetainedObject): bool =
+  (o.kind == ReportBodyObject or o.kind == CaseAuditRecord or o.kind == TraceObject) implies not(mayDeleteObject(o))
+pure def lawSuccessfulAdmissionPermanent(o: RetainedObject): bool = o.successfulAdmission and o.kind == ScannerObject implies not(mayDeleteObject(o))
+pure def lawSharedObjectsRetained(o: RetainedObject): bool = o.references > 0 and o.kind == ScannerObject implies not(mayDeleteObject(o))
+pure def lawAccessLogsKeptOneYear(o: RetainedObject): bool = o.kind == ScannerAccessLog and o.ageDays < 365 implies not(mayDeleteObject(o))
+```
+
+Contributor trace bodies remain permanent private R2 objects. The uploader
+stores the exact contributor-reviewed bytes and never performs automatic
+redaction.
+
+### Simulation samples
+
+```quint
+pure val byValues = Set(1, 2, 4, 5, 6, 18633264, 202660855)
+pure val actorValues = Set(6)
+pure val checkedEpochValues = Set(1, 2)
+pure val minutesValues = Set(1, 15)
+pure val snapshotValues = Set({ ...C::staff, epoch: 2 }, { ...C::staff, epoch: 3, technical: List(3) })
 pure val oValues = Set(
-  { references: 0, successfulAdmission: false, caseOpen: false, daysAfterClose: 90, present: true },
-  { references: 1, successfulAdmission: false, caseOpen: false, daysAfterClose: 91, present: true },
-  { references: 0, successfulAdmission: true, caseOpen: false, daysAfterClose: 100, present: true },
-  { references: 0, successfulAdmission: false, caseOpen: true, daysAfterClose: 100, present: true },
-  { references: 0, successfulAdmission: false, caseOpen: false, daysAfterClose: 89, present: true }
-)
-pure def mayDeleteObject(o: RetainedObject): bool = o.references == 0 and not(o.successfulAdmission) and not(o.caseOpen) and o.daysAfterClose >= 90
-pure def lawSuccessfulAdmissionPermanent(o: RetainedObject): bool = o.successfulAdmission implies not(mayDeleteObject(o))
-pure def lawSharedObjectsRetained(o: RetainedObject): bool = o.references > 0 implies not(mayDeleteObject(o))
-```
-
-Failed, incomplete and malicious scanner cases require authorized closure.
-Other scanner evidence remains for 90 days after closure. Private backups are
-daily and retained for 30 days. Access logs remain for one year. Restoration
-requires a verified complete chain before activation. Contributor trace bodies
-remain permanent private R2 objects. The uploader stores the exact
-contributor-reviewed bytes and never performs automatic redaction.
-
-### Simulation samples exercise missing, matching and conflicting evidence
-
-These input sets bound simulation only. The generated guards accept every
-value allowed by their declared types and product rules.
-
-```quint
-pure val actorValues = Set(0, 1, 2)
+  { kind: ScannerObject, references: 0, successfulAdmission: false, caseOpen: false, daysAfterClose: 90, ageDays: 400 },
+  { kind: ScannerObject, references: 1, successfulAdmission: false, caseOpen: false, daysAfterClose: 91, ageDays: 400 },
+  { kind: ScannerObject, references: 0, successfulAdmission: true, caseOpen: false, daysAfterClose: 100, ageDays: 400 },
+  { kind: ReportBodyObject, references: 0, successfulAdmission: false, caseOpen: false, daysAfterClose: 1000, ageDays: 4000 },
+  { kind: ScannerAccessLog, references: 0, successfulAdmission: false, caseOpen: false, daysAfterClose: 0, ageDays: 364 })
 ```
