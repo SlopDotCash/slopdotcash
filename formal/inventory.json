@@ -255,7 +255,7 @@
     },
     {
       "path": "backend/notifications/events.ts",
-      "sha256": "add7bb997bec2e9d2ad5579466bf3c2663a16f5dd7c9c82d502e383a24e66df0",
+      "sha256": "514bc39f85121e2aff3baa282f58f31bb635c4977528189341222d9a8378a658",
       "models": [
         "formal/models/api/api_inbox.qnt",
         "formal/models/api/api_mail_delivery.qnt",
@@ -265,9 +265,9 @@
         "formal/models/api/wallet_claim_publication.qnt"
       ],
       "candidateLines": [
-        15, 29, 107, 115, 116, 142, 145, 154, 160, 173, 228, 257, 265, 274, 283,
-        290, 304, 310, 324, 346, 354, 375, 395, 403, 437, 467, 483, 498, 530,
-        556, 585, 649, 666
+        15, 29, 130, 138, 139, 165, 168, 177, 183, 196, 251, 280, 288, 297, 306,
+        313, 327, 333, 347, 369, 376, 397, 416, 424, 458, 488, 504, 519, 551,
+        577, 606, 670, 687
       ],
       "review": "mapped-abstraction"
     },
@@ -7575,13 +7575,13 @@
     },
     {
       "path": "workers/notify/activity.ts",
-      "sha256": "58e062d7cfe9a2019956e4c8f6ef2fce041e4d3ad1edbfc40dc54e7f6bc65512",
+      "sha256": "a8973013b64c26cf23a77dc39578b66e35d353f1ab20c780fc1b6a5ecc00bf13",
       "models": [
         "formal/models/api/api_mail_delivery.qnt",
         "formal/models/api/notification_attempt_ownership.qnt",
         "formal/models/api/notification_delivery.qnt"
       ],
-      "candidateLines": [303, 305, 324, 330, 344],
+      "candidateLines": [301, 303, 322, 328, 342],
       "review": "mapped-abstraction"
     },
     {
