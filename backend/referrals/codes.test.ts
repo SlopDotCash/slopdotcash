@@ -36,6 +36,8 @@ function harness() {
     [BOB, "bob-gh"],
     [ADMIN, "admin-gh"],
   ]);
+  // GitHub's account type by permanent id; any other account is a "User".
+  const types = new Map<string, string>();
   let githubDown = false;
   let lookups = 0;
   const deps = (actor: string | null) => ({
@@ -51,7 +53,11 @@ function harness() {
           const login = logins.get(decodeURIComponent(byId));
           return login === undefined
             ? new Response("{}", { status: 404 })
-            : Response.json({ id: Number(byId), login, type: "User" });
+            : Response.json({
+                id: Number(byId),
+                login,
+                type: types.get(decodeURIComponent(byId)) ?? "User",
+              });
         }
         const id = github.get(
           decodeURIComponent(url.split("/users/")[1] ?? "").toLowerCase(),
@@ -112,6 +118,7 @@ function harness() {
     follow,
     github,
     logins,
+    types,
     lookups: () => lookups,
     githubDown: (value: boolean) => {
       githubDown = value;
@@ -330,6 +337,25 @@ test("an unanswered GitHub read answers 503 instead of forwarding a login it cou
     status: 302,
     location: `${origin}/projects/new`,
   });
+});
+
+test("a link whose account is no longer a person's forwards without a referrer", async () => {
+  const h = harness();
+  await h.choose(ALICE, "AliceBuilds");
+  // GitHub converted Alice's account to an organization, or answers it as a
+  // bot. The account keeps its permanent id, so the name still points at it,
+  // but capture refuses a referrer that is not a person's account
+  // (personal_account_required), just as it cannot record a gone account.
+  for (const type of ["Organization", "Bot"]) {
+    h.types.set(ALICE, type);
+    expect(await h.follow("AliceBuilds")).toEqual({
+      status: 302,
+      location: `${origin}/projects/new`,
+    });
+  }
+  // A read GitHub did not answer still answers 503.
+  h.githubDown(true);
+  expect((await h.follow("AliceBuilds")).status).toBe(503);
 });
 
 test("the member record carries the name in use, at sign-in and on later reads", async () => {

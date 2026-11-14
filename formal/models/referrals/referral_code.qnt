@@ -16,10 +16,12 @@
 // may then take the old one. The link forwards a login and capture resolves
 // that login on GitHub, so the link reads the account's current login by its
 // permanent id, never the cached one. An unanswered GitHub read answers 503
-// and changes nothing.
+// and changes nothing. person is false once GitHub converted the account to
+// an organization (or answers it as a bot); the account keeps its id and
+// login, but it cannot sign in and capture refuses it as a referrer.
 module referral_code {
   type S = { owner: int -> int, first: int -> int, used: int -> int,
-    login: int -> int, cached: int -> int }
+    login: int -> int, cached: int -> int, person: int -> bool }
   val accounts = Set(1, 2)
   val names = Set(1, 2, 3)
   val logins = Set(1, 2, 3)
@@ -27,7 +29,7 @@ module referral_code {
   var s: S
   action init = s' = { owner: names.mapBy(_ => 0), first: names.mapBy(_ => 0),
     used: accounts.mapBy(_ => 0), login: accounts.mapBy(a => a),
-    cached: accounts.mapBy(a => a) }
+    cached: accounts.mapBy(a => a), person: accounts.mapBy(_ => true) }
   def held(a: int): int = names.filter(n => s.owner.get(n) == a).size()
   def accepted(a: int, n: int, reserved: bool, team: bool, github: int): bool = and {
     not(reserved), not(team),
@@ -50,20 +52,28 @@ module referral_code {
     accounts.contains(a), s.login.get(a) != 0,
     s' = { ...s, login: s.login.set(a, 0) } }
   action signIn(a: int): bool = all {
-    accounts.contains(a), s.login.get(a) != 0,
+    accounts.contains(a), s.login.get(a) != 0, s.person.get(a),
     s' = { ...s, cached: s.cached.set(a, s.login.get(a)) } }
+  action convert(a: int): bool = all {
+    accounts.contains(a), s.login.get(a) != 0, s.person.get(a),
+    s' = { ...s, person: s.person.set(a, false) } }
   // The account a link forwards for; 0 forwards to the form without a referrer.
   def forwards(n: int): int = {
     val a = s.owner.get(n)
     if (a != 0 and s.used.get(a) == n) a else 0
   }
   // The login the link puts in `ref`: the account's current GitHub login, read
-  // by its id; 0 (no referrer) when nobody has the name in use or the account
-  // is gone.
+  // by its id; 0 (no referrer) when nobody has the name in use, the account
+  // is gone or it is no longer a person's account.
   def forwardedLogin(n: int): int =
-    if (forwards(n) == 0) 0 else s.login.get(forwards(n))
-  // The account capture records for a login: whoever holds it on GitHub now.
+    if (forwards(n) == 0 or not(s.person.get(forwards(n)))) 0
+    else s.login.get(forwards(n))
+  // The account that holds a login on GitHub now.
   def holder(l: int): int = accounts.fold(0, (h, a) => if (s.login.get(a) == l) a else h)
+  // The account capture records for a login: its holder when that is a
+  // person's account; capture refuses an organization or bot.
+  def recorded(l: int): int =
+    if (holder(l) != 0 and s.person.get(holder(l))) holder(l) else 0
   action step = any {
     { nondet a = accounts.oneOf()
       nondet n = names.oneOf()
@@ -83,7 +93,9 @@ module referral_code {
     { nondet a = accounts.oneOf()
       leave(a) },
     { nondet a = accounts.oneOf()
-      signIn(a) } }
+      signIn(a) },
+    { nondet a = accounts.oneOf()
+      convert(a) } }
   val invariant = and {
     // A name never changes account, in use or replaced.
     names.forall(n => s.owner.get(n) == s.first.get(n)),
@@ -93,7 +105,7 @@ module referral_code {
     // A link forwards for at most the one account that has it in use.
     names.forall(n => if (forwards(n) == 0) true else s.used.get(forwards(n)) == n),
     // Capture records the account the link forwards for, or no referrer.
-    names.forall(n => forwardedLogin(n) == 0 or holder(forwardedLogin(n)) == forwards(n)) }
+    names.forall(n => forwardedLogin(n) == 0 or recorded(forwardedLogin(n)) == forwards(n)) }
   run replacedNameStaysWithItsAccountTest = init
     .then(choose(1, 1, false, false, 0)).expect(forwards(1) == 1)
     .then(choose(1, 2, false, false, 0)).expect(forwards(1) == 0 and forwards(2) == 1)
@@ -124,5 +136,9 @@ module referral_code {
   run goneAccountLinkForwardsWithoutReferrerTest = init
     .then(choose(1, 1, false, false, 0)).then(leave(1))
     .expect(forwards(1) == 1 and forwardedLogin(1) == 0)
+    .then(signIn(1).fail())
+  run convertedAccountLinkForwardsWithoutReferrerTest = init
+    .then(choose(1, 1, false, false, 0)).then(convert(1))
+    .expect(forwards(1) == 1 and forwardedLogin(1) == 0 and recorded(1) == 0)
     .then(signIn(1).fail())
 }

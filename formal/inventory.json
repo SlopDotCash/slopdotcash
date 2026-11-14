@@ -790,9 +790,9 @@
     },
     {
       "path": "backend/referrals/codes.ts",
-      "sha256": "f696401aac0440ca539c93471d1f255608c1e93778a6568c8f15ed4cf7071fef",
+      "sha256": "cdc1a8caa2b6e6ac6f886c3046c7e13150b4e804414fea4ffebd0065ac23ce3f",
       "models": ["formal/models/referrals/referral_code.qnt"],
-      "candidateLines": [144, 152, 160, 198, 215, 244, 245, 253],
+      "candidateLines": [145, 153, 161, 199, 218, 253, 254, 263],
       "review": "mapped-abstraction"
     },
     {
@@ -13833,7 +13833,7 @@
     },
     {
       "path": "formal/models/referrals/referral_code.qnt",
-      "sha256": "d66d6f9c40dea42c434f60b7df5c4cfc4555d4599bfe4b097b0f9abea9128672",
+      "sha256": "730325fd400799e7bc5bb1aefcd3cdebda003f7ffaabee0dc54a7861b3100276",
       "sources": [
         "backend/referrals/codes.ts",
         "migrations/0124_referral_codes.sql",
@@ -13841,6 +13841,7 @@
       ],
       "scenarios": [
         "anotherGithubLoginRefusedTest",
+        "convertedAccountLinkForwardsWithoutReferrerTest",
         "goneAccountLinkForwardsWithoutReferrerTest",
         "limitRefusesANewNameTest",
         "limitStillAllowsAReturnTest",

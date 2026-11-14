@@ -33,6 +33,7 @@ import {
 } from "../http";
 import {
   type GithubFetch,
+  GithubLookupError,
   githubJson,
   lookupGitHubActor,
   validGithubLogin,
@@ -196,8 +197,10 @@ const PROJECT_FORM = "/projects/new";
  * can still list a project. Capture resolves the forwarded login on GitHub,
  * so the link names the login the account has now, read by its permanent id:
  * the login cached at sign-in can belong to another account after a rename.
- * A failed read answers 503: forwarding without the referrer would drop a
- * referral that exists.
+ * An account GitHub no longer has, or one that is no longer a person's
+ * account (an organization or bot), forwards without a referrer: capture
+ * could not record it either. A failed read answers 503: forwarding without
+ * the referrer would drop a referral that exists.
  */
 export async function referralRedirect(
   request: Request,
@@ -239,12 +242,19 @@ export async function referralRedirect(
               member.github_id,
             )
           )?.githubLogin ?? null;
-    } catch {
-      console.error("referral link read failure");
-      return new Response("This referral link is unavailable. Retry.", {
-        status: 503,
-        headers,
-      });
+    } catch (error) {
+      if (
+        !(
+          error instanceof GithubLookupError &&
+          error.code === "personal_account_required"
+        )
+      ) {
+        console.error("referral link read failure");
+        return new Response("This referral link is unavailable. Retry.", {
+          status: 503,
+          headers,
+        });
+      }
     }
   }
   const target = new URL(PROJECT_FORM, url.origin);
