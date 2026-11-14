@@ -1438,156 +1438,266 @@
       "evidenceEntries": [],
       "actions": {
         "init": {
-          "status": "missing-transition",
-          "reason": "No local measured-run durable completion journal, lease owner or trace intent sequence.",
-          "successors": []
-        },
-        "start": {
-          "status": "partial-model",
-          "reason": "Work selection begins a contribution, while optional local run creation and usage availability are absent.",
+          "status": "modeled-projection",
+          "reason": "The successor owns the corresponding local completion or remote evidence stage, with exact identity and refusal rules. Adapter conformance remains separate.",
           "successors": [
             {
-              "path": "spec/contributor/workflow.md",
-              "definitions": [
-                "beginWork"
-              ]
-            },
-            {
-              "path": "spec/contributor/evidence.md",
+              "path": "spec/contributor/localReceipt.md",
               "definitions": [
                 "initial"
               ]
             }
           ]
         },
+        "start": {
+          "status": "modeled-projection",
+          "reason": "The successor owns the corresponding local completion or remote evidence stage, with exact identity and refusal rules. Adapter conformance remains separate.",
+          "successors": [
+            {
+              "path": "spec/contributor/localReceipt.md",
+              "definitions": [
+                "start"
+              ]
+            }
+          ]
+        },
         "prepareFinish": {
-          "status": "missing-transition",
-          "reason": "Missing immutable completion candidate from current run, timestamp and optional usage.",
-          "successors": []
+          "status": "modeled-projection",
+          "reason": "The successor owns the corresponding local completion or remote evidence stage, with exact identity and refusal rules. Adapter conformance remains separate.",
+          "successors": [
+            {
+              "path": "spec/contributor/localReceipt.md",
+              "definitions": [
+                "prepareFinish"
+              ]
+            }
+          ]
         },
         "validateCandidate": {
-          "status": "missing-transition",
-          "reason": "Missing explicit pre-publication candidate validation.",
-          "successors": []
+          "status": "modeled-projection",
+          "reason": "The successor owns the corresponding local completion or remote evidence stage, with exact identity and refusal rules. Adapter conformance remains separate.",
+          "successors": [
+            {
+              "path": "spec/contributor/localReceipt.md",
+              "definitions": [
+                "validate"
+              ]
+            }
+          ]
         },
         "rejectCandidate": {
-          "status": "missing-transition",
-          "reason": "Missing separately retained invalid completion response.",
-          "successors": []
+          "status": "modeled-projection",
+          "reason": "The successor owns the corresponding local completion or remote evidence stage, with exact identity and refusal rules. Adapter conformance remains separate.",
+          "successors": [
+            {
+              "path": "spec/contributor/localReceipt.md",
+              "definitions": [
+                "reject"
+              ]
+            }
+          ]
         },
         "stage": {
-          "status": "missing-transition",
-          "reason": "Missing owned temporary completion artifact.",
-          "successors": []
+          "status": "modeled-projection",
+          "reason": "The successor owns the corresponding local completion or remote evidence stage, with exact identity and refusal rules. Adapter conformance remains separate.",
+          "successors": [
+            {
+              "path": "spec/contributor/localReceipt.md",
+              "definitions": [
+                "stage"
+              ]
+            }
+          ]
         },
         "publish": {
-          "status": "missing-transition",
-          "reason": "Missing atomic compare-and-publish for local completion receipt.",
-          "successors": []
+          "status": "modeled-projection",
+          "reason": "The successor owns the corresponding local completion or remote evidence stage, with exact identity and refusal rules. Adapter conformance remains separate.",
+          "successors": [
+            {
+              "path": "spec/contributor/localReceipt.md",
+              "definitions": [
+                "publish"
+              ]
+            }
+          ]
         },
         "competingFinishWins": {
-          "status": "missing-transition",
-          "reason": "Missing concurrent completion winner and replay/no overwrite.",
-          "successors": []
+          "status": "modeled-projection",
+          "reason": "The successor owns the corresponding local completion or remote evidence stage, with exact identity and refusal rules. Adapter conformance remains separate.",
+          "successors": [
+            {
+              "path": "spec/contributor/localReceipt.md",
+              "definitions": [
+                "competingWriter"
+              ]
+            }
+          ]
         },
         "removeTemporary": {
-          "status": "missing-transition",
-          "reason": "Missing selected completion-artifact cleanup and failure.",
-          "successors": []
+          "status": "modeled-projection",
+          "reason": "The successor owns the corresponding local completion or remote evidence stage, with exact identity and refusal rules. Adapter conformance remains separate.",
+          "successors": [
+            {
+              "path": "spec/contributor/localReceipt.md",
+              "definitions": [
+                "cleanupTemporary"
+              ]
+            }
+          ]
         },
         "removeActive": {
-          "status": "missing-transition",
-          "reason": "Missing failure recovery after retained completion with active local record.",
-          "successors": []
+          "status": "modeled-projection",
+          "reason": "The successor owns the corresponding local completion or remote evidence stage, with exact identity and refusal rules. Adapter conformance remains separate.",
+          "successors": [
+            {
+              "path": "spec/contributor/localReceipt.md",
+              "definitions": [
+                "removeActive"
+              ]
+            }
+          ]
         },
         "precommitFailure": {
-          "status": "missing-transition",
-          "reason": "Missing return to active local run after completion failure.",
-          "successors": []
+          "status": "modeled-projection",
+          "reason": "The successor owns the corresponding local completion or remote evidence stage, with exact identity and refusal rules. Adapter conformance remains separate.",
+          "successors": [
+            {
+              "path": "spec/contributor/localReceipt.md",
+              "definitions": [
+                "failBeforeCommit"
+              ]
+            }
+          ]
         },
         "replayCompleted": {
-          "status": "missing-transition",
-          "reason": "Missing exact receipt replay preserving prior complete bytes and recovering stale artifacts.",
-          "successors": []
+          "status": "modeled-projection",
+          "reason": "The successor owns the corresponding local completion or remote evidence stage, with exact identity and refusal rules. Adapter conformance remains separate.",
+          "successors": [
+            {
+              "path": "spec/contributor/localReceipt.md",
+              "definitions": [
+                "replayCompleted"
+              ]
+            }
+          ]
         },
         "observeInvalidHistoricalRecord": {
-          "status": "missing-transition",
-          "reason": "Missing invalid prior receipt reported distinctly from absent record.",
-          "successors": []
+          "status": "modeled-projection",
+          "reason": "The successor owns the corresponding local completion or remote evidence stage, with exact identity and refusal rules. Adapter conformance remains separate.",
+          "successors": [
+            {
+              "path": "spec/contributor/localReceipt.md",
+              "definitions": [
+                "observeInvalidHistory"
+              ]
+            }
+          ]
         },
         "reuseUploaded": {
-          "status": "missing-transition",
-          "reason": "Missing remote exact digest comparison when an upload already exists.",
-          "successors": []
+          "status": "modeled-projection",
+          "reason": "The successor owns the corresponding local completion or remote evidence stage, with exact identity and refusal rules. Adapter conformance remains separate.",
+          "successors": [
+            {
+              "path": "spec/contributor/runEvidence.md",
+              "definitions": [
+                "reuse"
+              ]
+            }
+          ]
         },
         "finalizeTrace": {
-          "status": "missing-transition",
-          "reason": "Missing separate attached/finalized remote lifecycle after durable upload.",
-          "successors": []
+          "status": "modeled-projection",
+          "reason": "The successor owns the corresponding local completion or remote evidence stage, with exact identity and refusal rules. Adapter conformance remains separate.",
+          "successors": [
+            {
+              "path": "spec/contributor/runEvidence.md",
+              "definitions": [
+                "finalize"
+              ]
+            }
+          ]
         },
         "lostTraceResponse": {
-          "status": "missing-transition",
-          "reason": "Missing response uncertainty preserving remote server state and retry identity.",
-          "successors": []
+          "status": "modeled-projection",
+          "reason": "The successor owns the corresponding local completion or remote evidence stage, with exact identity and refusal rules. Adapter conformance remains separate.",
+          "successors": [
+            {
+              "path": "spec/contributor/runEvidence.md",
+              "definitions": [
+                "loseResponse"
+              ]
+            }
+          ]
         },
         "refuseChangedTrace": {
-          "status": "missing-transition",
-          "reason": "Upload digest immutability has no cross-attempt compare against the durable remote identity.",
-          "successors": []
+          "status": "modeled-projection",
+          "reason": "The successor owns the corresponding local completion or remote evidence stage, with exact identity and refusal rules. Adapter conformance remains separate.",
+          "successors": [
+            {
+              "path": "spec/contributor/runEvidence.md",
+              "definitions": [
+                "refuseDifferentSelection"
+              ]
+            }
+          ]
         },
         "registerOpened": {
-          "status": "missing-transition",
-          "reason": "PR attribution requires exact authenticated run, but independent server intent identity is not modeled.",
-          "successors": []
+          "status": "modeled-projection",
+          "reason": "The successor owns the corresponding local completion or remote evidence stage, with exact identity and refusal rules. Adapter conformance remains separate.",
+          "successors": [
+            {
+              "path": "spec/contributor/runEvidence.md",
+              "definitions": [
+                "registerOpened"
+              ]
+            }
+          ]
         },
         "selectTrace": {
           "status": "modeled-projection",
-          "reason": "Contributor selects inspected exact bytes under scoped consent.",
+          "reason": "The successor owns the corresponding local completion or remote evidence stage, with exact identity and refusal rules. Adapter conformance remains separate.",
           "successors": [
             {
-              "path": "spec/contributor/evidence.md",
+              "path": "spec/contributor/runEvidence.md",
               "definitions": [
-                "canSelectFile",
-                "selectFile"
+                "selectTrace"
               ]
             }
           ]
         },
         "register": {
-          "status": "partial-model",
-          "reason": "Bounded upload begins under a verified session, without separate remote intent registration.",
+          "status": "modeled-projection",
+          "reason": "The successor owns the corresponding local completion or remote evidence stage, with exact identity and refusal rules. Adapter conformance remains separate.",
           "successors": [
             {
-              "path": "spec/contributor/evidence.md",
+              "path": "spec/contributor/runEvidence.md",
               "definitions": [
-                "canBeginUpload",
-                "beginUpload"
+                "register"
               ]
             }
           ]
         },
         "upload": {
-          "status": "partial-model",
-          "reason": "Persistent storage requires original digest and durable object, without uncertainty across independent writes.",
+          "status": "modeled-projection",
+          "reason": "The successor owns the corresponding local completion or remote evidence stage, with exact identity and refusal rules. Adapter conformance remains separate.",
           "successors": [
             {
-              "path": "spec/contributor/evidence.md",
+              "path": "spec/contributor/runEvidence.md",
               "definitions": [
-                "canPersist",
-                "persist"
+                "upload"
               ]
             }
           ]
         },
         "recordPullRequest": {
           "status": "modeled-projection",
-          "reason": "Records exact submitted PR node only for a verified author session and project.",
+          "reason": "The successor owns the corresponding local completion or remote evidence stage, with exact identity and refusal rules. Adapter conformance remains separate.",
           "successors": [
             {
-              "path": "spec/contributor/workflow.md",
+              "path": "spec/contributor/runEvidence.md",
               "definitions": [
-                "canRecordRun",
-                "recordRun"
+                "recordOpened",
+                "lawOpenedRetryIdempotent"
               ]
             }
           ]
@@ -1600,105 +1710,211 @@
       },
       "scenarios": {
         "optionalEvidenceDoesNotBlockReceiptTest": {
-          "status": "partial-model",
-          "reason": "Contribution submission is independent of optional upload and receipt signing may proceed, but local finish persistence is missing.",
+          "status": "modeled-projection",
+          "reason": "The focused exact-data scenario evaluates this separation or recovery using immutable completion, exact remote digests or a distinct authenticated PR event.",
           "successors": [
             {
-              "path": "spec/contributor/workflow.md",
+              "path": "spec/contributor/localReceipt.md",
               "definitions": [
-                "canSubmit"
-              ]
-            },
-            {
-              "path": "spec/contributor/evidence.md",
-              "definitions": [
-                "canSignReceipt"
+                "start",
+                "validate",
+                "publish",
+                "competingWriter",
+                "replayCompleted"
               ]
             }
           ]
         },
         "recordBeforeFinalizationTest": {
-          "status": "partial-model",
-          "reason": "PR run event can record independently of optional trace storage, but distinct server trace finalization is absent.",
+          "status": "modeled-projection",
+          "reason": "The focused exact-data scenario evaluates this separation or recovery using immutable completion, exact remote digests or a distinct authenticated PR event.",
           "successors": [
             {
-              "path": "spec/contributor/workflow.md",
+              "path": "spec/contributor/runEvidence.md",
               "definitions": [
-                "canRecordRun"
-              ]
-            },
-            {
-              "path": "spec/contributor/evidence.md",
-              "definitions": [
-                "persist"
+                "register",
+                "upload",
+                "reuse",
+                "finalize",
+                "refuseDifferentSelection",
+                "recordOpened"
               ]
             }
           ]
         },
         "openedDoesNotNeedMeasuredRunTest": {
           "status": "modeled-projection",
-          "reason": "Authenticated submit/run event has no local measured-run prerequisite.",
+          "reason": "The focused exact-data scenario evaluates this separation or recovery using immutable completion, exact remote digests or a distinct authenticated PR event.",
           "successors": [
             {
-              "path": "spec/contributor/workflow.md",
+              "path": "spec/contributor/runEvidence.md",
               "definitions": [
-                "canSubmit",
-                "canRecordRun"
+                "register",
+                "upload",
+                "reuse",
+                "finalize",
+                "refuseDifferentSelection",
+                "recordOpened"
+              ]
+            },
+            {
+              "path": "spec/contributor/localReceipt.md",
+              "definitions": [
+                "start",
+                "validate",
+                "publish",
+                "competingWriter",
+                "replayCompleted"
               ]
             }
           ]
         },
         "backwardClockCannotPoisonCompletedRecordTest": {
-          "status": "missing-transition",
-          "reason": "Missing monotonic clock/retained local receipt after completion.",
-          "successors": []
-        },
-        "invalidCandidateCannotPublishTest": {
-          "status": "missing-transition",
-          "reason": "Missing candidate validation and atomic local publication.",
-          "successors": []
-        },
-        "cleanupFailureLeavesValidReplayTest": {
-          "status": "missing-transition",
-          "reason": "Missing candidate cleanup failure after completed receipt.",
-          "successors": []
-        },
-        "activeRemovalFailureCanReplayTest": {
-          "status": "missing-transition",
-          "reason": "Missing active local-record cleanup and receipt replay.",
-          "successors": []
-        },
-        "concurrentFinishPreservesFirstWinnerTest": {
-          "status": "missing-transition",
-          "reason": "Missing first writer atomic finish and competing completion.",
-          "successors": []
-        },
-        "invalidExistingRecordRemainsExplicitErrorTest": {
-          "status": "missing-transition",
-          "reason": "Missing invalid retained record outcome.",
-          "successors": []
-        },
-        "traceRetryUsesStoredDigestTest": {
-          "status": "missing-transition",
-          "reason": "Missing idempotent remote retry against stored digest.",
-          "successors": []
-        },
-        "changedTraceCannotReplaceUploadTest": {
-          "status": "partial-model",
-          "reason": "A single upload verifies its original digest, with no prior remote receipt or retry context.",
+          "status": "modeled-projection",
+          "reason": "The focused exact-data scenario evaluates this separation or recovery using immutable completion, exact remote digests or a distinct authenticated PR event.",
           "successors": [
             {
-              "path": "spec/contributor/evidence.md",
+              "path": "spec/contributor/localReceipt.md",
               "definitions": [
-                "canPersist"
+                "start",
+                "validate",
+                "publish",
+                "competingWriter",
+                "replayCompleted"
+              ]
+            }
+          ]
+        },
+        "invalidCandidateCannotPublishTest": {
+          "status": "modeled-projection",
+          "reason": "The focused exact-data scenario evaluates this separation or recovery using immutable completion, exact remote digests or a distinct authenticated PR event.",
+          "successors": [
+            {
+              "path": "spec/contributor/localReceipt.md",
+              "definitions": [
+                "start",
+                "validate",
+                "publish",
+                "competingWriter",
+                "replayCompleted"
+              ]
+            }
+          ]
+        },
+        "cleanupFailureLeavesValidReplayTest": {
+          "status": "modeled-projection",
+          "reason": "The focused exact-data scenario evaluates this separation or recovery using immutable completion, exact remote digests or a distinct authenticated PR event.",
+          "successors": [
+            {
+              "path": "spec/contributor/localReceipt.md",
+              "definitions": [
+                "start",
+                "validate",
+                "publish",
+                "competingWriter",
+                "replayCompleted"
+              ]
+            }
+          ]
+        },
+        "activeRemovalFailureCanReplayTest": {
+          "status": "modeled-projection",
+          "reason": "The focused exact-data scenario evaluates this separation or recovery using immutable completion, exact remote digests or a distinct authenticated PR event.",
+          "successors": [
+            {
+              "path": "spec/contributor/localReceipt.md",
+              "definitions": [
+                "start",
+                "validate",
+                "publish",
+                "competingWriter",
+                "replayCompleted"
+              ]
+            }
+          ]
+        },
+        "concurrentFinishPreservesFirstWinnerTest": {
+          "status": "modeled-projection",
+          "reason": "The focused exact-data scenario evaluates this separation or recovery using immutable completion, exact remote digests or a distinct authenticated PR event.",
+          "successors": [
+            {
+              "path": "spec/contributor/localReceipt.md",
+              "definitions": [
+                "start",
+                "validate",
+                "publish",
+                "competingWriter",
+                "replayCompleted"
+              ]
+            }
+          ]
+        },
+        "invalidExistingRecordRemainsExplicitErrorTest": {
+          "status": "modeled-projection",
+          "reason": "The focused exact-data scenario evaluates this separation or recovery using immutable completion, exact remote digests or a distinct authenticated PR event.",
+          "successors": [
+            {
+              "path": "spec/contributor/localReceipt.md",
+              "definitions": [
+                "start",
+                "validate",
+                "publish",
+                "competingWriter",
+                "replayCompleted"
+              ]
+            }
+          ]
+        },
+        "traceRetryUsesStoredDigestTest": {
+          "status": "modeled-projection",
+          "reason": "The focused exact-data scenario evaluates this separation or recovery using immutable completion, exact remote digests or a distinct authenticated PR event.",
+          "successors": [
+            {
+              "path": "spec/contributor/runEvidence.md",
+              "definitions": [
+                "register",
+                "upload",
+                "reuse",
+                "finalize",
+                "refuseDifferentSelection",
+                "recordOpened"
+              ]
+            }
+          ]
+        },
+        "changedTraceCannotReplaceUploadTest": {
+          "status": "modeled-projection",
+          "reason": "The focused exact-data scenario evaluates this separation or recovery using immutable completion, exact remote digests or a distinct authenticated PR event.",
+          "successors": [
+            {
+              "path": "spec/contributor/runEvidence.md",
+              "definitions": [
+                "register",
+                "upload",
+                "reuse",
+                "finalize",
+                "refuseDifferentSelection",
+                "recordOpened"
               ]
             }
           ]
         },
         "openedRetryIdentityIsSeparateTest": {
-          "status": "missing-transition",
-          "reason": "Missing independent PR-opened intent idempotency key and recovery.",
-          "successors": []
+          "status": "modeled-projection",
+          "reason": "The focused exact-data scenario evaluates this separation or recovery using immutable completion, exact remote digests or a distinct authenticated PR event.",
+          "successors": [
+            {
+              "path": "spec/contributor/runEvidence.md",
+              "definitions": [
+                "register",
+                "upload",
+                "reuse",
+                "finalize",
+                "refuseDifferentSelection",
+                "recordOpened"
+              ]
+            }
+          ]
         }
       }
     }

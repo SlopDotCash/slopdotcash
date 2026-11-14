@@ -10,3 +10,4 @@ and automation eligibility remain separate from submission.
 - [Work and review](./workflow.md)
 - [Optional contribution evidence](./evidence.md)
 - [Durable local contributor receipts](./localReceipt.md)
+- [Private trace retries and PR-opened evidence](./runEvidence.md)
