@@ -1,0 +1,87 @@
+# Design system
+
+PRD section 2 requires WCAG AA, states a person can tell apart, and one
+consistent product presentation. The design system names every color by its
+role, never by its value. `packages/design-system/tokens.json` gives each role
+a value in a light and a dark theme; the design tools refuse a value that
+breaks the contrast this spec requires.
+
+## Story: Name every color by what it does
+
+### Each role is one token in both themes
+
+```quint
+type Role = Background | Foreground | Card | CardForeground | Popover | PopoverForeground
+  | Primary | PrimaryForeground | Secondary | SecondaryForeground | Muted | MutedForeground
+  | Accent | AccentForeground | Destructive | DestructiveForeground | Border | Input | Ring | Ok | Warn | Info
+pure val roles = List(Background, Foreground, Card, CardForeground, Popover, PopoverForeground,
+  Primary, PrimaryForeground, Secondary, SecondaryForeground, Muted, MutedForeground,
+  Accent, AccentForeground, Destructive, DestructiveForeground, Border, Input, Ring, Ok, Warn, Info)
+pure def token(role: Role): str = match role {
+  | Background => "background" | Foreground => "foreground" | Card => "card" | CardForeground => "card-foreground"
+  | Popover => "popover" | PopoverForeground => "popover-foreground" | Primary => "primary"
+  | PrimaryForeground => "primary-foreground" | Secondary => "secondary" | SecondaryForeground => "secondary-foreground"
+  | Muted => "muted" | MutedForeground => "muted-foreground" | Accent => "accent" | AccentForeground => "accent-foreground"
+  | Destructive => "destructive" | DestructiveForeground => "destructive-foreground" | Border => "border"
+  | Input => "input" | Ring => "ring" | Ok => "ok" | Warn => "warn" | Info => "info"
+}
+pure def lawTokensAreDistinct(a: Role, b: Role): bool = a != b implies token(a) != token(b)
+```
+
+### Text meets 4.5:1 and boundaries 3:1 on the surfaces they sit on
+
+A contrast requirement is in tenths: 45 is 4.5:1. Every `-foreground` role is
+read on its own fill; every role used as text is read on the page and on a
+card; a field's outline and the focus ring must be seen on both (WCAG 1.4.11).
+`border` divides content and carries no meaning, so it has no requirement.
+
+```quint
+type Pair = { text: Role, surface: Role, least: int }
+pure def pair(text: Role, surface: Role, least: int): Pair = { text: text, surface: surface, least: least }
+pure def onPageAndCard(role: Role, least: int): List[Pair] = List(pair(role, Background, least), pair(role, Card, least))
+pure val requiredContrast: List[Pair] =
+  List(pair(Foreground, Background, 45), pair(Foreground, Muted, 45), pair(MutedForeground, Popover, 45),
+    pair(CardForeground, Card, 45), pair(PopoverForeground, Popover, 45), pair(PrimaryForeground, Primary, 45),
+    pair(SecondaryForeground, Secondary, 45), pair(AccentForeground, Accent, 45), pair(DestructiveForeground, Destructive, 45))
+    .concat(onPageAndCard(MutedForeground, 45)).concat(onPageAndCard(Primary, 45)).concat(onPageAndCard(Destructive, 45))
+    .concat(onPageAndCard(Ok, 45)).concat(onPageAndCard(Warn, 45)).concat(onPageAndCard(Info, 45))
+    .concat(onPageAndCard(Input, 30)).concat(onPageAndCard(Ring, 30))
+pure def required(text: Role, surface: Role): int =
+  requiredContrast.foldl(0, (least, p) => if (p.text == text and p.surface == surface and p.least > least) p.least else least)
+pure def lawForegroundsAreReadable(role: Role): bool =
+  match role {
+    | CardForeground => required(CardForeground, Card) == 45
+    | PopoverForeground => required(PopoverForeground, Popover) == 45
+    | PrimaryForeground => required(PrimaryForeground, Primary) == 45
+    | SecondaryForeground => required(SecondaryForeground, Secondary) == 45
+    | AccentForeground => required(AccentForeground, Accent) == 45
+    | DestructiveForeground => required(DestructiveForeground, Destructive) == 45
+    | _ => true
+  }
+pure def lawBoundariesAreVisible(surface: Role): bool =
+  (surface == Background or surface == Card) implies required(Input, surface) >= 30 and required(Ring, surface) >= 30
+pure def lawNoBorderRequirement(surface: Role): bool = required(Border, surface) == 0
+```
+
+## Story: Mean the same thing everywhere
+
+### Each tone is a role that is readable as text
+
+A status is shown in a tone (`spec/ui/status.md`). The tone's role must be
+readable on the page and on a card, so a status never depends on a fill
+behind it.
+
+```quint
+type Tone = Neutral | Emphasis | Positive | Caution | Negative | Notice
+pure def toneRole(tone: Tone): Role = match tone {
+  | Neutral => MutedForeground
+  | Emphasis => Primary
+  | Positive => Ok
+  | Caution => Warn
+  | Negative => Destructive
+  | Notice => Info
+}
+pure def lawTonesAreReadable(tone: Tone): bool =
+  required(toneRole(tone), Background) >= 45 and required(toneRole(tone), Card) >= 45
+pure def lawTonesAreDistinct(a: Tone, b: Tone): bool = a != b implies toneRole(a) != toneRole(b)
+```
