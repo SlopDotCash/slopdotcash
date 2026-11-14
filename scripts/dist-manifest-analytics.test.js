@@ -141,6 +141,41 @@ test("the Function keeps apex normalization, existing tags and non-GET bodies un
   );
 });
 
+test("the published policy allows the script and report hosts of the Function-added tag and no other analytics host", async () => {
+  const policy = (
+    await readFile(new URL("../public/_headers", import.meta.url), "utf8")
+  )
+    .split(/\r?\n\r?\n/u)[0]
+    .split(/\r?\n/u)
+    .map((line) => line.trim())
+    .find((line) => line.startsWith("Content-Security-Policy:"));
+  const sources = Object.fromEntries(
+    policy
+      .slice(policy.indexOf(":") + 1)
+      .split(";")
+      .map((directive) => {
+        const [name, ...values] = directive.trim().split(/\s+/u);
+        return [name, values];
+      }),
+  );
+  const scriptOrigin = new URL(tag.match(/ src="([^"]+)"/u)[1]).origin;
+  expect(sources["script-src"]).toEqual(["'self'", scriptOrigin]);
+  // Cloudflare documents that a manually embedded tag, which is what the
+  // Function adds, reports to this host and not to the site's own origin.
+  // Without it the browser blocks every report from a Function-served page.
+  expect(sources["connect-src"]).toContain("https://cloudflareinsights.com");
+  expect(
+    Object.entries(sources).flatMap(([name, values]) =>
+      values
+        .filter((value) => value.includes("cloudflareinsights"))
+        .map((value) => `${name} ${value}`),
+    ),
+  ).toEqual([
+    `script-src ${scriptOrigin}`,
+    "connect-src https://cloudflareinsights.com",
+  ]);
+});
+
 test("the workflow CLI emits the same exact rendered bytes and refuses an unbound local index", async () => {
   const { root } = await fixture();
   const render = (origin) =>
