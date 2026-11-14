@@ -74,6 +74,8 @@ pure def nextFiling(p: Publication, a: A::Accrual): A::Filing =
   a.filings.select(file => file.entries.length() > 0 and p.roots.every(root => root.period < file.period)).nthOr(0, A::emptyFiling)
 pure def priorFinalizedTotal(p: Publication): M::Amount = p.roots.foldl(M::zero,
   (highest, root) => if (not(root.voided) and M::compareAmounts(root.total, highest) > 0) root.total else highest)
+pure def publicationUnit(p: Publication, a: A::Accrual): M::Amount =
+  if (p.token == "") a.tokenUnit else p.tokenUnit
 pure def canPrepare(p: Publication, control: R::Referral, a: A::Accrual, rootId: int,
   chain: D::Distributor, merkleRoot: str, rootVerified: bool, signer: str): bool =
   p.phase == Idle and not(p.postingPaused) and control.mode == R::Posting and R::alwaysActivationReady(control)
@@ -81,19 +83,19 @@ pure def canPrepare(p: Publication, control: R::Referral, a: A::Accrual, rootId:
     and A::alwaysUnitValid(a) and A::alwaysCompleteFilings(a) and A::alwaysFileTotals(a) and A::alwaysPinsUnique(a) and A::alwaysFileWalletPinned(a)
     and p.pins.every(pin => a.pins.includes(pin))
     and rootId > 0 and p.roots.every(root => root.id < rootId)
-    and (p.roots.length() == 0 or M::equalAmounts(p.tokenUnit, a.tokenUnit))
+    and (p.token == "" or M::equalAmounts(p.tokenUnit, a.tokenUnit))
     and M::equalAmounts(chain.tokenUnit, a.tokenUnit) and rootVerified and chain.epochs.length() == p.roots.length()
-    and (p.token == "" or chain.token == p.token)
+    and chain.token != "" and (p.token == "" or chain.token == p.token)
     and p.roots.every(root => not(root.voided) or root.voidAcknowledged)
     and D::canPostRoot(chain, chain.epochs.length(), merkleRoot, nextFiling(p, a).total, signer)
     and M::compareAmounts(nextFiling(p, a).total, priorFinalizedTotal(p)) >= 0
-    and M::compareAmounts(nextFiling(p, a).total, A::poolCap(a)) <= 0
+    and M::compareAmounts(nextFiling(p, a).total, M::multiplyAmounts(publicationUnit(p, a), M::smallAmount(2000000))) <= 0
     and M::compareAmounts(nextFiling(p, a).total, totalClaimed(p)) >= 0
     and nextFiling(p, a).entries.every(e => M::compareAmounts(e.amount, claimedFor(p, e.actor)) >= 0)
 pure def prepare(p: Publication, control: R::Referral, a: A::Accrual, rootId: int,
   chain: D::Distributor, merkleRoot: str, rootVerified: bool, signer: str): Publication =
   val filing = nextFiling(p, a)
-  { ...p, phase: Prepared, token: chain.token, tokenUnit: a.tokenUnit, pins: a.pins,
+  { ...p, phase: Prepared, token: chain.token, tokenUnit: publicationUnit(p, a), pins: a.pins,
     prepared: { id: rootId, epoch: chain.epochs.length(), merkleRoot: merkleRoot, period: filing.period,
       sourceDigest: filing.sourceDigest, entries: filing.entries, total: filing.total,
       height: 0, voided: false, sealed: false, voidAcknowledged: false } }
@@ -252,7 +254,11 @@ Discovered by the proof: a structurally valid prepared record could otherwise
 contain a wallet different from its retained pin, and the empty wallet used
 for a missing pin could satisfy an old root's pin check until a real pin was
 added. Prepared and finalized entries use the same nonempty retained wallet
-pins throughout preparation, signing and reconciliation.
+pins throughout preparation, signing and reconciliation. Discovered by the proof:
+once a token and scale are pinned they remain unchanged, even after a prepared
+root is discarded. A later equivalent limb encoding may pass scale comparison
+without replacing the retained representation. Only a token-bound
+publication can have a prepared or finalized root.
 
 A stale cache retains amounts and history, but does not advertise a currently
 claimable amount. Accrued and pending amounts come from the accrual ledger;
@@ -281,6 +287,8 @@ pure def alwaysHoldCeiling(p: Publication): bool = p.nativeHold >= 0 and p.nativ
 pure def alwaysIdleUnreserved(p: Publication): bool = (p.phase == Idle or p.phase == Prepared) implies p.nativeHold == 0
 pure def alwaysPreparedWalletsPinned(p: Publication): bool = p.phase != Idle implies
   p.prepared.entries.every(e => A::entryWalletPinned(p.pins, e))
+pure def alwaysTokenBound(p: Publication): bool =
+  p.token == "" implies p.phase == Idle and p.roots.length() == 0 and p.pins.length() == 0
 pure def alwaysPreparedCap(p: Publication): bool = p.phase != Idle implies
   p.prepared.id > 0 and M::validAmount(p.prepared.total)
     and M::compareAmounts(p.prepared.total, M::multiplyAmounts(p.tokenUnit, M::smallAmount(2000000))) <= 0
@@ -293,7 +301,7 @@ pure def alwaysPinsUnique(p: Publication): bool = p.pins.every(pin => pin.wallet
   p.pins.select(other => other.wallet == pin.wallet).length() == 1)
 pure def alwaysRootWalletPinned(p: Publication): bool = p.roots.every(root =>
   root.entries.every(e => A::entryWalletPinned(p.pins, e)))
-pure def stepTokenFixed(before: Publication, after: Publication): bool = before.token != "" implies after.token == before.token
+pure def stepTokenFixed(before: Publication, after: Publication): bool = before.token != "" implies after.token == before.token and after.tokenUnit == before.tokenUnit
 pure def stepPinsRetained(before: Publication, after: Publication): bool = before.pins.every(pin => after.pins.includes(pin))
 pure def stepAttemptsRetained(before: Publication, after: Publication): bool = before.attempts.every(a => after.attempts.includes(a))
 pure def stepClaimedNeverFalls(before: Publication, after: Publication): bool = before.claims.every(c =>

@@ -1,0 +1,54 @@
+{
+  "scratch": "/tmp/slop-referral-verify-distributor-amount-valid",
+  "specHashes": {
+    "spec/settlement/money.md": "6571d2fb27ad3aed1e06b5221101e39edfb843485c1bd6b911cc19790c6acb46",
+    "spec/settlement/money.proof.dfy": "296bd04784eba32baf73d4e61b6bbcee398694c8d565f6dd36f58fc43c9385f2",
+    "spec/settlement/referralDistributor.md": "9806b4cd07201302c90313cb2ed894c2ee0b7ef953c8bcc0abf1b1da9d75e673",
+    "spec/settlement/referralDistributor.proof.dfy": "525aac17a79bb5936d3d61ccb159a8c97d77f4cfca201ebf70cb187985fb31d3"
+  },
+  "rows": [
+    {
+      "unit": "settlement__money.ts",
+      "total": 15,
+      "unproved": [
+        "lawDivisionRemainder: (lawDivisionRemainder(a, b) == true)",
+        "lawDivisionReconstructs: (lawDivisionReconstructs(a, b) == true)",
+        "lawFullPrivateConservation: (lawFullPrivateConservation(a) == true)",
+        "lawFullOrdinaryConservation: (lawFullOrdinaryConservation(a) == true)"
+      ],
+      "exhausted": [
+        "lawDivisionReconstructs: (lawDivisionReconstructs(a, b) == true)"
+      ],
+      "errors": [],
+      "resting": {},
+      "proofDafnySha256": "9e4eb00f23456a6d9b14d7caa2d373899ec669312802aaa8ae34c4036de20d19",
+      "proofSource": {
+        "file": "spec/settlement/money.proof.dfy",
+        "sha256": "296bd04784eba32baf73d4e61b6bbcee398694c8d565f6dd36f58fc43c9385f2"
+      },
+      "checkedImportedLemmas": 0
+    },
+    {
+      "unit": "settlement__referralDistributor.ts",
+      "total": 146,
+      "unproved": [
+        "deposit: (inv(d) ==> canDeposit(d, amount, token, receipt, finalized) ==> alwaysConserved(deposit(d, amount, token, receipt, finalized)))",
+        "claim: (inv(d) ==> canClaim(d, wallet, cumulative, proofRoot, verified, transferExact, by_) ==> alwaysConserved(claim(d, wallet, cumulative, proofRoot, verified, transferExact, by_)))",
+        "claim: (inv(d) ==> canClaim(d, wallet, cumulative, proofRoot, verified, transferExact, by_) ==> alwaysPaidMatchesClaims(claim(d, wallet, cumulative, proofRoot, verified, transferExact, by_)))",
+        "rescue: (inv(d) ==> canRescue(d, destination, transferExact, by_) ==> alwaysConserved(rescue(d, destination, transferExact, by_)))",
+        "step: inv(step(current, event, by_))"
+      ],
+      "exhausted": [],
+      "errors": [],
+      "resting": {
+        "step: inv(step(current, event, by_))": "deposit: (inv(d) ==> canDeposit(d, amount, token, receipt, finalized) ==> alwaysConserved(deposit(d, amount, token, receipt, finalized)))"
+      },
+      "proofDafnySha256": "e0fca09491d5b0ab28657770bb40f98bc69c92d91d1b73b45bf737a53fe152dc",
+      "proofSource": {
+        "file": "spec/settlement/referralDistributor.proof.dfy",
+        "sha256": "525aac17a79bb5936d3d61ccb159a8c97d77f4cfca201ebf70cb187985fb31d3"
+      },
+      "checkedImportedLemmas": 11
+    }
+  ]
+}

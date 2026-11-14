@@ -69,17 +69,21 @@ pure def capture(a: Accrual, project: int, applicant: int, steward: int, referre
 ### Verified token units and approved reactivation precede dry-run accrual
 
 The canonical token adapter verifies token identity and decimals before
-configuration. Reactivation does not activate posting. A zero or unverified
-unit cannot create a rate or a monetary record.
+configuration. Reactivation preserves the posting gate. Configuration
+requires a verified positive token unit and a positive, exact initial
+rate in program-token base units per stablecoin micro-unit.
 
 ```quint
+pure def initialRateUnits(tokenUnit: M::Amount): M::Division =
+  M::divideAmounts(M::multiplySmall(tokenUnit, 3), List(0, 0, 1))
 pure def canConfigure(a: Accrual, tokenUnit: M::Amount, verified: bool, by: str): bool =
   a.phase == Off and not(a.configured) and by == "owner" and verified
     and M::validAmount(tokenUnit) and M::positiveAmount(tokenUnit)
-    and M::equalAmounts(M::divideAmounts(M::multiplySmall(tokenUnit, 3), List(0, 0, 1)).remainder, M::zero)
+    and M::validAmount(initialRateUnits(tokenUnit).quotient) and M::positiveAmount(initialRateUnits(tokenUnit).quotient)
+    and M::equalAmounts(initialRateUnits(tokenUnit).remainder, M::zero)
 pure def configure(a: Accrual, tokenUnit: M::Amount, verified: bool, by: str): Accrual =
   { ...a, configured: true, tokenUnit: tokenUnit,
-    rates: List({ fromPeriod: firstPeriod, numerator: M::divideAmounts(M::multiplySmall(tokenUnit, 3), List(0, 0, 1)).quotient, denominator: List(1) }) }
+    rates: List({ fromPeriod: firstPeriod, numerator: initialRateUnits(tokenUnit).quotient, denominator: List(1) }) }
 pure def canEnableDryRun(a: Accrual, reactivationApproved: bool, by: str): bool =
   a.phase == Off and a.configured and reactivationApproved and by == "owner"
 pure def enableDryRun(a: Accrual, reactivationApproved: bool, by: str): Accrual = { ...a, phase: Ready }
@@ -157,7 +161,7 @@ pure def nextAccrual(a: Accrual): AccrualRecord =
 pure def canAccrueNext(a: Accrual): bool = a.phase == Collecting and a.pending.length() > 0
 pure def accrueNext(a: Accrual): Accrual =
   val entry = nextAccrual(a)
-  { ...a, staged: a.staged.append(entry), pending: a.pending.select(p => p.id != entry.payout.id) }
+  { ...a, staged: a.staged.append(entry), pending: a.pending.removeAt(0) }
 pure def walletFor(wallets: List[Wallet], actor: int): str = wallets.foldl("",
   (found, w) => if (w.actor == actor and w.authorized) w.wallet else found)
 pure def pinnedWallet(pins: List[Wallet], actor: int): str = pins.foldl("",
@@ -197,7 +201,9 @@ pure def abandonMonth(a: Accrual, leaseId: str, leaseCurrent: bool): Accrual =
 
 A missing, expired or replaced D1 lease refuses filing. Unfiled rows are
 private staging state; abandoning a lost lease discards them and leaves every
-prior record and pin unchanged. The matching lease commits the staged rows,
+prior record and pin unchanged. Each step consumes the first canonical source
+row exactly once. Pending and staged rows exist only during collection. The
+matching lease commits the staged rows,
 exact file entries and first-use wallet pins as one atomic operation, including
 in dry-run mode. This follows `workers/referral-accrual/store.ts:258–306`.
 The public projection includes the complete immutable record and cumulative
@@ -236,7 +242,8 @@ pure def alwaysCollectingHeader(a: Accrual): bool = a.phase == Collecting implie
   a.sourceDigest != "" and a.leaseRun != "" and a.activePeriod == a.nextPeriod
 pure def alwaysFileTotals(a: Accrual): bool = a.filings.every(file => M::validAmount(file.total)
   and M::equalAmounts(file.total, entriesTotal(file.entries)))
-pure def alwaysStagedPrivate(a: Accrual): bool = a.phase != Collecting implies a.staged.length() == 0
+pure def alwaysStagedPrivate(a: Accrual): bool = a.phase != Collecting implies
+  a.staged.length() == 0 and a.pending.length() == 0
 pure def alwaysPinsUnique(a: Accrual): bool = a.pins.every(pin => pin.wallet != "" and
   a.pins.select(other => other.actor == pin.actor).length() == 1 and a.pins.select(other => other.wallet == pin.wallet).length() == 1)
 pure def entryWalletPinned(pins: List[Wallet], entry: RootEntry): bool =

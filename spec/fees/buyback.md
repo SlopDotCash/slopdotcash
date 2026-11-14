@@ -127,6 +127,9 @@ pure def alwaysWindowLimits(b: Buyback): bool = spentInWindow(b.bridgeSpends, b.
 pure def alwaysJournalPastAndPositive(b: Buyback): bool = b.clock >= 0
   and b.bridgeSpends.every(spend => spend.at >= 0 and spend.at <= b.clock and spend.amount > 0)
   and b.purchaseSpends.every(spend => spend.at >= 0 and spend.at <= b.clock and spend.amount > 0)
+pure def alwaysPendingOrderReserved(b: Buyback): bool =
+  (b.phase == Ordered or b.phase == InTransit) implies b.orderAmount >= 500000000 and b.orderAmount <= 1000000000
+    and M::compareAmounts(b.committed, M::smallAmount(b.orderAmount)) >= 0
 pure def stepIncomeMonotonic(before: Buyback, after: Buyback): bool = M::compareAmounts(after.income, before.income) >= 0
   and M::compareAmounts(after.acquired, before.acquired) >= 0 and M::compareAmounts(after.burnCommitted, before.burnCommitted) >= 0
 ```
@@ -136,6 +139,9 @@ retain valid limbs. The rolling-window bound also needs every journal entry
 to have a positive amount and a timestamp no later than the observed clock.
 Otherwise an arbitrary invariant-satisfying state can hide future spending
 outside the current window and reveal it when the clock advances.
+An ordered or in-transit bridge amount stays fully included in the committed
+share. Without that fact an otherwise admissible state could refund more than
+its commitment.
 
 ## Story: Check bridge-native and direct-receipt boundaries
 
