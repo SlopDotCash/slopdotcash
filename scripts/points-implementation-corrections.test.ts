@@ -736,6 +736,119 @@ test("a prospective ban on one grouped recipient holds the whole connected sourc
   expect(total(result.journal)).toBe(18);
 });
 
+// One retained decision spans PR #1 and PR #2. The leaderboard records each
+// unit at the latest acceptance among its own claim sources, while the
+// collector proves every unit with the decision's whole source scope.
+function staggeredGroup() {
+  const units = [`wu_${"a".repeat(64)}`, `wu_${"b".repeat(64)}`];
+  const second = "PR_second";
+  const secondUrl = "https://github.com/SlopDotCash/asi/pull/2";
+  const awards = [
+    award(C, 7, SOURCE, units[0], true),
+    {
+      ...award(C, 11, second, units[1], true),
+      occurredAt: COLLECTED,
+      sourceUrl: secondUrl,
+    },
+  ];
+  const journal = initial(awards, true);
+  const evidence = source();
+  const first: CorrectionSource = {
+    ...evidence,
+    headSha: sha("a"),
+    commitCount: 1,
+    commits: [evidence.commits[0]],
+  };
+  const later: CorrectionSource = {
+    ...evidence,
+    sourceId: second,
+    sourceUrl: secondUrl,
+    occurredAt: COLLECTED,
+    commitCount: 1,
+    commits: [{ ...evidence.commits[1], firstAcceptedSourceId: second }],
+  };
+  const candidates: PointsImplementationCorrectionCandidate[] = awards.map(
+    (row, index) => ({
+      id: `correction_unit_${index}`,
+      kind: "work-unit",
+      projectId: "asi",
+      sourceId: row.sourceId,
+      sourceUrl: row.sourceUrl,
+      occurredAt: row.occurredAt,
+      workUnitId: units[index],
+      sourceIds: [SOURCE, second],
+      expectedPredecessors: [...latestPoints(journal).values()]
+        .filter((revision) => revision.award.workUnitId === units[index])
+        .map((revision) => ({
+          key: revision.award.key,
+          revisionId: revision.id,
+        })),
+      proof: {
+        status: "complete",
+        censusDigest: "c".repeat(64),
+        sources: [structuredClone(first), structuredClone(later)],
+        decisionDigest: VALUE,
+        expectedClaimIds: [`claim_${index}`],
+        claims: [
+          {
+            id: `claim_${index}`,
+            sourceId: row.sourceId,
+            commitSha: evidence.commits[index].sha,
+            path: index === 0 ? "one.ts" : "two.ts",
+          },
+        ],
+      },
+    }),
+  );
+  return { journal, input: manifest(journal, candidates), units };
+}
+
+test("a sibling unit accepted later does not refuse an earlier grouped unit", () => {
+  const { journal, input, units } = staggeredGroup();
+  const result = apply(journal, input);
+  expect(result.dispositions.map((row) => row.status)).toEqual([
+    "applied",
+    "applied",
+  ]);
+  const rows = [...latestPoints(result.journal).values()];
+  const earlier = rows.find(
+    (row) => row.award.actor.id === A.id && row.award.workUnitId === units[0],
+  );
+  expect(earlier?.award.amount).toBe(7);
+  expect(earlier?.award.occurredAt).toBe(OCCURRED);
+  expect(
+    rows.find(
+      (row) => row.award.actor.id === B.id && row.award.workUnitId === units[1],
+    )?.award.amount,
+  ).toBe(11);
+  expect(total(result.journal)).toBe(18);
+
+  const future = staggeredGroup();
+  const claim = future.input.candidates[0];
+  if (claim.kind !== "work-unit" || claim.proof.status !== "complete")
+    throw new Error("group fixture");
+  claim.proof.claims[0] = {
+    ...claim.proof.claims[0],
+    sourceId: "PR_second",
+    commitSha: sha("b"),
+    path: "two.ts",
+  };
+  expect(() => apply(future.journal, future.input)).toThrow(
+    "invalid source identity",
+  );
+
+  const ordinary = initial();
+  const widened = manifest(ordinary);
+  widened.candidates[0].sourceIds.push("PR_second");
+  complete(widened).sources.push({
+    ...source(),
+    sourceId: "PR_second",
+    sourceUrl: "https://github.com/SlopDotCash/asi/pull/2",
+    occurredAt: COLLECTED,
+  });
+  expect(() => apply(ordinary, widened)).toThrow("invalid source identity");
+});
+
 test("partial unit scope, wrong decision, duplicated claims, and contradictory evidence refuse", () => {
   for (const failure of [
     "missing-unit",
