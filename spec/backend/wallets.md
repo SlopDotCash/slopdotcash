@@ -13,7 +13,8 @@ does not sign or settle payments.
 
 ### Registration appends an immutable successor or returns the current registry row
 
-The adapter authenticates the member and validates the chain-specific address.
+The shell authenticates the member and supplies the actor as `by`; it
+validates the chain-specific address and fills `addressVerified`.
 Registration compares its expected predecessor and appends one successor in
 the same transaction. A retry for the current registry wallet returns its
 existing row after a lost response or login rename. The same-address registry
@@ -39,13 +40,17 @@ type VerifiedRead = { claim: int, challengeId: int, capturedAt: int }
 type Authorization = { claim: int, challengeId: int, authorizedAt: int }
 type WalletRegistration = { actor: str, chain: WalletChain, clock: int,
   claims: List[WalletClaim], challenges: int -> Challenge, reads: int -> VerifiedRead,
-  consumptions: List[Consumption], finished: List[int], authorizations: List[Authorization] }
+  consumptions: List[Consumption], finished: List[int], authorizations: List[Authorization],
+  operators: List[str], contacts: List[OperatorContact], recoveries: List[Recovery], historicalProposals: List[int] }
+type OperatorContact = { contact: int, operator: str }
+type Recovery = { claim: int, operator: str, contact: int }
 pure val absentClaim: WalletClaim = { predecessor: 0, wallet: "", digest: "", source: Historical }
 pure val absentChallenge: Challenge = { claim: 0, claimDigest: "", wallet: "", issuedAt: 0, expiresAt: 0, messageDigest: "" }
 pure val absentRead: VerifiedRead = { claim: 0, challengeId: 0, capturedAt: 0 }
 pure val absentAuthorization: Authorization = { claim: 0, challengeId: 0, authorizedAt: 0 }
 pure val initial: WalletRegistration = { actor: "1", chain: Base, clock: 1, claims: List(),
-  challenges: Map(), reads: Map(), consumptions: List(), finished: List(), authorizations: List() }
+  challenges: Map(), reads: Map(), consumptions: List(), finished: List(), authorizations: List(),
+  operators: List("operator"), contacts: List(), recoveries: List(), historicalProposals: List(1) }
 pure def claimAt(b: WalletRegistration, claim: int): WalletClaim = b.claims.nthOr(claim - 1, absentClaim)
 pure def currentClaim(b: WalletRegistration): WalletClaim = claimAt(b, b.claims.length())
 pure def sameRegistryWallet(b: WalletRegistration, wallet: str): bool = currentClaim(b).source == Registry and currentClaim(b).wallet == wallet
@@ -55,17 +60,17 @@ pure def canRestoreHistorical(b: WalletRegistration, wallet: str, digest: str, p
   b.claims.length() == 0 and b.chain == Solana and wallet != "" and digest != "" and preserved
 pure def restoreHistorical(b: WalletRegistration, wallet: str, digest: str, preserved: bool): WalletRegistration =
   { ...b, claims: List({ predecessor: 0, wallet: wallet, digest: digest, source: Historical }) }
-pure def canRegister(b: WalletRegistration, registration: Registration, authenticated: bool, by: str): bool =
-  authenticated and by == b.actor and registration.addressVerified and registration.wallet != ""
+pure def canRegister(b: WalletRegistration, registration: Registration, by: str): bool =
+  by == b.actor and registration.addressVerified and registration.wallet != ""
     and (sameRegistryWallet(b, registration.wallet) or
       (registration.predecessor == b.claims.length() and registration.digest != ""
         and not(b.claims.some(claim => claim.digest == registration.digest))))
-pure def register(b: WalletRegistration, registration: Registration, authenticated: bool, by: str): WalletRegistration =
+pure def register(b: WalletRegistration, registration: Registration, by: str): WalletRegistration =
   if (sameRegistryWallet(b, registration.wallet)) b else
     { ...b, claims: b.claims.append({ predecessor: b.claims.length(),
       wallet: registration.wallet, digest: registration.digest, source: Registry }) }
-pure def registrationReadback(b: WalletRegistration, wallet: str, authenticated: bool, by: str): int =
-  if (authenticated and by == b.actor and sameRegistryWallet(b, wallet)) b.claims.length() else 0
+pure def registrationReadback(b: WalletRegistration, wallet: str, by: str): int =
+  if (by == b.actor and sameRegistryWallet(b, wallet)) b.claims.length() else 0
 ```
 
 ### The server issues an expiring challenge for the exact current registry claim
@@ -89,21 +94,21 @@ pure def consumed(b: WalletRegistration, challengeId: int): bool = b.consumption
 pure def canObserveTime(b: WalletRegistration, timestamp: int): bool =
   timestamp > b.clock and timestamp <= 8640000000000000 - challengeLifetime
 pure def observeTime(b: WalletRegistration, timestamp: int): WalletRegistration = { ...b, clock: timestamp }
-pure def canIssue(b: WalletRegistration, claim: int, challengeId: int, messageDigest: str, authenticated: bool, by: str): bool =
-  authenticated and by == b.actor and claim > 0 and claim == b.claims.length() and currentClaim(b).source == Registry
+pure def canIssue(b: WalletRegistration, claim: int, challengeId: int, messageDigest: str, by: str): bool =
+  by == b.actor and claim > 0 and claim == b.claims.length() and currentClaim(b).source == Registry
     and challengeId > 0 and messageDigest != "" and not(b.challenges.keys().contains(challengeId))
-pure def issue(b: WalletRegistration, claim: int, challengeId: int, messageDigest: str, authenticated: bool, by: str): WalletRegistration =
+pure def issue(b: WalletRegistration, claim: int, challengeId: int, messageDigest: str, by: str): WalletRegistration =
   { ...b, challenges: b.challenges.put(challengeId, { claim: claim, claimDigest: currentClaim(b).digest,
     wallet: currentClaim(b).wallet, issuedAt: b.clock, expiresAt: b.clock + challengeLifetime, messageDigest: messageDigest }) }
-pure def canReadProof(b: WalletRegistration, proof: PossessionEvidence, authenticated: bool, by: str): bool =
+pure def canReadProof(b: WalletRegistration, proof: PossessionEvidence, by: str): bool =
   val challenge = challengeFor(b, proof.challengeId)
-  authenticated and by == b.actor and proof.requestId > 0 and not(b.reads.keys().contains(proof.requestId))
+  by == b.actor and proof.requestId > 0 and not(b.reads.keys().contains(proof.requestId))
     and proof.challengeId > 0 and b.challenges.keys().contains(proof.challengeId) and not(consumed(b, proof.challengeId))
     and proof.claim == challenge.claim and proof.claim == b.claims.length() and currentClaim(b).source == Registry
     and challenge.claimDigest == currentClaim(b).digest and challenge.wallet == currentClaim(b).wallet
     and b.clock < challenge.expiresAt and b.clock >= challenge.issuedAt
     and proof.signerWallet == challenge.wallet and proof.messageDigest == challenge.messageDigest and proof.signatureVerified
-pure def readProof(b: WalletRegistration, proof: PossessionEvidence, authenticated: bool, by: str): WalletRegistration =
+pure def readProof(b: WalletRegistration, proof: PossessionEvidence, by: str): WalletRegistration =
   { ...b, reads: b.reads.put(proof.requestId, { claim: proof.claim,
     challengeId: proof.challengeId, capturedAt: b.clock }) }
 ```
@@ -155,8 +160,8 @@ pure def activeAuthorization(b: WalletRegistration): Authorization =
   b.authorizations.nthOr(b.authorizations.length() - 1, absentAuthorization)
 pure def activeWallet(b: WalletRegistration): str = claimAt(b, activeAuthorization(b).claim).wallet
 pure def firstProof(b: WalletRegistration): int = b.authorizations.nthOr(0, absentAuthorization).challengeId
-pure def authorizationReadback(b: WalletRegistration, claim: int, authenticated: bool, by: str): bool =
-  authenticated and by == b.actor and claim > 0 and claim == activeAuthorization(b).claim
+pure def authorizationReadback(b: WalletRegistration, claim: int, by: str): bool =
+  by == b.actor and claim > 0 and claim == activeAuthorization(b).claim
 pure def pendingWallet(b: WalletRegistration): str =
   if (currentClaim(b).source == Registry and b.claims.length() != activeAuthorization(b).claim) currentClaim(b).wallet else ""
 ```
@@ -203,7 +208,7 @@ pure def sometimesConsumedButUnsigned(b: WalletRegistration): bool = b.consumpti
 ### Simulation covers matching messages, stale claims, exact expiry and replay
 
 ```quint
-pure val byValues = Set("1", "other")
+pure val byValues = Set("1", "other", "operator")
 pure val walletValues = Set("wallet-a", "wallet-b", "")
 pure val digestValues = Set("digest-a", "digest-b", "")
 pure val timestampValues = Set(2, 900001, 900002)
@@ -233,3 +238,90 @@ pure val weight_readProof = 40
 pure val weight_consume = 35
 pure val weight_commitAuthorization = 40
 ```
+
+## Story: Recover a wallet through the operator without giving the operator authority
+
+> As a contributor who lost access to a payout wallet, I want the operator to
+> help me register a replacement, while only my own wallet signature can make
+> it my payout destination.
+
+### Operator recovery appends a successor claim that only the contributor's signature can authorize
+
+PRD section 3 ("Wallet registration and recovery") and the pinned
+`POST /api/v1/operator/wallet-claims` (`backend/trace/handler.ts`). The
+contributor first contacts the operator by email; the operator records that
+contact. An operator of the configured wallet-operator roster then appends a
+Solana registry successor for the contributor, comparing the expected
+predecessor like a self-service registration. The recovery record keeps the
+operator and the contact. The operator is never the account actor, so the
+operator cannot issue, read or consume a possession challenge: the new claim
+stays pending until the contributor signs the possession challenge, and the
+previous authorized wallet stays effective until then. The admin
+wallet-proposal endpoint is retired: it always answers not found and adds
+nothing, and historical proposal rows stay unchanged.
+
+```quint
+pure def canRecordOperatorContact(b: WalletRegistration, by: str, contact: int): bool =
+  b.operators.includes(by) and contact > 0 and not(b.contacts.some(c => c.contact == contact))
+pure def recordOperatorContact(b: WalletRegistration, by: str, contact: int): WalletRegistration =
+  { ...b, contacts: b.contacts.append({ contact: contact, operator: by }) }
+pure def canOperatorRecover(b: WalletRegistration, by: str, contact: int, registration: Registration): bool =
+  b.operators.includes(by) and b.chain == Solana and b.contacts.some(c => c.contact == contact)
+    and not(b.recoveries.some(r => r.contact == contact))
+    and registration.addressVerified and registration.wallet != "" and registration.digest != ""
+    and registration.predecessor == b.claims.length() and not(b.claims.some(claim => claim.digest == registration.digest))
+pure def operatorRecover(b: WalletRegistration, by: str, contact: int, registration: Registration): WalletRegistration =
+  { ...b, claims: b.claims.append({ predecessor: b.claims.length(), wallet: registration.wallet,
+      digest: registration.digest, source: Registry }),
+    recoveries: b.recoveries.append({ claim: b.claims.length() + 1, operator: by, contact: contact }) }
+pure def alwaysOperatorsAreNotTheActor(b: WalletRegistration): bool = not(b.operators.includes(b.actor))
+  and b.contacts.every(c => c.contact > 0 and b.operators.includes(c.operator))
+  and b.recoveries.every(r => r.claim > 0 and r.claim <= b.claims.length() and b.operators.includes(r.operator)
+    and b.contacts.some(c => c.contact == r.contact) and b.recoveries.select(o => o.contact == r.contact).length() == 1)
+pure def stepRecoveryHistoryRetained(before: WalletRegistration, after: WalletRegistration): bool =
+  before.contacts.every(c => after.contacts.includes(c)) and before.recoveries.every(r => after.recoveries.includes(r))
+    and after.historicalProposals == before.historicalProposals and after.operators == before.operators
+pure def lawOperatorCannotAuthorize(b: WalletRegistration, claim: int, challengeId: int, messageDigest: str): bool =
+  (alwaysOperatorsAreNotTheActor(b) and b.operators.length() > 0)
+    implies not(canIssue(b, claim, challengeId, messageDigest, b.operators.nthOr(0, b.actor)))
+pure def sometimesRecoveredPendingSignature(b: WalletRegistration): bool =
+  b.recoveries.length() > 0 and b.recoveries.every(r => not(alreadyAuthorized(b, r.claim)))
+pure def sometimesRecoveredAuthorized(b: WalletRegistration): bool = b.recoveries.some(r => alreadyAuthorized(b, r.claim))
+pure val contactValues = Set(0, 1, 2)
+pure val weight_recordOperatorContact = 8
+pure val weight_operatorRecover = 10
+```
+
+### The effective claim and held deliveries follow the authorized claim
+
+Readers that show a destination use the effective claim: the latest
+authorized claim, or, before any authorization, the newest claim (which may
+be historical). Payment uses only the authorized claim. Authorizing a claim
+releases held deliveries of reserved obligations in the same batch, except
+one whose uncertain attempt (prepared, unknown or submitted) used another
+claim: that stays held until settlement recovery reconciles the attempt.
+The payment outbox is owned by [settlement](../settlement/payment.md); the
+attempts here are the evidence that service supplies.
+
+```quint
+type AttemptEvidence = { obligation: int, claim: int, uncertain: bool }
+pure def effectiveClaim(b: WalletRegistration): int =
+  if (b.authorizations.length() == 0) b.claims.length() else activeAuthorization(b).claim
+pure def payableClaim(b: WalletRegistration): int = activeAuthorization(b).claim
+pure def releasesHeld(b: WalletRegistration, obligation: int, attempts: List[AttemptEvidence]): bool =
+  payableClaim(b) > 0 and not(attempts.some(t => t.obligation == obligation and t.uncertain and t.claim != payableClaim(b)))
+pure def lawUnauthorizedClaimIsNeverPayable(b: WalletRegistration): bool =
+  b.authorizations.length() == 0 implies payableClaim(b) == 0
+pure def lawUncertainOtherClaimStaysHeld(b: WalletRegistration, obligation: int, other: int): bool =
+  (other != payableClaim(b)) implies not(releasesHeld(b, obligation, List({ obligation: obligation, claim: other, uncertain: true })))
+pure val obligationValues = Set(1, 2)
+pure val otherValues = Set(0, 1, 2)
+pure val sampleSolana: WalletRegistration = selectChain(initial, Solana)
+pure val sampleRegistered: WalletRegistration = register(initial, { wallet: "wallet-a", digest: "digest-a", predecessor: 0, addressVerified: true }, "1")
+pure val sampleRecovered: WalletRegistration = operatorRecover(recordOperatorContact(sampleSolana, "operator", 1), "operator", 1,
+  { wallet: "wallet-b", digest: "digest-b", predecessor: 0, addressVerified: true })
+pure val bValues = Set(initial).union(Set(sampleRegistered)).union(Set(sampleRecovered))
+pure def lawNoAuthorizationShowsLatestIntent(b: WalletRegistration): bool =
+  b.authorizations.length() == 0 implies effectiveClaim(b) == b.claims.length()
+```
+
