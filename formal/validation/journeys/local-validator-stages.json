@@ -1,7 +1,7 @@
 {
   "sourceHashes": {
-    "spec/operations/localCommand.md": "60e080a22eb5b0923a808b4d772795b30a29eaf02a0f20b6ee893cff7eaca2c8",
-    "spec/operations/localValidator.md": "0be6d6ae4b7f821a39e78e99acb42b1e1141eb73eade5311b15770298f1dfcaa"
+    "spec/operations/localCommand.md": "54eba1490cd95dd2838c24db1006c68107a3de10b86a057bcd1d853effc05ba0",
+    "spec/operations/localValidator.md": "d67282b42a8e49b96e17c81e241ca8d6ad6a640666fdaedb5171733a09e98f61"
   },
   "scope": "Generated core only. No live validator, payer, signal, or subprocess invoked.",
   "journeys": [
@@ -694,20 +694,20 @@
       "series": [
         {
           "kind": "step",
-          "command": "seed 226659898924283; to simulate again: pnpm exec quint run gen/operations__localValidator.run.qnt --main operations__localValidator_run --step step --invariant inv --max-samples 1000 --max-steps 30 --mbt --seed 226659898924283",
+          "command": "seed 259820539368491; to simulate again: pnpm exec quint run gen/operations__localValidator.run.qnt --main operations__localValidator_run --step step --invariant inv --max-samples 1000 --max-steps 30 --mbt --seed 259820539368491",
           "samples": 1000,
           "replayed": 200
         },
         {
           "kind": "probe",
-          "command": "seed 242986908699783; to simulate again: pnpm exec quint run gen/operations__localValidator.run.qnt --main operations__localValidator_run --step probe --invariant inv --max-samples 1000 --max-steps 20 --mbt --seed 242986908699783",
+          "command": "seed 173182007367803; to simulate again: pnpm exec quint run gen/operations__localValidator.run.qnt --main operations__localValidator_run --step probe --invariant inv --max-samples 1000 --max-steps 20 --mbt --seed 173182007367803",
           "samples": 1000,
           "replayed": 200
         },
         {
           "kind": "reachability",
           "goal": "sometimesBothShellStagesComplete",
-          "command": "seed 273983485323807; to simulate again: pnpm exec quint run gen/operations__localValidator.run.qnt --main operations__localValidator_run --step step --invariant never_sometimesBothShellStagesComplete --max-samples 5000 --max-steps 50 --mbt --seed 273983485323807",
+          "command": "seed 150405148306288; to simulate again: pnpm exec quint run gen/operations__localValidator.run.qnt --main operations__localValidator_run --step step --invariant never_sometimesBothShellStagesComplete --max-samples 5000 --max-steps 50 --mbt --seed 150405148306288",
           "reached": true,
           "replayed": 1
         }
@@ -731,6 +731,7 @@
     }
   ],
   "proofs": [],
+  "proofReport": "local-validator-proof.json",
   "quintWitness": {
     "command": "pnpm exec quint test formal/validation/journeys/local-validator-witness.qnt --seed 0 --max-samples 1 --match '^(independentShellStagesTest|localDeadlineAndOwnedEscalationTest|primaryFailuresAndLedgerRemovalTest)$'",
     "passed": 3,
