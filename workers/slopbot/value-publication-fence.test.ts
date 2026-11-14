@@ -16,6 +16,7 @@ import { sqliteD1 } from "../../tests/sqlite-d1";
 import { fixture, policy, repository } from "../../tests/value-binary-fixture";
 import type { ReviewEnv } from "./review";
 import { collectValueEvidence } from "./value-evidence";
+import { importSubscriptionAssessment } from "./value-import";
 import { publishValueAssessment } from "./value-publication";
 import { type ValueAssessmentResult, valueSourceDigest } from "./value-review";
 import { prepareWorkUnitEvidence } from "./value-work-unit";
@@ -267,6 +268,215 @@ for (const mode of ["single", "joint"] as const) {
             sqlite.query(`SELECT count(*) AS n FROM ${table}`).get(),
           ).toEqual({ n: 0 });
         }
+      } finally {
+        globalThis.fetch = previousFetch;
+        sqlite.close();
+      }
+    });
+  }
+}
+
+for (const mode of ["single", "joint"] as const) {
+  for (const viaImport of [false, true] as const) {
+    test(`${mode} publication succeeds under a renamed repository's current path (${viaImport ? "subscription import" : "direct publisher"})`, async () => {
+      const { db, sqlite } = sqliteD1();
+      const source = fixture({ direct: true, textOnly: true });
+      const current = `${repository.id}-renamed`;
+      const baseProject = assertProjectDefinition(
+        applicationManifest("fixture", repository.id, {
+          rewardAsset: {
+            network: "ethereum",
+            kind: "stablecoin",
+            ...REWARD_ASSET_NETWORKS.ethereum.stablecoin,
+            chainId: REWARD_ASSET_NETWORKS.ethereum.chainId,
+            cluster: null,
+            verifiedAt: at,
+          },
+          status: "active",
+          authority: {
+            state: "unverified",
+            reason: "missing-repository-proof",
+            role: "project-steward",
+            repositoryId: "42",
+            repositoryNodeId: "R_binary",
+            proof: null,
+          },
+        }),
+      );
+      const project = assertProjectDefinition({
+        ...baseProject,
+        repositories: [
+          {
+            ...baseProject.repositories[0],
+            aliases: [current],
+            displayName: current,
+            githubUrl: `https://github.com/${current}`,
+          },
+        ],
+      });
+      const manifest = JSON.stringify(project);
+      sqlite.run(
+        "INSERT INTO project_revisions(project_id,revision,manifest,manifest_sha256,reason,created_at) VALUES (?,1,?,?,?,?)",
+        [project.id, manifest, digest(manifest), "Approved rename fixture", at],
+      );
+      sqlite.run(
+        "INSERT INTO projects(id,status,revision,manifest,manifest_sha256,created_at,updated_at) VALUES (?,'active',1,?,?,?,?)",
+        [project.id, manifest, digest(manifest), at, at],
+      );
+      sqlite.run(
+        "INSERT INTO project_repositories(repository_key,project_id) VALUES (?,?)",
+        [current, project.id],
+      );
+      sqlite.run(
+        "INSERT INTO slopbot_installations(installation_id,account_id,account_login,account_type,created_at) VALUES (1,1,'example','Organization',?)",
+        [at],
+      );
+      const repositories = collectTargetRepositories([project]);
+      const evidence = await collectValueEvidence(
+        source.client,
+        repository.id,
+        1,
+        repositories[0],
+      );
+      expect(evidence.repository).toBe(repository.id);
+      const assessment: ValueAssessment = {
+        status: "unresolved",
+        tier: null,
+        rationale:
+          "No model assessment is made by this storage conformance fixture.",
+        dimensions: Object.fromEntries(
+          VALUE_DIMENSIONS.map((dimension) => [
+            dimension,
+            "Not assessed by this fixture.",
+          ]),
+        ) as ValueAssessment["dimensions"],
+        evidenceUrls: [evidence.pull.html_url],
+        relatedPullRequests: [],
+        limitations: ["No inference was requested."],
+        reviews: [],
+      };
+      const previousFetch = globalThis.fetch;
+      globalThis.fetch = (async (input: RequestInfo | URL) => {
+        const url = new URL(
+          input instanceof Request ? input.url : String(input),
+        );
+        if (url.origin !== "https://api.github.com")
+          throw new Error("Unexpected external transport");
+        if (url.pathname === "/app/installations/1/access_tokens")
+          return Response.json({ token: "local-installation" });
+        if (url.pathname === "/installation/repositories")
+          return Response.json({
+            repositories: [{ id: 42, node_id: "R_binary", private: false }],
+          });
+        if (url.pathname === "/graphql")
+          return Response.json({ data: await source.client.graphql() });
+        if (url.pathname.endsWith("/contents/CONTRIBUTING.md"))
+          return Response.json({
+            type: "file",
+            encoding: "base64",
+            size: "Retain accepted source evidence.".length,
+            content: Buffer.from("Retain accepted source evidence.").toString(
+              "base64",
+            ),
+          });
+        const pathname = url.pathname.replace(
+          `/repos/${current}`,
+          `/repos/${repository.id}`,
+        );
+        const data = await source.client.get(pathname + url.search);
+        return Response.json(data, { status: data === null ? 404 : 200 });
+      }) as typeof fetch;
+      const env = {
+        SLOPBOT_DB: db,
+        SLOPBOT_APP_ID: "1",
+        SLOPBOT_APP_PRIVATE_KEY: privateKey,
+        SLOPBOT_PRODUCER_REVISION: "a".repeat(40),
+      } as unknown as ReviewEnv & { SLOPBOT_PRODUCER_REVISION: string };
+      const job = {
+        itemKind: "pull_request",
+        installationId: 1,
+        repositoryId: 42,
+        owner: "example",
+        repo: "binary-proof-renamed",
+        number: 1,
+      } as const;
+      const singleResult = {
+        blocked: false,
+        blockReason: null,
+        provenance: declaration,
+        assessedAt: at,
+        verdict: assessment,
+        rubricVersion: VALUE_RUBRIC_VERSION,
+        sourceDigest: await valueSourceDigest(evidence, policy),
+        pullRequestNodeId: evidence.pull.node_id,
+        headSha: evidence.pull.head.sha,
+        policySha: policy.sha,
+      } as ValueAssessmentResult;
+      const joint = await prepareWorkUnitEvidence(
+        [{ evidence, policy }],
+        repositories,
+      );
+      const jointResult = {
+        blocked: false,
+        blockReason: null,
+        provenance: declaration,
+        assessedAt: at,
+        verdict: {
+          units: [
+            {
+              claimIds: joint.claims.map((claim) => claim.id),
+              assessment,
+            },
+          ],
+        },
+        rubricVersion: VALUE_RUBRIC_VERSION,
+        sourceDigest: joint.sourceDigest,
+      } as WorkUnitAssessmentResult;
+      try {
+        if (viaImport) {
+          await importSubscriptionAssessment(env, {
+            installationId: 1,
+            mode: mode === "single" ? "single" : "work-unit",
+            result: mode === "single" ? singleResult : jointResult,
+            revisionReason: null,
+            sources: [
+              {
+                contextPaths: [],
+                pullRequestNumber: 1,
+                repository: current,
+              },
+            ],
+            supersedes: mode === "single" ? null : [],
+            ...(mode === "joint" ? { legacyPredecessors: [] } : {}),
+          });
+        } else if (mode === "single") {
+          await publishValueAssessment(
+            env,
+            job,
+            singleResult,
+            evidence,
+            "a".repeat(40),
+            null,
+          );
+        } else {
+          await publishWorkUnitAssessment(
+            env,
+            job,
+            jointResult,
+            joint,
+            "a".repeat(40),
+            [],
+            [],
+            null,
+          );
+        }
+        const table =
+          mode === "single"
+            ? "slopbot_value_journal"
+            : "slopbot_work_unit_journal";
+        expect(
+          sqlite.query(`SELECT count(*) AS n FROM ${table}`).get(),
+        ).toEqual({ n: 1 });
       } finally {
         globalThis.fetch = previousFetch;
         sqlite.close();

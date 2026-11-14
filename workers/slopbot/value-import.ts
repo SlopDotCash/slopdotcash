@@ -205,12 +205,11 @@ export async function importSubscriptionAssessment(
     }
   }
   const source = sources[0].evidence;
-  const [owner, repo] = source.repository.split("/");
   const job = {
     installationId: Number(input.installationId),
     repositoryId: source.repositoryDatabaseId,
-    owner,
-    repo,
+    owner: repositories[0].owner,
+    repo: repositories[0].name,
     number: source.pull.number,
     itemKind: "pull_request" as const,
   };
