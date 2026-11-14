@@ -15,6 +15,14 @@ the diagnostic. Neither the result nor a failed probe affects the recovery
 journal, receipt amounts, signing authority or posted burn status. Readiness
 requires the operator's independent recheck and the other PRD evidence.
 
+```quint
+type BuybackRpcScope = { robinhood: bool, live: bool, probeAvailable: bool }
+pure def runProbe(scope: BuybackRpcScope): bool = scope.robinhood and scope.live and scope.probeAvailable
+pure def lawInactiveProbeOmitted(scope: BuybackRpcScope, rpc: FinalizedRpcEvidence): bool =
+  val result = finalizedRpc(scope, rpc)
+  not(runProbe(scope)) implies match result { | Omitted => true | _ => false }
+```
+
 ### A verified observation binds the exact chain, block and contract read
 
 Require chain ID 4663. The finalized block response supplies an exact nonnegative
@@ -35,14 +43,12 @@ verified output consists of the chain ID, decimal height and hash. Provider
 errors, endpoint configuration and request material stay out of the summary.
 
 ```quint
-type BuybackRpcScope = { robinhood: bool, live: bool, probeAvailable: bool }
 type FinalizedBlock = { height: str, hash: str, exactHeight: bool, canonicalHash: bool }
 type DestinationRead = { completed: bool, height: str, exactDestination: bool, zeroOrder: bool }
 type FinalizedRpcEvidence = { observedChainId: int, finalized: bool, block: FinalizedBlock,
   contractRead: DestinationRead, canonical: FinalizedBlock }
 type RpcObservation = Omitted | Unavailable | Verified({ chainId: int, height: str, hash: str })
 pure val robinhoodChainId = 4663
-pure def runProbe(scope: BuybackRpcScope): bool = scope.robinhood and scope.live and scope.probeAvailable
 pure def exactFinalizedRead(rpc: FinalizedRpcEvidence): bool =
   rpc.observedChainId == robinhoodChainId and rpc.finalized and
     rpc.block.exactHeight and rpc.block.canonicalHash and rpc.block.height != "" and rpc.block.hash != "" and
@@ -53,9 +59,6 @@ pure def finalizedRpc(scope: BuybackRpcScope, rpc: FinalizedRpcEvidence): RpcObs
   if (not(runProbe(scope))) Omitted
   else if (exactFinalizedRead(rpc)) Verified({ chainId: robinhoodChainId, height: rpc.block.height, hash: rpc.block.hash })
   else Unavailable
-pure def lawInactiveProbeOmitted(scope: BuybackRpcScope, rpc: FinalizedRpcEvidence): bool =
-  val result = finalizedRpc(scope, rpc)
-  not(runProbe(scope)) implies match result { | Omitted => true | _ => false }
 pure def lawActiveProbeRefusal(scope: BuybackRpcScope, rpc: FinalizedRpcEvidence): bool =
   val result = finalizedRpc(scope, rpc)
   (runProbe(scope) and not(exactFinalizedRead(rpc))) implies match result { | Unavailable => true | _ => false }

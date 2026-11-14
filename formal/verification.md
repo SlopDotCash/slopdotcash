@@ -295,7 +295,7 @@ reporting requirement.
 - A live Robinhood buyback tick can report the exact finalized RPC observation
   in its private summary. This diagnostic leaves accounting and signer
   authority alone. All three obligations proved.
-  [RPC diagnostic results](validation/finance/buyback-rpc-proof.json)
+  [RPC diagnostic results](validation/source-coverage/buyback-rpc-rule-coverage.json)
 - Referrals and buyback preserve filing identity, posting history and the
   pinned bridged quantity. The repaired models replayed 210 traces. The
   distributor proof discharged all 146 obligations against its recorded
@@ -352,6 +352,11 @@ reporting requirement.
   payment obligations and 27 atomic vault composition obligations passed on
   the updated inputs.
   [Rail ownership proof](validation/source-coverage/settlement-rail-ownership.json)
+- Direct-award fee accounting discharged all 14 obligations. A finalized fee
+  can establish received cash while the researcher leg is outstanding.
+  Buyback eligibility waits for complete award evidence and the actual fee
+  receipt time. The pinned worker uses the preparation date as its cutoff.
+  [Fee accounting proof](validation/active-proof/finance/direct-bounty-income-proof.json) · [Source comparison](validation/active-proof/finance/direct-bounty-income-source.md)
 - Reserve release discharged all 146 obligations, including conservation after
   an exact partial settlement and the dependent step condition.
   [Reserve proof](validation/active-proof/settlement/reserve-complete.json)

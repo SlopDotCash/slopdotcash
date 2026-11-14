@@ -1,0 +1,25 @@
+{
+  "sourceMain": "e170d85aa5efcb45e2971c1733b7bb44f4226f32",
+  "sourceDevelopment": "5268ca066dfc67251715eceaa5c1e943b80a0b6c",
+  "source": "spec/fees/buybackRpc.md",
+  "sourceHash": "f8ea1a1536aef031c93da3c816a7b771d663003581522853b7863a3671937883",
+  "proofFileHash": null,
+  "proof": {
+    "generatedDafnySha256": "3476b1125cbc5699222e4bb8bbe71c25ab8506bf7b9664d745560de094e385c9",
+    "total": 3,
+    "unproved": [],
+    "exhausted": [],
+    "resting": {},
+    "errors": []
+  },
+  "simulation": {
+    "command": "seed 82844120665729; to simulate again: pnpm exec quint run gen/fees__buybackRpc.run.qnt --main fees__buybackRpc_run --step probe --invariant inv --max-samples 60 --max-steps 10 --mbt --seed 82844120665729",
+    "replayed": 20
+  },
+  "witnesses": {},
+  "directed": [
+    "three inactive scopes omit the diagnostic",
+    "exact block height above 2^53 and hash survive",
+    "moved block and wrong order target are unavailable"
+  ]
+}

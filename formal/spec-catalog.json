@@ -2236,7 +2236,7 @@
     },
     {
       "path": "spec/fees/buybackRpc.md",
-      "sha256": "0c1749945423ea64545cc836c65e3efdba649bea1cb696ad123f98765e8096f5",
+      "sha256": "f8ea1a1536aef031c93da3c816a7b771d663003581522853b7863a3671937883",
       "module": "fees__buybackRpc",
       "stories": [
         {
@@ -2248,22 +2248,23 @@
         {
           "heading": "Story: Observe whether the configured Robinhood RPC can serve finalized state / Only a live Robinhood buyback recovery tick can report the diagnostic",
           "line": 10,
-          "definitions": []
+          "definitions": [
+            "BuybackRpcScope",
+            "runProbe",
+            "lawInactiveProbeOmitted"
+          ]
         },
         {
           "heading": "Story: Observe whether the configured Robinhood RPC can serve finalized state / A verified observation binds the exact chain, block and contract read",
-          "line": 18,
+          "line": 26,
           "definitions": [
-            "BuybackRpcScope",
             "FinalizedBlock",
             "DestinationRead",
             "FinalizedRpcEvidence",
             "RpcObservation",
             "robinhoodChainId",
-            "runProbe",
             "exactFinalizedRead",
             "finalizedRpc",
-            "lawInactiveProbeOmitted",
             "lawActiveProbeRefusal",
             "lawVerifiedFactsExact",
             "liveRobinhood",
@@ -2467,8 +2468,264 @@
       "references": []
     },
     {
+      "path": "spec/settlement/directBounty.md",
+      "sha256": "57e396faaa8b0ea0d035dbf50b9914bde7a5c5cb12a492eb27c5f078d9e10ab2",
+      "module": "settlement__directBounty",
+      "stories": [
+        {
+          "heading": "Story: Authorize and retain each exact transfer of an approved direct award",
+          "line": 17
+        }
+      ],
+      "rules": [
+        {
+          "heading": "Story: Authorize and retain each exact transfer of an approved direct award / A standard award freezes its network, asset and two split amounts",
+          "line": 19,
+          "definitions": [
+            "Network",
+            "Lane",
+            "Wallet",
+            "Terms",
+            "Intent",
+            "Transfer",
+            "ReceiptPair",
+            "EndKind",
+            "Retirement",
+            "ArchivedIntent",
+            "TxUse",
+            "DirectBounty",
+            "noWallet",
+            "noIntent",
+            "noTerms",
+            "noRetirement",
+            "noTransfer",
+            "initial",
+            "validWallet",
+            "validTerms",
+            "canAdmit",
+            "admit",
+            "canObserveCaseRevision",
+            "observeCaseRevision",
+            "canObserveWallets",
+            "observeWallets",
+            "canConsent",
+            "consent",
+            "scopedWallets",
+            "authorizedWallets",
+            "wellFormedIntent",
+            "canPrepare",
+            "prepare"
+          ]
+        },
+        {
+          "heading": "Story: Authorize and retain each exact transfer of an approved direct award / Each finalized transaction belongs to one ledger and one exact request",
+          "line": 106,
+          "definitions": [
+            "matchesIntent",
+            "used",
+            "canRecordOtherUse",
+            "recordOtherUse",
+            "canRecordTransfer",
+            "recordTransfer",
+            "canRecordPair",
+            "recordPair",
+            "paid",
+            "heldResearcher",
+            "pendingResearcherRequest",
+            "pendingFeeRequest",
+            "pendingBundleRequest",
+            "receivedFee"
+          ]
+        },
+        {
+          "heading": "Story: Authorize and retain each exact transfer of an approved direct award / A recovered request changes only an unpaid leg after exact retirement",
+          "line": 169,
+          "definitions": [
+            "sameResearcherLeg",
+            "sameFeeLeg",
+            "freshNonce",
+            "freshMessage",
+            "canRecover",
+            "recover"
+          ]
+        },
+        {
+          "heading": "Story: Authorize and retain each exact transfer of an approved direct award / Paid legs and prior intent generations remain permanent",
+          "line": 221,
+          "definitions": [
+            "alwaysUnadmittedEmpty",
+            "alwaysAdmittedTerms",
+            "alwaysIntentBound",
+            "alwaysResearcherReceipt",
+            "alwaysFeeReceipt",
+            "alwaysSolanaReceiptAtomic",
+            "alwaysIndependentReceiptIds",
+            "alwaysNoOtherTransactionReuse",
+            "stepTermsUnchanged",
+            "stepPaidLegsUnchanged",
+            "stepIntentHistory",
+            "sometimesPartialFee",
+            "sometimesPartialResearcher",
+            "sometimesPaidEvm",
+            "sometimesPaidSolana",
+            "sometimesHeld",
+            "sometimesRecovered"
+          ]
+        },
+        {
+          "heading": "Story: Authorize and retain each exact transfer of an approved direct award / Simulation covers both payment shapes and conflicting evidence",
+          "line": 267,
+          "definitions": [
+            "payerOne",
+            "reporterOne",
+            "reporterTwo",
+            "termsEvm",
+            "termsSolana",
+            "evmIntent",
+            "solanaIntent",
+            "researcherTransfer",
+            "feeTransfer",
+            "bundledTransfer",
+            "nextResearcherIntent",
+            "nextFeeIntent",
+            "nextSolanaIntent",
+            "researcherRetirement",
+            "feeRetirement",
+            "solanaRetirement",
+            "termsValues",
+            "walletValues",
+            "payerWalletValues",
+            "reporterWalletValues",
+            "intentValues",
+            "successorValues",
+            "retirementValues",
+            "transferValues",
+            "useValues",
+            "pairValues",
+            "caseVersionValues",
+            "observedRevisionValues",
+            "generationValues",
+            "byValues",
+            "weight_admit",
+            "weight_observeWallets",
+            "weight_consent",
+            "weight_prepare",
+            "weight_recordTransfer",
+            "weight_recordPair",
+            "weight_recover"
+          ]
+        }
+      ],
+      "imports": [
+        "settlement__money"
+      ],
+      "references": []
+    },
+    {
+      "path": "spec/fees/directBountyIncome.md",
+      "sha256": "2e9c8c74d6bec0cad6ac501a7ddb7aed6d65673988903906b9fa3518eec1e070",
+      "module": "fees__directBountyIncome",
+      "stories": [
+        {
+          "heading": "Story: Distinguish funds received from income booked for a completed direct award",
+          "line": 25
+        }
+      ],
+      "rules": [
+        {
+          "heading": "Story: Distinguish funds received from income booked for a completed direct award / Only an exact durable journal receipt identifies received cash",
+          "line": 27,
+          "definitions": [
+            "CashStatus",
+            "BookingStatus",
+            "TimedReceipt",
+            "AwardTimes",
+            "FeeFact",
+            "Recognition",
+            "FeeJournal",
+            "initial",
+            "buybackCutover",
+            "noKey",
+            "noFee",
+            "exactPositiveFee",
+            "cashFact"
+          ]
+        },
+        {
+          "heading": "Story: Distinguish funds received from income booked for a completed direct award / Booking uses the exact completed journal and both canonical timestamps",
+          "line": 67,
+          "definitions": [
+            "exactAwardComplete",
+            "matchesTime",
+            "completionTime",
+            "completeTimeEvidence",
+            "eligibleTime",
+            "bookingStatus",
+            "pinnedPreparedFilter"
+          ]
+        },
+        {
+          "heading": "Story: Distinguish funds received from income booked for a completed direct award / One immutable receipt contributes its full amount to only its original asset and wallet",
+          "line": 101,
+          "definitions": [
+            "candidateRecognition",
+            "sameCash",
+            "cashFromRecognition",
+            "canRecordCash",
+            "recordCash",
+            "canBook",
+            "book",
+            "readback",
+            "receivedFor",
+            "incomeFor",
+            "validRecognition",
+            "validCash",
+            "alwaysReceivedVerifiable",
+            "alwaysQualifiedRecords",
+            "alwaysBookingBackedByCash",
+            "stepEveryCashReceiptRetained",
+            "stepEveryRecognitionRetained",
+            "stepNewIdentity",
+            "noRecognition",
+            "sometimesReceivedOnly",
+            "sometimesSeparateReceiptsBooked",
+            "sometimesBundleBooked",
+            "sometimesCrossCutoverPreparation"
+          ]
+        },
+        {
+          "heading": "Story: Distinguish funds received from income booked for a completed direct award / Simulation covers both rails and both sides of the activation instant",
+          "line": 186,
+          "definitions": [
+            "feeOnly",
+            "separatePaid",
+            "bundledPaid",
+            "feeClock",
+            "researcherClock",
+            "bundleClock",
+            "separateTimes",
+            "bundleTimes",
+            "bountyValues",
+            "timingValues",
+            "weight_recordCash",
+            "weight_book"
+          ]
+        }
+      ],
+      "imports": [
+        "settlement__money",
+        "settlement__directBounty"
+      ],
+      "references": [
+        {
+          "target": "../settlement/directBounty.md",
+          "line": 6
+        }
+      ]
+    },
+    {
       "path": "spec/fees/index.md",
-      "sha256": "092daed0e9e7cc5b2a73c1959800b012ba497be41b3133b9f8f9c8b4ffa18986",
+      "sha256": "c2039d0e919cb07ccb77e12afb3aaf452730cd9f59fb3826df9e27910e80523a",
       "module": "fees",
       "stories": [],
       "rules": [],
@@ -2479,16 +2736,20 @@
           "line": 5
         },
         {
-          "target": "./buyback.md",
+          "target": "./directBountyIncome.md",
           "line": 6
         },
         {
-          "target": "./buybackRpc.md",
+          "target": "./buyback.md",
           "line": 7
         },
         {
-          "target": "../settlement/",
+          "target": "./buybackRpc.md",
           "line": 8
+        },
+        {
+          "target": "../settlement/",
+          "line": 9
         }
       ]
     },
@@ -6584,160 +6845,6 @@
             "actorValues",
             "confirmedAtValues",
             "nowValues"
-          ]
-        }
-      ],
-      "imports": [
-        "settlement__money"
-      ],
-      "references": []
-    },
-    {
-      "path": "spec/settlement/directBounty.md",
-      "sha256": "57e396faaa8b0ea0d035dbf50b9914bde7a5c5cb12a492eb27c5f078d9e10ab2",
-      "module": "settlement__directBounty",
-      "stories": [
-        {
-          "heading": "Story: Authorize and retain each exact transfer of an approved direct award",
-          "line": 17
-        }
-      ],
-      "rules": [
-        {
-          "heading": "Story: Authorize and retain each exact transfer of an approved direct award / A standard award freezes its network, asset and two split amounts",
-          "line": 19,
-          "definitions": [
-            "Network",
-            "Lane",
-            "Wallet",
-            "Terms",
-            "Intent",
-            "Transfer",
-            "ReceiptPair",
-            "EndKind",
-            "Retirement",
-            "ArchivedIntent",
-            "TxUse",
-            "DirectBounty",
-            "noWallet",
-            "noIntent",
-            "noTerms",
-            "noRetirement",
-            "noTransfer",
-            "initial",
-            "validWallet",
-            "validTerms",
-            "canAdmit",
-            "admit",
-            "canObserveCaseRevision",
-            "observeCaseRevision",
-            "canObserveWallets",
-            "observeWallets",
-            "canConsent",
-            "consent",
-            "scopedWallets",
-            "authorizedWallets",
-            "wellFormedIntent",
-            "canPrepare",
-            "prepare"
-          ]
-        },
-        {
-          "heading": "Story: Authorize and retain each exact transfer of an approved direct award / Each finalized transaction belongs to one ledger and one exact request",
-          "line": 106,
-          "definitions": [
-            "matchesIntent",
-            "used",
-            "canRecordOtherUse",
-            "recordOtherUse",
-            "canRecordTransfer",
-            "recordTransfer",
-            "canRecordPair",
-            "recordPair",
-            "paid",
-            "heldResearcher",
-            "pendingResearcherRequest",
-            "pendingFeeRequest",
-            "pendingBundleRequest",
-            "receivedFee"
-          ]
-        },
-        {
-          "heading": "Story: Authorize and retain each exact transfer of an approved direct award / A recovered request changes only an unpaid leg after exact retirement",
-          "line": 169,
-          "definitions": [
-            "sameResearcherLeg",
-            "sameFeeLeg",
-            "freshNonce",
-            "freshMessage",
-            "canRecover",
-            "recover"
-          ]
-        },
-        {
-          "heading": "Story: Authorize and retain each exact transfer of an approved direct award / Paid legs and prior intent generations remain permanent",
-          "line": 221,
-          "definitions": [
-            "alwaysUnadmittedEmpty",
-            "alwaysAdmittedTerms",
-            "alwaysIntentBound",
-            "alwaysResearcherReceipt",
-            "alwaysFeeReceipt",
-            "alwaysSolanaReceiptAtomic",
-            "alwaysIndependentReceiptIds",
-            "alwaysNoOtherTransactionReuse",
-            "stepTermsUnchanged",
-            "stepPaidLegsUnchanged",
-            "stepIntentHistory",
-            "sometimesPartialFee",
-            "sometimesPartialResearcher",
-            "sometimesPaidEvm",
-            "sometimesPaidSolana",
-            "sometimesHeld",
-            "sometimesRecovered"
-          ]
-        },
-        {
-          "heading": "Story: Authorize and retain each exact transfer of an approved direct award / Simulation covers both payment shapes and conflicting evidence",
-          "line": 267,
-          "definitions": [
-            "payerOne",
-            "reporterOne",
-            "reporterTwo",
-            "termsEvm",
-            "termsSolana",
-            "evmIntent",
-            "solanaIntent",
-            "researcherTransfer",
-            "feeTransfer",
-            "bundledTransfer",
-            "nextResearcherIntent",
-            "nextFeeIntent",
-            "nextSolanaIntent",
-            "researcherRetirement",
-            "feeRetirement",
-            "solanaRetirement",
-            "termsValues",
-            "walletValues",
-            "payerWalletValues",
-            "reporterWalletValues",
-            "intentValues",
-            "successorValues",
-            "retirementValues",
-            "transferValues",
-            "useValues",
-            "pairValues",
-            "caseVersionValues",
-            "observedRevisionValues",
-            "generationValues",
-            "byValues",
-            "weight_admit",
-            "weight_observeWallets",
-            "weight_consent",
-            "weight_prepare",
-            "weight_recordTransfer",
-            "weight_recordPair",
-            "weight_recover"
           ]
         }
       ],
