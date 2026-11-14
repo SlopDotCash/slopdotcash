@@ -1,3 +1,8 @@
+Copied from SlopDotCash/slopdotcash (`development`, `5268ca066`). Its commands and
+the paths outside this package (`bun`, `scripts/`, `workers/`, `src/lib/`, `docs/`,
+`contracts/*.ts`) belong to that repository; `contracts/evm` and `contracts/solana`
+are `packages/contracts/evm` and `packages/contracts/solana` here.
+
 > Current owner decision (24 October 2026): deploy replacement EVM UUPS proxies
 > with `ESCROW_UPGRADE_AUTHORITY` explicitly set and `BINDING_DELAY = 0`.
 > The script deploys vault logic, factory logic and an atomically initialized

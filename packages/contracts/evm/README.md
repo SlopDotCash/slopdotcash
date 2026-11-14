@@ -16,6 +16,10 @@
 
 # EVM escrow v5
 
+Copied from SlopDotCash/slopdotcash (`development`, `5268ca066`). The TypeScript
+adapters, Workers, scripts and `docs/` named below remain in that repository;
+[the package README](../README.md) lists what runs here.
+
 This is an owner-upgradeable escrow implementation for one project, one asset and one
 purpose. The asset can be native ETH or any standard ERC-20 with any decimals: Circle USDC,
 Paxos USDG or a project token. Anyone can call the factory to create a vault
@@ -41,7 +45,7 @@ Direct transfers are not credited. Payouts, owner refunds and fee claims transfe
 ETH and check exact vault and recipient balance changes. Failed recipients keep
 the award or accrued fee unpaid; they do not consume it.
 
-Run `bun contracts/evm/native.integration.ts` from the repository root for the
+In the source repository, `contracts/evm/native.integration.ts` runs the
 local Anvil lifecycle, including sender gas, monthly awards and receiver failure.
 The ordinary adapter integration also runs this test. No deployment or reviewed
 production implementation binding changes with this source update.
@@ -262,19 +266,23 @@ funded seals with an empty tree and zero remaining reserve. The trusted attester
 rejects duplicate sources before signing; the contract cannot inspect every
 leaf during constant-size admission.
 
-While pending gross remains, new manual awards wait. If part of a reserve can never settle (an attester fault),
-the owner calls `releaseMonthlyReserve(period, expectedRemaining, releasedGross, attestation)` with the
-identity authority's EIP-712 `MonthlyRelease` signature from `monthlyReleaseDigest`. The signature binds the
-exact remaining gross, so a leaf that settles first makes it stale. The released gross returns to free balance
-without a fee, `monthlyReleased(period)` records it, committed awards do not change, and the period stays
-committed. Time alone never releases a reserve. See `docs/escrow-unsettleable-month-release.md`. Later signed monthly
+While pending gross remains, new manual awards wait. If an admitted root has the wrong total (an attester
+fault), the owner calls `releaseMonthlyReserve(period, expectedRemaining, releasedGross, attestation)` with the
+identity authority's EIP-712 `MonthlyRelease` signature from `monthlyReleaseDigest`. A release returns the whole
+untouched reserve exactly once, as the Solana program's `release_monthly_reserve` does: `releasedGross` must
+equal `expectedRemaining`, which must equal the whole admitted total. A committed leaf, an earlier release or a
+partial amount refuses it, so no gross can both settle and return
+([spec/settlement/reserveRelease.md](../../../spec/settlement/reserveRelease.md)); the source repository's
+version allowed partial and repeated releases. The released gross returns to free balance
+without a fee, `monthlyReleased(period)` records it, and the period stays committed. Time alone never releases a
+reserve. See the source repository's `docs/escrow-unsettleable-month-release.md`. Later signed monthly
 admissions can use free funds within their own caps. Existing funded payments, bindings, deposits,
 and free withdrawals remain available. Permissionless leaf execution completes
 the reserve after owner opt-out or window expiry. It has no refund, expiry, or
 human release step. The executor bounds examined leaves, including already
 committed leaves, and retains a finalized cursor for restart.
 
-`monthly-reserve.integration.ts` exercises the real migrated database, frozen
+The source repository's `monthly-reserve.integration.ts` exercises the real migrated database, frozen
 snapshot, signer, public authorization, and local chain executor with 100 awards.
 Its `SLOP_MONTHLY_LEGACY_ROOT` option expects a pre-upgrade tree that already
 has `createWithMonthlyCommitment`. The deployed mainnet source (`bce5b0df`)
@@ -424,14 +432,16 @@ these signatures. For the full ABI, use `forge inspect ProjectEscrow abi`.
 ## Local validation
 
 Use Foundry 1.7.1 (commit `4072e48705af9d93e3c0f6e29e93b5e9a40caed8`)
-and the compiler pinned in `foundry.toml`. From the repository root:
+and the compiler pinned in `foundry.toml`. In this directory:
 
 ```sh
-forge fmt --root contracts/evm --check
-forge build --root contracts/evm --sizes
-forge test --root contracts/evm
-bun contracts/evm/adapter.integration.ts
+forge fmt --check
+forge build --sizes
+forge test
 ```
+
+`pnpm --filter @repo/contracts test` also runs the SMTChecker proofs and the
+Solana tests ([the package README](../README.md)).
 
 `forge test` runs the Foundry suites under `test/`. `test/AnyToken.t.sol`
 covers 0-, 2-, 9- and 18-decimal tokens, amounts beyond `uint64`, `uint128`
@@ -444,13 +454,11 @@ binding lifecycle (commit delay, payment frozen during a rotation and after its
 cancel, cancel cap between payments and its waiver during a pending rotation,
 delay bounds, one-shot cancel), token and
 accounting checks, and invariant runs over random owner, authority and payer
-sequences. These suites are regression evidence, not a security review. The
-`base` job in `.github/workflows/escrow-tests.yml` runs the format check, build
-and `forge test` on every escrow change.
+sequences. These suites are regression evidence, not a security review.
 
-The integration deploys `integration/TestDollar.sol`, a six-decimal test
+The source repository's adapter integration deploys `integration/TestDollar.sol`, a six-decimal test
 ERC-20, and `test/WideToken.sol` at 18 decimals with amounts beyond `uint64`. The test token is not Circle USDC; Circle integration, wallet signatures, OAuth, indexer finality,
-and live broadcast require separate public-chain acceptance. The adapter integration
+and live broadcast require separate public-chain acceptance. That integration
 script starts an isolated Anvil on port 18546 (`SLOP_EVM_ADAPTER_TEST_PORT`), executes actual deployment,
 permissionless vault creation, award, monthly commitment and payment
 transactions, and checks canonical finalized receipts plus rejection
@@ -473,14 +481,14 @@ a private key in a command, environment dump, source file, or evidence.
 First simulate the exact compiled source:
 
 ```sh
-cd contracts/evm
+cd packages/contracts/evm
 forge script script/DeployBaseSepolia.s.sol:DeployBaseSepolia \
   --rpc-url "$BASE_SEPOLIA_RPC_URL" --account slop-test-deployer
 ```
 
 Use `DeployEthereumSepolia.s.sol:DeployEthereumSepolia` with
 `$ETHEREUM_SEPOLIA_RPC_URL`, or follow
-[`docs/robinhood-chain-testnet-runbook.md`](../../docs/robinhood-chain-testnet-runbook.md)
+the source repository's `docs/robinhood-chain-testnet-runbook.md`
 for Robinhood Chain Testnet. After the test deployment authority reviews the
 simulation, the same invocation with `--broadcast` submits testnet
 transactions. No public deployment was run as part of the local
@@ -546,7 +554,7 @@ funding checks, post spacing, roles, pause and rescue timing, proof binding to
 three-leaf tree and a fuzz over two epochs. `test/ReferralControlRegression.t.sol`
 also checks lower-total history and repeated voids. `script/DeployReferralDistributorRobinhoodTestnet.s.sol`
 deploys it on chain id 46630 with `integration/MockReferralToken.sol`; see
-[`docs/referral-distributor-testnet-runbook.md`](../../docs/referral-distributor-testnet-runbook.md)
+the source repository's `docs/referral-distributor-testnet-runbook.md`
 (prepare only; nothing has been deployed). `script/DeployReferralDistributorRobinhood.s.sol`
 is the mainnet (chain id 4663) deployment: it fixes the program token
 `0xfeb4E36FA4a2A494FF25ae4a63491e4c584A67AE`, the 2,000,000-token growth limit
@@ -564,5 +572,5 @@ owner is the Slop Cash S.P. operating wallet
 address `0x000000000000000000000000000000000000dEaD`, so no root can be posted
 until the owner sets a poster at activation. It holds no tokens and the
 program is inactive; `workers/referral-accrual/wrangler.toml` is unchanged. The AI-assisted internal review is
-[`docs/security/referral-distributor-ai-review-2026-10-25.md`](../../docs/security/referral-distributor-ai-review-2026-10-25.md);
+the source repository's `docs/security/referral-distributor-ai-review-2026-10-25.md`;
 it is not an audit.

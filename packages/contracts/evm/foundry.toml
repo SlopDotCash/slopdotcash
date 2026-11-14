@@ -1,6 +1,7 @@
 [profile.default]
 src = "src"
 out = "out"
+cache_path = ".cache/forge"
 libs = []
 solc_version = "0.8.30"
 evm_version = "cancun"
@@ -9,10 +10,28 @@ optimizer_runs = 200
 bytecode_hash = "none"
 
 # Pinned so the fuzz and invariant campaign in CI is reproducible
-# (docs/security/escrow-ai-review-2026-10-12.md, section 2).
+# (SlopDotCash/slopdotcash, docs/security/escrow-ai-review-2026-10-12.md, section 2).
 [profile.default.fuzz]
 runs = 256
 
 [profile.default.invariant]
 runs = 256
 depth = 500
+
+# `forge lint` stays a separate command: on every build it took minutes.
+[lint]
+lint_on_build = false
+
+# The SMTChecker run of `pnpm test` (../README.md, "Money invariants"). BMC explores every path of the loop-free
+# library for every input; z3 must be on PATH.
+[profile.smt]
+out = ".cache/smt/out"
+cache_path = ".cache/smt/cache"
+
+[profile.smt.model_checker]
+contracts = { "src/EscrowMath.sol" = ["EscrowMath"] }
+engine = "bmc"
+targets = ["assert", "underflow", "overflow", "divByZero"]
+show_proved_safe = true
+show_unproved = true
+show_unsupported = true

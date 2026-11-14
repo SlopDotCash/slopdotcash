@@ -270,6 +270,24 @@
         "generated/**",
         "design.md"
       ]
+    },
+    "@repo/contracts#build": {
+      "dependsOn": [
+        "gen",
+        "//#gen",
+        "^build"
+      ],
+      "outputs": [
+        "evm/out/**"
+      ]
+    },
+    "@repo/contracts#test": {
+      "dependsOn": [
+        "gen",
+        "//#gen",
+        "^build"
+      ],
+      "outputs": []
     }
   },
   "remoteCache": {

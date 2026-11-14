@@ -1,5 +1,10 @@
 # Solana protected payout escrow
 
+Copied from SlopDotCash/slopdotcash (`development`, `5268ca066`). The TypeScript
+adapter, scripts other than `scripts/build-local.sh`, end-to-end harness and
+Workers named below remain in that repository;
+[the package README](../README.md) lists what runs here.
+
 This Anchor program holds native SOL, classic SPL Token mints and the approved metadata-only
 Token-2022 subset in a separate PDA vault for each owner, project digest and purpose. The project PDA seeds are
 `["project", owner, project digest, purpose]`, where the purpose byte is `0`
@@ -346,7 +351,7 @@ records remain permanently allocated to prevent account recreation replay.
 ## Local build and end-to-end tests
 
 Validator workflows require a local Docker or Podman engine and the reviewed
-Agave 2.1.21 image. From the repository root, prepare its exact digest:
+Agave 2.1.21 image. From the source repository's root, prepare its exact digest:
 
 ```sh
 validator_image="$(node --input-type=module -e 'import { SOLANA_TEST_IMAGE } from "./scripts/local-solana-validator.mjs"; console.log(SOLANA_TEST_IMAGE)')"
@@ -362,7 +367,7 @@ already be shared with the engine's VM. The launcher mounts those inputs read
 only and does not change VM sharing. Native Solana CLI and Anchor tools are
 still needed for program preparation and client commands. Per-instance
 receipts distinguish ready, stopped and unconfirmed cleanup; retain a failed
-receipt before retrying. See [the lifecycle model](../../formal/models/contracts/solana_container_lifecycle.qnt).
+receipt before retrying. See the source repository's `formal/models/contracts/solana_container_lifecycle.qnt`.
 
 Run `npm run build` here to build the actual SBF binary and its IDL.
 Run `npm run test:e2e` to load that binary into an isolated local validator and
