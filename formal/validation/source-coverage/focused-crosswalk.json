@@ -554,29 +554,64 @@
       ],
       "actions": {
         "init": {
-          "status": "missing-transition",
-          "reason": "No invocation state independently tracks command, request cleanup, publication and report release.",
-          "successors": []
+          "status": "modeled-projection",
+          "reason": "The command completion unit records this exact lifecycle stage and retains the first helper, cleanup or release failure.",
+          "successors": [
+            {
+              "path": "spec/contributor/commandCompletion.md",
+              "definitions": [
+                "initial"
+              ]
+            }
+          ]
         },
         "command": {
-          "status": "missing-transition",
-          "reason": "No nonzero versus thrown outcome, captured output or primary process error.",
-          "successors": []
+          "status": "modeled-projection",
+          "reason": "The command completion unit records this exact lifecycle stage and retains the first helper, cleanup or release failure.",
+          "successors": [
+            {
+              "path": "spec/contributor/commandCompletion.md",
+              "definitions": [
+                "finishCommand"
+              ]
+            }
+          ]
         },
         "cleanupRequest": {
-          "status": "missing-transition",
-          "reason": "No exact owned request cleanup or first-failure precedence.",
-          "successors": []
+          "status": "modeled-projection",
+          "reason": "The command completion unit records this exact lifecycle stage and retains the first helper, cleanup or release failure.",
+          "successors": [
+            {
+              "path": "spec/contributor/commandCompletion.md",
+              "definitions": [
+                "cleanupRequest"
+              ]
+            }
+          ]
         },
         "classify": {
-          "status": "missing-transition",
-          "reason": "No report publication disposition after request cleanup.",
-          "successors": []
+          "status": "modeled-projection",
+          "reason": "The command completion unit records this exact lifecycle stage and retains the first helper, cleanup or release failure.",
+          "successors": [
+            {
+              "path": "spec/contributor/commandCompletion.md",
+              "definitions": [
+                "classify"
+              ]
+            }
+          ]
         },
         "release": {
-          "status": "missing-transition",
-          "reason": "No outer lease release, terminal status or preservation of existing failure.",
-          "successors": []
+          "status": "modeled-projection",
+          "reason": "The command completion unit records this exact lifecycle stage and retains the first helper, cleanup or release failure.",
+          "successors": [
+            {
+              "path": "spec/contributor/commandCompletion.md",
+              "definitions": [
+                "release"
+              ]
+            }
+          ]
         },
         "step": {
           "status": "generated-harness",
@@ -586,44 +621,132 @@
       },
       "scenarios": {
         "cleanSuccessTest": {
-          "status": "missing-transition",
-          "reason": "Missing successful invocation plus both successful cleanups.",
-          "successors": []
+          "status": "modeled-projection",
+          "reason": "Covered by the focused directed replay, including all command, request cleanup and outer release outcome combinations.",
+          "successors": [
+            {
+              "path": "spec/contributor/commandCompletion.md",
+              "definitions": [
+                "finishCommand",
+                "cleanupRequest",
+                "classify",
+                "release",
+                "stepFirstFailurePersists"
+              ]
+            }
+          ]
         },
         "nonzeroCommandSurvivesRequestCleanupTest": {
-          "status": "missing-transition",
-          "reason": "Missing retained nonzero output and command failure precedence.",
-          "successors": []
+          "status": "modeled-projection",
+          "reason": "Covered by the focused directed replay, including all command, request cleanup and outer release outcome combinations.",
+          "successors": [
+            {
+              "path": "spec/contributor/commandCompletion.md",
+              "definitions": [
+                "finishCommand",
+                "cleanupRequest",
+                "classify",
+                "release",
+                "stepFirstFailurePersists"
+              ]
+            }
+          ]
         },
         "thrownCommandSurvivesRequestCleanupTest": {
-          "status": "missing-transition",
-          "reason": "Missing thrown command identity and failure precedence.",
-          "successors": []
+          "status": "modeled-projection",
+          "reason": "Covered by the focused directed replay, including all command, request cleanup and outer release outcome combinations.",
+          "successors": [
+            {
+              "path": "spec/contributor/commandCompletion.md",
+              "definitions": [
+                "finishCommand",
+                "cleanupRequest",
+                "classify",
+                "release",
+                "stepFirstFailurePersists"
+              ]
+            }
+          ]
         },
         "primaryDiscoveryErrorSurvivesReleaseTest": {
-          "status": "missing-transition",
-          "reason": "Missing release failure with already recorded command error.",
-          "successors": []
+          "status": "modeled-projection",
+          "reason": "Covered by the focused directed replay, including all command, request cleanup and outer release outcome combinations.",
+          "successors": [
+            {
+              "path": "spec/contributor/commandCompletion.md",
+              "definitions": [
+                "finishCommand",
+                "cleanupRequest",
+                "classify",
+                "release",
+                "stepFirstFailurePersists"
+              ]
+            }
+          ]
         },
         "bothCleanupsPreserveCommandFailureTest": {
-          "status": "missing-transition",
-          "reason": "Missing independent cleanup failure retention and first command error.",
-          "successors": []
+          "status": "modeled-projection",
+          "reason": "Covered by the focused directed replay, including all command, request cleanup and outer release outcome combinations.",
+          "successors": [
+            {
+              "path": "spec/contributor/commandCompletion.md",
+              "definitions": [
+                "finishCommand",
+                "cleanupRequest",
+                "classify",
+                "release",
+                "stepFirstFailurePersists"
+              ]
+            }
+          ]
         },
         "successfulCommandFailsOnRequestCleanupTest": {
-          "status": "missing-transition",
-          "reason": "Missing terminal failure after request cleanup, even with command success.",
-          "successors": []
+          "status": "modeled-projection",
+          "reason": "Covered by the focused directed replay, including all command, request cleanup and outer release outcome combinations.",
+          "successors": [
+            {
+              "path": "spec/contributor/commandCompletion.md",
+              "definitions": [
+                "finishCommand",
+                "cleanupRequest",
+                "classify",
+                "release",
+                "stepFirstFailurePersists"
+              ]
+            }
+          ]
         },
         "successfulReportFailsOnReleaseTest": {
-          "status": "missing-transition",
-          "reason": "Missing distinction between published report and failing invocation release.",
-          "successors": []
+          "status": "modeled-projection",
+          "reason": "Covered by the focused directed replay, including all command, request cleanup and outer release outcome combinations.",
+          "successors": [
+            {
+              "path": "spec/contributor/commandCompletion.md",
+              "definitions": [
+                "finishCommand",
+                "cleanupRequest",
+                "classify",
+                "release",
+                "stepFirstFailurePersists"
+              ]
+            }
+          ]
         },
         "earlierCleanupErrorSurvivesReleaseTest": {
-          "status": "missing-transition",
-          "reason": "Missing first cleanup failure surviving later release failure.",
-          "successors": []
+          "status": "modeled-projection",
+          "reason": "Covered by the focused directed replay, including all command, request cleanup and outer release outcome combinations.",
+          "successors": [
+            {
+              "path": "spec/contributor/commandCompletion.md",
+              "definitions": [
+                "finishCommand",
+                "cleanupRequest",
+                "classify",
+                "release",
+                "stepFirstFailurePersists"
+              ]
+            }
+          ]
         }
       }
     },

@@ -1035,7 +1035,7 @@
     },
     {
       "path": "spec/contributor/commandCompletion.md",
-      "sha256": "b77bfd56328eb907b6eb76027db4a0d6f316588f3189894182f08c9ea3f89f77",
+      "sha256": "785d2a97e92005b5520c636ce6122c7b8462abe66004d99072369957bffcb8f2",
       "module": "contributor__commandCompletion",
       "stories": [
         {
@@ -1068,6 +1068,7 @@
             "classify",
             "canRelease",
             "release",
+            "alwaysCleanupOrder",
             "alwaysCommand",
             "alwaysCleanBeforeSuccess",
             "alwaysPublished",
@@ -1153,23 +1154,27 @@
     },
     {
       "path": "spec/contributor/index.md",
-      "sha256": "827250f6c22782454e070a2e83122326b58e4890350d96388b041ddec1a30089",
+      "sha256": "fec8d428e68011ef53e31d9532834f33370e9e06c60edc08210e05d76b7cbc8f",
       "module": "contributor",
       "stories": [],
       "rules": [],
       "imports": [],
       "references": [
         {
-          "target": "./installation.md",
+          "target": "./commandCompletion.md",
           "line": 7
         },
         {
-          "target": "./workflow.md",
+          "target": "./installation.md",
           "line": 8
         },
         {
-          "target": "./evidence.md",
+          "target": "./workflow.md",
           "line": 9
+        },
+        {
+          "target": "./evidence.md",
+          "line": 10
         }
       ]
     },
@@ -5220,7 +5225,7 @@
     },
     {
       "path": "spec/settlement/index.md",
-      "sha256": "6f74be305e83459ced9aba82d1aff6aa41c07d816f36bc3f5e7ad3e50c1d2ab7",
+      "sha256": "07590773dda51995801dc335090f810149d4505331c36ca4615e3c7d31ff84a0",
       "module": "settlement",
       "stories": [],
       "rules": [],
@@ -5251,64 +5256,68 @@
           "line": 10
         },
         {
-          "target": "./solanaScan.md",
+          "target": "./paymentDispatch.md",
           "line": 11
         },
         {
-          "target": "./composition.md",
+          "target": "./solanaScan.md",
           "line": 12
         },
         {
-          "target": "./recovery.md",
+          "target": "./composition.md",
           "line": 13
         },
         {
-          "target": "./reserveRelease.md",
+          "target": "./recovery.md",
           "line": 14
         },
         {
-          "target": "./signer.md",
+          "target": "./reserveRelease.md",
           "line": 15
         },
         {
-          "target": "./keeperRpc.md",
+          "target": "./signer.md",
           "line": 16
         },
         {
-          "target": "./keeperScan.md",
+          "target": "./keeperRpc.md",
           "line": 17
         },
         {
-          "target": "./keeperLifecycle.md",
+          "target": "./keeperScan.md",
           "line": 18
         },
         {
-          "target": "./keeperDiagnostics.md",
+          "target": "./keeperLifecycle.md",
           "line": 19
         },
         {
-          "target": "./contributorAllocation.md",
+          "target": "./keeperDiagnostics.md",
           "line": 20
         },
         {
-          "target": "./referrals.md",
+          "target": "./contributorAllocation.md",
           "line": 21
         },
         {
-          "target": "../fees/",
+          "target": "./referrals.md",
           "line": 22
         },
         {
-          "target": "./referralAccrual.md",
-          "line": 24
+          "target": "../fees/",
+          "line": 23
         },
         {
-          "target": "./referralPublication.md",
+          "target": "./referralAccrual.md",
           "line": 25
         },
         {
-          "target": "./referralDistributor.md",
+          "target": "./referralPublication.md",
           "line": 26
+        },
+        {
+          "target": "./referralDistributor.md",
+          "line": 27
         }
       ]
     },
@@ -5770,6 +5779,184 @@
         "settlement__money"
       ],
       "references": []
+    },
+    {
+      "path": "spec/settlement/paymentDispatch.md",
+      "sha256": "a93b78a4370702981dcf11b7e9f348b045e5bd91a057985b286da1a960d79fec",
+      "module": "settlement__paymentDispatch",
+      "stories": [
+        {
+          "heading": "Story: Dispatch under the current outbox lease",
+          "line": 24
+        },
+        {
+          "heading": "Story: Recover uncertainty without opening a competing transfer",
+          "line": 163
+        },
+        {
+          "heading": "Story: Index the canonical finalized payment independently of callback order",
+          "line": 231
+        }
+      ],
+      "rules": [
+        {
+          "heading": "Story: Dispatch under the current outbox lease / Acquire an exclusive token and retain the captured request identity",
+          "line": 26,
+          "definitions": [
+            "Scope",
+            "Network",
+            "Queue",
+            "AttemptState",
+            "Flow",
+            "Binding",
+            "Target",
+            "Attempt",
+            "DispatchRequest",
+            "Inspection",
+            "FailureEvidence",
+            "Receipt",
+            "ExecutorObservation",
+            "ObservationStatus",
+            "Dispatch",
+            "noBinding",
+            "noTarget",
+            "noAttempt",
+            "noRequest",
+            "noInspection",
+            "noReceipt",
+            "initial",
+            "validTarget",
+            "validBinding",
+            "canAdmit",
+            "admit",
+            "request",
+            "attempt",
+            "inspection",
+            "active",
+            "firstActive",
+            "owns",
+            "putRequest",
+            "putAttempt",
+            "clearLease",
+            "canAdvanceClock",
+            "advanceClock",
+            "canAcquire",
+            "acquire",
+            "canReadClaim",
+            "readClaim",
+            "canPrepare",
+            "prepare",
+            "canReuse",
+            "reuse"
+          ]
+        },
+        {
+          "heading": "Story: Dispatch under the current outbox lease / New wallet authority keeps an uncertain former wallet attempt held",
+          "line": 112,
+          "definitions": [
+            "canAuthorizeWallet",
+            "mayRelease",
+            "authorizeWallet",
+            "canClearCurrentWallet",
+            "clearCurrentWallet",
+            "canPark",
+            "park",
+            "canReturnAmbiguous",
+            "returnAmbiguous",
+            "canReturnSuccess",
+            "returnSuccess"
+          ]
+        },
+        {
+          "heading": "Story: Recover uncertainty without opening a competing transfer / Classify the exact executor journal result",
+          "line": 165,
+          "definitions": [
+            "canRecoverExecutor",
+            "acceptJournalSubmission",
+            "reopenUnseen",
+            "retireUnsigned",
+            "recoverExecutor"
+          ]
+        },
+        {
+          "heading": "Story: Recover uncertainty without opening a competing transfer / A reverted receipt names the attempt observed before the asynchronous read",
+          "line": 202,
+          "definitions": [
+            "canInspectFailure",
+            "inspectFailure",
+            "canSettleFailure",
+            "settleFailure"
+          ]
+        },
+        {
+          "heading": "Story: Index the canonical finalized payment independently of callback order / A scanner receipt commits through the canonical financial owner",
+          "line": 233,
+          "definitions": [
+            "exactReceipt",
+            "canIndexFinalized",
+            "indexFinalized",
+            "alwaysLeaseShape",
+            "alwaysIndexedHasExactReceipt",
+            "alwaysActiveQueueHasObligation",
+            "alwaysClockAndTokenDomain",
+            "stepIndexedIsAbsorbing",
+            "stepTargetIsImmutable",
+            "stepNoReceiptFromDispatch",
+            "sometimesUnknown",
+            "sometimesExternalIndex",
+            "sometimesHeld",
+            "sometimesRetried"
+          ]
+        },
+        {
+          "heading": "Story: Index the canonical finalized payment independently of callback order / Finite inputs exercise overlapping leases, claims and receipts",
+          "line": 295,
+          "definitions": [
+            "ordinaryTarget",
+            "privateTarget",
+            "targetValues",
+            "walletOne",
+            "walletTwo",
+            "bindingValues",
+            "verifiedWalletValues",
+            "verifiedChangeValues",
+            "tokenValues",
+            "keyValues",
+            "txValues",
+            "currentTimeValues",
+            "inspectionIdValues",
+            "paidReceipt",
+            "receiptValues",
+            "reverted",
+            "failureValues",
+            "missingJournal",
+            "observedValues",
+            "weight_admit",
+            "weight_authorizeWallet",
+            "weight_acquire",
+            "weight_readClaim",
+            "weight_prepare",
+            "weight_reuse",
+            "weight_returnAmbiguous",
+            "weight_returnSuccess"
+          ]
+        }
+      ],
+      "imports": [],
+      "references": [
+        {
+          "target": "./payment.md",
+          "line": 8
+        },
+        {
+          "target": "./vault.md",
+          "line": 9
+        },
+        {
+          "target": "./payment.md",
+          "line": 258
+        }
+      ]
     },
     {
       "path": "spec/settlement/recovery.md",
