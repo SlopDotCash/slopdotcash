@@ -7789,11 +7789,11 @@
     },
     {
       "path": "workers/payment-executor/bootstrap-workflow.mjs",
-      "sha256": "707242679a4a7429e78fbf2169696ab41b523f5ee7450e19c87e830b527fc516",
+      "sha256": "173f6a7e13de315e5b956bc0e4f563799bace9b1f9f5c500010f6c6600a431a3",
       "models": ["formal/models/payments/inactive_attester.qnt"],
       "candidateLines": [
-        3, 37, 56, 73, 76, 80, 83, 95, 97, 113, 167, 179, 182, 200, 214, 216,
-        222, 224, 239, 265, 284, 295, 298, 328, 332, 333, 340
+        3, 37, 56, 73, 76, 80, 83, 95, 97, 113, 171, 183, 186, 204, 218, 220,
+        226, 228, 243, 269, 288, 299, 302, 332, 336, 337, 344
       ],
       "review": "mapped-abstraction"
     },
