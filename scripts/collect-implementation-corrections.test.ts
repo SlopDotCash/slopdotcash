@@ -6,6 +6,7 @@ import { join } from "node:path";
 import {
   appendPointAwards,
   emptyPointsJournal,
+  latestPoints,
   type PointAward,
   pointKey,
 } from "../src/lib/points";
@@ -121,7 +122,7 @@ function fixture(merge = sha) {
             id: "C_source",
             oid: sha,
             parents: { totalCount: 1 },
-            author: { user: who },
+            author: { user: who as typeof who | null },
           },
         },
       ],
@@ -2608,6 +2609,7 @@ test("resumed months keep a later month's verified author link like an uninterru
 
 function relatedHistoricalFixture(
   original: "empty" | "bound" | "ambiguous" | "wrong-head",
+  mixed?: "linked" | "binding-mismatch" | "linked-mismatch",
 ) {
   const f = valueFixture({ textOnly: true, direct: true });
   const base = transport();
@@ -2622,17 +2624,58 @@ function relatedHistoricalFixture(
   const path = `/repos/${repository}`;
   const url = `https://github.com/${repository}/pull/2`;
   const merged = accepted.mergedAt;
+  const linkedSha = "d".repeat(40);
+  const linkedUser = {
+    __typename: "User",
+    id: "U_linked",
+    login: "linked",
+    avatarUrl: "https://avatars.githubusercontent.com/u/43",
+    url: "https://github.com/linked",
+  };
+  const linkedCommit = {
+    ...accepted.commits.nodes[0].commit,
+    id: "C_linked",
+    oid: linkedSha,
+    author: { user: null },
+  };
   Object.assign(accepted, {
     url,
     number: 2,
-    headRefOid: f.pull.head.sha,
-    additions: 1,
+    headRefOid: mixed ? linkedSha : f.pull.head.sha,
+    additions: mixed ? 3 : 1,
     deletions: 0,
   });
   Object.assign(accepted.commits.nodes[0].commit, {
     oid: f.pull.head.sha,
-    author: { user: null },
+    author: {
+      user:
+        mixed === "binding-mismatch"
+          ? {
+              ...linkedUser,
+              __typename: "Bot",
+              id: "BOT_GitHub",
+              login: "agent",
+            }
+          : null,
+    },
   });
+  if (mixed) {
+    accepted.commits.totalCount = 2;
+    accepted.commits.nodes.push({ commit: linkedCommit });
+  }
+  const promotion = {
+    ...accepted,
+    id: "PR_promotion",
+    number: 3,
+    url: `https://github.com/${repository}/pull/3`,
+    mergedAt: "2026-02-10T00:00:00Z",
+    updatedAt: "2026-02-10T00:00:00Z",
+    commits: {
+      ...accepted.commits,
+      totalCount: 1,
+      nodes: [{ commit: { ...linkedCommit, author: { user: linkedUser } } }],
+    },
+  };
   const originalId = "PR_original";
   const bound = original === "bound" || original === "wrong-head";
   const originalUrl = `https://github.com/${repository}/pull/1`;
@@ -2646,10 +2689,43 @@ function relatedHistoricalFixture(
     merge_commit_sha: number === 2 ? f.pull.merge_commit_sha : null,
     merged_by: number === 2 ? f.pull.merged_by : null,
     comments: number === 1 && bound ? 1 : 0,
-    head: number === 1 && original === "wrong-head" ? { sha } : f.pull.head,
-    changed_files: number === 1 && original === "empty" ? 0 : 1,
-    commits: number === 1 && original === "empty" ? 0 : 1,
+    user:
+      number === 2 && mixed
+        ? { node_id: actor.id, login: actor.login, type: "User" }
+        : f.pull.user,
+    head:
+      number === 1 && original === "wrong-head"
+        ? { sha }
+        : number === 2 && mixed
+          ? { sha: linkedSha }
+          : f.pull.head,
+    changed_files:
+      number === 1 && original === "empty" ? 0 : number === 2 && mixed ? 2 : 1,
+    commits:
+      number === 1 && original === "empty" ? 0 : number === 2 && mixed ? 2 : 1,
   });
+  const linkedFile = {
+    filename: "own.ts",
+    status: "added",
+    additions: 2,
+    deletions: 0,
+    patch:
+      "@@ -0,0 +1,2 @@\n+export const own = true;\n+export const other = true;",
+    blob_url: `https://github.com/${repository}/blob/${linkedSha}/own.ts`,
+  };
+  if (mixed) {
+    const files = new Map([
+      ["fix.ts", new TextEncoder().encode("export const fixed = true;\n")],
+      [
+        "own.ts",
+        new TextEncoder().encode(
+          "export const own = true;\nexport const other = true;\n",
+        ),
+      ],
+    ]);
+    f.bind(linkedSha, files, [f.pull.head.sha]);
+    f.bind(f.pull.merge_commit_sha, files, [f.pull.base.sha, linkedSha]);
+  }
   const reference = (number: number) => ({
     source: {
       __typename: "PullRequest",
@@ -2671,7 +2747,12 @@ function relatedHistoricalFixture(
               search: {
                 issueCount: 1,
                 pageInfo: { hasNextPage: false, endCursor: null },
-                nodes: [accepted],
+                nodes: [
+                  mixed &&
+                  String(variables.searchQuery).includes("merged:2026-02-01")
+                    ? promotion
+                    : accepted,
+                ],
               },
               rateLimit,
             },
@@ -2679,16 +2760,14 @@ function relatedHistoricalFixture(
         if (query.includes("LeaderboardOutcomeCommitLines"))
           return Response.json({
             data: {
-              nodes: [
-                {
-                  __typename: "Commit",
-                  id: "C_source",
-                  oid: f.pull.head.sha,
-                  additions: 1,
-                  deletions: 0,
-                  repository: { id: accepted.repository.id },
-                },
-              ],
+              nodes: (variables.ids as string[]).map((id) => ({
+                __typename: "Commit",
+                id,
+                oid: id === "C_linked" ? linkedSha : f.pull.head.sha,
+                additions: id === "C_linked" ? 2 : 1,
+                deletions: 0,
+                repository: { id: accepted.repository.id },
+              })),
               rateLimit,
             },
           });
@@ -2736,8 +2815,35 @@ function relatedHistoricalFixture(
         .replace(path, `/repos/${valueRepository.id}`)
         .replace(/\/(pulls|issues)\/2(?=\/|$)/u, "/$1/1");
       const evidence = await f.client.get<unknown>(remapped);
-      if (/\/pulls\/[12]\/commits\?/u.test(full) && Array.isArray(evidence))
+      if (/\/pulls\/[12]\/commits\?/u.test(full) && Array.isArray(evidence)) {
         for (const commit of evidence) commit.author = null;
+        if (mixed && full.includes("/pulls/2/"))
+          evidence.push({
+            ...evidence[0],
+            sha: linkedSha,
+            parents: [{ sha: f.pull.head.sha }],
+            author:
+              mixed === "linked-mismatch"
+                ? { node_id: "U_other", login: "other", type: "User" }
+                : null,
+          });
+      }
+      if (mixed && full.includes("/pulls/2/files?") && Array.isArray(evidence))
+        evidence.push(linkedFile);
+      if (mixed && full.includes(`/commits/${f.pull.merge_commit_sha}?`))
+        return Response.json({
+          ...(evidence as Record<string, unknown>),
+          parents: [{ sha: f.pull.base.sha }, { sha: linkedSha }],
+          stats: { additions: 3, deletions: 0, total: 3 },
+          files: [...f.files, linkedFile],
+        });
+      if (mixed && full.includes(`/commits/${linkedSha}?`))
+        return Response.json({
+          sha: linkedSha,
+          parents: [{ sha: f.pull.head.sha }],
+          stats: { additions: 2, deletions: 0, total: 2 },
+          files: [linkedFile],
+        });
       return Response.json(evidence);
     },
     { preconnect: fetch.preconnect },
@@ -2747,22 +2853,23 @@ function relatedHistoricalFixture(
 
 async function collectRelatedHistoricalSource(
   original: Parameters<typeof relatedHistoricalFixture>[0],
+  mixed?: Parameters<typeof relatedHistoricalFixture>[1],
 ) {
-  const network = relatedHistoricalFixture(original);
+  const network = relatedHistoricalFixture(original, mixed);
   const journal = baseline([{ ...award(), sourceUrl: network.url }]);
   const result = await collectImplementationCorrections(
     {
       projects: ["asi"],
       directory: await directory(),
-      month: "2026-01",
-      before: "2026-01-31T00:00:00.000Z",
+      ...(mixed ? { candidateMonth: "2026-01" } : { month: "2026-01" }),
+      before: mixed ? "2026-02-20T00:00:00.000Z" : "2026-01-31T00:00:00.000Z",
     },
     {
       journal,
       registry: registry(),
       token: "fixture-token",
       transport: network.call,
-      now: new Date("2026-01-31T23:59:59Z"),
+      now: new Date(mixed ? "2026-02-21T00:00:00Z" : "2026-01-31T23:59:59Z"),
     },
   );
   return { journal, result, calls: network.calls };
@@ -2830,4 +2937,59 @@ test("a verified retained original stays in the historical manifest and an ambig
     id: candidate.id,
     reason: "Retained original commit census does not reach the source head",
   });
+});
+
+test("historical retained bindings preserve a separately linked canonical author", async () => {
+  const { result, journal } = await collectRelatedHistoricalSource(
+    "bound",
+    "linked",
+  );
+  expect(result.receipt.ownershipComplete).toBe(true);
+  expect(result.receipt.completeProofs).toBe(1);
+  const candidate = result.manifest.candidates[0];
+  if (candidate.proof.status !== "complete")
+    throw new Error("Expected complete proof");
+  expect(candidate.proof.sources[0].commits).toMatchObject([
+    {
+      author: null,
+      files: [{ path: "fix.ts" }],
+      retainedCopy: { originalSourceId: "PR_original" },
+    },
+    {
+      author: { id: "U_linked", kind: "User", login: "linked" },
+      additions: 2,
+      deletions: 0,
+    },
+  ]);
+  expect(candidate.proof.sources[0].commits[1].files).toBeUndefined();
+  const corrected = applyPointsImplementationCorrections(
+    journal,
+    result.manifest,
+    [{ candidateId: candidate.id, eligible: true }],
+    result.manifest.generatedAt,
+    new Map(),
+  );
+  const points = [...latestPoints(corrected.journal).values()]
+    .map(({ award }) => [award.actor.id, award.amount])
+    .sort();
+  expect(points).toEqual([
+    [actor.id, 0],
+    ["U_linked", 9],
+    ["U_submitter", 4],
+  ]);
+});
+
+test("conflicting author evidence holds a historical retained source", async () => {
+  for (const mixed of ["binding-mismatch", "linked-mismatch"] as const) {
+    const { result } = await collectRelatedHistoricalSource("bound", mixed);
+    expect(result.receipt.ownershipComplete).toBe(true);
+    expect(result.receipt.completeProofs).toBe(0);
+    const candidate = result.manifest.candidates[0];
+    expect(candidate.proof).toEqual({ status: "held" });
+    expect(result.receipt.limitations).toContainEqual({
+      id: candidate.id,
+      reason:
+        "Retained accepted commit author differs from the canonical census",
+    });
+  }
 });
