@@ -7067,7 +7067,7 @@
     },
     {
       "path": "src/lib/web-analytics.mjs",
-      "sha256": "71cd8044a1ef9f0cff93b6078b4f28e19949825e8cd77c71344553d2e600d297",
+      "sha256": "96aa2f153796b7565c5ef878c02267c3ca9b22c3ce6290092bf692c7138decac",
       "models": [],
       "candidateLines": [],
       "review": "reviewed-no-independent-state",
