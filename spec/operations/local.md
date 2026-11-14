@@ -10,22 +10,39 @@ real authorization and no implicit production signer or real email delivery.
 
 ```quint
 type HandoffPhase = NotIssued | Issued | Consumed | Expired
-type Handoff = { phase: HandoffPhase, actor: int, originPort: int, nonce: int, expiresAt: int, clock: int, localSession: bool, productionAssertion: bool, localStore: int, productionStore: int }
-pure val initial: Handoff = { phase: NotIssued, actor: 0, originPort: 0, nonce: 0, expiresAt: 0, clock: 0, localSession: false, productionAssertion: false, localStore: 1, productionStore: 2 }
+type Store = LocalStore | ProductionStore
+type MailProvider = LocalSink | RealProvider
+type SignerKind = NoSigner | LocalTestSigner | ProductionSigner
+type Handoff = { phase: HandoffPhase, actor: int, originPort: int, nonce: int, expiresAt: int, clock: int, localSession: bool,
+  sessionStore: Store, writes: List[Store], mails: List[MailProvider], signatures: List[SignerKind] }
+pure val initial: Handoff = { phase: NotIssued, actor: 0, originPort: 0, nonce: 0, expiresAt: 0, clock: 0, localSession: false,
+  sessionStore: LocalStore, writes: List(), mails: List(), signatures: List() }
 pure def canIssue(h: Handoff, actor: int, originPort: int, nonce: int, expiresAt: int): bool = h.phase == NotIssued and actor > 0 and originPort > 0 and originPort <= 65535 and nonce > 0 and expiresAt > h.clock
 pure def issue(h: Handoff, actor: int, originPort: int, nonce: int, expiresAt: int): Handoff = { ...h, phase: Issued, actor: actor, originPort: originPort, nonce: nonce, expiresAt: expiresAt }
-pure def canConsume(h: Handoff, actor: int, originPort: int, nonce: int, loopback: bool, production: bool): bool = h.phase == Issued and h.clock < h.expiresAt and actor == h.actor and originPort == h.originPort and nonce == h.nonce and loopback and not(production)
-pure def consume(h: Handoff, actor: int, originPort: int, nonce: int, loopback: bool, production: bool): Handoff = { ...h, phase: Consumed, localSession: true }
+pure def canConsume(h: Handoff, actor: int, originPort: int, nonce: int, loopback: bool, targetStore: Store): bool = h.phase == Issued and h.clock < h.expiresAt and actor == h.actor and originPort == h.originPort and nonce == h.nonce and loopback and targetStore == LocalStore
+pure def consume(h: Handoff, actor: int, originPort: int, nonce: int, loopback: bool, targetStore: Store): Handoff = { ...h, phase: Consumed, localSession: true, sessionStore: targetStore }
 pure def canAdvanceTime(h: Handoff, time: int): bool = time >= h.clock
 pure def advanceTime(h: Handoff, time: int): Handoff = { ...h, clock: time, phase: if (h.phase == Issued and time >= h.expiresAt) Expired else h.phase }
-pure def alwaysLocalOnly(h: Handoff): bool = not(h.productionAssertion) and h.localStore != h.productionStore
+pure def canWrite(h: Handoff, targetStore: Store): bool = h.localSession and targetStore == h.sessionStore
+pure def write(h: Handoff, targetStore: Store): Handoff = { ...h, writes: h.writes.append(targetStore) }
+pure def canDeliverMail(h: Handoff, provider: MailProvider): bool = h.localSession and provider == LocalSink
+pure def deliverMail(h: Handoff, provider: MailProvider): Handoff = { ...h, mails: h.mails.append(provider) }
+pure def canSign(h: Handoff, signer: SignerKind): bool = h.localSession and signer == LocalTestSigner
+pure def sign(h: Handoff, signer: SignerKind): Handoff = { ...h, signatures: h.signatures.append(signer) }
+pure def alwaysLocalOnly(h: Handoff): bool = h.sessionStore == LocalStore and h.writes.every(w => w == LocalStore)
+  and h.mails.every(m => m == LocalSink) and h.signatures.every(s => s == LocalTestSigner)
+pure def sometimesLocalWork(h: Handoff): bool = h.writes.length() > 0 and h.mails.length() > 0 and h.signatures.length() > 0
 pure def alwaysSingleUse(h: Handoff): bool = h.localSession implies h.phase == Consumed
 pure def sometimesLocalSession(h: Handoff): bool = h.localSession
 pure def sometimesExpired(h: Handoff): bool = h.phase == Expired
 ```
 
 Local report writes, background assessment and private reads use the local
-store and the same authorization rules. The identity adapter validates the
+store and the same authorization rules. In a local session every write
+targets the session's local store, mail goes only to the local sink and the
+only signer is a local test signer; the notification and signer specs must
+take this environment as their delivery and signer input (a composition
+obligation). The identity adapter validates the
 actual loopback host, scheme and complete origin before the port reaches this
 model. Handoff expiry and consumption are atomic database checks. Retired
 isolated test identity stacks and the v1 secure-VM pipeline stay inactive.
@@ -41,4 +58,8 @@ pure val expiresAtValues = Set(1, 3)
 pure val nonceValues = Set(0, 1, 2)
 pure val originPortValues = Set(3000, 3001)
 pure val timeValues = Set(0, 1, 4)
+pure val loopbackValues = Set(true, false)
+pure val targetStoreValues = Set(LocalStore, ProductionStore)
+pure val providerValues = Set(LocalSink, RealProvider)
+pure val signerValues = Set(NoSigner, LocalTestSigner, ProductionSigner)
 ```
