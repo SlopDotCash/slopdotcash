@@ -12,6 +12,12 @@ catalogs:
     '@eslint/js':
       specifier: ^10.0.1
       version: 10.0.1
+    '@fontsource-variable/bricolage-grotesque':
+      specifier: 5.2.10
+      version: 5.2.10
+    '@fontsource/jetbrains-mono':
+      specifier: 5.2.8
+      version: 5.2.8
     '@radix-ui/react-checkbox':
       specifier: ^1.4.1
       version: 1.4.1
@@ -294,6 +300,13 @@ importers:
         version: 5.1.0(@opentelemetry/api@1.10.0)(@types/node@26.6.6)(@vitest/browser-playwright@5.1.0)(@vitest/ui@5.1.0)(happy-dom@21.0.4)(jsdom@31.0.1)(vite@8.3.5(@types/node@26.6.6)(esbuild@0.28.2)(jiti@2.7.0)(yaml@2.9.1))
 
   packages/design-system:
+    dependencies:
+      '@fontsource-variable/bricolage-grotesque':
+        specifier: 'catalog:'
+        version: 5.2.10
+      '@fontsource/jetbrains-mono':
+        specifier: 'catalog:'
+        version: 5.2.8
     devDependencies:
       eslint:
         specifier: 'catalog:'
@@ -1176,6 +1189,12 @@ packages:
     peerDependenciesMeta:
       '@noble/hashes':
         optional: true
+
+  '@fontsource-variable/bricolage-grotesque@5.2.10':
+    resolution: {integrity: sha512-5EDsCqgGpKVcJWE4sg9ydli+t5WM97mISYw5lla/Ev4z71FwXh1oN0YUU8xjkRW9+wBCGD9R+ntAvI8G4bUFJg==}
+
+  '@fontsource/jetbrains-mono@5.2.8':
+    resolution: {integrity: sha512-6w8/SG4kqvIMu7xd7wt6x3idn1Qux3p9N62s6G3rfldOUYHpWcc2FKrqf+Vo44jRvqWj2oAtTHrZXEP23oSKwQ==}
 
   '@grpc/grpc-js@1.14.7':
     resolution: {integrity: sha512-W4W/fcBMGRVtG6dW2c7cw2mnpS3hvbBd+oQXjh2iYFTZDk1JJmcNqkM5KSaPubQpamlUUurrlb7G1s9NJeERmQ==}
@@ -5858,6 +5877,10 @@ snapshots:
       levn: 0.4.1
 
   '@exodus/bytes@1.16.0': {}
+
+  '@fontsource-variable/bricolage-grotesque@5.2.10': {}
+
+  '@fontsource/jetbrains-mono@5.2.8': {}
 
   '@grpc/grpc-js@1.14.7':
     dependencies:
