@@ -195,8 +195,12 @@ protected financial history in the canonical append and treat an applied
 manifest as replay after revocation. Targeted Quint simulation and TypeScript
 replay reached all nine goals, and nine directed assertions passed. The
 publication proof establishes all 37 obligations, including exact-prefix
-transitivity across canonical and public state changes.
-[Points evidence](validation/points/targeted.json) · [Publication proof](validation/points/publication-proof.json)
+transitivity across canonical and public state changes. Historical corrections
+proved 15 of 18 obligations, including all transition rules. The three open
+laws concern concrete protection-race, aggregate-weight and replay witnesses.
+The attempted proof did not close their shared filter lemma. The directed
+checks passed all three.
+[Points evidence](validation/points/targeted.json) · [Publication proof](validation/points/publication-proof.json) · [Correction proof results](validation/points/baseline-proof.json)
 
 The local Solana stages require a fresh owned validator receipt for each
 shell stage and a confirmed local funding result before tests. The command

@@ -1,0 +1,62 @@
+{
+  "base": "b6dfe096bf094ff9ece1ba8838392da2b556b281",
+  "quint": "0.33.1",
+  "dafny": "4.11.0",
+  "sampleSeed": 812,
+  "results": {
+    "points__allocation": {
+      "source": "spec/points/allocation.md",
+      "sha256": "88fb3f1f3658dab887d763fd959145342b6783129c00d143a4690d48062d0ed3",
+      "typecheck": "passed",
+      "generation": "passed"
+    },
+    "points__journal": {
+      "source": "spec/points/journal.md",
+      "sha256": "4ed1dbc6cf4b5cef41d0fe669393c5aa1136586d489c927476feba8ea15a3188",
+      "typecheck": "passed",
+      "generation": "passed"
+    },
+    "points__corrections": {
+      "source": "spec/points/corrections.md",
+      "sha256": "84ea708b143c1589f6198893a54e07156bc7f904523f28086a8aaaceb5b9f833",
+      "typecheck": "passed",
+      "generation": "passed",
+      "proof": {
+        "total": 18,
+        "unproved": [
+          "lawProtectionRace: (lawProtectionRace(manifest) == true)",
+          "lawCanonicalWeightPreserved: (lawCanonicalWeightPreserved(manifest) == true)",
+          "lawReplayPreservesRevocation: (lawReplayPreservesRevocation(manifest) == true)"
+        ],
+        "exhausted": [],
+        "resting": {},
+        "errors": []
+      }
+    },
+    "points__publication": {
+      "source": "spec/points/publication.md",
+      "sha256": "59fb20095e17fe9d582feee70873402eb54a63e807a3f0195585ee11270c2f80",
+      "typecheck": "passed",
+      "generation": "passed",
+      "proof": {
+        "total": 37,
+        "unproved": [
+          "stage: (inv(p) ==> canStage(p) ==> stepExactHistory(p, stage(p, candidate)))",
+          "observeCanonical: (inv(p) ==> canObserveCanonical(p, snapshot, verified) ==> alwaysCanonicalVisible(observeCanonical(p, snapshot, verified)))",
+          "observeCanonical: (inv(p) ==> canObserveCanonical(p, snapshot, verified) ==> stepExactHistory(p, observeCanonical(p, snapshot, verified)))",
+          "reject: (inv(p) ==> canReject(p) ==> stepExactHistory(p, reject(p)))",
+          "interrupt: (inv(p) ==> canInterrupt(p) ==> stepExactHistory(p, interrupt(p)))",
+          "initialHolds: inv(initialHolds())",
+          "step: inv(step(current, event))"
+        ],
+        "exhausted": [],
+        "resting": {
+          "step: inv(step(current, event))": "stage: (inv(p) ==> canStage(p) ==> stepExactHistory(p, stage(p, candidate)))"
+        },
+        "errors": []
+      }
+    }
+  },
+  "scope": "Baseline Dafny on migrated specs without additional local proof files. See simulation.json for independent model simulation and generated TypeScript replay.",
+  "legacyComparison": "8d14a9692b998ee3f4479725b6323125f11f11be"
+}
