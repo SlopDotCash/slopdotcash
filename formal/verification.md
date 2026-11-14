@@ -326,7 +326,9 @@ reporting requirement.
 - The forwarding model discharged all 94 obligations. Reporter authorization
   and the durable send claim gate the exact retained version. A lost response
   retains the pending submission until a bounded listing reconciles its
-  canonical advisory. The original Slop receipt remains independently owned.
+  canonical advisory. The receipt owner discharged all 23 obligations after
+  forwarding moved to its dedicated model.
+  [Private intake proof](validation/source-coverage/private-intake-receipt-owner.json)
 - Points recovery discharged all nine obligations. Reconciliation keeps the
   exact award revision prefix and the union of complete source coverage, even
   when a newer copy has coverage changes alone.

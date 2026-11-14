@@ -1,0 +1,18 @@
+{
+  "sourceInputs": {
+    "spec/security/intake.md": "f5d01642407abd480e7b316bbb902089bbb6c290b17096e322540100a4304922"
+  },
+  "units": {
+    "security__intake.ts": {
+      "total": 23,
+      "unproved": [],
+      "exhausted": [],
+      "resting": {},
+      "errors": [],
+      "meaningSha256": "26aa76d99e99704fea88c43c653517789a57ba04044a499b54139bb04125ca73",
+      "generatedDafnySha256": "b9738b54cc69808e9e13a9fbf9372518fe674d9bd268fcb6bdb13cbe81ebddd9",
+      "proofSource": null
+    }
+  },
+  "qualification": "Vibestack proof on the exact units and imported definitions. No imported proof axioms offered."
+}
