@@ -5,6 +5,8 @@ queues, separated local and production environments, and source-bound releases.
 
 - [Daily backups and restoration](./backup.md)
 - [Isolated local identity](./local.md)
+- [Local validator funding command](./localCommand.md)
+- [Local Solana validator stages](./localValidator.md)
 - [Notifications](./notifications.md)
 - [Release and operational qualification](./release.md)
 

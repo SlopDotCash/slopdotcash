@@ -1,0 +1,7 @@
+
+  localValidatorWitness
+    ok independentShellStagesTest passed 1 test(s)
+    ok localDeadlineAndOwnedEscalationTest passed 1 test(s)
+    ok primaryFailuresAndLedgerRemovalTest passed 1 test(s)
+
+  3 passing (1578ms)

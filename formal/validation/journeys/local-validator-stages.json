@@ -1,0 +1,694 @@
+{
+  "sourceHashes": {
+    "spec/operations/localCommand.md": "60e080a22eb5b0923a808b4d772795b30a29eaf02a0f20b6ee893cff7eaca2c8",
+    "spec/operations/localValidator.md": "0be6d6ae4b7f821a39e78e99acb42b1e1141eb73eade5311b15770298f1dfcaa"
+  },
+  "scope": "Generated core only. No live validator, payer, signal, or subprocess invoked.",
+  "journeys": [
+    {
+      "name": "two shell stages each require new owned readiness, funding, and stop receipt",
+      "steps": [
+        {
+          "unit": "operations__localValidator",
+          "event": {
+            "type": "startStage",
+            "receipt": 1,
+            "mode": "ShellCaller",
+            "publicReadOnlyMounts": true,
+            "localEndpoint": false
+          },
+          "allowed": false
+        },
+        {
+          "unit": "operations__localValidator",
+          "event": {
+            "type": "startStage",
+            "receipt": 1,
+            "mode": "ShellCaller",
+            "publicReadOnlyMounts": true,
+            "localEndpoint": true
+          },
+          "allowed": true
+        },
+        {
+          "unit": "operations__localValidator",
+          "event": {
+            "type": "recognizeReady",
+            "receipt": 1,
+            "ownedReady": false
+          },
+          "allowed": false
+        },
+        {
+          "unit": "operations__localValidator",
+          "event": {
+            "type": "recognizeReady",
+            "receipt": 1,
+            "ownedReady": true
+          },
+          "allowed": true
+        },
+        {
+          "unit": "operations__localValidator",
+          "event": {
+            "type": "recordTests",
+            "testCode": 0
+          },
+          "allowed": false
+        },
+        {
+          "unit": "operations__localCommand",
+          "event": {
+            "type": "launch",
+            "receipt": 1,
+            "group": 1,
+            "now": 0,
+            "loopbackHttp": false,
+            "localPayer": true
+          },
+          "allowed": false
+        },
+        {
+          "unit": "operations__localCommand",
+          "event": {
+            "type": "launch",
+            "receipt": 1,
+            "group": 1,
+            "now": 0,
+            "loopbackHttp": true,
+            "localPayer": true
+          },
+          "allowed": true
+        },
+        {
+          "unit": "operations__localCommand",
+          "event": {
+            "type": "exitCommand",
+            "exitCode": 0,
+            "now": 59999
+          },
+          "allowed": true
+        },
+        {
+          "unit": "operations__localCommand",
+          "event": {
+            "type": "confirmDrained",
+            "group": 1,
+            "ownGroupGone": true,
+            "streamsDrained": true
+          },
+          "allowed": true
+        },
+        {
+          "unit": "operations__localCommand",
+          "event": {
+            "type": "settleCommand",
+            "cleanupConfirmed": true,
+            "cleanupDeadline": false
+          },
+          "allowed": true
+        },
+        {
+          "unit": "operations__localValidator",
+          "event": {
+            "type": "recordFunding",
+            "funding": {
+              "receipt": 1,
+              "code": 0,
+              "cleanupConfirmed": true
+            }
+          },
+          "allowed": true
+        },
+        {
+          "unit": "operations__localValidator",
+          "event": {
+            "type": "recordTests",
+            "testCode": 0
+          },
+          "allowed": true
+        },
+        {
+          "unit": "operations__localValidator",
+          "event": {
+            "type": "recordStop",
+            "receipt": 1,
+            "closeReturned": false,
+            "closeOk": true,
+            "ownStopped": true
+          },
+          "allowed": false
+        },
+        {
+          "unit": "operations__localValidator",
+          "event": {
+            "type": "recordStop",
+            "receipt": 1,
+            "closeReturned": true,
+            "closeOk": true,
+            "ownStopped": true
+          },
+          "allowed": true
+        },
+        {
+          "unit": "operations__localValidator",
+          "event": {
+            "type": "finishStage"
+          },
+          "allowed": true
+        },
+        {
+          "unit": "operations__localValidator",
+          "event": {
+            "type": "startStage",
+            "receipt": 1,
+            "mode": "ShellCaller",
+            "publicReadOnlyMounts": true,
+            "localEndpoint": true
+          },
+          "allowed": false
+        },
+        {
+          "unit": "operations__localValidator",
+          "event": {
+            "type": "startStage",
+            "receipt": 2,
+            "mode": "ShellCaller",
+            "publicReadOnlyMounts": true,
+            "localEndpoint": true
+          },
+          "allowed": true
+        },
+        {
+          "unit": "operations__localValidator",
+          "event": {
+            "type": "recognizeReady",
+            "receipt": 1,
+            "ownedReady": true
+          },
+          "allowed": false
+        },
+        {
+          "unit": "operations__localValidator",
+          "event": {
+            "type": "recognizeReady",
+            "receipt": 2,
+            "ownedReady": true
+          },
+          "allowed": true
+        },
+        {
+          "unit": "operations__localValidator",
+          "event": {
+            "type": "recordFunding",
+            "funding": {
+              "receipt": 1,
+              "code": 0,
+              "cleanupConfirmed": true
+            }
+          },
+          "allowed": false
+        },
+        {
+          "unit": "operations__localValidator",
+          "event": {
+            "type": "recordFunding",
+            "funding": {
+              "receipt": 2,
+              "code": 0,
+              "cleanupConfirmed": false
+            }
+          },
+          "allowed": false
+        },
+        {
+          "unit": "operations__localValidator",
+          "event": {
+            "type": "recordFunding",
+            "funding": {
+              "receipt": 2,
+              "code": 0,
+              "cleanupConfirmed": true
+            }
+          },
+          "allowed": true
+        },
+        {
+          "unit": "operations__localValidator",
+          "event": {
+            "type": "recordTests",
+            "testCode": 0
+          },
+          "allowed": true
+        },
+        {
+          "unit": "operations__localValidator",
+          "event": {
+            "type": "recordStop",
+            "receipt": 1,
+            "closeReturned": true,
+            "closeOk": true,
+            "ownStopped": true
+          },
+          "allowed": false
+        },
+        {
+          "unit": "operations__localValidator",
+          "event": {
+            "type": "recordStop",
+            "receipt": 2,
+            "closeReturned": true,
+            "closeOk": true,
+            "ownStopped": true
+          },
+          "allowed": true
+        },
+        {
+          "unit": "operations__localValidator",
+          "event": {
+            "type": "finishStage"
+          },
+          "allowed": true
+        }
+      ]
+    },
+    {
+      "name": "deadline waits for grace and refuses a changed process owner",
+      "steps": [
+        {
+          "unit": "operations__localValidator",
+          "event": {
+            "type": "startStage",
+            "receipt": 1,
+            "mode": "ShellCaller",
+            "publicReadOnlyMounts": true,
+            "localEndpoint": true
+          },
+          "allowed": true
+        },
+        {
+          "unit": "operations__localValidator",
+          "event": {
+            "type": "recognizeReady",
+            "receipt": 1,
+            "ownedReady": true
+          },
+          "allowed": true
+        },
+        {
+          "unit": "operations__localCommand",
+          "event": {
+            "type": "launch",
+            "receipt": 1,
+            "group": 1,
+            "now": 0,
+            "loopbackHttp": true,
+            "localPayer": true
+          },
+          "allowed": true
+        },
+        {
+          "unit": "operations__localCommand",
+          "event": {
+            "type": "interrupt",
+            "now": 59999,
+            "canceled": false
+          },
+          "allowed": false
+        },
+        {
+          "unit": "operations__localCommand",
+          "event": {
+            "type": "interrupt",
+            "now": 60000,
+            "canceled": false
+          },
+          "allowed": true
+        },
+        {
+          "unit": "operations__localCommand",
+          "event": {
+            "type": "escalate",
+            "now": 64999,
+            "group": 1,
+            "currentOwnership": true
+          },
+          "allowed": false
+        },
+        {
+          "unit": "operations__localCommand",
+          "event": {
+            "type": "escalate",
+            "now": 65000,
+            "group": 1,
+            "currentOwnership": false
+          },
+          "allowed": false
+        },
+        {
+          "unit": "operations__localCommand",
+          "event": {
+            "type": "escalate",
+            "now": 65000,
+            "group": 2,
+            "currentOwnership": true
+          },
+          "allowed": false
+        },
+        {
+          "unit": "operations__localCommand",
+          "event": {
+            "type": "escalate",
+            "now": 65000,
+            "group": 1,
+            "currentOwnership": true
+          },
+          "allowed": true
+        },
+        {
+          "unit": "operations__localCommand",
+          "event": {
+            "type": "exitCommand",
+            "exitCode": 0,
+            "now": 65000
+          },
+          "allowed": true
+        },
+        {
+          "unit": "operations__localCommand",
+          "event": {
+            "type": "confirmDrained",
+            "group": 1,
+            "ownGroupGone": true,
+            "streamsDrained": true
+          },
+          "allowed": true
+        },
+        {
+          "unit": "operations__localCommand",
+          "event": {
+            "type": "settleCommand",
+            "cleanupConfirmed": true,
+            "cleanupDeadline": false
+          },
+          "allowed": true
+        },
+        {
+          "unit": "operations__localValidator",
+          "event": {
+            "type": "recordFunding",
+            "funding": {
+              "receipt": 1,
+              "code": 1,
+              "cleanupConfirmed": true
+            }
+          },
+          "allowed": true
+        },
+        {
+          "unit": "operations__localValidator",
+          "event": {
+            "type": "recordTests",
+            "testCode": 0
+          },
+          "allowed": false
+        },
+        {
+          "unit": "operations__localValidator",
+          "event": {
+            "type": "finishStage"
+          },
+          "allowed": false
+        },
+        {
+          "unit": "operations__localValidator",
+          "event": {
+            "type": "recordStop",
+            "receipt": 1,
+            "closeReturned": true,
+            "closeOk": true,
+            "ownStopped": true
+          },
+          "allowed": true
+        },
+        {
+          "unit": "operations__localValidator",
+          "event": {
+            "type": "finishStage"
+          },
+          "allowed": true
+        }
+      ]
+    },
+    {
+      "name": "command exit failure survives an unconfirmed local validator stop",
+      "steps": [
+        {
+          "unit": "operations__localValidator",
+          "event": {
+            "type": "startStage",
+            "receipt": 1,
+            "mode": "ShellCaller",
+            "publicReadOnlyMounts": true,
+            "localEndpoint": true
+          },
+          "allowed": true
+        },
+        {
+          "unit": "operations__localValidator",
+          "event": {
+            "type": "recognizeReady",
+            "receipt": 1,
+            "ownedReady": true
+          },
+          "allowed": true
+        },
+        {
+          "unit": "operations__localCommand",
+          "event": {
+            "type": "launch",
+            "receipt": 1,
+            "group": 1,
+            "now": 0,
+            "loopbackHttp": true,
+            "localPayer": true
+          },
+          "allowed": true
+        },
+        {
+          "unit": "operations__localCommand",
+          "event": {
+            "type": "exitCommand",
+            "exitCode": 37,
+            "now": 1
+          },
+          "allowed": true
+        },
+        {
+          "unit": "operations__localCommand",
+          "event": {
+            "type": "settleCommand",
+            "cleanupConfirmed": false,
+            "cleanupDeadline": true
+          },
+          "allowed": true
+        },
+        {
+          "unit": "operations__localValidator",
+          "event": {
+            "type": "recordFunding",
+            "funding": {
+              "receipt": 1,
+              "code": 37,
+              "cleanupConfirmed": false
+            }
+          },
+          "allowed": true
+        },
+        {
+          "unit": "operations__localValidator",
+          "event": {
+            "type": "recordStop",
+            "receipt": 1,
+            "closeReturned": true,
+            "closeOk": false,
+            "ownStopped": true
+          },
+          "allowed": true
+        },
+        {
+          "unit": "operations__localValidator",
+          "event": {
+            "type": "finishStage"
+          },
+          "allowed": true
+        }
+      ]
+    },
+    {
+      "name": "acceptance cancellation waits for stop before ledger removal",
+      "steps": [
+        {
+          "unit": "operations__localValidator",
+          "event": {
+            "type": "startStage",
+            "receipt": 1,
+            "mode": "AcceptanceCaller",
+            "publicReadOnlyMounts": true,
+            "localEndpoint": true
+          },
+          "allowed": true
+        },
+        {
+          "unit": "operations__localValidator",
+          "event": {
+            "type": "cancelStart",
+            "cancellationCode": 7
+          },
+          "allowed": true
+        },
+        {
+          "unit": "operations__localValidator",
+          "event": {
+            "type": "recordLedgerCleanup",
+            "removed": true
+          },
+          "allowed": false
+        },
+        {
+          "unit": "operations__localValidator",
+          "event": {
+            "type": "recordStop",
+            "receipt": 1,
+            "closeReturned": true,
+            "closeOk": true,
+            "ownStopped": true
+          },
+          "allowed": true
+        },
+        {
+          "unit": "operations__localValidator",
+          "event": {
+            "type": "finishStage"
+          },
+          "allowed": false
+        },
+        {
+          "unit": "operations__localValidator",
+          "event": {
+            "type": "recordLedgerCleanup",
+            "removed": true
+          },
+          "allowed": true
+        },
+        {
+          "unit": "operations__localValidator",
+          "event": {
+            "type": "finishStage"
+          },
+          "allowed": true
+        }
+      ]
+    },
+    {
+      "name": "acceptance success requires confirmed ledger removal",
+      "steps": [
+        {
+          "unit": "operations__localValidator",
+          "event": {
+            "type": "startStage",
+            "receipt": 1,
+            "mode": "AcceptanceCaller",
+            "publicReadOnlyMounts": true,
+            "localEndpoint": true
+          },
+          "allowed": true
+        },
+        {
+          "unit": "operations__localValidator",
+          "event": {
+            "type": "recognizeReady",
+            "receipt": 1,
+            "ownedReady": true
+          },
+          "allowed": true
+        },
+        {
+          "unit": "operations__localValidator",
+          "event": {
+            "type": "recordTests",
+            "testCode": 0
+          },
+          "allowed": true
+        },
+        {
+          "unit": "operations__localValidator",
+          "event": {
+            "type": "recordStop",
+            "receipt": 1,
+            "closeReturned": true,
+            "closeOk": true,
+            "ownStopped": true
+          },
+          "allowed": true
+        },
+        {
+          "unit": "operations__localValidator",
+          "event": {
+            "type": "finishStage"
+          },
+          "allowed": false
+        },
+        {
+          "unit": "operations__localValidator",
+          "event": {
+            "type": "recordLedgerCleanup",
+            "removed": true
+          },
+          "allowed": true
+        },
+        {
+          "unit": "operations__localValidator",
+          "event": {
+            "type": "finishStage"
+          },
+          "allowed": true
+        }
+      ]
+    }
+  ],
+  "simulations": [
+    {
+      "unit": "operations__localCommand",
+      "series": [
+        {
+          "kind": "step",
+          "command": "seed 122727684764823; to simulate again: pnpm exec quint run gen/operations__localCommand.run.qnt --main operations__localCommand_run --step step --invariant inv --max-samples 1000 --max-steps 30 --mbt --seed 122727684764823",
+          "samples": 1000,
+          "replayed": 200
+        },
+        {
+          "kind": "probe",
+          "command": "seed 254759812402391; to simulate again: pnpm exec quint run gen/operations__localCommand.run.qnt --main operations__localCommand_run --step probe --invariant inv --max-samples 1000 --max-steps 20 --mbt --seed 254759812402391",
+          "samples": 1000,
+          "replayed": 200
+        }
+      ],
+      "events": [
+        "confirmDrained",
+        "escalate",
+        "exitCommand",
+        "interrupt",
+        "launch",
+        "settleCommand"
+      ],
+      "goals": [
+        "sometimesFailedCleanup",
+        "sometimesFundingSucceeded",
+        "sometimesGraceExpired"
+      ],
+      "unreached": []
+    }
+  ],
+  "proofs": []
+}

@@ -10,3 +10,5 @@ received remain separate records.
 - [Review credit](./reviews.md)
 - [Journal and corrections](./journal.md)
 - [Source census and publication](./census.md)
+- [Historical correction import](./corrections.md)
+- [Exact-prefix publication](./publication.md)
