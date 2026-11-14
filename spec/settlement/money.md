@@ -127,6 +127,9 @@ pure def lawNumericOrderTransitive(a: Amount, b: Amount, c: Amount): bool =
 pure def lawAddOrder(a: Amount, b: Amount, c: Amount): bool =
   (validAmount(a) and validAmount(b) and validAmount(c)) implies
     compareAmounts(addAmounts(a, c), addAmounts(b, c)) == compareAmounts(a, b)
+pure def lawUnitGap(a: Amount, b: Amount): bool =
+  (validAmount(a) and validAmount(b) and compareAmounts(a, b) < 0) implies
+    compareAmounts(addAmounts(a, List(1)), b) <= 0
 pure def lawAddMonotone(a: Amount, b: Amount): bool =
   (validAmount(a) and validAmount(b)) implies compareAmounts(addAmounts(a, b), a) >= 0
 pure def lawAddCongruence(a: Amount, b: Amount, c: Amount): bool =

@@ -1952,3 +1952,19 @@ lemma lawMultiplyZero_ensures(a: seq<int>)
     AmountValueOrder(multiplyAmounts(zero,a),zero);
   }
 }
+
+lemma lawUnitGap_ensures(a: seq<int>, b: seq<int>)
+  ensures (lawUnitGap(a, b) == true)
+{
+  if validAmount(a) && validAmount(b) && compareAmounts(a,b) < 0 {
+    var h := (n: int, d: int) => 1000*n+d;
+    assert validAmount([1]) && [1] == [1]+[];
+    assert reverseAmount([]) == [];
+    AmountValueCons(1,[]);
+    assert Std.Collections.Seq.FoldLeft(h,0,reverseAmount([1])) == 1;
+    lawAdditionValid_ensures(a,[1]);
+    AmountValueAdd(a,[1]);
+    AmountValueOrder(a,b);
+    AmountValueOrder(addAmounts(a,[1]),b);
+  }
+}
