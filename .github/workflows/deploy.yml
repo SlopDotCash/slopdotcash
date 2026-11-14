@@ -519,6 +519,8 @@ jobs:
   browsers:
     name: Browser ${{ matrix.lane }}
     needs: prepare
+    # The optional restore ancestor may be skipped on an otherwise valid run.
+    if: ${{ !cancelled() && needs.prepare.result == 'success' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     strategy:
@@ -653,7 +655,7 @@ jobs:
 
   isolated-artifact:
     needs: prepare
-    if: needs.prepare.outputs.sandbox == 'true'
+    if: ${{ !cancelled() && needs.prepare.result == 'success' && needs.prepare.outputs.sandbox == 'true' }}
     uses: ./.github/workflows/vetting-sandbox.yml
     permissions:
       contents: read
