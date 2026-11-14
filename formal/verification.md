@@ -298,6 +298,10 @@ page view traffic to the site's own origin.
   dependency bytes. Buyback discharged all 94 obligations, including the exact
   floor-half purchase and burn bound.
   [Repaired journeys](validation/finance/referral-buyback-repaired-models.json) · [Distributor proof](validation/finance/referral-distributor-proof-complete.json) · [Buyback proof](validation/finance/buyback-proof-complete.json)
+- Referral accrual discharged all 191 obligations with the 38 checked shared
+  money obligations. This checks ordered filing, pinned inputs, and cumulative
+  project and program caps.
+  [Accrual proof](validation/finance/referral-accrual-proof-complete.json)
 - Reserve release discharged all 146 obligations, including conservation after
   an exact partial settlement and the dependent step condition.
   [Reserve proof](validation/active-proof/settlement/reserve-complete.json)
