@@ -520,7 +520,7 @@
     },
     {
       "path": "backend/points/handler.ts",
-      "sha256": "be8e92b7e274cf91946b9e776dd3d2318742b8300c88c12a450e609c5e0d655b",
+      "sha256": "e2d6c92f3bd5b0492dbd04fc35eea011c826bd52b82c2f0bd0eca65503276252",
       "models": [
         "formal/models/api/api_accounts.qnt",
         "formal/models/api/identity_consumer_exchange.qnt",
@@ -529,8 +529,8 @@
         "formal/models/vetting/vetting_stream_authority.qnt"
       ],
       "candidateLines": [
-        21, 22, 115, 215, 220, 225, 229, 299, 327, 331, 334, 337, 340, 345, 350,
-        354, 377, 393
+        21, 22, 120, 220, 225, 230, 234, 304, 332, 336, 339, 342, 345, 350, 355,
+        359, 382, 398
       ],
       "review": "mapped-abstraction"
     },
@@ -786,6 +786,13 @@
         "formal/models/referrals/referral_distribution.qnt"
       ],
       "candidateLines": [20, 21, 43, 78, 98, 108, 110, 111, 112, 115],
+      "review": "mapped-abstraction"
+    },
+    {
+      "path": "backend/referrals/codes.ts",
+      "sha256": "9aa6dda4ccc658d0c039844d61f8f65d885c973de7590f61cf119cc1b912fc51",
+      "models": ["formal/models/referrals/referral_code.qnt"],
+      "candidateLines": [143, 151, 159, 210, 231, 232, 240],
       "review": "mapped-abstraction"
     },
     {
@@ -2024,7 +2031,7 @@
     },
     {
       "path": "functions/[[path]].ts",
-      "sha256": "b15107923163f50fad8061b23601adacafa1187480b9609b6e2d317c45d434b3",
+      "sha256": "a38c540f4d1a7c95d22f2cf08d623dc1a0dc394c38439b0829f0cb88143ddbf3",
       "models": ["formal/models/api/project_skill_publication.qnt"],
       "candidateLines": [],
       "review": "mapped-abstraction",
@@ -2032,7 +2039,7 @@
     },
     {
       "path": "functions/api/v1/[[path]].ts",
-      "sha256": "6f7b6e9f6517adcce584bf170ef65efd0a2326767eb79bae3b948f11b0530243",
+      "sha256": "86aabce140b2c3df20520db903cafa9e872031000097c55fc3bf9a5078265fa8",
       "models": [
         "formal/models/api/api_request_composition.qnt",
         "formal/models/api/identity_consumer_exchange.qnt",
@@ -2040,7 +2047,7 @@
         "formal/models/payments/solana_binding_api.qnt",
         "formal/models/vetting/vetting_stream_authority.qnt"
       ],
-      "candidateLines": [519, 520, 556, 569],
+      "candidateLines": [528, 529, 565, 578],
       "review": "mapped-abstraction"
     },
     {
@@ -3310,6 +3317,13 @@
         22, 23, 33, 34, 40, 45, 46, 47, 61, 81, 82, 83, 88, 89, 91, 101, 102,
         103, 108, 109, 111, 118
       ],
+      "review": "mapped-abstraction"
+    },
+    {
+      "path": "migrations/0124_referral_codes.sql",
+      "sha256": "0b4ff6188f8c8822d2f5e92f5705c6dbdda55d8f69f408d6218bbc2d6d9b401a",
+      "models": ["formal/models/referrals/referral_code.qnt"],
+      "candidateLines": [27, 28, 34, 35],
       "review": "mapped-abstraction"
     },
     {
@@ -5242,7 +5256,7 @@
     },
     {
       "path": "src/Points.tsx",
-      "sha256": "e6e257aacaec2be7e2244d9bcd2550404ad709f750fa1b5a0d883fc3eeeac6d0",
+      "sha256": "11b23fc45c28cb4a8ea25babae11a362e2e7a5f299bfbc3aeb636a7d6d38113c",
       "models": [
         "formal/models/ui/ui_calendar_views.qnt",
         "formal/models/ui/ui_email_parent.qnt",
@@ -5254,20 +5268,20 @@
         "formal/models/ui/ui_session.qnt"
       ],
       "candidateLines": [
-        14, 19, 87, 102, 103, 104, 106, 112, 122, 131, 134, 142, 143, 145, 146,
-        162, 164, 211, 212, 213, 216, 217, 218, 219, 236, 242, 249, 257, 267,
-        274, 281, 295, 315, 332, 350, 351, 352, 357, 381, 382, 387, 390, 391,
-        392, 393, 394, 396, 397, 414, 420, 477, 478, 483, 485, 515, 516, 517,
-        519, 521, 524, 533, 535, 537, 539, 541, 544, 545, 549, 551, 553, 563,
-        564, 569, 571, 583, 584, 614, 618, 619, 629, 630, 641, 643, 650, 654,
-        659, 660, 684, 690, 742, 743, 744, 745, 748, 760, 834, 847, 852, 861,
-        931, 952, 958, 968, 977, 982, 984, 987, 993, 994, 1005, 1014, 1022,
-        1024, 1025, 1033, 1036, 1037, 1038, 1039, 1041, 1042, 1045, 1046, 1057,
-        1066, 1090, 1094, 1103, 1125, 1126, 1127, 1136, 1220, 1230, 1235, 1253,
-        1255, 1257, 1260, 1261, 1262, 1264, 1332, 1336, 1438, 1439, 1440, 1470,
-        1471, 1510, 1512, 1513, 1514, 1516, 1523, 1525, 1529, 1531, 1533, 1542,
-        1543, 1549, 1555, 1560, 1569, 1570, 1571, 1572, 1574, 1575, 1578, 1579,
-        1581, 1582, 1586, 1594, 1595, 1596, 1597, 1600, 1604, 1615, 1616, 1621
+        14, 19, 89, 106, 107, 108, 110, 116, 126, 135, 138, 146, 147, 149, 150,
+        166, 168, 218, 219, 220, 223, 224, 225, 226, 243, 249, 256, 264, 274,
+        281, 288, 302, 322, 339, 357, 358, 359, 364, 388, 389, 394, 397, 398,
+        399, 400, 401, 403, 404, 421, 427, 484, 485, 490, 492, 522, 523, 524,
+        526, 528, 531, 540, 542, 544, 546, 548, 551, 552, 556, 558, 560, 570,
+        571, 576, 578, 590, 591, 621, 625, 626, 636, 637, 648, 650, 657, 661,
+        666, 667, 691, 697, 749, 750, 751, 752, 755, 767, 841, 854, 859, 868,
+        938, 959, 965, 975, 984, 989, 991, 994, 1000, 1001, 1012, 1021, 1029,
+        1031, 1032, 1040, 1043, 1044, 1045, 1046, 1048, 1049, 1052, 1053, 1064,
+        1073, 1097, 1101, 1110, 1147, 1148, 1149, 1158, 1242, 1252, 1257, 1275,
+        1277, 1279, 1282, 1283, 1284, 1286, 1354, 1358, 1460, 1461, 1462, 1492,
+        1493, 1532, 1534, 1535, 1536, 1538, 1545, 1547, 1551, 1553, 1555, 1564,
+        1565, 1571, 1577, 1582, 1591, 1592, 1593, 1594, 1596, 1597, 1600, 1601,
+        1603, 1604, 1608, 1616, 1617, 1618, 1619, 1622, 1626, 1637, 1638, 1643
       ],
       "review": "mapped-abstraction"
     },
@@ -5494,6 +5508,13 @@
         421, 429, 430, 439, 440, 442, 443, 450, 451, 453, 454, 470, 471, 472,
         474, 565
       ],
+      "review": "mapped-abstraction"
+    },
+    {
+      "path": "src/ReferralCode.tsx",
+      "sha256": "684efc816370335b74b0c8b85a3100da7257fb6a42cdb387c03946d7e60e109f",
+      "models": ["formal/models/ui/ui_referral_code.qnt"],
+      "candidateLines": [3, 37, 39, 54, 77, 78, 81, 137],
       "review": "mapped-abstraction"
     },
     {
@@ -6520,6 +6541,13 @@
       "sha256": "22d987f01e76e454b47fb4fc1dca8fd67675f9efd9ed82aabe38a2eac0b5bf8f",
       "models": ["formal/models/referrals/referral_claim_review.qnt"],
       "candidateLines": [36, 66, 80, 117, 125, 137, 239],
+      "review": "mapped-abstraction"
+    },
+    {
+      "path": "src/lib/referral-code.ts",
+      "sha256": "c87ba1c8ddd57198e4b50b2d5040bb7147ec8eb229d9f62e9f17091e039ffb6c",
+      "models": ["formal/models/referrals/referral_code.qnt"],
+      "candidateLines": [36],
       "review": "mapped-abstraction"
     },
     {
@@ -13796,6 +13824,25 @@
       ]
     },
     {
+      "path": "formal/models/referrals/referral_code.qnt",
+      "sha256": "ae07f679326d291ecfb851675f85c0d74f52c114e6dcd0cb7f05b001bfd09bbf",
+      "sources": [
+        "backend/referrals/codes.ts",
+        "migrations/0124_referral_codes.sql",
+        "src/lib/referral-code.ts"
+      ],
+      "scenarios": [
+        "anotherGithubLoginRefusedTest",
+        "limitRefusesANewNameTest",
+        "limitStillAllowsAReturnTest",
+        "otherAccountCannotTakeAReplacedNameTest",
+        "refusedNameChangesNothingTest",
+        "replacedNameStaysWithItsAccountTest",
+        "reservedNameRefusedTest",
+        "teamAccountRefusedTest"
+      ]
+    },
+    {
       "path": "formal/models/referrals/referral_control_plane.qnt",
       "sha256": "39909f02a5035aa5d8dcbcb36c980258904df35c643eaa8789dabd2b3edd093d",
       "sources": ["contracts/evm/src/ReferralDistributor.sol"],
@@ -17717,6 +17764,17 @@
         "unreadableMarkerCannotStartSendTest",
         "unreadableMarkerRequiresExplicitResetTest",
         "unsupportedLocksRefuseMutationTest"
+      ]
+    },
+    {
+      "path": "formal/models/ui/ui_referral_code.qnt",
+      "sha256": "a54dcc058c0ce5d2fbeb63bd2e2e68302a4d05ede128c72de470417b8c1e820a",
+      "sources": ["src/ReferralCode.tsx"],
+      "scenarios": [
+        "accountChangeDropsAnEarlierSaveTest",
+        "earlierSaveCannotAnswerAfterAccountChangeTest",
+        "savedNameShowsAndARefusalKeepsItTest",
+        "secondSaveWaitsForTheFirstTest"
       ]
     },
     {
