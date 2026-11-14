@@ -791,9 +791,9 @@
     },
     {
       "path": "backend/referrals/codes.ts",
-      "sha256": "9aa6dda4ccc658d0c039844d61f8f65d885c973de7590f61cf119cc1b912fc51",
+      "sha256": "0667fd65eb51fb72acbe4801e94af5f918233c7aeb3a388fdc9520531c565a6e",
       "models": ["formal/models/referrals/referral_code.qnt"],
-      "candidateLines": [143, 151, 159, 210, 231, 232, 240],
+      "candidateLines": [143, 151, 159, 217, 220, 246, 247, 255],
       "review": "mapped-abstraction"
     },
     {
@@ -13826,7 +13826,7 @@
     },
     {
       "path": "formal/models/referrals/referral_code.qnt",
-      "sha256": "ae07f679326d291ecfb851675f85c0d74f52c114e6dcd0cb7f05b001bfd09bbf",
+      "sha256": "05e51c5359091dcda9fd35574b36a63ac7b496872578d9044929b2788586add7",
       "sources": [
         "backend/referrals/codes.ts",
         "migrations/0124_referral_codes.sql",
