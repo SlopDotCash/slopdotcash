@@ -10,17 +10,26 @@ Staging publishes development with independent identity, storage and secrets.
 ### Source identity, checks, data and delivery remain separate evidence
 
 ```quint
+import releaseCoverage as Coverage from "./releaseCoverage"
 type Environment = Production | Staging
 type ReleasePhase = Candidate | Checked | Publishing | PublicationUncertain | Published | Verified
 type DataKind = NoData | FreshCollection | RetainedSnapshot
-type QualityGate = Types | Models | Unit | Browser | Isolation | Identity
-type Release = { phase: ReleasePhase, environment: Environment, source: int, branchHead: int, checkedSource: int, artifactDigest: int, servedDigest: int, trustedWorkflow: bool, isolatedSecrets: bool, publicationLock: bool, passed: Set[QualityGate], dataKind: DataKind, registryDigest: int, githubDigest: int, snapshotDigest: int, dataEnvironment: Environment, dataRecordedAt: int, explicitManual: bool, bootstrapData: bool, deployment: int, attempt: int }
-pure val initial: Release = { phase: Candidate, environment: Production, source: 1, branchHead: 1, checkedSource: 0, artifactDigest: 0, servedDigest: 0, trustedWorkflow: false, isolatedSecrets: false, publicationLock: false, passed: Set(), dataKind: NoData, registryDigest: 0, githubDigest: 0, snapshotDigest: 0, dataEnvironment: Production, dataRecordedAt: 0, explicitManual: false, bootstrapData: false, deployment: 0, attempt: 0 }
+type QualityGate = Types | Models | Proofs | ModelInventory | ProofInventory | Unit | Browser | BrowserSmoke | Isolation | Identity
+type Release = { phase: ReleasePhase, environment: Environment, source: int, branchHead: int, checkedSource: int, artifactDigest: int, servedDigest: int, trustedWorkflow: bool, isolatedSecrets: bool, publicationLock: bool, passed: Set[QualityGate], dataKind: DataKind, registryDigest: int, githubDigest: int, snapshotDigest: int, dataEnvironment: Environment, dataRecordedAt: int, manualRun: bool, skipProofs: bool, skipBrowserTests: bool, explicitManual: bool, bootstrapData: bool, deployment: int, attempt: int }
+pure val initial: Release = { phase: Candidate, environment: Production, source: 1, branchHead: 1, checkedSource: 0, artifactDigest: 0, servedDigest: 0, trustedWorkflow: false, isolatedSecrets: false, publicationLock: false, passed: Set(), dataKind: NoData, registryDigest: 0, githubDigest: 0, snapshotDigest: 0, dataEnvironment: Production, dataRecordedAt: 0, manualRun: false, skipProofs: false, skipBrowserTests: false, explicitManual: false, bootstrapData: false, deployment: 0, attempt: 0 }
 pure def canConfigure(r: Release): bool = r.phase == Candidate
-pure def configure(r: Release, environment: Environment, trustedWorkflow: bool, isolatedSecrets: bool): Release = { ...r, environment: environment, trustedWorkflow: trustedWorkflow, isolatedSecrets: isolatedSecrets, dataKind: NoData, passed: Set() }
+pure def configure(r: Release, environment: Environment, trustedWorkflow: bool, isolatedSecrets: bool): Release = { ...r, environment: environment, trustedWorkflow: trustedWorkflow, isolatedSecrets: isolatedSecrets, dataKind: NoData, manualRun: false, skipProofs: false, skipBrowserTests: false, passed: Set() }
 pure def canObserveBranchHead(r: Release, sourceHead: int): bool = sourceHead > 0
 pure def observeBranchHead(r: Release, sourceHead: int): Release = { ...r, branchHead: sourceHead }
 pure def requiredBranch(environment: Environment): str = if (environment == Production) "main" else "development"
+pure def coverageRequest(r: Release): Coverage::Requests = {
+  kind: if (r.manualRun) Coverage::ManualDispatch else Coverage::DeployingPush,
+  target: if (r.environment == Production) Coverage::Main else Coverage::Development,
+  skipProofs: r.skipProofs, skipBrowserTests: r.skipBrowserTests }
+pure def canSelectManualCoverage(r: Release, authenticatedDispatch: bool): bool = r.phase == Candidate
+  and r.trustedWorkflow and authenticatedDispatch and not(r.manualRun)
+pure def selectManualCoverage(r: Release, authenticatedDispatch: bool, skipProofs: bool, skipBrowserTests: bool): Release =
+  { ...r, manualRun: true, skipProofs: skipProofs, skipBrowserTests: skipBrowserTests }
 ```
 
 ### Normal releases need verified registry and GitHub collections for this environment
@@ -35,14 +44,15 @@ pure def collectData(r: Release, environment: Environment, registryDigest: int, 
 
 ### An explicit manual release may retain its own verified published snapshot
 
-The snapshot includes original history, timestamps and record counts. Its
+The snapshot includes original history, timestamps and record counts. An
+authenticated workflow dispatch is required before retaining it. Its
 adapter validates its digest and all rows before this event. A snapshot from
 another environment or bootstrap data never qualifies.
 
 ```quint
-pure def canRetainSnapshot(r: Release, environment: Environment, digest: int, originalRecordedAt: int, explicitManual: bool, bootstrap: bool): bool = r.phase == Candidate and environment == r.environment and digest > 0 and originalRecordedAt > 0 and explicitManual and not(bootstrap)
+pure def canRetainSnapshot(r: Release, environment: Environment, digest: int, originalRecordedAt: int, explicitManual: bool, bootstrap: bool): bool = r.phase == Candidate and environment == r.environment and digest > 0 and originalRecordedAt > 0 and r.manualRun and explicitManual and not(bootstrap)
 pure def retainSnapshot(r: Release, environment: Environment, digest: int, originalRecordedAt: int, explicitManual: bool, bootstrap: bool): Release = { ...r, dataKind: RetainedSnapshot, snapshotDigest: digest, dataEnvironment: environment, dataRecordedAt: originalRecordedAt, explicitManual: explicitManual, bootstrapData: bootstrap, registryDigest: 0, githubDigest: 0 }
-pure def validData(r: Release): bool = r.dataEnvironment == r.environment and r.dataRecordedAt > 0 and (if (r.dataKind == FreshCollection) r.registryDigest > 0 and r.githubDigest > 0 else r.dataKind == RetainedSnapshot and r.snapshotDigest > 0 and r.explicitManual and not(r.bootstrapData))
+pure def validData(r: Release): bool = r.dataEnvironment == r.environment and r.dataRecordedAt > 0 and (if (r.dataKind == FreshCollection) r.registryDigest > 0 and r.githubDigest > 0 else r.dataKind == RetainedSnapshot and r.snapshotDigest > 0 and r.manualRun and r.explicitManual and not(r.bootstrapData))
 pure def stepPreservesDataTimestamps(before: Release, via: str, after: Release): bool = (via != "collectData" and via != "retainSnapshot") implies before.dataRecordedAt == after.dataRecordedAt
 ```
 
@@ -51,12 +61,20 @@ pure def stepPreservesDataTimestamps(before: Release, via: str, after: Release):
 Actual check receipts are verified before `recordGate`. Passed quality cannot
 be inferred from a deployment, a prior revision or an absent result. Exhaustive
 verification timeouts retain their exact warning under STATE-05. Broken models,
-counterexamples, crashes, unstable inputs and failed scenarios remain failures.
+counterexamples, crashes, unstable inputs and failed scenarios remain failures. Authenticated
+manual dispatch may select the [independent coverage options](./releaseCoverage.md).
+A proof omission records no proof result, and browser smoke records no full
+browser pass. Both inventory receipts are always required.
 
 ```quint
 pure def canRecordGate(r: Release, gate: QualityGate, source: int): bool = r.phase == Candidate and source == r.source and r.branchHead == r.source
 pure def recordGate(r: Release, gate: QualityGate, source: int): Release = { ...r, passed: r.passed.union(Set(gate)) }
-pure def allGatesPassed(r: Release): bool = r.passed.exists(checked => checked == Types) and r.passed.exists(checked => checked == Models) and r.passed.exists(checked => checked == Unit) and r.passed.exists(checked => checked == Browser) and r.passed.exists(checked => checked == Isolation) and r.passed.exists(checked => checked == Identity)
+pure def allGatesPassed(r: Release): bool =
+  Coverage::releaseReceiptsPass(coverageRequest(r), {
+    common: r.passed.exists(gate => gate == Types) and r.passed.exists(gate => gate == Unit) and r.passed.exists(gate => gate == Isolation) and r.passed.exists(gate => gate == Identity),
+    modelInventory: r.passed.exists(gate => gate == ModelInventory), proofInventory: r.passed.exists(gate => gate == ProofInventory),
+    stateModels: r.passed.exists(gate => gate == Models), staticProofs: r.passed.exists(gate => gate == Proofs),
+    browserSmoke: r.passed.exists(gate => gate == BrowserSmoke), browserComplete: r.passed.exists(gate => gate == Browser) })
 pure def canCheck(r: Release, artifactDigest: int): bool = r.phase == Candidate and validData(r) and r.isolatedSecrets and r.trustedWorkflow and r.branchHead == r.source and artifactDigest > 0 and allGatesPassed(r)
 pure def check(r: Release, artifactDigest: int): Release = { ...r, phase: Checked, checkedSource: r.source, artifactDigest: artifactDigest }
 ```
@@ -134,7 +152,8 @@ pure val registryDigestValues = Set(0, 1)
 pure val sourceValues = Set(1, 2)
 pure val sourceHeadValues = Set(1, 2)
 pure val viaValues = Set("", "a", "b")
-pure val weight_recordGate = 10
+pure val weight_selectManualCoverage = 4
+pure val weight_recordGate = 18
 pure val weight_check = 10
 pure val weight_acquireLock = 10
 pure val weight_publish = 10

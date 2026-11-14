@@ -209,12 +209,17 @@ and approval remain pending.
 
 ## Continuing proof and source audit
 
-The 14 November source update contains the approved provisional EVM token
-vault policy and member-owned referral names. It also records the requirement
+The 14 November source updates contain the approved provisional EVM token
+vault policy, member-owned referral names and the two manual release options. It also records the requirement
 for the production Pages Function to configure its analytics beacon to send
 page view traffic to the site's own origin.
 [Approved source paragraphs](validation/active-proof/source-policy-delta.json)
 
+- Manual release coverage distinguishes an omitted full lane from a passing
+  receipt. The release machine still requires both inventories, common gates
+  and the exact selected browser and proof evidence. All 63 obligations and
+  four reachability goals passed.
+  [Release coverage results](validation/source-coverage/release-coverage.json)
 - Provisional vault setup checks creation replacement, finality and exact
   deposit evidence. All 107 obligations proved.
   [Provisional vault results](validation/source-coverage/provisional-vault.json)
@@ -242,15 +247,13 @@ page view traffic to the site's own origin.
   [Durable keeper results](validation/source-coverage/keeper-lifecycle.json)
 - Settlements retain exact receipts and amounts by obligation alongside prior
   unrelated payments. The allocation model applies the approved purpose-specific
-  split. Vault proof now discharges 32 of 42 obligations. The remaining
-  conservation and positivity clauses require additional arithmetic proofs.
-  [Settlement journeys](validation/active-proof/settlement/settlement-history-models.json) · [Vault proof](validation/active-proof/settlement/vault-reservation-effects.json)
+  split. All 42 vault obligations proved, including conservation and positivity.
+  [Settlement journeys](validation/active-proof/settlement/settlement-history-models.json) · [Vault proof](validation/active-proof/settlement/vault-complete.json)
 - Shared money proves exact addition, covered subtraction, and value order for
-  arbitrary-width amounts with zero padding. The focused run discharged 27 of
-  31 obligations. Division bounds, division reconstruction, and both fee
-  conservation laws remain open. Fixed floor-halving proves exact quotient,
-  parity and order independently.
-  [Shared money proofs](validation/active-proof/money-add-subtract/verification.json) · [Floor halves](validation/finance/half-proof.json)
+  arbitrary-width amounts with zero padding. All 36 obligations proved, including long
+  division bounds and reconstruction, and both fee conservation laws. Fixed
+  floor-halving proves exact quotient, parity and order independently.
+  [Shared money proofs](validation/active-proof/money-complete/verification.json) · [Floor halves](validation/finance/half-proof.json)
 - Monthly settlement discharged all 73 obligations. Allocation proves valid
   computed shares and whole-pool allocation for a sole eligible recipient.
   Full conservation across multiple recipients still needs proof.
@@ -266,12 +269,12 @@ page view traffic to the site's own origin.
   [RPC diagnostic results](validation/finance/buyback-rpc-proof.json)
 - Referrals and buyback preserve filing identity, posting history and the
   pinned bridged quantity. The repaired models replayed 210 traces. The
-  distributor proof discharged 141 of 146 obligations against its recorded
+  distributor proof discharged all 146 obligations against its recorded
   dependency bytes. Buyback also replays exact halving.
-  [Repaired journeys](validation/finance/referral-buyback-repaired-models.json) · [Distributor proof](validation/finance/referral-distributor-proof-progress.json) · [Floor-half replay](validation/finance/buyback-exact-half-replay.json)
-- Reserve release proof discharges 144 of 146 obligations. Exact partial
-  settlement conservation and its dependent step condition remain open.
-  [Reserve proof](validation/active-proof/settlement/reserve-validity-conservation.json)
+  [Repaired journeys](validation/finance/referral-buyback-repaired-models.json) · [Distributor proof](validation/finance/referral-distributor-proof-complete.json) · [Floor-half replay](validation/finance/buyback-exact-half-replay.json)
+- Reserve release discharged all 146 obligations, including conservation after
+  an exact partial settlement and the dependent step condition.
+  [Reserve proof](validation/active-proof/settlement/reserve-complete.json)
 
 The structural inventory accounts for all 473 retained models, 5,800 legacy
 actions and 4,962 legacy scenarios. The detailed crosswalks map the reviewed

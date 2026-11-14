@@ -102,6 +102,40 @@
           "summary": "The private live recovery summary may report an exact finalized read on the configured Robinhood RPC. The diagnostic cannot change accounting or signing."
         }
       }
+    },
+    "mainReleasePolicyUpdate": {
+      "commit": "21663f12cd276dfc7b4c913e3b9fbe34c153f99a",
+      "prdPath": "docs/slop-product-requirements.md",
+      "prdSha256": "d425851ca28fe5e987fa2e31854add1b606daf7db036294ec09bf303e7e34df0",
+      "paragraphs": {
+        "manualBrowserSmoke": {
+          "section": 9,
+          "line": 717,
+          "text": "Normal releases sync the current D1 registry and collect live GitHub data. An explicit manual main or development release may set `use_published_data` to retain the validated rankings and profiles last published by its own environment (production or staging; operator decision, 13 November 2026). Preserve their timestamps, history, and counts. The option defaults to false and cannot run with bootstrap data. It cannot use the PR adapter or skip any code, browser, sandbox, environment, source, or deployed-byte check. Missing or invalid data stops release. A manual release may separately set `skip_proofs` (section 12, STATE-05); that option leaves out only the state-model and LemmaScript proof stages. Operator decision, 14 November 2026: a manual main or development release may also set `skip_browser_tests`. That run runs the browser smoke lane against the built bundle instead of the complete browser lanes. Pull requests still run the lanes their files affect, and a push release still runs all of them. Bundle, data, integration, installer, sandbox, environment, source and deployed-byte checks still run. The option defaults to false. A release that skipped the browser lanes is not evidence that they passed.",
+          "owners": [
+            "spec/operations/releaseCoverage.md",
+            "spec/operations/release.md"
+          ]
+        },
+        "manualProofOmission": {
+          "section": 12,
+          "line": 809,
+          "text": "- **STATE-05 — Verification evidence.** Pin Quint in the lockfile. Run `bun run formal:check` and `bun run formal:verify`. Record tool versions, source hashes, scenarios, backend, finite bounds, results, and unresolved gaps. Distinguish simulation, exhaustive finite exploration, implementation conformance, and live integration. Operator decision, 12 November 2026: an exhaustive verification that runs its whole time allowance without a result is recorded as \"not verified within its time bound\", shown as a warning, and does not fail the release gate. A counterexample, crash, broken model, unstable input or failed scenario check still fails it, and every identity, command, tool and view check still applies to the timed-out stage. Operator decision, 14 November 2026: an explicit manual main or development release may set `skip_proofs`. That run repeats neither the Quint state-model stages nor the LemmaScript proofs. Pull requests still run the models and proofs their files affect, a push release still runs all of them, and a scheduled run checks all of them on the default branch every night without blocking a release. Both inventory checks and every code, browser, sandbox, environment, source and deployed-byte check still run in the skipping release. The option defaults to false. A release that skipped the proofs is not evidence that they passed.",
+          "owners": [
+            "spec/operations/releaseCoverage.md",
+            "spec/operations/release.md"
+          ]
+        },
+        "customReferralCode": {
+          "section": 11,
+          "line": 781,
+          "text": "A signed-in member may choose a name for their own referral link (migration `0124_referral_codes.sql`, `backend/referrals/codes.ts`). `/referral/<name>` forwards to the project form with that member's GitHub login as the referrer. The name is only a pointer to the GitHub account: capture, the immutable record and accrual are unchanged. Refuse reserved names, another GitHub account's login, a name another account holds or has held, and administrator and moderator accounts. A member has one name in use, may replace it, and may hold five names in all; a replaced name stops forwarding and stays with its account. A name nobody has in use forwards to the form without a referrer. Settings shows the link and states no reward. The operator proposed this on 14 November 2026; the owner's merge approves it.",
+          "owners": [
+            "spec/backend/referralCodes.md",
+            "spec/frontend/referralSettings.md"
+          ]
+        }
+      }
     }
   },
   "notes": "The pinned PRD remains the migration baseline. The two current legacy refs supply later approved requirements. Each changed paragraph retains exact source text."

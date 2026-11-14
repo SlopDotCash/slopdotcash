@@ -1034,6 +1034,55 @@
       "references": []
     },
     {
+      "path": "spec/contributor/commandCompletion.md",
+      "sha256": "b77bfd56328eb907b6eb76027db4a0d6f316588f3189894182f08c9ea3f89f77",
+      "module": "contributor__commandCompletion",
+      "stories": [
+        {
+          "heading": "Story: Preserve the first failure through both cleanup boundaries",
+          "line": 11
+        }
+      ],
+      "rules": [
+        {
+          "heading": "Story: Preserve the first failure through both cleanup boundaries / The helper retains a nonzero exit and its bounded diagnostic output",
+          "line": 13,
+          "definitions": [
+            "Command",
+            "Failure",
+            "Phase",
+            "Result",
+            "Completion",
+            "initial",
+            "canFinishCommand",
+            "finishCommand",
+            "canCleanupRequest",
+            "cleanupRequest"
+          ]
+        },
+        {
+          "heading": "Story: Preserve the first failure through both cleanup boundaries / Outer release can fail after publication without erasing earlier evidence",
+          "line": 40,
+          "definitions": [
+            "canClassify",
+            "classify",
+            "canRelease",
+            "release",
+            "alwaysCommand",
+            "alwaysCleanBeforeSuccess",
+            "alwaysPublished",
+            "alwaysExit",
+            "stepFirstFailurePersists",
+            "sometimesSuccess",
+            "sometimesFailureAfterPublication",
+            "sometimesBothCleanupsPreserveCommand"
+          ]
+        }
+      ],
+      "imports": [],
+      "references": []
+    },
+    {
       "path": "spec/contributor/evidence.md",
       "sha256": "45c0c719573e946a8331c5a1bd7fbfa063b6f04b7876d3a3f4d2077de1a4b25d",
       "module": "contributor__evidence",
@@ -1301,7 +1350,7 @@
     },
     {
       "path": "spec/settlement/money.md",
-      "sha256": "801d269c4fa02d62cac4d5d37412d831793daf16aff7a751c07e10a5ce383f4b",
+      "sha256": "4a0d4ea094817e47a835d3c022fdcf4c57cabaf0de60b502ddeaa151d99785e2",
       "module": "settlement__money",
       "stories": [
         {
@@ -1427,8 +1476,19 @@
           ]
         },
         {
-          "heading": "Story: Multiply and divide full-width monetary values / Long division chooses each quotient limb by ten fixed binary decisions",
+          "heading": "Story: Multiply and divide full-width monetary values / Full-width products preserve value, distributivity, and exact cancellation",
           "line": 208,
+          "definitions": [
+            "lawMultiplyCongruence",
+            "lawMultiplyCommutative",
+            "lawMultiplyAddition",
+            "lawMultiplyCancellation",
+            "lawDivisionByOne"
+          ]
+        },
+        {
+          "heading": "Story: Multiply and divide full-width monetary values / Long division chooses each quotient limb by ten fixed binary decisions",
+          "line": 230,
           "definitions": [
             "quotientBits",
             "quotientCandidate",
@@ -1443,7 +1503,7 @@
         },
         {
           "heading": "Story: Multiply and divide full-width monetary values / Full-width ordinary and private fee calculations conserve every base unit",
-          "line": 239,
+          "line": 261,
           "definitions": [
             "ordinaryFeeAmount",
             "ordinaryNetAmount",
@@ -1456,7 +1516,7 @@
         },
         {
           "heading": "Story: Multiply and divide full-width monetary values / Multiplication, division and derived fees preserve valid limb representations",
-          "line": 255,
+          "line": 277,
           "definitions": [
             "lawMultiplySmallValid",
             "lawMultiplyValid",
@@ -1467,7 +1527,7 @@
         },
         {
           "heading": "Story: Multiply and divide full-width monetary values / Simulation samples exercise missing, matching and conflicting evidence",
-          "line": 274,
+          "line": 296,
           "definitions": [
             "assetValues",
             "decimalsValues",
@@ -1520,7 +1580,7 @@
     },
     {
       "path": "spec/fees/buyback.md",
-      "sha256": "709729d6a21d1a204a95c8a15fdb98d8b04497f225b77dd6249ccfedd91eec05",
+      "sha256": "805bf185354dc70865ee85f8d8ffcb08882c18f79cfe4e0380f932c7ecb0d999",
       "module": "fees__buyback",
       "stories": [
         {
@@ -2842,7 +2902,7 @@
     },
     {
       "path": "spec/operations/index.md",
-      "sha256": "fd3eb202c539ed630f67e6db1e84adc3a9177d16f18532dc74cd1b10873cfd17",
+      "sha256": "7e51e510edb2f8712156be2cde399e0ab5b8ef1ff65133478a637baf25a2f432",
       "module": "operations",
       "stories": [],
       "rules": [],
@@ -2873,8 +2933,12 @@
           "line": 11
         },
         {
-          "target": "./paymentJobs.md",
+          "target": "./releaseCoverage.md",
           "line": 12
+        },
+        {
+          "target": "./paymentJobs.md",
+          "line": 13
         }
       ]
     },
@@ -3235,8 +3299,80 @@
       "references": []
     },
     {
+      "path": "spec/operations/releaseCoverage.md",
+      "sha256": "9e002447408487e82d859c4ecdcbb16664d0b9cb323298333520030e4f617109",
+      "module": "operations__releaseCoverage",
+      "stories": [
+        {
+          "heading": "Story: Resolve the exact coverage for a trusted release",
+          "line": 14
+        },
+        {
+          "heading": "Story: Retain independent verification coverage outside releases",
+          "line": 78
+        }
+      ],
+      "rules": [
+        {
+          "heading": "Story: Resolve the exact coverage for a trusted release / Only a manual release on the target branch can request either option",
+          "line": 16,
+          "definitions": [
+            "RunKind",
+            "Target",
+            "Requests",
+            "ReleaseChecks",
+            "releaseTarget",
+            "deploying",
+            "explicitManual",
+            "coverage",
+            "lawPushRunsEverything",
+            "lawOnlyManualCanOmit",
+            "lawSeparateOptions"
+          ]
+        },
+        {
+          "heading": "Story: Resolve the exact coverage for a trusted release / Source-bound receipts satisfy only the lanes they actually ran",
+          "line": 54,
+          "definitions": [
+            "CheckReceipts",
+            "releaseReceiptsPass",
+            "fullFormalEvidence",
+            "lawInventoriesNeverOmitted",
+            "lawSmokeNeedsItsOwnReceipt"
+          ]
+        },
+        {
+          "heading": "Story: Retain independent verification coverage outside releases / Pull requests select affected work and nightly verification always runs in full",
+          "line": 80,
+          "definitions": [
+            "Affected",
+            "RequestChecks",
+            "pullRequestChecks",
+            "nightlyRunsAll",
+            "lawPromotionChecksBoth",
+            "lawScopeAlwaysChecksInventories",
+            "lawNightlyIsIndependent"
+          ]
+        },
+        {
+          "heading": "Story: Retain independent verification coverage outside releases / Simulation includes default, manual, pull request and nightly inputs",
+          "line": 113,
+          "definitions": [
+            "defaultReleaseRequest",
+            "requestValues",
+            "fullReceipts",
+            "receiptsValues",
+            "noAffected",
+            "affectedValues"
+          ]
+        }
+      ],
+      "imports": [],
+      "references": []
+    },
+    {
       "path": "spec/operations/release.md",
-      "sha256": "16717364ec0c6219b4ff22e7cb98f03b92bbcf5153d53d5c95b4cf1053f79456",
+      "sha256": "4ed36d5d184079d482210a62934d4867bc7b009235d5d6a3d6cc5e397fe92981",
       "module": "operations__release",
       "stories": [
         {
@@ -3245,7 +3381,7 @@
         },
         {
           "heading": "Story: Keep operational readiness distinct from source approval",
-          "line": 102
+          "line": 120
         }
       ],
       "rules": [
@@ -3263,12 +3399,15 @@
             "configure",
             "canObserveBranchHead",
             "observeBranchHead",
-            "requiredBranch"
+            "requiredBranch",
+            "coverageRequest",
+            "canSelectManualCoverage",
+            "selectManualCoverage"
           ]
         },
         {
           "heading": "Story: Publish the exact checked source and data to its own environment / Normal releases need verified registry and GitHub collections for this environment",
-          "line": 26,
+          "line": 35,
           "definitions": [
             "canCollectData",
             "collectData"
@@ -3276,7 +3415,7 @@
         },
         {
           "heading": "Story: Publish the exact checked source and data to its own environment / An explicit manual release may retain its own verified published snapshot",
-          "line": 36,
+          "line": 45,
           "definitions": [
             "canRetainSnapshot",
             "retainSnapshot",
@@ -3286,7 +3425,7 @@
         },
         {
           "heading": "Story: Publish the exact checked source and data to its own environment / Every required check binds the same candidate and artifact",
-          "line": 49,
+          "line": 59,
           "definitions": [
             "canRecordGate",
             "recordGate",
@@ -3297,7 +3436,7 @@
         },
         {
           "heading": "Story: Publish the exact checked source and data to its own environment / The shared publication lock and unchanged branch sourceHead gate every send",
-          "line": 64,
+          "line": 82,
           "definitions": [
             "canAcquireLock",
             "acquireLock",
@@ -3313,7 +3452,7 @@
         },
         {
           "heading": "Story: Publish the exact checked source and data to its own environment / Served bytes require exact deployment identity and current branch equivalence",
-          "line": 79,
+          "line": 97,
           "definitions": [
             "canVerifyServed",
             "verifyServed",
@@ -3328,7 +3467,7 @@
         },
         {
           "heading": "Story: Keep operational readiness distinct from source approval / Expired reporting health restricts only optional trace collection",
-          "line": 104,
+          "line": 122,
           "definitions": [
             "traceCollectionReady",
             "contributionAvailable",
@@ -3337,7 +3476,7 @@
         },
         {
           "heading": "Story: Keep operational readiness distinct from source approval / Simulation samples exercise missing, matching and conflicting evidence",
-          "line": 119,
+          "line": 137,
           "definitions": [
             "ageHoursValues",
             "artifactDigestValues",
@@ -3351,6 +3490,7 @@
             "sourceValues",
             "sourceHeadValues",
             "viaValues",
+            "weight_selectManualCoverage",
             "weight_recordGate",
             "weight_check",
             "weight_acquireLock",
@@ -3362,8 +3502,15 @@
           ]
         }
       ],
-      "imports": [],
-      "references": []
+      "imports": [
+        "operations__releaseCoverage"
+      ],
+      "references": [
+        {
+          "target": "./releaseCoverage.md",
+          "line": 65
+        }
+      ]
     },
     {
       "path": "spec/points/allocation.md",
