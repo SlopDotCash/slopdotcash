@@ -14,7 +14,7 @@
     },
     {
       "path": ".github/workflows/deploy.yml",
-      "sha256": "310d14a9428b9bbe25b5eb003f01e3902060fd777330ff36925996db74c4d4d7",
+      "sha256": "9e789ca6070415b2f534093f112a691ce359e37a456b618fd307488c46a1314f",
       "models": [
         "formal/models/release/ci_browser_evidence.qnt",
         "formal/models/release/ci_browser_runtime.qnt",
@@ -24,9 +24,9 @@
       ],
       "candidateLines": [
         29, 39, 71, 186, 218, 223, 224, 278, 332, 409, 522, 528, 596, 599, 625,
-        626, 647, 659, 725, 955, 983, 1040, 1131, 1237, 1239, 1240, 1444, 1527,
-        1680, 1682, 1712, 1821, 1843, 1914, 1925, 1950, 2021, 2034, 2047, 2056,
-        2057, 2058
+        626, 647, 659, 725, 955, 983, 1048, 1139, 1245, 1247, 1248, 1452, 1535,
+        1688, 1690, 1720, 1829, 1851, 1922, 1933, 1958, 2029, 2042, 2055, 2064,
+        2065, 2066
       ],
       "review": "mapped-abstraction"
     },
@@ -4403,12 +4403,12 @@
     },
     {
       "path": "scripts/release-robinhood-rpc.ts",
-      "sha256": "bb593a483ea08e4882cec854c3c72c3172926a8f0b6898630e6836c7ca38c17d",
+      "sha256": "ebce9a0bd71a4c758f493b1e7f81546560f71bd3cb77d053d8e4044583513c43",
       "models": ["formal/models/release/release_publication.qnt"],
       "candidateLines": [
         57, 60, 63, 70, 76, 77, 78, 79, 80, 202, 206, 226, 228, 233, 234, 235,
-        236, 237, 238, 317, 320, 323, 401, 421, 422, 424, 427, 452, 453, 454,
-        459, 494, 530
+        236, 237, 238, 321, 324, 327, 405, 425, 426, 428, 431, 456, 457, 458,
+        463, 498, 534
       ],
       "review": "mapped-abstraction"
     },
@@ -14105,7 +14105,7 @@
     },
     {
       "path": "formal/models/release/release_publication.qnt",
-      "sha256": "ee178831fe77482ced3ea6adaab7474ccaa5c5eaa66dda186a97691dd4d7cb07",
+      "sha256": "36503ad56f8b4f7e0f4d0d4f11d663be249c2eabdd371a410b44afe2e862fe6f",
       "sources": [
         ".github/workflows/deploy.yml",
         "scripts/dist-manifest.mjs",
@@ -14119,12 +14119,15 @@
       ],
       "scenarios": [
         "ambiguousUploadKeepsExternalWriteWithoutPromotionTest",
+        "changedRpcInheritanceStillStopsUploadTest",
         "cleanupFailureDoesNotValidateOrPromoteTest",
         "deployErrorDoesNotInventRollbackOrConfirmationTest",
+        "disabledConverterDoesNotRequireInheritanceTest",
         "disabledSlopbotDoesNotNeedOrMutateItsSecretTest",
         "earlierWritesRemainPartialOnSecretRefusalTest",
         "emptyKeyAllocationStillNeedsExitCleanupTest",
         "exactReleaseTest",
+        "inheritedRpcMismatchStopsBeforeWritesTest",
         "metadataReadNeedsSecretFileCleanupTest",
         "missingProtectedSecretNeverUploadsTest",
         "missingVersionBindingCannotPromoteTest",

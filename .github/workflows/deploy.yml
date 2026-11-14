@@ -1003,6 +1003,14 @@ jobs:
             exit 1
           fi
 
+      - name: Check fee-converter RPC inheritance before publication
+        if: steps.release-input.outputs.superseded != 'true' && vars.SLOP_FEE_CONVERTER_RELEASE == 'enabled' && (inputs.rotate_robinhood_rpc_from || '') == ''
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        # The final upload rechecks inheritance under the same publication lock.
+        run: bun --no-env-file scripts/release-robinhood-rpc.ts inherit
+
       - name: Rotate the production fee-converter Robinhood RPC
         if: (inputs.rotate_robinhood_rpc_from || '') != ''
         timeout-minutes: 4

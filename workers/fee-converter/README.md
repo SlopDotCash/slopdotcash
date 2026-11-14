@@ -863,8 +863,12 @@ supports current-state fee estimation and receipt recovery, and provides
    bridge deposits and Robinhood signed gas reservations. It compares the
    candidate's finalized contract probe to an independent chain block, then
    uploads and verifies the same Worker with just that secret replaced. Pages,
-   other services and the cron are outside this dispatch. The journal reads
-   are point-in-time checks; a later scheduled run can still create work.
+   other services and the cron are outside this dispatch. The source, active
+   version and journal checks are point-in-time. Leave manual fee-converter
+   uploads, settings changes and deployments idle during this dispatch. A
+   scheduled run can still create work. Cloudflare reports secret binding
+   names and types. Preservation of their values relies on inheritance from
+   the checked latest upload.
 3. Retain the old and new UUIDs from the run. Observe an ordinary recovery tick
    on the new version and compare its finalized block with an independent
    endpoint. The next scheduled run can resume the approved live policy.

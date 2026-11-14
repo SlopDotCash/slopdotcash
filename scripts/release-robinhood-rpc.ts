@@ -255,7 +255,11 @@ function cloudflare() {
       `https://api.cloudflare.com/client/v4/accounts/${account}/workers/scripts/${worker}/${path}`,
       {
         redirect: "error",
-        headers: { authorization: `Bearer ${token}` },
+        cache: "no-store",
+        headers: {
+          authorization: `Bearer ${token}`,
+          "cache-control": "no-cache",
+        },
         signal: AbortSignal.timeout(20_000),
       },
     );
