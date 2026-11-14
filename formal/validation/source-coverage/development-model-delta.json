@@ -1,0 +1,190 @@
+{
+  "development": "0d0f0817a439df03cc022bf7aeed4bbe64ef4c65",
+  "main": "e96069ce2a403588ca2129b1ebb943f7bb0972a6",
+  "tool": "Quint 0.33.1",
+  "commands": [
+    "quint typecheck <isolated-source-file>",
+    "quint test <isolated-source-file> --seed=812 --max-samples=100"
+  ],
+  "scope": "Exact reevaluation of later source model files. Candidate owners are active cross-reference without a complete refinement theorem.",
+  "models": [
+    {
+      "file": "formal/models/fees/buyback_market.qnt",
+      "sha256": "cf7919a1735d2888bd8aa7f8a6b376dd58a29d58e19f25d35309df1df5ffbacb",
+      "mainSha256": "795e954ea79fdb6a549a9623349332dea3dd7031ac661365e4133bdede83d7b9",
+      "owners": [
+        "spec/fees/buyback.md",
+        "spec/fees/buybackRpc.md"
+      ],
+      "declaredNames": [
+        "offKeepsRobinhoodUntouchedTest",
+        "dryRunSignsNothingTest",
+        "liveBuybackNeedsLiveConverterTest",
+        "converterOffStopsEverythingTest",
+        "claimBuyBurnTest",
+        "swapNeedsItsFinalApprovalTest",
+        "movedPriceRefusesTheSwapTest",
+        "revertedSwapReleasesAndRetriesTest",
+        "pausedTokenOnlyWaitsTest",
+        "burnPausedInFlightRetriesOnceTest",
+        "offMidwayKeepsOpenSendsTest"
+      ],
+      "passed": 11,
+      "typecheck": {
+        "exitCode": 0,
+        "output": "",
+        "error": ""
+      },
+      "test": {
+        "exitCode": 0,
+        "output": "\n  buyback_market\n    ok offKeepsRobinhoodUntouchedTest passed 1 test(s)\n    ok dryRunSignsNothingTest passed 1 test(s)\n    ok liveBuybackNeedsLiveConverterTest passed 1 test(s)\n    ok converterOffStopsEverythingTest passed 1 test(s)\n    ok claimBuyBurnTest passed 1 test(s)\n    ok swapNeedsItsFinalApprovalTest passed 1 test(s)\n    ok movedPriceRefusesTheSwapTest passed 1 test(s)\n    ok revertedSwapReleasesAndRetriesTest passed 1 test(s)\n    ok pausedTokenOnlyWaitsTest passed 1 test(s)\n    ok burnPausedInFlightRetriesOnceTest passed 1 test(s)\n    ok offMidwayKeepsOpenSendsTest passed 1 test(s)\n\n  11 passing (975ms)",
+        "error": ""
+      }
+    },
+    {
+      "file": "formal/models/payments/solana_scan_checkpoint.qnt",
+      "sha256": "324fcf3762a164dbc0a14449f347560c78374f33d600378c2e47effaf7f2505c",
+      "mainSha256": "e177ef84b4944110ba13d2e745bfdc497e176e3f3fb163aeb79e5c25fa3d7a89",
+      "owners": [
+        "spec/settlement/solanaScan.md",
+        "spec/settlement/vaultSnapshots.md"
+      ],
+      "declaredNames": [
+        "discoveryBeforeProcessingTest",
+        "missingClusterRefusesDiscoveryTest",
+        "wrongClusterRefusesProcessingTest",
+        "unpinnedClusterCannotChangeDiscoveryOrProcessingTest",
+        "staleCheckpointCannotRewindTest",
+        "restartKeepsVerifiedPrefixTest",
+        "laterArrivalOutsideIntervalTest"
+      ],
+      "passed": 7,
+      "typecheck": {
+        "exitCode": 0,
+        "output": "",
+        "error": ""
+      },
+      "test": {
+        "exitCode": 0,
+        "output": "\n  solana_scan_checkpoint\n    ok discoveryBeforeProcessingTest passed 1 test(s)\n    ok missingClusterRefusesDiscoveryTest passed 1 test(s)\n    ok wrongClusterRefusesProcessingTest passed 1 test(s)\n    ok unpinnedClusterCannotChangeDiscoveryOrProcessingTest passed 1 test(s)\n    ok staleCheckpointCannotRewindTest passed 1 test(s)\n    ok restartKeepsVerifiedPrefixTest passed 1 test(s)\n    ok laterArrivalOutsideIntervalTest passed 1 test(s)\n\n  7 passing (565ms)",
+        "error": ""
+      }
+    },
+    {
+      "file": "formal/models/referrals/referral_code.qnt",
+      "sha256": "ae07f679326d291ecfb851675f85c0d74f52c114e6dcd0cb7f05b001bfd09bbf",
+      "mainSha256": null,
+      "owners": [
+        "spec/backend/referralCodes.md"
+      ],
+      "declaredNames": [
+        "replacedNameStaysWithItsAccountTest",
+        "otherAccountCannotTakeAReplacedNameTest",
+        "reservedNameRefusedTest",
+        "teamAccountRefusedTest",
+        "anotherGithubLoginRefusedTest",
+        "refusedNameChangesNothingTest",
+        "limitRefusesANewNameTest",
+        "limitStillAllowsAReturnTest"
+      ],
+      "passed": 8,
+      "typecheck": {
+        "exitCode": 0,
+        "output": "",
+        "error": ""
+      },
+      "test": {
+        "exitCode": 0,
+        "output": "\n  referral_code\n    ok replacedNameStaysWithItsAccountTest passed 1 test(s)\n    ok otherAccountCannotTakeAReplacedNameTest passed 1 test(s)\n    ok reservedNameRefusedTest passed 1 test(s)\n    ok teamAccountRefusedTest passed 1 test(s)\n    ok anotherGithubLoginRefusedTest passed 1 test(s)\n    ok refusedNameChangesNothingTest passed 1 test(s)\n    ok limitRefusesANewNameTest passed 1 test(s)\n    ok limitStillAllowsAReturnTest passed 1 test(s)\n\n  8 passing (433ms)",
+        "error": ""
+      }
+    },
+    {
+      "file": "formal/models/ui/ui_referral_code.qnt",
+      "sha256": "a54dcc058c0ce5d2fbeb63bd2e2e68302a4d05ede128c72de470417b8c1e820a",
+      "mainSha256": null,
+      "owners": [
+        "spec/frontend/referralSettings.md"
+      ],
+      "declaredNames": [
+        "savedNameShowsAndARefusalKeepsItTest",
+        "secondSaveWaitsForTheFirstTest",
+        "accountChangeDropsAnEarlierSaveTest",
+        "earlierSaveCannotAnswerAfterAccountChangeTest"
+      ],
+      "passed": 4,
+      "typecheck": {
+        "exitCode": 0,
+        "output": "",
+        "error": ""
+      },
+      "test": {
+        "exitCode": 0,
+        "output": "\n  ui_referral_code\n    ok savedNameShowsAndARefusalKeepsItTest passed 1 test(s)\n    ok secondSaveWaitsForTheFirstTest passed 1 test(s)\n    ok accountChangeDropsAnEarlierSaveTest passed 1 test(s)\n    ok earlierSaveCannotAnswerAfterAccountChangeTest passed 1 test(s)\n\n  4 passing (382ms)",
+        "error": ""
+      }
+    },
+    {
+      "file": "formal/models/ui/ui_vault_auto_check.qnt",
+      "sha256": "a3930ddbb678e51d3f7a7b0da4e976c395493a95c9f583471a507015bdff7da8",
+      "mainSha256": "a3930ddbb678e51d3f7a7b0da4e976c395493a95c9f583471a507015bdff7da8",
+      "owners": [
+        "spec/frontend/provisionalVault.md"
+      ],
+      "declaredNames": [
+        "failedReadShowsThenClearsTest",
+        "approvalBeforeFinalityTest",
+        "transferWaitsForFinalityTest",
+        "replacedApprovalTest",
+        "recoveryHashNeedsClickTest",
+        "receivedWithdrawnAfterReplacementTest",
+        "revertedTransferNeverReceivedTest",
+        "approvalNeverReceivedTest",
+        "failedTransferTest",
+        "attemptLimitTest"
+      ],
+      "passed": 10,
+      "typecheck": {
+        "exitCode": 0,
+        "output": "",
+        "error": ""
+      },
+      "test": {
+        "exitCode": 0,
+        "output": "\n  ui_vault_auto_check\n    ok failedReadShowsThenClearsTest passed 1 test(s)\n    ok approvalBeforeFinalityTest passed 1 test(s)\n    ok transferWaitsForFinalityTest passed 1 test(s)\n    ok replacedApprovalTest passed 1 test(s)\n    ok recoveryHashNeedsClickTest passed 1 test(s)\n    ok receivedWithdrawnAfterReplacementTest passed 1 test(s)\n    ok revertedTransferNeverReceivedTest passed 1 test(s)\n    ok approvalNeverReceivedTest passed 1 test(s)\n    ok failedTransferTest passed 1 test(s)\n    ok attemptLimitTest passed 1 test(s)\n\n  10 passing (926ms)",
+        "error": ""
+      }
+    },
+    {
+      "file": "formal/models/ui/ui_vault_provisional_funding.qnt",
+      "sha256": "8b61ecc24e3acb1ee45a88644218c4f25301f5a71d36bb1f2a15f921e5276feb",
+      "mainSha256": "8b61ecc24e3acb1ee45a88644218c4f25301f5a71d36bb1f2a15f921e5276feb",
+      "owners": [
+        "spec/frontend/provisionalVault.md"
+      ],
+      "declaredNames": [
+        "fundsBeforeFinalityTest",
+        "depositVerifiesBeforeRegistrationTest",
+        "unregisteredDepositIsNotCountedTest",
+        "droppedCreationHidesFormTest",
+        "reincludedCreationRestoresFormTest",
+        "depositWithoutVaultEndsClearlyTest",
+        "promptDefersRegistrationTest",
+        "promptThenRegistrationTest",
+        "reloadRestoresFormTest",
+        "revertedCreationOffersNoFormTest"
+      ],
+      "passed": 10,
+      "typecheck": {
+        "exitCode": 0,
+        "output": "",
+        "error": ""
+      },
+      "test": {
+        "exitCode": 0,
+        "output": "\n  ui_vault_provisional_funding\n    ok fundsBeforeFinalityTest passed 100 test(s)\n    ok depositVerifiesBeforeRegistrationTest passed 100 test(s)\n    ok unregisteredDepositIsNotCountedTest passed 100 test(s)\n    ok droppedCreationHidesFormTest passed 1 test(s)\n    ok reincludedCreationRestoresFormTest passed 1 test(s)\n    ok depositWithoutVaultEndsClearlyTest passed 100 test(s)\n    ok promptDefersRegistrationTest passed 1 test(s)\n    ok promptThenRegistrationTest passed 100 test(s)\n    ok reloadRestoresFormTest passed 1 test(s)\n    ok revertedCreationOffersNoFormTest passed 1 test(s)\n\n  10 passing (1119ms)",
+        "error": ""
+      }
+    }
+  ]
+}
