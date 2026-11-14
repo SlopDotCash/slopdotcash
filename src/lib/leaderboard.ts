@@ -2743,7 +2743,7 @@ function latestSourceUpdate(input: LeaderboardInput): string {
  * request cannot score the same commits again. Every branch shares credit
  * with the implementation authors of the commits it owns (SCR-04).
  */
-function commitCreditOwners(
+export function commitCreditOwners(
   outcomes: readonly MergedPullRequestOutcome[],
 ): Map<string, string> {
   const owners = new Map<string, string>();
