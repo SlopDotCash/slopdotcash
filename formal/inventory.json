@@ -3980,16 +3980,17 @@
     },
     {
       "path": "scripts/payment-keeper/keeper.ts",
-      "sha256": "188959981875144d819a0d6a73495b34ba48622cdd1f061b1b0db524864370b7",
+      "sha256": "97d22cd5cb3b50bbc9378966d991558c6b022b13e86e119dd282145567b0063a",
       "models": [
         "formal/models/payments/operator_keeper.qnt",
+        "formal/models/payments/operator_keeper_diagnostics.qnt",
         "formal/models/payments/operator_keeper_lifecycle.qnt",
         "formal/models/payments/stored_binding_broadcast_authority.qnt",
         "formal/models/rewards/monthly_execution_recovery.qnt"
       ],
       "candidateLines": [
-        100, 101, 125, 249, 312, 412, 422, 430, 468, 480, 492, 519, 526, 539,
-        560, 564, 565, 567, 576, 585
+        103, 104, 128, 143, 144, 265, 328, 435, 445, 453, 459, 493, 505, 517,
+        544, 551, 557, 565, 586, 590, 591, 593, 602, 611
       ],
       "review": "mapped-abstraction"
     },
@@ -7650,14 +7651,15 @@
     },
     {
       "path": "workers/operator-keeper/index.ts",
-      "sha256": "a52933a9123833ab13c10663c1fbe6cab69fb8daf428b65af81c53649d9a4547",
+      "sha256": "7146490c7d59be6a4b8e8b1901328e4247e29f43b79d1829a8b2c4553281acdf",
       "models": [
         "formal/models/payments/operator_keeper.qnt",
+        "formal/models/payments/operator_keeper_diagnostics.qnt",
         "formal/models/payments/operator_keeper_lifecycle.qnt"
       ],
       "candidateLines": [
-        60, 66, 67, 81, 82, 83, 84, 85, 95, 96, 116, 119, 147, 148, 157, 165,
-        190, 191
+        62, 72, 73, 87, 88, 89, 90, 91, 94, 107, 108, 124, 127, 151, 154, 182,
+        183, 192, 200, 225, 226
       ],
       "review": "mapped-abstraction"
     },
@@ -12710,6 +12712,28 @@
         "offNoWorkTest",
         "overlapNoSecondJournalTest",
         "restartRetainsLiabilityTest"
+      ]
+    },
+    {
+      "path": "formal/models/payments/operator_keeper_diagnostics.qnt",
+      "sha256": "d2173192c20133574dd6048dc9c1a8c1e00045de6f0a93454a64f826030e9151",
+      "sources": [
+        "scripts/payment-keeper/keeper.ts",
+        "workers/operator-keeper/index.ts"
+      ],
+      "scenarios": [
+        "diagnosticDoesNotEraseExistingFailureTest",
+        "emptyRunStaysSilentTest",
+        "identicalFailuresAggregatePositiveCountsTest",
+        "indexFailureRetainsIndexStageTest",
+        "nondeploymentCannotBorrowStageOrRpcCauseTest",
+        "spoofedRpcNameRemainsOtherTest",
+        "successfulAndEmptyResultsStaySilentTest",
+        "successfulCallbackRestoresScannerStageTest",
+        "unavailableSubclassHasPriorityTest",
+        "unknownValuesCollapseWithoutPrivateDataTest",
+        "verifierFailureRetainsEvidenceStageTest",
+        "waitingWithoutErrorDoesNotTriggerFailureTest"
       ]
     },
     {
