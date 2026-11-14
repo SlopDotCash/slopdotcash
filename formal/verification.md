@@ -213,15 +213,19 @@ endpoint, revision and deployment before any work. Receipt processing records
 whether it failed during scanning, evidence verification or indexing.
 Operational summaries contain fixed labels and aggregated counts, and healthy
 or waiting work stays silent. These models preserve the keeper's identity,
-budget and journal across RPC changes.
-[Keeper rules](../spec/settlement/keeperScan.md) · [Keeper transition witnesses](validation/journeys/keeper-delta-directed.json)
+budget and journal across RPC changes. All 40 keeper obligations proved. The
+focused checks passed 210 simulation replays and 24 directed cases.
+[Keeper rules](../spec/settlement/keeperScan.md) · [Keeper evidence](validation/journeys/keeper-delta-final.json)
 
 A signed reserve release keeps the reviewed amount, request and attempt
 identity across new chain observations and owner rotation. An exact finalized
 failure retires the attempt for a fresh review, while an unfinalized or
 mismatched result keeps it pending. A later competing finalized settlement
 blocks release. The five named Quint journeys, 70 generated-core events and
-100 seeded TypeScript replays passed on the repaired model.
+100 seeded TypeScript replays passed on the repaired model. The adapter must
+supply authenticated evidence for the retained deployment. An owner rotation
+that changes the current deployment can make the pinned route refuse that
+read, so deployment-changing rotations need shell conformance.
 [Reserve release evidence](validation/finance/reserve-release-signed-handoff.md)
 
 ## Guard diagnostics
