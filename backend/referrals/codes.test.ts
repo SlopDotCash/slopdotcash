@@ -30,6 +30,14 @@ function harness() {
     ["alice-gh", Number(ALICE)],
     ["someone", 42],
   ]);
+  // The login each member account has on GitHub now, by permanent id.
+  const logins = new Map<string, string>([
+    [ALICE, "alice-gh"],
+    [BOB, "bob-gh"],
+    [ADMIN, "admin-gh"],
+  ]);
+  // GitHub's account type by permanent id; any other account is a "User".
+  const types = new Map<string, string>();
   let githubDown = false;
   let lookups = 0;
   const deps = (actor: string | null) => ({
@@ -40,6 +48,17 @@ function harness() {
       fetch: async (url: string) => {
         lookups += 1;
         if (githubDown) return new Response("down", { status: 500 });
+        const byId = url.split("/user/")[1];
+        if (byId !== undefined) {
+          const login = logins.get(decodeURIComponent(byId));
+          return login === undefined
+            ? new Response("{}", { status: 404 })
+            : Response.json({
+                id: Number(byId),
+                login,
+                type: types.get(decodeURIComponent(byId)) ?? "User",
+              });
+        }
         const id = github.get(
           decodeURIComponent(url.split("/users/")[1] ?? "").toLowerCase(),
         );
@@ -82,6 +101,7 @@ function harness() {
     const response = await referralRedirect(
       new Request(`${origin}/referral/${code}`, { method }),
       db,
+      deps(null).github,
     );
     if (response === null) throw new Error("Route did not match");
     return {
@@ -96,6 +116,9 @@ function harness() {
     choose,
     read,
     follow,
+    github,
+    logins,
+    types,
     lookups: () => lookups,
     githubDown: (value: boolean) => {
       githubDown = value;
@@ -263,9 +286,76 @@ test("a failed read answers 503 instead of forwarding without the referrer", asy
   const response = await referralRedirect(
     new Request(`${origin}/referral/alice-link`),
     broken,
+    h.deps(null).github,
   );
   expect(response?.status).toBe(503);
   expect(response?.headers.get("location")).toBeNull();
+});
+
+test("a renamed member's link names the GitHub login the account has now", async () => {
+  const h = harness();
+  await h.choose(ALICE, "AliceBuilds");
+  expect((await h.follow("AliceBuilds")).location).toBe(
+    `${origin}/projects/new?ref=alice-gh`,
+  );
+  // Alice renames her GitHub account and has not signed in since, so the
+  // member record still caches her old login. Another account now holds it.
+  h.logins.set(ALICE, "alice-renamed");
+  h.github.delete("alice-gh");
+  h.github.set("alice-renamed", Number(ALICE));
+  h.github.set("alice-gh", 900000300);
+  expect(
+    (
+      h.sqlite
+        .query("SELECT login FROM points_members WHERE github_id = ?")
+        .get(ALICE) as { login: string }
+    ).login,
+  ).toBe("alice-gh");
+  // Capture resolves `ref` by login, so the link must name the login that
+  // resolves to Alice's permanent id.
+  expect(await h.follow("AliceBuilds")).toEqual({
+    status: 302,
+    location: `${origin}/projects/new?ref=alice-renamed`,
+  });
+  // An account GitHub no longer has cannot be recorded: no referrer.
+  h.logins.delete(ALICE);
+  expect(await h.follow("AliceBuilds")).toEqual({
+    status: 302,
+    location: `${origin}/projects/new`,
+  });
+});
+
+test("an unanswered GitHub read answers 503 instead of forwarding a login it could not confirm", async () => {
+  const h = harness();
+  await h.choose(ALICE, "AliceBuilds");
+  h.githubDown(true);
+  const response = await h.follow("AliceBuilds");
+  expect(response.status).toBe(503);
+  expect(response.location).toBeNull();
+  // A name nobody has in use needs no GitHub read.
+  expect(await h.follow("nobody-here")).toEqual({
+    status: 302,
+    location: `${origin}/projects/new`,
+  });
+});
+
+test("a link whose account is no longer a person's forwards without a referrer", async () => {
+  const h = harness();
+  await h.choose(ALICE, "AliceBuilds");
+  // GitHub converted Alice's account to an organization, or answers it as a
+  // bot. The account keeps its permanent id, so the name still points at it,
+  // but capture refuses a referrer that is not a person's account
+  // (personal_account_required), just as it cannot record a gone account.
+  for (const type of ["Organization", "Bot"]) {
+    h.types.set(ALICE, type);
+    expect(await h.follow("AliceBuilds")).toEqual({
+      status: 302,
+      location: `${origin}/projects/new`,
+    });
+  }
+  // A read GitHub did not answer still answers 503.
+  h.githubDown(true);
+  expect((await h.follow("AliceBuilds")).status).toBe(503);
 });
 
 test("the member record carries the name in use, at sign-in and on later reads", async () => {
@@ -336,6 +426,14 @@ test("the member record carries the name in use, at sign-in and on later reads",
   const followed = await referralRedirect(
     new Request(`${origin}/referral/link_member`),
     db,
+    {
+      fetch: async (url: string) =>
+        url.endsWith("/user/91002")
+          ? Response.json({ id: 91002, login: "Link-Member", type: "User" })
+          : new Response("{}", { status: 404 }),
+      token: undefined,
+      apiOrigin: "https://api.github.test",
+    },
   );
   expect(followed?.headers.get("location")).toBe(
     `${origin}/projects/new?ref=Link-Member`,

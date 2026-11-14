@@ -790,9 +790,9 @@
     },
     {
       "path": "backend/referrals/codes.ts",
-      "sha256": "9aa6dda4ccc658d0c039844d61f8f65d885c973de7590f61cf119cc1b912fc51",
+      "sha256": "cdc1a8caa2b6e6ac6f886c3046c7e13150b4e804414fea4ffebd0065ac23ce3f",
       "models": ["formal/models/referrals/referral_code.qnt"],
-      "candidateLines": [143, 151, 159, 210, 231, 232, 240],
+      "candidateLines": [145, 153, 161, 199, 218, 253, 254, 263],
       "review": "mapped-abstraction"
     },
     {
@@ -2032,7 +2032,7 @@
     },
     {
       "path": "functions/[[path]].ts",
-      "sha256": "a38c540f4d1a7c95d22f2cf08d623dc1a0dc394c38439b0829f0cb88143ddbf3",
+      "sha256": "b97369976ca02b5a98a72967d5e5d4a04a862a97bc937e77232d9b2331444897",
       "models": ["formal/models/api/project_skill_publication.qnt"],
       "candidateLines": [],
       "review": "mapped-abstraction",
@@ -13833,7 +13833,7 @@
     },
     {
       "path": "formal/models/referrals/referral_code.qnt",
-      "sha256": "ae07f679326d291ecfb851675f85c0d74f52c114e6dcd0cb7f05b001bfd09bbf",
+      "sha256": "730325fd400799e7bc5bb1aefcd3cdebda003f7ffaabee0dc54a7861b3100276",
       "sources": [
         "backend/referrals/codes.ts",
         "migrations/0124_referral_codes.sql",
@@ -13841,10 +13841,13 @@
       ],
       "scenarios": [
         "anotherGithubLoginRefusedTest",
+        "convertedAccountLinkForwardsWithoutReferrerTest",
+        "goneAccountLinkForwardsWithoutReferrerTest",
         "limitRefusesANewNameTest",
         "limitStillAllowsAReturnTest",
         "otherAccountCannotTakeAReplacedNameTest",
         "refusedNameChangesNothingTest",
+        "renamedAccountLinkNamesItsCurrentLoginTest",
         "replacedNameStaysWithItsAccountTest",
         "reservedNameRefusedTest",
         "teamAccountRefusedTest"

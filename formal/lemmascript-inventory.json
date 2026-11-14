@@ -17,9 +17,9 @@
   ],
   "counts": {
     "files": 753,
-    "functions": 10954,
+    "functions": 10955,
     "selectedContractTargets": 188,
-    "unprovedFunctions": 10766,
+    "unprovedFunctions": 10767,
     "nonTypeScriptFiles": 56
   },
   "limits": [
@@ -772,13 +772,13 @@
 {"name":"<ArrowFunction@68>","kind":"ArrowFunction","line":68,"sha256":"9031c1bce6e750530c67d5964e69d57a765d4239e354a2ba98469b2eb4c6193d","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
 {"name":"<ArrowFunction@129>","kind":"ArrowFunction","line":129,"sha256":"162bab7e800e9ad1b9539eb3430abf53ede1f04c3bd16e6ee43e93e67f85151e","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]}
 ]},
-{"path":"backend/referrals/codes.ts","sha256":"9aa6dda4ccc658d0c039844d61f8f65d885c973de7590f61cf119cc1b912fc51","language":"typescript","disposition":"callables-inventoried","functions":[
-{"name":"reserved","kind":"FunctionDeclaration","line":71,"sha256":"5f8b48e9fd90e56d610bbb8968879b5824aaebcafde4789be5f66748ac4c41c9","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
-{"name":"<ArrowFunction@73>","kind":"ArrowFunction","line":73,"sha256":"b0a19cbaaf38d39e74bd35910174bc78754c2521af6f3462d45afa2181b9e093","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
-{"name":"codeRow","kind":"FunctionDeclaration","line":87,"sha256":"f0cf201c6755821c1604c24f18fe9b33a83983285b78c552e1388778c300b73a","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
-{"name":"choose","kind":"FunctionDeclaration","line":96,"sha256":"1a15578f662f5cfcd62cf338cb388e9f081e9acd3e2a8901a47b4a02a6b4ab45","status":"unproved","candidate":"requires-effect-or-language-boundary","syntaxFeatures":["await"]},
-{"name":"handleReferralCode","kind":"FunctionDeclaration","line":175,"sha256":"f13d1e5c70abf5e12be3555369999e744a914c4b2cb6ffd0a66df99dafbce045","status":"unproved","candidate":"requires-effect-or-language-boundary","syntaxFeatures":["await"]},
-{"name":"referralRedirect","kind":"FunctionDeclaration","line":198,"sha256":"3251cfe1000e00eb6194263ea3332165832239d7ef66de00a3196901f8d17326","status":"unproved","candidate":"requires-effect-or-language-boundary","syntaxFeatures":["await","runtime-effect"]}
+{"path":"backend/referrals/codes.ts","sha256":"cdc1a8caa2b6e6ac6f886c3046c7e13150b4e804414fea4ffebd0065ac23ce3f","language":"typescript","disposition":"callables-inventoried","functions":[
+{"name":"reserved","kind":"FunctionDeclaration","line":73,"sha256":"5f8b48e9fd90e56d610bbb8968879b5824aaebcafde4789be5f66748ac4c41c9","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
+{"name":"<ArrowFunction@75>","kind":"ArrowFunction","line":75,"sha256":"b0a19cbaaf38d39e74bd35910174bc78754c2521af6f3462d45afa2181b9e093","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
+{"name":"codeRow","kind":"FunctionDeclaration","line":89,"sha256":"f0cf201c6755821c1604c24f18fe9b33a83983285b78c552e1388778c300b73a","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
+{"name":"choose","kind":"FunctionDeclaration","line":98,"sha256":"1a15578f662f5cfcd62cf338cb388e9f081e9acd3e2a8901a47b4a02a6b4ab45","status":"unproved","candidate":"requires-effect-or-language-boundary","syntaxFeatures":["await"]},
+{"name":"handleReferralCode","kind":"FunctionDeclaration","line":177,"sha256":"f13d1e5c70abf5e12be3555369999e744a914c4b2cb6ffd0a66df99dafbce045","status":"unproved","candidate":"requires-effect-or-language-boundary","syntaxFeatures":["await"]},
+{"name":"referralRedirect","kind":"FunctionDeclaration","line":205,"sha256":"9ac56bb902a32582fdf0613fca8234e645815a60606305560a274ff483a329dd","status":"unproved","candidate":"requires-effect-or-language-boundary","syntaxFeatures":["await","runtime-effect"]}
 ]},
 {"path":"backend/referrals/handler.ts","sha256":"44249d4131eefeb6565bb01c5d7182de79c1d200ef3539e5cb5b9235dd6a1ee4","language":"typescript","disposition":"callables-inventoried","functions":[
 {"name":"handleReferralsApi","kind":"FunctionDeclaration","line":38,"sha256":"76f7e54c70ee7b20d4266d274f5459d4a80b646665615ea6401abf244d72a841","status":"unproved","candidate":"requires-effect-or-language-boundary","syntaxFeatures":["await"]},
@@ -2458,13 +2458,14 @@
 {"path":"contracts/vault-totals.ts","sha256":"167ac5c3d1f7e94051e9137a0ab75671f4d08ce9a556fcdd73c3061f00270639","language":"typescript","disposition":"no-function-body","functions":[
 
 ]},
-{"path":"functions/[[path]].ts","sha256":"a38c540f4d1a7c95d22f2cf08d623dc1a0dc394c38439b0829f0cb88143ddbf3","language":"typescript","disposition":"callables-inventoried","functions":[
-{"name":"onRequest","kind":"FunctionDeclaration","line":11,"sha256":"975909d27db8b1876249c18c1f58e7011311e3eb5f6829161f74e95943fb9380","status":"unproved","candidate":"requires-effect-or-language-boundary","syntaxFeatures":["await"]},
-{"name":"getProject","kind":"ArrowFunction","line":24,"sha256":"cb3602ec689d8f1755eafbed56f8724e35aa502495c16770c1b249c7df9e7466","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
-{"name":"listProjects","kind":"ArrowFunction","line":25,"sha256":"ed36c1938ac9d6607e0522207c993a2cda48f23e5239b0f0acde61352464d4aa","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
-{"name":"listEnforcements","kind":"ArrowFunction","line":26,"sha256":"6fe3ebf7c34eae8bc273a9a5158e39623548a2dd0cdf4f58e22b65d526a3a747","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
-{"name":"vettingClearance","kind":"ArrowFunction","line":28,"sha256":"10dff2b4c4811aff34c25e5dc8a5eda584e263a389f4e84717358d603466d430","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
-{"name":"<ArrowFunction@33>","kind":"ArrowFunction","line":33,"sha256":"9c741df2f5aa97e26f016b2a21df2979b78a74c47f9270b8af6fbed9921e111e","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]}
+{"path":"functions/[[path]].ts","sha256":"b97369976ca02b5a98a72967d5e5d4a04a862a97bc937e77232d9b2331444897","language":"typescript","disposition":"callables-inventoried","functions":[
+{"name":"onRequest","kind":"FunctionDeclaration","line":12,"sha256":"a5b1528f4cf492dafbb1ba460aef384118afdae47fa7102f77697e4f0f3f5c74","status":"unproved","candidate":"requires-effect-or-language-boundary","syntaxFeatures":["await","runtime-effect"]},
+{"name":"fetch","kind":"ArrowFunction","line":18,"sha256":"0a7776ffa99b46c376d87f09f54f590a743d9fcb681d6aaa3e6150ff21052495","status":"unproved","candidate":"requires-effect-or-language-boundary","syntaxFeatures":["runtime-effect"]},
+{"name":"getProject","kind":"ArrowFunction","line":29,"sha256":"cb3602ec689d8f1755eafbed56f8724e35aa502495c16770c1b249c7df9e7466","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
+{"name":"listProjects","kind":"ArrowFunction","line":30,"sha256":"ed36c1938ac9d6607e0522207c993a2cda48f23e5239b0f0acde61352464d4aa","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
+{"name":"listEnforcements","kind":"ArrowFunction","line":31,"sha256":"6fe3ebf7c34eae8bc273a9a5158e39623548a2dd0cdf4f58e22b65d526a3a747","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
+{"name":"vettingClearance","kind":"ArrowFunction","line":33,"sha256":"10dff2b4c4811aff34c25e5dc8a5eda584e263a389f4e84717358d603466d430","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
+{"name":"<ArrowFunction@38>","kind":"ArrowFunction","line":38,"sha256":"9c741df2f5aa97e26f016b2a21df2979b78a74c47f9270b8af6fbed9921e111e","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]}
 ]},
 {"path":"functions/api/v1/[[path]].ts","sha256":"86aabce140b2c3df20520db903cafa9e872031000097c55fc3bf9a5078265fa8","language":"typescript","disposition":"callables-inventoried","functions":[
 {"name":"privateIntake","kind":"FunctionDeclaration","line":105,"sha256":"1036fc50bc8cc36b5775add97cd64b6e0607834233d39f2ec47bb13776a692c2","status":"unproved","candidate":"requires-effect-or-language-boundary","syntaxFeatures":["runtime-effect"]},
