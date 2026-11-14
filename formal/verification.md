@@ -246,10 +246,10 @@ blocks release. The five named Quint journeys, 70 generated-core events and
 supply authenticated evidence for the retained deployment. An owner rotation
 that changes the current deployment can make the pinned route refuse that
 read, so deployment-changing rotations need shell conformance. The exact
-reserve proof run discharged 138 of 146 obligations. The eight open clauses
-cover monetary equivalence and conservation, signed-attempt freshness and
-composed step preservation. Dafny reported zero tool errors or exhaustion for
-that run.
+reserve proof run with the signed-identity fold lemma discharged 139 of 146
+obligations. The seven open clauses cover monetary equivalence, conservation
+and dependent step preservation. Dafny reported zero tool errors or exhaustion
+for that run.
 [Reserve release evidence](validation/finance/reserve-release-signed-handoff.md)
 
 ## Guard diagnostics

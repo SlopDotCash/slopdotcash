@@ -84,7 +84,8 @@
     "spec/security/enforcement.proof.dfy": "d2746f4084622de405f9b16563c55e53fa610cb1fb49b824f30e7d05137f0a06",
     "spec/security/evidence.proof.dfy": "4e68b3fbe63f32053cef29ad3f2bcde207bdb5409f04b1104c9c4c5580642bf7",
     "spec/settlement/keeperDiagnostics.proof.dfy": "467647db895ea45b5a1a2adc0a2010bf7dbc606f4d1e8fd8bf226f0fc037b482",
-    "spec/settlement/money.proof.dfy": "c963c019e25af747ffc8c6f1ccde302ce211182fc852f872e42324585b32e95a"
+    "spec/settlement/money.proof.dfy": "c963c019e25af747ffc8c6f1ccde302ce211182fc852f872e42324585b32e95a",
+    "spec/settlement/reserveRelease.proof.dfy": "5a1268a393d06c9db72198584ead1ba75b9b7cbef02cc096dc65eb2f3e90bac6"
   },
   "passes": [
     "pnpm gen",
