@@ -1,6 +1,6 @@
 # Account-owned browser composition
 
-PRD sections 3, 8 and 12. This machine composes navigation and draft lifetimes.
+PRD sections 3, 8 and 12. This machine composes navigation, draft and mounted private-report lifetimes.
 Backend project, financial and case machines retain their own authority checks.
 
 ## Story: Change accounts without disclosing the prior account's draft
@@ -10,14 +10,15 @@ Backend project, financial and case machines retain their own authority checks.
 ```quint
 import navigation as N from "./frontend/navigation"
 import drafts as D from "./frontend/drafts"
-type BrowserSession = { navigation: N::Navigation, draft: D::Draft }
-pure val initial: BrowserSession = { navigation: N::initial, draft: D::initial }
+import reportDetails as R from "./frontend/reportDetails"
+type BrowserSession = { navigation: N::Navigation, draft: D::Draft, details: R::DetailSet }
+pure val initial: BrowserSession = { navigation: N::initial, draft: D::initial, details: R::emptyDetails }
 pure def canAuthenticate(b: BrowserSession, actorId: int): bool = N::canSignIn(b.navigation, actorId)
-pure def authenticate(b: BrowserSession, actorId: int): BrowserSession = { navigation: N::signIn(b.navigation, actorId), draft: D::initial }
-pure def logout(b: BrowserSession): BrowserSession = { navigation: N::signOut(b.navigation), draft: D::initial }
+pure def authenticate(b: BrowserSession, actorId: int): BrowserSession = { navigation: N::signIn(b.navigation, actorId), draft: D::initial, details: R::emptyDetails }
+pure def logout(b: BrowserSession): BrowserSession = { navigation: N::signOut(b.navigation), draft: D::initial, details: R::emptyDetails }
 pure def canBeginReport(b: BrowserSession, projectId: int): bool = b.navigation.actor > 0 and projectId > 0
 pure def beginReport(b: BrowserSession, projectId: int): BrowserSession = {
-  navigation: N::navigate(b.navigation, N::Report), draft: D::open(b.draft, b.navigation.actor, projectId)
+  ...b, navigation: N::navigate(b.navigation, N::Report), draft: D::open(b.draft, b.navigation.actor, projectId)
 }
 pure def canEditReport(b: BrowserSession, contentDigest: int): bool = D::canEdit(b.draft, contentDigest)
 pure def editReport(b: BrowserSession, contentDigest: int, storageAvailable: bool): BrowserSession =
@@ -26,6 +27,29 @@ pure def canReviewReport(b: BrowserSession): bool = D::canReview(b.draft)
 pure def reviewReport(b: BrowserSession): BrowserSession = { ...b, draft: D::review(b.draft) }
 pure def canSubmitReport(b: BrowserSession, submissionKey: int): bool = D::canSend(b.draft, submissionKey)
 pure def submitReport(b: BrowserSession, submissionKey: int): BrowserSession = { ...b, draft: D::send(b.draft, submissionKey) }
+```
+
+### Each mounted report must belong to the authorized current account lifetime
+
+Current authority comes from the case service and is checked against the exact
+submission. A response captured for a prior account or navigation epoch cannot
+mount a detail. Sign-out and authentication erase every mounted detail. Closing
+one detail leaves its siblings mounted.
+
+```quint
+pure def canOpenDetail(b: BrowserSession, actorId: int, requestEpoch: int, submission: int, caseReadAuthorized: bool): bool =
+  b.navigation.actor > 0 and actorId == b.navigation.actor and requestEpoch == b.navigation.epoch and caseReadAuthorized
+    and R::canOpenDetail(b.details, submission)
+pure def openDetail(b: BrowserSession, actorId: int, requestEpoch: int, submission: int, caseReadAuthorized: bool): BrowserSession =
+  { ...b, details: R::openDetail(b.details, submission) }
+pure def canCloseDetail(b: BrowserSession, submission: int): bool = R::canCloseDetail(b.details, submission)
+pure def closeDetail(b: BrowserSession, submission: int): BrowserSession = { ...b, details: R::closeDetail(b.details, submission) }
+pure def alwaysDetailsOwned(b: BrowserSession): bool = b.details.opened.size() > 0 implies b.navigation.actor > 0
+pure def stepAccountChangeClearsDetails(before: BrowserSession, via: str, after: BrowserSession): bool =
+  (via == "authenticate" or via == "logout") implies after.details.opened.size() == 0
+pure def sometimesSiblingDetails(b: BrowserSession): bool = b.details.opened.size() > 1
+pure val submissionValues = Set(1, 2)
+pure val requestEpochValues = Set(1, 2, 3, 4)
 ```
 
 ### Account changes erase drafts and preserve every child invariant

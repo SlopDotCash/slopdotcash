@@ -1,0 +1,622 @@
+{
+  "scope": "Focused models and generated replay. Browser computed names, actual transport lease handling and database role authorization require application conformance.",
+  "legacyMain": "6b3b9d0b979f0608d87941f1146056a98513ffcf",
+  "sourceInputs": [
+    {
+      "path": "spec/frontend/navigation.md",
+      "sha256": "25cd192a17ec647982912658ea214e2479ba73473a2f5a67ea55c3206b2731e0"
+    },
+    {
+      "path": "spec/frontend/drafts.md",
+      "sha256": "c30ef5bcd0f2e9c36e0600aa350525804c3e6967d9a10d4f85e310710ae97ed9"
+    },
+    {
+      "path": "spec/frontend/reportDetails.md",
+      "sha256": "81a1083797788bf1841a22e7b0a97793cca7cce03c956cc12e9454b8fee4c8f1"
+    },
+    {
+      "path": "spec/composition.md",
+      "sha256": "82c11e2a8b99c767d3ee721c80ebd06ac3e3a35a8b56a4d54e05476955d29018"
+    },
+    {
+      "path": "spec/frontend/snapshotCache.md",
+      "sha256": "eebb4e81fe3c5aa068a901cc7aa5e5863e30b1919c74976b7dc21bc24205c3df"
+    },
+    {
+      "path": "spec/frontend/reportDetails.proof.dfy",
+      "sha256": "604b0906c4bb18e6211967ce3ecd87404d6cf82160335bd98d0c3c9680a85c70"
+    }
+  ],
+  "results": {
+    "frontend__reportDetails": {
+      "simulation": {
+        "command": "seed 255881133879919; to simulate again: pnpm exec quint run gen/frontend__reportDetails.run.qnt --main frontend__reportDetails_run --step step --invariant inv --max-samples 250 --max-steps 20 --mbt --seed 255881133879919",
+        "replayed": 25
+      },
+      "witnesses": {},
+      "proof": {
+        "total": 2,
+        "unproved": [],
+        "exhausted": [],
+        "resting": {},
+        "errors": []
+      }
+    },
+    "composition": {
+      "simulation": {
+        "command": "seed 117545458508634; to simulate again: pnpm exec quint run gen/composition.run.qnt --main composition_run --step step --invariant inv --max-samples 250 --max-steps 20 --mbt --seed 117545458508634",
+        "replayed": 25
+      },
+      "witnesses": {
+        "sometimesSiblingDetails": {
+          "check": "seed 117545458508634; to simulate again: pnpm exec quint run gen/composition.run.qnt --main composition_run --step step --invariant inv --max-samples 250 --max-steps 20 --mbt --seed 117545458508634",
+          "events": [
+            {
+              "type": "authenticate",
+              "actorId": 1
+            },
+            {
+              "type": "logout"
+            },
+            {
+              "type": "logout"
+            },
+            {
+              "type": "authenticate",
+              "actorId": 2
+            },
+            {
+              "type": "openDetail",
+              "actorId": 2,
+              "requestEpoch": 4,
+              "submission": 1,
+              "caseReadAuthorized": true
+            },
+            {
+              "type": "openDetail",
+              "actorId": 2,
+              "requestEpoch": 4,
+              "submission": 2,
+              "caseReadAuthorized": true
+            },
+            {
+              "type": "logout"
+            },
+            {
+              "type": "logout"
+            },
+            {
+              "type": "logout"
+            },
+            {
+              "type": "authenticate",
+              "actorId": 2
+            },
+            {
+              "type": "logout"
+            },
+            {
+              "type": "authenticate",
+              "actorId": 1
+            },
+            {
+              "type": "logout"
+            },
+            {
+              "type": "logout"
+            },
+            {
+              "type": "logout"
+            },
+            {
+              "type": "logout"
+            },
+            {
+              "type": "logout"
+            },
+            {
+              "type": "logout"
+            },
+            {
+              "type": "logout"
+            },
+            {
+              "type": "authenticate",
+              "actorId": 2
+            }
+          ]
+        },
+        "sometimesReportSubmitted": {
+          "check": "seed 117545458508634; to simulate again: pnpm exec quint run gen/composition.run.qnt --main composition_run --step step --invariant inv --max-samples 250 --max-steps 20 --mbt --seed 117545458508634",
+          "events": [
+            {
+              "type": "authenticate",
+              "actorId": 2
+            },
+            {
+              "type": "beginReport",
+              "projectId": 1
+            },
+            {
+              "type": "editReport",
+              "contentDigest": 1,
+              "storageAvailable": false
+            },
+            {
+              "type": "reviewReport"
+            },
+            {
+              "type": "submitReport",
+              "submissionKey": 2
+            },
+            {
+              "type": "logout"
+            },
+            {
+              "type": "authenticate",
+              "actorId": 1
+            },
+            {
+              "type": "beginReport",
+              "projectId": 1
+            },
+            {
+              "type": "beginReport",
+              "projectId": 2
+            },
+            {
+              "type": "beginReport",
+              "projectId": 2
+            },
+            {
+              "type": "beginReport",
+              "projectId": 1
+            },
+            {
+              "type": "authenticate",
+              "actorId": 2
+            },
+            {
+              "type": "authenticate",
+              "actorId": 1
+            },
+            {
+              "type": "authenticate",
+              "actorId": 1
+            },
+            {
+              "type": "authenticate",
+              "actorId": 2
+            },
+            {
+              "type": "authenticate",
+              "actorId": 1
+            },
+            {
+              "type": "authenticate",
+              "actorId": 2
+            },
+            {
+              "type": "logout"
+            },
+            {
+              "type": "authenticate",
+              "actorId": 2
+            },
+            {
+              "type": "authenticate",
+              "actorId": 2
+            }
+          ]
+        },
+        "sometimesLogoutClears": {
+          "check": "seed 117545458508634; to simulate again: pnpm exec quint run gen/composition.run.qnt --main composition_run --step step --invariant inv --max-samples 250 --max-steps 20 --mbt --seed 117545458508634",
+          "events": [
+            {
+              "type": "logout"
+            },
+            {
+              "type": "authenticate",
+              "actorId": 1
+            },
+            {
+              "type": "authenticate",
+              "actorId": 2
+            },
+            {
+              "type": "logout"
+            },
+            {
+              "type": "authenticate",
+              "actorId": 2
+            },
+            {
+              "type": "beginReport",
+              "projectId": 1
+            },
+            {
+              "type": "logout"
+            },
+            {
+              "type": "authenticate",
+              "actorId": 1
+            },
+            {
+              "type": "logout"
+            },
+            {
+              "type": "authenticate",
+              "actorId": 1
+            },
+            {
+              "type": "authenticate",
+              "actorId": 2
+            },
+            {
+              "type": "authenticate",
+              "actorId": 1
+            },
+            {
+              "type": "authenticate",
+              "actorId": 1
+            },
+            {
+              "type": "authenticate",
+              "actorId": 1
+            },
+            {
+              "type": "logout"
+            },
+            {
+              "type": "logout"
+            },
+            {
+              "type": "logout"
+            },
+            {
+              "type": "logout"
+            },
+            {
+              "type": "authenticate",
+              "actorId": 2
+            },
+            {
+              "type": "logout"
+            }
+          ]
+        }
+      },
+      "proof": {
+        "total": 42,
+        "unproved": [],
+        "exhausted": [],
+        "resting": {},
+        "errors": []
+      }
+    },
+    "frontend__snapshotCache": {
+      "simulation": {
+        "command": "seed 204641788410295; to simulate again: pnpm exec quint run gen/frontend__snapshotCache.run.qnt --main frontend__snapshotCache_run --step step --invariant inv --max-samples 250 --max-steps 20 --mbt --seed 204641788410295",
+        "replayed": 25
+      },
+      "witnesses": {
+        "sometimesSharedRead": {
+          "check": "seed 204641788410295; to simulate again: pnpm exec quint run gen/frontend__snapshotCache.run.qnt --main frontend__snapshotCache_run --step step --invariant inv --max-samples 250 --max-steps 20 --mbt --seed 204641788410295",
+          "events": [
+            {
+              "type": "beginRead",
+              "read": 1
+            },
+            {
+              "type": "complete",
+              "read": 1,
+              "version": 2,
+              "validSnapshot": true
+            },
+            {
+              "type": "beginRead",
+              "read": 3
+            },
+            {
+              "type": "acquire",
+              "consumer": 1,
+              "lease": 3
+            },
+            {
+              "type": "acquire",
+              "consumer": 2,
+              "lease": 1
+            },
+            {
+              "type": "complete",
+              "read": 3,
+              "version": 2,
+              "validSnapshot": true
+            },
+            {
+              "type": "cacheHit",
+              "consumer": 2
+            },
+            {
+              "type": "cacheHit",
+              "consumer": 1
+            },
+            {
+              "type": "cacheHit",
+              "consumer": 2
+            },
+            {
+              "type": "cacheHit",
+              "consumer": 2
+            },
+            {
+              "type": "cacheHit",
+              "consumer": 2
+            },
+            {
+              "type": "cacheHit",
+              "consumer": 2
+            },
+            {
+              "type": "cacheHit",
+              "consumer": 1
+            },
+            {
+              "type": "cacheHit",
+              "consumer": 1
+            },
+            {
+              "type": "cacheHit",
+              "consumer": 1
+            },
+            {
+              "type": "cacheHit",
+              "consumer": 2
+            },
+            {
+              "type": "cacheHit",
+              "consumer": 2
+            },
+            {
+              "type": "cacheHit",
+              "consumer": 2
+            },
+            {
+              "type": "cacheHit",
+              "consumer": 2
+            },
+            {
+              "type": "cacheHit",
+              "consumer": 2
+            }
+          ]
+        },
+        "sometimesCache": {
+          "check": "seed 204641788410295; to simulate again: pnpm exec quint run gen/frontend__snapshotCache.run.qnt --main frontend__snapshotCache_run --step step --invariant inv --max-samples 250 --max-steps 20 --mbt --seed 204641788410295",
+          "events": [
+            {
+              "type": "beginRead",
+              "read": 2
+            },
+            {
+              "type": "complete",
+              "read": 2,
+              "version": 1,
+              "validSnapshot": true
+            },
+            {
+              "type": "beginRead",
+              "read": 3
+            },
+            {
+              "type": "acquire",
+              "consumer": 2,
+              "lease": 2
+            },
+            {
+              "type": "complete",
+              "read": 3,
+              "version": 1,
+              "validSnapshot": true
+            },
+            {
+              "type": "cacheHit",
+              "consumer": 1
+            },
+            {
+              "type": "cacheHit",
+              "consumer": 2
+            },
+            {
+              "type": "cacheHit",
+              "consumer": 2
+            },
+            {
+              "type": "cacheHit",
+              "consumer": 2
+            },
+            {
+              "type": "cacheHit",
+              "consumer": 2
+            },
+            {
+              "type": "cacheHit",
+              "consumer": 1
+            },
+            {
+              "type": "cacheHit",
+              "consumer": 1
+            },
+            {
+              "type": "cacheHit",
+              "consumer": 1
+            },
+            {
+              "type": "cacheHit",
+              "consumer": 1
+            },
+            {
+              "type": "cacheHit",
+              "consumer": 1
+            },
+            {
+              "type": "cacheHit",
+              "consumer": 2
+            },
+            {
+              "type": "cacheHit",
+              "consumer": 1
+            },
+            {
+              "type": "cacheHit",
+              "consumer": 1
+            },
+            {
+              "type": "cacheHit",
+              "consumer": 1
+            },
+            {
+              "type": "cacheHit",
+              "consumer": 2
+            }
+          ]
+        },
+        "sometimesAborted": {
+          "check": "seed 178284513197717; to simulate again: pnpm exec quint run gen/frontend__snapshotCache.run.qnt --main frontend__snapshotCache_run --step step --invariant never_sometimesAborted --max-samples 500 --max-steps 16 --mbt --seed 178284513197717",
+          "events": [
+            {
+              "type": "beginRead",
+              "read": 2
+            },
+            {
+              "type": "acquire",
+              "consumer": 2,
+              "lease": 3
+            },
+            {
+              "type": "release",
+              "consumer": 2,
+              "lease": 3,
+              "read": 2
+            },
+            {
+              "type": "flushRelease",
+              "read": 2
+            }
+          ]
+        },
+        "sometimesRefreshKeepsDisplay": {
+          "check": "seed 204641788410295; to simulate again: pnpm exec quint run gen/frontend__snapshotCache.run.qnt --main frontend__snapshotCache_run --step step --invariant inv --max-samples 250 --max-steps 20 --mbt --seed 204641788410295",
+          "events": [
+            {
+              "type": "beginRead",
+              "read": 2
+            },
+            {
+              "type": "acquire",
+              "consumer": 1,
+              "lease": 1
+            },
+            {
+              "type": "complete",
+              "read": 2,
+              "version": 2,
+              "validSnapshot": true
+            },
+            {
+              "type": "cacheHit",
+              "consumer": 1
+            },
+            {
+              "type": "beginRead",
+              "read": 3
+            },
+            {
+              "type": "acquire",
+              "consumer": 2,
+              "lease": 3
+            },
+            {
+              "type": "complete",
+              "read": 3,
+              "version": 1,
+              "validSnapshot": true
+            },
+            {
+              "type": "cacheHit",
+              "consumer": 2
+            },
+            {
+              "type": "cacheHit",
+              "consumer": 2
+            },
+            {
+              "type": "cacheHit",
+              "consumer": 1
+            },
+            {
+              "type": "cacheHit",
+              "consumer": 2
+            },
+            {
+              "type": "cacheHit",
+              "consumer": 1
+            },
+            {
+              "type": "cacheHit",
+              "consumer": 1
+            },
+            {
+              "type": "cacheHit",
+              "consumer": 1
+            },
+            {
+              "type": "cacheHit",
+              "consumer": 2
+            },
+            {
+              "type": "cacheHit",
+              "consumer": 2
+            },
+            {
+              "type": "cacheHit",
+              "consumer": 2
+            },
+            {
+              "type": "cacheHit",
+              "consumer": 1
+            },
+            {
+              "type": "cacheHit",
+              "consumer": 2
+            },
+            {
+              "type": "cacheHit",
+              "consumer": 1
+            }
+          ]
+        }
+      },
+      "proof": {
+        "total": 23,
+        "unproved": [],
+        "exhausted": [],
+        "resting": {},
+        "errors": []
+      }
+    }
+  },
+  "directed": [
+    "distinct sibling heading references",
+    "independent report close",
+    "account switch clears details",
+    "stale wrong-account detail refused",
+    "deferred replacement retains pending shared read",
+    "last subscriber abort",
+    "cached mount",
+    "failed forced refresh leaves displayed row",
+    "old cleanup leaves newer binding",
+    "late old completion cannot replace new cache",
+    "old completion usable only by still-owned consumer"
+  ]
+}

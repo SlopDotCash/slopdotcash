@@ -177,52 +177,95 @@
       ],
       "actions": {
         "init": {
-          "status": "partial-model",
-          "reason": "Navigation starts without private rows, but no set of separately opened report-detail identities exists.",
+          "status": "modeled-projection",
+          "reason": "Browser composition starts without private detail identities.",
           "successors": [
             {
-              "path": "spec/frontend/navigation.md",
+              "path": "spec/composition.md",
               "definitions": [
                 "initial"
+              ]
+            },
+            {
+              "path": "spec/frontend/reportDetails.md",
+              "definitions": [
+                "emptyDetails"
               ]
             }
           ]
         },
         "openFirst": {
-          "status": "missing-transition",
-          "reason": "No per-submission detail/card mount transition or deterministic accessible heading IDs.",
-          "successors": []
+          "status": "modeled-projection",
+          "reason": "Exact case-authorized submission mounts in the current account and navigation epoch.",
+          "successors": [
+            {
+              "path": "spec/composition.md",
+              "definitions": [
+                "canOpenDetail",
+                "openDetail"
+              ]
+            }
+          ]
         },
         "openSecond": {
-          "status": "missing-transition",
-          "reason": "No second concurrent report detail, so references cannot be checked for collisions.",
-          "successors": []
+          "status": "modeled-projection",
+          "reason": "Exact case-authorized submission mounts in the current account and navigation epoch.",
+          "successors": [
+            {
+              "path": "spec/composition.md",
+              "definitions": [
+                "canOpenDetail",
+                "openDetail"
+              ]
+            }
+          ]
         },
         "closeFirst": {
-          "status": "missing-transition",
-          "reason": "No independent report-detail closure preserving its sibling.",
-          "successors": []
+          "status": "modeled-projection",
+          "reason": "Closes only the chosen submission and retains every sibling.",
+          "successors": [
+            {
+              "path": "spec/composition.md",
+              "definitions": [
+                "closeDetail"
+              ]
+            },
+            {
+              "path": "spec/frontend/reportDetails.md",
+              "definitions": [
+                "lawCloseKeepsSibling"
+              ]
+            }
+          ]
         },
         "closeSecond": {
-          "status": "missing-transition",
-          "reason": "No independent report-detail closure preserving its sibling.",
-          "successors": []
+          "status": "modeled-projection",
+          "reason": "Closes only the chosen submission and retains every sibling.",
+          "successors": [
+            {
+              "path": "spec/composition.md",
+              "definitions": [
+                "closeDetail"
+              ]
+            },
+            {
+              "path": "spec/frontend/reportDetails.md",
+              "definitions": [
+                "lawCloseKeepsSibling"
+              ]
+            }
+          ]
         },
         "accountChanges": {
-          "status": "partial-model",
-          "reason": "Existing composition clears one draft and private row count. It cannot clear a set of mounted detail instances because that set is absent.",
+          "status": "modeled-projection",
+          "reason": "Reauthentication and sign-out clear all detail IDs, plus retained drafts.",
           "successors": [
             {
               "path": "spec/composition.md",
               "definitions": [
                 "authenticate",
-                "logout"
-              ]
-            },
-            {
-              "path": "spec/frontend/navigation.md",
-              "definitions": [
-                "signOut"
+                "logout",
+                "stepAccountChangeClearsDetails"
               ]
             }
           ]
@@ -235,24 +278,50 @@
       },
       "scenarios": {
         "bothOpenKeepDistinctReferencesTest": {
-          "status": "missing-transition",
-          "reason": "Missing two-report simultaneous detail and DOM-reference uniqueness contract.",
-          "successors": []
+          "status": "modeled-projection",
+          "reason": "Independent submission/section reference labels for two mounted details.",
+          "successors": [
+            {
+              "path": "spec/frontend/reportDetails.md",
+              "definitions": [
+                "lawHeadingReferencesDistinct"
+              ]
+            },
+            {
+              "path": "spec/composition.md",
+              "definitions": [
+                "sometimesSiblingDetails"
+              ]
+            }
+          ]
         },
         "closingOneKeepsTheOtherTest": {
-          "status": "missing-transition",
-          "reason": "Missing independent close transition.",
-          "successors": []
+          "status": "modeled-projection",
+          "reason": "A close leaves a distinct mounted sibling.",
+          "successors": [
+            {
+              "path": "spec/composition.md",
+              "definitions": [
+                "closeDetail"
+              ]
+            },
+            {
+              "path": "spec/frontend/reportDetails.md",
+              "definitions": [
+                "lawCloseKeepsSibling"
+              ]
+            }
+          ]
         },
         "accountChangeRemovesBothTest": {
-          "status": "partial-model",
-          "reason": "Current account reset covers aggregate rows and one draft only.",
+          "status": "modeled-projection",
+          "reason": "Account switch clears the complete mounted detail projection.",
           "successors": [
             {
               "path": "spec/composition.md",
               "definitions": [
                 "authenticate",
-                "logout"
+                "stepAccountChangeClearsDetails"
               ]
             }
           ]
@@ -268,11 +337,11 @@
       "evidenceEntries": [],
       "actions": {
         "init": {
-          "status": "partial-model",
-          "reason": "Single frontend request starts empty. It has no shared consumer subscriptions or cache identity.",
+          "status": "modeled-projection",
+          "reason": "Starts with no retained cache, visible result or subscriber binding.",
           "successors": [
             {
-              "path": "spec/frontend/requests.md",
+              "path": "spec/frontend/snapshotCache.md",
               "definitions": [
                 "initial"
               ]
@@ -280,58 +349,93 @@
           ]
         },
         "acquire": {
-          "status": "partial-model",
-          "reason": "One request opens. No concurrent consumer joins the same pending request.",
+          "status": "modeled-projection",
+          "reason": "Creates exact read and lease pair for distinct subscriber instances.",
           "successors": [
             {
-              "path": "spec/frontend/requests.md",
+              "path": "spec/frontend/snapshotCache.md",
               "definitions": [
-                "request"
+                "canAcquire",
+                "acquire"
               ]
             }
           ]
         },
         "cacheHit": {
-          "status": "missing-transition",
-          "reason": "No distinct validated shared cache hit or consumer-local view attachment.",
-          "successors": []
-        },
-        "force": {
-          "status": "missing-transition",
-          "reason": "No separate forced replacement generation that invalidates shared cache while preserving each visible record.",
-          "successors": []
-        },
-        "release": {
-          "status": "missing-transition",
-          "reason": "No exact read/consumer unbind preserving a newer binding.",
-          "successors": []
-        },
-        "flushRelease": {
-          "status": "missing-transition",
-          "reason": "No deferred last-consumer cancellation, or rejoin before deferred abort.",
-          "successors": []
-        },
-        "failure": {
-          "status": "partial-model",
-          "reason": "A single failed read preserves its snapshot, without distinct cache and consumer-local state.",
+          "status": "modeled-projection",
+          "reason": "Mounts a validated cached version without sharing active read binding.",
           "successors": [
             {
-              "path": "spec/frontend/requests.md",
+              "path": "spec/frontend/snapshotCache.md",
               "definitions": [
-                "receive"
+                "canCacheHit",
+                "cacheHit"
+              ]
+            }
+          ]
+        },
+        "force": {
+          "status": "modeled-projection",
+          "reason": "Advances read identity, invalidates cached value and keeps visible result.",
+          "successors": [
+            {
+              "path": "spec/frontend/snapshotCache.md",
+              "definitions": [
+                "beginRead",
+                "stepNewestNeverMovesBack"
+              ]
+            }
+          ]
+        },
+        "release": {
+          "status": "modeled-projection",
+          "reason": "Releases exactly the original consumer lease, preserves newer leases, and requests deferred disposal.",
+          "successors": [
+            {
+              "path": "spec/frontend/snapshotCache.md",
+              "definitions": [
+                "canRelease",
+                "release"
+              ]
+            }
+          ]
+        },
+        "flushRelease": {
+          "status": "modeled-projection",
+          "reason": "Aborts a queued transport only when no exact subscriber remains.",
+          "successors": [
+            {
+              "path": "spec/frontend/snapshotCache.md",
+              "definitions": [
+                "canFlushRelease",
+                "flushRelease"
+              ]
+            }
+          ]
+        },
+        "failure": {
+          "status": "modeled-projection",
+          "reason": "Failure leaves each independently displayed value unchanged.",
+          "successors": [
+            {
+              "path": "spec/frontend/snapshotCache.md",
+              "definitions": [
+                "failRead",
+                "stepRetainedDisplayOnFailure"
               ]
             }
           ]
         },
         "complete": {
-          "status": "partial-model",
-          "reason": "Resource/lifetime/request guard blocks a stale consumer result. Independent cache and consumer commit behavior is absent.",
+          "status": "modeled-projection",
+          "reason": "Newest read publishes cache, while each exact latest consumer binding may receive its own validated snapshot.",
           "successors": [
             {
-              "path": "spec/frontend/requests.md",
+              "path": "spec/frontend/snapshotCache.md",
               "definitions": [
-                "canReceive",
-                "receive"
+                "canComplete",
+                "complete",
+                "latestBinding"
               ]
             }
           ]
@@ -344,53 +448,97 @@
       },
       "scenarios": {
         "failedForcedRefreshKeepsVisibleRecordTest": {
-          "status": "partial-model",
-          "reason": "Single stale view is modeled, but cache eviction and unchanged consumer output are not independent.",
+          "status": "modeled-projection",
+          "reason": "Failed forced refresh preserves displayed version independently of cache.",
           "successors": [
             {
-              "path": "spec/frontend/requests.md",
+              "path": "spec/frontend/snapshotCache.md",
               "definitions": [
-                "receive"
+                "beginRead",
+                "failRead",
+                "stepRetainedDisplayOnFailure"
               ]
             }
           ]
         },
         "replacedEffectCannotAcceptOldReadTest": {
-          "status": "partial-model",
-          "reason": "A stale request cannot overwrite a new resource/lifetime. There is no same-resource forced generation with two requests in flight.",
+          "status": "modeled-projection",
+          "reason": "Older subscription cannot overwrite newer binding.",
           "successors": [
             {
-              "path": "spec/frontend/requests.md",
+              "path": "spec/frontend/snapshotCache.md",
               "definitions": [
-                "canReceive"
+                "latestBinding",
+                "complete"
               ]
             }
           ]
         },
         "oldCleanupCannotUnbindNewReadTest": {
-          "status": "missing-transition",
-          "reason": "Missing per-consumer and per-request cleanup identity.",
-          "successors": []
+          "status": "modeled-projection",
+          "reason": "Cleanup matches exact captured consumer, lease and read identity.",
+          "successors": [
+            {
+              "path": "spec/frontend/snapshotCache.md",
+              "definitions": [
+                "canRelease",
+                "release"
+              ]
+            }
+          ]
         },
         "cachedMountTest": {
-          "status": "missing-transition",
-          "reason": "Missing cache-hit attach for a second consumer.",
-          "successors": []
+          "status": "modeled-projection",
+          "reason": "Consumer can mount existing validated cache.",
+          "successors": [
+            {
+              "path": "spec/frontend/snapshotCache.md",
+              "definitions": [
+                "canCacheHit",
+                "cacheHit"
+              ]
+            }
+          ]
         },
         "oldReadCannotReplaceRefreshCacheTest": {
-          "status": "missing-transition",
-          "reason": "Missing shared cache newest-generation write fence.",
-          "successors": []
+          "status": "modeled-projection",
+          "reason": "A late earlier result cannot publish the shared cache.",
+          "successors": [
+            {
+              "path": "spec/frontend/snapshotCache.md",
+              "definitions": [
+                "complete",
+                "stepNewestNeverMovesBack"
+              ]
+            }
+          ]
         },
         "replacementEffectCanJoinBeforeAbortTest": {
-          "status": "missing-transition",
-          "reason": "Missing deferred release and replacement consumer rejoin.",
-          "successors": []
+          "status": "modeled-projection",
+          "reason": "New subscriber keeps an otherwise queued transport alive.",
+          "successors": [
+            {
+              "path": "spec/frontend/snapshotCache.md",
+              "definitions": [
+                "acquire",
+                "flushRelease"
+              ]
+            }
+          ]
         },
         "lastConsumerAbortsTest": {
-          "status": "missing-transition",
-          "reason": "Missing last-consumer ownership test before transport abort.",
-          "successors": []
+          "status": "modeled-projection",
+          "reason": "Deferred cleanup after last lease releases prevents completion.",
+          "successors": [
+            {
+              "path": "spec/frontend/snapshotCache.md",
+              "definitions": [
+                "release",
+                "flushRelease",
+                "canComplete"
+              ]
+            }
+          ]
         }
       }
     },

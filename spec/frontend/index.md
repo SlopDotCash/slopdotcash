@@ -8,7 +8,9 @@ service. They introduce no new screens or visual design.
 
 - [Navigation and session ownership](./navigation.md)
 - [Asynchronous reads and recovery](./requests.md)
+- [Shared public snapshot ownership](./snapshotCache.md)
 - [Private report drafts](./drafts.md)
+- [Independent private report details](./reportDetails.md)
 - [Public and private projections](./projections.md)
 - [Required product presentation](./presentation.md)
 - [Provisional EVM vault funding](./provisionalVault.md)
