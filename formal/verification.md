@@ -323,6 +323,10 @@ reporting requirement.
   five named outcomes. Directed checks covered claim takeover, exact duplicate
   evidence, stale completion, version replacement and private routing.
   [Screening proof and replays](validation/source-coverage/private-report-screening.json)
+- The forwarding model discharged all 94 obligations. Reporter authorization
+  and the durable send claim gate the exact retained version. A lost response
+  retains the pending submission until a bounded listing reconciles its
+  canonical advisory. The original Slop receipt remains independently owned.
 - Points recovery discharged all nine obligations. Reconciliation keeps the
   exact award revision prefix and the union of complete source coverage, even
   when a newer copy has coverage changes alone.

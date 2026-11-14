@@ -25,9 +25,10 @@ specification migration. Product implementation follows after review.
 - [Cross-machine account ownership](./composition.md)
 - [Registry and security composition](./projectComposition.md)
 
-The preserved PRD is `docs/slop-product-requirements.md`, from development
-commit `cde1f719cda7fc52a0f26dcbbcd524cd2cd7c138`. The user resolved one
-source conflict on 13 November 2026. New project closure consent starts
+The preserved PRD is `docs/slop-product-requirements.md`. Its exact
+`development` and matching `main` revisions are recorded in
+`formal/source-manifest.json`. The user resolved one source conflict on
+13 November 2026. New project closure consent starts
 unchecked. Missing consent is false and explicit consent remains necessary.
 
 `formal/` records source identity, requirement coverage, original-model mappings,

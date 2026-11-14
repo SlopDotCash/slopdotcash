@@ -3799,7 +3799,7 @@
     },
     {
       "path": "spec/index.md",
-      "sha256": "11b4a60fb7525929cec6747a7ec8a3f89b3288c0d0eddd256b6dc600ccf48963",
+      "sha256": "714c1cf6109ed8a0ffd74418b3fa803bec15ac630f3cace8f680c64d3b829ae5",
       "module": "index",
       "stories": [],
       "rules": [],
@@ -3859,7 +3859,7 @@
         },
         {
           "target": "./app/",
-          "line": 39
+          "line": 40
         }
       ]
     },
@@ -5873,196 +5873,6 @@
       "references": []
     },
     {
-      "path": "spec/security/index.md",
-      "sha256": "ae9c98325bbea402374485ce44090c8f5be6078cfccea627c043f9234b0afcc0",
-      "module": "security",
-      "stories": [],
-      "rules": [],
-      "imports": [],
-      "references": [
-        {
-          "target": "./admission.md",
-          "line": 7
-        },
-        {
-          "target": "./enforcement.md",
-          "line": 8
-        },
-        {
-          "target": "./intake.md",
-          "line": 9
-        },
-        {
-          "target": "./screening.md",
-          "line": 10
-        },
-        {
-          "target": "./cases.md",
-          "line": 11
-        },
-        {
-          "target": "./terms.md",
-          "line": 12
-        },
-        {
-          "target": "./evidence.md",
-          "line": 13
-        },
-        {
-          "target": "./privacy.md",
-          "line": 14
-        }
-      ]
-    },
-    {
-      "path": "spec/security/intake.md",
-      "sha256": "96e02eb1c37223a7daaaff7950bba76047ea7e05e2435c4a137e5cc7a6bf7721",
-      "module": "security__intake",
-      "stories": [
-        {
-          "heading": "Story: Submit and recover one private report",
-          "line": 7
-        }
-      ],
-      "rules": [
-        {
-          "heading": "Story: Submit and recover one private report / Upload and receipt creation have separate durable states",
-          "line": 9,
-          "definitions": [
-            "IntakeAvailability",
-            "IntakePhase",
-            "Intake",
-            "initial"
-          ]
-        },
-        {
-          "heading": "Story: Submit and recover one private report / A new attempt binds authenticated identity and keeps its idempotency key",
-          "line": 18,
-          "definitions": [
-            "canBegin",
-            "begin",
-            "canObserveAvailability",
-            "observeAvailability",
-            "keyValues",
-            "digestValues",
-            "reporterValues",
-            "repositoryValues",
-            "termsRevisionValues",
-            "canInterruptUpload",
-            "interruptUpload",
-            "canRetryUpload",
-            "retryUpload"
-          ]
-        },
-        {
-          "heading": "Story: Submit and recover one private report / Only verified exact object bytes permit an atomic case and Inbox receipt",
-          "line": 40,
-          "definitions": [
-            "canVerifyObject",
-            "verifyObject",
-            "canCommitReceipt",
-            "commitReceipt",
-            "canReconcileReceipt",
-            "reconcileReceipt",
-            "alwaysAtomicReceipt",
-            "alwaysReceivedHasReceipt",
-            "alwaysForwardingHasReceipt",
-            "stepPreservesReceipt"
-          ]
-        },
-        {
-          "heading": "Story: Submit and recover one private report / Forwarding requires separate researcher authorization and its own receipt",
-          "line": 59,
-          "definitions": [
-            "canAuthorizeForwarding",
-            "authorizeForwarding",
-            "canStartForwarding",
-            "startForwarding",
-            "canConfirmForwarding",
-            "confirmForwarding",
-            "canProveUnsent",
-            "proveUnsent",
-            "alwaysForwardedAfterReceipt",
-            "sometimesUnavailable",
-            "sometimesDenied",
-            "sometimesReceived",
-            "sometimesForwarded"
-          ]
-        },
-        {
-          "heading": "Story: Submit and recover one private report / Simulation samples exercise missing, matching and conflicting evidence",
-          "line": 90,
-          "definitions": [
-            "byValues"
-          ]
-        }
-      ],
-      "imports": [],
-      "references": []
-    },
-    {
-      "path": "spec/security/privacy.md",
-      "sha256": "7bd1db09d36dcd67e4df3e6e051c710503bb118e7ed01171a7b9e5b8c4472bc2",
-      "module": "security__privacy",
-      "stories": [
-        {
-          "heading": "Story: Read only authorized retained evidence",
-          "line": 7
-        },
-        {
-          "heading": "Story: Retain evidence while any obligation references it",
-          "line": 41
-        }
-      ],
-      "rules": [
-        {
-          "heading": "Story: Read only authorized retained evidence / Read authorization is scoped, expiring and audited",
-          "line": 9,
-          "definitions": [
-            "BodyKind",
-            "ReadAccess",
-            "initial",
-            "scannerActorAllowed",
-            "byValues",
-            "canRequestRead",
-            "requestRead",
-            "allowed",
-            "canRecordAudit",
-            "recordAudit",
-            "canDeliver",
-            "deliver",
-            "canExpire",
-            "expire",
-            "alwaysAuditedDelivery",
-            "alwaysNoTraceRead",
-            "sometimesReportRead",
-            "sometimesScannerRead"
-          ]
-        },
-        {
-          "heading": "Story: Retain evidence while any obligation references it / Content-addressed objects cannot be deleted while retained",
-          "line": 43,
-          "definitions": [
-            "RetainedObject",
-            "emptyObject",
-            "oValues",
-            "mayDeleteObject",
-            "lawSuccessfulAdmissionPermanent",
-            "lawSharedObjectsRetained"
-          ]
-        },
-        {
-          "heading": "Story: Retain evidence while any obligation references it / Simulation samples exercise missing, matching and conflicting evidence",
-          "line": 67,
-          "definitions": [
-            "actorValues"
-          ]
-        }
-      ],
-      "imports": [],
-      "references": []
-    },
-    {
       "path": "spec/security/screening.md",
       "sha256": "27fafe9f9765065177d967ce33197c4bcfb4ccb75efe965ce8b6fe48f37b76a9",
       "module": "security__screening",
@@ -6158,6 +5968,346 @@
             "weight_reviewReport",
             "weight_replace",
             "weight_route"
+          ]
+        }
+      ],
+      "imports": [],
+      "references": []
+    },
+    {
+      "path": "spec/security/forwarding.md",
+      "sha256": "acc27bf07ce3ce9f7172bb021806eec926ff37d204e21fa105893c0a923d0a4c",
+      "module": "security__forwarding",
+      "stories": [
+        {
+          "heading": "Story: Forward the approved saved report using the researcher's consent",
+          "line": 21
+        },
+        {
+          "heading": "Story: Reconcile the exact privately submitted copy and verify its receipt",
+          "line": 137
+        }
+      ],
+      "rules": [
+        {
+          "heading": "Story: Forward the approved saved report using the researcher's consent / Each request uses its own exact row revision and a reporter-only v1 grant",
+          "line": 23,
+          "definitions": [
+            "Phase",
+            "Failure",
+            "Operation",
+            "Credential",
+            "Grant",
+            "Request",
+            "Claim",
+            "ClaimRead",
+            "SendGate",
+            "Copy",
+            "Forwarding",
+            "noClaim",
+            "noCopy",
+            "initial",
+            "grantAllows",
+            "currentRequest",
+            "mayOperate",
+            "lawNoInstallationUse"
+          ]
+        },
+        {
+          "heading": "Story: Forward the approved saved report using the researcher's consent / The atomic claim and exact readback precede any GitHub POST",
+          "line": 70,
+          "definitions": [
+            "gateMatches",
+            "canClaimSend",
+            "claimSend",
+            "canRecordClaimRead",
+            "recordClaimRead",
+            "canStartPost",
+            "startPost",
+            "ownsPostedClaim",
+            "canMarkInterrupted",
+            "markInterrupted",
+            "alwaysClaimBound",
+            "stepEarlierClaimsRetained",
+            "lawClaimReadbackUsesOwnRevision",
+            "stepPostNeedsOwnReadback"
+          ]
+        },
+        {
+          "heading": "Story: Forward the approved saved report using the researcher's consent / Only recognized throttling reopens the same draft without a listing",
+          "line": 112,
+          "definitions": [
+            "PostResult",
+            "canRecordPostResult",
+            "recordPostResult",
+            "canHoldLateCopy",
+            "holdLateCopy",
+            "sometimesRetryableDraft",
+            "sometimesUncertain"
+          ]
+        },
+        {
+          "heading": "Story: Reconcile the exact privately submitted copy and verify its receipt / A complete matching listing chooses the earliest copy or permits retry after the quiet window",
+          "line": 139,
+          "definitions": [
+            "Listing",
+            "validCreatedCopy",
+            "exactListing",
+            "comesBefore",
+            "earliestCopy",
+            "createdCandidates",
+            "canRecordCreated",
+            "recordCreated",
+            "canReconcile",
+            "reconcile",
+            "lawUnknownListingCannotReopen",
+            "lawEarlyEmptyCannotReopen",
+            "stepCanonicalFixed",
+            "sometimesSubmitted",
+            "sometimesDuplicates"
+          ]
+        },
+        {
+          "heading": "Story: Reconcile the exact privately submitted copy and verify its receipt / A separate exact advisory read links one verified receipt to the saved case",
+          "line": 199,
+          "definitions": [
+            "ReadStatus",
+            "GitHubState",
+            "AdvisoryRead",
+            "receiptIdentityMatches",
+            "DirectCheck",
+            "DirectRequest",
+            "directReceiptCheck",
+            "canReadReceipt",
+            "readReceipt",
+            "canExpireVerification",
+            "expireVerification",
+            "canLoseReceiptReply",
+            "loseReceiptReply",
+            "alwaysOriginalCase",
+            "alwaysReceiptBinding",
+            "alwaysSubmittedBinding",
+            "alwaysDraftHasNoCopy",
+            "sometimesContactsUnavailable",
+            "sometimesReceiptRecovered"
+          ]
+        },
+        {
+          "heading": "Story: Reconcile the exact privately submitted copy and verify its receipt / Simulation samples expose retry, stale ownership and exact receipt paths",
+          "line": 258,
+          "definitions": [
+            "capturedGrant",
+            "revisionsToTry",
+            "requestValues",
+            "readbackValues",
+            "approvedReport",
+            "gateValues",
+            "claimValues",
+            "startedAtMsValues",
+            "seenRevisionValues",
+            "nowMsValues",
+            "earlyCopy",
+            "lateCopy",
+            "baseListing",
+            "listingValues",
+            "acceptedValues",
+            "earlyReceipt",
+            "advisoryReadValues",
+            "weight_holdLateCopy",
+            "weight_claimSend",
+            "weight_recordClaimRead",
+            "weight_startPost",
+            "weight_recordPostResult",
+            "weight_recordCreated",
+            "weight_reconcile",
+            "weight_readReceipt",
+            "weight_loseReceiptReply"
+          ]
+        }
+      ],
+      "imports": [
+        "security__screening"
+      ],
+      "references": [
+        {
+          "target": "./intake.md",
+          "line": 3
+        },
+        {
+          "target": "./screening.md",
+          "line": 4
+        }
+      ]
+    },
+    {
+      "path": "spec/security/index.md",
+      "sha256": "f77e585c50fcbb8325a693a90682d1f6f1160df8a4c01da340ae6f6c718e2dde",
+      "module": "security",
+      "stories": [],
+      "rules": [],
+      "imports": [],
+      "references": [
+        {
+          "target": "./admission.md",
+          "line": 7
+        },
+        {
+          "target": "./enforcement.md",
+          "line": 8
+        },
+        {
+          "target": "./intake.md",
+          "line": 9
+        },
+        {
+          "target": "./forwarding.md",
+          "line": 10
+        },
+        {
+          "target": "./screening.md",
+          "line": 11
+        },
+        {
+          "target": "./cases.md",
+          "line": 12
+        },
+        {
+          "target": "./terms.md",
+          "line": 13
+        },
+        {
+          "target": "./evidence.md",
+          "line": 14
+        },
+        {
+          "target": "./privacy.md",
+          "line": 15
+        }
+      ]
+    },
+    {
+      "path": "spec/security/intake.md",
+      "sha256": "f5d01642407abd480e7b316bbb902089bbb6c290b17096e322540100a4304922",
+      "module": "security__intake",
+      "stories": [
+        {
+          "heading": "Story: Submit and recover one private report",
+          "line": 7
+        }
+      ],
+      "rules": [
+        {
+          "heading": "Story: Submit and recover one private report / Upload and receipt creation have separate durable states",
+          "line": 9,
+          "definitions": [
+            "IntakeAvailability",
+            "IntakePhase",
+            "Intake",
+            "initial"
+          ]
+        },
+        {
+          "heading": "Story: Submit and recover one private report / A new attempt binds authenticated identity and keeps its idempotency key",
+          "line": 18,
+          "definitions": [
+            "canBegin",
+            "begin",
+            "canObserveAvailability",
+            "observeAvailability",
+            "keyValues",
+            "digestValues",
+            "reporterValues",
+            "repositoryValues",
+            "termsRevisionValues",
+            "canInterruptUpload",
+            "interruptUpload",
+            "canRetryUpload",
+            "retryUpload"
+          ]
+        },
+        {
+          "heading": "Story: Submit and recover one private report / Only verified exact object bytes permit an atomic case and Inbox receipt",
+          "line": 40,
+          "definitions": [
+            "canVerifyObject",
+            "verifyObject",
+            "canCommitReceipt",
+            "commitReceipt",
+            "canReconcileReceipt",
+            "reconcileReceipt",
+            "alwaysAtomicReceipt",
+            "alwaysReceivedHasReceipt",
+            "stepPreservesReceipt",
+            "sometimesUnavailable",
+            "sometimesDenied",
+            "sometimesReceived"
+          ]
+        }
+      ],
+      "imports": [],
+      "references": [
+        {
+          "target": "./forwarding.md",
+          "line": 58
+        }
+      ]
+    },
+    {
+      "path": "spec/security/privacy.md",
+      "sha256": "7bd1db09d36dcd67e4df3e6e051c710503bb118e7ed01171a7b9e5b8c4472bc2",
+      "module": "security__privacy",
+      "stories": [
+        {
+          "heading": "Story: Read only authorized retained evidence",
+          "line": 7
+        },
+        {
+          "heading": "Story: Retain evidence while any obligation references it",
+          "line": 41
+        }
+      ],
+      "rules": [
+        {
+          "heading": "Story: Read only authorized retained evidence / Read authorization is scoped, expiring and audited",
+          "line": 9,
+          "definitions": [
+            "BodyKind",
+            "ReadAccess",
+            "initial",
+            "scannerActorAllowed",
+            "byValues",
+            "canRequestRead",
+            "requestRead",
+            "allowed",
+            "canRecordAudit",
+            "recordAudit",
+            "canDeliver",
+            "deliver",
+            "canExpire",
+            "expire",
+            "alwaysAuditedDelivery",
+            "alwaysNoTraceRead",
+            "sometimesReportRead",
+            "sometimesScannerRead"
+          ]
+        },
+        {
+          "heading": "Story: Retain evidence while any obligation references it / Content-addressed objects cannot be deleted while retained",
+          "line": 43,
+          "definitions": [
+            "RetainedObject",
+            "emptyObject",
+            "oValues",
+            "mayDeleteObject",
+            "lawSuccessfulAdmissionPermanent",
+            "lawSharedObjectsRetained"
+          ]
+        },
+        {
+          "heading": "Story: Retain evidence while any obligation references it / Simulation samples exercise missing, matching and conflicting evidence",
+          "line": 67,
+          "definitions": [
+            "actorValues"
           ]
         }
       ],

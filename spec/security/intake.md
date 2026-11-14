@@ -11,8 +11,8 @@ receipt time and receipt-time terms. Report text is private R2 content.
 ```quint
 type IntakeAvailability = Enabled | Disabled | StaleAccess | DeniedAccess | Unavailable | InvalidInput
 type IntakePhase = Editing | Uploading | UploadUncertain | ObjectStored | Received
-type Intake = { availability: IntakeAvailability, phase: IntakePhase, key: int, digest: int, reporter: int, repository: int, termsRevision: int, objectVerified: bool, caseExists: bool, inboxExists: bool, forwarded: bool, forwardingAuthorized: bool, forwardUncertain: bool }
-pure val initial: Intake = { availability: Enabled, phase: Editing, key: 0, digest: 0, reporter: 0, repository: 0, termsRevision: 0, objectVerified: false, caseExists: false, inboxExists: false, forwarded: false, forwardingAuthorized: false, forwardUncertain: false }
+type Intake = { availability: IntakeAvailability, phase: IntakePhase, key: int, digest: int, reporter: int, repository: int, termsRevision: int, objectVerified: bool, caseExists: bool, inboxExists: bool }
+pure val initial: Intake = { availability: Enabled, phase: Editing, key: 0, digest: 0, reporter: 0, repository: 0, termsRevision: 0, objectVerified: false, caseExists: false, inboxExists: false }
 ```
 
 ### A new attempt binds authenticated identity and keeps its idempotency key
@@ -52,46 +52,20 @@ pure def canReconcileReceipt(i: Intake, key: int, digest: int): bool = i.phase =
 pure def reconcileReceipt(i: Intake, key: int, digest: int): Intake = i
 pure def alwaysAtomicReceipt(i: Intake): bool = i.caseExists == i.inboxExists and (i.caseExists implies i.objectVerified and i.phase == Received)
 pure def alwaysReceivedHasReceipt(i: Intake): bool = i.phase == Received implies i.caseExists and i.inboxExists and i.objectVerified
-pure def alwaysForwardingHasReceipt(i: Intake): bool = (i.forwardingAuthorized or i.forwardUncertain) implies i.phase == Received and i.caseExists and i.forwardingAuthorized
 pure def stepPreservesReceipt(before: Intake, after: Intake): bool = before.caseExists implies after.caseExists and after.key == before.key and after.digest == before.digest and after.termsRevision == before.termsRevision
 ```
 
-### Forwarding requires separate researcher authorization and its own receipt
-
-The adapter uses the authorized user's GitHub token. Installation tokens retain
-read-only advisory access. Unknown delivery requires reconciliation before a
-new send. A forwarding failure leaves the original Slop receipt available.
-
-Discovered by the proof. Received and forwarding states retain the durable
-case and Inbox receipt, and an uncertain forwarding attempt retains its
-researcher authorization.
+The [GitHub forwarding model](./forwarding.md) owns the researcher's separate
+authorization, attempts, reconciliation, and advisory receipt after Slop
+has stored the case.
 
 ```quint
-pure def canAuthorizeForwarding(i: Intake, by: int): bool = i.phase == Received and by == i.reporter
-pure def authorizeForwarding(i: Intake, by: int): Intake = { ...i, forwardingAuthorized: true }
-pure def canStartForwarding(i: Intake, userToken: bool): bool = i.forwardingAuthorized and userToken and not(i.forwarded) and not(i.forwardUncertain)
-pure def startForwarding(i: Intake, userToken: bool): Intake = { ...i, forwardUncertain: true }
-pure def canConfirmForwarding(i: Intake, receiptMatches: bool): bool = i.forwardUncertain and receiptMatches
-pure def confirmForwarding(i: Intake, receiptMatches: bool): Intake = { ...i, forwarded: true, forwardUncertain: false }
-pure def canProveUnsent(i: Intake, absenceProved: bool): bool = i.forwardUncertain and absenceProved
-pure def proveUnsent(i: Intake, absenceProved: bool): Intake = { ...i, forwardUncertain: false }
-pure def alwaysForwardedAfterReceipt(i: Intake): bool = i.forwarded implies i.caseExists and i.forwardingAuthorized
 pure def sometimesUnavailable(i: Intake): bool = i.availability == Unavailable
 pure def sometimesDenied(i: Intake): bool = i.availability == DeniedAccess
 pure def sometimesReceived(i: Intake): bool = i.phase == Received
-pure def sometimesForwarded(i: Intake): bool = i.forwarded
 ```
 
 Drafts are account-and-project-bound session storage. Sign-out and account
 changes clear retained private draft data. Storage failures remain visible.
 No local-storage persistence, server autosave, attachment service or public
 issue fallback is introduced. The frontend specification owns those controls.
-
-### Simulation samples exercise missing, matching and conflicting evidence
-
-These input sets bound simulation only. The generated guards accept every
-value allowed by their declared types and product rules.
-
-```quint
-pure val byValues = Set(0, 1, 2)
-```
