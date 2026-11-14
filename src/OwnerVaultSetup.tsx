@@ -89,8 +89,11 @@ function restore(key: string): Pending | null {
  * every 10 seconds at first, then every 30, for about an hour, paused while the
  * tab is hidden. "Check vault registration" stays for an entered hash.
  */
-/** The first check is early: inclusion alone lets the owner fund the vault. */
-const AUTO_REGISTER_FIRST_MS = 4_000;
+/**
+ * A creation this page just sent, or whose deposit it just verified, is asked
+ * about early: inclusion alone lets the owner fund the vault.
+ */
+const AUTO_REGISTER_SOON_MS = 4_000;
 const AUTO_REGISTER_FAST_MS = 10_000;
 const AUTO_REGISTER_SLOW_MS = 30_000;
 const AUTO_REGISTER_FAST_ATTEMPTS = 6;
@@ -183,6 +186,8 @@ export function OwnerVaultSetup({
   const [provisional, setProvisional] = useState<EscrowDeployment | null>(null);
   const fundingWallet = useRef<Connection | null>(null);
   const [fundingBusy, setFundingBusy] = useState(false);
+  // The creation hash whose next automatic check should run early.
+  const [askSoon, setAskSoon] = useState<string | null>(null);
   const solana =
     ESCROW_NETWORKS[network as keyof typeof ESCROW_NETWORKS]?.family ===
     "solana";
@@ -436,6 +441,7 @@ export function OwnerVaultSetup({
             storedPending.current = submitted;
             if (current()) {
               setPending(submitted);
+              setAskSoon(hash);
               setNotice(
                 "Creation sent. Check registration once it is finalized.",
               );
@@ -662,14 +668,14 @@ export function OwnerVaultSetup({
             );
           });
       },
-      autoAttempts === 0
-        ? AUTO_REGISTER_FIRST_MS
+      autoAttempts === 0 && askSoon === autoHash
+        ? AUTO_REGISTER_SOON_MS
         : autoAttempts < AUTO_REGISTER_FAST_ATTEMPTS
           ? AUTO_REGISTER_FAST_MS
           : AUTO_REGISTER_SLOW_MS,
     );
     return () => window.clearTimeout(timer);
-  }, [autoHash, autoAttempts, autoErrors, autoTicks, setError]);
+  }, [autoHash, autoAttempts, autoErrors, autoTicks, askSoon, setError]);
   const active = pending ?? review;
   return (
     <section
@@ -994,16 +1000,17 @@ export function OwnerVaultSetup({
                 if (running) action.current += 1;
                 setFundingBusy(running);
               }}
-              onFinalized={() =>
+              onFinalized={() => {
                 // A final deposit means the creation before it is final too:
-                // ask for registration now instead of at the next timer.
+                // ask for registration soon instead of at the next timer.
+                setAskSoon(pending.hash);
                 setAutoRegister((state) => ({
                   ...state,
                   attempts: 0,
                   errors: 0,
                   ticks: state.ticks + 1,
-                }))
-              }
+                }));
+              }}
             />
           ) : null}
         </>
