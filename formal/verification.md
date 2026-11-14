@@ -241,6 +241,13 @@ page view traffic to the site's own origin.
   checking exact chain evidence. Payment jobs scope failures and retries to
   their own network and run identity. All 78 obligations proved.
   [Deposit and job results](validation/source-coverage/deposit-jobs.json)
+- Payment dispatch tracks attempt and lease identity independently of confirmed
+  vault receipts. All 107 obligations proved. The current atomic payment/vault
+  model also discharged all 38 obligations for its retained-attempt path, and
+  the payment lifecycle discharged all 90. The independently verified scanner
+  receipt needs an atomic handoff to the aggregate to cover historical wallet
+  authorization without a local attempt.
+  [Dispatch evidence](validation/source-coverage/payment-dispatch.json) · [Payment proof](validation/active-proof/settlement/payment-complete.json) · [Composition proof](validation/active-proof/settlement/composition-complete.json)
 - Solana payment discovery verifies the RPC genesis before touching its
   backlog. The frozen interval advances oldest first under a generation and
   revision fence. All 22 obligations proved, and the directed check drained
@@ -255,10 +262,10 @@ page view traffic to the site's own origin.
   split. All 42 vault obligations proved, including conservation and positivity.
   [Settlement journeys](validation/active-proof/settlement/settlement-history-models.json) · [Vault proof](validation/active-proof/settlement/vault-complete.json)
 - Shared money proves exact addition, covered subtraction, and value order for
-  arbitrary-width amounts with zero padding. All 37 obligations proved, including long
+  arbitrary-width amounts with zero padding. All 38 obligations proved, including long
   division bounds and reconstruction, and both fee conservation laws. Fixed
   floor-halving proves exact quotient, parity and order independently.
-  [Shared money proofs](validation/active-proof/money-multiply-zero/verification.json) · [Floor halves](validation/finance/half-proof.json)
+  [Shared money proofs](validation/active-proof/money-unit-gap/verification.json) · [Floor halves](validation/finance/half-proof.json)
 - Monthly settlement discharged all 73 obligations. Allocation proves valid
   computed shares and whole-pool allocation for a sole eligible recipient.
   Full conservation across multiple recipients still needs proof.
@@ -275,8 +282,9 @@ page view traffic to the site's own origin.
 - Referrals and buyback preserve filing identity, posting history and the
   pinned bridged quantity. The repaired models replayed 210 traces. The
   distributor proof discharged all 146 obligations against its recorded
-  dependency bytes. Buyback also replays exact halving.
-  [Repaired journeys](validation/finance/referral-buyback-repaired-models.json) · [Distributor proof](validation/finance/referral-distributor-proof-complete.json) · [Floor-half replay](validation/finance/buyback-exact-half-replay.json)
+  dependency bytes. Buyback discharged all 94 obligations, including the exact
+  floor-half purchase and burn bound.
+  [Repaired journeys](validation/finance/referral-buyback-repaired-models.json) · [Distributor proof](validation/finance/referral-distributor-proof-complete.json) · [Buyback proof](validation/finance/buyback-proof-complete.json)
 - Reserve release discharged all 146 obligations, including conservation after
   an exact partial settlement and the dependent step condition.
   [Reserve proof](validation/active-proof/settlement/reserve-complete.json)
