@@ -5722,7 +5722,8 @@
       "candidateSuccessorSpecs": [
         "spec/settlement/referrals.md",
         "spec/settlement/referralAccrual.md",
-        "spec/settlement/referralPublication.md"
+        "spec/settlement/referralPublication.md",
+        "spec/settlement/referralDistributor.md"
       ]
     },
     {
@@ -11594,7 +11595,8 @@
       "candidateSuccessorSpecs": [
         "spec/settlement/referrals.md",
         "spec/settlement/referralAccrual.md",
-        "spec/settlement/referralPublication.md"
+        "spec/settlement/referralPublication.md",
+        "spec/settlement/referralDistributor.md"
       ]
     },
     {
@@ -11632,7 +11634,8 @@
       "candidateSuccessorSpecs": [
         "spec/settlement/referrals.md",
         "spec/settlement/referralAccrual.md",
-        "spec/settlement/referralPublication.md"
+        "spec/settlement/referralPublication.md",
+        "spec/settlement/referralDistributor.md"
       ]
     },
     {
@@ -11672,7 +11675,8 @@
       "candidateSuccessorSpecs": [
         "spec/settlement/referrals.md",
         "spec/settlement/referralAccrual.md",
-        "spec/settlement/referralPublication.md"
+        "spec/settlement/referralPublication.md",
+        "spec/settlement/referralDistributor.md"
       ]
     },
     {
@@ -11721,7 +11725,8 @@
       "candidateSuccessorSpecs": [
         "spec/settlement/referrals.md",
         "spec/settlement/referralAccrual.md",
-        "spec/settlement/referralPublication.md"
+        "spec/settlement/referralPublication.md",
+        "spec/settlement/referralDistributor.md"
       ]
     },
     {
@@ -11763,7 +11768,8 @@
       "candidateSuccessorSpecs": [
         "spec/settlement/referrals.md",
         "spec/settlement/referralAccrual.md",
-        "spec/settlement/referralPublication.md"
+        "spec/settlement/referralPublication.md",
+        "spec/settlement/referralDistributor.md"
       ]
     },
     {
@@ -11817,7 +11823,8 @@
       "candidateSuccessorSpecs": [
         "spec/settlement/referrals.md",
         "spec/settlement/referralAccrual.md",
-        "spec/settlement/referralPublication.md"
+        "spec/settlement/referralPublication.md",
+        "spec/settlement/referralDistributor.md"
       ]
     },
     {
@@ -11858,7 +11865,8 @@
       "candidateSuccessorSpecs": [
         "spec/settlement/referrals.md",
         "spec/settlement/referralAccrual.md",
-        "spec/settlement/referralPublication.md"
+        "spec/settlement/referralPublication.md",
+        "spec/settlement/referralDistributor.md"
       ]
     },
     {
@@ -11895,7 +11903,8 @@
       "candidateSuccessorSpecs": [
         "spec/settlement/referrals.md",
         "spec/settlement/referralAccrual.md",
-        "spec/settlement/referralPublication.md"
+        "spec/settlement/referralPublication.md",
+        "spec/settlement/referralDistributor.md"
       ]
     },
     {
@@ -21862,7 +21871,8 @@
       "candidateSuccessorSpecs": [
         "spec/settlement/referrals.md",
         "spec/settlement/referralAccrual.md",
-        "spec/settlement/referralPublication.md"
+        "spec/settlement/referralPublication.md",
+        "spec/settlement/referralDistributor.md"
       ]
     },
     {
@@ -21924,7 +21934,8 @@
       "candidateSuccessorSpecs": [
         "spec/settlement/referrals.md",
         "spec/settlement/referralAccrual.md",
-        "spec/settlement/referralPublication.md"
+        "spec/settlement/referralPublication.md",
+        "spec/settlement/referralDistributor.md"
       ]
     },
     {

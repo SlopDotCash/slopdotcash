@@ -805,7 +805,8 @@
       "owners": [
         "spec/settlement/referrals.md",
         "spec/settlement/referralAccrual.md",
-        "spec/settlement/referralPublication.md"
+        "spec/settlement/referralPublication.md",
+        "spec/settlement/referralDistributor.md"
       ],
       "status": "source-preserved-domain-mapped",
       "implementationEvidence": "pending-implementation"

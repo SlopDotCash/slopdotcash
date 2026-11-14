@@ -3884,7 +3884,7 @@
     },
     {
       "path": "spec/settlement/index.md",
-      "sha256": "5a88f39b2b2382e2dfc2bdd0fcfac6a815c03e61bc5c4e1c9cccb7d0e473bcf2",
+      "sha256": "8a3532cc1f1017fbcaa9c50f51be8f613cfd107cc4224022dcca54e9196aab78",
       "module": "settlement",
       "stories": [],
       "rules": [],
@@ -3945,6 +3945,10 @@
         {
           "target": "./referralPublication.md",
           "line": 19
+        },
+        {
+          "target": "./referralDistributor.md",
+          "line": 20
         }
       ]
     },
@@ -4131,28 +4135,38 @@
     },
     {
       "path": "spec/settlement/referralAccrual.md",
-      "sha256": "71fefa565e86159705b3423add12b2ed0733dff64cd427ae1ff88290ed128f3a",
+      "sha256": "015d404a16238f06ffa2122455d77e209e4ec9e12291edbecc298ee8bcd290d0",
       "module": "settlement__referralAccrual",
       "stories": [
         {
           "heading": "Story: Retain the submitting maintainer's referral choice",
-          "line": 10
+          "line": 12
         },
         {
           "heading": "Story: File every closed month once at its historical rate",
-          "line": 50
+          "line": 67
         }
       ],
       "rules": [
         {
           "heading": "Story: Retain the submitting maintainer's referral choice / A project captures an eligible signed-in referrer once",
-          "line": 12,
+          "line": 14,
           "definitions": [
             "Attribution",
             "Rate",
+            "CalendarDate",
+            "leapYear",
+            "monthDays",
+            "validDate",
+            "beforeDate",
+            "windowEnd",
             "Payout",
-            "Accrued",
+            "AccrualOutcome",
+            "AccrualRecord",
+            "Wallet",
+            "RootEntry",
             "Filing",
+            "emptyFiling",
             "AccrualPhase",
             "Accrual",
             "firstPeriod",
@@ -4166,7 +4180,7 @@
         },
         {
           "heading": "Story: File every closed month once at its historical rate / Verified token units and approved reactivation precede dry-run accrual",
-          "line": 52,
+          "line": 69,
           "definitions": [
             "canConfigure",
             "configure",
@@ -4183,11 +4197,12 @@
         },
         {
           "heading": "Story: File every closed month once at its historical rate / A complete immutable source snapshot is filed in ordinal-month order",
-          "line": 81,
+          "line": 99,
           "definitions": [
             "validSource",
             "canStartMonth",
             "startMonth",
+            "allRecords",
             "totalAccrued",
             "projectAccrued",
             "actorAccrued",
@@ -4198,13 +4213,21 @@
             "nextAccrual",
             "canAccrueNext",
             "accrueNext",
+            "walletFor",
+            "pinnedWallet",
+            "actors",
+            "eligibleWallet",
+            "rootEntries",
+            "entriesTotal",
             "canFileMonth",
-            "fileMonth"
+            "fileMonth",
+            "canAbandonMonth",
+            "abandonMonth"
           ]
         },
         {
-          "heading": "Story: File every closed month once at its historical rate / Filed records, historical rates and source counts never change",
-          "line": 131,
+          "heading": "Story: File every closed month once at its historical rate / Filed records, first-use wallet pins and exact roots commit atomically",
+          "line": 196,
           "definitions": [
             "alwaysConfigured",
             "alwaysUnconfiguredEmpty",
@@ -4217,6 +4240,12 @@
             "alwaysCompleteFilings",
             "alwaysUniqueAttribution",
             "alwaysActiveSourceCount",
+            "alwaysCollectingHeader",
+            "alwaysFileTotals",
+            "alwaysStagedPrivate",
+            "alwaysPinsUnique",
+            "alwaysFileWalletPinned",
+            "stepPinsRetained",
             "stepRecordsRetained",
             "stepRatesRetained",
             "stepAttributionsRetained",
@@ -4228,8 +4257,16 @@
         },
         {
           "heading": "Story: File every closed month once at its historical rate / Simulation distinguishes eligible, excluded and repeated payout evidence",
-          "line": 168,
+          "line": 250,
           "definitions": [
+            "dateValues",
+            "firstValues",
+            "earlierDateValues",
+            "laterDateValues",
+            "yearValues",
+            "monthValues",
+            "leaseIdValues",
+            "walletsValues",
             "projectValues",
             "applicantValues",
             "stewardValues",
@@ -4247,8 +4284,154 @@
       "references": []
     },
     {
+      "path": "spec/settlement/referralDistributor.md",
+      "sha256": "a4787831326ae67277b93177fab67d54511b1d1e1949f89ec1638bd4c5c5ab3d",
+      "module": "settlement__referralDistributor",
+      "stories": [
+        {
+          "heading": "Story: Keep owner and poster authority separate",
+          "line": 12
+        },
+        {
+          "heading": "Story: Admit funded roots at sequential epochs",
+          "line": 73
+        },
+        {
+          "heading": "Story: Claim only the unpaid cumulative difference",
+          "line": 117
+        }
+      ],
+      "rules": [
+        {
+          "heading": "Story: Keep owner and poster authority separate / Deployment fixes token, growth cap and spacing, with distinct owner and poster",
+          "line": 14,
+          "definitions": [
+            "SequenceCheck",
+            "emptySequenceCheck",
+            "Epoch",
+            "AddressClaim",
+            "Distributor",
+            "rescueDelay",
+            "emptyEpoch",
+            "initial",
+            "canDeploy",
+            "deploy",
+            "approvedGrowthCap",
+            "canTick",
+            "tick"
+          ]
+        },
+        {
+          "heading": "Story: Keep owner and poster authority separate / Ownership transfer is accepted by the pending owner and never merges signer roles",
+          "line": 53,
+          "definitions": [
+            "canTransferOwnership",
+            "transferOwnership",
+            "canAcceptOwnership",
+            "acceptOwnership",
+            "canSetPoster",
+            "setPoster",
+            "canPause",
+            "pause",
+            "canUnpause",
+            "unpause"
+          ]
+        },
+        {
+          "heading": "Story: Admit funded roots at sequential epochs / Only exact token deposits increase the balance",
+          "line": 75,
+          "definitions": [
+            "canDeposit",
+            "deposit",
+            "liveRoot",
+            "highWater",
+            "canPostRoot",
+            "postRoot"
+          ]
+        },
+        {
+          "heading": "Story: Admit funded roots at sequential epochs / Voiding the latest unclaimed epoch restores prior live spacing and high water",
+          "line": 102,
+          "definitions": [
+            "canVoidLast",
+            "voidLast"
+          ]
+        },
+        {
+          "heading": "Story: Claim only the unpaid cumulative difference / The wallet signs a valid active-root claim and receives its exact difference",
+          "line": 119,
+          "definitions": [
+            "claimedBy",
+            "claimDifference",
+            "rawClaimable",
+            "canClaim",
+            "claim"
+          ]
+        },
+        {
+          "heading": "Story: Claim only the unpaid cumulative difference / Rescue waits a full year after every post and unpause, even after a void",
+          "line": 149,
+          "definitions": [
+            "rescueAvailableAt",
+            "canRescue",
+            "rescue"
+          ]
+        },
+        {
+          "heading": "Story: Claim only the unpaid cumulative difference / Configuration, retained claims and complete balance accounting never change retroactively",
+          "line": 170,
+          "definitions": [
+            "alwaysUnconfiguredEmpty",
+            "alwaysTimeValid",
+            "alwaysEpochRecords",
+            "alwaysRolesSeparate",
+            "alwaysMoneyValid",
+            "alwaysConserved",
+            "alwaysPaidMatchesClaims",
+            "alwaysUniqueClaims",
+            "alwaysSequentialEpochs",
+            "alwaysEpochTimes",
+            "stepConfigurationFixed",
+            "stepClaimsRetained",
+            "sometimesClaimed",
+            "sometimesVoided",
+            "sometimesRescued"
+          ]
+        },
+        {
+          "heading": "Story: Claim only the unpaid cumulative difference / Simulation includes distinct roles, zero-based epochs and exact amounts",
+          "line": 206,
+          "definitions": [
+            "tokenValues",
+            "tokenUnitValues",
+            "capValues",
+            "spacingValues",
+            "ownerValues",
+            "posterValues",
+            "newOwnerValues",
+            "newPosterValues",
+            "byValues",
+            "timestampValues",
+            "amountValues",
+            "totalValues",
+            "cumulativeValues",
+            "indexValues",
+            "receiptValues",
+            "rootValues",
+            "proofRootValues",
+            "walletValues",
+            "destinationValues"
+          ]
+        }
+      ],
+      "imports": [
+        "settlement__money"
+      ],
+      "references": []
+    },
+    {
       "path": "spec/settlement/referrals.md",
-      "sha256": "4e33aec6eaa92d50da20414cfb45ee9ec2134714cf91ea379107b25c3bdba581",
+      "sha256": "70f1701d007216eff36152de00b41020a01a772cece96950ef9563a89699a373",
       "module": "settlement__referrals",
       "stories": [
         {
@@ -4286,20 +4469,17 @@
           ]
         },
         {
-          "heading": "Story: Require every activation prerequisite / Eligibility uses finalized stablecoin payouts and immutable captured referrers",
+          "heading": "Story: Require every activation prerequisite / Poster gas has transaction and UTC-day ceilings",
           "line": 43,
           "definitions": [
-            "eligiblePayout",
             "posterGasAllowed"
           ]
         },
         {
           "heading": "Story: Require every activation prerequisite / Simulation samples exercise missing, matching and conflicting evidence",
-          "line": 57,
+          "line": 55,
           "definitions": [
             "dayWeiValues",
-            "firstPaidMonthValues",
-            "monthValues",
             "transactionWeiValues"
           ]
         }
@@ -4313,54 +4493,58 @@
         {
           "target": "./referralPublication.md",
           "line": 33
+        },
+        {
+          "target": "./referralAccrual.md",
+          "line": 46
         }
       ]
     },
     {
       "path": "spec/settlement/referralPublication.md",
-      "sha256": "6c36d5a67d4901a383ade230a46eef86acb810d43307ded040c83057e86aa01b",
+      "sha256": "e0e00eacc314b956dca57720b26695a0bde1f60fc3dacf460caaf209326ae981",
       "module": "settlement__referralPublication",
       "stories": [
         {
           "heading": "Story: Publish one complete cumulative root",
-          "line": 9
+          "line": 12
         },
         {
           "heading": "Story: Claim immediately without reissuing paid tokens",
-          "line": 125
+          "line": 149
         }
       ],
       "rules": [
         {
-          "heading": "Story: Publish one complete cumulative root / Only filed accruals and authorized wallets enter a root",
-          "line": 11,
+          "heading": "Story: Publish one complete cumulative root / The next immutable filed tree supplies every root entry",
+          "line": 14,
           "definitions": [
-            "Wallet",
-            "RootEntry",
             "Root",
             "Claim",
             "PostingPhase",
+            "GasSettlement",
             "Attempt",
             "Publication",
             "emptyRoot",
             "initial",
-            "walletFor",
-            "actors",
-            "entriesFor",
-            "entryTotal",
+            "spentGas",
             "claimedFor",
             "totalClaimed",
             "activeRoot",
+            "nextFiling",
+            "priorFinalizedTotal",
             "canPrepare",
             "prepare"
           ]
         },
         {
           "heading": "Story: Publish one complete cumulative root / Every signed root reserves gas and journals its exact identity first",
-          "line": 71,
+          "line": 88,
           "definitions": [
             "canJournal",
             "journal",
+            "canDiscardPrepared",
+            "discardPrepared",
             "canSubmit",
             "submit",
             "canLoseObservation",
@@ -4375,7 +4559,7 @@
         },
         {
           "heading": "Story: Publish one complete cumulative root / Only exact finalized evidence makes a root claimable",
-          "line": 100,
+          "line": 124,
           "definitions": [
             "canFinalize",
             "finalize",
@@ -4385,12 +4569,14 @@
         },
         {
           "heading": "Story: Claim immediately without reissuing paid tokens / A claim uses the active root's pinned wallet and cumulative amount",
-          "line": 127,
+          "line": 151,
           "definitions": [
             "canClaim",
             "claim",
             "canVoidRoot",
             "voidRoot",
+            "canAcknowledgeVoid",
+            "acknowledgeVoid",
             "canInvalidateCache",
             "invalidateCache",
             "canRefreshCache",
@@ -4401,14 +4587,21 @@
         },
         {
           "heading": "Story: Claim immediately without reissuing paid tokens / History, native holds and cumulative claims remain bounded",
-          "line": 172,
+          "line": 212,
           "definitions": [
             "alwaysNativeBounded",
+            "alwaysAttemptGasAccounted",
+            "alwaysSettledGasValid",
+            "alwaysHoldCeiling",
             "alwaysIdleUnreserved",
             "alwaysPreparedCap",
             "alwaysPendingHeld",
             "alwaysRootCap",
             "alwaysUniqueClaims",
+            "alwaysPinsUnique",
+            "alwaysRootWalletPinned",
+            "stepTokenFixed",
+            "stepPinsRetained",
             "stepAttemptsRetained",
             "stepClaimedNeverFalls",
             "sometimesUncertain",
@@ -4418,14 +4611,18 @@
         },
         {
           "heading": "Story: Claim immediately without reissuing paid tokens / Simulation includes live control, capped accruals and conflicting receipts",
-          "line": 202,
+          "line": 255,
           "definitions": [
             "byValues",
+            "signerValues",
             "actorValues",
             "walletValues",
+            "epochValues",
+            "merkleRootValues",
             "rootIdValues",
             "attemptValues",
             "receiptValues",
+            "settledDayValues",
             "dayValues",
             "gasValues",
             "actualGasValues",
@@ -4434,23 +4631,30 @@
             "totalValues",
             "transferredValues",
             "entriesValues",
-            "walletsValues",
             "reviewedControl",
             "configuredLedger",
             "capturedLedger",
             "sourcePayout",
             "filedLedger",
             "controlValues",
-            "aValues"
+            "aValues",
+            "fundedChain",
+            "chainValues"
           ]
         }
       ],
       "imports": [
         "settlement__money",
         "settlement__referrals",
-        "settlement__referralAccrual"
+        "settlement__referralAccrual",
+        "settlement__referralDistributor"
       ],
-      "references": []
+      "references": [
+        {
+          "target": "./referralDistributor.md",
+          "line": 8
+        }
+      ]
     },
     {
       "path": "spec/settlement/reserveRelease.md",

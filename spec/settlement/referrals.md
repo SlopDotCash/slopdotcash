@@ -40,15 +40,13 @@ pure def sometimesDryRun(r: Referral): bool = r.mode == DryRun
 pure def sometimesPosting(r: Referral): bool = r.mode == Posting
 ```
 
-### Eligibility uses finalized stablecoin payouts and immutable captured referrers
+### Poster gas has transaction and UTC-day ceilings
 
-Team roles, bans, public holds, self-referrals and stale identity evidence refuse accrual. Periods are ordinal months (`year * 12 + month - 1`). The first paid month begins a twelve-month eligibility window. The applied rate is retained with each filed record. Dry-run records never post roots.
+The exact payout eligibility and calendar-anniversary rules live in the
+[accrual ledger](./referralAccrual.md). Posting reserves no more than the
+approved 0.0002 ETH per send and 0.002 ETH per UTC day.
 
 ```quint
-pure def eligiblePayout(paid: bool, stablecoin: bool, month: int, firstPaidMonth: int,
-  team: bool, banned: bool, held: bool, selfReferral: bool): bool =
-  paid and stablecoin and month >= 0 and firstPaidMonth >= 0 and month >= firstPaidMonth
-    and month - firstPaidMonth < 12 and not(team) and not(banned) and not(held) and not(selfReferral)
 pure def posterGasAllowed(transactionWei: int, dayWei: int): bool =
   transactionWei >= 0 and transactionWei <= 200000000000000
     and dayWei >= 0 and dayWei <= 2000000000000000
@@ -61,7 +59,5 @@ value allowed by their declared types and product rules.
 
 ```quint
 pure val dayWeiValues = Set(0, 1, 2)
-pure val firstPaidMonthValues = Set(0, 1, 2)
-pure val monthValues = Set(0, 1, 2)
 pure val transactionWeiValues = Set(0, 1, 2)
 ```

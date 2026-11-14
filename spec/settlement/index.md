@@ -17,3 +17,4 @@ PRD sections 2, 3, 6, 8, 10, 11 and 12 govern these financial state machines. Ru
 
 - [Referral accrual ledger](./referralAccrual.md)
 - [Referral root publication](./referralPublication.md)
+- [Referral distributor contract](./referralDistributor.md)

@@ -4,68 +4,85 @@ PRD section 11 requires a separately activated poster, complete filed accruals,
 pinned recipient wallets and finalized evidence. This machine owns root
 publication, uncertain attempts, native reservations and claims. It consumes
 the activation model and complete accrual ledger; those services must provide
-their current authenticated records, never caller-asserted substitutes.
+their current authenticated records, never caller-asserted substitutes. The
+[distributor contract](./referralDistributor.md) owns on-chain authority,
+funding, sequential epochs, spacing, pause and rescue behavior; successful
+observations here must reconcile that exact contract state.
 
 ## Story: Publish one complete cumulative root
 
-### Only filed accruals and authorized wallets enter a root
+### The next immutable filed tree supplies every root entry
 
-A referrer with no authorized wallet remains in the accrual ledger and enters
-a later root when a wallet is available. All projects contribute to the same
-lifetime cap. Each actor appears once with its cumulative amount. The Merkle
-encoder must commit these exact entries and total; its byte-level correctness
+The accrual service freezes wallet pins and exact tree entries in each filed
+period, including dry-run files. The poster consumes the oldest nonempty file
+that has not occupied a chain epoch. It never rerenders an old file from newer
+wallets or later totals. A referrer with no authorized wallet remains in the
+accrual ledger and enters a later file when a wallet is available. When new actors share an address, the lowest immutable actor ID keeps the
+leaf; the others remain walletless in that tree. An address already pinned to
+another actor is withheld. Those actors keep their accruals and can resolve
+the current-wallet conflict.
+Existing pins are retained independently of current-wallet changes. All projects contribute to the same
+lifetime cap. Each actor appears once with its cumulative amount. The positive `id` is an off-chain journal identity; `epoch` is separately the
+contract's zero-based next index. Preparation and signing both recheck the
+authenticated distributor snapshot through its `canPostRoot` rule. The Merkle
+encoder must verify the committed digest against these exact entries and total; its byte-level correctness
 requires the future adapter's independent tests.
 
 ```quint
 import money as M from "./money"
 import referrals as R from "./referrals"
 import referralAccrual as A from "./referralAccrual"
-type Wallet = { actor: int, wallet: str, authorized: bool }
-type RootEntry = { actor: int, wallet: str, amount: M::Amount }
-type Root = { id: int, period: int, sourceDigest: str, entries: List[RootEntry], total: M::Amount,
-  height: int, voided: bool, sealed: bool }
+import referralDistributor as D from "./referralDistributor"
+type Root = { id: int, epoch: int, merkleRoot: str, period: int, sourceDigest: str, entries: List[A::RootEntry], total: M::Amount,
+  height: int, voided: bool, sealed: bool, voidAcknowledged: bool }
 type Claim = { actor: int, cumulative: M::Amount }
 type PostingPhase = Idle | Prepared | Journaled | Submitted | Uncertain
-type Attempt = { id: int, root: int, day: int, reservedGas: int }
+type GasSettlement = { attempt: int, actual: int, day: int }
+type Attempt = { id: int, root: int, epoch: int, day: int, reservedGas: int }
 type Publication = { phase: PostingPhase, prepared: Root, roots: List[Root], attempts: List[Attempt],
-  claims: List[Claim], receipts: List[int], tokenUnit: M::Amount, currentAttempt: int,
-  day: int, nativeSpent: int, nativeHold: int, postingPaused: bool, distributorPaused: bool, cacheFresh: bool }
-pure val emptyRoot: Root = { id: 0, period: 0, sourceDigest: "", entries: List(), total: M::zero,
-  height: 0, voided: false, sealed: false }
+  claims: List[Claim], pins: List[A::Wallet], receipts: List[int], token: str, tokenUnit: M::Amount, currentAttempt: int,
+  day: int, settledGas: List[GasSettlement], nativeHold: int, postingPaused: bool, distributorPaused: bool, cacheFresh: bool }
+pure val emptyRoot: Root = { id: 0, epoch: -1, merkleRoot: "", period: 0, sourceDigest: "", entries: List(), total: M::zero,
+  height: 0, voided: false, sealed: false, voidAcknowledged: false }
 pure val initial: Publication = { phase: Idle, prepared: emptyRoot, roots: List(), attempts: List(),
-  claims: List(), receipts: List(), tokenUnit: M::zero, currentAttempt: 0,
-  day: 1, nativeSpent: 0, nativeHold: 0, postingPaused: false, distributorPaused: false, cacheFresh: false }
-pure def walletFor(wallets: List[Wallet], actor: int): str = wallets.foldl("",
-  (found, w) => if (w.actor == actor and w.authorized) w.wallet else found)
-pure def actors(a: A::Accrual): List[int] = a.attributions.foldl(List(),
-  (found, entry) => if (entry.referrer > 0 and not(found.includes(entry.referrer))) found.append(entry.referrer) else found)
-pure def entriesFor(a: A::Accrual, wallets: List[Wallet]): List[RootEntry] =
-  actors(a).select(actor => walletFor(wallets, actor) != "" and M::positiveAmount(A::actorAccrued(a, actor)))
-    .listMap(actor => { actor: actor, wallet: walletFor(wallets, actor), amount: A::actorAccrued(a, actor) })
-pure def entryTotal(entries: List[RootEntry]): M::Amount = entries.foldl(M::zero, (total, e) => M::addAmounts(total, e.amount))
+  claims: List(), pins: List(), receipts: List(), token: "", tokenUnit: M::zero, currentAttempt: 0,
+  day: 1, settledGas: List(), nativeHold: 0, postingPaused: false, distributorPaused: false, cacheFresh: false }
+pure def spentGas(p: Publication): int = p.settledGas.foldl(0,
+  (total, settlement) => total + (if (settlement.day == p.day) settlement.actual else 0))
 pure def claimedFor(p: Publication, actor: int): M::Amount = p.claims.foldl(M::zero,
   (found, claim) => if (claim.actor == actor) claim.cumulative else found)
 pure def totalClaimed(p: Publication): M::Amount = p.claims.foldl(M::zero,
   (total, claim) => M::addAmounts(total, claim.cumulative))
 pure def activeRoot(p: Publication): Root = p.roots.foldl(emptyRoot,
   (found, root) => if (not(root.voided)) root else found)
-pure def canPrepare(p: Publication, control: R::Referral, a: A::Accrual, wallets: List[Wallet], rootId: int): bool =
+pure def nextFiling(p: Publication, a: A::Accrual): A::Filing =
+  a.filings.select(file => file.entries.length() > 0 and p.roots.every(root => root.period < file.period)).nthOr(0, A::emptyFiling)
+pure def priorFinalizedTotal(p: Publication): M::Amount = p.roots.foldl(M::zero,
+  (highest, root) => if (not(root.voided) and M::compareAmounts(root.total, highest) > 0) root.total else highest)
+pure def canPrepare(p: Publication, control: R::Referral, a: A::Accrual, rootId: int,
+  chain: D::Distributor, merkleRoot: str, rootVerified: bool, signer: str): bool =
   p.phase == Idle and not(p.postingPaused) and control.mode == R::Posting and R::alwaysActivationReady(control)
-    and a.phase == A::Ready and a.configured and a.filings.length() > 0
-    and A::alwaysCaps(a) and A::alwaysUnitValid(a) and A::alwaysUniqueAttribution(a) and A::alwaysCompleteFilings(a)
-    and rootId > 0 and p.roots.every(root => root.id < rootId
-      and root.period <= a.filings.nthOr(a.filings.length() - 1, { period: 0, sourceDigest: "", sourceCount: 0, recordCount: 0 }).period)
+    and a.configured and nextFiling(p, a).entries.length() > 0
+    and A::alwaysUnitValid(a) and A::alwaysCompleteFilings(a) and A::alwaysFileTotals(a) and A::alwaysPinsUnique(a) and A::alwaysFileWalletPinned(a)
+    and p.pins.every(pin => a.pins.includes(pin))
+    and rootId > 0 and p.roots.every(root => root.id < rootId)
     and (p.roots.length() == 0 or p.tokenUnit == a.tokenUnit)
-    and wallets.every(w => w.actor > 0 and wallets.select(other => other.actor == w.actor).length() == 1)
-    and entriesFor(a, wallets).length() > 0
-    and M::compareAmounts(entryTotal(entriesFor(a, wallets)), A::poolCap(a)) <= 0
-    and M::compareAmounts(entryTotal(entriesFor(a, wallets)), totalClaimed(p)) >= 0
-    and entriesFor(a, wallets).every(e => M::compareAmounts(e.amount, claimedFor(p, e.actor)) >= 0)
-pure def prepare(p: Publication, control: R::Referral, a: A::Accrual, wallets: List[Wallet], rootId: int): Publication =
-  val filing = a.filings.nthOr(a.filings.length() - 1, { period: 0, sourceDigest: "", sourceCount: 0, recordCount: 0 })
-  val entries = entriesFor(a, wallets)
-  { ...p, phase: Prepared, tokenUnit: a.tokenUnit, prepared: { id: rootId, period: filing.period,
-    sourceDigest: filing.sourceDigest, entries: entries, total: entryTotal(entries), height: 0, voided: false, sealed: false } }
+    and chain.tokenUnit == a.tokenUnit and rootVerified and chain.epochs.length() == p.roots.length()
+    and (p.token == "" or chain.token == p.token)
+    and p.roots.every(root => not(root.voided) or root.voidAcknowledged)
+    and D::canPostRoot(chain, chain.epochs.length(), merkleRoot, nextFiling(p, a).total, signer)
+    and M::compareAmounts(nextFiling(p, a).total, priorFinalizedTotal(p)) >= 0
+    and M::compareAmounts(nextFiling(p, a).total, A::poolCap(a)) <= 0
+    and M::compareAmounts(nextFiling(p, a).total, totalClaimed(p)) >= 0
+    and nextFiling(p, a).entries.every(e => M::compareAmounts(e.amount, claimedFor(p, e.actor)) >= 0)
+pure def prepare(p: Publication, control: R::Referral, a: A::Accrual, rootId: int,
+  chain: D::Distributor, merkleRoot: str, rootVerified: bool, signer: str): Publication =
+  val filing = nextFiling(p, a)
+  { ...p, phase: Prepared, token: chain.token, tokenUnit: a.tokenUnit, pins: a.pins,
+    prepared: { id: rootId, epoch: chain.epochs.length(), merkleRoot: merkleRoot, period: filing.period,
+      sourceDigest: filing.sourceDigest, entries: filing.entries, total: filing.total,
+      height: 0, voided: false, sealed: false, voidAcknowledged: false } }
+
 ```
 
 ### Every signed root reserves gas and journals its exact identity first
@@ -73,16 +90,23 @@ pure def prepare(p: Publication, control: R::Referral, a: A::Accrual, wallets: L
 Native amounts are integer wei. The 0.0002 ETH transaction ceiling and
 0.002 ETH UTC-day ceiling are independent of fee conversion. Every retry has
 an immutable attempt ID. An uncertain send retains its hold, across day changes,
-until a finalized outcome proves the cost. The poster cannot transfer tokens.
+until a finalized outcome proves the cost and its actual settlement UTC day.
+Settled costs count only on that day; a late old-day receipt does not become
+new-day spending. Every unresolved maximum remains reserved on every day. The poster cannot transfer tokens.
 
 ```quint
-pure def canJournal(p: Publication, control: R::Referral, attempt: int, gas: int): bool =
+pure def canJournal(p: Publication, control: R::Referral, attempt: int, gas: int, chain: D::Distributor, signer: str): bool =
   p.phase == Prepared and not(p.postingPaused) and control.mode == R::Posting and R::alwaysActivationReady(control)
+    and D::canPostRoot(chain, p.prepared.epoch, p.prepared.merkleRoot, p.prepared.total, signer)
+    and chain.tokenUnit == p.tokenUnit and chain.token == p.token and chain.epochs.length() == p.roots.length()
+    and p.roots.every(root => not(root.voided) or root.voidAcknowledged)
     and attempt > 0 and not(p.attempts.some(old => old.id == attempt)) and gas > 0
-    and R::posterGasAllowed(gas, p.nativeSpent + p.nativeHold + gas)
-pure def journal(p: Publication, control: R::Referral, attempt: int, gas: int): Publication =
+    and R::posterGasAllowed(gas, spentGas(p) + p.nativeHold + gas)
+pure def journal(p: Publication, control: R::Referral, attempt: int, gas: int, chain: D::Distributor, signer: str): Publication =
   { ...p, phase: Journaled, currentAttempt: attempt, nativeHold: gas,
-    attempts: p.attempts.append({ id: attempt, root: p.prepared.id, day: p.day, reservedGas: gas }) }
+    attempts: p.attempts.append({ id: attempt, root: p.prepared.id, epoch: p.prepared.epoch, day: p.day, reservedGas: gas }) }
+pure def canDiscardPrepared(p: Publication): bool = p.phase == Prepared and p.nativeHold == 0
+pure def discardPrepared(p: Publication): Publication = { ...p, phase: Idle }
 pure def canSubmit(p: Publication, control: R::Referral): bool = p.phase == Journaled and not(p.postingPaused)
   and control.mode == R::Posting and R::alwaysActivationReady(control)
 pure def submit(p: Publication, control: R::Referral): Publication = { ...p, phase: Submitted }
@@ -92,7 +116,7 @@ pure def canRetransmit(p: Publication, control: R::Referral): bool = p.phase == 
   and control.mode == R::Posting and R::alwaysActivationReady(control)
 pure def retransmit(p: Publication, control: R::Referral): Publication = { ...p, phase: Submitted }
 pure def canObserveDay(p: Publication, day: int): bool = day > p.day
-pure def observeDay(p: Publication, day: int): Publication = { ...p, day: day, nativeSpent: 0 }
+pure def observeDay(p: Publication, day: int): Publication = { ...p, day: day }
 pure def canSetPostingPaused(p: Publication, paused: bool, by: str): bool = by == "owner"
 pure def setPostingPaused(p: Publication, paused: bool, by: str): Publication = { ...p, postingPaused: paused }
 ```
@@ -105,28 +129,34 @@ conflicting evidence remains Uncertain. A finalized failed send permits a new
 attempt and consumes its actual gas; it never adds a root.
 
 ```quint
-pure def canFinalize(p: Publication, attempt: int, rootId: int, entries: List[RootEntry],
-  total: M::Amount, receipt: int, height: int, actualGas: int, finalized: bool, succeeded: bool): bool =
+pure def canFinalize(p: Publication, attempt: int, rootId: int, epoch: int, merkleRoot: str, entries: List[A::RootEntry],
+  total: M::Amount, receipt: int, height: int, actualGas: int, settledDay: int, finalized: bool, succeeded: bool): bool =
   (p.phase == Submitted or p.phase == Uncertain) and attempt == p.currentAttempt
-    and rootId == p.prepared.id and entries == p.prepared.entries and M::equalAmounts(total, p.prepared.total)
+    and rootId == p.prepared.id and epoch == p.prepared.epoch and merkleRoot == p.prepared.merkleRoot and entries == p.prepared.entries and M::equalAmounts(total, p.prepared.total)
     and receipt > 0 and not(p.receipts.includes(receipt)) and height > 0 and finalized and succeeded
-    and actualGas >= 0 and actualGas <= p.nativeHold
-pure def finalize(p: Publication, attempt: int, rootId: int, entries: List[RootEntry],
-  total: M::Amount, receipt: int, height: int, actualGas: int, finalized: bool, succeeded: bool): Publication =
+    and actualGas >= 0 and actualGas <= p.nativeHold and settledDay > 0 and settledDay <= p.day
+pure def finalize(p: Publication, attempt: int, rootId: int, epoch: int, merkleRoot: str, entries: List[A::RootEntry],
+  total: M::Amount, receipt: int, height: int, actualGas: int, settledDay: int, finalized: bool, succeeded: bool): Publication =
   { ...p, phase: Idle, roots: p.roots.append({ ...p.prepared, height: height }),
-    receipts: p.receipts.append(receipt), nativeSpent: p.nativeSpent + actualGas, nativeHold: 0, cacheFresh: false }
-pure def canFinalizeFailure(p: Publication, attempt: int, receipt: int, actualGas: int, finalized: bool, succeeded: bool): bool =
+    receipts: p.receipts.append(receipt), settledGas: p.settledGas.append({ attempt: attempt, actual: actualGas, day: settledDay }), nativeHold: 0, cacheFresh: false }
+pure def canFinalizeFailure(p: Publication, attempt: int, receipt: int, actualGas: int, settledDay: int, finalized: bool, succeeded: bool): bool =
   (p.phase == Submitted or p.phase == Uncertain) and attempt == p.currentAttempt
-    and receipt > 0 and not(p.receipts.includes(receipt)) and finalized and not(succeeded) and actualGas >= 0 and actualGas <= p.nativeHold
-pure def finalizeFailure(p: Publication, attempt: int, receipt: int, actualGas: int, finalized: bool, succeeded: bool): Publication =
-  { ...p, phase: Prepared, receipts: p.receipts.append(receipt), nativeSpent: p.nativeSpent + actualGas, nativeHold: 0 }
+    and receipt > 0 and not(p.receipts.includes(receipt)) and finalized and not(succeeded) and actualGas >= 0 and actualGas <= p.nativeHold and settledDay > 0 and settledDay <= p.day
+pure def finalizeFailure(p: Publication, attempt: int, receipt: int, actualGas: int, settledDay: int, finalized: bool, succeeded: bool): Publication =
+  { ...p, phase: Prepared, receipts: p.receipts.append(receipt), settledGas: p.settledGas.append({ attempt: attempt, actual: actualGas, day: settledDay }), nativeHold: 0 }
 ```
 
 ## Story: Claim immediately without reissuing paid tokens
 
 ### A claim uses the active root's pinned wallet and cumulative amount
 
-Claims need no waiting period. A wallet change affects a future root only.
+Claims need no waiting period. First-use wallets remain pinned for this
+distributor's entire lifetime, including in later roots and after a void.
+Changing the account's current wallet never moves a cumulative leaf, because
+the contract tracks claimed amounts per address. This lifetime rule comes from
+[`workers/referral-accrual/core.ts:403–410`](https://github.com/SlopDotCash/slopdotcash/blob/6b3b9d0b979f0608d87941f1146056a98513ffcf/workers/referral-accrual/core.ts#L403-L410);
+its lines 425–460 keep existing pins and choose the lowest actor ID when a new
+address is shared.
 The finalized receipt pays only the increase above the actor's lifetime claimed
 amount. A successful claim seals the active root. The owner may void only the
 latest unsealed root, restoring the prior live root without rewriting history.
@@ -134,7 +164,11 @@ Neither pause, key rotation nor void can recover an earlier payment.
 A poster operational pause stops new publication sends only. It never blocks
 recording a finalized claim. The deployed distributor has its own on-chain
 pause, which blocks executing new claims, as recorded by its finalized cache;
-this is distinct from stopping the poster. A pending claim can beat a pause.
+this is distinct from stopping the poster. A pending claim can beat a pause. An observed owner void halts new posts until
+an authenticated operator acknowledges it; that acknowledgement does not
+restore the voided root or change any claim. Posted periods remain unique and
+increasing, including voided epochs. This matches pinned
+`workers/referral-accrual/core.ts:816–889`.
 
 ```quint
 pure def canClaim(p: Publication, actor: int, wallet: str, cumulative: M::Amount,
@@ -142,7 +176,9 @@ pure def canClaim(p: Publication, actor: int, wallet: str, cumulative: M::Amount
     activeRoot(p).id == rootId and rootId > 0 and activeRoot(p).height > 0
     and activeRoot(p).entries.some(e => e.actor == actor and e.wallet == wallet and M::equalAmounts(e.amount, cumulative))
     and M::compareAmounts(cumulative, claimedFor(p, actor)) > 0
-    and M::validAmount(transferred) and M::equalAmounts(transferred, M::subtractAmounts(cumulative, claimedFor(p, actor))) and receipt > 0
+    and M::validAmount(cumulative) and M::validAmount(transferred)
+    and M::compareAmounts(M::addAmounts(totalClaimed(p), transferred), activeRoot(p).total) <= 0
+    and M::equalAmounts(transferred, M::subtractAmounts(cumulative, claimedFor(p, actor))) and receipt > 0
     and not(p.receipts.includes(receipt)) and height > 0 and finalized
 pure def claim(p: Publication, actor: int, wallet: str, cumulative: M::Amount,
   rootId: int, transferred: M::Amount, receipt: int, height: int, finalized: bool): Publication =
@@ -154,8 +190,12 @@ pure def canVoidRoot(p: Publication, rootId: int, receipt: int, height: int, fin
     and not(p.roots.nthOr(p.roots.length() - 1, emptyRoot).voided)
     and receipt > 0 and not(p.receipts.includes(receipt)) and height > 0 and finalized
 pure def voidRoot(p: Publication, rootId: int, receipt: int, height: int, finalized: bool, by: str): Publication =
-  { ...p, roots: p.roots.listMap(root => if (root.id == rootId) { ...root, voided: true } else root),
+  { ...p, roots: p.roots.listMap(root => if (root.id == rootId) { ...root, voided: true, voidAcknowledged: false } else root),
     receipts: p.receipts.append(receipt), cacheFresh: false }
+pure def canAcknowledgeVoid(p: Publication, rootId: int, by: str): bool = by == "operator"
+  and p.roots.some(root => root.id == rootId and root.voided and not(root.voidAcknowledged))
+pure def acknowledgeVoid(p: Publication, rootId: int, by: str): Publication =
+  { ...p, roots: p.roots.listMap(root => if (root.id == rootId) { ...root, voidAcknowledged: true } else root) }
 pure def canInvalidateCache(p: Publication): bool = p.cacheFresh
 pure def invalidateCache(p: Publication): Publication = { ...p, cacheFresh: false }
 pure def canRefreshCache(p: Publication, paused: bool, finalized: bool): bool = finalized
@@ -171,6 +211,10 @@ pure def claimableFor(p: Publication, actor: int): ClaimableView =
 
 ### History, native holds and cumulative claims remain bounded
 
+Discovered by the proof: a structurally valid prepared record could otherwise
+contain a wallet different from its retained pin. Preparation, signing and
+reconciliation all retain the same pinned wallets.
+
 A stale cache retains amounts and history, but does not advertise a currently
 claimable amount. Accrued and pending amounts come from the accrual ledger;
 claimed amounts come from finalized claim records. Missing cache evidence is
@@ -180,9 +224,17 @@ used. A confirmed distributor pause can establish a known current claimable
 amount of zero without altering accrued or already-claimed amounts.
 
 ```quint
-pure def alwaysNativeBounded(p: Publication): bool = p.nativeSpent >= 0 and p.nativeHold >= 0
-  and p.nativeSpent + p.nativeHold <= 2000000000000000
+pure def alwaysNativeBounded(p: Publication): bool = spentGas(p) >= 0 and p.nativeHold >= 0
+  and spentGas(p) + p.nativeHold <= 2000000000000000
+pure def alwaysAttemptGasAccounted(p: Publication): bool = p.attempts.every(attempt =>
+  p.settledGas.some(cost => cost.attempt == attempt.id) or
+    ((p.phase == Journaled or p.phase == Submitted or p.phase == Uncertain) and attempt.id == p.currentAttempt and attempt.reservedGas == p.nativeHold))
+pure def alwaysSettledGasValid(p: Publication): bool = p.day > 0 and p.settledGas.every(cost =>
+  cost.actual >= 0 and cost.actual <= 200000000000000 and cost.day > 0 and cost.day <= p.day)
+pure def alwaysHoldCeiling(p: Publication): bool = p.nativeHold >= 0 and p.nativeHold <= 200000000000000
 pure def alwaysIdleUnreserved(p: Publication): bool = (p.phase == Idle or p.phase == Prepared) implies p.nativeHold == 0
+pure def alwaysPreparedWalletsPinned(p: Publication): bool = p.phase != Idle implies
+  p.prepared.entries.every(e => e.wallet == A::pinnedWallet(p.pins, e.actor))
 pure def alwaysPreparedCap(p: Publication): bool = p.phase != Idle implies
   p.prepared.id > 0 and M::validAmount(p.prepared.total)
     and M::compareAmounts(p.prepared.total, M::multiplyAmounts(p.tokenUnit, M::smallAmount(2000000))) <= 0
@@ -191,6 +243,13 @@ pure def alwaysPendingHeld(p: Publication): bool =
 pure def alwaysRootCap(p: Publication): bool = p.roots.every(root =>
   M::compareAmounts(root.total, M::multiplyAmounts(p.tokenUnit, M::smallAmount(2000000))) <= 0)
 pure def alwaysUniqueClaims(p: Publication): bool = p.claims.every(c => p.claims.select(other => other.actor == c.actor).length() == 1)
+pure def alwaysPinsUnique(p: Publication): bool = p.pins.every(pin => pin.wallet != "" and
+  p.pins.select(other => other.actor == pin.actor).length() == 1 and
+  p.pins.select(other => other.wallet == pin.wallet).length() == 1)
+pure def alwaysRootWalletPinned(p: Publication): bool = p.roots.every(root =>
+  root.entries.every(e => e.wallet == A::pinnedWallet(p.pins, e.actor)))
+pure def stepTokenFixed(before: Publication, after: Publication): bool = before.token != "" implies after.token == before.token
+pure def stepPinsRetained(before: Publication, after: Publication): bool = before.pins.every(pin => after.pins.includes(pin))
 pure def stepAttemptsRetained(before: Publication, after: Publication): bool = before.attempts.every(a => after.attempts.includes(a))
 pure def stepClaimedNeverFalls(before: Publication, after: Publication): bool = before.claims.every(c =>
   M::compareAmounts(claimedFor(after, c.actor), c.cumulative) >= 0)
@@ -202,30 +261,38 @@ pure def sometimesVoided(p: Publication): bool = p.roots.some(root => root.voide
 ### Simulation includes live control, capped accruals and conflicting receipts
 
 ```quint
-pure val byValues = Set("owner", "wrong")
+pure val byValues = Set("owner", "operator", "wrong")
+pure val signerValues = Set("poster", "wrong")
 pure val actorValues = Set(3)
 pure val walletValues = Set("wallet", "wrong")
+pure val epochValues = Set(0, 1)
+pure val merkleRootValues = Set("merkle", "wrong", "")
 pure val rootIdValues = Set(1, 2)
 pure val attemptValues = Set(1, 2)
 pure val receiptValues = Set(1, 2, 3)
+pure val settledDayValues = Set(1, 2)
 pure val dayValues = Set(1, 2)
 pure val gasValues = Set(1, 200000000000000, 200000000000001)
 pure val actualGasValues = Set(0, 1)
 pure val heightValues = Set(1, 2)
-pure val cumulativeValues = Set(List(3))
-pure val totalValues = Set(List(3))
-pure val transferredValues = Set(List(0), List(3))
-pure val entriesValues = Set(List({ actor: 3, wallet: "wallet", amount: List(3) }))
-pure val walletsValues = Set(List({ actor: 3, wallet: "wallet", authorized: true }), List())
+pure val cumulativeValues = Set(List(0, 0, 3))
+pure val totalValues = Set(List(0, 0, 3))
+pure val transferredValues = Set(List(0), List(0, 0, 3))
+pure val entriesValues = Set(List({ actor: 3, wallet: "wallet", amount: List(0, 0, 3) }))
 ```
 
 ```quint
 pure val reviewedControl = R::activate(R::startWatcher(R::recordFunding(R::dryRun(R::initial, "owner"), 2000000, true, true), true), "owner")
-pure val configuredLedger = A::enableDryRun(A::configure(A::initial, List(1), true, "owner"), true, "owner")
+pure val configuredLedger = A::enableDryRun(A::configure(A::initial, List(0, 0, 1), true, "owner"), true, "owner")
 pure val capturedLedger = A::capture(configuredLedger, 1, 1, 2, 3, true, false, false)
-pure val sourcePayout: A::Payout = { id: 1, project: 1, period: A::firstPeriod, firstPaidPeriod: A::firstPeriod,
+pure val sourcePayout: A::Payout = { id: 1, project: 1, period: A::firstPeriod, paidAt: { year: 2026, month: 11, day: 1, millis: 0 }, firstPaidAt: { year: 2026, month: 11, day: 1, millis: 0 },
   gross: List(0, 0, 1), paid: true, stablecoin: true, team: false, banned: false, held: false }
-pure val filedLedger = A::fileMonth(A::accrueNext(A::startMonth(capturedLedger, A::firstPeriod, List(sourcePayout), "source", true, true)))
+pure val filedLedger = A::fileMonth(A::accrueNext(A::startMonth(capturedLedger, A::firstPeriod, List(sourcePayout), "source", true, true, true, "run", true)), List({ actor: 3, wallet: "wallet", authorized: true }), "run", true)
 pure val controlValues = Set(R::initial, reviewedControl)
 pure val aValues = Set(A::initial, filedLedger)
+```
+
+```quint
+pure val fundedChain = D::deposit(D::deploy(D::initial, "token", List(0, 0, 1), List(0, 0, 0, 0, 2), 0, "owner", "poster", 1), List(0, 0, 0, 0, 2), "token", 1, true)
+pure val chainValues = Set(D::initial, fundedChain)
 ```
