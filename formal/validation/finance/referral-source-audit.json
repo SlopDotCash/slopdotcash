@@ -3,9 +3,9 @@
   "sourceCommit": "6b3b9d0b979f0608d87941f1146056a98513ffcf",
   "snapshot": {
     "spec/settlement/referrals.md": "70f1701d007216eff36152de00b41020a01a772cece96950ef9563a89699a373",
-    "spec/settlement/referralAccrual.md": "015d404a16238f06ffa2122455d77e209e4ec9e12291edbecc298ee8bcd290d0",
-    "spec/settlement/referralPublication.md": "e4ff4db6590953f01b43922bd101004fb5464d636f24fca26ea0b57279aa4fb6",
-    "spec/settlement/referralDistributor.md": "a4787831326ae67277b93177fab67d54511b1d1e1949f89ec1638bd4c5c5ab3d"
+    "spec/settlement/referralAccrual.md": "19b764dab95a164e54aa14133f24eb53adaf6678f0ee0871f24b8d55d2ea3eef",
+    "spec/settlement/referralPublication.md": "2288ae248dcf6ba7a427542f465e31d3bd0f986fd84b5b90e81e863fd245d9ec",
+    "spec/settlement/referralDistributor.md": "9806b4cd07201302c90313cb2ed894c2ee0b7ef953c8bcc0abf1b1da9d75e673"
   },
   "comparisons": [
     {
@@ -88,9 +88,10 @@
     "preflightLog": "formal/validation/finance/referral-preflight.log",
     "guidedReport": "formal/validation/finance/referral-journeys.json",
     "guidedEvents": 172,
-    "guidedChecks": 30,
+    "guidedChecks": 33,
     "transitionsCovered": 40,
-    "sometimesGoalsCovered": 11
+    "sometimesGoalsCovered": 11,
+    "currentSimulation": "formal/validation/finance/referral-weighted-goals.json"
   },
   "sourceFiles": [
     {

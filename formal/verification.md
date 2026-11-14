@@ -63,6 +63,10 @@ Their owning specs include the corresponding explanations and rules.
   history, so it cannot release a substituted amount.
 - Buyback journal entries are positive and no later than the observed clock;
   future entries cannot silently enter a later rolling window.
+- Referral receipt entries compare ordered actor and wallet identities and
+  monetary values. Structural limb-array equality incorrectly refused a
+  numerically equal amount with trailing zero limbs; the corrected rule
+  still rejects different amounts, wallets, order and entry counts.
 
 ## Rules reconciled with the source
 

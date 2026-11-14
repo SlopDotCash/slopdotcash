@@ -9,9 +9,9 @@
     "spec/settlement/monthly.md": "aba4e09eef3906bb5a541514ea91c75252e5f7f34b85c30dfde7cb3762549f69",
     "spec/settlement/payment.md": "cec541e396aaa2f44573af1754b609a3d491f1122eb2faf146e050a47efd7d55",
     "spec/settlement/recovery.md": "521dbaf5984c54f1d084b769ac2c327293e6d45e1dec05433795655cab72ccb7",
-    "spec/settlement/referralAccrual.md": "015d404a16238f06ffa2122455d77e209e4ec9e12291edbecc298ee8bcd290d0",
-    "spec/settlement/referralDistributor.md": "a4787831326ae67277b93177fab67d54511b1d1e1949f89ec1638bd4c5c5ab3d",
-    "spec/settlement/referralPublication.md": "e4ff4db6590953f01b43922bd101004fb5464d636f24fca26ea0b57279aa4fb6",
+    "spec/settlement/referralAccrual.md": "19b764dab95a164e54aa14133f24eb53adaf6678f0ee0871f24b8d55d2ea3eef",
+    "spec/settlement/referralDistributor.md": "9806b4cd07201302c90313cb2ed894c2ee0b7ef953c8bcc0abf1b1da9d75e673",
+    "spec/settlement/referralPublication.md": "2288ae248dcf6ba7a427542f465e31d3bd0f986fd84b5b90e81e863fd245d9ec",
     "spec/settlement/referrals.md": "70f1701d007216eff36152de00b41020a01a772cece96950ef9563a89699a373",
     "spec/settlement/reserveRelease.md": "133ee6f6be73b41d1c6ad2f499bce5193791f891bca512d69a84ad7dbc054ee9",
     "spec/settlement/signer.md": "0eb06b5e673bb020ee5fbcc4a775d4e9777cbb4bbc89e127b6bdd6d7739835a9",
@@ -156,22 +156,29 @@
           "reserve: (inv(s) ==> canReserve(s) ==> alwaysChildRules(reserve(s)))",
           "reconcile: (inv(s) ==> canReconcile(s, evidence) ==> alwaysChildRules(reconcile(s, evidence)))",
           "reconcile: (inv(s) ==> canReconcile(s, evidence) ==> alwaysPaidConsumesReserve(reconcile(s, evidence)))",
-          "initialHolds: inv(initialHolds())",
           "step: inv(step(current, event, by_))"
         ],
         "errors": [],
         "exhausted": [
           "deposit: (inv(s) ==> canDeposit(s, amount, asset, receipt, finalized) ==> alwaysChildRules(deposit(s, amount, asset, receipt, finalized)))",
           "configure: (inv(s) ==> canConfigure(s, purpose, rail, gross) ==> alwaysChildRules(configure(s, purpose, rail, gross)))",
-          "initialHolds: inv(initialHolds())"
+          "reconcile: (inv(s) ==> canReconcile(s, evidence) ==> alwaysChildRules(reconcile(s, evidence)))",
+          "reconcile: (inv(s) ==> canReconcile(s, evidence) ==> alwaysPaidConsumesReserve(reconcile(s, evidence)))"
         ],
         "proofFile": null,
         "proofSha256": null,
-        "log": "formal/validation/finance/settlement__composition.ts.proof.log",
+        "log": "formal/validation/finance/finish-settlement__composition.ts.log",
         "source": "spec/settlement/composition.md",
-        "sourceSha256": "b11b7d872ae2024f42b499bede24619b2bdb81a38e4d9de71d8535c3665db3b8",
-        "sourceCurrent": false,
+        "sourceSha256": "81e874de4b53d9638648530a91cf3862c9c2e9e79715f2d95393f99ad8e1bb4c",
+        "sourceCurrent": true,
         "status": "unproved",
+        "report": "formal/validation/finance/composition-finish-proofs.json",
+        "inputs": {
+          "spec/settlement/money.md": "cb766a9b5b99f5509da5478ca15ecbe1c77a09127956d9524e7447c7d0939978",
+          "spec/settlement/vault.md": "76605964dbaeab24b00742637965b4e338890e4e84103e395f6ce6713780b6c5",
+          "spec/settlement/payment.md": "cec541e396aaa2f44573af1754b609a3d491f1122eb2faf146e050a47efd7d55",
+          "spec/settlement/composition.md": "81e874de4b53d9638648530a91cf3862c9c2e9e79715f2d95393f99ad8e1bb4c"
+        },
         "currentSourceSha256": "81e874de4b53d9638648530a91cf3862c9c2e9e79715f2d95393f99ad8e1bb4c"
       },
       {
@@ -304,9 +311,8 @@
     ],
     "baselineReport": "formal/validation/finance/proofs.json",
     "attemptsReport": "formal/validation/finance/proof-attempts.json",
-    "unprovedCount": 44,
+    "unprovedCount": 43,
     "sourceSnapshotsNeedingFinalTreeRecheck": [
-      "settlement__composition.ts",
       "settlement__payment.ts",
       "settlement__referrals.ts"
     ],
@@ -327,6 +333,10 @@
   "referrals": {
     "sourceAudit": "formal/validation/finance/referral-source-audit.json",
     "journeys": "formal/validation/finance/referral-journeys.json",
-    "checks": "formal/validation/finance/referral-completion.json"
+    "checks": "formal/validation/finance/referral-completion.json",
+    "weightedGoals": "formal/validation/finance/referral-weighted-goals.json",
+    "entryEquality": "formal/validation/finance/referral-entry-equality.json",
+    "fixtureEquivalence": "formal/validation/finance/referral-fixture-equivalence.json",
+    "handoff": "formal/validation/finance/referral-handoff.md"
   }
 }

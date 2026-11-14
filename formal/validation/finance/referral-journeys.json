@@ -1,9 +1,9 @@
 {
   "snapshot": {
-    "spec/settlement/referralAccrual.md": "015d404a16238f06ffa2122455d77e209e4ec9e12291edbecc298ee8bcd290d0",
-    "spec/settlement/referralPublication.md": "e4ff4db6590953f01b43922bd101004fb5464d636f24fca26ea0b57279aa4fb6",
+    "spec/settlement/referralAccrual.md": "19b764dab95a164e54aa14133f24eb53adaf6678f0ee0871f24b8d55d2ea3eef",
+    "spec/settlement/referralPublication.md": "2288ae248dcf6ba7a427542f465e31d3bd0f986fd84b5b90e81e863fd245d9ec",
     "spec/settlement/referrals.md": "70f1701d007216eff36152de00b41020a01a772cece96950ef9563a89699a373",
-    "spec/settlement/referralDistributor.md": "a4787831326ae67277b93177fab67d54511b1d1e1949f89ec1638bd4c5c5ab3d"
+    "spec/settlement/referralDistributor.md": "9806b4cd07201302c90313cb2ed894c2ee0b7ef953c8bcc0abf1b1da9d75e673"
   },
   "meaning": "Finite guided core journeys, not application or chain conformance.",
   "checks": [
@@ -36,7 +36,10 @@
     "expired lease commits no rows or pins",
     "earliest filed tree",
     "void acknowledgement before next post",
-    "gas retains actual settlement day"
+    "gas retains actual settlement day",
+    "equivalent zero-padded amount evidence",
+    "wrong ordered entry evidence rejected",
+    "padded rate denominator and token-unit evidence"
   ],
   "coverage": [
     {
@@ -424,7 +427,9 @@
             6
           ],
           "denominator": [
-            1
+            1,
+            0,
+            0
           ]
         }
       },
@@ -1945,7 +1950,9 @@
                 6
               ],
               "denominator": [
-                1
+                1,
+                0,
+                0
               ]
             }
           ],
@@ -2100,7 +2107,9 @@
                   6
                 ],
                 "denominator": [
-                  1
+                  1,
+                  0,
+                  0
                 ]
               },
               "computed": [
@@ -2476,36 +2485,38 @@
       "unit": "referralPublication",
       "event": {
         "type": "finalize",
-        "attempt": 1,
-        "rootId": 1,
-        "epoch": 0,
-        "merkleRoot": "merkle",
-        "entries": [
-          {
-            "actor": 3,
-            "wallet": "wallet",
-            "amount": [
-              0,
-              0,
-              6,
-              0,
-              0
-            ]
-          }
-        ],
-        "total": [
-          0,
-          0,
-          6,
-          0,
-          0
-        ],
-        "receipt": 1,
-        "height": 1,
-        "actualGas": 10,
-        "settledDay": 1,
-        "finalized": true,
-        "succeeded": false
+        "rootReceipt": {
+          "attempt": 1,
+          "rootId": 1,
+          "epoch": 0,
+          "merkleRoot": "merkle",
+          "entries": [
+            {
+              "actor": 3,
+              "wallet": "wallet",
+              "amount": [
+                0,
+                0,
+                6,
+                0,
+                0
+              ]
+            }
+          ],
+          "total": [
+            0,
+            0,
+            6,
+            0,
+            0
+          ],
+          "receipt": 1,
+          "height": 1,
+          "actualGas": 10,
+          "settledDay": 1,
+          "finalized": true,
+          "succeeded": false
+        }
       },
       "expected": false
     },
@@ -2530,36 +2541,40 @@
       "unit": "referralPublication",
       "event": {
         "type": "finalize",
-        "attempt": 1,
-        "rootId": 1,
-        "epoch": 0,
-        "merkleRoot": "merkle",
-        "entries": [
-          {
-            "actor": 3,
-            "wallet": "wallet",
-            "amount": [
-              0,
-              0,
-              6,
-              0,
-              0
-            ]
-          }
-        ],
-        "total": [
-          0,
-          0,
-          6,
-          0,
-          0
-        ],
-        "receipt": 1,
-        "height": 1,
-        "actualGas": 10,
-        "settledDay": 1,
-        "finalized": true,
-        "succeeded": true
+        "rootReceipt": {
+          "attempt": 1,
+          "rootId": 1,
+          "epoch": 0,
+          "merkleRoot": "merkle",
+          "entries": [
+            {
+              "actor": 3,
+              "wallet": "wallet",
+              "amount": [
+                0,
+                0,
+                6,
+                0,
+                0,
+                0,
+                0
+              ]
+            }
+          ],
+          "total": [
+            0,
+            0,
+            6,
+            0,
+            0
+          ],
+          "receipt": 1,
+          "height": 1,
+          "actualGas": 10,
+          "settledDay": 1,
+          "finalized": true,
+          "succeeded": true
+        }
       },
       "expected": true
     },
@@ -2594,22 +2609,24 @@
       "unit": "referralPublication",
       "event": {
         "type": "claim",
-        "actor": 3,
-        "wallet": "wrong",
-        "cumulative": [
-          0,
-          0,
-          6
-        ],
-        "rootId": 1,
-        "transferred": [
-          0,
-          0,
-          6
-        ],
-        "receipt": 2,
-        "height": 2,
-        "finalized": true
+        "claimReceipt": {
+          "actor": 3,
+          "wallet": "wrong",
+          "cumulative": [
+            0,
+            0,
+            6
+          ],
+          "rootId": 1,
+          "transferred": [
+            0,
+            0,
+            6
+          ],
+          "receipt": 2,
+          "height": 2,
+          "finalized": true
+        }
       },
       "expected": false
     },
@@ -2617,22 +2634,24 @@
       "unit": "referralPublication",
       "event": {
         "type": "claim",
-        "actor": 3,
-        "wallet": "wallet",
-        "cumulative": [
-          0,
-          0,
-          6
-        ],
-        "rootId": 1,
-        "transferred": [
-          999,
-          999,
-          5
-        ],
-        "receipt": 2,
-        "height": 2,
-        "finalized": true
+        "claimReceipt": {
+          "actor": 3,
+          "wallet": "wallet",
+          "cumulative": [
+            0,
+            0,
+            6
+          ],
+          "rootId": 1,
+          "transferred": [
+            999,
+            999,
+            5
+          ],
+          "receipt": 2,
+          "height": 2,
+          "finalized": true
+        }
       },
       "expected": false
     },
@@ -2640,22 +2659,24 @@
       "unit": "referralPublication",
       "event": {
         "type": "claim",
-        "actor": 3,
-        "wallet": "wallet",
-        "cumulative": [
-          0,
-          0,
-          6
-        ],
-        "rootId": 1,
-        "transferred": [
-          0,
-          0,
-          6
-        ],
-        "receipt": 2,
-        "height": 2,
-        "finalized": true
+        "claimReceipt": {
+          "actor": 3,
+          "wallet": "wallet",
+          "cumulative": [
+            0,
+            0,
+            6
+          ],
+          "rootId": 1,
+          "transferred": [
+            0,
+            0,
+            6
+          ],
+          "receipt": 2,
+          "height": 2,
+          "finalized": true
+        }
       },
       "expected": true
     },
@@ -2663,22 +2684,24 @@
       "unit": "referralPublication",
       "event": {
         "type": "claim",
-        "actor": 3,
-        "wallet": "wallet",
-        "cumulative": [
-          0,
-          0,
-          6
-        ],
-        "rootId": 1,
-        "transferred": [
-          0,
-          0,
-          6
-        ],
-        "receipt": 3,
-        "height": 2,
-        "finalized": true
+        "claimReceipt": {
+          "actor": 3,
+          "wallet": "wallet",
+          "cumulative": [
+            0,
+            0,
+            6
+          ],
+          "rootId": 1,
+          "transferred": [
+            0,
+            0,
+            6
+          ],
+          "receipt": 3,
+          "height": 2,
+          "finalized": true
+        }
       },
       "expected": false
     },
@@ -2787,7 +2810,9 @@
                 6
               ],
               "denominator": [
-                1
+                1,
+                0,
+                0
               ]
             }
           ],
@@ -2942,7 +2967,9 @@
                   6
                 ],
                 "denominator": [
-                  1
+                  1,
+                  0,
+                  0
                 ]
               },
               "computed": [
@@ -3236,36 +3263,40 @@
       "unit": "referralPublication",
       "event": {
         "type": "finalize",
-        "attempt": 2,
-        "rootId": 2,
-        "epoch": 1,
-        "merkleRoot": "next",
-        "entries": [
-          {
-            "actor": 3,
-            "wallet": "wallet",
-            "amount": [
-              0,
-              0,
-              12,
-              0,
-              0
-            ]
-          }
-        ],
-        "total": [
-          0,
-          0,
-          12,
-          0,
-          0
-        ],
-        "receipt": 3,
-        "height": 3,
-        "actualGas": 10,
-        "settledDay": 1,
-        "finalized": true,
-        "succeeded": true
+        "rootReceipt": {
+          "attempt": 2,
+          "rootId": 2,
+          "epoch": 1,
+          "merkleRoot": "next",
+          "entries": [
+            {
+              "actor": 3,
+              "wallet": "wallet",
+              "amount": [
+                0,
+                0,
+                12,
+                0,
+                0,
+                0,
+                0
+              ]
+            }
+          ],
+          "total": [
+            0,
+            0,
+            12,
+            0,
+            0
+          ],
+          "receipt": 3,
+          "height": 3,
+          "actualGas": 10,
+          "settledDay": 1,
+          "finalized": true,
+          "succeeded": true
+        }
       },
       "expected": true
     },
@@ -3372,7 +3403,9 @@
                 6
               ],
               "denominator": [
-                1
+                1,
+                0,
+                0
               ]
             }
           ],
@@ -3527,7 +3560,9 @@
                   6
                 ],
                 "denominator": [
-                  1
+                  1,
+                  0,
+                  0
                 ]
               },
               "computed": [
@@ -3802,7 +3837,9 @@
                 6
               ],
               "denominator": [
-                1
+                1,
+                0,
+                0
               ]
             }
           ],
@@ -3957,7 +3994,9 @@
                   6
                 ],
                 "denominator": [
-                  1
+                  1,
+                  0,
+                  0
                 ]
               },
               "computed": [
@@ -4865,7 +4904,9 @@
                 6
               ],
               "denominator": [
-                1
+                1,
+                0,
+                0
               ]
             }
           ],
@@ -5020,7 +5061,9 @@
                   6
                 ],
                 "denominator": [
-                  1
+                  1,
+                  0,
+                  0
                 ]
               },
               "computed": [
@@ -5220,7 +5263,9 @@
                 6
               ],
               "denominator": [
-                1
+                1,
+                0,
+                0
               ]
             }
           ],
@@ -5375,7 +5420,9 @@
                   6
                 ],
                 "denominator": [
-                  1
+                  1,
+                  0,
+                  0
                 ]
               },
               "computed": [

@@ -1,0 +1,37 @@
+{
+  "canonicalEntries": [
+    {
+      "actor": 3,
+      "wallet": "wallet",
+      "amount": [
+        0,
+        0,
+        6,
+        0,
+        0
+      ]
+    }
+  ],
+  "paddedEntries": [
+    {
+      "actor": 3,
+      "wallet": "wallet",
+      "amount": [
+        0,
+        0,
+        6,
+        0,
+        0,
+        0,
+        0
+      ]
+    }
+  ],
+  "entryChecks": {
+    "numericPadding": true,
+    "wrongOrder": true,
+    "wrongWallet": true,
+    "wrongAmount": true,
+    "wrongLength": true
+  }
+}

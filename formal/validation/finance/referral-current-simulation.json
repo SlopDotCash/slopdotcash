@@ -1,5 +1,5 @@
 {
-  "status": "complete",
+  "status": "complete-on-earlier-source",
   "snapshot": {
     "spec/settlement/money.md": "cb766a9b5b99f5509da5478ca15ecbe1c77a09127956d9524e7447c7d0939978",
     "spec/settlement/referralAccrual.md": "015d404a16238f06ffa2122455d77e209e4ec9e12291edbecc298ee8bcd290d0",
@@ -22,5 +22,13 @@
       "replayedTraces": 20,
       "again": "seed 49109082303145; to simulate again: pnpm exec quint run gen/settlement__referralPublication.run.qnt --main settlement__referralPublication_run --step step --invariant inv --max-samples 100 --max-steps 30 --mbt --seed 49109082303145"
     }
-  ]
+  ],
+  "sourceCurrent": {
+    "spec/settlement/money.md": true,
+    "spec/settlement/referralAccrual.md": false,
+    "spec/settlement/referralDistributor.md": false,
+    "spec/settlement/referrals.md": true,
+    "spec/settlement/referralPublication.md": false
+  },
+  "supersededBy": "formal/validation/finance/referral-weighted-goals.json"
 }

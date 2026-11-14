@@ -1,0 +1,70 @@
+{
+  "status": "superseded-publication-evidence-padding-fix",
+  "samplesPerSeed": 100,
+  "maxSteps": 20,
+  "seeds": [
+    812,
+    813
+  ],
+  "countsMeaning": "Counts are over all 100 retained traces per seed, not exhaustive reachability.",
+  "snapshot": {
+    "spec/settlement/money.md": "cb766a9b5b99f5509da5478ca15ecbe1c77a09127956d9524e7447c7d0939978",
+    "spec/settlement/referralAccrual.md": "e848fcd27b1831384147529e29eb69f7e029cf09222dfead4d3bdbd3d89145db",
+    "spec/settlement/referralDistributor.md": "9806b4cd07201302c90313cb2ed894c2ee0b7ef953c8bcc0abf1b1da9d75e673",
+    "spec/settlement/referrals.md": "70f1701d007216eff36152de00b41020a01a772cece96950ef9563a89699a373",
+    "spec/settlement/referralPublication.md": "153b1fbf185b301de5c5e0449005a417eae0cc3824fc42be85e2545d39c7672c"
+  },
+  "results": [
+    {
+      "unit": "settlement__referralAccrual",
+      "seed": 812,
+      "safetyPassed": true,
+      "replayPassed": true,
+      "traces": 100,
+      "goalTraceCounts": {
+        "sometimesFiled": 100,
+        "sometimesExcludedRecorded": 9,
+        "sometimesMultiProject": 9
+      },
+      "eventCounts": {
+        "capture": 200,
+        "configure": 100,
+        "enableDryRun": 650,
+        "startMonth": 213,
+        "fileMonth": 200,
+        "disable": 574,
+        "setRate": 17,
+        "abandonMonth": 13,
+        "accrueNext": 33
+      },
+      "again": "seed 12741891072982; to simulate again: pnpm exec quint run gen/settlement__referralAccrual.run.qnt --main settlement__referralAccrual_run --step step --invariant inv --max-samples 100 --max-steps 20 --mbt --seed 12741891072982"
+    },
+    {
+      "unit": "settlement__referralDistributor",
+      "seed": 812,
+      "safetyPassed": true,
+      "replayPassed": true,
+      "traces": 100,
+      "goalTraceCounts": {
+        "sometimesClaimed": 41,
+        "sometimesVoided": 97,
+        "sometimesRescued": 12
+      },
+      "eventCounts": {
+        "deploy": 100,
+        "postRoot": 285,
+        "tick": 116,
+        "deposit": 200,
+        "voidLast": 189,
+        "transferOwnership": 320,
+        "pause": 182,
+        "setPoster": 303,
+        "unpause": 141,
+        "acceptOwnership": 65,
+        "claim": 54,
+        "rescue": 45
+      },
+      "again": "seed 4400376760062; to simulate again: pnpm exec quint run gen/settlement__referralDistributor.run.qnt --main settlement__referralDistributor_run --step step --invariant inv --max-samples 100 --max-steps 20 --mbt --seed 4400376760062"
+    }
+  ]
+}
