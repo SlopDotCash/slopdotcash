@@ -153,16 +153,24 @@ pipeline. Source code, generated core, cache and acceptance files remain
 separate. No proof exception has been accepted for this migration.
 
 The focused reports count proved obligations once per current source unit.
-The account and email models proved 233 obligations. Their directed journeys
+The browser, backend, contributor and Points units have 967 proved obligations.
+The security, Slopbot and operations units have 741. The account and email
+models account for 233 of the first total. Their directed journeys
 cover current-session sign-out, targeted revocation, exact expiry, closure
 and reopening, and sign-in consent preservation. The wallet journeys covered
-69 events across seven cases. The repaired referral journeys covered 182
+69 events across seven cases, and all 90 wallet obligations proved after
+adding lemmas for predecessor ordering and unique consumption and authorization.
+[Wallet proof results](validation/journeys/wallet-registration-helper-proofs.json)
+
+The repaired referral journeys covered 182
 events across 36 cases, reaching all 40 transitions and 11 goals. Two random
 seeds also reached every transition and goal in the amended referral units,
 including settlement after UTC-day rollover.
 
-General full-width arithmetic and dependent financial invariants retain the
-unresolved obligations listed in their report.
+The money proof now verifies multiplication by one for arbitrary-width
+amounts. Four laws remain open for division and fee conservation. The
+financial report lists those laws and the dependent obligations.
+[Money proof results](validation/finance/multiply-one-verified/verification.json)
 
 The retained full-tree snapshots record model compilation, invariant simulation,
 reachability and generated TypeScript replay. The preceding run was interrupted

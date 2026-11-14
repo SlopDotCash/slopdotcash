@@ -21,7 +21,7 @@
     "spec/fees/index.md": "221be82ccdcfca981224204f2a1953e444f18257334eac44c9c109d96eeffefd"
   },
   "proofFileHashes": {
-    "spec/settlement/money.proof.dfy": "4ef9c14a579f84b696a70b771d65213d81516ee9ee601470c4eb8243959ebc11"
+    "spec/settlement/money.proof.dfy": "c963c019e25af747ffc8c6f1ccde302ce211182fc852f872e42324585b32e95a"
   },
   "arithmeticDifferential": {
     "status": "passed",
@@ -53,7 +53,6 @@
         "unit": "settlement__money.ts",
         "total": 9,
         "unproved": [
-          "lawMultiplyOne: (lawMultiplyOne(a) == true)",
           "lawDivisionRemainder: (lawDivisionRemainder(a, b) == true)",
           "lawDivisionReconstructs: (lawDivisionReconstructs(a, b) == true)",
           "lawFullPrivateConservation: (lawFullPrivateConservation(a) == true)",
@@ -64,13 +63,18 @@
           "lawDivisionReconstructs: (lawDivisionReconstructs(a, b) == true)"
         ],
         "proofFile": "spec/settlement/money.proof.dfy",
-        "proofSha256": "4ef9c14a579f84b696a70b771d65213d81516ee9ee601470c4eb8243959ebc11",
-        "log": "formal/validation/finance/settlement__money.ts.proof.log",
+        "proofSha256": "c963c019e25af747ffc8c6f1ccde302ce211182fc852f872e42324585b32e95a",
+        "log": "formal/validation/finance/multiply-one-verified/verification.log",
         "source": "spec/settlement/money.md",
         "sourceSha256": "cb766a9b5b99f5509da5478ca15ecbe1c77a09127956d9524e7447c7d0939978",
         "sourceCurrent": true,
         "status": "unproved",
-        "currentSourceSha256": "cb766a9b5b99f5509da5478ca15ecbe1c77a09127956d9524e7447c7d0939978"
+        "currentSourceSha256": "cb766a9b5b99f5509da5478ca15ecbe1c77a09127956d9524e7447c7d0939978",
+        "report": "formal/validation/finance/multiply-one-verified/verification.json",
+        "inputs": {
+          "spec/settlement/money.md": "cb766a9b5b99f5509da5478ca15ecbe1c77a09127956d9524e7447c7d0939978",
+          "spec/settlement/money.proof.dfy": "c963c019e25af747ffc8c6f1ccde302ce211182fc852f872e42324585b32e95a"
+        }
       },
       {
         "unit": "settlement__allocation.ts",
@@ -311,14 +315,39 @@
     ],
     "baselineReport": "formal/validation/finance/proofs.json",
     "attemptsReport": "formal/validation/finance/proof-attempts.json",
-    "unprovedCount": 43,
+    "unprovedCount": 42,
     "sourceSnapshotsNeedingFinalTreeRecheck": [
       "settlement__payment.ts",
       "settlement__referrals.ts"
     ],
     "meaning": "Unproved obligations remain unaccepted. Whole-application proof completeness is not established.",
     "scope": "Focused source-bound proof attempts; the full-tree report is authoritative for the complete current tree.",
-    "fullTreeReport": "formal/validation/full-tree/current-check.json"
+    "fullTreeReport": "formal/validation/full-tree/current-check.json",
+    "historicalResults": [
+      {
+        "unit": "settlement__money.ts",
+        "total": 9,
+        "unproved": [
+          "lawMultiplyOne: (lawMultiplyOne(a) == true)",
+          "lawDivisionRemainder: (lawDivisionRemainder(a, b) == true)",
+          "lawDivisionReconstructs: (lawDivisionReconstructs(a, b) == true)",
+          "lawFullPrivateConservation: (lawFullPrivateConservation(a) == true)",
+          "lawFullOrdinaryConservation: (lawFullOrdinaryConservation(a) == true)"
+        ],
+        "errors": [],
+        "exhausted": [
+          "lawDivisionReconstructs: (lawDivisionReconstructs(a, b) == true)"
+        ],
+        "proofFile": "spec/settlement/money.proof.dfy",
+        "proofSha256": "4ef9c14a579f84b696a70b771d65213d81516ee9ee601470c4eb8243959ebc11",
+        "log": "formal/validation/finance/settlement__money.ts.proof.log",
+        "source": "spec/settlement/money.md",
+        "sourceSha256": "cb766a9b5b99f5509da5478ca15ecbe1c77a09127956d9524e7447c7d0939978",
+        "sourceCurrent": true,
+        "status": "unproved",
+        "currentSourceSha256": "cb766a9b5b99f5509da5478ca15ecbe1c77a09127956d9524e7447c7d0939978"
+      }
+    ]
   },
   "reachabilityProbes": {
     "status": "passed-on-recorded-snapshot",

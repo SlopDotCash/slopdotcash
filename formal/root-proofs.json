@@ -96,19 +96,23 @@
     },
     {
       "unit": "backend__wallets.ts",
-      "spec": "spec/backend/wallets.md",
-      "sourceSha256": "bc33a7dd7015e952350eb69ca7f1f87184bfaf0b772403105ac735d6619f3bcd",
-      "inputs": {
-        "spec/backend/wallets.md": "bc33a7dd7015e952350eb69ca7f1f87184bfaf0b772403105ac735d6619f3bcd"
-      },
-      "total": 30,
+      "total": 90,
       "unproved": [],
       "errors": [],
       "exhausted": [],
-      "sourceCurrent": false,
-      "status": "superseded",
-      "log": "formal/validation/journeys/backend__wallets.proof.log",
-      "qualifiedBy": "The wallet challenge and registry model replaced this binding sketch."
+      "proofSha256": "8ef7e5b862c5abe51bc4cc0a0479c9f2f104fdcd6d6b5ead0389f64351b7e052",
+      "log": "formal/validation/journeys/wallet-registration-helper-backend__wallets.ts.log",
+      "proofFile": "spec/backend/wallets.proof.dfy",
+      "proofLocation": "Identical verified bytes installed in the owning spec proof file.",
+      "spec": "spec/backend/wallets.md",
+      "sourceSha256": "c2f024263e30cbcdde00fa36d79e44f9ec8687ed0b8b3651c6628899352bc13b",
+      "inputs": {
+        "spec/backend/wallets.md": "c2f024263e30cbcdde00fa36d79e44f9ec8687ed0b8b3651c6628899352bc13b",
+        "spec/backend/wallets.proof.dfy": "8ef7e5b862c5abe51bc4cc0a0479c9f2f104fdcd6d6b5ead0389f64351b7e052"
+      },
+      "report": "formal/validation/journeys/wallet-registration-helper-proofs.json",
+      "sourceCurrent": true,
+      "status": "passed"
     },
     {
       "unit": "composition.ts",
@@ -502,16 +506,30 @@
       "status": "superseded",
       "log": "formal/validation/journeys/backend__accounts.proof.log",
       "supersededBy": "formal/validation/journeys/account-proof-v2-backend__accounts.ts.log"
+    },
+    {
+      "unit": "backend__wallets.ts",
+      "spec": "spec/backend/wallets.md",
+      "sourceSha256": "bc33a7dd7015e952350eb69ca7f1f87184bfaf0b772403105ac735d6619f3bcd",
+      "inputs": {
+        "spec/backend/wallets.md": "bc33a7dd7015e952350eb69ca7f1f87184bfaf0b772403105ac735d6619f3bcd"
+      },
+      "total": 30,
+      "unproved": [],
+      "errors": [],
+      "exhausted": [],
+      "sourceCurrent": false,
+      "status": "superseded",
+      "log": "formal/validation/journeys/backend__wallets.proof.log",
+      "qualifiedBy": "The wallet challenge and registry model replaced this binding sketch."
     }
   ],
   "currentSummary": {
-    "uniqueProofUnits": 22,
-    "provedObligations": 877,
+    "uniqueProofUnits": 23,
+    "provedObligations": 967,
     "unproved": 0,
     "errors": 0,
-    "staleUnits": [
-      "backend__wallets.ts"
-    ],
+    "staleUnits": [],
     "historicalRunsExcluded": true
   }
 }
