@@ -7,7 +7,6 @@ import { useNotFoundHead } from "./lib/document-head";
 import { GithubIcon } from "./lib/github-icon";
 import { hasBountyOverview } from "./lib/home-projects";
 import type { GitHubActor, LeaderboardSnapshot } from "./lib/leaderboard";
-import { POINTS_PER_THIRD } from "./lib/points";
 import {
   type ProjectSessionState,
   useProjectMaintainer,
@@ -19,6 +18,7 @@ import {
   monthlyPoolLabel,
   monthlyPoolUnfunded,
 } from "./lib/reward-amount";
+import { scoreThirdsToPoints } from "./lib/score-units";
 import { type DataState, SNAPSHOT_STALE_AFTER_MS } from "./lib/use-snapshot";
 
 type RouteTone = "neutral" | "success" | "warning" | "danger" | "info";
@@ -523,9 +523,9 @@ export function Avatar({
   );
 }
 
-/** Integer credit-thirds in the displayed Slop Points unit. */
+/** Legacy credit-thirds in the displayed whole Slop Points unit. */
 export function formatPointsFromThirds(thirds: number): string {
-  return (thirds * POINTS_PER_THIRD).toLocaleString();
+  return scoreThirdsToPoints(thirds).toLocaleString();
 }
 
 export function formatPercent(partsPerMillion: number): string {

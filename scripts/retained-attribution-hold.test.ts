@@ -1,14 +1,19 @@
 import { expect, test } from "bun:test";
 import { findRegisteredRepositoryById } from "../src/lib/repositories.mjs";
 import { fixture, repository } from "../tests/value-binary-fixture";
-import { loadValueInputs } from "./value-ingestion";
+import { loadValueInputs, type ValueInputProgress } from "./value-ingestion";
 
-function candidate(failure: "proof" | "transport" | "identity") {
+function candidate(
+  failure: "proof" | "transport" | "identity",
+  baseRefName = "main",
+  related = true,
+) {
   const f = fixture({ textOnly: true, direct: true });
   const target = findRegisteredRepositoryById("SlopDotCash/asi");
   if (!target?.expectedNodeId) throw new Error("Missing registered fixture");
   const originalId = "PR_original";
   const acceptedId = "PR_accepted";
+  const reads: string[] = [];
   const remap = <T>(value: T): T =>
     JSON.parse(
       JSON.stringify(value)
@@ -18,6 +23,7 @@ function candidate(failure: "proof" | "transport" | "identity") {
   const github = {
     ...f.client,
     async get<T>(path: string): Promise<T | null> {
+      reads.push(path);
       if (failure === "transport" && path.endsWith("/pulls/2"))
         throw new Error("Fixture transport unavailable");
       const rawPath = path
@@ -60,7 +66,7 @@ function candidate(failure: "proof" | "transport" | "identity") {
             id: number === 1 ? originalId : acceptedId,
             timelineItems: {
               nodes:
-                number === 2
+                number === 2 && related
                   ? [
                       {
                         source: {
@@ -89,19 +95,27 @@ function candidate(failure: "proof" | "transport" | "identity") {
     },
     { preconnect: fetch.preconnect },
   );
-  const run = () =>
-    loadValueInputs(github, [], transport, undefined, [
-      {
-        id: acceptedId,
-        number: 2,
-        url: `https://github.com/${target.id}/pull/2`,
-        headRefOid: f.pull.head.sha,
-        mergedAt: f.pull.merged_at,
-        updatedAt: f.pull.updated_at,
-        commits: [{ oid: f.pull.head.sha, author: null, parentCount: 1 }],
-      },
-    ]);
-  return { run, acceptedId };
+  const run = (onProgress?: (progress: ValueInputProgress) => void) =>
+    loadValueInputs(
+      github,
+      [],
+      transport,
+      undefined,
+      [
+        {
+          id: acceptedId,
+          number: 2,
+          baseRefName,
+          url: `https://github.com/${target.id}/pull/2`,
+          headRefOid: f.pull.head.sha,
+          mergedAt: f.pull.merged_at,
+          updatedAt: f.pull.updated_at,
+          commits: [{ oid: f.pull.head.sha, author: null, parentCount: 1 }],
+        },
+      ],
+      onProgress,
+    );
+  return { run, acceptedId, reads };
 }
 
 test("unproven retained work becomes a source-specific attribution hold", async () => {
@@ -118,9 +132,13 @@ test("unproven retained work becomes a source-specific attribution hold", async 
 });
 
 test("transport failures do not become successful attribution holds", async () => {
-  await expect(candidate("transport").run()).rejects.toThrow(
-    "Fixture transport unavailable",
-  );
+  const progress: ValueInputProgress[] = [];
+  await expect(
+    candidate("transport").run((entry) => progress.push(entry)),
+  ).rejects.toThrow("Fixture transport unavailable");
+  expect(progress).toEqual([
+    { phase: "commit-attributions", completed: 0, total: 1 },
+  ]);
 });
 
 test("repository identity failures do not become successful attribution holds", async () => {
@@ -129,7 +147,28 @@ test("repository identity failures do not become successful attribution holds", 
   );
 });
 
-test("branch promotions do not hydrate unused provisional commit attribution", async () => {
+test("first-owned unlinked work on another branch still reads original attribution", async () => {
+  const { run, acceptedId, reads } = candidate("proof", "production-promotion");
+  const result = await run();
+  expect(reads.some((path) => path.endsWith("/pulls/1"))).toBe(true);
+  expect([...result.implementationAttributionHolds.keys()]).toEqual([
+    acceptedId,
+  ]);
+});
+
+test("an unreferenced unlinked commit needs no full commit or file evidence", async () => {
+  const { run, reads } = candidate("proof", "main", false);
+  const result = await run();
+  expect(result.retainedCommitAuthors.size).toBe(0);
+  expect(result.implementationAttributionHolds.size).toBe(0);
+  expect(reads.some((path) => /\/(?:files|commits)(?:\/|\?)/u.test(path))).toBe(
+    false,
+  );
+  expect(reads.some((path) => path.endsWith("/pulls/1"))).toBe(false);
+  expect(reads.some((path) => path.includes("/issues/2/comments?"))).toBe(true);
+});
+
+test("a later promotion of already accepted SHAs does not hydrate attribution again", async () => {
   const github = {
     async get<T>(): Promise<T | null> {
       throw new Error("Promotion attribution must not read GitHub");
@@ -142,6 +181,28 @@ test("branch promotions do not hydrate unused provisional commit attribution", a
     },
   };
   const result = await loadValueInputs(github, [], undefined, undefined, [
+    {
+      id: "PR_earlier_acceptance",
+      number: 122,
+      url: "https://github.com/SlopDotCash/asi/pull/122",
+      baseRefName: "main",
+      headRefOid: "a".repeat(40),
+      mergedAt: "2026-10-10T00:00:00Z",
+      updatedAt: "2026-10-10T00:00:00Z",
+      commits: [
+        {
+          oid: "a".repeat(40),
+          author: {
+            id: "MDQ6VXNlcjQy",
+            login: "author",
+            avatarUrl: "https://avatars.githubusercontent.com/u/42?v=4",
+            url: "https://github.com/author",
+            kind: "User",
+          },
+          parentCount: 1,
+        },
+      ],
+    },
     {
       id: "PR_promotion",
       number: 123,

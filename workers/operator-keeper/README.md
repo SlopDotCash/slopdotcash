@@ -39,6 +39,13 @@ run must resume from the journal; it is not proof of payment. Use the existing
 `perRun` bound and the operator's spending limits. A provider failure or missing
 receipt remains unavailable work.
 
+An unavailable scheduled run logs only grouped operation, state, fixed failure
+stage, typed RPC cause labels and counts before raising its existing failure.
+Schema version 2 distinguishes deployment preflight, authority, gas, history,
+and local payment-state failures. It logs no project or
+wallet IDs, amounts, configuration or raw error text. Successful runs stay
+silent. Unknown categories are recorded as `other`.
+
 ## Local durability qualification
 
 Run the actual keeper against Anvil and a native Workerd SQLite Durable Object:
@@ -99,6 +106,15 @@ installing them. A key is read only when an approved operation reaches signing,
 and its address must match the configuration. Never print or commit a secret.
 For a temporary stop, deploy `KEEPER_MODE = "off"` with the same namespace.
 This stops new work without deleting unknown transactions or funded awards.
+
+To rotate an unavailable RPC endpoint, set the optional `KEEPER_RPC_URL` secret
+through Wrangler's secret prompt while the keeper is off or in dry-run. The
+keeper uses that HTTPS URL in place of `KEEPER_CONFIG.rpcUrl`. Removing the
+override restores the URL in `KEEPER_CONFIG`. An empty, malformed or non-HTTPS
+override refuses the run. Keep the existing Worker and namespace, then inspect
+the next scheduled dry-run result. Network, signer, project selection, budgets
+and journal identity still come from `KEEPER_CONFIG`, and the usual chain and
+deployment checks apply to the replacement endpoint.
 
 ## Runtime references
 

@@ -45,9 +45,16 @@ export async function registeredHistoryRepository(
       WHERE lower(json_extract(r.value, '$.id')) = ?
          OR EXISTS (SELECT 1 FROM json_each(r.value, '$.aliases') a
                     WHERE lower(a.value) = ?))`
-        : `SELECT manifest FROM projects WHERE json_extract(manifest, '$.authority.repositoryNodeId') = ?`,
+        : `SELECT manifest FROM projects p
+      WHERE json_extract(p.manifest, '$.authority.repositoryNodeId') = ?
+         OR EXISTS (SELECT 1 FROM json_each(p.manifest, '$.repositories') r
+                    WHERE r.key > 0 AND json_extract(r.value, '$.nodeId') = ?)`,
     )
-    .bind(...(repositoryNodeId === null ? [key, key] : [repositoryNodeId]))
+    .bind(
+      ...(repositoryNodeId === null
+        ? [key, key]
+        : [repositoryNodeId, repositoryNodeId]),
+    )
     .first<{ manifest: string }>();
   if (row === null) return null;
   const project = assertProjectDefinition(JSON.parse(row.manifest));
@@ -58,11 +65,20 @@ export async function registeredHistoryRepository(
             (id) => id.toLowerCase() === key,
           ),
         )
-      : 0;
+      : project.authority.repositoryNodeId === repositoryNodeId
+        ? 0
+        : project.repositories.findIndex(
+            (repository, position) =>
+              position > 0 && repository.nodeId === repositoryNodeId,
+          );
   if (index < 0) return null;
+  // An appended repository carries its own permanent node id.
   return {
     id: project.repositories[index].id,
-    nodeId: index === 0 ? project.authority.repositoryNodeId : null,
+    nodeId:
+      index === 0
+        ? project.authority.repositoryNodeId
+        : (project.repositories[index].nodeId ?? null),
   };
 }
 
@@ -109,9 +125,14 @@ export async function repositoryCapabilities(
         .toLowerCase() === key,
   );
   // Old aliases are history, not permission to review a reused repository name.
+  // Each repository answers to its own permanent GitHub id: the first one's
+  // is the project authority, an appended one carries its own.
   if (
     index < 0 ||
-    (index === 0 && String(job.repositoryId) !== project.authority.repositoryId)
+    String(job.repositoryId) !==
+      (index === 0
+        ? project.authority.repositoryId
+        : project.repositories[index].githubId)
   )
     return { projectId: null, project: null, capabilities: UNREGISTERED };
   const identity = repositoryIdentity(project);

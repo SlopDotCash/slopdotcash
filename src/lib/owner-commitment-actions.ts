@@ -178,6 +178,8 @@ export async function checkEvmCommitment(
     plan.deployment.vault,
     intent.data,
   );
+  // Not final yet: this flow reports only pending until finality.
+  if (checked.status === "included") return "pending" as const;
   if (checked.status !== "finalized") return checked.status;
   const events = checked.receipt.logs.filter(
     (log) =>

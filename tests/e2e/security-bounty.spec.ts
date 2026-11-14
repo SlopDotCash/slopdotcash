@@ -1613,6 +1613,12 @@ test("private security bounty programs keep cases restricted from intake to awar
       path: test.info().outputPath("program-terms.png"),
       fullPage: true,
     });
+    const intakeRead = page.waitForResponse(
+      (response) =>
+        response.request().method() === "GET" &&
+        new URL(response.url()).pathname ===
+          `/api/v1/security-programs/${b.id}/intake`,
+    );
     await page.goto(`/projects/${b.id}/security`);
     await expect(page.locator(".route-page-header .route-lead")).toContainText(
       "100,000 USDC security bounty",
@@ -1624,8 +1630,12 @@ test("private security bounty programs keep cases restricted from intake to awar
     const split = page.getByRole("region", { name: "Award split" });
     await expect(split).toContainText("Researcher · 75%75,000 USDC");
     await expect(split).toContainText("Slop · 25%25,000 USDC");
-    // Finish the overview background reads before explicitly closing this context.
-    // Strict diagnostics must still catch unexpected request cancellations.
+    // Finish this program's intake and font reads before leaving its page.
+    // Waiting only on the destination would cancel these requests first.
+    expect(await (await intakeRead).finished()).toBeNull();
+    await page.evaluate(async () => {
+      await document.fonts.ready;
+    });
     await page.goto(`/projects/${a.id}`, { waitUntil: "networkidle" });
     await expect(
       page.getByText("Loading records…", { exact: true }),
@@ -2617,7 +2627,11 @@ test("private security bounty programs keep cases restricted from intake to awar
         "/.well-known/slop/projects.json",
         `/projects/${a.id}/security`,
         "/",
-      ].map(async (path) => (await request.get(path)).text()),
+      ].map(async (path) => {
+        const response = await request.get(path, { maxRetries: 1 });
+        expect(response.status(), path).toBe(200);
+        return response.text();
+      }),
     );
     for (const text of outputs) {
       expect(text).not.toContain("GHSA-");

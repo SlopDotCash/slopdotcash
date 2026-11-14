@@ -119,7 +119,7 @@ async function collectRange(
     } = await github.graphql<{
       search: Page<Pull> & { issueCount: number };
     }>(
-      `query($q:String!,$cursor:String){search(query:$q,type:ISSUE,first:100,after:$cursor){issueCount nodes{... on PullRequest{id number url mergedAt baseRefOid headRefOid repository{id databaseId nameWithOwner isPrivate} mergeCommit{oid} commits(first:100){totalCount nodes{commit{oid}}pageInfo{hasNextPage endCursor}}}}pageInfo{hasNextPage endCursor}}}`,
+      `query($q:String!,$cursor:String){search(query:$q,type:ISSUE,first:100,after:$cursor){issueCount nodes{... on PullRequest{id number url mergedAt baseRefOid headRefOid repository{id databaseId nameWithOwner isPrivate} mergeCommit{oid} commits(first:100){totalCount nodes{commit{oid}}pageInfo{hasNextPage endCursor}}}}pageInfo{hasNextPage endCursor}} rateLimit{cost limit remaining resetAt}}`,
       { q: query, cursor },
     );
     const search = result.search;
@@ -203,7 +203,7 @@ async function collectRange(
             pullRequest: { id: string; commits: Commits };
           } | null;
         }>(
-          `query($owner:String!,$name:String!,$number:Int!,$after:String!){repository(owner:$owner,name:$name){id pullRequest(number:$number){id commits(first:100,after:$after){totalCount nodes{commit{oid}}pageInfo{hasNextPage endCursor}}}}}`,
+          `query($owner:String!,$name:String!,$number:Int!,$after:String!){repository(owner:$owner,name:$name){id pullRequest(number:$number){id commits(first:100,after:$after){totalCount nodes{commit{oid}}pageInfo{hasNextPage endCursor}}}} rateLimit{cost limit remaining resetAt}}`,
           { owner, name, number: pull.number, after },
         );
         if (

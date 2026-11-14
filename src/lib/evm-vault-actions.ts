@@ -22,6 +22,51 @@ const tokenAbi = parseAbi([
   "function allowance(address,address) view returns (uint256)",
   "function approve(address,uint256) returns (bool)",
 ]);
+/**
+ * EIP-5792 and provider codes a wallet returns when it refuses a batch before
+ * sending anything: unsupported method, capability, chain, size or atomicity.
+ */
+const BATCH_REFUSED = new Set([4200, -32601, 5700, 5710, 5740, 5750, 5760]);
+/** The wallet cannot send the approval and deposit as one request; nothing was sent. */
+export class VaultBatchUnavailable extends Error {}
+const hexQuantity = (value: bigint) => `0x${value.toString(16)}`;
+const approveCall = (deployment: EscrowDeployment, value: bigint) => ({
+  to: deployment.asset,
+  data: encodeFunctionData({
+    abi: tokenAbi,
+    functionName: "approve",
+    args: [deployment.vault as `0x${string}`, value],
+  }),
+  value: "0x0",
+});
+/**
+ * True only when the wallet already executes batches atomically on this chain.
+ * A wallet that would first have to upgrade the account ("ready") is not asked to.
+ */
+async function atomicBatchSupported(
+  wallet: VaultConnection,
+  chainId: bigint,
+): Promise<boolean> {
+  const request = wallet.evmRequest;
+  if (!request) return false;
+  try {
+    const capabilities = await request("wallet_getCapabilities", [
+      wallet.address,
+      [hexQuantity(chainId)],
+    ]);
+    if (!capabilities || typeof capabilities !== "object") return false;
+    return Object.entries(capabilities).some(
+      ([chain, value]) =>
+        /^0x[0-9a-fA-F]+$/.test(chain) &&
+        // "0x0" carries capabilities that apply to every chain (EIP-5792).
+        (BigInt(chain) === chainId || BigInt(chain) === 0n) &&
+        (value as { atomic?: { status?: unknown } } | null)?.atomic?.status ===
+          "supported",
+    );
+  } catch {
+    return false;
+  }
+}
 const word = (value: unknown): bigint => {
   if (typeof value !== "string" || !/^0x[0-9a-fA-F]{64}$/.test(value))
     throw new Error("The wallet returned an invalid token amount.");
@@ -147,15 +192,19 @@ export async function reviewVaultAction(
     }
   }
   const fee = operation === "withdraw" ? ordinaryFee(gross) : 0n;
+  const approvalNeeded =
+    operation === "deposit" && !native && allowance < gross;
   return {
     gross: gross.toString(),
     fee: fee.toString(),
     net: (gross - fee).toString(),
     decimals: totals.decimals,
     freeBalance: totals.freeBalance,
-    approvalNeeded: operation === "deposit" && !native && allowance < gross,
-    resetAllowance:
-      operation === "deposit" && !native && allowance > 0n && allowance < gross,
+    approvalNeeded,
+    resetAllowance: approvalNeeded && allowance > 0n,
+    /** One wallet request can carry the approval and the deposit. */
+    batch:
+      approvalNeeded && (await atomicBatchSupported(wallet, config.chainId)),
   };
 }
 export type VaultActionReview = Awaited<ReturnType<typeof reviewVaultAction>>;
@@ -222,6 +271,162 @@ export async function sendVaultAction(
   return hash;
 }
 
+/**
+ * Sends the exact approval and the deposit as one atomic wallet request
+ * (EIP-5792). The caller shows the action and obtains the confirmation. No retries.
+ * Returns the wallet's batch identifier, which is not a transaction hash.
+ */
+export async function sendVaultBatch(
+  deployment: EscrowDeployment,
+  wallet: VaultConnection,
+  amount: string,
+  beforeSend: () => void,
+  payoutPolicy: PayoutPolicy = "ordinary",
+) {
+  const review = await reviewVaultAction(
+    deployment,
+    wallet,
+    "deposit",
+    amount,
+    payoutPolicy,
+  );
+  const request = wallet.evmRequest;
+  if (!request) throw new Error("Choose an EVM wallet.");
+  if (!review.batch)
+    throw new VaultBatchUnavailable(
+      "Your wallet cannot send this as one request. Approve, then deposit.",
+    );
+  const config = walletVaultConfig(deployment, wallet, payoutPolicy);
+  const calls = [
+    ...(review.resetAllowance ? [approveCall(deployment, 0n)] : []),
+    approveCall(deployment, BigInt(review.gross)),
+    {
+      to: deployment.vault,
+      data: buildDepositCalldata(review.gross),
+      value: "0x0",
+    },
+  ];
+  // The deposit cannot be estimated before its approval exists; the wallet
+  // simulates the batch. The first call must at least be executable.
+  await request("eth_estimateGas", [{ from: wallet.address, ...calls[0] }]);
+  await assertVaultWalletAccount(wallet, config);
+  beforeSend();
+  let result: unknown;
+  try {
+    result = await request("wallet_sendCalls", [
+      {
+        version: "2.0.0",
+        from: wallet.address,
+        chainId: hexQuantity(config.chainId),
+        atomicRequired: true,
+        calls,
+      },
+    ]);
+  } catch (caught) {
+    if (BATCH_REFUSED.has(Number((caught as { code?: unknown } | null)?.code)))
+      throw new VaultBatchUnavailable(
+        "Your wallet could not send this as one request. Nothing was sent. Approve, then deposit.",
+      );
+    throw caught;
+  }
+  const id =
+    typeof result === "string" ? result : (result as { id?: unknown })?.id;
+  if (typeof id !== "string" || id.length < 1 || id.length > 4096)
+    throw new Error(
+      "The wallet did not return a batch reference. Check wallet activity before another attempt.",
+    );
+  return id;
+}
+
+/**
+ * A batched deposit is proved by its finalized vault event, never by the
+ * wallet's own status. The status only supplies the transaction to read. The
+ * transaction is sent by the wallet's account logic, so its target and input
+ * are not compared; the event names the depositor and the exact amount.
+ */
+export async function checkVaultBatch(
+  deployment: EscrowDeployment,
+  wallet: VaultConnection,
+  gross: string,
+  batchId: string | null,
+  transactionId: string | null,
+  payoutPolicy: PayoutPolicy = "ordinary",
+): Promise<{
+  status: "pending" | "not-sent" | "received" | "failed" | "finalized";
+  transactionId: string | null;
+}> {
+  const request = wallet.evmRequest;
+  if (!request) throw new Error("Choose an EVM wallet.");
+  const config = walletVaultConfig(deployment, wallet, payoutPolicy);
+  await assertVaultWalletAccount(wallet, config);
+  let hash = transactionId;
+  if (hash === null) {
+    if (batchId === null)
+      throw new Error("Enter the transaction from your wallet.");
+    const reported = (await request("wallet_getCallsStatus", [batchId])) as {
+      status?: unknown;
+      receipts?: { transactionHash?: unknown }[];
+    } | null;
+    const code = reported?.status;
+    if (typeof code !== "number" || !Number.isInteger(code))
+      throw new Error(
+        "The wallet returned an unrecognized batch status. Enter its transaction hash from wallet activity.",
+      );
+    if (code >= 100 && code < 200) return { status: "pending", transactionId };
+    // The wallet reports that the batch was not included and will not be retried.
+    if (code >= 400 && code < 500) return { status: "not-sent", transactionId };
+    if (code !== 200 && code !== 500)
+      throw new Error(
+        "The wallet reports a partly completed batch. Check wallet activity and enter its transaction hash.",
+      );
+    const last = reported?.receipts?.at(-1)?.transactionHash;
+    if (typeof last !== "string" || !/^0x[0-9a-fA-F]{64}$/.test(last))
+      throw new Error(
+        "The wallet did not return the batch transaction. Enter its hash from wallet activity.",
+      );
+    hash = last;
+  }
+  if (!/^0x[0-9a-fA-F]{64}$/.test(hash))
+    throw new Error("Enter a transaction hash from your wallet.");
+  const receipt = (await request("eth_getTransactionReceipt", [
+    hash,
+  ])) as WalletReceipt | null;
+  if (!receipt) return { status: "pending", transactionId: hash };
+  const settled = await settleWalletReceipt(
+    request,
+    receipt,
+    hash,
+    "finalized",
+  );
+  if (settled === "pending" || settled === "failed")
+    return { status: settled, transactionId: hash };
+  const depositor = `0x${wallet.address.slice(2).toLowerCase().padStart(64, "0")}`;
+  // A shared transaction may contain other wallets' deposits. Keep every
+  // deposit by this wallet so an ambiguous own receipt still fails closed.
+  const events = receipt.logs.filter(
+    (log) =>
+      log.address.toLowerCase() === deployment.vault.toLowerCase() &&
+      log.topics[0]?.toLowerCase() === EVM_ESCROW_EVENT_TOPICS.Deposited &&
+      log.topics[1]?.toLowerCase() === depositor,
+  );
+  // Before finality the batch is only reported as received when it carries
+  // this wallet's one deposit event; the final check below proves the amount.
+  if (settled === "included")
+    return {
+      status: events.length === 1 ? "received" : "pending",
+      transactionId: hash,
+    };
+  if (events.length !== 1)
+    throw new Error("This transaction does not match the request.");
+  await verifyVaultFundingAction(
+    config,
+    hash,
+    Number(BigInt(events[0].logIndex)),
+    { operation: "deposit", address: wallet.address, gross },
+  );
+  return { status: "finalized", transactionId: hash };
+}
+
 /** A receipt alone is insufficient: require canonical finality and the exact reviewed vault event. */
 export async function checkVaultAction(
   deployment: EscrowDeployment,
@@ -261,6 +466,9 @@ export async function checkVaultAction(
     // a reorganized approval makes the deposit fail before the wallet prompt.
     step === "send" ? "finalized" : "included",
   );
+  // Only a transfer of funds reads "finalized" evidence, so only it can report
+  // "received": included in a canonical block, waiting for finality to count.
+  if (checked.status === "included") return "received" as const;
   if (checked.status !== "finalized") return checked.status;
   const receipt = checked.receipt;
   if (step !== "send") return "approval-confirmed";
@@ -310,13 +518,7 @@ export async function readFinalizedWalletTransaction(
     throw new Error("Enter a transaction hash from your wallet.");
   const receipt = (await request("eth_getTransactionReceipt", [
     transactionId,
-  ])) as {
-    status: string;
-    transactionHash: string;
-    blockNumber: string;
-    blockHash: string;
-    logs: { address: string; topics: string[]; logIndex: string }[];
-  } | null;
+  ])) as WalletReceipt | null;
   if (!receipt) return { status: "pending" as const, receipt: null };
   const transaction = (await request("eth_getTransactionByHash", [
     transactionId,
@@ -336,13 +538,40 @@ export async function readFinalizedWalletTransaction(
     throw new Error(
       "This transaction does not match the pending wallet action. Check its hash in your wallet.",
     );
+  const settled = await settleWalletReceipt(
+    request,
+    receipt,
+    transactionId,
+    evidence,
+  );
+  if (settled === "pending")
+    return { status: "pending" as const, receipt: null };
+  if (settled === "included") return { status: "included" as const, receipt };
+  if (settled === "failed") return { status: "failed" as const, receipt };
+  return { status: "finalized" as const, receipt };
+}
+
+type WalletReceipt = {
+  status: string;
+  transactionHash: string;
+  blockNumber: string;
+  blockHash: string;
+  logs: { address: string; topics: string[]; logIndex: string }[];
+};
+/** Canonical block, required evidence level and execution status of one receipt. */
+async function settleWalletReceipt(
+  request: NonNullable<VaultConnection["evmRequest"]>,
+  receipt: WalletReceipt,
+  transactionId: string,
+  evidence: "finalized" | "included",
+): Promise<"pending" | "included" | "failed" | "finalized"> {
+  let final = true;
   if (evidence === "finalized") {
     const finalized = (await request("eth_getBlockByNumber", [
       "finalized",
       false,
     ])) as { number: string };
-    if (BigInt(receipt.blockNumber) > BigInt(finalized.number))
-      return { status: "pending" as const, receipt: null };
+    final = BigInt(receipt.blockNumber) <= BigInt(finalized.number);
   }
   const block = (await request("eth_getBlockByNumber", [
     receipt.blockNumber,
@@ -353,12 +582,14 @@ export async function readFinalizedWalletTransaction(
     receipt.transactionHash.toLowerCase() !== transactionId.toLowerCase()
   ) {
     // A block that is not final can still be replaced; ask again later.
-    if (evidence === "included")
-      return { status: "pending" as const, receipt: null };
+    if (evidence === "included" || !final) return "pending";
     throw new Error("The transaction is not in the canonical finalized chain.");
   }
-  if (receipt.status === "0x0") return { status: "failed" as const, receipt };
+  // Successful and in the canonical chain, but not final yet. It is reported so
+  // the owner sees the transfer arrived; it never counts as funding.
+  if (!final) return receipt.status === "0x1" ? "included" : "pending";
+  if (receipt.status === "0x0") return "failed";
   if (receipt.status !== "0x1")
     throw new Error("The transaction status is not recognized.");
-  return { status: "finalized" as const, receipt };
+  return "finalized";
 }

@@ -248,12 +248,18 @@ test("an ordinary Perl install script keeps no finding", () => {
   }
 });
 
-test("the executable surface stays bounded", () => {
-  // Only build definitions are added: unrelated extensionless files keep no
-  // surface, so the inventory does not become a blanket text scan.
+test("ordinary extensionless content is reviewed without declaring it an install script", () => {
   expect(surfacesOf("LICENSE")).toEqual([]);
   expect(surfacesOf("NOTICE")).toEqual([]);
-  expect(inspected("NOTICE", PAYLOAD).findings).toEqual([]);
+  const result = inspected("NOTICE", PAYLOAD);
+  expect(result.coverage.installScripts.items).toBe(0);
+  expect(result.findings).toContainEqual(
+    expect.objectContaining({
+      path: "NOTICE",
+      category: "unsafe-execution",
+      severity: "high",
+    }),
+  );
 });
 
 test("dedicated tox TOML commands are reviewed as an install surface", () => {

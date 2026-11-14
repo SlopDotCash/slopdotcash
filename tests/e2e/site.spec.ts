@@ -2015,6 +2015,33 @@ test("lands direct and lazy cross-route hash links on their section", async ({
   }
 });
 
+test("how it works answers the referral and buyback questions", async ({
+  page,
+}) => {
+  await page.goto("/how-it-works#faq");
+  const faq = page.locator("#faq");
+  const referral = faq.locator("article", {
+    has: page.getByRole("heading", { name: "Is there a referral program?" }),
+  });
+  await expect(referral).toContainText("none pay until the program");
+  await expect(
+    referral.getByRole("link", { name: "Referral terms" }),
+  ).toHaveAttribute("href", "https://record.slop.cash/referrals");
+  const buyback = faq.locator("article", {
+    has: page.getByRole("heading", { name: "Does Slop buy back SLOP?" }),
+  });
+  await expect(buyback).toContainText("configured live since 12 November 2026");
+  await expect(buyback).toContainText("eligible fee income");
+  await expect(buyback).toContainText("once minimum order sizes are met");
+  await expect(buyback).toContainText(
+    "The first verified bridge fill, purchase and burn are still pending",
+  );
+  await expect(buyback).not.toContainText("starts with the first fee");
+  await expect(
+    buyback.getByRole("link", { name: "How the buyback works" }),
+  ).toHaveAttribute("href", "https://record.slop.cash/buyback");
+});
+
 test("refuses retired and unknown paths and recovers to projects", async ({
   page,
 }) => {

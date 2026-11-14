@@ -7,9 +7,12 @@ import {
 } from "./lib/escrow-policy.mjs";
 import {
   checkVaultAction,
+  checkVaultBatch,
   reviewVaultAction,
   sendVaultAction,
+  sendVaultBatch,
   type VaultActionReview,
+  VaultBatchUnavailable,
   type VaultConnection,
   type VaultOperation,
 } from "./lib/evm-vault-actions";
@@ -40,7 +43,8 @@ import { isWalletAddress, sameWalletAddress } from "./lib/wallets";
 import { PendingWalletCheck } from "./OwnerPresentation";
 import { NetworkName, NoWalletFound, WalletConnection } from "./Presentation";
 
-type Step = "approve" | "reset" | "send";
+/** "batch" is one wallet request that carries the approval and the deposit. */
+type Step = "approve" | "reset" | "send" | "batch";
 type Pending = PendingAttempt & {
   version: 1;
   wallet: string;
@@ -52,8 +56,13 @@ type Pending = PendingAttempt & {
   hash: string | null;
   hashSource?: "wallet" | "recovery";
   solanaBlockhash?: string;
+  /** The wallet's reference for a batch; its transaction hash is read later. */
+  batchId?: string;
 };
-type Review = VaultActionReview & { solanaPlan?: SolanaFundingPlan };
+type Review = Omit<VaultActionReview, "batch"> & {
+  batch?: boolean;
+  solanaPlan?: SolanaFundingPlan;
+};
 /**
  * A submitted wallet transaction is checked without a click: every 3 seconds
  * at first, then every 15, for about an hour. "Check transaction" stays for
@@ -71,7 +80,13 @@ function readPending(text: string | null, solana: boolean): Pending | null {
     !validPendingAttemptId(value.attemptId) ||
     !isWalletAddress(solana ? "solana" : "base", value.wallet) ||
     !["deposit", "withdraw"].includes(value.operation) ||
-    !["approve", "reset", "send"].includes(value.step) ||
+    !["approve", "reset", "send", "batch"].includes(value.step) ||
+    (value.step === "batch" && (solana || value.operation !== "deposit")) ||
+    (value.batchId !== undefined &&
+      (value.step !== "batch" ||
+        typeof value.batchId !== "string" ||
+        value.batchId.length < 1 ||
+        value.batchId.length > 4096)) ||
     !/^[1-9][0-9]*$/.test(value.gross) ||
     typeof value.amount !== "string" ||
     !Number.isInteger(value.decimals) ||
@@ -150,8 +165,11 @@ export function VaultActions({
       : entry.family === "evm",
   );
   const { busy, error, setError, run: act } = useAction(saved.error);
+  /** True while the shown error came from an automatic check, not an owner action. */
+  const autoErrored = useRef(false);
   const run = (action: () => Promise<void>) => {
     setNotice("");
+    autoErrored.current = false;
     return act(action, (caught) =>
       errorMessage(caught, "The wallet request failed."),
     );
@@ -265,6 +283,14 @@ export function VaultActions({
             current.solanaPlan,
             beforeSend,
           );
+        } else if (step === "batch") {
+          hash = await sendVaultBatch(
+            deployment,
+            wallet,
+            amount,
+            beforeSend,
+            payoutPolicy,
+          );
         } else {
           hash = await sendVaultAction(
             deployment,
@@ -276,22 +302,36 @@ export function VaultActions({
             payoutPolicy,
           );
         }
-        const submitted: Pending = { ...intent, hash, hashSource: "wallet" };
+        // A batch returns the wallet's reference, not a transaction hash.
+        const submitted: Pending =
+          step === "batch"
+            ? { ...intent, batchId: hash }
+            : { ...intent, hash, hashSource: "wallet" };
+        const kept = step === "batch" ? "batch reference" : "hash";
         try {
           if (!remember(submitted, intent) && mounted.current)
             setNotice(
-              `Submitted ${hash}. Keep this hash; the saved request changed.`,
+              `Submitted ${hash}. Keep this ${kept}; the saved request changed.`,
             );
         } catch {
           if (mounted.current) {
             setPending(submitted);
             setNotice(
-              `Submitted ${hash}. Keep this hash; browser storage could not save it.`,
+              `Submitted ${hash}. Keep this ${kept}; browser storage could not save it.`,
             );
           }
         }
         if (mounted.current) setReview(null);
       } catch (caught) {
+        if (caught instanceof VaultBatchUnavailable) {
+          // The wallet refused before sending: offer the two separate requests.
+          if (requested) {
+            if (mounted.current) clear(intent);
+            else clearPendingAttempt(key, intent);
+          }
+          if (mounted.current) setReview({ ...review, batch: false });
+          throw caught;
+        }
         if ((caught as { code?: unknown } | null)?.code === 4001) {
           if (requested) {
             if (mounted.current) clear(intent);
@@ -307,6 +347,8 @@ export function VaultActions({
       }
     });
   const checking = useRef(false);
+  /** Whether the notice now says the transfer was received but is not final. */
+  const receivedShown = useRef(false);
   /**
    * Reads the chain for the pending request. An automatic check signs nothing,
    * shows no busy state and leaves the notice alone while the result is pending.
@@ -315,38 +357,107 @@ export function VaultActions({
     if (!pending || !wallet || checking.current) return;
     checking.current = true;
     try {
-      const captured = storedPending.current;
+      let captured = storedPending.current;
       if (!captured)
         throw new Error("The saved request changed. Reload before continuing.");
       // Older records have no provenance. Keep their evidence editable;
       // only a hash returned by this wallet interaction is fixed here.
-      const hash =
+      const entered =
         pending.hashSource === "wallet" ? pending.hash : recoveryHash.trim();
-      if (!hash) throw new Error("Enter the transaction from your wallet.");
-      const result = solana
-        ? await checkSolanaVaultAction(
-            projectId,
-            deployment,
-            wallet,
-            pending.operation,
-            pending.gross,
-            pending.solanaBlockhash as string,
-            hash,
-            payoutPolicy,
-          )
-        : await checkVaultAction(
-            deployment,
-            wallet,
-            pending.operation,
-            pending.gross,
-            hash,
-            pending.step,
-            payoutPolicy,
-          );
-      if (!mounted.current) return;
-      if (result === "pending") {
-        if (automatic) return;
-        if (pending.hashSource !== "wallet") {
+      let hash = entered ?? "";
+      let fromWallet = pending.hashSource === "wallet";
+      let result:
+        | "pending"
+        | "not-sent"
+        | "received"
+        | "failed"
+        | "approval-confirmed"
+        | "finalized";
+      if (pending.step === "batch") {
+        if (!entered && !pending.batchId)
+          throw new Error("Enter the transaction from your wallet.");
+        const checked = await checkVaultBatch(
+          deployment,
+          wallet,
+          pending.gross,
+          pending.batchId ?? null,
+          entered || null,
+          payoutPolicy,
+        );
+        if (!mounted.current) return;
+        result = checked.status;
+        hash = checked.transactionId ?? "";
+        if (!entered && checked.transactionId) {
+          // The wallet named the batch transaction: fix it like a returned hash.
+          const named: Pending = {
+            ...pending,
+            hash: checked.transactionId,
+            hashSource: "wallet",
+          };
+          fromWallet = true;
+          let stored = false;
+          try {
+            stored = updatePendingRecord(key, captured, named);
+          } catch {
+            // Storage refused the write; this view still names the transaction.
+            if (result === "pending" || result === "received")
+              setPending(named);
+          }
+          if (stored) {
+            captured = named;
+            storedPending.current = named;
+            if (result === "pending" || result === "received")
+              setPending(named);
+          }
+        }
+      } else {
+        if (!hash) throw new Error("Enter the transaction from your wallet.");
+        result = solana
+          ? await checkSolanaVaultAction(
+              projectId,
+              deployment,
+              wallet,
+              pending.operation,
+              pending.gross,
+              pending.solanaBlockhash as string,
+              hash,
+              payoutPolicy,
+            )
+          : await checkVaultAction(
+              deployment,
+              wallet,
+              pending.operation,
+              pending.gross,
+              hash,
+              pending.step,
+              payoutPolicy,
+            );
+        if (!mounted.current) return;
+      }
+      if (result === "pending" || result === "received") {
+        // Included in a canonical block but not final: say it arrived, keep
+        // the saved request and keep checking. It counts only once final.
+        const network = networkLabel(deployment.network);
+        const receivedNotice = `${pending.operation === "deposit" ? "Deposit received" : "Withdrawal sent"} in a ${network} block. It counts once ${network} finalizes that block, usually within 20 minutes; you can leave this page. ${hash}`;
+        const waitingNotice =
+          fromWallet || pending.batchId
+            ? "Submitted. Waiting for finalized chain evidence."
+            : "Waiting for finalized chain evidence.";
+        if (automatic) {
+          // The check works again: withdraw the error an earlier one showed.
+          if (autoErrored.current) setError(null);
+          autoErrored.current = false;
+          if (result === "received") {
+            receivedShown.current = true;
+            setNotice(receivedNotice);
+          } else if (receivedShown.current) {
+            // The block that carried it was replaced; it is pending again.
+            receivedShown.current = false;
+            setNotice(waitingNotice);
+          }
+          return;
+        }
+        if (!fromWallet && hash) {
           const candidate: Pending = {
             ...pending,
             hash,
@@ -369,20 +480,23 @@ export function VaultActions({
           storedPending.current = candidate;
           setPending(candidate);
         }
-        setNotice(
-          pending.hashSource === "wallet"
-            ? "Submitted. Waiting for finalized chain evidence."
-            : "Waiting for finalized chain evidence.",
-        );
+        receivedShown.current = result === "received";
+        setNotice(result === "received" ? receivedNotice : waitingNotice);
         return;
       }
+      receivedShown.current = false;
       clear(captured);
       setRecoveryHash("");
       setReview(null);
       if (automatic) setError(null);
+      autoErrored.current = false;
       if (result === "failed")
         setNotice(
           "The transaction failed. Review the amount and wallet, then retry.",
+        );
+      else if (result === "not-sent")
+        setNotice(
+          "Your wallet reports that this request was not sent. Review the deposit, then retry.",
         );
       else if (result === "approval-confirmed") {
         setNotice(
@@ -424,8 +538,10 @@ export function VaultActions({
     ticks: 0,
   });
   const autoHash =
-    wallet && !busy && !storageError && pending?.hashSource === "wallet"
-      ? pending.hash
+    wallet && !busy && !storageError && pending
+      ? pending.hashSource === "wallet"
+        ? pending.hash
+        : (pending.batchId ?? null)
       : null;
   const autoAttempts = autoCheck.hash === autoHash ? autoCheck.attempts : 0;
   const autoTicks = autoCheck.ticks;
@@ -446,7 +562,13 @@ export function VaultActions({
         else
           void latestVerify
             .current(true)
-            .catch(() => undefined)
+            .catch((caught) => {
+              // Show why the check fails; the next attempt still runs and a
+              // later success withdraws the message.
+              if (!mounted.current) return;
+              autoErrored.current = true;
+              setError(errorMessage(caught, "The wallet request failed."));
+            })
             .then(() => done(true));
       },
       autoAttempts < AUTO_CHECK_FAST_ATTEMPTS
@@ -454,7 +576,7 @@ export function VaultActions({
         : AUTO_CHECK_SLOW_MS,
     );
     return () => window.clearTimeout(timer);
-  }, [autoHash, autoAttempts, autoTicks, mounted]);
+  }, [autoHash, autoAttempts, autoTicks, mounted, setError]);
   const formatted = (value: string, decimals: number) =>
     formatAssetAmount(value, {
       network: deployment.network,
@@ -535,7 +657,7 @@ export function VaultActions({
           busy={busy}
           canCheck={!!wallet}
           onCheck={() => void check()}
-          unsent={!pending.hash && !recoveryHash.trim()}
+          unsent={!pending.hash && !pending.batchId && !recoveryHash.trim()}
           onClear={() =>
             void run(async () => {
               clear(storedPending.current ?? pending);
@@ -545,7 +667,7 @@ export function VaultActions({
           }
         >
           <p>
-            {pending.step === "send"
+            {pending.step === "send" || pending.step === "batch"
               ? pending.operation === "deposit"
                 ? "Deposit"
                 : "Withdrawal"
@@ -650,7 +772,7 @@ export function VaultActions({
                   <code>{deployment.owner}</code>.
                 </p>
               )}
-              {review.resetAllowance ? (
+              {review.resetAllowance && !review.batch ? (
                 <p>Reset the existing token allowance to zero first.</p>
               ) : null}
               <button
@@ -659,21 +781,25 @@ export function VaultActions({
                 disabled={busy || (!canDeposit && operation === "deposit")}
                 onClick={() =>
                   void send(
-                    review.resetAllowance
-                      ? "reset"
-                      : review.approvalNeeded
-                        ? "approve"
-                        : "send",
+                    review.batch
+                      ? "batch"
+                      : review.resetAllowance
+                        ? "reset"
+                        : review.approvalNeeded
+                          ? "approve"
+                          : "send",
                   )
                 }
               >
-                {review.resetAllowance
-                  ? "Reset token allowance in wallet"
-                  : review.approvalNeeded
-                    ? "Approve exact token amount in wallet"
-                    : operation === "deposit"
-                      ? "Confirm deposit in wallet"
-                      : "Confirm withdrawal in wallet"}
+                {review.batch
+                  ? "Approve and deposit in wallet"
+                  : review.resetAllowance
+                    ? "Reset token allowance in wallet"
+                    : review.approvalNeeded
+                      ? "Approve exact token amount in wallet"
+                      : operation === "deposit"
+                        ? "Confirm deposit in wallet"
+                        : "Confirm withdrawal in wallet"}
               </button>
             </section>
           ) : null}
