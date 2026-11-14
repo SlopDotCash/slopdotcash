@@ -2,8 +2,10 @@
 pragma solidity 0.8.30;
 
 import {ERC1967Proxy} from "../vendor/openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
+import {ERC1967Utils} from "../vendor/openzeppelin/contracts/proxy/ERC1967/ERC1967Utils.sol";
 import {UUPSUpgradeable} from "../vendor/openzeppelin/contracts/proxy/utils/UUPSUpgradeable.sol";
 import {Initializable} from "../vendor/openzeppelin/contracts/proxy/utils/Initializable.sol";
+import {EscrowMath} from "./EscrowMath.sol";
 
 interface IERC20 {
     function balanceOf(address account) external view returns (uint256);
@@ -27,7 +29,8 @@ enum Purpose {
     Bounty
 }
 
-/// @notice Version 5 signatures, upgradeable single-project, single-asset, single-purpose escrow for native ETH or a standard ERC-20.
+/// @notice Upgradeable single-project, single-asset, single-purpose escrow for native ETH or a standard ERC-20. Its
+/// EIP-712 signatures use domain version 5.
 /// @dev A binding needs the identity authority's transaction and the destination wallet's EIP-712 signature.
 /// The latest verified binding activates immediately; earlier versions never pay. An award still waits
 /// bindingDelay after commitment. The owner may cancel an unpaid binding during its review window or an
@@ -216,6 +219,14 @@ contract ProjectEscrow is Initializable, UUPSUpgradeable {
         _;
         entered = false;
     }
+    /// @dev Every deposit stays accounted for: a money-moving function changes held() by exactly what it adds to
+    /// totalDeposited (packages/contracts/README.md, "Money invariants").
+    modifier conserves() {
+        uint256 heldBefore = held();
+        uint128 depositedBefore = totalDeposited;
+        _;
+        assert(held() + depositedBefore == heldBefore + totalDeposited);
+    }
 
     /// @dev Only the factory creates vaults: the deployer is the factory, and reading its authority here
     /// reverts for any other deployer.
@@ -223,10 +234,18 @@ contract ProjectEscrow is Initializable, UUPSUpgradeable {
         _disableInitializers();
     }
 
+    /// @dev Only the factory's upgrade authority upgrades a vault.
     function _authorizeUpgrade(address) internal view override {
         if (msg.sender != factory.upgradeAuthority()) revert Unauthorized();
     }
 
+    /// @notice One-time setup through the factory's proxy, with monthly commitments off.
+    /// @param projectId_ The registry's project ID; never zero.
+    /// @param token_ Zero for native ETH, else an ERC-20 contract with decimals().
+    /// @param owner_ The only account that commits, cancels bindings, refunds and sets the monthly policy.
+    /// @param purpose_ Ordinary awards or private bounties; fixed for the vault's life.
+    /// @param feeRecipient_ Where claimFees sends accrued fees.
+    /// @param bindingDelay_ How long an award waits after commitment, at most MAX_BINDING_DELAY.
     function initialize(
         bytes32 projectId_,
         IERC20 token_,
@@ -253,6 +272,7 @@ contract ProjectEscrow is Initializable, UUPSUpgradeable {
         _setMonthlyCommitment(monthlyCap_, monthlyEnabled_);
     }
 
+    /// @dev Shared setup: the caller is the factory, whose identity authority must differ from the owner.
     function _initialize(
         bytes32 projectId_,
         IERC20 token_,
@@ -432,11 +452,11 @@ contract ProjectEscrow is Initializable, UUPSUpgradeable {
     /// @notice The 2% fee deducted from a gross award, rounded up once per award, so splitting an award into
     /// pieces under 50 base units never avoids it.
     function payoutFee(uint128 gross) public pure returns (uint128) {
-        return gross / 50 + (gross % 50 == 0 ? 0 : 1);
+        return EscrowMath.payoutFee(gross);
     }
 
     /// @notice The fee on one unused-fund withdrawal: the same 2% as payoutFee, rounded up once per withdrawal
-    /// (PRD section 18, #907).
+    /// (PRD section 6, #907).
     function withdrawalFee(uint128 gross) public pure returns (uint128) {
         return payoutFee(gross);
     }
@@ -474,7 +494,7 @@ contract ProjectEscrow is Initializable, UUPSUpgradeable {
 
     /// @notice Anyone may deposit. The amount joins the free balance, which only the owner can commit to awards
     /// or refund to itself; a depositor gets no refund right. Direct transfers are not credited.
-    function deposit(uint128 amount) external payable nonReentrant {
+    function deposit(uint128 amount) external payable nonReentrant conserves {
         if (amount == 0) revert InvalidInput();
         if (address(token) == address(0)) {
             if (msg.value != amount) revert InvalidInput();
@@ -490,7 +510,7 @@ contract ProjectEscrow is Initializable, UUPSUpgradeable {
     }
 
     /// @param sourceDigest Unique per award origin (project/cycle/actor/allocation), not a whole-cycle digest.
-    function commitAward(bytes32 id, uint64 actorId, uint128 gross, bytes32 sourceDigest) external onlyOwner {
+    function commitAward(bytes32 id, uint64 actorId, uint128 gross, bytes32 sourceDigest) external onlyOwner conserves {
         if (purpose != Purpose.Ordinary) revert WrongPurpose();
         if (pendingMonthlyGross != 0) revert MonthlyLeavesPending();
         commit(id, actorId, gross, sourceDigest, payoutFee(gross));
@@ -498,10 +518,14 @@ contract ProjectEscrow is Initializable, UUPSUpgradeable {
 
     /// @notice Owner-approved private bounty: exactly 75% to the researcher and 25% to Slop. Only a bounty
     /// vault takes it. The source must be a random opaque commitment, never a digest of a private report.
-    function commitBountyAward(bytes32 id, uint64 actorId, uint128 gross, bytes32 sourceDigest) external onlyOwner {
+    function commitBountyAward(bytes32 id, uint64 actorId, uint128 gross, bytes32 sourceDigest)
+        external
+        onlyOwner
+        conserves
+    {
         if (purpose != Purpose.Bounty) revert WrongPurpose();
         if (gross % 4 != 0) revert InvalidInput();
-        commit(id, actorId, gross, sourceDigest, gross / 4);
+        commit(id, actorId, gross, sourceDigest, EscrowMath.bountyFee(gross));
     }
 
     /// @notice The owner sets the monthly cap and turns monthly commitments on or off. While they are off,
@@ -510,6 +534,7 @@ contract ProjectEscrow is Initializable, UUPSUpgradeable {
         _setMonthlyCommitment(cap, enabled);
     }
 
+    /// @dev Ordinary vaults only; turning commitments on needs a positive cap.
     function _setMonthlyCommitment(uint128 cap, bool enabled) private {
         if (purpose != Purpose.Ordinary) revert WrongPurpose();
         if (enabled && cap == 0) revert InvalidInput();
@@ -522,7 +547,10 @@ contract ProjectEscrow is Initializable, UUPSUpgradeable {
     /// has monthly commitments on. The identity authority must have signed monthlyDigest(period, root) for
     /// exactly these awards, and their gross total must be within monthlyCap. The free balance covers new
     /// awards only; matching existing awards retain their payment state and are never reserved twice.
-    function commitMonthly(uint32 period, MonthlyAward[] calldata entries, bytes calldata attestation) external {
+    function commitMonthly(uint32 period, MonthlyAward[] calldata entries, bytes calldata attestation)
+        external
+        conserves
+    {
         if (purpose != Purpose.Ordinary) revert WrongPurpose();
         if (!monthlyEnabled) revert MonthlyDisabled();
         (uint64 opensAt, uint64 closesAt) = monthlyWindow(period);
@@ -539,6 +567,8 @@ contract ProjectEscrow is Initializable, UUPSUpgradeable {
             alreadyCommitted[i] = awards[awardId(entries[i].sourceDigest)].actorId != 0;
         }
         if (total > monthlyCap) revert MonthlyCapExceeded();
+        // One root per period, within the owner's cap (packages/contracts/README.md, "Money invariants").
+        assert(monthlyRoots[period] == bytes32(0) && total <= monthlyCap);
         monthlyRoots[period] = root;
         for (uint256 i; i < entries.length; ++i) {
             MonthlyAward calldata entry = entries[i];
@@ -565,6 +595,7 @@ contract ProjectEscrow is Initializable, UUPSUpgradeable {
     /// a wallet, fresh authority signature, an open admission window, or the owner's later opt-in.
     function reserveMonthly(uint32 period, MonthlyReservation calldata reservation, bytes calldata attestation)
         external
+        conserves
     {
         if (purpose != Purpose.Ordinary) revert WrongPurpose();
         if (!monthlyEnabled) revert MonthlyDisabled();
@@ -582,6 +613,8 @@ contract ProjectEscrow is Initializable, UUPSUpgradeable {
             revert InvalidAttestation();
         }
         if (reservation.remainingGross > freeBalance) revert InsufficientFreeBalance();
+        // One root per period, within the owner's cap (packages/contracts/README.md, "Money invariants").
+        assert(monthlyRoots[period] == bytes32(0) && reservation.wholeGross <= monthlyCap);
         freeBalance -= reservation.remainingGross;
         pendingMonthlyGross += reservation.remainingGross;
         monthlyRoots[period] = reservation.allocationRoot;
@@ -610,7 +643,7 @@ contract ProjectEscrow is Initializable, UUPSUpgradeable {
         MonthlyAward calldata entry,
         uint32 index,
         AllocationNode[] calldata proof
-    ) external {
+    ) external conserves {
         MonthlyReserve storage month = monthlyReserves[period];
         if (month.allocationDigest == bytes32(0) || index >= month.count) revert InvalidAllocationProof();
         AllocationNode memory node = AllocationNode(
@@ -637,32 +670,37 @@ contract ProjectEscrow is Initializable, UUPSUpgradeable {
         recordAward(awardId(entry.sourceDigest), entry.actorId, entry.gross, entry.sourceDigest, payoutFee(entry.gross));
     }
 
-    /// @notice The owner returns gross of a V2 reserve that can never settle (an attester fault) to free
-    /// balance. The identity authority in force must sign monthlyReleaseDigest for the current remaining
-    /// gross. Committed leaves, awards and fees do not change. Time alone never releases a reserve, and
-    /// the period stays committed. A leaf still proves while its gross fits the remaining reserve.
+    /// @notice The owner returns the whole reserve of a wholly untouched V2 allocation whose admitted root has
+    /// the wrong total (an attester fault) to free balance, once. The identity authority in force must sign
+    /// monthlyReleaseDigest for the remaining gross, released whole. A committed leaf, an earlier release or a
+    /// partial amount refuses it, so no gross can both settle and return. Time alone never releases a reserve,
+    /// and the period stays committed. As release_monthly_reserve in the Solana program.
+    /// @dev spec/settlement/reserveRelease.md, "Finalized release returns the whole untouched reserve".
     function releaseMonthlyReserve(
         uint32 period,
         uint128 expectedRemaining,
         uint128 releasedGross,
         bytes calldata attestation
-    ) external onlyOwner {
+    ) external onlyOwner conserves {
         MonthlyReserve storage month = monthlyReserves[period];
         if (month.allocationDigest == bytes32(0) || releasedGross == 0) revert InvalidInput();
-        if (month.remaining != expectedRemaining) revert MonthlyReserveChanged();
-        if (releasedGross > expectedRemaining) revert InvalidInput();
+        if (month.remaining != expectedRemaining || month.remaining != month.total) revert MonthlyReserveChanged();
+        if (releasedGross != expectedRemaining) revert InvalidInput();
         if (!signedBy(
                 monthlyReleaseDigest(period, expectedRemaining, releasedGross), factory.identityAuthority(), attestation
             )) {
             revert InvalidAttestation();
         }
-        month.remaining = expectedRemaining - releasedGross;
+        month.remaining = 0;
         pendingMonthlyGross -= releasedGross;
-        monthlyReleased[period] += releasedGross;
+        monthlyReleased[period] = releasedGross;
         freeBalance += releasedGross;
+        // The whole admitted reserve, once (packages/contracts/README.md, "Money invariants").
+        assert(releasedGross == month.total && month.remaining == 0);
         emit MonthlyReserveReleased(period, month.allocationDigest, expectedRemaining, releasedGross);
     }
 
+    /// @dev An allocation tree node over two children: their hashes and totals, and the sum of the totals.
     function sumNode(AllocationNode memory left, AllocationNode memory right)
         private
         pure
@@ -674,12 +712,15 @@ contract ProjectEscrow is Initializable, UUPSUpgradeable {
         );
     }
 
+    /// @dev Records an award and pays its gross out of free balance.
     function commit(bytes32 id, uint64 actorId, uint128 gross, bytes32 sourceDigest, uint128 fee) private {
         recordAward(id, actorId, gross, sourceDigest, fee);
         if (gross > freeBalance) revert InsufficientFreeBalance();
         freeBalance -= gross;
     }
 
+    /// @dev Records an award once per source and reserves its principal and fee. The caller takes the gross from
+    /// free balance or a monthly reserve.
     function recordAward(bytes32 id, uint64 actorId, uint128 gross, bytes32 sourceDigest, uint128 fee) private {
         if (actorId == 0 || gross == 0 || sourceDigest == bytes32(0) || id != awardId(sourceDigest)) {
             revert InvalidInput();
@@ -727,6 +768,8 @@ contract ProjectEscrow is Initializable, UUPSUpgradeable {
 
     /// @notice Cancel the latest unpaid binding during its binding or award review period. A payment
     /// already mined cannot be cancelled. A new co-signed version is required after cancellation.
+    /// @param actorId The GitHub actor whose binding is cancelled.
+    /// @param expectedVersion The binding version the owner reviewed; any other version refuses.
     function cancelBinding(uint64 actorId, uint64 expectedVersion) external onlyOwner {
         Binding storage binding = bindings[actorId];
         if (
@@ -755,7 +798,7 @@ contract ProjectEscrow is Initializable, UUPSUpgradeable {
     }
 
     /// @notice Pays an award to its actor's current binding once the award's commit delay has passed. Anyone can call it, because the destination is fixed by the contract.
-    function pay(bytes32 id, uint64 expectedBindingVersion) external nonReentrant {
+    function pay(bytes32 id, uint64 expectedBindingVersion) external nonReentrant conserves {
         Award storage award = awards[id];
         if (award.actorId == 0 || award.paid) revert InvalidInput();
         if (block.timestamp < award.committedAt + bindingDelay) revert AwardPending();
@@ -764,6 +807,8 @@ contract ProjectEscrow is Initializable, UUPSUpgradeable {
         paidVersion[award.actorId] = version;
         cancelCount[award.actorId] = 0;
         uint128 net = award.gross - award.fee;
+        // Never more than this award reserved (packages/contracts/README.md, "Money invariants").
+        assert(net <= reservedPrincipal && award.fee <= reservedFees);
         award.paid = true;
         reservedPrincipal -= net;
         reservedFees -= award.fee;
@@ -776,7 +821,7 @@ contract ProjectEscrow is Initializable, UUPSUpgradeable {
 
     /// @notice Refunds free funds to the owner less withdrawalFee(gross), 2% rounded up, so splitting a
     /// withdrawal never lowers the fee.
-    function withdrawUnused(uint128 gross) external onlyOwner nonReentrant {
+    function withdrawUnused(uint128 gross) external onlyOwner nonReentrant conserves {
         if (gross == 0) revert InvalidInput();
         if (gross > freeBalance) revert InsufficientFreeBalance();
         uint128 fee = withdrawalFee(gross);
@@ -797,6 +842,7 @@ contract ProjectEscrow is Initializable, UUPSUpgradeable {
         emit FeesClaimed(feeRecipient, amount);
     }
 
+    /// @dev Sends exactly amount, or reverts if either balance moves by anything else.
     function sendExact(address destination, uint256 amount) private {
         if (amount == 0) return;
         uint256 beforeVault = assetBalance(address(this));
@@ -812,6 +858,13 @@ contract ProjectEscrow is Initializable, UUPSUpgradeable {
         ) revert TransferFailed();
     }
 
+    /// @dev Where every deposit is now; it equals totalDeposited (packages/contracts/README.md, "Money invariants").
+    function held() private view returns (uint256) {
+        return uint256(freeBalance) + pendingMonthlyGross + reservedPrincipal + reservedFees + totalPaid
+            + totalPayoutFees + totalGrossWithdrawn;
+    }
+
+    /// @dev The vault asset held by account.
     function assetBalance(address account) private view returns (uint256) {
         return address(token) == address(0) ? account.balance : token.balanceOf(account);
     }
@@ -825,6 +878,7 @@ contract ProjectEscrow is Initializable, UUPSUpgradeable {
         return uint8(value);
     }
 
+    /// @dev Calls the token, accepting no return data or a true boolean, as standard ERC-20 tokens do.
     function callToken(bytes memory data) private {
         (bool ok, bytes memory result) = address(token).call(data);
         if (!ok || (result.length != 0 && (result.length != 32 || !abi.decode(result, (bool))))) {
@@ -890,6 +944,14 @@ contract EscrowFactory is Initializable, UUPSUpgradeable {
 
     function _authorizeUpgrade(address) internal view override onlyUpgradeAuthority {}
 
+    /// @notice One-time setup through the factory's proxy. The upgrade authority is distinct from the fee
+    /// recipient and the identity authority, and the identity authority from the registrar.
+    /// @param registrar_ Proposes and cancels identity authority rotations.
+    /// @param feeRecipient_ Every new vault's fee recipient.
+    /// @param identityAuthority_ Binds destinations and attests monthly allocations and releases.
+    /// @param bindingDelay_ Every new vault's award delay, at most MAX_BINDING_DELAY.
+    /// @param upgradeAuthority_ Upgrades the factory and vaults and selects the vault implementation.
+    /// @param vaultImplementation_ A UUPS implementation of ProjectEscrow for new vaults.
     function initialize(
         address registrar_,
         address feeRecipient_,
@@ -941,10 +1003,7 @@ contract EscrowFactory is Initializable, UUPSUpgradeable {
     }
 
     function _setVaultImplementation(address implementation_) private {
-        if (
-            UUPSUpgradeable(implementation_).proxiableUUID()
-                != 0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc
-        ) {
+        if (UUPSUpgradeable(implementation_).proxiableUUID() != ERC1967Utils.IMPLEMENTATION_SLOT) {
             revert ProjectEscrow.InvalidInput();
         }
         vaultImplementation = implementation_;

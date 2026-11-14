@@ -417,9 +417,11 @@ contract MonthlyReserveV2Test {
         vm.prank(OWNER);
         vm.expectRevert(ProjectEscrow.InvalidAttestation.selector);
         vault.releaseMonthlyReserve(PERIOD, CAP, CAP, forged);
+        // Only the whole reserve returns: a partial amount refuses, signed or not.
+        bytes memory part = signRelease(vault, AUTHORITY_KEY, PERIOD, CAP, CAP - 1);
         vm.prank(OWNER);
-        vm.expectRevert(ProjectEscrow.InvalidAttestation.selector);
-        vault.releaseMonthlyReserve(PERIOD, CAP, CAP - 1, signature);
+        vm.expectRevert(ProjectEscrow.InvalidInput.selector);
+        vault.releaseMonthlyReserve(PERIOD, CAP, CAP - 1, part);
         vm.prank(OWNER);
         vm.expectRevert(ProjectEscrow.MonthlyReserveChanged.selector);
         vault.releaseMonthlyReserve(PERIOD, CAP - 1, CAP, signature);
@@ -448,17 +450,23 @@ contract MonthlyReserveV2Test {
         (,, uint128 remaining,,) = vault.monthlyReserves(PERIOD);
         require(remaining == 0, "nothing left to settle");
         require(vault.reservedPrincipal() == 0 && vault.reservedFees() == 0 && vault.accruedFees() == 0, "no fee");
-        // The same signature cannot release twice, and the period stays committed.
+        // A reserve releases once: neither the same signature nor one over what is left releases again, and
+        // the period stays committed.
         vm.prank(OWNER);
         vm.expectRevert(ProjectEscrow.MonthlyReserveChanged.selector);
         vault.releaseMonthlyReserve(PERIOD, CAP, CAP, signature);
+        bytes memory again = signRelease(vault, AUTHORITY_KEY, PERIOD, 0, 0);
+        vm.prank(OWNER);
+        vm.expectRevert(ProjectEscrow.InvalidInput.selector);
+        vault.releaseMonthlyReserve(PERIOD, 0, 0, again);
+        require(vault.monthlyReleased(PERIOD) == CAP && vault.freeBalance() == 10_000e6, "released once");
         require(vault.monthlyRoots(PERIOD) == keccak256("random root"), "period stays committed");
         // Manual awards work again.
         vm.prank(OWNER);
         vault.commitAward(id, 7, 1e6, manual);
     }
 
-    function test_aPartialReleaseKeepsSettleableLeavesPayable() public {
+    function test_aReleaseRefusesAPartialAmountAndATouchedReserve() public {
         // The attester signed a tree whose last leaf can never commit (actor 0).
         ProjectEscrow.MonthlyAward[] memory e = entries(3, 0);
         e[2].actorId = 0;
@@ -467,21 +475,27 @@ contract MonthlyReserveV2Test {
         vm.expectRevert(ProjectEscrow.InvalidInput.selector);
         vault.commitMonthlyLeaf(PERIOD, e[2], 2, proof);
         uint128 whole = sum(e);
+        // Returning only the faulty gross is a partial release, refused even when signed.
         bytes memory faulty = signRelease(vault, AUTHORITY_KEY, PERIOD, whole, e[2].gross);
         vm.prank(OWNER);
+        vm.expectRevert(ProjectEscrow.InvalidInput.selector);
         vault.releaseMonthlyReserve(PERIOD, whole, e[2].gross, faulty);
-        require(vault.pendingMonthlyGross() == e[0].gross + e[1].gross, "settleable leaves stay reserved");
-        require(vault.freeBalance() == 10_000e6 - e[0].gross - e[1].gross, "only the faulty gross returns");
-        // A release signed before a leaf settles is stale afterwards.
-        uint128 left = e[0].gross + e[1].gross;
-        bytes memory early = signRelease(vault, AUTHORITY_KEY, PERIOD, left, e[1].gross);
+        // After a leaf settles, neither a release signed before it nor one over what is left is valid.
+        bytes memory early = signRelease(vault, AUTHORITY_KEY, PERIOD, whole, whole);
         leaf(vault, PERIOD, e, 0);
+        uint128 left = whole - e[0].gross;
+        bytes memory touched = signRelease(vault, AUTHORITY_KEY, PERIOD, left, left);
         vm.prank(OWNER);
         vm.expectRevert(ProjectEscrow.MonthlyReserveChanged.selector);
-        vault.releaseMonthlyReserve(PERIOD, left, e[1].gross, early);
+        vault.releaseMonthlyReserve(PERIOD, whole, whole, early);
+        vm.prank(OWNER);
+        vm.expectRevert(ProjectEscrow.MonthlyReserveChanged.selector);
+        vault.releaseMonthlyReserve(PERIOD, left, left, touched);
+        require(vault.pendingMonthlyGross() == left && vault.monthlyReleased(PERIOD) == 0, "nothing released");
+        require(vault.freeBalance() == 10_000e6 - whole, "free balance unchanged");
+        // The settleable leaves still settle and pay exactly.
         leaf(vault, PERIOD, e, 1);
-        require(vault.pendingMonthlyGross() == 0, "every settleable leaf settled");
-        require(vault.reservedPrincipal() + vault.reservedFees() == e[0].gross + e[1].gross, "awards reserved");
+        require(vault.pendingMonthlyGross() == e[2].gross, "only the faulty gross stays reserved");
         bytes32 id = vault.awardId(e[1].sourceDigest);
         address wallet = bindAndPay(id, e[1].actorId);
         require(usdc.balanceOf(wallet) == e[1].gross - vault.payoutFee(e[1].gross), "settled leaf pays exactly");

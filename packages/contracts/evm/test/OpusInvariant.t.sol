@@ -222,14 +222,14 @@ contract OpusHandler {
         ghostUnsettled -= entries[i].gross;
     }
 
-    /// @dev The owner releases the whole unsettled remainder of one reserve with the authority's signature.
-    /// Its unproven leaves can no longer settle, so the handler stops proving them.
+    /// @dev The owner releases the whole reserve of one untouched allocation with the authority's signature.
+    /// Its leaves can no longer settle, so the handler stops proving them.
     function releaseMonthlyReserve(uint256 reserveSeed) external {
         if (reserveCount == 0) return;
         uint256 r = reserveSeed % reserveCount;
         uint32 reserved = reservePeriod[r];
-        (,, uint128 remaining,,) = escrow.monthlyReserves(reserved);
-        if (remaining == 0) return;
+        (, uint128 total, uint128 remaining,,) = escrow.monthlyReserves(reserved);
+        if (remaining == 0 || remaining != total) return;
         (uint8 v, bytes32 rr, bytes32 s) =
             vm.sign(authorityKey, escrow.monthlyReleaseDigest(reserved, remaining, remaining));
         vm.prank(owner);
