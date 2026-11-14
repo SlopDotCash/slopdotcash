@@ -31,6 +31,7 @@ import {
   TransactionReceiptNotFoundError,
   type TransactionSerializableEIP1559,
   type TransactionSerializedEIP1559,
+  zeroHash,
 } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import {
@@ -1677,8 +1678,8 @@ export function createEvmClient(options: EvmClientOptions): ChainClient {
     return latest;
   }
   /** A finalized block read: evidence is never taken from an unfinalized head. */
-  async function finalizedBlock() {
-    const block = await client.getBlock({ blockTag: "finalized" });
+  async function finalizedBlock(reader = client) {
+    const block = await reader.getBlock({ blockTag: "finalized" });
     if (typeof block.number !== "bigint" || !block.hash)
       throw new Error("Finalized block is unavailable");
     return { number: block.number, hash: block.hash };
@@ -1886,6 +1887,50 @@ export function createEvmClient(options: EvmClientOptions): ChainClient {
   if (buyback && config.network === BUYBACK_NETWORK) {
     const reference = usdc();
     const market: NonNullable<BuybackChainClient["market"]> = {
+      async observeFinalizedRpc() {
+        try {
+          const signal = AbortSignal.timeout(5_000);
+          const reader = createPublicClient({
+            chain,
+            ccipRead: false,
+            transport: http(config.rpcUrl, {
+              fetchFn: doFetch,
+              fetchOptions: { signal, redirect: "error" },
+              retryCount: 0,
+            }),
+          });
+          const chainId = await reader.getChainId();
+          if (chainId !== chain.id) return { status: "unavailable" };
+          const block = await finalizedBlock(reader);
+          // Exercise the exact finalized contract read used to verify arrivals.
+          // A zero order ID is a probe only; its status never enters accounting.
+          await reader.readContract({
+            address: DLN.destination as Address,
+            abi: DLN_DESTINATION_ABI,
+            functionName: "takeOrders",
+            args: [zeroHash],
+            blockNumber: block.number,
+          });
+          const canonical = await reader.getBlock({
+            blockNumber: block.number,
+          });
+          if (
+            canonical.number !== block.number ||
+            canonical.hash !== block.hash ||
+            !/^0x[0-9a-f]{64}$/u.test(block.hash)
+          )
+            return { status: "unavailable" };
+          return {
+            status: "verified",
+            chainId,
+            blockNumber: block.number.toString(),
+            blockHash: block.hash,
+          };
+        } catch {
+          // Provider errors can contain the RPC URL and request details.
+          return { status: "unavailable" };
+        }
+      },
       async fill(terms): Promise<FillState> {
         if (
           terms.takeToken.toLowerCase() !== ROBINHOOD_USDG ||

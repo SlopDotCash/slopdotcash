@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "meaning": "Declared lifecycle candidates. This intentionally incomplete syntactic census cannot find every implicit state, establish reachability, or prove source/model correspondence. Review the open work listed in formal/README.md as well.",
-  "inventorySha256": "a9bb0107b8d1ea0e6fcd34acbd745af016d31d5958a48cf96542cc95d4be06b7",
+  "inventorySha256": "00d1d4b09619b10e533103abcc9279575e1d0f5927466812d58d617c9a1f9af8",
   "states": [
     {
       "path": "backend/fee-conversions/handler.ts",
@@ -3474,7 +3474,7 @@
     },
     {
       "path": "workers/fee-converter/buyback.ts",
-      "line": 149,
+      "line": 160,
       "name": "outcome",
       "kind": "string-union",
       "values": ["arrived", "refunded"],
@@ -3490,7 +3490,7 @@
     },
     {
       "path": "workers/fee-converter/buyback.ts",
-      "line": 211,
+      "line": 223,
       "name": "mode",
       "kind": "string-union",
       "values": ["dry_run", "live"],
@@ -3506,7 +3506,7 @@
     },
     {
       "path": "workers/fee-converter/buyback.ts",
-      "line": 217,
+      "line": 229,
       "name": "mode",
       "kind": "string-union",
       "values": ["dry_run", "live"],
@@ -3522,7 +3522,7 @@
     },
     {
       "path": "workers/fee-converter/buyback.ts",
-      "line": 318,
+      "line": 330,
       "name": "state",
       "kind": "string-union",
       "values": ["no_route", "pending", "quoted", "skipped"],

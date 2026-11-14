@@ -1682,15 +1682,16 @@
     },
     {
       "path": "contracts/solana/adapter.ts",
-      "sha256": "949c1c0ef8d2d5baa93e9cf0a60a26b3274e6b446f26f86fcea0b27fc9fb7b48",
+      "sha256": "ddcdf520792de627eaf9a278b596e1c71bc0802932560c9a1b56729d122269e0",
       "models": [
         "formal/models/payments/chain_evidence.qnt",
+        "formal/models/payments/solana_scan_checkpoint.qnt",
         "formal/models/payments/vault_initial_snapshot.qnt"
       ],
       "candidateLines": [
-        47, 68, 73, 75, 184, 200, 227, 235, 254, 262, 276, 286, 304, 347, 366,
-        375, 420, 427, 428, 431, 685, 691, 694, 696, 701, 725, 866, 867, 895,
-        924, 937, 945, 952, 981, 996
+        47, 68, 73, 75, 184, 200, 227, 235, 254, 275, 288, 298, 316, 359, 378,
+        387, 432, 439, 440, 443, 697, 703, 706, 708, 713, 737, 878, 879, 907,
+        936, 949, 957, 964, 993, 1008
       ],
       "review": "mapped-abstraction"
     },
@@ -3709,9 +3710,9 @@
     },
     {
       "path": "scripts/escrow-acceptance/solana-local.ts",
-      "sha256": "1fa7a232735d6a13a2d68f86ab1e2467cf50b13464cbbdede215bba76e637f25",
+      "sha256": "99261a1cfdb1e858014f2c4a1e730fd64f85d1f4170a3db2ae6cd1886d1d66fe",
       "models": ["formal/models/contracts/local_solana_acceptance.qnt"],
-      "candidateLines": [58, 59, 60, 61, 72, 117, 207],
+      "candidateLines": [58, 59, 60, 61, 72, 117, 210],
       "review": "mapped-abstraction"
     },
     {
@@ -3982,7 +3983,7 @@
     },
     {
       "path": "scripts/payment-keeper/keeper.ts",
-      "sha256": "97d22cd5cb3b50bbc9378966d991558c6b022b13e86e119dd282145567b0063a",
+      "sha256": "32f6d994e16e5529a8fcc1f060ff87e3c091e340d3f9bbe9dcd96135843447ba",
       "models": [
         "formal/models/payments/operator_keeper.qnt",
         "formal/models/payments/operator_keeper_diagnostics.qnt",
@@ -3991,8 +3992,8 @@
         "formal/models/rewards/monthly_execution_recovery.qnt"
       ],
       "candidateLines": [
-        103, 104, 128, 143, 144, 265, 328, 435, 445, 453, 459, 493, 505, 517,
-        544, 551, 557, 565, 586, 590, 591, 593, 602, 611
+        103, 104, 128, 143, 144, 265, 328, 437, 447, 455, 461, 495, 507, 519,
+        546, 553, 559, 567, 588, 592, 593, 595, 604, 613
       ],
       "review": "mapped-abstraction"
     },
@@ -4669,10 +4670,10 @@
     },
     {
       "path": "scripts/vault-setup-browser-server.ts",
-      "sha256": "36c1e01891d53f46c3fdba201fe5682b139c15f6e6beb580574ef9a894f6e82e",
+      "sha256": "ae2ea1e385dcf7a01d5984abc6d57fb255b068cdc62fc703a2b643afc699d45a",
       "models": ["formal/models/tooling/dev_server_lifecycle.qnt"],
       "candidateLines": [
-        50, 55, 59, 75, 79, 136, 161, 261, 286, 301, 304, 307, 314
+        50, 55, 59, 75, 79, 136, 161, 264, 289, 304, 307, 310, 317
       ],
       "review": "mapped-abstraction"
     },
@@ -7115,7 +7116,7 @@
     },
     {
       "path": "workers/fee-converter/buyback.ts",
-      "sha256": "c7d38e40755d88b8cf658b7b2274c3f0ce293bc22da93018add8ca34704b5a72",
+      "sha256": "9c99922657b795f0b0e1497386de34abbf30d77a34e42b165695a0e9572be3dc",
       "models": [
         "formal/models/fees/buyback_accounting.qnt",
         "formal/models/fees/buyback_bridge_order.qnt",
@@ -7124,9 +7125,9 @@
         "formal/models/fees/fee_value_caps.qnt"
       ],
       "candidateLines": [
-        4, 16, 86, 93, 95, 96, 118, 200, 300, 316, 318, 325, 330, 331, 332, 337,
-        364, 366, 373, 377, 391, 392, 399, 400, 420, 465, 498, 595, 624, 629,
-        739, 743, 829, 835, 837, 872, 873, 874
+        4, 16, 86, 93, 95, 96, 110, 115, 127, 211, 312, 328, 330, 337, 342, 343,
+        344, 349, 376, 378, 385, 389, 403, 404, 411, 412, 432, 477, 510, 607,
+        636, 641, 751, 755, 841, 847, 849, 884, 885, 886
       ],
       "review": "mapped-abstraction"
     },
@@ -7206,7 +7207,7 @@
     },
     {
       "path": "workers/fee-converter/evm.ts",
-      "sha256": "a13565335070ae79368d0a80215aef0da41f7222dd109337b2607cfb4b0fc314",
+      "sha256": "00ba730dd67be90a1c493a3508a5001f56087735b41e4587fdff82708bc84b84",
       "models": [
         "formal/models/fees/buyback_bridge_order.qnt",
         "formal/models/fees/buyback_market.qnt",
@@ -7217,12 +7218,12 @@
         "formal/models/payments/signed_send.qnt"
       ],
       "candidateLines": [
-        321, 387, 391, 393, 394, 698, 891, 930, 964, 966, 1050, 1181, 1186,
-        1189, 1190, 1193, 1233, 1271, 1297, 1301, 1302, 1304, 1305, 1318, 1332,
-        1333, 1354, 1370, 1376, 1382, 1398, 1402, 1408, 1414, 1421, 1425, 1431,
-        1434, 1445, 1454, 1624, 1625, 1627, 1629, 1630, 1653, 1668, 1670, 1672,
-        1674, 1675, 1679, 1681, 1683, 1871, 1878, 1897, 1905, 1906, 1909, 1912,
-        1913, 1914
+        322, 388, 392, 394, 395, 699, 892, 931, 965, 967, 1051, 1182, 1187,
+        1190, 1191, 1194, 1234, 1272, 1298, 1302, 1303, 1305, 1306, 1319, 1333,
+        1334, 1355, 1371, 1377, 1383, 1399, 1403, 1409, 1415, 1422, 1426, 1432,
+        1435, 1446, 1455, 1625, 1626, 1628, 1630, 1631, 1654, 1669, 1671, 1673,
+        1675, 1676, 1680, 1682, 1684, 1872, 1879, 1903, 1905, 1906, 1922, 1924,
+        1931, 1942, 1950, 1951, 1954, 1957, 1958, 1959
       ],
       "review": "mapped-abstraction"
     },
@@ -7891,18 +7892,19 @@
     },
     {
       "path": "workers/payments/index.ts",
-      "sha256": "1c9e2ea8e9eb57ec3f3a9e358f3ab6b09869edc90b9680377e358cc2a49e6218",
+      "sha256": "f601a441c6da64bf28ef6551fb2e9b9012d3d2f4adb2711fd469c99915e28486",
       "models": [
         "formal/models/payments/payment_reopen_landing.qnt",
         "formal/models/payments/payment_unsigned_retirement.qnt",
+        "formal/models/payments/solana_scan_checkpoint.qnt",
         "formal/models/payments/vault_initial_snapshot.qnt",
         "formal/models/rewards/monthly_commit_cursor.qnt",
         "formal/models/rewards/monthly_reserve.qnt"
       ],
       "candidateLines": [
-        66, 93, 110, 113, 119, 120, 124, 151, 161, 165, 167, 171, 173, 184, 185,
-        187, 189, 191, 197, 200, 203, 207, 219, 220, 222, 223, 228, 278, 325,
-        336, 357, 365, 368, 399, 479, 579, 580, 639, 640
+        67, 103, 120, 123, 129, 130, 134, 161, 171, 175, 177, 181, 183, 194,
+        195, 197, 199, 201, 207, 210, 213, 217, 229, 230, 232, 233, 238, 288,
+        335, 346, 367, 375, 378, 409, 489, 587, 588, 647, 648
       ],
       "review": "mapped-abstraction"
     },
@@ -7924,7 +7926,7 @@
     },
     {
       "path": "workers/payments/scanner.ts",
-      "sha256": "859e9352f0a7a9dd5ad62dbfb45a511d9fee3d039ca57d6fe9eae327c700b5c5",
+      "sha256": "e2fecc7acd891cd55b954f3027da78bb8f2c8320dae2741329eac62168ac049e",
       "models": [
         "formal/models/payments/chain_range_scan.qnt",
         "formal/models/payments/evm_scan_checkpoint.qnt",
@@ -7932,8 +7934,8 @@
         "formal/models/payments/solana_scan_checkpoint.qnt"
       ],
       "candidateLines": [
-        23, 55, 56, 60, 61, 64, 65, 81, 103, 133, 158, 167, 181, 193, 215, 231,
-        238, 252, 274, 286, 291, 296
+        27, 59, 60, 64, 65, 68, 69, 85, 107, 138, 163, 172, 186, 198, 220, 236,
+        243, 257, 279, 291, 296, 301
       ],
       "review": "mapped-abstraction"
     },
@@ -12042,7 +12044,7 @@
     },
     {
       "path": "formal/models/fees/buyback_market.qnt",
-      "sha256": "795e954ea79fdb6a549a9623349332dea3dd7031ac661365e4133bdede83d7b9",
+      "sha256": "cf7919a1735d2888bd8aa7f8a6b376dd58a29d58e19f25d35309df1df5ffbacb",
       "sources": [
         "backend/fee-conversions/handler.ts",
         "workers/fee-converter/buyback-config.ts",
@@ -13279,16 +13281,21 @@
     },
     {
       "path": "formal/models/payments/solana_scan_checkpoint.qnt",
-      "sha256": "e177ef84b4944110ba13d2e745bfdc497e176e3f3fb163aeb79e5c25fa3d7a89",
+      "sha256": "324fcf3762a164dbc0a14449f347560c78374f33d600378c2e47effaf7f2505c",
       "sources": [
+        "contracts/solana/adapter.ts",
         "migrations/0012_solana_scan_backlog.sql",
+        "workers/payments/index.ts",
         "workers/payments/scanner.ts"
       ],
       "scenarios": [
         "discoveryBeforeProcessingTest",
         "laterArrivalOutsideIntervalTest",
+        "missingClusterRefusesDiscoveryTest",
         "restartKeepsVerifiedPrefixTest",
-        "staleCheckpointCannotRewindTest"
+        "staleCheckpointCannotRewindTest",
+        "unpinnedClusterCannotChangeDiscoveryOrProcessingTest",
+        "wrongClusterRefusesProcessingTest"
       ]
     },
     {
