@@ -221,7 +221,7 @@ export interface OutcomeCommitIdentity {
   author: GitHubActor | null;
 }
 
-interface NodeReference {
+export interface NodeReference {
   id: string;
   kind: "Issue" | "PullRequest";
   outcome: MergedPullRequestOutcome | null;
@@ -300,6 +300,95 @@ export class GraphqlUpstreamError extends Error {
     this.name = "GraphqlUpstreamError";
     this.status = status;
   }
+}
+
+/** The commit exists, but GitHub could not compute one aggregate counter. */
+export class CommitStatisticsUnavailableError extends Error {
+  override readonly name = "CommitStatisticsUnavailableError";
+  constructor(
+    readonly ids: readonly string[],
+    readonly indices: readonly number[],
+    readonly data: JsonRecord,
+  ) {
+    super("GitHub commit statistics are temporarily unavailable");
+  }
+}
+
+/** Only the exact aggregate-counter query may use the historical REST path. */
+export function commitStatisticsFailure(
+  document: string,
+  value: unknown,
+  variables: GraphqlVariables,
+): CommitStatisticsUnavailableError | null {
+  if (
+    document !== OUTCOME_COMMIT_LINES_QUERY ||
+    !value ||
+    typeof value !== "object" ||
+    Array.isArray(value)
+  )
+    return null;
+  const envelope = value as JsonRecord;
+  const ids = variables.ids;
+  const data = envelope.data;
+  if (
+    !Array.isArray(ids) ||
+    ids.length === 0 ||
+    !ids.every((id) => typeof id === "string") ||
+    new Set(ids).size !== ids.length ||
+    !data ||
+    typeof data !== "object" ||
+    Array.isArray(data)
+  )
+    return null;
+  const nodes = (data as JsonRecord).nodes;
+  try {
+    parseRateLimit((data as JsonRecord).rateLimit);
+  } catch {
+    return null;
+  }
+  if (
+    !Array.isArray(nodes) ||
+    nodes.length !== ids.length ||
+    !Array.isArray(envelope.errors) ||
+    envelope.errors.length === 0
+  )
+    return null;
+  const indices = new Set<number>();
+  for (const value of envelope.errors) {
+    if (!value || typeof value !== "object" || Array.isArray(value))
+      return null;
+    const error = value as JsonRecord;
+    const path = error.path;
+    if (
+      error.type !== "SERVICE_UNAVAILABLE" ||
+      !Array.isArray(path) ||
+      path.length !== 3 ||
+      path[0] !== "nodes" ||
+      !Number.isInteger(path[1]) ||
+      path[1] < 0 ||
+      path[1] >= ids.length ||
+      !["additions", "deletions"].includes(path[2]) ||
+      nodes[path[1]] !== null
+    )
+      return null;
+    indices.add(path[1]);
+  }
+  if (
+    nodes.some((node, index) =>
+      node === null
+        ? !indices.has(index)
+        : !node ||
+          typeof node !== "object" ||
+          Array.isArray(node) ||
+          node.id !== ids[index],
+    )
+  )
+    return null;
+  return new CommitStatisticsUnavailableError(
+    ids as string[],
+    [...indices],
+    data as JsonRecord,
+  );
 }
 
 /**
@@ -747,7 +836,17 @@ export class OutcomeCommitLineLoader {
   private readonly byId = new Map<string, CachedCommitLines>();
   private readonly idBySha = new Map<string, string>();
 
-  constructor(private readonly client: Pick<GraphqlExecutor, "execute">) {}
+  constructor(
+    private readonly client: Pick<GraphqlExecutor, "execute">,
+    private readonly recoverStatistics?: (
+      repositoryNodeId: string,
+      commit: OutcomeCommitIdentity,
+    ) => Promise<{
+      additions: number;
+      deletions: number;
+      author: GitHubActor | null;
+    }>,
+  ) {}
 
   async hydrate(
     repositoryNodeId: string,
@@ -804,11 +903,56 @@ export class OutcomeCommitLineLoader {
       }
     }
     const staged = new Map<string, CachedCommitLines>();
+    const recoveredAuthors = new Map<string, GitHubActor | null>();
     for (const batch of chunks([...pending.values()], GRAPHQL_PAGE_SIZE)) {
+      const statisticsClient = {
+        execute: async (document: string, variables: GraphqlVariables = {}) => {
+          try {
+            return await this.client.execute(document, variables);
+          } catch (error) {
+            if (
+              !(error instanceof CommitStatisticsUnavailableError) ||
+              !this.recoverStatistics
+            )
+              throw error;
+            if (JSON.stringify(error.ids) !== JSON.stringify(variables.ids))
+              throw new Error(
+                "Unavailable commit statistics changed request identity",
+              );
+            const nodes = [
+              ...asArray(error.data.nodes, "commit statistics.nodes"),
+            ];
+            for (const index of error.indices) {
+              const expected = pending.get(error.ids[index]);
+              if (!expected)
+                throw new Error(
+                  "Unavailable commit statistics are outside the requested batch",
+                );
+              const recovered = await this.recoverStatistics(
+                repositoryNodeId,
+                expected,
+              );
+              recoveredAuthors.set(
+                expected.id,
+                mergeCommitAuthor(expected.author, recovered.author),
+              );
+              nodes[index] = {
+                __typename: "Commit",
+                id: expected.id,
+                oid: expected.oid,
+                repository: { id: repositoryNodeId },
+                additions: recovered.additions,
+                deletions: recovered.deletions,
+              };
+            }
+            return { ...error.data, nodes };
+          }
+        },
+      };
       let data: JsonRecord;
       try {
         data = await executeNodeBatch(
-          this.client,
+          statisticsClient,
           OUTCOME_COMMIT_LINES_QUERY,
           batch.map((commit) => commit.id),
         );
@@ -844,7 +988,7 @@ export class OutcomeCommitLineLoader {
           outcome: {
             oid: expected.oid,
             parentCount: expected.parentCount,
-            author: expected.author,
+            author: recoveredAuthors.get(expected.id) ?? expected.author,
             additions,
             deletions,
           },
@@ -1764,7 +1908,7 @@ async function readGraphqlResponseBody(response: Response): Promise<string> {
 // opaque `after` cursor valid, because a smaller `first` returns fewer nodes
 // from the same position, so callers page more times over an unchanged result
 // set and every reported total stays comparable.
-function narrowedPageSize(
+export function narrowedPageSize(
   variables: GraphqlVariables,
 ): GraphqlVariables | null {
   const current = variables.pageSize;
@@ -2108,10 +2252,14 @@ export class GitHubGraphqlClient implements GraphqlExecutor {
       ? []
       : unavailableRequestedSources(envelope, activeVariables);
     const unavailableNode = unavailableSources.length > 0;
+    const statisticsFailure = restPath
+      ? null
+      : commitStatisticsFailure(document, envelope, activeVariables);
     if (
       Array.isArray(envelope.errors) &&
       envelope.errors.length > 0 &&
-      !unavailableNode
+      !unavailableNode &&
+      !statisticsFailure
     ) {
       const errors = envelope.errors.map(sanitizeGraphqlError).join("; ");
       throw new Error(`${apiLabel} rejected the leaderboard query: ${errors}`);
@@ -2159,6 +2307,7 @@ export class GitHubGraphqlClient implements GraphqlExecutor {
           (envelope.errors as unknown[]).map(sanitizeGraphqlError).join("; "),
         ),
       });
+    if (statisticsFailure) throw statisticsFailure;
     return data;
   }
 
@@ -2260,7 +2409,7 @@ function midpoint(from: Date, to: Date): Date {
   return new Date(from.getTime() + Math.max(1, seconds) * 1000);
 }
 
-function parseSearchReference(
+export function parseSearchReference(
   value: unknown,
   path: string,
   expectedKind: NodeReference["kind"],
@@ -2454,13 +2603,22 @@ export async function collectSearchReferences(
   stats: { searchSliceCount: number },
   commitLines = new OutcomeCommitLineLoader(client),
   repositoryNodeId = repository.expectedNodeId,
+  initialSearchPageSize = GRAPHQL_PAGE_SIZE,
 ): Promise<NodeReference[]> {
+  if (
+    !Number.isInteger(initialSearchPageSize) ||
+    initialSearchPageSize < 1 ||
+    initialSearchPageSize > GRAPHQL_PAGE_SIZE
+  )
+    throw new Error(
+      "Initial search page size must be an integer from 1 to 100",
+    );
   const searchQuery = `repo:${repository.owner}/${repository.name} ${kindQualifier} ${qualifier}:${searchRange(from, to)}`;
   stats.searchSliceCount += 1;
   const firstData = await client.execute(SEARCH_REFERENCES_QUERY, {
     searchQuery,
     after: null,
-    pageSize: GRAPHQL_PAGE_SIZE,
+    pageSize: initialSearchPageSize,
     withMergeCommits: qualifier === "merged",
   });
   const firstPage = parseSearchPage(firstData, (value, path) =>
@@ -2484,6 +2642,7 @@ export async function collectSearchReferences(
       stats,
       commitLines,
       repositoryNodeId,
+      initialSearchPageSize,
     );
     const right = await collectSearchReferences(
       client,
@@ -2496,6 +2655,7 @@ export async function collectSearchReferences(
       stats,
       commitLines,
       repositoryNodeId,
+      initialSearchPageSize,
     );
     const combined = dedupeByNodeId([...left, ...right]);
     if (combined.length !== firstPage.totalCount) {
@@ -2524,7 +2684,7 @@ export async function collectSearchReferences(
     const data = await client.execute(SEARCH_REFERENCES_QUERY, {
       searchQuery,
       after: pageInfo.endCursor,
-      pageSize: GRAPHQL_PAGE_SIZE,
+      pageSize: initialSearchPageSize,
       withMergeCommits: qualifier === "merged",
     });
     const page = parseSearchPage(data, (value, path) =>
@@ -2583,7 +2743,7 @@ export async function collectSearchReferences(
 // endpoint can paginate the complete immutable base/head range beyond that.
 const GITHUB_PULL_REQUEST_COMMIT_LIST_LIMIT = 250;
 
-async function completeOutcomeCommits(
+export async function completeOutcomeCommits(
   client: GraphqlExecutor,
   reference: NodeReference,
   repository: TargetRepository,

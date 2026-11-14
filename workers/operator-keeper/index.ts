@@ -57,7 +57,13 @@ interface TickResult {
 function unavailableWorkSummary(results: KeeperResult[]) {
   const groups = new Map<
     string,
-    { operation: string; state: string; cause: string; count: number }
+    {
+      operation: string;
+      state: string;
+      stage: string;
+      cause: string;
+      count: number;
+    }
   >();
   let failedResults = 0;
   for (const item of results) {
@@ -84,6 +90,25 @@ function unavailableWorkSummary(results: KeeperResult[]) {
       item.state === "waiting"
         ? item.state
         : "other";
+    const deploymentFailure =
+      item.operation === "deployment" && item.state === "unavailable";
+    const failureStage = item.failureStage;
+    const stage =
+      deploymentFailure &&
+      typeof failureStage === "string" &&
+      [
+        "preflight",
+        "authority-read",
+        "signer-role",
+        "gas-reconcile",
+        "payment-scan",
+        "payment-evidence",
+        "payment-index",
+        "monthly-state",
+        "award-state",
+      ].includes(failureStage)
+        ? failureStage
+        : "other";
     const cause =
       item.operation === "registry" &&
       item.error === "Project unavailable in current registry"
@@ -91,15 +116,25 @@ function unavailableWorkSummary(results: KeeperResult[]) {
         : item.operation === "registry" &&
             item.error === "No reviewed deployment for this network"
           ? "deployment-unavailable"
-          : "other";
-    const key = `${operation}:${state}:${cause}`;
-    const group = groups.get(key) ?? { operation, state, cause, count: 0 };
+          : deploymentFailure &&
+              (item.failureCause === "rpc-unavailable" ||
+                item.failureCause === "rpc-error")
+            ? item.failureCause
+            : "other";
+    const key = `${operation}:${state}:${stage}:${cause}`;
+    const group = groups.get(key) ?? {
+      operation,
+      state,
+      stage,
+      cause,
+      count: 0,
+    };
     group.count++;
     groups.set(key, group);
   }
   return {
     event: "operator_keeper_unavailable",
-    schemaVersion: 1,
+    schemaVersion: 2,
     failedResults,
     groups: [...groups]
       .sort(([a], [b]) => a.localeCompare(b))

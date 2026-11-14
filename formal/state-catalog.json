@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "meaning": "Declared lifecycle candidates. This intentionally incomplete syntactic census cannot find every implicit state, establish reachability, or prove source/model correspondence. Review the open work listed in formal/README.md as well.",
-  "inventorySha256": "eaaeaf450620f266dacf7c335a84903da91e31bb0b7892a83216c1503efc5d75",
+  "inventorySha256": "0fc26ac38cdf23f6df5fb027dadcf71996e9f3cb7f5746be6d7d15daca70e909",
   "states": [
     {
       "path": "backend/fee-conversions/handler.ts",
@@ -2036,7 +2036,7 @@
     },
     {
       "path": "scripts/generate-leaderboard.ts",
-      "line": 371,
+      "line": 460,
       "name": "phase",
       "kind": "string-union",
       "values": [
@@ -2071,7 +2071,7 @@
     },
     {
       "path": "scripts/generate-leaderboard.ts",
-      "line": 3473,
+      "line": 3633,
       "name": "expectedState",
       "kind": "string-union",
       "values": ["closed", "merged"],
@@ -2090,7 +2090,7 @@
     },
     {
       "path": "scripts/generate-leaderboard.ts",
-      "line": 4077,
+      "line": 4237,
       "name": "status",
       "kind": "string-union",
       "values": ["complete", "suppressed-limit"],
@@ -2105,6 +2105,32 @@
         "formal/models/ui/ui_score_selection.qnt"
       ],
       "lexicallyUnmentionedValues": ["suppressed-limit"],
+      "review": "candidate-only"
+    },
+    {
+      "path": "scripts/payment-keeper/keeper.ts",
+      "line": 136,
+      "name": "KeeperFailureStage",
+      "kind": "string-union",
+      "values": [
+        "authority-read",
+        "award-state",
+        "gas-reconcile",
+        "monthly-state",
+        "payment-evidence",
+        "payment-index",
+        "payment-scan",
+        "preflight",
+        "signer-role"
+      ],
+      "models": [
+        "formal/models/payments/operator_keeper.qnt",
+        "formal/models/payments/operator_keeper_diagnostics.qnt",
+        "formal/models/payments/operator_keeper_lifecycle.qnt",
+        "formal/models/payments/stored_binding_broadcast_authority.qnt",
+        "formal/models/rewards/monthly_execution_recovery.qnt"
+      ],
+      "lexicallyUnmentionedValues": [],
       "review": "candidate-only"
     },
     {
@@ -2132,7 +2158,7 @@
     },
     {
       "path": "scripts/value-ingestion.ts",
-      "line": 436,
+      "line": 437,
       "name": "AttributionOutcome",
       "kind": "string-union",
       "values": ["headRefOid", "id", "number", "updatedAt", "url"],
@@ -2153,7 +2179,7 @@
     },
     {
       "path": "scripts/value-ingestion.ts",
-      "line": 445,
+      "line": 446,
       "name": "phase",
       "kind": "string-union",
       "values": ["commit-attributions", "value-histories"],
@@ -3099,6 +3125,22 @@
       "review": "candidate-only"
     },
     {
+      "path": "src/lib/points-implementation-corrections.ts",
+      "line": 123,
+      "name": "status",
+      "kind": "string-union",
+      "values": ["already-applied", "applied", "held", "retained", "unchanged"],
+      "models": [
+        "formal/models/points/historical_implementation_allocation.qnt"
+      ],
+      "lexicallyUnmentionedValues": [
+        "already-applied",
+        "retained",
+        "unchanged"
+      ],
+      "review": "candidate-only"
+    },
+    {
       "path": "src/lib/profiles.ts",
       "line": 49,
       "name": "state",
@@ -3652,6 +3694,7 @@
       "values": ["dry_run", "execute", "off"],
       "models": [
         "formal/models/payments/operator_keeper.qnt",
+        "formal/models/payments/operator_keeper_diagnostics.qnt",
         "formal/models/payments/operator_keeper_lifecycle.qnt"
       ],
       "lexicallyUnmentionedValues": [],
