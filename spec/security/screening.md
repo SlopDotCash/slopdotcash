@@ -20,11 +20,11 @@ Credentials absent at screening produce unavailable evidence.
 ```quint
 type Phase = Queued | Running | Legitimate | NeedsInformation | Spam | Unavailable
 type Review = PendingReview | Forward | RequestInformation
-type Screening = { revision: int, version: int, digest: str, phase: Phase, review: Review,
+type Screening = { reporter: int, revision: int, version: int, digest: str, phase: Phase, review: Review,
   startedAt: int, routed: bool, noticeVersions: Set[int], reportDigests: List[str] }
 type Clock = UnknownClock | ExactClock({ nowMs: int })
 type Claim = { revision: int, version: int, digest: str }
-pure val initial: Screening = { revision: 1, version: 1, digest: "original", phase: Queued, review: PendingReview,
+pure val initial: Screening = { reporter: 1, revision: 1, version: 1, digest: "original", phase: Queued, review: PendingReview,
   startedAt: 0, routed: false, noticeVersions: Set(), reportDigests: List("original") }
 pure def qualified(s: Screening): bool = s.review == Forward or (s.review == PendingReview and s.phase == Legitimate)
 pure def recoverable(s: Screening, clock: Clock): bool =
@@ -96,8 +96,9 @@ pure def sometimesUnavailable(s: Screening): bool = s.phase == Unavailable
 
 ### A late result cannot replace human review or a newly saved version
 
-A current security maintainer may forward or ask for information with a
-valid reason. Require optimistic versions for both intake and case before
+A current security maintainer other than the reporter may forward or ask for
+information with a valid reason; the [composed report flow](./journey.md) supplies
+`currentMaintainer` from the case's verified authority snapshot. Require optimistic versions for both intake and case before
 a reporter replaces an eligible draft or failed report. The transaction
 advances both records and appends exact retained evidence. A successful
 replacement queues new screening and clears current routing. Preserve prior
@@ -107,9 +108,9 @@ case eligibility, private object and reporter before this event.
 ```quint
 type RevisionEvidence = { isReporter: bool, draftOrFailed: bool, noAdvisory: bool, caseNeedsInformation: bool,
   exactCaseCas: bool, allowedCaseState: bool, exactObjectStored: bool, admitted: bool }
-pure def canReviewReport(s: Screening, seenRevision: int, decision: Review, currentMaintainer: bool, checkedReason: bool): bool =
-  seenRevision == s.revision and currentMaintainer and checkedReason and decision != PendingReview
-pure def reviewReport(s: Screening, seenRevision: int, decision: Review, currentMaintainer: bool, checkedReason: bool): Screening =
+pure def canReviewReport(s: Screening, by: int, seenRevision: int, decision: Review, currentMaintainer: bool, checkedReason: bool): bool =
+  seenRevision == s.revision and by != s.reporter and currentMaintainer and checkedReason and decision != PendingReview
+pure def reviewReport(s: Screening, by: int, seenRevision: int, decision: Review, currentMaintainer: bool, checkedReason: bool): Screening =
   { ...s, revision: s.revision + 1, review: decision }
 pure def revisionPermitted(s: Screening, evidence: RevisionEvidence): bool =
   evidence.isReporter and evidence.draftOrFailed and evidence.noAdvisory and evidence.exactCaseCas and evidence.allowedCaseState
@@ -181,6 +182,7 @@ pure val routingValues = Set(
   { checkedContext: true, eligibleRecipients: true, actingTechnicalApprover: false },
   { checkedContext: true, eligibleRecipients: false, actingTechnicalApprover: true },
   { checkedContext: true, eligibleRecipients: false, actingTechnicalApprover: false })
+pure val byValues = Set(1, 2)
 pure val weight_claim = 35
 pure val weight_finish = 100
 pure val weight_reviewReport = 20

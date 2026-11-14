@@ -1,4 +1,4 @@
-lemma startPost_ensures(f: Forwarding, claim: Claim)
+lemma startPost_ensures(f: Forwarding, claim: SendClaim)
   ensures (inv(f) ==> canStartPost(f, claim) ==> alwaysClaimBound(startPost(f, claim)))
   ensures (inv(f) ==> canStartPost(f, claim) ==> alwaysOriginalCase(startPost(f, claim)))
   ensures (inv(f) ==> canStartPost(f, claim) ==> alwaysReceiptBinding(startPost(f, claim)))
@@ -23,7 +23,7 @@ lemma startPost_ensures(f: Forwarding, claim: Claim)
   }
 }
 
-lemma recordCreated_ensures(f: Forwarding, claim: Claim, accepted: Copy, listing: Listing)
+lemma recordCreated_ensures(f: Forwarding, claim: SendClaim, accepted: Copy, listing: Listing)
   ensures (inv(f) ==> canRecordCreated(f, claim, accepted, listing) ==> alwaysClaimBound(recordCreated(f, claim, accepted, listing)))
   ensures (inv(f) ==> canRecordCreated(f, claim, accepted, listing) ==> alwaysOriginalCase(recordCreated(f, claim, accepted, listing)))
   ensures (inv(f) ==> canRecordCreated(f, claim, accepted, listing) ==> alwaysReceiptBinding(recordCreated(f, claim, accepted, listing)))
