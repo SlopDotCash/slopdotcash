@@ -11,11 +11,15 @@ Backend project, financial and case machines retain their own authority checks.
 import navigation as N from "./frontend/navigation"
 import drafts as D from "./frontend/drafts"
 import reportDetails as R from "./frontend/reportDetails"
-type BrowserSession = { navigation: N::Navigation, draft: D::Draft, details: R::DetailSet }
-pure val initial: BrowserSession = { navigation: N::initial, draft: D::initial, details: R::emptyDetails }
+type BrowserSession = { navigation: N::Navigation, draft: D::Draft, details: R::DetailSet, returnPath: str }
+pure val initial: BrowserSession = { navigation: N::initial, draft: D::initial, details: R::emptyDetails, returnPath: "/" }
 pure def canAuthenticate(b: BrowserSession, actorId: int): bool = N::canSignIn(b.navigation, actorId)
-pure def authenticate(b: BrowserSession, actorId: int): BrowserSession = { navigation: N::signIn(b.navigation, actorId), draft: D::initial, details: R::emptyDetails }
-pure def logout(b: BrowserSession): BrowserSession = { navigation: N::signOut(b.navigation), draft: D::initial, details: R::emptyDetails }
+pure def authenticate(b: BrowserSession, actorId: int): BrowserSession =
+  { navigation: N::signIn(b.navigation, actorId), draft: D::initial, details: R::emptyDetails, returnPath: b.returnPath }
+pure def logout(b: BrowserSession): BrowserSession =
+  { navigation: N::signOut(b.navigation), draft: D::initial, details: R::emptyDetails, returnPath: "/" }
+pure def canServerSessionEnded(b: BrowserSession): bool = b.navigation.actor > 0
+pure def serverSessionEnded(b: BrowserSession): BrowserSession = logout(b)
 pure def canBeginReport(b: BrowserSession, projectId: int): bool = b.navigation.actor > 0 and projectId > 0
 pure def beginReport(b: BrowserSession, projectId: int): BrowserSession = {
   ...b, navigation: N::navigate(b.navigation, N::Report), draft: D::open(b.draft, b.navigation.actor, projectId)
@@ -27,6 +31,39 @@ pure def canReviewReport(b: BrowserSession): bool = D::canReview(b.draft)
 pure def reviewReport(b: BrowserSession): BrowserSession = { ...b, draft: D::review(b.draft) }
 pure def canSubmitReport(b: BrowserSession, submissionKey: int): bool = D::canSend(b.draft, submissionKey)
 pure def submitReport(b: BrowserSession, submissionKey: int): BrowserSession = { ...b, draft: D::send(b.draft, submissionKey) }
+```
+
+### Sign-in keeps only a safe same-origin return destination
+
+PRD section 3 keeps the return destination through sign-in. The shell
+parses the requested `next` value (`src/lib/login-return.ts`) into a
+`ReturnRequest`: a same-origin path starting with one `/`, with no
+backslash, that is not the login page itself. Anything else returns to `/`.
+`next=earnings` is the shell's alias for `/earnings`. A private report
+draft is never a permitted draft across an account change: authentication
+erases it (below). A server answer that the session expired, was revoked
+or the account closed ends the browser session exactly like sign-out.
+
+```quint
+type ReturnRequest = { path: str, startsWithSlash: bool, protocolRelative: bool, backslash: bool,
+  sameOrigin: bool, loginPage: bool }
+pure def safeReturn(r: ReturnRequest): bool =
+  r.path != "" and r.startsWithSlash and not(r.protocolRelative) and not(r.backslash) and r.sameOrigin and not(r.loginPage)
+pure def canSaveReturn(b: BrowserSession, request: ReturnRequest): bool = b.navigation.actor == 0
+pure def saveReturn(b: BrowserSession, request: ReturnRequest): BrowserSession =
+  { ...b, returnPath: if (safeReturn(request)) request.path else "/" }
+pure def lawProtocolRelativeRefused(r: ReturnRequest): bool = r.protocolRelative implies not(safeReturn(r))
+pure def lawLoginLoopRefused(r: ReturnRequest): bool = r.loginPage implies not(safeReturn(r))
+pure def stepServerEndClearsPrivateState(before: BrowserSession, via: str, after: BrowserSession): bool =
+  via == "serverSessionEnded" implies after.draft == D::initial and after.details.opened.size() == 0 and after.navigation.actor == 0
+pure def stepSignInKeepsReturnPath(before: BrowserSession, via: str, after: BrowserSession): bool =
+  via == "authenticate" implies after.returnPath == before.returnPath
+pure val requestValues = Set({ path: "/inbox", startsWithSlash: true, protocolRelative: false, backslash: false, sameOrigin: true, loginPage: false },
+  { path: "//evil.example", startsWithSlash: true, protocolRelative: true, backslash: false, sameOrigin: false, loginPage: false },
+  { path: "/login", startsWithSlash: true, protocolRelative: false, backslash: false, sameOrigin: true, loginPage: true },
+  { path: "/a%5Cb", startsWithSlash: true, protocolRelative: false, backslash: true, sameOrigin: true, loginPage: false })
+pure val rValues = requestValues
+pure def sometimesSafeReturnKept(b: BrowserSession): bool = b.navigation.actor > 0 and b.returnPath == "/inbox"
 ```
 
 ### Each mounted report must belong to the authorized current account lifetime
@@ -46,7 +83,7 @@ pure def canCloseDetail(b: BrowserSession, submission: int): bool = R::canCloseD
 pure def closeDetail(b: BrowserSession, submission: int): BrowserSession = { ...b, details: R::closeDetail(b.details, submission) }
 pure def alwaysDetailsOwned(b: BrowserSession): bool = b.details.opened.size() > 0 implies b.navigation.actor > 0
 pure def stepAccountChangeClearsDetails(before: BrowserSession, via: str, after: BrowserSession): bool =
-  (via == "authenticate" or via == "logout") implies after.details.opened.size() == 0
+  (via == "authenticate" or via == "logout" or via == "serverSessionEnded") implies after.details.opened.size() == 0
 pure def sometimesSiblingDetails(b: BrowserSession): bool = b.details.opened.size() > 1
 pure val submissionValues = Set(1, 2)
 pure val requestEpochValues = Set(1, 2, 3, 4)
@@ -58,7 +95,7 @@ pure val requestEpochValues = Set(1, 2, 3, 4)
 pure def alwaysSharedActor(b: BrowserSession): bool = b.draft.actor == 0 or b.draft.actor == b.navigation.actor
 pure def alwaysChildrenValid(b: BrowserSession): bool = N::alwaysPrivateRowsHaveOwner(b.navigation) and N::alwaysEpochsAreValid(b.navigation) and D::alwaysDraftBinding(b.draft)
 pure def stepAccountChangeClearsDraft(before: BrowserSession, via: str, after: BrowserSession): bool =
-  (via == "authenticate" or via == "logout") implies after.draft == D::initial
+  (via == "authenticate" or via == "logout" or via == "serverSessionEnded") implies after.draft == D::initial
 pure def sometimesReportSubmitted(b: BrowserSession): bool = b.draft.stage == D::Sending and b.navigation.actor == b.draft.actor
 pure def sometimesLogoutClears(b: BrowserSession): bool = b.navigation.epoch > 2 and b.navigation.actor == 0 and b.draft == D::initial
 pure val actorIdValues = Set(1, 2)
