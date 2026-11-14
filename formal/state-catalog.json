@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "meaning": "Declared lifecycle candidates. This intentionally incomplete syntactic census cannot find every implicit state, establish reachability, or prove source/model correspondence. Review the open work listed in formal/README.md as well.",
-  "inventorySha256": "ba4984122899222ad619cbf546825105863061027fcf597ea41368a12e4089ef",
+  "inventorySha256": "9ce5120c3dcea3c600287284e0e8df2cdf104ee8838eba71b357aa1f1cb92cf1",
   "states": [
     {
       "path": "backend/fee-conversions/handler.ts",
@@ -2108,6 +2108,32 @@
       "review": "candidate-only"
     },
     {
+      "path": "scripts/payment-keeper/keeper.ts",
+      "line": 136,
+      "name": "KeeperFailureStage",
+      "kind": "string-union",
+      "values": [
+        "authority-read",
+        "award-state",
+        "gas-reconcile",
+        "monthly-state",
+        "payment-evidence",
+        "payment-index",
+        "payment-scan",
+        "preflight",
+        "signer-role"
+      ],
+      "models": [
+        "formal/models/payments/operator_keeper.qnt",
+        "formal/models/payments/operator_keeper_diagnostics.qnt",
+        "formal/models/payments/operator_keeper_lifecycle.qnt",
+        "formal/models/payments/stored_binding_broadcast_authority.qnt",
+        "formal/models/rewards/monthly_execution_recovery.qnt"
+      ],
+      "lexicallyUnmentionedValues": [],
+      "review": "candidate-only"
+    },
+    {
       "path": "scripts/prior-cycle-accrual.ts",
       "line": 37,
       "name": "PriorCycleNotReadyReason",
@@ -3668,6 +3694,7 @@
       "values": ["dry_run", "execute", "off"],
       "models": [
         "formal/models/payments/operator_keeper.qnt",
+        "formal/models/payments/operator_keeper_diagnostics.qnt",
         "formal/models/payments/operator_keeper_lifecycle.qnt"
       ],
       "lexicallyUnmentionedValues": [],
