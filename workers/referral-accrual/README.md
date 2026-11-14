@@ -105,6 +105,11 @@ The files are public at `GET /api/v1/referrals/accruals` (index) and
 `GET /api/v1/referrals/accruals/<YYYY-MM>` (exact bytes, `x-slop-sha256`).
 There is no page, link or copy for them yet.
 
+`GET /api/v1/referrals/projects` lists the registered projects whose record
+names a referrer (project ID, registry status, registration time, referrer's
+GitHub account), oldest first. It reads the registry only; this job does not
+use it.
+
 ## Parameters
 
 The initial values in `wrangler.toml` are approved in PRD section 11. Every

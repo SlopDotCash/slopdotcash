@@ -798,9 +798,9 @@
     },
     {
       "path": "backend/referrals/handler.ts",
-      "sha256": "44249d4131eefeb6565bb01c5d7182de79c1d200ef3539e5cb5b9235dd6a1ee4",
+      "sha256": "1b5de82ce245f509c8d1d7bd6e1c7588dc4a0fb03a9f598a584a707efdb0955b",
       "models": ["formal/models/referrals/referral_accrual.qnt"],
-      "candidateLines": [97],
+      "candidateLines": [11, 51, 73, 87, 170],
       "review": "mapped-abstraction"
     },
     {
