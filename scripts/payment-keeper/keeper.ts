@@ -404,6 +404,8 @@ export async function runKeeper(
             projectId: scope,
             projectPda: record.projectPda ?? undefined,
             programId: record.programId ?? undefined,
+            genesisHash:
+              "genesisHash" in checked ? checked.genesisHash : undefined,
           },
           config.rpcUrl,
           async (event: ScanEvent) => {

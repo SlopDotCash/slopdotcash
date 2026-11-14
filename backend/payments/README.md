@@ -80,7 +80,9 @@ deployment before reading or advancing its cursor, including empty log pages.
 This check prevents new omissions; it does not repair a cursor advanced before
 the check was released. Audit such history from its trusted deployment boundary
 and reconcile retained events before treating that coverage as verified.
-Solana stores one finalized signature page per run in a durable discovery
+Solana checks the RPC genesis hash against the configured network trust root
+before reading vault snapshots or touching discovery and processing
+checkpoints. Solana stores one finalized signature page per run in a durable discovery
 interval. After it reaches the preceding cursor, it indexes that interval
 oldest first, at most 100 transactions per run. Migration `0012` adds the pending
 pages and generation/revision checkpoints. Indexing verifies only this project's
