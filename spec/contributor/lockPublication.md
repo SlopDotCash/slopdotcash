@@ -137,6 +137,7 @@ pure def canConfirmAllStopped(p: LockPublication): bool = p.step == LockIdle and
 pure def confirmAllStopped(p: LockPublication): LockPublication = { ...p, allStopped: true }
 pure def canManualRecovery(p: LockPublication): bool = p.step == LockIdle and p.allStopped and needsRecovery(p)
 pure def manualRecovery(p: LockPublication): LockPublication = { ...p, guard: PubNone, canonical: 0, allStopped: false,
+  op: NoOp, committed: false,
   diagnostic: ExternallyRecovered,
   handles: { one: retire(p.handles.one), two: retire(p.handles.two) } }
 pure def alwaysRollbackUnpublished(p: LockPublication): bool =
@@ -150,6 +151,19 @@ pure def handleSound(p: LockPublication, caller: int): bool =
 pure def alwaysHandles(p: LockPublication): bool = handleSound(p, 1) and handleSound(p, 2)
   and (p.op != NoOp implies (p.actor == 1 or p.actor == 2))
   and (p.diagnostic == ReleasedClean implies not(p.tombstones.includes(p.actor)))
+pure def alwaysOperationFacts(p: LockPublication): bool =
+  p.attempt >= 0
+  and (p.attempt == 0 implies not(p.staleDamaged) and p.diagnostic == NoDiagnostic and p.op == NoOp and p.guard == PubNone)
+  and ((p.handles.one.published or p.handles.two.published) implies p.attempt > 0)
+  and ((p.op == Acquiring and p.step != LockIdle and p.step != Finish) implies p.guard == PubAcquire)
+  and (p.step != LockIdle implies p.diagnostic == NoDiagnostic and p.op != NoOp)
+  and ((p.op == Acquiring and p.step != LockIdle) implies not(handleOf(p, p.actor).published))
+  and ((p.op == Releasing and p.step != LockIdle) implies handleOf(p, p.actor).published)
+  and ((p.step == Prepare or p.step == Inspect or p.step == Quarantine or p.step == PublishStep
+    or p.step == StaleCleanup or p.step == Rollback) implies not(p.rolledBack) and p.op == Acquiring)
+  and ((p.op == Acquiring and p.committed and not(p.rolledBack)) implies p.canonical == p.actor)
+  and ((p.op == Releasing and (p.step == ReleaseCleanup or ((p.step == GuardCleanup or p.step == Finish) and p.primary == NoLockError)))
+    implies handleOf(p, p.actor).released)
 pure def alwaysDiagnostics(p: LockPublication): bool =
   (p.diagnostic == Acquired implies handleOf(p, p.actor).published)
   and (p.diagnostic == CommittedWithoutHandle implies p.canonical == p.actor and not(handleOf(p, p.actor).published))

@@ -84,8 +84,9 @@ pure def canReleaseStartup(s: DiscoveryLock): bool = s.guard == StartupGuard and
   and (s.childPublished or (not(s.childLive) and s.closeObserved))
   and (s.phase == ChildPublished or s.phase == HelperClosed or s.phase == HelperClosing)
 pure def releaseStartup(s: DiscoveryLock): DiscoveryLock = { ...s, guard: NoGuard, phase: if (s.childLive) HelperRunning else HelperClosed }
-pure def alwaysAdmittedLease(s: DiscoveryLock): bool = s.phase == HelperAdmitted implies
-  s.guard == StartupGuard and s.commandLease and s.owner != 0 and not(s.closeObserved) and not(s.childLive)
+pure def alwaysAdmittedLease(s: DiscoveryLock): bool = (s.phase == HelperAdmitted implies
+  s.guard == StartupGuard and s.commandLease and s.owner != 0 and not(s.closeObserved) and not(s.childLive))
+  and ((s.phase == HelperWaiting or s.phase == HelperChecking) implies not(s.childLive))
 pure def alwaysChildOwned(s: DiscoveryLock): bool = s.childLive implies s.owner != 0 and s.owner == s.launchOwner and s.commandLease
 pure def alwaysCloseObserved(s: DiscoveryLock): bool = s.closeObserved implies not(s.childLive)
 pure def alwaysStartupHasHelper(s: DiscoveryLock): bool = (s.guard == StartupGuard implies s.helperLive)

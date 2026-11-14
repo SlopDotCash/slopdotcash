@@ -198,6 +198,7 @@ pure def alwaysActiveInvocation(e: Exchange): bool = ((e.phase != Idle and e.pha
   and ((e.phase == Idle or e.phase == Starting) implies e.flow == FlowNone and not(e.assertionConsumed) and not(e.minted)
     and e.assertionIssuedAt == 0 and e.poll == NoPoll)
   and (e.phase == StartReply implies (e.flow == FlowPending or e.flow == FlowPurged) and e.assertionIssuedAt == 0 and not(e.assertionConsumed))
+  and ((e.phase == Idle or e.phase == Starting or e.phase == StartReply) implies not(e.displayed))
   and (e.phase == Polling implies e.now > 0)
   and (e.phase == PollReply implies e.poll != NoPoll)
 pure def alwaysReady(e: Exchange): bool = e.result == Ready implies e.phase == Done and e.snapshot.serverId != "" and e.minted

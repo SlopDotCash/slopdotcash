@@ -139,7 +139,7 @@ pure def createIntent(s: TraceServer, by: int, key: str, digest: str, byteCount:
         expiresAt: s.now + intentLifetime, consumed: false }), reply: ReplyCreated }
   else if (prior.digest != digest or prior.size != byteCount or prior.contentType != contentType) { ...s, reply: ReplyConflict }
   else if (not(prior.consumed) and prior.expiresAt <= s.now)
-    { ...s, intents: s.intents.listMap(i => if (i.key == key) { ...i, expiresAt: s.now + intentLifetime } else i),
+    { ...s, intents: s.intents.listMap(i => if (i.key == key and not(i.consumed)) { ...i, expiresAt: s.now + intentLifetime } else i),
       reply: ReplyRenewed }
   else { ...s, reply: ReplyExisting }
 pure def alwaysIntentsBounded(s: TraceServer): bool = s.intents.every(i => i.key != "" and i.digest != ""
@@ -199,7 +199,7 @@ pure def attachPut(s: TraceServer, key: str): TraceServer =
   if (s.banned) { ...s, puts: failed, reply: ReplyBanned }
   else if (not(live) or s.state == Finalized or (s.attached != "" and s.attached != p.blob.digest))
     { ...s, puts: failed, reply: ReplyConflict }
-  else { ...s, intents: s.intents.listMap(i => if (i.key == key) { ...i, consumed: true } else i),
+  else { ...s, intents: s.intents.listMap(i => if (i.key == key and not(i.consumed)) { ...i, consumed: true } else i),
     attached: p.blob.digest, state: TraceUploaded,
     puts: s.puts.listMap(x => if (x.key == key and x.stage == PutWritten) { ...x, stage: PutAttached } else x),
     reply: ReplyCreated }
