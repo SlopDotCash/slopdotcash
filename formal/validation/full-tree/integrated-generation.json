@@ -86,7 +86,7 @@
     "spec/security/evidence.proof.dfy": "4e68b3fbe63f32053cef29ad3f2bcde207bdb5409f04b1104c9c4c5580642bf7",
     "spec/settlement/keeperDiagnostics.proof.dfy": "467647db895ea45b5a1a2adc0a2010bf7dbc606f4d1e8fd8bf226f0fc037b482",
     "spec/settlement/money.proof.dfy": "c963c019e25af747ffc8c6f1ccde302ce211182fc852f872e42324585b32e95a",
-    "spec/settlement/reserveRelease.proof.dfy": "5a1268a393d06c9db72198584ead1ba75b9b7cbef02cc096dc65eb2f3e90bac6"
+    "spec/settlement/reserveRelease.proof.dfy": "8326a7b1e757fe158e5c640402afb86f4df3ed01322bcebb794589fb924df3f9"
   },
   "passes": [
     "pnpm gen",
@@ -149,6 +149,7 @@
   },
   "generationAndTypecheckCommit": "0eba208feb4e880e6933bce65bc65b7fca3063fc",
   "laterProofInputs": {
-    "spec/points/corrections.proof.dfy": "formal/validation/points/corrections-proof.json"
+    "spec/points/corrections.proof.dfy": "formal/validation/points/corrections-proof.json",
+    "spec/settlement/reserveRelease.proof.dfy": "formal/validation/finance/reserve-release-signed-verification.json"
   }
 }

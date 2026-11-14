@@ -398,8 +398,8 @@
     "report": "formal/validation/finance/reserve-release-signed-handoff.md",
     "proof": {
       "total": 146,
-      "proved": 139,
-      "unproved": 7,
+      "proved": 140,
+      "unproved": 6,
       "exhausted": 0,
       "errors": 0
     }
