@@ -117,7 +117,7 @@ pure def joined(s: Accounts, token: int): Member =
       xLink: if (prior.xLink.xId != "") { ...prior.xLink, public: true } else prior.xLink }
   else { actor: g.nodeId, githubId: g.actor, login: g.login, membership: Open, public: true, joinedAt: s.now,
     closedAt: 0, closures: List(), xLink: X::noLink, telegramLinked: false, email: E::newEnrollment(g.actor, 0) }
-pure def admitMember(s: Accounts, token: int): Accounts =
+pure def admitMember(token: int, s: Accounts): Accounts =
   val m = joined(s, token)
   { ...s, identity: I::consume(s.identity, token, I::PointsWeb), sessions: openSession(s, m.actor),
     lastSession: s.lastSession + 1,
@@ -125,7 +125,7 @@ pure def admitMember(s: Accounts, token: int): Accounts =
 pure def canSignIn(s: Accounts, token: int): bool =
   I::canConsume(s.identity, token, I::PointsWeb) and actorKeyFree(s, token)
     and (hasGithubMember(s, assertedGithub(s, token).actor) implies memberByGithub(s, assertedGithub(s, token).actor).membership == Open)
-pure def signIn(s: Accounts, token: int): Accounts = admitMember(s, token)
+pure def signIn(s: Accounts, token: int): Accounts = admitMember(token, s)
 pure def canSignInStorageFailed(s: Accounts, token: int): bool = I::canConsume(s.identity, token, I::PointsWeb)
 pure def signInStorageFailed(s: Accounts, token: int): Accounts =
   { ...s, identity: I::consume(s.identity, token, I::PointsWeb), refusedSignIns: s.refusedSignIns.append(token) }
@@ -163,7 +163,7 @@ pure def canRefuseClosedSignIn(s: Accounts, token: int): bool =
 pure def refuseClosedSignIn(s: Accounts, token: int): Accounts =
   { ...s, identity: I::consume(s.identity, token, I::PointsWeb), refusedSignIns: s.refusedSignIns.append(token) }
 pure def canReopen(s: Accounts, token: int): bool = canRefuseClosedSignIn(s, token)
-pure def reopen(s: Accounts, token: int): Accounts = admitMember(s, token)
+pure def reopen(s: Accounts, token: int): Accounts = admitMember(token, s)
 pure def closureReadback(s: Accounts, githubId: int): int = memberByGithub(s, githubId).closedAt
 pure def alwaysRefusalsConsumed(s: Accounts): bool = s.refusedSignIns.every(t => s.identity.consumedTokens.includes(t))
 pure def lawJoinAfterCloseIssuesNoSession(s: Accounts, token: int): bool =

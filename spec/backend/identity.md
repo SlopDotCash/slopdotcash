@@ -107,9 +107,9 @@ pure def alwaysFlowsWellFormed(s: Identity): bool = s.lastFlow >= 0 and s.now >=
 pure def alwaysFlowIdsUnique(s: Identity): bool = s.flows.every(f => s.flows.select(g => g.id == f.id).length() == 1)
 pure def alwaysRateWindowsCounted(s: Identity): bool = s.windows.every(w => w.count >= 1 and w.client > 0
   and s.windows.select(o => o.client == w.client and o.scope == w.scope).length() == 1)
-pure def lawThirteenthStartInWindowRefused(client: int, now: int): bool =
-  val full = { client: client, scope: StartScope, count: startLimit, expiresAt: now + 1 }
-  nextWindow(full, now).count > limitOf(StartScope) and nextWindow({ ...full, expiresAt: now }, now).count == 1
+pure def lawFullWindowRefusesUntilItExpires(w: RateWindow, now: int): bool =
+  ((w.count >= limitOf(w.scope) and w.expiresAt > now) implies nextWindow(w, now).count > limitOf(w.scope))
+    and (w.expiresAt <= now implies nextWindow(w, now).count == 1)
 ```
 
 ### The callback claims a pending flow once and clears its verifier before contacting GitHub
@@ -288,6 +288,8 @@ pure val sampleComplete: Identity = completeCallback(claimCallback(sampleStarted
 pure val sampleIssued: Identity = issueAssertion(storeAssertion(sampleComplete, 1, 1, PointsWeb), 1, 1, PointsWeb)
 pure val sValues = Set(initial).union(Set(sampleStarted)).union(Set(sampleComplete)).union(Set(sampleIssued))
 pure val audienceValues = Set(PointsWeb, PrivateTrace)
+pure val wValues = Set({ client: 2, scope: StartScope, count: 12, expiresAt: 60 }, { client: 2, scope: PollScope, count: 3, expiresAt: 60 },
+  { client: 1, scope: StartScope, count: 1, expiresAt: 0 })
 pure val clientValues = Set(1, 2)
 pure val flowIdValues = Set(1, 2, 3)
 pure val tokenValues = Set(0, 1, 2, 3)

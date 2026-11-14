@@ -11,8 +11,10 @@ immediately; there is no waiting period. The pinned sources are
 `evm_binding_consent_api`, `binding_consent_renewal`, `solana_binding_api`,
 `solana_binding_completion` and `payment_binding` models.
 
-This machine composes one actor's [wallet registration](./wallets.md) on
-one chain with the consent evidence that names its authorized claim. The
+This machine composes one actor's EVM [wallet registration](./wallets.md)
+partition, which moves through its own guarded events, and that actor's
+Solana partition, held fixed at an authorized claim, with the consent
+evidence that names the authorized claim of each. The
 attester's own signing, submission, cancellation and finalized-winner
 reconciliation are the [signer boundary](../settlement/signer.md); this
 machine never signs for the attester, broadcasts or changes payment state.
@@ -54,7 +56,7 @@ type SolanaStatus = SolanaPrepared | SolanaCompleted | SolanaExpired
 type SolanaGeneration = { obligation: int, generation: int, claim: int, transaction: int, status: SolanaStatus }
 type SolanaAttempt = { obligation: int, claim: int, open: bool, reserved: bool }
 type SolanaWalletSignature = { signer: str, transaction: int }
-type Binding = { wallet: W::WalletRegistration, deployments: List[Deployment], consents: List[Consent],
+type Binding = { wallet: W::WalletRegistration, solanaWallet: W::WalletRegistration, deployments: List[Deployment], consents: List[Consent],
   generations: List[SolanaGeneration], lastGeneration: int }
 pure val consentLifetime = 90 * 24 * 60 * 60
 pure val submissionWindow = 600
@@ -81,7 +83,8 @@ pure def lawChallengeOffersNinetyDays(b: Binding): bool = offeredExpiry(b) - now
 
 ### Authorization stores a consent the attester can still submit and never edits an earlier one
 
-The signed expiry must leave the attester more than the 600-second
+The request carries the signed fields and the signature; the shell's
+recovery reports the signer of exactly those fields. The signed expiry must leave the attester more than the 600-second
 submission window and may not exceed the 90-day lifetime plus one hour of
 clock slack. The recovered signer must be the claim's wallet, the signed
 fields must be the request's, and an upper-half `s` is refused. Each
@@ -90,23 +93,22 @@ append-only row; a repeated signature over the same fields keeps the first
 row, and a renewal with a new expiry adds a row.
 
 ```quint
-pure def canBindAuthorize(b: Binding, by: str, claim: int, network: str, vault: str, version: int,
-  expiresAt: int, signature: EvmConsentSignature): bool =
-  val d = deploymentFor(b, network, vault)
-  by == b.wallet.actor and challengeOutcome(b, claim, network, vault, version) == ChallengeOffered
-    and expiresAt > nowSeconds(b) + submissionWindow and expiresAt <= nowSeconds(b) + consentLifetime + expirySlack
-    and not(signature.highS) and signature.signer != "" and signature.signer == claimWallet(b, claim)
-    and signature.claim == claim and signature.network == network and signature.vault == vault
-    and signature.chainId == d.chainId and signature.version == version and signature.expiresAt == expiresAt
+pure def canBindAuthorize(b: Binding, by: str, signature: EvmConsentSignature): bool =
+  val d = deploymentFor(b, signature.network, signature.vault)
+  by == b.wallet.actor and challengeOutcome(b, signature.claim, signature.network, signature.vault, signature.version) == ChallengeOffered
+    and signature.expiresAt > nowSeconds(b) + submissionWindow
+    and signature.expiresAt <= nowSeconds(b) + consentLifetime + expirySlack
+    and not(signature.highS) and signature.signer != "" and signature.signer == claimWallet(b, signature.claim)
+    and signature.chainId == d.chainId
 pure def sameKey(c: Consent, claim: int, network: str, vault: str, chainId: int, version: int, expiresAt: int): bool =
   c.claim == claim and c.network == network and c.vault == vault and c.chainId == chainId
     and c.version == version and c.expiresAt == expiresAt
-pure def bindAuthorize(b: Binding, by: str, claim: int, network: str, vault: str, version: int,
-  expiresAt: int, signature: EvmConsentSignature): Binding =
-  val d = deploymentFor(b, network, vault)
-  if (b.consents.some(c => sameKey(c, claim, network, vault, d.chainId, version, expiresAt))) b
-  else { ...b, consents: b.consents.append({ claim: claim, network: network, vault: vault, chainId: d.chainId,
-    version: version, expiresAt: expiresAt, signer: signature.signer, createdAt: nowSeconds(b) }) }
+pure def bindAuthorize(b: Binding, by: str, signature: EvmConsentSignature): Binding =
+  if (b.consents.some(c => sameKey(c, signature.claim, signature.network, signature.vault, signature.chainId,
+    signature.version, signature.expiresAt))) b
+  else { ...b, consents: b.consents.append({ claim: signature.claim, network: signature.network, vault: signature.vault,
+    chainId: signature.chainId, version: signature.version, expiresAt: signature.expiresAt, signer: signature.signer,
+    createdAt: nowSeconds(b) }) }
 pure def alwaysConsentsVerified(b: Binding): bool = b.consents.every(c =>
   c.claim > 0 and c.claim <= b.wallet.claims.length() and c.signer == claimWallet(b, c.claim)
     and c.expiresAt > c.createdAt + submissionWindow and c.expiresAt <= c.createdAt + consentLifetime + expirySlack
@@ -131,10 +133,9 @@ pure def usableExpiry(b: Binding, network: str, vault: str, version: int): int =
   b.consents.foldl(0, (best, c) => if (usable(b, c, network, vault, version) and c.expiresAt > best) c.expiresAt else best)
 pure def lawReplacedClaimCannotBind(b: Binding, c: Consent, network: str, vault: str, version: int): bool =
   c.claim != authorizedClaim(b) implies not(usable(b, c, network, vault, version))
-pure def lawStoredConsentUsableImmediately(b: Binding, by: str, claim: int, network: str, vault: str, version: int,
-  expiresAt: int, signature: EvmConsentSignature): bool =
-  canBindAuthorize(b, by, claim, network, vault, version, expiresAt, signature) implies
-    usableExpiry(bindAuthorize(b, by, claim, network, vault, version, expiresAt, signature), network, vault, version) >= expiresAt
+pure def lawStoredConsentUsableImmediately(b: Binding, by: str, signature: EvmConsentSignature): bool =
+  canBindAuthorize(b, by, signature) implies
+    usableExpiry(bindAuthorize(b, by, signature), signature.network, signature.vault, signature.version) >= signature.expiresAt
 ```
 
 ### A Solana binding is one half-signed transaction per generation that only the wallet slot completes
@@ -156,16 +157,16 @@ pure def liveGeneration(b: Binding, obligation: int): SolanaGeneration =
   b.generations.select(g => g.obligation == obligation and g.status != SolanaExpired)
     .nthOr(0, { obligation: 0, generation: 0, claim: 0, transaction: 0, status: SolanaExpired })
 pure def canSolanaPrepare(b: Binding, by: str, attempt: SolanaAttempt): bool =
-  by == b.wallet.actor and b.wallet.chain == W::Solana and attempt.obligation > 0 and attempt.reserved and attempt.open
-    and attempt.claim > 0 and attempt.claim == authorizedClaim(b) and liveGeneration(b, attempt.obligation).generation == 0
+  by == b.solanaWallet.actor and b.solanaWallet.chain == W::Solana and attempt.obligation > 0 and attempt.reserved and attempt.open
+    and attempt.claim > 0 and attempt.claim == W::activeAuthorization(b.solanaWallet).claim and liveGeneration(b, attempt.obligation).generation == 0
 pure def solanaPrepare(b: Binding, by: str, attempt: SolanaAttempt): Binding =
   { ...b, lastGeneration: b.lastGeneration + 1, generations: b.generations.append({ obligation: attempt.obligation,
     generation: b.lastGeneration + 1, claim: attempt.claim, transaction: b.lastGeneration + 1, status: SolanaPrepared }) }
 pure def canSolanaComplete(b: Binding, by: str, obligation: int, generation: int, walletSignature: SolanaWalletSignature): bool =
   val g = liveGeneration(b, obligation)
-  by == b.wallet.actor and g.generation > 0 and g.generation == generation and g.status == SolanaPrepared
-    and g.claim == authorizedClaim(b) and walletSignature.transaction == g.transaction
-    and walletSignature.signer != "" and walletSignature.signer == claimWallet(b, g.claim)
+  by == b.solanaWallet.actor and g.generation > 0 and g.generation == generation and g.status == SolanaPrepared
+    and g.claim == W::activeAuthorization(b.solanaWallet).claim and walletSignature.transaction == g.transaction
+    and walletSignature.signer != "" and walletSignature.signer == W::claimAt(b.solanaWallet, g.claim).wallet
 pure def solanaComplete(b: Binding, by: str, obligation: int, generation: int, walletSignature: SolanaWalletSignature): Binding =
   { ...b, generations: b.generations.listMap(g => if (g.generation == generation) { ...g, status: SolanaCompleted } else g) }
 pure def canSolanaExpire(b: Binding, obligation: int, generation: int): bool =
@@ -190,8 +191,6 @@ These events forward to the wallet registry unchanged, so the consent rules
 above are checked against every authorization, replacement and recovery.
 
 ```quint
-pure def canSelectChain(b: Binding, chain: W::WalletChain): bool = W::canSelectChain(b.wallet, chain)
-pure def selectChain(b: Binding, chain: W::WalletChain): Binding = { ...b, wallet: W::selectChain(b.wallet, chain) }
 pure def canObserveTime(b: Binding, timestamp: int): bool = W::canObserveTime(b.wallet, timestamp)
 pure def observeTime(b: Binding, timestamp: int): Binding = { ...b, wallet: W::observeTime(b.wallet, timestamp) }
 pure def canRegister(b: Binding, registration: W::Registration, by: str): bool = W::canRegister(b.wallet, registration, by)
@@ -208,18 +207,28 @@ pure def canCommitAuthorization(b: Binding, requestId: int, storageSucceeded: bo
   W::canCommitAuthorization(b.wallet, requestId, storageSucceeded)
 pure def commitAuthorization(b: Binding, requestId: int, storageSucceeded: bool): Binding =
   { ...b, wallet: W::commitAuthorization(b.wallet, requestId, storageSucceeded) }
+pure def stepSolanaPartitionFixed(before: Binding, after: Binding): bool = after.solanaWallet == before.solanaWallet
+pure def alwaysSolanaPartitionAuthorized(b: Binding): bool =
+  b.solanaWallet.chain == W::Solana and W::activeAuthorization(b.solanaWallet).claim > 0 and b.solanaWallet.actor == b.wallet.actor
 pure def alwaysWalletValid(b: Binding): bool = W::alwaysPartitionValid(b.wallet) and W::alwaysPredecessors(b.wallet)
   and W::alwaysClaimsAdmitted(b.wallet) and W::alwaysAuthorizationAdmitted(b.wallet) and W::alwaysOneAuthorization(b.wallet)
-  and W::alwaysAuthorizationIncreases(b.wallet) and W::alwaysOneConsumption(b.wallet)
+  and W::alwaysAuthorizationIncreases(b.wallet) and W::alwaysOneConsumption(b.wallet) and W::alwaysOperatorsAreNotTheActor(b.wallet)
 ```
 
 ### Renewal, replacement, expiry and Solana completion are reachable
 
-The deployment list and the samples bound simulation only. Clock values
-are milliseconds.
+The launch sample starts with claim 1 authorized on Base (EVM, moving) and
+on Solana (held fixed). The deployment list and the samples bound
+simulation only. Clock values are milliseconds.
 
 ```quint
-pure val initial: Binding = { wallet: W::initial, consents: List(), generations: List(), lastGeneration: 0,
+pure def authorizedSample(chain: W::WalletChain, wallet: str): W::WalletRegistration =
+  val registered = W::register(W::selectChain(W::initial, chain), { wallet: wallet, digest: "digest-a", predecessor: 0, addressVerified: true }, "1")
+  val issued = W::issue(registered, 1, 1, "message-a", "1")
+  val read = W::readProof(issued, { requestId: 1, challengeId: 1, claim: 1, signerWallet: wallet, messageDigest: "message-a",
+    signatureVerified: true }, "1")
+  W::commitAuthorization(W::consume(read, 1), 1, true)
+pure val initial: Binding = { wallet: authorizedSample(W::Base, "wallet-a"), solanaWallet: authorizedSample(W::Solana, "wallet-s"), consents: List(), generations: List(), lastGeneration: 0,
   deployments: List({ network: "base", vault: "vault-a", chain: W::Base, chainId: 8453, family: Evm, registered: true },
     { network: "base", vault: "vault-b", chain: W::Base, chainId: 8453, family: Evm, registered: true },
     { network: "base", vault: "vault-b", chain: W::Base, chainId: 84532, family: Evm, registered: true },
@@ -230,26 +239,31 @@ pure def sometimesConsentForReplacedClaim(b: Binding): bool = b.consents.some(c 
 pure def sometimesSolanaCompleted(b: Binding): bool = b.generations.some(g => g.status == SolanaCompleted)
 pure def sometimesSolanaRegenerated(b: Binding): bool = b.generations.some(g => g.status == SolanaExpired) and b.lastGeneration >= 2
 pure val byValues = Set("1", "other")
-pure val networkValues = Set("base", "robinhood")
 pure val vaultValues = Set("vault-a", "vault-b")
-pure val versionValues = Set(0, 1)
 pure val discoveredVersionValues = Set(-1, 0)
-pure val expiresAtValues = Set(600, 601, 7777601, 7779601, 7779602)
 pure val signatureValues = Set(
   { signer: "wallet-a", claim: 1, network: "base", vault: "vault-a", chainId: 8453, version: 0, expiresAt: 7777601, highS: false },
   { signer: "wallet-a", claim: 1, network: "base", vault: "vault-a", chainId: 8453, version: 0, expiresAt: 7779601, highS: false },
   { signer: "wallet-a", claim: 1, network: "base", vault: "vault-a", chainId: 8453, version: 0, expiresAt: 7777601, highS: true },
   { signer: "wallet-b", claim: 2, network: "base", vault: "vault-a", chainId: 8453, version: 1, expiresAt: 7777601, highS: false },
-  { signer: "wallet-b", claim: 1, network: "base", vault: "vault-a", chainId: 8453, version: 0, expiresAt: 7777601, highS: false })
+  { signer: "wallet-b", claim: 1, network: "base", vault: "vault-a", chainId: 8453, version: 0, expiresAt: 7777601, highS: false },
+  { signer: "wallet-a", claim: 1, network: "base", vault: "vault-a", chainId: 8453, version: 0, expiresAt: 601, highS: false },
+  { signer: "wallet-a", claim: 1, network: "base", vault: "vault-b", chainId: 8453, version: 0, expiresAt: 7777601, highS: false })
 pure val attemptValues = Set({ obligation: 1, claim: 1, open: true, reserved: true },
-  { obligation: 1, claim: 2, open: true, reserved: true }, { obligation: 1, claim: 1, open: false, reserved: true })
-pure val walletSignatureValues = Set({ signer: "wallet-a", transaction: 1 }, { signer: "wallet-a", transaction: 2 },
-  { signer: "wallet-b", transaction: 2 }, { signer: "wallet-x", transaction: 1 })
+  { obligation: 1, claim: 2, open: true, reserved: true }, { obligation: 1, claim: 1, open: false, reserved: true },
+  { obligation: 2, claim: 1, open: true, reserved: false })
+pure val walletSignatureValues = Set({ signer: "wallet-s", transaction: 1 }, { signer: "wallet-s", transaction: 2 },
+  { signer: "wallet-a", transaction: 2 }, { signer: "wallet-x", transaction: 1 })
 pure val generationValues = Set(1, 2)
 pure val obligationValues = Set(1)
 pure val cValues = Set({ claim: 1, network: "base", vault: "vault-a", chainId: 8453, version: 0, expiresAt: 7777601, signer: "wallet-a", createdAt: 0 })
 pure val bValues = Set(initial)
-pure val weight_bindAuthorize = 20
+pure val weight_bindAuthorize = 12
+pure val weight_register = 8
+pure val weight_issue = 8
+pure val weight_readProof = 8
+pure val weight_consume = 8
+pure val weight_commitAuthorization = 8
 pure val weight_solanaPrepare = 10
 pure val weight_solanaComplete = 10
 ```
