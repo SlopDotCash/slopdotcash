@@ -1,0 +1,138 @@
+{
+  "source": "/Users/shawwalters/.codex/worktrees/slop-vibestack-spec/slopdotcash",
+  "scratch": "/tmp/slop-final-coverage-v2",
+  "sourceHashes": {
+    "spec/backend/projects.md": "6c833c593b60a6b649a8f5f09ded528805fa1bd585cb499b0a67e956cfc6f620",
+    "spec/backend/listing.md": "7e9d19789cbd1e89800102ba4bf79c233a3297c0eab1ada584ef1d7dfa3b8a27",
+    "spec/settlement/money.md": "cb766a9b5b99f5509da5478ca15ecbe1c77a09127956d9524e7447c7d0939978",
+    "spec/frontend/requests.md": "90a50c604aed8998a34faa7222a9aae3043a8e924c36dbb08824a3af1b9f724a",
+    "spec/frontend/presentation.md": "adf1e83e8aee95257b12b5316dfeaef0d5c7fd74cb017b9c1eea50b03fcf7952",
+    "spec/frontend/projections.md": "635399e7681905c91017d927d9df583af7126fa6a655399a76cab04a3aa612c6"
+  },
+  "simulations": [
+    {
+      "unit": "backend__listing",
+      "step": "step",
+      "passed": true,
+      "replay": true,
+      "traces": 30,
+      "command": "seed 75351968533339; to simulate again: pnpm exec quint run gen/backend__listing.run.qnt --main backend__listing_run --step step --invariant inv --max-samples 100 --max-steps 20 --mbt --seed 75351968533339",
+      "events": [
+        "place",
+        "retainRevision"
+      ],
+      "goals": [
+        {
+          "name": "sometimesFeatured",
+          "reached": true
+        },
+        {
+          "name": "sometimesReturnedToCommunity",
+          "reached": true
+        }
+      ]
+    },
+    {
+      "unit": "backend__listing",
+      "step": "probe",
+      "passed": true,
+      "replay": true,
+      "traces": 30,
+      "command": "seed 117404760741552; to simulate again: pnpm exec quint run gen/backend__listing.run.qnt --main backend__listing_run --step probe --invariant inv --max-samples 100 --max-steps 20 --mbt --seed 117404760741552",
+      "events": [
+        "retainRevision",
+        "place"
+      ],
+      "goals": [
+        {
+          "name": "sometimesFeatured",
+          "reached": true
+        },
+        {
+          "name": "sometimesReturnedToCommunity",
+          "reached": true
+        }
+      ]
+    },
+    {
+      "unit": "frontend__projections",
+      "step": "step",
+      "passed": true,
+      "replay": true,
+      "traces": 30,
+      "command": "seed 66234069530652; to simulate again: pnpm exec quint run gen/frontend__projections.run.qnt --main frontend__projections_run --step step --invariant inv --max-samples 100 --max-steps 20 --mbt --seed 66234069530652",
+      "events": [],
+      "goals": []
+    },
+    {
+      "unit": "frontend__projections",
+      "step": "probe",
+      "passed": true,
+      "replay": true,
+      "traces": 30,
+      "command": "seed 229726220297094; to simulate again: pnpm exec quint run gen/frontend__projections.run.qnt --main frontend__projections_run --step probe --invariant inv --max-samples 100 --max-steps 20 --mbt --seed 229726220297094",
+      "events": [],
+      "goals": []
+    },
+    {
+      "unit": "frontend__presentation",
+      "step": "step",
+      "passed": true,
+      "replay": true,
+      "traces": 30,
+      "command": "seed 135768772945481; to simulate again: pnpm exec quint run gen/frontend__presentation.run.qnt --main frontend__presentation_run --step step --invariant inv --max-samples 100 --max-steps 20 --mbt --seed 135768772945481",
+      "events": [],
+      "goals": []
+    },
+    {
+      "unit": "frontend__presentation",
+      "step": "probe",
+      "passed": true,
+      "replay": true,
+      "traces": 30,
+      "command": "seed 176175960458921; to simulate again: pnpm exec quint run gen/frontend__presentation.run.qnt --main frontend__presentation_run --step probe --invariant inv --max-samples 100 --max-steps 20 --mbt --seed 176175960458921",
+      "events": [],
+      "goals": []
+    }
+  ],
+  "proofs": [
+    {
+      "unit": "backend__listing.ts",
+      "total": 15,
+      "unproved": [],
+      "errors": [],
+      "exhausted": [],
+      "log": "formal/validation/journeys/final-coverage-v2-backend__listing.ts.log",
+      "spec": "spec/backend/listing.md",
+      "sourceSha256": "7e9d19789cbd1e89800102ba4bf79c233a3297c0eab1ada584ef1d7dfa3b8a27",
+      "sourceCurrent": true,
+      "status": "passed"
+    },
+    {
+      "unit": "frontend__presentation.ts",
+      "total": 11,
+      "unproved": [],
+      "errors": [],
+      "exhausted": [],
+      "log": "formal/validation/journeys/final-coverage-v2-frontend__presentation.ts.log",
+      "spec": "spec/frontend/presentation.md",
+      "sourceSha256": "adf1e83e8aee95257b12b5316dfeaef0d5c7fd74cb017b9c1eea50b03fcf7952",
+      "sourceCurrent": false,
+      "status": "passed"
+    },
+    {
+      "unit": "frontend__projections.ts",
+      "total": 12,
+      "unproved": [],
+      "errors": [],
+      "exhausted": [],
+      "log": "formal/validation/journeys/final-coverage-v2-frontend__projections.ts.log",
+      "spec": "spec/frontend/projections.md",
+      "sourceSha256": "635399e7681905c91017d927d9df583af7126fa6a655399a76cab04a3aa612c6",
+      "sourceCurrent": true,
+      "status": "passed"
+    }
+  ],
+  "status": "complete",
+  "meaning": "Listing and projections are current. The pre-beacon presentation snapshot is historical; current presentation evidence is in presentation-final.json."
+}

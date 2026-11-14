@@ -1,0 +1,35 @@
+[
+  {
+    "unit": "security__evidence.ts",
+    "total": 54,
+    "unproved": [],
+    "errors": [],
+    "exhausted": [],
+    "source": "spec/security/evidence.md",
+    "sourceSha256": "4199c84db9035505ecad7a69f2d0c63d2df4e642eb368673995b17e708fa755a",
+    "proofFile": "spec/security/evidence.proof.dfy",
+    "proofSha256": "4e68b3fbe63f32053cef29ad3f2bcde207bdb5409f04b1104c9c4c5580642bf7"
+  },
+  {
+    "unit": "security__cases.ts",
+    "total": 130,
+    "unproved": [],
+    "errors": [],
+    "exhausted": [],
+    "source": "spec/security/cases.md",
+    "sourceSha256": "3c1ce2f2bab10141be7518785f3c6abaff1ef8f387d08922a12c79ef33d58fb7",
+    "proofFile": "spec/security/cases.proof.dfy",
+    "proofSha256": "86e36cbaf0428605167ff1a23470132b42d5a80ff2ce0bc1e46f29d344ae436d"
+  },
+  {
+    "unit": "security__enforcement.ts",
+    "total": 146,
+    "unproved": [],
+    "errors": [],
+    "exhausted": [],
+    "source": "spec/security/enforcement.md",
+    "sourceSha256": "f20b596e97a434445c98e45cc71b220cb2711a2c22755ff63ad5e12f30ae809b",
+    "proofFile": "spec/security/enforcement.proof.dfy",
+    "proofSha256": "d2746f4084622de405f9b16563c55e53fa610cb1fb49b824f30e7d05137f0a06"
+  }
+]

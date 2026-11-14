@@ -1,0 +1,57 @@
+{
+  "source": "/Users/shawwalters/.codex/worktrees/slop-vibestack-spec/slopdotcash",
+  "scratch": "/tmp/slop-final-coverage-check",
+  "sourceHashes": {
+    "spec/backend/projects.md": "6c833c593b60a6b649a8f5f09ded528805fa1bd585cb499b0a67e956cfc6f620",
+    "spec/backend/listing.md": "87d7622b8b7608dbf2df43f2b3ba870dd6207f63c38553d589751fe190e452cf",
+    "spec/settlement/money.md": "cb766a9b5b99f5509da5478ca15ecbe1c77a09127956d9524e7447c7d0939978",
+    "spec/frontend/projections.md": "635399e7681905c91017d927d9df583af7126fa6a655399a76cab04a3aa612c6"
+  },
+  "simulations": [
+    {
+      "unit": "backend__listing",
+      "step": "step",
+      "passed": true,
+      "replay": true,
+      "traces": 30,
+      "command": "seed 153721118152679; to simulate again: pnpm exec quint run gen/backend__listing.run.qnt --main backend__listing_run --step step --invariant inv --max-samples 100 --max-steps 20 --mbt --seed 153721118152679",
+      "events": [
+        "place"
+      ],
+      "goals": [
+        {
+          "name": "sometimesFeatured",
+          "reached": true
+        },
+        {
+          "name": "sometimesReturnedToCommunity",
+          "reached": true
+        }
+      ]
+    },
+    {
+      "unit": "backend__listing",
+      "step": "probe",
+      "passed": true,
+      "replay": true,
+      "traces": 30,
+      "command": "seed 157016256201923; to simulate again: pnpm exec quint run gen/backend__listing.run.qnt --main backend__listing_run --step probe --invariant inv --max-samples 100 --max-steps 20 --mbt --seed 157016256201923",
+      "events": [
+        "place"
+      ],
+      "goals": [
+        {
+          "name": "sometimesFeatured",
+          "reached": true
+        },
+        {
+          "name": "sometimesReturnedToCommunity",
+          "reached": true
+        }
+      ]
+    }
+  ],
+  "proofs": [],
+  "status": "superseded-incomplete",
+  "meaning": "An interrupted earlier snapshot. The completed current-source results are recorded in final-coverage-v2.json and presentation-final.json."
+}

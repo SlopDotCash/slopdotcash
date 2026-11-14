@@ -1,18 +1,9 @@
 solver: Z3 4.15.4 (/opt/homebrew/Cellar/z3/4.15.4/bin/z3)
-Generated: /private/tmp/slop-projections-proof-complete/gen/proof/frontend__projections/frontend__projections.dfy.gen
-Created: /private/tmp/slop-projections-proof-complete/gen/proof/frontend__projections/frontend__projections.dfy
-Generated: /private/tmp/slop-projections-proof-complete/gen/proof/frontend__projections/frontend__projections.dfy.gen
-frontend__projections.dfy(212,0): Error: a postcondition could not be proved on this return path
-frontend__projections.dfy(211,58): Related location: this is the postcondition that could not be proved
+Generated: /private/tmp/slop-projections-proof-simplified/gen/proof/frontend__projections/frontend__projections.dfy.gen
+Created: /private/tmp/slop-projections-proof-simplified/gen/proof/frontend__projections/frontend__projections.dfy
+Generated: /private/tmp/slop-projections-proof-simplified/gen/proof/frontend__projections/frontend__projections.dfy.gen
 
-Dafny program verifier finished with 11 verified, 1 error
-
----- each definition with a failure, every assertion isolated ----
-frontend__projections.isolated.dfy(227,0): Error: a postcondition could not be proved on this return path
-frontend__projections.isolated.dfy(226,58): Related location: this is the postcondition that could not be proved
-
-Dafny program verifier finished with 0 verified, 1 error
-Results File: /private/tmp/slop-projections-proof-complete/gen/proof/frontend__projections/frontend__projections.isolated.csv
+Dafny program verifier finished with 12 verified, 0 errors
 
 ---- dafny audit ----
 DafnyStandardLibraries.dfy(15327,26): Warning: Omega: Declaration has explicit `{:axiom}` attribute. Possible mitigation: Provide a proof or test.

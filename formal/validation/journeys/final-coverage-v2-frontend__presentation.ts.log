@@ -1,0 +1,13 @@
+solver: Z3 4.15.4 (/opt/homebrew/Cellar/z3/4.15.4/bin/z3)
+Generated: /private/tmp/slop-final-coverage-v2/gen/proof/frontend__presentation/frontend__presentation.dfy.gen
+Created: /private/tmp/slop-final-coverage-v2/gen/proof/frontend__presentation/frontend__presentation.dfy
+WARNING: '===' compares non-primitive operands (array === array): structural equality in the proof, but reference equality when this TypeScript runs. Sound only if operands are primitives or a canonical (string/number) encoding; otherwise compare via an explicit structural equals.
+Generated: /private/tmp/slop-final-coverage-v2/gen/proof/frontend__presentation/frontend__presentation.dfy.gen
+WARNING: '===' compares non-primitive operands (array === array): structural equality in the proof, but reference equality when this TypeScript runs. Sound only if operands are primitives or a canonical (string/number) encoding; otherwise compare via an explicit structural equals.
+
+Dafny program verifier finished with 13 verified, 0 errors
+
+---- dafny audit ----
+Dafny auditor completed with 0 findings
+
+Dafny program verifier did not attempt verification

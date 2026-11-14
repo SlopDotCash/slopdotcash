@@ -1,0 +1,24 @@
+[
+  {
+    "unit": "operations__release.ts",
+    "total": 51,
+    "unproved": [],
+    "errors": [],
+    "exhausted": [],
+    "source": "spec/operations/release.md",
+    "sourceSha256": "16717364ec0c6219b4ff22e7cb98f03b92bbcf5153d53d5c95b4cf1053f79456",
+    "proofFile": null,
+    "proofSha256": null
+  },
+  {
+    "unit": "security__terms.ts",
+    "total": 5,
+    "unproved": [],
+    "errors": [],
+    "exhausted": [],
+    "source": "spec/security/terms.md",
+    "sourceSha256": "b39ba589fb34a5e49273cf682975f56835eccb6ed168240b1a53decb5d1920d8",
+    "proofFile": null,
+    "proofSha256": null
+  }
+]

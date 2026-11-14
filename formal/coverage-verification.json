@@ -1,0 +1,163 @@
+{
+  "status": "complete",
+  "scope": "Final frontend/backend coverage audit repairs; specification only.",
+  "rulesAdded": [
+    "Featured and Community placement remains independent of funding and derives visibility from the same immutable registry revision.",
+    "Public payment projections retain full-width asset base units.",
+    "Approved home, account and setup presentation behavior is explicit.",
+    "The approved production-only Cloudflare beacon excludes private navigation and cannot block a page."
+  ],
+  "selectedCurrentProofs": [
+    {
+      "unit": "backend__listing.ts",
+      "total": 15,
+      "unproved": [],
+      "errors": [],
+      "exhausted": [],
+      "log": "formal/validation/journeys/final-coverage-v2-backend__listing.ts.log",
+      "spec": "spec/backend/listing.md",
+      "sourceSha256": "7e9d19789cbd1e89800102ba4bf79c233a3297c0eab1ada584ef1d7dfa3b8a27",
+      "sourceCurrent": true,
+      "status": "passed",
+      "inputs": {
+        "spec/backend/listing.md": "7e9d19789cbd1e89800102ba4bf79c233a3297c0eab1ada584ef1d7dfa3b8a27",
+        "spec/backend/projects.md": "6c833c593b60a6b649a8f5f09ded528805fa1bd585cb499b0a67e956cfc6f620",
+        "spec/backend/projects.proof.dfy": "2ad927f7dfba22ee4002ca93b0ae149484bef68773b770a6a3e8ba084700ba19"
+      },
+      "proofFile": null,
+      "proofSha256": null,
+      "proofLibrarySha256": "4c9f8dcbd9918f7d4b282ad9531b4cf0096ea389c015149b1786d0fe4ebd8e29"
+    },
+    {
+      "unit": "frontend__projections.ts",
+      "total": 12,
+      "unproved": [],
+      "errors": [],
+      "exhausted": [],
+      "log": "formal/validation/journeys/final-coverage-v2-frontend__projections.ts.log",
+      "spec": "spec/frontend/projections.md",
+      "sourceSha256": "635399e7681905c91017d927d9df583af7126fa6a655399a76cab04a3aa612c6",
+      "sourceCurrent": true,
+      "status": "passed",
+      "inputs": {
+        "spec/frontend/projections.md": "635399e7681905c91017d927d9df583af7126fa6a655399a76cab04a3aa612c6",
+        "spec/settlement/money.md": "cb766a9b5b99f5509da5478ca15ecbe1c77a09127956d9524e7447c7d0939978",
+        "spec/settlement/money.proof.dfy": "4ef9c14a579f84b696a70b771d65213d81516ee9ee601470c4eb8243959ebc11"
+      },
+      "proofFile": null,
+      "proofSha256": null,
+      "proofLibrarySha256": "4c9f8dcbd9918f7d4b282ad9531b4cf0096ea389c015149b1786d0fe4ebd8e29"
+    },
+    {
+      "unit": "frontend__presentation.ts",
+      "total": 14,
+      "unproved": [],
+      "errors": [],
+      "exhausted": [],
+      "log": "formal/validation/journeys/presentation-final-frontend__presentation.ts.log",
+      "spec": "spec/frontend/presentation.md",
+      "sourceSha256": "f6da04af125a30565015f8dedaaaa6eff76a7597fa50346c5f3a94cd83b279bd",
+      "sourceCurrent": true,
+      "status": "passed",
+      "inputs": {
+        "spec/frontend/presentation.md": "f6da04af125a30565015f8dedaaaa6eff76a7597fa50346c5f3a94cd83b279bd",
+        "spec/frontend/requests.md": "90a50c604aed8998a34faa7222a9aae3043a8e924c36dbb08824a3af1b9f724a"
+      },
+      "proofFile": null,
+      "proofSha256": null,
+      "proofLibrarySha256": "4c9f8dcbd9918f7d4b282ad9531b4cf0096ea389c015149b1786d0fe4ebd8e29"
+    }
+  ],
+  "provedObligations": 41,
+  "simulations": [
+    {
+      "unit": "backend__listing",
+      "step": "step",
+      "passed": true,
+      "replay": true,
+      "traces": 30,
+      "command": "seed 75351968533339; to simulate again: pnpm exec quint run gen/backend__listing.run.qnt --main backend__listing_run --step step --invariant inv --max-samples 100 --max-steps 20 --mbt --seed 75351968533339",
+      "events": [
+        "place",
+        "retainRevision"
+      ],
+      "goals": [
+        {
+          "name": "sometimesFeatured",
+          "reached": true
+        },
+        {
+          "name": "sometimesReturnedToCommunity",
+          "reached": true
+        }
+      ]
+    },
+    {
+      "unit": "backend__listing",
+      "step": "probe",
+      "passed": true,
+      "replay": true,
+      "traces": 30,
+      "command": "seed 117404760741552; to simulate again: pnpm exec quint run gen/backend__listing.run.qnt --main backend__listing_run --step probe --invariant inv --max-samples 100 --max-steps 20 --mbt --seed 117404760741552",
+      "events": [
+        "retainRevision",
+        "place"
+      ],
+      "goals": [
+        {
+          "name": "sometimesFeatured",
+          "reached": true
+        },
+        {
+          "name": "sometimesReturnedToCommunity",
+          "reached": true
+        }
+      ]
+    },
+    {
+      "unit": "frontend__projections",
+      "step": "step",
+      "passed": true,
+      "replay": true,
+      "traces": 30,
+      "command": "seed 66234069530652; to simulate again: pnpm exec quint run gen/frontend__projections.run.qnt --main frontend__projections_run --step step --invariant inv --max-samples 100 --max-steps 20 --mbt --seed 66234069530652",
+      "events": [],
+      "goals": []
+    },
+    {
+      "unit": "frontend__projections",
+      "step": "probe",
+      "passed": true,
+      "replay": true,
+      "traces": 30,
+      "command": "seed 229726220297094; to simulate again: pnpm exec quint run gen/frontend__projections.run.qnt --main frontend__projections_run --step probe --invariant inv --max-samples 100 --max-steps 20 --mbt --seed 229726220297094",
+      "events": [],
+      "goals": []
+    },
+    {
+      "unit": "frontend__presentation",
+      "step": "step",
+      "passed": true,
+      "replay": true,
+      "traces": 30,
+      "command": "seed 15693174951124; to simulate again: pnpm exec quint run gen/frontend__presentation.run.qnt --main frontend__presentation_run --step step --invariant inv --max-samples 100 --max-steps 20 --mbt --seed 15693174951124",
+      "events": [],
+      "goals": []
+    },
+    {
+      "unit": "frontend__presentation",
+      "step": "probe",
+      "passed": true,
+      "replay": true,
+      "traces": 30,
+      "command": "seed 33097184137650; to simulate again: pnpm exec quint run gen/frontend__presentation.run.qnt --main frontend__presentation_run --step probe --invariant inv --max-samples 100 --max-steps 20 --mbt --seed 33097184137650",
+      "events": [],
+      "goals": []
+    }
+  ],
+  "reports": [
+    "formal/validation/journeys/final-coverage-v2.json",
+    "formal/validation/journeys/presentation-final.json"
+  ],
+  "meaning": "All 41 focused obligations proved, with seeded simulation and generated TypeScript replay. No rendered UI, live provider, database, or application conformance was run."
+}

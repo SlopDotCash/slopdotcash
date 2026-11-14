@@ -1,0 +1,46 @@
+{
+  "source": "/Users/shawwalters/.codex/worktrees/slop-vibestack-spec/slopdotcash",
+  "scratch": "/tmp/slop-presentation-final",
+  "sourceHashes": {
+    "spec/frontend/requests.md": "90a50c604aed8998a34faa7222a9aae3043a8e924c36dbb08824a3af1b9f724a",
+    "spec/frontend/presentation.md": "f6da04af125a30565015f8dedaaaa6eff76a7597fa50346c5f3a94cd83b279bd"
+  },
+  "simulations": [
+    {
+      "unit": "frontend__presentation",
+      "step": "step",
+      "passed": true,
+      "replay": true,
+      "traces": 30,
+      "command": "seed 15693174951124; to simulate again: pnpm exec quint run gen/frontend__presentation.run.qnt --main frontend__presentation_run --step step --invariant inv --max-samples 100 --max-steps 20 --mbt --seed 15693174951124",
+      "events": [],
+      "goals": []
+    },
+    {
+      "unit": "frontend__presentation",
+      "step": "probe",
+      "passed": true,
+      "replay": true,
+      "traces": 30,
+      "command": "seed 33097184137650; to simulate again: pnpm exec quint run gen/frontend__presentation.run.qnt --main frontend__presentation_run --step probe --invariant inv --max-samples 100 --max-steps 20 --mbt --seed 33097184137650",
+      "events": [],
+      "goals": []
+    }
+  ],
+  "proofs": [
+    {
+      "unit": "frontend__presentation.ts",
+      "total": 14,
+      "unproved": [],
+      "errors": [],
+      "exhausted": [],
+      "log": "formal/validation/journeys/presentation-final-frontend__presentation.ts.log",
+      "spec": "spec/frontend/presentation.md",
+      "sourceSha256": "f6da04af125a30565015f8dedaaaa6eff76a7597fa50346c5f3a94cd83b279bd",
+      "sourceCurrent": true,
+      "status": "passed"
+    }
+  ],
+  "status": "complete",
+  "meaning": "Final current presentation rules including the production-only private-safe beacon."
+}

@@ -27,17 +27,19 @@
     {
       "unit": "backend.ts",
       "spec": "spec/backend/index.md",
-      "sourceSha256": "e867d29fdcd91494fdffc3cf364434cdee902bf56dde1bc7edd305b075002b4f",
+      "sourceSha256": "fc9beb4a1efa2320d74decddbf7031a51f58974117d075b40bb6c66a3367871f",
       "inputs": {
-        "spec/backend/index.md": "e867d29fdcd91494fdffc3cf364434cdee902bf56dde1bc7edd305b075002b4f"
+        "spec/backend/index.md": "fc9beb4a1efa2320d74decddbf7031a51f58974117d075b40bb6c66a3367871f"
       },
       "total": 0,
       "unproved": [],
       "errors": [],
       "exhausted": [],
       "sourceCurrent": true,
-      "status": "passed",
-      "log": "formal/validation/journeys/backend.proof.log"
+      "status": "navigation-only",
+      "log": "formal/validation/journeys/backend.proof.log",
+      "previousNavigationSourceSha256": "e867d29fdcd91494fdffc3cf364434cdee902bf56dde1bc7edd305b075002b4f",
+      "meaning": "No Quint declarations or proof obligations. Current navigation links were reviewed; the retained zero-obligation log belongs to the prior navigation text."
     },
     {
       "unit": "backend__accounts.ts",
@@ -170,13 +172,15 @@
       "errors": [],
       "exhausted": [],
       "spec": "spec/frontend/index.md",
-      "sourceSha256": "c3d3760150e87208567105ab824626e5b8804c7964343235445dcd710e271930",
+      "sourceSha256": "1f0b60c3adb6c339c39aab294cc76293175e6ac038421caf4bb673ef720cea3d",
       "inputs": {
-        "spec/frontend/index.md": "c3d3760150e87208567105ab824626e5b8804c7964343235445dcd710e271930"
+        "spec/frontend/index.md": "1f0b60c3adb6c339c39aab294cc76293175e6ac038421caf4bb673ef720cea3d"
       },
       "sourceCurrent": true,
-      "status": "passed",
-      "log": "formal/validation/journeys/frontend.proof.log"
+      "status": "navigation-only",
+      "log": "formal/validation/journeys/frontend.proof.log",
+      "previousNavigationSourceSha256": "c3d3760150e87208567105ab824626e5b8804c7964343235445dcd710e271930",
+      "meaning": "No Quint declarations or proof obligations. Current navigation links were reviewed; the retained zero-obligation log belongs to the prior navigation text."
     },
     {
       "unit": "frontend__drafts.ts",
@@ -211,19 +215,22 @@
     {
       "unit": "frontend__projections.ts",
       "total": 12,
-      "unproved": [
-        "lawLifetimeIncludesEveryPeriod: (lawLifetimeIncludesEveryPeriod(entries, actor) == true)"
-      ],
+      "unproved": [],
       "errors": [],
       "exhausted": [],
+      "log": "formal/validation/journeys/final-coverage-v2-frontend__projections.ts.log",
       "spec": "spec/frontend/projections.md",
-      "sourceSha256": "fb1b0325e3bf498bbed770ef6bd9e30efd947f3ee4162a12a1f989898262f4c6",
+      "sourceSha256": "635399e7681905c91017d927d9df583af7126fa6a655399a76cab04a3aa612c6",
+      "sourceCurrent": true,
+      "status": "passed",
       "inputs": {
-        "spec/frontend/projections.md": "fb1b0325e3bf498bbed770ef6bd9e30efd947f3ee4162a12a1f989898262f4c6"
+        "spec/frontend/projections.md": "635399e7681905c91017d927d9df583af7126fa6a655399a76cab04a3aa612c6",
+        "spec/settlement/money.md": "cb766a9b5b99f5509da5478ca15ecbe1c77a09127956d9524e7447c7d0939978",
+        "spec/settlement/money.proof.dfy": "4ef9c14a579f84b696a70b771d65213d81516ee9ee601470c4eb8243959ebc11"
       },
-      "sourceCurrent": false,
-      "status": "not-proved",
-      "log": "formal/validation/journeys/frontend__projections.proof.log"
+      "proofFile": null,
+      "proofSha256": null,
+      "proofLibrarySha256": "4c9f8dcbd9918f7d4b282ad9531b4cf0096ea389c015149b1786d0fe4ebd8e29"
     },
     {
       "unit": "frontend__requests.ts",
@@ -365,6 +372,84 @@
       "sourceCurrent": true,
       "status": "passed",
       "log": "formal/validation/journeys/projectComposition.proof.log"
+    },
+    {
+      "unit": "backend__listing.ts",
+      "total": 15,
+      "unproved": [],
+      "errors": [],
+      "exhausted": [],
+      "log": "formal/validation/journeys/final-coverage-v2-backend__listing.ts.log",
+      "spec": "spec/backend/listing.md",
+      "sourceSha256": "7e9d19789cbd1e89800102ba4bf79c233a3297c0eab1ada584ef1d7dfa3b8a27",
+      "sourceCurrent": true,
+      "status": "passed",
+      "inputs": {
+        "spec/backend/listing.md": "7e9d19789cbd1e89800102ba4bf79c233a3297c0eab1ada584ef1d7dfa3b8a27",
+        "spec/backend/projects.md": "6c833c593b60a6b649a8f5f09ded528805fa1bd585cb499b0a67e956cfc6f620",
+        "spec/backend/projects.proof.dfy": "2ad927f7dfba22ee4002ca93b0ae149484bef68773b770a6a3e8ba084700ba19"
+      },
+      "proofFile": null,
+      "proofSha256": null,
+      "proofLibrarySha256": "4c9f8dcbd9918f7d4b282ad9531b4cf0096ea389c015149b1786d0fe4ebd8e29"
+    },
+    {
+      "unit": "frontend__presentation.ts",
+      "total": 14,
+      "unproved": [],
+      "errors": [],
+      "exhausted": [],
+      "log": "formal/validation/journeys/presentation-final-frontend__presentation.ts.log",
+      "spec": "spec/frontend/presentation.md",
+      "sourceSha256": "f6da04af125a30565015f8dedaaaa6eff76a7597fa50346c5f3a94cd83b279bd",
+      "sourceCurrent": true,
+      "status": "passed",
+      "inputs": {
+        "spec/frontend/presentation.md": "f6da04af125a30565015f8dedaaaa6eff76a7597fa50346c5f3a94cd83b279bd",
+        "spec/frontend/requests.md": "90a50c604aed8998a34faa7222a9aae3043a8e924c36dbb08824a3af1b9f724a"
+      },
+      "proofFile": null,
+      "proofSha256": null,
+      "proofLibrarySha256": "4c9f8dcbd9918f7d4b282ad9531b4cf0096ea389c015149b1786d0fe4ebd8e29"
     }
-  ]
+  ],
+  "historicalRuns": [
+    {
+      "unit": "frontend__projections.ts",
+      "total": 12,
+      "unproved": [],
+      "errors": [],
+      "exhausted": [],
+      "spec": "spec/frontend/projections.md",
+      "sourceSha256": "9684cfdbd635503ad7e1fed7e644bc6d8ca2fca8ba1b3ee7d39f985127760409",
+      "inputs": {
+        "spec/frontend/projections.md": "9684cfdbd635503ad7e1fed7e644bc6d8ca2fca8ba1b3ee7d39f985127760409"
+      },
+      "sourceCurrent": false,
+      "status": "superseded",
+      "log": "formal/validation/journeys/frontend__projections.proof.log",
+      "supersededBy": "formal/validation/journeys/final-coverage-v2-frontend__projections.ts.log"
+    },
+    {
+      "unit": "frontend__presentation.ts",
+      "total": 11,
+      "unproved": [],
+      "errors": [],
+      "exhausted": [],
+      "log": "formal/validation/journeys/final-coverage-v2-frontend__presentation.ts.log",
+      "spec": "spec/frontend/presentation.md",
+      "sourceSha256": "adf1e83e8aee95257b12b5316dfeaef0d5c7fd74cb017b9c1eea50b03fcf7952",
+      "sourceCurrent": false,
+      "status": "superseded",
+      "supersededBy": "formal/validation/journeys/presentation-final.json"
+    }
+  ],
+  "currentSummary": {
+    "uniqueProofUnits": 23,
+    "provedObligations": 758,
+    "unproved": 0,
+    "errors": 0,
+    "staleUnits": [],
+    "historicalRunsExcluded": true
+  }
 }
