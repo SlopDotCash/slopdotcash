@@ -1,6 +1,11 @@
 name: State model verification
 
 on:
+  # Every model, every night, on the default branch: a manual release may skip
+  # the proof stages (PRD section 12, STATE-05), so this run does not depend
+  # on any release.
+  schedule:
+    - cron: "41 4 * * *"
   workflow_call:
     inputs:
       models:

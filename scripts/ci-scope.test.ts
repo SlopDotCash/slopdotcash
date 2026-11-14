@@ -161,6 +161,65 @@ function git(cwd: string, ...args: string[]) {
  * Runs the real selector for a contributor PR that changes `files` on a base
  * that already holds `baseFiles`.
  */
+/** Scope of a trusted run that has no pull-request file list. */
+function trustedScope(
+  eventName: string,
+  ref: string,
+  skipProofs: boolean,
+): Record<string, string> {
+  const directory = mkdtempSync(join(tmpdir(), "slop-trusted-scope-"));
+  try {
+    const event = join(directory, "event.json");
+    const output = join(directory, "output");
+    writeFileSync(event, JSON.stringify({ ref }));
+    execFileSync("node", [selector], {
+      cwd: directory,
+      env: {
+        ...process.env,
+        GITHUB_EVENT_NAME: eventName,
+        GITHUB_REF: ref,
+        GITHUB_EVENT_PATH: event,
+        GITHUB_OUTPUT: output,
+        SKIP_PROOFS: String(skipProofs),
+      },
+    });
+    return Object.fromEntries(
+      readFileSync(output, "utf8")
+        .trim()
+        .split("\n")
+        .map((line) => {
+          const separator = line.indexOf("=");
+          return [line.slice(0, separator), line.slice(separator + 1)];
+        }),
+    );
+  } finally {
+    rmSync(directory, { force: true, recursive: true });
+  }
+}
+
+test("a manual run with skip_proofs leaves out only the model and proof stages", () => {
+  const full = trustedScope("workflow_dispatch", "refs/heads/main", false);
+  expect(full.formal_models).toBe("all");
+  expect(full.lemmascript).toBe("true");
+  const skipped = trustedScope("workflow_dispatch", "refs/heads/main", true);
+  expect(skipped.formal_models).toBe("none");
+  expect(JSON.parse(skipped.formal_shards)).toEqual([1]);
+  expect(skipped.lemmascript).toBe("false");
+  // Every other gate is the one a complete manual run selects.
+  for (const key of ["browser_matrix", "installer", "sandbox", "evm", "solana"])
+    expect(skipped[key]).toBe(full[key]);
+  expect(skipped.installer).toBe("true");
+  expect(skipped.sandbox).toBe("true");
+});
+
+test("a push release cannot skip the model and proof stages", () => {
+  for (const ref of ["refs/heads/main", "refs/heads/development"]) {
+    const values = trustedScope("push", ref, true);
+    expect(values.formal_models).toBe("all");
+    expect(values.lemmascript).toBe("true");
+  }
+});
+
 function scopeFor(
   files: Record<string, string>,
   baseFiles: Record<string, string> = {},

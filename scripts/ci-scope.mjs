@@ -110,14 +110,21 @@ const installer =
 // changes. The formal and LemmaScript inventory checks run on every pull
 // request either way.
 const allProofs = !pr || full || promotion;
+// Operator exemption (PRD section 12, STATE-05): a manual run may set
+// skip_proofs. It then repeats neither the state models nor the LemmaScript
+// proofs; both inventory checks still run. No other event can set it.
+const skipProofs =
+  process.env.GITHUB_EVENT_NAME === "workflow_dispatch" &&
+  process.env.SKIP_PROOFS === "true";
 const changedFiles = new Set(files);
 const formalTools = changed(
   /^(\.github\/workflows\/formal\.yml|scripts\/(ci-scope|check-formal|formal-models|formal-report|run-e2e-phase|quint-[\w-]+)\.mjs|formal\/tlc(-safety-views)?\.json|package\.json|bun\.lock)$/u,
 );
 const modelName = (path) =>
   path.slice(path.lastIndexOf("/") + 1, -".qnt".length);
-const formalModels =
-  allProofs || formalTools
+const formalModels = skipProofs
+  ? "none"
+  : allProofs || formalTools
     ? "all"
     : (existsSync("formal/models") ? listModels(".") : [])
         .filter(
@@ -184,11 +191,12 @@ function proofInputs() {
   return seen;
 }
 const lemmascript =
-  allProofs ||
-  changed(
-    /^(\.github\/workflows\/lemmascript\.yml|scripts\/(ci-scope\.mjs|check-lemmascript\.mjs|lemmascript-[\w-]+\.mjs|run-e2e-phase\.mjs|setup-lemmascript\.sh)|lemmascript\.json|LemmaScript-files\.txt|package\.json|bun\.lock|tsconfig[^/]*\.json)$|^formal\/lemmascript\//u,
-  ) ||
-  [...proofInputs()].some((path) => changedFiles.has(path));
+  !skipProofs &&
+  (allProofs ||
+    changed(
+      /^(\.github\/workflows\/lemmascript\.yml|scripts\/(ci-scope\.mjs|check-lemmascript\.mjs|lemmascript-[\w-]+\.mjs|run-e2e-phase\.mjs|setup-lemmascript\.sh)|lemmascript\.json|LemmaScript-files\.txt|package\.json|bun\.lock|tsconfig[^/]*\.json)$|^formal\/lemmascript\//u,
+    ) ||
+    [...proofInputs()].some((path) => changedFiles.has(path)));
 for (const [key, value] of Object.entries({
   browser_matrix: JSON.stringify({ include: lanes }),
   formal_models: formalModels,
