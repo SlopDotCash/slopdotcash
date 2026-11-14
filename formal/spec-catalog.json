@@ -1154,7 +1154,7 @@
     },
     {
       "path": "spec/contributor/index.md",
-      "sha256": "1044fd5b87f01c2ba099b1fc9c1da9a57c4c38a21b29049cf53475efb52fd1f7",
+      "sha256": "a885fa2e55b25bf7e6ce910da324fcfc9de3fb12e39364f390099fd46e0810e4",
       "module": "contributor",
       "stories": [],
       "rules": [],
@@ -1187,6 +1187,10 @@
         {
           "target": "./runEvidence.md",
           "line": 13
+        },
+        {
+          "target": "./sessionExchange.md",
+          "line": 14
         }
       ]
     },
@@ -1494,6 +1498,122 @@
           "line": 8
         }
       ]
+    },
+    {
+      "path": "spec/contributor/sessionExchange.md",
+      "sha256": "1d167ce597dc319bf55fca6dd12512e2dd49c56c54ce37f64a7e65e1fefa90b2",
+      "module": "contributor__sessionExchange",
+      "stories": [
+        {
+          "heading": "Story: Exchange one fresh assertion for a private-use session",
+          "line": 13
+        },
+        {
+          "heading": "Story: Commit the actor- and request-keyed row before acknowledging it",
+          "line": 94
+        }
+      ],
+      "rules": [
+        {
+          "heading": "Story: Exchange one fresh assertion for a private-use session / A fresh invocation owns its browser handoff and each poll",
+          "line": 15,
+          "definitions": [
+            "ExchangePhase",
+            "PollResult",
+            "Outcome",
+            "RowStage",
+            "RunLookup",
+            "Exchange",
+            "noLookup",
+            "initial",
+            "complete",
+            "canBegin",
+            "begin",
+            "canObserveTime",
+            "observeTime",
+            "canAcceptStart",
+            "acceptStart",
+            "canReceiveStart",
+            "receiveStart",
+            "canAuthorizeFlow",
+            "authorizeFlow",
+            "canWaitPoll",
+            "waitPoll",
+            "canAcceptPoll",
+            "acceptPoll",
+            "canReceivePoll",
+            "receivePoll"
+          ]
+        },
+        {
+          "heading": "Story: Exchange one fresh assertion for a private-use session / Assertion consumption survives signing errors and a lost session reply",
+          "line": 73,
+          "definitions": [
+            "canExchange",
+            "exchange",
+            "canReceiveBearer",
+            "receiveBearer",
+            "canAuthenticateCreate",
+            "authenticateCreate"
+          ]
+        },
+        {
+          "heading": "Story: Commit the actor- and request-keyed row before acknowledging it / A lost response preserves server registration without claiming local receipt",
+          "line": 96,
+          "definitions": [
+            "canCommitCreate",
+            "commitCreate",
+            "canReceiveCreate",
+            "receiveCreate",
+            "canInterrupt",
+            "interrupt",
+            "canTransportFails",
+            "transportFails",
+            "alwaysClock",
+            "alwaysActor",
+            "alwaysEvidenceOrder",
+            "alwaysReply",
+            "alwaysActiveInvocation",
+            "alwaysReady",
+            "stepInvocationAndClock",
+            "sometimesReady",
+            "sometimesLostButCommitted",
+            "sometimesConsumedWithoutBearer"
+          ]
+        },
+        {
+          "heading": "Story: Commit the actor- and request-keyed row before acknowledging it / Simulation uses representative deadlines and actor-scoped response outcomes",
+          "line": 137,
+          "definitions": [
+            "attemptValues",
+            "keyValues",
+            "actorValues",
+            "deadlineValues",
+            "delayValues",
+            "retryValues",
+            "timeValues",
+            "assertionUntilValues",
+            "bearerUntilValues",
+            "responseValues",
+            "weight_begin",
+            "weight_acceptStart",
+            "weight_receiveStart",
+            "weight_authorizeFlow",
+            "weight_receivePoll",
+            "weight_exchange",
+            "weight_receiveBearer",
+            "weight_authenticateCreate",
+            "weight_commitCreate",
+            "weight_interrupt",
+            "weight_transportFails",
+            "weight_receiveCreate",
+            "weight_waitPoll",
+            "weight_acceptPoll"
+          ]
+        }
+      ],
+      "imports": [],
+      "references": []
     },
     {
       "path": "spec/contributor/skillAuthority.md",

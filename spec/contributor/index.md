@@ -11,3 +11,4 @@ and automation eligibility remain separate from submission.
 - [Optional contribution evidence](./evidence.md)
 - [Durable local contributor receipts](./localReceipt.md)
 - [Private trace retries and PR-opened evidence](./runEvidence.md)
+- [Contributor session exchange](./sessionExchange.md)
