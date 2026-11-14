@@ -1,0 +1,149 @@
+{
+  "unit": "settlement__vault.ts",
+  "total": 42,
+  "unproved": [
+    "deposit: (inv(v) ==> canDeposit(v, amount, asset, receipt, finalized) ==> alwaysConserved(deposit(v, amount, asset, receipt, finalized)))",
+    "reserve: (inv(v) ==> canReserve(v, amount, recipient, obligation) ==> alwaysConserved(reserve(v, amount, recipient, obligation)))",
+    "reserve: (inv(v) ==> canReserve(v, amount, recipient, obligation) ==> alwaysReservationMatches(reserve(v, amount, recipient, obligation)))",
+    "reserve: (inv(v) ==> canReserve(v, amount, recipient, obligation) ==> alwaysReservationTotal(reserve(v, amount, recipient, obligation)))",
+    "payReserved: (inv(v) ==> canPayReserved(v, amount, vault, asset, recipient, obligation, receipt, finalizedHeight) ==> alwaysSettlementTotal(payReserved(v, amount, vault, asset, recipient, obligation, receipt, finalizedHeight)))",
+    "payReserved: (inv(v) ==> canPayReserved(v, amount, vault, asset, recipient, obligation, receipt, finalizedHeight) ==> alwaysConserved(payReserved(v, amount, vault, asset, recipient, obligation, receipt, finalizedHeight)))",
+    "payReserved: (inv(v) ==> canPayReserved(v, amount, vault, asset, recipient, obligation, receipt, finalizedHeight) ==> alwaysReservationMatches(payReserved(v, amount, vault, asset, recipient, obligation, receipt, finalizedHeight)))",
+    "payReserved: (inv(v) ==> canPayReserved(v, amount, vault, asset, recipient, obligation, receipt, finalizedHeight) ==> alwaysReservationTotal(payReserved(v, amount, vault, asset, recipient, obligation, receipt, finalizedHeight)))",
+    "refund: (inv(v) ==> canRefund(v, amount, destination, receipt, finalizedHeight, by_) ==> alwaysConserved(refund(v, amount, destination, receipt, finalizedHeight, by_)))",
+    "step: inv(step(current, event, by_))"
+  ],
+  "errors": [],
+  "exhausted": [
+    "payReserved: (inv(v) ==> canPayReserved(v, amount, vault, asset, recipient, obligation, receipt, finalizedHeight) ==> alwaysSettlementTotal(payReserved(v, amount, vault, asset, recipient, obligation, receipt, finalizedHeight)))"
+  ],
+  "resting": {
+    "step: inv(step(current, event, by_))": "deposit: (inv(v) ==> canDeposit(v, amount, asset, receipt, finalized) ==> alwaysConserved(deposit(v, amount, asset, receipt, finalized)))"
+  },
+  "sha256": {
+    "spec/settlement/vault.md": "b173bd0c43b63a7a2695598ea469c3cb59080c2ca5d86401733460fb751525fb",
+    "spec/settlement/money.md": "232b15ff434a1ea7aaaf385aeac05d0fad805b512ba7e0dba64fb6bd2819cbb4",
+    "spec/settlement/vault.proof.dfy": "ad816457eb97cdac0f3a5fc8b8580857c60184b3810d8842727cc5a771e2919f"
+  },
+  "generated": {
+    "typescript": "48edc20dd3bfbd31a7e09988ce9beefcd100564382ae61dd2b191d8a09e72478",
+    "dafny": "cb4d531f30a3104250b54845fdb86b4a3bfdfaececa84907048362c88da506d0"
+  },
+  "offered": [
+    {
+      "fn": "settlement__money_lawEqualReflexive",
+      "proved": [
+        true
+      ]
+    },
+    {
+      "fn": "settlement__money_lawZeroOrder",
+      "proved": [
+        true
+      ]
+    },
+    {
+      "fn": "settlement__money_lawEqualSymmetric",
+      "proved": [
+        true
+      ]
+    },
+    {
+      "fn": "settlement__money_lawEqualOrder",
+      "proved": [
+        true
+      ]
+    },
+    {
+      "fn": "settlement__money_lawEqualSubstitution",
+      "proved": [
+        true
+      ]
+    },
+    {
+      "fn": "settlement__money_lawZeroIdentity",
+      "proved": [
+        true
+      ]
+    },
+    {
+      "fn": "settlement__money_lawAdditionValid",
+      "proved": [
+        true
+      ]
+    },
+    {
+      "fn": "settlement__money_lawSubtractionValid",
+      "proved": [
+        true
+      ]
+    },
+    {
+      "fn": "settlement__money_lawAddCommutative",
+      "proved": [
+        true
+      ]
+    },
+    {
+      "fn": "settlement__money_lawPrivateConservation",
+      "proved": [
+        true
+      ]
+    },
+    {
+      "fn": "settlement__money_lawOrdinaryConservation",
+      "proved": [
+        true
+      ]
+    },
+    {
+      "fn": "settlement__money_lawMultiplyOne",
+      "proved": [
+        true
+      ]
+    },
+    {
+      "fn": "settlement__money_lawDivisionRemainder",
+      "proved": [
+        false
+      ]
+    },
+    {
+      "fn": "settlement__money_lawDivisionReconstructs",
+      "proved": [
+        false
+      ]
+    },
+    {
+      "fn": "settlement__money_lawFullPrivateConservation",
+      "proved": [
+        false
+      ]
+    },
+    {
+      "fn": "settlement__money_lawFullOrdinaryConservation",
+      "proved": [
+        false
+      ]
+    }
+  ],
+  "checkedDependencies": {
+    "settlement__money.ts": {
+      "sourceHashes": {
+        "spec/settlement/money.md": "232b15ff434a1ea7aaaf385aeac05d0fad805b512ba7e0dba64fb6bd2819cbb4",
+        "spec/settlement/money.proof.dfy": "1cb4e9420913011c8c88b3cd6ad3c1498e0d27d8fe561c05d768f377513d5c47"
+      },
+      "generatedDafnySha256": "0427fcdb41c3fad2a31766a5fe285324f272707c1683f16f99554c2bfeaca321",
+      "sourceCommit": "500125a01",
+      "proofRecord": "formal/validation/active-proof/money-order/verification.json"
+    }
+  },
+  "log": "formal/validation/active-proof/settlement/vault-reservation-effects.log",
+  "toolchain": {
+    "node": "v26.13.1",
+    "dafny": "4.11.0",
+    "z3": "4.15.4"
+  },
+  "proofLibrarySha256": "4c9f8dcbd9918f7d4b282ad9531b4cf0096ea389c015149b1786d0fe4ebd8e29",
+  "proved": 32
+}
