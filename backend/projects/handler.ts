@@ -109,6 +109,7 @@ import {
 } from "./github-lookup";
 import {
   type AccessCheck,
+  currentRepositoryPath,
   projectSetupStatus,
   type RepositoryAccessReader,
   readListedRepositoryAccess,
@@ -1025,7 +1026,7 @@ async function currentAuthority(
     manifest,
     actor,
   );
-  const authority = setupAuthority(access, actor, manifest.repositories[0].id);
+  const authority = setupAuthority(access, actor, manifest.repositories[0]);
   if (authority.state !== "verified") return { authority, access };
   let control: RepositoryControl;
   try {
@@ -1425,7 +1426,7 @@ async function ownerVault(
     fail(
       403,
       "vault_authority_required",
-      `Only the project steward or an admin of ${current.manifest.repositories[0].id} can set up the project vault.`,
+      `Only the project steward or an admin of ${currentRepositoryPath(current.manifest.repositories[0])} can set up the project vault.`,
     );
   if (!deps.vaultSetup)
     fail(

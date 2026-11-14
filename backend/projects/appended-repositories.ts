@@ -208,7 +208,7 @@ async function verifyOne(
     { ...entry, githubId: entry.githubId },
     actor,
   );
-  const authority = setupAuthority(access, actor, entry.id);
+  const authority = setupAuthority(access, actor, entry);
   if (authority.state === "retry")
     fail(503, "github_unavailable", authority.message);
   if (access.state === "read" && access.access.installation !== "installed")
