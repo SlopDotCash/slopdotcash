@@ -71,7 +71,109 @@
       "withdrawn direct report",
       "credited non-author",
       "unrelated direct GHSA"
-    ]
+    ],
+    "quint": {
+      "passed": true,
+      "kind": "Quint exact transition values and blocked inputs compared with generated TypeScript",
+      "cases": 12,
+      "comparisonSteps": 111,
+      "stdout": "\n  security__forwarding_directed\n    ok journey1Test passed 1 test(s)\n    ok journey2Test passed 1 test(s)\n    ok journey3Test passed 1 test(s)\n    ok journey4Test passed 1 test(s)\n    ok journey5Test passed 1 test(s)\n    ok journey6Test passed 1 test(s)\n    ok journey7Test passed 1 test(s)\n    ok journey8Test passed 1 test(s)\n    ok journey9Test passed 1 test(s)\n    ok journey10Test passed 1 test(s)\n    ok journey11Test passed 1 test(s)\n    ok journey12Test passed 1 test(s)\n\n  12 passing (3242ms)\n",
+      "stderr": ""
+    }
   },
-  "boundary": "The saved-report worker rules consume authenticated grant validation, exact response parsing and committed D1 evidence. The legacy direct path is modeled as receipt fact classification. Real provider behavior and adapters remain integration obligations."
+  "boundary": "The saved-report worker rules consume authenticated grant validation, exact response parsing and committed D1 evidence. The legacy direct path is modeled as receipt fact classification. Real provider behavior and adapters remain integration obligations.",
+  "simulation": [
+    {
+      "unit": "security__forwarding",
+      "step": "step",
+      "passed": true,
+      "replay": true,
+      "traces": 30,
+      "command": "seed 127411024779757; to simulate again: pnpm exec quint run gen/security__forwarding.run.qnt --main security__forwarding_run --step step --invariant inv --max-samples 64 --max-steps 12 --mbt --seed 127411024779757",
+      "events": [
+        "claimSend",
+        "recordClaimRead",
+        "startPost",
+        "recordPostResult",
+        "holdLateCopy",
+        "reconcile",
+        "readReceipt",
+        "markInterrupted",
+        "loseReceiptReply",
+        "recordCreated",
+        "expireVerification"
+      ],
+      "goals": [
+        {
+          "name": "sometimesRetryableDraft",
+          "reached": true
+        },
+        {
+          "name": "sometimesUncertain",
+          "reached": true
+        },
+        {
+          "name": "sometimesSubmitted",
+          "reached": true
+        },
+        {
+          "name": "sometimesDuplicates",
+          "reached": true
+        },
+        {
+          "name": "sometimesContactsUnavailable",
+          "reached": true
+        },
+        {
+          "name": "sometimesReceiptRecovered",
+          "reached": true
+        }
+      ]
+    },
+    {
+      "unit": "security__forwarding",
+      "step": "probe",
+      "passed": true,
+      "replay": true,
+      "traces": 30,
+      "command": "seed 8405607239495; to simulate again: pnpm exec quint run gen/security__forwarding.run.qnt --main security__forwarding_run --step probe --invariant inv --max-samples 64 --max-steps 12 --mbt --seed 8405607239495",
+      "events": [
+        "claimSend",
+        "recordClaimRead",
+        "startPost",
+        "recordPostResult",
+        "holdLateCopy",
+        "recordCreated",
+        "readReceipt",
+        "reconcile",
+        "markInterrupted"
+      ],
+      "goals": [
+        {
+          "name": "sometimesRetryableDraft",
+          "reached": true
+        },
+        {
+          "name": "sometimesUncertain",
+          "reached": true
+        },
+        {
+          "name": "sometimesSubmitted",
+          "reached": true
+        },
+        {
+          "name": "sometimesDuplicates",
+          "reached": true
+        },
+        {
+          "name": "sometimesContactsUnavailable",
+          "reached": true
+        },
+        {
+          "name": "sometimesReceiptRecovered",
+          "reached": false
+        }
+      ]
+    }
+  ]
 }
