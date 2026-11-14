@@ -231,8 +231,11 @@ page view traffic to the site's own origin.
 - Contributor command completion preserves the first failure through both
   cleanup boundaries. Skill authority has bounded transport retries and
   separate static, contributor and reviewer admission. All 50 obligations
-  across the two units proved.
-  [Command proof](validation/source-coverage/command-completion.json) · [Skill authority proof](validation/source-coverage/skill-authority.json)
+  across the two units proved. Local receipt completion preserves the first
+  valid writer. A lost optional trace response preserves the original digest,
+  and PR-opened evidence uses its own authenticated run. Those two units
+  discharged all 113 obligations.
+  [Command proof](validation/source-coverage/command-completion.json) · [Skill authority proof](validation/source-coverage/skill-authority.json) · [Local receipt](validation/source-coverage/local-receipt.json) · [Run evidence](validation/source-coverage/run-evidence.json)
 - Report details clear on account changes and support independently mounted
   siblings. Snapshot consumers cannot detach another lease or have a stale
   response overwrite a newer request. All 67 obligations proved.

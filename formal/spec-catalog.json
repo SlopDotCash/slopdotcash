@@ -1154,7 +1154,7 @@
     },
     {
       "path": "spec/contributor/index.md",
-      "sha256": "e23f6a646fc5ee932a2559b13d8845a502c819973fccb16202e621fa6617376f",
+      "sha256": "1044fd5b87f01c2ba099b1fc9c1da9a57c4c38a21b29049cf53475efb52fd1f7",
       "module": "contributor",
       "stories": [],
       "rules": [],
@@ -1179,36 +1179,45 @@
         {
           "target": "./evidence.md",
           "line": 11
+        },
+        {
+          "target": "./localReceipt.md",
+          "line": 12
+        },
+        {
+          "target": "./runEvidence.md",
+          "line": 13
         }
       ]
     },
     {
       "path": "spec/contributor/installation.md",
-      "sha256": "7b233a3716e02027c4dd5b10d01064004176ae69da1ef27fa94f70e64418df47",
+      "sha256": "85af4397d14f1eba4c0420a17a08a00c2739dadac8bf8af3776f65c6f5c5519a",
       "module": "contributor__installation",
       "stories": [
         {
           "heading": "Story: Install, update, and roll back a verified project skill",
-          "line": 10
+          "line": 12
         }
       ],
       "rules": [
         {
           "heading": "Story: Install, update, and roll back a verified project skill / Installation tracks verification, activation, and readback separately",
-          "line": 15,
+          "line": 17,
           "definitions": [
             "Version",
             "InstallPhase",
+            "InstallOutput",
+            "InstallError",
             "Installation",
             "initial",
-            "alwaysRevisionNonnegative",
-            "alwaysRetainedVersions",
-            "alwaysSelectedVersionValid"
+            "openAttempt",
+            "alwaysIdentities"
           ]
         },
         {
-          "heading": "Story: Install, update, and roll back a verified project skill / Only one living process can stage an allowed revision",
-          "line": 37,
+          "heading": "Story: Install, update, and roll back a verified project skill / A living process acquires the lock before staging an admissible revision",
+          "line": 46,
           "definitions": [
             "retainedPair",
             "canBegin",
@@ -1218,51 +1227,273 @@
           ]
         },
         {
-          "heading": "Story: Install, update, and roll back a verified project skill / Canonical bytes and approved D1 rendering must both match before retention",
-          "line": 60,
+          "heading": "Story: Install, update, and roll back a verified project skill / An exact unchanged release keeps the installed identity",
+          "line": 74,
           "definitions": [
             "canVerify",
             "verify",
+            "unchanged",
+            "afterWork",
+            "canRecordUnchanged",
+            "recordUnchanged",
+            "canRetain",
+            "retain"
+          ]
+        },
+        {
+          "heading": "Story: Install, update, and roll back a verified project skill / Atomic publication keeps the committed target through cleanup and readback failure",
+          "line": 103,
+          "definitions": [
             "canPrepareLink",
             "prepareLink",
             "canCommit",
             "commit",
             "canConfirm",
             "confirm",
-            "alwaysSuccessHasReadback",
-            "alwaysActiveRetained",
-            "alwaysCandidateRetained"
+            "canEmitActivation",
+            "emitActivation",
+            "canRecordFailure",
+            "recordFailure"
           ]
         },
         {
-          "heading": "Story: Install, update, and roll back a verified project skill / Failure, process death, and cleanup retain the committed version",
-          "line": 94,
+          "heading": "Story: Install, update, and roll back a verified project skill / Finish reports its first failure and leaves unrelated attempt artifacts alone",
+          "line": 133,
           "definitions": [
-            "canRecordFailure",
-            "recordFailure",
+            "canCleanup",
+            "cleanup",
+            "canFinish",
+            "finish",
             "canProcessDies",
             "processDies",
             "canRecoverProcess",
             "recoverProcess",
             "canAuthorizeLocal",
             "authorizeLocal",
+            "alwaysSuccessHasReadback",
+            "alwaysActiveRetained",
+            "alwaysCandidateVerified",
+            "alwaysCandidateRetained",
             "alwaysUncommittedRetainsActive",
+            "alwaysCleanupFacts",
+            "alwaysActivationOutput",
+            "alwaysPublishedStage",
+            "stepCommittedTarget",
             "sometimesInstalled",
             "sometimesLocalAuthorized",
-            "sometimesRecovered"
+            "sometimesRecovered",
+            "sometimesUnchanged",
+            "sometimesCommittedAndUnverified"
           ]
         },
         {
           "heading": "Story: Install, update, and roll back a verified project skill / Simulation samples exercise missing, matching and conflicting evidence",
-          "line": 122,
+          "line": 186,
           "definitions": [
             "revisionValues",
-            "templateValues"
+            "templateValues",
+            "viaValues",
+            "weight_begin",
+            "weight_download",
+            "weight_verify",
+            "weight_retain",
+            "weight_commit",
+            "weight_confirm",
+            "weight_finish"
           ]
         }
       ],
       "imports": [],
-      "references": []
+      "references": [
+        {
+          "target": "./skillAuthority.md",
+          "line": 5
+        }
+      ]
+    },
+    {
+      "path": "spec/contributor/localReceipt.md",
+      "sha256": "b14b7e28017c4c4c855295ce5d50865ac2f143ccb88813bc95405977dd7638d6",
+      "module": "contributor__localReceipt",
+      "stories": [
+        {
+          "heading": "Story: Publish the first valid receipt and recover a lost completion reply",
+          "line": 14
+        }
+      ],
+      "rules": [
+        {
+          "heading": "Story: Publish the first valid receipt and recover a lost completion reply / Prepare and validate the candidate before moving any durable completion",
+          "line": 16,
+          "definitions": [
+            "Capture",
+            "Finish",
+            "Exit",
+            "ReceiptFile",
+            "LocalReceipt",
+            "noCandidate",
+            "initial",
+            "canStart",
+            "start",
+            "canPrepareFinish",
+            "prepareFinish",
+            "validCandidate",
+            "canValidate",
+            "validate",
+            "canReject",
+            "reject"
+          ]
+        },
+        {
+          "heading": "Story: Publish the first valid receipt and recover a lost completion reply / Publication, temporary cleanup and active-file removal are separate outcomes",
+          "line": 48,
+          "definitions": [
+            "canStage",
+            "stage",
+            "canPublish",
+            "publish",
+            "canCompetingWriter",
+            "competingWriter",
+            "canCleanupTemporary",
+            "cleanupTemporary",
+            "canRemoveActive",
+            "removeActive",
+            "canFailBeforeCommit",
+            "failBeforeCommit",
+            "canReplayCompleted",
+            "replayCompleted",
+            "canObserveInvalidHistory",
+            "observeInvalidHistory",
+            "alwaysState",
+            "alwaysCandidate",
+            "alwaysCompleted",
+            "alwaysOptional",
+            "alwaysSuccess",
+            "stepFirstWriter",
+            "sometimesFinishedWithoutCapture",
+            "sometimesTemporaryCleanupFailed",
+            "sometimesInvalidHistory",
+            "sometimesRace"
+          ]
+        },
+        {
+          "heading": "Story: Publish the first valid receipt and recover a lost completion reply / Samples exercise missing, matching and conflicting evidence",
+          "line": 108,
+          "definitions": [
+            "startedAtValues",
+            "digestValues",
+            "validFinish",
+            "candidateValues",
+            "contenderValues",
+            "weight_prepareFinish",
+            "weight_replayCompleted",
+            "weight_competingWriter",
+            "weight_validate",
+            "weight_stage",
+            "weight_publish"
+          ]
+        }
+      ],
+      "imports": [],
+      "references": [
+        {
+          "target": "./evidence.md",
+          "line": 8
+        }
+      ]
+    },
+    {
+      "path": "spec/contributor/runEvidence.md",
+      "sha256": "a9e47997cf7521c2c9e6c4468dcaa42659a166d316eda8f9bbbcf51947e9d2af",
+      "module": "contributor__runEvidence",
+      "stories": [
+        {
+          "heading": "Story: Recover a lost optional trace response without replacing accepted bytes",
+          "line": 13
+        },
+        {
+          "heading": "Story: Bind the ordinary PR-opened event to its own authenticated run",
+          "line": 82
+        }
+      ],
+      "rules": [
+        {
+          "heading": "Story: Recover a lost optional trace response without replacing accepted bytes / The same local run resumes its own server record and bounded exact upload",
+          "line": 15,
+          "definitions": [
+            "ServerStage",
+            "LocalPhase",
+            "TraceRun",
+            "initial",
+            "canSelectTrace",
+            "selectTrace",
+            "canRegister",
+            "register",
+            "canUpload",
+            "upload"
+          ]
+        },
+        {
+          "heading": "Story: Recover a lost optional trace response without replacing accepted bytes / A retained digest can be finalized again while changed local bytes fail",
+          "line": 47,
+          "definitions": [
+            "canReuse",
+            "reuse",
+            "canFinalize",
+            "finalize",
+            "canRefuseDifferentSelection",
+            "refuseDifferentSelection",
+            "canLoseResponse",
+            "loseResponse",
+            "alwaysRunIdentity",
+            "alwaysActiveSelection",
+            "alwaysObject",
+            "alwaysExactCompletion",
+            "stepIdentityRetained",
+            "sometimesConfirmed",
+            "sometimesChangedRefused"
+          ]
+        },
+        {
+          "heading": "Story: Bind the ordinary PR-opened event to its own authenticated run / Stable event bodies are idempotent and never share the measured trace run",
+          "line": 84,
+          "definitions": [
+            "OpenedRun",
+            "noOpenedRun",
+            "mayRegisterOpened",
+            "registerOpened",
+            "mayRecordOpened",
+            "recordOpened",
+            "mayObserveOpenedFinalized",
+            "observeOpenedFinalized",
+            "lawOpenedRetryIdempotent",
+            "lawCannotRecordOtherActor"
+          ]
+        },
+        {
+          "heading": "Story: Bind the ordinary PR-opened event to its own authenticated run / Simulation uses bounded representative digests and distinct identities",
+          "line": 117,
+          "definitions": [
+            "digestValues",
+            "remoteRunValues",
+            "actorValues",
+            "prValues",
+            "eventBodyValues",
+            "openedSample",
+            "sValues",
+            "weight_register",
+            "weight_upload",
+            "weight_finalize"
+          ]
+        }
+      ],
+      "imports": [],
+      "references": [
+        {
+          "target": "./evidence.md",
+          "line": 8
+        }
+      ]
     },
     {
       "path": "spec/contributor/skillAuthority.md",
@@ -1444,7 +1675,7 @@
     },
     {
       "path": "spec/settlement/money.md",
-      "sha256": "4304f9f1735cd873e637cb3d5166db14d905a4df532ef2771814c02092de9981",
+      "sha256": "65d72012c72c335adddbb78d3934687c0fce7442ad51b5404090130af42a4c5b",
       "module": "settlement__money",
       "stories": [
         {
@@ -1453,11 +1684,11 @@
         },
         {
           "heading": "Story: Admit the exact supported token behavior",
-          "line": 163
+          "line": 166
         },
         {
           "heading": "Story: Multiply and divide full-width monetary values",
-          "line": 185
+          "line": 188
         }
       ],
       "rules": [
@@ -1530,6 +1761,7 @@
             "lawNumericOrderTotal",
             "lawNumericOrderTransitive",
             "lawAddOrder",
+            "lawUnitGap",
             "lawAddMonotone",
             "lawAddCongruence",
             "lawAddAssociative",
@@ -1540,7 +1772,7 @@
         },
         {
           "heading": "Story: Preserve every base unit / Ordinary fees round upward and private splits require exact division",
-          "line": 150,
+          "line": 153,
           "definitions": [
             "ordinaryFee",
             "ordinaryNet",
@@ -1552,7 +1784,7 @@
         },
         {
           "heading": "Story: Admit the exact supported token behavior / Token-2022 admission permits only immutable metadata and immutable token ownership",
-          "line": 165,
+          "line": 168,
           "definitions": [
             "AssetKind",
             "token2022Admissible",
@@ -1561,7 +1793,7 @@
         },
         {
           "heading": "Story: Multiply and divide full-width monetary values / Multiplication accumulates shifted limb products without converting the amount to a number",
-          "line": 187,
+          "line": 190,
           "definitions": [
             "multiplySmall",
             "multiplyAmounts",
@@ -1571,7 +1803,7 @@
         },
         {
           "heading": "Story: Multiply and divide full-width monetary values / Full-width products preserve value, distributivity, and exact cancellation",
-          "line": 208,
+          "line": 211,
           "definitions": [
             "lawMultiplyCongruence",
             "lawMultiplyCommutative",
@@ -1583,7 +1815,7 @@
         },
         {
           "heading": "Story: Multiply and divide full-width monetary values / Long division chooses each quotient limb by ten fixed binary decisions",
-          "line": 232,
+          "line": 235,
           "definitions": [
             "quotientBits",
             "quotientCandidate",
@@ -1598,7 +1830,7 @@
         },
         {
           "heading": "Story: Multiply and divide full-width monetary values / Full-width ordinary and private fee calculations conserve every base unit",
-          "line": 263,
+          "line": 266,
           "definitions": [
             "ordinaryFeeAmount",
             "ordinaryNetAmount",
@@ -1611,7 +1843,7 @@
         },
         {
           "heading": "Story: Multiply and divide full-width monetary values / Multiplication, division and derived fees preserve valid limb representations",
-          "line": 279,
+          "line": 282,
           "definitions": [
             "lawMultiplySmallValid",
             "lawMultiplyValid",
@@ -1622,7 +1854,7 @@
         },
         {
           "heading": "Story: Multiply and divide full-width monetary values / Simulation samples exercise missing, matching and conflicting evidence",
-          "line": 298,
+          "line": 301,
           "definitions": [
             "assetValues",
             "decimalsValues",
