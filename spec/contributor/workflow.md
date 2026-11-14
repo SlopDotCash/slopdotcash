@@ -226,8 +226,8 @@ pure def sometimesAppealed(c: Contribution): bool = c.appealed and c.phase == Cl
 pure def sometimesReopened(c: Contribution): bool = c.phase == Submitted and c.maintainerReopened
 pure def sometimesStoppedForRisk(c: Contribution): bool = c.stop == RiskFound
 pure def sometimesStoppedByProject(c: Contribution): bool = c.stop == ProjectUnavailable
-pure def sometimesIssueRefused(c: Contribution): bool = c.refusedWrites.includes(OpenIssue)
-pure def sometimesStarred(c: Contribution): bool = c.writes.includes(StarRepository)
+pure def sometimesIssueRefused(c: Contribution): bool = c.refusedWrites.some(w => w == OpenIssue)
+pure def sometimesStarred(c: Contribution): bool = c.writes.some(w => w == StarRepository)
 pure def sometimesSelfReviewUncredited(c: Contribution): bool = c.reviewerRecommendation != "" and not(c.reviewCredit)
 pure def sometimesRevised(c: Contribution): bool = c.head > 1
 pure def sometimesRunRecorded(c: Contribution): bool = c.runRecorded

@@ -32,20 +32,21 @@ type LockError = NoLockError | PrepareError | ContentionError | QuarantineError 
   | GuardCleanupError | ReleaseRenameError | ReleaseCleanupError
 type Diagnostic = NoDiagnostic | Acquired | CommittedWithoutHandle | RolledBackAcquisition | Unpublished
   | ManualRecoveryNeeded | ReleasedClean | ReleasedCleanupIncomplete | StillOwned | ExternallyRecovered
-type Handle = { caller: int, published: bool, released: bool, complete: bool }
+type Handle = { published: bool, released: bool, complete: bool }
+type Handles = { one: Handle, two: Handle }
 type LockPublication = { step: LockStep, op: LockOp, actor: int, attempt: int, guard: PubGuard, canonical: int,
   priorDead: bool, candidatePresent: bool, stale: bool, ownsStale: bool, staleDamaged: bool,
-  handles: List[Handle], tombstones: List[int], primary: LockError, secondaryFailures: int, committed: bool,
+  handles: Handles, tombstones: List[int], primary: LockError, secondaryFailures: int, committed: bool,
   rolledBack: bool, diagnostic: Diagnostic, cleanupCanonical: int, allStopped: bool }
 pure val priorOwner = 3
-pure val noHandle: Handle = { caller: 0, published: false, released: false, complete: false }
+pure val noHandle: Handle = { published: false, released: false, complete: false }
 pure val initial: LockPublication = { step: LockIdle, op: NoOp, actor: 1, attempt: 0, guard: PubNone, canonical: 0,
   priorDead: false, candidatePresent: false, stale: false, ownsStale: false, staleDamaged: false,
-  handles: List({ ...noHandle, caller: 1 }, { ...noHandle, caller: 2 }), tombstones: List(), primary: NoLockError,
+  handles: { one: noHandle, two: noHandle }, tombstones: List(), primary: NoLockError,
   secondaryFailures: 0, committed: false, rolledBack: false, diagnostic: NoDiagnostic, cleanupCanonical: 0, allStopped: false }
-pure def handleOf(p: LockPublication, caller: int): Handle = p.handles.select(h => h.caller == caller).nthOr(0, noHandle)
-pure def setHandle(p: LockPublication, caller: int, h: Handle): List[Handle] =
-  p.handles.listMap(x => if (x.caller == caller) h else x)
+pure def handleOf(p: LockPublication, caller: int): Handle = if (caller == 1) p.handles.one else if (caller == 2) p.handles.two else noHandle
+pure def setHandle(p: LockPublication, caller: int, h: Handle): Handles =
+  if (caller == 1) { ...p.handles, one: h } else if (caller == 2) { ...p.handles, two: h } else p.handles
 pure def mayStart(p: LockPublication, caller: int): bool = p.guard == PubNone and p.canonical == caller
   and handleOf(p, caller).published and not(handleOf(p, caller).released)
 pure def canSeedStale(p: LockPublication): bool = p.step == LockIdle and p.attempt == 0 and p.canonical == 0 and not(p.priorDead)
@@ -92,7 +93,7 @@ pure def cleanupGuard(p: LockPublication, succeeds: bool): LockPublication = { .
 pure def canPublishHandle(p: LockPublication): bool = p.step == Finish and p.op == Acquiring
   and p.primary == NoLockError and p.guard == PubNone and p.canonical == p.actor
 pure def publishHandle(p: LockPublication): LockPublication = { ...p, step: LockIdle, diagnostic: Acquired,
-  handles: setHandle(p, p.actor, { caller: p.actor, published: true, released: false, complete: false }) }
+  handles: setHandle(p, p.actor, { published: true, released: false, complete: false }) }
 pure def canReportAcquireFailure(p: LockPublication): bool = p.step == Finish and p.op == Acquiring and p.primary != NoLockError
 pure def reportAcquireFailure(p: LockPublication): LockPublication = { ...p, step: LockIdle,
   diagnostic: if (p.guard == PubBlocked) ManualRecoveryNeeded
@@ -130,27 +131,32 @@ A returned handle cannot be used after its process stopped, and recovery
 never reuses the saved-path identity.
 
 ```quint
+pure def retire(h: Handle): Handle = if (h.published) { ...h, released: true, complete: true } else h
 pure def needsRecovery(p: LockPublication): bool = p.guard == PubBlocked or p.diagnostic == CommittedWithoutHandle
 pure def canConfirmAllStopped(p: LockPublication): bool = p.step == LockIdle and needsRecovery(p)
 pure def confirmAllStopped(p: LockPublication): LockPublication = { ...p, allStopped: true }
 pure def canManualRecovery(p: LockPublication): bool = p.step == LockIdle and p.allStopped and needsRecovery(p)
 pure def manualRecovery(p: LockPublication): LockPublication = { ...p, guard: PubNone, canonical: 0, allStopped: false,
   diagnostic: ExternallyRecovered,
-  handles: p.handles.listMap(h => if (h.published) { ...h, released: true, complete: true } else h) }
+  handles: { one: retire(p.handles.one), two: retire(p.handles.two) } }
 pure def alwaysRollbackUnpublished(p: LockPublication): bool =
   (p.step == Rollback implies p.guard == PubAcquire and not(handleOf(p, p.actor).published))
   and ((p.rolledBack and p.op == Acquiring) implies p.canonical != p.actor)
   and (p.staleDamaged implies p.canonical != priorOwner)
-pure def alwaysHandles(p: LockPublication): bool = p.handles.every(h =>
-  (h.released implies p.canonical != h.caller) and (h.complete implies h.released and h.published)
-  and (h.released implies h.published))
+pure def handleSound(p: LockPublication, caller: int): bool =
+  (handleOf(p, caller).released implies p.canonical != caller)
+  and (handleOf(p, caller).complete implies handleOf(p, caller).released)
+  and (handleOf(p, caller).released implies handleOf(p, caller).published)
+pure def alwaysHandles(p: LockPublication): bool = handleSound(p, 1) and handleSound(p, 2)
+  and (p.op != NoOp implies (p.actor == 1 or p.actor == 2))
   and (p.diagnostic == ReleasedClean implies not(p.tombstones.includes(p.actor)))
 pure def alwaysDiagnostics(p: LockPublication): bool =
   (p.diagnostic == Acquired implies handleOf(p, p.actor).published)
   and (p.diagnostic == CommittedWithoutHandle implies p.canonical == p.actor and not(handleOf(p, p.actor).published))
   and (p.diagnostic == ManualRecoveryNeeded implies p.guard == PubBlocked)
 pure def stepPublishedNeverReissued(before: LockPublication, after: LockPublication): bool =
-  before.handles.every(h => h.published implies handleOf(after, h.caller).published)
+  (before.handles.one.published implies after.handles.one.published)
+  and (before.handles.two.published implies after.handles.two.published)
 pure def sometimesAcquired(p: LockPublication): bool = mayStart(p, 1) or mayStart(p, 2)
 pure def sometimesRolledBack(p: LockPublication): bool = p.diagnostic == RolledBackAcquisition and p.staleDamaged
 pure def sometimesCommittedWithoutHandle(p: LockPublication): bool = p.diagnostic == CommittedWithoutHandle

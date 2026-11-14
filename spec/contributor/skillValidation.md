@@ -27,7 +27,8 @@ pure def inspect(v: SkillValidation, realDirectory: bool, bounded: bool, yaml: b
 pure def canDecide(v: SkillValidation): bool = v.inspected and v.outcome == Unchecked
 pure def decide(v: SkillValidation): SkillValidation =
   { ...v, outcome: if (v.realDirectory and v.bounded and v.yaml) Valid else Invalid }
-pure def alwaysValidMeansClean(v: SkillValidation): bool = v.outcome == Valid implies v.runtime and v.realDirectory and v.bounded and v.yaml
+pure def alwaysValidMeansClean(v: SkillValidation): bool = (v.outcome == Valid implies v.runtime and v.realDirectory and v.bounded and v.yaml)
+  and (v.inspected implies v.runtime)
 pure def alwaysRuntimeBound(v: SkillValidation): bool = 0 <= v.tried and v.tried <= maxRuntimes and (v.outcome == NoRuntime implies not(v.runtime))
 pure def stepOutcomeFinal(before: SkillValidation, after: SkillValidation): bool = before.outcome != Unchecked implies after == before
 pure def sometimesFallbackValid(v: SkillValidation): bool = v.outcome == Valid and v.tried > 1

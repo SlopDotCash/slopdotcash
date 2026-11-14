@@ -25,7 +25,7 @@ pure def freeze(e: ReviewEpoch, frontier: List[FrontierItem]): ReviewEpoch = { .
 pure def canDispose(e: ReviewEpoch, itemId: int, frozenHead: int, currentHead: int): bool = e.frozen and not(e.permitted)
   and e.items.some(i => i.item == itemId and not(i.deferred) and not(i.disposed) and i.head == frozenHead)
 pure def dispose(e: ReviewEpoch, itemId: int, frozenHead: int, currentHead: int): ReviewEpoch =
-  { ...e, items: e.items.listMap(i => if (i.item == itemId) { ...i, disposed: true, stale: currentHead != frozenHead } else i) }
+  { ...e, items: e.items.listMap(i => if (i.item == itemId and not(i.deferred)) { ...i, disposed: true, stale: currentHead != frozenHead } else i) }
 pure def frontierDone(e: ReviewEpoch): bool = e.items.every(i => i.deferred or i.disposed)
 pure def canPermit(e: ReviewEpoch): bool = e.frozen and not(e.permitted) and frontierDone(e)
 pure def permit(e: ReviewEpoch): ReviewEpoch = { ...e, permitted: true }

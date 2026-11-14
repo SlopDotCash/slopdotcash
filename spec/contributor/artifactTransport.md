@@ -39,11 +39,11 @@ pure def canAccept(a: Artifact, valid: bool, complete: bool, document: bool): bo
   a.phase == ArtifactWaiting and valid and (not(document) or complete)
 pure def accept(a: Artifact, valid: bool, complete: bool, document: bool): Artifact =
   { ...a, phase: ArtifactDone, accepted: true, fullDigest: complete }
-pure def alwaysNoTokenAtCdn(a: Artifact): bool = not(a.calls.includes(TokenToCdn))
+pure def alwaysNoTokenAtCdn(a: Artifact): bool = not(a.calls.some(c => c == TokenToCdn))
 pure def alwaysBounded(a: Artifact): bool = 0 <= a.attempts and a.attempts <= maxAttempts and 0 <= a.redirects and a.redirects <= maxRedirects
 pure def alwaysDigestNeedsAcceptance(a: Artifact): bool = (a.fullDigest implies a.accepted) and (a.accepted iff a.phase == ArtifactDone)
 pure def stepTerminal(before: Artifact, after: Artifact): bool =
   (before.phase == ArtifactDone or before.phase == ArtifactFailed) implies after == before
-pure def sometimesRetriedFromAuthority(a: Artifact): bool = a.accepted and a.attempts == 2 and a.calls.includes(NoTokenToCdn)
+pure def sometimesRetriedFromAuthority(a: Artifact): bool = a.accepted and a.attempts == 2 and a.calls.some(c => c == NoTokenToCdn)
 pure def sometimesPartialMedia(a: Artifact): bool = a.accepted and not(a.fullDigest)
 pure def sometimesUntrustedRedirectRefused(a: Artifact): bool = a.phase == ArtifactFailed and a.attempts == 1

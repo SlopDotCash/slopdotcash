@@ -51,8 +51,9 @@ pure def decline(e: Evidence): Evidence = { ...e, phase: Declined }
 ```quint
 pure def canDeclareHumanOnly(e: Evidence): bool = e.phase == Undecided and not(e.receipt.signed)
 pure def declareHumanOnly(e: Evidence): Evidence = { ...e, phase: HumanOnly }
-pure def alwaysHumanOnlyHasNoTrace(e: Evidence): bool = e.phase == HumanOnly implies
-  e.digest == "" and e.storedDigest == "" and not(e.receipt.signed)
+pure def alwaysHumanOnlyHasNoTrace(e: Evidence): bool = (e.phase == HumanOnly implies
+  e.digest == "" and e.storedDigest == "" and not(e.receipt.signed))
+  and (e.phase == Undecided implies e.digest == "" and e.storedDigest == "")
 ```
 
 ### Only one disclosed, consented snapshot of bounded size can be selected

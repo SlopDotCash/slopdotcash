@@ -36,7 +36,9 @@ pure def canFailRead(s: Snapshot): bool = s.phase == ReadingInventory or s.phase
 pure def failRead(s: Snapshot): Snapshot = { ...s, phase: SnapshotFailed }
 pure def canPublish(s: Snapshot): bool = s.phase == ReadyToPublish
 pure def publish(s: Snapshot): Snapshot = { ...s, phase: Published }
-pure def alwaysPublishedComplete(s: Snapshot): bool = s.phase == Published implies s.inventoryItems >= 0 and s.activityRead
+pure def alwaysPublishedComplete(s: Snapshot): bool =
+  ((s.phase == Published or s.phase == ReadyToPublish) implies s.inventoryItems >= 0 and s.activityRead)
+  and (s.phase == ReadingActivity implies s.inventoryItems >= 0)
 pure def alwaysBounded(s: Snapshot): bool = 1 <= s.attempt and s.attempt <= 2 and 0 <= s.reads and s.reads <= readBudget
 pure def stepTerminal(before: Snapshot, after: Snapshot): bool =
   (before.phase == Published or before.phase == SnapshotFailed) implies after == before

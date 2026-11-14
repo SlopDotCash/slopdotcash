@@ -52,8 +52,9 @@ pure def alwaysEvidenceIdentity(l: Ledger): bool = l.revision > 0 and l.obligati
   and (o.kind == Missing iff o.resultRevision == 0)
   and (o.kind != Missing implies o.resultRevision == l.revision)
   and ((o.kind == FiniteVerified) iff (o.bound > 0))
-  and (o.kind == Waived iff o.approval > 0) and o.reviewer >= 0
-  and l.obligations.select(x => x.id == o.id).length() == 1)
+  and (o.kind == Waived iff o.approval > 0) and o.reviewer >= 0)
+  and l.completionRevision <= l.revision
+pure def alwaysUniqueObligations(l: Ledger): bool = l.obligations.every(o => l.obligations.every(x => x.id == o.id implies x == o))
 ```
 
 ### A waiver needs the owner, and simulation, timeout, skip and waiver never pass

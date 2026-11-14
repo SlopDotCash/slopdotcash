@@ -194,7 +194,12 @@ pure def alwaysEvidenceOrder(e: Exchange): bool = (e.minted implies e.assertionC
   and ((e.phase == PollReply and e.poll == AssertionReturned) implies issued(e))
 pure def alwaysReply(e: Exchange): bool = (e.snapshot.serverId != "") implies e.snapshot.status != NoRow
   and e.key != "" and e.minted and (e.created == RowCreated or e.created == RowExisting) and (e.phase == CreateReply or e.phase == Done)
-pure def alwaysActiveInvocation(e: Exchange): bool = (e.phase != Idle and e.phase != Done) implies e.attempt > 0 and e.key != ""
+pure def alwaysActiveInvocation(e: Exchange): bool = ((e.phase != Idle and e.phase != Done) implies e.attempt > 0 and e.key != "")
+  and ((e.phase == Idle or e.phase == Starting) implies e.flow == FlowNone and not(e.assertionConsumed) and not(e.minted)
+    and e.assertionIssuedAt == 0 and e.poll == NoPoll)
+  and (e.phase == StartReply implies (e.flow == FlowPending or e.flow == FlowPurged) and e.assertionIssuedAt == 0 and not(e.assertionConsumed))
+  and (e.phase == Polling implies e.now > 0)
+  and (e.phase == PollReply implies e.poll != NoPoll)
 pure def alwaysReady(e: Exchange): bool = e.result == Ready implies e.phase == Done and e.snapshot.serverId != "" and e.minted
   and (e.created == RowCreated or e.created == RowExisting)
 pure def stepInvocationAndClock(before: Exchange, after: Exchange): bool = before.now <= after.now and before.attempt <= after.attempt

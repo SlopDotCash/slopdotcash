@@ -62,7 +62,8 @@ pure val initial: TraceServer = { owner: 1, now: 0, banned: false,
   intake: { observed: false, enabled: false, verifiedAt: 0 }, createKey: "", request: noRequest,
   state: NoRun, intents: List(), reservation: List(), objects: List(), attached: "", finalizedAt: 0,
   puts: List(), events: List(), reply: ReplyNone }
-pure def alwaysRunRow(s: TraceServer): bool = (s.state == NoRun) iff (s.createKey == "")
+pure def alwaysRunRow(s: TraceServer): bool = ((s.state == NoRun) iff (s.createKey == ""))
+  and ((s.intents.length() > 0 or s.puts.length() > 0 or s.events.length() > 0) implies s.createKey != "")
 pure def alwaysAttachedState(s: TraceServer): bool =
   ((s.state == TraceUploaded or s.state == Finalized) iff (s.attached != ""))
   and (s.state == Finalized implies s.finalizedAt >= 0 and s.finalizedAt <= s.now)
@@ -133,7 +134,7 @@ pure def createIntent(s: TraceServer, by: int, key: str, digest: str, byteCount:
   else if (s.state == Finalized) { ...s, reply: ReplyFinalized }
   else if (s.attached != "" and s.attached != digest) { ...s, reply: ReplyTraceConflict }
   else if (byteCount < 1 or byteCount > maxTraceBytes) { ...s, reply: ReplyInvalid }
-  else if (found.length() == 0)
+  else if (not(s.intents.some(i => i.key == key)))
     { ...s, intents: s.intents.append({ key: key, digest: digest, size: byteCount, contentType: contentType,
         expiresAt: s.now + intentLifetime, consumed: false }), reply: ReplyCreated }
   else if (prior.digest != digest or prior.size != byteCount or prior.contentType != contentType) { ...s, reply: ReplyConflict }
@@ -143,7 +144,7 @@ pure def createIntent(s: TraceServer, by: int, key: str, digest: str, byteCount:
   else { ...s, reply: ReplyExisting }
 pure def alwaysIntentsBounded(s: TraceServer): bool = s.intents.every(i => i.key != "" and i.digest != ""
   and 1 <= i.size and i.size <= maxTraceBytes and i.expiresAt <= s.now + intentLifetime
-  and s.intents.select(j => j.key == i.key).length() == 1)
+  and s.intents.every(j => j.key == i.key implies j == i))
 pure def alwaysConsumedAttached(s: TraceServer): bool = s.intents.every(i => i.consumed implies i.digest == s.attached)
 pure def stepConsumedStaysConsumed(before: TraceServer, after: TraceServer): bool =
   before.intents.every(i => i.consumed implies after.intents.includes(i))
@@ -214,7 +215,7 @@ pure def alwaysAttachedObject(s: TraceServer): bool = s.attached != "" implies
 pure def alwaysWrittenStored(s: TraceServer): bool =
   s.puts.every(p => (p.stage == PutWritten or p.stage == PutAttached) implies s.objects.includes(p.blob))
 pure def alwaysContentAddressed(s: TraceServer): bool =
-  s.objects.every(o => o.digest != "" and s.objects.select(x => x.digest == o.digest).length() == 1)
+  s.objects.every(o => o.digest != "" and s.objects.every(x => x.digest == o.digest implies x == o))
 pure def stepReservationPermanent(before: TraceServer, after: TraceServer): bool =
   before.reservation.length() > 0 implies after.reservation == before.reservation
 pure def stepObjectsPermanent(before: TraceServer, after: TraceServer): bool =
@@ -257,13 +258,13 @@ pure def appendEvent(s: TraceServer, by: int, key: str, kind: EventKind, source:
   else if (not(owns(s, by))) { ...s, reply: ReplyNotFound }
   else if (s.state == Finalized) { ...s, reply: ReplyFinalized }
   else if (source != AgentSource or occurredAt > s.now + eventClockSkew) { ...s, reply: ReplyInvalid }
-  else if (found.length() > 0)
+  else if (s.events.some(e => e.key == key))
     { ...s, reply: if (prior.kind == kind and prior.occurredAt == occurredAt and prior.githubObject == githubObject) ReplyExisting else ReplyConflict }
   else { ...s, events: s.events.append({ key: key, kind: kind, source: source, occurredAt: occurredAt,
       githubObject: githubObject, recordedAt: s.now }), reply: ReplyCreated }
 pure def alwaysAgentEvents(s: TraceServer): bool = s.events.every(e => e.source == AgentSource and e.key != ""
   and e.occurredAt <= e.recordedAt + eventClockSkew and e.recordedAt <= s.now
-  and s.events.select(x => x.key == e.key).length() == 1)
+  and s.events.every(x => x.key == e.key implies x == e))
 pure def stepEventsAppendOnly(before: TraceServer, after: TraceServer): bool =
   before.events.length() <= after.events.length() and before.events.every(e => after.events.includes(e))
 ```
@@ -295,7 +296,8 @@ pure def recordedSkillRun(s: TraceServer, author: int, project: int, repository:
   s.owner == author and s.state != NoRun and s.request.project == project and s.request.repository == repository
     and prNode != "" and s.events.some(e => e.kind == PullRequestOpened and e.source == AgentSource and e.githubObject == prNode)
 pure def lawRecordedRunIsTheAuthors(s: TraceServer, author: int, project: int, repository: str, prNode: str): bool =
-  recordedSkillRun(s, author, project, repository, prNode) implies author == s.owner and s.createKey != ""
+  recordedSkillRun(s, author, project, repository, prNode) implies author == s.owner and s.state != NoRun
+    and s.events.some(e => e.githubObject == prNode)
 pure def sometimesOpenedRecorded(s: TraceServer): bool = s.events.some(e => e.kind == PullRequestOpened and e.githubObject != "")
 pure def sometimesFinalized(s: TraceServer): bool = s.state == Finalized
 pure def sometimesRenewed(s: TraceServer): bool = s.reply == ReplyRenewed

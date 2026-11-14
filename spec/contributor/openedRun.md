@@ -60,6 +60,9 @@ pure def canRefuseEvent(o: OpenedInvocation): bool = o.phase == AwaitingEvent
 pure def refuseEvent(o: OpenedInvocation): OpenedInvocation = failWith(EventRefused, o)
 pure def alwaysRecordedEvidence(o: OpenedInvocation): bool = o.phase == Recorded implies
   o.serverRun != "" and o.eventId != "" and o.prNode != "" and o.prRepository == o.repository
+pure def alwaysInFlightValid(o: OpenedInvocation): bool =
+  ((o.phase == AwaitingSession or o.phase == AwaitingEvent) implies o.prNode != "" and o.prRepository == o.repository)
+  and (o.phase == AwaitingEvent implies o.serverRun != "")
 pure def alwaysFailureNamed(o: OpenedInvocation): bool = (o.phase == OpenFailed) iff (o.failure != NoOpenedFailure)
 pure def stepNoHiddenRetry(before: OpenedInvocation, after: OpenedInvocation): bool =
   (before.phase == OpenFailed and after.phase != OpenFailed) implies after.attempt > before.attempt
