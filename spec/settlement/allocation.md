@@ -13,7 +13,9 @@ import money as M from "./money"
 type Weight = { actor: int, weight: M::Amount }
 type Share = { actor: int, amount: M::Amount }
 type Portion = { actor: int, floor: M::Amount, remainder: M::Amount }
-pure def totalWeight(weights: List[Weight]): M::Amount = weights.foldl(M::zero, (total, recipient) => M::addAmounts(total, recipient.weight))
+pure def totalWeight(weights: List[Weight]): M::Amount =
+  if (weights.length() == 1) weights[0].weight
+  else weights.foldl(M::zero, (total, recipient) => M::addAmounts(total, recipient.weight))
 pure def validWeights(weights: List[Weight]): bool = weights.length() > 0
   and weights.every(recipient => recipient.actor > 0 and M::validAmount(recipient.weight)
     and weights.select(other => other.actor == recipient.actor).length() == 1)
@@ -43,15 +45,16 @@ pure def remainderRank(rankedPortion: Portion, portions: List[Portion]): M::Amou
 
 ### The largest remainders receive the remaining units exactly once
 
-Each quotient and remainder is computed once and retained through ranking. A rank is counted directly into limb form before comparison with the unallocated amount. No monetary value is converted back to a JavaScript number. Invalid weights return an empty allocation and cannot be committed.
+Each quotient and remainder is computed once and retained through ranking. A rank is counted directly into limb form before comparison with the unallocated amount. A sole eligible recipient receives the whole pool. No monetary value is converted back to a JavaScript number. Invalid weights return an empty allocation and cannot be committed.
 
 ```quint
 pure def allocateAmounts(total: M::Amount, weights: List[Weight]): List[Share] =
   val admitted = canAllocate(total, weights)
   val denominator = if (admitted) totalWeight(weights) else M::zero
-  val portions = if (admitted) weights.listMap(recipient => weightedPortion(total, recipient, denominator)) else List()
+  val portions = if (admitted and weights.length() > 1) weights.listMap(recipient => weightedPortion(total, recipient, denominator)) else List()
   val remaining = if (admitted) M::subtractAmounts(total, portionTotal(portions)) else M::zero
-  if (admitted) portions.listMap(recipient => {
+  if (admitted and weights.length() == 1) weights.listMap(recipient => { actor: recipient.actor, amount: total })
+  else if (admitted) portions.listMap(recipient => {
     actor: recipient.actor,
     amount: M::addAmounts(recipient.floor,
       if (M::compareAmounts(remainderRank(recipient, portions), remaining) < 0) List(1) else M::zero)
