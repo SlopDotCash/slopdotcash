@@ -10,7 +10,8 @@ Start at [the product specification](../spec/index.md) and
   actions and named scenarios, and maps it to an active domain.
 - `spec-catalog.json` inventories the active stories, formal rules and imports.
 - `legacy-validation.json` records direct Quint typechecks and seeded named
-  scenarios on the retained models.
+  scenarios on the retained models. `validation/main-model-delta.json` records
+  six later additions and changes, retained under `reference/slop-main-delta/`.
 - `verification.md` records this branch's actual validation results and gaps.
 - The domain verification JSON records and `validation/` logs retain exact
   source identities, bounded simulations, differential checks and proofs.

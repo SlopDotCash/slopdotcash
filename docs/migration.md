@@ -71,6 +71,8 @@ database migration, route, signer, deployment or transaction.
 line range and owning spec paths. `formal/model-map.json` inventories every
 legacy model, source mapping, action, scenario and digest, with its destination
 area. `reference/slop-main/formal/` preserves the original models and inventories.
+`reference/slop-main-delta/` retains six later legacy model inputs with separate
+verification and successor mappings.
 
 A mapped source establishes traceability. Equivalence requires a reviewed
 transition-by-transition comparison or refinement proof. Legacy scenarios must
