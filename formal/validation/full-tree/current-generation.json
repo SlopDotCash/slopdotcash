@@ -1,0 +1,19 @@
+{
+  "checkedCommit": "980ed7334",
+  "matchingSpecAndToolchainAt": "9fe3682f10f7ca738b13748eb254886e7e9ba09e",
+  "executableSnapshotUnchanged": true,
+  "checks": {
+    "pnpm gen": "pass",
+    "pnpm exec vibelang --noEmit -p tsconfig.json": "pass",
+    "pnpm --filter @repo/app typecheck": "pass"
+  },
+  "templateChecks": {
+    "rootVitest": 34,
+    "appVitest": 3,
+    "conformanceJourneys": 1,
+    "malformedInputs": 5,
+    "randomWalks": 1000
+  },
+  "templateCheckScope": "Source-independent template tests and greeting driver. Verified separately before the final specification-only changes.",
+  "wholeTreeCheck": "Running separately. This report is generation and typechecking evidence."
+}

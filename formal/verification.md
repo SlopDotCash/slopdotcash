@@ -136,15 +136,15 @@ response. On-chain binding and reconciliation remain in the signer model.
 
 ## Proofs and checks
 
-The current proof inventory binds all 4,863 Slop obligations in 92
+The current proof inventory binds all 4,945 Slop obligations in 94
 proof-bearing specifications to completed verifier results. The template
 greeting adds one proved obligation. Each receipt is tied to the current
 transitive generated meaning and proof or to the exact complete source
 dependencies. The whole-tree check and legacy-equivalence review remain open.
-[Current proof coverage](validation/full-tree/current-proof-coverage.json)
+[Current proof coverage](validation/full-tree/current-proof-coverage.json) · [Current generation and types](validation/full-tree/current-generation.json)
 
-The later registry composition and project closure-consent checks add 14
-passing obligations in their focused receipts. The new-project setting
+The registry composition and project closure-consent receipts contain 14
+passing obligations. The new-project setting
 starts unchecked. Current project identity, revision, enforcement and
 clearance govern work discovery and activation. Paused projects with usable
 clearance can still serve generated skill bytes for inspection.
@@ -349,6 +349,10 @@ reporting requirement.
   exact award revision prefix and the union of complete source coverage, even
   when a newer copy has coverage changes alone.
   [Points recovery proof and replays](validation/source-coverage/points-recovery.json)
+- The promoted historical Points collector discharged all 68 obligations.
+  Its model checks exact campaign recovery, quota stops, durable progress,
+  request ceilings and the verified handoff to the correction process.
+  [Quota recovery proof and traces](validation/source-coverage/points-quota-recovery.json)
 - Mainnet escrow qualification discharged all 147 obligations and reached six
   named outcomes. Exact network, vault and review evidence gates activation,
   and an uncertain attempt stays durable until exact finality is checked.
