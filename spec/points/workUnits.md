@@ -28,15 +28,16 @@ type Units = { units: List[Unit], nextId: int }
 pure val initial: Units = { units: List(), nextId: 1 }
 pure def live(u: Unit): bool = not(u.superseded)
 pure def touches(u: Unit, sources: Set[int], commits: Set[int]): bool =
-  live(u) and (u.sources.intersect(sources).size() > 0 or u.commits.intersect(commits).size() > 0)
+  live(u) and (u.sources.exists(x => sources.contains(x)) or u.commits.exists(x => commits.contains(x)))
 pure def unitValue(band: int): int = A::sizePoints(band)
+pure def alwaysNextIdPositive(s: Units): bool = s.nextId >= 1
 pure def alwaysUnitsWellFormed(s: Units): bool = s.units.every(u =>
   u.id > 0 and u.id < s.nextId and u.sources.size() > 0 and u.value == unitValue(u.band) and u.value >= 10 and
   (u.superseded implies (u.supersededBy > u.id and u.supersededBy < s.nextId)) and
-  (not(u.superseded) implies u.supersededBy == 0))
+  (not(u.superseded) implies u.supersededBy == 0) and (u.frozen implies u.accepted))
 pure def alwaysCurrentUnitsDisjoint(s: Units): bool = s.units.every(u => live(u) implies
   s.units.every(v => (live(v) and v.id != u.id) implies
-    (u.sources.intersect(v.sources).size() == 0 and u.commits.intersect(v.commits).size() == 0)))
+    (u.sources.forall(x => not(v.sources.contains(x))) and u.commits.forall(x => not(v.commits.contains(x))))))
 ```
 
 ### A new group supersedes every current group it touches, whole
@@ -65,10 +66,10 @@ pure def lawZeroSizeKeepsMinimum(band: int): bool = band <= 0 implies unitValue(
 ```quint
 pure def canAccept(s: Units, unit: int): bool = s.units.some(u => u.id == unit and live(u) and not(u.accepted))
 pure def accept(s: Units, unit: int): Units =
-  { ...s, units: s.units.listMap(u => if (u.id == unit) { ...u, accepted: true } else u) }
+  { ...s, units: s.units.listMap(u => if (u.id == unit and live(u) and not(u.accepted)) { ...u, accepted: true } else u) }
 pure def canFreezeUnit(s: Units, unit: int): bool = s.units.some(u => u.id == unit and live(u) and u.accepted and not(u.frozen))
 pure def freezeUnit(s: Units, unit: int): Units =
-  { ...s, units: s.units.listMap(u => if (u.id == unit) { ...u, frozen: true } else u) }
+  { ...s, units: s.units.listMap(u => if (u.id == unit and live(u) and u.accepted and not(u.frozen)) { ...u, frozen: true } else u) }
 pure def shares(u: Unit, recipients: List[A::Recipient]): List[A::PointShare] = A::allocatePoints(u.value, recipients)
 pure def sameUnit(u: Unit, v: Unit): bool =
   v.id == u.id and v.value == u.value and v.band == u.band and v.accepted == u.accepted and v.frozen == u.frozen and

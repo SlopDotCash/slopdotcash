@@ -61,23 +61,24 @@ cannot draft, escalate or record calls. Model calls are recorded before any
 draft; an unrecorded call fails the run without escalation.
 
 ```quint
+pure def noDraft(draft: Draft): bool = match draft { | NoDraft => true | _ => false }
 pure def leaseHeld(d: Dispute, token: int): bool = token > 0 and d.leaseToken == token and d.leaseUntil > d.now
 pure def canClaim(d: Dispute, token: int): bool =
-  (d.phase == Triage or (d.phase == Escalated and d.draft == NoDraft)) and token > 0 and
+  (d.phase == Triage or (d.phase == Escalated and noDraft(d.draft))) and token > 0 and
   (d.leaseToken == 0 or d.leaseUntil <= d.now)
 pure def claim(d: Dispute, token: int): Dispute = { ...d, leaseToken: token, leaseUntil: d.now + leaseDays }
-pure def canCallModel(d: Dispute, token: int): bool = leaseHeld(d, token) and d.draft == NoDraft and d.phase != Resolved
+pure def canCallModel(d: Dispute, token: int): bool = leaseHeld(d, token) and noDraft(d.draft) and d.phase != Resolved
 pure def callModel(d: Dispute, token: int): Dispute = { ...d, modelCalls: d.modelCalls + 1 }
 pure def canRecordCalls(d: Dispute, token: int): bool = leaseHeld(d, token) and d.callsRecorded < d.modelCalls
 pure def recordCalls(d: Dispute, token: int): Dispute = { ...d, callsRecorded: d.modelCalls }
 pure def canRecordDraft(d: Dispute, token: int, uphold: bool, confidence: int): bool =
-  leaseHeld(d, token) and d.draft == NoDraft and d.phase != Resolved and
+  leaseHeld(d, token) and noDraft(d.draft) and d.phase != Resolved and
   d.modelCalls > 0 and d.callsRecorded == d.modelCalls and confidence >= 0 and confidence <= 100
 pure def recordDraft(d: Dispute, token: int, uphold: bool, confidence: int): Dispute =
   { ...d, draft: Drafted({ uphold: uphold, confidence: if (confidence > 89) 89 else confidence }) }
 pure def canEscalate(d: Dispute, token: int, why: Escalation): bool =
   leaseHeld(d, token) and d.phase == Triage and why != NotEscalated and d.callsRecorded == d.modelCalls and
-  (why == NeedsModerator implies d.draft != NoDraft) and
+  (why == NeedsModerator implies not(noDraft(d.draft))) and
   ((why == ProjectUnavailable or why == ProjectRestricted or why == InstallationUnavailable) implies d.modelCalls == 0)
 pure def escalate(d: Dispute, token: int, why: Escalation): Dispute = { ...d, phase: Escalated, escalation: why }
 pure def canReleaseLease(d: Dispute, token: int): bool = token > 0 and d.leaseToken == token
@@ -107,7 +108,7 @@ pure def alwaysOpenedIdentity(d: Dispute): bool = d.phase != NotOpened implies
   (d.revision > 0 and d.appellant > 0 and d.statement != "" and d.dueAt == d.openedAt + appealDays)
 pure def stepIdentityImmutable(before: Dispute, after: Dispute): bool = before.phase != NotOpened implies
   (after.revision == before.revision and after.appellant == before.appellant and after.statement == before.statement and after.openedAt == before.openedAt)
-pure def stepDraftImmutable(before: Dispute, after: Dispute): bool = before.draft != NoDraft implies after.draft == before.draft
+pure def stepDraftImmutable(before: Dispute, after: Dispute): bool = not(noDraft(before.draft)) implies after.draft == before.draft
 pure def stepDecisionImmutable(before: Dispute, after: Dispute): bool = before.phase == Resolved implies
   (after.resolution == before.resolution and after.reason == before.reason and after.resolver == before.resolver and after.phase == Resolved)
 pure def lawModeratorCannotReadBeforeEscalation(by: int): bool =
@@ -117,7 +118,7 @@ pure def sometimesUnavailableEscalatesWithoutCall(d: Dispute): bool = d.escalati
 pure def sometimesDraftedThenEscalated(d: Dispute): bool = d.phase == Escalated and d.escalation == NeedsModerator
 pure def sometimesUpheld(d: Dispute): bool = d.resolution == Upheld
 pure def sometimesDenied(d: Dispute): bool = d.resolution == Denied
-pure def sometimesLeaseExpiredUndrafted(d: Dispute): bool = d.phase == Triage and d.leaseToken > 0 and d.leaseUntil <= d.now and d.draft == NoDraft
+pure def sometimesLeaseExpiredUndrafted(d: Dispute): bool = d.phase == Triage and d.leaseToken > 0 and d.leaseUntil <= d.now and noDraft(d.draft)
 ```
 
 ### Simulation samples cover the recipient, a moderator and other actors

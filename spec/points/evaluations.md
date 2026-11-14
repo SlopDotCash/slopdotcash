@@ -65,40 +65,41 @@ recovers.
 
 ```quint
 type Protection = Retained | IncidentZeroed | Recovered | Ended
-type Retirement = { key: int, amount: int, phase: Protection, endedAfter: Protection }
-type RetiredAwards = { evaluations: Evaluations, awards: List[Retirement] }
-pure val initial: RetiredAwards = { evaluations: { admitted: List() }, awards: List() }
+type Retirement = { amount: int, phase: Protection, endedAfter: Protection }
+type RetiredAwards = { evaluations: Evaluations, keys: List[int], awards: int -> Retirement }
+pure val retainedPhase: Protection = Retained
+pure val untracked: Retirement = { amount: 0, phase: Ended, endedAfter: Ended }
+pure val initial: RetiredAwards = { evaluations: { admitted: List() }, keys: List(), awards: Map() }
 pure def canAdmitManifest(s: RetiredAwards, m: Manifest): bool = admissible(s.evaluations, m)
 pure def admitManifest(s: RetiredAwards, m: Manifest): RetiredAwards =
   { ...s, evaluations: { admitted: s.evaluations.admitted.append(m) } }
-pure def tracked(s: RetiredAwards, key: int): bool = s.awards.some(a => a.key == key)
-pure def phaseOf(s: RetiredAwards, key: int): Protection =
-  s.awards.foldl(Ended, (acc, a) => if (a.key == key) a.phase else acc)
-pure def setPhase(key: int, phase: Protection, s: RetiredAwards): RetiredAwards =
-  { ...s, awards: s.awards.listMap(a => if (a.key == key) { ...a, phase: phase } else a) }
-pure def canRetain(s: RetiredAwards, key: int, amount: int): bool = key > 0 and amount > 0 and not(tracked(s, key))
+pure def tracked(s: RetiredAwards, key: int): bool = s.awards.keys().contains(key)
+pure def award(s: RetiredAwards, key: int): Retirement = if (s.awards.keys().contains(key)) s.awards.get(key) else untracked
+pure def inPhase(s: RetiredAwards, key: int, phase: Protection): bool = tracked(s, key) and award(s, key).phase == phase
+pure def canRetain(s: RetiredAwards, key: int, amount: int): bool = key > 0 and amount > 0 and not(tracked(s, key)) and not(s.keys.includes(key))
 pure def retain(s: RetiredAwards, key: int, amount: int): RetiredAwards =
-  { ...s, awards: s.awards.append({ key: key, amount: amount, phase: Retained, endedAfter: Retained }) }
-pure def canIncidentZero(s: RetiredAwards, key: int): bool = tracked(s, key) and phaseOf(s, key) == Retained
-pure def incidentZero(s: RetiredAwards, key: int): RetiredAwards = setPhase(key, IncidentZeroed, s)
-pure def canRecover(s: RetiredAwards, key: int): bool = tracked(s, key) and phaseOf(s, key) == IncidentZeroed
-pure def recover(s: RetiredAwards, key: int): RetiredAwards = setPhase(key, Recovered, s)
-pure def canLaterDecision(s: RetiredAwards, key: int): bool = tracked(s, key) and phaseOf(s, key) != Ended
+  { ...s, keys: s.keys.append(key), awards: s.awards.put(key, { ...untracked, amount: amount, phase: retainedPhase, endedAfter: retainedPhase }) }
+pure def canIncidentZero(s: RetiredAwards, key: int): bool = inPhase(s, key, Retained)
+pure def incidentZero(s: RetiredAwards, key: int): RetiredAwards =
+  { ...s, awards: s.awards.put(key, { ...award(s, key), phase: IncidentZeroed }) }
+pure def canRecover(s: RetiredAwards, key: int): bool = inPhase(s, key, IncidentZeroed)
+pure def recover(s: RetiredAwards, key: int): RetiredAwards =
+  { ...s, awards: s.awards.put(key, { ...award(s, key), phase: Recovered }) }
+pure def canLaterDecision(s: RetiredAwards, key: int): bool = tracked(s, key) and not(inPhase(s, key, Ended))
 pure def laterDecision(s: RetiredAwards, key: int): RetiredAwards =
-  { ...s, awards: s.awards.listMap(a => if (a.key == key) { ...a, phase: Ended, endedAfter: a.phase } else a) }
-pure def alwaysRetainedPositive(s: RetiredAwards): bool = s.awards.every(a => a.key > 0 and a.amount > 0 and
-  s.awards.select(o => o.key == a.key).length() == 1)
+  { ...s, awards: s.awards.put(key, { ...award(s, key), phase: Ended, endedAfter: award(s, key).phase }) }
+pure def alwaysRetainedPositive(s: RetiredAwards): bool = s.keys.every(k => k > 0 and tracked(s, k) and award(s, k).amount > 0)
 pure def alwaysAdmittedWellFormed(s: RetiredAwards): bool = admittedUnique(s.evaluations)
 pure def stepAdmittedPermanent(before: RetiredAwards, after: RetiredAwards): bool =
   before.evaluations.admitted.every(m => after.evaluations.admitted.includes(m))
 pure def stepProtectionEndsForever(before: RetiredAwards, after: RetiredAwards): bool =
-  before.awards.every(a => a.phase == Ended implies after.awards.includes(a)) and
-  before.awards.every(a => a.phase == Recovered implies after.awards.some(b => b.key == a.key and (b.phase == Recovered or b.phase == Ended)))
+  before.keys.every(k => (award(before, k).phase == Ended implies award(after, k) == award(before, k)) and
+    (award(before, k).phase == Recovered implies (award(after, k).phase == Recovered or award(after, k).phase == Ended)))
 pure def stepAmountsRetained(before: RetiredAwards, after: RetiredAwards): bool =
-  before.awards.every(a => after.awards.some(b => b.key == a.key and b.amount == a.amount))
-pure def sometimesRecovered(s: RetiredAwards): bool = s.awards.some(a => a.phase == Recovered)
-pure def sometimesExplicitDecisionEndsRecovery(s: RetiredAwards): bool = s.awards.some(a => a.phase == Ended and a.endedAfter == IncidentZeroed)
-pure def sometimesUnrelatedDecisionNeverRecovers(s: RetiredAwards): bool = s.awards.some(a => a.phase == Ended and a.endedAfter == Retained)
+  before.keys.every(k => after.keys.includes(k) and award(after, k).amount == award(before, k).amount)
+pure def sometimesRecovered(s: RetiredAwards): bool = s.keys.some(k => award(s, k).phase == Recovered)
+pure def sometimesExplicitDecisionEndsRecovery(s: RetiredAwards): bool = s.keys.some(k => award(s, k).phase == Ended and award(s, k).endedAfter == IncidentZeroed)
+pure def sometimesUnrelatedDecisionNeverRecovers(s: RetiredAwards): bool = s.keys.some(k => award(s, k).phase == Ended and award(s, k).endedAfter == Retained)
 pure def sometimesAdmitted(s: RetiredAwards): bool = s.evaluations.admitted.length() > 1
 ```
 

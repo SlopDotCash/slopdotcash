@@ -36,15 +36,16 @@ pure def consumeStep(acc: Consumption, request: int): Consumption =
   { remaining: acc.remaining - takeFrom(acc.remaining, request), applied: acc.applied.append(takeFrom(acc.remaining, request)) }
 pure def consume(credit: int, requests: List[int]): List[int] =
   requests.foldl({ remaining: if (credit > 0) credit else 0, applied: List() }, (acc, request) => consumeStep(acc, request)).applied
+pure def pair(first: int, second: int): List[int] = List(first, second)
 pure def total(xs: List[int]): int = xs.foldl(0, (acc, x) => acc + x)
 pure def lawEarlierRequestConsumesFirst(credit: int, first: int, second: int): bool =
   (credit >= 0 and first >= 0 and second >= 0 and first >= credit) implies
-    consume(credit, List(first, second)) == List(credit, 0)
+    consume(credit, List(first, second)) == pair(credit, 0)
 pure def lawZeroBalanceSpendsNothing(first: int, second: int): bool =
-  consume(0, List(first, second)) == List(0, 0)
+  consume(0, List(first, second)) == pair(0, 0)
 pure def lawEnoughCreditAppliesAll(credit: int, first: int, second: int): bool =
   (first >= 0 and second >= 0 and credit >= first + second) implies
-    consume(credit, List(first, second)) == List(first, second)
+    consume(credit, List(first, second)) == pair(first, second)
 pure def lawTwoRequestsBounded(credit: int, first: int, second: int): bool =
   total(consume(credit, List(first, second))) <= (if (credit > 0) credit else 0)
 pure val creditValues = Set(0, 10, 30, 40)

@@ -22,7 +22,7 @@ type WindowPhase = Building | Published | Failed
 type ActorKind = Human | Bot | Slopbot
 type EventKind = MergeEvent | ReviewEvent | CommentEvent | IssueEvent
 type Outcome = Counted | ExcludedBot | ExcludedSelfReview | ExcludedPostMerge | ExcludedRepeat | OutsideWindow
-type Event = { id: int, kind: EventKind, actor: int, actorKind: ActorKind, prAuthor: int, at: int, mergedAt: int, repeatLowValue: bool }
+type LedgerEvent = { id: int, kind: EventKind, actor: int, actorKind: ActorKind, prAuthor: int, at: int, mergedAt: int, repeatLowValue: bool }
 type Recorded = { id: int, actor: int, outcome: Outcome }
 type Window = { phase: WindowPhase, from: int, to: int, records: List[Recorded],
   publishedFrom: int, publishedTo: int, publishedCount: int, censusComplete: bool }
@@ -41,15 +41,15 @@ Every observed event is retained with its outcome. Only counted events reach
 rankings; Slopbot and other bots never count.
 
 ```quint
-pure def outcomeOf(w: Window, e: Event): Outcome =
+pure def outcomeOf(w: Window, e: LedgerEvent): Outcome =
   if (e.at < w.from or e.at >= w.to) OutsideWindow
   else if (e.actorKind != Human) ExcludedBot
   else if (e.kind == ReviewEvent and e.actor == e.prAuthor) ExcludedSelfReview
   else if (e.kind == ReviewEvent and e.mergedAt > 0 and e.at >= e.mergedAt) ExcludedPostMerge
   else if (e.kind == CommentEvent and e.repeatLowValue) ExcludedRepeat
   else Counted
-pure def canObserve(w: Window, e: Event): bool = w.phase == Building and e.id > 0 and e.actor > 0
-pure def observe(w: Window, e: Event): Window =
+pure def canObserve(w: Window, e: LedgerEvent): bool = w.phase == Building and e.id > 0 and e.actor > 0
+pure def observe(w: Window, e: LedgerEvent): Window =
   if (w.records.some(r => r.id == e.id)) w
   else { ...w, records: w.records.append({ id: e.id, actor: e.actor, outcome: outcomeOf(w, e) }) }
 pure def countedRecords(w: Window): int = w.records.select(r => r.outcome == Counted).length()
@@ -72,8 +72,8 @@ pure def stepFailureKeepsPublished(before: Window, after: Window): bool =
   after.phase != Published implies
     (after.publishedFrom == before.publishedFrom and after.publishedTo == before.publishedTo and after.publishedCount == before.publishedCount)
 pure def stepWindowNeverRegresses(before: Window, after: Window): bool = after.publishedTo >= before.publishedTo
-pure def lawBotsNeverCount(e: Event): bool = e.actorKind != Human implies outcomeOf({ ...initial, from: 0, to: 100 }, e) != Counted
-pure def lawSelfReviewNeverCounts(e: Event): bool = (e.kind == ReviewEvent and e.actor == e.prAuthor) implies outcomeOf({ ...initial, from: 0, to: 100 }, e) != Counted
+pure def lawBotsNeverCount(e: LedgerEvent): bool = e.actorKind != Human implies outcomeOf({ ...initial, from: 0, to: 100 }, e) != Counted
+pure def lawSelfReviewNeverCounts(e: LedgerEvent): bool = (e.kind == ReviewEvent and e.actor == e.prAuthor) implies outcomeOf({ ...initial, from: 0, to: 100 }, e) != Counted
 pure def sometimesPublishedWithExclusions(w: Window): bool =
   w.phase == Published and w.publishedCount > 0 and w.records.some(r => r.outcome != Counted)
 pure def sometimesFailedKeepsPrior(w: Window): bool = w.phase == Failed and w.publishedTo > 35
@@ -82,7 +82,7 @@ pure def sometimesFailedKeepsPrior(w: Window): bool = w.phase == Failed and w.pu
 ### Simulation samples include duplicates and every exclusion
 
 ```quint
-pure val base: Event = { id: 1, kind: ReviewEvent, actor: 1, actorKind: Human, prAuthor: 2, at: 40, mergedAt: 50, repeatLowValue: false }
+pure val base: LedgerEvent = { id: 1, kind: ReviewEvent, actor: 1, actorKind: Human, prAuthor: 2, at: 40, mergedAt: 50, repeatLowValue: false }
 pure val eValues = Set(base, { ...base, id: 2, actorKind: Slopbot }, { ...base, id: 3, actor: 2 },
   { ...base, id: 4, at: 55 }, { ...base, id: 5, kind: CommentEvent, repeatLowValue: true }, { ...base, id: 6, at: 10 })
 pure val upperValues = Set(35, 70, 71)

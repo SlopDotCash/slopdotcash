@@ -88,6 +88,7 @@ pure def ruleAllowed(cat: Category, rule: SourceRule): bool =
   else if (cat == PayoutReceived) rule == VerifiedPayoutV1
   else rule != PenaltyTable and rule != VerifiedPayoutV1
 pure def validKey(k: AwardKey): bool = k.project != "" and k.actor > 0 and k.source > 0 and k.workUnit > 0
+pure def alwaysNextIdPositive(l: Ledger): bool = l.nextId >= 1
 pure def alwaysRevisionsWellFormed(l: Ledger): bool = l.revisions.every(r =>
   r.id > 0 and r.id < l.nextId and r.previous >= 0 and r.previous < r.id and validKey(r.key) and
   amountAllowed(r.key.category, r.amount) and ruleAllowed(r.key.category, r.rule) and
@@ -164,8 +165,8 @@ type CorrectionInput = { key: AwardKey, amount: int, rule: SourceRule, provision
   basis: Basis, effectiveAt: int, reason: str }
 pure def canCorrect(l: Ledger, c: CorrectionInput): bool =
   val prior = latest(l, c.key)
-  prior.id > 0 and prior.id < l.nextId and prior.occurredAt <= l.now and prior.recordedAt <= l.now and
-  c.key.category != Penalty and c.key.category != PayoutReceived and
+  prior.id > 0 and prior.id < l.nextId and prior.occurredAt >= 0 and prior.occurredAt <= l.now and
+  prior.recordedAt <= l.now and validKey(c.key) and c.key.category != Penalty and c.key.category != PayoutReceived and
   c.basis != NoBasis and c.basis != PenaltyChange and c.reason != "" and
   c.effectiveAt >= prior.occurredAt and c.effectiveAt <= l.now and c.digest != "" and
   amountAllowed(c.key.category, c.amount) and ruleAllowed(c.key.category, c.rule) and
@@ -196,7 +197,7 @@ pure def canRecordPenalty(l: Ledger, p: PenaltyEvidence): bool =
   p.requested >= 0 and p.applied >= 0 and p.applied <= p.requested and p.applied <= maxSafe and
   (p.reversed implies p.applied == 0) and p.reason != "" and
   p.occurredAt >= 0 and p.occurredAt <= l.now and p.effectiveAt >= p.occurredAt and p.effectiveAt <= l.now and
-  prior.id < l.nextId and prior.recordedAt <= l.now and prior.amount <= 0 and
+  prior.id >= 0 and prior.id < l.nextId and prior.recordedAt <= l.now and prior.amount <= 0 and
   (prior.id > 0 implies (prior.tableVersion == p.tableVersion and prior.occurredAt == p.occurredAt and
      0 - p.applied != prior.amount)) and
   (prior.id == 0 implies prior.amount == 0)

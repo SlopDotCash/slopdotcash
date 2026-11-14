@@ -61,6 +61,9 @@ pure def accept(s: Scored, acceptedAt: int, legacyPoints: int): Scored =
     { ...s, phase: Provisional, acceptedAt: acceptedAt, policy: ValueV1, legacyPoints: legacyPoints, points: 10 }
   else { ...s, phase: LegacyScored, acceptedAt: acceptedAt, policy: policyFor(acceptedAt), legacyPoints: legacyPoints, points: legacyPoints }
 pure def alwaysMinimum(s: Scored): bool = s.phase != Unscored implies s.points >= 10
+pure def alwaysUnscoredUntouched(s: Scored): bool = s.phase == Unscored implies
+  (not(s.frozen) and not(s.held) and not(s.billingProven) and s.points == 0 and s.frozenPoints == 0)
+pure def alwaysLegacyScoredKeepsLegacyPoints(s: Scored): bool = s.phase == LegacyScored implies s.points == s.legacyPoints
 pure def alwaysPolicyMatchesAcceptance(s: Scored): bool = s.phase != Unscored implies s.policy == policyFor(s.acceptedAt)
 ```
 

@@ -53,22 +53,34 @@ pure def recipientFor(a: CommitAttribution): int =
   else if (copyRecipient(a.copy) > 0) copyRecipient(a.copy)
   else sourceRecipient(a.source)
 pure def isUnknown(o: Observed): bool = match o { | Unknown => true | _ => false }
+pure def sameSeen(o: Observed, actor: int, kind: ActorKind, linked: bool): bool =
+  match o { | Seen(x) => x.actor == actor and x.kind == kind and x.linked == linked | Unknown => false }
+pure def isNoCopy(c: CopyBinding): bool = match c { | NoCopy => true | _ => false }
+pure def isDescriptionOnly(c: CopyBinding): bool = match c { | DescriptionOnly => true | _ => false }
+pure def verifiedAs(c: CopyBinding, actor: int, kind: ActorKind): bool =
+  match c { | VerifiedCopy(y) => y.actor == actor and y.kind == kind | _ => false }
+pure def sameCopy(first: CopyBinding, second: CopyBinding): bool =
+  match first { | VerifiedCopy(x) => verifiedAs(second, x.actor, x.kind) | NoCopy => isNoCopy(second) | DescriptionOnly => isDescriptionOnly(second) }
+pure def notObserved(acceptance: Acceptance): bool = match acceptance { | NotObserved => true | _ => false }
+pure def acceptedAs(acceptance: Acceptance, merge: bool, earlierSource: bool): bool =
+  match acceptance { | AcceptedCommit(x) => x.merge == merge and x.earlierSource == earlierSource | _ => false }
+pure def hasLines(lines: Lines): bool = match lines { | CompleteLines(x) => true | NoLines => false }
 pure def openForEvidence(a: CommitAttribution): bool = a.phase == Gathering or a.phase == Attributed
 pure def canObservePrimary(a: CommitAttribution, actor: int, kind: ActorKind, linked: bool): bool =
   openForEvidence(a) and actor > 0 and linked
 pure def observePrimary(a: CommitAttribution, actor: int, kind: ActorKind, linked: bool): CommitAttribution =
   if (isUnknown(a.primary)) { ...a, primary: Seen({ actor: actor, kind: kind, linked: linked }), phase: Gathering, recipient: 0 }
-  else if (a.primary == Seen({ actor: actor, kind: kind, linked: linked })) a
+  else if (sameSeen(a.primary, actor, kind, linked)) a
   else { ...a, phase: ConflictHeld, recipient: 0 }
 pure def canObserveSource(a: CommitAttribution, actor: int, kind: ActorKind): bool = a.phase == Gathering and actor > 0
 pure def observeSource(a: CommitAttribution, actor: int, kind: ActorKind): CommitAttribution =
   if (isUnknown(a.source)) { ...a, source: Seen({ actor: actor, kind: kind, linked: false }) }
-  else if (a.source == Seen({ actor: actor, kind: kind, linked: false })) a
+  else if (sameSeen(a.source, actor, kind, false)) a
   else { ...a, phase: ConflictHeld }
-pure def canObserveCopy(a: CommitAttribution, copy: CopyBinding): bool = a.phase == Gathering and copy != NoCopy
+pure def canObserveCopy(a: CommitAttribution, copy: CopyBinding): bool = a.phase == Gathering and not(isNoCopy(copy))
 pure def observeCopy(a: CommitAttribution, copy: CopyBinding): CommitAttribution =
-  if (a.copy == NoCopy or a.copy == DescriptionOnly) { ...a, copy: copy }
-  else if (a.copy == copy or copy == DescriptionOnly) a
+  if (isNoCopy(a.copy) or isDescriptionOnly(a.copy)) { ...a, copy: copy }
+  else if (sameCopy(a.copy, copy) or isDescriptionOnly(copy)) a
   else { ...a, phase: ConflictHeld }
 pure def lawDescriptionIsNoEvidence(actor: int, kind: ActorKind): bool =
   copyRecipient(DescriptionOnly) == 0
@@ -88,17 +100,17 @@ evidence holds a multiple-recipient allocation.
 
 ```quint
 pure def canObserveAcceptance(a: CommitAttribution, merge: bool, earlierSource: bool): bool =
-  a.phase == Gathering and a.acceptance == NotObserved
+  a.phase == Gathering and notObserved(a.acceptance)
 pure def observeAcceptance(a: CommitAttribution, merge: bool, earlierSource: bool): CommitAttribution =
   { ...a, acceptance: AcceptedCommit({ merge: merge, earlierSource: earlierSource }) }
 pure def canRecordLines(a: CommitAttribution, additions: int, deletions: int): bool =
-  a.phase == Gathering and additions >= 0 and deletions >= 0 and a.lines == NoLines
+  a.phase == Gathering and additions >= 0 and deletions >= 0 and not(hasLines(a.lines))
 pure def recordLines(a: CommitAttribution, additions: int, deletions: int): CommitAttribution =
   { ...a, lines: CompleteLines({ additions: additions, deletions: deletions }) }
-pure def contributes(a: CommitAttribution): bool = a.acceptance == AcceptedCommit({ merge: false, earlierSource: false })
+pure def contributes(a: CommitAttribution): bool = acceptedAs(a.acceptance, false, false)
 pure def canAttribute(a: CommitAttribution): bool = a.phase == Gathering and contributes(a) and recipientFor(a) > 0
 pure def attribute(a: CommitAttribution): CommitAttribution = { ...a, phase: Attributed, recipient: recipientFor(a) }
-pure def canCreditCommit(a: CommitAttribution): bool = a.phase == Attributed and a.lines != NoLines
+pure def canCreditCommit(a: CommitAttribution): bool = a.phase == Attributed and hasLines(a.lines)
 pure def creditCommit(a: CommitAttribution): CommitAttribution = { ...a, phase: Credited }
 ```
 
@@ -117,7 +129,7 @@ pure def repair(a: CommitAttribution, actor: int, kind: ActorKind): CommitAttrib
 pure def alwaysAttributedEligibility(a: CommitAttribution): bool =
   (a.phase == Attributed or a.phase == Credited or a.phase == Repaired) implies
     (contributes(a) and a.recipient == recipientFor(a) and a.recipient > 0)
-pure def alwaysCreditedHasLines(a: CommitAttribution): bool = (a.phase == Credited or a.phase == Repaired) implies a.lines != NoLines
+pure def alwaysCreditedHasLines(a: CommitAttribution): bool = (a.phase == Credited or a.phase == Repaired) implies hasLines(a.lines)
 pure def alwaysRepairKeepsPredecessor(a: CommitAttribution): bool = a.phase == Repaired implies (a.repairedFrom > 0 and a.repairedFrom != a.recipient)
 pure def stepCreditedNeverRewritten(before: CommitAttribution, after: CommitAttribution): bool =
   (before.phase == Credited or before.phase == Repaired) implies (after.lines == before.lines and after.acceptance == before.acceptance)
@@ -128,7 +140,7 @@ pure def sometimesCopyFallback(a: CommitAttribution): bool = a.phase == Credited
 pure def sometimesSourceFallback(a: CommitAttribution): bool = a.phase == Credited and primaryRecipient(a.primary) == 0 and copyRecipient(a.copy) == 0 and a.recipient > 0
 pure def sometimesConflictHeld(a: CommitAttribution): bool = a.phase == ConflictHeld
 pure def sometimesRepaired(a: CommitAttribution): bool = a.phase == Repaired
-pure def sometimesMergeHeld(a: CommitAttribution): bool = a.acceptance == AcceptedCommit({ merge: true, earlierSource: false })
+pure def sometimesMergeHeld(a: CommitAttribution): bool = acceptedAs(a.acceptance, true, false)
 ```
 
 ### Recipient line weights sum additions plus deletions over contributing commits
