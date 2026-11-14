@@ -4318,7 +4318,7 @@
     },
     {
       "path": "spec/settlement/referralPublication.md",
-      "sha256": "3f0e397bc0d7a91f627d62d989eb0e948aa80dadda04b578779f4b17f56d71bb",
+      "sha256": "6c36d5a67d4901a383ade230a46eef86acb810d43307ded040c83057e86aa01b",
       "module": "settlement__referralPublication",
       "stories": [
         {
@@ -4369,8 +4369,8 @@
             "retransmit",
             "canObserveDay",
             "observeDay",
-            "canSetPaused",
-            "setPaused"
+            "canSetPostingPaused",
+            "setPostingPaused"
           ]
         },
         {
@@ -4395,12 +4395,13 @@
             "invalidateCache",
             "canRefreshCache",
             "refreshCache",
+            "ClaimableView",
             "claimableFor"
           ]
         },
         {
           "heading": "Story: Claim immediately without reissuing paid tokens / History, native holds and cumulative claims remain bounded",
-          "line": 165,
+          "line": 172,
           "definitions": [
             "alwaysNativeBounded",
             "alwaysIdleUnreserved",
@@ -4417,7 +4418,7 @@
         },
         {
           "heading": "Story: Claim immediately without reissuing paid tokens / Simulation includes live control, capped accruals and conflicting receipts",
-          "line": 192,
+          "line": 202,
           "definitions": [
             "byValues",
             "actorValues",

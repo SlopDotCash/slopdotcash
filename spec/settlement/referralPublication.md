@@ -29,12 +29,12 @@ type PostingPhase = Idle | Prepared | Journaled | Submitted | Uncertain
 type Attempt = { id: int, root: int, day: int, reservedGas: int }
 type Publication = { phase: PostingPhase, prepared: Root, roots: List[Root], attempts: List[Attempt],
   claims: List[Claim], receipts: List[int], tokenUnit: M::Amount, currentAttempt: int,
-  day: int, nativeSpent: int, nativeHold: int, paused: bool, cacheFresh: bool }
+  day: int, nativeSpent: int, nativeHold: int, postingPaused: bool, distributorPaused: bool, cacheFresh: bool }
 pure val emptyRoot: Root = { id: 0, period: 0, sourceDigest: "", entries: List(), total: M::zero,
   height: 0, voided: false, sealed: false }
 pure val initial: Publication = { phase: Idle, prepared: emptyRoot, roots: List(), attempts: List(),
   claims: List(), receipts: List(), tokenUnit: M::zero, currentAttempt: 0,
-  day: 1, nativeSpent: 0, nativeHold: 0, paused: false, cacheFresh: false }
+  day: 1, nativeSpent: 0, nativeHold: 0, postingPaused: false, distributorPaused: false, cacheFresh: false }
 pure def walletFor(wallets: List[Wallet], actor: int): str = wallets.foldl("",
   (found, w) => if (w.actor == actor and w.authorized) w.wallet else found)
 pure def actors(a: A::Accrual): List[int] = a.attributions.foldl(List(),
@@ -50,7 +50,7 @@ pure def totalClaimed(p: Publication): M::Amount = p.claims.foldl(M::zero,
 pure def activeRoot(p: Publication): Root = p.roots.foldl(emptyRoot,
   (found, root) => if (not(root.voided)) root else found)
 pure def canPrepare(p: Publication, control: R::Referral, a: A::Accrual, wallets: List[Wallet], rootId: int): bool =
-  p.phase == Idle and not(p.paused) and control.mode == R::Posting and R::alwaysActivationReady(control)
+  p.phase == Idle and not(p.postingPaused) and control.mode == R::Posting and R::alwaysActivationReady(control)
     and a.phase == A::Ready and a.configured and a.filings.length() > 0
     and A::alwaysCaps(a) and A::alwaysUnitValid(a) and A::alwaysUniqueAttribution(a) and A::alwaysCompleteFilings(a)
     and rootId > 0 and p.roots.every(root => root.id < rootId
@@ -77,24 +77,24 @@ until a finalized outcome proves the cost. The poster cannot transfer tokens.
 
 ```quint
 pure def canJournal(p: Publication, control: R::Referral, attempt: int, gas: int): bool =
-  p.phase == Prepared and not(p.paused) and control.mode == R::Posting and R::alwaysActivationReady(control)
+  p.phase == Prepared and not(p.postingPaused) and control.mode == R::Posting and R::alwaysActivationReady(control)
     and attempt > 0 and not(p.attempts.some(old => old.id == attempt)) and gas > 0
     and R::posterGasAllowed(gas, p.nativeSpent + p.nativeHold + gas)
 pure def journal(p: Publication, control: R::Referral, attempt: int, gas: int): Publication =
   { ...p, phase: Journaled, currentAttempt: attempt, nativeHold: gas,
     attempts: p.attempts.append({ id: attempt, root: p.prepared.id, day: p.day, reservedGas: gas }) }
-pure def canSubmit(p: Publication, control: R::Referral): bool = p.phase == Journaled and not(p.paused)
+pure def canSubmit(p: Publication, control: R::Referral): bool = p.phase == Journaled and not(p.postingPaused)
   and control.mode == R::Posting and R::alwaysActivationReady(control)
 pure def submit(p: Publication, control: R::Referral): Publication = { ...p, phase: Submitted }
 pure def canLoseObservation(p: Publication): bool = p.phase == Submitted
 pure def loseObservation(p: Publication): Publication = { ...p, phase: Uncertain }
-pure def canRetransmit(p: Publication, control: R::Referral): bool = p.phase == Uncertain and not(p.paused)
+pure def canRetransmit(p: Publication, control: R::Referral): bool = p.phase == Uncertain and not(p.postingPaused)
   and control.mode == R::Posting and R::alwaysActivationReady(control)
 pure def retransmit(p: Publication, control: R::Referral): Publication = { ...p, phase: Submitted }
 pure def canObserveDay(p: Publication, day: int): bool = day > p.day
 pure def observeDay(p: Publication, day: int): Publication = { ...p, day: day, nativeSpent: 0 }
-pure def canSetPaused(p: Publication, paused: bool, by: str): bool = by == "owner"
-pure def setPaused(p: Publication, paused: bool, by: str): Publication = { ...p, paused: paused, cacheFresh: false }
+pure def canSetPostingPaused(p: Publication, paused: bool, by: str): bool = by == "owner"
+pure def setPostingPaused(p: Publication, paused: bool, by: str): Publication = { ...p, postingPaused: paused }
 ```
 
 ### Only exact finalized evidence makes a root claimable
@@ -114,7 +114,7 @@ pure def canFinalize(p: Publication, attempt: int, rootId: int, entries: List[Ro
 pure def finalize(p: Publication, attempt: int, rootId: int, entries: List[RootEntry],
   total: M::Amount, receipt: int, height: int, actualGas: int, finalized: bool, succeeded: bool): Publication =
   { ...p, phase: Idle, roots: p.roots.append({ ...p.prepared, height: height }),
-    receipts: p.receipts.append(receipt), nativeSpent: p.nativeSpent + actualGas, nativeHold: 0, cacheFresh: true }
+    receipts: p.receipts.append(receipt), nativeSpent: p.nativeSpent + actualGas, nativeHold: 0, cacheFresh: false }
 pure def canFinalizeFailure(p: Publication, attempt: int, receipt: int, actualGas: int, finalized: bool, succeeded: bool): bool =
   (p.phase == Submitted or p.phase == Uncertain) and attempt == p.currentAttempt
     and receipt > 0 and not(p.receipts.includes(receipt)) and finalized and not(succeeded) and actualGas >= 0 and actualGas <= p.nativeHold
@@ -131,11 +131,15 @@ The finalized receipt pays only the increase above the actor's lifetime claimed
 amount. A successful claim seals the active root. The owner may void only the
 latest unsealed root, restoring the prior live root without rewriting history.
 Neither pause, key rotation nor void can recover an earlier payment.
+A poster operational pause stops new publication sends only. It never blocks
+recording a finalized claim. The deployed distributor has its own on-chain
+pause, which blocks executing new claims, as recorded by its finalized cache;
+this is distinct from stopping the poster. A pending claim can beat a pause.
 
 ```quint
 pure def canClaim(p: Publication, actor: int, wallet: str, cumulative: M::Amount,
-  rootId: int, transferred: M::Amount, receipt: int, height: int, finalized: bool): bool = not(p.paused)
-    and activeRoot(p).id == rootId and rootId > 0 and activeRoot(p).height > 0
+  rootId: int, transferred: M::Amount, receipt: int, height: int, finalized: bool): bool =
+    activeRoot(p).id == rootId and rootId > 0 and activeRoot(p).height > 0
     and activeRoot(p).entries.some(e => e.actor == actor and e.wallet == wallet and M::equalAmounts(e.amount, cumulative))
     and M::compareAmounts(cumulative, claimedFor(p, actor)) > 0
     and M::validAmount(transferred) and M::equalAmounts(transferred, M::subtractAmounts(cumulative, claimedFor(p, actor))) and receipt > 0
@@ -143,7 +147,7 @@ pure def canClaim(p: Publication, actor: int, wallet: str, cumulative: M::Amount
 pure def claim(p: Publication, actor: int, wallet: str, cumulative: M::Amount,
   rootId: int, transferred: M::Amount, receipt: int, height: int, finalized: bool): Publication =
   { ...p, claims: p.claims.select(c => c.actor != actor).append({ actor: actor, cumulative: cumulative }),
-    receipts: p.receipts.append(receipt), roots: p.roots.listMap(root => if (root.id == rootId) { ...root, sealed: true } else root), cacheFresh: true }
+    receipts: p.receipts.append(receipt), roots: p.roots.listMap(root => if (root.id == rootId) { ...root, sealed: true } else root), cacheFresh: false }
 pure def canVoidRoot(p: Publication, rootId: int, receipt: int, height: int, finalized: bool, by: str): bool =
   by == "owner" and p.roots.length() > 0 and p.roots.nthOr(p.roots.length() - 1, emptyRoot).id == rootId
     and not(p.roots.nthOr(p.roots.length() - 1, emptyRoot).sealed)
@@ -151,15 +155,18 @@ pure def canVoidRoot(p: Publication, rootId: int, receipt: int, height: int, fin
     and receipt > 0 and not(p.receipts.includes(receipt)) and height > 0 and finalized
 pure def voidRoot(p: Publication, rootId: int, receipt: int, height: int, finalized: bool, by: str): Publication =
   { ...p, roots: p.roots.listMap(root => if (root.id == rootId) { ...root, voided: true } else root),
-    receipts: p.receipts.append(receipt), cacheFresh: true }
+    receipts: p.receipts.append(receipt), cacheFresh: false }
 pure def canInvalidateCache(p: Publication): bool = p.cacheFresh
 pure def invalidateCache(p: Publication): Publication = { ...p, cacheFresh: false }
-pure def canRefreshCache(p: Publication, finalized: bool): bool = finalized
-pure def refreshCache(p: Publication, finalized: bool): Publication = { ...p, cacheFresh: true }
-pure def claimableFor(p: Publication, actor: int): M::Amount =
+pure def canRefreshCache(p: Publication, paused: bool, finalized: bool): bool = finalized
+pure def refreshCache(p: Publication, paused: bool, finalized: bool): Publication =
+  { ...p, distributorPaused: paused, cacheFresh: true }
+type ClaimableView = { known: bool, amount: M::Amount }
+pure def claimableFor(p: Publication, actor: int): ClaimableView =
   val entry = activeRoot(p).entries.foldl(M::zero, (amount, e) => if (e.actor == actor) e.amount else amount)
-  if (p.cacheFresh and not(p.paused) and M::compareAmounts(entry, claimedFor(p, actor)) >= 0)
-    M::subtractAmounts(entry, claimedFor(p, actor)) else M::zero
+  { known: p.cacheFresh, amount:
+    if (p.cacheFresh and not(p.distributorPaused) and M::compareAmounts(entry, claimedFor(p, actor)) >= 0)
+      M::subtractAmounts(entry, claimedFor(p, actor)) else M::zero }
 ```
 
 ### History, native holds and cumulative claims remain bounded
@@ -167,7 +174,10 @@ pure def claimableFor(p: Publication, actor: int): M::Amount =
 A stale cache retains amounts and history, but does not advertise a currently
 claimable amount. Accrued and pending amounts come from the accrual ledger;
 claimed amounts come from finalized claim records. Missing cache evidence is
-unknown, never evidence that the claim or balance is zero.
+unknown, never evidence that the claim or balance is zero. `claimableFor`
+returns `known: false` in that state; its amount field must not be displayed or
+used. A confirmed distributor pause can establish a known current claimable
+amount of zero without altering accrued or already-claimed amounts.
 
 ```quint
 pure def alwaysNativeBounded(p: Publication): bool = p.nativeSpent >= 0 and p.nativeHold >= 0
