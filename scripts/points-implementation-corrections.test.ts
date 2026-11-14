@@ -695,6 +695,60 @@ test("grouped work units use their exact claim scopes and preserve each existing
   expect(total(result.journal)).toBe(18);
 });
 
+test("a grouped claim on a synchronization merge's conflict resolution supplies no share", () => {
+  const { journal, input, units } = grouped();
+  // A retained unit may scope a verified sync-merge resolution
+  // (workers/slopbot/value-work-unit.ts). The collector copies the claim on
+  // the merge SHA and records the merge commit with null counts and no files.
+  const merge = {
+    sha: sha("e"),
+    parentCount: 2,
+    author: B,
+    additions: null,
+    deletions: null,
+    firstAcceptedSourceId: SOURCE,
+  };
+  for (const row of input.candidates) {
+    if (row.kind !== "work-unit" || row.proof.status !== "complete")
+      throw new Error("group fixture");
+    const evidence = row.proof.sources[0];
+    evidence.commits.splice(1, 0, structuredClone(merge));
+    evidence.commitCount = evidence.commits.length;
+  }
+  const first = input.candidates[0];
+  if (first.kind !== "work-unit" || first.proof.status !== "complete")
+    throw new Error("group fixture");
+  first.proof.expectedClaimIds.push("claim_merge");
+  first.proof.claims.push({
+    id: "claim_merge",
+    sourceId: SOURCE,
+    commitSha: merge.sha,
+    path: "one.ts",
+  });
+  const result = apply(journal, input);
+  expect(result.dispositions.map((row) => row.status)).toEqual([
+    "applied",
+    "applied",
+  ]);
+  const rows = [...latestPoints(result.journal).values()].filter(
+    (row) => row.award.amount > 0,
+  );
+  expect(
+    rows.map((row) => [row.award.workUnitId, row.award.actor.id]).sort(),
+  ).toEqual(
+    [
+      [units[0], A.id],
+      [units[1], B.id],
+    ].sort(),
+  );
+  expect(
+    rows.find(
+      (row) => row.award.actor.id === A.id && row.award.workUnitId === units[0],
+    )?.award.amount,
+  ).toBe(7);
+  expect(total(result.journal)).toBe(18);
+});
+
 test("an incomplete or privately ineligible grouped member retains the entire connected component", () => {
   const { journal, input } = grouped();
   input.candidates[1].proof = { status: "held" };

@@ -418,11 +418,14 @@ function deriveProof(
       );
       const file = commit?.files?.find((item) => item.path === claim.path);
       check(
-        source &&
-          source.occurredAt !== null &&
-          commit &&
-          commit.parentCount <= 1 &&
-          commit.firstAcceptedSourceId === source.sourceId,
+        source && source.occurredAt !== null && commit,
+        "grouped claim has no unique accepted ordinary commit",
+      );
+      // A verified synchronization merge resolution may be a unit claim, but
+      // only non-merge commits supply implementation lines (as add() does).
+      if (commit.parentCount > 1) continue;
+      check(
+        commit.firstAcceptedSourceId === source.sourceId,
         "grouped claim has no unique accepted ordinary commit",
       );
       if (!file) {
