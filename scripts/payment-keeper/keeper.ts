@@ -66,7 +66,7 @@ export interface KeeperConfiguration {
   signer: string;
   rpcUrl: string;
   gas: GasBudget;
-  /** Maximum award checks per vault and examined EVM leaves per month per run. */
+  /** Maximum award checks per vault, and examined EVM leaves or Solana monthly transactions per month, per run. */
   perRun: number;
   /**
    * The deployment's `MONTHLY_PAYMENT_SCHEDULE`. Omitted, the keeper serves
@@ -539,6 +539,7 @@ export async function runKeeper(
                       solana as PublicSolanaExecutorEnvironment,
                       authorization,
                       admit,
+                      config.perRun,
                     );
               result.push({
                 ...item,
