@@ -747,3 +747,573 @@ lemma lawPrivateAmountsValid_ensures(a: seq<int>)
     lawMultiplySmallValid_ensures(privateFeeAmount(a), 3);
   }
 }
+
+// The valuation exists only in proofs. Executable amounts retain their digits.
+lemma AmountValueCons(digit: int, xs: seq<int>)
+  ensures Std.Collections.Seq.FoldLeft((acc: int, limb: int) => 1000 * acc + limb, 0, reverseAmount([digit] + xs)) ==
+    1000 * Std.Collections.Seq.FoldLeft((acc: int, limb: int) => 1000 * acc + limb, 0, reverseAmount(xs)) + digit
+{
+  var reverse := (acc: seq<int>, digit: int) => ([digit] + acc);
+  assert |[digit] + xs| > 0 && ([digit] + xs)[0] == digit && ([digit] + xs)[1..] == xs;
+  assert reverse([], digit) == [digit];
+  assert reverseAmount([digit] + xs) == Std.Collections.Seq.FoldLeft(reverse, [digit], xs);
+  ReverseOneAtEnd(reverse, xs, digit);
+  assert reverseAmount([digit] + xs) == reverseAmount(xs) + [digit];
+  ProofLib.FoldLeftAppend((acc: int, limb: int) => 1000 * acc + limb, 0, reverseAmount(xs), digit);
+}
+
+lemma ReverseOneAtEnd(reverse: (seq<int>, int) -> seq<int>, xs: seq<int>, digit: int)
+  requires forall acc, limb :: reverse(acc, limb) == [limb] + acc
+  ensures Std.Collections.Seq.FoldLeft(reverse, [digit], xs) == Std.Collections.Seq.FoldLeft(reverse, [], xs) + [digit]
+{
+  ReverseRetainsTail(reverse, [], [digit], xs);
+  assert [] + [digit] == [digit];
+}
+
+lemma ReverseRetainsTail(reverse: (seq<int>, int) -> seq<int>, first: seq<int>, tail: seq<int>, xs: seq<int>)
+  requires forall acc, limb :: reverse(acc, limb) == [limb] + acc
+  ensures Std.Collections.Seq.FoldLeft(reverse, first + tail, xs) == Std.Collections.Seq.FoldLeft(reverse, first, xs) + tail
+  decreases |xs|
+{
+  if |xs| > 0 {
+    assert reverse(first + tail, xs[0]) == reverse(first, xs[0]) + tail;
+    ReverseRetainsTail(reverse, reverse(first, xs[0]), tail, xs[1..]);
+  }
+}
+
+lemma AmountValueConsRange(xs: seq<int>)
+  requires forall d :: d in xs ==> 0 <= d < 1000
+  ensures 0 <= Std.Collections.Seq.FoldLeft((n: int, x: int) => 1000*n + x, 0, reverseAmount(xs))
+  ensures Std.Collections.Seq.FoldLeft((n: int, x: int) => 1000*n + x, 0, reverseAmount(xs)) <
+    Std.Collections.Seq.FoldLeft((n: int, x: int) => 1000*n, 1, xs)
+  decreases |xs|
+{
+  var h := (n: int, x: int) => 1000*n + x;
+  var power := (n: int, x: int) => 1000*n;
+  if |xs| > 0 {
+    var d := xs[0];
+    var tail := xs[1..];
+    assert d in xs;
+    forall x | x in tail ensures x in xs { }
+    AmountValueConsRange(tail);
+    assert xs == [d] + tail;
+    AmountValueCons(d, tail);
+    PowerInitialScale(tail, 1, 1000);
+    assert Std.Collections.Seq.FoldLeft(power, 1, xs) == Std.Collections.Seq.FoldLeft(power, 1000, tail);
+    assert 0 <= d < 1000;
+    assert 0 <= Std.Collections.Seq.FoldLeft(h, 0, reverseAmount(tail)) < Std.Collections.Seq.FoldLeft(power, 1, tail);
+  }
+}
+
+lemma PowerInitialScale(xs: seq<int>, initial: int, factor: int)
+  ensures Std.Collections.Seq.FoldLeft((n: int, d: int) => 1000*n, factor * initial, xs) ==
+    factor * Std.Collections.Seq.FoldLeft((n: int, d: int) => 1000*n, initial, xs)
+  decreases |xs|
+{
+  if |xs| > 0 {
+    PowerInitialScale(xs[1..], 1000 * initial, factor);
+    assert 1000 * (factor * initial) == factor * (1000 * initial);
+  }
+}
+
+lemma HornerFromInitial(xs: seq<int>, initial: int)
+  ensures Std.Collections.Seq.FoldLeft((n: int, x: int) => 1000*n + x, initial, xs) ==
+    initial * Std.Collections.Seq.FoldLeft((n: int, x: int) => 1000*n, 1, xs) +
+    Std.Collections.Seq.FoldLeft((n: int, x: int) => 1000*n + x, 0, xs)
+  decreases |xs|
+{
+  if |xs| > 0 {
+    var h := (n: int, x: int) => 1000*n + x;
+    var power := (n: int, x: int) => 1000*n;
+    var tail := xs[1..];
+    var digit := xs[0];
+    HornerFromInitial(tail, 1000 * initial + digit);
+    HornerFromInitial(tail, digit);
+    PowerInitialScale(tail, 1, 1000);
+    var w := Std.Collections.Seq.FoldLeft(power, 1, tail);
+    assert (1000 * initial + digit) * w == initial * (1000 * w) + digit * w;
+  }
+}
+
+lemma ReverseAmountAppend(xs: seq<int>, digit: int)
+  ensures reverseAmount(xs + [digit]) == [digit] + reverseAmount(xs)
+{
+  var step := (r: seq<int>, d: int) => [d] + r;
+  ProofLib.FoldLeftAppend(step, [], xs, digit);
+}
+
+lemma AmountValueAppend(xs: seq<int>, digit: int)
+  ensures Std.Collections.Seq.FoldLeft((n: int, x: int) => 1000*n + x, 0, reverseAmount(xs + [digit])) ==
+    Std.Collections.Seq.FoldLeft((n: int, x: int) => 1000*n + x, 0, reverseAmount(xs)) +
+    digit * Std.Collections.Seq.FoldLeft((n: int, x: int) => 1000*n, 1, xs)
+{
+  var h := (n: int, x: int) => 1000*n + x;
+  var power := (n: int, x: int) => 1000*n;
+  ReverseAmountAppend(xs, digit);
+  HornerFromInitial(reverseAmount(xs), digit);
+  ReverseAmountLength(xs, []);
+  PowerLengthOnly(xs, reverseAmount(xs), 1);
+  assert ([digit] + reverseAmount(xs))[1..] == reverseAmount(xs);
+  assert Std.Collections.Seq.FoldLeft(h, 0, [digit] + reverseAmount(xs)) ==
+    Std.Collections.Seq.FoldLeft(h, digit, reverseAmount(xs));
+}
+
+lemma ReverseAmountLength(xs: seq<int>, acc: seq<int>)
+  ensures |Std.Collections.Seq.FoldLeft((r: seq<int>, d: int) => [d] + r, acc, xs)| == |xs| + |acc|
+  decreases |xs|
+{
+  if |xs| > 0 {
+    ReverseAmountLength(xs[1..], [xs[0]] + acc);
+  }
+}
+
+lemma PowerLengthOnly(xs: seq<int>, ys: seq<int>, initial: int)
+  requires |xs| == |ys|
+  ensures Std.Collections.Seq.FoldLeft((n: int, d: int) => 1000*n, initial, xs) ==
+    Std.Collections.Seq.FoldLeft((n: int, d: int) => 1000*n, initial, ys)
+  decreases |xs|
+{
+  if |xs| > 0 {
+    PowerLengthOnly(xs[1..], ys[1..], 1000 * initial);
+  }
+}
+
+lemma CompareSuffixValue(a: seq<int>, b: seq<int>, work: seq<int>, index: int, previous: int)
+  requires 0 <= index <= (if |a| >= |b| then |a| else |b|)
+  requires index + |work| == (if |a| >= |b| then |a| else |b|)
+  requires forall d :: d in a ==> 0 <= d < 1000
+  requires forall d :: d in b ==> 0 <= d < 1000
+  ensures var h := (n: int, d: int) => 1000*n + d;
+    var u := Std.Collections.Seq.FoldLeft(h, 0, reverseAmount(a[if index < |a| then index else |a|..]));
+    var v := Std.Collections.Seq.FoldLeft(h, 0, reverseAmount(b[if index < |b| then index else |b|..]));
+    (Std.Collections.Seq.FoldLeft((acc: CompareFold, ignored: int) => CompareFold((acc.index + 1), (if ((if ((0 <= acc.index) && (acc.index < |a|)) then a[acc.index] else 0) == (if ((0 <= acc.index) && (acc.index < |b|)) then b[acc.index] else 0)) then acc.comparison else (if ((if ((0 <= acc.index) && (acc.index < |a|)) then a[acc.index] else 0) > (if ((0 <= acc.index) && (acc.index < |b|)) then b[acc.index] else 0)) then 1 else -1))), CompareFold(index, previous), work).comparison ==
+      (if u > v then 1 else if u < v then -1 else previous))
+  decreases |work|
+{
+  if |work| > 0 {
+    var da := if index < |a| then a[index] else 0;
+    var db := if index < |b| then b[index] else 0;
+    var k := index + 1;
+    var at := a[if index < |a| then index else |a|..];
+    var bt := b[if index < |b| then index else |b|..];
+    var atNext := a[if k < |a| then k else |a|..];
+    var btNext := b[if k < |b| then k else |b|..];
+    var h := (n: int, d: int) => 1000*n + d;
+    if index < |a| {
+      assert da in a;
+      assert at == [da] + atNext;
+      AmountValueCons(da, atNext);
+    } else {
+      assert at == [] && atNext == [];
+    }
+    if index < |b| {
+      assert db in b;
+      assert bt == [db] + btNext;
+      AmountValueCons(db, btNext);
+    } else {
+      assert bt == [] && btNext == [];
+    }
+    assert 0 <= da < 1000 && 0 <= db < 1000;
+    var u := Std.Collections.Seq.FoldLeft(h, 0, reverseAmount(at));
+    var v := Std.Collections.Seq.FoldLeft(h, 0, reverseAmount(bt));
+    var tailA := Std.Collections.Seq.FoldLeft(h, 0, reverseAmount(atNext));
+    var tailB := Std.Collections.Seq.FoldLeft(h, 0, reverseAmount(btNext));
+    assert u == da + 1000 * tailA && v == db + 1000 * tailB;
+    var next := if da == db then previous else if da > db then 1 else -1;
+    CompareSuffixValue(a, b, work[1..], k, next);
+    if tailA > tailB { assert u > v; }
+    else if tailA < tailB { assert u < v; }
+    else { assert next == (if u > v then 1 else if u < v then -1 else previous); }
+  }
+}
+
+lemma AmountValueOrder(a: seq<int>, b: seq<int>)
+  requires forall d :: d in a ==> 0 <= d < 1000
+  requires forall d :: d in b ==> 0 <= d < 1000
+  ensures var h := (n: int, d: int) => 1000*n + d;
+    var u := Std.Collections.Seq.FoldLeft(h, 0, reverseAmount(a));
+    var v := Std.Collections.Seq.FoldLeft(h, 0, reverseAmount(b));
+    compareAmounts(a, b) == (if u > v then 1 else if u < v then -1 else 0)
+{
+  var work := if |a| >= |b| then a else b;
+  CompareSuffixValue(a, b, work, 0, 0);
+  assert a[if 0 < |a| then 0 else |a|..] == a;
+  assert b[if 0 < |b| then 0 else |b|..] == b;
+}
+
+lemma AddSuffixValue(a: seq<int>, b: seq<int>, work: seq<int>, current: AddFold)
+  requires 0 <= current.index && current.index + |work| == (if |a| >= |b| then |a| else |b|)
+  requires 0 <= current.carry <= 1
+  requires forall d :: d in a ==> 0 <= d < 1000
+  requires forall d :: d in b ==> 0 <= d < 1000
+  ensures var h := (n: int, d: int) => 1000*n + d;
+    var remainderA := a[if current.index < |a| then current.index else |a|..];
+    var remainderB := b[if current.index < |b| then current.index else |b|..];
+    var result := Std.Collections.Seq.FoldLeft((acc: AddFold, ignored: int) => AddFold((acc.index + 1), quotient_settlement__money((((if ((0 <= acc.index) && (acc.index < |a|)) then a[acc.index] else 0) + (if ((0 <= acc.index) && (acc.index < |b|)) then b[acc.index] else 0)) + acc.carry), 1000), (acc.digits + [remainder_settlement__money((((if ((0 <= acc.index) && (acc.index < |a|)) then a[acc.index] else 0) + (if ((0 <= acc.index) && (acc.index < |b|)) then b[acc.index] else 0)) + acc.carry), 1000)])), current, work);
+    |result.digits| == |current.digits| + |work| && result.digits[..|current.digits|] == current.digits &&
+    (var tail := result.digits[|current.digits|..];
+     var out := if result.carry > 0 then tail + [result.carry] else tail;
+     Std.Collections.Seq.FoldLeft(h, 0, reverseAmount(out)) ==
+       Std.Collections.Seq.FoldLeft(h, 0, reverseAmount(remainderA)) +
+       Std.Collections.Seq.FoldLeft(h, 0, reverseAmount(remainderB)) + current.carry)
+  decreases |work|
+{
+  var f := (acc: AddFold, ignored: int) => AddFold((acc.index + 1), quotient_settlement__money((((if ((0 <= acc.index) && (acc.index < |a|)) then a[acc.index] else 0) + (if ((0 <= acc.index) && (acc.index < |b|)) then b[acc.index] else 0)) + acc.carry), 1000), (acc.digits + [remainder_settlement__money((((if ((0 <= acc.index) && (acc.index < |a|)) then a[acc.index] else 0) + (if ((0 <= acc.index) && (acc.index < |b|)) then b[acc.index] else 0)) + acc.carry), 1000)]));
+  var full := Std.Collections.Seq.FoldLeft(f, current, work);
+  var h := (n: int, d: int) => 1000*n + d;
+  var ra := a[if current.index < |a| then current.index else |a|..];
+  var rb := b[if current.index < |b| then current.index else |b|..];
+  var va := Std.Collections.Seq.FoldLeft(h, 0, reverseAmount(ra));
+  var vb := Std.Collections.Seq.FoldLeft(h, 0, reverseAmount(rb));
+  if |work| > 0 {
+    var i := current.index;
+    var j := i + 1;
+    var da := if i < |a| then a[i] else 0;
+    var db := if i < |b| then b[i] else 0;
+    if i < |a| { assert da in a; }
+    if i < |b| { assert db in b; }
+    assert 0 <= da < 1000 && 0 <= db < 1000;
+    var total := da + db + current.carry;
+    var digit := total % 1000;
+    var next := f(current, work[0]);
+    assert 0 <= total < 2000;
+    assert next.index == j && next.carry == total / 1000 && next.digits == current.digits + [digit];
+    AddSuffixValue(a, b, work[1..], next);
+    assert full == Std.Collections.Seq.FoldLeft(f, next, work[1..]);
+    assert |full.digits| == |current.digits| + |work|;
+    assert full.digits[..|next.digits|] == next.digits;
+    assert full.digits[|current.digits|] == digit;
+    var rest := full.digits[|next.digits|..];
+    var outRest := if full.carry > 0 then rest + [full.carry] else rest;
+    assert |next.digits| == |current.digits| + 1;
+    assert full.digits[|current.digits|..] == full.digits[|current.digits|..|next.digits|] + rest;
+    assert full.digits[|current.digits|..|next.digits|] == [digit];
+    var tail := full.digits[|current.digits|..];
+    var out := if full.carry > 0 then tail + [full.carry] else tail;
+    assert out == [digit] + outRest;
+    AmountValueCons(digit, outRest);
+    AmountSuffixValue(a, i);
+    AmountSuffixValue(b, i);
+    var ta := a[if j < |a| then j else |a|..];
+    var tb := b[if j < |b| then j else |b|..];
+    var vta := Std.Collections.Seq.FoldLeft(h, 0, reverseAmount(ta));
+    var vtb := Std.Collections.Seq.FoldLeft(h, 0, reverseAmount(tb));
+    var remaining := Std.Collections.Seq.FoldLeft(h, 0, reverseAmount(outRest));
+    assert remaining == vta + vtb + next.carry;
+    assert total == digit + 1000 * next.carry;
+    calc {
+      Std.Collections.Seq.FoldLeft(h, 0, reverseAmount(out));
+      == digit + 1000 * remaining;
+      == total + 1000*vta + 1000*vtb;
+      == va + vb + current.carry;
+    }
+  } else {
+    assert full == current;
+    assert current.index >= |a| && current.index >= |b|;
+    assert a[|a|..] == [] && b[|b|..] == [];
+    assert full.digits[|current.digits|..] == [];
+    assert reverseAmount([]) == [] && Std.Collections.Seq.FoldLeft(h, 0, []) == 0;
+    assert ra == [] && rb == [] && va == 0 && vb == 0;
+    var tail := full.digits[|current.digits|..];
+    var out := if full.carry > 0 then tail + [full.carry] else tail;
+    if current.carry == 1 {
+      assert out == [1];
+      AmountValueCons(1, []);
+      assert out == [1] + [];
+      calc {
+        Std.Collections.Seq.FoldLeft(h, 0, reverseAmount(out));
+        == 1 + 1000 * Std.Collections.Seq.FoldLeft(h, 0, reverseAmount([]));
+        == 1;
+      }
+    } else {
+      assert out == [] && current.carry == 0;
+    }
+    assert Std.Collections.Seq.FoldLeft(h, 0, reverseAmount(out)) == va + vb + current.carry;
+  }
+}
+
+lemma AmountSuffixValue(a: seq<int>, i: int)
+  requires i >= 0
+  ensures var h := (n: int, d: int) => 1000*n + d;
+    var next := i + 1;
+    var da := if i < |a| then a[i] else 0;
+    var at := a[if i < |a| then i else |a|..];
+    var atNext := a[if next < |a| then next else |a|..];
+    Std.Collections.Seq.FoldLeft(h, 0, reverseAmount(at)) == da + 1000 * Std.Collections.Seq.FoldLeft(h, 0, reverseAmount(atNext))
+{
+  if i < |a| {
+    var da := a[i];
+    var next := i + 1;
+    var at := a[i..];
+    var atNext := a[if next < |a| then next else |a|..];
+    assert at == [da] + atNext;
+    AmountValueCons(da, atNext);
+  }
+}
+
+lemma AmountValueAdd(a: seq<int>, b: seq<int>)
+  requires forall d :: d in a ==> 0 <= d < 1000
+  requires forall d :: d in b ==> 0 <= d < 1000
+  ensures var h := (n: int, d: int) => 1000*n + d;
+    Std.Collections.Seq.FoldLeft(h, 0, reverseAmount(addAmounts(a, b))) ==
+      Std.Collections.Seq.FoldLeft(h, 0, reverseAmount(a)) + Std.Collections.Seq.FoldLeft(h, 0, reverseAmount(b))
+{
+  var f := (acc: AddFold, ignored: int) => AddFold((acc.index + 1), quotient_settlement__money((((if ((0 <= acc.index) && (acc.index < |a|)) then a[acc.index] else 0) + (if ((0 <= acc.index) && (acc.index < |b|)) then b[acc.index] else 0)) + acc.carry), 1000), (acc.digits + [remainder_settlement__money((((if ((0 <= acc.index) && (acc.index < |a|)) then a[acc.index] else 0) + (if ((0 <= acc.index) && (acc.index < |b|)) then b[acc.index] else 0)) + acc.carry), 1000)]));
+  var work := if |a| >= |b| then a else b;
+  var current := AddFold(0, 0, []);
+  AddSuffixValue(a, b, work, current);
+  assert a[if 0 < |a| then 0 else |a|..] == a;
+  assert b[if 0 < |b| then 0 else |b|..] == b;
+}
+
+lemma AmountValueConcat(a: seq<int>, b: seq<int>)
+  ensures var h := (n: int, d: int) => 1000*n + d;
+    var p := (n: int, d: int) => 1000*n;
+    Std.Collections.Seq.FoldLeft(h, 0, reverseAmount(a+b)) ==
+      Std.Collections.Seq.FoldLeft(h, 0, reverseAmount(a)) +
+      Std.Collections.Seq.FoldLeft(p, 1, a) * Std.Collections.Seq.FoldLeft(h, 0, reverseAmount(b))
+  decreases |a|
+{
+  if |a| > 0 {
+    var d := a[0];
+    var tail := a[1..];
+    var h := (n: int, x: int) => 1000*n + x;
+    var p := (n: int, x: int) => 1000*n;
+    assert a == [d] + tail;
+    assert a + b == [d] + (tail + b);
+    AmountValueCons(d, tail);
+    AmountValueCons(d, tail+b);
+    AmountValueConcat(tail, b);
+    PowerInitialScale(tail, 1, 1000);
+    var w := Std.Collections.Seq.FoldLeft(p, 1, tail);
+    var right := Std.Collections.Seq.FoldLeft(h, 0, reverseAmount(b));
+    assert Std.Collections.Seq.FoldLeft(p, 1, a) == 1000 * w;
+    assert 1000 * (w * right) == (1000 * w) * right;
+    var left := Std.Collections.Seq.FoldLeft(h, 0, reverseAmount(tail));
+    var joined := Std.Collections.Seq.FoldLeft(h, 0, reverseAmount(tail+b));
+    assert joined == left + w*right;
+    calc {
+      Std.Collections.Seq.FoldLeft(h, 0, reverseAmount(a+b));
+      == d + 1000*joined;
+      == d + 1000*left + (1000*w)*right;
+      == Std.Collections.Seq.FoldLeft(h, 0, reverseAmount(a)) + Std.Collections.Seq.FoldLeft(p, 1, a) * right;
+    }
+  } else {
+    assert a == [] && a+b == b;
+    assert reverseAmount(a) == [];
+
+  }
+}
+
+lemma SubtractSuffixValue(a: seq<int>, b: seq<int>, work: seq<int>, current: SubtractFold)
+  requires 0 <= current.index && current.index + |work| == |a|
+  requires 0 <= current.borrow <= 1
+  requires forall d :: d in a ==> 0 <= d < 1000
+  requires forall d :: d in b ==> 0 <= d < 1000
+  requires Std.Collections.Seq.FoldLeft((n: int, d: int) => 1000*n+d, 0, reverseAmount(b[if |a| < |b| then |a| else |b|..])) == 0
+  ensures var h := (n: int, d: int) => 1000*n + d;
+    var p := (n: int, d: int) => 1000*n;
+    var remainingA := a[current.index..];
+    var remainingB := b[if current.index < |b| then current.index else |b|..];
+    var result := Std.Collections.Seq.FoldLeft((acc: SubtractFold, ignored: int) => SubtractFold((acc.index + 1), (if ((((if ((0 <= acc.index) && (acc.index < |a|)) then a[acc.index] else 0) - (if ((0 <= acc.index) && (acc.index < |b|)) then b[acc.index] else 0)) - acc.borrow) < 0) then 1 else 0), (acc.digits + [(if ((((if ((0 <= acc.index) && (acc.index < |a|)) then a[acc.index] else 0) - (if ((0 <= acc.index) && (acc.index < |b|)) then b[acc.index] else 0)) - acc.borrow) < 0) then ((((if ((0 <= acc.index) && (acc.index < |a|)) then a[acc.index] else 0) - (if ((0 <= acc.index) && (acc.index < |b|)) then b[acc.index] else 0)) - acc.borrow) + 1000) else (((if ((0 <= acc.index) && (acc.index < |a|)) then a[acc.index] else 0) - (if ((0 <= acc.index) && (acc.index < |b|)) then b[acc.index] else 0)) - acc.borrow))])), current, work);
+    |result.digits| == |current.digits| + |work| && result.digits[..|current.digits|] == current.digits &&
+    0 <= result.borrow <= 1 &&
+    (var tail := result.digits[|current.digits|..];
+     Std.Collections.Seq.FoldLeft(h, 0, reverseAmount(tail)) - result.borrow * Std.Collections.Seq.FoldLeft(p, 1, work) ==
+       Std.Collections.Seq.FoldLeft(h, 0, reverseAmount(remainingA)) -
+       Std.Collections.Seq.FoldLeft(h, 0, reverseAmount(remainingB)) - current.borrow)
+  decreases |work|
+{
+  var f := (acc: SubtractFold, ignored: int) => SubtractFold((acc.index + 1), (if ((((if ((0 <= acc.index) && (acc.index < |a|)) then a[acc.index] else 0) - (if ((0 <= acc.index) && (acc.index < |b|)) then b[acc.index] else 0)) - acc.borrow) < 0) then 1 else 0), (acc.digits + [(if ((((if ((0 <= acc.index) && (acc.index < |a|)) then a[acc.index] else 0) - (if ((0 <= acc.index) && (acc.index < |b|)) then b[acc.index] else 0)) - acc.borrow) < 0) then ((((if ((0 <= acc.index) && (acc.index < |a|)) then a[acc.index] else 0) - (if ((0 <= acc.index) && (acc.index < |b|)) then b[acc.index] else 0)) - acc.borrow) + 1000) else (((if ((0 <= acc.index) && (acc.index < |a|)) then a[acc.index] else 0) - (if ((0 <= acc.index) && (acc.index < |b|)) then b[acc.index] else 0)) - acc.borrow))]));
+  var result := Std.Collections.Seq.FoldLeft(f, current, work);
+  if |work| > 0 {
+    var i := current.index;
+    var j := i + 1;
+    var da := a[i];
+    var db := if i < |b| then b[i] else 0;
+    assert da in a;
+    if i < |b| { assert db in b; }
+    assert 0 <= da < 1000 && 0 <= db < 1000;
+    var difference := da - db - current.borrow;
+    var borrow := if difference < 0 then 1 else 0;
+    var digit := difference + 1000 * borrow;
+    var next := f(current, work[0]);
+    assert next.index == j && next.borrow == borrow && next.digits == current.digits + [digit];
+    SubtractSuffixValue(a, b, work[1..], next);
+    assert result == Std.Collections.Seq.FoldLeft(f, next, work[1..]);
+    assert |result.digits| == |current.digits| + |work|;
+    assert result.digits[..|next.digits|] == next.digits;
+    assert result.digits[|current.digits|] == digit;
+    var rest := result.digits[|next.digits|..];
+    assert result.digits[|current.digits|..] == [digit] + rest;
+    AmountValueCons(digit, rest);
+    AmountSuffixValue(a, i);
+    AmountSuffixValue(b, i);
+    PowerInitialScale(work[1..], 1, 1000);
+    var p := (n: int, d: int) => 1000*n;
+    var w := Std.Collections.Seq.FoldLeft(p, 1, work[1..]);
+    assert Std.Collections.Seq.FoldLeft(p, 1, work) == 1000 * w;
+    assert result.borrow * (1000 * w) == 1000 * (result.borrow * w);
+  }
+}
+
+lemma AmountValueSubtract(a: seq<int>, b: seq<int>)
+  requires validAmount(a) && validAmount(b) && compareAmounts(a, b) >= 0
+  ensures var h := (n: int, d: int) => 1000*n + d;
+    Std.Collections.Seq.FoldLeft(h, 0, reverseAmount(subtractAmounts(a, b))) ==
+      Std.Collections.Seq.FoldLeft(h, 0, reverseAmount(a)) - Std.Collections.Seq.FoldLeft(h, 0, reverseAmount(b))
+{
+  var h := (n: int, d: int) => 1000*n + d;
+  var p := (n: int, d: int) => 1000*n;
+  var wa := Std.Collections.Seq.FoldLeft(p, 1, a);
+  var va := Std.Collections.Seq.FoldLeft(h, 0, reverseAmount(a));
+  var vb := Std.Collections.Seq.FoldLeft(h, 0, reverseAmount(b));
+  AmountValueOrder(a, b);
+  assert vb <= va;
+  AmountValueConsRange(a);
+  if |a| < |b| {
+    var lo := b[..|a|];
+    var hi := b[|a|..];
+    assert lo + hi == b;
+    assert forall d :: d in lo ==> d in b;
+    assert forall d :: d in hi ==> d in b;
+    PowerLengthOnly(a, lo, 1);
+    AmountValueConsRange(lo);
+    AmountValueConsRange(hi);
+    AmountValueConcat(lo, hi);
+    var vl := Std.Collections.Seq.FoldLeft(h, 0, reverseAmount(lo));
+    var vh := Std.Collections.Seq.FoldLeft(h, 0, reverseAmount(hi));
+    assert 0 <= vl && 0 <= vh;
+    assert vb == vl + wa * vh;
+    if vh > 0 { assert wa * vh >= wa; }
+    assert vh == 0;
+  }
+  var f := (acc: SubtractFold, ignored: int) => SubtractFold((acc.index + 1), (if ((((if ((0 <= acc.index) && (acc.index < |a|)) then a[acc.index] else 0) - (if ((0 <= acc.index) && (acc.index < |b|)) then b[acc.index] else 0)) - acc.borrow) < 0) then 1 else 0), (acc.digits + [(if ((((if ((0 <= acc.index) && (acc.index < |a|)) then a[acc.index] else 0) - (if ((0 <= acc.index) && (acc.index < |b|)) then b[acc.index] else 0)) - acc.borrow) < 0) then ((((if ((0 <= acc.index) && (acc.index < |a|)) then a[acc.index] else 0) - (if ((0 <= acc.index) && (acc.index < |b|)) then b[acc.index] else 0)) - acc.borrow) + 1000) else (((if ((0 <= acc.index) && (acc.index < |a|)) then a[acc.index] else 0) - (if ((0 <= acc.index) && (acc.index < |b|)) then b[acc.index] else 0)) - acc.borrow))]));
+  var result := Std.Collections.Seq.FoldLeft(f, SubtractFold(0, 0, []), a);
+  SubtractSuffixValue(a, b, a, SubtractFold(0, 0, []));
+  assert a[0..] == a && b[if 0 < |b| then 0 else |b|..] == b;
+  assert result.digits == subtractAmounts(a, b) && |result.digits| == |a|;
+  lawSubtractionValid_ensures(a, b);
+  AmountValueConsRange(result.digits);
+  PowerLengthOnly(result.digits, a, 1);
+  assert Std.Collections.Seq.FoldLeft(h, 0, reverseAmount(result.digits)) < wa;
+  assert result.borrow == 0;
+}
+
+lemma lawNumericOrderTotal_ensures(a: seq<int>, b: seq<int>)
+  ensures (lawNumericOrderTotal(a, b) == true)
+{
+  if validAmount(a) && validAmount(b) {
+    AmountValueOrder(a, b);
+    AmountValueOrder(b, a);
+  }
+}
+
+lemma lawNumericOrderTransitive_ensures(a: seq<int>, b: seq<int>, c: seq<int>)
+  ensures (lawNumericOrderTransitive(a, b, c) == true)
+{
+  if validAmount(a) && validAmount(b) && validAmount(c) {
+    AmountValueOrder(a, b);
+    AmountValueOrder(b, c);
+    AmountValueOrder(a, c);
+  }
+}
+
+lemma lawAddOrder_ensures(a: seq<int>, b: seq<int>, c: seq<int>)
+  ensures (lawAddOrder(a, b, c) == true)
+{
+  if validAmount(a) && validAmount(b) && validAmount(c) {
+    lawAdditionValid_ensures(a, c);
+    lawAdditionValid_ensures(b, c);
+    AmountValueAdd(a, c);
+    AmountValueAdd(b, c);
+    AmountValueOrder(a, b);
+    AmountValueOrder(addAmounts(a, c), addAmounts(b, c));
+  }
+}
+
+lemma lawAddMonotone_ensures(a: seq<int>, b: seq<int>)
+  ensures (lawAddMonotone(a, b) == true)
+{
+  if validAmount(a) && validAmount(b) {
+    lawAdditionValid_ensures(a, b);
+    AmountValueAdd(a, b);
+    AmountValueConsRange(b);
+    AmountValueOrder(addAmounts(a, b), a);
+  }
+}
+
+lemma lawAddCongruence_ensures(a: seq<int>, b: seq<int>, c: seq<int>)
+  ensures (lawAddCongruence(a, b, c) == true)
+{
+  if validAmount(a) && validAmount(b) && validAmount(c) && equalAmounts(a,b) {
+    lawAddOrder_ensures(a, b, c);
+    lawAddCommutative_ensures(c, a);
+    lawAddCommutative_ensures(c, b);
+  }
+}
+
+lemma lawAddAssociative_ensures(a: seq<int>, b: seq<int>, c: seq<int>)
+  ensures (lawAddAssociative(a, b, c) == true)
+{
+  if validAmount(a) && validAmount(b) && validAmount(c) {
+    var ab := addAmounts(a, b);
+    var bc := addAmounts(b, c);
+    lawAdditionValid_ensures(a, b);
+    lawAdditionValid_ensures(b, c);
+    lawAdditionValid_ensures(ab, c);
+    lawAdditionValid_ensures(a, bc);
+    AmountValueAdd(a, b);
+    AmountValueAdd(b, c);
+    AmountValueAdd(ab, c);
+    AmountValueAdd(a, bc);
+    AmountValueOrder(addAmounts(ab, c), addAmounts(a, bc));
+  }
+}
+
+lemma lawSubtractionReconstructs_ensures(a: seq<int>, b: seq<int>)
+  ensures (lawSubtractionReconstructs(a, b) == true)
+{
+  if validAmount(a) && validAmount(b) && compareAmounts(a,b) >= 0 {
+    var difference := subtractAmounts(a,b);
+    lawSubtractionValid_ensures(a,b);
+    lawAdditionValid_ensures(difference,b);
+    AmountValueSubtract(a,b);
+    AmountValueAdd(difference,b);
+    AmountValueOrder(addAmounts(difference,b),a);
+  }
+}
+
+lemma lawSubtractCongruence_ensures(a: seq<int>, b: seq<int>, c: seq<int>)
+  ensures (lawSubtractCongruence(a, b, c) == true)
+{
+  if validAmount(a) && validAmount(b) && validAmount(c) && equalAmounts(a,b) {
+    lawEqualOrder_ensures(a,b,c);
+    AmountValueOrder(a,b);
+    if compareAmounts(a,c) >= 0 {
+      lawSubtractionValid_ensures(a,c);
+      lawSubtractionValid_ensures(b,c);
+      AmountValueSubtract(a,c);
+      AmountValueSubtract(b,c);
+      AmountValueOrder(subtractAmounts(a,c),subtractAmounts(b,c));
+    }
+    if compareAmounts(c,a) >= 0 {
+      lawSubtractionValid_ensures(c,a);
+      lawSubtractionValid_ensures(c,b);
+      AmountValueSubtract(c,a);
+      AmountValueSubtract(c,b);
+      AmountValueOrder(subtractAmounts(c,a),subtractAmounts(c,b));
+    }
+  }
+}
+
+lemma lawSubtractionAtMost_ensures(a: seq<int>, b: seq<int>)
+  ensures (lawSubtractionAtMost(a, b) == true)
+{
+  if validAmount(a) && validAmount(b) && compareAmounts(a,b) >= 0 {
+    lawSubtractionValid_ensures(a,b);
+    AmountValueSubtract(a,b);
+    AmountValueConsRange(b);
+    AmountValueOrder(subtractAmounts(a,b),a);
+  }
+}

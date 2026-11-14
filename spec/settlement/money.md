@@ -109,6 +109,44 @@ pure def lawPositiveAddition(a: Amount, b: Amount): bool =
     (positiveAmount(addAmounts(a, b)) == (positiveAmount(a) or positiveAmount(b)))
 ```
 
+### Compatible amounts obey exact order, addition and subtraction
+
+Comparison gives the same order as the value of the digits, including zero
+padding. Adding the same valid amount preserves order and equivalent values.
+Subtraction reconstructs the original value once the subtrahend is added back.
+
+```quint
+pure def lawNumericOrderTotal(a: Amount, b: Amount): bool =
+  (validAmount(a) and validAmount(b)) implies
+    compareAmounts(a, b) >= -1 and compareAmounts(a, b) <= 1 and compareAmounts(a, b) == (0 - compareAmounts(b, a))
+pure def lawNumericOrderTransitive(a: Amount, b: Amount, c: Amount): bool =
+  (validAmount(a) and validAmount(b) and validAmount(c)) implies
+    ((compareAmounts(a, b) <= 0 and compareAmounts(b, c) <= 0) implies compareAmounts(a, c) <= 0)
+      and ((compareAmounts(a, b) < 0 and compareAmounts(b, c) <= 0) implies compareAmounts(a, c) < 0)
+      and ((compareAmounts(a, b) <= 0 and compareAmounts(b, c) < 0) implies compareAmounts(a, c) < 0)
+pure def lawAddOrder(a: Amount, b: Amount, c: Amount): bool =
+  (validAmount(a) and validAmount(b) and validAmount(c)) implies
+    compareAmounts(addAmounts(a, c), addAmounts(b, c)) == compareAmounts(a, b)
+pure def lawAddMonotone(a: Amount, b: Amount): bool =
+  (validAmount(a) and validAmount(b)) implies compareAmounts(addAmounts(a, b), a) >= 0
+pure def lawAddCongruence(a: Amount, b: Amount, c: Amount): bool =
+  (validAmount(a) and validAmount(b) and validAmount(c) and equalAmounts(a, b)) implies
+    equalAmounts(addAmounts(a, c), addAmounts(b, c)) and equalAmounts(addAmounts(c, a), addAmounts(c, b))
+pure def lawAddAssociative(a: Amount, b: Amount, c: Amount): bool =
+  (validAmount(a) and validAmount(b) and validAmount(c)) implies
+    equalAmounts(addAmounts(addAmounts(a, b), c), addAmounts(a, addAmounts(b, c)))
+pure def lawSubtractionReconstructs(a: Amount, b: Amount): bool =
+  (validAmount(a) and validAmount(b) and compareAmounts(a, b) >= 0) implies
+    equalAmounts(addAmounts(subtractAmounts(a, b), b), a)
+pure def lawSubtractCongruence(a: Amount, b: Amount, c: Amount): bool =
+  (validAmount(a) and validAmount(b) and validAmount(c) and equalAmounts(a, b)) implies
+    ((compareAmounts(a, c) >= 0) implies equalAmounts(subtractAmounts(a, c), subtractAmounts(b, c)))
+      and ((compareAmounts(c, a) >= 0) implies equalAmounts(subtractAmounts(c, a), subtractAmounts(c, b)))
+pure def lawSubtractionAtMost(a: Amount, b: Amount): bool =
+  (validAmount(a) and validAmount(b) and compareAmounts(a, b) >= 0) implies
+    compareAmounts(subtractAmounts(a, b), a) <= 0
+```
+
 ### Ordinary fees round upward and private splits require exact division
 
 Scalar compatibility helpers retain existing safe-integer callers. Full-width fee and allocation operations below use limb arithmetic. A one-unit ordinary award has zero net. A private 75/25 award requires exact quarter division and never adds the ordinary fee.

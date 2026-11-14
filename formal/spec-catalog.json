@@ -1301,7 +1301,7 @@
     },
     {
       "path": "spec/settlement/money.md",
-      "sha256": "b00cb238e46146e9bf37b4665d3f288d6f752c95ca4557d5450ce9ee5f911224",
+      "sha256": "801d269c4fa02d62cac4d5d37412d831793daf16aff7a751c07e10a5ce383f4b",
       "module": "settlement__money",
       "stories": [
         {
@@ -1310,11 +1310,11 @@
         },
         {
           "heading": "Story: Admit the exact supported token behavior",
-          "line": 125
+          "line": 163
         },
         {
           "heading": "Story: Multiply and divide full-width monetary values",
-          "line": 147
+          "line": 185
         }
       ],
       "rules": [
@@ -1381,8 +1381,23 @@
           ]
         },
         {
-          "heading": "Story: Preserve every base unit / Ordinary fees round upward and private splits require exact division",
+          "heading": "Story: Preserve every base unit / Compatible amounts obey exact order, addition and subtraction",
           "line": 112,
+          "definitions": [
+            "lawNumericOrderTotal",
+            "lawNumericOrderTransitive",
+            "lawAddOrder",
+            "lawAddMonotone",
+            "lawAddCongruence",
+            "lawAddAssociative",
+            "lawSubtractionReconstructs",
+            "lawSubtractCongruence",
+            "lawSubtractionAtMost"
+          ]
+        },
+        {
+          "heading": "Story: Preserve every base unit / Ordinary fees round upward and private splits require exact division",
+          "line": 150,
           "definitions": [
             "ordinaryFee",
             "ordinaryNet",
@@ -1394,7 +1409,7 @@
         },
         {
           "heading": "Story: Admit the exact supported token behavior / Token-2022 admission permits only immutable metadata and immutable token ownership",
-          "line": 127,
+          "line": 165,
           "definitions": [
             "AssetKind",
             "token2022Admissible",
@@ -1403,7 +1418,7 @@
         },
         {
           "heading": "Story: Multiply and divide full-width monetary values / Multiplication accumulates shifted limb products without converting the amount to a number",
-          "line": 149,
+          "line": 187,
           "definitions": [
             "multiplySmall",
             "multiplyAmounts",
@@ -1413,7 +1428,7 @@
         },
         {
           "heading": "Story: Multiply and divide full-width monetary values / Long division chooses each quotient limb by ten fixed binary decisions",
-          "line": 170,
+          "line": 208,
           "definitions": [
             "quotientBits",
             "quotientCandidate",
@@ -1428,7 +1443,7 @@
         },
         {
           "heading": "Story: Multiply and divide full-width monetary values / Full-width ordinary and private fee calculations conserve every base unit",
-          "line": 201,
+          "line": 239,
           "definitions": [
             "ordinaryFeeAmount",
             "ordinaryNetAmount",
@@ -1441,7 +1456,7 @@
         },
         {
           "heading": "Story: Multiply and divide full-width monetary values / Multiplication, division and derived fees preserve valid limb representations",
-          "line": 217,
+          "line": 255,
           "definitions": [
             "lawMultiplySmallValid",
             "lawMultiplyValid",
@@ -1452,7 +1467,7 @@
         },
         {
           "heading": "Story: Multiply and divide full-width monetary values / Simulation samples exercise missing, matching and conflicting evidence",
-          "line": 236,
+          "line": 274,
           "definitions": [
             "assetValues",
             "decimalsValues",
@@ -1641,6 +1656,49 @@
           "line": 47
         }
       ]
+    },
+    {
+      "path": "spec/fees/buybackRpc.md",
+      "sha256": "0c1749945423ea64545cc836c65e3efdba649bea1cb696ad123f98765e8096f5",
+      "module": "fees__buybackRpc",
+      "stories": [
+        {
+          "heading": "Story: Observe whether the configured Robinhood RPC can serve finalized state",
+          "line": 8
+        }
+      ],
+      "rules": [
+        {
+          "heading": "Story: Observe whether the configured Robinhood RPC can serve finalized state / Only a live Robinhood buyback recovery tick can report the diagnostic",
+          "line": 10,
+          "definitions": []
+        },
+        {
+          "heading": "Story: Observe whether the configured Robinhood RPC can serve finalized state / A verified observation binds the exact chain, block and contract read",
+          "line": 18,
+          "definitions": [
+            "BuybackRpcScope",
+            "FinalizedBlock",
+            "DestinationRead",
+            "FinalizedRpcEvidence",
+            "RpcObservation",
+            "robinhoodChainId",
+            "runProbe",
+            "exactFinalizedRead",
+            "finalizedRpc",
+            "lawInactiveProbeOmitted",
+            "lawActiveProbeRefusal",
+            "lawVerifiedFactsExact",
+            "liveRobinhood",
+            "observedBlock",
+            "observedRpc",
+            "scopeValues",
+            "rpcValues"
+          ]
+        }
+      ],
+      "imports": [],
+      "references": []
     },
     {
       "path": "spec/fees/conversion.md",
@@ -1833,7 +1891,7 @@
     },
     {
       "path": "spec/fees/index.md",
-      "sha256": "221be82ccdcfca981224204f2a1953e444f18257334eac44c9c109d96eeffefd",
+      "sha256": "092daed0e9e7cc5b2a73c1959800b012ba497be41b3133b9f8f9c8b4ffa18986",
       "module": "fees",
       "stories": [],
       "rules": [],
@@ -1848,8 +1906,12 @@
           "line": 6
         },
         {
-          "target": "../settlement/",
+          "target": "./buybackRpc.md",
           "line": 7
+        },
+        {
+          "target": "../settlement/",
+          "line": 8
         }
       ]
     },
