@@ -9280,7 +9280,8 @@
         "spec/settlement/payment.md",
         "spec/settlement/money.md",
         "spec/settlement/reserveRelease.md",
-        "spec/settlement/composition.md"
+        "spec/settlement/composition.md",
+        "spec/settlement/paymentDispatch.md"
       ]
     },
     {

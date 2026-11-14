@@ -577,7 +577,7 @@
         },
         "finalized": {
           "status": "modeled-projection",
-          "reason": "Exact finalized payout admits a canonical handoff and marks a matching attempt reference finalized when present.",
+          "reason": "Exact finalized vault payout consumes the actor-owned reserve and sets the canonical financial, dispatch and vault projections in one transition. The transaction can be absent from retained attempts.",
           "successors": [
             {
               "path": "spec/settlement/paymentDispatch.md",
@@ -585,12 +585,34 @@
                 "canIndexFinalized",
                 "indexFinalized"
               ]
+            },
+            {
+              "path": "spec/settlement/composition.md",
+              "definitions": [
+                "canReconcile",
+                "reconcile",
+                "alwaysCanonicalReceiptAgrees"
+              ]
+            },
+            {
+              "path": "spec/settlement/payment.md",
+              "definitions": [
+                "vaultPayoutMatches",
+                "recordVaultPayment"
+              ]
+            },
+            {
+              "path": "spec/settlement/vault.md",
+              "definitions": [
+                "reservationMatches",
+                "payReserved"
+              ]
             }
           ]
         },
         "externalPaid": {
           "status": "modeled-projection",
-          "reason": "Canonical handoff permits an exact finalized vault payout without a submitted attempt. The aggregate payment specification requires composition work.",
+          "reason": "Exact finalized vault payout consumes the actor-owned reserve and sets the canonical financial, dispatch and vault projections in one transition. The transaction can be absent from retained attempts.",
           "successors": [
             {
               "path": "spec/settlement/paymentDispatch.md",
@@ -598,6 +620,28 @@
                 "exactReceipt",
                 "canIndexFinalized",
                 "indexFinalized"
+              ]
+            },
+            {
+              "path": "spec/settlement/composition.md",
+              "definitions": [
+                "canReconcile",
+                "reconcile",
+                "alwaysCanonicalReceiptAgrees"
+              ]
+            },
+            {
+              "path": "spec/settlement/payment.md",
+              "definitions": [
+                "vaultPayoutMatches",
+                "recordVaultPayment"
+              ]
+            },
+            {
+              "path": "spec/settlement/vault.md",
+              "definitions": [
+                "reservationMatches",
+                "payReserved"
               ]
             }
           ]
@@ -760,6 +804,14 @@
                 "exactReceipt",
                 "indexFinalized"
               ]
+            },
+            {
+              "path": "spec/settlement/composition.md",
+              "definitions": [
+                "canReconcile",
+                "reconcile",
+                "alwaysPaidConsumesReserve"
+              ]
             }
           ]
         },
@@ -798,6 +850,14 @@
                 "exactReceipt",
                 "indexFinalized"
               ]
+            },
+            {
+              "path": "spec/settlement/composition.md",
+              "definitions": [
+                "canReconcile",
+                "reconcile",
+                "alwaysPaidConsumesReserve"
+              ]
             }
           ]
         },
@@ -809,6 +869,14 @@
               "path": "spec/settlement/paymentDispatch.md",
               "definitions": [
                 "indexFinalized"
+              ]
+            },
+            {
+              "path": "spec/settlement/composition.md",
+              "definitions": [
+                "canReconcile",
+                "reconcile",
+                "alwaysPaidConsumesReserve"
               ]
             }
           ]
@@ -835,6 +903,14 @@
               "definitions": [
                 "canIndexFinalized",
                 "indexFinalized"
+              ]
+            },
+            {
+              "path": "spec/settlement/composition.md",
+              "definitions": [
+                "canReconcile",
+                "reconcile",
+                "alwaysPaidConsumesReserve"
               ]
             }
           ]
@@ -1059,8 +1135,26 @@
           ]
         }
       ],
-      "successorSha256": "c122f31d9b7c0ba7eea803c8fb74112142c54646408bc99f79ab080415b229ad",
-      "boundary": "Exact chain, executor and wallet evidence are supplied by canonical owners. The source-settled scanner route must compose with the financial owner. Payment canReconcile and alwaysPaidEvidence currently require a retained attempt and current recipient. A native D1 conflicting concurrent paid-event integration test and canonical atomic adapter are outside this projected proof."
+      "successorSha256": "ee69d737b4b4c093330e3159b1b9c278b3036c0b4d176afb6b6100992e84f005",
+      "boundary": "The canonical composition checks actor-owned reserve, exact vault receipt, historic wallet authority and immutable amounts in one finalized transition. Native D1 conflicting concurrent paid-event integration and atomic persistence adapter remain runtime conformance.",
+      "composedSuccessors": [
+        {
+          "path": "spec/settlement/paymentDispatch.md",
+          "sha256": "ee69d737b4b4c093330e3159b1b9c278b3036c0b4d176afb6b6100992e84f005"
+        },
+        {
+          "path": "spec/settlement/composition.md",
+          "sha256": "dc0109df85c26a729916235e245ccc3831e64dbbf15e619c8a37fdcf19d460a5"
+        },
+        {
+          "path": "spec/settlement/payment.md",
+          "sha256": "8ed715161511f58b5b4fd951868bf2b538447db9d49d77ab657299952f54959b"
+        },
+        {
+          "path": "spec/settlement/vault.md",
+          "sha256": "8b65119c2fa355b37b093cedcc1b862439492c7acde8c712c0968434c93484e2"
+        }
+      ]
     },
     {
       "legacyModel": "formal/models/payments/vault_initial_snapshot.qnt",
