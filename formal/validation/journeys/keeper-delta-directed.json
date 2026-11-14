@@ -1,0 +1,1630 @@
+{
+  "sourceHashes": {
+    "spec/settlement/keeperRpc.md": "163e49a1435ddd2e3446a020d1a339101ae6ade76a47c526e2ba5a02f01c8393",
+    "spec/settlement/keeperScan.md": "67ada5f6f952a8f7949dbf97fb7d383982ee50e0edf638c8dcf0e7ce8b07cc0a",
+    "spec/settlement/keeperDiagnostics.md": "c36fb32f4e28000dc1224d04ee2120e79cadd4d91b2433f4bf8af944528bf04e"
+  },
+  "method": "Directed generated-core witnesses adapted from retained legacy scenarios. No RPC, network, database or operator runtime was invoked.",
+  "cases": [
+    {
+      "name": "existingConfigRemainsAvailable",
+      "events": [
+        {
+          "event": {
+            "type": "resolve"
+          },
+          "accepted": true
+        },
+        {
+          "event": {
+            "type": "preflight",
+            "endpointId": 1,
+            "selectionId": 0,
+            "observedChain": "BaseMainnet",
+            "observationAvailable": true
+          },
+          "accepted": true
+        }
+      ],
+      "final": {
+        "identity": {
+          "network": "BaseMainnet",
+          "signer": 2,
+          "budget": 3,
+          "projects": 4,
+          "registry": 5,
+          "objectId": 1,
+          "journal": 7
+        },
+        "originalEndpoint": 1,
+        "endpoint": 1,
+        "overrideEndpoint": 0,
+        "overrideKind": "AbsentOverride",
+        "selection": 0,
+        "observed": "BaseMainnet",
+        "phase": "ChainReady"
+      }
+    },
+    {
+      "name": "rotationRetainsIdentityAndJournal",
+      "events": [
+        {
+          "event": {
+            "type": "resolve"
+          },
+          "accepted": true
+        },
+        {
+          "event": {
+            "type": "preflight",
+            "endpointId": 1,
+            "selectionId": 0,
+            "observedChain": "BaseMainnet",
+            "observationAvailable": true
+          },
+          "accepted": true
+        },
+        {
+          "event": {
+            "type": "chooseOverride",
+            "kind": "HttpsOverride",
+            "overrideEndpoint": 2,
+            "selectionId": 1
+          },
+          "accepted": true
+        },
+        {
+          "event": {
+            "type": "resolve"
+          },
+          "accepted": true
+        },
+        {
+          "event": {
+            "type": "preflight",
+            "endpointId": 2,
+            "selectionId": 1,
+            "observedChain": "BaseMainnet",
+            "observationAvailable": true
+          },
+          "accepted": true
+        }
+      ],
+      "final": {
+        "identity": {
+          "network": "BaseMainnet",
+          "signer": 2,
+          "budget": 3,
+          "projects": 4,
+          "registry": 5,
+          "objectId": 1,
+          "journal": 7
+        },
+        "originalEndpoint": 1,
+        "endpoint": 2,
+        "overrideEndpoint": 2,
+        "overrideKind": "HttpsOverride",
+        "selection": 1,
+        "observed": "BaseMainnet",
+        "phase": "ChainReady"
+      }
+    },
+    {
+      "name": "removingOverrideRestoresOriginal",
+      "events": [
+        {
+          "event": {
+            "type": "chooseOverride",
+            "kind": "HttpsOverride",
+            "overrideEndpoint": 2,
+            "selectionId": 1
+          },
+          "accepted": true
+        },
+        {
+          "event": {
+            "type": "resolve"
+          },
+          "accepted": true
+        },
+        {
+          "event": {
+            "type": "preflight",
+            "endpointId": 2,
+            "selectionId": 1,
+            "observedChain": "BaseMainnet",
+            "observationAvailable": true
+          },
+          "accepted": true
+        },
+        {
+          "event": {
+            "type": "chooseOverride",
+            "kind": "AbsentOverride",
+            "overrideEndpoint": 0,
+            "selectionId": 2
+          },
+          "accepted": true
+        },
+        {
+          "event": {
+            "type": "resolve"
+          },
+          "accepted": true
+        },
+        {
+          "event": {
+            "type": "preflight",
+            "endpointId": 1,
+            "selectionId": 2,
+            "observedChain": "BaseMainnet",
+            "observationAvailable": true
+          },
+          "accepted": true
+        }
+      ],
+      "final": {
+        "identity": {
+          "network": "BaseMainnet",
+          "signer": 2,
+          "budget": 3,
+          "projects": 4,
+          "registry": 5,
+          "objectId": 1,
+          "journal": 7
+        },
+        "originalEndpoint": 1,
+        "endpoint": 1,
+        "overrideEndpoint": 0,
+        "overrideKind": "AbsentOverride",
+        "selection": 2,
+        "observed": "BaseMainnet",
+        "phase": "ChainReady"
+      }
+    },
+    {
+      "name": "EmptyOverrideRefuses",
+      "events": [
+        {
+          "event": {
+            "type": "chooseOverride",
+            "kind": "EmptyOverride",
+            "overrideEndpoint": 2,
+            "selectionId": 1
+          },
+          "accepted": true
+        },
+        {
+          "event": {
+            "type": "resolve"
+          },
+          "accepted": true
+        },
+        {
+          "event": {
+            "type": "preflight",
+            "endpointId": 1,
+            "selectionId": 1,
+            "observedChain": "BaseMainnet",
+            "observationAvailable": true
+          },
+          "accepted": false
+        }
+      ],
+      "final": {
+        "identity": {
+          "network": "BaseMainnet",
+          "signer": 2,
+          "budget": 3,
+          "projects": 4,
+          "registry": 5,
+          "objectId": 1,
+          "journal": 7
+        },
+        "originalEndpoint": 1,
+        "endpoint": 0,
+        "overrideEndpoint": 2,
+        "overrideKind": "EmptyOverride",
+        "selection": 1,
+        "observed": "BaseMainnet",
+        "phase": "InvalidOverride"
+      }
+    },
+    {
+      "name": "MalformedOverrideRefuses",
+      "events": [
+        {
+          "event": {
+            "type": "chooseOverride",
+            "kind": "MalformedOverride",
+            "overrideEndpoint": 2,
+            "selectionId": 1
+          },
+          "accepted": true
+        },
+        {
+          "event": {
+            "type": "resolve"
+          },
+          "accepted": true
+        },
+        {
+          "event": {
+            "type": "preflight",
+            "endpointId": 1,
+            "selectionId": 1,
+            "observedChain": "BaseMainnet",
+            "observationAvailable": true
+          },
+          "accepted": false
+        }
+      ],
+      "final": {
+        "identity": {
+          "network": "BaseMainnet",
+          "signer": 2,
+          "budget": 3,
+          "projects": 4,
+          "registry": 5,
+          "objectId": 1,
+          "journal": 7
+        },
+        "originalEndpoint": 1,
+        "endpoint": 0,
+        "overrideEndpoint": 2,
+        "overrideKind": "MalformedOverride",
+        "selection": 1,
+        "observed": "BaseMainnet",
+        "phase": "InvalidOverride"
+      }
+    },
+    {
+      "name": "InsecureOverrideRefuses",
+      "events": [
+        {
+          "event": {
+            "type": "chooseOverride",
+            "kind": "InsecureOverride",
+            "overrideEndpoint": 2,
+            "selectionId": 1
+          },
+          "accepted": true
+        },
+        {
+          "event": {
+            "type": "resolve"
+          },
+          "accepted": true
+        },
+        {
+          "event": {
+            "type": "preflight",
+            "endpointId": 1,
+            "selectionId": 1,
+            "observedChain": "BaseMainnet",
+            "observationAvailable": true
+          },
+          "accepted": false
+        }
+      ],
+      "final": {
+        "identity": {
+          "network": "BaseMainnet",
+          "signer": 2,
+          "budget": 3,
+          "projects": 4,
+          "registry": 5,
+          "objectId": 1,
+          "journal": 7
+        },
+        "originalEndpoint": 1,
+        "endpoint": 0,
+        "overrideEndpoint": 2,
+        "overrideKind": "InsecureOverride",
+        "selection": 1,
+        "observed": "BaseMainnet",
+        "phase": "InvalidOverride"
+      }
+    },
+    {
+      "name": "wrongChainRefusesEvenForSameFamily",
+      "events": [
+        {
+          "event": {
+            "type": "chooseOverride",
+            "kind": "HttpsOverride",
+            "overrideEndpoint": 2,
+            "selectionId": 1
+          },
+          "accepted": true
+        },
+        {
+          "event": {
+            "type": "resolve"
+          },
+          "accepted": true
+        },
+        {
+          "event": {
+            "type": "preflight",
+            "endpointId": 2,
+            "selectionId": 1,
+            "observedChain": "BaseSepolia",
+            "observationAvailable": true
+          },
+          "accepted": true
+        }
+      ],
+      "final": {
+        "identity": {
+          "network": "BaseMainnet",
+          "signer": 2,
+          "budget": 3,
+          "projects": 4,
+          "registry": 5,
+          "objectId": 1,
+          "journal": 7
+        },
+        "originalEndpoint": 1,
+        "endpoint": 2,
+        "overrideEndpoint": 2,
+        "overrideKind": "HttpsOverride",
+        "selection": 1,
+        "observed": "BaseSepolia",
+        "phase": "WrongChain"
+      }
+    },
+    {
+      "name": "unavailableDoesNotQualify",
+      "events": [
+        {
+          "event": {
+            "type": "resolve"
+          },
+          "accepted": true
+        },
+        {
+          "event": {
+            "type": "preflight",
+            "endpointId": 1,
+            "selectionId": 0,
+            "observedChain": "BaseMainnet",
+            "observationAvailable": false
+          },
+          "accepted": true
+        }
+      ],
+      "final": {
+        "identity": {
+          "network": "BaseMainnet",
+          "signer": 2,
+          "budget": 3,
+          "projects": 4,
+          "registry": 5,
+          "objectId": 1,
+          "journal": 7
+        },
+        "originalEndpoint": 1,
+        "endpoint": 1,
+        "overrideEndpoint": 0,
+        "overrideKind": "AbsentOverride",
+        "selection": 0,
+        "observed": "BaseMainnet",
+        "phase": "PreflightUnavailable"
+      }
+    },
+    {
+      "name": "lateObservationAfterEndpointReselectionRefuses",
+      "events": [
+        {
+          "event": {
+            "type": "chooseOverride",
+            "kind": "HttpsOverride",
+            "overrideEndpoint": 2,
+            "selectionId": 1
+          },
+          "accepted": true
+        },
+        {
+          "event": {
+            "type": "resolve"
+          },
+          "accepted": true
+        },
+        {
+          "event": {
+            "type": "chooseOverride",
+            "kind": "HttpsOverride",
+            "overrideEndpoint": 2,
+            "selectionId": 2
+          },
+          "accepted": true
+        },
+        {
+          "event": {
+            "type": "resolve"
+          },
+          "accepted": true
+        },
+        {
+          "event": {
+            "type": "preflight",
+            "endpointId": 2,
+            "selectionId": 1,
+            "observedChain": "BaseMainnet",
+            "observationAvailable": true
+          },
+          "accepted": false
+        },
+        {
+          "event": {
+            "type": "preflight",
+            "endpointId": 2,
+            "selectionId": 2,
+            "observedChain": "BaseMainnet",
+            "observationAvailable": true
+          },
+          "accepted": true
+        }
+      ],
+      "final": {
+        "identity": {
+          "network": "BaseMainnet",
+          "signer": 2,
+          "budget": 3,
+          "projects": 4,
+          "registry": 5,
+          "objectId": 1,
+          "journal": 7
+        },
+        "originalEndpoint": 1,
+        "endpoint": 2,
+        "overrideEndpoint": 2,
+        "overrideKind": "HttpsOverride",
+        "selection": 2,
+        "observed": "BaseMainnet",
+        "phase": "ChainReady"
+      }
+    },
+    {
+      "name": "verifierFailureRetainsEvidenceStage",
+      "events": [
+        {
+          "event": {
+            "type": "begin",
+            "identity": {
+              "network": "BaseMainnet",
+              "signer": 2,
+              "budget": 3,
+              "projects": 4,
+              "registry": 5,
+              "objectId": 1,
+              "journal": 7
+            },
+            "endpoint": 1,
+            "selection": 0
+          },
+          "accepted": true
+        },
+        {
+          "event": {
+            "type": "confirmPreflight",
+            "rpc": {
+              "identity": {
+                "network": "BaseMainnet",
+                "signer": 2,
+                "budget": 3,
+                "projects": 4,
+                "registry": 5,
+                "objectId": 1,
+                "journal": 7
+              },
+              "originalEndpoint": 1,
+              "endpoint": 1,
+              "overrideEndpoint": 0,
+              "overrideKind": "AbsentOverride",
+              "selection": 0,
+              "observed": "BaseMainnet",
+              "phase": "ChainReady"
+            },
+            "deploymentVerified": true
+          },
+          "accepted": true
+        },
+        {
+          "event": {
+            "type": "advance",
+            "checkPassed": true
+          },
+          "accepted": true
+        },
+        {
+          "event": {
+            "type": "advance",
+            "checkPassed": true
+          },
+          "accepted": true
+        },
+        {
+          "event": {
+            "type": "advance",
+            "checkPassed": true
+          },
+          "accepted": true
+        },
+        {
+          "event": {
+            "type": "beginReceipt"
+          },
+          "accepted": true
+        },
+        {
+          "event": {
+            "type": "verifyReceipt",
+            "verified": false
+          },
+          "accepted": false
+        },
+        {
+          "event": {
+            "type": "recordFailure",
+            "classifiedError": "EvmUnavailable"
+          },
+          "accepted": true
+        }
+      ],
+      "final": {
+        "phase": "FailedScan",
+        "stage": "PaymentEvidence",
+        "identity": {
+          "network": "BaseMainnet",
+          "signer": 2,
+          "budget": 3,
+          "projects": 4,
+          "registry": 5,
+          "objectId": 1,
+          "journal": 7
+        },
+        "endpoint": 1,
+        "selection": 0,
+        "failure": {
+          "operation": "DeploymentOp",
+          "outcome": "UnavailableWork",
+          "observedStage": "PaymentEvidence",
+          "hasError": true,
+          "classifiedError": "EvmUnavailable"
+        }
+      }
+    },
+    {
+      "name": "indexFailureRetainsIndexStage",
+      "events": [
+        {
+          "event": {
+            "type": "begin",
+            "identity": {
+              "network": "BaseMainnet",
+              "signer": 2,
+              "budget": 3,
+              "projects": 4,
+              "registry": 5,
+              "objectId": 1,
+              "journal": 7
+            },
+            "endpoint": 1,
+            "selection": 0
+          },
+          "accepted": true
+        },
+        {
+          "event": {
+            "type": "confirmPreflight",
+            "rpc": {
+              "identity": {
+                "network": "BaseMainnet",
+                "signer": 2,
+                "budget": 3,
+                "projects": 4,
+                "registry": 5,
+                "objectId": 1,
+                "journal": 7
+              },
+              "originalEndpoint": 1,
+              "endpoint": 1,
+              "overrideEndpoint": 0,
+              "overrideKind": "AbsentOverride",
+              "selection": 0,
+              "observed": "BaseMainnet",
+              "phase": "ChainReady"
+            },
+            "deploymentVerified": true
+          },
+          "accepted": true
+        },
+        {
+          "event": {
+            "type": "advance",
+            "checkPassed": true
+          },
+          "accepted": true
+        },
+        {
+          "event": {
+            "type": "advance",
+            "checkPassed": true
+          },
+          "accepted": true
+        },
+        {
+          "event": {
+            "type": "advance",
+            "checkPassed": true
+          },
+          "accepted": true
+        },
+        {
+          "event": {
+            "type": "beginReceipt"
+          },
+          "accepted": true
+        },
+        {
+          "event": {
+            "type": "verifyReceipt",
+            "verified": true
+          },
+          "accepted": true
+        },
+        {
+          "event": {
+            "type": "indexReceipt",
+            "indexed": false
+          },
+          "accepted": false
+        },
+        {
+          "event": {
+            "type": "recordFailure",
+            "classifiedError": "UnrecognizedError"
+          },
+          "accepted": true
+        }
+      ],
+      "final": {
+        "phase": "FailedScan",
+        "stage": "PaymentIndex",
+        "identity": {
+          "network": "BaseMainnet",
+          "signer": 2,
+          "budget": 3,
+          "projects": 4,
+          "registry": 5,
+          "objectId": 1,
+          "journal": 7
+        },
+        "endpoint": 1,
+        "selection": 0,
+        "failure": {
+          "operation": "DeploymentOp",
+          "outcome": "UnavailableWork",
+          "observedStage": "PaymentIndex",
+          "hasError": true,
+          "classifiedError": "UnrecognizedError"
+        }
+      }
+    },
+    {
+      "name": "successfulCallbackRestoresScannerStage",
+      "events": [
+        {
+          "event": {
+            "type": "begin",
+            "identity": {
+              "network": "BaseMainnet",
+              "signer": 2,
+              "budget": 3,
+              "projects": 4,
+              "registry": 5,
+              "objectId": 1,
+              "journal": 7
+            },
+            "endpoint": 1,
+            "selection": 0
+          },
+          "accepted": true
+        },
+        {
+          "event": {
+            "type": "confirmPreflight",
+            "rpc": {
+              "identity": {
+                "network": "BaseMainnet",
+                "signer": 2,
+                "budget": 3,
+                "projects": 4,
+                "registry": 5,
+                "objectId": 1,
+                "journal": 7
+              },
+              "originalEndpoint": 1,
+              "endpoint": 1,
+              "overrideEndpoint": 0,
+              "overrideKind": "AbsentOverride",
+              "selection": 0,
+              "observed": "BaseMainnet",
+              "phase": "ChainReady"
+            },
+            "deploymentVerified": true
+          },
+          "accepted": true
+        },
+        {
+          "event": {
+            "type": "advance",
+            "checkPassed": true
+          },
+          "accepted": true
+        },
+        {
+          "event": {
+            "type": "advance",
+            "checkPassed": true
+          },
+          "accepted": true
+        },
+        {
+          "event": {
+            "type": "advance",
+            "checkPassed": true
+          },
+          "accepted": true
+        },
+        {
+          "event": {
+            "type": "beginReceipt"
+          },
+          "accepted": true
+        },
+        {
+          "event": {
+            "type": "verifyReceipt",
+            "verified": true
+          },
+          "accepted": true
+        },
+        {
+          "event": {
+            "type": "indexReceipt",
+            "indexed": true
+          },
+          "accepted": true
+        },
+        {
+          "event": {
+            "type": "recordFailure",
+            "classifiedError": "EvmFailure"
+          },
+          "accepted": true
+        }
+      ],
+      "final": {
+        "phase": "FailedScan",
+        "stage": "PaymentScan",
+        "identity": {
+          "network": "BaseMainnet",
+          "signer": 2,
+          "budget": 3,
+          "projects": 4,
+          "registry": 5,
+          "objectId": 1,
+          "journal": 7
+        },
+        "endpoint": 1,
+        "selection": 0,
+        "failure": {
+          "operation": "DeploymentOp",
+          "outcome": "UnavailableWork",
+          "observedStage": "PaymentScan",
+          "hasError": true,
+          "classifiedError": "EvmFailure"
+        }
+      }
+    },
+    {
+      "name": "secondCallbackCanFailAtItsOwnStage",
+      "events": [
+        {
+          "event": {
+            "type": "begin",
+            "identity": {
+              "network": "BaseMainnet",
+              "signer": 2,
+              "budget": 3,
+              "projects": 4,
+              "registry": 5,
+              "objectId": 1,
+              "journal": 7
+            },
+            "endpoint": 1,
+            "selection": 0
+          },
+          "accepted": true
+        },
+        {
+          "event": {
+            "type": "confirmPreflight",
+            "rpc": {
+              "identity": {
+                "network": "BaseMainnet",
+                "signer": 2,
+                "budget": 3,
+                "projects": 4,
+                "registry": 5,
+                "objectId": 1,
+                "journal": 7
+              },
+              "originalEndpoint": 1,
+              "endpoint": 1,
+              "overrideEndpoint": 0,
+              "overrideKind": "AbsentOverride",
+              "selection": 0,
+              "observed": "BaseMainnet",
+              "phase": "ChainReady"
+            },
+            "deploymentVerified": true
+          },
+          "accepted": true
+        },
+        {
+          "event": {
+            "type": "advance",
+            "checkPassed": true
+          },
+          "accepted": true
+        },
+        {
+          "event": {
+            "type": "advance",
+            "checkPassed": true
+          },
+          "accepted": true
+        },
+        {
+          "event": {
+            "type": "advance",
+            "checkPassed": true
+          },
+          "accepted": true
+        },
+        {
+          "event": {
+            "type": "beginReceipt"
+          },
+          "accepted": true
+        },
+        {
+          "event": {
+            "type": "verifyReceipt",
+            "verified": true
+          },
+          "accepted": true
+        },
+        {
+          "event": {
+            "type": "indexReceipt",
+            "indexed": true
+          },
+          "accepted": true
+        },
+        {
+          "event": {
+            "type": "beginReceipt"
+          },
+          "accepted": true
+        },
+        {
+          "event": {
+            "type": "recordFailure",
+            "classifiedError": "SolanaUnavailable"
+          },
+          "accepted": true
+        }
+      ],
+      "final": {
+        "phase": "FailedScan",
+        "stage": "PaymentEvidence",
+        "identity": {
+          "network": "BaseMainnet",
+          "signer": 2,
+          "budget": 3,
+          "projects": 4,
+          "registry": 5,
+          "objectId": 1,
+          "journal": 7
+        },
+        "endpoint": 1,
+        "selection": 0,
+        "failure": {
+          "operation": "DeploymentOp",
+          "outcome": "UnavailableWork",
+          "observedStage": "PaymentEvidence",
+          "hasError": true,
+          "classifiedError": "SolanaUnavailable"
+        }
+      }
+    },
+    {
+      "name": "unverifiedWrongOrStalePreflightCannotAdvance",
+      "events": [
+        {
+          "event": {
+            "type": "begin",
+            "identity": {
+              "network": "BaseMainnet",
+              "signer": 2,
+              "budget": 3,
+              "projects": 4,
+              "registry": 5,
+              "objectId": 1,
+              "journal": 7
+            },
+            "endpoint": 1,
+            "selection": 0
+          },
+          "accepted": true
+        },
+        {
+          "event": {
+            "type": "advance",
+            "checkPassed": true
+          },
+          "accepted": false
+        },
+        {
+          "event": {
+            "type": "confirmPreflight",
+            "rpc": {
+              "identity": {
+                "network": "BaseMainnet",
+                "signer": 2,
+                "budget": 3,
+                "projects": 4,
+                "registry": 5,
+                "objectId": 1,
+                "journal": 7
+              },
+              "originalEndpoint": 1,
+              "endpoint": 1,
+              "overrideEndpoint": 0,
+              "overrideKind": "AbsentOverride",
+              "selection": 0,
+              "observed": "BaseMainnet",
+              "phase": "ChainReady"
+            },
+            "deploymentVerified": false
+          },
+          "accepted": false
+        },
+        {
+          "event": {
+            "type": "confirmPreflight",
+            "rpc": {
+              "identity": {
+                "network": "BaseMainnet",
+                "signer": 2,
+                "budget": 3,
+                "projects": 4,
+                "registry": 5,
+                "objectId": 1,
+                "journal": 7
+              },
+              "originalEndpoint": 1,
+              "endpoint": 1,
+              "overrideEndpoint": 0,
+              "overrideKind": "AbsentOverride",
+              "selection": 9,
+              "observed": "BaseMainnet",
+              "phase": "ChainReady"
+            },
+            "deploymentVerified": true
+          },
+          "accepted": false
+        },
+        {
+          "event": {
+            "type": "confirmPreflight",
+            "rpc": {
+              "identity": {
+                "network": "BaseMainnet",
+                "signer": 2,
+                "budget": 3,
+                "projects": 4,
+                "registry": 5,
+                "objectId": 1,
+                "journal": 7
+              },
+              "originalEndpoint": 1,
+              "endpoint": 1,
+              "overrideEndpoint": 0,
+              "overrideKind": "AbsentOverride",
+              "selection": 0,
+              "observed": "BaseSepolia",
+              "phase": "ChainReady"
+            },
+            "deploymentVerified": true
+          },
+          "accepted": false
+        },
+        {
+          "event": {
+            "type": "confirmPreflight",
+            "rpc": {
+              "identity": {
+                "network": "BaseMainnet",
+                "signer": 2,
+                "budget": 3,
+                "projects": 4,
+                "registry": 5,
+                "objectId": 9,
+                "journal": 7
+              },
+              "originalEndpoint": 1,
+              "endpoint": 1,
+              "overrideEndpoint": 0,
+              "overrideKind": "AbsentOverride",
+              "selection": 0,
+              "observed": "BaseMainnet",
+              "phase": "ChainReady"
+            },
+            "deploymentVerified": true
+          },
+          "accepted": false
+        },
+        {
+          "event": {
+            "type": "confirmPreflight",
+            "rpc": {
+              "identity": {
+                "network": "BaseMainnet",
+                "signer": 2,
+                "budget": 3,
+                "projects": 4,
+                "registry": 5,
+                "objectId": 1,
+                "journal": 7
+              },
+              "originalEndpoint": 1,
+              "endpoint": 1,
+              "overrideEndpoint": 0,
+              "overrideKind": "AbsentOverride",
+              "selection": 0,
+              "observed": "BaseMainnet",
+              "phase": "ChainReady"
+            },
+            "deploymentVerified": true
+          },
+          "accepted": true
+        }
+      ],
+      "final": {
+        "phase": "RunningScan",
+        "stage": "AuthorityRead",
+        "identity": {
+          "network": "BaseMainnet",
+          "signer": 2,
+          "budget": 3,
+          "projects": 4,
+          "registry": 5,
+          "objectId": 1,
+          "journal": 7
+        },
+        "endpoint": 1,
+        "selection": 0,
+        "failure": {
+          "operation": "OtherOp",
+          "outcome": "OtherWork",
+          "observedStage": "OtherStage",
+          "hasError": false,
+          "classifiedError": "UnrecognizedError"
+        }
+      }
+    },
+    {
+      "name": "rotatedPreflightBindsCurrentRun",
+      "events": [
+        {
+          "event": {
+            "type": "begin",
+            "identity": {
+              "network": "BaseMainnet",
+              "signer": 2,
+              "budget": 3,
+              "projects": 4,
+              "registry": 5,
+              "objectId": 1,
+              "journal": 7
+            },
+            "endpoint": 2,
+            "selection": 1
+          },
+          "accepted": true
+        },
+        {
+          "event": {
+            "type": "confirmPreflight",
+            "rpc": {
+              "identity": {
+                "network": "BaseMainnet",
+                "signer": 2,
+                "budget": 3,
+                "projects": 4,
+                "registry": 5,
+                "objectId": 1,
+                "journal": 7
+              },
+              "originalEndpoint": 1,
+              "endpoint": 1,
+              "overrideEndpoint": 0,
+              "overrideKind": "AbsentOverride",
+              "selection": 0,
+              "observed": "BaseMainnet",
+              "phase": "ChainReady"
+            },
+            "deploymentVerified": true
+          },
+          "accepted": false
+        },
+        {
+          "event": {
+            "type": "confirmPreflight",
+            "rpc": {
+              "identity": {
+                "network": "BaseMainnet",
+                "signer": 2,
+                "budget": 3,
+                "projects": 4,
+                "registry": 5,
+                "objectId": 1,
+                "journal": 7
+              },
+              "originalEndpoint": 1,
+              "endpoint": 2,
+              "overrideEndpoint": 2,
+              "overrideKind": "HttpsOverride",
+              "selection": 1,
+              "observed": "BaseMainnet",
+              "phase": "ChainReady"
+            },
+            "deploymentVerified": true
+          },
+          "accepted": true
+        }
+      ],
+      "final": {
+        "phase": "RunningScan",
+        "stage": "AuthorityRead",
+        "identity": {
+          "network": "BaseMainnet",
+          "signer": 2,
+          "budget": 3,
+          "projects": 4,
+          "registry": 5,
+          "objectId": 1,
+          "journal": 7
+        },
+        "endpoint": 2,
+        "selection": 1,
+        "failure": {
+          "operation": "OtherOp",
+          "outcome": "OtherWork",
+          "observedStage": "OtherStage",
+          "hasError": false,
+          "classifiedError": "UnrecognizedError"
+        }
+      }
+    },
+    {
+      "name": "healthyRunCompletesAllStages",
+      "events": [
+        {
+          "event": {
+            "type": "begin",
+            "identity": {
+              "network": "BaseMainnet",
+              "signer": 2,
+              "budget": 3,
+              "projects": 4,
+              "registry": 5,
+              "objectId": 1,
+              "journal": 7
+            },
+            "endpoint": 1,
+            "selection": 0
+          },
+          "accepted": true
+        },
+        {
+          "event": {
+            "type": "confirmPreflight",
+            "rpc": {
+              "identity": {
+                "network": "BaseMainnet",
+                "signer": 2,
+                "budget": 3,
+                "projects": 4,
+                "registry": 5,
+                "objectId": 1,
+                "journal": 7
+              },
+              "originalEndpoint": 1,
+              "endpoint": 1,
+              "overrideEndpoint": 0,
+              "overrideKind": "AbsentOverride",
+              "selection": 0,
+              "observed": "BaseMainnet",
+              "phase": "ChainReady"
+            },
+            "deploymentVerified": true
+          },
+          "accepted": true
+        },
+        {
+          "event": {
+            "type": "advance",
+            "checkPassed": true
+          },
+          "accepted": true
+        },
+        {
+          "event": {
+            "type": "advance",
+            "checkPassed": true
+          },
+          "accepted": true
+        },
+        {
+          "event": {
+            "type": "advance",
+            "checkPassed": true
+          },
+          "accepted": true
+        },
+        {
+          "event": {
+            "type": "beginReceipt"
+          },
+          "accepted": true
+        },
+        {
+          "event": {
+            "type": "verifyReceipt",
+            "verified": true
+          },
+          "accepted": true
+        },
+        {
+          "event": {
+            "type": "indexReceipt",
+            "indexed": true
+          },
+          "accepted": true
+        },
+        {
+          "event": {
+            "type": "advance",
+            "checkPassed": true
+          },
+          "accepted": true
+        },
+        {
+          "event": {
+            "type": "advance",
+            "checkPassed": true
+          },
+          "accepted": true
+        },
+        {
+          "event": {
+            "type": "advance",
+            "checkPassed": true
+          },
+          "accepted": true
+        }
+      ],
+      "final": {
+        "phase": "FinishedScan",
+        "stage": "OtherStage",
+        "identity": {
+          "network": "BaseMainnet",
+          "signer": 2,
+          "budget": 3,
+          "projects": 4,
+          "registry": 5,
+          "objectId": 1,
+          "journal": 7
+        },
+        "endpoint": 1,
+        "selection": 0,
+        "failure": {
+          "operation": "OtherOp",
+          "outcome": "OtherWork",
+          "observedStage": "OtherStage",
+          "hasError": false,
+          "classifiedError": "UnrecognizedError"
+        }
+      }
+    },
+    {
+      "name": "emptyRunStaysSilent",
+      "rows": [],
+      "result": {
+        "emitted": false,
+        "eventName": "",
+        "schemaVersion": 0,
+        "failedResults": 0,
+        "groups": [],
+        "scheduledFailed": false
+      }
+    },
+    {
+      "name": "successfulAndWaitingResultsStaySilent",
+      "rows": [
+        {
+          "operation": "AwardOp",
+          "outcome": "WaitingWork",
+          "observedStage": "OtherStage",
+          "hasError": false,
+          "classifiedError": "UnrecognizedError"
+        },
+        {
+          "operation": "AwardOp",
+          "outcome": "WaitingWork",
+          "observedStage": "OtherStage",
+          "hasError": false,
+          "classifiedError": "UnrecognizedError"
+        }
+      ],
+      "result": {
+        "emitted": false,
+        "eventName": "",
+        "schemaVersion": 0,
+        "failedResults": 0,
+        "groups": [],
+        "scheduledFailed": false
+      }
+    },
+    {
+      "name": "identicalFailuresAggregatePositiveCounts",
+      "rows": [
+        {
+          "operation": "DeploymentOp",
+          "outcome": "UnavailableWork",
+          "observedStage": "PaymentEvidence",
+          "hasError": true,
+          "classifiedError": "EvmUnavailable"
+        },
+        {
+          "operation": "DeploymentOp",
+          "outcome": "UnavailableWork",
+          "observedStage": "PaymentEvidence",
+          "hasError": true,
+          "classifiedError": "EvmUnavailable"
+        },
+        {
+          "operation": "AwardOp",
+          "outcome": "WaitingWork",
+          "observedStage": "OtherStage",
+          "hasError": false,
+          "classifiedError": "UnrecognizedError"
+        }
+      ],
+      "result": {
+        "emitted": true,
+        "eventName": "operator_keeper_unavailable",
+        "schemaVersion": 2,
+        "failedResults": 2,
+        "groups": [
+          {
+            "key": {
+              "operation": "DeploymentOp",
+              "outcome": "UnavailableWork",
+              "stage": "PaymentEvidence",
+              "cause": "RpcUnavailable"
+            },
+            "count": 2
+          }
+        ],
+        "scheduledFailed": true
+      }
+    },
+    {
+      "name": "nondeploymentCannotBorrowStageOrCause",
+      "rows": [
+        {
+          "operation": "AwardOp",
+          "outcome": "WaitingWork",
+          "observedStage": "PaymentIndex",
+          "hasError": true,
+          "classifiedError": "EvmFailure"
+        },
+        {
+          "operation": "OtherOp",
+          "outcome": "OtherWork",
+          "observedStage": "PaymentIndex",
+          "hasError": true,
+          "classifiedError": "UnrecognizedError"
+        }
+      ],
+      "result": {
+        "emitted": true,
+        "eventName": "operator_keeper_unavailable",
+        "schemaVersion": 2,
+        "failedResults": 2,
+        "groups": [
+          {
+            "key": {
+              "operation": "AwardOp",
+              "outcome": "WaitingWork",
+              "stage": "OtherStage",
+              "cause": "OtherCause"
+            },
+            "count": 1
+          },
+          {
+            "key": {
+              "operation": "OtherOp",
+              "outcome": "OtherWork",
+              "stage": "OtherStage",
+              "cause": "OtherCause"
+            },
+            "count": 1
+          }
+        ],
+        "scheduledFailed": true
+      }
+    },
+    {
+      "name": "normalizedExactRegistryCause",
+      "rows": [
+        {
+          "operation": "RegistryOp",
+          "outcome": "UnavailableWork",
+          "observedStage": "Preflight",
+          "hasError": true,
+          "classifiedError": "RegistryProjectMissing"
+        }
+      ],
+      "result": {
+        "emitted": true,
+        "eventName": "operator_keeper_unavailable",
+        "schemaVersion": 2,
+        "failedResults": 1,
+        "groups": [
+          {
+            "key": {
+              "operation": "RegistryOp",
+              "outcome": "UnavailableWork",
+              "stage": "OtherStage",
+              "cause": "ProjectUnavailable"
+            },
+            "count": 1
+          }
+        ],
+        "scheduledFailed": true
+      }
+    },
+    {
+      "name": "spoofedRpcNameRemainsOther",
+      "rows": [
+        {
+          "operation": "DeploymentOp",
+          "outcome": "UnavailableWork",
+          "observedStage": "PaymentEvidence",
+          "hasError": true,
+          "classifiedError": "UnrecognizedError"
+        }
+      ],
+      "result": {
+        "emitted": true,
+        "eventName": "operator_keeper_unavailable",
+        "schemaVersion": 2,
+        "failedResults": 1,
+        "groups": [
+          {
+            "key": {
+              "operation": "DeploymentOp",
+              "outcome": "UnavailableWork",
+              "stage": "PaymentEvidence",
+              "cause": "OtherCause"
+            },
+            "count": 1
+          }
+        ],
+        "scheduledFailed": true
+      }
+    },
+    {
+      "name": "mixedFailureCountsAndOutputSchema",
+      "rows": [
+        {
+          "operation": "DeploymentOp",
+          "outcome": "UnavailableWork",
+          "observedStage": "PaymentEvidence",
+          "hasError": true,
+          "classifiedError": "EvmUnavailable"
+        },
+        {
+          "operation": "OtherOp",
+          "outcome": "OtherWork",
+          "observedStage": "PaymentIndex",
+          "hasError": true,
+          "classifiedError": "UnrecognizedError"
+        },
+        {
+          "operation": "DeploymentOp",
+          "outcome": "UnavailableWork",
+          "observedStage": "PaymentEvidence",
+          "hasError": true,
+          "classifiedError": "EvmUnavailable"
+        },
+        {
+          "operation": "RegistryOp",
+          "outcome": "UnavailableWork",
+          "observedStage": "Preflight",
+          "hasError": true,
+          "classifiedError": "RegistryProjectMissing"
+        },
+        {
+          "operation": "AwardOp",
+          "outcome": "WaitingWork",
+          "observedStage": "OtherStage",
+          "hasError": false,
+          "classifiedError": "UnrecognizedError"
+        }
+      ],
+      "result": {
+        "emitted": true,
+        "eventName": "operator_keeper_unavailable",
+        "schemaVersion": 2,
+        "failedResults": 4,
+        "groups": [
+          {
+            "key": {
+              "operation": "DeploymentOp",
+              "outcome": "UnavailableWork",
+              "stage": "PaymentEvidence",
+              "cause": "RpcUnavailable"
+            },
+            "count": 2
+          },
+          {
+            "key": {
+              "operation": "OtherOp",
+              "outcome": "OtherWork",
+              "stage": "OtherStage",
+              "cause": "OtherCause"
+            },
+            "count": 1
+          },
+          {
+            "key": {
+              "operation": "RegistryOp",
+              "outcome": "UnavailableWork",
+              "stage": "OtherStage",
+              "cause": "ProjectUnavailable"
+            },
+            "count": 1
+          }
+        ],
+        "scheduledFailed": true
+      }
+    },
+    {
+      "name": "invocationExceptionHasSanitizedStatus",
+      "result": {
+        "status": 503,
+        "errorCode": "keeper_run_failed"
+      }
+    }
+  ]
+}
