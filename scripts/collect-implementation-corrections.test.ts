@@ -2077,3 +2077,278 @@ test("a counter error without rate accounting is never admitted for cached recov
     expect(envelope.errors).toBeUndefined();
   }
 });
+
+function discussionTransport(
+  result:
+    | "complete"
+    | "overflow"
+    | "quota"
+    | "missing-rate"
+    | "recorded-before-cap",
+) {
+  const base = transport();
+  const calls = {
+    pull: 0,
+    reviews: 0,
+    comments: 0,
+    inline: 0,
+    timeline: 0,
+    envelope: 0,
+  };
+  const rateLimit = {
+    cost: 1,
+    limit: 5000,
+    remaining: 4900,
+    resetAt: "2026-02-01T01:00:00Z",
+  };
+  const page = {
+    nodes: [],
+    totalCount: 0,
+    pageInfo: { hasNextPage: false, endCursor: null },
+  };
+  const call = Object.assign(
+    async (input: RequestInfo | URL, init?: RequestInit) => {
+      const { pathname } = new URL(String(input));
+      if (pathname.endsWith("/asi/pulls/1")) {
+        calls.pull++;
+        const node = fixture();
+        return Response.json({
+          node_id: node.id,
+          number: node.number,
+          html_url: node.url,
+          updated_at: node.updatedAt,
+          merged_at: node.mergedAt,
+          head: { sha },
+          state: "closed",
+          body: node.body,
+          comments: 0,
+          review_comments: 0,
+        });
+      }
+      if (pathname.endsWith("/reviews")) {
+        calls.reviews++;
+        return Response.json([]);
+      }
+      if (pathname.endsWith("/issues/1/comments")) {
+        calls.comments++;
+        return Response.json([]);
+      }
+      if (pathname.endsWith("/pulls/1/comments")) {
+        calls.inline++;
+        return Response.json([]);
+      }
+      const { query } = JSON.parse(String(init?.body)) as { query: string };
+      if (query.includes("HistoricalValueDiscussion")) {
+        calls.envelope++;
+        if (result === "quota")
+          return Response.json(
+            { message: "Secondary rate limit" },
+            { status: 403, headers: { "retry-after": "17" } },
+          );
+        const node = fixture();
+        return Response.json({
+          data: {
+            rateLimit:
+              result === "missing-rate"
+                ? undefined
+                : result === "recorded-before-cap"
+                  ? { ...rateLimit, cost: 4901, remaining: 99 }
+                  : rateLimit,
+            repository: {
+              ...node.repository,
+              nameWithOwner: "elizaOS/asi",
+              pullRequest: {
+                ...node,
+                id: node.id,
+                state: "MERGED",
+                comments:
+                  result === "overflow"
+                    ? { ...page, pageInfo: { hasNextPage: true } }
+                    : page,
+                reviewThreads: page,
+                timelineItems: { ...page, totalCount: 36 },
+              },
+            },
+          },
+        });
+      }
+      if (query.includes("CROSS_REFERENCED_EVENT")) {
+        calls.timeline++;
+        return Response.json({
+          data: {
+            rateLimit,
+            repository: {
+              pullRequest: { id: "PR_source", timelineItems: page },
+            },
+          },
+        });
+      }
+      if (query.includes("LeaderboardSearchReferences")) {
+        const node = fixture();
+        (node.commits.nodes[0].commit.author as { user: unknown }).user = null;
+        return Response.json({
+          data: {
+            rateLimit,
+            search: { issueCount: 1, pageInfo: page.pageInfo, nodes: [node] },
+          },
+        });
+      }
+      return base.call(input, init);
+    },
+    { preconnect: fetch.preconnect },
+  );
+  return { call, calls };
+}
+
+async function discussionCampaign(
+  which: Parameters<typeof discussionTransport>[0],
+) {
+  const network = discussionTransport(which);
+  const options = {
+    projects: ["asi"],
+    directory: await directory(),
+    before: "2026-01-31T00:00:00.000Z",
+    month: "2026-01",
+  };
+  const dependencies = {
+    journal: baseline(),
+    registry: registry(),
+    token: "fixture-token",
+    now: new Date("2026-01-31T23:59:59Z"),
+    transport: network.call,
+    quotaNow: () => 1_000_000,
+  };
+  return { options, dependencies, calls: network.calls };
+}
+
+test("historical discussion opt-in only fetches new envelopes and replays exact saved evidence in apply mode", async () => {
+  const graph = await discussionCampaign("complete");
+  const graphFirst = await collectImplementationCorrections(
+    { ...graph.options, graphqlDiscussions: true },
+    graph.dependencies,
+  );
+  expect(graphFirst.receipt.completeProofs).toBe(1);
+  expect(graph.calls).toEqual({
+    pull: 1,
+    reviews: 1,
+    comments: 0,
+    inline: 0,
+    timeline: 0,
+    envelope: 1,
+  });
+  const replay = await collectImplementationCorrections(
+    graph.options,
+    graph.dependencies,
+  );
+  expect(replay.receipt.requests).toBe(0);
+  expect(replay.receipt.manifestDigest).toBe(graphFirst.receipt.manifestDigest);
+  expect(graph.calls).toEqual({
+    pull: 1,
+    reviews: 1,
+    comments: 0,
+    inline: 0,
+    timeline: 0,
+    envelope: 1,
+  });
+
+  const rest = await discussionCampaign("complete");
+  const restFirst = await collectImplementationCorrections(
+    rest.options,
+    rest.dependencies,
+  );
+  expect(restFirst.receipt.manifestDigest).toBe(
+    graphFirst.receipt.manifestDigest,
+  );
+  const covered = await collectImplementationCorrections(
+    { ...rest.options, graphqlDiscussions: true },
+    rest.dependencies,
+  );
+  expect(covered.receipt.requests).toBe(0);
+  expect(rest.calls).toEqual({
+    pull: 1,
+    reviews: 1,
+    comments: 1,
+    inline: 1,
+    timeline: 1,
+    envelope: 0,
+  });
+});
+
+test("historical discussion falls back once per REST page when a GraphQL connection is partial", async () => {
+  const { options, dependencies, calls } = await discussionCampaign("overflow");
+  const filled = await collectImplementationCorrections(
+    { ...options, graphqlDiscussions: true },
+    dependencies,
+  );
+  expect(filled.receipt.completeProofs).toBe(1);
+  expect(calls).toEqual({
+    pull: 1,
+    reviews: 1,
+    comments: 1,
+    inline: 1,
+    timeline: 1,
+    envelope: 1,
+  });
+});
+
+test("historical discussion never replays an envelope missing rate evidence", async () => {
+  const { options, dependencies, calls } =
+    await discussionCampaign("missing-rate");
+  const first = await collectImplementationCorrections(
+    { ...options, graphqlDiscussions: true },
+    dependencies,
+  );
+  expect(first.receipt.completeProofs).toBe(1);
+  expect(calls).toEqual({
+    pull: 1,
+    reviews: 1,
+    comments: 1,
+    inline: 1,
+    timeline: 1,
+    envelope: 1,
+  });
+  const replay = await collectImplementationCorrections(
+    { ...options, graphqlDiscussions: true },
+    dependencies,
+  );
+  expect(replay.receipt.manifestDigest).toBe(first.receipt.manifestDigest);
+  expect(replay.receipt.requests).toBe(0);
+});
+
+test("a live budget error after recording a complete envelope keeps exact replay semantics", async () => {
+  const { options, dependencies, calls } = await discussionCampaign(
+    "recorded-before-cap",
+  );
+  const first = await collectImplementationCorrections(
+    { ...options, graphqlDiscussions: true },
+    dependencies,
+  );
+  expect(first.receipt.completeProofs).toBe(1);
+  expect(first.receipt.reportedGraphqlCost).toBeGreaterThan(4900);
+  expect(calls).toEqual({
+    pull: 1,
+    reviews: 1,
+    comments: 0,
+    inline: 0,
+    timeline: 0,
+    envelope: 1,
+  });
+  const replay = await collectImplementationCorrections(options, dependencies);
+  expect(replay.receipt.manifestDigest).toBe(first.receipt.manifestDigest);
+  expect(replay.receipt.requests).toBe(0);
+});
+
+test("historical discussion secondary quota remains sticky across the optional fallback", async () => {
+  const { options, dependencies, calls } = await discussionCampaign("quota");
+  await expect(
+    collectImplementationCorrections(
+      { ...options, graphqlDiscussions: true },
+      dependencies,
+    ),
+  ).rejects.toMatchObject({ kind: "quota", retryAtMs: 1_019_000 });
+  await expect(
+    readFile(join(options.directory, "manifest.json"), "utf8"),
+  ).rejects.toThrow();
+  expect(calls.envelope).toBe(1);
+  expect(calls.inline + calls.comments + calls.timeline).toBe(0);
+});

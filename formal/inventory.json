@@ -71,11 +71,12 @@
     },
     {
       "path": ".github/workflows/points-implementation-corrections.yml",
-      "sha256": "d0e0fec28b3a4c52a7838377ddbce56fb090198cf25c4c21be096d5bc239b2d1",
+      "sha256": "6077695066c3fa201a0ad3fc473b7e03f3c536b240ce46f5e9631b9b53df9979",
       "models": [
+        "formal/models/points/historical_discussion_evidence.qnt",
         "formal/models/points/historical_implementation_allocation.qnt"
       ],
-      "candidateLines": [70, 98, 172],
+      "candidateLines": [74, 102, 178],
       "review": "mapped-abstraction"
     },
     {
@@ -3485,14 +3486,15 @@
     },
     {
       "path": "scripts/collect-implementation-corrections.ts",
-      "sha256": "5d7a69f260cd926506ab3314535270680529a07b22246327b8e69d2ca5a06b4e",
+      "sha256": "7be5b6844d5e753405af0a3042b67eed462430008c4f5a184c7e08c363321d4e",
       "models": [
+        "formal/models/points/historical_discussion_evidence.qnt",
         "formal/models/points/historical_implementation_allocation.qnt"
       ],
       "candidateLines": [
-        4, 11, 13, 77, 157, 234, 240, 243, 248, 258, 274, 280, 296, 297, 307,
-        310, 393, 439, 460, 485, 522, 529, 636, 647, 812, 1093, 1608, 1667,
-        1703, 1728, 1756, 1758
+        4, 11, 13, 83, 163, 240, 246, 249, 254, 264, 280, 286, 302, 303, 313,
+        316, 413, 459, 480, 505, 544, 551, 661, 672, 837, 1204, 1724, 1783,
+        1819, 1844, 1872, 1874
       ],
       "review": "mapped-abstraction"
     },
@@ -3926,6 +3928,13 @@
       "sha256": "96cd3b41a85caf5442d3fa7e84a52a7af67048307bdc30e53bfebc6145c8f85f",
       "models": ["formal/models/points/ingestion_retry.qnt"],
       "candidateLines": [],
+      "review": "mapped-abstraction"
+    },
+    {
+      "path": "scripts/historical-discussion-evidence.ts",
+      "sha256": "ff8fe26a58076a2fee4f15c5832969d526dc5a3c552bd13d2d9549271bd8e4b5",
+      "models": ["formal/models/points/historical_discussion_evidence.qnt"],
+      "candidateLines": [9, 146, 147],
       "review": "mapped-abstraction"
     },
     {
@@ -8488,12 +8497,13 @@
     },
     {
       "path": "workers/slopbot/value-evidence.ts",
-      "sha256": "3622e480334ddfdc8a5a774a712fe83d5a8e2d21145ce367f5d1854c04a30a28",
+      "sha256": "df922b896087cf899f3a0a5207ba0ab9e03e17a11158c6de9b2d250c74f5d288",
       "models": [
+        "formal/models/points/historical_discussion_evidence.qnt",
         "formal/models/slopbot/bot_evidence_integrity.qnt",
         "formal/models/slopbot/bot_value_dispute_actor.qnt"
       ],
-      "candidateLines": [61, 72, 81, 95, 559, 579, 622, 631, 650, 991, 1010],
+      "candidateLines": [61, 72, 81, 95, 601, 621, 664, 673, 692, 1033, 1052],
       "review": "mapped-abstraction"
     },
     {
@@ -13536,6 +13546,25 @@
         "repeatedLimitFailsTest",
         "timedOutCheckpointCannotPublishTest",
         "writeDoesNotRetryTest"
+      ]
+    },
+    {
+      "path": "formal/models/points/historical_discussion_evidence.qnt",
+      "sha256": "46f413d41b67007c2b2c31236fbc55a3da58761eaafb2aa9f998e0d10a87c884",
+      "sources": [
+        ".github/workflows/points-implementation-corrections.yml",
+        "scripts/collect-implementation-corrections.ts",
+        "scripts/historical-discussion-evidence.ts",
+        "workers/slopbot/value-evidence.ts"
+      ],
+      "scenarios": [
+        "completeGraphqlPathTest",
+        "disabledPathTest",
+        "incompleteFallbackHoldsTest",
+        "incompleteGraphqlFallsBackTest",
+        "legacyPathTest",
+        "quotaNeverLooksLikeDiscoveryTest",
+        "savedGraphqlReplaysWithNewReadsDisabledTest"
       ]
     },
     {

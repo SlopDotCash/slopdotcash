@@ -223,12 +223,35 @@ async function collectCommitChanges(
   }
   return { commit, limitations };
 }
+export interface RelatedPullRequestTimelineNode {
+  source: {
+    __typename: string;
+    id?: string;
+    number?: number;
+    url?: string;
+    repository?: { nameWithOwner: string; isPrivate: boolean };
+  };
+}
+
+export function valueReferenceTimelineRequest(
+  repository: string,
+  number: number,
+  cursor: string | null,
+) {
+  const [owner, name] = repository.split("/");
+  return {
+    query: `query($owner:String!,$name:String!,$number:Int!,$cursor:String){repository(owner:$owner,name:$name){pullRequest(number:$number){id timelineItems(first:100,after:$cursor,itemTypes:[CROSS_REFERENCED_EVENT]){nodes{... on CrossReferencedEvent{source{__typename ... on PullRequest{id number url repository{nameWithOwner isPrivate}}}}}pageInfo{hasNextPage endCursor}}}} rateLimit{cost limit remaining resetAt}}`,
+    variables: { owner, name, number, cursor },
+  };
+}
+
 async function relatedPullRequests(
   client: EvidenceClient,
   repository: string,
   number: number,
   pullId: string,
   sourceTexts: readonly string[],
+  completeTimeline?: readonly RelatedPullRequestTimelineNode[],
 ) {
   const references = new Map<string, RelatedPullRequest>();
   const limitations: string[] = [];
@@ -237,38 +260,8 @@ async function relatedPullRequests(
       references: [],
       limitations: ["Related PR evidence is unavailable"],
     };
-  const [owner, name] = repository.split("/");
-  const cursors = new Set<string>();
-  let cursor: string | null = null;
-  for (;;) {
-    const result: {
-      repository: {
-        pullRequest: {
-          id: string;
-          timelineItems: {
-            nodes: {
-              source: {
-                __typename: string;
-                id?: string;
-                number?: number;
-                url?: string;
-                repository?: { nameWithOwner: string; isPrivate: boolean };
-              };
-            }[];
-            pageInfo: { hasNextPage: boolean; endCursor: string | null };
-          };
-        } | null;
-      } | null;
-    } = await client.graphql(
-      `query($owner:String!,$name:String!,$number:Int!,$cursor:String){repository(owner:$owner,name:$name){pullRequest(number:$number){id timelineItems(first:100,after:$cursor,itemTypes:[CROSS_REFERENCED_EVENT]){nodes{... on CrossReferencedEvent{source{__typename ... on PullRequest{id number url repository{nameWithOwner isPrivate}}}}}pageInfo{hasNextPage endCursor}}}} rateLimit{cost limit remaining resetAt}}`,
-      { owner, name, number, cursor },
-    );
-    const pull = result.repository?.pullRequest;
-    if (!pull || pull.id !== pullId) {
-      limitations.push("Related PR evidence is unavailable");
-      break;
-    }
-    for (const { source } of pull.timelineItems.nodes) {
+  const addIncoming = (nodes: readonly RelatedPullRequestTimelineNode[]) => {
+    for (const { source } of nodes) {
       if (source.__typename !== "PullRequest") continue;
       if (source.repository?.isPrivate !== false) {
         limitations.push("Related private PR evidence is withheld");
@@ -290,12 +283,37 @@ async function relatedPullRequests(
         repository: source.repository.nameWithOwner,
       });
     }
-    const page = pull.timelineItems.pageInfo;
-    if (!page.hasNextPage) break;
-    if (!page.endCursor || cursors.has(page.endCursor))
-      throw new Error("Related PR pagination did not advance");
-    cursors.add(page.endCursor);
-    cursor = page.endCursor;
+  };
+  if (completeTimeline) addIncoming(completeTimeline);
+  else {
+    const cursors = new Set<string>();
+    let cursor: string | null = null;
+    for (;;) {
+      const request = valueReferenceTimelineRequest(repository, number, cursor);
+      const result: {
+        repository: {
+          pullRequest: {
+            id: string;
+            timelineItems: {
+              nodes: RelatedPullRequestTimelineNode[];
+              pageInfo: { hasNextPage: boolean; endCursor: string | null };
+            };
+          } | null;
+        } | null;
+      } = await client.graphql(request.query, request.variables);
+      const pull = result.repository?.pullRequest;
+      if (!pull || pull.id !== pullId) {
+        limitations.push("Related PR evidence is unavailable");
+        break;
+      }
+      addIncoming(pull.timelineItems.nodes);
+      const page = pull.timelineItems.pageInfo;
+      if (!page.hasNextPage) break;
+      if (!page.endCursor || cursors.has(page.endCursor))
+        throw new Error("Related PR pagination did not advance");
+      cursors.add(page.endCursor);
+      cursor = page.endCursor;
+    }
   }
   // Timeline events point from a referenced PR back to its source. Resolve
   // outgoing references too: a replacement often names the original only in
@@ -353,7 +371,7 @@ async function relatedPullRequests(
       .catch(() => null);
     // Failed discovery is retained as an explicit gap, never an empty success.
     const repo = result?.repository;
-    if (!repo || repo.isPrivate !== false) {
+    if (repo?.isPrivate !== false) {
       limitations.push("Outgoing reference is unavailable or private");
       continue;
     }
@@ -387,6 +405,12 @@ async function relatedPullRequests(
   };
 }
 
+export interface CompleteValueReferenceDiscussion {
+  commentBodies: string[];
+  inlineBodies: string[];
+  timeline: RelatedPullRequestTimelineNode[];
+}
+
 /** Discover retained-copy candidates before reading any commit patches.
  * Uses the same complete discussions and reference resolver as valuation.
  * This is discovery only; a candidate still needs full retained-copy proof.
@@ -395,14 +419,31 @@ export async function collectValueReferenceEvidence(
   client: EvidenceClient,
   repository: string,
   number: number,
+  readDiscussion?: (
+    pull: Pull,
+  ) => Promise<CompleteValueReferenceDiscussion | null>,
 ) {
   const path = `/repos/${repository}/pulls/${number}`;
   const pull = await client.get<Pull>(path);
   if (!pull) throw new Error("Pull request unavailable");
-  const [reviews, comments, reviewComments] = await Promise.all([
+  const [reviews, discussion] = await Promise.all([
     pages<Review>(client, `${path}/reviews`),
-    pages<Comment>(client, `/repos/${repository}/issues/${number}/comments`),
-    pages<Comment>(client, `${path}/comments`),
+    (async () => {
+      const verified = await readDiscussion?.(pull);
+      if (verified) return verified;
+      const [comments, inline] = await Promise.all([
+        pages<Comment>(
+          client,
+          `/repos/${repository}/issues/${number}/comments`,
+        ),
+        pages<Comment>(client, `${path}/comments`),
+      ]);
+      return {
+        commentBodies: comments.map((entry) => entry.body),
+        inlineBodies: inline.map((entry) => entry.body),
+        timeline: undefined,
+      };
+    })(),
   ]);
   const related = await relatedPullRequests(
     client,
@@ -412,13 +453,14 @@ export async function collectValueReferenceEvidence(
     [
       pull.body ?? "",
       ...reviews.map((review) => review.body),
-      ...comments.map((entry) => entry.body),
-      ...reviewComments.map((entry) => entry.body),
+      ...discussion.commentBodies,
+      ...discussion.inlineBodies,
     ],
+    discussion.timeline,
   );
   for (const [name, actual, expected] of [
-    ["comments", comments.length, pull.comments],
-    ["review comments", reviewComments.length, pull.review_comments],
+    ["comments", discussion.commentBodies.length, pull.comments],
+    ["review comments", discussion.inlineBodies.length, pull.review_comments],
   ] as const)
     if (actual !== expected)
       related.limitations.push(`Incomplete ${name}: ${actual}/${expected}`);

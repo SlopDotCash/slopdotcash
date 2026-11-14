@@ -41,6 +41,14 @@ The frozen baseline, registry and campaign scope must still match. An uploaded
 checkpoint is not its own evidence of completeness. Applying corrections still
 requires the current main checkout and fresh authority and financial checks.
 
+The optional `graphql_discussions=true` input reduces REST comment requests
+for new retained-copy discovery. GitHub's REST PR and reviews still anchor
+the evidence. Before using a GraphQL discussion, the collector checks the PR
+identity and reconciles every comment count with REST. Missing pages, count
+mismatches, and ambiguous references fall back to the original REST reads.
+The retained-copy proof checks the original and accepted patches before
+allocating Points. Resuming a campaign reuses its recorded discussion reads.
+
 ## Private eligibility and recording
 
 The reconcile job uses the production environment and publication lock. It
