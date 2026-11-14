@@ -1,5 +1,12 @@
 import { describe, expect, test } from "bun:test";
-import { decodeFunctionData, encodeFunctionData, type Hex } from "viem";
+import {
+  decodeFunctionData,
+  encodeFunctionData,
+  encodeFunctionResult,
+  type Hex,
+  zeroAddress,
+  zeroHash,
+} from "viem";
 import { generatePrivateKey, privateKeyToAccount } from "viem/accounts";
 import orders from "../../tests/fixtures/dln-orders.json";
 import { sqliteD1 } from "../../tests/sqlite-d1";
@@ -10,6 +17,7 @@ import {
   type BuyQuote,
   createBuyback,
   type FillState,
+  type FinalizedRpcObservation,
   type OutcomeEvidence,
 } from "./buyback";
 import {
@@ -31,7 +39,11 @@ import {
   runNetwork,
   type SendStatus,
 } from "./core";
-import { checkedDlnOrder, DLN_SOURCE_ABI } from "./debridge";
+import {
+  checkedDlnOrder,
+  DLN_DESTINATION_ABI,
+  DLN_SOURCE_ABI,
+} from "./debridge";
 import { checkedSolanaDlnOrder, dlnGiveOrderWallet } from "./debridge-solana";
 import { createEvmClient } from "./evm";
 import { runOnce } from "./index";
@@ -97,6 +109,127 @@ const CONVERTER_ENV = {
     },
   }),
 };
+
+test("only live Robinhood recovery reports finalized DLN RPC readiness", async () => {
+  const endpoint = "https://private-rpc.invalid/redacted";
+  const block = {
+    number: "0x10",
+    hash: `0x${"ab".repeat(32)}`,
+    timestamp: "0x1",
+    transactions: [],
+  };
+  const callData = encodeFunctionData({
+    abi: DLN_DESTINATION_ABI,
+    functionName: "takeOrders",
+    args: [zeroHash],
+  });
+  const order = encodeFunctionResult({
+    abi: DLN_DESTINATION_ABI,
+    functionName: "takeOrders",
+    result: [0, zeroAddress, 0, 0n],
+  });
+  const cases = [
+    { name: "finalized", methods: ["chain", "finalized", "call", "canonical"] },
+    { name: "wrong-chain", methods: ["chain"] },
+    { name: "latest-only", methods: ["chain", "finalized", "call"] },
+    {
+      name: "changed-block",
+      methods: ["chain", "finalized", "call", "canonical"],
+    },
+    { name: "receipts", methods: [] },
+    { name: "dry_run", methods: [] },
+    { name: "off", methods: [] },
+  ];
+  for (const { name, methods } of cases) {
+    const { db, sqlite } = sqliteD1();
+    const key = generatePrivateKey();
+    const actual: string[] = [];
+    const doFetch = (async (input, init) => {
+      if (String(input) !== endpoint)
+        throw new Error("Unexpected provider in the RPC test");
+      const request = JSON.parse(String(init?.body));
+      const reply = (result: unknown) =>
+        Response.json({ jsonrpc: "2.0", id: request.id, result });
+      if (request.method === "eth_chainId") {
+        actual.push("chain");
+        return reply(name === "wrong-chain" ? "0x1" : "0x1237");
+      }
+      if (request.method === "eth_getBlockByNumber") {
+        if (request.params[0] === "finalized") {
+          actual.push("finalized");
+          return reply(block);
+        }
+        if (request.params[0] === block.number) {
+          actual.push("canonical");
+          return reply(
+            name === "changed-block" ? { ...block, hash: zeroHash } : block,
+          );
+        }
+      }
+      if (request.method === "eth_call") {
+        actual.push("call");
+        if (
+          request.params[0].to.toLowerCase() !== DLN.destination ||
+          request.params[0].data !== callData ||
+          request.params[1] !== block.number
+        )
+          throw new Error(
+            "The RPC did not pin the DLN view to the finalized block",
+          );
+        if (name === "latest-only")
+          return Response.json({
+            jsonrpc: "2.0",
+            id: request.id,
+            error: {
+              code: -32000,
+              message: `No historical state at ${endpoint}`,
+            },
+          });
+        return reply(order);
+      }
+      actual.push(request.method);
+      throw new Error("Unexpected method in the RPC test");
+    }) as typeof fetch;
+    try {
+      const [result] = await runOnce(
+        {
+          FEE_DB: db,
+          ...CONVERTER_ENV,
+          ...BUYBACK_ENV,
+          FEE_CONVERTER_NETWORKS: "robinhood",
+          FEE_CONVERTER_ALLOWLIST: "",
+          FEE_WALLET_ROBINHOOD: privateKeyToAccount(key).address.toLowerCase(),
+          FEE_WALLET_KEY_ROBINHOOD: key,
+          RPC_URL_ROBINHOOD: endpoint,
+          BUYBACK_MODE: name === "off" || name === "dry_run" ? name : "live",
+        },
+        () => new Date(NOW),
+        { fetch: doFetch },
+        name === "receipts" ? "receipts" : "recovery",
+      );
+      expect(actual).toEqual(methods);
+      expect(result?.status).toBe("not_converted");
+      const expected: FinalizedRpcObservation | undefined =
+        name === "finalized"
+          ? {
+              status: "verified",
+              chainId: 4663,
+              blockNumber: "16",
+              blockHash: block.hash,
+            }
+          : methods.length
+            ? { status: "unavailable" }
+            : undefined;
+      expect(result?.buyback?.finalizedRpc).toEqual(expected);
+      expect(result?.buyback?.errors ?? 0).toBe(0);
+      expect(
+        sqlite.query("SELECT COUNT(*) AS n FROM fee_conversions").get(),
+      ).toEqual({ n: 0 });
+    } finally {
+      sqlite.close();
+    }
+  }
+});
 
 interface FakeChain extends ChainClient {
   balances: Map<string, bigint>;

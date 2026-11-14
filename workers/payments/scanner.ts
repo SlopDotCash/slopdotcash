@@ -1,7 +1,11 @@
 import { bytesToHex } from "@noble/hashes/utils.js";
 import type { D1TransactionalDatabase as D1Database } from "../../backend/d1";
 import { EVM_ESCROW_EVENT_TOPICS, evmRpc } from "../../contracts/evm/adapter";
-import { escrowInvocations, solanaRpc } from "../../contracts/solana/adapter";
+import {
+  assertSolanaGenesis,
+  escrowInvocations,
+  solanaRpc,
+} from "../../contracts/solana/adapter";
 import { decodeBase64 } from "../../src/lib/byte-encoding";
 import type { DeploymentView } from "./deployment-types";
 
@@ -119,13 +123,14 @@ const SOLANA_TRANSACTIONS_PER_RUN = 100;
  */
 export async function scanSolanaPayments(
   db: D1Database,
-  deployment: ScanDeployment,
+  deployment: ScanDeployment & { genesisHash: string | undefined },
   rpcUrl: string,
   index: (event: ScanEvent) => Promise<void>,
 ): Promise<void> {
   const { projectPda, programId } = deployment;
   if (!projectPda || !programId)
     throw new Error("Solana project deployment missing");
+  await assertSolanaGenesis({ rpcUrl, genesisHash: deployment.genesisHash });
   // Freeze a discovery interval. A later run resumes its oldest fetched page;
   // newly arriving transactions belong to the next interval.
   await db

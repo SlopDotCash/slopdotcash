@@ -826,6 +826,13 @@ for the current evidence and its limits.
    finalized block. The public RPC answers
    `historical state … is not available` for such reads; fill status, claim
    and approval receipts then stay unverified and nothing is credited.
+   For a deployed live buyback, inspect the private `fee_converter_run`
+   summary from a normal recovery tick on the expected Worker version.
+   Its Robinhood `buyback.finalizedRpc` observation verifies the configured
+   endpoint's chain ID and a DLN Destination contract read at the reported
+   finalized block. Confirm the block number and hash with a separate
+   trusted Robinhood Chain RPC at or below its finalized head. An unavailable
+   observation leaves readiness unproven and has no effect on processing.
 3. Install `FEE_WALLET_KEY_ROBINHOOD` and fund gas on every enabled network.
    On Base and Ethereum each order also pays the 0.001 ETH fixed fee.
 4. Land `BUYBACK_MODE = "dry_run"` with `BUYBACK_START_AT`. Watch the admin

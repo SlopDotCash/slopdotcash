@@ -193,8 +193,11 @@ export class LocalSolanaAcceptance {
     const reviewed = deployments as unknown as PaymentDeployment[];
     for (const deployment of deployments)
       await attempt(() =>
-        scanSolanaPayments(env.PAYMENTS_DB, deployment, rpcUrl, (event) =>
-          ingestPaymentEvent(env, event, new Date(), reviewed),
+        scanSolanaPayments(
+          env.PAYMENTS_DB,
+          { ...deployment, genesisHash },
+          rpcUrl,
+          (event) => ingestPaymentEvent(env, event, new Date(), reviewed),
         ),
       );
     await attempt(() => recoverUncertainAttempts(env));
