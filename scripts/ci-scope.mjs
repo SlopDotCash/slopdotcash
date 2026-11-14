@@ -133,16 +133,22 @@ const selectedModels =
   formalModels === "all" || formalModels === "none"
     ? 0
     : formalModels.split(" ").length;
-// About ten models per runner, at most the six shards of a complete run. A
-// selection of none skips the model jobs; it still names one shard so the
-// matrix is never empty.
+// A complete run spreads the models over FORMAL_SHARDS runners: each runner
+// checks its models one after another, so the slowest runner sets the length
+// of a release. A selection gets about ten models per runner, up to the same
+// number. A selection of none skips the model jobs; it still names one shard
+// so the matrix is never empty.
+const FORMAL_SHARDS = 16;
 const formalShards = JSON.stringify(
   Array.from(
     {
       length:
         formalModels === "all"
-          ? 6
-          : Math.max(1, Math.min(6, Math.ceil(selectedModels / 10))),
+          ? FORMAL_SHARDS
+          : Math.max(
+              1,
+              Math.min(FORMAL_SHARDS, Math.ceil(selectedModels / 10)),
+            ),
     },
     (_, index) => index + 1,
   ),
