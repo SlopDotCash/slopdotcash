@@ -136,7 +136,7 @@
     "executableUnits": 61,
     "baselineReplayUnitsCarriedForward": 51,
     "focusedReplayUnits": 10,
-    "replayedTraces": 23816,
+    "replayedTraces": 23813,
     "method": "Carry baseline replay only for unchanged executable Markdown. Replace the earlier reserve-release, destination-recovery and Slopbot closure unit results and add seven new units using the named focused reports. The three changed navigation indexes generate identical Quint apart from comments. Count retained ordinary replays and retained local and Slopbot reachability replays, excluding supplemental Points and keeper targeted witness runs."
   },
   "templateConformance": {
@@ -145,5 +145,6 @@
     "malformedInputs": 5,
     "journeys": 1,
     "evidence": "integrated-template-conformance.json"
-  }
+  },
+  "generationAndTypecheckCommit": "0eba208feb4e880e6933bce65bc65b7fca3063fc"
 }

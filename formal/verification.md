@@ -182,7 +182,7 @@ lists the definitions without standalone comparison.
 [Full-tree simulation and replay](validation/full-tree/model-simulation-replay.json)
 
 The assembled 71-document tree generated successfully and passed both VibeLang
-typechecks. Baseline and focused results together replayed 23,816 traces across
+typechecks. Baseline and focused results together replayed 23,813 traces across
 all 61 current executable models. The integrated report lists the inputs
 carried forward and the focused substitutions. The template tool suite passed
 34 tests and the greeting app passed three. The greeting's conformance driver
