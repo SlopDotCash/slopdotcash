@@ -18,6 +18,9 @@
 // keeps its earlier behavior exactly: no claim, no quote, no key. The key is
 // loaded only by a run whose buyback is live. A dry run records decisions
 // and signs nothing. `signedWithoutKey` records what a send really saw.
+// The finalized RPC observation runs after live recovery work and changes
+// no modeled balances, journal entries, signing authority or outcomes.
+// The RPC request sequence and refused evidence are exercised in buyback.test.ts.
 //
 // Purchase. An exact approval is its own send; the swap is signed only when
 // the simulated output meets the signed minimum, so a price that moved away
