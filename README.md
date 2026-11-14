@@ -282,8 +282,10 @@ checks in full:
 gh workflow run deploy.yml --ref main -f use_published_data=true -f skip_proofs=true
 ```
 
-Every other check and all deployment verification still run. A release that
-skipped the proofs is not evidence that they passed.
+Add `-f skip_browser_tests=true` to run the browser smoke lane instead of the
+complete browser lanes. Every other check and all deployment verification
+still run. A release that skipped the proofs or the browser lanes is not
+evidence that they passed.
 Each environment reuses only its own last publication. It validates the
 published data and preserves its original collection timestamps and history.
 It skips fresh leaderboard/profile collection and the merge-collector install.

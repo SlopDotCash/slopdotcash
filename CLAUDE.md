@@ -625,6 +625,11 @@ stages nor the LemmaScript proofs. Both inventory checks and every code,
 browser, sandbox, source-identity and deployment check still run. A push
 release cannot skip them, pull requests still run the affected models and
 proofs, and scheduled nightly runs check all of them on the default branch.
+The same kind of run may set `skip_browser_tests` (operator decision,
+14 November 2026; PRD section 9): it runs the browser smoke lane instead of
+the complete browser lanes, and every other check still runs. A push release
+cannot skip them. A release that skipped either set is not evidence that
+the skipped checks passed.
 To publish new data without a commit, run the release workflow by hand
 (`workflow_dispatch`) with the `use_published_data` option off. Every production release requires current main equivalence. Every
 deployment is bound to its actual tested source SHA.

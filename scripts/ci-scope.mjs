@@ -63,8 +63,14 @@ const lane = (name, server, browsers, shard, grep = "") => ({
   shard,
   grep,
 });
+// Operator exemption (PRD section 9): a manual run may set
+// skip_browser_tests. It then runs the smoke lane instead of the complete
+// lanes: the built site still has to load. No other event can set it.
+const skipBrowserTests =
+  process.env.GITHUB_EVENT_NAME === "workflow_dispatch" &&
+  process.env.SKIP_BROWSER_TESTS === "true";
 const lanes = [];
-if (ui)
+if (ui && !skipBrowserTests)
   lanes.push(
     // Preview includes the draft and email identity cases in both engines.
     lane("preview-1", "preview", "chromium firefox", "1/2"),
@@ -72,9 +78,9 @@ if (ui)
     lane("pages", "pages", "chromium", "1/1"),
   );
 // Root skill edits change raw Markdown and discovery bytes checked by Pages.
-if (!ui && changed(/^skills\/slop\//u))
+if (!ui && !skipBrowserTests && changed(/^skills\/slop\//u))
   lanes.push(lane("pages", "pages", "chromium", "1/1"));
-if (api)
+if (api && !skipBrowserTests)
   lanes.push(
     lane("registry-1", "registry", "chromium firefox", "1/2"),
     lane("registry-2", "registry", "chromium firefox", "2/2"),
