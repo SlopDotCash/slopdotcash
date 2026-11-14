@@ -1,0 +1,33 @@
+{
+  "sourceHashes": {
+    "spec/backend/email.md": "50c35c43e69f5bc394e8b9678c225bd0bcbd6b76219d3b0bfbe36dc97358b28f",
+    "spec/backend/accounts.md": "ecd464884aa42edf59cf32aa6c738b9341a088be3fb27565bc6a61ffa1f92359"
+  },
+  "status": "complete",
+  "rows": [
+    {
+      "goal": "sometimesTwoSessions",
+      "reached": true,
+      "replay": true,
+      "states": 9,
+      "trace": "formal/validation/journeys/account-closure-sometimesTwoSessions.itf.json",
+      "traceSha256": "9c270d3b06a7bae5974d3c793c434c87a0a69523f4ad14270ec4aa43dc6e4223",
+      "command": "pnpm exec quint run gen/backend__accounts.run.qnt --main backend__accounts_run --step step --invariant never_sometimesTwoSessions --max-samples 1500 --max-steps 25 --mbt --seed 4589779812700 --n-traces 1"
+    },
+    {
+      "goal": "sometimesExpiredSession",
+      "reached": true,
+      "replay": true,
+      "states": 5,
+      "trace": "formal/validation/journeys/account-closure-sometimesExpiredSession.itf.json",
+      "traceSha256": "a1582026d4ccac685a07e7f29d4a2157aad7229aa337893e7305896f903a7b84",
+      "command": "pnpm exec quint run gen/backend__accounts.run.qnt --main backend__accounts_run --step step --invariant never_sometimesExpiredSession --max-samples 1500 --max-steps 25 --mbt --seed 189401639883547 --n-traces 1"
+    }
+  ],
+  "consentGuard": {
+    "result": "allowed in both directed Quint journey and retained randomized probe replay",
+    "directedLog": "formal/validation/journeys/account-closure-quint.log",
+    "randomizedProbe": "formal/validation/journeys/account-closure-v2.json",
+    "separateRandomizedSearch": "stopped after redundant corroboration became unnecessary"
+  }
+}

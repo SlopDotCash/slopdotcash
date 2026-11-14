@@ -1,0 +1,192 @@
+{
+  "source": "/Users/shawwalters/.codex/worktrees/slop-vibestack-spec/slopdotcash",
+  "scratch": "/tmp/slop-account-closure-v2",
+  "sourceHashes": {
+    "spec/backend/email.md": "50c35c43e69f5bc394e8b9678c225bd0bcbd6b76219d3b0bfbe36dc97358b28f",
+    "spec/backend/accounts.md": "ecd464884aa42edf59cf32aa6c738b9341a088be3fb27565bc6a61ffa1f92359"
+  },
+  "simulations": [
+    {
+      "unit": "backend__accounts",
+      "step": "step",
+      "passed": true,
+      "replay": true,
+      "traces": 60,
+      "command": "seed 52437418880463; to simulate again: pnpm exec quint run gen/backend__accounts.run.qnt --main backend__accounts_run --step step --invariant inv --max-samples 400 --max-steps 30 --mbt --seed 52437418880463",
+      "events": [
+        "signIn",
+        "close",
+        "advanceTime",
+        "unsubscribe",
+        "rename",
+        "saveReturn",
+        "connectX",
+        "endSession",
+        "reopen",
+        "enrollEmail",
+        "revokeSession",
+        "verifyEmail"
+      ],
+      "goals": [
+        {
+          "name": "sometimesClosed",
+          "reached": true
+        },
+        {
+          "name": "sometimesDisconnected",
+          "reached": true
+        },
+        {
+          "name": "sometimesReopened",
+          "reached": true
+        },
+        {
+          "name": "sometimesExpiredSession",
+          "reached": false
+        },
+        {
+          "name": "sometimesTwoSessions",
+          "reached": false
+        },
+        {
+          "name": "sometimesTargetedSignOut",
+          "reached": true
+        }
+      ]
+    },
+    {
+      "unit": "backend__accounts",
+      "step": "probe",
+      "passed": true,
+      "replay": true,
+      "traces": 60,
+      "command": "seed 255520378303774; to simulate again: pnpm exec quint run gen/backend__accounts.run.qnt --main backend__accounts_run --step probe --invariant inv --max-samples 400 --max-steps 30 --mbt --seed 255520378303774",
+      "events": [
+        "signIn",
+        "advanceTime",
+        "enrollEmail",
+        "close",
+        "reopen",
+        "rename",
+        "endSession",
+        "unsubscribe",
+        "connectX",
+        "saveReturn",
+        "verifyEmail",
+        "revokeSession",
+        "setEmailConsent"
+      ],
+      "goals": [
+        {
+          "name": "sometimesClosed",
+          "reached": true
+        },
+        {
+          "name": "sometimesDisconnected",
+          "reached": true
+        },
+        {
+          "name": "sometimesReopened",
+          "reached": true
+        },
+        {
+          "name": "sometimesExpiredSession",
+          "reached": false
+        },
+        {
+          "name": "sometimesTwoSessions",
+          "reached": true
+        },
+        {
+          "name": "sometimesTargetedSignOut",
+          "reached": false
+        }
+      ]
+    },
+    {
+      "unit": "backend__email",
+      "step": "step",
+      "passed": true,
+      "replay": true,
+      "traces": 60,
+      "command": "seed 131133213500921; to simulate again: pnpm exec quint run gen/backend__email.run.qnt --main backend__email_run --step step --invariant inv --max-samples 400 --max-steps 30 --mbt --seed 131133213500921",
+      "events": [
+        "advanceTime",
+        "unsubscribe",
+        "addNotice",
+        "closeEnrollment",
+        "enroll",
+        "verify",
+        "setConsent"
+      ],
+      "goals": [
+        {
+          "name": "sometimesVerified",
+          "reached": true
+        },
+        {
+          "name": "sometimesBothConsent",
+          "reached": true
+        },
+        {
+          "name": "sometimesIndependentNotice",
+          "reached": true
+        }
+      ]
+    },
+    {
+      "unit": "backend__email",
+      "step": "probe",
+      "passed": true,
+      "replay": true,
+      "traces": 60,
+      "command": "seed 175677175985466; to simulate again: pnpm exec quint run gen/backend__email.run.qnt --main backend__email_run --step probe --invariant inv --max-samples 400 --max-steps 30 --mbt --seed 175677175985466",
+      "events": [
+        "addNotice",
+        "unsubscribe",
+        "advanceTime",
+        "closeEnrollment",
+        "enroll",
+        "verify",
+        "setConsent"
+      ],
+      "goals": [
+        {
+          "name": "sometimesVerified",
+          "reached": true
+        },
+        {
+          "name": "sometimesBothConsent",
+          "reached": true
+        },
+        {
+          "name": "sometimesIndependentNotice",
+          "reached": true
+        }
+      ]
+    }
+  ],
+  "proofs": [
+    {
+      "unit": "backend__email.ts",
+      "total": 16,
+      "unproved": [],
+      "errors": [],
+      "exhausted": [],
+      "log": "formal/validation/journeys/account-closure-v2-backend__email.ts.log"
+    },
+    {
+      "unit": "backend__accounts.ts",
+      "total": 217,
+      "unproved": [],
+      "errors": [],
+      "exhausted": [],
+      "log": "formal/validation/journeys/account-closure-v2-backend__accounts.ts.log"
+    }
+  ],
+  "status": "complete",
+  "meaning": "Both seeded modes pass safety and generated TypeScript replay for account and email. The finite retained sample omitted exact session expiry, reached in the separate Quint targeted witness.",
+  "directedJourneys": "formal/validation/journeys/account-closure-directed.json",
+  "directedQuintLog": "formal/validation/journeys/account-closure-quint.log",
+  "proofReport": "formal/validation/journeys/account-proof-v2.json"
+}

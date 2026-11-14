@@ -1,0 +1,846 @@
+{
+  "snapshot": {
+    "spec/backend/wallets.md": "c2f024263e30cbcdde00fa36d79e44f9ec8687ed0b8b3651c6628899352bc13b"
+  },
+  "journeys": [
+    {
+      "name": "CAS registration, conflicting successor and registry readback",
+      "events": [
+        {
+          "event": {
+            "type": "register",
+            "registration": {
+              "wallet": "wallet-a",
+              "digest": "digest-a",
+              "predecessor": 0,
+              "addressVerified": true
+            },
+            "authenticated": true
+          },
+          "sender": "other",
+          "enabled": false
+        },
+        {
+          "event": {
+            "type": "register",
+            "registration": {
+              "wallet": "wallet-a",
+              "digest": "digest-a",
+              "predecessor": 0,
+              "addressVerified": true
+            },
+            "authenticated": true
+          },
+          "sender": "1",
+          "enabled": true
+        },
+        {
+          "event": {
+            "type": "register",
+            "registration": {
+              "wallet": "wallet-b",
+              "digest": "digest-b",
+              "predecessor": 0,
+              "addressVerified": true
+            },
+            "authenticated": true
+          },
+          "sender": "1",
+          "enabled": false
+        },
+        {
+          "event": {
+            "type": "register",
+            "registration": {
+              "wallet": "wallet-a",
+              "digest": "digest-lost-response",
+              "predecessor": 0,
+              "addressVerified": true
+            },
+            "authenticated": true
+          },
+          "sender": "1",
+          "enabled": true
+        },
+        {
+          "event": {
+            "type": "register",
+            "registration": {
+              "wallet": "wallet-b",
+              "digest": "digest-b",
+              "predecessor": 1,
+              "addressVerified": true
+            },
+            "authenticated": true
+          },
+          "sender": "1",
+          "enabled": true
+        }
+      ]
+    },
+    {
+      "name": "Historical same-address requires a registry successor",
+      "events": [
+        {
+          "event": {
+            "type": "selectChain",
+            "chain": "Solana"
+          },
+          "enabled": true
+        },
+        {
+          "event": {
+            "type": "restoreHistorical",
+            "wallet": "wallet-a",
+            "digest": "legacy",
+            "preserved": true
+          },
+          "enabled": true
+        },
+        {
+          "event": {
+            "type": "issue",
+            "claim": 1,
+            "challengeId": 1,
+            "messageDigest": "message-a",
+            "authenticated": true
+          },
+          "sender": "1",
+          "enabled": false
+        },
+        {
+          "event": {
+            "type": "register",
+            "registration": {
+              "wallet": "wallet-a",
+              "digest": "digest-a",
+              "predecessor": 1,
+              "addressVerified": true
+            },
+            "authenticated": true
+          },
+          "sender": "1",
+          "enabled": true
+        },
+        {
+          "event": {
+            "type": "selectChain",
+            "chain": "Base"
+          },
+          "enabled": false
+        }
+      ]
+    },
+    {
+      "name": "Proof binds actor, exact challenge message and wallet signature",
+      "events": [
+        {
+          "event": {
+            "type": "register",
+            "registration": {
+              "wallet": "wallet-a",
+              "digest": "digest-a",
+              "predecessor": 0,
+              "addressVerified": true
+            },
+            "authenticated": true
+          },
+          "sender": "1",
+          "enabled": true
+        },
+        {
+          "event": {
+            "type": "issue",
+            "claim": 1,
+            "challengeId": 1,
+            "messageDigest": "message-a",
+            "authenticated": true
+          },
+          "sender": "1",
+          "enabled": true
+        },
+        {
+          "event": {
+            "type": "readProof",
+            "proof": {
+              "requestId": 1,
+              "challengeId": 1,
+              "claim": 1,
+              "signerWallet": "wallet-a",
+              "messageDigest": "message-a",
+              "signatureVerified": true
+            },
+            "authenticated": true
+          },
+          "sender": "other",
+          "enabled": false
+        },
+        {
+          "event": {
+            "type": "readProof",
+            "proof": {
+              "requestId": 1,
+              "challengeId": 1,
+              "claim": 2,
+              "signerWallet": "wallet-a",
+              "messageDigest": "message-a",
+              "signatureVerified": true
+            },
+            "authenticated": true
+          },
+          "sender": "1",
+          "enabled": false
+        },
+        {
+          "event": {
+            "type": "readProof",
+            "proof": {
+              "requestId": 1,
+              "challengeId": 1,
+              "claim": 1,
+              "signerWallet": "wallet-b",
+              "messageDigest": "message-a",
+              "signatureVerified": true
+            },
+            "authenticated": true
+          },
+          "sender": "1",
+          "enabled": false
+        },
+        {
+          "event": {
+            "type": "readProof",
+            "proof": {
+              "requestId": 1,
+              "challengeId": 1,
+              "claim": 1,
+              "signerWallet": "wallet-a",
+              "messageDigest": "wrong",
+              "signatureVerified": true
+            },
+            "authenticated": true
+          },
+          "sender": "1",
+          "enabled": false
+        },
+        {
+          "event": {
+            "type": "readProof",
+            "proof": {
+              "requestId": 1,
+              "challengeId": 1,
+              "claim": 1,
+              "signerWallet": "wallet-a",
+              "messageDigest": "message-a",
+              "signatureVerified": false
+            },
+            "authenticated": true
+          },
+          "sender": "1",
+          "enabled": false
+        },
+        {
+          "event": {
+            "type": "readProof",
+            "proof": {
+              "requestId": 1,
+              "challengeId": 1,
+              "claim": 1,
+              "signerWallet": "wallet-a",
+              "messageDigest": "message-a",
+              "signatureVerified": true
+            },
+            "authenticated": true
+          },
+          "sender": "1",
+          "enabled": true
+        },
+        {
+          "event": {
+            "type": "readProof",
+            "proof": {
+              "requestId": 2,
+              "challengeId": 1,
+              "claim": 1,
+              "signerWallet": "wallet-a",
+              "messageDigest": "message-a",
+              "signatureVerified": true
+            },
+            "authenticated": true
+          },
+          "sender": "1",
+          "enabled": true
+        },
+        {
+          "event": {
+            "type": "consume",
+            "requestId": 1
+          },
+          "enabled": true
+        },
+        {
+          "event": {
+            "type": "consume",
+            "requestId": 2
+          },
+          "enabled": false
+        },
+        {
+          "event": {
+            "type": "commitAuthorization",
+            "requestId": 2,
+            "storageSucceeded": true
+          },
+          "enabled": false
+        },
+        {
+          "event": {
+            "type": "commitAuthorization",
+            "requestId": 1,
+            "storageSucceeded": true
+          },
+          "enabled": true
+        },
+        {
+          "event": {
+            "type": "readProof",
+            "proof": {
+              "requestId": 3,
+              "challengeId": 1,
+              "claim": 1,
+              "signerWallet": "wallet-a",
+              "messageDigest": "message-a",
+              "signatureVerified": true
+            },
+            "authenticated": true
+          },
+          "sender": "1",
+          "enabled": false
+        },
+        {
+          "event": {
+            "type": "commitAuthorization",
+            "requestId": 1,
+            "storageSucceeded": true
+          },
+          "enabled": false
+        }
+      ]
+    },
+    {
+      "name": "At expiry a new read refuses but the captured request can consume",
+      "events": [
+        {
+          "event": {
+            "type": "register",
+            "registration": {
+              "wallet": "wallet-a",
+              "digest": "digest-a",
+              "predecessor": 0,
+              "addressVerified": true
+            },
+            "authenticated": true
+          },
+          "sender": "1",
+          "enabled": true
+        },
+        {
+          "event": {
+            "type": "issue",
+            "claim": 1,
+            "challengeId": 1,
+            "messageDigest": "message-a",
+            "authenticated": true
+          },
+          "sender": "1",
+          "enabled": true
+        },
+        {
+          "event": {
+            "type": "readProof",
+            "proof": {
+              "requestId": 1,
+              "challengeId": 1,
+              "claim": 1,
+              "signerWallet": "wallet-a",
+              "messageDigest": "message-a",
+              "signatureVerified": true
+            },
+            "authenticated": true
+          },
+          "sender": "1",
+          "enabled": true
+        },
+        {
+          "event": {
+            "type": "observeTime",
+            "timestamp": 900001
+          },
+          "enabled": true
+        },
+        {
+          "event": {
+            "type": "readProof",
+            "proof": {
+              "requestId": 2,
+              "challengeId": 1,
+              "claim": 1,
+              "signerWallet": "wallet-a",
+              "messageDigest": "message-a",
+              "signatureVerified": true
+            },
+            "authenticated": true
+          },
+          "sender": "1",
+          "enabled": false
+        },
+        {
+          "event": {
+            "type": "consume",
+            "requestId": 1
+          },
+          "enabled": true
+        },
+        {
+          "event": {
+            "type": "commitAuthorization",
+            "requestId": 1,
+            "storageSucceeded": true
+          },
+          "enabled": true
+        }
+      ]
+    },
+    {
+      "name": "A successor between proof read and batch prevents old authorization",
+      "events": [
+        {
+          "event": {
+            "type": "register",
+            "registration": {
+              "wallet": "wallet-a",
+              "digest": "digest-a",
+              "predecessor": 0,
+              "addressVerified": true
+            },
+            "authenticated": true
+          },
+          "sender": "1",
+          "enabled": true
+        },
+        {
+          "event": {
+            "type": "issue",
+            "claim": 1,
+            "challengeId": 1,
+            "messageDigest": "message-a",
+            "authenticated": true
+          },
+          "sender": "1",
+          "enabled": true
+        },
+        {
+          "event": {
+            "type": "readProof",
+            "proof": {
+              "requestId": 1,
+              "challengeId": 1,
+              "claim": 1,
+              "signerWallet": "wallet-a",
+              "messageDigest": "message-a",
+              "signatureVerified": true
+            },
+            "authenticated": true
+          },
+          "sender": "1",
+          "enabled": true
+        },
+        {
+          "event": {
+            "type": "register",
+            "registration": {
+              "wallet": "wallet-b",
+              "digest": "digest-b",
+              "predecessor": 1,
+              "addressVerified": true
+            },
+            "authenticated": true
+          },
+          "sender": "1",
+          "enabled": true
+        },
+        {
+          "event": {
+            "type": "issue",
+            "claim": 1,
+            "challengeId": 1,
+            "messageDigest": "message-a",
+            "authenticated": true
+          },
+          "sender": "1",
+          "enabled": false
+        },
+        {
+          "event": {
+            "type": "readProof",
+            "proof": {
+              "requestId": 2,
+              "challengeId": 1,
+              "claim": 1,
+              "signerWallet": "wallet-a",
+              "messageDigest": "message-a",
+              "signatureVerified": true
+            },
+            "authenticated": true
+          },
+          "sender": "1",
+          "enabled": false
+        },
+        {
+          "event": {
+            "type": "consume",
+            "requestId": 1
+          },
+          "enabled": true
+        },
+        {
+          "event": {
+            "type": "commitAuthorization",
+            "requestId": 1,
+            "storageSucceeded": true
+          },
+          "enabled": true
+        },
+        {
+          "event": {
+            "type": "issue",
+            "claim": 2,
+            "challengeId": 2,
+            "messageDigest": "message-b",
+            "authenticated": true
+          },
+          "sender": "1",
+          "enabled": true
+        },
+        {
+          "event": {
+            "type": "readProof",
+            "proof": {
+              "requestId": 3,
+              "challengeId": 2,
+              "claim": 2,
+              "signerWallet": "wallet-b",
+              "messageDigest": "message-b",
+              "signatureVerified": true
+            },
+            "authenticated": true
+          },
+          "sender": "1",
+          "enabled": true
+        },
+        {
+          "event": {
+            "type": "consume",
+            "requestId": 3
+          },
+          "enabled": true
+        },
+        {
+          "event": {
+            "type": "commitAuthorization",
+            "requestId": 3,
+            "storageSucceeded": true
+          },
+          "enabled": true
+        }
+      ]
+    },
+    {
+      "name": "Failed batch retains consumed evidence and needs a fresh challenge",
+      "events": [
+        {
+          "event": {
+            "type": "register",
+            "registration": {
+              "wallet": "wallet-a",
+              "digest": "digest-a",
+              "predecessor": 0,
+              "addressVerified": true
+            },
+            "authenticated": true
+          },
+          "sender": "1",
+          "enabled": true
+        },
+        {
+          "event": {
+            "type": "issue",
+            "claim": 1,
+            "challengeId": 1,
+            "messageDigest": "message-a",
+            "authenticated": true
+          },
+          "sender": "1",
+          "enabled": true
+        },
+        {
+          "event": {
+            "type": "readProof",
+            "proof": {
+              "requestId": 1,
+              "challengeId": 1,
+              "claim": 1,
+              "signerWallet": "wallet-a",
+              "messageDigest": "message-a",
+              "signatureVerified": true
+            },
+            "authenticated": true
+          },
+          "sender": "1",
+          "enabled": true
+        },
+        {
+          "event": {
+            "type": "consume",
+            "requestId": 1
+          },
+          "enabled": true
+        },
+        {
+          "event": {
+            "type": "commitAuthorization",
+            "requestId": 1,
+            "storageSucceeded": false
+          },
+          "enabled": true
+        },
+        {
+          "event": {
+            "type": "readProof",
+            "proof": {
+              "requestId": 2,
+              "challengeId": 1,
+              "claim": 1,
+              "signerWallet": "wallet-a",
+              "messageDigest": "message-a",
+              "signatureVerified": true
+            },
+            "authenticated": true
+          },
+          "sender": "1",
+          "enabled": false
+        },
+        {
+          "event": {
+            "type": "commitAuthorization",
+            "requestId": 1,
+            "storageSucceeded": true
+          },
+          "enabled": false
+        },
+        {
+          "event": {
+            "type": "issue",
+            "claim": 1,
+            "challengeId": 2,
+            "messageDigest": "message-b",
+            "authenticated": true
+          },
+          "sender": "1",
+          "enabled": true
+        },
+        {
+          "event": {
+            "type": "readProof",
+            "proof": {
+              "requestId": 2,
+              "challengeId": 2,
+              "claim": 1,
+              "signerWallet": "wallet-a",
+              "messageDigest": "message-b",
+              "signatureVerified": true
+            },
+            "authenticated": true
+          },
+          "sender": "1",
+          "enabled": true
+        },
+        {
+          "event": {
+            "type": "consume",
+            "requestId": 2
+          },
+          "enabled": true
+        },
+        {
+          "event": {
+            "type": "commitAuthorization",
+            "requestId": 2,
+            "storageSucceeded": true
+          },
+          "enabled": true
+        }
+      ]
+    },
+    {
+      "name": "Prior wallet stays effective and first proof survives a signed successor",
+      "events": [
+        {
+          "event": {
+            "type": "register",
+            "registration": {
+              "wallet": "wallet-a",
+              "digest": "digest-a",
+              "predecessor": 0,
+              "addressVerified": true
+            },
+            "authenticated": true
+          },
+          "sender": "1",
+          "enabled": true
+        },
+        {
+          "event": {
+            "type": "issue",
+            "claim": 1,
+            "challengeId": 1,
+            "messageDigest": "message-a",
+            "authenticated": true
+          },
+          "sender": "1",
+          "enabled": true
+        },
+        {
+          "event": {
+            "type": "readProof",
+            "proof": {
+              "requestId": 1,
+              "challengeId": 1,
+              "claim": 1,
+              "signerWallet": "wallet-a",
+              "messageDigest": "message-a",
+              "signatureVerified": true
+            },
+            "authenticated": true
+          },
+          "sender": "1",
+          "enabled": true
+        },
+        {
+          "event": {
+            "type": "consume",
+            "requestId": 1
+          },
+          "enabled": true
+        },
+        {
+          "event": {
+            "type": "commitAuthorization",
+            "requestId": 1,
+            "storageSucceeded": true
+          },
+          "enabled": true
+        },
+        {
+          "event": {
+            "type": "issue",
+            "claim": 1,
+            "challengeId": 2,
+            "messageDigest": "message-b",
+            "authenticated": true
+          },
+          "sender": "1",
+          "enabled": true
+        },
+        {
+          "event": {
+            "type": "readProof",
+            "proof": {
+              "requestId": 2,
+              "challengeId": 2,
+              "claim": 1,
+              "signerWallet": "wallet-a",
+              "messageDigest": "message-b",
+              "signatureVerified": true
+            },
+            "authenticated": true
+          },
+          "sender": "1",
+          "enabled": true
+        },
+        {
+          "event": {
+            "type": "consume",
+            "requestId": 2
+          },
+          "enabled": true
+        },
+        {
+          "event": {
+            "type": "commitAuthorization",
+            "requestId": 2,
+            "storageSucceeded": true
+          },
+          "enabled": true
+        },
+        {
+          "event": {
+            "type": "register",
+            "registration": {
+              "wallet": "wallet-b",
+              "digest": "digest-b",
+              "predecessor": 1,
+              "addressVerified": true
+            },
+            "authenticated": true
+          },
+          "sender": "1",
+          "enabled": true
+        },
+        {
+          "event": {
+            "type": "issue",
+            "claim": 2,
+            "challengeId": 3,
+            "messageDigest": "message-b",
+            "authenticated": true
+          },
+          "sender": "1",
+          "enabled": true
+        },
+        {
+          "event": {
+            "type": "readProof",
+            "proof": {
+              "requestId": 3,
+              "challengeId": 3,
+              "claim": 2,
+              "signerWallet": "wallet-b",
+              "messageDigest": "message-b",
+              "signatureVerified": true
+            },
+            "authenticated": true
+          },
+          "sender": "1",
+          "enabled": true
+        },
+        {
+          "event": {
+            "type": "consume",
+            "requestId": 3
+          },
+          "enabled": true
+        },
+        {
+          "event": {
+            "type": "commitAuthorization",
+            "requestId": 3,
+            "storageSucceeded": true
+          },
+          "enabled": true
+        }
+      ]
+    }
+  ],
+  "eventCount": 69
+}

@@ -1,0 +1,32 @@
+{
+  "scratch": "/var/folders/1g/77s889gx10n7mtl6z1nfrxzm0000gn/T/slop-wallet-registration-6LBx9f",
+  "snapshot": {
+    "spec/backend/wallets.md": "23122a0d14d9aa3f28842900d73de092fa1e32d19e0fdc5eca45d11a6adef39c"
+  },
+  "simulations": [
+    {
+      "unit": "backend__wallets",
+      "broken": false,
+      "traces": 100,
+      "samples": 100,
+      "steps": 20,
+      "replayPassed": true,
+      "again": "seed 102904026698255; to simulate again: pnpm exec quint run gen/backend__wallets.run.qnt --main backend__wallets_run --step step --invariant inv --max-samples 100 --max-steps 20 --mbt --seed 102904026698255"
+    }
+  ],
+  "proofs": [
+    {
+      "unit": "backend__wallets.ts",
+      "total": 90,
+      "unproved": [
+        "register: (inv(b) ==> canRegister(b, registration, authenticated, by_) ==> alwaysPredecessors(register(b, registration, authenticated, by_)))",
+        "consume: (inv(b) ==> canConsume(b, requestId) ==> alwaysOneConsumption(consume(b, requestId)))",
+        "commitAuthorization: (inv(b) ==> canCommitAuthorization(b, requestId, storageSucceeded) ==> alwaysOneAuthorization(commitAuthorization(b, requestId, storageSucceeded)))",
+        "step: inv(step(current, event, by_))"
+      ],
+      "errors": [],
+      "exhausted": [],
+      "log": "formal/validation/journeys/wallet-registration-backend__wallets.ts.log"
+    }
+  ]
+}
