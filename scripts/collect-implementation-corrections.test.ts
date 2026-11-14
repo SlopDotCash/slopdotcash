@@ -307,6 +307,87 @@ test("complete canonical census derives first acceptance and resumes from raw ev
   );
 });
 
+test("resume reconstructs the complete repository plan from cached canonical preflight evidence", async () => {
+  const dir = await directory();
+  const network = transport();
+  const options = {
+    projects: ["asi"],
+    before: "2026-01-31T00:00:00.000Z",
+    directory: dir,
+    month: "2026-01",
+  };
+  const dependencies = {
+    journal: baseline(),
+    registry: registry(),
+    token: "private-test-token",
+    transport: network.call,
+    now: new Date("2026-01-31T23:59:59Z"),
+  };
+  const first = await collectImplementationCorrections(options, dependencies);
+  const path = join(dir, "campaign.json");
+  const original = await readFile(path, "utf8");
+  const calls = network.requests();
+  const resumed = await collectImplementationCorrections(options, dependencies);
+  expect(resumed.receipt.manifestDigest).toBe(first.receipt.manifestDigest);
+  expect(network.requests()).toBe(calls);
+  type FrozenCampaign = {
+    through: string;
+    repositories: {
+      nodeId: string;
+      createdAt: string;
+      months: ReturnType<typeof censusMonths>;
+    }[];
+  };
+  for (const mutate of [
+    (campaign: FrozenCampaign) => {
+      campaign.repositories = [];
+    },
+    (campaign: FrozenCampaign) => {
+      campaign.repositories.push(structuredClone(campaign.repositories[0]));
+    },
+    (campaign: FrozenCampaign) => {
+      campaign.repositories[0].months = [];
+    },
+    (campaign: FrozenCampaign) => {
+      const plan = campaign.repositories[0];
+      plan.createdAt = "2026-01-02T00:00:00Z";
+      plan.months = censusMonths(plan.createdAt, campaign.through);
+    },
+    (campaign: FrozenCampaign) => {
+      campaign.repositories[0].nodeId = "R_changed";
+    },
+  ]) {
+    const changed = JSON.parse(original);
+    mutate(changed);
+    await writeFile(path, JSON.stringify(changed));
+    await expect(
+      collectImplementationCorrections(options, dependencies),
+    ).rejects.toThrow("Campaign repository scope or monthly partition");
+    expect(network.requests()).toBe(calls);
+  }
+  await writeFile(path, original);
+  for (const name of await readdir(join(dir, "attempts"))) {
+    const attempt = JSON.parse(
+      await readFile(join(dir, "attempts", name), "utf8"),
+    );
+    if (!attempt.body?.includes("CorrectionRepository")) continue;
+    const key = createHash("sha256")
+      .update(
+        JSON.stringify({
+          url: attempt.url,
+          method: attempt.method,
+          body: attempt.body,
+        }),
+      )
+      .digest("hex");
+    await rm(join(dir, "requests", `${key}.json`));
+  }
+  await expect(
+    collectImplementationCorrections(options, dependencies),
+  ).rejects.toThrow("Cached census is missing raw request evidence");
+  expect(network.requests()).toBe(calls);
+});
+
 test("a complete census supplies source proofs without another metadata or statistics pass", async () => {
   const dir = await directory();
   const base = transport();
