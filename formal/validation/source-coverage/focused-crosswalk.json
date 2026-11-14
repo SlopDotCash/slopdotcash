@@ -1,0 +1,1342 @@
+{
+  "scope": "Focused action-by-action and scenario-by-scenario review. Modeled projection identifies a corresponding rule only. Complete behavior equivalence, source replay, live conformance and untouched retained models remain unestablished.",
+  "legacyMain": "6b3b9d0b979f0608d87941f1146056a98513ffcf",
+  "migrationHead": "778ae268338bc5039f85d5cdb9770a2c4b6aad71",
+  "modelsReviewed": [
+    {
+      "legacyPath": "formal/models/api/api_accounts.qnt",
+      "sourceSha256": "933a96ce34d3c4f976ad3a50f70ac5d06f9c04ff1485bec20c061bd015faf9d0",
+      "sourceEntries": [
+        "migrations/0008_points.sql",
+        "migrations/0063_account_closure_notification_events.sql",
+        "migrations/0056_points_telegram.sql",
+        "backend/points/handler.ts",
+        "backend/identity-assertion.ts"
+      ],
+      "evidenceEntries": [],
+      "actions": {
+        "init": {
+          "status": "modeled-projection",
+          "reason": "Starts signed out. A fixed synthetic obligation is moved to the separate funded-rights policy.",
+          "successors": [
+            {
+              "path": "spec/backend/accounts.md",
+              "definitions": [
+                "initial"
+              ]
+            },
+            {
+              "path": "spec/access.md",
+              "definitions": [
+                "initial"
+              ]
+            }
+          ]
+        },
+        "join": {
+          "status": "modeled-projection",
+          "reason": "Ordinary authenticated sign-in and explicit reopening are separate and preserve permanent actor ID.",
+          "successors": [
+            {
+              "path": "spec/backend/accounts.md",
+              "definitions": [
+                "signIn",
+                "reopen"
+              ]
+            }
+          ]
+        },
+        "otherSession": {
+          "status": "modeled-projection",
+          "reason": "Sign-in with a fresh session ID appends a separate active session.",
+          "successors": [
+            {
+              "path": "spec/backend/accounts.md",
+              "definitions": [
+                "signIn"
+              ]
+            }
+          ]
+        },
+        "connectX": {
+          "status": "modeled-projection",
+          "reason": "A live session and external OAuth evidence connect a permanently reserved X identity.",
+          "successors": [
+            {
+              "path": "spec/backend/accounts.md",
+              "definitions": [
+                "canConnectX",
+                "connectX"
+              ]
+            }
+          ]
+        },
+        "optIn": {
+          "status": "modeled-projection",
+          "reason": "Two independent consent purposes bind to account and current session.",
+          "successors": [
+            {
+              "path": "spec/backend/accounts.md",
+              "definitions": [
+                "canSetEmailConsent",
+                "setEmailConsent"
+              ]
+            }
+          ]
+        },
+        "revoke": {
+          "status": "modeled-projection",
+          "reason": "The successor adds live caller checks to target revocation and separate current-session sign-out.",
+          "successors": [
+            {
+              "path": "spec/backend/accounts.md",
+              "definitions": [
+                "endSession",
+                "revokeSession"
+              ]
+            }
+          ]
+        },
+        "close": {
+          "status": "modeled-projection",
+          "reason": "Confirmed closure clears all sessions, X visibility and consent, while the wallet/payment policies own retained obligations.",
+          "successors": [
+            {
+              "path": "spec/backend/accounts.md",
+              "definitions": [
+                "close"
+              ]
+            },
+            {
+              "path": "spec/access.md",
+              "definitions": [
+                "fundedPaymentAllowed"
+              ]
+            }
+          ]
+        },
+        "step": {
+          "status": "generated-harness",
+          "reason": "Vibestack generates event dispatch and enabled guards from transitions.",
+          "successors": []
+        }
+      },
+      "scenarios": {
+        "closureTest": {
+          "status": "partial-model",
+          "reason": "Account model checks session and X/consent outcome. Funded rights are separately specified, with no account-close-to-settlement conformance trace yet.",
+          "successors": [
+            {
+              "path": "spec/backend/accounts.md",
+              "definitions": [
+                "close"
+              ]
+            },
+            {
+              "path": "spec/access.md",
+              "definitions": [
+                "fundedPaymentAllowed"
+              ]
+            }
+          ]
+        },
+        "reopenTest": {
+          "status": "modeled-projection",
+          "reason": "Explicit reopening restores public membership without reconnecting X.",
+          "successors": [
+            {
+              "path": "spec/backend/accounts.md",
+              "definitions": [
+                "reopen"
+              ]
+            }
+          ]
+        },
+        "currentSignoutTest": {
+          "status": "modeled-projection",
+          "reason": "Per-session sign-out differs from closing every session.",
+          "successors": [
+            {
+              "path": "spec/backend/accounts.md",
+              "definitions": [
+                "endSession"
+              ]
+            }
+          ]
+        }
+      }
+    },
+    {
+      "legacyPath": "formal/models/ui/ui_private_report_identity.qnt",
+      "sourceSha256": "2fa807e87eda1c73a85cc558080ed8f3ca7166f4f410bf7a3821bc3deaa04f72",
+      "sourceEntries": [
+        "src/SecurityBounty.tsx"
+      ],
+      "evidenceEntries": [
+        "tests/e2e/security-bounty.spec.ts"
+      ],
+      "actions": {
+        "init": {
+          "status": "partial-model",
+          "reason": "Navigation starts without private rows, but no set of separately opened report-detail identities exists.",
+          "successors": [
+            {
+              "path": "spec/frontend/navigation.md",
+              "definitions": [
+                "initial"
+              ]
+            }
+          ]
+        },
+        "openFirst": {
+          "status": "missing-transition",
+          "reason": "No per-submission detail/card mount transition or deterministic accessible heading IDs.",
+          "successors": []
+        },
+        "openSecond": {
+          "status": "missing-transition",
+          "reason": "No second concurrent report detail, so references cannot be checked for collisions.",
+          "successors": []
+        },
+        "closeFirst": {
+          "status": "missing-transition",
+          "reason": "No independent report-detail closure preserving its sibling.",
+          "successors": []
+        },
+        "closeSecond": {
+          "status": "missing-transition",
+          "reason": "No independent report-detail closure preserving its sibling.",
+          "successors": []
+        },
+        "accountChanges": {
+          "status": "partial-model",
+          "reason": "Existing composition clears one draft and private row count. It cannot clear a set of mounted detail instances because that set is absent.",
+          "successors": [
+            {
+              "path": "spec/composition.md",
+              "definitions": [
+                "authenticate",
+                "logout"
+              ]
+            },
+            {
+              "path": "spec/frontend/navigation.md",
+              "definitions": [
+                "signOut"
+              ]
+            }
+          ]
+        },
+        "step": {
+          "status": "generated-harness",
+          "reason": "Legacy closed finite dispatcher is retained. Successor lacks its sibling-detail state.",
+          "successors": []
+        }
+      },
+      "scenarios": {
+        "bothOpenKeepDistinctReferencesTest": {
+          "status": "missing-transition",
+          "reason": "Missing two-report simultaneous detail and DOM-reference uniqueness contract.",
+          "successors": []
+        },
+        "closingOneKeepsTheOtherTest": {
+          "status": "missing-transition",
+          "reason": "Missing independent close transition.",
+          "successors": []
+        },
+        "accountChangeRemovesBothTest": {
+          "status": "partial-model",
+          "reason": "Current account reset covers aggregate rows and one draft only.",
+          "successors": [
+            {
+              "path": "spec/composition.md",
+              "definitions": [
+                "authenticate",
+                "logout"
+              ]
+            }
+          ]
+        }
+      }
+    },
+    {
+      "legacyPath": "formal/models/ui/ui_snapshot_cache.qnt",
+      "sourceSha256": "a100607886c47157b5303f58e68ae0984416a7028b952f1d771837b5b6f60aae",
+      "sourceEntries": [
+        "src/lib/use-snapshot.ts"
+      ],
+      "evidenceEntries": [],
+      "actions": {
+        "init": {
+          "status": "partial-model",
+          "reason": "Single frontend request starts empty. It has no shared consumer subscriptions or cache identity.",
+          "successors": [
+            {
+              "path": "spec/frontend/requests.md",
+              "definitions": [
+                "initial"
+              ]
+            }
+          ]
+        },
+        "acquire": {
+          "status": "partial-model",
+          "reason": "One request opens. No concurrent consumer joins the same pending request.",
+          "successors": [
+            {
+              "path": "spec/frontend/requests.md",
+              "definitions": [
+                "request"
+              ]
+            }
+          ]
+        },
+        "cacheHit": {
+          "status": "missing-transition",
+          "reason": "No distinct validated shared cache hit or consumer-local view attachment.",
+          "successors": []
+        },
+        "force": {
+          "status": "missing-transition",
+          "reason": "No separate forced replacement generation that invalidates shared cache while preserving each visible record.",
+          "successors": []
+        },
+        "release": {
+          "status": "missing-transition",
+          "reason": "No exact read/consumer unbind preserving a newer binding.",
+          "successors": []
+        },
+        "flushRelease": {
+          "status": "missing-transition",
+          "reason": "No deferred last-consumer cancellation, or rejoin before deferred abort.",
+          "successors": []
+        },
+        "failure": {
+          "status": "partial-model",
+          "reason": "A single failed read preserves its snapshot, without distinct cache and consumer-local state.",
+          "successors": [
+            {
+              "path": "spec/frontend/requests.md",
+              "definitions": [
+                "receive"
+              ]
+            }
+          ]
+        },
+        "complete": {
+          "status": "partial-model",
+          "reason": "Resource/lifetime/request guard blocks a stale consumer result. Independent cache and consumer commit behavior is absent.",
+          "successors": [
+            {
+              "path": "spec/frontend/requests.md",
+              "definitions": [
+                "canReceive",
+                "receive"
+              ]
+            }
+          ]
+        },
+        "step": {
+          "status": "generated-harness",
+          "reason": "Legacy tie and subscription dispatcher retained. The active model generates its single-resource dispatcher.",
+          "successors": []
+        }
+      },
+      "scenarios": {
+        "failedForcedRefreshKeepsVisibleRecordTest": {
+          "status": "partial-model",
+          "reason": "Single stale view is modeled, but cache eviction and unchanged consumer output are not independent.",
+          "successors": [
+            {
+              "path": "spec/frontend/requests.md",
+              "definitions": [
+                "receive"
+              ]
+            }
+          ]
+        },
+        "replacedEffectCannotAcceptOldReadTest": {
+          "status": "partial-model",
+          "reason": "A stale request cannot overwrite a new resource/lifetime. There is no same-resource forced generation with two requests in flight.",
+          "successors": [
+            {
+              "path": "spec/frontend/requests.md",
+              "definitions": [
+                "canReceive"
+              ]
+            }
+          ]
+        },
+        "oldCleanupCannotUnbindNewReadTest": {
+          "status": "missing-transition",
+          "reason": "Missing per-consumer and per-request cleanup identity.",
+          "successors": []
+        },
+        "cachedMountTest": {
+          "status": "missing-transition",
+          "reason": "Missing cache-hit attach for a second consumer.",
+          "successors": []
+        },
+        "oldReadCannotReplaceRefreshCacheTest": {
+          "status": "missing-transition",
+          "reason": "Missing shared cache newest-generation write fence.",
+          "successors": []
+        },
+        "replacementEffectCanJoinBeforeAbortTest": {
+          "status": "missing-transition",
+          "reason": "Missing deferred release and replacement consumer rejoin.",
+          "successors": []
+        },
+        "lastConsumerAbortsTest": {
+          "status": "missing-transition",
+          "reason": "Missing last-consumer ownership test before transport abort.",
+          "successors": []
+        }
+      }
+    },
+    {
+      "legacyPath": "formal/models/contributor/contributor_command_completion.qnt",
+      "sourceSha256": "04ea7cf17a4dee2c2dd71ccde0f019a40337258fd672ef188690a5743afef9df",
+      "sourceEntries": [
+        "skills/project-contributor-template/scripts/live-report.mjs"
+      ],
+      "evidenceEntries": [
+        "scripts/contributor-discovery-lifetime.test.ts",
+        "scripts/contributor-discovery-startup.test.ts"
+      ],
+      "actions": {
+        "init": {
+          "status": "missing-transition",
+          "reason": "No invocation state independently tracks command, request cleanup, publication and report release.",
+          "successors": []
+        },
+        "command": {
+          "status": "missing-transition",
+          "reason": "No nonzero versus thrown outcome, captured output or primary process error.",
+          "successors": []
+        },
+        "cleanupRequest": {
+          "status": "missing-transition",
+          "reason": "No exact owned request cleanup or first-failure precedence.",
+          "successors": []
+        },
+        "classify": {
+          "status": "missing-transition",
+          "reason": "No report publication disposition after request cleanup.",
+          "successors": []
+        },
+        "release": {
+          "status": "missing-transition",
+          "reason": "No outer lease release, terminal status or preservation of existing failure.",
+          "successors": []
+        },
+        "step": {
+          "status": "generated-harness",
+          "reason": "Legacy argument enumeration and dispatch only.",
+          "successors": []
+        }
+      },
+      "scenarios": {
+        "cleanSuccessTest": {
+          "status": "missing-transition",
+          "reason": "Missing successful invocation plus both successful cleanups.",
+          "successors": []
+        },
+        "nonzeroCommandSurvivesRequestCleanupTest": {
+          "status": "missing-transition",
+          "reason": "Missing retained nonzero output and command failure precedence.",
+          "successors": []
+        },
+        "thrownCommandSurvivesRequestCleanupTest": {
+          "status": "missing-transition",
+          "reason": "Missing thrown command identity and failure precedence.",
+          "successors": []
+        },
+        "primaryDiscoveryErrorSurvivesReleaseTest": {
+          "status": "missing-transition",
+          "reason": "Missing release failure with already recorded command error.",
+          "successors": []
+        },
+        "bothCleanupsPreserveCommandFailureTest": {
+          "status": "missing-transition",
+          "reason": "Missing independent cleanup failure retention and first command error.",
+          "successors": []
+        },
+        "successfulCommandFailsOnRequestCleanupTest": {
+          "status": "missing-transition",
+          "reason": "Missing terminal failure after request cleanup, even with command success.",
+          "successors": []
+        },
+        "successfulReportFailsOnReleaseTest": {
+          "status": "missing-transition",
+          "reason": "Missing distinction between published report and failing invocation release.",
+          "successors": []
+        },
+        "earlierCleanupErrorSurvivesReleaseTest": {
+          "status": "missing-transition",
+          "reason": "Missing first cleanup failure surviving later release failure.",
+          "successors": []
+        }
+      }
+    },
+    {
+      "legacyPath": "formal/models/contributor/skill_source_authority.qnt",
+      "sourceSha256": "4c20ea7d5da237fe314dad25e4d0ba9b8216b477b8c736d209b75af0886b054c",
+      "sourceEntries": [
+        "skills/project-contributor-template/scripts/skill-authority.mjs",
+        "scripts/skill-source-matches-commit.mjs"
+      ],
+      "evidenceEntries": [],
+      "actions": {
+        "init": {
+          "status": "partial-model",
+          "reason": "Installer starts idle; the role-and-binding transport lifecycle has no initialization.",
+          "successors": [
+            {
+              "path": "spec/contributor/installation.md",
+              "definitions": [
+                "initial"
+              ]
+            }
+          ]
+        },
+        "selectRole": {
+          "status": "missing-transition",
+          "reason": "Static, generated contributor and generated reviewer admission predicates differ; installation currently has no role state.",
+          "successors": []
+        },
+        "fetch": {
+          "status": "partial-model",
+          "reason": "Download stage exists, but endpoint/caller ownership and bounded transient transport attempts are absent.",
+          "successors": [
+            {
+              "path": "spec/contributor/installation.md",
+              "definitions": [
+                "canDownload",
+                "download"
+              ]
+            }
+          ]
+        },
+        "transient": {
+          "status": "missing-transition",
+          "reason": "No transport retry phase or bounded retry accounting.",
+          "successors": []
+        },
+        "integrityFailure": {
+          "status": "partial-model",
+          "reason": "Invalid bytes cannot verify. The same invocation does not distinguish integrity refusal from transport retry.",
+          "successors": [
+            {
+              "path": "spec/contributor/installation.md",
+              "definitions": [
+                "canVerify",
+                "recordFailure"
+              ]
+            }
+          ]
+        },
+        "complete": {
+          "status": "partial-model",
+          "reason": "Complete immutable tree admits verification. No transport done/error result state.",
+          "successors": [
+            {
+              "path": "spec/contributor/installation.md",
+              "definitions": [
+                "canDownload",
+                "download"
+              ]
+            }
+          ]
+        },
+        "compare": {
+          "status": "partial-model",
+          "reason": "Canonical tree and D1 digest checks exist for the generated install flow, without separate role binding and independent file/blob observations.",
+          "successors": [
+            {
+              "path": "spec/contributor/installation.md",
+              "definitions": [
+                "canVerify"
+              ]
+            }
+          ]
+        },
+        "currentProject": {
+          "status": "partial-model",
+          "reason": "A permission fact gates installation. Reviewer-versus-contributor treatment of project openness is not represented.",
+          "successors": [
+            {
+              "path": "spec/contributor/installation.md",
+              "definitions": [
+                "canBegin",
+                "canVerify"
+              ]
+            }
+          ]
+        },
+        "admit": {
+          "status": "partial-model",
+          "reason": "Generated installation admission requires D1 digest and current permission, without role-specific admission or credential transport.",
+          "successors": [
+            {
+              "path": "spec/contributor/installation.md",
+              "definitions": [
+                "canVerify"
+              ]
+            }
+          ]
+        },
+        "step": {
+          "status": "generated-harness",
+          "reason": "Legacy transport and role simulator dispatcher.",
+          "successors": []
+        }
+      },
+      "scenarios": {
+        "transientMayRetryTest": {
+          "status": "missing-transition",
+          "reason": "Missing bounded transport retry and later admission.",
+          "successors": []
+        },
+        "digestFailureCannotRetryTest": {
+          "status": "partial-model",
+          "reason": "Mismatching digest refuses verification, but error class has no effect on retry policy.",
+          "successors": [
+            {
+              "path": "spec/contributor/installation.md",
+              "definitions": [
+                "canVerify",
+                "canBegin"
+              ]
+            }
+          ]
+        },
+        "extraFileRefusedTest": {
+          "status": "modeled-projection",
+          "reason": "Complete-tree predicate must refuse an extra file and binds exact GitHub bytes.",
+          "successors": [
+            {
+              "path": "spec/contributor/installation.md",
+              "definitions": [
+                "canDownload",
+                "canVerify"
+              ]
+            }
+          ]
+        },
+        "pausedProjectRefusedTest": {
+          "status": "modeled-projection",
+          "reason": "Contributor install takes current permission to begin and verify. Adapter must derive it from current restrictions.",
+          "successors": [
+            {
+              "path": "spec/contributor/installation.md",
+              "definitions": [
+                "canBegin",
+                "canVerify"
+              ]
+            }
+          ]
+        },
+        "staticSkillNeedsNoRegistryTest": {
+          "status": "missing-transition",
+          "reason": "No static artifact route without generated project binding.",
+          "successors": []
+        },
+        "staticSkillRejectsRegistryBindingTest": {
+          "status": "missing-transition",
+          "reason": "No static role with explicit registry-binding refusal.",
+          "successors": []
+        },
+        "reviewerDoesNotRequireOpenProjectTest": {
+          "status": "missing-transition",
+          "reason": "No authorized reviewer-only signed manifest branch distinct from contributor install clearance.",
+          "successors": []
+        },
+        "reviewerStillNeedsManifestTest": {
+          "status": "partial-model",
+          "reason": "Manifest digest gates generated install generally. No independent reviewer role.",
+          "successors": [
+            {
+              "path": "spec/contributor/installation.md",
+              "definitions": [
+                "canVerify"
+              ]
+            }
+          ]
+        },
+        "contributorNeedsBindingTest": {
+          "status": "modeled-projection",
+          "reason": "Contributor install requires approved D1 digest and rendered bytes.",
+          "successors": [
+            {
+              "path": "spec/contributor/installation.md",
+              "definitions": [
+                "canVerify"
+              ]
+            }
+          ]
+        },
+        "reviewerNeedsBindingTest": {
+          "status": "partial-model",
+          "reason": "The digest requirement is generic and reviewer role is not a state.",
+          "successors": [
+            {
+              "path": "spec/contributor/installation.md",
+              "definitions": [
+                "canVerify"
+              ]
+            }
+          ]
+        },
+        "staticSkillStillNeedsExactBytesTest": {
+          "status": "missing-transition",
+          "reason": "Missing static artifact path with byte check independent of a project registry.",
+          "successors": []
+        }
+      }
+    },
+    {
+      "legacyPath": "formal/models/contributor/skill_installation.qnt",
+      "sourceSha256": "73e896274d801ebdfad25f12fac81c8a6844ebfad3e3f0e378cfe82acb34215d",
+      "sourceEntries": [
+        "src/lib/install-command.ts",
+        "src/lib/project-skill.mjs",
+        "src/lib/project-skill-publication.mjs"
+      ],
+      "evidenceEntries": [],
+      "actions": {
+        "init": {
+          "status": "modeled-projection",
+          "reason": "Starts with no active version, process lock or staged target.",
+          "successors": [
+            {
+              "path": "spec/contributor/installation.md",
+              "definitions": [
+                "initial"
+              ]
+            }
+          ]
+        },
+        "begin": {
+          "status": "modeled-projection",
+          "reason": "Only unlocked alive process with valid revision and permission can begin. Ordinary and explicit rollback choose distinct revision guards.",
+          "successors": [
+            {
+              "path": "spec/contributor/installation.md",
+              "definitions": [
+                "canBegin",
+                "begin"
+              ]
+            }
+          ]
+        },
+        "stageArchive": {
+          "status": "partial-model",
+          "reason": "Download separates verification admission, but per-invocation work roots and staged archive cleanup are absent.",
+          "successors": [
+            {
+              "path": "spec/contributor/installation.md",
+              "definitions": [
+                "download"
+              ]
+            }
+          ]
+        },
+        "verifyBytes": {
+          "status": "partial-model",
+          "reason": "Canonical tree and approved digest are checked, but equal rendered bytes versus equal pair identity have no distinct state.",
+          "successors": [
+            {
+              "path": "spec/contributor/installation.md",
+              "definitions": [
+                "canVerify",
+                "verify"
+              ]
+            }
+          ]
+        },
+        "noChange": {
+          "status": "missing-transition",
+          "reason": "No byte-identical no-change outcome preserving active template identity.",
+          "successors": []
+        },
+        "retain": {
+          "status": "partial-model",
+          "reason": "Selected pair is appended, with no retained-directory reuse versus physical move outcome.",
+          "successors": [
+            {
+              "path": "spec/contributor/installation.md",
+              "definitions": [
+                "verify",
+                "retainedPair"
+              ]
+            }
+          ]
+        },
+        "prepareLink": {
+          "status": "modeled-projection",
+          "reason": "Only retained verified target under a live lock may prepare relative-link activation.",
+          "successors": [
+            {
+              "path": "spec/contributor/installation.md",
+              "definitions": [
+                "canPrepareLink",
+                "prepareLink"
+              ]
+            }
+          ]
+        },
+        "activate": {
+          "status": "modeled-projection",
+          "reason": "Publication commits active target only under verified atomic relative rename.",
+          "successors": [
+            {
+              "path": "spec/contributor/installation.md",
+              "definitions": [
+                "canCommit",
+                "commit"
+              ]
+            }
+          ]
+        },
+        "confirmReadback": {
+          "status": "modeled-projection",
+          "reason": "Current committed target requires readback before complete.",
+          "successors": [
+            {
+              "path": "spec/contributor/installation.md",
+              "definitions": [
+                "canConfirm",
+                "confirm"
+              ]
+            }
+          ]
+        },
+        "printSuccess": {
+          "status": "partial-model",
+          "reason": "Completion and readback are represented, but success output and subsequent cleanup are not independently modeled.",
+          "successors": [
+            {
+              "path": "spec/contributor/installation.md",
+              "definitions": [
+                "confirm"
+              ]
+            }
+          ]
+        },
+        "failure": {
+          "status": "partial-model",
+          "reason": "Generic failure preserves active version, but no per-phase primary diagnostic and cleanup ordering.",
+          "successors": [
+            {
+              "path": "spec/contributor/installation.md",
+              "definitions": [
+                "recordFailure"
+              ]
+            }
+          ]
+        },
+        "linkFailure": {
+          "status": "partial-model",
+          "reason": "Phase can fail without committing, but temporary-link ownership/cleanup choice is missing.",
+          "successors": [
+            {
+              "path": "spec/contributor/installation.md",
+              "definitions": [
+                "recordFailure"
+              ]
+            }
+          ]
+        },
+        "readbackFailure": {
+          "status": "modeled-projection",
+          "reason": "Failure after commit leaves active pair at the committed target.",
+          "successors": [
+            {
+              "path": "spec/contributor/installation.md",
+              "definitions": [
+                "commit",
+                "recordFailure"
+              ]
+            }
+          ]
+        },
+        "cleanup": {
+          "status": "partial-model",
+          "reason": "A failure flag is retained, but cleanup actions cannot record per-invocation roots, staged candidate removal or separate cleanup error.",
+          "successors": [
+            {
+              "path": "spec/contributor/installation.md",
+              "definitions": [
+                "recordFailure"
+              ]
+            }
+          ]
+        },
+        "finish": {
+          "status": "partial-model",
+          "reason": "Lock held through readback, but no separate command exit and cleanup result.",
+          "successors": [
+            {
+              "path": "spec/contributor/installation.md",
+              "definitions": [
+                "confirm",
+                "recordFailure"
+              ]
+            }
+          ]
+        },
+        "permission": {
+          "status": "partial-model",
+          "reason": "Permission is an evidence input at begin/verification rather than an idle authority observation.",
+          "successors": [
+            {
+              "path": "spec/contributor/installation.md",
+              "definitions": [
+                "canBegin",
+                "canVerify"
+              ]
+            }
+          ]
+        },
+        "step": {
+          "status": "generated-harness",
+          "reason": "Vibestack dispatch covers the active installation transitions, with differing abstraction boundaries.",
+          "successors": []
+        }
+      },
+      "scenarios": {
+        "olderTemplateNewerPolicyTest": {
+          "status": "modeled-projection",
+          "reason": "Template ancestry is ignored. Ordinary registry revision cannot decrease.",
+          "successors": [
+            {
+              "path": "spec/contributor/installation.md",
+              "definitions": [
+                "canBegin"
+              ]
+            }
+          ]
+        },
+        "explicitRollbackTest": {
+          "status": "modeled-projection",
+          "reason": "Retained pair and current permission recheck precede rollback commit.",
+          "successors": [
+            {
+              "path": "spec/contributor/installation.md",
+              "definitions": [
+                "canBegin",
+                "canVerify",
+                "commit"
+              ]
+            }
+          ]
+        },
+        "interruptedActivationTest": {
+          "status": "modeled-projection",
+          "reason": "Process loss before atomic commit leaves original active pair.",
+          "successors": [
+            {
+              "path": "spec/contributor/installation.md",
+              "definitions": [
+                "processDies",
+                "recoverProcess",
+                "alwaysUncommittedRetainsActive"
+              ]
+            }
+          ]
+        },
+        "cleanupFailureAfterCommitTest": {
+          "status": "partial-model",
+          "reason": "Failure leaves committed target, but successful readback followed by cleanup failure remains conflated.",
+          "successors": [
+            {
+              "path": "spec/contributor/installation.md",
+              "definitions": [
+                "commit",
+                "recordFailure"
+              ]
+            }
+          ]
+        },
+        "cleanupFailureThenSameVersionRetryTest": {
+          "status": "partial-model",
+          "reason": "Retry allowed after failure. Same pair reuse/no-change does not have its own effect path.",
+          "successors": [
+            {
+              "path": "spec/contributor/installation.md",
+              "definitions": [
+                "canBegin",
+                "verify"
+              ]
+            }
+          ]
+        },
+        "readbackFailureLeavesCommittedTargetTest": {
+          "status": "modeled-projection",
+          "reason": "Readback failure cannot roll back an already activated pair.",
+          "successors": [
+            {
+              "path": "spec/contributor/installation.md",
+              "definitions": [
+                "commit",
+                "recordFailure"
+              ]
+            }
+          ]
+        },
+        "readbackFailureThenVerifiedRetryTest": {
+          "status": "partial-model",
+          "reason": "Re-verification allowed but retained reuse and a retry readback without re-publication are absent.",
+          "successors": [
+            {
+              "path": "spec/contributor/installation.md",
+              "definitions": [
+                "canBegin",
+                "verify",
+                "confirm"
+              ]
+            }
+          ]
+        },
+        "rollbackReadbackFailureKeepsRollbackCommitTest": {
+          "status": "modeled-projection",
+          "reason": "A committed older retained target stays active on later failure.",
+          "successors": [
+            {
+              "path": "spec/contributor/installation.md",
+              "definitions": [
+                "commit",
+                "recordFailure"
+              ]
+            }
+          ]
+        },
+        "failedTemporaryLinkCleanupRetainsOnlyOwnedArtifactsTest": {
+          "status": "missing-transition",
+          "reason": "No owned artifact collection or selective cleanup.",
+          "successors": []
+        },
+        "retryReusesRetainedVersionTest": {
+          "status": "partial-model",
+          "reason": "Retains pair history but appends the same pair rather than modeling physical reuse.",
+          "successors": [
+            {
+              "path": "spec/contributor/installation.md",
+              "definitions": [
+                "verify",
+                "retainedPair"
+              ]
+            }
+          ]
+        },
+        "unchangedBytesKeepOriginalIdentityTest": {
+          "status": "missing-transition",
+          "reason": "No exact rendered-byte equality/no-change branch.",
+          "successors": []
+        },
+        "refusalBeforeStagingCreatesNoTemporaryArtifactsTest": {
+          "status": "partial-model",
+          "reason": "Pre-begin permission is gated, but there are no modeled roots/artifacts to assert untouched.",
+          "successors": [
+            {
+              "path": "spec/contributor/installation.md",
+              "definitions": [
+                "canBegin"
+              ]
+            }
+          ]
+        },
+        "cleanupFailurePreservesEarlierErrorTest": {
+          "status": "missing-transition",
+          "reason": "Missing primary error and later cleanup diagnostic distinction.",
+          "successors": []
+        },
+        "readbackAndCleanupFailureKeepsPrimaryTest": {
+          "status": "missing-transition",
+          "reason": "Missing readback failure priority over cleanup error.",
+          "successors": []
+        },
+        "noChangeCleanupFailureDoesNotClaimNewActivationTest": {
+          "status": "missing-transition",
+          "reason": "Missing byte-identity no-change, readback and cleanup outcomes.",
+          "successors": []
+        }
+      }
+    },
+    {
+      "legacyPath": "formal/models/contributor/skill_run_local.qnt",
+      "sourceSha256": "277df1836250e1bdf4e1ad2e278e31921383d37f7bdf07721c65ea72be789b64",
+      "sourceEntries": [
+        "skills/project-contributor-template/scripts/run-receipt.mjs",
+        "src/lib/run-receipts.ts"
+      ],
+      "evidenceEntries": [],
+      "actions": {
+        "init": {
+          "status": "missing-transition",
+          "reason": "No local measured-run durable completion journal, lease owner or trace intent sequence.",
+          "successors": []
+        },
+        "start": {
+          "status": "partial-model",
+          "reason": "Work selection begins a contribution, while optional local run creation and usage availability are absent.",
+          "successors": [
+            {
+              "path": "spec/contributor/workflow.md",
+              "definitions": [
+                "beginWork"
+              ]
+            },
+            {
+              "path": "spec/contributor/evidence.md",
+              "definitions": [
+                "initial"
+              ]
+            }
+          ]
+        },
+        "prepareFinish": {
+          "status": "missing-transition",
+          "reason": "Missing immutable completion candidate from current run, timestamp and optional usage.",
+          "successors": []
+        },
+        "validateCandidate": {
+          "status": "missing-transition",
+          "reason": "Missing explicit pre-publication candidate validation.",
+          "successors": []
+        },
+        "rejectCandidate": {
+          "status": "missing-transition",
+          "reason": "Missing separately retained invalid completion response.",
+          "successors": []
+        },
+        "stage": {
+          "status": "missing-transition",
+          "reason": "Missing owned temporary completion artifact.",
+          "successors": []
+        },
+        "publish": {
+          "status": "missing-transition",
+          "reason": "Missing atomic compare-and-publish for local completion receipt.",
+          "successors": []
+        },
+        "competingFinishWins": {
+          "status": "missing-transition",
+          "reason": "Missing concurrent completion winner and replay/no overwrite.",
+          "successors": []
+        },
+        "removeTemporary": {
+          "status": "missing-transition",
+          "reason": "Missing selected completion-artifact cleanup and failure.",
+          "successors": []
+        },
+        "removeActive": {
+          "status": "missing-transition",
+          "reason": "Missing failure recovery after retained completion with active local record.",
+          "successors": []
+        },
+        "precommitFailure": {
+          "status": "missing-transition",
+          "reason": "Missing return to active local run after completion failure.",
+          "successors": []
+        },
+        "replayCompleted": {
+          "status": "missing-transition",
+          "reason": "Missing exact receipt replay preserving prior complete bytes and recovering stale artifacts.",
+          "successors": []
+        },
+        "observeInvalidHistoricalRecord": {
+          "status": "missing-transition",
+          "reason": "Missing invalid prior receipt reported distinctly from absent record.",
+          "successors": []
+        },
+        "reuseUploaded": {
+          "status": "missing-transition",
+          "reason": "Missing remote exact digest comparison when an upload already exists.",
+          "successors": []
+        },
+        "finalizeTrace": {
+          "status": "missing-transition",
+          "reason": "Missing separate attached/finalized remote lifecycle after durable upload.",
+          "successors": []
+        },
+        "lostTraceResponse": {
+          "status": "missing-transition",
+          "reason": "Missing response uncertainty preserving remote server state and retry identity.",
+          "successors": []
+        },
+        "refuseChangedTrace": {
+          "status": "missing-transition",
+          "reason": "Upload digest immutability has no cross-attempt compare against the durable remote identity.",
+          "successors": []
+        },
+        "registerOpened": {
+          "status": "missing-transition",
+          "reason": "PR attribution requires exact authenticated run, but independent server intent identity is not modeled.",
+          "successors": []
+        },
+        "selectTrace": {
+          "status": "modeled-projection",
+          "reason": "Contributor selects inspected exact bytes under scoped consent.",
+          "successors": [
+            {
+              "path": "spec/contributor/evidence.md",
+              "definitions": [
+                "canSelectFile",
+                "selectFile"
+              ]
+            }
+          ]
+        },
+        "register": {
+          "status": "partial-model",
+          "reason": "Bounded upload begins under a verified session, without separate remote intent registration.",
+          "successors": [
+            {
+              "path": "spec/contributor/evidence.md",
+              "definitions": [
+                "canBeginUpload",
+                "beginUpload"
+              ]
+            }
+          ]
+        },
+        "upload": {
+          "status": "partial-model",
+          "reason": "Persistent storage requires original digest and durable object, without uncertainty across independent writes.",
+          "successors": [
+            {
+              "path": "spec/contributor/evidence.md",
+              "definitions": [
+                "canPersist",
+                "persist"
+              ]
+            }
+          ]
+        },
+        "recordPullRequest": {
+          "status": "modeled-projection",
+          "reason": "Records exact submitted PR node only for a verified author session and project.",
+          "successors": [
+            {
+              "path": "spec/contributor/workflow.md",
+              "definitions": [
+                "canRecordRun",
+                "recordRun"
+              ]
+            }
+          ]
+        },
+        "step": {
+          "status": "generated-harness",
+          "reason": "Legacy scheduler dispatch retained to exercise interleavings absent in active simplified workflow.",
+          "successors": []
+        }
+      },
+      "scenarios": {
+        "optionalEvidenceDoesNotBlockReceiptTest": {
+          "status": "partial-model",
+          "reason": "Contribution submission is independent of optional upload and receipt signing may proceed, but local finish persistence is missing.",
+          "successors": [
+            {
+              "path": "spec/contributor/workflow.md",
+              "definitions": [
+                "canSubmit"
+              ]
+            },
+            {
+              "path": "spec/contributor/evidence.md",
+              "definitions": [
+                "canSignReceipt"
+              ]
+            }
+          ]
+        },
+        "recordBeforeFinalizationTest": {
+          "status": "partial-model",
+          "reason": "PR run event can record independently of optional trace storage, but distinct server trace finalization is absent.",
+          "successors": [
+            {
+              "path": "spec/contributor/workflow.md",
+              "definitions": [
+                "canRecordRun"
+              ]
+            },
+            {
+              "path": "spec/contributor/evidence.md",
+              "definitions": [
+                "persist"
+              ]
+            }
+          ]
+        },
+        "openedDoesNotNeedMeasuredRunTest": {
+          "status": "modeled-projection",
+          "reason": "Authenticated submit/run event has no local measured-run prerequisite.",
+          "successors": [
+            {
+              "path": "spec/contributor/workflow.md",
+              "definitions": [
+                "canSubmit",
+                "canRecordRun"
+              ]
+            }
+          ]
+        },
+        "backwardClockCannotPoisonCompletedRecordTest": {
+          "status": "missing-transition",
+          "reason": "Missing monotonic clock/retained local receipt after completion.",
+          "successors": []
+        },
+        "invalidCandidateCannotPublishTest": {
+          "status": "missing-transition",
+          "reason": "Missing candidate validation and atomic local publication.",
+          "successors": []
+        },
+        "cleanupFailureLeavesValidReplayTest": {
+          "status": "missing-transition",
+          "reason": "Missing candidate cleanup failure after completed receipt.",
+          "successors": []
+        },
+        "activeRemovalFailureCanReplayTest": {
+          "status": "missing-transition",
+          "reason": "Missing active local-record cleanup and receipt replay.",
+          "successors": []
+        },
+        "concurrentFinishPreservesFirstWinnerTest": {
+          "status": "missing-transition",
+          "reason": "Missing first writer atomic finish and competing completion.",
+          "successors": []
+        },
+        "invalidExistingRecordRemainsExplicitErrorTest": {
+          "status": "missing-transition",
+          "reason": "Missing invalid retained record outcome.",
+          "successors": []
+        },
+        "traceRetryUsesStoredDigestTest": {
+          "status": "missing-transition",
+          "reason": "Missing idempotent remote retry against stored digest.",
+          "successors": []
+        },
+        "changedTraceCannotReplaceUploadTest": {
+          "status": "partial-model",
+          "reason": "A single upload verifies its original digest, with no prior remote receipt or retry context.",
+          "successors": [
+            {
+              "path": "spec/contributor/evidence.md",
+              "definitions": [
+                "canPersist"
+              ]
+            }
+          ]
+        },
+        "openedRetryIdentityIsSeparateTest": {
+          "status": "missing-transition",
+          "reason": "Missing independent PR-opened intent idempotency key and recovery.",
+          "successors": []
+        }
+      }
+    }
+  ]
+}

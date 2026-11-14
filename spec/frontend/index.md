@@ -11,7 +11,8 @@ service. They introduce no new screens or visual design.
 - [Private report drafts](./drafts.md)
 - [Public and private projections](./projections.md)
 - [Required product presentation](./presentation.md)
+- [Provisional EVM vault funding](./provisionalVault.md)
 
-Source requirements are PRD sections 2–4 and 7–10. The retained UI models under
+Source requirements are PRD sections 2–4 and 6–10. The retained UI models under
 `reference/slop-main/formal/models/ui/` provide the individual legacy races and
 named scenarios to replay through the eventual shell.
