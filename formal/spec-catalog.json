@@ -1624,7 +1624,7 @@
     },
     {
       "path": "spec/frontend/presentation.md",
-      "sha256": "f6da04af125a30565015f8dedaaaa6eff76a7597fa50346c5f3a94cd83b279bd",
+      "sha256": "8c2d34307bdc175703cf64c0c16509b4281fb11c8ab03c38672ca07ca35c1545",
       "module": "frontend__presentation",
       "stories": [
         {
@@ -1642,6 +1642,10 @@
         {
           "heading": "Story: Use the approved page-view beacon without exposing private navigation",
           "line": 176
+        },
+        {
+          "heading": "Story: Read token tickers without mistaking them for a dollar valuation",
+          "line": 222
         }
       ],
       "rules": [
@@ -1740,6 +1744,23 @@
             "lawBeaconNeverBlocksPage",
             "hostValues",
             "evidenceValues"
+          ]
+        },
+        {
+          "heading": "Story: Read token tickers without mistaking them for a dollar valuation / Project tokens have one dollar prefix while native and approved stablecoin tickers have none",
+          "line": 224,
+          "definitions": [
+            "TickerKind",
+            "DecodedTicker",
+            "TickerView",
+            "validTicker",
+            "displayTicker",
+            "lawProjectTokenHasOnePrefix",
+            "lawNativeAndStablecoinHaveNoPrefix",
+            "lawCanonicalTickerIsUnchanged",
+            "lawTickerIsNotUsdValuation",
+            "lawInvalidTickerIsUnavailable",
+            "symbolValues"
           ]
         }
       ],
@@ -4502,7 +4523,7 @@
     },
     {
       "path": "spec/settlement/referralPublication.md",
-      "sha256": "e0e00eacc314b956dca57720b26695a0bde1f60fc3dacf460caaf209326ae981",
+      "sha256": "e4ff4db6590953f01b43922bd101004fb5464d636f24fca26ea0b57279aa4fb6",
       "module": "settlement__referralPublication",
       "stories": [
         {
@@ -4594,6 +4615,7 @@
             "alwaysSettledGasValid",
             "alwaysHoldCeiling",
             "alwaysIdleUnreserved",
+            "alwaysPreparedWalletsPinned",
             "alwaysPreparedCap",
             "alwaysPendingHeld",
             "alwaysRootCap",
@@ -4611,7 +4633,7 @@
         },
         {
           "heading": "Story: Claim immediately without reissuing paid tokens / Simulation includes live control, capped accruals and conflicting receipts",
-          "line": 255,
+          "line": 261,
           "definitions": [
             "byValues",
             "signerValues",

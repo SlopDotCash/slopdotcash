@@ -395,18 +395,18 @@
     },
     {
       "unit": "frontend__presentation.ts",
-      "total": 14,
+      "total": 19,
       "unproved": [],
       "errors": [],
       "exhausted": [],
-      "log": "formal/validation/journeys/presentation-final-frontend__presentation.ts.log",
+      "log": "formal/validation/journeys/presentation-tickers-frontend__presentation.ts.log",
       "spec": "spec/frontend/presentation.md",
-      "sourceSha256": "f6da04af125a30565015f8dedaaaa6eff76a7597fa50346c5f3a94cd83b279bd",
+      "sourceSha256": "8c2d34307bdc175703cf64c0c16509b4281fb11c8ab03c38672ca07ca35c1545",
       "sourceCurrent": true,
       "status": "passed",
       "inputs": {
-        "spec/frontend/presentation.md": "f6da04af125a30565015f8dedaaaa6eff76a7597fa50346c5f3a94cd83b279bd",
-        "spec/frontend/requests.md": "90a50c604aed8998a34faa7222a9aae3043a8e924c36dbb08824a3af1b9f724a"
+        "spec/frontend/requests.md": "90a50c604aed8998a34faa7222a9aae3043a8e924c36dbb08824a3af1b9f724a",
+        "spec/frontend/presentation.md": "8c2d34307bdc175703cf64c0c16509b4281fb11c8ab03c38672ca07ca35c1545"
       },
       "proofFile": null,
       "proofSha256": null,
@@ -442,11 +442,31 @@
       "sourceCurrent": false,
       "status": "superseded",
       "supersededBy": "formal/validation/journeys/presentation-final.json"
+    },
+    {
+      "unit": "frontend__presentation.ts",
+      "total": 14,
+      "unproved": [],
+      "errors": [],
+      "exhausted": [],
+      "log": "formal/validation/journeys/presentation-final-frontend__presentation.ts.log",
+      "spec": "spec/frontend/presentation.md",
+      "sourceSha256": "f6da04af125a30565015f8dedaaaa6eff76a7597fa50346c5f3a94cd83b279bd",
+      "sourceCurrent": false,
+      "status": "superseded",
+      "inputs": {
+        "spec/frontend/presentation.md": "f6da04af125a30565015f8dedaaaa6eff76a7597fa50346c5f3a94cd83b279bd",
+        "spec/frontend/requests.md": "90a50c604aed8998a34faa7222a9aae3043a8e924c36dbb08824a3af1b9f724a"
+      },
+      "proofFile": null,
+      "proofSha256": null,
+      "proofLibrarySha256": "4c9f8dcbd9918f7d4b282ad9531b4cf0096ea389c015149b1786d0fe4ebd8e29",
+      "supersededBy": "formal/validation/journeys/presentation-tickers-frontend__presentation.ts.log"
     }
   ],
   "currentSummary": {
     "uniqueProofUnits": 23,
-    "provedObligations": 758,
+    "provedObligations": 763,
     "unproved": 0,
     "errors": 0,
     "staleUnits": [],

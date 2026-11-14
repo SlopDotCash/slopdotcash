@@ -1,0 +1,53 @@
+{
+  "source": "/Users/shawwalters/.codex/worktrees/slop-vibestack-spec/slopdotcash",
+  "scratch": "/tmp/slop-presentation-tickers",
+  "sourceHashes": {
+    "spec/frontend/requests.md": "90a50c604aed8998a34faa7222a9aae3043a8e924c36dbb08824a3af1b9f724a",
+    "spec/frontend/presentation.md": "8c2d34307bdc175703cf64c0c16509b4281fb11c8ab03c38672ca07ca35c1545"
+  },
+  "simulations": [
+    {
+      "unit": "frontend__presentation",
+      "step": "step",
+      "passed": true,
+      "replay": true,
+      "traces": 30,
+      "command": "seed 64977189604479; to simulate again: pnpm exec quint run gen/frontend__presentation.run.qnt --main frontend__presentation_run --step step --invariant inv --max-samples 100 --max-steps 20 --mbt --seed 64977189604479",
+      "events": [],
+      "goals": []
+    },
+    {
+      "unit": "frontend__presentation",
+      "step": "probe",
+      "passed": true,
+      "replay": true,
+      "traces": 30,
+      "command": "seed 75243843451923; to simulate again: pnpm exec quint run gen/frontend__presentation.run.qnt --main frontend__presentation_run --step probe --invariant inv --max-samples 100 --max-steps 20 --mbt --seed 75243843451923",
+      "events": [],
+      "goals": []
+    }
+  ],
+  "proofs": [
+    {
+      "unit": "frontend__presentation.ts",
+      "total": 19,
+      "unproved": [],
+      "errors": [],
+      "exhausted": [],
+      "log": "formal/validation/journeys/presentation-tickers-frontend__presentation.ts.log",
+      "spec": "spec/frontend/presentation.md",
+      "sourceSha256": "8c2d34307bdc175703cf64c0c16509b4281fb11c8ab03c38672ca07ca35c1545",
+      "sourceCurrent": true,
+      "status": "passed",
+      "inputs": {
+        "spec/frontend/requests.md": "90a50c604aed8998a34faa7222a9aae3043a8e924c36dbb08824a3af1b9f724a",
+        "spec/frontend/presentation.md": "8c2d34307bdc175703cf64c0c16509b4281fb11c8ab03c38672ca07ca35c1545"
+      },
+      "proofFile": null,
+      "proofSha256": null,
+      "proofLibrarySha256": "4c9f8dcbd9918f7d4b282ad9531b4cf0096ea389c015149b1786d0fe4ebd8e29"
+    }
+  ],
+  "status": "complete",
+  "meaning": "Current presentation includes ticker notation, asset-class prefixing, canonical-symbol preservation, invalid-input refusal and no inferred USD valuation."
+}

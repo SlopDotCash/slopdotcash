@@ -682,8 +682,8 @@
     },
     {
       "source": "spec/security/intake.md",
-      "sourceCurrent": true,
-      "currentSourceSha256": "d30ea471aa939fcb2ef6f6a11bc182d4f49edc3725b1ab166da1cf8a7ec3512a",
+      "sourceCurrent": false,
+      "currentSourceSha256": "96e02eb1c37223a7daaaff7950bba76047ea7e05e2435c4a137e5cc7a6bf7721",
       "modelSha256": "5585acd6bd8bced7b5be59de1fa73100db639f1f77e37650ee39bbea2c5e841e",
       "snapshot": "formal/validation/security/initial-security__intake.qnt",
       "run": "initial",
@@ -725,7 +725,11 @@
           "name": "sometimesForwarded",
           "reached": true
         }
-      ]
+      ],
+      "recordedSourceSha256": "d30ea471aa939fcb2ef6f6a11bc182d4f49edc3725b1ab166da1cf8a7ec3512a",
+      "currentModelSha256": "692e43d4d11a9bc6284091aba79a2f86a1d2d6e8e693902a03c74ae186171b4c",
+      "executableModelCurrent": false,
+      "sourceDifference": "The current model adds inductive invariants absent from this retained simulation snapshot. This historical run does not validate the current model."
     },
     {
       "source": "spec/security/cases.md",
@@ -864,8 +868,8 @@
     },
     {
       "source": "spec/slopbot/appeals.md",
-      "sourceCurrent": true,
-      "currentSourceSha256": "a655a74fff69a0e0e3107e7590dcbfbfdb46b7740a266bd882d024aeab42d6ad",
+      "sourceCurrent": false,
+      "currentSourceSha256": "027911d19567a27d047525c6bd3d380122672f833a944fe5985442e4a1d7bb7d",
       "modelSha256": "c919e99a0ed2f6ebfd5974e76577957dd8d0a303826b8875a2a1bf16e8343416",
       "snapshot": "formal/validation/security/initial-slopbot__appeals.qnt",
       "run": "initial",
@@ -896,7 +900,11 @@
           "name": "sometimesReversed",
           "reached": true
         }
-      ]
+      ],
+      "recordedSourceSha256": "a655a74fff69a0e0e3107e7590dcbfbfdb46b7740a266bd882d024aeab42d6ad",
+      "currentModelSha256": "f26614160e9fcb773200ae31e5e454cad3897c85f4cfa37e3a64064b38e039a3",
+      "executableModelCurrent": false,
+      "sourceDifference": "The current model adds inductive invariants absent from this retained simulation snapshot. This historical run does not validate the current model."
     },
     {
       "source": "spec/slopbot/closure.md",
@@ -1032,8 +1040,8 @@
     },
     {
       "source": "spec/operations/backup.md",
-      "sourceCurrent": true,
-      "currentSourceSha256": "c086269c8333750dabdedfd14819715b38a93b89aca1e56331e6c09e4290a04f",
+      "sourceCurrent": false,
+      "currentSourceSha256": "d24dc961e524112ffa9aad9e8942e588b09dfb03e475755fff5285c94e19b93d",
       "modelSha256": "1816d52449a4d7e03e663b4366ba28525348a013968557fd98684607f752f30c",
       "snapshot": "formal/validation/security/initial-operations__backup.qnt",
       "run": "initial",
@@ -1073,7 +1081,11 @@
           "name": "sometimesInterrupted",
           "reached": true
         }
-      ]
+      ],
+      "recordedSourceSha256": "c086269c8333750dabdedfd14819715b38a93b89aca1e56331e6c09e4290a04f",
+      "currentModelSha256": "cd578e0b97a4c65fbb2abc84c4c5877dec8ef7d1d461703a35758b5c3f0452b6",
+      "executableModelCurrent": false,
+      "sourceDifference": "The current model adds inductive invariants absent from this retained simulation snapshot. This historical run does not validate the current model."
     },
     {
       "source": "spec/operations/local.md",
@@ -1257,8 +1269,8 @@
     },
     {
       "source": "spec/slopbot/review.md",
-      "sourceCurrent": true,
-      "currentSourceSha256": "76b01aca7ff311f90438b2dd5fcf6c3aa3fcbecad2641c3e64c03e749aca3467",
+      "sourceCurrent": false,
+      "currentSourceSha256": "87dd0d837549d957d32e0e6e0c892c0c431ebf5e479dac0959a7fe868a37e8fd",
       "modelSha256": "aee5237fb612546267e153afb589e22964e9f4180ee40a645acfe3cf3131694e",
       "snapshot": "formal/validation/security/refined-slopbot__review.qnt",
       "run": "refined",
@@ -1294,7 +1306,11 @@
           "name": "sometimesProviderFailure",
           "reached": false
         }
-      ]
+      ],
+      "recordedSourceSha256": "76b01aca7ff311f90438b2dd5fcf6c3aa3fcbecad2641c3e64c03e749aca3467",
+      "currentModelSha256": "989938d3c8db369494d86352e30a7ac5bd17001e9b837081ecb5436c0813e3d5",
+      "executableModelCurrent": false,
+      "sourceDifference": "The current model adds inductive invariants absent from this retained simulation snapshot. This historical run does not validate the current model."
     },
     {
       "source": "spec/operations/notifications.md",

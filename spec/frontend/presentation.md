@@ -218,3 +218,59 @@ pure val evidenceValues = Set(
     queryStrings: true, pathAndReferringSiteOnly: false }
 )
 ```
+
+## Story: Read token tickers without mistaking them for a dollar valuation
+
+### Project tokens have one dollar prefix while native and approved stablecoin tickers have none
+
+PRD section 6 changes displayed ticker notation only. Asset classification
+comes from the verified registry and token identity, never from a symbol's
+spelling. The adapter decodes the canonical stored symbol into its count of
+leading dollar signs and its remaining Unicode characters. It verifies that
+this is an exact decomposition, each list entry is one character, and the body
+is nonempty and no longer starts with a dollar sign. The model uses this decoded
+representation because the supported Quint subset does not split strings.
+Rendering joins the returned prefix and body characters; it never writes them
+back to the canonical symbol. Invalid decoding produces no ticker.
+
+```quint
+type TickerKind = NativeCoin | ApprovedStablecoin | ProjectToken
+type DecodedTicker = { canonicalSymbol: str, leadingDollars: int, body: List[str] }
+type TickerView = { available: bool, canonicalSymbol: str, prefixDollars: int, body: List[str], usdValuation: bool }
+pure def validTicker(symbol: DecodedTicker): bool = symbol.canonicalSymbol != "" and
+  symbol.leadingDollars >= 0 and symbol.body.length() > 0 and
+  symbol.body.nthOr(0, "") != "$" and symbol.body.every(character => character != "")
+pure def displayTicker(kind: TickerKind, symbol: DecodedTicker): TickerView = {
+  available: validTicker(symbol), canonicalSymbol: symbol.canonicalSymbol,
+  prefixDollars: if (validTicker(symbol) and kind == ProjectToken) 1 else 0,
+  body: if (validTicker(symbol)) symbol.body else List(), usdValuation: false
+}
+pure def lawProjectTokenHasOnePrefix(symbol: DecodedTicker): bool =
+  validTicker(symbol) implies displayTicker(ProjectToken, symbol).available and
+    displayTicker(ProjectToken, symbol).prefixDollars == 1 and
+    displayTicker(ProjectToken, symbol).body.nthOr(0, "") != "$"
+pure def lawNativeAndStablecoinHaveNoPrefix(kind: TickerKind, symbol: DecodedTicker): bool =
+  (kind == NativeCoin or kind == ApprovedStablecoin) implies displayTicker(kind, symbol).prefixDollars == 0
+pure def lawCanonicalTickerIsUnchanged(kind: TickerKind, symbol: DecodedTicker): bool =
+  displayTicker(kind, symbol).canonicalSymbol == symbol.canonicalSymbol and
+    (validTicker(symbol) implies displayTicker(kind, symbol).body == symbol.body)
+pure def lawTickerIsNotUsdValuation(kind: TickerKind, symbol: DecodedTicker): bool =
+  not(displayTicker(kind, symbol).usdValuation)
+pure def lawInvalidTickerIsUnavailable(kind: TickerKind, symbol: DecodedTicker): bool =
+  not(validTicker(symbol)) implies not(displayTicker(kind, symbol).available) and
+    displayTicker(kind, symbol).prefixDollars == 0 and displayTicker(kind, symbol).body.length() == 0
+pure val symbolValues = Set(
+  { canonicalSymbol: "CREDIT", leadingDollars: 0, body: List("C", "R", "E", "D", "I", "T") },
+  { canonicalSymbol: "$$EPYH", leadingDollars: 2, body: List("E", "P", "Y", "H") },
+  { canonicalSymbol: "SOL", leadingDollars: 0, body: List("S", "O", "L") },
+  { canonicalSymbol: "ETH", leadingDollars: 0, body: List("E", "T", "H") },
+  { canonicalSymbol: "USDC", leadingDollars: 0, body: List("U", "S", "D", "C") },
+  { canonicalSymbol: "USDG", leadingDollars: 0, body: List("U", "S", "D", "G") },
+  { canonicalSymbol: "", leadingDollars: 0, body: List() },
+  { canonicalSymbol: "$$", leadingDollars: 1, body: List("$") }
+)
+```
+
+Ticker notation does not alter integer amounts, asset identity, reward terms,
+or the existing formatting of dollar-denominated amounts. A prefix does not
+supply an exchange rate or a USD equivalent.

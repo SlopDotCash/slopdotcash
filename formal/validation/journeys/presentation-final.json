@@ -37,10 +37,12 @@
       "log": "formal/validation/journeys/presentation-final-frontend__presentation.ts.log",
       "spec": "spec/frontend/presentation.md",
       "sourceSha256": "f6da04af125a30565015f8dedaaaa6eff76a7597fa50346c5f3a94cd83b279bd",
-      "sourceCurrent": true,
-      "status": "passed"
+      "sourceCurrent": false,
+      "status": "superseded",
+      "currentSourceSha256": "8c2d34307bdc175703cf64c0c16509b4281fb11c8ab03c38672ca07ca35c1545"
     }
   ],
-  "status": "complete",
-  "meaning": "Final current presentation rules including the production-only private-safe beacon."
+  "status": "superseded",
+  "meaning": "Historical pre-ticker presentation. Current presentation is in presentation-tickers.json.",
+  "supersededBy": "formal/validation/journeys/presentation-tickers.json"
 }
