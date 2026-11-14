@@ -1,0 +1,30 @@
+{
+  "sourceHashes": {
+    "spec/settlement/money.md": "65d72012c72c335adddbb78d3934687c0fce7442ad51b5404090130af42a4c5b",
+    "spec/settlement/directBounty.md": "57e396faaa8b0ea0d035dbf50b9914bde7a5c5cb12a492eb27c5f078d9e10ab2"
+  },
+  "seed": 808,
+  "traces": 250,
+  "maxSteps": 28,
+  "transitions": {
+    "admit": 250,
+    "observeWallets": 5238,
+    "consent": 689,
+    "recordOtherUse": 378,
+    "prepare": 189,
+    "recordTransfer": 185,
+    "recover": 33,
+    "observeCaseRevision": 28,
+    "recordPair": 10
+  },
+  "goals": {
+    "sometimesPartialFee": 15,
+    "sometimesPartialResearcher": 35,
+    "sometimesRecovered": 33,
+    "sometimesPaidEvm": 27,
+    "sometimesPaidSolana": 118,
+    "sometimesHeld": 48
+  },
+  "replayed": true,
+  "again": "seed 44053416872837; to simulate again: pnpm exec quint run gen/settlement__directBounty.run.qnt --main settlement__directBounty_run --step step --invariant inv --max-samples 250 --max-steps 28 --mbt --seed 44053416872837"
+}
