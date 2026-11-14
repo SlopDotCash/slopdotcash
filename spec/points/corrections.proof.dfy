@@ -12,18 +12,15 @@ lemma lawProtectionRace_ensures(manifest: Manifest)
   }
 }
 
-lemma lawCanonicalWeightPreserved_ensures(manifest: Manifest)
-  ensures (lawCanonicalWeightPreserved(manifest) == true)
+lemma lawReallocationPreservesPool_ensures(manifest: Manifest)
+  ensures (lawReallocationPreservesPool(manifest) == true)
 {
   if manifest == readyManifest {
     ReadyManifestAllocates();
-    var source := points__journal_credit(points__journal_initial, 30, 1, true, true, false);
     var corrected := commit(prepare(initial, manifest));
     assert corrected.phase.Applied?;
     assert corrected.pool == initial.pool && corrected.occurredAt == initial.occurredAt;
-    assert points__journal_canReassign(source, initial.pool, corrected.pool, manifest.connectedProof);
-    assert points__journal_reassign(source, initial.pool, corrected.pool, manifest.connectedProof).rewardWeight == source.rewardWeight;
-    assert points__journal_reassign(source, initial.pool, corrected.pool, manifest.connectedProof).occurredAt == corrected.occurredAt;
+    assert points__allocation_canWriteAllocation(30, manifest.recipients, true, false);
   }
 }
 
@@ -34,7 +31,7 @@ lemma lawReplayPreservesRevocation_ensures(manifest: Manifest)
     ReadyManifestAllocates();
     var committed := commit(prepare(initial, manifest));
     assert committed.phase.Applied? && manifest.digest in committed.applied;
-    var revoked := revoke(committed, true);
+    var revoked := revoke(committed, readyRevocation);
     assert manifest.digest in revoked.applied;
     assert prepare(revoked, manifest).phase.Replayed?;
     assert prepare(revoked, manifest).history == revoked.history;

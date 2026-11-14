@@ -1,16 +1,27 @@
 # Points and source integrity
 
-One append-only Points history supports monthly and lifetime views. Accepted
-work sets reward weights. Participation history, optional evidence, and money
-received remain separate records.
+One append-only Points journal holds every award revision; monthly and
+lifetime totals are views of it. Only accepted-work Points for a project and
+month determine reward weights. Participation, payout recognition, usage and
+trace evidence remain separate and never change a payment share.
 
+- [Points journal](./journal.md)
+- [Participation Points](./participation.md)
+- [Payout recognition](./payoutRecognition.md)
+- [Reward weights](./rewardWeights.md)
+- [Accepted work units](./workUnits.md)
 - [Accepted-commit authorship](./authorship.md)
-- [Aggregate monthly penalties](./penalties.md)
 - [Implementation allocation](./allocation.md)
 - [Review credit](./reviews.md)
-- [Journal and corrections](./journal.md)
-- [Source census and publication](./census.md)
+- [Aggregate monthly penalties](./penalties.md)
+- [Scoring policy versions](./scoringPolicy.md)
+- [Historical import and publication hold](./historicalImport.md)
 - [Historical correction import](./corrections.md)
 - [Historical collector quota recovery](./quotaRecovery.md)
+- [Evaluation manifests](./evaluations.md)
+- [Points disputes](./disputes.md)
+- [Source census](./census.md)
+- [Rolling 35-day ledger](./window.md)
+- [GitHub ingestion reads and transport](./ingestion.md)
 - [Recovery across verified publication copies](./recovery.md)
 - [Exact-prefix publication](./publication.md)

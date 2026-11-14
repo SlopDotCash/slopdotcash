@@ -30,9 +30,11 @@ import publication as P from "./publication"
 type Environment = Production | Staging
 type SourceCoverage = { repository: str, fromTime: int, throughTime: int, digest: str }
 type PublicHistory = { origin: Environment, generatedAt: int, revisions: List[P::PublishedRecord], coverage: List[SourceCoverage] }
-type CopyEvidence = { history: PublicHistory, verified: bool }
-type RecoveryEvidence = { requested: Environment, checkpoint: CopyEvidence, pages: CopyEvidence }
-type RecoveryOutcome = Pending | Recovered(PublicHistory) | WrongEnvironment | UnverifiedCopy | DivergingHistory
+type CopyState = CopyPresent | CopyAbsent | CopyUnavailable
+type CopyEvidence = { state: CopyState, history: PublicHistory, verified: bool }
+type RecoveryEvidence = { requested: Environment, explicitBootstrap: bool, checkpoint: CopyEvidence, pages: CopyEvidence }
+type RecoveryOutcome = Pending | Recovered(PublicHistory) | Bootstrapped | BootstrapRefused | MissingHistory | SourceUnavailable |
+  WrongEnvironment | UnverifiedCopy | DivergingHistory
 type Recovery = { outcome: RecoveryOutcome }
 pure val initial: Recovery = { outcome: Pending }
 pure def originMatches(evidence: RecoveryEvidence): bool = evidence.checkpoint.history.origin == evidence.requested and evidence.pages.history.origin == evidence.requested
@@ -43,15 +45,46 @@ pure def laterCopy(evidence: RecoveryEvidence): PublicHistory =
 pure def earlierCopy(evidence: RecoveryEvidence): PublicHistory =
   if (checkpointIsLater(evidence)) evidence.pages.history else evidence.checkpoint.history
 pure def historiesAgree(evidence: RecoveryEvidence): bool = P::exactPrefix(earlierCopy(evidence).revisions, laterCopy(evidence).revisions)
-pure def admissibleRecovery(evidence: RecoveryEvidence): bool = originMatches(evidence) and verifiedCopies(evidence) and historiesAgree(evidence)
+pure def bothPresent(evidence: RecoveryEvidence): bool = evidence.checkpoint.state == CopyPresent and evidence.pages.state == CopyPresent
+pure def admissibleRecovery(evidence: RecoveryEvidence): bool = bothPresent(evidence) and originMatches(evidence) and verifiedCopies(evidence) and historiesAgree(evidence)
 pure def pendingResult(r: Recovery): bool =
   val decision = r.outcome
   match decision { | Pending => true | _ => false }
 pure def canRecover(r: Recovery, evidence: RecoveryEvidence): bool = pendingResult(r) and admissibleRecovery(evidence)
-pure def canRefuse(r: Recovery, evidence: RecoveryEvidence): bool = pendingResult(r) and not(admissibleRecovery(evidence))
+pure def canRefuse(r: Recovery, evidence: RecoveryEvidence): bool = pendingResult(r) and not(admissibleRecovery(evidence)) and
+  not(bootstrapAllowed(evidence)) and not(stagingPagesOnly(evidence))
 pure def refuse(r: Recovery, evidence: RecoveryEvidence): Recovery = { outcome:
-  if (not(originMatches(evidence))) WrongEnvironment else if (not(verifiedCopies(evidence))) UnverifiedCopy else DivergingHistory }
+  if (evidence.checkpoint.state == CopyUnavailable or evidence.pages.state == CopyUnavailable) SourceUnavailable
+  else if (evidence.explicitBootstrap and evidence.checkpoint.state == CopyAbsent) BootstrapRefused
+  else if (not(bothPresent(evidence))) MissingHistory
+  else if (not(originMatches(evidence))) WrongEnvironment else if (not(verifiedCopies(evidence))) UnverifiedCopy else DivergingHistory }
 pure def stepTerminalResult(before: Recovery, after: Recovery): bool = not(pendingResult(before)) implies after.outcome == before.outcome
+```
+
+### Bootstrap starts an empty journal only when no public copy exists
+
+An explicit bootstrap is the release workflow's input. It succeeds only when
+both the protected checkpoint and the Pages projection are absent; when any
+published copy may exist it is refused. Without it, an absent copy refuses
+recovery. A copy that cannot be read refuses recovery without discarding
+history. Staging historically published only its Pages journal: when its
+checkpoint is not published, the verified staging Pages copy is recovered
+alone.
+
+```quint
+pure def bootstrapAllowed(evidence: RecoveryEvidence): bool =
+  evidence.explicitBootstrap and evidence.checkpoint.state == CopyAbsent and evidence.pages.state == CopyAbsent
+pure def stagingPagesOnly(evidence: RecoveryEvidence): bool =
+  evidence.requested == Staging and evidence.checkpoint.state == CopyAbsent and evidence.pages.state == CopyPresent and
+  evidence.pages.verified and evidence.pages.history.origin == Staging
+pure def canBootstrap(r: Recovery, evidence: RecoveryEvidence): bool = pendingResult(r) and bootstrapAllowed(evidence)
+pure def bootstrap(r: Recovery, evidence: RecoveryEvidence): Recovery = { outcome: Bootstrapped }
+pure def canRecoverStagingPages(r: Recovery, evidence: RecoveryEvidence): bool = pendingResult(r) and stagingPagesOnly(evidence)
+pure def recoverStagingPages(r: Recovery, evidence: RecoveryEvidence): Recovery = { outcome: Recovered({ origin: evidence.pages.history.origin,
+  generatedAt: evidence.pages.history.generatedAt, revisions: evidence.pages.history.revisions, coverage: evidence.pages.history.coverage }) }
+pure def lawBootstrapNeedsBothAbsent(evidence: RecoveryEvidence): bool =
+  bootstrapAllowed(evidence) implies (evidence.checkpoint.state == CopyAbsent and evidence.pages.state == CopyAbsent)
+pure def lawProductionNeverPagesOnly(evidence: RecoveryEvidence): bool = evidence.requested == Production implies not(stagingPagesOnly(evidence))
 ```
 
 ### Recovery retains exact coverage even when no award revision changes
@@ -101,14 +134,22 @@ pure val otherCoverageRow: SourceCoverage = { repository: "other", fromTime: 1, 
 pure val firstHistory: PublicHistory = { origin: Production, generatedAt: 2, revisions: List(P::firstRecord), coverage: List(firstCoverage) }
 pure val refreshedHistory: PublicHistory = { ...firstHistory, generatedAt: 3, coverage: List(firstCoverage, refreshedCoverage) }
 pure def evidenceFor(checkpoint: PublicHistory, pages: PublicHistory): RecoveryEvidence =
-  { requested: Production, checkpoint: { history: checkpoint, verified: true }, pages: { history: pages, verified: true } }
+  { requested: Production, explicitBootstrap: false, checkpoint: { state: CopyPresent, history: checkpoint, verified: true },
+    pages: { state: CopyPresent, history: pages, verified: true } }
 pure val checkedBoth = evidenceFor(firstHistory, refreshedHistory)
 pure val verifiedCheckpointRefresh = evidenceFor(refreshedHistory, firstHistory)
 pure val extendedCheckpoint = evidenceFor({ ...firstHistory, revisions: List(P::firstRecord, P::secondRecord) }, refreshedHistory)
 pure val forkedCopies = evidenceFor({ ...firstHistory, revisions: List(P::secondRecord) }, firstHistory)
 pure val differentEnvironment = evidenceFor(firstHistory, { ...refreshedHistory, origin: Staging })
-pure val unverifiedPages = { ...checkedBoth, pages: { history: refreshedHistory, verified: false } }
-pure val evidenceValues = Set(checkedBoth, verifiedCheckpointRefresh, extendedCheckpoint, forkedCopies, differentEnvironment, unverifiedPages)
+pure val unverifiedPages = { ...checkedBoth, pages: { state: CopyPresent, history: refreshedHistory, verified: false } }
+pure val absentCopy: CopyEvidence = { state: CopyAbsent, history: { ...firstHistory, revisions: List(), coverage: List() }, verified: false }
+pure val emptyBoth = { ...checkedBoth, explicitBootstrap: true, checkpoint: absentCopy, pages: absentCopy }
+pure val bootstrapOverExisting = { ...checkedBoth, explicitBootstrap: true, checkpoint: absentCopy }
+pure val stagingPages = { ...checkedBoth, requested: Staging, checkpoint: absentCopy,
+  pages: { state: CopyPresent, history: { ...firstHistory, origin: Staging }, verified: true } }
+pure val unreadable = { ...checkedBoth, pages: { state: CopyUnavailable, history: firstHistory, verified: false } }
+pure val evidenceValues = Set(checkedBoth, verifiedCheckpointRefresh, extendedCheckpoint, forkedCopies, differentEnvironment, unverifiedPages,
+  emptyBoth, bootstrapOverExisting, stagingPages, unreadable)
 pure val baseValues = Set(List(), List(firstCoverage), List(refreshedCoverage), List(firstCoverage, refreshedCoverage))
 pure val otherCoverageValues = Set(List(), List(refreshedCoverage), List(otherCoverageRow), List(firstCoverage, refreshedCoverage))
 pure val rowValues = Set(firstCoverage, refreshedCoverage, otherCoverageRow)
@@ -124,6 +165,12 @@ pure def sometimesWrongEnvironment(r: Recovery): bool =
 pure def sometimesUnverified(r: Recovery): bool =
   val decision = r.outcome
   match decision { | UnverifiedCopy => true | _ => false }
+pure def sometimesBootstrapped(r: Recovery): bool = r.outcome == Bootstrapped
+pure def sometimesBootstrapRefused(r: Recovery): bool = r.outcome == BootstrapRefused
+pure def sometimesUnavailable(r: Recovery): bool = r.outcome == SourceUnavailable
+pure def sometimesStagingPagesOnly(r: Recovery): bool =
+  val decision = r.outcome
+  match decision { | Recovered(history) => history.origin == Staging | _ => false }
 pure def sometimesDiverged(r: Recovery): bool =
   val decision = r.outcome
   match decision { | DivergingHistory => true | _ => false }

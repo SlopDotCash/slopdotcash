@@ -11,14 +11,14 @@ protection is rechecked in the same database operation as the append. The view
 contains no private award amount. Database atomicity and evidence authenticity
 require adapter conformance. The machine is instantiated per accepted source.
 
-This is a detailed projection of a correction in the canonical [Points
-journal](./journal.md). `history` tracks recipient allocations for that single
-source and `applied` tracks the digests of its canonical correction records.
-The operation represented by `commit` appends once to the canonical journal.
-The summary journal's `reassign` represents that same append at the aggregate
-weight level. A future adapter uses a single database transaction and does
-not emit a second append from the summary. Publication consumes the resulting
-journal snapshot through the [publication model](./publication.md).
+Each applied history row is written to the canonical [Points
+journal](./journal.md) as one correction per recipient key with basis
+`Reallocation`, in the same database transaction. The row's shares sum to the
+unchanged pool, so the corrections together preserve the source's complete
+prior total. `applied` tracks the digests of those canonical corrections.
+Publication consumes the resulting journal snapshot through the [publication
+model](./publication.md). A revocation is a maintainer decision recorded in
+the correction workflow and bound to the source and an applied manifest.
 
 ## Story: Reassign the existing pool while preserving funded history
 
@@ -26,7 +26,6 @@ journal snapshot through the [publication model](./publication.md).
 
 ```quint
 import allocation as A from "./allocation"
-import journal as J from "./journal"
 type CorrectionPhase = Open | Prepared | EvidenceHeld | Protected | Stale | Applied | Replayed
 type JournalEntry = { source: int, occurredAt: int, shares: List[A::PointShare], revoked: bool }
 type Manifest = { digest: str, source: int, predecessor: int, connectedProof: bool, recipients: List[A::Recipient] }
@@ -80,8 +79,10 @@ pure def commit(c: Correction): Correction =
   else { ...c, phase: Applied, staged: emptyManifest, applied: c.applied.append(c.staged.digest),
     history: c.history.append({ source: c.source, occurredAt: c.occurredAt,
       shares: A::allocatePoints(c.pool, c.staged.recipients), revoked: false }) }
-pure def canRevoke(c: Correction, verifiedRevocation: bool): bool = verifiedRevocation and not(c.revoked) and not(c.frozen)
-pure def revoke(c: Correction, verifiedRevocation: bool): Correction = { ...c, revoked: true,
+type Revocation = { source: int, manifestDigest: str, decision: str }
+pure def canRevoke(c: Correction, revocation: Revocation): bool = revocation.source == c.source and
+  revocation.decision != "" and c.applied.includes(revocation.manifestDigest) and not(c.revoked) and not(c.frozen)
+pure def revoke(c: Correction, revocation: Revocation): Correction = { ...c, revoked: true,
   history: c.history.append({ source: c.source, occurredAt: c.occurredAt, shares: List(), revoked: true }) }
 pure def alwaysSourceHistory(c: Correction): bool = c.history.every(row => row.source == c.source
   and row.occurredAt == c.occurredAt and (if (row.revoked) row.shares.length() == 0 else A::pointTotal(row.shares) == c.pool))
@@ -108,17 +109,17 @@ pure val manifestValues = Set(readyManifest,
 pure def lawProtectionRace(manifest: Manifest): bool = manifest == readyManifest implies
   commit(protect(prepare(initial, manifest))).phase == Protected
     and commit(protect(prepare(initial, manifest))).history == initial.history
+pure val readyRevocation: Revocation = { source: 1, manifestDigest: "manifest", decision: "maintainer" }
+pure val revocationValues = Set(readyRevocation, { ...readyRevocation, manifestDigest: "other" }, { ...readyRevocation, source: 2 })
 pure def lawStalePredecessor(manifest: Manifest): bool = manifest == readyManifest implies
-  commit(revoke(prepare(initial, manifest), true)).phase == Stale
-pure def lawCanonicalWeightPreserved(manifest: Manifest): bool =
-  val source = J::credit(J::initial, 30, 1, true, true, false)
+  commit(revoke(prepare(initial, manifest), readyRevocation)).phase == Stale
+pure def lawReallocationPreservesPool(manifest: Manifest): bool =
   val corrected = commit(prepare(initial, manifest))
-  manifest == readyManifest implies corrected.phase == Applied
-    and J::canReassign(source, initial.pool, corrected.pool, manifest.connectedProof)
-    and J::reassign(source, initial.pool, corrected.pool, manifest.connectedProof).rewardWeight == source.rewardWeight
-    and J::reassign(source, initial.pool, corrected.pool, manifest.connectedProof).occurredAt == corrected.occurredAt
+  manifest == readyManifest implies corrected.phase == Applied and corrected.pool == initial.pool
+    and corrected.occurredAt == initial.occurredAt
+    and A::pointTotal(A::allocatePoints(corrected.pool, manifest.recipients)) == initial.pool
 pure def lawReplayPreservesRevocation(manifest: Manifest): bool =
-  val revokedState = revoke(commit(prepare(initial, manifest)), true)
+  val revokedState = revoke(commit(prepare(initial, manifest)), readyRevocation)
   manifest == readyManifest implies prepare(revokedState, manifest).history == revokedState.history
     and prepare(revokedState, manifest).phase == Replayed
 ```
