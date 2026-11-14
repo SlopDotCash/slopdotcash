@@ -1,9 +1,11 @@
 /** Owner vault setup. Trust and RPCs come from the server; only the owner signs. */
 import {
+  EVM_NATIVE_ASSET,
   type EvmFactoryConfig,
   EvmRpcUnavailable,
   type EvmVaultCreation,
   EvmVaultCreationFailed,
+  EvmVaultCreationUnsettled,
   prepareEvmVaultCreation,
   verifyEvmFactory,
   verifyEvmVaultCreation,
@@ -61,13 +63,28 @@ export interface OwnerVaultSetup {
     actor: GithubActor,
     input: VaultSetupInput,
   ): Promise<VaultSetupReview>;
+  /**
+   * `finalized` is the only evidence that registers a vault. `included` is a
+   * provisional answer: the same verified deployment, in a canonical block that
+   * can still be replaced. The caller shows it and writes nothing.
+   */
   register(
     project: ProjectRecord,
     actor: GithubActor,
     input: VaultSetupInput,
     transactionId: string,
-  ): Promise<EscrowDeployment | null>;
+  ): Promise<{
+    deployment: EscrowDeployment;
+    evidence: "finalized" | "included";
+  } | null>;
 }
+
+/**
+ * Whether the register step may answer with a provisional deployment before the
+ * creation is final, so the owner can fund the vault while it is confirmed. Set
+ * to false to answer plain "pending" until finality, as before.
+ */
+const PROVISIONAL_VAULT_ANSWER = true;
 
 /** Bind observations to the registered chain, reviewed program and exact project. */
 export async function readRegisteredVaultTotals(
@@ -279,6 +296,7 @@ export function ownerVaultSetupService(deps: {
       creation: EvmVaultCreation,
     ) => Promise<EvmPrepared>,
     transactionId?: string,
+    acceptIncluded = false,
   ) {
     const network = ESCROW_NETWORKS[input.network];
     const reward = project.manifest.reward;
@@ -424,6 +442,10 @@ export function ownerVaultSetupService(deps: {
       payoutPolicy: input.payoutPolicy ?? "ordinary",
     };
     let verificationError: { error: unknown } | undefined;
+    let unsettled:
+      | { template: ReviewedEvmFactory; config: EvmFactoryConfig }
+      | undefined;
+    let unsettledPrepared: EvmPrepared | undefined;
     for (const template of await factories(project, input.payoutPolicy)) {
       if (template.network !== input.network || !network.chainId) continue;
       const config: EvmFactoryConfig = {
@@ -460,11 +482,29 @@ export function ownerVaultSetupService(deps: {
             config,
             creation,
             transactionId,
+            {
+              // An ordinary token vault only. A call that carries native ETH to
+              // an address whose creation is later replaced would strand it, so
+              // a native vault is funded only after registration.
+              acceptIncluded:
+                acceptIncluded &&
+                creation.payoutPolicy === "ordinary" &&
+                creation.asset.toLowerCase() !== EVM_NATIVE_ASSET,
+            },
           );
         } catch (error) {
           if (error instanceof EvmRpcUnavailable) networkUnavailable();
           if (error instanceof EvmVaultCreationFailed)
             registrationFailure(error, "evm");
+          // Not final and not matching this review: try the next one. Without
+          // a match the creation is only pending; finality decides a refusal.
+          if (error instanceof EvmVaultCreationUnsettled) {
+            if (!unsettled) {
+              unsettled = { template, config };
+              unsettledPrepared = prepared;
+            }
+            continue;
+          }
           verificationError ??= { error };
           continue;
         }
@@ -478,6 +518,14 @@ export function ownerVaultSetupService(deps: {
         verified,
       };
     }
+    if (unsettled)
+      return {
+        family: "evm" as const,
+        ...unsettled,
+        creation,
+        prepared: unsettledPrepared as EvmPrepared,
+        verified: null,
+      };
     if (verificationError) registrationFailure(verificationError.error, "evm");
     fail(
       503,
@@ -581,33 +629,40 @@ export function ownerVaultSetupService(deps: {
         (config) =>
           verifyEvmFactory(config, "finalized", { forCreation: true }),
         transactionId,
+        PROVISIONAL_VAULT_ANSWER,
       );
       if (result.family === "solana") {
         if (!result.verified) return null;
         return {
-          ...result.template,
-          factory: null,
-          factoryCodeSha256: null,
-          registrar: null,
-          ...result.verified,
-          owner: result.creation.owner,
-          asset: result.creation.mint,
-          deploymentTransaction: transactionId,
+          deployment: {
+            ...result.template,
+            factory: null,
+            factoryCodeSha256: null,
+            registrar: null,
+            ...result.verified,
+            owner: result.creation.owner,
+            asset: result.creation.mint,
+            deploymentTransaction: transactionId,
+          },
+          evidence: "finalized",
         };
       }
-      const { template, creation, verified: vault } = result;
-      if (!vault) return null;
+      const { template, creation, verified } = result;
+      if (!verified) return null;
       return {
-        ...template,
-        programId: null,
-        upgradeAuthority: null,
-        projectPda: null,
-        networkDomain: null,
-        rotationDelaySeconds: null,
-        vault,
-        owner: creation.owner,
-        asset: creation.asset,
-        deploymentTransaction: transactionId,
+        deployment: {
+          ...template,
+          programId: null,
+          upgradeAuthority: null,
+          projectPda: null,
+          networkDomain: null,
+          rotationDelaySeconds: null,
+          vault: verified.vault,
+          owner: creation.owner,
+          asset: creation.asset,
+          deploymentTransaction: transactionId,
+        },
+        evidence: verified.evidence,
       };
     },
   };

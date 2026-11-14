@@ -69,6 +69,8 @@ function fixture(
     canonicalHash?: string;
     status?: string;
     input?: string;
+    /** Runtime code at the vault address; "0x" is an address with no vault. */
+    vaultCode?: string;
   } = {},
 ) {
   const reads: string[] = [];
@@ -113,7 +115,10 @@ function fixture(
         input: options.input ?? "0x",
         value: "0x0",
       };
-    if (method === "eth_getCode") return CODE;
+    if (method === "eth_getCode")
+      return (params[0] as string).toLowerCase() === VAULT
+        ? (options.vaultCode ?? CODE)
+        : CODE;
     if (method === "eth_getStorageAt") return uintWord(0n);
     if (method === "eth_call") {
       const call = params[0] as { to: string; data: string };
@@ -250,4 +255,27 @@ test("a reverted unfinal direct deposit is never reported as received", async ()
     input: buildDepositCalldata("7"),
   });
   expect(await send()).toBe("pending");
+});
+
+// A vault funded before its registration can lose its creation to a replaced
+// block. A call to an address with no code succeeds and moves nothing.
+test("a deposit to an address with no vault code is never received or verified", async () => {
+  const input = buildDepositCalldata("7");
+  const early = fixture([], { finalized: "0xf", input, vaultCode: "0x" });
+  expect(await early.send()).toBe("pending");
+  const final = fixture([], { input, vaultCode: "0x" });
+  expect(await final.send()).toBe("no-vault");
+  expect(await final.check()).toEqual({
+    status: "no-vault",
+    transactionId: TRANSACTION,
+  });
+});
+
+test("a successful transaction without the vault's event is not a deposit", async () => {
+  const input = buildDepositCalldata("7");
+  const early = fixture([], { finalized: "0xf", input });
+  expect(await early.send()).toBe("pending");
+  const final = fixture([], { input });
+  await expect(final.send()).rejects.toThrow("does not match the request");
+  await expect(final.check()).rejects.toThrow("does not match the request");
 });
