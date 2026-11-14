@@ -21,7 +21,8 @@
       },
       "subject": "Local validator funding and cleanup sequencing",
       "candidateSuccessor": "spec/operations/localValidator.md",
-      "review": "Stage-owned readiness, separate shell funding, test admission and awaited cleanup are modeled. Real validator conformance remains open."
+      "review": "Stage-owned readiness, separate shell funding, test admission and awaited cleanup are modeled. Real validator conformance remains open.",
+      "retainedPath": "reference/slop-main-delta/formal/models/contracts/solana_validator_callers.qnt"
     },
     {
       "path": "formal/models/payments/operator_keeper_diagnostics.qnt",
@@ -37,7 +38,8 @@
       "subject": "Keeper failure-stage classification and safe projection",
       "candidateSuccessor": "spec/settlement/keeperDiagnostics.md",
       "review": "Evidence callback, index and scan failures and privacy-safe summaries are modeled. Log and adapter conformance remain open.",
-      "relatedSuccessor": "spec/settlement/keeperScan.md"
+      "relatedSuccessor": "spec/settlement/keeperScan.md",
+      "retainedPath": "reference/slop-main-delta/formal/models/payments/operator_keeper_diagnostics.qnt"
     },
     {
       "path": "formal/models/payments/operator_keeper_rpc.qnt",
@@ -52,7 +54,8 @@
       },
       "subject": "Independent RPC rotation and wrong-chain refusal",
       "candidateSuccessor": "spec/settlement/keeperRpc.md",
-      "review": "Scoped RPC override and exact chain preflight are modeled. Provider and deployment conformance remain open."
+      "review": "Scoped RPC override and exact chain preflight are modeled. Provider and deployment conformance remain open.",
+      "retainedPath": "reference/slop-main-delta/formal/models/payments/operator_keeper_rpc.qnt"
     },
     {
       "path": "formal/models/points/historical_implementation_allocation.qnt",
@@ -67,7 +70,8 @@
       },
       "subject": "Historical line-weighted reallocation",
       "candidateSuccessor": "spec/points/corrections.md",
-      "review": "Guarded correction staging and commit preserve the source weight and protected payment history. Transaction conformance remains open."
+      "review": "Guarded correction staging and commit preserve the source weight and protected payment history. Transaction conformance remains open.",
+      "retainedPath": "reference/slop-main-delta/formal/models/points/historical_implementation_allocation.qnt"
     },
     {
       "path": "formal/models/points/journal_publication.qnt",
@@ -82,7 +86,8 @@
       },
       "subject": "Stale prepared publication rejection",
       "candidateSuccessor": "spec/points/publication.md",
-      "review": "Public staging checks an exact canonical prefix and rejects stale preparation. Atomic filesystem and storage conformance remain open."
+      "review": "Public staging checks an exact canonical prefix and rejects stale preparation. Atomic filesystem and storage conformance remain open.",
+      "retainedPath": "reference/slop-main-delta/formal/models/points/journal_publication.qnt"
     },
     {
       "path": "formal/models/tooling/formal_process.qnt",
@@ -97,7 +102,8 @@
       },
       "subject": "Local airdrop cancellation and owned-process cleanup",
       "candidateSuccessor": "spec/operations/localCommand.md",
-      "review": "The local airdrop command now models interruption, grace, current group ownership and cleanup. Browser-process transition equivalence and shell conformance remain open."
+      "review": "The local airdrop command now models interruption, grace, current group ownership and cleanup. Browser-process transition equivalence and shell conformance remain open.",
+      "retainedPath": "reference/slop-main-delta/formal/models/tooling/formal_process.qnt"
     }
   ]
 }
