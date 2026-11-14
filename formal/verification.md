@@ -136,6 +136,14 @@ response. On-chain binding and reconciliation remain in the signer model.
 
 ## Proofs and checks
 
+The current proof inventory binds all 4,863 Slop obligations in 92
+proof-bearing specifications to completed verifier results. The template
+greeting adds one proved obligation. Each receipt is tied to the current
+transitive generated meaning and proof or to the exact complete source
+dependencies. The whole-tree check and legacy-equivalence review remain open.
+[Current proof coverage](validation/full-tree/current-proof-coverage.json)
+
+
 The toolchain uses Node 26.13.1, Quint 0.33.1 and Dafny 4.11.0. Exact commands,
 source hashes, finite budgets, outcomes and retained logs are recorded in the
 following files.

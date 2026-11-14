@@ -1292,7 +1292,9 @@
         "spec/security/intake.md",
         "spec/security/cases.md",
         "spec/settlement/payment.md",
-        "spec/settlement/recovery.md"
+        "spec/settlement/recovery.md",
+        "spec/security/screening.md",
+        "spec/security/forwarding.md"
       ]
     },
     {
@@ -1905,7 +1907,9 @@
         "spec/settlement/monthly.md",
         "spec/settlement/recovery.md",
         "spec/settlement/referrals.md",
-        "spec/settlement/money.md"
+        "spec/settlement/money.md",
+        "spec/security/screening.md",
+        "spec/security/forwarding.md"
       ]
     },
     {
@@ -2121,7 +2125,9 @@
         "spec/settlement/monthly.md",
         "spec/settlement/recovery.md",
         "spec/settlement/referrals.md",
-        "spec/settlement/money.md"
+        "spec/settlement/money.md",
+        "spec/security/screening.md",
+        "spec/security/forwarding.md"
       ]
     },
     {
@@ -4368,7 +4374,9 @@
         "spec/settlement/monthly.md",
         "spec/settlement/recovery.md",
         "spec/settlement/referrals.md",
-        "spec/settlement/money.md"
+        "spec/settlement/money.md",
+        "spec/security/screening.md",
+        "spec/security/forwarding.md"
       ]
     },
     {
@@ -4441,7 +4449,9 @@
       "conformance": "pending-product-implementation",
       "candidateSuccessorSpecs": [
         "spec/contributor/evidence.md",
-        "spec/security/privacy.md"
+        "spec/security/privacy.md",
+        "spec/security/screening.md",
+        "spec/security/forwarding.md"
       ]
     },
     {
@@ -5515,7 +5525,8 @@
         "spec/settlement/referrals.md",
         "spec/settlement/money.md",
         "spec/fees/buyback.md",
-        "spec/fees/conversion.md"
+        "spec/fees/conversion.md",
+        "spec/operations/escrowQualification.md"
       ]
     },
     {
@@ -8360,7 +8371,8 @@
       "equivalence": "transition-level-comparison-required",
       "conformance": "pending-product-implementation",
       "candidateSuccessorSpecs": [
-        "spec/operations/release.md"
+        "spec/operations/release.md",
+        "spec/operations/escrowQualification.md"
       ]
     },
     {
@@ -8426,7 +8438,9 @@
         "spec/security/cases.md",
         "spec/settlement/payment.md",
         "spec/settlement/recovery.md",
-        "spec/security/terms.md"
+        "spec/security/terms.md",
+        "spec/settlement/directBounty.md",
+        "spec/frontend/directBountyPrompt.md"
       ]
     },
     {
@@ -8523,7 +8537,8 @@
         "spec/settlement/vault.md",
         "spec/settlement/payment.md",
         "spec/settlement/money.md",
-        "spec/settlement/reserveRelease.md"
+        "spec/settlement/reserveRelease.md",
+        "spec/settlement/directBounty.md"
       ]
     },
     {
@@ -14948,7 +14963,8 @@
       "candidateSuccessorSpecs": [
         "spec/slopbot/appeals.md",
         "spec/slopbot/closure.md",
-        "spec/slopbot/review.md"
+        "spec/slopbot/review.md",
+        "spec/slopbot/valueInference.md"
       ]
     },
     {
@@ -14997,7 +15013,8 @@
       "candidateSuccessorSpecs": [
         "spec/slopbot/appeals.md",
         "spec/slopbot/closure.md",
-        "spec/slopbot/review.md"
+        "spec/slopbot/review.md",
+        "spec/slopbot/valueInference.md"
       ]
     },
     {
@@ -15437,7 +15454,8 @@
       "candidateSuccessorSpecs": [
         "spec/slopbot/appeals.md",
         "spec/slopbot/closure.md",
-        "spec/slopbot/review.md"
+        "spec/slopbot/review.md",
+        "spec/slopbot/valueInference.md"
       ]
     },
     {
@@ -15491,7 +15509,8 @@
       "candidateSuccessorSpecs": [
         "spec/slopbot/appeals.md",
         "spec/slopbot/closure.md",
-        "spec/slopbot/review.md"
+        "spec/slopbot/review.md",
+        "spec/slopbot/valueInference.md"
       ]
     },
     {
@@ -15586,7 +15605,8 @@
       "candidateSuccessorSpecs": [
         "spec/slopbot/appeals.md",
         "spec/slopbot/closure.md",
-        "spec/slopbot/review.md"
+        "spec/slopbot/review.md",
+        "spec/slopbot/webhookDelivery.md"
       ]
     },
     {
@@ -22705,7 +22725,8 @@
         "spec/frontend/requests.md",
         "spec/frontend/navigation.md",
         "spec/frontend/drafts.md",
-        "spec/composition.md"
+        "spec/composition.md",
+        "spec/frontend/rankedSnapshot.md"
       ]
     },
     {

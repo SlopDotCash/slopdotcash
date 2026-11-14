@@ -186,7 +186,8 @@
       "sourceText": "### Wallet registration and recovery\n\nA user may add EVM and Solana payout wallets. Record walletless awards against the account. Require a verified wallet only for payment.\n\nBind a wallet with both authenticated account evidence and the destination wallet's signature. Neither proof establishes the other identity. Changed or recovered wallets activate immediately after these proofs. There is no waiting period.\n\nKeep the current verified wallet active until the replacement wallet signs its authorization. Preserve the first-registration proof, pending attempts, uncertain attempts, and replay protection.\n\nRedirected recovery uses one operator: contact the operator by email, then complete the contributor-signed self-service flow. The operator gains no signing or payment authority. Retain historical recovery records; retire the unused admin wallet-proposal endpoint.\n\nFor an unpaid private award, use explicit review and a successor payment request after a wallet change. Obtain renewed reporter consent. Retire or prove expiry of every prior signable request before presenting the replacement. Preserve paid legs. Deleting a database row never cancels an external transaction or permits a second payment.\n\n",
       "owners": [
         "spec/backend/wallets.md",
-        "spec/settlement/signer.md"
+        "spec/settlement/signer.md",
+        "spec/frontend/directBountyPrompt.md"
       ],
       "status": "source-preserved-domain-mapped",
       "implementationEvidence": "pending-implementation"
@@ -419,7 +420,8 @@
       "sourceEndLine": 388,
       "sourceText": "### SLOP buyback and burn\n\nOwner decision, 10 November 2026. Half of all fee income funds a programmatic buyback of SLOP, the Slop Cash token at `0xfeb4e36fa4a2a494ff25ae4a63491e4c584a67ae` on Robinhood Chain. This is 1% of an ordinary award or withdrawal and 12.5% of a private security bounty. The other half keeps the handling above. This section supersedes \"never converts or bridges\" for the buyback share only.\n\n- **BUY-01 — Share.** Count verified fee income from an activation instant: finalized conversions into USDC, finalized USDC fee claims, and completed direct-award fees. The buyback may take at most the floor of half of that cumulative total, less every amount already committed. A fee in another token counts once, as its conversion output. Earlier income never counts. A retry, restart, or repeated run must not take a share twice.\n- **BUY-02 — Bridge.** On Base, Ethereum, and Solana, bridge the buyback share of USDC to the Robinhood Chain fee wallet as Paxos USDG through one deBridge DLN order at a time. Before signing, verify the exact amount, asset, destination chain, and the fee wallet as receiver, order authority, and refund beneficiary. Refuse any external call, affiliate fee, unknown reserved taker, or unchecked byte. Refuse an order below the minimum value or above the cost limit. On EVM, approve exactly the order amount to the pinned bridge contract first.\n- **BUY-03 — Arrival.** Credit an arrival once, from the order's fulfilled status at a finalized Robinhood Chain block. Release a deposit only after a proven refund. A deposit without either stays in transit. The Worker never cancels an order. Report an order that stays unfilled; cancellation is an owner action.\n- **BUY-04 — Purchase.** On Robinhood Chain, claim accrued fees from reviewed vaults when the buyback is active. Spend each proven arrival in full, and each fee received there at the buyback share, on SLOP through the approved swap route with output to the same fee wallet. Apply the purchase limits for minimum value, slippage, price impact, and value per run and day. The retained half of a Robinhood fee stays unconverted. SLOP received as a fee needs no purchase: its buyback share counts as acquired.\n- **BUY-05 — Burn.** Keep purchased SLOP in the Robinhood Chain fee wallet. Send half of all SLOP acquired, rounded down and less every burn already committed, to `0x000000000000000000000000000000000000dEaD`. The retained half is never burned again. SLOP has no holder burn function, so `totalSupply` does not fall; the burn address balance is the public record. A paused token waits.\n- **BUY-06 — Records.** Journal every approval, order, purchase, and burn before broadcast in the existing fee journal. Record one finalized outcome per send and one proven outcome per deposit. Mark a state final only from finalized evidence. Show the ledger in the private administrator report.\n- **BUY-07 — Activation.** The buyback has its own mode, off by default. A live buyback needs a live converter, Robinhood Chain enabled with its key and native limits, and every limit set explicitly. Source approval does not activate it.\n\n| Limit | Value |\n| --- | --- |\n| Buyback share of fee income | 50% |\n| Burn share of acquired SLOP | 50% |\n| Minimum bridge order | 500 USDC |\n| Maximum bridge cost: spread, fixed protocol fee, and network fee | 1.5% of the order |\n| Fixed protocol fee ceiling, Base and Ethereum | 0.001 ETH per order |\n| Solana order native ceiling: order-account rent, fixed fee, and network fee | 0.05 SOL per order, 0.1 SOL per UTC day |\n| Minimum purchase and minimum burn | 25 USDG and 5 USDG of value |\n| Purchase slippage and price impact | 1% and 3% |\n| Bridge and purchase value | 1,000 per run and 5,000 per rolling 24 hours, per network and leg |\n\nThe owner confirmed these values on 10 November 2026, and confirmed that the burn takes half of the SLOP the buyback acquired, once. Confirmation did not activate the buyback. Operator decision, 12 November 2026: the production buyback is live and counts fee income from `2026-11-12T00:00:00.000Z`; staging stays off. The Solana order ceiling is separate from the fee-conversion native budget.\n\nThe buyback trusts the pinned deBridge contracts and program, the pinned swap router, and the SLOP token, whose owner can pause and mint. It measures price impact from the aggregator's own prices. A hot fee-wallet key can sign any transaction from its wallet; the checks above bound what the Worker signs, not what a stolen key can do. Do not describe the buyback as guaranteed, and do not publish a burn before its finalized receipt.\n\n",
       "owners": [
-        "spec/fees/buyback.md"
+        "spec/fees/buyback.md",
+        "spec/fees/directBountyIncome.md"
       ],
       "status": "source-preserved-domain-mapped",
       "implementationEvidence": "pending-implementation"
@@ -461,7 +463,8 @@
         "spec/points/journal.md",
         "spec/points/authorship.md",
         "spec/slopbot/valueInference.md",
-        "spec/points/recovery.md"
+        "spec/points/recovery.md",
+        "spec/frontend/rankedSnapshot.md"
       ],
       "status": "source-preserved-domain-mapped",
       "implementationEvidence": "pending-implementation"
@@ -477,7 +480,8 @@
         "spec/points/journal.md",
         "spec/points/corrections.md",
         "spec/points/publication.md",
-        "spec/points/recovery.md"
+        "spec/points/recovery.md",
+        "spec/frontend/rankedSnapshot.md"
       ],
       "status": "source-preserved-domain-mapped",
       "implementationEvidence": "pending-implementation"
@@ -509,7 +513,8 @@
         "spec/backend/listing.md",
         "spec/frontend/presentation.md",
         "spec/points/publication.md",
-        "spec/points/recovery.md"
+        "spec/points/recovery.md",
+        "spec/frontend/rankedSnapshot.md"
       ],
       "status": "source-preserved-domain-mapped",
       "implementationEvidence": "pending-implementation"
@@ -572,7 +577,8 @@
       "sourceText": "### Researcher journey\n\n1. Open a project's confidential-report entry or published bounty offer.\n2. Review scope, safe-test rules, funding status, and any gross, net, and Slop-share amounts.\n3. Sign in and write the affected component, source revision, impact, and safe reproduction evidence.\n4. Review the exact report, eligibility, and privacy terms, then submit.\n5. Receive a durable Slop receipt in Inbox.\n6. Follow screening and human review; provide requested information or appeal privately.\n7. If awarded, confirm the payment destination and follow funding and payment progress.\n8. Track remediation and any separately approved disclosure.\n\nAny registered user may report to a registered project, including one without a bounty. Use the primary repository if no intake repository is set. An unpaid intake promises no award. Uncertain eligibility never justifies a public issue or induced loss.\n\n",
       "owners": [
         "spec/security/intake.md",
-        "spec/frontend/drafts.md"
+        "spec/frontend/drafts.md",
+        "spec/security/forwarding.md"
       ],
       "status": "source-preserved-domain-mapped",
       "implementationEvidence": "pending-implementation"
@@ -599,7 +605,8 @@
       "owners": [
         "spec/security/cases.md",
         "spec/security/intake.md",
-        "spec/security/screening.md"
+        "spec/security/screening.md",
+        "spec/security/forwarding.md"
       ],
       "status": "source-preserved-domain-mapped",
       "implementationEvidence": "pending-implementation"
@@ -614,7 +621,9 @@
         "spec/security/cases.md",
         "spec/settlement/payment.md",
         "spec/security/terms.md",
-        "spec/settlement/directBounty.md"
+        "spec/settlement/directBounty.md",
+        "spec/fees/directBountyIncome.md",
+        "spec/frontend/directBountyPrompt.md"
       ],
       "status": "source-preserved-domain-mapped",
       "implementationEvidence": "pending-implementation"
