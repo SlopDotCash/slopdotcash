@@ -66,6 +66,8 @@ pure val totalValues = Set(List(0), List(1), List(10), List(0, 1))
 pure val weightsValues = Set(List(), List({ actor: 1, weight: List(1) }),
   List({ actor: 1, weight: List(1) }, { actor: 2, weight: List(3) }),
   List({ actor: 2, weight: List(5, 1) }, { actor: 1, weight: List(5, 1) }, { actor: 3, weight: List(0) }))
+pure def lawAllocatedSharesValid(total: M::Amount, weights: List[Weight]): bool =
+  canAllocate(total, weights) implies allocateAmounts(total, weights).every(s => M::validAmount(s.amount))
 pure def lawAllocationConserves(total: M::Amount, weights: List[Weight]): bool = canAllocate(total, weights) implies
   M::equalAmounts(allocatedTotal(allocateAmounts(total, weights)), total)
 pure def lawSingleRecipient(total: M::Amount, actor: int): bool = (M::validAmount(total) and actor > 0) implies
