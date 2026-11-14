@@ -1,0 +1,11 @@
+{
+  "initialCommit": "8cd5b6b2c402ea3fa3157e6e927acf03a28fe8e1",
+  "qualification": "These template inputs were unchanged through the run. The greeting is the only handwritten application proof unit. The root spec snapshot covers the generated units.",
+  "unchangedTemplateInputs": {
+    "apps/app/src/greeting.ts": "ae92e4d28f44c2f16b6e8eebca4582e14513c9a662c94542d60b8843bc49109a",
+    "apps/app/src/greeting.proof.dfy": "e80553bcafc001f75df5a0aa1b69eb6542007d6acf196efbcc2e06753bdccec9",
+    "vibestack/proof/lib.dfy": "4c9f8dcbd9918f7d4b282ad9531b4cf0096ea389c015149b1786d0fe4ebd8e29",
+    "spec/lock.json": "9341019b06604a745ebe0ba4caafcfdfb7c5ec5228e13f7e8615623f92f02bb3",
+    "pnpm-lock.yaml": "faf80406c33a10daf9dd3fea86f151b2ecad21573b3271d27ebf2e8785fae18d"
+  }
+}

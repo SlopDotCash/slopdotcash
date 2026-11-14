@@ -473,7 +473,7 @@
       "exhausted": [],
       "source": "spec/operations/backup.md",
       "sourceSha256": "d24dc961e524112ffa9aad9e8942e588b09dfb03e475755fff5285c94e19b93d",
-      "proofFile": "spec/operations/backup.proof.dfy",
+      "proofFile": null,
       "proofSha256": null,
       "sourceCurrent": true,
       "dependencies": [],
