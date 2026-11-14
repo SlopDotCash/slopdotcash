@@ -116,15 +116,29 @@ export function VaultActions({
   connectedWallet,
   payoutPolicy = "ordinary",
   canDeposit = true,
+  provisional = false,
   onFinalized,
+  onWallet,
+  onBusy,
 }: {
   projectId: string;
   deployment: EscrowDeployment;
   connectedWallet?: VaultConnection;
   payoutPolicy?: PayoutPolicy;
   canDeposit?: boolean;
+  /**
+   * The vault's creation is in a block that is not final and the vault is not
+   * registered yet. Its owner may deposit now; the vault is read at the latest
+   * block and a deposit still counts only from finalized evidence.
+   */
+  provisional?: boolean;
   onFinalized: () => void;
+  /** The wallet this form uses, so a later form for the same vault can keep it. */
+  onWallet?: (wallet: VaultConnection | null) => void;
+  /** True while an owner action, such as a wallet request, is running. */
+  onBusy?: (busy: boolean) => void;
 }) {
+  const evidence = provisional ? "latest" : "finalized";
   const family = ESCROW_NETWORKS[deployment.network].family;
   const solana = family === "solana";
   const sameWallet = (a: string, b: string) => sameWalletAddress(family, a, b);
@@ -174,6 +188,19 @@ export function VaultActions({
       errorMessage(caught, "The wallet request failed."),
     );
   };
+  const reportWallet = useRef(onWallet);
+  const reportBusy = useRef(onBusy);
+  useLayoutEffect(() => {
+    reportWallet.current = onWallet;
+    reportBusy.current = onBusy;
+  });
+  useEffect(() => {
+    reportWallet.current?.(wallet);
+  }, [wallet]);
+  useEffect(() => {
+    reportBusy.current?.(busy);
+    return () => reportBusy.current?.(false);
+  }, [busy]);
   const connect = (provider: PayoutWallet) =>
     run(async () => {
       const connection = await provider.connect();
@@ -181,6 +208,12 @@ export function VaultActions({
       if (pending && !sameWallet(connection.address, pending.wallet))
         throw new Error(
           `Reconnect the wallet that submitted this action: ${pending.wallet}`,
+        );
+      // The owner's own later transaction cannot be mined before the creation
+      // it follows, so only the owner funds a vault that is not registered yet.
+      if (provisional && !sameWallet(connection.address, deployment.owner))
+        throw new Error(
+          "Connect the wallet that created this vault. Other wallets can deposit once it is registered.",
         );
       if (
         !canDeposit &&
@@ -216,6 +249,7 @@ export function VaultActions({
             operation,
             amount,
             payoutPolicy,
+            evidence,
           );
       if (mounted.current) setReview(result);
     });
@@ -290,6 +324,7 @@ export function VaultActions({
             amount,
             beforeSend,
             payoutPolicy,
+            evidence,
           );
         } else {
           hash = await sendVaultAction(
@@ -300,6 +335,7 @@ export function VaultActions({
             step,
             beforeSend,
             payoutPolicy,
+            evidence,
           );
         }
         // A batch returns the wallet's reference, not a transaction hash.
@@ -347,6 +383,8 @@ export function VaultActions({
       }
     });
   const checking = useRef(false);
+  /** Whether the notice now says the transfer was received but is not final. */
+  const receivedShown = useRef(false);
   /**
    * Reads the chain for the pending request. An automatic check signs nothing,
    * shows no busy state and leaves the notice alone while the result is pending.
@@ -367,7 +405,9 @@ export function VaultActions({
       let result:
         | "pending"
         | "not-sent"
+        | "received"
         | "failed"
+        | "no-vault"
         | "approval-confirmed"
         | "finalized";
       if (pending.step === "batch") {
@@ -397,12 +437,14 @@ export function VaultActions({
             stored = updatePendingRecord(key, captured, named);
           } catch {
             // Storage refused the write; this view still names the transaction.
-            if (result === "pending") setPending(named);
+            if (result === "pending" || result === "received")
+              setPending(named);
           }
           if (stored) {
             captured = named;
             storedPending.current = named;
-            if (result === "pending") setPending(named);
+            if (result === "pending" || result === "received")
+              setPending(named);
           }
         }
       } else {
@@ -429,11 +471,27 @@ export function VaultActions({
             );
         if (!mounted.current) return;
       }
-      if (result === "pending") {
+      if (result === "pending" || result === "received") {
+        // Included in a canonical block but not final: say it arrived, keep
+        // the saved request and keep checking. It counts only once final.
+        const network = networkLabel(deployment.network);
+        const receivedNotice = `${pending.operation === "deposit" ? "Deposit received" : "Withdrawal sent"} in a ${network} block. It counts once ${network} finalizes that block, usually within 20 minutes; you can leave this page. ${hash}`;
+        const waitingNotice =
+          fromWallet || pending.batchId
+            ? "Submitted. Waiting for finalized chain evidence."
+            : "Waiting for finalized chain evidence.";
         if (automatic) {
           // The check works again: withdraw the error an earlier one showed.
           if (autoErrored.current) setError(null);
           autoErrored.current = false;
+          if (result === "received") {
+            receivedShown.current = true;
+            setNotice(receivedNotice);
+          } else if (receivedShown.current) {
+            // The block that carried it was replaced; it is pending again.
+            receivedShown.current = false;
+            setNotice(waitingNotice);
+          }
           return;
         }
         if (!fromWallet && hash) {
@@ -459,13 +517,11 @@ export function VaultActions({
           storedPending.current = candidate;
           setPending(candidate);
         }
-        setNotice(
-          fromWallet || pending.batchId
-            ? "Submitted. Waiting for finalized chain evidence."
-            : "Waiting for finalized chain evidence.",
-        );
+        receivedShown.current = result === "received";
+        setNotice(result === "received" ? receivedNotice : waitingNotice);
         return;
       }
+      receivedShown.current = false;
       clear(captured);
       setRecoveryHash("");
       setReview(null);
@@ -474,6 +530,10 @@ export function VaultActions({
       if (result === "failed")
         setNotice(
           "The transaction failed. Review the amount and wallet, then retry.",
+        );
+      else if (result === "no-vault")
+        setNotice(
+          "The vault was not on chain in the block that confirmed this transaction, so no tokens moved. Review the deposit again once the vault is confirmed.",
         );
       else if (result === "not-sent")
         setNotice(
@@ -494,6 +554,7 @@ export function VaultActions({
           "deposit",
           pending.amount,
           payoutPolicy,
+          evidence,
         ).catch(() => null);
         if (mounted.current && next && storedPending.current === null)
           setReview(next);
@@ -664,7 +725,9 @@ export function VaultActions({
               <legend>Action</legend>
               {(isOwner
                 ? canDeposit
-                  ? (["deposit", "withdraw"] as const)
+                  ? provisional
+                    ? (["deposit"] as const)
+                    : (["deposit", "withdraw"] as const)
                   : (["withdraw"] as const)
                 : canDeposit
                   ? (["deposit"] as const)

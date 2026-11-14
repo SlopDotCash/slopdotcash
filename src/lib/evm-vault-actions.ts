@@ -17,6 +17,12 @@ import type { PayoutWallet } from "./use-payout-wallets";
 
 export type VaultConnection = Awaited<ReturnType<PayoutWallet["connect"]>>;
 export type VaultOperation = "deposit" | "withdraw";
+/**
+ * The block a funding form reads the vault at. A registered vault is read at
+ * the finalized block. A vault whose creation is included but not final exists
+ * only at "latest"; that read shows the form and never counts funds.
+ */
+export type VaultEvidence = "finalized" | "latest";
 const tokenAbi = parseAbi([
   "function balanceOf(address) view returns (uint256)",
   "function allowance(address,address) view returns (uint256)",
@@ -128,14 +134,27 @@ export async function reviewVaultAction(
   operation: VaultOperation,
   amount: string,
   payoutPolicy: PayoutPolicy = "ordinary",
+  evidence: VaultEvidence = "finalized",
 ) {
   const config = walletVaultConfig(deployment, wallet, payoutPolicy);
   await assertVaultWalletAccount(wallet, config);
-  await verifyEvmDeployment(config);
-  const totals = await readVaultTotals({
-    ...config,
-    network: deployment.network,
-  });
+  // A vault that is not registered yet takes only its owner's deposits of its
+  // token. The owner's deposit follows the creation in the same account, so
+  // it cannot be mined without it; a withdrawal needs finalized funds; and
+  // native ETH sent to an address whose creation is later replaced would not
+  // be credited.
+  if (
+    evidence === "latest" &&
+    (operation !== "deposit" ||
+      deployment.asset.toLowerCase() === EVM_NATIVE_ASSET ||
+      wallet.address.toLowerCase() !== deployment.owner.toLowerCase())
+  )
+    throw new Error("Wait until the vault is registered.");
+  await verifyEvmDeployment(config, evidence);
+  const totals = await readVaultTotals(
+    { ...config, network: deployment.network },
+    evidence,
+  );
   const gross = parseVaultAmount(amount, totals.decimals);
   if (totals.asset.toLowerCase() !== deployment.asset.toLowerCase())
     throw new Error("The vault asset changed. Reload the project.");
@@ -218,6 +237,7 @@ export async function sendVaultAction(
   step: "approve" | "reset" | "send",
   beforeSend: () => void,
   payoutPolicy: PayoutPolicy = "ordinary",
+  evidence: VaultEvidence = "finalized",
 ) {
   const review = await reviewVaultAction(
     deployment,
@@ -225,6 +245,7 @@ export async function sendVaultAction(
     operation,
     amount,
     payoutPolicy,
+    evidence,
   );
   const request = wallet.evmRequest;
   if (!request) throw new Error("Choose an EVM wallet.");
@@ -282,6 +303,7 @@ export async function sendVaultBatch(
   amount: string,
   beforeSend: () => void,
   payoutPolicy: PayoutPolicy = "ordinary",
+  evidence: VaultEvidence = "finalized",
 ) {
   const review = await reviewVaultAction(
     deployment,
@@ -289,6 +311,7 @@ export async function sendVaultBatch(
     "deposit",
     amount,
     payoutPolicy,
+    evidence,
   );
   const request = wallet.evmRequest;
   if (!request) throw new Error("Choose an EVM wallet.");
@@ -352,7 +375,13 @@ export async function checkVaultBatch(
   transactionId: string | null,
   payoutPolicy: PayoutPolicy = "ordinary",
 ): Promise<{
-  status: "pending" | "not-sent" | "failed" | "finalized";
+  status:
+    | "pending"
+    | "not-sent"
+    | "received"
+    | "failed"
+    | "no-vault"
+    | "finalized";
   transactionId: string | null;
 }> {
   const request = wallet.evmRequest;
@@ -398,7 +427,8 @@ export async function checkVaultBatch(
     hash,
     "finalized",
   );
-  if (settled !== "finalized") return { status: settled, transactionId: hash };
+  if (settled === "pending" || settled === "failed")
+    return { status: settled, transactionId: hash };
   const depositor = `0x${wallet.address.slice(2).toLowerCase().padStart(64, "0")}`;
   // A shared transaction may contain other wallets' deposits. Keep every
   // deposit by this wallet so an ambiguous own receipt still fails closed.
@@ -408,6 +438,18 @@ export async function checkVaultBatch(
       log.topics[0]?.toLowerCase() === EVM_ESCROW_EVENT_TOPICS.Deposited &&
       log.topics[1]?.toLowerCase() === depositor,
   );
+  // Before finality the batch is only reported as received when it carries
+  // this wallet's one deposit event; the final check below proves the amount.
+  if (settled === "included")
+    return {
+      status: events.length === 1 ? "received" : "pending",
+      transactionId: hash,
+    };
+  if (
+    events.length === 0 &&
+    (await vaultAbsentAt(request, deployment, receipt))
+  )
+    return { status: "no-vault", transactionId: hash };
   if (events.length !== 1)
     throw new Error("This transaction does not match the request.");
   await verifyVaultFundingAction(
@@ -458,7 +500,8 @@ export async function checkVaultAction(
     // a reorganized approval makes the deposit fail before the wallet prompt.
     step === "send" ? "finalized" : "included",
   );
-  if (checked.status !== "finalized") return checked.status;
+  if (checked.status !== "finalized" && checked.status !== "included")
+    return checked.status;
   const receipt = checked.receipt;
   if (step !== "send") return "approval-confirmed";
   const topic =
@@ -470,6 +513,21 @@ export async function checkVaultAction(
       log.address.toLowerCase() === deployment.vault.toLowerCase() &&
       log.topics[0]?.toLowerCase() === topic,
   );
+  // Only a transfer of funds reads "finalized" evidence, so only it can report
+  // "received": included in a canonical block, waiting for finality to count.
+  // It must carry the vault's own event: a call to an address that has no
+  // vault code succeeds and moves nothing, and is never reported as received.
+  if (checked.status === "included")
+    return events.length === 1 ? ("received" as const) : ("pending" as const);
+  if (
+    events.length === 0 &&
+    (await vaultAbsentAt(
+      wallet.evmRequest as NonNullable<VaultConnection["evmRequest"]>,
+      deployment,
+      receipt,
+    ))
+  )
+    return "no-vault" as const;
   if (events.length !== 1)
     throw new Error("This transaction does not match the request.");
   await verifyVaultFundingAction(
@@ -535,8 +593,24 @@ export async function readFinalizedWalletTransaction(
   );
   if (settled === "pending")
     return { status: "pending" as const, receipt: null };
+  if (settled === "included") return { status: "included" as const, receipt };
   if (settled === "failed") return { status: "failed" as const, receipt };
   return { status: "finalized" as const, receipt };
+}
+
+/**
+ * True when the vault address held no code in the block of this finalized
+ * receipt: the vault's creation was replaced, so the call moved nothing.
+ */
+async function vaultAbsentAt(
+  request: NonNullable<VaultConnection["evmRequest"]>,
+  deployment: EscrowDeployment,
+  receipt: WalletReceipt,
+) {
+  return (
+    (await request("eth_getCode", [deployment.vault, receipt.blockNumber])) ===
+    "0x"
+  );
 }
 
 type WalletReceipt = {
@@ -552,14 +626,14 @@ async function settleWalletReceipt(
   receipt: WalletReceipt,
   transactionId: string,
   evidence: "finalized" | "included",
-): Promise<"pending" | "failed" | "finalized"> {
+): Promise<"pending" | "included" | "failed" | "finalized"> {
+  let final = true;
   if (evidence === "finalized") {
     const finalized = (await request("eth_getBlockByNumber", [
       "finalized",
       false,
     ])) as { number: string };
-    if (BigInt(receipt.blockNumber) > BigInt(finalized.number))
-      return "pending";
+    final = BigInt(receipt.blockNumber) <= BigInt(finalized.number);
   }
   const block = (await request("eth_getBlockByNumber", [
     receipt.blockNumber,
@@ -570,9 +644,12 @@ async function settleWalletReceipt(
     receipt.transactionHash.toLowerCase() !== transactionId.toLowerCase()
   ) {
     // A block that is not final can still be replaced; ask again later.
-    if (evidence === "included") return "pending";
+    if (evidence === "included" || !final) return "pending";
     throw new Error("The transaction is not in the canonical finalized chain.");
   }
+  // Successful and in the canonical chain, but not final yet. It is reported so
+  // the owner sees the transfer arrived; it never counts as funding.
+  if (!final) return receipt.status === "0x1" ? "included" : "pending";
   if (receipt.status === "0x0") return "failed";
   if (receipt.status !== "0x1")
     throw new Error("The transaction status is not recognized.");
