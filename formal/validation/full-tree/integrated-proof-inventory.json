@@ -1,0 +1,663 @@
+{
+  "status": "partial",
+  "qualification": "Counts the baseline and focused exact-source unit results once. The old closure, reserve release and destination recovery proofs are replaced by results for the current models. Navigation index changes carry no obligations. Unproved clauses and missing verdicts remain open.",
+  "provedObligations": 2639,
+  "unprovedObligations": 67,
+  "unitsWithCounts": 69,
+  "unitsWithoutCounts": [
+    "fees__buyback.ts",
+    "settlement__referralAccrual.ts",
+    "settlement__referralPublication.ts"
+  ],
+  "units": [
+    {
+      "unit": "access.ts",
+      "evidence": "formal/validation/full-tree/proof-checkpoint.json",
+      "total": 14,
+      "proved": 14,
+      "unproved": 0,
+      "errors": 0,
+      "resourceExhausted": 0
+    },
+    {
+      "unit": "app.ts",
+      "evidence": "formal/validation/full-tree/proof-checkpoint.json",
+      "total": 6,
+      "proved": 6,
+      "unproved": 0,
+      "errors": 0,
+      "resourceExhausted": 0
+    },
+    {
+      "unit": "backend__email.ts",
+      "evidence": "formal/validation/full-tree/proof-checkpoint.json",
+      "total": 16,
+      "proved": 16,
+      "unproved": 0,
+      "errors": 0,
+      "resourceExhausted": 0
+    },
+    {
+      "unit": "backend__accounts.ts",
+      "evidence": "formal/validation/full-tree/proof-checkpoint.json",
+      "total": 217,
+      "proved": 217,
+      "unproved": 0,
+      "errors": 0,
+      "resourceExhausted": 0
+    },
+    {
+      "unit": "backend.ts",
+      "evidence": "formal/validation/full-tree/proof-checkpoint.json",
+      "total": 0,
+      "proved": 0,
+      "unproved": 0,
+      "errors": 0,
+      "resourceExhausted": 0
+    },
+    {
+      "unit": "backend__projects.ts",
+      "evidence": "formal/validation/full-tree/proof-checkpoint.json",
+      "total": 198,
+      "proved": 198,
+      "unproved": 0,
+      "errors": 0,
+      "resourceExhausted": 0
+    },
+    {
+      "unit": "backend__listing.ts",
+      "evidence": "formal/validation/full-tree/proof-checkpoint.json",
+      "total": 15,
+      "proved": 15,
+      "unproved": 0,
+      "errors": 0,
+      "resourceExhausted": 0
+    },
+    {
+      "unit": "backend__wallets.ts",
+      "evidence": "formal/validation/full-tree/proof-checkpoint.json",
+      "total": 90,
+      "proved": 90,
+      "unproved": 0,
+      "errors": 0,
+      "resourceExhausted": 0
+    },
+    {
+      "unit": "frontend__navigation.ts",
+      "evidence": "formal/validation/full-tree/proof-checkpoint.json",
+      "total": 10,
+      "proved": 10,
+      "unproved": 0,
+      "errors": 0,
+      "resourceExhausted": 0
+    },
+    {
+      "unit": "frontend__drafts.ts",
+      "evidence": "formal/validation/full-tree/proof-checkpoint.json",
+      "total": 18,
+      "proved": 18,
+      "unproved": 0,
+      "errors": 0,
+      "resourceExhausted": 0
+    },
+    {
+      "unit": "composition.ts",
+      "evidence": "formal/validation/full-tree/proof-checkpoint.json",
+      "total": 20,
+      "proved": 20,
+      "unproved": 0,
+      "errors": 0,
+      "resourceExhausted": 0
+    },
+    {
+      "unit": "contributor__evidence.ts",
+      "evidence": "formal/validation/full-tree/proof-checkpoint.json",
+      "total": 50,
+      "proved": 50,
+      "unproved": 0,
+      "errors": 0,
+      "resourceExhausted": 0
+    },
+    {
+      "unit": "contributor.ts",
+      "evidence": "formal/validation/full-tree/proof-checkpoint.json",
+      "total": 0,
+      "proved": 0,
+      "unproved": 0,
+      "errors": 0,
+      "resourceExhausted": 0
+    },
+    {
+      "unit": "contributor__installation.ts",
+      "evidence": "formal/validation/full-tree/proof-checkpoint.json",
+      "total": 72,
+      "proved": 72,
+      "unproved": 0,
+      "errors": 0,
+      "resourceExhausted": 0
+    },
+    {
+      "unit": "contributor__workflow.ts",
+      "evidence": "formal/validation/full-tree/proof-checkpoint.json",
+      "total": 38,
+      "proved": 38,
+      "unproved": 0,
+      "errors": 0,
+      "resourceExhausted": 0
+    },
+    {
+      "unit": "settlement__money.ts",
+      "evidence": "formal/validation/full-tree/proof-checkpoint.json",
+      "total": 9,
+      "proved": 5,
+      "unproved": 4,
+      "errors": 0,
+      "resourceExhausted": 1
+    },
+    {
+      "unit": "fees__buyback.ts",
+      "evidence": "formal/validation/full-tree/proof-checkpoint.json",
+      "total": null,
+      "proved": null,
+      "unproved": null,
+      "errors": null,
+      "resourceExhausted": null,
+      "boundedAttempt": "formal/validation/finance/buyback-proof.json"
+    },
+    {
+      "unit": "fees__conversion.ts",
+      "evidence": "formal/validation/full-tree/proof-checkpoint.json",
+      "total": 114,
+      "proved": 114,
+      "unproved": 0,
+      "errors": 0,
+      "resourceExhausted": 0
+    },
+    {
+      "unit": "fees.ts",
+      "evidence": "formal/validation/full-tree/proof-checkpoint.json",
+      "total": 0,
+      "proved": 0,
+      "unproved": 0,
+      "errors": 0,
+      "resourceExhausted": 0
+    },
+    {
+      "unit": "frontend.ts",
+      "evidence": "formal/validation/full-tree/proof-checkpoint.json",
+      "total": 0,
+      "proved": 0,
+      "unproved": 0,
+      "errors": 0,
+      "resourceExhausted": 0
+    },
+    {
+      "unit": "frontend__requests.ts",
+      "evidence": "formal/validation/full-tree/proof-checkpoint.json",
+      "total": 6,
+      "proved": 6,
+      "unproved": 0,
+      "errors": 0,
+      "resourceExhausted": 0
+    },
+    {
+      "unit": "frontend__presentation.ts",
+      "evidence": "formal/validation/full-tree/proof-checkpoint.json",
+      "total": 19,
+      "proved": 19,
+      "unproved": 0,
+      "errors": 0,
+      "resourceExhausted": 0
+    },
+    {
+      "unit": "frontend__projections.ts",
+      "evidence": "formal/validation/full-tree/proof-checkpoint.json",
+      "total": 12,
+      "proved": 12,
+      "unproved": 0,
+      "errors": 0,
+      "resourceExhausted": 0
+    },
+    {
+      "unit": "governance.ts",
+      "evidence": "formal/validation/full-tree/proof-checkpoint.json",
+      "total": 9,
+      "proved": 9,
+      "unproved": 0,
+      "errors": 0,
+      "resourceExhausted": 0
+    },
+    {
+      "unit": "index.ts",
+      "evidence": "formal/validation/full-tree/proof-checkpoint.json",
+      "total": 0,
+      "proved": 0,
+      "unproved": 0,
+      "errors": 0,
+      "resourceExhausted": 0
+    },
+    {
+      "unit": "operations__backup.ts",
+      "evidence": "formal/validation/full-tree/proof-checkpoint.json",
+      "total": 67,
+      "proved": 67,
+      "unproved": 0,
+      "errors": 0,
+      "resourceExhausted": 0
+    },
+    {
+      "unit": "operations.ts",
+      "evidence": "formal/validation/full-tree/proof-checkpoint.json",
+      "total": 0,
+      "proved": 0,
+      "unproved": 0,
+      "errors": 0,
+      "resourceExhausted": 0
+    },
+    {
+      "unit": "operations__local.ts",
+      "evidence": "formal/validation/full-tree/proof-checkpoint.json",
+      "total": 8,
+      "proved": 8,
+      "unproved": 0,
+      "errors": 0,
+      "resourceExhausted": 0
+    },
+    {
+      "unit": "operations__notifications.ts",
+      "evidence": "formal/validation/full-tree/proof-checkpoint.json",
+      "total": 50,
+      "proved": 50,
+      "unproved": 0,
+      "errors": 0,
+      "resourceExhausted": 0
+    },
+    {
+      "unit": "operations__release.ts",
+      "evidence": "formal/validation/full-tree/proof-checkpoint.json",
+      "total": 51,
+      "proved": 51,
+      "unproved": 0,
+      "errors": 0,
+      "resourceExhausted": 0
+    },
+    {
+      "unit": "points__allocation.ts",
+      "evidence": "formal/validation/full-tree/proof-checkpoint.json",
+      "total": 4,
+      "proved": 4,
+      "unproved": 0,
+      "errors": 0,
+      "resourceExhausted": 0
+    },
+    {
+      "unit": "points__authorship.ts",
+      "evidence": "formal/validation/full-tree/proof-checkpoint.json",
+      "total": 30,
+      "proved": 30,
+      "unproved": 0,
+      "errors": 0,
+      "resourceExhausted": 0
+    },
+    {
+      "unit": "points__census.ts",
+      "evidence": "formal/validation/full-tree/proof-checkpoint.json",
+      "total": 58,
+      "proved": 58,
+      "unproved": 0,
+      "errors": 0,
+      "resourceExhausted": 0
+    },
+    {
+      "unit": "points.ts",
+      "evidence": "formal/validation/full-tree/proof-checkpoint.json",
+      "total": 0,
+      "proved": 0,
+      "unproved": 0,
+      "errors": 0,
+      "resourceExhausted": 0
+    },
+    {
+      "unit": "points__journal.ts",
+      "evidence": "formal/validation/full-tree/proof-checkpoint.json",
+      "total": 26,
+      "proved": 26,
+      "unproved": 0,
+      "errors": 0,
+      "resourceExhausted": 0
+    },
+    {
+      "unit": "points__penalties.ts",
+      "evidence": "formal/validation/full-tree/proof-checkpoint.json",
+      "total": 30,
+      "proved": 30,
+      "unproved": 0,
+      "errors": 0,
+      "resourceExhausted": 0
+    },
+    {
+      "unit": "points__reviews.ts",
+      "evidence": "formal/validation/full-tree/proof-checkpoint.json",
+      "total": 12,
+      "proved": 12,
+      "unproved": 0,
+      "errors": 0,
+      "resourceExhausted": 0
+    },
+    {
+      "unit": "security__enforcement.ts",
+      "evidence": "formal/validation/full-tree/proof-checkpoint.json",
+      "total": 146,
+      "proved": 146,
+      "unproved": 0,
+      "errors": 0,
+      "resourceExhausted": 0
+    },
+    {
+      "unit": "projectComposition.ts",
+      "evidence": "formal/validation/full-tree/proof-checkpoint.json",
+      "total": 3,
+      "proved": 3,
+      "unproved": 0,
+      "errors": 0,
+      "resourceExhausted": 0
+    },
+    {
+      "unit": "security__admission.ts",
+      "evidence": "formal/validation/full-tree/proof-checkpoint.json",
+      "total": 57,
+      "proved": 57,
+      "unproved": 0,
+      "errors": 0,
+      "resourceExhausted": 0
+    },
+    {
+      "unit": "security__cases.ts",
+      "evidence": "formal/validation/full-tree/proof-checkpoint.json",
+      "total": 130,
+      "proved": 130,
+      "unproved": 0,
+      "errors": 0,
+      "resourceExhausted": 0
+    },
+    {
+      "unit": "security__evidence.ts",
+      "evidence": "formal/validation/full-tree/proof-checkpoint.json",
+      "total": 54,
+      "proved": 54,
+      "unproved": 0,
+      "errors": 0,
+      "resourceExhausted": 0
+    },
+    {
+      "unit": "security.ts",
+      "evidence": "formal/validation/full-tree/proof-checkpoint.json",
+      "total": 0,
+      "proved": 0,
+      "unproved": 0,
+      "errors": 0,
+      "resourceExhausted": 0
+    },
+    {
+      "unit": "security__intake.ts",
+      "evidence": "formal/validation/full-tree/proof-checkpoint.json",
+      "total": 57,
+      "proved": 57,
+      "unproved": 0,
+      "errors": 0,
+      "resourceExhausted": 0
+    },
+    {
+      "unit": "security__privacy.ts",
+      "evidence": "formal/validation/full-tree/proof-checkpoint.json",
+      "total": 12,
+      "proved": 12,
+      "unproved": 0,
+      "errors": 0,
+      "resourceExhausted": 0
+    },
+    {
+      "unit": "security__terms.ts",
+      "evidence": "formal/validation/full-tree/proof-checkpoint.json",
+      "total": 5,
+      "proved": 5,
+      "unproved": 0,
+      "errors": 0,
+      "resourceExhausted": 0
+    },
+    {
+      "unit": "settlement__allocation.ts",
+      "evidence": "formal/validation/full-tree/proof-checkpoint.json",
+      "total": 2,
+      "proved": 0,
+      "unproved": 2,
+      "errors": 0,
+      "resourceExhausted": 2
+    },
+    {
+      "unit": "settlement__vault.ts",
+      "evidence": "formal/validation/full-tree/proof-checkpoint.json",
+      "total": 30,
+      "proved": 15,
+      "unproved": 15,
+      "errors": 0,
+      "resourceExhausted": 0
+    },
+    {
+      "unit": "settlement__payment.ts",
+      "evidence": "formal/validation/full-tree/proof-checkpoint.json",
+      "total": 90,
+      "proved": 87,
+      "unproved": 3,
+      "errors": 0,
+      "resourceExhausted": 0
+    },
+    {
+      "unit": "settlement__composition.ts",
+      "evidence": "formal/validation/full-tree/proof-checkpoint.json",
+      "total": 38,
+      "proved": 32,
+      "unproved": 6,
+      "errors": 0,
+      "resourceExhausted": 4
+    },
+    {
+      "unit": "settlement__contributorAllocation.ts",
+      "evidence": "formal/validation/full-tree/proof-checkpoint.json",
+      "total": 32,
+      "proved": 32,
+      "unproved": 0,
+      "errors": 0,
+      "resourceExhausted": 0
+    },
+    {
+      "unit": "settlement.ts",
+      "evidence": "formal/validation/full-tree/proof-checkpoint.json",
+      "total": 0,
+      "proved": 0,
+      "unproved": 0,
+      "errors": 0,
+      "resourceExhausted": 0
+    },
+    {
+      "unit": "settlement__monthly.ts",
+      "evidence": "formal/validation/full-tree/proof-checkpoint.json",
+      "total": 73,
+      "proved": 68,
+      "unproved": 5,
+      "errors": 0,
+      "resourceExhausted": 1
+    },
+    {
+      "unit": "settlement__referralAccrual.ts",
+      "evidence": "formal/validation/full-tree/proof-checkpoint.json",
+      "total": null,
+      "proved": null,
+      "unproved": null,
+      "errors": null,
+      "resourceExhausted": null
+    },
+    {
+      "unit": "settlement__referralDistributor.ts",
+      "evidence": "formal/validation/full-tree/proof-checkpoint.json",
+      "total": 146,
+      "proved": 124,
+      "unproved": 22,
+      "errors": 0,
+      "resourceExhausted": 0
+    },
+    {
+      "unit": "settlement__referrals.ts",
+      "evidence": "formal/validation/full-tree/proof-checkpoint.json",
+      "total": 6,
+      "proved": 6,
+      "unproved": 0,
+      "errors": 0,
+      "resourceExhausted": 0
+    },
+    {
+      "unit": "settlement__referralPublication.ts",
+      "evidence": "formal/validation/full-tree/proof-checkpoint.json",
+      "total": null,
+      "proved": null,
+      "unproved": null,
+      "errors": null,
+      "resourceExhausted": null
+    },
+    {
+      "unit": "settlement__signer.ts",
+      "evidence": "formal/validation/full-tree/proof-checkpoint.json",
+      "total": 19,
+      "proved": 19,
+      "unproved": 0,
+      "errors": 0,
+      "resourceExhausted": 0
+    },
+    {
+      "unit": "slopbot__appeals.ts",
+      "evidence": "formal/validation/full-tree/proof-checkpoint.json",
+      "total": 34,
+      "proved": 34,
+      "unproved": 0,
+      "errors": 0,
+      "resourceExhausted": 0
+    },
+    {
+      "unit": "slopbot.ts",
+      "evidence": "formal/validation/full-tree/proof-checkpoint.json",
+      "total": 0,
+      "proved": 0,
+      "unproved": 0,
+      "errors": 0,
+      "resourceExhausted": 0
+    },
+    {
+      "unit": "slopbot__review.ts",
+      "evidence": "formal/validation/full-tree/proof-checkpoint.json",
+      "total": 28,
+      "proved": 28,
+      "unproved": 0,
+      "errors": 0,
+      "resourceExhausted": 0
+    },
+    {
+      "unit": "apps-app-src-greeting.ts",
+      "evidence": "formal/validation/full-tree/proof-checkpoint.json",
+      "total": 1,
+      "proved": 1,
+      "unproved": 0,
+      "errors": 0,
+      "resourceExhausted": 0
+    },
+    {
+      "unit": "operations__localCommand.ts",
+      "evidence": "formal/validation/journeys/local-validator-proof.json",
+      "total": 26,
+      "proved": 26,
+      "unproved": 0,
+      "errors": 0,
+      "resourceExhausted": 0
+    },
+    {
+      "unit": "operations__localValidator.ts",
+      "evidence": "formal/validation/journeys/local-validator-proof.json",
+      "total": 50,
+      "proved": 50,
+      "unproved": 0,
+      "errors": 0,
+      "resourceExhausted": 0
+    },
+    {
+      "unit": "settlement__keeperRpc.ts",
+      "evidence": "formal/validation/journeys/keeper-delta-final.json",
+      "total": 16,
+      "proved": 16,
+      "unproved": 0,
+      "errors": 0,
+      "resourceExhausted": 0
+    },
+    {
+      "unit": "settlement__keeperDiagnostics.ts",
+      "evidence": "formal/validation/journeys/keeper-delta-final.json",
+      "total": 8,
+      "proved": 8,
+      "unproved": 0,
+      "errors": 0,
+      "resourceExhausted": 0
+    },
+    {
+      "unit": "settlement__keeperScan.ts",
+      "evidence": "formal/validation/journeys/keeper-delta-final.json",
+      "total": 16,
+      "proved": 16,
+      "unproved": 0,
+      "errors": 0,
+      "resourceExhausted": 0
+    },
+    {
+      "unit": "slopbot__closure.ts",
+      "evidence": "formal/validation/journeys/closure-final.json",
+      "total": 137,
+      "proved": 137,
+      "unproved": 0,
+      "errors": 0,
+      "resourceExhausted": 0
+    },
+    {
+      "unit": "settlement__reserveRelease.ts",
+      "evidence": "formal/validation/finance/reserve-release-signed-verification.json",
+      "total": 146,
+      "proved": 139,
+      "unproved": 7,
+      "errors": 0,
+      "resourceExhausted": 0
+    },
+    {
+      "unit": "settlement__recovery.ts",
+      "evidence": "formal/validation/finance/recovery-current.json",
+      "total": 20,
+      "proved": 20,
+      "unproved": 0,
+      "errors": 0,
+      "resourceExhausted": 0
+    },
+    {
+      "unit": "points__publication.ts",
+      "evidence": "formal/validation/points/publication-proof.json",
+      "total": 37,
+      "proved": 37,
+      "unproved": 0,
+      "errors": 0,
+      "resourceExhausted": 0
+    },
+    {
+      "unit": "points__corrections.ts",
+      "evidence": "formal/validation/points/baseline-proof.json",
+      "total": 18,
+      "proved": 15,
+      "unproved": 3,
+      "errors": 0,
+      "resourceExhausted": 0
+    }
+  ]
+}

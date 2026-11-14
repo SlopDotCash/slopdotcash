@@ -203,6 +203,13 @@ superseded by the signed-attempt correction below.
 [Buyback proof attempt](validation/finance/buyback-proof.json)
 [Proof stage inputs](validation/full-tree/proof-stage-inputs.json) · [Template inputs](validation/full-tree/template-inputs.json) · [Proof checkpoint](validation/full-tree/proof-checkpoint.json)
 
+The exact-source proof inventory includes each baseline or focused unit once.
+It records 2,639 discharged obligations and 67 open clauses across 69 of 72
+units. Buyback, referral accrual and referral publication lack a complete unit
+verdict in that inventory. The current proof result takes precedence where the
+underlying model changed. Sign-off and all open obligations remain pending.
+[Current proof inventory](validation/full-tree/integrated-proof-inventory.json)
+
 ## Additional source refinements
 
 The later-main review made journal publication and historical corrections
