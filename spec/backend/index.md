@@ -7,5 +7,6 @@ verification remain external evidence boundaries for the future shell.
 - [Accounts](./accounts.md)
 - [Wallets](./wallets.md)
 - [Email enrollment](./email.md)
+- [Custom referral name reservations](./referralCodes.md)
 - [Project registration](./projects.md)
 - [Project discovery placement](./listing.md)

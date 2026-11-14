@@ -355,7 +355,7 @@
     },
     {
       "path": "spec/backend/index.md",
-      "sha256": "fc9beb4a1efa2320d74decddbf7031a51f58974117d075b40bb6c66a3367871f",
+      "sha256": "962d985ac3e531ad65d3b0026c633f9d013505b0319fd4ce72f8f370230da2e8",
       "module": "backend",
       "stories": [],
       "rules": [],
@@ -374,12 +374,16 @@
           "line": 9
         },
         {
-          "target": "./projects.md",
+          "target": "./referralCodes.md",
           "line": 10
         },
         {
-          "target": "./listing.md",
+          "target": "./projects.md",
           "line": 11
+        },
+        {
+          "target": "./listing.md",
+          "line": 12
         }
       ]
     },
@@ -581,6 +585,69 @@
       "imports": [
         "backend__projects"
       ],
+      "references": []
+    },
+    {
+      "path": "spec/backend/referralCodes.md",
+      "sha256": "0d1ae80d41ef792ed38461d4945ebc1cab63e9628d317c2e0f0cc46dca660311",
+      "module": "backend__referralCodes",
+      "stories": [
+        {
+          "heading": "Story: Choose a name for a member's referral link",
+          "line": 12
+        },
+        {
+          "heading": "Story: Follow a referral link to the project form",
+          "line": 107
+        }
+      ],
+      "rules": [
+        {
+          "heading": "Story: Choose a name for a member's referral link / Write admission binds an authenticated member and the reviewed name bytes",
+          "line": 14,
+          "definitions": [
+            "NameEvidence",
+            "GitHubEvidence",
+            "Choice",
+            "CodeRecord",
+            "LinkRegistry",
+            "initial",
+            "byValues",
+            "nameValues",
+            "githubValues",
+            "weight_choose",
+            "recordFor",
+            "namesHeld",
+            "choice"
+          ]
+        },
+        {
+          "heading": "Story: Choose a name for a member's referral link / The reservation and change of active name commit together",
+          "line": 71,
+          "definitions": [
+            "canChoose",
+            "choose",
+            "activeKey",
+            "alwaysPairedOwnership",
+            "alwaysLifetimeLimit",
+            "alwaysActiveReserved",
+            "stepHoldingsGrow",
+            "retiredBy",
+            "sometimesReplacedLink",
+            "sometimesDistinctOwners"
+          ]
+        },
+        {
+          "heading": "Story: Follow a referral link to the project form / A current reservation resolves through current open membership",
+          "line": 109,
+          "definitions": [
+            "Lookup",
+            "Redirect",
+            "destination"
+          ]
+        }
+      ],
+      "imports": [],
       "references": []
     },
     {
@@ -853,8 +920,47 @@
       "references": []
     },
     {
+      "path": "spec/frontend/reportDetails.md",
+      "sha256": "81a1083797788bf1841a22e7b0a97793cca7cce03c956cc12e9454b8fee4c8f1",
+      "module": "frontend__reportDetails",
+      "stories": [
+        {
+          "heading": "Story: Open two authorized details and close either independently",
+          "line": 11
+        }
+      ],
+      "rules": [
+        {
+          "heading": "Story: Open two authorized details and close either independently / Private report IDs scope both heading references",
+          "line": 13,
+          "definitions": [
+            "HeadingKind",
+            "HeadingRef",
+            "DetailSet",
+            "emptyDetails",
+            "cardHeading",
+            "summaryHeading",
+            "lawHeadingReferencesDistinct"
+          ]
+        },
+        {
+          "heading": "Story: Open two authorized details and close either independently / An individual mount or close changes only its own submission",
+          "line": 31,
+          "definitions": [
+            "canOpenDetail",
+            "openDetail",
+            "canCloseDetail",
+            "closeDetail",
+            "lawCloseKeepsSibling"
+          ]
+        }
+      ],
+      "imports": [],
+      "references": []
+    },
+    {
       "path": "spec/composition.md",
-      "sha256": "694f43989f1b24381edb2e79cf3a78581eb02225a06a5d86ad14541921a9adec",
+      "sha256": "82c11e2a8b99c767d3ee721c80ebd06ac3e3a35a8b56a4d54e05476955d29018",
       "module": "composition",
       "stories": [
         {
@@ -883,8 +989,23 @@
           ]
         },
         {
+          "heading": "Story: Change accounts without disclosing the prior account's draft / Each mounted report must belong to the authorized current account lifetime",
+          "line": 32,
+          "definitions": [
+            "canOpenDetail",
+            "openDetail",
+            "canCloseDetail",
+            "closeDetail",
+            "alwaysDetailsOwned",
+            "stepAccountChangeClearsDetails",
+            "sometimesSiblingDetails",
+            "submissionValues",
+            "requestEpochValues"
+          ]
+        },
+        {
           "heading": "Story: Change accounts without disclosing the prior account's draft / Account changes erase drafts and preserve every child invariant",
-          "line": 31,
+          "line": 55,
           "definitions": [
             "alwaysSharedActor",
             "alwaysChildrenValid",
@@ -899,7 +1020,7 @@
         },
         {
           "heading": "Story: Change accounts without disclosing the prior account's draft / Simulation samples exercise missing, matching and conflicting evidence",
-          "line": 46,
+          "line": 70,
           "definitions": [
             "viaValues"
           ]
@@ -907,7 +1028,8 @@
       ],
       "imports": [
         "frontend__navigation",
-        "frontend__drafts"
+        "frontend__drafts",
+        "frontend__reportDetails"
       ],
       "references": []
     },
@@ -1179,7 +1301,7 @@
     },
     {
       "path": "spec/settlement/money.md",
-      "sha256": "cb766a9b5b99f5509da5478ca15ecbe1c77a09127956d9524e7447c7d0939978",
+      "sha256": "232b15ff434a1ea7aaaf385aeac05d0fad805b512ba7e0dba64fb6bd2819cbb4",
       "module": "settlement__money",
       "stories": [
         {
@@ -1188,11 +1310,11 @@
         },
         {
           "heading": "Story: Admit the exact supported token behavior",
-          "line": 76
+          "line": 114
         },
         {
           "heading": "Story: Multiply and divide full-width monetary values",
-          "line": 98
+          "line": 136
         }
       ],
       "rules": [
@@ -1218,8 +1340,18 @@
           ]
         },
         {
-          "heading": "Story: Preserve every base unit / Addition carries each limb and subtraction borrows each limb",
+          "heading": "Story: Preserve every base unit / Equivalent padded amounts have the same order against every other amount",
           "line": 38,
+          "definitions": [
+            "lawEqualSymmetric",
+            "lawEqualOrder",
+            "lawEqualSubstitution",
+            "lawZeroOrder"
+          ]
+        },
+        {
+          "heading": "Story: Preserve every base unit / Addition carries each limb and subtraction borrows each limb",
+          "line": 54,
           "definitions": [
             "addAmounts",
             "subtractAmounts",
@@ -1227,8 +1359,23 @@
           ]
         },
         {
+          "heading": "Story: Preserve every base unit / Carry and borrow preserve valid base-unit digits",
+          "line": 79,
+          "definitions": [
+            "lawAdditionValid",
+            "lawSubtractionValid"
+          ]
+        },
+        {
+          "heading": "Story: Preserve every base unit / Addition is independent of operand order",
+          "line": 93,
+          "definitions": [
+            "lawAddCommutative"
+          ]
+        },
+        {
           "heading": "Story: Preserve every base unit / Ordinary fees round upward and private splits require exact division",
-          "line": 63,
+          "line": 101,
           "definitions": [
             "ordinaryFee",
             "ordinaryNet",
@@ -1240,7 +1387,7 @@
         },
         {
           "heading": "Story: Admit the exact supported token behavior / Token-2022 admission permits only immutable metadata and immutable token ownership",
-          "line": 78,
+          "line": 116,
           "definitions": [
             "AssetKind",
             "token2022Admissible",
@@ -1249,7 +1396,7 @@
         },
         {
           "heading": "Story: Multiply and divide full-width monetary values / Multiplication accumulates shifted limb products without converting the amount to a number",
-          "line": 100,
+          "line": 138,
           "definitions": [
             "multiplySmall",
             "multiplyAmounts",
@@ -1259,7 +1406,7 @@
         },
         {
           "heading": "Story: Multiply and divide full-width monetary values / Long division chooses each quotient limb by ten fixed binary decisions",
-          "line": 121,
+          "line": 159,
           "definitions": [
             "quotientDigit",
             "divisionStep",
@@ -1272,7 +1419,7 @@
         },
         {
           "heading": "Story: Multiply and divide full-width monetary values / Full-width ordinary and private fee calculations conserve every base unit",
-          "line": 151,
+          "line": 189,
           "definitions": [
             "ordinaryFeeAmount",
             "ordinaryNetAmount",
@@ -1285,7 +1432,7 @@
         },
         {
           "heading": "Story: Multiply and divide full-width monetary values / Simulation samples exercise missing, matching and conflicting evidence",
-          "line": 167,
+          "line": 205,
           "definitions": [
             "assetValues",
             "decimalsValues",
@@ -1308,7 +1455,7 @@
     },
     {
       "path": "spec/fees/buyback.md",
-      "sha256": "d45d97d3353687f3a134c57b10daddd00d73285687035533e9e330d2a548c8e4",
+      "sha256": "6581b8900f4f1a293e05cdaa0bd2b194e0b29abb564894dd89c05c22931981c1",
       "module": "fees__buyback",
       "stories": [
         {
@@ -1321,7 +1468,7 @@
         },
         {
           "heading": "Story: Check bridge-native and direct-receipt boundaries",
-          "line": 140
+          "line": 146
         }
       ],
       "rules": [
@@ -1395,12 +1542,13 @@
             "continueCycle",
             "alwaysWindowLimits",
             "alwaysJournalPastAndPositive",
+            "alwaysPendingOrderReserved",
             "stepIncomeMonotonic"
           ]
         },
         {
           "heading": "Story: Check bridge-native and direct-receipt boundaries / Bridge-native spending observes its own network ceilings",
-          "line": 142,
+          "line": 148,
           "definitions": [
             "bridgeNativeAllowed",
             "localFeeShare",
@@ -1416,7 +1564,7 @@
         },
         {
           "heading": "Story: Check bridge-native and direct-receipt boundaries / Simulation samples exercise missing, matching and conflicting evidence",
-          "line": 180,
+          "line": 186,
           "definitions": [
             "alreadyCommittedValues",
             "dayNativeValues",
@@ -1650,8 +1798,88 @@
       ]
     },
     {
+      "path": "spec/frontend/batchedDeposit.md",
+      "sha256": "8a5bd7322818847d0a46d4821f2479a37e79d9be17195b6804a01713524f017c",
+      "module": "frontend__batchedDeposit",
+      "stories": [
+        {
+          "heading": "Story: Offer one atomic request only on a wallet that already supports it",
+          "line": 12
+        },
+        {
+          "heading": "Story: Verify money moved from matching finalized evidence",
+          "line": 63
+        }
+      ],
+      "rules": [
+        {
+          "heading": "Story: Offer one atomic request only on a wallet that already supports it / Capabilities that require a wallet upgrade use the separate-signature path",
+          "line": 14,
+          "definitions": [
+            "BatchCapability",
+            "BatchPhase",
+            "ChainResult",
+            "Batch",
+            "initial",
+            "canReview",
+            "review",
+            "canSaveIntent",
+            "saveIntent"
+          ]
+        },
+        {
+          "heading": "Story: Offer one atomic request only on a wallet that already supports it / Wallet references identify later lookups and uncertainty preserves the intent",
+          "line": 36,
+          "definitions": [
+            "canKeepWalletReference",
+            "keepWalletReference",
+            "canRefuseBatch",
+            "refuseBatch",
+            "canDeclineBatch",
+            "declineBatch",
+            "canKeepUncertain",
+            "keepUncertain",
+            "canReportNotSent",
+            "reportNotSent",
+            "canNameTransaction",
+            "nameTransaction",
+            "canRecoverHash",
+            "recoverHash"
+          ]
+        },
+        {
+          "heading": "Story: Verify money moved from matching finalized evidence / Included or missing-event evidence leaves verification pending",
+          "line": 65,
+          "definitions": [
+            "canObserveChain",
+            "observeChain",
+            "alwaysEvidenceForTerminal",
+            "alwaysAtomicRequest",
+            "alwaysSingleBatchPrompt",
+            "alwaysUnreviewedEmpty",
+            "stepVerifiedStable",
+            "sometimesOneBatch",
+            "sometimesSeparate",
+            "sometimesUncertain",
+            "sometimesMissingEvent",
+            "ownerValues",
+            "byValues",
+            "intentValues",
+            "digestValues",
+            "expectedDigestValues",
+            "referenceValues",
+            "transactionValues",
+            "weight_saveIntent",
+            "weight_observeChain"
+          ]
+        }
+      ],
+      "imports": [],
+      "references": []
+    },
+    {
       "path": "spec/frontend/index.md",
-      "sha256": "1f0b60c3adb6c339c39aab294cc76293175e6ac038421caf4bb673ef720cea3d",
+      "sha256": "594926c667e0c7721462a7ba915be170482239072d2e54a17d86dcef9c84cf1b",
       "module": "frontend",
       "stories": [],
       "rules": [],
@@ -1666,16 +1894,36 @@
           "line": 10
         },
         {
-          "target": "./drafts.md",
+          "target": "./snapshotCache.md",
           "line": 11
         },
         {
-          "target": "./projections.md",
+          "target": "./drafts.md",
           "line": 12
         },
         {
-          "target": "./presentation.md",
+          "target": "./reportDetails.md",
           "line": 13
+        },
+        {
+          "target": "./projections.md",
+          "line": 14
+        },
+        {
+          "target": "./presentation.md",
+          "line": 15
+        },
+        {
+          "target": "./referralSettings.md",
+          "line": 16
+        },
+        {
+          "target": "./provisionalVault.md",
+          "line": 17
+        },
+        {
+          "target": "./batchedDeposit.md",
+          "line": 18
         }
       ]
     },
@@ -2011,6 +2259,259 @@
       "references": []
     },
     {
+      "path": "spec/frontend/provisionalVault.md",
+      "sha256": "28e2a302434d78130683df1ae76586cc128ecc68737c9fc1a6f2ee1266c4d215",
+      "module": "frontend__provisionalVault",
+      "stories": [
+        {
+          "heading": "Story: Open a provisional funding form without registering a vault",
+          "line": 22
+        },
+        {
+          "heading": "Story: Retain an uncertain deposit through replacement and finality",
+          "line": 96
+        }
+      ],
+      "rules": [
+        {
+          "heading": "Story: Open a provisional funding form without registering a vault / Reviewed identity and current chain evidence govern the form",
+          "line": 24,
+          "definitions": [
+            "VaultKind",
+            "Creation",
+            "FundingForm",
+            "CreationNotice",
+            "DepositPhase",
+            "IncludedDepositEvidence",
+            "DepositView",
+            "Setup",
+            "initial",
+            "byValues",
+            "blockValues",
+            "transactionValues",
+            "weight_openPrompt",
+            "weight_sign",
+            "weight_replaceCreation",
+            "weight_includeDeposit",
+            "weight_finalizeDeposit",
+            "weight_checkDeposit",
+            "canReviewCreation",
+            "reviewCreation",
+            "canIncludeCreation",
+            "includeCreation",
+            "canFinalizeCreation",
+            "finalizeCreation",
+            "hasVault",
+            "showsFundingForm"
+          ]
+        },
+        {
+          "heading": "Story: Open a provisional funding form without registering a vault / Registration polling leaves an open wallet prompt and last verified form alone on unavailable reads",
+          "line": 66,
+          "definitions": [
+            "canCheckCreation",
+            "checkCreation",
+            "canReplaceCreation",
+            "replaceCreation",
+            "canReload",
+            "reload"
+          ]
+        },
+        {
+          "heading": "Story: Retain an uncertain deposit through replacement and finality / Only the owner opens the provisional token deposit prompt",
+          "line": 98,
+          "definitions": [
+            "canOpenPrompt",
+            "openPrompt",
+            "canDecline",
+            "decline",
+            "canSign",
+            "sign"
+          ]
+        },
+        {
+          "heading": "Story: Retain an uncertain deposit through replacement and finality / Included deposits are received pending finality only when there is an exact deposit event",
+          "line": 118,
+          "definitions": [
+            "canIncludeDeposit",
+            "includeDeposit",
+            "canReplaceDeposit",
+            "replaceDeposit",
+            "canFinalizeDeposit",
+            "finalizeDeposit",
+            "canObserveFailure",
+            "observeFailure",
+            "canCheckDeposit",
+            "checkDeposit"
+          ]
+        },
+        {
+          "heading": "Story: Retain an uncertain deposit through replacement and finality / Only a finalized deposit in a registered vault is eligible for accounting",
+          "line": 153,
+          "definitions": [
+            "canCountDeposit",
+            "countDeposit",
+            "alwaysRegistrationFinal",
+            "alwaysProvisionalScope",
+            "alwaysRegisteredForm",
+            "alwaysCountedFinal",
+            "alwaysDepositFinality",
+            "alwaysPromptOwnsForm",
+            "alwaysVerifiedViewNeedsEvidence",
+            "sometimesProvisional",
+            "sometimesReplaced",
+            "sometimesPendingTransfer",
+            "sometimesVerifiedBeforeRegistration",
+            "sometimesCounted",
+            "sometimesNoVault"
+          ]
+        }
+      ],
+      "imports": [],
+      "references": [
+        {
+          "target": "../settlement/vault.md",
+          "line": 18
+        }
+      ]
+    },
+    {
+      "path": "spec/frontend/referralSettings.md",
+      "sha256": "be162ae92ebb9ef3852757276b85c24ca6c4b34caab4d66bd803cf9ba32ea919",
+      "module": "frontend__referralSettings",
+      "stories": [
+        {
+          "heading": "Story: Edit and save the current account's referral name",
+          "line": 11
+        }
+      ],
+      "rules": [
+        {
+          "heading": "Story: Edit and save the current account's referral name / A loaded account owns the displayed link and the editable draft",
+          "line": 13,
+          "definitions": [
+            "SaveNotice",
+            "Answer",
+            "Settings",
+            "initial",
+            "actorValues",
+            "codeValues",
+            "textValues",
+            "answerValues",
+            "lifetimeValues",
+            "requestValues",
+            "canMount",
+            "mount",
+            "signOut",
+            "canEdit",
+            "edit"
+          ]
+        },
+        {
+          "heading": "Story: Edit and save the current account's referral name / Exactly one request can act for each active account lifetime",
+          "line": 39,
+          "definitions": [
+            "canSubmit",
+            "submit",
+            "canResolve",
+            "resolve",
+            "alwaysOwner",
+            "alwaysRequest",
+            "alwaysSaved",
+            "stepRetainsNameOutsideVerifiedReply",
+            "stepRequestOrder",
+            "sometimesSaving",
+            "sometimesSaved",
+            "sometimesFailedPreservesLink"
+          ]
+        }
+      ],
+      "imports": [],
+      "references": [
+        {
+          "target": "../backend/referralCodes.md",
+          "line": 6
+        }
+      ]
+    },
+    {
+      "path": "spec/frontend/snapshotCache.md",
+      "sha256": "eebb4e81fe3c5aa068a901cc7aa5e5863e30b1919c74976b7dc21bc24205c3df",
+      "module": "frontend__snapshotCache",
+      "stories": [
+        {
+          "heading": "Story: Several consumers share a public read without accepting stale completions",
+          "line": 11
+        }
+      ],
+      "rules": [
+        {
+          "heading": "Story: Several consumers share a public read without accepting stale completions / Each subscriber receives a unique current read binding",
+          "line": 13,
+          "definitions": [
+            "Subscription",
+            "Displayed",
+            "ReadRecord",
+            "Cache",
+            "initial",
+            "noRead",
+            "readEntry",
+            "pendingRead",
+            "latestBinding",
+            "hasConsumer",
+            "hasReadConsumer",
+            "canBeginRead",
+            "beginRead",
+            "canAcquire",
+            "acquire",
+            "canCacheHit",
+            "cacheHit"
+          ]
+        },
+        {
+          "heading": "Story: Several consumers share a public read without accepting stale completions / Deferred disposal cancels transport only after the last matching consumer leaves",
+          "line": 45,
+          "definitions": [
+            "canRelease",
+            "release",
+            "canFlushRelease",
+            "flushRelease"
+          ]
+        },
+        {
+          "heading": "Story: Several consumers share a public read without accepting stale completions / A stale response can update only its still-owned view and never replace the current cache",
+          "line": 65,
+          "definitions": [
+            "canComplete",
+            "complete",
+            "canFailRead",
+            "failRead",
+            "stepNoOlderCacheWrite",
+            "stepNewestNeverMovesBack",
+            "stepRetainedDisplayOnFailure",
+            "sometimesSharedRead",
+            "sometimesCache",
+            "sometimesAborted",
+            "sometimesRefreshKeepsDisplay",
+            "consumerValues",
+            "leaseValues",
+            "readValues",
+            "versionValues",
+            "weight_acquire",
+            "weight_release",
+            "weight_complete"
+          ]
+        }
+      ],
+      "imports": [],
+      "references": [
+        {
+          "target": "./requests.md",
+          "line": 7
+        }
+      ]
+    },
+    {
       "path": "spec/governance.md",
       "sha256": "8345bd2cccb353b1c5d5f9d26c6bf98cec122817e8db3a96b89cd217bbff2893",
       "module": "governance",
@@ -2223,7 +2724,7 @@
     },
     {
       "path": "spec/operations/index.md",
-      "sha256": "42efb6c6bf17d0aa21a0d21758b2c4e02ae0d2d2150da33c7007a039f741dd95",
+      "sha256": "fd3eb202c539ed630f67e6db1e84adc3a9177d16f18532dc74cd1b10873cfd17",
       "module": "operations",
       "stories": [],
       "rules": [],
@@ -2252,6 +2753,10 @@
         {
           "target": "./release.md",
           "line": 11
+        },
+        {
+          "target": "./paymentJobs.md",
+          "line": 12
         }
       ]
     },
@@ -2530,6 +3035,81 @@
           "line": 83,
           "definitions": [
             "attemptValues"
+          ]
+        }
+      ],
+      "imports": [],
+      "references": []
+    },
+    {
+      "path": "spec/operations/paymentJobs.md",
+      "sha256": "54447807b8e011121ee107f94540d5ae2813f96aa7ca57ae17e2259e1c607c25",
+      "module": "operations__paymentJobs",
+      "stories": [
+        {
+          "heading": "Story: Respect service authorization and settle each configured network independently",
+          "line": 11
+        }
+      ],
+      "rules": [
+        {
+          "heading": "Story: Respect service authorization and settle each configured network independently / Off and invalid or unauthorized configurations start no work",
+          "line": 13,
+          "definitions": [
+            "JobMode",
+            "Network",
+            "NetworkStatus",
+            "NetworkRow",
+            "JobPhase",
+            "Job",
+            "initial",
+            "supportedNetworks",
+            "networkRows",
+            "canConfigure",
+            "configure",
+            "canBegin",
+            "begin"
+          ]
+        },
+        {
+          "heading": "Story: Respect service authorization and settle each configured network independently / Dry runs can finish a read and cannot reach execution",
+          "line": 41,
+          "definitions": [
+            "rowStatus",
+            "updateRows",
+            "canStartRead",
+            "startRead",
+            "canSettleRead",
+            "settleRead",
+            "canStartExecution",
+            "startExecution",
+            "canSettleExecution",
+            "settleExecution"
+          ]
+        },
+        {
+          "heading": "Story: Respect service authorization and settle each configured network independently / A completed summary preserves each network result and retries allocate a fresh run",
+          "line": 65,
+          "definitions": [
+            "allTerminal",
+            "canReport",
+            "report",
+            "canResetRun",
+            "resetRun",
+            "alwaysReportsTerminal",
+            "alwaysDryNoSigning",
+            "alwaysRunningAuthorized",
+            "sometimesIndependentFailure",
+            "sometimesDryComplete",
+            "sometimesExecuteComplete",
+            "networksValues",
+            "runIdValues",
+            "weight_begin",
+            "weight_report",
+            "weight_startRead",
+            "weight_settleRead",
+            "weight_startExecution",
+            "weight_settleExecution"
           ]
         }
       ],
@@ -4014,7 +4594,7 @@
     },
     {
       "path": "spec/settlement/vault.md",
-      "sha256": "76605964dbaeab24b00742637965b4e338890e4e84103e395f6ce6713780b6c5",
+      "sha256": "b173bd0c43b63a7a2695598ea469c3cb59080c2ca5d86401733460fb751525fb",
       "module": "settlement__vault",
       "stories": [
         {
@@ -4028,6 +4608,7 @@
           "line": 7,
           "definitions": [
             "Reservation",
+            "SettlementRecord",
             "Vault",
             "initial",
             "amountValues",
@@ -4040,7 +4621,7 @@
         },
         {
           "heading": "Story: Deposit and preserve obligations / Only finalized deposits of the configured asset increase free funds",
-          "line": 24,
+          "line": 25,
           "definitions": [
             "canDeposit",
             "deposit"
@@ -4048,18 +4629,21 @@
         },
         {
           "heading": "Story: Deposit and preserve obligations / Reservations require the complete amount and never consume another reserve",
-          "line": 35,
+          "line": 36,
           "definitions": [
             "canReserve",
             "reserve",
             "reservationMatches",
+            "withoutReservation",
+            "settlementExists",
+            "settlementMatches",
             "canPayReserved",
             "payReserved"
           ]
         },
         {
           "heading": "Story: Deposit and preserve obligations / Only the fixed refund destination receives free funds",
-          "line": 57,
+          "line": 70,
           "definitions": [
             "canRefund",
             "refund",
@@ -4068,6 +4652,9 @@
             "alwaysReservationMatches",
             "alwaysReservationTotal",
             "alwaysReservationIdentity",
+            "alwaysSettlementHistory",
+            "alwaysSettlementTotal",
+            "stepRetainedSettlements",
             "stepRetainedObligations",
             "stepIdentityFixed",
             "sometimesReserved",
@@ -4078,7 +4665,7 @@
         },
         {
           "heading": "Story: Deposit and preserve obligations / Simulation samples exercise missing, matching and conflicting evidence",
-          "line": 83,
+          "line": 102,
           "definitions": [
             "finalizedHeightValues",
             "obligationValues",
@@ -4093,7 +4680,7 @@
     },
     {
       "path": "spec/settlement/payment.md",
-      "sha256": "cec541e396aaa2f44573af1754b609a3d491f1122eb2faf146e050a47efd7d55",
+      "sha256": "ba8914c4bc4077bc5d091336cbd2c59aa44b7cb7e95757bc8acfc49c6e042e1f",
       "module": "settlement__payment",
       "stories": [
         {
@@ -4102,7 +4689,7 @@
         },
         {
           "heading": "Story: Preserve policy-specific private awards",
-          "line": 119
+          "line": 120
         }
       ],
       "rules": [
@@ -4129,7 +4716,7 @@
         },
         {
           "heading": "Story: Pay one obligation exactly once / A destination requires the current account and wallet consent",
-          "line": 44,
+          "line": 45,
           "definitions": [
             "canBind",
             "bind"
@@ -4137,7 +4724,7 @@
         },
         {
           "heading": "Story: Pay one obligation exactly once / Journal before submission and retain every uncertain attempt",
-          "line": 53,
+          "line": 54,
           "definitions": [
             "canJournal",
             "journal",
@@ -4157,7 +4744,7 @@
         },
         {
           "heading": "Story: Pay one obligation exactly once / Exact finalized evidence is the only transition to paid",
-          "line": 82,
+          "line": 83,
           "definitions": [
             "canReconcile",
             "reconcile",
@@ -4178,7 +4765,7 @@
         },
         {
           "heading": "Story: Preserve policy-specific private awards / Private fee schedules are exact and purpose-bound",
-          "line": 121,
+          "line": 122,
           "definitions": [
             "validSplit",
             "railMatchesPurpose",
@@ -4187,7 +4774,7 @@
         },
         {
           "heading": "Story: Preserve policy-specific private awards / Simulation samples exercise missing, matching and conflicting evidence",
-          "line": 142,
+          "line": 143,
           "definitions": [
             "attemptValues",
             "consentValues",
@@ -4203,7 +4790,7 @@
     },
     {
       "path": "spec/settlement/composition.md",
-      "sha256": "81e874de4b53d9638648530a91cf3862c9c2e9e79715f2d95393f99ad8e1bb4c",
+      "sha256": "c83b2de7cb627fcbf398c82506206c3058515591890af9674119a84224b9f152",
       "module": "settlement__composition",
       "stories": [
         {
@@ -4267,7 +4854,7 @@
         },
         {
           "heading": "Story: Consume the exact reserve when its payment becomes paid / Simulation covers exact and conflicting evidence for the same obligation",
-          "line": 97,
+          "line": 99,
           "definitions": [
             "amountValues",
             "grossValues",
@@ -4277,6 +4864,7 @@
             "consentValues",
             "attemptValues",
             "byValues",
+            "weight_reconcile",
             "evidenceValues"
           ]
         }
@@ -4365,8 +4953,36 @@
       "references": []
     },
     {
+      "path": "spec/settlement/half.md",
+      "sha256": "c9c22ee47471408922c6b3dca092ab668a8f500a8559ae43697da4b022a288c8",
+      "module": "settlement__half",
+      "stories": [
+        {
+          "heading": "Story: Split any supported amount into its whole half and remainder",
+          "line": 6
+        }
+      ],
+      "rules": [
+        {
+          "heading": "Story: Split any supported amount into its whole half and remainder / Halving carries one remainder bit between adjacent limbs",
+          "line": 8,
+          "definitions": [
+            "Half",
+            "halfStep",
+            "half",
+            "lawHalfValid",
+            "amountValues"
+          ]
+        }
+      ],
+      "imports": [
+        "settlement__money"
+      ],
+      "references": []
+    },
+    {
       "path": "spec/settlement/index.md",
-      "sha256": "9a047b0ec082ca24daf356e0a08e359d04b53168870d60dfdf2a1a1f03d0481e",
+      "sha256": "436304b5c1ec4b460cbd30574a4b7115cd2be6ea716d21bafb263116facbdd3d",
       "module": "settlement",
       "stories": [],
       "rules": [],
@@ -4377,72 +4993,76 @@
           "line": 5
         },
         {
-          "target": "./vault.md",
+          "target": "./half.md",
           "line": 6
         },
         {
-          "target": "./allocation.md",
+          "target": "./vault.md",
           "line": 7
         },
         {
-          "target": "./monthly.md",
+          "target": "./allocation.md",
           "line": 8
         },
         {
-          "target": "./payment.md",
+          "target": "./monthly.md",
           "line": 9
         },
         {
-          "target": "./composition.md",
+          "target": "./payment.md",
           "line": 10
         },
         {
-          "target": "./recovery.md",
+          "target": "./composition.md",
           "line": 11
         },
         {
-          "target": "./reserveRelease.md",
+          "target": "./recovery.md",
           "line": 12
         },
         {
-          "target": "./signer.md",
+          "target": "./reserveRelease.md",
           "line": 13
         },
         {
-          "target": "./keeperRpc.md",
+          "target": "./signer.md",
           "line": 14
         },
         {
-          "target": "./keeperScan.md",
+          "target": "./keeperRpc.md",
           "line": 15
         },
         {
-          "target": "./keeperDiagnostics.md",
+          "target": "./keeperScan.md",
           "line": 16
         },
         {
-          "target": "./contributorAllocation.md",
+          "target": "./keeperDiagnostics.md",
           "line": 17
         },
         {
-          "target": "./referrals.md",
+          "target": "./contributorAllocation.md",
           "line": 18
         },
         {
-          "target": "../fees/",
+          "target": "./referrals.md",
           "line": 19
         },
         {
-          "target": "./referralAccrual.md",
-          "line": 21
+          "target": "../fees/",
+          "line": 20
         },
         {
-          "target": "./referralPublication.md",
+          "target": "./referralAccrual.md",
           "line": 22
         },
         {
-          "target": "./referralDistributor.md",
+          "target": "./referralPublication.md",
           "line": 23
+        },
+        {
+          "target": "./referralDistributor.md",
+          "line": 24
         }
       ]
     },
@@ -4835,7 +5455,7 @@
     },
     {
       "path": "spec/settlement/referralAccrual.md",
-      "sha256": "7d8c666da177c63701fd1e9133fc94d2005aaea41cb3a0fa5fbb0bff4f7ef2b3",
+      "sha256": "b266367ea004830b865b8860189e57393ca7897493d1aeae983ca695a4a78110",
       "module": "settlement__referralAccrual",
       "stories": [
         {
@@ -4882,6 +5502,7 @@
           "heading": "Story: File every closed month once at its historical rate / Verified token units and approved reactivation precede dry-run accrual",
           "line": 69,
           "definitions": [
+            "initialRateUnits",
             "canConfigure",
             "configure",
             "canEnableDryRun",
@@ -4897,7 +5518,7 @@
         },
         {
           "heading": "Story: File every closed month once at its historical rate / A complete immutable source snapshot is filed in ordinal-month order",
-          "line": 99,
+          "line": 103,
           "definitions": [
             "validSource",
             "canStartMonth",
@@ -4927,7 +5548,7 @@
         },
         {
           "heading": "Story: File every closed month once at its historical rate / Filed records, first-use wallet pins and exact roots commit atomically",
-          "line": 196,
+          "line": 200,
           "definitions": [
             "alwaysConfigured",
             "alwaysUnconfiguredEmpty",
@@ -4958,7 +5579,7 @@
         },
         {
           "heading": "Story: File every closed month once at its historical rate / Simulation distinguishes eligible, excluded and repeated payout evidence",
-          "line": 255,
+          "line": 262,
           "definitions": [
             "dateValues",
             "firstValues",
@@ -5216,7 +5837,7 @@
     },
     {
       "path": "spec/settlement/referralPublication.md",
-      "sha256": "34b7a91a6777b034cf72742ece7d126db85892835213da68d4d367bd9be51b08",
+      "sha256": "86d0ccb3e1b1ac54e0d48e6b9901ccb9065154a6894f01812be7dec81839e75a",
       "module": "settlement__referralPublication",
       "stories": [
         {
@@ -5225,7 +5846,7 @@
         },
         {
           "heading": "Story: Claim immediately without reissuing paid tokens",
-          "line": 186
+          "line": 188
         }
       ],
       "rules": [
@@ -5254,13 +5875,14 @@
             "activeRoot",
             "nextFiling",
             "priorFinalizedTotal",
+            "publicationUnit",
             "canPrepare",
             "prepare"
           ]
         },
         {
           "heading": "Story: Publish one complete cumulative root / Every signed root reserves gas and journals its exact identity first",
-          "line": 103,
+          "line": 105,
           "definitions": [
             "canJournal",
             "journal",
@@ -5280,7 +5902,7 @@
         },
         {
           "heading": "Story: Publish one complete cumulative root / Only exact finalized evidence makes a root claimable",
-          "line": 144,
+          "line": 146,
           "definitions": [
             "pendingPosting",
             "matchesPendingAttempt",
@@ -5293,7 +5915,7 @@
         },
         {
           "heading": "Story: Claim immediately without reissuing paid tokens / A claim uses the active root's pinned wallet and cumulative amount",
-          "line": 188,
+          "line": 190,
           "definitions": [
             "canClaim",
             "claim",
@@ -5311,7 +5933,7 @@
         },
         {
           "heading": "Story: Claim immediately without reissuing paid tokens / History, native holds and cumulative claims remain bounded",
-          "line": 249,
+          "line": 251,
           "definitions": [
             "alwaysNativeBounded",
             "alwaysAttemptGasAccounted",
@@ -5321,6 +5943,7 @@
             "alwaysHoldCeiling",
             "alwaysIdleUnreserved",
             "alwaysPreparedWalletsPinned",
+            "alwaysTokenBound",
             "alwaysPreparedCap",
             "alwaysPendingHeld",
             "alwaysRootCap",
@@ -5338,7 +5961,7 @@
         },
         {
           "heading": "Story: Claim immediately without reissuing paid tokens / Simulation includes live control, capped accruals and conflicting receipts",
-          "line": 306,
+          "line": 314,
           "definitions": [
             "byValues",
             "signerValues",
