@@ -251,13 +251,22 @@ export class CorrectionEvidenceCache {
   allowRequests = true;
   cacheHits = 0;
   reportedGraphqlCost = 0;
+  private interruption: CollectionBudgetExhausted | null = null;
   constructor(
     readonly directory: string,
     readonly transport: typeof fetch,
     readonly requestBudget = 2000,
   ) {}
+  assertUninterrupted(): void {
+    if (this.interruption) throw this.interruption;
+  }
+  private interrupt(message: string): never {
+    this.interruption ??= new CollectionBudgetExhausted(message);
+    throw this.interruption;
+  }
   readonly fetch: typeof fetch = Object.assign(
     async (input: RequestInfo | URL, init: RequestInit = {}) => {
+      this.assertUninterrupted();
       const request = input instanceof Request ? input : null;
       const url = new URL(request?.url ?? String(input));
       const method = (init.method ?? request?.method ?? "GET").toUpperCase();
@@ -300,8 +309,9 @@ export class CorrectionEvidenceCache {
         this.allowRequests,
         "Cached census is missing raw request evidence",
       );
+      this.assertUninterrupted();
       if (this.requests >= this.requestBudget)
-        throw new CollectionBudgetExhausted(
+        this.interrupt(
           "Request budget reached; rerun the same baseline-bound campaign",
         );
       this.requests += 1;
@@ -351,6 +361,25 @@ export class CorrectionEvidenceCache {
           }),
         ),
       );
+      if (
+        github &&
+        (response.status === 429 ||
+          (response.status === 403 &&
+            response.headers.get("x-ratelimit-remaining") === "0") ||
+          (response.status === 200 &&
+            url.pathname === "/graphql" &&
+            Array.isArray(parsed?.errors) &&
+            parsed.errors.some(
+              (error) =>
+                typeof error === "object" &&
+                error !== null &&
+                "type" in error &&
+                error.type === "RATE_LIMITED",
+            )))
+      )
+        this.interrupt(
+          "GitHub API quota exhausted; wait for quota recovery and rerun the same baseline-bound campaign",
+        );
       const validJson = typeof parsed === "object" && parsed !== null;
       const completeGraphql =
         url.pathname !== "/graphql" ||
@@ -1558,6 +1587,8 @@ export async function collectImplementationCorrections(
     limitations: [...limitations].map(([id, reason]) => ({ id, reason })),
     manifestDigest: digest(encode(manifest)),
   };
+  // Optional discovery helpers may catch errors; an interrupted pass cannot publish.
+  cache.assertUninterrupted();
   await atomicJson(resolve(directory, "manifest.json"), manifest);
   await atomicJson(resolve(directory, "collection-receipt.json"), receipt);
   return { manifest, receipt };

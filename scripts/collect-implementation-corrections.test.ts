@@ -12,6 +12,7 @@ import {
 import { findProject } from "../src/lib/projects.mjs";
 import { collectTargetRepositories } from "../src/lib/repositories.mjs";
 import {
+  CollectionBudgetExhausted,
   CorrectionEvidenceCache,
   censusMonths,
   collectImplementationCorrections,
@@ -629,6 +630,253 @@ test("a request-budget stop retains raw progress and the next invocation complet
   expect(resumed.receipt.ownershipComplete).toBe(true);
   expect(resumed.receipt.completeProofs).toBe(1);
   expect(resumed.receipt.cacheHits).toBeGreaterThan(0);
+});
+
+test("GitHub quota failures retain raw attempts without caching them or swallowing other failures", async () => {
+  const failures: {
+    url: string;
+    init: RequestInit;
+    body: unknown;
+    status: number;
+    headers: HeadersInit;
+  }[] = [
+    {
+      url: "https://api.github.com/repos/SlopDotCash/asi/pulls/1",
+      init: {},
+      body: { message: "API rate limit exceeded" },
+      status: 403,
+      headers: { "x-ratelimit-remaining": "0" },
+    },
+    {
+      url: "https://api.github.com/repos/SlopDotCash/asi/pulls/1",
+      init: {},
+      body: { message: "Too many requests" },
+      status: 429,
+      headers: {},
+    },
+    {
+      url: "https://api.github.com/graphql",
+      init: {
+        method: "POST",
+        body: JSON.stringify({ query: "query Sample { node }" }),
+      },
+      body: { data: null, errors: [{ type: "RATE_LIMITED" }] },
+      status: 200,
+      headers: {},
+    },
+  ];
+  for (const failure of failures) {
+    const dir = await directory();
+    let requests = 0;
+    const transport = Object.assign(
+      async () => {
+        requests++;
+        return requests === 1
+          ? Response.json(failure.body, {
+              status: failure.status,
+              headers: failure.headers,
+            })
+          : Response.json({ data: { node: null } });
+      },
+      { preconnect: fetch.preconnect },
+    );
+    const cache = new CorrectionEvidenceCache(dir, transport);
+    await expect(cache.fetch(failure.url, failure.init)).rejects.toBeInstanceOf(
+      CollectionBudgetExhausted,
+    );
+    const attempts = await readdir(join(dir, "attempts"));
+    expect(attempts).toHaveLength(1);
+    const retained = JSON.parse(
+      await readFile(join(dir, "attempts", attempts[0]), "utf8"),
+    );
+    expect(retained.status).toBe(failure.status);
+    expect(
+      JSON.parse(
+        await readFile(join(dir, "objects", retained.bodyDigest), "utf8"),
+      ),
+    ).toEqual(failure.body);
+    await expect(cache.fetch(failure.url, failure.init)).rejects.toBeInstanceOf(
+      CollectionBudgetExhausted,
+    );
+    expect(requests).toBe(1);
+    expect(() => cache.assertUninterrupted()).toThrow(
+      CollectionBudgetExhausted,
+    );
+    const resumed = new CorrectionEvidenceCache(dir, transport);
+    expect(
+      await (await resumed.fetch(failure.url, failure.init)).json(),
+    ).toEqual({ data: { node: null } });
+    await resumed.fetch(failure.url, failure.init);
+    expect(requests).toBe(2);
+    expect(resumed.cacheHits).toBe(1);
+  }
+  for (const [url, status, headers] of [
+    ["https://api.github.com/repos/SlopDotCash/asi/pulls/1", 403, {}],
+    [
+      "https://api.github.com/repos/SlopDotCash/asi/pulls/1",
+      403,
+      { "x-ratelimit-remaining": "1" },
+    ],
+    ["https://api.github.com/repos/SlopDotCash/asi/pulls/1", 404, {}],
+    ["https://api.github.com/repos/SlopDotCash/asi/pulls/1", 503, {}],
+    ["https://slop.cash/api/v1/points/journal", 429, {}],
+  ] as const) {
+    const cache = new CorrectionEvidenceCache(
+      await directory(),
+      Object.assign(
+        async () =>
+          Response.json({ error: "unavailable" }, { status, headers }),
+        { preconnect: fetch.preconnect },
+      ),
+    );
+    expect((await cache.fetch(url)).status).toBe(status);
+  }
+});
+
+test("retained-source quota and budget interruptions survive caught discovery errors", async () => {
+  const dir = await directory();
+  const base = transport();
+  let quotaAvailable = false;
+  let timelineQuotaAvailable = false;
+  let outgoingQuotaAvailable = false;
+  let outgoingRequests = 0;
+  let pullRequests = 0;
+  let requests = 0;
+  const network = Object.assign(
+    async (input: RequestInfo | URL, init?: RequestInit) => {
+      requests++;
+      const url = new URL(String(input));
+      if (url.pathname.endsWith("/asi/pulls/1")) {
+        pullRequests++;
+        if (!quotaAvailable)
+          return Response.json(
+            { message: "API rate limit exceeded" },
+            { status: 403, headers: { "x-ratelimit-remaining": "0" } },
+          );
+        return Response.json({
+          node_id: "PR_source",
+          number: 1,
+          body: "Fix #2 and #3",
+          head: { sha },
+          merged_at: when,
+          comments: 0,
+          review_comments: 0,
+        });
+      }
+      if (url.pathname !== "/graphql") return Response.json([]);
+      const body = JSON.parse(String(init?.body));
+      if (body.query.includes("issueOrPullRequest")) {
+        outgoingRequests++;
+        if (!outgoingQuotaAvailable)
+          return Response.json(
+            { message: "Too many requests" },
+            { status: 429 },
+          );
+        return Response.json({
+          data: {
+            repository: {
+              isPrivate: false,
+              nameWithOwner: "elizaOS/asi",
+              issueOrPullRequest: { __typename: "Issue" },
+            },
+          },
+        });
+      }
+      if (body.query.includes("CROSS_REFERENCED_EVENT")) {
+        if (!timelineQuotaAvailable)
+          return Response.json({
+            data: null,
+            errors: [{ type: "RATE_LIMITED" }],
+          });
+        return Response.json({
+          data: {
+            repository: {
+              pullRequest: {
+                id: "PR_source",
+                timelineItems: {
+                  nodes: [],
+                  pageInfo: { hasNextPage: false, endCursor: null },
+                },
+              },
+            },
+          },
+        });
+      }
+      if (body.query.includes("LeaderboardSearchReferences")) {
+        const pull = fixture();
+        (pull.commits.nodes[0].commit.author as { user: unknown }).user = null;
+        return Response.json({
+          data: {
+            search: {
+              issueCount: 1,
+              pageInfo: { hasNextPage: false, endCursor: null },
+              nodes: [pull],
+            },
+            rateLimit: {
+              cost: 1,
+              limit: 5000,
+              remaining: 4900,
+              resetAt: "2026-02-01T01:00:00Z",
+            },
+          },
+        });
+      }
+      return base.call(input, init);
+    },
+    { preconnect: fetch.preconnect },
+  );
+  const options = {
+    projects: ["asi"],
+    before: "2026-01-31T00:00:00.000Z",
+    directory: dir,
+    month: "2026-01",
+  };
+  const dependencies = {
+    journal: baseline(),
+    registry: registry(),
+    token: "private-test-token",
+    transport: network,
+    now: new Date("2026-01-31T23:59:59Z"),
+  };
+  await expect(
+    collectImplementationCorrections(options, dependencies),
+  ).rejects.toBeInstanceOf(CollectionBudgetExhausted);
+  await expect(readFile(join(dir, "manifest.json"), "utf8")).rejects.toThrow();
+  expect(pullRequests).toBe(1);
+  const censusRequests = base.requests();
+  quotaAvailable = true;
+  await expect(
+    collectImplementationCorrections(options, dependencies),
+  ).rejects.toBeInstanceOf(CollectionBudgetExhausted);
+  await expect(readFile(join(dir, "manifest.json"), "utf8")).rejects.toThrow();
+  timelineQuotaAvailable = true;
+  await expect(
+    collectImplementationCorrections(options, dependencies),
+  ).rejects.toBeInstanceOf(CollectionBudgetExhausted);
+  await expect(readFile(join(dir, "manifest.json"), "utf8")).rejects.toThrow();
+  expect(outgoingRequests).toBe(1);
+  outgoingQuotaAvailable = true;
+  await expect(
+    collectImplementationCorrections(
+      { ...options, requestBudget: 1 },
+      dependencies,
+    ),
+  ).rejects.toBeInstanceOf(CollectionBudgetExhausted);
+  await expect(readFile(join(dir, "manifest.json"), "utf8")).rejects.toThrow();
+  expect(outgoingRequests).toBe(2);
+  const resumed = await collectImplementationCorrections(options, dependencies);
+  expect(resumed.receipt.ownershipComplete).toBe(true);
+  expect(resumed.receipt.completeProofs).toBe(1);
+  expect(resumed.receipt.heldProofs).toBe(0);
+  expect(base.requests()).toBe(censusRequests);
+  expect(pullRequests).toBe(2);
+  const completedRequests = requests;
+  const replayed = await collectImplementationCorrections(
+    options,
+    dependencies,
+  );
+  expect(requests).toBe(completedRequests);
+  expect(replayed.receipt.manifestDigest).toBe(resumed.receipt.manifestDigest);
 });
 
 test("CLI rejects invalid calendar months", () => {
