@@ -9,3 +9,4 @@ and automation eligibility remain separate from submission.
 - [Skill installation](./installation.md)
 - [Work and review](./workflow.md)
 - [Optional contribution evidence](./evidence.md)
+- [Durable local contributor receipts](./localReceipt.md)
