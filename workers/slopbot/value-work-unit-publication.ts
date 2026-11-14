@@ -6,6 +6,7 @@ import type { Job } from "./contracts";
 import { GitHubClient } from "./github";
 import { requireRegisteredRepository } from "./registry";
 import type { ReviewEnv } from "./review";
+import { findRepository } from "./value-evidence";
 import { latestValueRecord } from "./value-journal";
 import type { ValueClaim } from "./value-processing";
 import { isSubscriptionProvenance } from "./value-producer";
@@ -103,28 +104,45 @@ export async function publishWorkUnitAssessment(
     !evidence.sources.some(
       ({ evidence: source }) =>
         source.repositoryDatabaseId === job.repositoryId &&
-        source.repository.toLowerCase() ===
-          `${job.owner}/${job.repo}`.toLowerCase() &&
         source.pull.number === job.number,
     )
   )
     throw new Error("Joint publication job does not match a source member");
-  const registration = await registeredValuePublication(
-    env.SLOPBOT_DB,
-    job,
-    evidence.sources.map(({ evidence: source }) => source.repository),
-  );
+  const registration = await registeredValuePublication(env.SLOPBOT_DB, job);
   if (!registration)
     throw new Error("Repository is not active in the Slop project registry");
   const { project, fence } = registration;
   const repositories = collectTargetRepositories([project]);
-  for (const { evidence: source } of evidence.sources) {
-    const [owner, repo] = source.repository.split("/");
-    await requireRegisteredRepository(env.SLOPBOT_DB, {
-      owner,
-      repo,
+  const sourceTargets = evidence.sources.map(({ evidence: source }) => {
+    const target = findRepository(repositories, source.repository);
+    if (!target)
+      throw new Error("Value source is absent from the verified registry");
+    return {
+      owner: target.owner,
+      repo: target.name,
       repositoryId: source.repositoryDatabaseId,
-    });
+      number: source.pull.number,
+    };
+  });
+  if (
+    !sourceTargets.some(
+      (target) =>
+        target.repositoryId === job.repositoryId &&
+        `${target.owner}/${target.repo}`.toLowerCase() ===
+          `${job.owner}/${job.repo}`.toLowerCase() &&
+        target.number === job.number,
+    )
+  )
+    throw new Error("Joint publication job does not match a source member");
+  fence.repositoryKeys = [
+    ...new Set(
+      sourceTargets.map((target) =>
+        `${target.owner}/${target.repo}`.toLowerCase(),
+      ),
+    ),
+  ];
+  for (const target of sourceTargets) {
+    await requireRegisteredRepository(env.SLOPBOT_DB, target);
   }
   await assertValueInstallation(env.SLOPBOT_DB, job.installationId);
   const github = await GitHubClient.forInstallation(
@@ -189,13 +207,8 @@ export async function publishWorkUnitAssessment(
     github,
     current.sources.map((source) => source.evidence),
   );
-  for (const { evidence: source } of evidence.sources) {
-    const [owner, repo] = source.repository.split("/");
-    await requireRegisteredRepository(env.SLOPBOT_DB, {
-      owner,
-      repo,
-      repositoryId: source.repositoryDatabaseId,
-    });
+  for (const target of sourceTargets) {
+    await requireRegisteredRepository(env.SLOPBOT_DB, target);
   }
   await assertValueInstallation(env.SLOPBOT_DB, job.installationId);
   return appendWorkUnitRecord(

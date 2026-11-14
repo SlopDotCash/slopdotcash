@@ -151,8 +151,6 @@ export async function publishValueAssessment(
   if (
     job.itemKind !== "pull_request" ||
     job.repositoryId !== evidence.repositoryDatabaseId ||
-    `${job.owner}/${job.repo}`.toLowerCase() !==
-      evidence.repository.toLowerCase() ||
     job.number !== evidence.pull.number
   )
     throw new Error("Value publication job does not match its source");
@@ -161,6 +159,13 @@ export async function publishValueAssessment(
     throw new Error("Repository is not active in the Slop project registry");
   const { project, fence } = registration;
   const repositories = collectTargetRepositories([project]);
+  const sourceRepository = findRepository(repositories, evidence.repository);
+  if (
+    !sourceRepository ||
+    `${sourceRepository.owner}/${sourceRepository.name}`.toLowerCase() !==
+      `${job.owner}/${job.repo}`.toLowerCase()
+  )
+    throw new Error("Value publication job does not match its source");
   await assertValueInstallation(env.SLOPBOT_DB, job.installationId);
   // A public repository read alone does not prove installation membership.
   // Verify the token-scoped repository list before reading public source.
