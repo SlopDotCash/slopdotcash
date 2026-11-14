@@ -79,7 +79,8 @@ for (const scenario of ["ownership-read", "remove-zero", "remove-seven"]) {
         });
         expect(stderr).toContain("process cleanup failed");
         expect(stderr).toMatch(
-          scenario === "ownership-read" ? /ENOTDIR/ : /EACCES|ENOTEMPTY/,
+          // Cleanup may read the path after removal and before replacement.
+          scenario === "ownership-read" ? /ENOTDIR|ENOENT/ : /EACCES|ENOTEMPTY/,
         );
         if (scenario === "ownership-read") {
           const observed = JSON.parse(readFileSync(ready, "utf8"));

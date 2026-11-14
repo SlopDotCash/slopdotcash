@@ -16,6 +16,7 @@ import {
   CorrectionEvidenceCache,
   censusMonths,
   collectImplementationCorrections,
+  collectWithQuotaResume,
   immutableBytes,
   inventoryCorrectionPools,
   parseCollectionArguments,
@@ -777,6 +778,13 @@ test("GitHub quota failures retain raw attempts without caching them or swallowi
       headers: {},
     },
     {
+      url: "https://api.github.com/repos/SlopDotCash/asi/pulls/1",
+      init: {},
+      body: { message: "You have exceeded a secondary rate limit" },
+      status: 403,
+      headers: {},
+    },
+    {
       url: "https://api.github.com/graphql",
       init: {
         method: "POST",
@@ -999,6 +1007,323 @@ test("retained-source quota and budget interruptions survive caught discovery er
   );
   expect(requests).toBe(completedRequests);
   expect(replayed.receipt.manifestDigest).toBe(resumed.receipt.manifestDigest);
+});
+
+test("opt-in quota resume replays the same campaign across shared REST and GraphQL windows", async () => {
+  const dir = await directory();
+  const base = transport();
+  const now = new Date("2026-01-31T23:59:59Z");
+  let clock = now.getTime();
+  const delays: number[] = [];
+  let comparisons = 0;
+  let timelineReads = 0;
+  let initialCensusReads = 0;
+  let totalReads = 0;
+  let sourceGraphqlCost = 0;
+  const network = Object.assign(
+    async (input: RequestInfo | URL, init?: RequestInit) => {
+      totalReads++;
+      const url = new URL(String(input));
+      if (url.pathname.endsWith("/asi/pulls/1")) {
+        comparisons++;
+        if (comparisons === 1)
+          return Response.json(
+            { message: "API rate limit exceeded" },
+            {
+              status: 403,
+              headers: {
+                "x-ratelimit-remaining": "0",
+                "x-ratelimit-reset": String(Math.floor(clock / 1000) + 5),
+              },
+            },
+          );
+        if (comparisons === 2)
+          return Response.json(
+            { message: "Secondary rate limit" },
+            { status: 403, headers: { "retry-after": "10" } },
+          );
+        return Response.json({
+          node_id: "PR_source",
+          number: 1,
+          body: "Fix",
+          head: { sha },
+          merged_at: when,
+          comments: 0,
+          review_comments: 0,
+        });
+      }
+      if (url.pathname !== "/graphql") return Response.json([]);
+      const { query } = JSON.parse(String(init?.body));
+      if (query.includes("CROSS_REFERENCED_EVENT")) {
+        timelineReads++;
+        if (timelineReads === 1) {
+          sourceGraphqlCost += 3;
+          return Response.json({
+            errors: [{ type: "RATE_LIMITED" }],
+            data: {
+              rateLimit: {
+                cost: 3,
+                resetAt: new Date(clock + 4_000).toISOString(),
+              },
+            },
+          });
+        }
+        return Response.json({
+          data: {
+            repository: {
+              pullRequest: {
+                id: "PR_source",
+                timelineItems: {
+                  nodes: [],
+                  pageInfo: { hasNextPage: false, endCursor: null },
+                },
+              },
+            },
+          },
+        });
+      }
+      if (query.includes("LeaderboardSearchReferences")) {
+        initialCensusReads++;
+        sourceGraphqlCost++;
+        const pull = fixture();
+        (pull.commits.nodes[0].commit.author as { user: unknown }).user = null;
+        return Response.json({
+          data: {
+            search: {
+              issueCount: 1,
+              pageInfo: { hasNextPage: false, endCursor: null },
+              nodes: [pull],
+            },
+            rateLimit: {
+              cost: 1,
+              limit: 5000,
+              remaining: 4900,
+              resetAt: "2026-02-01T01:00:00Z",
+            },
+          },
+        });
+      }
+      const response = await base.call(input, init);
+      const value = await response.clone().json();
+      sourceGraphqlCost += value.data?.rateLimit?.cost ?? 0;
+      return response;
+    },
+    { preconnect: fetch.preconnect },
+  );
+  const options = {
+    projects: ["asi"],
+    before: "2026-01-31T00:00:00.000Z",
+    directory: dir,
+    month: "2026-01",
+    resumeForSeconds: 300,
+  };
+  const dependencies = {
+    journal: baseline(),
+    registry: registry(),
+    token: "private-test-token",
+    transport: network,
+    now,
+  };
+  const result = await collectWithQuotaResume(options, dependencies, {
+    now: () => clock,
+    wait: async (ms) => {
+      await expect(
+        readFile(join(dir, "manifest.json"), "utf8"),
+      ).rejects.toThrow();
+      delays.push(ms);
+      clock += ms;
+    },
+  });
+  expect(delays).toEqual([7_000, 12_000, 6_000]);
+  expect(result.receipt.ownershipComplete).toBe(true);
+  expect(result.receipt.completeProofs).toBe(1);
+  expect(result.receipt.heldProofs).toBe(0);
+  expect(result.receipt.through).toBe(now.toISOString());
+  expect(result.receipt.requests).toBe(totalReads);
+  expect(result.receipt.reportedGraphqlCost).toBe(sourceGraphqlCost);
+  expect(sourceGraphqlCost).toBeGreaterThan(3);
+  expect(initialCensusReads).toBe(1);
+  expect(comparisons).toBe(3);
+  expect(timelineReads).toBe(2);
+  const replay = await collectImplementationCorrections(options, dependencies);
+  expect(replay.receipt.manifestDigest).toBe(result.receipt.manifestDigest);
+  expect(replay.receipt.requests).toBe(0);
+  expect(replay.receipt.reportedGraphqlCost).toBe(0);
+});
+
+test("quota resume checkpoints on deadline, unusable reset, repeated refusal and cumulative budget", async () => {
+  for (const scenario of [
+    "deadline",
+    "reset",
+    "refusal",
+    "budget",
+    "unrelated",
+  ] as const) {
+    const dir = await directory();
+    const waitFor = 120;
+    let clock = Date.parse("2026-01-31T23:59:59Z");
+    let attempts = 0;
+    const delays: number[] = [];
+    const network = Object.assign(
+      async () => {
+        attempts++;
+        if (scenario === "unrelated") throw new Error("Malformed source data");
+        return Response.json(
+          { message: "API rate limit exceeded" },
+          {
+            status: 403,
+            headers: {
+              "x-ratelimit-remaining": "0",
+              "x-ratelimit-reset":
+                scenario === "reset"
+                  ? "bad"
+                  : String(
+                      Math.floor(clock / 1000) +
+                        (scenario === "deadline" ? waitFor : 1),
+                    ),
+            },
+          },
+        );
+      },
+      { preconnect: fetch.preconnect },
+    );
+    const options = {
+      projects: ["asi"],
+      directory: dir,
+      month: "2026-01",
+      resumeForSeconds: 60,
+      requestBudget: scenario === "budget" ? 2 : 30,
+    };
+    const dependencies = {
+      journal: baseline(),
+      registry: registry(),
+      token: "private-test-token",
+      transport: network,
+    };
+    await expect(
+      collectWithQuotaResume(options, dependencies, {
+        now: () => clock,
+        wait: async (ms) => {
+          delays.push(ms);
+          clock += ms;
+        },
+      }),
+    ).rejects.toThrow(
+      scenario === "unrelated"
+        ? "GitHub GraphQL network request failed"
+        : "GitHub API quota exhausted",
+    );
+    expect(attempts).toBe(
+      scenario === "refusal" ? 3 : scenario === "budget" ? 2 : 1,
+    );
+    expect(delays.length).toBe(attempts - 1);
+    await expect(
+      readFile(join(dir, "manifest.json"), "utf8"),
+    ).rejects.toThrow();
+  }
+});
+
+test("parallel quota reads wait for the strictest reset and stop when no request entries persist", async () => {
+  for (const unknownPrimaryReset of [false, true]) {
+    const dir = await directory();
+    const base = transport();
+    const now = new Date("2026-01-31T23:59:59Z");
+    let clock = now.getTime();
+    let siblingReads = 0;
+    const delays: number[] = [];
+    const network = Object.assign(
+      async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = new URL(String(input));
+        if (url.pathname.endsWith("/asi/pulls/1"))
+          return Response.json({
+            node_id: "PR_source",
+            number: 1,
+            body: "Fix",
+            head: { sha },
+            merged_at: when,
+            comments: 0,
+            review_comments: 0,
+          });
+        if (url.pathname !== "/graphql") {
+          siblingReads++;
+          if (url.pathname.endsWith("/reviews"))
+            return Response.json(
+              { message: "Secondary rate limit" },
+              { status: 403, headers: { "retry-after": "5" } },
+            );
+          await Bun.sleep(30);
+          return Response.json(
+            { message: "API rate limit exceeded" },
+            {
+              status: 403,
+              headers: {
+                "x-ratelimit-remaining": "0",
+                "x-ratelimit-reset": unknownPrimaryReset
+                  ? "invalid"
+                  : String(Math.floor(clock / 1_000) + 20),
+              },
+            },
+          );
+        }
+        if (
+          JSON.parse(String(init?.body)).query.includes(
+            "LeaderboardSearchReferences",
+          )
+        ) {
+          const pull = fixture();
+          (pull.commits.nodes[0].commit.author as { user: unknown }).user =
+            null;
+          return Response.json({
+            data: {
+              search: {
+                issueCount: 1,
+                pageInfo: { hasNextPage: false, endCursor: null },
+                nodes: [pull],
+              },
+              rateLimit: {
+                cost: 1,
+                limit: 5000,
+                remaining: 4900,
+                resetAt: "2026-02-01T01:00:00Z",
+              },
+            },
+          });
+        }
+        return base.call(input, init);
+      },
+      { preconnect: fetch.preconnect },
+    );
+    await expect(
+      collectWithQuotaResume(
+        {
+          projects: ["asi"],
+          before: "2026-01-31T00:00:00.000Z",
+          directory: dir,
+          month: "2026-01",
+          resumeForSeconds: 300,
+        },
+        {
+          journal: baseline(),
+          registry: registry(),
+          token: "private-test-token",
+          transport: network,
+          now,
+        },
+        {
+          now: () => clock,
+          wait: async (ms) => {
+            delays.push(ms);
+            clock += ms;
+          },
+        },
+      ),
+    ).rejects.toBeInstanceOf(CollectionBudgetExhausted);
+    expect(delays).toEqual(unknownPrimaryReset ? [] : [22_000, 22_000, 22_000]);
+    expect(siblingReads).toBe(unknownPrimaryReset ? 3 : 12);
+    await expect(
+      readFile(join(dir, "manifest.json"), "utf8"),
+    ).rejects.toThrow();
+  }
 });
 
 test("CLI rejects invalid calendar months", () => {

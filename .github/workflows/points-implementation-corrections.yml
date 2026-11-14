@@ -121,9 +121,12 @@ jobs:
           if [ -n "$MONTH" ]; then args+=(--month "$MONTH"); fi
           if [ -n "$CANDIDATE_MONTH" ]; then args+=(--candidate-month "$CANDIDATE_MONTH"); fi
           if [ -n "$BEFORE" ]; then args+=(--before "$BEFORE"); fi
-          # Leave time to retain verified raw evidence and checkpoints even
-          # when the full census needs another quota window and a resumed run.
-          timeout --signal=TERM 18000 bun --no-env-file scripts/collect-implementation-corrections.ts "${args[@]}"
+          # Resume from retained evidence across GitHub quota windows. Exit 75
+          # is an incomplete checkpoint and prevents reconciliation. Bound the
+          # entire command to five hours so the job has time to upload evidence.
+          timeout --signal=TERM --kill-after=10s 18000 bun --no-env-file \
+            scripts/collect-implementation-corrections.ts "${args[@]}" \
+            --resume-for-seconds 18000 --request-budget 50000
       - name: Retain public source evidence and collection dispositions
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a

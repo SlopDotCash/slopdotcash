@@ -13,7 +13,10 @@ import {
   type ProjectApiDependencies,
 } from "../backend/projects/handler";
 import { ownerVaultSetupService } from "../backend/projects/vault-setup";
-import { buildCreateVaultCalldata } from "../contracts/evm/adapter";
+import {
+  buildCreateVaultCalldata,
+  verifyEvmVaultCreation,
+} from "../contracts/evm/adapter";
 import type { ReviewedEvmFactory } from "../contracts/evm/factories";
 import { ESCROW_NETWORKS } from "../src/lib/escrow-policy.mjs";
 import { sha256Hex } from "../src/lib/sha256";
@@ -66,6 +69,8 @@ const CREATION_HASH = `0x${"ab".repeat(32)}`;
 const BLOCK_HASH = `0x${"cd".repeat(32)}`;
 let creationData = "0x";
 let creationStatus: "pending" | "failed" | "valid" = "valid";
+// The creation is mined in block 1. "0x0" leaves it included but not final.
+let finalizedBlock = "0x1";
 let snapshotLimited = false;
 let vaultGetters: Record<string, string> = {};
 const creationMethods: string[] = [];
@@ -121,11 +126,15 @@ const rpc = Bun.serve({
           blockHash: BLOCK_HASH,
         });
       if (method === "eth_getBlockByNumber")
-        return answer({
-          number: "0x1",
-          hash: BLOCK_HASH,
-          timestamp: "0x69000000",
-        });
+        return answer(
+          params[0] === "finalized" && finalizedBlock !== "0x1"
+            ? {
+                number: finalizedBlock,
+                hash: `0x${"ef".repeat(32)}`,
+                timestamp: "0x68ffffff",
+              }
+            : { number: "0x1", hash: BLOCK_HASH, timestamp: "0x69000000" },
+        );
     }
     if (mode === "factory" || mode === "creation") {
       if (method === "eth_chainId") return answer("0x2105");
@@ -388,7 +397,71 @@ test("registration tries the next reviewed EVM factory for the exact creation", 
       status: 422,
       body: { error: "vault_creation_failed" },
     });
+    // Included in a canonical block that is not final yet. The same checks run
+    // at the creation block and the verified deployment is answered as
+    // provisional. Nothing is registered, appended or observed.
+    finalizedBlock = "0x0";
     creationStatus = "valid";
+    const included = await vaultSetup("register");
+    expect(included).toMatchObject({
+      status: 200,
+      body: {
+        status: "pending",
+        provisional: {
+          network: "base-mainnet",
+          factory: SECOND_FACTORY,
+          vault: CREATED_VAULT,
+          owner: OWNER_WALLET,
+          asset,
+          deploymentTransaction: CREATION_HASH,
+        },
+      },
+    });
+    // The adapter answers an included creation only when asked to.
+    const second = { ...common, factory: SECOND_FACTORY };
+    const creationInput = {
+      projectId: `0x${registryProjectDigest("vault-network")}`,
+      owner: OWNER_WALLET,
+      asset,
+      monthlyCap: monthlyCapMinor,
+      monthlyEnabled: false,
+      payoutPolicy: "ordinary" as const,
+    };
+    const config = { ...second, chainId: 8453n, rpcUrl };
+    expect(
+      await verifyEvmVaultCreation(config, creationInput, CREATION_HASH),
+    ).toBeNull();
+    expect(
+      await verifyEvmVaultCreation(config, creationInput, CREATION_HASH, {
+        acceptIncluded: true,
+      }),
+    ).toEqual({ vault: CREATED_VAULT, evidence: "included" });
+    // Before finality a failed, absent or mismatched creation is only pending:
+    // its block can still be replaced, so nothing is refused or offered.
+    creationStatus = "failed";
+    expect(await vaultSetup("register")).toEqual({
+      status: 200,
+      body: { status: "pending" },
+    });
+    creationStatus = "pending";
+    expect(await vaultSetup("register")).toEqual({
+      status: 200,
+      body: { status: "pending" },
+    });
+    creationStatus = "valid";
+    const enabledGetter = toFunctionSelector("monthlyEnabled()");
+    vaultGetters[enabledGetter] = word("1");
+    expect(await vaultSetup("register")).toEqual({
+      status: 200,
+      body: { status: "pending" },
+    });
+    vaultGetters[enabledGetter] = word("0");
+    expect((await persistence.getProject("vault-network"))?.revision).toBe(1);
+    expect(
+      sqlite.query("SELECT COUNT(*) n FROM vault_snapshots").get(),
+    ).toEqual({ n: 0 });
+    // Finality arrives: the same creation now registers.
+    finalizedBlock = "0x1";
     expect(await vaultSetup("register")).toMatchObject({
       status: 200,
       body: {
@@ -446,6 +519,7 @@ test("registration tries the next reviewed EVM factory for the exact creation", 
     );
   } finally {
     snapshotLimited = false;
+    finalizedBlock = "0x1";
     reviewedFactories.splice(0, reviewedFactories.length, factory);
     mode = "factory";
   }
