@@ -204,7 +204,7 @@ superseded by the signed-attempt correction below.
 [Proof stage inputs](validation/full-tree/proof-stage-inputs.json) · [Template inputs](validation/full-tree/template-inputs.json) · [Proof checkpoint](validation/full-tree/proof-checkpoint.json)
 
 The exact-source proof inventory includes each baseline or focused unit once.
-It records 2,643 discharged obligations and 63 open clauses across 69 of 72
+It records 2,644 discharged obligations and 62 open clauses across 69 of 72
 units. Buyback, referral accrual and referral publication lack a complete unit
 verdict in that inventory. The current proof result takes precedence where the
 underlying model changed. Sign-off and all open obligations remain pending.
@@ -254,10 +254,11 @@ blocks release. The five named Quint journeys, 70 generated-core events and
 supply authenticated evidence for the retained deployment. An owner rotation
 that changes the current deployment can make the pinned route refuse that
 read, so deployment-changing rotations need shell conformance. The exact
-reserve proof run discharged 140 of 146 obligations. The checked lemmas
-prove that a retired attempt identity cannot be reused and that equivalent
-padded monetary values bind the same approval. Six clauses remain open for
-conservation and dependent step preservation. Dafny reported zero tool errors or exhaustion
+reserve proof run discharged 141 of 146 obligations. The checked lemmas
+prove that a retired attempt identity cannot be reused, equivalent padded
+monetary values bind the same approval, and finalization returns the entire
+untouched reserve. Five clauses remain open for amount validity, conservation
+and dependent step preservation. Dafny reported zero tool errors or exhaustion
 for that run.
 [Reserve release evidence](validation/finance/reserve-release-signed-handoff.md)
 
