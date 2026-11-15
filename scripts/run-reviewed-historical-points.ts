@@ -350,6 +350,22 @@ async function main() {
       .filter((r) => r.award.projectId === packet.projectId)
       .map((r) => r.award.actor.id),
   );
+  for (const correction of packet.recipientCorrections)
+    for (const recipient of correction.recipients) {
+      actors.add(recipient.actor.id);
+      const user = await github.get<{
+        id: number;
+        node_id: string;
+        login: string;
+      }>(`/user/${recipient.githubId}`);
+      if (
+        !user ||
+        String(user.id) !== recipient.githubId ||
+        user.node_id !== recipient.actor.id ||
+        user.login !== recipient.actor.login
+      )
+        throw Error("Reviewed recipient account changed");
+    }
   const bans = await loadParticipationBans(github, fetch, actors);
   if (hash(baseline) === packet.candidateDigest) {
     const recorded = await query(

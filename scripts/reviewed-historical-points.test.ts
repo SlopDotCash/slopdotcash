@@ -377,19 +377,20 @@ function recipientExceptionFixture() {
     prior.award.sourceId,
   );
   const evidence = JSON.stringify({
-    source: "synthetic complete owner review",
-    claimIds: ["claim_verified"],
-    originalGithubId: "43",
+    sourceId: prior.award.sourceId,
+    workUnitId: prior.award.workUnitId,
+    sourceSha256: "a".repeat(64),
+    acceptedClaimIds: ["c".repeat(64)],
+    recipients: [{ githubId: "43", weight: "1" }],
   });
   f.packet.recipientCorrections = [
     {
       sourceId: prior.award.sourceId,
       workUnitId: prior.award.workUnitId,
-      originalActor: original,
-      originalGithubId: "43",
+      recipients: [{ actor: original, githubId: "43", weight: "1" }],
       evidence,
       evidenceSha256: sha256Hex(evidence),
-      claimIds: ["claim_verified"],
+      claimIds: ["c".repeat(64)],
       expectedPredecessors: [{ key: prior.award.key, revisionId: prior.id }],
       expectedAfter: [
         {
@@ -454,8 +455,90 @@ for (const fault of ["dossier", "predecessor", "amount", "identity"] as const)
     if (fault === "predecessor")
       c.expectedPredecessors[0].revisionId = "0".repeat(64);
     if (fault === "amount") c.expectedAfter[0].amount = 31;
-    if (fault === "identity") c.originalGithubId = "44";
+    if (fault === "identity") c.recipients[0].githubId = "44";
     expect(() =>
       reconstructHistoricalPoints(f.packet, f.baseline, time, new Map()),
     ).toThrow();
   });
+
+test("manual original introduced outside prior journal still obeys participation ban", () => {
+  const f = recipientExceptionFixture();
+  expect(() =>
+    reconstructHistoricalPoints(
+      f.packet,
+      f.baseline,
+      time,
+      new Map([[btoa("04:User43"), "2026-10-01T00:00:00.000Z"]]),
+    ),
+  ).toThrow();
+});
+
+test("owner-reviewed multiple origins use canonical weighted remainder without changing total", () => {
+  const f = recipientExceptionFixture();
+  const c = f.packet.recipientCorrections[0];
+  const prior = f.baseline.revisions[0].award;
+  c.recipients.push({
+    actor: { id: btoa("04:User44"), login: "second-origin" },
+    githubId: "44",
+    weight: "2",
+  });
+  const dossier = JSON.parse(c.evidence);
+  dossier.recipients = [
+    { githubId: "43", weight: "1" },
+    { githubId: "44", weight: "2" },
+  ];
+  c.evidence = JSON.stringify(dossier);
+  c.evidenceSha256 = sha256Hex(c.evidence);
+  const awards = [
+    {
+      ...prior,
+      key: pointKey(
+        "feed",
+        btoa("04:User43"),
+        "merged-pull-request",
+        prior.sourceId,
+      ),
+      actor: c.recipients[0].actor,
+      amount: 10,
+    },
+    {
+      ...prior,
+      key: pointKey(
+        "feed",
+        btoa("04:User44"),
+        "merged-pull-request",
+        prior.sourceId,
+      ),
+      actor: c.recipients[1].actor,
+      amount: 20,
+    },
+    { ...prior, amount: 0 },
+  ];
+  c.expectedAfter = awards.map((a) => ({
+    key: a.key,
+    actorId: a.actor.id,
+    amount: a.amount,
+    occurredAt: a.occurredAt,
+  }));
+  const expected = appendPointAwards(
+    f.baseline,
+    awards,
+    hash(c),
+    "slop-score-v2",
+    time,
+    new Map(
+      awards.map((a) => [
+        a.key,
+        {
+          sourceId: `owner_october_${c.evidenceSha256}`,
+          effectiveAt: time,
+          reason: OCTOBER_ORIGINAL_CONTRIBUTOR_DECISION,
+        },
+      ]),
+    ),
+  );
+  f.packet.candidateDigest = hash(expected);
+  expect(
+    reconstructHistoricalPoints(f.packet, f.baseline, time, new Map()),
+  ).toEqual(expected);
+});

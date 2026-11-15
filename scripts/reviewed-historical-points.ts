@@ -1,7 +1,7 @@
 /** Owner-reviewed historical award changes, reconstructed with canonical Points APIs. */
 
 import { gunzipSync } from "node:zlib";
-import { githubUserIdFromNodeId } from "../src/lib/github-actor";
+import { compareActors, githubUserIdFromNodeId } from "../src/lib/github-actor";
 import {
   assertLeaderboardSnapshot,
   type LeaderboardSnapshot,
@@ -21,6 +21,7 @@ import {
   type PointsImplementationCorrectionManifest,
 } from "../src/lib/points-implementation-corrections";
 import { sha256Hex } from "../src/lib/sha256";
+import { allocateWeightedRows } from "../src/lib/weighted-allocation";
 import { pointProtectionQuery } from "./points-protection-sql";
 
 export interface HistoricalPointsPacket {
@@ -52,8 +53,11 @@ export interface HistoricalPointsPacket {
   recipientCorrections: {
     sourceId: string;
     workUnitId: string;
-    originalActor: { id: string; login: string };
-    originalGithubId: string;
+    recipients: {
+      actor: { id: string; login: string };
+      githubId: string;
+      weight: string;
+    }[];
     evidenceSha256: string;
     evidence: string;
     expectedAfter: {
@@ -295,15 +299,60 @@ export function reconstructHistoricalPoints(
       "Recipient correction lacks reviewed evidence",
     );
     check(
-      githubUserIdFromNodeId(correction.originalActor.id) ===
-        correction.originalGithubId &&
-        /^[1-9][0-9]{0,19}$/u.test(correction.originalGithubId),
-      "Unverified original recipient identity",
+      correction.recipients.length > 0 &&
+        new Set(correction.recipients.map((r) => r.githubId)).size ===
+          correction.recipients.length,
+      "Duplicate or missing recipients",
     );
+    for (const recipient of correction.recipients)
+      check(
+        githubUserIdFromNodeId(recipient.actor.id) === recipient.githubId &&
+          /^[1-9][0-9]{0,19}$/u.test(recipient.githubId) &&
+          /^[A-Za-z0-9-]{1,39}$/u.test(recipient.actor.login) &&
+          /^[1-9][0-9]*$/u.test(recipient.weight),
+        "Invalid reviewed recipient",
+      );
     check(
       typeof correction.evidence === "string" &&
         sha256Hex(correction.evidence) === correction.evidenceSha256,
       "Reviewed recipient dossier changed",
+    );
+    const dossier = JSON.parse(correction.evidence) as {
+      sourceId: string;
+      workUnitId: string;
+      recipients: { githubId: string; weight: string }[];
+      sourceSha256: string;
+      acceptedClaimIds: string[];
+    };
+    check(
+      dossier.sourceId === correction.sourceId &&
+        dossier.workUnitId === correction.workUnitId &&
+        Array.isArray(dossier.recipients) &&
+        dossier.recipients.length === correction.recipients.length &&
+        correction.recipients.every((recipient) =>
+          dossier.recipients.some(
+            (row) =>
+              row.githubId === recipient.githubId &&
+              row.weight === recipient.weight,
+          ),
+        ) &&
+        /^[a-f0-9]{64}$/u.test(dossier.sourceSha256) &&
+        Array.isArray(dossier.acceptedClaimIds) &&
+        dossier.acceptedClaimIds.every((id) => /^[a-f0-9]{64}$/u.test(id)) &&
+        dossier.acceptedClaimIds.length === correction.claimIds.length &&
+        new Set(dossier.acceptedClaimIds).size ===
+          dossier.acceptedClaimIds.length &&
+        dossier.acceptedClaimIds.every((id) =>
+          correction.claimIds.includes(id),
+        ),
+      "Recipient dossier scope differs",
+    );
+    check(
+      new Set(correction.expectedPredecessors.map((row) => row.key)).size ===
+        correction.expectedPredecessors.length &&
+        new Set(correction.expectedAfter.map((row) => row.key)).size ===
+          correction.expectedAfter.length,
+      "Recipient correction repeats a key",
     );
     const candidate = packet.corrections.candidates.find(
       (c) =>
@@ -314,6 +363,14 @@ export function reconstructHistoricalPoints(
       candidate !== undefined,
       "Recipient correction lacks canonical source scope",
     );
+    if (candidate.proof.status === "complete" && "claims" in candidate.proof)
+      check(
+        correction.claimIds.length === candidate.proof.claims.length &&
+          candidate.proof.claims.every((claim) =>
+            correction.claimIds.includes(claim.id),
+          ),
+        "Recipient claims differ from canonical proof",
+      );
     const rows = [...latestPoints(result).values()].filter(
       (row) =>
         row.award.projectId === packet.projectId &&
@@ -336,29 +393,54 @@ export function reconstructHistoricalPoints(
         ),
       "Recipient pool changed after owner review",
     );
+    check(
+      rows.every(
+        (row) =>
+          row.award.occurredAt === rows[0].award.occurredAt &&
+          row.award.sourceUrl === rows[0].award.sourceUrl,
+      ),
+      "Recipient pool has inconsistent source identity",
+    );
+    for (const recipient of correction.recipients) {
+      const ban = bans.get(recipient.actor.id);
+      check(
+        ban === undefined ||
+          Date.parse(rows[0].award.occurredAt) < Date.parse(ban),
+        "Recipient is banned for this award",
+      );
+    }
     const total = rows.reduce((sum, row) => sum + BigInt(row.award.amount), 0n);
     check(
       total > 0n && total <= BigInt(Number.MAX_SAFE_INTEGER),
       "Invalid recipient pool total",
     );
     const template = rows[0].award;
-    const key = pointKey(
-      packet.projectId,
-      correction.originalActor.id,
-      "merged-pull-request",
-      correction.sourceId,
-      candidate.kind === "work-unit" ? correction.workUnitId : undefined,
-    );
-    const replacement = {
+    const replacements = allocateWeightedRows(
+      total,
+      correction.recipients,
+      (row) => BigInt(row.weight),
+      (left, right) => compareActors(left.actor, right.actor),
+    ).map(({ row, amount }) => ({
       ...template,
-      key,
-      actor: correction.originalActor,
-      amount: Number(total),
-    };
+      key: pointKey(
+        packet.projectId,
+        row.actor.id,
+        "merged-pull-request",
+        correction.sourceId,
+        candidate.kind === "work-unit" ? correction.workUnitId : undefined,
+      ),
+      actor: row.actor,
+      amount: Number(amount),
+    }));
     const awards = [
-      replacement,
+      ...replacements,
       ...rows
-        .filter((row) => row.award.key !== key)
+        .filter(
+          (row) =>
+            !replacements.some(
+              (replacement) => replacement.key === row.award.key,
+            ),
+        )
         .map((row) => ({ ...row.award, amount: 0 })),
     ];
     check(
