@@ -125,6 +125,13 @@ export interface OriginalContributorBinding {
   exactAcceptance?: true;
   /** Exact reviewed unit within a multi-origin native integration. */
   claimIds?: string[];
+  copiedClaims?: {
+    claimId: string;
+    originalCommitSha: string;
+    acceptedCommitSha: string;
+    path: string;
+    bindingDigest: string;
+  }[];
   /** First accepted carrier when the recorded unit completes on its donor. */
   acceptedSourceId?: string;
   followups?: OriginalContributorFollowup[];
@@ -518,6 +525,8 @@ export function originalContributorClaimScope(
   }[] = [],
   anchorSha = original.headSha,
   repairs: readonly OriginalContributorRepair[] = [],
+  copiedClaims: NonNullable<OriginalContributorBinding["copiedClaims"]> = [],
+  acceptedAnchorSha = anchorSha,
 ): boolean {
   const origin = original.author;
   const carrier = accepted.author;
@@ -538,8 +547,13 @@ export function originalContributorClaimScope(
     original.commits.map((commit) => [commit.sha, commit]),
   );
   const anchor = originals.get(anchorSha);
+  const copiedAnchor = copiedClaims.find(
+    (claim) =>
+      claim.originalCommitSha === anchorSha &&
+      claim.acceptedCommitSha === acceptedAnchorSha,
+  );
   const acceptedAnchor = accepted.commits.find(
-    (commit) => commit.sha === anchorSha,
+    (commit) => commit.sha === (copiedAnchor?.acceptedCommitSha ?? anchorSha),
   );
   if (
     originals.size !== original.commits.length ||
@@ -554,6 +568,35 @@ export function originalContributorClaimScope(
       anchor.author.id !== carrier.id) ||
     acceptedAnchor.author?.id !== anchor.author?.id ||
     acceptedAnchor.author?.kind !== anchor.author?.kind
+  )
+    return false;
+  if (
+    new Set(copiedClaims.map((copy) => copy.claimId)).size !==
+      copiedClaims.length ||
+    copiedClaims.some((copy) => {
+      const claim = claims.find((item) => item.id === copy.claimId);
+      const originalCommit = originals.get(copy.originalCommitSha);
+      const acceptedCommit = accepted.commits.find(
+        (item) => item.sha === copy.acceptedCommitSha,
+      );
+      return (
+        !claim ||
+        claim.sourceId !== accepted.sourceId ||
+        claim.commitSha !== copy.acceptedCommitSha ||
+        claim.path !== copy.path ||
+        !digest.test(copy.bindingDigest) ||
+        !originalCommit ||
+        !acceptedCommit ||
+        originalCommit.parentCount > 1 ||
+        acceptedCommit.parentCount > 1 ||
+        originalCommit.author?.id !== origin.id ||
+        acceptedCommit.author?.id !== origin.id ||
+        originalCommit.author.kind !== acceptedCommit.author.kind ||
+        acceptedCommit.firstAcceptedSourceId !== accepted.sourceId ||
+        !originalCommit.files?.some((file) => file.path === copy.path) ||
+        !acceptedCommit.files?.some((file) => file.path === copy.path)
+      );
+    })
   )
     return false;
   const graph = new Map<string, CorrectionCommit & { parentShas: string[] }>();
@@ -640,7 +683,7 @@ export function originalContributorClaimScope(
     !original.commits.every((commit) => descends(original.headSha, commit.sha))
   )
     return false;
-  const scoped = { anchorSha, origin };
+  const scoped = { anchorSha: acceptedAnchor.sha, origin };
   const followupIds = new Set(followups.map(({ source }) => source.sourceId));
   if (
     followupIds.size !== followups.length ||
@@ -666,7 +709,7 @@ export function originalContributorClaimScope(
         !commit ||
         !claims.some((claim) => claim.commitSha === repair.commitSha) ||
         !isOriginalContributorRepair(repair, original, accepted, commit) ||
-        !descends(commit.sha, anchorSha) ||
+        !descends(commit.sha, acceptedAnchor.sha) ||
         !descends(repair.reference.headSha, commit.sha)
       );
     })
@@ -691,8 +734,12 @@ export function originalContributorClaimScope(
     const acknowledgedRepair =
       repair !== undefined &&
       isOriginalContributorRepair(repair, original, accepted, commit) &&
-      descends(commit.sha, anchorSha) &&
+      descends(commit.sha, acceptedAnchor.sha) &&
       descends(repair.reference.headSha, commit.sha);
+    if (copiedClaims.some((copy) => copy.claimId === claim.id)) {
+      hasOriginal = true;
+      continue;
+    }
     if (originals.has(commit.sha)) {
       if (
         commit.author !== null &&
@@ -713,7 +760,7 @@ export function originalContributorClaimScope(
       (commit.author.id !== origin.id &&
         commit.author.id !== carrier.id &&
         !acknowledgedRepair) ||
-      !descends(commit.sha, anchorSha)
+      !descends(commit.sha, acceptedAnchorSha)
     )
       return false;
   }
@@ -1282,10 +1329,20 @@ function deriveProof(
       check(
         candidate.kind === "work-unit" &&
           candidate.proof.status === "complete" &&
-          binding.exactAcceptance === true &&
+          (binding.copiedClaims !== undefined
+            ? binding.exactAcceptance === undefined &&
+              original?.occurredAt === null &&
+              binding.copiedClaims.length > 0 &&
+              binding.copiedClaims.some(
+                (copy) =>
+                  copy.originalCommitSha === binding.originalCommitSha &&
+                  copy.acceptedCommitSha === binding.acceptedCommitSha,
+              )
+            : binding.exactAcceptance === true) &&
           original &&
           acceptedCommit &&
-          binding.originalCommitSha === binding.acceptedCommitSha &&
+          (binding.copiedClaims !== undefined ||
+            binding.originalCommitSha === binding.acceptedCommitSha) &&
           sameSet(
             binding.boundPaths,
             acceptedCommit.parentCount === 2
@@ -1313,6 +1370,8 @@ function deriveProof(
             }),
             binding.originalCommitSha,
             binding.repairs,
+            binding.copiedClaims,
+            binding.acceptedCommitSha,
           ),
         "original-contributor unit scope does not bind the reviewed native claims",
       );

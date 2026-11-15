@@ -2621,3 +2621,99 @@ test("verified nine-parent delta uses the existing author fallback and keeps its
   expect(total(value.journal)).toBe(total(journal));
   expect(apply(value.journal, input, true, LATER).journal).toBe(value.journal);
 });
+
+function scopedCopiedOriginal() {
+  const sample = octoberGroupedReplacement();
+  if (
+    sample.grouped.proof.status !== "complete" ||
+    !sample.grouped.proof.originalContributor
+  )
+    throw Error("fixture");
+  const proof = sample.grouped.proof,
+    accepted = proof.sources[0],
+    original = proof.sources[1];
+  const binding = proof.originalContributor;
+  if (!binding) throw Error("fixture binding");
+  binding.claimIds = proof.claims.map((c) => c.id);
+  binding.copiedClaims = [
+    {
+      claimId: proof.claims[0].id,
+      originalCommitSha: original.commits[0].sha,
+      acceptedCommitSha: accepted.commits[0].sha,
+      path: proof.claims[0].path,
+      bindingDigest: VALUE,
+    },
+  ];
+  original.commits[0].parentShas = [sha("0")];
+  accepted.commits[0].parentShas = [sha("0")];
+  accepted.commits[1].parentShas = [accepted.commits[0].sha];
+  const other = structuredClone(accepted.commits[1]);
+  other.sha = sha("9");
+  other.author = B;
+  other.parentShas = [accepted.commits[1].sha];
+  accepted.commits.push(other);
+  accepted.commitCount++;
+  accepted.headSha = other.sha;
+  return { ...sample, accepted, original, binding };
+}
+
+test("a copied reviewed unit preserves the original pool while retaining unrelated carrier work", () => {
+  const { journal, input, accepted } = scopedCopiedOriginal();
+  const before = JSON.stringify(input);
+  const result = apply(journal, input);
+  expect(amounts(result.journal)).toEqual({ [A.id]: 30, [C.id]: 0 });
+  expect(accepted.commits).toHaveLength(3);
+  expect(JSON.stringify(input)).toBe(before);
+  expect(apply(result.journal, input, true, LATER).journal).toBe(
+    result.journal,
+  );
+});
+for (const fault of [
+  "claim-id",
+  "copy-path",
+  "copy-author",
+  "first-acceptance",
+  "missing-binding",
+  "foreign-claim",
+  "native-flag",
+  "outer-anchor",
+  "original-sha",
+  "accepted-sha",
+  "duplicate-id",
+  "merged-original",
+  "competing-anchor",
+] as const) {
+  test(`copied reviewed unit refuses ${fault}`, () => {
+    const { journal, input, grouped, accepted, binding } =
+      scopedCopiedOriginal();
+    if (grouped.proof.status !== "complete" || !binding?.copiedClaims)
+      throw Error("fixture");
+    if (fault === "claim-id") binding.copiedClaims[0].claimId = "different";
+    if (fault === "copy-path") binding.copiedClaims[0].path = "other.ts";
+    if (fault === "copy-author") accepted.commits[0].author = B;
+    if (fault === "first-acceptance")
+      accepted.commits[0].firstAcceptedSourceId = "PR_elsewhere";
+    const copies = binding.copiedClaims;
+    if (fault === "missing-binding") delete binding.copiedClaims;
+    if (fault === "native-flag") binding.exactAcceptance = true;
+    if (fault === "outer-anchor")
+      binding.acceptedCommitSha = accepted.commits[1].sha;
+    if (fault === "original-sha") copies[0].originalCommitSha = sha("8");
+    if (fault === "accepted-sha")
+      copies[0].acceptedCommitSha = accepted.commits[1].sha;
+    if (fault === "duplicate-id") copies.push({ ...copies[0] });
+    if (fault === "merged-original")
+      grouped.proof.sources[1].occurredAt = grouped.occurredAt;
+    if (fault === "competing-anchor") {
+      copies.unshift({
+        ...copies[0],
+        claimId: grouped.proof.claims[1].id,
+        acceptedCommitSha: accepted.commits[1].sha,
+      });
+    }
+    if (fault === "foreign-claim") {
+      grouped.proof.claims[1].commitSha = accepted.commits[2].sha;
+    }
+    expect(() => apply(journal, input)).toThrow();
+  });
+}
