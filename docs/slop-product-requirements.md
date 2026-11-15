@@ -646,6 +646,8 @@ Recheck roles and destinations before sending. Provider acceptance does not prov
 
 Public pages use cached D1 data or published snapshots. Refresh failure retains the last good value with a stale label. Sensitive actions require fresh authority.
 
+An active project's page shows how promptly it merges outside work: when it last merged a pull request, how many outside pull requests (author not an owner, member or collaborator, not a bot, not a draft) have waited seven days or more without a review or comment from anyone who can merge, and the median time to merge of outside pull requests merged in the last 30 days, with the date checked. The Slopbot schedule reads each repository once a day into D1 and `GET /api/v1/merge-activity` serves the stored rows; a failed read keeps the last values. It is display only and changes no score, status or payment (operator decision, 15 November 2026; #1993).
+
 Production `slop.cash` may load Cloudflare Web Analytics through Cloudflare's automatic setup, only to count page views by path and referring site. Cloudflare does not inject into HTML the site's Pages Function serves, so that function adds the beacon tag itself on the production host only, set to report to the site's own origin as the automatic tag does. The beacon uses no cookies or local storage, logs no query strings and reports to the site's own origin, so private Inbox, case and admin parameters never reach it. Staging, local development and tests never load it. No page depends on it: a blocked or failed beacon changes nothing. Add no other analytics or third-party script without a separate owner decision. The operator proposed this on 11 November 2026; the owner's merge approves it.
 
 | Dependency | Required failure behavior |
