@@ -62,6 +62,10 @@ import type {
 } from "../workers/slopbot/value-evidence-types";
 import { mergeResolutionLineCounts } from "../workers/slopbot/value-merge-resolution";
 import {
+  NATIVE_MERGE_CONTEXT,
+  nativeMergeCarrierMatches,
+} from "../workers/slopbot/value-native-merge";
+import {
   valueAdditionCount,
   valueDeletionCount,
 } from "../workers/slopbot/value-patch";
@@ -1072,12 +1076,31 @@ function richSource(
   return result;
 }
 
-async function bindRetained(
+export async function bindRetained(
   sources: readonly WorkUnitSource[],
   owners: ReadonlyMap<string, string>,
   acceptedSubset = false,
 ): Promise<CorrectionSource[]> {
-  const retained = await retainedCopyBindings(sources, {
+  // Joint acceptance validates the exact carrier before resolving its context-only deferral.
+  const verifiedSources = await Promise.all(
+    sources.map(async (source) => {
+      const native =
+        acceptedSubset &&
+        (await nativeMergeCarrierMatches(source.evidence, sources));
+      return native
+        ? {
+            ...source,
+            evidence: {
+              ...source.evidence,
+              limitations: source.evidence.limitations.filter(
+                (limitation) => limitation !== NATIVE_MERGE_CONTEXT,
+              ),
+            },
+          }
+        : source;
+    }),
+  );
+  const retained = await retainedCopyBindings(verifiedSources, {
     ordinaryCommitsOnly: true,
     acceptedSubset,
   });
@@ -1085,16 +1108,20 @@ async function bindRetained(
     retained.limitations.length === 0,
     "Retained-copy evidence is incomplete or ambiguous",
   );
-  const converted = sources.map((source) =>
+  const converted = verifiedSources.map((source) =>
     richSource(source.evidence, owners),
   );
-  for (const accepted of sources.filter(
+  for (const accepted of verifiedSources.filter(
     (source) => source.evidence.pull.merged_at,
   )) {
     // Each credited commit still requires a complete accepted-path binding.
-    const canonical = await retainedCommitCreditSources(accepted, sources, {
-      acceptedSubset,
-    });
+    const canonical = await retainedCommitCreditSources(
+      accepted,
+      verifiedSources,
+      {
+        acceptedSubset,
+      },
+    );
     for (const [sha, binding] of canonical) {
       const target = converted
         .find((s) => s.sourceId === accepted.evidence.pull.node_id)
