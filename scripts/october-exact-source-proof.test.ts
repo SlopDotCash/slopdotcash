@@ -7,6 +7,7 @@ import {
   firstAcceptedCorrectionClaims,
   groupedOriginalContributorProof,
   isMergedOriginalContributor,
+  octoberOriginalContributorPartsProof,
   octoberOriginalContributorProof,
   octoberOriginalContributorUnitProof,
   originalContributorFollowupProof,
@@ -891,13 +892,19 @@ test("native reviewed unit accepts a carrier-authored sync head with the origina
     input.owners,
     claims,
   );
-  expect(proof.originalContributor?.originalCommitSha).toBe(sync.sha);
+  expect(proof.originalContributor?.originalCommitSha).toBe(sha("a"));
   expect(proof.originalContributor?.boundPaths).toEqual(["fix.ts"]);
   const { originalContributorClaimScope } = await import(
     "../src/lib/points-implementation-corrections"
   );
   expect(
-    originalContributorClaimScope(proof.sources[1], proof.sources[0], claims),
+    originalContributorClaimScope(
+      proof.sources[1],
+      proof.sources[0],
+      claims,
+      [],
+      proof.originalContributor?.originalCommitSha,
+    ),
   ).toBe(true);
   proof.sources[1].commits[1].author = {
     id: "third",
@@ -1180,14 +1187,14 @@ test("native unit selects later follow-up claims while retaining unrelated work"
   );
   for (const commit of followup.evidence.commits)
     input.responses.set(`${root}/git/commits/${commit.sha}`, clone(commit));
-  const path = `${root}/compare/${sha("b")}...${later.sha}?per_page=100&page=1`;
+  const path = `${root}/compare/${sha("a")}...${later.sha}?per_page=100&page=1`;
   input.responses.set(path, {
     status: "ahead",
-    merge_base_commit: { sha: sha("b") },
-    ahead_by: 1,
+    merge_base_commit: { sha: sha("a") },
+    ahead_by: 2,
     behind_by: 0,
-    total_commits: 1,
-    commits: [clone(later)],
+    total_commits: 2,
+    commits: [clone(input.accepted.commits[1]), clone(later)],
   });
   const claims = [
     {
@@ -1241,4 +1248,106 @@ test("native unit selects later follow-up claims while retaining unrelated work"
   };
   range.merge_base_commit.sha = sha("0");
   await expect(prove()).rejects.toThrow("does not descend");
+});
+
+test("the native collector partitions two original PRs by one contributor", async () => {
+  const input = await snapshot();
+  const second = clone(input.sources[1]);
+  second.evidence.pull = {
+    ...second.evidence.pull,
+    node_id: "PR_second_original",
+    number: 4,
+    html_url: `https://github.com/${repository}/pull/4`,
+    head: { sha: sha("d") },
+  };
+  second.evidence.commits[0].sha = sha("d");
+  second.evidence.commitAttribution[0].sha = sha("d");
+  const accepted = input.sources[0].evidence;
+  accepted.commits.push(clone(second.evidence.commits[0]));
+  accepted.pull.commits++;
+  accepted.commitAttribution.push(clone(second.evidence.commitAttribution[0]));
+  input.owners.set(
+    `${repository.toLowerCase()}\0${sha("d")}`,
+    accepted.pull.node_id,
+  );
+  input.responses.set(`${root}/pulls/2`, {
+    ...clone(accepted.pull),
+    created_at: "2026-10-02T00:00:00Z",
+  });
+  input.responses.set(`${root}/pulls/4`, {
+    ...clone(second.evidence.pull),
+    created_at: "2026-10-01T00:00:00Z",
+  });
+  input.responses.set(
+    `${root}/git/commits/${sha("d")}`,
+    clone(second.evidence.commits[0]),
+  );
+  for (const [end, status, behind] of [
+    [sha("f"), "diverged", 1],
+    [sha("b"), "ahead", 0],
+  ] as const)
+    input.responses.set(
+      `${root}/compare/${sha("d")}...${end}?per_page=100&page=1`,
+      {
+        status,
+        base_commit: { sha: sha("d") },
+        merge_base_commit: { sha: status === "ahead" ? sha("d") : sha("0") },
+        ahead_by: 0,
+        behind_by: behind,
+        total_commits: 0,
+        commits: [],
+      },
+    );
+  const range = input.responses.get(
+    `${root}/compare/${sha("f")}...${sha("c")}?per_page=100&page=1`,
+  ) as {
+    commits: unknown[];
+    total_commits: number;
+    ahead_by: number;
+  };
+  range.commits.splice(2, 0, clone(second.evidence.commits[0]));
+  range.total_commits++;
+  range.ahead_by++;
+  const claims = [
+    {
+      id: "claim_first",
+      sourceId: accepted.pull.node_id,
+      commitSha: sha("a"),
+      path: "fix.ts",
+    },
+    {
+      id: "claim_second",
+      sourceId: accepted.pull.node_id,
+      commitSha: sha("d"),
+      path: "fix.ts",
+    },
+  ];
+  const originals = new Map([
+    [input.original.pull.node_id, ["claim_first"]],
+    [second.evidence.pull.node_id, ["claim_second"]],
+  ]);
+  const proof = await octoberOriginalContributorPartsProof(
+    input.github,
+    [...input.sources, second],
+    input.owners,
+    claims,
+    originals,
+    accepted.pull.node_id,
+  );
+  expect(proof.originalContributorParts).toHaveLength(2);
+  expect(proof.originalContributorParts?.map((part) => part.claimIds)).toEqual([
+    ["claim_first"],
+    ["claim_second"],
+  ]);
+  second.evidence.pull.user = carrier;
+  await expect(
+    octoberOriginalContributorPartsProof(
+      input.github,
+      [...input.sources, second],
+      input.owners,
+      claims,
+      originals,
+      accepted.pull.node_id,
+    ),
+  ).rejects.toThrow("different originating contributors");
 });

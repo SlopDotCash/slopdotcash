@@ -2213,3 +2213,88 @@ test("a later original-author completion can bind an already accepted scoped uni
   binding.followups[0].commits[0].parentShas = [sha("7")];
   expect(() => apply(shifted, shiftedInput)).toThrow("unit scope");
 });
+
+function multiOriginalPrUnit() {
+  const sample = scopedUnlinkedOriginal();
+  const { donor, accepted, grouped } = sample;
+  if (grouped.proof.status !== "complete" || !grouped.proof.originalContributor)
+    throw Error("fixture");
+  const second = structuredClone(donor);
+  second.sourceId = "PR_second_original";
+  second.sourceUrl = "https://github.com/SlopDotCash/asi/pull/5";
+  second.headSha = sha("6");
+  second.commits[0].sha = second.headSha;
+  second.commits[0].parentShas = [sha("0")];
+  second.commits[0].additions = 1;
+  second.commits[0].deletions = 0;
+  second.commits[0].files = [{ path: "second.ts", additions: 1, deletions: 0 }];
+  accepted.commits.push(structuredClone(second.commits[0]));
+  accepted.commitCount++;
+  grouped.proof.sources.push(second);
+  grouped.sourceIds.push(second.sourceId);
+  const secondClaim = {
+    id: "claim_second_original",
+    sourceId: accepted.sourceId,
+    commitSha: second.headSha,
+    path: "second.ts",
+  };
+  grouped.proof.claims.push(secondClaim);
+  grouped.proof.expectedClaimIds.push(secondClaim.id);
+  const firstBinding = grouped.proof.originalContributor;
+  const secondBinding = {
+    ...structuredClone(firstBinding),
+    originalSourceId: second.sourceId,
+    originalCommitSha: second.headSha,
+    acceptedCommitSha: second.headSha,
+    boundPaths: ["second.ts"],
+    claimIds: [secondClaim.id],
+  };
+  delete grouped.proof.originalContributor;
+  grouped.proof.originalContributorParts = [firstBinding, secondBinding];
+  return { ...sample, second };
+}
+
+test("one contributor retains one whole unit across separate original PRs", () => {
+  const { journal, input } = multiOriginalPrUnit();
+  const result = apply(journal, input);
+  expect(amounts(result.journal)).toEqual({ [A.id]: 30, [C.id]: 0 });
+  expect(total(result.journal)).toBe(total(journal));
+  expect(apply(result.journal, input, true, LATER).journal).toBe(
+    result.journal,
+  );
+  expect(apply(journal, input, false).journal).toBe(journal);
+});
+
+for (const fault of [
+  "missing-claim",
+  "repeated-claim",
+  "different-origin",
+  "duplicate-original",
+  "ordinary",
+  "unscoped",
+  "late-acceptance",
+  "expected-scope",
+] as const) {
+  test(`multi-original native unit rejects ${fault}`, () => {
+    const { journal, input, grouped, second, accepted } = multiOriginalPrUnit();
+    if (
+      grouped.proof.status !== "complete" ||
+      !grouped.proof.originalContributorParts
+    )
+      throw Error("fixture");
+    const parts = grouped.proof.originalContributorParts;
+    if (fault === "missing-claim")
+      parts[0].claimIds = parts[0].claimIds?.slice(1);
+    if (fault === "repeated-claim")
+      parts[1].claimIds?.push(parts[0].claimIds?.[0] ?? "missing_claim");
+    if (fault === "different-origin") second.author = B;
+    if (fault === "duplicate-original")
+      parts[1].originalSourceId = parts[0].originalSourceId;
+    if (fault === "ordinary") Object.assign(grouped, { kind: "pull-request" });
+    if (fault === "unscoped") delete parts[0].claimIds;
+    if (fault === "expected-scope") grouped.proof.expectedClaimIds.pop();
+    if (fault === "late-acceptance")
+      accepted.occurredAt = "2026-10-26T00:00:00.000Z";
+    expect(() => apply(journal, input)).toThrow();
+  });
+}
