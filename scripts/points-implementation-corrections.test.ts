@@ -16,7 +16,7 @@ import {
   type PointsImplementationCorrectionCandidate,
   type PointsImplementationCorrectionManifest,
 } from "../src/lib/points-implementation-corrections";
-import { sha256Hex } from "../src/lib/sha256";
+import { sha256Hex as resolutionDigest, sha256Hex } from "../src/lib/sha256";
 
 const A: CorrectionActor = {
   id: "MDQ6VXNlcjQy",
@@ -1743,6 +1743,62 @@ for (const fault of ["cycle", "foreign-node"] as const) {
       parentShas:
         fault === "cycle" ? [binding.commits[0].sha] : [binding.ancestorSha],
     });
+    expect(() => apply(journal, input)).toThrow();
+  });
+}
+
+function claimedResolution() {
+  const sample = octoberGroupedReplacement();
+  if (sample.grouped.proof.status !== "complete") throw Error("fixture");
+  const source = sample.grouped.proof.sources[0];
+  const patch = `diff --git a/merge.ts b/merge.ts\n--- a/merge.ts\n+++ b/merge.ts\n@@ -1 +1 @@\n-old\n+resolved\n`;
+  const commit = {
+    sha: sha("8"),
+    parentCount: 2,
+    parentShas: [sha("6"), sha("7")],
+    author: C,
+    additions: 1,
+    deletions: 1,
+    files: [{ path: "merge.ts", additions: 1, deletions: 1 }],
+    firstAcceptedSourceId: source.sourceId,
+    mergeResolution: {
+      commitSha: sha("8"),
+      parents: [sha("6"), sha("7")] as [string, string],
+      gitVersion: "git version 2.56.0",
+      automaticTree: sha("1"),
+      resolvedTree: sha("2"),
+      hadConflicts: true,
+      patch,
+      patchSha256: resolutionDigest(patch),
+      paths: ["merge.ts"],
+    },
+  };
+  source.commits.push(commit);
+  source.commitCount++;
+  sample.grouped.proof.claims.push({
+    id: "claim_merge",
+    sourceId: source.sourceId,
+    commitSha: commit.sha,
+    path: "merge.ts",
+  });
+  sample.grouped.proof.expectedClaimIds.push("claim_merge");
+  return { ...sample, commit };
+}
+test("verified resolution claims preserve the original contributor's complete assessed pool", () => {
+  const { journal, input } = claimedResolution();
+  expect(
+    [...latestPoints(apply(journal, input).journal).values()].find(
+      (row) => row.award.actor.id === A.id,
+    )?.award.amount,
+  ).toBe(30);
+});
+for (const fault of ["missing", "hash", "author"] as const) {
+  test(`claimed resolution rejects ${fault}`, () => {
+    const { journal, input, commit } = claimedResolution();
+    if (fault === "missing")
+      delete (commit as { mergeResolution?: unknown }).mergeResolution;
+    if (fault === "hash") commit.mergeResolution.patchSha256 = "0".repeat(64);
+    if (fault === "author") commit.author = B;
     expect(() => apply(journal, input)).toThrow();
   });
 }

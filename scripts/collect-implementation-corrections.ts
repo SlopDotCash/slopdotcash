@@ -30,6 +30,7 @@ import {
   type CorrectionActor,
   type CorrectionClaim,
   type CorrectionSource,
+  correctionClaimCommit,
   createPointsCorrectionBaseline,
   isOriginalContributorContext,
   isOriginalContributorFollowup,
@@ -54,6 +55,7 @@ import type {
   Pull,
   ValueEvidence,
 } from "../workers/slopbot/value-evidence-types";
+import { mergeResolutionLineCounts } from "../workers/slopbot/value-merge-resolution";
 import {
   valueAdditionCount,
   valueDeletionCount,
@@ -974,7 +976,15 @@ function richSource(
     complete: true,
     commitCount: evidence.commits.length,
     commits: evidence.commits.map((commit) => {
-      if (commit.parents.length > 1)
+      if (commit.parents.length > 1) {
+        const resolutions = evidence.mergeResolutions?.filter(
+          (item) => item.commitSha === commit.sha,
+        );
+        const resolution =
+          resolutions?.length === 1 ? resolutions[0] : undefined;
+        const files = resolution
+          ? mergeResolutionLineCounts(resolution, commit)
+          : null;
         return {
           sha: commit.sha,
           parentCount: commit.parents.length,
@@ -985,14 +995,22 @@ function richSource(
                 kind: commit.author.type,
               }
             : null,
-          additions: null,
-          deletions: null,
+          additions: files?.reduce((n, file) => n + file.additions, 0) ?? null,
+          deletions: files?.reduce((n, file) => n + file.deletions, 0) ?? null,
+          ...(files?.length
+            ? {
+                files,
+                mergeResolution: resolution,
+                parentShas: commit.parents.map((parent) => parent.sha),
+              }
+            : {}),
           firstAcceptedSourceId: evidence.pull.merged_at
             ? (owners.get(
                 `${evidence.repository.toLowerCase()}\0${commit.sha}`,
               ) ?? null)
             : null,
         };
+      }
       if (evidence.pull.merged_at)
         requireThat(
           owners.has(`${evidence.repository.toLowerCase()}\0${commit.sha}`),
@@ -1668,7 +1686,7 @@ export function firstAcceptedCorrectionClaims(
             commit.sha === claim.commitSha &&
             commit.author?.id === originalCommit.author?.id &&
             commit.author?.kind === originalCommit.author?.kind &&
-            commit.parentCount <= 1 &&
+            correctionClaimCommit(commit) &&
             commit.firstAcceptedSourceId === source.sourceId &&
             commit.files?.some((file) => file.path === claim.path),
         ),
@@ -1885,7 +1903,7 @@ export function groupedOriginalContributorProof(
             source.commits.some(
               (commit) =>
                 commit.sha === claim.commitSha &&
-                commit.parentCount <= 1 &&
+                correctionClaimCommit(commit) &&
                 commit.firstAcceptedSourceId === source.sourceId &&
                 commit.files?.some((file) => file.path === claim.path),
             ),

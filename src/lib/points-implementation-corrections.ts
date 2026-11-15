@@ -1,3 +1,5 @@
+import type { ValueMergeResolution } from "../../workers/slopbot/value-evidence-types";
+import { mergeResolutionLineCounts } from "../../workers/slopbot/value-merge-resolution";
 /**
  * Allocation-only correction of existing Points pools (PRD section 7).
  *
@@ -37,6 +39,7 @@ export interface CorrectionActor {
 export interface CorrectionCommit {
   sha: string;
   parentCount: number;
+  mergeResolution?: ValueMergeResolution;
   /** Recorded only for an original PR that needs an authenticated follow-up graph. */
   parentShas?: string[];
   author: CorrectionActor | null;
@@ -535,6 +538,19 @@ function pools(revisions: Iterable<PointRevision>) {
   }
   return result;
 }
+export function correctionClaimCommit(commit: CorrectionCommit): boolean {
+  return (
+    commit.parentCount <= 1 ||
+    Boolean(
+      commit.mergeResolution &&
+        commit.parentShas &&
+        mergeResolutionLineCounts(commit.mergeResolution, {
+          sha: commit.sha,
+          parents: commit.parentShas.map((sha) => ({ sha })),
+        })?.length,
+    )
+  );
+}
 interface DerivedProof {
   actors: Map<string, CorrectionActor>;
   weights: Map<string, bigint>;
@@ -605,6 +621,18 @@ function deriveProof(
         "invalid commit proof",
       );
       actor(commit.author);
+      if (commit.mergeResolution) {
+        const files = commit.parentShas
+          ? mergeResolutionLineCounts(commit.mergeResolution, {
+              sha: commit.sha,
+              parents: commit.parentShas.map((sha) => ({ sha })),
+            })
+          : null;
+        check(
+          files && JSON.stringify(files) === JSON.stringify(commit.files),
+          "resolution file evidence differs from canonical patch",
+        );
+      }
       if (commit.files) {
         check(
           sameSet(
@@ -705,7 +733,8 @@ function deriveProof(
     path: string,
   ) => {
     if (
-      commit.parentCount > 1 ||
+      !correctionClaimCommit(commit) ||
+      (candidate.kind === "pull-request" && commit.parentCount > 1) ||
       commit.firstAcceptedSourceId !== source.sourceId
     )
       return;
@@ -754,7 +783,7 @@ function deriveProof(
         source &&
           source.occurredAt !== null &&
           commit &&
-          commit.parentCount <= 1 &&
+          correctionClaimCommit(commit) &&
           commit.firstAcceptedSourceId === source.sourceId,
         "grouped claim has no unique accepted ordinary commit",
       );
@@ -827,6 +856,22 @@ function deriveProof(
       "original-contributor proof does not bind verified accepted work",
     );
     if (candidate.kind === "work-unit") {
+      check(
+        candidate.proof.status === "complete" &&
+          candidate.proof.claims.every((claim) => {
+            const commit = sources
+              .get(claim.sourceId)
+              ?.commits.find((item) => item.sha === claim.commitSha);
+            return (
+              !commit ||
+              commit.parentCount <= 1 ||
+              (eligibleActor(commit.author) &&
+                (commit.author.id === original.author?.id ||
+                  commit.author.id === accepted.author?.id))
+            );
+          }),
+        "Claimed resolution has an unrelated author",
+      );
       const claims =
         candidate.proof.status === "complete" ? candidate.proof.claims : [];
       const followupBindings = binding.followups ?? [];

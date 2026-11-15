@@ -3486,15 +3486,15 @@
     },
     {
       "path": "scripts/collect-implementation-corrections.ts",
-      "sha256": "6120b9ed06df314bf0ecbebb2c90442b2b792da19c9942757d40d1f152e12f85",
+      "sha256": "744794844e82f4da531cc0154b3be228f3a117274eedd473815e5cd809bc1877",
       "models": [
         "formal/models/points/historical_discussion_evidence.qnt",
         "formal/models/points/historical_implementation_allocation.qnt"
       ],
       "candidateLines": [
-        4, 11, 13, 93, 173, 250, 256, 259, 264, 274, 290, 296, 312, 313, 323,
-        326, 423, 469, 490, 515, 561, 568, 684, 695, 860, 1286, 1322, 1351,
-        1356, 1369, 1461, 1770, 1781, 2065, 2655, 2714, 2878, 2897, 2926, 2928
+        4, 11, 13, 95, 175, 252, 258, 261, 266, 276, 292, 298, 314, 315, 325,
+        328, 425, 471, 492, 517, 563, 570, 686, 697, 862, 1304, 1340, 1369,
+        1374, 1387, 1479, 1788, 1799, 2083, 2673, 2732, 2896, 2915, 2944, 2946
       ],
       "review": "mapped-abstraction"
     },
@@ -6051,7 +6051,7 @@
     },
     {
       "path": "src/lib/implementation-lines.ts",
-      "sha256": "a26025e0f5d68a6720bd3f3fb34f13b84e889321ac1ff6618fe154ae4aa840b4",
+      "sha256": "d2d2e54a69bd1457b2c99cef83f765dd3b53afea3c1a54b66f115a5f4c0e3bd9",
       "models": [
         "formal/models/points/implementation_allocation.qnt",
         "formal/models/points/implementation_credit.qnt"
@@ -6314,14 +6314,14 @@
     },
     {
       "path": "src/lib/points-implementation-corrections.ts",
-      "sha256": "9177c92215f4a05fbf975249a28cf769662fe838704102238c4e585f7b0b20b9",
+      "sha256": "d2d6d74da6559f755d1861f7466c6b05fdaeb7b910d5a8f0796cbcab292fae4a",
       "models": [
         "formal/models/points/historical_implementation_allocation.qnt"
       ],
       "candidateLines": [
-        108, 129, 140, 154, 161, 307, 364, 365, 366, 370, 440, 446, 473, 474,
-        548, 733, 831, 1030, 1036, 1041, 1149, 1230, 1265, 1293, 1395, 1396,
-        1397
+        111, 132, 143, 157, 164, 310, 367, 368, 369, 373, 443, 449, 476, 477,
+        564, 762, 860, 876, 1075, 1081, 1086, 1194, 1275, 1310, 1338, 1440,
+        1441, 1442
       ],
       "review": "mapped-abstraction"
     },
@@ -8632,7 +8632,7 @@
     },
     {
       "path": "workers/slopbot/value-merge-resolution.ts",
-      "sha256": "bd8889156f15c3ed08fe5979097867c0b12ffa7bc30f5cab8570e1c4345b303a",
+      "sha256": "6f943fdc4909f9167c7717617bf99817ce736fe913f7a0c1099438793a73413d",
       "models": ["formal/models/slopbot/bot_historical_import.qnt"],
       "candidateLines": [],
       "review": "mapped-abstraction"
