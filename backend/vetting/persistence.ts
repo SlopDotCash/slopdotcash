@@ -813,13 +813,28 @@ export class CloudflareVettingPersistence {
     );
     const currentContentSha256 = await vettedContentSha256(project.manifest);
     const repositories = project.manifest.repositories;
+    const assessments = await this.projectAssessments(project.id);
+    const listed = (candidate: VettingAssessment) =>
+      findListedRepository(repositories, candidate.repositoryId ?? "")
+        ?.repository.id;
+    // Same rule as the moderator path (`repositoryClearance`): a later
+    // finished investigation of the same repository at the same pin controls,
+    // so an older clean scan cannot lift a pause over it.
+    const superseded = (candidate: VettingAssessment) =>
+      assessments
+        .slice(assessments.findIndex((entry) => entry.id === candidate.id) + 1)
+        .some(
+          (later) =>
+            later.state !== "pending" &&
+            later.state !== "clean" &&
+            listed(later) === listed(candidate) &&
+            later.commitSha === candidate.commitSha &&
+            later.templateSha256 === candidate.templateSha256,
+        );
+    if (superseded(assessment)) return null;
     if (repositories.length > 1) {
-      const scanned = findListedRepository(
-        repositories,
-        assessment.repositoryId,
-      )?.repository.id;
+      const scanned = listed(assessment);
       if (scanned === undefined || readPin === undefined) return null;
-      const assessments = await this.projectAssessments(project.id);
       for (const repository of repositories) {
         if (repository.id === scanned) continue;
         let pin: VettingPin;
@@ -832,8 +847,8 @@ export class CloudflareVettingPersistence {
         for (const candidate of assessments)
           if (
             candidate.state === "clean" &&
-            findListedRepository(repositories, candidate.repositoryId ?? "")
-              ?.repository.id === repository.id &&
+            listed(candidate) === repository.id &&
+            !superseded(candidate) &&
             !(
               candidate.result &&
               isScanResult(candidate.result) &&

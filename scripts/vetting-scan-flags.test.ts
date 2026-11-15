@@ -1679,6 +1679,73 @@ test("a live-pin outage while a fresh clean scan lands defers the flag reinstate
   ).toHaveLength(1);
 });
 
+test("a deferred flag reinstatement waits while a newer investigation at the live pin is incomplete", async () => {
+  await activeProject();
+  expect((await flag("alice")).status).toBe(201);
+  clock = new Date(NOW.getTime() + 60_000);
+  expect((await flag("bob")).status).toBe(201);
+  const pending = (await vetting.pendingAssessments()).at(-1);
+  if (!pending) throw new Error("Missing pause scan");
+  pinUp = false;
+  expect(
+    (
+      await postResult(
+        await scanFixture(pending.id, "clean", { runId: "scan-run-4" }),
+      )
+    ).status,
+  ).toBe(200);
+  expect((await publicProject()).status).toBe(410);
+
+  // An administrator investigates the same commit; the investigation fails.
+  pinUp = true;
+  clock = new Date(NOW.getTime() + 120_000);
+  const project = await projects.getProject("open-registry");
+  if (!project) throw new Error("Missing project");
+  expect(
+    (
+      await vettingApi(
+        sessionRequest("POST", "admin/vetting/assessments", "admin", {
+          projectId: project.id,
+          revision: project.revision,
+          reason: "Investigate the reported install script.",
+        }),
+      )
+    ).status,
+  ).toBeLessThan(300);
+  const investigation = (await vetting.pendingAssessments()).at(-1);
+  if (!investigation || investigation.id === pending.id)
+    throw new Error("Missing investigation");
+  expect(investigation.commitSha).toBe(pending.commitSha);
+  expect(
+    (
+      await postResult(
+        await scanFixture(investigation.id, "incomplete", {
+          runId: "scan-run-5",
+        }),
+      )
+    ).status,
+  ).toBe(200);
+  expect(
+    await vetting.manifestClearance(
+      project.id,
+      project.manifest,
+      project.revision,
+      readLivePin,
+      true,
+    ),
+  ).toMatchObject({ state: "quarantined" });
+
+  // The older clean scan cannot lift the pause over the newer investigation.
+  expect((await refresh()) as unknown).toMatchObject({ reinstated: [] });
+  expect((await publicProject()).status).toBe(410);
+  expect(
+    (await projects.listEnforcements()).filter(
+      (entry) =>
+        entry.projectId === "open-registry" && entry.action === "reinstate",
+    ),
+  ).toHaveLength(0);
+});
+
 test("a cached scan from before an active contributor flag is refused so it cannot resolve that flag without a fresh scan", async () => {
   const initialAssessmentId = await activeProject();
   clock = new Date(NOW.getTime() + 30_000);
