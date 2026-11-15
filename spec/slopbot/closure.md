@@ -1,4 +1,4 @@
-# Qualified automatic closure
+# Qualified automatic closure decision
 
 PRD section 5 governs closure, and CLAUDE.md "Slopbot" and "Automatic closure"
 restate it. The project automatic-closure setting comes from the approved
@@ -6,28 +6,33 @@ project revision: a new draft starts unchecked and a missing saved value is
 false (owner decision, 13 November 2026;
 [closure consent](../backend/closureConsent.md)). Source
 `workers/slopbot/review.ts` (`runReview`, `stillMayClose`, `closureState`,
-`confirmedClosure`, `grounded`), `closure-eligibility.ts`,
-`close-attempts.ts`, `maintainer-holds.ts`, `contracts.ts` and migrations
-`0060`, `0064` and `0117` at the development head.
+`confirmedClosure`, `grounded`, `duplicateOf`, `matchingOpenItem`),
+`closure-eligibility.ts`, `contracts.ts` and migrations `0060` and `0064` at
+the development head.
 
-Each instance is one reviewed item revision. Every fact that authorizes an
-action is either state this model owns or a typed observation whose
-provenance is a named verified service:
+Each instance is one reviewed item revision, from its first observation to
+its recorded decision and the labels that decision posts. What happens after
+a close decision lives in sibling machines that start from this decision:
+the [close attempt](./closeAttempt.md) of a close candidate and the
+[maintainer hold](./maintainerHold.md) of an uncertain finding. Every fact
+that authorizes an action is either state this model owns or a typed
+observation whose provenance is a named verified service:
 
 | Observation | Verified by |
 |---|---|
-| `SourceObservation` | the GitHub review adapter: exact item, head, content digest, installation, item state, assignees, author role, the approved project revision with its saved consent, and the repository's `.github/slopbot.json` |
-| `ParticipationEvidence` | the closure-eligibility reader over `points_members`, `trace_runs` and `run_progress_events` in D1 |
+| `GateObservation.source` | the GitHub review adapter: exact item, head, content digest, installation, item state, assignees, author role, the approved project revision with its saved consent, and the repository's `.github/slopbot.json` |
+| `GateObservation.participation` | the closure-eligibility reader over `points_members`, `trace_runs` and `run_progress_events` in D1 |
+| `GateObservation.activation` | closure activation (`closureActivation.md`) |
 | `Verdict` | the provider route of review (`review.md`), one retained call record per triage or confirm call |
-| `ActivationView` | closure activation (`closureActivation.md`) |
-| `CapacityGrant` | close capacity (`closeCapacity.md`), which reserves the repository slot in the same D1 write |
-| `CloseEvidence`, `GithubRefusal`, `TimelineObservation`, `ReopenEvidence`, `RemovalEvidence` | GitHub's immutable close event, response status, issue timeline, reopen event and label read |
+| `GroundingCheck` | the review worker's deterministic verbatim comparison (`grounded`) of the call's quotes with the reviewed item text and the policy files it read |
+| `RelatedItemCheck` | the review worker's duplicate lookup (`duplicateOf`, `matchingOpenItem`) |
+| `ReopenEvidence`, `RemovalEvidence` | GitHub's reopen event with the actor's verified role, and the label read |
 | `AppealOutcome` | appeals (`appeals.md`) |
 
-Binding these sibling machines into one composed state is an open
-composition obligation; until then each observation is an input of this
-machine. A shell obligation remains: each adapter must produce its
-observation from the named verified source and never from request text.
+Binding these machines into one composed state is an open composition
+obligation; until then each observation is an input of this machine. A
+shell obligation remains: each adapter must produce its observation from the
+named verified source and never from request text.
 
 ## Story: Decide a current review under the registered repository's policy
 
@@ -73,7 +78,13 @@ pure val unknownSource: SourceObservation = { identity: reviewedItem, scope: Unr
 pure def sourceUsable(o: SourceObservation, identity: ReviewIdentity): bool =
   o.identity == identity and o.source == SourceCurrent and o.installation == InstallationActive and
   o.item == ItemOpen and not(o.draft) and o.coverage != CoverageUnknown
+pure def mayPostOrdinaryFor(o: SourceObservation, identity: ReviewIdentity): bool =
+  o.scope == Active and sourceUsable(o, identity)
+pure def mayActOrdinaryFor(o: SourceObservation, identity: ReviewIdentity): bool =
+  mayPostOrdinaryFor(o, identity) and o.coverage == CoverageComplete
 pure def lawUnknownSourceRefusesAction(identity: ReviewIdentity): bool = not(sourceUsable(unknownSource, identity))
+pure def lawLimitedCoverageNeverActs(sampleObservation: SourceObservation, identity: ReviewIdentity): bool =
+  sampleObservation.coverage != CoverageComplete implies not(mayActOrdinaryFor(sampleObservation, identity))
 ```
 
 ### The effective policy keeps file opt-outs, category restrictions and the saved project consent
@@ -136,251 +147,187 @@ pure def lawOtherActorsRunRefuses(sampleRun: ParticipationEvidence, identity: Re
     not(participationAuthority(sampleRun, identity))
 ```
 
-### Two independent grounded verdicts with the same category are required before any close
+### Grounding and the duplicate relation are checked by the service, never taken from the model
 
-The first call is triage; a close also needs a confirm call. A verdict is
-grounded when its evidence is verbatim item text and, outside the universal
-categories, its cited rule is found verbatim in the reviewed policy. A
-finding is uncertain when it is not grounded, has confidence below 90
-hundredths, reports limitations, or is a duplicate with no verified related
-open item by the same author. On the closure path a deterministic prefilter
-without model triage and a confirm call that disagrees, is ungrounded or is
-not confident are uncertain too. Objective low quality also needs the same
-objective defect in both verdicts.
+A verdict is grounded only when the service's verbatim comparison for that
+exact call and the reviewed content digest found every evidence quote in the
+item text and, outside the universal categories, found every cited rule
+verbatim in a complete policy read. A missing or truncated policy grounds no
+quoted-rule category. A deterministic prefilter result is grounded by
+construction. A duplicate needs the service's lookup of an open item by the
+same author with the same content, other than the reviewed one. The grounded
+and related results are computed when the verdict is recorded and kept with
+it.
 
 ```quint
-type Verdict = { category: F::Category, confidenceHundredths: int, limitations: bool, evidenceVerbatim: bool,
-  ruleQuotedVerbatim: bool, relatedOpenItem: bool, objectiveDefect: str, deterministic: bool }
-pure val noVerdict: Verdict = { category: F::NoFinding, confidenceHundredths: 0, limitations: false,
-  evidenceVerbatim: false, ruleQuotedVerbatim: false, relatedOpenItem: false, objectiveDefect: "", deterministic: false }
-pure def validVerdict(v: Verdict): bool = F::validConfidence(v.confidenceHundredths)
-pure def grounded(v: Verdict): bool =
-  v.deterministic or (v.evidenceVerbatim and (F::universal(v.category) or v.ruleQuotedVerbatim))
-pure def initiallyUncertain(v: Verdict): bool = v.category != F::NoFinding and
-  (not(grounded(v)) or not(F::confident(v.confidenceHundredths)) or v.limitations or
-    (v.category == F::Duplicate and not(v.relatedOpenItem)))
-pure def confirms(verdict: Verdict, confirmVerdict: Verdict): bool =
-  not(verdict.deterministic) and not(confirmVerdict.deterministic) and verdict.category == confirmVerdict.category and
-  F::confident(verdict.confidenceHundredths) and F::confident(confirmVerdict.confidenceHundredths) and
-  not(verdict.limitations) and not(confirmVerdict.limitations) and grounded(verdict) and grounded(confirmVerdict) and
-  (verdict.category != F::LowQuality or (verdict.objectiveDefect != "" and verdict.objectiveDefect == confirmVerdict.objectiveDefect))
-pure def lawUncertainNeverConfirms(sampleVerdict: Verdict, otherVerdict: Verdict): bool =
-  initiallyUncertain(sampleVerdict) and sampleVerdict.category != F::Duplicate implies not(confirms(sampleVerdict, otherVerdict))
-pure def lawDeterministicNeverConfirms(sampleVerdict: Verdict, otherVerdict: Verdict): bool =
-  sampleVerdict.deterministic implies not(confirms(sampleVerdict, otherVerdict))
-pure def lawDisagreementNeverConfirms(sampleVerdict: Verdict, otherVerdict: Verdict): bool =
-  sampleVerdict.category != otherVerdict.category implies not(confirms(sampleVerdict, otherVerdict))
+type PolicyRead = PolicyMissing | PolicyTruncated | PolicyComplete
+type Verdict = { callId: str, category: F::Category, confidenceHundredths: int, limitations: bool,
+  objectiveDefect: str, deterministic: bool }
+type GroundingCheck = { callId: str, contentDigest: str, evidenceFound: bool, policy: PolicyRead, ruleFound: bool }
+type RelatedItemCheck = { itemNode: str, relatedNode: str, author: int, relatedOpen: bool, sameContent: bool }
+type AssessedVerdict = { verdict: Verdict, grounded: bool, related: bool }
+pure val noVerdict: Verdict = { callId: "", category: F::NoFinding, confidenceHundredths: 0, limitations: false,
+  objectiveDefect: "", deterministic: false }
+pure val notAssessed: AssessedVerdict = { verdict: noVerdict, grounded: false, related: false }
+pure def validVerdict(v: Verdict): bool = F::validConfidence(v.confidenceHundredths) and v.callId != ""
+pure def groundedBy(v: Verdict, check: GroundingCheck, identity: ReviewIdentity): bool =
+  v.deterministic or (check.callId == v.callId and check.contentDigest == identity.contentDigest and
+    check.evidenceFound and (F::universal(v.category) or (check.policy == PolicyComplete and check.ruleFound)))
+pure def relatedBy(related: RelatedItemCheck, identity: ReviewIdentity): bool =
+  related.itemNode == identity.itemNode and related.relatedNode != "" and related.relatedNode != identity.itemNode and
+  related.author == identity.author and related.relatedOpen and related.sameContent
+pure def assess(v: Verdict, check: GroundingCheck, related: RelatedItemCheck, identity: ReviewIdentity): AssessedVerdict =
+  { verdict: v, grounded: groundedBy(v, check, identity), related: relatedBy(related, identity) }
+pure def lawIncompletePolicyNeverGroundsQuotedRule(v: Verdict, check: GroundingCheck, identity: ReviewIdentity): bool =
+  (not(v.deterministic) and F::requiresQuotedRule(v.category) and check.policy != PolicyComplete) implies
+    not(groundedBy(v, check, identity))
+pure def lawOtherContentNeverGrounds(v: Verdict, check: GroundingCheck, identity: ReviewIdentity): bool =
+  (not(v.deterministic) and check.contentDigest != identity.contentDigest) implies not(groundedBy(v, check, identity))
+pure def lawSelfNeverRelated(related: RelatedItemCheck, identity: ReviewIdentity): bool =
+  related.relatedNode == identity.itemNode implies not(relatedBy(related, identity))
+```
+
+### Two independent grounded verdicts with the same category are required before any close
+
+The first call is triage; a close also needs a confirm call. A finding is
+uncertain when it is not grounded, has confidence below 90 hundredths,
+reports limitations, or is a duplicate without the verified related item. On
+the closure path a deterministic prefilter without model triage and a
+confirm call that disagrees, is ungrounded or is not confident are uncertain
+too. Objective low quality also needs the same objective defect in both
+verdicts.
+
+```quint
+pure def initiallyUncertain(t: AssessedVerdict): bool = t.verdict.category != F::NoFinding and
+  (not(t.grounded) or not(F::confident(t.verdict.confidenceHundredths)) or t.verdict.limitations or
+    (t.verdict.category == F::Duplicate and not(t.related)))
+pure def confirms(t: AssessedVerdict, k: AssessedVerdict): bool =
+  not(t.verdict.deterministic) and not(k.verdict.deterministic) and t.verdict.category == k.verdict.category and
+  t.verdict.callId != k.verdict.callId and
+  F::confident(t.verdict.confidenceHundredths) and F::confident(k.verdict.confidenceHundredths) and
+  not(t.verdict.limitations) and not(k.verdict.limitations) and t.grounded and k.grounded and
+  (t.verdict.category != F::Duplicate or t.related) and
+  (t.verdict.category != F::LowQuality or
+    (t.verdict.objectiveDefect != "" and t.verdict.objectiveDefect == k.verdict.objectiveDefect))
+pure def lawUncertainNeverConfirms(sampleVerdict: AssessedVerdict, otherVerdict: AssessedVerdict): bool =
+  initiallyUncertain(sampleVerdict) implies not(confirms(sampleVerdict, otherVerdict))
+pure def lawDeterministicNeverConfirms(sampleVerdict: AssessedVerdict, otherVerdict: AssessedVerdict): bool =
+  sampleVerdict.verdict.deterministic implies not(confirms(sampleVerdict, otherVerdict))
+pure def lawDisagreementNeverConfirms(sampleVerdict: AssessedVerdict, otherVerdict: AssessedVerdict): bool =
+  sampleVerdict.verdict.category != otherVerdict.verdict.category implies not(confirms(sampleVerdict, otherVerdict))
+pure def lawSameCallNeverConfirms(sampleVerdict: AssessedVerdict): bool = not(confirms(sampleVerdict, sampleVerdict))
 ```
 
 ### Closing also needs current production activation, a qualified category and every independent gate
 
-The closure gates are rechecked from fresh state at the decision, at slot
-reservation and immediately before the GitHub request: active full-review
-scope, a current open PR (never an issue) with complete coverage, no
-assignee, a known non-maintainer author, effective closure consent, a close
-mode for the category, participation authority, the global switch on with
-the category qualified (and the objective verifier for low quality), two
-confirming verdicts, and no reopen or appeal of this revision.
+One gate observation carries the source, participation and activation read
+together, with a sequence number that increases with each read. The closure
+gates are: active full-review scope, a current open PR (never an issue) with
+complete coverage, no assignee, a known non-maintainer author, effective
+closure consent, a close mode for the category, participation authority, the
+global switch on with the category qualified (and the objective verifier for
+low quality), two confirming verdicts, and no reopen or appeal of this
+revision. The close attempt evaluates the same gates again on a later
+observation before it reserves capacity.
 
 ```quint
 type ActivationView = { enabled: bool, category: F::Category, categoryQualified: bool, verifierQualified: bool }
+type GateObservation = { seq: int, source: SourceObservation, participation: ParticipationEvidence,
+  activation: ActivationView }
 pure val inactive: ActivationView = { enabled: false, category: F::NoFinding, categoryQualified: false, verifierQualified: false }
+pure val unobserved: GateObservation = { seq: 0, source: unknownSource, participation: noParticipation, activation: inactive }
 pure def activationAllows(a: ActivationView, category: F::Category): bool =
   a.enabled and a.category == category and a.categoryQualified and
   (not(F::requiresObjectiveVerifier(category)) or a.verifierQualified)
+pure def closePolicyFor(g: GateObservation, identity: ReviewIdentity, category: F::Category): bool =
+  mayActOrdinaryFor(g.source, identity) and identity.kind == PullRequest and
+  g.source.assignment == Unassigned and g.source.authorRole == NonMaintainer and effectiveClosure(g.source) and
+  effectiveMode(g.source, category) == ModeClose and F::permittedAction(category) == F::CloseAllowed
+pure def closePathFor(g: GateObservation, identity: ReviewIdentity, category: F::Category): bool =
+  closePolicyFor(g, identity, category) and participationAuthority(g.participation, identity) and
+  activationAllows(g.activation, category)
+pure def closeGatesFor(g: GateObservation, identity: ReviewIdentity, t: AssessedVerdict, k: AssessedVerdict): bool =
+  closePathFor(g, identity, t.verdict.category) and confirms(t, k)
 pure def lawInactiveNeverAllows(category: F::Category): bool = not(activationAllows(inactive, category))
+pure def lawIssuesNeverPassGates(g: GateObservation, identity: ReviewIdentity, category: F::Category): bool =
+  identity.kind == Issue implies not(closePolicyFor(g, identity, category))
 ```
 
 ### A decision is recorded once and keeps its scope, verdicts and outcome
 
 `decide` records exactly one outcome for the revision: advisory (no finding,
-limited coverage or mode off), a certain label, an uncertain maintainer hold,
-a security-only comment, or a close candidate. A close candidate still has to
-reserve capacity and pass the final recheck before any GitHub request. A
-budget-blocked or failed confirm call leaves the revision triaged and
-retryable; it never decides.
+limited coverage or mode off), a certain label, an uncertain finding for the
+maintainer hold, a security-only comment, or a close candidate. A close
+candidate starts its close attempt, which reserves capacity only after a
+later recheck. A budget-blocked or failed confirm call leaves the revision
+triaged and retryable; it never decides.
 
 ```quint
 type Phase = Unreviewed | Triaged | Decided
 type Outcome = Undecided | Advisory | LabelFinding | Uncertain | SecurityAdvisory | CloseCandidate
-type AttemptState = NoAttempt | Pending | Confirmed
-type CloseAttempt = { state: AttemptState, id: int, requests: int, closedAt: int, commentConfirmed: bool }
-type HoldStatus = NoHold | WaitingForMaintainer | MaintainerActed | HoldSuperseded | HoldLabeled
-type Closure = { identity: ReviewIdentity, source: SourceObservation, participation: ParticipationEvidence,
-  activation: ActivationView, phase: Phase, triage: Verdict, hasConfirm: bool, confirm: Verdict,
-  outcome: Outcome, decidedScope: RepositoryScope, attempt: CloseAttempt, rejected: List[int],
-  now: int, heldAt: int, holdQueuedAt: int, hold: HoldStatus,
-  findingLabel: bool, uncertainLabel: bool, moderatorLabel: bool, securityCommented: bool,
-  moderatorNotices: Set[int], maintainerReopened: bool, authorAppealed: bool, appealUpheld: bool, slopbotReopened: bool }
-pure val noAttempt: CloseAttempt = { state: NoAttempt, id: 0, requests: 0, closedAt: 0, commentConfirmed: false }
-pure val initial: Closure = { identity: reviewedItem, source: unknownSource, participation: noParticipation,
-  activation: inactive, phase: Unreviewed, triage: noVerdict, hasConfirm: false, confirm: noVerdict,
-  outcome: Undecided, decidedScope: Unregistered, attempt: noAttempt, rejected: List(),
-  now: 0, heldAt: 0, holdQueuedAt: 0, hold: NoHold,
-  findingLabel: false, uncertainLabel: false, moderatorLabel: false, securityCommented: false,
-  moderatorNotices: Set(), maintainerReopened: false, authorAppealed: false, appealUpheld: false, slopbotReopened: false }
+type Closure = { identity: ReviewIdentity, gate: GateObservation, phase: Phase, triage: AssessedVerdict,
+  hasConfirm: bool, confirm: AssessedVerdict, outcome: Outcome, decidedScope: RepositoryScope, decidedSeq: int,
+  findingLabel: bool, securityCommented: bool, maintainerReopened: bool, authorAppealed: bool, appealUpheld: bool }
+pure val initial: Closure = { identity: reviewedItem, gate: unobserved, phase: Unreviewed, triage: notAssessed,
+  hasConfirm: false, confirm: notAssessed, outcome: Undecided, decidedScope: Unregistered, decidedSeq: 0,
+  findingLabel: false, securityCommented: false, maintainerReopened: false, authorAppealed: false, appealUpheld: false }
 pure def revisionDisputed(c: Closure): bool = c.maintainerReopened or c.authorAppealed or c.appealUpheld
-pure def mayReview(c: Closure): bool = sourceUsable(c.source, c.identity) and not(revisionDisputed(c))
-pure def mayPostOrdinary(c: Closure): bool = c.source.scope == Active and mayReview(c)
-pure def mayActOrdinary(c: Closure): bool = mayPostOrdinary(c) and c.source.coverage == CoverageComplete
-pure def mayPostSecurity(c: Closure): bool = c.source.scope == SecurityOnly and c.source.securityAuthorized and mayReview(c)
-pure def closePolicy(c: Closure): bool = mayActOrdinary(c) and c.identity.kind == PullRequest and
-  c.source.assignment == Unassigned and c.source.authorRole == NonMaintainer and effectiveClosure(c.source) and
-  effectiveMode(c.source, c.triage.category) == ModeClose and F::permittedAction(c.triage.category) == F::CloseAllowed
-pure def closeGates(c: Closure): bool = closePolicy(c) and participationAuthority(c.participation, c.identity) and
-  activationAllows(c.activation, c.triage.category) and c.hasConfirm and confirms(c.triage, c.confirm)
-pure def closePath(c: Closure): bool = closePolicy(c) and participationAuthority(c.participation, c.identity) and
-  activationAllows(c.activation, c.triage.category)
-pure def uncertainFinding(c: Closure): bool = c.triage.category != F::NoFinding and
-  (initiallyUncertain(c.triage) or (closePath(c) and (c.triage.deterministic or
+pure def mayReview(c: Closure): bool = sourceUsable(c.gate.source, c.identity) and not(revisionDisputed(c))
+pure def mayPostOrdinary(c: Closure): bool = mayPostOrdinaryFor(c.gate.source, c.identity) and not(revisionDisputed(c))
+pure def mayActOrdinary(c: Closure): bool = mayActOrdinaryFor(c.gate.source, c.identity) and not(revisionDisputed(c))
+pure def mayPostSecurity(c: Closure): bool = c.gate.source.scope == SecurityOnly and c.gate.source.securityAuthorized and mayReview(c)
+pure def closePath(c: Closure): bool = closePathFor(c.gate, c.identity, c.triage.verdict.category)
+pure def closeGates(c: Closure): bool = c.hasConfirm and closeGatesFor(c.gate, c.identity, c.triage, c.confirm)
+pure def uncertainFinding(c: Closure): bool = c.triage.verdict.category != F::NoFinding and
+  (initiallyUncertain(c.triage) or (closePath(c) and (c.triage.verdict.deterministic or
     (c.hasConfirm and not(confirms(c.triage, c.confirm))))))
-pure def canObserveSource(c: Closure, observation: SourceObservation): bool = observation.identity == c.identity
-pure def observeSource(c: Closure, observation: SourceObservation): Closure = { ...c, source: observation }
-pure def observeParticipation(c: Closure, runEvidence: ParticipationEvidence): Closure = { ...c, participation: runEvidence }
-pure def observeActivation(c: Closure, view: ActivationView): Closure = { ...c, activation: view }
-pure def canRecordTriage(c: Closure, verdict: Verdict): bool =
+pure def canObserve(c: Closure, observation: GateObservation): bool =
+  observation.seq > c.gate.seq and observation.source.identity == c.identity
+pure def observe(c: Closure, observation: GateObservation): Closure = { ...c, gate: observation }
+pure def canRecordTriage(c: Closure, verdict: Verdict, grounding: GroundingCheck, related: RelatedItemCheck): bool =
   c.phase == Unreviewed and validVerdict(verdict) and (mayPostOrdinary(c) or mayPostSecurity(c))
-pure def recordTriage(c: Closure, verdict: Verdict): Closure = { ...c, phase: Triaged, triage: verdict }
-pure def canRecordConfirm(c: Closure, verdict: Verdict): bool =
-  c.phase == Triaged and not(c.hasConfirm) and validVerdict(verdict) and closePath(c) and
-  not(initiallyUncertain(c.triage)) and not(c.triage.deterministic)
-pure def recordConfirm(c: Closure, verdict: Verdict): Closure = { ...c, hasConfirm: true, confirm: verdict }
+pure def recordTriage(c: Closure, verdict: Verdict, grounding: GroundingCheck, related: RelatedItemCheck): Closure =
+  { ...c, phase: Triaged, triage: assess(verdict, grounding, related, c.identity) }
 pure def needsConfirm(c: Closure): bool = closePath(c) and not(initiallyUncertain(c.triage)) and
-  not(c.triage.deterministic) and not(c.hasConfirm)
+  not(c.triage.verdict.deterministic) and not(c.hasConfirm)
+pure def canRecordConfirm(c: Closure, verdict: Verdict, grounding: GroundingCheck, related: RelatedItemCheck): bool =
+  c.phase == Triaged and validVerdict(verdict) and needsConfirm(c) and mayPostOrdinary(c)
+pure def recordConfirm(c: Closure, verdict: Verdict, grounding: GroundingCheck, related: RelatedItemCheck): Closure =
+  { ...c, hasConfirm: true, confirm: assess(verdict, grounding, related, c.identity) }
 pure def outcomeFor(c: Closure): Outcome =
-  if (c.source.scope == SecurityOnly) SecurityAdvisory
-  else if (c.triage.category == F::NoFinding or c.source.coverage != CoverageComplete or
-    effectiveMode(c.source, c.triage.category) == ModeOff) Advisory
+  if (c.gate.source.scope == SecurityOnly) SecurityAdvisory
+  else if (c.triage.verdict.category == F::NoFinding or c.gate.source.coverage != CoverageComplete or
+    effectiveMode(c.gate.source, c.triage.verdict.category) == ModeOff) Advisory
   else if (uncertainFinding(c)) Uncertain
   else if (closeGates(c)) CloseCandidate
   else LabelFinding
 pure def canDecide(c: Closure): bool = c.phase == Triaged and
-  (if (c.source.scope == SecurityOnly) mayPostSecurity(c) else mayPostOrdinary(c) and not(needsConfirm(c)))
+  (if (c.gate.source.scope == SecurityOnly) mayPostSecurity(c) else mayPostOrdinary(c) and not(needsConfirm(c)))
 pure def decide(c: Closure): Closure =
-  { ...c, phase: Decided, outcome: outcomeFor(c), decidedScope: c.source.scope }
+  { ...c, phase: Decided, outcome: outcomeFor(c), decidedScope: c.gate.source.scope, decidedSeq: c.gate.seq }
 pure def alwaysOutcomeOnlyWhenDecided(c: Closure): bool = (c.phase == Decided) iff (c.outcome != Undecided)
-pure def alwaysTriageBeforeConfirm(c: Closure): bool = c.hasConfirm implies c.phase != Unreviewed
+pure def alwaysConfirmOnlyAfterTriage(c: Closure): bool = c.hasConfirm implies c.phase != Unreviewed
 pure def alwaysOrdinaryOutcomesActive(c: Closure): bool =
   (c.outcome == Advisory or c.outcome == LabelFinding or c.outcome == Uncertain or c.outcome == CloseCandidate)
     implies c.decidedScope == Active
 pure def alwaysSecurityDecisionKeepsScope(c: Closure): bool =
   (c.outcome == SecurityAdvisory iff (c.phase == Decided and c.decidedScope == SecurityOnly)) and
   (c.phase == Decided implies (c.decidedScope == Active or c.decidedScope == SecurityOnly))
+pure def alwaysCandidateConfirmed(c: Closure): bool = c.outcome == CloseCandidate implies
+  c.hasConfirm and confirms(c.triage, c.confirm) and c.identity.kind == PullRequest and
+  F::permittedAction(c.triage.verdict.category) == F::CloseAllowed and c.decidedSeq > 0
+pure def alwaysUncertainOrCandidateHasFinding(c: Closure): bool =
+  (c.outcome == Uncertain or c.outcome == CloseCandidate or c.outcome == LabelFinding) implies
+    c.triage.verdict.category != F::NoFinding
 pure def stepDecisionImmutable(before: Closure, after: Closure): bool = before.phase == Decided implies
   after.phase == Decided and after.outcome == before.outcome and after.decidedScope == before.decidedScope and
-  after.triage == before.triage and after.confirm == before.confirm and after.hasConfirm == before.hasConfirm
+  after.triage == before.triage and after.confirm == before.confirm and after.hasConfirm == before.hasConfirm and
+  after.decidedSeq == before.decidedSeq
 pure def stepIdentityFixed(before: Closure, after: Closure): bool = after.identity == before.identity
+pure def stepObservationsAdvance(before: Closure, after: Closure): bool = after.gate.seq >= before.gate.seq
 pure def sometimesAdvisory(c: Closure): bool = c.outcome == Advisory
-pure def sometimesLabelOutcome(c: Closure): bool = c.outcome == LabelFinding
-```
-
-## Story: Close at most once, never resend, and reconcile lost responses
-
-### The repository slot is reserved before the request and a request is sent at most once
-
-Source `reserveClose`: one serialized D1 write owns the repository slot
-under the current review claim before any external request. The model keeps
-one live attempt per revision. The GitHub close request is issued only after
-a final fresh recheck of every gate and at most once per attempt, so replay
-never sends another close.
-
-```quint
-type CapacityGrant = { repository: int, itemNode: str, revision: str, attemptId: int }
-pure def canReserveClose(c: Closure, grant: CapacityGrant): bool =
-  c.outcome == CloseCandidate and closeGates(c) and c.attempt.state == NoAttempt and
-  grant.repository == c.identity.repository and grant.itemNode == c.identity.itemNode and
-  grant.revision == c.identity.revision and grant.attemptId > c.attempt.id and
-  not(c.rejected.includes(grant.attemptId)) and c.rejected.every(r => r < grant.attemptId)
-pure def reserveClose(c: Closure, grant: CapacityGrant): Closure =
-  { ...c, attempt: { state: Pending, id: grant.attemptId, requests: 0, closedAt: 0, commentConfirmed: false } }
-pure def canRequestClose(c: Closure): bool = c.attempt.state == Pending and c.attempt.requests == 0 and closeGates(c)
-pure def requestClose(c: Closure): Closure = { ...c, attempt: { ...c.attempt, requests: 1 } }
-pure def alwaysAtMostOneRequest(c: Closure): bool = c.attempt.requests >= 0 and c.attempt.requests <= 1 and
-  (c.attempt.state == NoAttempt implies c.attempt == noAttempt)
-pure def alwaysAttemptOnlyForCloseCandidate(c: Closure): bool = c.attempt.state != NoAttempt implies
-  c.outcome == CloseCandidate and c.identity.kind == PullRequest and c.hasConfirm and confirms(c.triage, c.confirm) and
-  F::permittedAction(c.triage.category) == F::CloseAllowed and c.decidedScope == Active
-pure def stepRequestOnlyWhenEligible(before: Closure, via: str, after: Closure): bool =
-  via == "requestClose" implies closeGates(before)
-pure def stepNoResend(before: Closure, after: Closure): bool =
-  (before.attempt.id == after.attempt.id and before.attempt.state != NoAttempt) implies after.attempt.requests >= before.attempt.requests
-```
-
-### Only GitHub's own close evidence confirms and only a definitive refusal releases
-
-A confirmed close needs GitHub's immutable close event by the Slopbot App on
-the reviewed revision with its `closed_at`. A definitive 401, 403, 404, 410,
-422 or 429 response rejects the attempt and releases its slot; a later retry
-creates a new attempt and never rewrites the rejected one. A timeout, lost
-response, a human close or unavailable evidence keeps the attempt pending;
-pending attempts never expire with the review lease and keep occupying
-capacity until reconciled (an operator release of a stuck attempt is an
-owner decision gate, not modeled as allowed). After confirmation the close
-comment is retried until GitHub confirms it.
-
-```quint
-type CloseActor = ActorUnknown | SlopbotApp | HumanActor
-type CloseEvidence = { itemNode: str, revision: str, closedBy: CloseActor, closedAt: int }
-type GithubRefusal = { attemptId: int, status: int }
-pure def definitiveRefusal(status: int): bool =
-  status == 401 or status == 403 or status == 404 or status == 410 or status == 422 or status == 429
-pure def lawAmbiguousResponseNeverReleases(status: int): bool =
-  (status == 408 or status == 500 or status == 502 or status == 503 or status == 504 or status == 0) implies
-    not(definitiveRefusal(status))
-pure val statusValues = Set(0, 401, 403, 404, 408, 410, 422, 429, 500, 502, 503, 504)
-pure def canConfirmClose(c: Closure, closeEvent: CloseEvidence): bool =
-  c.attempt.state == Pending and c.attempt.requests == 1 and closeEvent.itemNode == c.identity.itemNode and
-  closeEvent.revision == c.identity.revision and closeEvent.closedBy == SlopbotApp and closeEvent.closedAt > 0
-pure def confirmClose(c: Closure, closeEvent: CloseEvidence): Closure =
-  { ...c, attempt: { ...c.attempt, state: Confirmed, closedAt: closeEvent.closedAt } }
-pure def canRejectClose(c: Closure, refusal: GithubRefusal): bool =
-  c.attempt.state == Pending and c.attempt.requests == 1 and refusal.attemptId == c.attempt.id and
-  definitiveRefusal(refusal.status)
-pure def rejectClose(c: Closure, refusal: GithubRefusal): Closure =
-  { ...c, attempt: noAttempt, rejected: c.rejected.append(refusal.attemptId) }
-pure def canConfirmCloseComment(c: Closure): bool = c.attempt.state == Confirmed and not(c.attempt.commentConfirmed)
-pure def confirmCloseComment(c: Closure): Closure = { ...c, attempt: { ...c.attempt, commentConfirmed: true } }
-pure def closedBySlopbot(c: Closure): bool = c.attempt.state == Confirmed
-pure def alwaysConfirmedHasCloseTime(c: Closure): bool =
-  (c.attempt.state == Confirmed implies c.attempt.closedAt > 0 and c.attempt.requests == 1) and
-  (c.attempt.state != Confirmed implies c.attempt.closedAt == 0 and not(c.attempt.commentConfirmed))
-pure def alwaysRejectedIdsOrdered(c: Closure): bool =
-  c.rejected.every(r => r > 0 and (c.attempt.state == NoAttempt or r < c.attempt.id))
-pure def stepRejectedHistoryRetained(before: Closure, after: Closure): bool =
-  after.rejected.length() >= before.rejected.length() and before.rejected.every(r => after.rejected.includes(r))
-pure def stepConfirmedIsFinal(before: Closure, after: Closure): bool = before.attempt.state == Confirmed implies
-  after.attempt.state == Confirmed and after.attempt.id == before.attempt.id and after.attempt.closedAt == before.attempt.closedAt
-pure def sometimesConfirmedClose(c: Closure): bool = c.attempt.state == Confirmed
-pure def sometimesRejected(c: Closure): bool = c.rejected.length() > 0
-pure def sometimesPendingAfterRequest(c: Closure): bool = c.attempt.state == Pending and c.attempt.requests == 1
-```
-
-### A confirmed scam closure notifies each moderator once and adds the moderator label
-
-Source `notifyScamReviewForPenalty`: a confirmed close of a `scam` finding
-(the only `moderator_review` category) records one moderator Inbox notice
-per configured moderator under an idempotent key and adds the
-`slopbot: moderator` label. The notice is retried from the committed close
-even after GitHub already shows the item closed. Moderators are the PRD
-section 9 GitHub actors 18633264 and 202660855.
-
-```quint
-pure val slopModerators: Set[int] = Set(18633264, 202660855)
-pure def canNotifyModerator(c: Closure, recipient: int): bool =
-  closedBySlopbot(c) and F::moderatorReview(c.triage.category) and slopModerators.contains(recipient) and
-  not(c.moderatorNotices.contains(recipient))
-pure def notifyModerator(c: Closure, recipient: int): Closure =
-  { ...c, moderatorNotices: c.moderatorNotices.union(Set(recipient)) }
-pure def canAddModeratorLabel(c: Closure): bool =
-  closedBySlopbot(c) and F::moderatorReview(c.triage.category) and not(c.moderatorLabel)
-pure def addModeratorLabel(c: Closure): Closure = { ...c, moderatorLabel: true }
-pure def alwaysNoticesOnlyForConfirmedScam(c: Closure): bool =
-  (c.moderatorNotices.size() > 0 or c.moderatorLabel) implies closedBySlopbot(c) and c.triage.category == F::Scam
-pure def alwaysNoticesToModerators(c: Closure): bool = c.moderatorNotices.subseteq(slopModerators)
-pure def sometimesModeratorNotified(c: Closure): bool = c.moderatorNotices.size() > 0
-pure val fair_notifyModerator = "weak"
-pure def leadsToEveryModeratorNotified(c: Closure, later: Closure): bool =
-  (closedBySlopbot(c) and c.triage.category == F::Scam) implies slopModerators.subseteq(later.moderatorNotices)
+pure def sometimesUncertainOutcome(c: Closure): bool = c.outcome == Uncertain
+pure def sometimesCloseCandidate(c: Closure): bool = c.outcome == CloseCandidate
 ```
 
 ## Story: Label certain findings and security results without closing
@@ -389,17 +336,18 @@ pure def leadsToEveryModeratorNotified(c: Closure, later: Closure): bool =
 
 Source `runReview`: a certain finding whose close is blocked by a policy gate
 (no consent, an ineligible author, mode label, inactive switch) is commented
-and labeled with its category label. Issues are labeled and never closed.
+and labeled with its category label. Issues are labeled and never closed. A
+close candidate whose close is later blocked is labeled by its close attempt.
 
 ```quint
 pure def canLabelFinding(c: Closure): bool =
   c.outcome == LabelFinding and mayActOrdinary(c) and not(c.findingLabel) and
-  effectiveMode(c.source, c.triage.category) != ModeOff
+  effectiveMode(c.gate.source, c.triage.verdict.category) != ModeOff
 pure def labelFinding(c: Closure): Closure = { ...c, findingLabel: true }
-pure def alwaysIssuesNeverClose(c: Closure): bool = c.identity.kind == Issue implies c.attempt.state == NoAttempt
-pure def alwaysLabelOnlyCategoriesStayOpen(c: Closure): bool =
-  F::neverCloses(c.triage.category) implies c.attempt.state == NoAttempt
-pure def alwaysUncertainNeverCloses(c: Closure): bool = c.outcome == Uncertain implies c.attempt.state == NoAttempt
+pure def alwaysLabelOnlyCategoriesNeverCandidates(c: Closure): bool =
+  F::neverCloses(c.triage.verdict.category) implies c.outcome != CloseCandidate
+pure def alwaysFindingLabelFollowsOutcome(c: Closure): bool = c.findingLabel implies
+  (c.outcome == LabelFinding or (c.outcome == SecurityAdvisory and c.triage.verdict.category == F::Scam))
 pure def sometimesLabeledFinding(c: Closure): bool = c.findingLabel and c.outcome == LabelFinding
 ```
 
@@ -409,104 +357,19 @@ pure def sometimesLabeledFinding(c: Closure): bool = c.findingLabel and c.outcom
 pure def canCommentSecurity(c: Closure): bool = c.outcome == SecurityAdvisory and mayPostSecurity(c) and not(c.securityCommented)
 pure def commentSecurity(c: Closure): Closure = { ...c, securityCommented: true }
 pure def canLabelSecurityScam(c: Closure): bool = c.outcome == SecurityAdvisory and mayPostSecurity(c) and
-  c.source.coverage == CoverageComplete and
-  F::securityCategory(c.triage.category) and not(initiallyUncertain(c.triage)) and not(c.findingLabel)
+  c.gate.source.coverage == CoverageComplete and
+  F::securityCategory(c.triage.verdict.category) and not(initiallyUncertain(c.triage)) and not(c.findingLabel)
 pure def labelSecurityScam(c: Closure): Closure = { ...c, findingLabel: true }
-pure def alwaysRestrictedNeverCloses(c: Closure): bool = c.decidedScope == SecurityOnly implies c.attempt.state == NoAttempt
+pure def alwaysRestrictedNeverCandidate(c: Closure): bool = c.decidedScope == SecurityOnly implies c.outcome != CloseCandidate
 pure def alwaysSecurityLabelIsScam(c: Closure): bool =
-  (c.findingLabel and c.decidedScope == SecurityOnly) implies c.triage.category == F::Scam
+  (c.findingLabel and c.decidedScope == SecurityOnly) implies c.triage.verdict.category == F::Scam
 pure def sometimesRestrictedScamLabel(c: Closure): bool =
-  c.decidedScope == SecurityOnly and c.triage.category == F::Scam and c.securityCommented and c.findingLabel
-```
-
-## Story: Give the maintainer seven days to decide an uncertain finding
-
-### The first durable maintainer notice starts the window once
-
-Source `maintainer-holds.ts` derives the deadline from the stored hold
-timestamp and preserves it on retry. The hold starts when the maintainer
-comment is confirmed and the durable hold is recorded. The adapter supplies
-an absolute trusted time in seconds. A notification retry cannot restart the
-window. A security-only finding never starts an ordinary hold.
-
-```quint
-pure val holdSeconds = 604800
-pure val requeueSeconds = 86400
-pure def canObserveTime(c: Closure, observedAt: int): bool = observedAt >= c.now
-pure def observeTime(c: Closure, observedAt: int): Closure = { ...c, now: observedAt }
-pure def canNotifyMaintainer(c: Closure): bool = c.outcome == Uncertain and mayActOrdinary(c) and c.hold == NoHold
-pure def notifyMaintainer(c: Closure): Closure = { ...c, heldAt: c.now, hold: WaitingForMaintainer }
-pure def holdDue(c: Closure): bool = c.hold == WaitingForMaintainer and c.now - c.heldAt >= holdSeconds
-pure def alwaysHoldTime(c: Closure): bool = c.now >= 0 and c.heldAt >= 0 and c.heldAt <= c.now and
-  c.holdQueuedAt >= 0 and c.holdQueuedAt <= c.now
-pure def alwaysHoldHasUncertainFinding(c: Closure): bool =
-  c.hold != NoHold implies c.outcome == Uncertain and c.decidedScope == Active and c.attempt.state == NoAttempt
-pure def stepHoldStartRetained(before: Closure, after: Closure): bool =
-  before.hold != NoHold implies after.heldAt == before.heldAt and after.hold != NoHold
-```
-
-### The scheduled dispatcher queues each due hold and requeues a lost message after a day
-
-Source `dispatchDueJobs`: the five-minute cron selects unresolved holds whose
-deadline passed and whose last queue time is absent or a day old, then
-records the queue time. The one-time hold resolution and the unique label
-action make a duplicate delivery harmless.
-
-```quint
-pure def canDispatchHold(c: Closure): bool = holdDue(c) and
-  (c.holdQueuedAt == 0 or c.now - c.holdQueuedAt >= requeueSeconds)
-pure def dispatchHold(c: Closure): Closure = { ...c, holdQueuedAt: c.now }
-pure def holdQueued(c: Closure): bool = c.holdQueuedAt > 0 and c.holdQueuedAt >= c.heldAt + holdSeconds
-pure def alwaysQueuedOnlyWhenDue(c: Closure): bool = c.holdQueuedAt > 0 implies c.holdQueuedAt - c.heldAt >= holdSeconds and c.hold != NoHold
-pure def sometimesRequeued(c: Closure): bool = holdQueued(c) and c.holdQueuedAt - c.heldAt >= holdSeconds + requeueSeconds
-```
-
-### The due hold labels only when current evidence proves no maintainer acted
-
-Current maintainer comments, reviews, labels, assignments and state changes
-since the hold began count once attributed to the maintainer. Passive mentions
-and subscriptions do not. The observation binds the reviewed revision, the
-first notice timestamp and the current decision time. A known changed
-source, scope or installation, a closed item, an appeal or a verified reopen
-supersedes the hold; an unknown source or timeline refuses labeling and leaves
-the hold retryable. The only automatic hold output is the once-only
-`slopbot:uncertain` label; it never closes.
-
-```quint
-type MaintainerTimeline = TimelineUnknown | NoMaintainerAction | MaintainerAction
-type TimelineObservation = { itemNode: str, revision: str, heldAt: int, checkedAt: int, timeline: MaintainerTimeline }
-pure def matchesHoldObservation(c: Closure, timeline: TimelineObservation): bool =
-  timeline.itemNode == c.identity.itemNode and timeline.revision == c.identity.revision and
-  timeline.heldAt == c.heldAt and timeline.checkedAt == c.now
-pure def canResolveMaintainerAction(c: Closure, timeline: TimelineObservation): bool =
-  holdDue(c) and holdQueued(c) and mayPostOrdinary(c) and matchesHoldObservation(c, timeline) and
-  timeline.timeline == MaintainerAction
-pure def resolveMaintainerAction(c: Closure, timeline: TimelineObservation): Closure = { ...c, hold: MaintainerActed }
-pure def supersedingFact(c: Closure): bool =
-  c.source.source == SourceSuperseded or c.source.scope != Active or c.source.installation == InstallationRemoved or
-  c.source.installation == InstallationSuspended or c.source.item == ItemClosed or c.source.item == ItemMerged or
-  revisionDisputed(c)
-pure def canSupersedeHold(c: Closure): bool = holdDue(c) and holdQueued(c) and c.source.identity == c.identity and supersedingFact(c)
-pure def supersedeHold(c: Closure): Closure = { ...c, hold: HoldSuperseded }
-pure def canLabelUncertain(c: Closure, timeline: TimelineObservation): bool = mayActOrdinary(c) and
-  holdDue(c) and holdQueued(c) and matchesHoldObservation(c, timeline) and
-  timeline.timeline == NoMaintainerAction and not(c.uncertainLabel)
-pure def labelUncertain(c: Closure, timeline: TimelineObservation): Closure =
-  { ...c, hold: HoldLabeled, uncertainLabel: true }
-pure def alwaysUncertainLabelAfterWindow(c: Closure): bool =
-  c.uncertainLabel implies c.hold == HoldLabeled and c.now - c.heldAt >= holdSeconds
-pure def alwaysHoldResolvedOnce(c: Closure): bool =
-  (c.hold == HoldLabeled or c.hold == MaintainerActed or c.hold == HoldSuperseded) implies c.holdQueuedAt > 0
-pure def stepHoldResolutionFinal(before: Closure, after: Closure): bool =
-  (before.hold == HoldLabeled or before.hold == MaintainerActed or before.hold == HoldSuperseded) implies after.hold == before.hold
-pure def sometimesUncertainLabel(c: Closure): bool = c.hold == HoldLabeled
-pure def sometimesMaintainerActed(c: Closure): bool = c.hold == MaintainerActed
-pure def sometimesSuperseded(c: Closure): bool = c.hold == HoldSuperseded
+  c.decidedScope == SecurityOnly and c.triage.verdict.category == F::Scam and c.securityCommented and c.findingLabel
 ```
 
 ## Story: Reopen and appeal decisions stop further automatic action on the revision
 
-### Any maintainer reopen or author appeal blocks re-closing that revision
+### A maintainer reopen or an author appeal blocks further review actions on that revision
 
 A confirmed reopen event binds the actor, the reopened revision and its
 event time. A current maintainer's reopen is a maintainer decision and always
@@ -515,37 +378,35 @@ reopened. A reopen by anyone else records no decision (source
 `recordHumanSignal`; the README's "any reopen" means these two). An author's
 `/slopbot appeal` also disputes the revision. An author's appeal of a
 revision that no finding covers decides nothing for that revision, which
-keeps its own review (`appeal-before-finding`). Each blocks review actions and
-any further close of this revision; a newer head is a new instance.
+keeps its own review (`appeal-before-finding`). Each blocks review actions on
+this revision; a newer head is a new instance.
 
 ```quint
 type ReopenRole = ReopenByMaintainer | ReopenByAuthor | ReopenByOther
 type ReopenEvidence = { itemNode: str, revision: str, actor: int, role: ReopenRole, at: int }
+pure def findingRecorded(c: Closure): bool = c.phase == Decided and c.triage.verdict.category != F::NoFinding
 pure def canObserveReopen(c: Closure, reopen: ReopenEvidence): bool =
   reopen.itemNode == c.identity.itemNode and reopen.revision == c.identity.revision and reopen.at > 0 and
   (reopen.role == ReopenByMaintainer or
     (reopen.role == ReopenByAuthor and reopen.actor == c.identity.author and findingRecorded(c)))
 pure def observeReopen(c: Closure, reopen: ReopenEvidence): Closure =
   if (reopen.role == ReopenByMaintainer) { ...c, maintainerReopened: true } else { ...c, authorAppealed: true }
-pure def findingRecorded(c: Closure): bool = c.phase == Decided and c.triage.category != F::NoFinding
 pure def canObserveAuthorAppeal(c: Closure, appellant: int): bool =
   appellant == c.identity.author and appellant > 0 and findingRecorded(c)
 pure def observeAuthorAppeal(c: Closure, appellant: int): Closure = { ...c, authorAppealed: true }
+pure def alwaysAppealCoversFinding(c: Closure): bool = (c.authorAppealed or c.appealUpheld) implies findingRecorded(c)
 pure def stepDisputeIsPermanent(before: Closure, after: Closure): bool =
   (before.maintainerReopened implies after.maintainerReopened) and (before.authorAppealed implies after.authorAppealed) and
   (before.appealUpheld implies after.appealUpheld)
-pure def stepNoReservationAfterDispute(before: Closure, after: Closure): bool =
-  (revisionDisputed(before) and before.attempt.state == NoAttempt) implies after.attempt.state == NoAttempt
-pure def sometimesMaintainerReopened(c: Closure): bool = c.maintainerReopened and closedBySlopbot(c)
+pure def stepNoLabelAfterDispute(before: Closure, via: str, after: Closure): bool =
+  (via == "labelFinding" or via == "labelSecurityScam") implies not(revisionDisputed(before))
+pure def sometimesMaintainerReopened(c: Closure): bool = c.maintainerReopened and c.findingLabel
 ```
 
-### An upheld appeal reopens Slopbot's current close and removes Slopbot's labels
+### An upheld appeal or a maintainer reopen removes the decision's finding label
 
-Source `finishAppeal`: an upheld appeal of this revision reopens the item
-only while Slopbot's own close is current, read fresh from GitHub for the
-exact item and revision (`CurrentItemState`); a later human close stays. The
-finding and uncertain labels are removed and GitHub must confirm removal or
-absence. A maintainer reopen removes the same labels. The appeal and debit
+Source `finishAppeal` and `reconcileConfirmedReopen`: the finding label is
+removed and GitHub must confirm removal or absence. The appeal and debit
 journals own their resolutions; this model only consumes the outcome.
 
 ```quint
@@ -554,113 +415,87 @@ type AppealOutcome = { itemNode: str, revision: str, verdict: AppealVerdict }
 type RemovalEvidence = { itemNode: str, revision: str, confirmedRemoval: bool }
 pure def canObserveAppealOutcome(c: Closure, appealOutcome: AppealOutcome): bool =
   appealOutcome.itemNode == c.identity.itemNode and appealOutcome.revision == c.identity.revision and
-  appealOutcome.verdict == AppealUpheld and not(c.appealUpheld)
+  appealOutcome.verdict == AppealUpheld and not(c.appealUpheld) and findingRecorded(c)
 pure def observeAppealOutcome(c: Closure, appealOutcome: AppealOutcome): Closure = { ...c, appealUpheld: true }
-type CurrentItemState = { itemNode: str, revision: str, item: ItemState, closedBy: ClosedBy, installation: InstallationStatus }
-pure def canReopenAfterAppeal(c: Closure, itemNow: CurrentItemState): bool =
-  c.appealUpheld and closedBySlopbot(c) and not(c.slopbotReopened) and
-  itemNow.itemNode == c.identity.itemNode and itemNow.revision == c.identity.revision and
-  itemNow.item == ItemClosed and itemNow.closedBy == ClosedBySlopbot and itemNow.installation == InstallationActive
-pure def reopenAfterAppeal(c: Closure, itemNow: CurrentItemState): Closure = { ...c, slopbotReopened: true }
-pure def canRemoveLabels(c: Closure, removal: RemovalEvidence): bool =
-  (c.appealUpheld or c.maintainerReopened) and (c.findingLabel or c.uncertainLabel) and
+pure def canRemoveLabel(c: Closure, removal: RemovalEvidence): bool =
+  (c.appealUpheld or c.maintainerReopened) and c.findingLabel and
   removal.itemNode == c.identity.itemNode and removal.revision == c.identity.revision and removal.confirmedRemoval
-pure def removeLabels(c: Closure, removal: RemovalEvidence): Closure = { ...c, findingLabel: false, uncertainLabel: false }
-pure def alwaysSlopbotReopensOnlyOwnClose(c: Closure): bool = c.slopbotReopened implies c.appealUpheld and closedBySlopbot(c)
-pure def sometimesAppealReopened(c: Closure): bool = c.slopbotReopened
-pure def sometimesLabelsRemoved(c: Closure): bool = c.hold == HoldLabeled and not(c.uncertainLabel) and c.appealUpheld
+pure def removeLabel(c: Closure, removal: RemovalEvidence): Closure = { ...c, findingLabel: false }
+pure def sometimesLabelRemoved(c: Closure): bool = not(c.findingLabel) and c.appealUpheld and c.outcome == LabelFinding
 ```
 
-### Simulation samples include allowed and refused repository, participation and timeline observations
+### Simulation samples include allowed and refused repository, participation and verdict observations
 
 The finite samples exercise changes after a review, closure opt-outs, absent
-consent, an invalid file, ineligible participation, inactive activation and
-the exact hold boundary. They do not bound production values.
+consent, an invalid file, ineligible participation and inactive activation.
+They do not bound production values.
 
 ```quint
 pure val verifiedSource: SourceObservation = { identity: reviewedItem, scope: Active, source: SourceCurrent,
   installation: InstallationActive, item: ItemOpen, closedBy: NotClosed, draft: false, coverage: CoverageComplete,
   assignment: Unassigned, authorRole: NonMaintainer, projectRevision: 3, consent: CC::Enabled,
   file: FileAbsent, fileClosure: false, modeCategory: F::NoFinding, fileMode: ModeOff, securityAuthorized: false }
-pure val observationValues = Set(verifiedSource,
-  { ...verifiedSource, scope: SecurityOnly, securityAuthorized: true },
-  { ...verifiedSource, consent: CC::Absent },
-  { ...verifiedSource, coverage: CoverageLimited },
-  { ...verifiedSource, source: SourceSuperseded },
-  { ...verifiedSource, item: ItemClosed, closedBy: ClosedBySlopbot },
-  { ...verifiedSource, identity: { ...reviewedItem, kind: Issue } })
+pure val ownRun: PrOpenedEvent = { actor: 5, sessionActor: 5, project: 1, repository: 7, prNode: "pr" }
+pure val eligibleParticipation: ParticipationEvidence = { member: 5, membership: MemberActive,
+  events: List(ownRun), copiedMarker: false }
+pure val activeSpam: ActivationView = { enabled: true, category: F::Spam, categoryQualified: true, verifierQualified: false }
+pure val eligibleGate: GateObservation = { seq: 1, source: verifiedSource, participation: eligibleParticipation,
+  activation: activeSpam }
+pure val observationValues = Set(eligibleGate, { ...eligibleGate, seq: 2 },
+  { ...eligibleGate, seq: 2, source: { ...verifiedSource, scope: SecurityOnly, securityAuthorized: true } },
+  { ...eligibleGate, seq: 1, source: { ...verifiedSource, coverage: CoverageLimited } },
+  { ...eligibleGate, seq: 3, source: { ...verifiedSource, consent: CC::Absent } })
 pure val sampleObservationValues = Set(verifiedSource,
   { ...verifiedSource, scope: ReversalOnly }, { ...verifiedSource, consent: CC::Absent },
-  { ...verifiedSource, consent: CC::Disabled },
+  { ...verifiedSource, consent: CC::Disabled }, { ...verifiedSource, coverage: CoverageLimited },
   { ...verifiedSource, file: FileValid, fileClosure: false, modeCategory: F::Spam, fileMode: ModeClose },
   { ...verifiedSource, file: FileValid, fileClosure: true, modeCategory: F::OutOfScope, fileMode: ModeClose },
   { ...verifiedSource, file: FileInvalid }, { ...verifiedSource, assignment: Assigned },
   { ...verifiedSource, authorRole: RoleUnknown }, { ...verifiedSource, item: ItemClosed, closedBy: ClosedByHuman })
-pure val ownRun: PrOpenedEvent = { actor: 5, sessionActor: 5, project: 1, repository: 7, prNode: "pr" }
-pure val eligibleParticipation: ParticipationEvidence = { member: 5, membership: MemberActive,
-  events: List(ownRun), copiedMarker: false }
-pure val runEvidenceValues = Set(eligibleParticipation, { ...eligibleParticipation, membership: MemberClosed })
 pure val sampleRunValues = Set(eligibleParticipation,
   { ...eligibleParticipation, membership: MemberClosed },
   { ...eligibleParticipation, events: List({ ...ownRun, sessionActor: 6 }), copiedMarker: true },
   { ...eligibleParticipation, events: List({ ...ownRun, prNode: "other" }) },
   { ...eligibleParticipation, events: List({ ...ownRun, repository: 8 }) })
-pure val activeSpam: ActivationView = { enabled: true, category: F::Spam, categoryQualified: true, verifierQualified: false }
-pure val viewValues = Set(activeSpam, { ...activeSpam, category: F::Scam })
-pure val spamVerdict: Verdict = { category: F::Spam, confidenceHundredths: 95, limitations: false,
-  evidenceVerbatim: true, ruleQuotedVerbatim: false, relatedOpenItem: false, objectiveDefect: "", deterministic: false }
-pure val verdictValues = Set(spamVerdict, { ...spamVerdict, category: F::Scam },
-  { ...spamVerdict, confidenceHundredths: 89 }, { ...spamVerdict, category: F::OutOfScope, ruleQuotedVerbatim: true })
-pure val sampleVerdictValues = Set(spamVerdict, { ...spamVerdict, confidenceHundredths: 89 },
-  { ...spamVerdict, deterministic: true }, { ...spamVerdict, category: F::Busywork },
-  { ...spamVerdict, category: F::Busywork, ruleQuotedVerbatim: true }, { ...spamVerdict, limitations: true },
-  { ...spamVerdict, category: F::Duplicate }, { ...spamVerdict, category: F::Duplicate, relatedOpenItem: true },
-  { ...spamVerdict, category: F::LowQuality, ruleQuotedVerbatim: true, objectiveDefect: "d" },
-  { ...spamVerdict, category: F::LowQuality, ruleQuotedVerbatim: true, objectiveDefect: "e" })
+pure val spamVerdict: Verdict = { callId: "t", category: F::Spam, confidenceHundredths: 95, limitations: false,
+  objectiveDefect: "", deterministic: false }
+pure val verdictValues = Set(spamVerdict, { ...spamVerdict, callId: "k" },
+  { ...spamVerdict, callId: "k", confidenceHundredths: 89 }, { ...spamVerdict, category: F::Scam },
+  { ...spamVerdict, category: F::OutOfScope })
+pure val groundingValues = Set({ callId: "t", contentDigest: "review", evidenceFound: true, policy: PolicyComplete, ruleFound: true },
+  { callId: "k", contentDigest: "review", evidenceFound: true, policy: PolicyComplete, ruleFound: true },
+  { callId: "t", contentDigest: "review", evidenceFound: true, policy: PolicyTruncated, ruleFound: true })
+pure val checkValues = Set({ callId: "t", contentDigest: "review", evidenceFound: true, policy: PolicyComplete, ruleFound: true },
+  { callId: "t", contentDigest: "review", evidenceFound: true, policy: PolicyTruncated, ruleFound: true },
+  { callId: "t", contentDigest: "other", evidenceFound: true, policy: PolicyComplete, ruleFound: true })
+pure val relatedValues = Set({ itemNode: "pr", relatedNode: "", author: 5, relatedOpen: false, sameContent: false })
+pure val assessedSpam: AssessedVerdict = { verdict: spamVerdict, grounded: true, related: false }
+pure val sampleVerdictValues = Set(assessedSpam, { ...assessedSpam, grounded: false },
+  { ...assessedSpam, verdict: { ...spamVerdict, confidenceHundredths: 89 } },
+  { ...assessedSpam, verdict: { ...spamVerdict, deterministic: true } },
+  { ...assessedSpam, verdict: { ...spamVerdict, callId: "k", category: F::Busywork } },
+  { ...assessedSpam, verdict: { ...spamVerdict, limitations: true } },
+  { ...assessedSpam, verdict: { ...spamVerdict, category: F::Duplicate } },
+  { ...assessedSpam, verdict: { ...spamVerdict, callId: "k", category: F::Duplicate }, related: true },
+  { ...assessedSpam, verdict: { ...spamVerdict, category: F::LowQuality, objectiveDefect: "d" } },
+  { ...assessedSpam, verdict: { ...spamVerdict, callId: "k", category: F::LowQuality, objectiveDefect: "e" } },
+  { ...assessedSpam, verdict: { ...spamVerdict, callId: "k" } })
 pure val otherVerdictValues = sampleVerdictValues
+pure val vValues = Set(spamVerdict, { ...spamVerdict, category: F::Busywork }, { ...spamVerdict, deterministic: true })
+pure val gValues = Set(eligibleGate, { ...eligibleGate, source: { ...verifiedSource, identity: { ...reviewedItem, kind: Issue } } })
 pure val identityValues = Set(reviewedItem, { ...reviewedItem, author: 6 }, { ...reviewedItem, kind: Issue })
-pure val grantValues = Set({ repository: 7, itemNode: "pr", revision: "head", attemptId: 1 },
-  { repository: 7, itemNode: "pr", revision: "head", attemptId: 2 })
-pure val closeEvidence: CloseEvidence = { itemNode: "pr", revision: "head", closedBy: SlopbotApp, closedAt: 100 }
-pure val closeEventValues = Set(closeEvidence, { ...closeEvidence, closedBy: HumanActor })
-pure val refusalValues = Set({ attemptId: 1, status: 422 })
-pure val recipientValues = Set(18633264, 202660855)
-pure val observedAtValues = Set(604800, 691200)
-pure val dueObservation: TimelineObservation = { itemNode: "pr", revision: "head", heldAt: 0, checkedAt: 604800,
-  timeline: NoMaintainerAction }
-pure val timelineValues = Set(dueObservation, { ...dueObservation, timeline: MaintainerAction },
-  { ...dueObservation, timeline: TimelineUnknown })
 pure val reopenValues = Set({ itemNode: "pr", revision: "head", actor: 9, role: ReopenByMaintainer, at: 50 },
   { itemNode: "pr", revision: "head", actor: 5, role: ReopenByAuthor, at: 50 },
   { itemNode: "pr", revision: "head", actor: 6, role: ReopenByOther, at: 50 })
 pure val appellantValues = Set(5, 6)
 pure val appealOutcomeValues = Set({ itemNode: "pr", revision: "head", verdict: AppealUpheld })
-pure val itemNowValues = Set({ itemNode: "pr", revision: "head", item: ItemClosed, closedBy: ClosedBySlopbot,
-  installation: InstallationActive })
 pure val removalValues = Set({ itemNode: "pr", revision: "head", confirmedRemoval: true })
-pure val weight_observeSource = 3
-pure val weight_observeParticipation = 3
-pure val weight_observeActivation = 3
-pure val weight_recordTriage = 20
-pure val weight_recordConfirm = 15
-pure val weight_decide = 20
-pure val weight_reserveClose = 20
-pure val weight_requestClose = 20
-pure val weight_confirmClose = 20
-pure val weight_rejectClose = 20
-pure val weight_confirmCloseComment = 20
-pure val weight_notifyModerator = 20
-pure val weight_notifyMaintainer = 10
-pure val weight_observeTime = 3
-pure val weight_dispatchHold = 10
-pure val weight_labelUncertain = 10
-pure val weight_labelFinding = 8
-pure val weight_commentSecurity = 6
-pure val weight_labelSecurityScam = 6
-pure val weight_reopenAfterAppeal = 20
-pure val weight_removeLabels = 20
-pure val weight_observeAppealOutcome = 5
-pure val weight_addModeratorLabel = 5
-pure val weight_supersedeHold = 5
-pure val weight_resolveMaintainerAction = 5
+pure val weight_observe = 4
+pure val weight_recordTriage = 10
+pure val weight_recordConfirm = 10
+pure val weight_decide = 10
+pure val weight_labelFinding = 6
+pure val weight_commentSecurity = 15
+pure val weight_labelSecurityScam = 15
+pure val weight_removeLabel = 6
 ```
