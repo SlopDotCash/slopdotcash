@@ -2226,11 +2226,31 @@ async function singleOriginalContributorUnitProof(
   claims: readonly CorrectionClaim[],
   followups: readonly WorkUnitSource[] = [],
 ): Promise<HistoricalOrdinaryProof> {
-  const currentSource = richSource(original.evidence, owners);
-  const canonical = matchRetainedAcceptedSource(
-    accepted,
-    richSource(integration.evidence, owners),
+  // Resolve a native carrier deferral only against this complete supplied group.
+  // Keep the raw sources for their digest and fresh GitHub identity checks below.
+  const verified = await bindRetained(
+    [
+      ...new Map(
+        [original, integration, ...followups].map((source) => [
+          source.evidence.pull.node_id,
+          source,
+        ]),
+      ).values(),
+    ],
+    owners,
+    true,
   );
+  const currentSource = verified.find(
+    (source) => source.sourceId === original.evidence.pull.node_id,
+  );
+  const integrationSource = verified.find(
+    (source) => source.sourceId === integration.evidence.pull.node_id,
+  );
+  requireThat(
+    currentSource && integrationSource,
+    "Native unit source is missing",
+  );
+  const canonical = matchRetainedAcceptedSource(accepted, integrationSource);
   const reviewedOriginal = await reviewedOriginalCommit(
     github,
     original,
@@ -2300,7 +2320,10 @@ async function singleOriginalContributorUnitProof(
   const bindings: OriginalContributorFollowup[] = [];
   const nativeAcceptance: unknown[] = [];
   for (const followup of followups) {
-    const converted = richSource(followup.evidence, owners);
+    const converted = verified.find(
+      (source) => source.sourceId === followup.evidence.pull.node_id,
+    );
+    requireThat(converted, "Native follow-up source is missing");
     bindings.push(
       await originalContributorFollowupProof(
         github,
