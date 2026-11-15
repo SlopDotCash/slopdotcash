@@ -573,3 +573,66 @@ for (const mutation of [
     ).toBe(false);
   });
 }
+
+test("a saturated comparison still verifies unchanged selected paths through full trees", async () => {
+  const f = fixture();
+  const key = `/repos/${repository.id}/compare/${head}...${merged}?per_page=1`;
+  const comparison = f.values.get(key) as { files: FileChange[] };
+  comparison.files = Array.from({ length: 300 }, (_, i) => ({
+    ...comparison.files[0],
+    filename: `unrelated-${i}.ts`,
+  }));
+  const proof = await collectNativeMergeAcceptance(
+    f.client,
+    repository.id,
+    f.source.evidence,
+  );
+  expect(proof?.retainedFiles.map((file) => file.sourcePath)).toEqual([
+    "fix.ts",
+  ]);
+  if (!proof) throw Error("Missing stable-path proof");
+  f.source.evidence.nativeMergeAcceptance = proof;
+  f.source.evidence.limitations = [NATIVE_MERGE_CONTEXT];
+  expect(
+    await nativeMergeCarrierMatches(f.source.evidence, [f.source, f.carrier]),
+  ).toBe(true);
+});
+for (const fault of ["rename", "missing-tree", "blob-mismatch"] as const) {
+  test(`saturated retention refuses ${fault}`, async () => {
+    const f = fixture();
+    const key = `/repos/${repository.id}/compare/${head}...${merged}?per_page=1`;
+    const comparison = f.values.get(key) as { files: FileChange[] };
+    comparison.files = Array.from({ length: 300 }, (_, i) => ({
+      ...comparison.files[0],
+      filename: `unrelated-${i}.ts`,
+    }));
+    if (fault === "rename")
+      comparison.files[0] = {
+        ...comparison.files[0],
+        filename: "moved.ts",
+        previous_filename: "fix.ts",
+        status: "renamed",
+      };
+    if (fault === "missing-tree") {
+      const commit = f.values.get(
+        `/repos/${repository.id}/git/commits/${merged}`,
+      ) as { tree: { sha: string } };
+      f.values.delete(
+        `/repos/${repository.id}/git/trees/${commit.tree.sha}?recursive=1`,
+      );
+    }
+    if (fault === "blob-mismatch") {
+      const file = f.values.get(
+        `/repos/${repository.id}/contents/fix.ts?ref=${merged}`,
+      ) as { sha: string };
+      file.sha = "f".repeat(40);
+    }
+    expect(
+      await collectNativeMergeAcceptance(
+        f.client,
+        repository.id,
+        f.source.evidence,
+      ),
+    ).toBeNull();
+  });
+}

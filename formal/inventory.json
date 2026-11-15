@@ -8701,9 +8701,9 @@
     },
     {
       "path": "workers/slopbot/value-indirect-retention.ts",
-      "sha256": "4582bf92d7a2c44964782af1f0458b1bf3886daf61f76d7f5b7167a91ba9f16e",
+      "sha256": "c0b1da047e813c44ecd397cac936e7c2945f6224ae0ecdac3b1d9cb1785c9047",
       "models": ["formal/models/slopbot/bot_retained_acceptance.qnt"],
-      "candidateLines": [28, 30, 35, 38, 46, 93, 96],
+      "candidateLines": [28, 30, 35, 38, 46, 88, 102, 105],
       "review": "mapped-abstraction"
     },
     {
