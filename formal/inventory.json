@@ -104,6 +104,13 @@
       "review": "mapped-abstraction"
     },
     {
+      "path": ".github/workflows/private-payout-packet.yml",
+      "sha256": "f0c7f8bb56bbf9bd6af837447dd8f38e96f81e792f14c033c44a06ea46ee5096",
+      "models": ["formal/models/points/source_import.qnt"],
+      "candidateLines": [],
+      "review": "mapped-abstraction"
+    },
+    {
       "path": ".github/workflows/production-watch.yml",
       "sha256": "dc6693e1e195fc723b45cd08356bc1976ab904c3efd51473b63c41692fb2842b",
       "models": ["formal/models/release/workflow_authority.qnt"],
@@ -126,7 +133,7 @@
     },
     {
       "path": ".github/workflows/reviewed-historical-points.yml",
-      "sha256": "1d6e2eb6a397c8f0aef50bc0371457ea7559de11a6ef64763625796cc7d61ba8",
+      "sha256": "cb961b52599d5c180d2f542ec3468c69f849361a8df0091d83f4eda8ea3287e1",
       "models": ["formal/models/points/source_import.qnt"],
       "candidateLines": [],
       "review": "mapped-abstraction"
@@ -4336,6 +4343,13 @@
       "review": "mapped-abstraction"
     },
     {
+      "path": "scripts/private-payout-packet.ts",
+      "sha256": "0598d81defc0f0753275580161b25e196351102d320e9c5b2ebf8c7868a6bec0",
+      "models": ["formal/models/points/source_import.qnt"],
+      "candidateLines": [78],
+      "review": "mapped-abstraction"
+    },
+    {
       "path": "scripts/production-watch.ts",
       "sha256": "493a73f8c2d757736ce9466a3a62155954a937bea58578107f82965eae50c6de",
       "models": ["formal/models/release/deployment_probe.qnt"],
@@ -4590,9 +4604,9 @@
     },
     {
       "path": "scripts/reviewed-historical-points.ts",
-      "sha256": "d5f40d43098113e372c946bf3afa1c641ad566f8cb3e68eeb013825c069247d4",
+      "sha256": "afc7bec50acbd6f5089b31d4a14773a7508dcb24246d47ae214e53200a1479e4",
       "models": ["formal/models/points/source_import.qnt"],
-      "candidateLines": [399, 688],
+      "candidateLines": [406, 695],
       "review": "mapped-abstraction"
     },
     {
@@ -4653,9 +4667,9 @@
     },
     {
       "path": "scripts/run-reviewed-historical-points.ts",
-      "sha256": "b127198c25053eb6409412ef21a61ff63b8b39d8801214d27b131cf3e9168ae0",
+      "sha256": "f1a8dcca800c4bb4c14a5caa149b32412177e1f9592308e710c8142db7ed5aaf",
       "models": ["formal/models/points/source_import.qnt"],
-      "candidateLines": [3, 253, 273, 342, 430],
+      "candidateLines": [3, 257, 277, 353, 441],
       "review": "mapped-abstraction"
     },
     {
@@ -14060,13 +14074,15 @@
     },
     {
       "path": "formal/models/points/source_import.qnt",
-      "sha256": "36660dc1dae7e19cef16f731f55d5fcc38491e9bb4426395407fa392b31b2654",
+      "sha256": "c6e4e9862a876e27f9a9adeec6af392cf77beb098a29f1a7226fc775f7c55735",
       "sources": [
+        ".github/workflows/private-payout-packet.yml",
         ".github/workflows/reviewed-historical-points.yml",
         "scripts/backfill-points.ts",
         "scripts/check-direct-payment-disclosures.ts",
         "scripts/prepare-payments-import.ts",
         "scripts/prepare-points-import.ts",
+        "scripts/private-payout-packet.ts",
         "scripts/reviewed-historical-points.ts",
         "scripts/run-reviewed-historical-points.ts",
         "src/lib/payments/escrow-cycle.ts"

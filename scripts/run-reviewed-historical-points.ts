@@ -17,8 +17,10 @@ import {
   correctionBatchRecorded,
   recordCorrection,
 } from "./prepare-implementation-corrections";
+import { privatePayoutStorage } from "./private-payout-packet";
 import {
   decodeHistoricalPacket,
+  decodeHistoricalPacketBytes,
   type HistoricalPointsPacket,
   historicalProtectionQuery,
   reconstructHistoricalPoints,
@@ -299,10 +301,17 @@ async function main() {
   const encoded = [1, 2, 3, 4]
     .map((n) => process.env[`HISTORICAL_POINTS_PACKET_${n}`] ?? "")
     .join("");
-  const packet = decodeHistoricalPacket(
-    encoded,
-    process.env.REVIEWED_PACKET_SHA256 ?? "",
-  );
+  const digest = process.env.REVIEWED_PACKET_SHA256 ?? "";
+  const manifest = process.env.HISTORICAL_POINTS_OBJECT_MANIFEST;
+  const packet = manifest
+    ? decodeHistoricalPacketBytes(
+        await privatePayoutStorage(
+          process.env.CLOUDFLARE_ACCOUNT_ID ?? "",
+          process.env.CLOUDFLARE_API_TOKEN ?? "",
+        ).read(manifest),
+        digest,
+      )
+    : decodeHistoricalPacket(encoded, digest);
   const query: Query = async (sql) => {
     try {
       const { stdout } = await execute(
