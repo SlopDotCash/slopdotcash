@@ -128,6 +128,9 @@ pure def canCheckDeterministically(s: Scan, uncovered: int): bool =
   s.phase == Reviewing and not(s.deterministic) and uncovered >= 0 and uncovered + s.blocked <= s.inventory
 pure def checkDeterministically(s: Scan, uncovered: int): Scan = { ...s, deterministic: true, uncoveredExecutable: uncovered }
 pure val uncoveredValues = Set(0, 1)
+pure def alwaysReviewingUndecided(s: Scan): bool =
+  s.phase == Reviewing implies s.disposition == NoDisposition and s.refusal == NoRefusal and not(s.retained) and
+    not(s.reused) and not(s.synthesis) and s.confirmation == NoConfirmation
 pure def alwaysCoverageBounds(s: Scan): bool =
   s.inventory >= 0 and s.reviewed >= 0 and s.reviewed <= s.inventory and
   s.uncoveredExecutable >= 0 and s.blocked >= 0 and s.uncoveredExecutable + s.blocked <= s.inventory
