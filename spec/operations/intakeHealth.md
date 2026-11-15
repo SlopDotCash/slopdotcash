@@ -28,29 +28,40 @@ rate-limited, unauthorized, rejected or malformed answer leaves the previous
 observation in place, so it expires on schedule rather than being refreshed
 on bad evidence. A refused token is retried anonymously once by the adapter;
 the verdict here is the final answer. A failed database write is an explicit
-failed renewal and changes nothing.
+failed renewal and changes nothing. A skipped renewal is also an explicit
+operational failure: the invocation reports failure even though nothing was
+written. Each renewer stamps the observation with its own read time, and the
+write is conditional: an answer read earlier than the stored observation,
+delivered late, never replaces it.
 
 ```quint
 type Renewer = IdentityCron | ReleaseJob | OperatorScript | HealthWatch | Contributor
 type Skip = Unreachable | RateLimited | Unauthorized | Rejected | Malformed
 type GitHubAnswer = ReportingEnabled | ReportingDisabled | Unusable({ reason: Skip })
 type Observation = NoObservation | Observed({ enabled: bool, verifiedAt: int })
-type RenewalResult = NotRun | Renewed | Skipped({ reason: Skip }) | WriteFailed
-type Health = { clock: int, observation: Observation, last: RenewalResult, failures: int, skips: int, renewals: int, alerts: int }
-pure val initial: Health = { clock: 1, observation: NoObservation, last: NotRun, failures: 0, skips: 0, renewals: 0, alerts: 0 }
+type RenewalResult = NotRun | Renewed | OlderThanStored | Skipped({ reason: Skip }) | WriteFailed
+type Health = { clock: int, observation: Observation, last: RenewalResult, failures: int, skips: int, renewals: int, alerts: int,
+  failedInvocations: int }
+pure val initial: Health = { clock: 1, observation: NoObservation, last: NotRun, failures: 0, skips: 0, renewals: 0, alerts: 0,
+  failedInvocations: 0 }
 pure def renewerAllowed(by: Renewer): bool = by == IdentityCron or by == ReleaseJob or by == OperatorScript
 pure def canAdvanceClock(h: Health, now: int): bool = now > h.clock
 pure def advanceClock(h: Health, now: int): Health = { ...h, clock: now }
-pure def canRenew(h: Health, answer: GitHubAnswer, by: Renewer): bool = renewerAllowed(by)
-pure def renew(h: Health, answer: GitHubAnswer, by: Renewer): Health = match answer {
-  | ReportingEnabled => { ...h, observation: Observed({ enabled: true, verifiedAt: h.clock }), last: Renewed, renewals: h.renewals + 1 }
-  | ReportingDisabled => { ...h, observation: Observed({ enabled: false, verifiedAt: h.clock }), last: Renewed, renewals: h.renewals + 1 }
-  | Unusable(u) => { ...h, last: Skipped({ reason: u.reason }), skips: h.skips + 1 } }
-pure def canFailWrite(h: Health, by: Renewer): bool = renewerAllowed(by)
-pure def failWrite(h: Health, by: Renewer): Health = { ...h, last: WriteFailed, failures: h.failures + 1 }
 pure def observedAt(h: Health): int =
   val observation = h.observation
   match observation { | Observed(o) => o.verifiedAt | NoObservation => 0 }
+pure def written(isEnabled: bool, readAt: int, h: Health): Health =
+  if (readAt > observedAt(h)) { ...h, observation: Observed({ enabled: isEnabled, verifiedAt: readAt }), last: Renewed, renewals: h.renewals + 1 }
+  else { ...h, last: OlderThanStored }
+pure def canRenew(h: Health, answer: GitHubAnswer, readAt: int, by: Renewer): bool = renewerAllowed(by) and readAt > 0 and readAt <= h.clock
+pure def renew(h: Health, answer: GitHubAnswer, readAt: int, by: Renewer): Health = match answer {
+  | ReportingEnabled => written(true, readAt, h)
+  | ReportingDisabled => written(false, readAt, h)
+  | Unusable(u) => { ...h, last: Skipped({ reason: u.reason }), skips: h.skips + 1, failedInvocations: h.failedInvocations + 1 } }
+pure def canFailWrite(h: Health, by: Renewer): bool = renewerAllowed(by)
+pure def failWrite(h: Health, by: Renewer): Health = { ...h, last: WriteFailed, failures: h.failures + 1, failedInvocations: h.failedInvocations + 1 }
+pure def alwaysUnsuccessfulRenewalsReported(h: Health): bool = h.failedInvocations == h.failures + h.skips
+  and h.failures >= 0 and h.skips >= 0
 pure def alwaysObservationNotFuture(h: Health): bool = observedAt(h) >= 0 and observedAt(h) <= h.clock
 pure def stepOnlyRenewersWrite(before: Health, via: str, after: Health): bool =
   after.observation != before.observation implies via == "renew"
@@ -59,6 +70,9 @@ pure def sometimesSkippedKeepsObservation(h: Health): bool = h.skips > 0 and obs
 pure def failedLast(result: RenewalResult): bool = match result { | WriteFailed => true | _ => false }
 pure def renewedLast(result: RenewalResult): bool = match result { | Renewed => true | _ => false }
 pure def sometimesWriteFailed(h: Health): bool = failedLast(h.last)
+pure def sometimesLateAnswerIgnored(h: Health): bool =
+  val result = h.last
+  match result { | OlderThanStored => observedAt(h) > 0 | _ => false }
 pure def sometimesDisabled(h: Health): bool =
   val observation = h.observation
   match observation { | Observed(o) => not(o.enabled) | _ => false }
@@ -119,6 +133,7 @@ pure val answerValues = Set(ReportingEnabled, ReportingDisabled, Unusable({ reas
 pure val byValues = Set(IdentityCron, ReleaseJob, OperatorScript, HealthWatch, Contributor)
 pure val observationValues = Set(NoObservation, Observed({ enabled: true, verifiedAt: 1 }), Observed({ enabled: false, verifiedAt: 1 }),
   Observed({ enabled: true, verifiedAt: 400000 }))
+pure val readAtValues = Set(1, 2, 3600002, 86400003)
 pure val weight_renew = 4
 pure val weight_advanceClock = 4
 ```
