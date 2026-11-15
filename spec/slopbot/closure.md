@@ -351,7 +351,6 @@ pure def stepRejectedHistoryRetained(before: Closure, after: Closure): bool =
 pure def stepConfirmedIsFinal(before: Closure, after: Closure): bool = before.attempt.state == Confirmed implies
   after.attempt.state == Confirmed and after.attempt.id == before.attempt.id and after.attempt.closedAt == before.attempt.closedAt
 pure def sometimesConfirmedClose(c: Closure): bool = c.attempt.state == Confirmed
-pure def sometimesCloseCommented(c: Closure): bool = c.attempt.commentConfirmed
 pure def sometimesRejectedThenRetried(c: Closure): bool = c.rejected.length() > 0 and c.attempt.state == Pending
 pure def sometimesPendingAfterRequest(c: Closure): bool = c.attempt.state == Pending and c.attempt.requests == 1
 ```
@@ -649,7 +648,7 @@ pure val weight_reserveClose = 20
 pure val weight_requestClose = 20
 pure val weight_confirmClose = 20
 pure val weight_rejectClose = 20
-pure val weight_confirmCloseComment = 8
+pure val weight_confirmCloseComment = 20
 pure val weight_notifyModerator = 20
 pure val weight_notifyMaintainer = 10
 pure val weight_observeTime = 3
