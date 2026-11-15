@@ -7,8 +7,10 @@
 // @source scripts/verify-staging-deployment.mjs
 // @source scripts/release-notify.mjs
 // @source scripts/release-robinhood-rpc.ts
+// @source scripts/qualify-solana-rpc-pair.ts
 // @evidence scripts/pages-secret-inventory.test.ts
 // @evidence scripts/release-robinhood-rpc.test.ts
+// @evidence scripts/qualify-solana-rpc-pair.test.ts
 // Source advancement before service writes supersedes; advancement afterward
 // is an explicit partial-publication failure, never a verified release.
 // proofsPass is the successful same-SHA result modeled by release_proof_gate.
@@ -26,7 +28,9 @@
 // promote. This safety model makes no eventual-cleanup or provider guarantee.
 // sourceMatches is an existing workflow recheck's retained observation, not a
 // continuous lock on live main or a new check between file preparation/upload.
-// The opt-in Robinhood child never shares the normal service-write branch.
+// The opt-in RPC child never shares the normal service-write branch. It covers
+// Robinhood rotation and the disabled-network Solana public-pair binding.
+// Solana's canonical witness and quiet journal are qualification inputs here.
 // Its data/RPC and identity predicates (including immediate version succession)
 // model bounded observations, not a lock
 // on the fee journal or guarantees about Cloudflare and the chain.

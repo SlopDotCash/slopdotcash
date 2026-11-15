@@ -14,7 +14,7 @@
     },
     {
       "path": ".github/workflows/deploy.yml",
-      "sha256": "4485f292377d2b2d5d06a29bcacad6e8775f28f1f37d3ceff5e04aca93f3d46f",
+      "sha256": "a3e65f05c08ad32eb181afd7ca6a92cd34757e568ed0bd0d4a4111552c00299e",
       "models": [
         "formal/models/release/ci_browser_evidence.qnt",
         "formal/models/release/ci_browser_runtime.qnt",
@@ -23,10 +23,10 @@
         "formal/models/release/release_publication.qnt"
       ],
       "candidateLines": [
-        32, 42, 115, 230, 268, 269, 326, 360, 416, 493, 608, 614, 682, 685, 711,
-        712, 733, 745, 811, 1041, 1069, 1134, 1225, 1331, 1333, 1334, 1538,
-        1621, 1774, 1776, 1806, 1915, 1937, 2008, 2019, 2044, 2115, 2128, 2141,
-        2150, 2151, 2152
+        36, 46, 119, 248, 286, 287, 344, 378, 434, 511, 626, 632, 700, 703, 729,
+        730, 751, 763, 829, 1059, 1087, 1175, 1266, 1372, 1374, 1375, 1579,
+        1662, 1815, 1817, 1847, 1956, 1978, 2049, 2060, 2085, 2156, 2169, 2182,
+        2191, 2192, 2193
       ],
       "review": "mapped-abstraction"
     },
@@ -4335,6 +4335,13 @@
       "review": "mapped-abstraction"
     },
     {
+      "path": "scripts/qualify-solana-rpc-pair.ts",
+      "sha256": "ef81671e07f8b97c05fde7cf9a5343f6501b5af6731054e20b9c677bb0ff1860",
+      "models": ["formal/models/release/release_publication.qnt"],
+      "candidateLines": [],
+      "review": "mapped-abstraction"
+    },
+    {
       "path": "scripts/qualify-value-models.ts",
       "sha256": "9ce1c7ad0c327cfb083f6693bc246d4060aff4102910c308ee565937baa73c57",
       "models": ["formal/models/slopbot/qualification_value_budget.qnt"],
@@ -4444,12 +4451,12 @@
     },
     {
       "path": "scripts/release-robinhood-rpc.ts",
-      "sha256": "746b05625c8fe769b0a664194f4ebeb1b0288c676a9287cefca35475408e2f70",
+      "sha256": "76d2cdae7f3ef8a8b4358f0c54a01b0aeb5a2f46b270406396652f7ad1eaefc5",
       "models": ["formal/models/release/release_publication.qnt"],
       "candidateLines": [
-        57, 60, 63, 70, 76, 77, 78, 79, 80, 209, 213, 233, 235, 240, 241, 242,
-        243, 244, 245, 328, 331, 334, 412, 432, 433, 435, 438, 463, 464, 465,
-        470, 501, 541
+        80, 83, 86, 93, 99, 100, 101, 102, 103, 257, 261, 281, 283, 288, 289,
+        290, 291, 292, 293, 376, 379, 382, 409, 410, 412, 432, 496, 516, 517,
+        519, 522, 554, 555, 556, 561, 622, 673
       ],
       "review": "mapped-abstraction"
     },
@@ -14198,12 +14205,13 @@
     },
     {
       "path": "formal/models/release/release_publication.qnt",
-      "sha256": "5ad631eb7230f1290ed2883ce0fb12623b9f3691af8a3985369ef15fbde1c789",
+      "sha256": "a50078e839727a25e26577d584f8f475b7dc174ac222f1d6311e221605a302c4",
       "sources": [
         ".github/workflows/deploy.yml",
         "scripts/dist-manifest.mjs",
         "scripts/prepare-publication.mjs",
         "scripts/prepare-site.mjs",
+        "scripts/qualify-solana-rpc-pair.ts",
         "scripts/release-notify.mjs",
         "scripts/release-robinhood-rpc.ts",
         "scripts/select-pages-deployment.mjs",
