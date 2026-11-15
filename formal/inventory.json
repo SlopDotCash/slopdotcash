@@ -687,6 +687,13 @@
       "review": "mapped-abstraction"
     },
     {
+      "path": "backend/projects/merge-activity.ts",
+      "sha256": "a7ea9dade75ccc28aa82a05bd8471bb226d6d401fa030e1373f67bb06daede5f",
+      "models": ["formal/models/api/api_merge_activity.qnt"],
+      "candidateLines": [30, 167, 274, 354, 359, 389, 392],
+      "review": "mapped-abstraction"
+    },
+    {
       "path": "backend/projects/repository-access.ts",
       "sha256": "d212d41868629c9a84b99876198c9c553903eb6f19665115171b428af6aa1ed0",
       "models": [
@@ -929,7 +936,7 @@
     },
     {
       "path": "backend/security/github-advisories.ts",
-      "sha256": "73a7abf37cc3c6330cbd4022ee9a1c08f1fba47b8e6b1327212895b041bceaf2",
+      "sha256": "ac7add6a61ab406eb763efeaf30035e5f404eed85d49299136c91c230f685d97",
       "models": [
         "formal/models/api/api_private_authorization.qnt",
         "formal/models/api/api_private_intake.qnt",
@@ -937,7 +944,7 @@
       ],
       "candidateLines": [
         76, 313, 352, 357, 358, 361, 380, 395, 422, 473, 500, 502, 504, 505,
-        522, 526, 554, 638, 654, 656, 662, 664, 677, 695, 713
+        522, 526, 554, 638, 654, 656, 662, 664, 677, 707, 725
       ],
       "review": "mapped-abstraction"
     },
@@ -2049,7 +2056,7 @@
     },
     {
       "path": "functions/api/v1/[[path]].ts",
-      "sha256": "86aabce140b2c3df20520db903cafa9e872031000097c55fc3bf9a5078265fa8",
+      "sha256": "a692759af802e3216f9e6558fedaec25f362c319fefb6d789c25c8704cfcb96f",
       "models": [
         "formal/models/api/api_request_composition.qnt",
         "formal/models/api/identity_consumer_exchange.qnt",
@@ -2057,7 +2064,7 @@
         "formal/models/payments/solana_binding_api.qnt",
         "formal/models/vetting/vetting_stream_authority.qnt"
       ],
-      "candidateLines": [528, 529, 565, 578],
+      "candidateLines": [531, 532, 568, 581],
       "review": "mapped-abstraction"
     },
     {
@@ -3334,6 +3341,13 @@
       "sha256": "0b4ff6188f8c8822d2f5e92f5705c6dbdda55d8f69f408d6218bbc2d6d9b401a",
       "models": ["formal/models/referrals/referral_code.qnt"],
       "candidateLines": [27, 28, 34, 35],
+      "review": "mapped-abstraction"
+    },
+    {
+      "path": "migrations/0125_repository_merge_activity.sql",
+      "sha256": "96f13fa1e2d443e04170438d4d62de0501e04d606edac839504d27f04462ded0",
+      "models": ["formal/models/api/api_merge_activity.qnt"],
+      "candidateLines": [],
       "review": "mapped-abstraction"
     },
     {
@@ -4935,7 +4949,7 @@
     },
     {
       "path": "src/App.tsx",
-      "sha256": "4d4f35b950112717ca991456923f8484f0e88802877fc9625d0ed22078711d46",
+      "sha256": "19097fe5e7f7386870862484a1c7ee46fc3f56cd09f89c1a782b74043830190d",
       "models": [
         "formal/models/ui/ui_clipboard_requests.qnt",
         "formal/models/ui/ui_cycle_archive.qnt",
@@ -4953,13 +4967,13 @@
         "formal/models/ui/ui_vetting_inventory.qnt"
       ],
       "candidateLines": [
-        13, 15, 286, 296, 306, 317, 326, 327, 328, 329, 330, 332, 333, 394, 449,
-        450, 451, 454, 477, 543, 574, 611, 651, 655, 657, 698, 755, 811, 1021,
-        1036, 1050, 1060, 1090, 1093, 1155, 1158, 1160, 1164, 1165, 1173, 1192,
-        1196, 1204, 1205, 1212, 1216, 1251, 1295, 1298, 1315, 1316, 1359, 1361,
-        1381, 1383, 1438, 1439, 1442, 1443, 1446, 1447, 1464, 1465, 1471, 1476,
-        1478, 1482, 1483, 1541, 1551, 1582, 1584, 1609, 1610, 1627, 1628, 1639,
-        1641, 1654, 1657, 1668
+        13, 15, 288, 298, 308, 319, 328, 329, 330, 331, 332, 334, 335, 396, 451,
+        452, 453, 456, 479, 545, 576, 613, 653, 657, 659, 700, 757, 813, 1023,
+        1038, 1052, 1062, 1092, 1095, 1157, 1160, 1162, 1166, 1167, 1175, 1194,
+        1198, 1206, 1207, 1214, 1218, 1253, 1297, 1300, 1317, 1318, 1361, 1363,
+        1383, 1385, 1409, 1410, 1415, 1416, 1421, 1458, 1459, 1462, 1463, 1466,
+        1467, 1485, 1486, 1492, 1497, 1499, 1503, 1504, 1562, 1572, 1603, 1605,
+        1630, 1631, 1648, 1649, 1660, 1662, 1675, 1678, 1689
       ],
       "review": "mapped-abstraction"
     },
@@ -6184,6 +6198,13 @@
       "path": "src/lib/login-return.ts",
       "sha256": "8cee546e7ce221e1a82d28ce4e2339276e778291a73d452e7aa75efc648f3284",
       "models": ["formal/models/ui/ui_session.qnt"],
+      "candidateLines": [],
+      "review": "mapped-abstraction"
+    },
+    {
+      "path": "src/lib/merge-activity.ts",
+      "sha256": "cfdb40e82f0d1a5f257cfe13d4191bc0a424f5986c55a522bfdb99808192f809",
+      "models": ["formal/models/api/api_merge_activity.qnt"],
       "candidateLines": [],
       "review": "mapped-abstraction"
     },
@@ -7626,7 +7647,7 @@
     },
     {
       "path": "workers/identity/index.ts",
-      "sha256": "19e083fbd6750080318f65aad928b883ed2c5865a269b027791a2b969d8b9316",
+      "sha256": "1221b4adf6c396188ace25761ac2a0e8b8906dfedd7e36e819626eff1199bd48",
       "models": [
         "formal/models/api/api_identity_admission.qnt",
         "formal/models/api/github_identity_exchange.qnt",
@@ -7635,8 +7656,8 @@
         "formal/models/api/identity_scheduled_maintenance.qnt"
       ],
       "candidateLines": [
-        28, 53, 59, 89, 91, 93, 99, 119, 124, 138, 143, 302, 343, 347, 349, 358,
-        361, 369, 375, 379, 405, 417, 420, 426, 436, 437, 438, 490
+        28, 54, 60, 90, 92, 94, 100, 120, 125, 139, 144, 303, 344, 348, 350,
+        359, 362, 370, 376, 380, 406, 418, 421, 427, 437, 438, 439, 504
       ],
       "review": "mapped-abstraction"
     },
@@ -8361,16 +8382,16 @@
     },
     {
       "path": "workers/slopbot/reporting-readiness-service.ts",
-      "sha256": "e4a5239d48e44654932d6bba428e7c28886d5b32148c9fdf71e229376cae6c33",
+      "sha256": "52d515e1da3508e10496261826a6f9af6d895da8a02f10643a74bf206ff321f6",
       "models": ["formal/models/api/api_reporting_readiness.qnt"],
       "candidateLines": [],
       "review": "mapped-abstraction"
     },
     {
       "path": "workers/slopbot/reporting-readiness.ts",
-      "sha256": "71002d6b65290b12c343d34c63595d48f3daa3eeb8563702cc768846a673f406",
+      "sha256": "a82d5e9314ce117acfee28030311a2559097fc45d7f80df4f84dcd746901af3c",
       "models": ["formal/models/api/api_reporting_readiness.qnt"],
-      "candidateLines": [42, 47],
+      "candidateLines": [46, 51],
       "review": "mapped-abstraction"
     },
     {
@@ -9523,6 +9544,20 @@
         "preparationAfterOptOutRefusedTest",
         "preparationFailureDoesNotCountProviderCallTest",
         "uncertainSendCountsProviderCallTest"
+      ]
+    },
+    {
+      "path": "formal/models/api/api_merge_activity.qnt",
+      "sha256": "e76a3d68cda5a9320abab1bdbc453b240fb69c46a06bba0ffa4169780989553d",
+      "sources": [
+        "backend/projects/merge-activity.ts",
+        "migrations/0125_repository_merge_activity.sql",
+        "src/lib/merge-activity.ts"
+      ],
+      "scenarios": [
+        "failureKeepsValuesTest",
+        "freshRowIsNotDueTest",
+        "neverReadIsNotPublishedTest"
       ]
     },
     {
