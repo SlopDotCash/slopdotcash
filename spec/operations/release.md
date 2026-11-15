@@ -9,9 +9,18 @@ independent identity, storage and secrets. The pinned source is
 `.github/workflows/deploy.yml` and the legacy `release/*` models.
 
 The `by` sender is the authenticated run identity GitHub supplies to the
-checked-in workflow. A `RunRef` is GitHub's own event description of that
-run. Check receipts are verified by the workflow before `recordGate`.
-Deployment and served-byte observations come from the provider read-back.
+checked-in workflow, or the repository owner changing a release variable. A
+`RunRef` is GitHub's own event description of that run. Check receipts are
+verified by the workflow before `recordGates`. Deployment listings and
+served-byte observations come from the provider read-back. The
+[fee-wallet Worker runtime](../fees/runtime.md) is a component of this
+machine. The environment's publication lock and its branch head with its
+fast-forward lineage are state of this machine: this run is run 1, and other
+runs of the same environment (2, 3, …) wait for, take and release the same
+lock through the rival transitions. The lock follows the
+[publication lock machine](./publicationLock.md); that it is literally that
+machine's state is a composition obligation (the current tools cannot hold
+that machine's run records inside this one).
 
 ## Story: Admit only a trusted run of the exact environment branch
 
@@ -26,28 +35,35 @@ import releaseCoverage as Coverage from "./releaseCoverage"
 import runtime as F from "../fees/runtime"
 type Environment = Production | Staging
 type RefKind = BranchPush | WorkflowDispatch | PullRequestRef | ForkHead | TagRef | LocalTree | ScheduledRef
-type Actor = TrustedWorkflow | HealthJob | Contributor
+type Actor = TrustedWorkflow | HealthJob | Contributor | Owner
 type RunRef = { kind: RefKind, branch: str, repository: str, githubEnvironment: str }
-type Comparison = Identical | Ahead | Behind | Diverged
 type ReleasePhase = Candidate | Built | Checked | Publishing | PublicationUncertain | Published | Verified
   | Superseded | Refused | PartiallyPublished
 type DataKind = NoData | FreshCollection | RetainedSnapshot
 type QualityGate = Types | Models | Proofs | ModelInventory | ProofInventory | Unit | Browser | BrowserSmoke | Isolation | Identity
 type Service = FeeConverter | Notify | VettingBackup | VettingRetention | Slopbot | PaymentAttesters | IdentityWorker
+  | VettingSandbox | Referral | RepositoryAccess
+type ServiceVariables = { notify: bool, vettingBackup: bool, vettingRetention: bool, slopbot: bool }
+type PublicationLock = { holder: int, waiting: List[int], nextRival: int, rivalsPublished: int, head: int, lineage: List[int], nextHead: int }
 type ServicePhase = ServiceSkipped | ServicePending | ServiceBound | ServiceFailed
 type ServiceRow = { service: Service, enabled: bool, phase: ServicePhase }
 type GateReceipt = { gate: QualityGate, source: int, artifact: int }
-type Release = { phase: ReleasePhase, configured: bool, environment: Environment, ref: RunRef, source: int, branchHead: int,
-  headAhead: bool, checkedSource: int, artifactDigest: int, servedDigest: int, passed: List[GateReceipt],
+type Release = { phase: ReleasePhase, configured: bool, environment: Environment, ref: RunRef, source: int,
+  checkedSource: int, artifactDigest: int, servedDigest: int, passed: List[GateReceipt],
   dataKind: DataKind, registryDigest: int, githubDigest: int, snapshotDigest: int, dataEnvironment: Environment, dataRecordedAt: int,
-  manualRun: bool, skipProofs: bool, skipBrowserTests: bool, bootstrapData: bool, lockHeld: bool, services: List[ServiceRow],
-  deployment: int, attempt: int }
+  manualRun: bool, skipProofs: bool, skipBrowserTests: bool, bootstrapData: bool, services: List[ServiceRow],
+  deployment: int, attempt: int, lock: PublicationLock, fee: F::Runtime, variables: ServiceVariables }
 pure val noRef: RunRef = { kind: LocalTree, branch: "", repository: "", githubEnvironment: "" }
 pure val canonicalRepository = "SlopDotCash/slopdotcash"
-pure val initial: Release = { phase: Candidate, configured: false, environment: Production, ref: noRef, source: 1, branchHead: 1,
-  headAhead: true, checkedSource: 0, artifactDigest: 0, servedDigest: 0, passed: List(), dataKind: NoData, registryDigest: 0,
+pure val initial: Release = { phase: Candidate, configured: false, environment: Production, ref: noRef, source: 0,
+  checkedSource: 0, artifactDigest: 0, servedDigest: 0, passed: List(), dataKind: NoData, registryDigest: 0,
   githubDigest: 0, snapshotDigest: 0, dataEnvironment: Production, dataRecordedAt: 0, manualRun: false, skipProofs: false,
-  skipBrowserTests: false, bootstrapData: false, lockHeld: false, services: List(), deployment: 0, attempt: 0 }
+  skipBrowserTests: false, bootstrapData: false, services: List(), deployment: 0, attempt: 0,
+  lock: { holder: 0, waiting: List(), nextRival: 2, rivalsPublished: 0, head: 1, lineage: List(1), nextHead: 2 }, fee: F::initial, variables: { notify: false, vettingBackup: false, vettingRetention: false, slopbot: false } }
+pure val selfRun = 1
+pure def liveHead(r: Release): int = r.lock.head
+pure def lockHeld(r: Release): bool = r.configured and r.lock.holder == selfRun
+pure def headAhead(r: Release): bool = not(r.configured) or r.lock.lineage.includes(r.source)
 pure def requiredBranch(environment: Environment): str = if (environment == Production) "main" else "development"
 pure def requiredGithubEnvironment(environment: Environment): str = if (environment == Production) "slop-production" else "slop-staging"
 pure def admissibleRef(environment: Environment, ref: RunRef): bool =
@@ -56,11 +72,27 @@ pure def admissibleRef(environment: Environment, ref: RunRef): bool =
 pure def canConfigure(r: Release, environment: Environment, ref: RunRef, by: Actor): bool =
   r.phase == Candidate and not(r.configured) and by == TrustedWorkflow and admissibleRef(environment, ref)
 pure def configure(r: Release, environment: Environment, ref: RunRef, by: Actor): Release =
-  { ...r, configured: true, environment: environment, ref: ref, manualRun: ref.kind == WorkflowDispatch }
+  { ...r, configured: true, environment: environment, ref: ref, manualRun: ref.kind == WorkflowDispatch,
+    source: r.lock.head,
+    fee: if (environment == Production) r.fee else if (F::canChooseEnvironment(r.fee, F::Staging)) F::chooseEnvironment(r.fee, F::Staging) else r.fee }
+pure def canSetVariable(r: Release, service: Service, value: bool, by: Actor): bool = by == Owner
+  and (service == FeeConverter implies F::canSetReleaseVariable(r.fee, value, F::Owner))
+  and (service == Notify or service == VettingBackup or service == VettingRetention or service == Slopbot or service == FeeConverter)
+pure def setVariable(r: Release, service: Service, value: bool, by: Actor): Release =
+  if (service == FeeConverter) { ...r, fee: F::setReleaseVariable(r.fee, value, F::Owner) }
+  else if (service == Notify) { ...r, variables: { ...r.variables, notify: value } }
+  else if (service == VettingBackup) { ...r, variables: { ...r.variables, vettingBackup: value } }
+  else if (service == VettingRetention) { ...r, variables: { ...r.variables, vettingRetention: value } }
+  else { ...r, variables: { ...r.variables, slopbot: value } }
 pure def alwaysAdmittedRef(r: Release): bool = (r.configured or r.phase != Candidate) implies admissibleRef(r.environment, r.ref)
 pure def alwaysConfiguredBeforeProgress(r: Release): bool = (r.phase != Candidate implies r.configured)
   and ((r.phase != Candidate and r.phase != Refused) implies r.artifactDigest > 0)
-  and (not(r.headAhead) implies r.configured)
+  and (r.configured implies r.source > 0 and r.source <= r.lock.head)
+  and (not(r.configured) implies r.lock.holder == 0 and r.lock.waiting == List())
+pure def alwaysOneLockHolder(r: Release): bool = r.lock.holder >= 0 and r.lock.holder < r.lock.nextRival
+  and r.lock.waiting.every(w => w > selfRun and w < r.lock.nextRival and w != r.lock.holder)
+  and r.lock.lineage.length() > 0 and r.lock.lineage.nthOr(r.lock.lineage.length() - 1, 0) == r.lock.head
+  and r.lock.head < r.lock.nextHead and r.lock.lineage.every(h => h > 0 and h <= r.lock.head)
   and (not(r.configured) implies not(r.skipProofs or r.skipBrowserTests) and not(r.manualRun))
   and (r.phase == Candidate implies r.passed == List() and r.services == List())
 pure def lawPullRequestsNeverPublish(environment: Environment, ref: RunRef, by: Actor): bool =
@@ -142,102 +174,150 @@ pure def alwaysCheckedComplete(r: Release): bool =
 
 ### A newer fast-forward supersedes the run; a rewritten branch refuses it
 
-Immediately before publication the run reads the live branch head. A newer
-fast-forward owns publication: this run stops without publishing and records
-itself as superseded. Any branch head that is not a fast-forward of the
-tested source fails closed. The lock is the environment's publication
-concurrency group. This machine records only its own holding; the
-[lock machine](./publicationLock.md) states that at most one run of an
-environment holds the lock, and `acquireLock` here must be that machine's
-grant to this run (a composition obligation).
+Other runs of the environment start, take, publish under and release the
+same lock; this run takes it only through the lock machine's own grant, so
+at most one run of the environment holds it. Under the lock, immediately
+before publication, the run compares the live branch head with its tested
+source through the branch's lineage. A newer fast-forward owns publication:
+this run stops without publishing and records itself as superseded. A head
+whose lineage no longer contains the tested source fails closed.
 
 ```quint
-pure def canObserveBranchHead(r: Release, liveHead: int, comparison: Comparison): bool =
-  r.configured and liveHead > 0 and (comparison == Identical iff liveHead == r.source)
-pure def observeBranchHead(r: Release, liveHead: int, comparison: Comparison): Release =
-  { ...r, branchHead: liveHead, headAhead: comparison == Identical or comparison == Ahead }
-pure def canAcquireLock(r: Release): bool = r.phase == Checked and not(r.lockHeld)
-pure def acquireLock(r: Release): Release = { ...r, lockHeld: true }
-pure def canSupersede(r: Release): bool = r.phase == Checked and r.branchHead != r.checkedSource and r.headAhead
-pure def supersede(r: Release): Release = { ...r, phase: Superseded, lockHeld: false }
-pure def canRefuseRewrite(r: Release): bool = (r.phase == Checked or r.phase == Built or r.phase == Candidate) and not(r.headAhead)
-pure def refuseRewrite(r: Release): Release = { ...r, phase: Refused, lockHeld: false }
+pure def canRivalStart(r: Release): bool = r.configured
+pure def rivalStart(r: Release): Release =
+  { ...r, lock: { ...r.lock, waiting: r.lock.waiting.append(r.lock.nextRival), nextRival: r.lock.nextRival + 1 } }
+pure def canRivalTakeLock(r: Release, rival: int): bool = r.lock.holder == 0 and r.lock.waiting.includes(rival)
+pure def rivalTakeLock(r: Release, rival: int): Release =
+  { ...r, lock: { ...r.lock, holder: rival, waiting: r.lock.waiting.select(w => w != rival) } }
+pure def canRivalFinish(r: Release, rival: int): bool = rival > selfRun and r.lock.holder == rival
+pure def rivalFinish(r: Release, rival: int): Release =
+  { ...r, lock: { ...r.lock, holder: 0, rivalsPublished: r.lock.rivalsPublished + 1 } }
+pure def canAdvanceBranch(r: Release): bool = r.configured
+pure def advanceBranch(r: Release): Release =
+  { ...r, lock: { ...r.lock, head: r.lock.nextHead, lineage: r.lock.lineage.append(r.lock.nextHead), nextHead: r.lock.nextHead + 1 } }
+pure def canRewriteBranch(r: Release): bool = r.configured
+pure def rewriteBranch(r: Release): Release =
+  { ...r, lock: { ...r.lock, head: r.lock.nextHead, lineage: List(r.lock.nextHead), nextHead: r.lock.nextHead + 1 } }
+pure def released(r: Release): PublicationLock = if (lockHeld(r)) { ...r.lock, holder: 0 } else r.lock
+pure def canAcquireLock(r: Release): bool = r.phase == Checked and r.configured and r.lock.holder == 0
+pure def acquireLock(r: Release): Release = { ...r, lock: { ...r.lock, holder: selfRun } }
+pure def canSupersede(r: Release): bool = r.phase == Checked and lockHeld(r) and liveHead(r) != r.checkedSource and headAhead(r)
+pure def supersede(r: Release): Release = { ...r, phase: Superseded, lock: released(r) }
+pure def canRefuseRewrite(r: Release): bool = (r.phase == Checked or r.phase == Built or r.phase == Candidate)
+  and r.configured and not(headAhead(r))
+pure def refuseRewrite(r: Release): Release = { ...r, phase: Refused, lock: released(r) }
 pure def sometimesSuperseded(r: Release): bool = r.phase == Superseded
 pure def sometimesRewriteRefused(r: Release): bool = r.phase == Refused
+pure def sometimesWaitedBehindRival(r: Release): bool = lockHeld(r) and r.lock.rivalsPublished > 0
 ```
 
 ### Workers publish before the static site, each only when its own release variable is enabled
 
-Each service has a repository release variable read once for the run. A
-disabled service is skipped and its deployed version is unchanged. An
-enabled service uploads a version tagged with the tested source, deploys it
-to all traffic and reads back that exact tag; `publishService` records the
-read-back of the tested source's tag on the version serving all traffic. The fee converter additionally
-passes the [runtime preflight](../fees/runtime.md) for its reviewed
-configuration. A failed service publication leaves the release partially
-published: earlier services stay published, nothing is rolled back, and the
-static site is not published.
+The owner sets each repository release variable; the run reads them once
+when publication begins. A disabled or inapplicable service is skipped and
+its deployed version is unchanged. Production publishes the fee converter
+only under `SLOP_FEE_CONVERTER_RELEASE`, Slopbot only with the notification
+Worker, retention only with backups, and always publishes the vetting
+sandbox, the identity Worker, the payment attesters and the referral
+service. Staging always publishes the vetting sandbox, the staging
+repository-access Worker, the identity Worker, its test attesters and its
+dry-run fee converter, never Slopbot or the referral service. An enabled
+service uploads a version tagged with the tested source, deploys it to all
+traffic and reads back that exact tag; `publishService` records the
+read-back of the tested source's tag on the version serving all traffic.
+The fee converter is published through the runtime's own guard: its
+reviewed configuration passes the preflight, carries the tested source, and
+advances the runtime's published source. A failed service publication
+leaves the release partially published: earlier services stay published,
+nothing is rolled back, the static site is not published, and the lock is
+released without a publication. That the referral service keeps its
+reviewed `Off` mode is the [referral publication](../settlement/referralPublication.md)
+machine's rule.
 
 ```quint
-type ServiceVariables = { feeConverter: bool, notify: bool, vettingBackup: bool, vettingRetention: bool, slopbot: bool }
-pure def serviceRows(v: ServiceVariables): List[ServiceRow] = List(
-  { service: FeeConverter, enabled: v.feeConverter, phase: if (v.feeConverter) ServicePending else ServiceSkipped },
-  { service: Notify, enabled: v.notify, phase: if (v.notify) ServicePending else ServiceSkipped },
-  { service: VettingBackup, enabled: v.vettingBackup, phase: if (v.vettingBackup) ServicePending else ServiceSkipped },
-  { service: VettingRetention, enabled: v.vettingRetention and v.vettingBackup, phase: if (v.vettingRetention and v.vettingBackup) ServicePending else ServiceSkipped },
-  { service: Slopbot, enabled: v.slopbot and v.notify, phase: if (v.slopbot and v.notify) ServicePending else ServiceSkipped },
-  { service: PaymentAttesters, enabled: true, phase: ServicePending },
-  { service: IdentityWorker, enabled: true, phase: ServicePending })
+pure def feeVariable(r: Release): bool = r.environment == Staging or r.fee.variableEnabled
+pure def row(service: Service, on: bool): ServiceRow =
+  { service: service, enabled: on, phase: if (on) ServicePending else ServiceSkipped }
+pure def serviceRows(r: Release): List[ServiceRow] = List(
+  row(FeeConverter, feeVariable(r)),
+  row(Notify, r.variables.notify),
+  row(VettingBackup, r.variables.vettingBackup),
+  row(VettingRetention, r.variables.vettingRetention and r.variables.vettingBackup),
+  row(Slopbot, r.environment == Production and r.variables.slopbot and r.variables.notify),
+  row(PaymentAttesters, true),
+  row(IdentityWorker, true),
+  row(VettingSandbox, true),
+  row(Referral, r.environment == Production),
+  row(RepositoryAccess, r.environment == Staging))
 pure def serviceAt(r: Release, service: Service): ServiceRow =
   r.services.foldl({ service: service, enabled: false, phase: ServiceSkipped }, (found, s) => if (s.service == service) s else found)
 pure def setService(r: Release, service: Service, phase: ServicePhase): List[ServiceRow] =
   r.services.listMap(s => if (s.service == service and s.phase == ServicePending) { ...s, phase: phase } else s)
-pure def canBeginPublication(r: Release, variables: ServiceVariables): bool =
-  r.phase == Checked and r.lockHeld and r.checkedSource == r.branchHead and validData(r)
-pure def beginPublication(r: Release, variables: ServiceVariables): Release =
-  { ...r, phase: Publishing, services: serviceRows(variables), attempt: r.attempt + 1 }
+pure def canBeginPublication(r: Release): bool =
+  r.phase == Checked and lockHeld(r) and r.checkedSource == liveHead(r) and validData(r)
+pure def beginPublication(r: Release): Release =
+  { ...r, phase: Publishing, services: serviceRows(r), attempt: r.attempt + 1 }
 pure def canPublishService(r: Release, service: Service, feeConfig: F::WorkerConfig, taggedSource: int): bool =
-  r.phase == Publishing and r.lockHeld and serviceAt(r, service).phase == ServicePending and taggedSource == r.source
-    and (service == FeeConverter implies F::preflightPasses(if (r.environment == Production) F::Production else F::Staging, feeConfig)
-      and feeConfig.source == r.source)
+  r.phase == Publishing and lockHeld(r) and serviceAt(r, service).phase == ServicePending and taggedSource == r.source
+    and (service == FeeConverter implies F::canPublish(r.fee, feeConfig, F::ReleaseWorkflow) and feeConfig.source == r.source)
 pure def publishService(r: Release, service: Service, feeConfig: F::WorkerConfig, taggedSource: int): Release =
-  { ...r, services: setService(r, service, ServiceBound) }
+  { ...r, services: setService(r, service, ServiceBound),
+    fee: if (service == FeeConverter) F::publish(r.fee, feeConfig, F::ReleaseWorkflow) else r.fee }
 pure def canFailService(r: Release, service: Service): bool =
-  r.phase == Publishing and serviceAt(r, service).phase == ServicePending
+  r.phase == Publishing and lockHeld(r) and serviceAt(r, service).phase == ServicePending
 pure def failService(r: Release, service: Service): Release =
-  { ...r, phase: PartiallyPublished, services: setService(r, service, ServiceFailed), lockHeld: false }
+  { ...r, phase: PartiallyPublished, services: setService(r, service, ServiceFailed), lock: released(r) }
 pure def servicesDone(r: Release): bool = r.services.length() > 0
   and r.services.every(s => s.phase == ServiceBound or s.phase == ServiceSkipped)
 pure def alwaysSkippedServicesDisabled(r: Release): bool = r.services.every(s => (s.phase == ServiceSkipped) iff not(s.enabled))
-pure def sometimesFeeConverterBound(r: Release): bool = serviceAt(r, FeeConverter).phase == ServiceBound
+pure def alwaysFeeConverterBoundToSource(r: Release): bool =
+  (serviceAt(r, FeeConverter).phase == ServiceBound implies r.fee.published and r.fee.source == r.source)
+    and (r.fee.published implies r.fee.source <= r.source)
+    and F::alwaysPublishedPassedPreflight(r.fee) and F::alwaysStagingNeverSigns(r.fee)
+    and (r.configured implies (r.fee.environment == F::Staging iff r.environment == Staging))
+pure def alwaysEnvironmentServices(r: Release): bool =
+  (r.environment == Staging implies serviceAt(r, Slopbot).phase == ServiceSkipped and serviceAt(r, Referral).phase == ServiceSkipped)
+    and (r.environment == Production implies serviceAt(r, RepositoryAccess).phase == ServiceSkipped)
+pure def sometimesFeeConverterBound(r: Release): bool = serviceAt(r, FeeConverter).phase == ServiceBound and r.environment == Production
+pure def sometimesStagingDryRunBound(r: Release): bool = serviceAt(r, FeeConverter).phase == ServiceBound and r.environment == Staging
 pure def sometimesFeeConverterSkipped(r: Release): bool = r.phase == Verified and serviceAt(r, FeeConverter).phase == ServiceSkipped
 pure def sometimesPartial(r: Release): bool = r.phase == PartiallyPublished
 ```
 
 ### The static site publishes last and a lost response is reconciled from the provider
 
-The final live-branch check repeats before the static deployment. A lost
-response leaves publication uncertain until the provider read-back shows the
-exact artifact or proves that nothing was published. Proven non-publication
-returns the run to its checked state without the lock.
+The site publication itself rereads the live branch head under the lock. A
+lost response leaves publication uncertain until a complete provider listing
+of the environment's deployments since this attempt either contains the exact
+artifact or proves that it does not. Proven non-publication yields the lock
+and returns the run to its checked state; it waits for the lock again.
 
 ```quint
-pure def canPublishSite(r: Release): bool = r.phase == Publishing and r.lockHeld and servicesDone(r) and r.branchHead == r.checkedSource
+type ListedDeployment = { deployment: int, digest: int }
+type DeploymentListing = { environment: Environment, sinceAttempt: int, entries: List[ListedDeployment] }
+pure def deploymentOf(listing: DeploymentListing, digest: int): int =
+  listing.entries.foldl(0, (found, e) => if (found == 0 and e.digest == digest) e.deployment else found)
+pure def listed(listing: DeploymentListing, digest: int): bool = listing.entries.some(e => e.digest == digest)
+pure def canPublishSite(r: Release): bool = r.phase == Publishing and lockHeld(r) and servicesDone(r) and liveHead(r) == r.checkedSource
 pure def publishSite(r: Release): Release = { ...r, phase: PublicationUncertain }
-pure def canReconcilePublication(r: Release, deployment: int, observedDigest: int, environment: Environment): bool =
-  r.phase == PublicationUncertain and deployment > 0 and observedDigest == r.artifactDigest and environment == r.environment
-pure def reconcilePublication(r: Release, deployment: int, observedDigest: int, environment: Environment): Release =
-  { ...r, phase: Published, deployment: deployment, lockHeld: false }
-pure def canProveUnpublished(r: Release, observedDigest: int): bool = r.phase == PublicationUncertain and observedDigest != r.artifactDigest
-pure def proveUnpublished(r: Release, observedDigest: int): Release = { ...r, phase: Checked, lockHeld: false, services: List() }
+pure def canReconcilePublication(r: Release, listing: DeploymentListing): bool =
+  r.phase == PublicationUncertain and lockHeld(r) and listing.environment == r.environment and listing.sinceAttempt == r.attempt
+    and deploymentOf(listing, r.artifactDigest) > 0
+pure def reconcilePublication(r: Release, listing: DeploymentListing): Release =
+  { ...r, phase: Published, deployment: deploymentOf(listing, r.artifactDigest), lock: released(r) }
+pure def canProveUnpublished(r: Release, listing: DeploymentListing): bool = r.phase == PublicationUncertain and lockHeld(r)
+  and listing.environment == r.environment and listing.sinceAttempt == r.attempt
+  and not(listed(listing, r.artifactDigest))
+pure def proveUnpublished(r: Release, listing: DeploymentListing): Release =
+  { ...r, phase: Checked, lock: released(r), services: List() }
 pure def alwaysPublishingHoldsLock(r: Release): bool =
-  ((r.phase == Publishing or r.phase == PublicationUncertain) implies r.lockHeld and r.services.length() > 0)
+  ((r.phase == Publishing or r.phase == PublicationUncertain) implies lockHeld(r) and r.services.length() > 0)
     and (r.phase == PublicationUncertain implies servicesDone(r))
 pure def alwaysTerminalReleasedLock(r: Release): bool =
   (r.phase == Published or r.phase == Verified or r.phase == Superseded or r.phase == Refused or r.phase == PartiallyPublished)
-    implies not(r.lockHeld)
+    implies not(lockHeld(r))
 pure def sometimesUncertain(r: Release): bool = r.phase == PublicationUncertain
-pure def sometimesRecoveredUnpublished(r: Release): bool = r.phase == Checked and r.attempt > 0 and not(r.lockHeld)
+pure def sometimesRecoveredUnpublished(r: Release): bool = r.phase == Checked and r.attempt > 0 and not(lockHeld(r))
 ```
 
 ### Served bytes are verified against the deployment's own source
@@ -259,7 +339,7 @@ pure def stepTerminalPhases(before: Release, after: Release): bool =
     implies after.phase == before.phase
 pure def sometimesVerified(r: Release): bool = r.phase == Verified
 pure def sometimesStaging(r: Release): bool = r.environment == Staging and r.phase == Verified
-pure def sometimesVerifiedAfterAdvance(r: Release): bool = r.phase == Verified and r.branchHead != r.checkedSource
+pure def sometimesVerifiedAfterAdvance(r: Release): bool = r.phase == Verified and liveHead(r) != r.checkedSource
 ```
 
 Pinned publication tooling installs without lifecycle scripts or dependency
@@ -280,10 +360,13 @@ pure val refValues = Set(goodRef, { ...goodRef, kind: WorkflowDispatch },
   { ...goodRef, kind: PullRequestRef }, { ...goodRef, kind: TagRef }, { ...goodRef, branch: "develop" },
   { ...goodRef, repository: "fork/slopdotcash" })
 pure val environmentValues = Set(Production, Staging)
-pure val byValues = Set(TrustedWorkflow, HealthJob)
+pure val byValues = Set(TrustedWorkflow, HealthJob, Owner)
 pure val artifactDigestValues = Set(0, 7)
-pure val deploymentValues = Set(0, 1)
-pure val observedDigestValues = Set(7, 8)
+pure val listingValues = Set({ environment: Production, sinceAttempt: 1, entries: List({ deployment: 1, digest: 7 }) },
+  { environment: Production, sinceAttempt: 1, entries: List({ deployment: 2, digest: 8 }) },
+  { environment: Staging, sinceAttempt: 1, entries: List({ deployment: 1, digest: 7 }) },
+  { environment: Production, sinceAttempt: 1, entries: List() },
+  { environment: Production, sinceAttempt: 2, entries: List({ deployment: 3, digest: 7 }) })
 pure val githubDigestValues = Set(0, 1)
 pure val registryDigestValues = Set(0, 1)
 pure val digestValues = Set(0, 1)
@@ -291,14 +374,18 @@ pure val originalRecordedAtValues = Set(1)
 pure val recordedAtValues = Set(1)
 pure val sourceValues = Set(1, 2)
 pure val taggedSourceValues = Set(1, 2)
-pure val liveHeadValues = Set(1, 2)
-pure val comparisonValues = Set(Identical, Ahead, Diverged)
+pure val rivalValues = Set(1, 2, 3)
+pure val serviceValues = Set(FeeConverter, Notify, Slopbot, VettingBackup, Referral, IdentityWorker)
+pure val valueValues = Set(true, false)
 pure val servedValues = Set({ deployment: 1, digest: 7, environment: Production, dnsTlsHeaders: true },
   { deployment: 1, digest: 7, environment: Staging, dnsTlsHeaders: true },
   { deployment: 1, digest: 8, environment: Production, dnsTlsHeaders: true })
-pure val variablesValues = Set({ feeConverter: true, notify: true, vettingBackup: false, vettingRetention: true, slopbot: true },
-  { feeConverter: false, notify: false, vettingBackup: false, vettingRetention: false, slopbot: false })
-pure val feeConfigValues = Set({ ...F::liveAll, buybackMode: F::Off }, { ...F::liveAll, keys: List(F::Base), buybackMode: F::Off })
+pure val feeConfigValues = Set({ ...F::liveAll, buybackMode: F::Off }, { ...F::liveAll, keys: List(F::Base), buybackMode: F::Off },
+  { ...F::liveAll, converterMode: F::DryRun, buybackMode: F::Off, keys: List() })
+pure val weight_setVariable = 6
+pure val weight_rivalStart = 5
+pure val weight_rivalTakeLock = 6
+pure val weight_rivalFinish = 6
 pure val weight_configure = 6
 pure val weight_build = 6
 pure val gatesValues = Set(Set(Types, Unit, Isolation, Identity, ModelInventory, ProofInventory, Models, Proofs, Browser),

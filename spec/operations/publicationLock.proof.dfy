@@ -15,6 +15,7 @@ lemma PhaseUpdate(l: Locks, id: int, phase: RunPhase)
 }
 
 lemma start_ensures(l: Locks, environment: Environment, kind: RunKind, by_: Actor)
+  ensures (inv(l) ==> canStart(l, environment, kind, by_) ==> alwaysHeadsEndLineage(start(l, environment, kind, by_)))
   ensures (inv(l) ==> canStart(l, environment, kind, by_) ==> alwaysOneHolderPerEnvironment(start(l, environment, kind, by_)))
   ensures (inv(l) ==> canStart(l, environment, kind, by_) ==> alwaysRunsWellFormed(start(l, environment, kind, by_)))
   ensures (inv(l) ==> canStart(l, environment, kind, by_) ==> stepHealthJobNeverLocks(l, "start", start(l, environment, kind, by_)))
@@ -44,6 +45,7 @@ lemma start_ensures(l: Locks, environment: Environment, kind: RunKind, by_: Acto
 }
 
 lemma acquire_ensures(l: Locks, id: int)
+  ensures (inv(l) ==> canAcquire(l, id) ==> alwaysHeadsEndLineage(acquire(l, id)))
   ensures (inv(l) ==> canAcquire(l, id) ==> alwaysOneHolderPerEnvironment(acquire(l, id)))
   ensures (inv(l) ==> canAcquire(l, id) ==> alwaysRunsWellFormed(acquire(l, id)))
   ensures (inv(l) ==> canAcquire(l, id) ==> stepHealthJobNeverLocks(l, "acquire", acquire(l, id)))
@@ -70,6 +72,7 @@ lemma acquire_ensures(l: Locks, id: int)
 }
 
 lemma rejectObsolete_ensures(l: Locks, id: int)
+  ensures (inv(l) ==> canRejectObsolete(l, id) ==> alwaysHeadsEndLineage(rejectObsolete(l, id)))
   ensures (inv(l) ==> canRejectObsolete(l, id) ==> alwaysOneHolderPerEnvironment(rejectObsolete(l, id)))
   ensures (inv(l) ==> canRejectObsolete(l, id) ==> alwaysRunsWellFormed(rejectObsolete(l, id)))
   ensures (inv(l) ==> canRejectObsolete(l, id) ==> stepHealthJobNeverLocks(l, "rejectObsolete", rejectObsolete(l, id)))
@@ -96,6 +99,7 @@ lemma rejectObsolete_ensures(l: Locks, id: int)
 }
 
 lemma finish_ensures(l: Locks, id: int)
+  ensures (inv(l) ==> canFinish(l, id) ==> alwaysHeadsEndLineage(finish(l, id)))
   ensures (inv(l) ==> canFinish(l, id) ==> alwaysOneHolderPerEnvironment(finish(l, id)))
   ensures (inv(l) ==> canFinish(l, id) ==> alwaysRunsWellFormed(finish(l, id)))
   ensures (inv(l) ==> canFinish(l, id) ==> stepHealthJobNeverLocks(l, "finish", finish(l, id)))
