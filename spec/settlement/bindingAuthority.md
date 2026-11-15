@@ -34,21 +34,27 @@ cannot block it.
 The EVM rotation delay is zero and EVM rotation needs no confirmation. A
 Solana rotation needs the independent rotation authority's confirmation and
 may carry a delay. The binding delay is between zero and 30 days; the owner
-decision for Slop deployments is zero.
+decision for Slop deployments is zero. The deployment also fixes the
+addresses a rotation may never name: on EVM the factory registrar and its
+current and pending upgrade authorities; on Solana the project owner, the
+project fee recipient and the program's rotation authority. A Solana
+destination may not be the project or vault address.
 
 ```quint
 type Chain = EvmChain | SolanaChain
 type Binding = { actor: int, destination: str, version: int, claimDigest: str, activatesAt: int, cancelled: bool }
-type ActorBinding = { actor: int, current: Binding, paidVersion: int, cancelCount: int, lastCommittedAt: int }
+type ActorBinding = { actor: int, current: Binding, paidVersion: int, cancelCount: int, lastCommittedAt: int, commitTimes: List[int] }
 type Authority = { current: str, pending: str, effectiveAt: int, confirmed: bool }
 type BindRequest = { actor: int, destination: str, expectedVersion: int, claimDigest: str, expiresAt: int, walletSigner: str }
 type Bindings = { deployed: bool, chain: Chain, owner: str, registrar: str, rotationAuthority: str,
+  feeRecipient: str, upgradeAuthority: str, pendingUpgradeAuthority: str, project: str, vault: str,
   bindingDelay: int, rotationDelay: int, clock: int, authority: Authority,
   actors: List[ActorBinding], history: List[Binding], payments: int }
 pure val noBinding: Binding = { actor: 0, destination: "", version: 0, claimDigest: "", activatesAt: 0, cancelled: false }
-pure val noActor: ActorBinding = { actor: 0, current: noBinding, paidVersion: 0, cancelCount: 0, lastCommittedAt: 0 }
+pure val noActor: ActorBinding = { actor: 0, current: noBinding, paidVersion: 0, cancelCount: 0, lastCommittedAt: 0, commitTimes: List() }
 pure val initial: Bindings = { deployed: false, chain: EvmChain, owner: "owner", registrar: "registrar",
-  rotationAuthority: "rotation", bindingDelay: 0, rotationDelay: 0, clock: 1796342400,
+  rotationAuthority: "rotation", feeRecipient: "fees", upgradeAuthority: "upgrader", pendingUpgradeAuthority: "",
+  project: "project", vault: "vault", bindingDelay: 0, rotationDelay: 0, clock: 1796342400,
   authority: { current: "attester", pending: "", effectiveAt: 0, confirmed: false },
   actors: List(), history: List(), payments: 0 }
 pure val maxCancelsBetweenPayments = 3
@@ -69,14 +75,20 @@ pure def withActor(ab: ActorBinding, b: Bindings): Bindings =
 ### Only the current authority binds, for the current version and before expiry, with the wallet's own signature
 
 The expected version prevents a stale or reordered wallet update. Expiry
-limits submission of both signatures, not the claim's lifetime. A rotated-out
-authority cannot bind, so an old signed binding transaction reverts.
+limits submission of both signatures, not the claim's lifetime: EVM accepts a
+binding at its expiry second, Solana only before it. A rotated-out authority
+cannot bind, so an old signed binding transaction reverts. Solana refuses a
+destination equal to the identity authority, the project or the vault
+address, which would strand the principal.
 
 ```quint
 pure def canBind(b: Bindings, request: BindRequest, by: str): bool =
   val ab = actorState(b, request.actor)
   b.deployed and by == b.authority.current and request.actor > 0 and request.destination != ""
-    and request.claimDigest != "" and request.expiresAt >= b.clock and request.walletSigner == request.destination
+    and request.claimDigest != "" and request.walletSigner == request.destination
+    and (if (b.chain == EvmChain) request.expiresAt >= b.clock
+      else request.expiresAt > b.clock and request.destination != b.authority.current
+        and request.destination != b.project and request.destination != b.vault)
     and ab.current.version == request.expectedVersion
 pure def bind(b: Bindings, request: BindRequest, by: str): Bindings =
   val ab = actorState(b, request.actor)
@@ -89,12 +101,16 @@ pure def bind(b: Bindings, request: BindRequest, by: str): Bindings =
 
 ### An award commitment opens the commit window
 
-The escrow reports each committed award for an actor. The commit window lasts
-the binding delay after the latest commitment.
+The escrow reports each committed award for an actor. On EVM the commit
+window lasts the binding delay after the actor's latest commitment. On
+Solana the owner names one obligation and the window lasts the binding delay
+after that award's own commitment.
 
 ```quint
 pure def canRecordCommit(b: Bindings, actor: int): bool = b.deployed and actor > 0
-pure def recordCommit(b: Bindings, actor: int): Bindings = withActor({ ...actorState(b, actor), lastCommittedAt: b.clock }, b)
+pure def recordCommit(b: Bindings, actor: int): Bindings =
+  val ab = actorState(b, actor)
+  withActor({ ...ab, lastCommittedAt: b.clock, commitTimes: ab.commitTimes.append(b.clock) }, b)
 ```
 
 ### The owner cancels the latest unpaid binding at most three times between payments
@@ -108,15 +124,19 @@ first mined wins.
 
 ```quint
 pure def rotationWaiver(b: Bindings): bool = b.authority.pending != "" and (b.chain == EvmChain or b.authority.confirmed)
+pure def commitWindowOpen(b: Bindings, ab: ActorBinding, named: int): bool =
+  if (b.chain == EvmChain) ab.lastCommittedAt > 0 and b.clock < ab.lastCommittedAt + b.bindingDelay
+  else named >= 0 and named < ab.commitTimes.length() and b.clock < ab.commitTimes[named] + b.bindingDelay
+pure def reviewWindowOpen(b: Bindings, ab: ActorBinding): bool = b.clock < ab.current.activatesAt + b.bindingDelay
 pure def cancelWindowOpen(b: Bindings, ab: ActorBinding): bool =
-  b.clock < ab.current.activatesAt + b.bindingDelay
-    or (ab.lastCommittedAt > 0 and b.clock < ab.lastCommittedAt + b.bindingDelay)
-pure def canCancel(b: Bindings, actor: int, expectedVersion: int, by: str): bool =
+  reviewWindowOpen(b, ab) or (ab.lastCommittedAt > 0 and b.clock < ab.lastCommittedAt + b.bindingDelay)
+pure def canCancel(b: Bindings, actor: int, expectedVersion: int, named: int, by: str): bool =
   val ab = actorState(b, actor)
   b.deployed and by == b.owner and ab.current.version > 0 and ab.current.version == expectedVersion
     and not(ab.current.cancelled) and ab.current.version != ab.paidVersion
-    and cancelWindowOpen(b, ab) and (rotationWaiver(b) or ab.cancelCount < maxCancelsBetweenPayments)
-pure def cancel(b: Bindings, actor: int, expectedVersion: int, by: str): Bindings =
+    and (reviewWindowOpen(b, ab) or commitWindowOpen(b, ab, named))
+    and (rotationWaiver(b) or ab.cancelCount < maxCancelsBetweenPayments)
+pure def cancel(b: Bindings, actor: int, expectedVersion: int, named: int, by: str): Bindings =
   val ab = actorState(b, actor)
   val cancelled = { ...ab.current, cancelled: true }
   { ...withActor({ ...ab, current: cancelled,
@@ -143,19 +163,27 @@ pure def pay(b: Bindings, actor: int, expectedVersion: int): Bindings =
 
 ## Story: Rotate the identity authority without the attester's cooperation
 
-### The registrar proposes and may cancel one rotation at a time
+### The registrar on EVM, or the project owner on Solana, proposes and may cancel one rotation at a time
 
-The proposed key differs from the current authority, the owner, the
-registrar and the rotation authority.
+On EVM the factory registrar proposes and only it withdraws its proposal;
+the proposed key differs from the current authority, the registrar and the
+current and pending upgrade authorities. On Solana the project owner starts
+the two-party rotation and only it withdraws it; the proposed key differs
+from the current authority, the project owner, the fee recipient and the
+program's rotation authority.
 
 ```quint
+pure def rotationProposer(b: Bindings): str = if (b.chain == EvmChain) b.registrar else b.owner
+pure def excludedAuthority(b: Bindings, nextAuthority: str): bool =
+  nextAuthority == "" or nextAuthority == b.authority.current
+    or (if (b.chain == EvmChain) nextAuthority == b.registrar or nextAuthority == b.upgradeAuthority
+          or (b.pendingUpgradeAuthority != "" and nextAuthority == b.pendingUpgradeAuthority)
+        else nextAuthority == b.owner or nextAuthority == b.feeRecipient or nextAuthority == b.rotationAuthority)
 pure def canProposeRotation(b: Bindings, nextAuthority: str, by: str): bool =
-  b.deployed and by == b.registrar and b.authority.pending == "" and nextAuthority != ""
-    and nextAuthority != b.authority.current and nextAuthority != b.registrar and nextAuthority != b.owner
-    and nextAuthority != b.rotationAuthority
+  b.deployed and by == rotationProposer(b) and b.authority.pending == "" and not(excludedAuthority(b, nextAuthority))
 pure def proposeRotation(b: Bindings, nextAuthority: str, by: str): Bindings =
   { ...b, authority: { ...b.authority, pending: nextAuthority, effectiveAt: b.clock + b.rotationDelay, confirmed: false } }
-pure def canCancelRotation(b: Bindings, by: str): bool = b.deployed and by == b.registrar and b.authority.pending != ""
+pure def canCancelRotation(b: Bindings, by: str): bool = b.deployed and by == rotationProposer(b) and b.authority.pending != ""
 pure def cancelRotation(b: Bindings, by: str): Bindings =
   { ...b, authority: { ...b.authority, pending: "", effectiveAt: 0, confirmed: false } }
 ```
@@ -185,7 +213,8 @@ pure def alwaysActorsUnique(b: Bindings): bool = b.actors.every(a => a.actor > 0
 pure def alwaysCancelBudget(b: Bindings): bool = b.actors.every(a => a.cancelCount >= 0 and a.cancelCount <= maxCancelsBetweenPayments)
 pure def alwaysPaidVersionKnown(b: Bindings): bool = b.actors.every(a => a.paidVersion >= 0 and a.paidVersion <= a.current.version
   and not(a.current.cancelled and a.paidVersion == a.current.version))
-pure def alwaysTimesInPast(b: Bindings): bool = b.actors.every(a => a.current.activatesAt <= b.clock and a.lastCommittedAt <= b.clock)
+pure def alwaysTimesInPast(b: Bindings): bool = b.actors.every(a => a.current.activatesAt <= b.clock and a.lastCommittedAt <= b.clock
+  and a.commitTimes.every(t => t <= b.clock))
 pure def alwaysRotationShape(b: Bindings): bool =
   (b.authority.pending == "" implies b.authority.effectiveAt == 0 and not(b.authority.confirmed))
     and (b.authority.confirmed implies b.chain == SolanaChain) and b.authority.current != ""
@@ -198,6 +227,11 @@ pure def stepHistoryRetained(before: Bindings, after: Bindings): bool =
   after.history.length() >= before.history.length()
     and before.history.every(h => after.history.some(n => n.actor == h.actor and n.version == h.version
       and n.destination == h.destination and n.claimDigest == h.claimDigest and n.activatesAt == h.activatesAt))
+pure def alwaysAuthorityNotExcludedRole(b: Bindings): bool = b.deployed implies
+  (if (b.chain == EvmChain) b.authority.current != b.registrar and b.authority.current != b.upgradeAuthority
+   else b.authority.current != b.owner and b.authority.current != b.feeRecipient and b.authority.current != b.rotationAuthority)
+pure def alwaysSolanaDestinationsSafe(b: Bindings): bool = b.chain == SolanaChain implies
+  b.history.every(h => h.destination != b.project and h.destination != b.vault)
 pure def stepOnlyRegistrarOrAnyoneRotates(before: Bindings, via: str, after: Bindings): bool =
   after.authority.current != before.authority.current implies via == "executeRotation"
 pure def stepDeploymentFixed(before: Bindings, after: Bindings): bool =
@@ -207,11 +241,16 @@ pure def stepDeploymentFixed(before: Bindings, after: Bindings): bool =
 
 ### With the owner-decision zero delay no cancellation window is ever open
 
-This is the accepted risk stated above, checked in every reachable state.
+This is the accepted risk stated above. It follows by arithmetic from a zero
+delay and is a statement of the risk, not evidence of any behavior: on every
+Slop deployment the owner's cancellation is unreachable. The cancellation
+goals below are reachable only on a deployment with a non-zero delay, which
+the contract permits and the owner decision does not use.
 
 ```quint
 pure def alwaysZeroDelayLeavesNoVeto(b: Bindings): bool =
-  b.bindingDelay == 0 implies b.actors.every(a => not(cancelWindowOpen(b, a)))
+  b.bindingDelay == 0 implies b.actors.every(a => not(cancelWindowOpen(b, a))
+    and a.commitTimes.every(t => not(b.clock < t + b.bindingDelay)))
 pure def sometimesCancelledWithDelay(b: Bindings): bool = b.bindingDelay > 0 and b.history.some(h => h.cancelled)
 pure def sometimesBudgetExhausted(b: Bindings): bool = b.actors.some(a => a.cancelCount == maxCancelsBetweenPayments)
 pure def sometimesWaivedCancellation(b: Bindings): bool = rotationWaiver(b) and b.actors.some(a => a.current.cancelled)
@@ -228,13 +267,14 @@ These input sets bound simulation only.
 
 ```quint
 pure val byValues = Set("attester", "next", "owner", "registrar", "rotation", "anyone")
+pure val namedValues = Set(-1, 0, 1)
 pure val chainValues = Set(EvmChain, SolanaChain)
 pure val delayValues = Set(0, 3600)
 pure val rotationValues = Set(0, 60)
 pure val nowValues = Set(1796342460, 1796346000, 1796349700)
 pure val actorValues = Set(1, 2)
 pure val expectedVersionValues = Set(0, 1, 2, 3)
-pure val nextAuthorityValues = Set("next", "attester", "owner")
+pure val nextAuthorityValues = Set("next", "attester", "owner", "registrar", "fees", "upgrader")
 pure val requestValues = Set(
   { actor: 1, destination: "w1", expectedVersion: 0, claimDigest: "c1", expiresAt: 1799999999, walletSigner: "w1" },
   { actor: 1, destination: "w2", expectedVersion: 1, claimDigest: "c2", expiresAt: 1799999999, walletSigner: "w2" },
@@ -242,7 +282,8 @@ pure val requestValues = Set(
   { actor: 1, destination: "w4", expectedVersion: 3, claimDigest: "c4", expiresAt: 1799999999, walletSigner: "w4" },
   { actor: 2, destination: "w5", expectedVersion: 0, claimDigest: "c5", expiresAt: 1799999999, walletSigner: "w5" },
   { actor: 1, destination: "w2", expectedVersion: 1, claimDigest: "c2", expiresAt: 1799999999, walletSigner: "other" },
-  { actor: 1, destination: "w2", expectedVersion: 1, claimDigest: "c2", expiresAt: 1, walletSigner: "w2" })
+  { actor: 1, destination: "w2", expectedVersion: 1, claimDigest: "c2", expiresAt: 1, walletSigner: "w2" },
+  { actor: 2, destination: "vault", expectedVersion: 0, claimDigest: "c6", expiresAt: 1799999999, walletSigner: "vault" })
 pure val weight_bind = 10
 pure val weight_cancel = 10
 pure val weight_recordCommit = 4

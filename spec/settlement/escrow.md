@@ -17,7 +17,12 @@ handlers `deposit`, `commit_award`, `commit_monthly`, `commit_monthly_award`,
 `release_monthly_award`, `release_monthly_reserve`, `pay` and `withdraw`.
 The unfinished `formal/drafts/monthly-reserve.md` was the starting point.
 The legacy V1 `commitMonthly` path, which commits every leaf in one call, is
-historical and admits no new month. [Binding authority](./bindingAuthority.md)
+still callable on deployed EVM vaults; an independently signed V1
+transaction can win after V2 publication, so this unit applies it. The
+conservation laws cover vaults at the current account layout: a Solana
+project migrated from the 316-byte layout starts its fee counters at zero
+after fees were sent out at once, and legacy `expired` months settle
+differently; that state is not modelled here. [Binding authority](./bindingAuthority.md)
 owns destinations, owner cancellation and identity-authority rotation; a
 payment here records the binding version the contract selected.
 [Monthly commitment](./monthlyCommitment.md) owns the attester's signed
@@ -54,8 +59,9 @@ type MonthReserve = { period: int, allocationDigest: str, root: str, wholeGross:
   admittedGross: M::Amount, remaining: M::Amount, released: M::Amount, leafCount: int, admittedAt: int, frozenAt: int }
 type LeafPosition = { period: int, index: int }
 type Withdrawal = { transaction: str, gross: M::Amount, fee: M::Amount, poolPending: bool }
+type Implementation = PreRelease | ReleaseCapable
 type Escrow = { deployed: bool, vault: str, asset: AssetIdentity, purpose: VaultPurpose, owner: str, feeRecipient: str,
-  authority: str, bindingDelay: int, at: ChainEvent, clock: int,
+  authority: str, bindingDelay: int, implementation: Implementation, at: ChainEvent, clock: int,
   monthlyEnabled: bool, monthlyCap: M::Amount, sourceSequence: int,
   deposited: M::Amount, held: M::Amount, committed: M::Amount, spent: M::Amount,
   free: M::Amount, pending: M::Amount, reserved: M::Amount,
@@ -66,7 +72,7 @@ type Escrow = { deployed: bool, vault: str, asset: AssetIdentity, purpose: Vault
 pure val baseAsset: AssetIdentity = { network: Base, token: "usdc", decimals: 6, native: false, kind: M::Classic }
 pure val origin: ChainEvent = { block: 0, index: 0, time: 1793491200, transaction: "" }
 pure val initial: Escrow = { deployed: false, vault: "vault", asset: baseAsset, purpose: OrdinaryPurpose, owner: "owner",
-  feeRecipient: "fees", authority: "attester", bindingDelay: 0, at: origin, clock: 1793491200,
+  feeRecipient: "fees", authority: "attester", bindingDelay: 0, implementation: PreRelease, at: origin, clock: 1793491200,
   monthlyEnabled: false, monthlyCap: M::zero, sourceSequence: 0,
   deposited: M::zero, held: M::zero, committed: M::zero, spent: M::zero, free: M::zero, pending: M::zero, reserved: M::zero,
   reservedPrincipal: M::zero, reservedFees: M::zero, paid: M::zero, paidNet: M::zero,
@@ -86,7 +92,9 @@ immutable-owner token accounts (owner decision of 26 October 2026); the mint
 facts come from the verified chain read at creation. Fee-on-transfer,
 rebasing and transfer-hook behavior are refused by that subset.
 Creation fixes the asset, purpose and binding delay and may turn monthly
-commitments on with a positive cap. The contract accepts a binding delay
+commitments on with a positive cap. It also records whether the deployed
+implementation is the reviewed release-capable one; a vault deployed before
+it gains reserve release only through a finalized upgrade event. The contract accepts a binding delay
 from zero through 30 days; the owner decision for Slop deployments is zero.
 A bounty vault never takes monthly commitments. Before creation no event
 applies.
@@ -103,6 +111,8 @@ pure def canDeploy(e: Escrow, asset: AssetIdentity, mint: MintFacts, purpose: Va
     and M::withinMaximum(cap, maxFor(asset.network)) and (not(turnOn) or (purpose == OrdinaryPurpose and M::positiveAmount(cap)))
 pure def deploy(e: Escrow, asset: AssetIdentity, mint: MintFacts, purpose: VaultPurpose, delay: int, cap: M::Amount, turnOn: bool): Escrow =
   { ...e, deployed: true, asset: asset, purpose: purpose, bindingDelay: delay, monthlyCap: cap, monthlyEnabled: turnOn }
+pure def canUpgradeToRelease(e: Escrow, ev: ChainEvent): bool = later(e, ev) and e.implementation == PreRelease
+pure def upgradeToRelease(e: Escrow, ev: ChainEvent): Escrow = { ...advance(ev, e), implementation: ReleaseCapable }
 ```
 
 ### Events apply once, in canonical block and event order
@@ -281,6 +291,48 @@ pure def admitRoot(e: Escrow, authorization: RootAuthorization, ev: ChainEvent):
       frozenAt: if (e.asset.network == Solana) authorization.frozenAt else ev.time }) }
 ```
 
+### On EVM a legacy V1 root commits every leaf at once and counts an identical existing award once
+
+Anyone may submit a V1 commitment the identity authority signed. It is
+admitted under the same window, opt-in, cap and one-root-per-period rules. It
+commits each entry as a monthly award directly, debiting free funds only for
+entries whose source is not yet consumed. An entry whose source already holds
+an award with the same actor and gross is counted once; any other existing
+award under an entry's source refuses the whole commitment. Nothing enters
+the pool reserve.
+
+```quint
+type LegacyEntry = { source: SourceKey, actor: int, gross: M::Amount }
+type LegacyCommitment = { period: int, vault: str, root: str, entries: List[LegacyEntry], signer: str }
+pure def legacyTotal(entries: List[LegacyEntry]): M::Amount = entries.foldl(M::zero, (sum, x) => M::addAmounts(sum, x.gross))
+pure def legacyNewTotal(e: Escrow, entries: List[LegacyEntry]): M::Amount =
+  entries.foldl(M::zero, (sum, x) => M::addAmounts(sum, if (sourceFree(e, x.source)) x.gross else M::zero))
+pure def legacyEntryAdmissible(e: Escrow, entries: List[LegacyEntry], x: LegacyEntry): bool =
+  validSource(x.source) and x.actor > 0 and M::validAmount(x.gross) and M::positiveAmount(x.gross)
+    and entries.select(o => o.source == x.source).length() == 1
+    and (sourceFree(e, x.source) or (awardFor(e, x.source).actor == x.actor and M::equalAmounts(awardFor(e, x.source).gross, x.gross)))
+pure def canAdmitLegacyMonth(e: Escrow, legacy: LegacyCommitment, ev: ChainEvent): bool =
+  later(e, ev) and e.asset.network != Solana and e.purpose == OrdinaryPurpose and e.monthlyEnabled and windowOpen(legacy.period, ev.time)
+    and not(hasMonth(e, legacy.period)) and legacy.vault == e.vault and legacy.signer == e.authority and legacy.root != ""
+    and legacy.entries.length() > 0 and legacy.entries.every(x => legacyEntryAdmissible(e, legacy.entries, x))
+    and inRange(e, legacyTotal(legacy.entries)) and M::compareAmounts(legacyTotal(legacy.entries), e.monthlyCap) <= 0
+    and M::compareAmounts(e.free, legacyNewTotal(e, legacy.entries)) >= 0
+pure def legacyAward(e: Escrow, x: LegacyEntry, period: int, index: int, time: int): Award =
+  { source: x.source, actor: x.actor, gross: x.gross, fee: feeFor(e.purpose, x.gross), origin: MonthlyLeaf,
+    period: period, index: index, committedAt: time, paid: false, destination: "", bindingVersion: 0, paidIn: "" }
+type LegacyFold = { vault: Escrow, index: int }
+pure def legacyStep(period: int, time: int, acc: LegacyFold, x: LegacyEntry): LegacyFold =
+  { vault: if (sourceFree(acc.vault, x.source)) withAward(legacyAward(acc.vault, x, period, acc.index, time), acc.vault) else acc.vault,
+    index: acc.index + 1 }
+pure def admitLegacyMonth(e: Escrow, legacy: LegacyCommitment, ev: ChainEvent): Escrow =
+  val added = legacy.entries.length()
+  val newTotal = legacyNewTotal(e, legacy.entries)
+  val withMonth = { ...advance(ev, e), free: M::subtractAmounts(e.free, newTotal), committed: M::addAmounts(e.committed, newTotal),
+    months: e.months.append({ period: legacy.period, allocationDigest: "v1", root: legacy.root, wholeGross: legacyTotal(legacy.entries),
+      admittedGross: M::zero, remaining: M::zero, released: M::zero, leafCount: added, admittedAt: ev.time, frozenAt: ev.time }) }
+  legacy.entries.foldl({ vault: withMonth, index: 0 }, (acc, x) => legacyStep(legacy.period, ev.time, acc, x)).vault
+```
+
 ### A proven leaf reclassifies pool gross into one award without debiting free funds
 
 The adapter recomputes the Merkle-sum root from the leaf and its proof path;
@@ -350,7 +402,9 @@ pure def lawStrandedNeverReleases(e: Escrow, proof: LeafProof, ev: ChainEvent): 
 
 ### Only an owner request co-signed by the current authority releases pool gross
 
-The release names the exact current remainder of that period. Committed
+Until the vault runs the reviewed release-capable implementation, an
+allocation that cannot settle stays reserved (PRD section 6). The release
+names the exact current remainder of that period. Committed
 leaves, awards and fees do not change, the period stays committed, and a later
 leaf still proves while its gross fits the remainder. No transition releases a
 reserve because time passed. The application service approves only the whole
@@ -363,7 +417,7 @@ settled leaf.
 type ReleaseAuthorization = { period: int, expectedRemaining: M::Amount, releasedGross: M::Amount, signer: str }
 pure def canReleaseReserve(e: Escrow, release: ReleaseAuthorization, ev: ChainEvent, by: str): bool =
   val month = monthFor(e, release.period)
-  later(e, ev) and by == e.owner and month.period > 0 and release.signer == e.authority
+  later(e, ev) and by == e.owner and e.implementation == ReleaseCapable and month.period > 0 and release.signer == e.authority
     and M::validAmount(release.expectedRemaining) and M::equalAmounts(release.expectedRemaining, month.remaining)
     and M::validAmount(release.releasedGross) and M::positiveAmount(release.releasedGross)
     and M::compareAmounts(release.releasedGross, month.remaining) <= 0 and M::compareAmounts(e.pending, release.releasedGross) >= 0
@@ -420,11 +474,13 @@ pure def pay(e: Escrow, source: SourceKey, binding: PayableBinding, ev: ChainEve
 
 Earlier attestations are not re-checked: an admitted month and existing
 awards keep their state. A root or release signed by the former authority is
-refused after the rotation.
+refused after the rotation. Which keys a rotation may name, and who proposes
+it, is owned by [binding authority](./bindingAuthority.md); this unit only
+applies the finalized result.
 
 ```quint
 pure def canObserveAuthority(e: Escrow, authority: str, ev: ChainEvent): bool =
-  later(e, ev) and authority != "" and authority != e.authority and authority != e.owner
+  later(e, ev) and authority != "" and authority != e.authority
 pure def observeAuthority(e: Escrow, authority: str, ev: ChainEvent): Escrow = { ...advance(ev, e), authority: authority }
 ```
 
@@ -518,12 +574,17 @@ pure def stepCumulativeCounters(before: Escrow, after: Escrow): bool =
 pure def stepPoolLeavesOnlyByLeafOrRelease(before: Escrow, via: str, after: Escrow): bool =
   M::compareAmounts(after.pending, before.pending) < 0 implies (via == "materialize" or via == "releaseReserve" or via == "releaseLeaf")
 pure def stepFreeLeavesOnlyByOwnerOrRoot(before: Escrow, via: str, after: Escrow): bool =
-  M::compareAmounts(after.free, before.free) < 0 implies (via == "commitAward" or via == "admitRoot" or via == "withdraw")
+  M::compareAmounts(after.free, before.free) < 0 implies (via == "commitAward" or via == "admitRoot" or via == "withdraw"
+    or via == "admitLegacyMonth")
 pure def stepManualBlockedWhilePoolPending(before: Escrow, via: str, after: Escrow): bool =
   via == "commitAward" implies not(M::positiveAmount(before.pending))
 pure def stepOneRootPerPeriod(before: Escrow, via: str, after: Escrow): bool =
   val added = after.months.nthOr(before.months.length(), noMonth)
-  via == "admitRoot" implies after.months == before.months.append(added) and not(hasMonth(before, added.period))
+  (via == "admitRoot" or via == "admitLegacyMonth") implies after.months == before.months.append(added) and not(hasMonth(before, added.period))
+pure def stepImplementationOnlyUpgrades(before: Escrow, after: Escrow): bool =
+  before.implementation == ReleaseCapable implies after.implementation == ReleaseCapable
+pure def stepReleaseNeedsUpgrade(before: Escrow, via: str, after: Escrow): bool =
+  via == "releaseReserve" implies before.implementation == ReleaseCapable
 ```
 
 ### Pool deposits, withdrawals, leaves after opt-out, releases and fee claims are reachable
@@ -539,6 +600,8 @@ pure def sometimesWithdrawalFee(e: Escrow): bool = M::positiveAmount(e.withdrawa
 pure def sometimesFeesClaimed(e: Escrow): bool = M::positiveAmount(e.claimedFees) and M::positiveAmount(e.withdrawalFees)
 pure def sometimesManualAfterRelease(e: Escrow): bool = e.awards.some(a => a.origin == ManualAward)
   and e.months.some(m => M::positiveAmount(m.released))
+pure def sometimesLegacyMonthCountsExistingOnce(e: Escrow): bool = e.months.some(m => m.allocationDigest == "v1")
+  and e.awards.some(a => a.origin == ManualAward and a.source.period == 202611)
 ```
 
 ### Simulation samples reach the November 2026 window
@@ -598,4 +661,10 @@ pure val weight_claimFees = 2
 pure val weight_observeAuthority = 1
 pure val weight_releaseLeaf = 8
 pure val weight_commitAward = 8
+pure val weight_admitLegacyMonth = 4
+pure val weight_upgradeToRelease = 4
+pure val legacyValues = Set({ period: 202611, vault: "vault", root: "v1", signer: "attester",
+  entries: List({ source: sampleKey(202611, 1), actor: 1, gross: List(4) }, { source: sampleKey(202611, 2), actor: 2, gross: List(1) }) },
+  { period: 202611, vault: "vault", root: "v1", signer: "attester",
+  entries: List({ source: sampleKey(202611, 1), actor: 1, gross: List(50) }) })
 ```
