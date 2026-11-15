@@ -1,10 +1,12 @@
 import { expect, test } from "bun:test";
+import { createHash } from "node:crypto";
 import {
   integrated,
   makeOriginal,
   repository,
 } from "../tests/value-promotion-fixture";
 import { retainedCopyBindings } from "../workers/slopbot/value-retained-copy";
+import { collectRetainedMergeReferences } from "../workers/slopbot/value-retained-reference";
 import { retainedCommitCreditSources } from "./retained-commit-credit";
 
 function sources() {
@@ -256,4 +258,164 @@ test("a copied merge commit receives no ordinary implementation attribution", as
   await expect(
     retainedCommitCreditSources(copy, [original, copy]),
   ).rejects.toThrow("has 0 exact copy bindings");
+});
+
+function asFormalReview(source: ReturnType<typeof sources>) {
+  const { original, comment } = source;
+  original.evidence.comments = [];
+  const review = {
+    node_id: "PRR_retained",
+    id: 991,
+    html_url: `${original.evidence.pull.html_url}#pullrequestreview-991`,
+    body: comment.body,
+    user: comment.user,
+    submitted_at: comment.created_at,
+    state: "COMMENTED",
+    commit_id: original.evidence.pull.head.sha,
+  };
+  original.evidence.reviews = [review];
+  return review;
+}
+
+test("formal merger review acknowledges retained work and replays deterministically", async () => {
+  const source = sources();
+  asFormalReview(source);
+  const first = await retainedCopyBindings([source.original, source.copy]);
+  const replay = await retainedCopyBindings([source.original, source.copy]);
+  expect(first.limitations).toEqual([]);
+  expect([...first.bindings]).toEqual([...replay.bindings]);
+  expect(first.bindings.size).toBe(1);
+});
+
+for (const invalid of [
+  "other-actor",
+  "before-merge",
+  "missing-time",
+  "wrong-reference",
+  "bot",
+] as const)
+  test(`formal review refuses ${invalid} acknowledgement`, async () => {
+    const source = sources();
+    const review = asFormalReview(source);
+    if (invalid === "other-actor")
+      review.user = source.original.evidence.pull.user;
+    if (invalid === "before-merge")
+      review.submitted_at = "2026-10-02T09:00:00Z";
+    if (invalid === "missing-time")
+      review.submitted_at = null as unknown as string;
+    if (invalid === "wrong-reference")
+      review.body = "Your work is retained in #3.";
+    if (invalid === "bot") review.user = { ...review.user, type: "Bot" };
+    const result = await retainedCopyBindings([source.original, source.copy]);
+    expect(result.bindings.size).toBe(0);
+    expect(result.limitations).toContain(
+      `${source.original.evidence.pull.node_id}: matching copied edits require authenticated retention acknowledgement`,
+    );
+  });
+
+function emptySourceResolutions(
+  source: ReturnType<typeof fourCommitsWithSourceMerges>,
+) {
+  source.original.evidence.mergeResolutions = source.original.evidence.commits
+    .filter((commit) => commit.parents.length === 2)
+    .map((commit) => ({
+      commitSha: commit.sha,
+      parents: commit.parents.map((parent) => parent.sha) as [string, string],
+      gitVersion: "git version 2.56.0",
+      automaticTree: "c".repeat(40),
+      resolvedTree: "c".repeat(40),
+      hadConflicts: false,
+      patch: "",
+      patchSha256: createHash("sha256").update("").digest("hex"),
+      paths: [],
+    }));
+}
+
+test("complete canonical empty source resolutions retain only ordinary mappings", async () => {
+  const source = fourCommitsWithSourceMerges();
+  emptySourceResolutions(source);
+  const result = await retainedCopyBindings([source.original, source.copy]);
+  expect(result.limitations).toEqual([]);
+  expect(result.bindings.size).toBe(4);
+  expect(
+    [...result.bindings.values()].every((binding) =>
+      source.original.evidence.commitAttribution.some(
+        (entry) => entry.sha === binding.originalCommitSha,
+      ),
+    ),
+  ).toBe(true);
+  expect([...result.bindings]).toEqual([
+    ...(await retainedCopyBindings([source.original, source.copy])).bindings,
+  ]);
+});
+
+for (const invalid of [
+  "missing",
+  "duplicate",
+  "wrong-parent",
+  "wrong-hash",
+  "wrong-version",
+  "resolution-edit",
+  "unresolved-conflict",
+] as const)
+  test(`full retained scope holds a ${invalid} source resolution`, async () => {
+    const source = fourCommitsWithSourceMerges();
+    emptySourceResolutions(source);
+    const resolutions = source.original.evidence.mergeResolutions;
+    if (!resolutions) throw new Error("Missing fixture merge resolutions");
+    const resolution = resolutions[0];
+    if (invalid === "missing") resolutions.shift();
+    if (invalid === "duplicate") resolutions.push(structuredClone(resolution));
+    if (invalid === "wrong-parent") resolution.parents[0] = "d".repeat(40);
+    if (invalid === "wrong-hash") resolution.patchSha256 = "d".repeat(64);
+    if (invalid === "wrong-version")
+      resolution.gitVersion = "git version 2.50.1";
+    if (invalid === "unresolved-conflict") resolution.hadConflicts = true;
+    if (invalid === "resolution-edit") {
+      resolution.patch = "diff --git a/fix.ts b/fix.ts\n+changed\n";
+      resolution.patchSha256 = createHash("sha256")
+        .update(resolution.patch)
+        .digest("hex");
+      resolution.paths = ["fix.ts"];
+      resolution.resolvedTree = "d".repeat(40);
+    }
+    const result = await retainedCopyBindings([source.original, source.copy]);
+    expect(result.limitations).toHaveLength(1);
+    expect(result.bindings.size).toBe(4);
+  });
+
+test("short merge references authenticate the original formal review bytes", async () => {
+  const source = sources();
+  const review = asFormalReview(source);
+  review.body = `The fix was delivered in #2, merged as ${integrated.slice(0, 8)}.`;
+  source.copy.evidence.mergeCommitEvidence = {
+    sha: integrated,
+    html_url: `https://github.com/${repository.id}/commit/${integrated}`,
+    parents: [{ sha: "0".repeat(40) }],
+    stats: { additions: 1, deletions: 0, total: 1 },
+    files: source.copy.evidence.files,
+  };
+  const client = {
+    async get<T>(path: string): Promise<T | null> {
+      if (path.endsWith(`/commits/${integrated.slice(0, 8)}`))
+        return {
+          sha: integrated,
+          html_url: `https://github.com/${repository.id}/commit/${integrated}`,
+        } as T;
+      if (path.endsWith(`/commits/${integrated}/pulls?per_page=100`))
+        return [source.copy.evidence.pull] as T;
+      if (path.endsWith("/pulls/2")) return source.copy.evidence.pull as T;
+      throw new Error(`Unexpected source request ${path}`);
+    },
+  };
+  source.original.evidence.retainedMergeReferences = (
+    await collectRetainedMergeReferences(client, source.original.evidence)
+  ).references;
+  const first = await retainedCopyBindings([source.original, source.copy]);
+  expect(first.limitations).toEqual([]);
+  expect(first.bindings.size).toBe(1);
+  review.commit_id = "e".repeat(40);
+  const changed = await retainedCopyBindings([source.original, source.copy]);
+  expect(changed.bindings.size).toBe(0);
+  expect(changed.limitations).toHaveLength(1);
 });

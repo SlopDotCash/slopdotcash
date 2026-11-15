@@ -973,6 +973,7 @@ export async function collectValueEvidence(
           repositoryDatabaseId: repositoryIdentity.id,
           pull,
           comments,
+          reviews,
         })
       : { references: [], limitations: [] };
   limitations.push(...retained.limitations);

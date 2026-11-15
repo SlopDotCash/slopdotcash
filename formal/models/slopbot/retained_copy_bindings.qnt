@@ -19,7 +19,7 @@
 // An unacknowledged-copy predicate includes a PR relationship, matching edits
 // and absence of an independently acknowledged carrier of the same commit.
 // PR-reference proof requires explicit retained-work wording in the actual
-// merger's post-merge comment and a same-repository reference resolved to the
+// merger's post-merge comment or submitted formal review and a same-repository reference resolved to the
 // exact accepted PR node; patch and original-author checks remain independent.
 // Matching kinds preserve exact edits, manifest identity and uniquely bound
 // ancestor hunks; the low-level graph/hunk algorithms remain separate models.
@@ -27,12 +27,15 @@
 // matches and competing originals retain limitations; prior Map entries are
 // not rolled back. Downstream publication must reject every such partial result.
 // Existing accepted-promotion definitions are partial conformance evidence.
-// These scenarios have not been parsed, simulated or executed.
+// Synchronization proof requires the exact two ordered parents, pinned Git
+// version, matching patch digest and equal automatic/resolved trees. A missing,
+// malformed or nonempty resolution stays held. Incoming parent changes cannot
+// supply original implementation claims. This abstracts the canonical collector.
 module retained_copy_bindings {
   val ids = Set(1, 2)
   val sourceKinds = Set("original", "accepted", "promotion")
   val identities = Set("same-source", "foreign-repository", "same-pr", "unmerged", "no-merge", "bot", "no-overlap")
-  val proofs = Set("none", "reopen", "bad-reopen", "comment", "bad-comment", "pr-reference")
+  val proofs = Set("none", "reopen", "bad-reopen", "comment", "bad-comment", "pr-reference", "review", "bad-review")
   val matchKinds = Set("none", "exact", "manifest", "ancestor", "ambiguous-hunks")
   var s: { phase: str, original: int, kind: str, inspected: Set[int],
     admitted: Set[int], unacknowledged: Set[int], matched: Set[int],
@@ -49,7 +52,7 @@ module retained_copy_bindings {
     s' = s.with("phase", "candidates").with("kind", kind).with("inspected", Set())
       .with("admitted", Set()).with("unacknowledged", Set()).with("matched", Set()).with("compared", Set()) }
   action candidate(id: int, identity: str, proof: str, unacknowledgedCopy: bool): bool = {
-    val accepted = s.kind != "accepted" and identity == "same-source" and Set("reopen", "comment", "pr-reference").contains(proof)
+    val accepted = s.kind != "accepted" and identity == "same-source" and Set("reopen", "comment", "pr-reference", "review").contains(proof)
     all { s.phase == "candidates", ids.contains(id), not(s.inspected.contains(id)),
       identities.contains(identity), proofs.contains(proof),
       s' = s.with("inspected", s.inspected.union(Set(id)))
@@ -67,6 +70,9 @@ module retained_copy_bindings {
   }
   action fileEvidence(complete: bool): bool = all { s.phase == "file",
     s' = if (complete) s.with("phase", "matches")
+      else finishedOrigin.with("limitations", s.limitations.union(Set(s.original))) }
+  action synchronization(complete: bool, empty: bool): bool = all { s.phase == "file",
+    s' = if (complete and empty) s
       else finishedOrigin.with("limitations", s.limitations.union(Set(s.original))) }
   action matchCandidate(id: int, kind: str): bool = all { s.phase == "matches", s.admitted.contains(id),
     not(s.compared.contains(id)), matchKinds.contains(kind),
@@ -94,7 +100,7 @@ module retained_copy_bindings {
     nondet proof = proofs.oneOf()
     nondet matchKind = matchKinds.oneOf()
     nondet yes = Set(false, true).oneOf()
-    any { begin(source), candidate(id, identity, proof, yes), admissions, fileEvidence(yes),
+    any { begin(source), candidate(id, identity, proof, yes), admissions, fileEvidence(yes), synchronization(yes, yes),
       matchCandidate(id, matchKind), bind, referenceFailure, returnResult, downstream(yes), s' = s }
   }
   val invariant = all { ids.contains(s.original), s.inspected.subseteq(ids), s.admitted.subseteq(s.inspected),
@@ -115,6 +121,18 @@ module retained_copy_bindings {
     .then(skipLast).expect(s.usable and invariant)
   run authenticatedPrReferenceBindsTest = init.then(oneIntegration("original", "pr-reference")).then(matched("exact"))
     .then(skipLast).expect(s.usable and invariant)
+  run authenticatedFormalReviewBindsTest = init.then(oneIntegration("original", "review")).then(matched("exact"))
+    .then(skipLast).expect(s.usable and invariant)
+  run invalidFormalReviewIsHeldTest = init.then(begin("original")).then(candidate(1, "same-source", "bad-review", true))
+    .then(candidate(2, "foreign-repository", "none", false)).then(admissions).then(skipLast)
+    .expect(not(s.usable) and s.owners.get(1) == 0 and invariant)
+  run canonicalEmptySynchronizationPreservesOrdinaryClaimTest = init.then(oneIntegration("original", "comment"))
+    .then(synchronization(true, true)).then(matched("exact")).then(skipLast)
+    .expect(s.usable and s.owners.get(1) == 1 and invariant)
+  run missingSynchronizationEvidenceIsHeldTest = init.then(oneIntegration("original", "comment"))
+    .then(synchronization(false, true)).then(skipLast).expect(not(s.usable) and invariant)
+  run synchronizationResolutionEditsAreHeldTest = init.then(oneIntegration("original", "comment"))
+    .then(synchronization(true, false)).then(skipLast).expect(not(s.usable) and invariant)
   run manifestIdentityBindsTest = init.then(oneIntegration("original", "comment")).then(matched("manifest"))
     .then(skipLast).expect(s.owners.get(1) == 1 and invariant)
   run uniqueAncestorHunksBindTest = init.then(oneIntegration("original", "comment")).then(matched("ancestor"))

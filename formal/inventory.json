@@ -8524,14 +8524,14 @@
     },
     {
       "path": "workers/slopbot/value-evidence.ts",
-      "sha256": "8136d242744bb4db5691805f0acca5630e74db9ca9872ee1411c44fd1fdf44e1",
+      "sha256": "8af0ff415f46f1f8dad5885fe0ea3ca8f2904576ca4998d428fa3abc2e24f164",
       "models": [
         "formal/models/points/historical_discussion_evidence.qnt",
         "formal/models/slopbot/bot_evidence_integrity.qnt",
         "formal/models/slopbot/bot_value_dispute_actor.qnt"
       ],
       "candidateLines": [
-        62, 73, 82, 96, 435, 436, 627, 647, 690, 699, 718, 1059, 1078
+        62, 73, 82, 96, 435, 436, 627, 647, 690, 699, 718, 1060, 1079
       ],
       "review": "mapped-abstraction"
     },
@@ -8731,23 +8731,23 @@
     },
     {
       "path": "workers/slopbot/value-retained-copy.ts",
-      "sha256": "124569180113fa21c55075d6b5cce11d4973fb3e19edd7f5f9d240f893c6341c",
+      "sha256": "a11b2a397a90553ad01a98651ac4596d0c51f01d69b606fda29bcec58255e8f3",
       "models": [
         "formal/models/slopbot/bot_retained_acceptance.qnt",
         "formal/models/slopbot/retained_copy_bindings.qnt",
         "formal/models/slopbot/retained_recipient_scope.qnt"
       ],
-      "candidateLines": [33, 60, 233, 303, 309, 333, 367],
+      "candidateLines": [40, 67, 240, 312, 318, 342, 376],
       "review": "mapped-abstraction"
     },
     {
       "path": "workers/slopbot/value-retained-reference.ts",
-      "sha256": "23a49fdb7dcdcfb4819b8870e8dd6f2d6f39d748827a3df0ff05f9aca635e6ef",
+      "sha256": "51fc95b25209f650bd948e9b3ce0f6098f991af61012a81892fa802ee7795b4e",
       "models": [
         "formal/models/slopbot/bot_retained_acceptance.qnt",
         "formal/models/slopbot/retained_copy_bindings.qnt"
       ],
-      "candidateLines": [84, 109],
+      "candidateLines": [23, 103, 128],
       "review": "mapped-abstraction"
     },
     {
@@ -15555,7 +15555,7 @@
     },
     {
       "path": "formal/models/slopbot/retained_copy_bindings.qnt",
-      "sha256": "6eb78955df6d54ff148079ae2f31314a2e6b3776e5c7113ae21e65c983fcd1fb",
+      "sha256": "ba7dc9ba617634855b25e253a906dcf698dd7af8c929dfc272b059038d3a1cb7",
       "sources": [
         "workers/slopbot/value-manifest-identity.ts",
         "workers/slopbot/value-retained-copy.ts",
@@ -15568,8 +15568,10 @@
         "acknowledgedPromotionStillChecksFilesTest",
         "ambiguousAncestorHunksDoNotBindTest",
         "authenticatedCommentBindsTest",
+        "authenticatedFormalReviewBindsTest",
         "authenticatedPrReferenceBindsTest",
         "botMergerCannotAcknowledgeTest",
+        "canonicalEmptySynchronizationPreservesOrdinaryClaimTest",
         "changedAuthorNeedsCommentTest",
         "cleanResultStillNeedsOtherPublicationChecksTest",
         "competingOriginalsRetainFirstMapEntryAndHoldTest",
@@ -15578,11 +15580,14 @@
         "ignoringPartialResultLimitationsNegativeControlTest",
         "incompleteOriginalFileIsHeldTest",
         "independentlyAcceptedPromotionNeedsNoNewBindingTest",
+        "invalidFormalReviewIsHeldTest",
         "laterFailureReturnsPartialMapWithLimitationsTest",
         "manifestIdentityBindsTest",
+        "missingSynchronizationEvidenceIsHeldTest",
         "referenceLookupRejectsWithoutReturningPartialMapTest",
         "sameAuthorReopenBindsTest",
         "samePrCannotBindItselfTest",
+        "synchronizationResolutionEditsAreHeldTest",
         "twoExactMatchesAreAmbiguousTest",
         "uniqueAncestorHunksBindTest",
         "zeroExactMatchesIsHeldTest"

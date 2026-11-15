@@ -2,19 +2,26 @@
  * discovery hint, never sufficient evidence for assigning implementation credit.
  */
 
+import { sha256Hex } from "../../src/lib/async-sha256.mjs";
 import {
   githubLinkDestinations,
   sameRepositoryCommitHints,
 } from "./value-commit-hints";
 import type { FileChange, ValueEvidence } from "./value-evidence-types";
 import { retainedManifestIdentity } from "./value-manifest-identity";
+import { MERGE_GIT_VERSION } from "./value-merge-profile";
+import { mergeResolutionMatches } from "./value-merge-resolution";
 import {
   hasCompleteValuePatch,
   valueAdditionCount,
   valueDeletionCount,
   valuePatch,
 } from "./value-patch";
-import { hasRetainedMergeReference } from "./value-retained-reference";
+import {
+  acknowledgementTime,
+  hasRetainedMergeReference,
+  retainedAcknowledgements,
+} from "./value-retained-reference";
 import type { WorkUnitSource } from "./value-work-unit-types";
 import {
   type CandidateHunkFile,
@@ -236,10 +243,11 @@ async function retainedCopySources(
       accepted.merged_by.type === "User" &&
       evidence.pull.user.node_id !== accepted.user.node_id;
     let acknowledged = sameAuthorReopen(evidence, integration);
-    for (const comment of evidence.comments) {
+    for (const comment of retainedAcknowledgements(evidence)) {
       if (
+        comment.user?.type !== "Bot" &&
         comment.user?.node_id === accepted.merged_by?.node_id &&
-        Date.parse(comment.created_at) >=
+        Date.parse(acknowledgementTime(comment)) >=
           Date.parse(accepted.merged_at as string) &&
         // GitHub numbers PRs in creation order. A lower number proves this
         // PR existed before the accepted PR was opened. A duplicate opened
@@ -263,6 +271,7 @@ async function retainedCopySources(
       octoberReplacement &&
       evidence.comments.some(
         (comment) =>
+          comment.user?.type !== "Bot" &&
           comment.user?.node_id === accepted.merged_by?.node_id &&
           comment.updated_at === comment.created_at &&
           Date.parse(comment.created_at) <=
@@ -614,11 +623,33 @@ export async function retainedCopyBindings(
       // A source's branch-sync merge is not one of those implementation claims.
       // Full joint preparation retains its existing merge-resolution gate.
       if (options.ordinaryCommitsOnly && commit.parents.length > 1) continue;
+      if (commit.parents.length > 1) {
+        const resolutions = (evidence.mergeResolutions ?? []).filter(
+          (resolution) => resolution.commitSha === commit.sha,
+        );
+        const resolution = resolutions[0];
+        if (
+          resolutions.length !== 1 ||
+          !mergeResolutionMatches(resolution, commit) ||
+          resolution.gitVersion !== MERGE_GIT_VERSION ||
+          (await sha256Hex(resolution.patch)) !== resolution.patchSha256
+        ) {
+          limitations.add(
+            `${evidence.pull.node_id}: retained merge ${commit.sha} needs complete canonical resolution evidence`,
+          );
+        } else if (resolution.hadConflicts || resolution.paths.length > 0) {
+          limitations.add(
+            `${evidence.pull.node_id}: retained merge ${commit.sha} has resolution edits requiring joint reconciliation`,
+          );
+        }
+        // Only an authenticated empty resolution proves synchronization alone.
+        // Incoming parent changes never become original implementation claims.
+        continue;
+      }
       const attribution = evidence.commitAttribution.find(
         (a) => a.sha === commit.sha,
       );
       if (
-        commit.parents.length > 1 ||
         !attribution?.files ||
         attribution.limitations.length ||
         attribution.changedPaths === null ||
