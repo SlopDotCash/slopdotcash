@@ -167,7 +167,11 @@ export async function prepareWorkUnitEvidence(
     const covered = new Set<string>();
     const relocated = new Map<string, Set<string>>();
     for (const resolution of evidence.mergeResolutions ?? []) {
-      if (!resolution.automaticRelocations?.length) continue;
+      if (
+        resolution.kind === "combined-parent-delta" ||
+        !resolution.automaticRelocations?.length
+      )
+        continue;
       const merge = evidence.commits.find(
         (entry) => entry.sha === resolution.commitSha,
       );

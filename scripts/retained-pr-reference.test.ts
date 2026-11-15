@@ -773,6 +773,8 @@ for (const invalid of [
     const resolutions = source.original.evidence.mergeResolutions;
     if (!resolutions) throw new Error("Missing fixture merge resolutions");
     const resolution = resolutions[0];
+    if (resolution.kind === "combined-parent-delta")
+      throw Error("Expected two-parent fixture");
     if (invalid === "missing") resolutions.shift();
     if (invalid === "duplicate") resolutions.push(structuredClone(resolution));
     if (invalid === "wrong-parent") resolution.parents[0] = "d".repeat(40);

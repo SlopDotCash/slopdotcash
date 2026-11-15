@@ -7,6 +7,8 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type {
+  AutomaticValueMergeResolution,
+  CombinedParentValueMergeResolution,
   ValueEvidence,
   ValueMergeResolution,
 } from "../workers/slopbot/value-evidence-types";
@@ -17,6 +19,7 @@ import {
   type ValueMergeInput,
   type ValueMergeProfile,
 } from "../workers/slopbot/value-merge-profile";
+import { mergeResolutionLineCounts } from "../workers/slopbot/value-merge-resolution";
 
 /** The fixed intake/Points profile verifies full object identities and ordinary
  * path inventories before using the same canonical merge collector below.
@@ -153,27 +156,116 @@ export async function collectMergeResolutions(
         .find((entry) => entry.split("\t")[1] === path)
         ?.split("\t")[0];
     for (const commit of evidence.commits) {
-      if (commit.parents.length !== 2) continue;
+      if (commit.parents.length < 2) continue;
       if (
         ![commit.sha, ...commit.parents.map((parent) => parent.sha)].every(
           (sha) => /^[a-f0-9]{40}$/u.test(sha),
         )
       )
         throw new Error("Invalid immutable merge identity");
-      const parents = commit.parents.map((parent) => parent.sha) as [
-        string,
-        string,
-      ];
+      const parents = commit.parents.map((parent) => parent.sha);
       if (
         read("show", "-s", "--format=%P", commit.sha).trim() !==
         parents.join(" ")
       )
         throw new Error("Local merge parents differ from GitHub evidence");
+      if (commit.parents.length > 2) {
+        const parentTrees = parents.map((parent) =>
+          read("rev-parse", `${parent}^{tree}`).trim(),
+        );
+        const resolvedTree = read("rev-parse", `${commit.sha}^{tree}`).trim();
+        const combinedPaths = read(
+          "diff-tree",
+          "--no-commit-id",
+          "-c",
+          "--name-only",
+          "-z",
+          commit.sha,
+          "--",
+        )
+          .split("\0")
+          .filter(Boolean);
+        const combined = read(
+          "diff-tree",
+          "--no-commit-id",
+          "-c",
+          "-p",
+          "--combined-all-paths",
+          "--full-index",
+          "--no-ext-diff",
+          "--no-textconv",
+          "--no-renames",
+          commit.sha,
+          "--",
+        );
+        const files: CombinedParentValueMergeResolution["files"] = [];
+        const sections: string[] = [];
+        const observed: string[] = [];
+        for (const section of combined.split(/^diff --combined /mu).slice(1)) {
+          const path = section.slice(0, section.indexOf("\n"));
+          if (!combinedPaths.includes(path) || observed.includes(path))
+            throw new Error("Incomplete combined merge paths");
+          observed.push(path);
+          const prefixes = section
+            .split("\n")
+            .map((line) => line.slice(0, parents.length));
+          if (
+            !prefixes.some(
+              (prefix) =>
+                prefix === "+".repeat(parents.length) ||
+                prefix === "-".repeat(parents.length),
+            )
+          )
+            continue;
+          const entries = [...parents, commit.sha].map((ref) => {
+            const value = entryAt(ref, path);
+            const match = /^(100644|100755) blob ([a-f0-9]{40})$/u.exec(
+              value ?? "",
+            );
+            if (!match)
+              throw new Error(
+                "Octopus resolution requires complete regular-file snapshots",
+              );
+            return { mode: match[1], blobSha: match[2] };
+          });
+          files.push({
+            path,
+            parents: entries.slice(0, -1),
+            result: entries[entries.length - 1],
+          });
+          sections.push(`diff --combined ${section}`);
+        }
+        if (
+          JSON.stringify([...observed].sort()) !==
+          JSON.stringify([...combinedPaths].sort())
+        )
+          throw new Error(
+            "Combined merge contains an unsupported path or binary delta",
+          );
+        const patch = sections.join("");
+        const resolution: CombinedParentValueMergeResolution = {
+          kind: "combined-parent-delta",
+          commitSha: commit.sha,
+          parents,
+          parentTrees,
+          gitVersion,
+          resolvedTree,
+          patch,
+          patchSha256: createHash("sha256").update(patch).digest("hex"),
+          paths: files.map((file) => file.path),
+          files,
+        };
+        if (mergeResolutionLineCounts(resolution, commit) === null)
+          throw new Error("Incomplete or ambiguous combined-parent resolution");
+        resolutions.push(resolution);
+        continue;
+      }
       const merged = git(
         "merge-tree",
         "--write-tree",
         "--no-messages",
-        ...parents,
+        parents[0],
+        parents[1],
       );
       if (merged.status !== 0 && merged.status !== 1)
         throw new Error("Automatic merge reconstruction failed");
@@ -204,7 +296,7 @@ export async function collectMergeResolutions(
         .split("\0")
         .filter(Boolean);
       const automaticRelocations: NonNullable<
-        ValueMergeResolution["automaticRelocations"]
+        AutomaticValueMergeResolution["automaticRelocations"]
       > = [];
       for (const sourceParent of parents) {
         const rows = read(
@@ -267,7 +359,7 @@ export async function collectMergeResolutions(
       }
       resolutions.push({
         commitSha: commit.sha,
-        parents,
+        parents: [parents[0], parents[1]],
         gitVersion,
         automaticTree,
         resolvedTree,
