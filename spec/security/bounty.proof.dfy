@@ -55,7 +55,12 @@ lemma reviewRelated_ensures(b: Bounty, id: int, by_: int, checkedEpoch: int, app
       }
       RecordedHoldKeepsRules(id, after, gross, b);
     } else {
-      DroppedHoldKeepsRules(id, after, b);
+      forall other | known(other) && other != id
+        ensures caseOf(reviewRelated(b, id, by_, checkedEpoch, false), other) == caseOf(b, other)
+      {
+        OtherCaseUnchanged(id, after, b, other);
+      }
+      DroppedHoldKeepsRules(b, id, by_, checkedEpoch);
     }
   }
 }
@@ -68,18 +73,10 @@ lemma RecordedHoldMembers(id: int, after: security__cases_PrivateCase, amount: s
   ProofLib.FilterMember((h: Hold) => (h.caseId != id), b.holds, x);
 }
 
-// The generated filter of the other cases' holds is the library's filter view.
-lemma DroppedHolds(id: int, b: Bounty)
-  ensures Std.Collections.Seq.Filter((h: Hold) => (h.caseId != id), b.holds) == ProofLib.Filter((h: Hold) => (h.caseId != id), b.holds)
+// A refusal keeps exactly the other cases' holds, through the library's filter view.
+lemma RefusedHolds(b: Bounty, id: int, by_: int, checkedEpoch: int)
+  ensures reviewRelated(b, id, by_, checkedEpoch, false).holds == ProofLib.Filter((h: Hold) => (h.caseId != id), b.holds)
 {
-}
-
-// A refused proposal drops exactly the case's own hold.
-lemma DroppedHoldMembers(id: int, b: Bounty, x: Hold)
-  ensures x in Std.Collections.Seq.Filter((h: Hold) => (h.caseId != id), b.holds) <==> x in b.holds && x.caseId != id
-{
-  DroppedHolds(id, b);
-  ProofLib.FilterMember((h: Hold) => (h.caseId != id), b.holds, x);
 }
 
 // The case rules of the other case are untouched when one case changes.
@@ -160,29 +157,27 @@ lemma RecordedHoldKeepsRules(id: int, after: security__cases_PrivateCase, amount
 }
 
 // A refused proposal releases its hold and leaves every other hold matching its case.
-lemma DroppedHoldKeepsRules(id: int, after: security__cases_PrivateCase, b: Bounty)
+lemma DroppedHoldKeepsRules(b: Bounty, id: int, by_: int, checkedEpoch: int)
   requires inv(b)
   requires known(id)
-  requires !security__cases_committed(after) && !after.relatedReview.ReviewPending?
-  ensures alwaysOneHoldPerRootCause(putCase(id, after, b).(holds := Std.Collections.Seq.Filter((h: Hold) => (h.caseId != id), b.holds)))
-  ensures alwaysFullAwardBindsNoVault(putCase(id, after, b).(holds := Std.Collections.Seq.Filter((h: Hold) => (h.caseId != id), b.holds)))
-  ensures alwaysHoldsMatchCases(putCase(id, after, b).(holds := Std.Collections.Seq.Filter((h: Hold) => (h.caseId != id), b.holds)))
-  ensures stepHoldsNeedClearance(b, putCase(id, after, b).(holds := Std.Collections.Seq.Filter((h: Hold) => (h.caseId != id), b.holds)))
+  requires !security__cases_committed(caseOf(reviewRelated(b, id, by_, checkedEpoch, false), id))
+  requires !caseOf(reviewRelated(b, id, by_, checkedEpoch, false), id).relatedReview.ReviewPending?
+  requires forall other :: known(other) && other != id ==> caseOf(reviewRelated(b, id, by_, checkedEpoch, false), other) == caseOf(b, other)
+  ensures alwaysOneHoldPerRootCause(reviewRelated(b, id, by_, checkedEpoch, false))
+  ensures alwaysFullAwardBindsNoVault(reviewRelated(b, id, by_, checkedEpoch, false))
+  ensures alwaysHoldsMatchCases(reviewRelated(b, id, by_, checkedEpoch, false))
+  ensures stepHoldsNeedClearance(b, reviewRelated(b, id, by_, checkedEpoch, false))
 {
-  var nb := putCase(id, after, b).(holds := Std.Collections.Seq.Filter((h: Hold) => (h.caseId != id), b.holds));
+  var nb := reviewRelated(b, id, by_, checkedEpoch, false);
+  RefusedHolds(b, id, by_, checkedEpoch);
   forall x
     ensures x in nb.holds <==> x in b.holds && x.caseId != id
   {
-    DroppedHoldMembers(id, b, x);
-  }
-  assert caseOf(nb, id) == after;
-  forall other | known(other) && other != id
-    ensures caseOf(nb, other) == caseOf(b, other)
-  {
-    OtherCaseUnchanged(id, after, b, other);
+    ProofLib.FilterMember((h: Hold) => (h.caseId != id), b.holds, x);
   }
   forall h | h in nb.holds
     ensures holdMatches(nb, h)
+    ensures (h.kind.VaultHold? || h.kind.DirectHold?) ==> caseOf(nb, h.caseId).terms.split.StandardSplit?
   {
     assert h in b.holds && h.caseId != id && holdMatches(b, h);
     assert caseOf(nb, h.caseId) == caseOf(b, h.caseId);
@@ -198,12 +193,6 @@ lemma DroppedHoldKeepsRules(id: int, after: security__cases_PrivateCase, b: Boun
     ensures (g.rootCause == h.rootCause || g.caseId == h.caseId) ==> g == h
   {
     assert h in b.holds && g in b.holds;
-  }
-  forall h | h in nb.holds
-    ensures (h.kind.VaultHold? || h.kind.DirectHold?) ==> caseOf(nb, h.caseId).terms.split.StandardSplit?
-  {
-    assert h in b.holds && h.caseId != id && holdMatches(b, h);
-    assert caseOf(nb, h.caseId) == caseOf(b, h.caseId);
   }
   assert alwaysOneHoldPerRootCause(nb);
   assert alwaysFullAwardBindsNoVault(nb);
