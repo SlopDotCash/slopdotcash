@@ -3840,6 +3840,26 @@ describe("owner cuts (operator decision, 15 November 2026)", () => {
     expect(cutRows()).toHaveLength(1);
   });
 
+  test("turning automatic finalization back on cannot shorten a cut's notice", async () => {
+    clock = new Date(afterCutoff.getTime() - 12 * 60 * 60 * 1000);
+    await service().setAutomatic(project.id, actor, false);
+    await service().changeAllocation(project.id, "2082-11", actor, {
+      githubUserId: B,
+      grossBase: "300",
+      expectedSequence: 0,
+      reason: REASON,
+    });
+    clock = new Date(afterCutoff.getTime() - 11 * 60 * 60 * 1000);
+    await rejects(
+      service().setAutomatic(project.id, actor, true),
+      "cut_notice_window",
+    );
+    clock = new Date(afterCutoff.getTime() + 12 * 60 * 60 * 1000);
+    expect(await service().setAutomatic(project.id, actor, true)).toEqual({
+      automatic: true,
+    });
+  });
+
   test("the owner cannot finalize until 24 hours after the latest cut", async () => {
     clock = afterCutoff;
     await service().setAutomatic(project.id, actor, false);

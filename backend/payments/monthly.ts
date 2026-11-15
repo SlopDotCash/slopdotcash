@@ -1404,6 +1404,32 @@ export function monthlyOwnerService(deps: {
         : 0;
       const { project } = await authorized(projectId, actor, "owner");
       await assertMonthlyParticipation(deps.db, actor.githubId);
+      // Turning the automatic default on must not let the cutoff lock a cut
+      // with less than 24 hours of notice (operator decision, 15 November
+      // 2026). The month then waits for the owner to finalize it.
+      const schedule = deps.schedule();
+      if (on && schedule) {
+        const open = await deps.db
+          .prepare(
+            "SELECT json_group_array(json_object('period',period,'latest',latest)) items FROM (SELECT x.period, MAX(x.created_at) latest FROM monthly_allocation_cut_reasons x WHERE x.project_id=? AND NOT EXISTS (SELECT 1 FROM monthly_payment_runs r WHERE r.project_id=x.project_id AND r.period=x.period) GROUP BY x.period)",
+          )
+          .bind(project.id)
+          .first<{ items: string }>();
+        const now = deps.now().getTime();
+        for (const row of JSON.parse(open?.items ?? "[]") as {
+          period: string;
+          latest: string;
+        }[]) {
+          const noticeEnds = Date.parse(row.latest) + CUT_NOTICE_MS;
+          const cutoff = monthlyCutoff(schedule, row.period)?.getTime();
+          if (cutoff !== undefined && noticeEnds > cutoff && now < noticeEnds)
+            throw new MonthlyPaymentError(
+              409,
+              "cut_notice_window",
+              `A cut in ${row.period} has less than 24 hours of notice before the cutoff. Automatic finalization can be turned on after ${utcMinute(new Date(noticeEnds))}, or finalize the month yourself then.`,
+            );
+        }
+      }
       let changed: number | undefined;
       try {
         // A later registry revision can change the authorized owner while
