@@ -1,6 +1,7 @@
 import { githubAppJwt, githubHeaders } from "../../backend/github";
 import { bytesToHex, decodeBase64 } from "../../src/lib/byte-encoding";
 import { constantTimeEqual } from "../identity/crypto";
+import { isConfirmedMissingPublicReference } from "./value-reference-query";
 
 // GitHub App plumbing: webhook signatures, App JWT, installation tokens, and
 // the few REST calls Slopbot is allowed to make (BOT-01, slopbot-v2 permissions).
@@ -139,7 +140,12 @@ export class GitHubClient {
       "/graphql",
       { query, variables },
     );
-    if (!response.data?.data || response.data.errors?.length)
+    if (!response.data?.data)
+      throw new Error("GitHub GraphQL evidence is incomplete");
+    if (
+      response.data.errors?.length &&
+      !isConfirmedMissingPublicReference(query, variables, response.data)
+    )
       throw new Error("GitHub GraphQL evidence is incomplete");
     return response.data.data;
   }

@@ -3486,15 +3486,15 @@
     },
     {
       "path": "scripts/collect-implementation-corrections.ts",
-      "sha256": "5e09cb0e62936d763f8adf929b903d73372ad0b242956f8bf631fce0949ce3f4",
+      "sha256": "799c56e9face33410b45fe00c90a16b2d998832e180bddfa25f2b417ca4b9dd7",
       "models": [
         "formal/models/points/historical_discussion_evidence.qnt",
         "formal/models/points/historical_implementation_allocation.qnt"
       ],
       "candidateLines": [
-        4, 11, 13, 84, 164, 241, 247, 250, 255, 265, 281, 287, 303, 304, 314,
-        317, 414, 460, 481, 506, 545, 552, 662, 673, 838, 1205, 1765, 1824,
-        1860, 1885, 1914, 1916
+        4, 11, 13, 85, 165, 242, 248, 251, 256, 266, 282, 288, 304, 305, 315,
+        318, 415, 461, 482, 507, 553, 560, 676, 687, 852, 1219, 1779, 1838,
+        1874, 1899, 1928, 1930
       ],
       "review": "mapped-abstraction"
     },
@@ -8216,14 +8216,14 @@
     },
     {
       "path": "workers/slopbot/github.ts",
-      "sha256": "3a3f39affb5a364a06f089adca73c4d8099e1cb882f05e2bb8359e57c255c3a8",
+      "sha256": "b4ea743257f98a6c68589df778dfa291a7777a802ebd3b3543894ce7c70ce39b",
       "models": [
         "formal/models/points/github_ingestion_read.qnt",
         "formal/models/slopbot/bot_repository_access.qnt"
       ],
       "candidateLines": [
-        43, 77, 88, 105, 114, 115, 116, 118, 122, 123, 126, 164, 167, 220, 221,
-        252
+        44, 78, 89, 106, 115, 116, 117, 119, 123, 124, 127, 170, 173, 226, 227,
+        258
       ],
       "review": "mapped-abstraction"
     },
@@ -8516,7 +8516,7 @@
     },
     {
       "path": "workers/slopbot/value-evidence-types.ts",
-      "sha256": "ad975bab5bacdda9fef837efc8afcc55b446342cbfaeb1134922e053326f9324",
+      "sha256": "444f51baaf88c002018cbd1523fce819c6e22f74de0bfe3a7bac711484a74c32",
       "models": [],
       "candidateLines": [14, 69, 89],
       "review": "reviewed-no-independent-state",
@@ -8524,14 +8524,14 @@
     },
     {
       "path": "workers/slopbot/value-evidence.ts",
-      "sha256": "09e9d712cc240228bf2cfa67ffdbc41c5f8b379547a24cd4be550964edc3530b",
+      "sha256": "8136d242744bb4db5691805f0acca5630e74db9ca9872ee1411c44fd1fdf44e1",
       "models": [
         "formal/models/points/historical_discussion_evidence.qnt",
         "formal/models/slopbot/bot_evidence_integrity.qnt",
         "formal/models/slopbot/bot_value_dispute_actor.qnt"
       ],
       "candidateLines": [
-        61, 72, 81, 95, 412, 413, 604, 624, 667, 676, 695, 1036, 1055
+        62, 73, 82, 96, 435, 436, 627, 647, 690, 699, 718, 1059, 1078
       ],
       "review": "mapped-abstraction"
     },
@@ -8713,6 +8713,14 @@
       ],
       "candidateLines": [107, 238, 240, 243, 245, 248, 259, 262, 264],
       "review": "mapped-abstraction"
+    },
+    {
+      "path": "workers/slopbot/value-reference-query.ts",
+      "sha256": "56ede5f192c73cee94ac0518b14d90862f93ccef3c171023c83af6da5e7b885e",
+      "models": [],
+      "candidateLines": [],
+      "review": "reviewed-no-independent-state",
+      "statelessReason": "Pure classification of one fixed source-discovery query and its explicit public missing-item envelope; retains no state, performs no I/O and grants no source or payment credit."
     },
     {
       "path": "workers/slopbot/value-requests.ts",
