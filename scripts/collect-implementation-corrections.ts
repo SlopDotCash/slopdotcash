@@ -4987,10 +4987,27 @@ async function collectWithEvidenceCache(
               verifiedOriginal,
               "Verified original source disappeared",
             );
+            const primary = soleOriginalPrimary(verifiedOriginal);
+            const alreadyCreditedToOriginal =
+              primary !== undefined &&
+              claims.every((claim) => {
+                const source = sources.find(
+                  (source) => source.sourceId === claim.sourceId,
+                );
+                const commit = source?.commits.find(
+                  (commit) => commit.sha === claim.commitSha,
+                );
+                return (
+                  commit !== undefined &&
+                  verifiedHuman(commit.author) &&
+                  commit.author.id === primary.id
+                );
+              });
             if (
+              !alreadyCreditedToOriginal &&
               original.evidence.pull.user.type === "User" &&
-              (soleOriginalPrimary(verifiedOriginal)?.id ??
-                original.evidence.pull.user.node_id) !== accepted.author?.id
+              (primary?.id ?? original.evidence.pull.user.node_id) !==
+                accepted.author?.id
             ) {
               const proof = await octoberOriginalContributorUnitProof(
                 github,
