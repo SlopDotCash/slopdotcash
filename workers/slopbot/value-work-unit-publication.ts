@@ -65,6 +65,7 @@ export async function verifyCurrentWorkUnitSource(
       repositories,
       source.mergeRecipe,
       "joint",
+      original.sources,
     );
   }
   // Every source digest was recomputed from fresh GitHub bytes above. Reuse
