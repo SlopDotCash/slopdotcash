@@ -12,7 +12,7 @@ the local evidence. The operating instructions are in the
 on staging. This records the configured mode, not completed operational
 qualification. The dry-run period and the small verified first order were not
 run: no fee income existed to run them. The first real order still has to be
-verified (fee-converter guide, "Turn on the buyback", steps 2–5).
+verified (fee-converter guide, "Turn on the buyback", step 5).
 
 ### Qualification review, 12 November 2026
 
@@ -40,10 +40,24 @@ no signing key. TLS verification remained enabled.
   an independent comparison of the deployed program bytes.
 - The authenticated production admin report returned no recorded
   fee-conversion or buyback rows and no totals. This is an empty recorded
-  journal, not proof that no unrecorded chain activity occurred. The values of
-  the Worker's RPC secrets remain unreadable, so its installed endpoint's
-  finalized-state capability is still unverified. No eligible fee income was
-  established for a live qualification order.
+  journal, not proof that no unrecorded chain activity occurred. The installed
+  endpoint's finalized-state capability was unverified at this check. No
+  eligible fee income was established for a live qualification order.
+
+### Production readiness check, 15 November 2026 UTC
+
+- The production Worker matched the reviewed buyback settings. Its normal
+  01:00 UTC recovery tick read the deBridge destination at finalized Robinhood
+  Chain block `114570998`. Two independent public endpoints confirmed that
+  block and its hash. One also confirmed the destination read.
+- Finalized balances showed 0.01 ETH in each enabled fee wallet on Base,
+  Ethereum, and Robinhood Chain. These balances covered the configured native
+  ceilings for one Base or Ethereum approval and bridge, and one Robinhood
+  claim, approval, purchase, and burn. The Base and Ethereum fixed bridge fees
+  both equaled the approved 0.001 ETH cap.
+- The production journal and scoped finalized checks showed no eligible first
+  order, fill, purchase, or burn. A live order still needs a current quote and
+  a check of the journal reservations.
 
 Qualification remains pending. Reconcile the production journal and deployed
 configuration first. Use only verified eligible fee income for the first
@@ -255,11 +269,7 @@ Set at activation (operator decision, 12 November 2026):
 
 Still open:
 
-2. A Robinhood Chain RPC that serves state at the finalized block. The Worker
-   holds an `RPC_URL_ROBINHOOD` secret; whether that endpoint serves such
-   reads was not verified at activation. Until one does, arrivals, claims and
-   approvals stay unverified and nothing is credited or bought.
-3. Whether the Worker should later be allowed to cancel unfilled orders. It is
+2. Whether the Worker should later be allowed to cancel unfilled orders. It is
    not, today.
 
 ## Accepted risks
