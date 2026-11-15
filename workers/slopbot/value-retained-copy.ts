@@ -382,8 +382,8 @@ async function retainedCopySources(
       )
     )
       acknowledged = true;
-    // An outgoing reference only discovers the source. Without an authenticated
-    // acknowledgement, both commits must independently name that contributor.
+    // A reference and shared author alone do not establish copied work. Without
+    // an acknowledgement, require a verified retained path with that primary.
     const linkedOnly =
       !acknowledged &&
       evidence.pull.state === "closed" &&
@@ -401,18 +401,40 @@ async function retainedCopySources(
           reference.repository.toLowerCase() ===
             evidence.repository.toLowerCase(),
       ) &&
-      evidence.commits.some(
-        (commit) =>
-          commit.parents.length === 1 &&
-          commit.author?.type === "User" &&
-          commit.author.node_id === evidence.pull.user.node_id &&
-          integration.commits.some(
-            (copy) =>
-              copy.parents.length === 1 &&
-              copy.author?.type === "User" &&
-              copy.author.node_id === commit.author?.node_id,
-          ),
-      );
+      evidence.commitAttribution.some((entry) => {
+        const commit = evidence.commits.find((item) => item.sha === entry.sha);
+        if (
+          commit?.parents.length !== 1 ||
+          commit.author?.type !== "User" ||
+          commit.author.node_id !== evidence.pull.user.node_id ||
+          entry.limitations.length
+        )
+          return false;
+        return (entry.files ?? []).some((file) => {
+          const identity = retainedEditIdentity(file);
+          if (identity === null) return false;
+          return integration.commitAttribution.some((copied) => {
+            const copy = integration.commits.find(
+              (item) => item.sha === copied.sha,
+            );
+            if (
+              copy?.parents.length !== 1 ||
+              copy.author?.type !== "User" ||
+              copy.author.node_id !== commit.author?.node_id ||
+              copied.limitations.length
+            )
+              return false;
+            return (copied.files ?? []).some(
+              (candidate) =>
+                retainedEditIdentity(candidate) === identity ||
+                (retainedManifestIdentity(file, commit) !== null &&
+                  retainedManifestIdentity(file, commit) ===
+                    retainedManifestIdentity(candidate, copy)) ||
+                preexistingHunks(file, candidate, source, copied.sha) !== null,
+            );
+          });
+        });
+      });
     if (acknowledged || linkedOnly) retained.push({ source, linkedOnly });
   }
   return retained;
