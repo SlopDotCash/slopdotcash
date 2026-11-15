@@ -2,7 +2,6 @@ import { CircleAlert, Hourglass, LoaderCircle, RotateCcw } from "lucide-react";
 import { Fragment, lazy, useCallback, useEffect, useState } from "react";
 import "./owner-review.css";
 import { readBoundedJson } from "./lib/browser-json";
-import { ESCROW_NETWORKS } from "./lib/escrow-policy.mjs";
 import type { VaultConnection } from "./lib/evm-vault-actions";
 import {
   formatAssetAmount,
@@ -451,13 +450,12 @@ export function EscrowFunding({
                     onWallet={setLockWallet}
                     onFinalized={() => setRevision((value) => value + 1)}
                   />
-                  {/* Month locks are sent from the browser on EVM vaults. */}
                   {locks &&
                   vault &&
                   decimals !== undefined &&
-                  project.reward.kind === "monthly-pool" &&
-                  ESCROW_NETWORKS[deployment.network].family === "evm" ? (
+                  project.reward.kind === "monthly-pool" ? (
                     <VaultMonthLock
+                      projectId={project.id}
                       deployment={deployment}
                       wallet={lockWallet}
                       pledges={vault.pledges ?? []}

@@ -17,7 +17,8 @@
  *
  * A vault whose contract supports month pledges (migration 0128) also carries
  * its open pledged total and its pledge for each month from the previous one
- * on; `openPledgedGross` is null for a vault without pledge support.
+ * on, and every pledge still open, so an owner can see and release a lapsed
+ * one; `openPledgedGross` is null for a vault without pledge support.
  */
 
 import { ESCROW_NETWORKS } from "../../src/lib/escrow-policy.mjs";
@@ -134,7 +135,7 @@ export async function handlePoolFundingApi(
       .prepare(
         `SELECT project_id, network, vault, period, amount, open
            FROM vault_month_pledges
-          WHERE period >= ? AND amount <> '0'
+          WHERE (period >= ? OR open = 1) AND amount <> '0'
           ORDER BY period`,
       )
       .bind(previous)

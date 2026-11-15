@@ -14,7 +14,10 @@ import {
   type VaultConnection,
   walletVaultConfig,
 } from "./evm-vault-actions";
+import { chainMonth, LOCK_MONTH_COUNTS, lockPeriods } from "./month-lock";
 import { parseVaultAmount } from "./payments/vault-amount";
+
+export { LOCK_MONTH_COUNTS, lockEnds, lockPeriods } from "./month-lock";
 
 /**
  * Month locks on an upgraded EVM vault (operator decision, 15 November 2026).
@@ -29,12 +32,30 @@ const pledgeAbi = parseAbi([
   "function monthPledges(uint32) view returns (uint128 amount, bool open)",
   "function pledgeMonths(uint32 fromPeriod, uint8 count, uint128 amount)",
   "function currentPeriod() view returns (uint32)",
+  "function expirePledge(uint32 period)",
 ]);
 
 /** The contract's refusal of a withdrawal that would take locked funds. */
 export const PLEDGED_FUNDS_SELECTOR = toFunctionSelector("PledgedFunds()");
 
-export const LOCK_MONTH_COUNTS = [1, 3, 6, 12] as const;
+type BuildExpire = (period: number) => `0x${string}`;
+
+/**
+ * `buildExpirePledgeCalldata` from the EVM adapter once the contract change
+ * is merged; until then the frozen signature is encoded here.
+ */
+function expireCalldata(period: number) {
+  const build = (
+    evmAdapter as unknown as { buildExpirePledgeCalldata?: BuildExpire }
+  ).buildExpirePledgeCalldata;
+  return build
+    ? build(period)
+    : encodeFunctionData({
+        abi: pledgeAbi,
+        functionName: "expirePledge",
+        args: [period],
+      });
+}
 
 type BuildPledge = (
   fromPeriod: number,
@@ -57,24 +78,6 @@ function pledgeCalldata(fromPeriod: number, count: number, amount: bigint) {
         functionName: "pledgeMonths",
         args: [fromPeriod, count, amount],
       });
-}
-
-/** `from` ("2026-12") and the next `count - 1` months. */
-export function lockPeriods(from: string, count: number): string[] {
-  const [year, month] = from.split("-").map(Number);
-  return Array.from({ length: count }, (_, index) =>
-    new Date(Date.UTC(year, month - 1 + index, 1)).toISOString().slice(0, 7),
-  );
-}
-
-/**
- * When a month's lock ends at the latest: its commit window closes at
- * 00:00 UTC on the 4th of the second month after it. A month reserved for
- * payout before then leaves the lock earlier.
- */
-export function lockEnds(period: string): Date {
-  const [year, month] = period.split("-").map(Number);
-  return new Date(Date.UTC(year, month + 1, 4));
 }
 
 /** The text of a wallet or RPC error and everything nested in it. */
@@ -129,6 +132,10 @@ export function lockRefusal(caught: unknown): Error | null {
       "A month in this range is already reserved for payout.",
     ],
     ["WrongPurpose", "This vault cannot lock months."],
+    [
+      "PledgeNotLapsed",
+      "This month's lock cannot be released yet: its payout window is still open.",
+    ],
   ];
   for (const [name, text] of words)
     if (contractError(caught, name)) return new Error(text);
@@ -451,5 +458,60 @@ export async function checkMonthLock(
   if (checked.status === "pending") return "pending";
   if (checked.status === "failed" || checked.receipt?.status === "0x0")
     return "failed";
+  return "included";
+}
+
+/**
+ * Releases a lapsed lock: a month that was never reserved for payout and
+ * whose commit window has closed (`expirePledge`). Anyone may send it; the
+ * funds return to the vault's free funds. Returns the transaction hash.
+ */
+export async function sendLockRelease(
+  deployment: EscrowDeployment,
+  wallet: VaultConnection,
+  period: string,
+  beforeSend: () => void,
+): Promise<string> {
+  const request = wallet.evmRequest;
+  if (!request) throw new Error("Choose an EVM wallet.");
+  await assertVaultWalletAccount(wallet, walletVaultConfig(deployment, wallet));
+  const transaction = {
+    from: wallet.address,
+    to: deployment.vault,
+    data: expireCalldata(chainMonth(period)),
+    value: "0x0",
+  };
+  try {
+    await request("eth_estimateGas", [transaction]);
+  } catch (caught) {
+    throw lockRefusal(caught) ?? caught;
+  }
+  beforeSend();
+  const hash = await request("eth_sendTransaction", [transaction]);
+  if (typeof hash !== "string" || !/^0x[0-9a-fA-F]{64}$/.test(hash))
+    throw new Error(
+      "The wallet did not return a transaction hash. Check wallet activity before another attempt.",
+    );
+  return hash;
+}
+
+/** The release transaction's state, as `checkMonthLock` reports a lock's. */
+export async function checkLockRelease(
+  deployment: EscrowDeployment,
+  wallet: VaultConnection,
+  period: string,
+  transactionId: string,
+): Promise<"pending" | "included" | "failed"> {
+  const checked = await readFinalizedWalletTransaction(
+    deployment,
+    wallet,
+    transactionId,
+    deployment.vault,
+    expireCalldata(chainMonth(period)),
+    0n,
+    "included",
+  );
+  if (checked.status === "pending") return "pending";
+  if (checked.status === "failed") return "failed";
   return "included";
 }

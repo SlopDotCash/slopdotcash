@@ -646,6 +646,20 @@ export async function readDeploymentVaultTotals(
     projectPda: deployment.projectPda,
   });
 }
+/** Months whose stored pledge is still open, for one vault. */
+async function storedOpenPledgePeriods(
+  db: D1Database,
+  deployment: { projectId: string; network: string; vault: string },
+): Promise<string[]> {
+  const row = await db
+    .prepare(
+      "SELECT json_group_array(period) periods FROM (SELECT period FROM vault_month_pledges WHERE project_id=? AND network=? AND vault=? AND open=1 ORDER BY period)",
+    )
+    .bind(deployment.projectId, deployment.network, deployment.vault)
+    .first<{ periods: string }>();
+  return JSON.parse(row?.periods ?? "[]") as string[];
+}
+
 /**
  * Reads the vault's month pledges at the totals' block (EVM) or at the
  * finalized commitment (Solana), from the previous month to eleven months
@@ -657,10 +671,17 @@ export async function readDeploymentMonthPledges(
   rpcUrl: string,
   totals: Pick<VaultTotals, "blockNumber" | "blockTime">,
   readers = chainPledgeReaders,
+  /** Months stored open earlier: a lapsed lock stays read until released. */
+  storedOpen: readonly string[] = [],
 ): Promise<StoredMonthPledges | null> {
-  const periods = pledgeReadPeriods(new Date(totals.blockTime)).map(
-    chainPeriod,
-  );
+  const periods = [
+    ...new Set([
+      ...storedOpen,
+      ...pledgeReadPeriods(new Date(totals.blockTime)),
+    ]),
+  ]
+    .sort()
+    .map(chainPeriod);
   if (chainFamily(deployment.chain) === "evm") {
     if (!readers.evm) return null;
     const read = await readers.evm({
@@ -718,6 +739,8 @@ export async function syncRegistryVaults(env: PaymentsWorkerEnvironment) {
               deployment,
               rpcUrl,
               totals,
+              chainPledgeReaders,
+              await storedOpenPledgePeriods(env.PAYMENTS_DB, deployment),
             ),
           };
         } catch (error) {

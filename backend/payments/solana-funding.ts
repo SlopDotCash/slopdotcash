@@ -1,4 +1,6 @@
 import {
+  readSolanaMonthPledges,
+  readVaultTotals as readSolanaVaultTotals,
   type SolanaEscrowConfig,
   solanaMintDecimals,
 } from "../../contracts/solana/adapter";
@@ -22,6 +24,9 @@ export class FundingVaultNotFoundError extends Error {
     this.name = "FundingVaultNotFoundError";
   }
 }
+
+const LOCKED_FUNDS =
+  "These funds are locked for a month that has not been paid out yet. Withdraw only funds above the locked months.";
 
 /** The caller controls access and resolves only its own registry scope. */
 export async function handleSolanaFunding(
@@ -79,6 +84,22 @@ export async function handleSolanaFunding(
     gross,
   };
   try {
+    // A vault with month locks refuses a withdrawal of locked funds; say so
+    // before the wallet is asked (operator decision, 15 November 2026).
+    if (body.step === "review" && body.operation === "withdraw") {
+      const pledges = await readSolanaMonthPledges({ ...config, periods: [] });
+      if (pledges !== null && pledges.openPledgedGross > 0n) {
+        const totals = await readSolanaVaultTotals(config);
+        if (
+          totals.freeBalance !== null &&
+          BigInt(totals.freeBalance) - BigInt(gross) < pledges.openPledgedGross
+        )
+          return json(422, {
+            error: "funding_action_rejected",
+            message: LOCKED_FUNDS,
+          });
+      }
+    }
     if (body.step === "review")
       return json(200, {
         plan: await prepareSolanaFunding(config, intent),
@@ -100,8 +121,7 @@ export async function handleSolanaFunding(
     )
       return json(422, {
         error: "funding_action_rejected",
-        message:
-          "These funds are locked for a month that has not been paid out yet. Withdraw only funds above the locked months.",
+        message: LOCKED_FUNDS,
       });
     if (error instanceof SolanaFundingError)
       return json(422, {
