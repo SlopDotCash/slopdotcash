@@ -90,8 +90,8 @@ export function validateRetainedSolanaProof(value: unknown): ProofRecord {
     const cursor = reconstructed.coverage.find(
       (entry) => entry.operator === page?.operator,
     );
+    if (!cursor) return refuse();
     if (
-      !cursor ||
       cursor.complete ||
       !Array.isArray(page.blocks) ||
       page.blocks.length === 0 ||

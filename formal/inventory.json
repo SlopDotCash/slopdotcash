@@ -4336,7 +4336,7 @@
     },
     {
       "path": "scripts/qualify-solana-rpc-pair.ts",
-      "sha256": "ef81671e07f8b97c05fde7cf9a5343f6501b5af6731054e20b9c677bb0ff1860",
+      "sha256": "c116743e5ed785c1b03b6ed6381d1b6da0057acd3458ae56ffdebc8a20708d7f",
       "models": ["formal/models/release/release_publication.qnt"],
       "candidateLines": [],
       "review": "mapped-abstraction"
