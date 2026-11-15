@@ -8775,7 +8775,7 @@
     },
     {
       "path": "workers/slopbot/value-retained-copy.ts",
-      "sha256": "4a5ceeda710f868c3e11b99c0199476921269aaed917138707f624729f66b0e5",
+      "sha256": "8415940f2c67904b7f68fd7cac419e29425872e44643c594c583a111b77bc096",
       "models": [
         "formal/models/slopbot/bot_retained_acceptance.qnt",
         "formal/models/slopbot/retained_copy_bindings.qnt",
@@ -8879,13 +8879,13 @@
     },
     {
       "path": "workers/slopbot/value-work-unit.ts",
-      "sha256": "b1e945af2b3e7802bb0b5adc9c77c9546e96f481048b7b031c06d777406fc069",
+      "sha256": "b22bed89582ef55934b28dca63624e8d0cbc62527622992ca54472f16412b42a",
       "models": [
         "formal/models/slopbot/bot_value_pipeline.qnt",
         "formal/models/slopbot/bot_work_partition.qnt",
         "formal/models/slopbot/retained_copy_bindings.qnt"
       ],
-      "candidateLines": [98],
+      "candidateLines": [100],
       "review": "mapped-abstraction"
     },
     {

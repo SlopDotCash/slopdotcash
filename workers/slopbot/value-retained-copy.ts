@@ -559,6 +559,7 @@ export async function retainedCopyBindings(
   options: {
     ordinaryCommitsOnly?: boolean;
     octoberOriginalCredit?: boolean;
+    acceptedSubset?: boolean;
   } = {},
 ) {
   const bindings = new Map<
@@ -669,6 +670,8 @@ export async function retainedCopyBindings(
       }
     }
     if (!integrations.length) continue;
+    let exactPaths = 0;
+    const unmatched: string[] = [];
     for (const commit of evidence.commits) {
       // Provisional recipient lookup asks only about copied ordinary commits.
       // A source's branch-sync merge is not one of those implementation claims.
@@ -815,6 +818,14 @@ export async function retainedCopyBindings(
         // October requires a full accepted anchor commit, while rebasing can
         // legitimately alter other original paths. Ambiguity still fails closed.
         if (!matches.length && options.octoberOriginalCredit) continue;
+        // Keep unmatched paths in the complete source evidence. Joint claims
+        // include only exact accepted copies once this original has an anchor.
+        if (!matches.length && options.acceptedSubset) {
+          unmatched.push(
+            `${evidence.pull.node_id}: retained ${commit.sha}:${file.filename} has 0 exact copy bindings`,
+          );
+          continue;
+        }
         if (matches.length !== 1) {
           limitations.add(
             `${evidence.pull.node_id}: retained ${commit.sha}:${file.filename} has ${matches.length} exact copy bindings`,
@@ -835,8 +846,11 @@ export async function retainedCopyBindings(
           continue;
         }
         bindings.set(key, match);
+        exactPaths++;
       }
     }
+    if (options.acceptedSubset && exactPaths === 0)
+      for (const limitation of unmatched) limitations.add(limitation);
   }
   return { bindings, limitations: [...limitations].sort() };
 }
