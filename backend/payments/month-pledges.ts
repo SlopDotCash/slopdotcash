@@ -122,3 +122,21 @@ export async function otherOpenPledges(
   const other = BigInt(row.total) - BigInt(row.own ?? "0");
   return other > 0n ? other : 0n;
 }
+
+/**
+ * Whether a closed month may be committed on chain: the owner's automatic
+ * default is on, or the owner pledged the month on chain.
+ */
+export async function monthlyConsent(
+  db: Pick<D1Database, "prepare">,
+  projectId: string,
+  period: string,
+): Promise<boolean> {
+  const row = await db
+    .prepare(
+      `SELECT (${MONTH_PLEDGED_SQL} OR COALESCE((SELECT automatic FROM monthly_payment_settings WHERE project_id=? ORDER BY sequence DESC LIMIT 1),1)=1) consent`,
+    )
+    .bind(projectId, period, projectId)
+    .first<{ consent: number }>();
+  return row?.consent === 1;
+}

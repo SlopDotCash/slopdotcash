@@ -32,6 +32,7 @@ import { assertProjectDefinition } from "../../src/lib/project-schema.mjs";
 import { sha256Hex } from "../../src/lib/sha256";
 import type { D1TransactionalDatabase } from "../d1";
 import { chainAwards, holdsAward } from "./chain-awards";
+import { monthPledged } from "./month-pledges";
 import { automaticMonthlyPayment, MonthlyPaymentError } from "./monthly";
 import type {
   MonthlyAttestationPlan,
@@ -79,7 +80,17 @@ export async function prepareMonthlyAttestation(
       "This month is outside its commitment window.",
     );
   const project = await deps.getProject(request.projectId);
-  if (project?.manifest.status !== "active" || (await deps.restricted(project)))
+  // A month pledged on chain is the owner's consent to reserve it, whatever
+  // the automatic default, a pause or a restriction says (operator decision,
+  // 15 November 2026). The contract still checks the pledge and the cap.
+  const pledged =
+    !!project && (await monthPledged(deps.db, project.id, period));
+  if (
+    !project ||
+    (!pledged &&
+      (project.manifest.status !== "active" ||
+        (await deps.restricted(project))))
+  )
     reject("project_restricted", "The project cannot create new commitments.");
   const deployment = project.manifest.escrow?.deployments.find(
     (d) => d.network === request.network,
@@ -89,7 +100,7 @@ export async function prepareMonthlyAttestation(
       "vault_not_served",
       "The project's vault is not served by this attester.",
     );
-  if (!(await automaticMonthlyPayment(deps.db, project.id)))
+  if (!pledged && !(await automaticMonthlyPayment(deps.db, project.id)))
     reject(
       "automatic_off",
       "The owner disabled automatic monthly commitments.",

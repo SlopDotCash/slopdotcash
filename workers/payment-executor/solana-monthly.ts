@@ -44,6 +44,19 @@ import {
   verifiedSignerSignature,
 } from "./solana";
 
+/**
+ * The program's `MonthPledge` account (operator decision, 15 November 2026):
+ * discriminator, project, period, amount, open, bump. Seeds
+ * `["pledge", project, period u32 LE]`.
+ */
+export const MONTH_PLEDGE_SIZE = 8 + 32 + 4 + 8 + 1 + 1;
+export function monthPledgeAddress(
+  programId: string,
+  projectPda: string,
+  period: Uint8Array,
+) {
+  return pda(programId, [encoder.encode("pledge"), bytes(projectPda), period]);
+}
 const discriminator = (name: string) =>
   bytesToHex(sha256(encoder.encode(`account:${name}`)).slice(0, 8));
 function u32(value: number) {
@@ -362,6 +375,20 @@ export async function submitSolanaMonthly(
     [48, 65535, 16, 65535, 112, signed.length, 65535].forEach((v, i) => {
       view.setUint16(2 + i * 2, v, true);
     });
+    // An owner's pledge for this month lets the program reserve it with the
+    // monthly switch off. Before the program upgrade, or without a pledge,
+    // the account is absent and the instruction is unchanged.
+    const pledgeAddress = monthPledgeAddress(
+      config.programId,
+      config.projectPda,
+      period,
+    );
+    const pledge = await readSolanaAccount(
+      config,
+      pledgeAddress,
+      MONTH_PLEDGE_SIZE,
+      discriminator("MonthPledge"),
+    );
     return submit(env, config, `${journal}:root`, [
       {
         program: "Ed25519SigVerify111111111111111111111111111",
@@ -377,6 +404,7 @@ export async function submitSolanaMonthly(
           monthMeta,
           { key: "Sysvar1nstructions1111111111111111111111111", write: false },
           system,
+          ...(pledge ? [{ key: pledgeAddress, write: true }] : []),
         ],
         data: instructionData(
           "commit_monthly",

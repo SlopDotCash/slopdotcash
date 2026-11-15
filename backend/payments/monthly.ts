@@ -16,6 +16,7 @@
  * reserve the same award twice. Change records other than cuts stay internal
  * for dispute handling and reconciliation and are never published.
  */
+
 import { readBoundedJson } from "../../src/lib/browser-json";
 import {
   ESCROW_NETWORKS,
@@ -70,6 +71,11 @@ import {
   repositoryIdentityMatches,
 } from "../projects/setup";
 import { chainAwards, holdsAward } from "./chain-awards";
+import {
+  MONTH_PLEDGED_SQL,
+  monthPledged,
+  otherOpenPledges,
+} from "./month-pledges";
 import type {
   MonthlyReleaseCheck,
   MonthlyReleaseRequest,
@@ -528,7 +534,7 @@ async function freezeMonthlyPeriod(
   });
   const inserted = await db
     .prepare(
-      `INSERT INTO monthly_payment_runs(project_id,period,trigger,actor_id,allocation_sequence,snapshot,snapshot_sha256,network,vault,total_gross_base,frozen_at,obligations_created_at) SELECT ?,?,?,?,?,?,?,?,?,?,?,NULL WHERE (SELECT COALESCE(MAX(sequence),0) FROM monthly_allocation_changes WHERE project_id=? AND period=?)=? AND (?='owner' OR COALESCE((SELECT automatic FROM monthly_payment_settings WHERE project_id=? ORDER BY sequence DESC LIMIT 1),1)=1) AND EXISTS(SELECT 1 FROM projects WHERE id=? AND revision=? AND manifest_sha256=? AND status='active') AND NOT EXISTS (${PARTICIPATION_BAN_QUERY}) ON CONFLICT(project_id,period) DO NOTHING`,
+      `INSERT INTO monthly_payment_runs(project_id,period,trigger,actor_id,allocation_sequence,snapshot,snapshot_sha256,network,vault,total_gross_base,frozen_at,obligations_created_at) SELECT ?,?,?,?,?,?,?,?,?,?,?,NULL WHERE (SELECT COALESCE(MAX(sequence),0) FROM monthly_allocation_changes WHERE project_id=? AND period=?)=? AND (?='owner' OR ${MONTH_PLEDGED_SQL} OR COALESCE((SELECT automatic FROM monthly_payment_settings WHERE project_id=? ORDER BY sequence DESC LIMIT 1),1)=1) AND EXISTS(SELECT 1 FROM projects WHERE id=? AND revision=? AND manifest_sha256=? AND (status='active' OR ${MONTH_PLEDGED_SQL})) AND NOT EXISTS (${PARTICIPATION_BAN_QUERY}) ON CONFLICT(project_id,period) DO NOTHING`,
     )
     .bind(
       project.id,
@@ -547,13 +553,20 @@ async function freezeMonthlyPeriod(
       sequence,
       input.trigger,
       project.id,
+      period,
+      project.id,
       project.id,
       project.revision,
       project.manifestSha256,
+      project.id,
+      period,
       input.actorId,
     )
     .run();
   if (inserted.meta?.changes === 1) return "frozen";
+  // A month pledged on chain freezes whatever the automatic default or a
+  // pause says (operator decision, 15 November 2026).
+  const pledged = await monthPledged(db, project.id, period);
   if (input.actorId) await assertMonthlyParticipation(db, input.actorId);
   if (await loadRun(db, project.id, period)) return "already-frozen";
   const current = await db
@@ -573,7 +586,7 @@ async function freezeMonthlyPeriod(
   if (
     current.revision !== project.revision ||
     current.manifest_sha256 !== project.manifestSha256 ||
-    current.status !== "active"
+    (current.status !== "active" && !pledged)
   ) {
     if (input.trigger === "automatic") return "project-changed";
     throw new MonthlyPaymentError(
@@ -586,6 +599,7 @@ async function freezeMonthlyPeriod(
   // the atomic insert can decide whether this automatic freeze is allowed.
   if (
     input.trigger === "automatic" &&
+    !pledged &&
     !(await automaticMonthlyPayment(db, project.id))
   )
     return "automatic-off";
@@ -707,7 +721,18 @@ async function createMonthlyObligations(
       now.getTime() - Date.parse(vault.observed_at) > VAULT_SNAPSHOT_STALE_MS
     )
       return "stale-funding";
-    if (vault.free_balance === null || BigInt(vault.free_balance) < needed) {
+    // The contract never lets one month take another month's pledge.
+    const heldBack =
+      (await otherOpenPledges(db, {
+        projectId,
+        network: run.network,
+        vault: run.vault,
+        period,
+      })) ?? 0n;
+    if (
+      vault.free_balance === null ||
+      BigInt(vault.free_balance) - heldBack < needed
+    ) {
       await notifyMonthlyUnderfunded(
         db,
         projectId,
@@ -821,13 +846,19 @@ export async function coordinateMonthlyPayments(input: {
         if (now.getTime() < cutoff.getTime()) continue;
         const project = await input.projects.getProject(projectId);
         if (!project) throw new Error(`Project ${projectId} is not registered`);
-        if (!(await automaticMonthlyPayment(db, projectId))) {
+        // An owner's on-chain pledge for the month is consent to reserve it:
+        // the month freezes even with automatic payment off, or while the
+        // project is paused or restricted (operator decision, 15 November
+        // 2026). Contributors did the work the pledge promised.
+        const pledged = await monthPledged(db, projectId, period);
+        if (!pledged && !(await automaticMonthlyPayment(db, projectId))) {
           report.waiting.push({ key, reason: "automatic-off" });
           continue;
         }
         if (
-          project.manifest.status !== "active" ||
-          (await input.projects.restricted(project))
+          !pledged &&
+          (project.manifest.status !== "active" ||
+            (await input.projects.restricted(project)))
         ) {
           report.waiting.push({ key, reason: "project-restricted" });
           continue;
