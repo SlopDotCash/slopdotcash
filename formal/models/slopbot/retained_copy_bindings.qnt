@@ -1,10 +1,12 @@
 // @source workers/slopbot/value-retained-copy.ts
+// @source workers/slopbot/value-original-repair.ts
 // @source workers/slopbot/value-work-unit.ts
 // @source workers/slopbot/verified-retained-binding.ts
 // @source workers/slopbot/value-retained-reference.ts
 // @source workers/slopbot/value-manifest-identity.ts
 // @evidence workers/slopbot/accepted-promotion.test.ts
 // @evidence scripts/retained-pr-reference.test.ts
+// @evidence workers/slopbot/value-original-repair.test.ts
 // Two original sources, each with one commit/path, and two candidate accepted
 // commit/path keys. Inputs classify one immutable captured evidence set; this
 // helper does not fetch new PR state or write a journal. A retained-reference

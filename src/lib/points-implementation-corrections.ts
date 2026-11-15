@@ -1,5 +1,11 @@
+import { sameRepositoryCommitHints } from "../../workers/slopbot/value-commit-hints";
 import type { ValueMergeResolution } from "../../workers/slopbot/value-evidence-types";
 import { mergeResolutionLineCounts } from "../../workers/slopbot/value-merge-resolution";
+import {
+  isOriginalContributorRepair,
+  type OriginalContributorRepair,
+  referencesOriginalContributorSource,
+} from "./original-contributor-repair";
 /**
  * Allocation-only correction of existing Points pools (PRD section 7).
  *
@@ -12,9 +18,14 @@ import { mergeResolutionLineCounts } from "../../workers/slopbot/value-merge-res
  * the ordinary pointsSql financial guard remains mandatory at publication.
  */
 
-import { githubLinkDestinations } from "../../workers/slopbot/value-commit-hints";
-import type { Pull } from "../../workers/slopbot/value-evidence-types";
-import { isCreditEligibleCommitAuthor } from "./commit-credit";
+import type {
+  Pull,
+  ValueEvidence,
+} from "../../workers/slopbot/value-evidence-types";
+import {
+  implementationCreditActors,
+  isCreditEligibleCommitAuthor,
+} from "./commit-credit";
 import { shareImplementationPoints } from "./implementation-allocation";
 import {
   appendPointAwards,
@@ -30,6 +41,12 @@ import {
 } from "./points";
 import { findHistoricalRepository } from "./projects.mjs";
 import { sha256Hex } from "./sha256";
+
+export {
+  isOriginalContributorRepair,
+  type OriginalContributorRepair,
+  referencesOriginalContributorSource,
+} from "./original-contributor-repair";
 
 export interface CorrectionActor {
   id: string;
@@ -98,6 +115,7 @@ export interface OriginalContributorFollowup {
     target: { id: string; number: number; url: string; repository: string };
     acknowledgement?: {
       node_id: string;
+      html_url?: string;
       body: string;
       user: { node_id: string; type: string } | null;
       created_at?: string;
@@ -107,26 +125,187 @@ export interface OriginalContributorFollowup {
     digest: string;
   };
 }
+export interface OriginalContributorBinding {
+  /** Native identical-SHA acceptance with authenticated accepted-parent edges. */
+  exactAcceptance?: true;
+  /** Exact reviewed unit within a multi-origin native integration. */
+  claimIds?: string[];
+  copiedClaims?: {
+    claimId: string;
+    originalCommitSha: string;
+    acceptedCommitSha: string;
+    path: string;
+    bindingDigest: string;
+  }[];
+  /** Sole verified primary author when a maintainer opened the original PR. */
+  originatingActor?: CorrectionActor;
+  /** Authenticated merger authority for a selected null-author native resolution. */
+  resolutionAcceptance?: { pull: Pull; sourceDigest: string };
+  /** First accepted carrier when the recorded unit completes on its donor. */
+  acceptedSourceId?: string;
+  followups?: OriginalContributorFollowup[];
+  repairs?: OriginalContributorRepair[];
+  /** A previously reviewed native commit, retained separately from the current PR head. */
+  reviewedOriginal?: {
+    sourceDigest: string;
+    currentSourceDigest: string;
+    review?: ValueEvidence["reviews"][number];
+    bodyReference?: {
+      kind: "pre-merge-body";
+      pull: Pull;
+      metadata: NonNullable<ValueEvidence["repairBodyEdit"]>;
+      headSha: string;
+      headCommittedAt: string;
+      createdAt: string;
+    };
+    commits: CorrectionCommit[];
+    digest: string;
+  };
+  originalSourceId: string;
+  originalCommitSha: string;
+  acceptedCommitSha: string;
+  boundPaths: string[];
+  bindingDigest: string;
+}
+
+export function originalContributorSource(
+  source: CorrectionSource,
+  originatingActor?: CorrectionActor,
+): CorrectionSource {
+  if (originatingActor === undefined) return source;
+  actor(originatingActor);
+  const ordinary = source.commits.filter((commit) => commit.parentCount <= 1);
+  check(
+    source.complete &&
+      source.commitCount === source.commits.length &&
+      eligibleActor(originatingActor) &&
+      ordinary.length > 0 &&
+      ordinary.every(
+        (commit) =>
+          implementationCreditActors(source.author, [commit.author])[0]?.id ===
+          originatingActor.id,
+      ),
+    "original primary author is not uniquely verified",
+  );
+  return { ...source, author: originatingActor };
+}
+
+function reviewedOriginalSource(
+  source: CorrectionSource,
+  accepted: CorrectionSource,
+  binding: OriginalContributorBinding,
+): CorrectionSource {
+  const retained = binding.reviewedOriginal;
+  if (!retained) return source;
+  const { digest: retainedDigest, ...evidence } = retained;
+  const { review, bodyReference, commits } = retained;
+  const head = commits.at(-1);
+  const metadata = bodyReference?.metadata;
+  const bodyActor =
+    metadata?.lastEditedAt === null ? metadata.author : metadata?.editor;
+  const referenceValid =
+    review !== undefined && bodyReference === undefined
+      ? review.node_id.length > 0 &&
+        Number.isSafeInteger(review.id) &&
+        review.html_url ===
+          `${source.sourceUrl}#pullrequestreview-${review.id}` &&
+        review.commit_id === head?.sha &&
+        review.user?.type === "User" &&
+        Number.isFinite(Date.parse(review.submitted_at ?? "")) &&
+        accepted.occurredAt !== null &&
+        Date.parse(review.submitted_at ?? "") < Date.parse(accepted.occurredAt)
+      : review === undefined &&
+        bodyReference?.kind === "pre-merge-body" &&
+        bodyReference.headSha === head?.sha &&
+        Number.isFinite(Date.parse(bodyReference.createdAt)) &&
+        Date.parse(bodyReference.createdAt) <=
+          Date.parse(metadata?.lastEditedAt ?? "") &&
+        Number.isFinite(Date.parse(bodyReference.headCommittedAt ?? "")) &&
+        Date.parse(bodyReference.headCommittedAt ?? "") <=
+          Date.parse(metadata?.lastEditedAt ?? "") &&
+        metadata !== undefined &&
+        metadata.id === source.sourceId &&
+        metadata.id === bodyReference.pull.node_id &&
+        bodyReference.pull.html_url === source.sourceUrl &&
+        bodyReference.pull.html_url ===
+          `https://github.com/${source.repository}/pull/${bodyReference.pull.number}` &&
+        Number.isSafeInteger(bodyReference.pull.number) &&
+        bodyReference.pull.number > 0 &&
+        bodyReference.pull.state === "closed" &&
+        bodyReference.pull.merged_by?.type === "User" &&
+        bodyReference.pull.merged_at !== null &&
+        source.occurredAt !== null &&
+        Date.parse(bodyReference.pull.merged_at) ===
+          Date.parse(source.occurredAt) &&
+        metadata.body === bodyReference.pull.body &&
+        metadata.headRefOid === source.headSha &&
+        metadata.headRefOid === bodyReference.pull.head.sha &&
+        metadata.updatedAt === bodyReference.pull.updated_at &&
+        metadata.author.id === bodyReference.pull.user.node_id &&
+        metadata.author.type === bodyReference.pull.user.type &&
+        Date.parse(metadata.lastEditedAt ?? "") <=
+          Date.parse(bodyReference.pull.updated_at) &&
+        Date.parse(metadata.lastEditedAt ?? "") <=
+          Date.parse(bodyReference.pull.merged_at) &&
+        metadata.mergedAt === bodyReference.pull.merged_at &&
+        bodyActor?.type === "User" &&
+        bodyActor.id === bodyReference.pull.merged_by?.node_id &&
+        Number.isFinite(Date.parse(metadata.lastEditedAt ?? "")) &&
+        accepted.occurredAt !== null &&
+        Date.parse(metadata.lastEditedAt ?? "") <
+          Date.parse(accepted.occurredAt) &&
+        sameRepositoryCommitHints(source.repository, metadata.body).includes(
+          bodyReference.headSha,
+        );
+  check(
+    binding.exactAcceptance === true &&
+      binding.claimIds !== undefined &&
+      digest.test(retained.sourceDigest) &&
+      retained.currentSourceDigest === sha256Hex(JSON.stringify(source)) &&
+      digest.test(retainedDigest) &&
+      sha256Hex(JSON.stringify(evidence)) === retainedDigest &&
+      referenceValid &&
+      head !== undefined &&
+      commits.some((commit) => commit.sha === binding.originalCommitSha) &&
+      new Set(commits.map((commit) => commit.sha)).size === commits.length &&
+      commits.every(
+        (commit, index) =>
+          !source.commits.some((current) => current.sha === commit.sha) &&
+          commit.parentCount === 1 &&
+          validParentShas(commit) &&
+          (index === 0 || commit.parentShas?.[0] === commits[index - 1].sha) &&
+          commit.author?.kind === "User" &&
+          commit.author.id === source.author?.id &&
+          commit.firstAcceptedSourceId === accepted.sourceId &&
+          !commit.retainedCopy &&
+          commit.files !== undefined &&
+          commit.files.length > 0 &&
+          accepted.commits.some(
+            (copy) =>
+              copy.sha === commit.sha &&
+              copy.author?.id === commit.author?.id &&
+              copy.author?.kind === commit.author?.kind &&
+              copy.parentCount === commit.parentCount &&
+              JSON.stringify(copy.parentShas) ===
+                JSON.stringify(commit.parentShas) &&
+              JSON.stringify(copy.files) === JSON.stringify(commit.files),
+          ),
+      ),
+    "reviewed original commits do not bind their authenticated PR revision",
+  );
+  return { ...source, headSha: head.sha, commitCount: commits.length, commits };
+}
 interface CompleteCorrectionProof {
   status: "complete";
   /** Digest of the complete accepted-source ownership census. */
   censusDigest: string;
   sources: CorrectionSource[];
   /** Verified retained implementation for the October 2026 replacement rule. */
-  originalContributor?: {
-    /** Native identical-SHA acceptance with authenticated accepted-parent edges. */
-    exactAcceptance?: true;
-    /** Exact reviewed unit within a multi-origin native integration. */
-    claimIds?: string[];
-    /** First accepted carrier when the recorded unit completes on its donor. */
-    acceptedSourceId?: string;
-    followups?: OriginalContributorFollowup[];
-    originalSourceId: string;
-    originalCommitSha: string;
-    acceptedCommitSha: string;
-    boundPaths: string[];
-    bindingDigest: string;
-  };
+  originalContributor?: OriginalContributorBinding;
+  /** Disjoint native subproofs for the verified origins of one accepted unit. */
+  originalContributorParts?: OriginalContributorBinding[];
+  /** Independent accepted work outside the verified replacement parts. */
+  independentClaimIds?: string[];
 }
 export type PointsImplementationCorrectionCandidate =
   | (CorrectionCandidateBase & {
@@ -254,38 +433,19 @@ export function isOriginalContributorContext(
   );
 }
 
-/** A resolved direct reference retains the authenticated carrier statement. */
-export function referencesOriginalContributorSource(
-  body: string,
-  repository: string,
-  number: number,
-): boolean {
-  const text = githubLinkDestinations(body).replace(
-    /\[[^[\]\n]*\](?:\[[^[\]\n]*\])?/gu,
-    " ",
-  );
-  return [
-    ...text.matchAll(
-      /(?:https:\/\/github\.com\/([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+)\/pull\/|(?<![\w/?.:=&-])([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+)?#)([1-9]\d*)\b/gu,
-    ),
-  ].some(
-    (match) =>
-      Number(match[3]) === number &&
-      (match[1] ?? match[2] ?? repository).toLowerCase() ===
-        repository.toLowerCase(),
-  );
-}
-
 /** Authenticate the later carrier range without counting intervening work. */
 export function isOriginalContributorFollowup(
   source: CorrectionSource,
   accepted: CorrectionSource,
   binding: OriginalContributorFollowup | undefined,
+  claims?: readonly CorrectionClaim[],
+  scoped?: { anchorSha: string; origin: CorrectionActor },
 ): boolean {
   if (
     !binding ||
     binding.sourceId !== source.sourceId ||
-    binding.ancestorSha !== accepted.headSha ||
+    (binding.ancestorSha !== accepted.headSha &&
+      binding.ancestorSha !== scoped?.anchorSha) ||
     !sha.test(binding.ancestorSha) ||
     source.sourceId === accepted.sourceId ||
     source.occurredAt === null ||
@@ -294,10 +454,18 @@ export function isOriginalContributorFollowup(
     source.repositoryNodeId !== accepted.repositoryNodeId ||
     !eligibleActor(source.author) ||
     !eligibleActor(accepted.author) ||
-    source.author.id !== accepted.author.id
+    (source.author.id !== accepted.author.id &&
+      (!scoped || source.author.id !== scoped.origin.id))
+  )
+    return false;
+  if (
+    claims &&
+    ((!claims.length && !scoped) ||
+      claims.some((claim) => claim.sourceId !== source.sourceId))
   )
     return false;
   if (binding.reference) {
+    if (claims) return false;
     const { digest: referenceDigest, ...reference } = binding.reference;
     const pull = reference.pull,
       target = reference.target;
@@ -311,7 +479,7 @@ export function isOriginalContributorFollowup(
       pull.head.sha === source.headSha &&
       pull.state === "closed" &&
       pull.merged_at !== null &&
-      new Date(pull.merged_at).toISOString() === source.occurredAt &&
+      Date.parse(pull.merged_at) === Date.parse(source.occurredAt) &&
       pull.user.type === "User" &&
       pull.user.node_id === accepted.author.id &&
       target.id === accepted.sourceId &&
@@ -399,18 +567,40 @@ export function isOriginalContributorFollowup(
   if (completed.size !== graph.size) return false;
   return (
     descends.has(source.headSha) &&
-    source.commits.every(
-      (commit) =>
-        commit.parentCount > 1 ||
-        (commit.firstAcceptedSourceId === source.sourceId &&
-          !commit.retainedCopy &&
-          commit.author?.id === accepted.author?.id &&
-          commit.author?.kind === accepted.author?.kind &&
-          descends.has(commit.sha) &&
-          validParentShas(commit) &&
-          JSON.stringify(commit.parentShas) ===
-            JSON.stringify(graph.get(commit.sha)?.parentShas)),
-    )
+    (claims
+      ? claims.every((claim) => {
+          const commit = source.commits.find(
+            (item) => item.sha === claim.commitSha,
+          );
+          return (
+            commit &&
+            correctionClaimCommit(commit) &&
+            commit.files?.some((file) => file.path === claim.path) &&
+            commit.firstAcceptedSourceId === source.sourceId &&
+            !commit.retainedCopy &&
+            (commit.author?.id === accepted.author?.id ||
+              (scoped &&
+                (commit.author === null ||
+                  commit.author.id === scoped.origin.id))) &&
+            (commit.author === null || commit.author.kind === "User") &&
+            descends.has(commit.sha) &&
+            validParentShas(commit) &&
+            JSON.stringify(commit.parentShas) ===
+              JSON.stringify(graph.get(commit.sha)?.parentShas)
+          );
+        })
+      : source.commits.every(
+          (commit) =>
+            commit.parentCount > 1 ||
+            (commit.firstAcceptedSourceId === source.sourceId &&
+              !commit.retainedCopy &&
+              commit.author?.id === accepted.author?.id &&
+              commit.author?.kind === accepted.author?.kind &&
+              descends.has(commit.sha) &&
+              validParentShas(commit) &&
+              JSON.stringify(commit.parentShas) ===
+                JSON.stringify(graph.get(commit.sha)?.parentShas)),
+        ))
   );
 }
 
@@ -419,6 +609,15 @@ export function originalContributorClaimScope(
   original: CorrectionSource,
   accepted: CorrectionSource,
   claims: readonly CorrectionClaim[],
+  followups: readonly {
+    source: CorrectionSource;
+    binding: OriginalContributorFollowup;
+  }[] = [],
+  anchorSha = original.headSha,
+  repairs: readonly OriginalContributorRepair[] = [],
+  copiedClaims: NonNullable<OriginalContributorBinding["copiedClaims"]> = [],
+  acceptedAnchorSha = anchorSha,
+  resolutionAcceptance?: OriginalContributorBinding["resolutionAcceptance"],
 ): boolean {
   const origin = original.author;
   const carrier = accepted.author;
@@ -438,47 +637,127 @@ export function originalContributorClaimScope(
   const originals = new Map(
     original.commits.map((commit) => [commit.sha, commit]),
   );
-  const graph = new Map(accepted.commits.map((commit) => [commit.sha, commit]));
+  const anchor = originals.get(anchorSha);
+  const copiedAnchor = copiedClaims.find(
+    (claim) =>
+      claim.originalCommitSha === anchorSha &&
+      claim.acceptedCommitSha === acceptedAnchorSha,
+  );
+  const acceptedAnchor = accepted.commits.find(
+    (commit) => commit.sha === (copiedAnchor?.acceptedCommitSha ?? anchorSha),
+  );
   if (
     originals.size !== original.commits.length ||
-    graph.size !== accepted.commits.length ||
     !originals.has(original.headSha) ||
-    !graph.has(accepted.headSha) ||
-    accepted.commits.some((commit) => !validParentShas(commit)) ||
-    original.commits.some((commit) => {
-      const copy = graph.get(commit.sha);
+    !anchor ||
+    !acceptedAnchor ||
+    acceptedAnchor.firstAcceptedSourceId !== accepted.sourceId ||
+    anchor.parentCount > 2 ||
+    (anchor.parentCount > 1 && !eligibleActor(anchor.author)) ||
+    (implementationCreditActors(original.author, [anchor.author])[0]?.id !==
+      origin.id &&
+      anchor.author?.id !== carrier.id) ||
+    acceptedAnchor.author?.id !== anchor.author?.id ||
+    acceptedAnchor.author?.kind !== anchor.author?.kind
+  )
+    return false;
+  if (
+    new Set(copiedClaims.map((copy) => copy.claimId)).size !==
+      copiedClaims.length ||
+    copiedClaims.some((copy) => {
+      const claim = claims.find((item) => item.id === copy.claimId);
+      const originalCommit = originals.get(copy.originalCommitSha);
+      const acceptedCommit = accepted.commits.find(
+        (item) => item.sha === copy.acceptedCommitSha,
+      );
       return (
-        commit.parentCount > 2 ||
-        (commit.parentCount > 1 && !eligibleActor(commit.author)) ||
-        (commit.author !== null &&
-          (!eligibleActor(commit.author) ||
-            (commit.author.id !== origin.id &&
-              commit.author.id !== carrier.id))) ||
-        !copy ||
-        copy.firstAcceptedSourceId !== accepted.sourceId ||
-        copy.author?.id !== commit.author?.id ||
-        copy.author?.kind !== commit.author?.kind
+        !claim ||
+        claim.sourceId !== accepted.sourceId ||
+        claim.commitSha !== copy.acceptedCommitSha ||
+        claim.path !== copy.path ||
+        !digest.test(copy.bindingDigest) ||
+        !originalCommit ||
+        !acceptedCommit ||
+        originalCommit.parentCount > 1 ||
+        acceptedCommit.parentCount > 1 ||
+        originalCommit.author?.id !== origin.id ||
+        acceptedCommit.author?.id !== origin.id ||
+        originalCommit.author.kind !== acceptedCommit.author.kind ||
+        acceptedCommit.firstAcceptedSourceId !== accepted.sourceId ||
+        !originalCommit.files?.some((file) => file.path === copy.path) ||
+        !acceptedCommit.files?.some((file) => file.path === copy.path)
       );
     })
   )
     return false;
+  const graph = new Map<string, CorrectionCommit & { parentShas: string[] }>();
+  for (const source of [accepted, ...followups.map((item) => item.source)]) {
+    for (const commit of source.commits) {
+      const previous = graph.get(commit.sha);
+      const parentShas = commit.parentShas ?? previous?.parentShas;
+      if (!parentShas || !validParentShas({ ...commit, parentShas }))
+        return false;
+      if (
+        previous &&
+        (JSON.stringify(previous.parentShas) !== JSON.stringify(parentShas) ||
+          previous.author?.id !== commit.author?.id ||
+          previous.author?.kind !== commit.author?.kind)
+      )
+        return false;
+      graph.set(commit.sha, { ...commit, parentShas });
+    }
+  }
+  for (const { binding } of followups) {
+    for (const commit of binding.commits) {
+      const existing = graph.get(commit.sha);
+      if (
+        existing &&
+        JSON.stringify(existing.parentShas) !==
+          JSON.stringify(commit.parentShas)
+      )
+        return false;
+      if (!existing)
+        graph.set(commit.sha, {
+          ...commit,
+          parentCount: commit.parentShas.length,
+          author: null,
+          additions: null,
+          deletions: null,
+          firstAcceptedSourceId: null,
+        });
+    }
+  }
+  for (const commit of original.commits) {
+    const existing = graph.get(commit.sha);
+    const parentShas = commit.parentShas ?? existing?.parentShas;
+    if (!parentShas || !validParentShas({ ...commit, parentShas }))
+      return false;
+    if (
+      existing &&
+      (JSON.stringify(existing.parentShas) !== JSON.stringify(parentShas) ||
+        (existing.firstAcceptedSourceId !== null &&
+          (existing.author?.id !== commit.author?.id ||
+            existing.author?.kind !== commit.author?.kind)))
+    )
+      return false;
+    graph.set(commit.sha, { ...commit, parentShas });
+  }
   const remaining = new Map(
     [...graph].map(([id, commit]) => [
       id,
-      (commit.parentShas ?? []).filter((parent) => graph.has(parent)).length,
+      commit.parentShas.filter((parent) => graph.has(parent)).length,
     ]),
   );
   const ready = [...remaining]
     .filter(([, count]) => count === 0)
     .map(([id]) => id);
-  for (const id of ready) {
+  for (const id of ready)
     for (const [child, commit] of graph) {
-      if (!(commit.parentShas ?? []).includes(id)) continue;
+      if (!commit.parentShas.includes(id)) continue;
       const count = (remaining.get(child) ?? 0) - 1;
       remaining.set(child, count);
       if (count === 0) ready.push(child);
     }
-  }
   if (ready.length !== graph.size) return false;
   const descends = (child: string, ancestor: string) => {
     const pending = [child];
@@ -495,55 +774,113 @@ export function originalContributorClaimScope(
     !original.commits.every((commit) => descends(original.headSha, commit.sha))
   )
     return false;
-  const ordinaryOrigins = original.commits.filter(
-    (commit) =>
-      commit.parentCount <= 1 &&
-      (commit.author === null || commit.author.id === origin.id),
-  );
+  const scoped = { anchorSha: acceptedAnchor.sha, origin };
+  const followupIds = new Set(followups.map(({ source }) => source.sourceId));
   if (
-    !ordinaryOrigins.length ||
-    original.commits.some(
-      (commit) =>
-        commit.parentCount > 1 &&
-        !ordinaryOrigins.some((ancestor) => descends(commit.sha, ancestor.sha)),
+    followupIds.size !== followups.length ||
+    followupIds.has(accepted.sourceId) ||
+    followups.some(
+      ({ source, binding }) =>
+        !isOriginalContributorFollowup(
+          source,
+          accepted,
+          binding,
+          claims.filter((claim) => claim.sourceId === source.sourceId),
+          scoped,
+        ),
     )
   )
     return false;
-  const resolvedOriginal = {
-    ...original,
-    commits: original.commits.map((commit) => ({
-      ...commit,
-      author: commit.author ?? origin,
-      parentShas: graph.get(commit.sha)?.parentShas,
-    })),
-  };
-  if (!originalContributorPrecedesFollowups(resolvedOriginal, carrier))
+  if (
+    new Set(repairs.map((repair) => repair.commitSha)).size !==
+      repairs.length ||
+    repairs.some((repair) => {
+      const commit = graph.get(repair.commitSha);
+      return (
+        !commit ||
+        !claims.some((claim) => claim.commitSha === repair.commitSha) ||
+        !isOriginalContributorRepair(repair, original, accepted, commit) ||
+        !descends(commit.sha, acceptedAnchor.sha) ||
+        !descends(repair.reference.headSha, commit.sha)
+      );
+    })
+  )
     return false;
   let hasOriginal = false;
   for (const claim of claims) {
-    const commit = graph.get(claim.commitSha);
+    const source =
+      claim.sourceId === accepted.sourceId
+        ? accepted
+        : followups.find((item) => item.source.sourceId === claim.sourceId)
+            ?.source;
+    const commit = source?.commits.find((item) => item.sha === claim.commitSha);
     if (
-      claim.sourceId !== accepted.sourceId ||
       !commit ||
       !correctionClaimCommit(commit) ||
-      commit.firstAcceptedSourceId !== accepted.sourceId ||
+      commit.firstAcceptedSourceId !== source?.sourceId ||
       !commit.files?.some((file) => file.path === claim.path)
     )
       return false;
-    if (originals.has(commit.sha)) {
-      if (
-        commit.parentCount <= 1 &&
-        (commit.author === null || commit.author.id === origin.id)
-      )
-        hasOriginal = true;
+    const repair = repairs.find((repair) => repair.commitSha === commit.sha);
+    const acknowledgedRepair =
+      repair !== undefined &&
+      isOriginalContributorRepair(repair, original, accepted, commit) &&
+      descends(commit.sha, acceptedAnchor.sha) &&
+      descends(repair.reference.headSha, commit.sha);
+    if (copiedClaims.some((copy) => copy.claimId === claim.id)) {
+      hasOriginal = true;
       continue;
     }
-    if (
-      !eligibleActor(commit.author) ||
-      (commit.author.id !== origin.id && commit.author.id !== carrier.id) ||
-      !descends(commit.sha, original.headSha)
-    )
-      return false;
+    if (originals.has(commit.sha)) {
+      if (
+        commit.author !== null &&
+        commit.author.id !== origin.id &&
+        commit.author.id !== carrier.id &&
+        isCreditEligibleCommitAuthor(commit.author) &&
+        !acknowledgedRepair
+      )
+        return false;
+      if (commit.author?.id === carrier.id && !descends(commit.sha, anchorSha))
+        return false;
+      if (
+        commit.parentCount <= 1 &&
+        implementationCreditActors(original.author, [commit.author])[0]?.id ===
+          origin.id
+      )
+        hasOriginal = true;
+    } else {
+      const pull = resolutionAcceptance?.pull;
+      const nativeResolution =
+        source.sourceId === accepted.sourceId &&
+        commit.author === null &&
+        commit.parentCount > 1 &&
+        commit.mergeResolution !== undefined &&
+        correctionClaimCommit(commit) &&
+        resolutionAcceptance !== undefined &&
+        digest.test(resolutionAcceptance.sourceDigest) &&
+        pull?.node_id === accepted.sourceId &&
+        pull.html_url === accepted.sourceUrl &&
+        pull.head.sha === accepted.headSha &&
+        pull.state === "closed" &&
+        pull.merged_at !== null &&
+        accepted.occurredAt !== null &&
+        Date.parse(pull.merged_at) === Date.parse(accepted.occurredAt) &&
+        pull.user.node_id === carrier.id &&
+        pull.user.type === "User" &&
+        pull.merged_by?.node_id === carrier.id &&
+        pull.merged_by.type === "User";
+      if (
+        (!eligibleActor(commit.author) &&
+          !nativeResolution &&
+          !acknowledgedRepair) ||
+        (commit.author !== null &&
+          commit.author.id !== origin.id &&
+          commit.author.id !== carrier.id &&
+          !acknowledgedRepair) ||
+        !descends(commit.sha, acceptedAnchorSha)
+      )
+        return false;
+    }
   }
   return hasOriginal;
 }
@@ -699,6 +1036,181 @@ function deriveProof(
   const proof = candidate.proof;
   if (proof.status === "held") return null;
   check(digest.test(proof.censusDigest), "invalid ownership census digest");
+  if (proof.originalContributorParts !== undefined) {
+    check(
+      candidate.kind === "work-unit" &&
+        candidate.proof.status === "complete" &&
+        candidate.occurredAt.startsWith("2026-10-") &&
+        proof.originalContributor === undefined &&
+        proof.originalContributorParts.length >= 2 &&
+        sameSet(
+          proof.originalContributorParts.map(
+            (part) => `${part.originalSourceId}\0${part.originalCommitSha}`,
+          ),
+          proof.originalContributorParts.map(
+            (part) => `${part.originalSourceId}\0${part.originalCommitSha}`,
+          ),
+        ),
+      "invalid multi-original native unit",
+    );
+    const parts = proof.originalContributorParts;
+    const claims = candidate.proof.claims;
+    const independentClaimIds = proof.independentClaimIds ?? [];
+    check(
+      sameSet(
+        candidate.proof.expectedClaimIds,
+        claims.map((claim) => claim.id),
+      ) &&
+        parts.every(
+          (part) =>
+            part.exactAcceptance === true &&
+            Array.isArray(part.claimIds) &&
+            part.claimIds.length > 0,
+        ) &&
+        sameSet(
+          [
+            ...parts.flatMap((part) => part.claimIds ?? []),
+            ...independentClaimIds,
+          ],
+          claims.map((claim) => claim.id),
+        ) &&
+        parts.some(
+          (part) =>
+            (part.acceptedSourceId ?? candidate.sourceId) ===
+              candidate.sourceId ||
+            part.originalSourceId === candidate.sourceId ||
+            part.followups?.some(
+              (followup) => followup.sourceId === candidate.sourceId,
+            ),
+        ),
+      "native subproofs do not partition the complete unit",
+    );
+    const completion = proof.sources.find(
+      (source) => source.sourceId === candidate.sourceId,
+    );
+    check(
+      completion &&
+        completion.sourceUrl === candidate.sourceUrl &&
+        completion.occurredAt === candidate.occurredAt,
+      "completion source does not match the recorded pool",
+    );
+    const result: DerivedProof = {
+      actors: new Map(),
+      weights: new Map(),
+      scopes: [],
+    };
+    let incompleteLines = false;
+    for (const part of parts) {
+      const acceptedId = part.acceptedSourceId ?? candidate.sourceId;
+      const accepted = proof.sources.find(
+        (source) => source.sourceId === acceptedId,
+      );
+      check(
+        accepted &&
+          accepted.occurredAt !== null &&
+          accepted.occurredAt <= candidate.occurredAt,
+        "native subproof acceptance exceeds the unit completion",
+      );
+      const selected = claims.filter((claim) =>
+        part.claimIds?.includes(claim.id),
+      );
+      const partSourceIds = new Set([
+        accepted.sourceId,
+        part.originalSourceId,
+        ...(part.followups ?? []).map((followup) => followup.sourceId),
+      ]);
+      const partCompletion = proof.sources
+        .filter(
+          (source) =>
+            partSourceIds.has(source.sourceId) &&
+            source.occurredAt !== null &&
+            source.occurredAt <= candidate.occurredAt,
+        )
+        .sort(
+          (left, right) =>
+            (right.occurredAt ?? "").localeCompare(left.occurredAt ?? "") ||
+            left.sourceId.localeCompare(right.sourceId),
+        )[0];
+      check(
+        partCompletion?.occurredAt,
+        "native subproof lacks a verified completion source",
+      );
+      const binding = {
+        ...part,
+        acceptedSourceId:
+          partCompletion.sourceId === accepted.sourceId
+            ? undefined
+            : accepted.sourceId,
+      };
+      const derived = deriveProof({
+        ...candidate,
+        sourceId: partCompletion.sourceId,
+        sourceUrl: partCompletion.sourceUrl,
+        occurredAt: partCompletion.occurredAt,
+        proof: {
+          ...candidate.proof,
+          originalContributorParts: undefined,
+          independentClaimIds: undefined,
+          originalContributor: binding,
+          expectedClaimIds: selected.map((claim) => claim.id),
+          claims: selected,
+        },
+      });
+      if (derived === null) return null;
+      check(
+        derived.actors.size === 1,
+        "native subproof lacks one originating contributor",
+      );
+      const origin = [...derived.actors.values()][0];
+      result.actors.set(origin.id, origin);
+      let weight = 0n;
+      for (const claim of selected) {
+        const source = proof.sources.find(
+          (source) => source.sourceId === claim.sourceId,
+        );
+        const commit = source?.commits.find(
+          (commit) => commit.sha === claim.commitSha,
+        );
+        const file = commit?.files?.find((file) => file.path === claim.path);
+        if (!file || !count(file.additions) || !count(file.deletions)) {
+          incompleteLines = true;
+          continue;
+        }
+        weight += BigInt(file.additions) + BigInt(file.deletions);
+      }
+      result.weights.set(
+        origin.id,
+        (result.weights.get(origin.id) ?? 0n) + weight,
+      );
+      result.scopes.push(...derived.scopes);
+    }
+    if (independentClaimIds.length) {
+      const independent = claims.filter((claim) =>
+        independentClaimIds.includes(claim.id),
+      );
+      const ordinary = deriveProof({
+        ...candidate,
+        proof: {
+          ...candidate.proof,
+          originalContributorParts: undefined,
+          independentClaimIds: undefined,
+          claims: independent,
+          expectedClaimIds: independentClaimIds,
+        },
+      });
+      if (!ordinary) return null;
+      for (const [id, actor] of ordinary.actors) result.actors.set(id, actor);
+      for (const [id, weight] of ordinary.weights)
+        result.weights.set(id, (result.weights.get(id) ?? 0n) + weight);
+      result.scopes.push(...ordinary.scopes);
+    }
+    if (incompleteLines && result.actors.size > 1) return null;
+    return result;
+  }
+  check(
+    proof.independentClaimIds === undefined,
+    "independent claims require a complete original partition",
+  );
   check(
     sameSet(
       candidate.sourceIds,
@@ -974,7 +1486,23 @@ function deriveProof(
         binding.boundPaths.length > 0,
       "original-contributor proof is invalid outside the October replacement rule",
     );
-    const original = sources.get(binding.originalSourceId);
+    check(
+      binding.originatingActor === undefined ||
+        (candidate.kind === "work-unit" &&
+          binding.claimIds !== undefined &&
+          (binding.exactAcceptance === true ||
+            (binding.exactAcceptance === undefined &&
+              binding.copiedClaims !== undefined &&
+              binding.copiedClaims.length > 0))),
+      "sole primary origin requires reviewed accepted claim scope",
+    );
+    const rawOriginal = sources.get(binding.originalSourceId);
+    const currentOriginal = rawOriginal
+      ? originalContributorSource(rawOriginal, binding.originatingActor)
+      : undefined;
+    const original = currentOriginal
+      ? reviewedOriginalSource(currentOriginal, accepted, binding)
+      : undefined;
     const originalCommit = original?.commits.find(
       (commit) => commit.sha === binding.originalCommitSha,
     );
@@ -985,15 +1513,30 @@ function deriveProof(
       check(
         candidate.kind === "work-unit" &&
           candidate.proof.status === "complete" &&
-          binding.exactAcceptance === true &&
+          (binding.copiedClaims !== undefined
+            ? binding.exactAcceptance === undefined &&
+              original?.occurredAt === null &&
+              binding.copiedClaims.length > 0 &&
+              binding.copiedClaims.some(
+                (copy) =>
+                  copy.originalCommitSha === binding.originalCommitSha &&
+                  copy.acceptedCommitSha === binding.acceptedCommitSha,
+              )
+            : binding.exactAcceptance === true) &&
           original &&
           acceptedCommit &&
-          binding.originalCommitSha === original.headSha &&
-          binding.acceptedCommitSha === original.headSha &&
+          (binding.copiedClaims !== undefined ||
+            binding.originalCommitSha === binding.acceptedCommitSha) &&
           sameSet(
             binding.boundPaths,
             acceptedCommit.parentCount === 2
-              ? [...new Set(candidate.proof.claims.map((claim) => claim.path))]
+              ? [
+                  ...new Set(
+                    candidate.proof.claims
+                      .filter((claim) => claim.sourceId === accepted.sourceId)
+                      .map((claim) => claim.path),
+                  ),
+                ]
               : (acceptedCommit.files ?? []).map((file) => file.path),
           ) &&
           sameSet(
@@ -1004,6 +1547,16 @@ function deriveProof(
             original,
             accepted,
             candidate.proof.claims,
+            (binding.followups ?? []).map((followup) => {
+              const source = sources.get(followup.sourceId);
+              check(source, "original-contributor follow-up source is missing");
+              return { source, binding: followup };
+            }),
+            binding.originalCommitSha,
+            binding.repairs,
+            binding.copiedClaims,
+            binding.acceptedCommitSha,
+            binding.resolutionAcceptance,
           ),
         "original-contributor unit scope does not bind the reviewed native claims",
       );
@@ -1274,7 +1827,8 @@ export function applyPointsImplementationCorrections(
     );
     const usesOctoberDecision =
       candidate.proof.status === "complete" &&
-      candidate.proof.originalContributor !== undefined;
+      (candidate.proof.originalContributor !== undefined ||
+        candidate.proof.originalContributorParts !== undefined);
     const proof =
       appliedOctoberDecision && !usesOctoberDecision
         ? null

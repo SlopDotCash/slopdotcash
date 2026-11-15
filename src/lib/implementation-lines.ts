@@ -1,4 +1,5 @@
 import { mergeResolutionLineCounts } from "../../workers/slopbot/value-merge-resolution";
+import { retainedRepair } from "../../workers/slopbot/value-original-repair";
 import {
   valueAdditionCount,
   valueDeletionCount,
@@ -26,6 +27,47 @@ export function workUnitCreditActorIds(
   );
   if (commits.length !== 1) return null;
   const commit = commits[0];
+  if (claim.retainedCopy?.repair) {
+    const original = evidence.sources.find(
+      (item) => item.evidence.pull.node_id === claim.creditPullRequestId,
+    );
+    const accepted = evidence.sources.find(
+      (item) =>
+        item.evidence.pull.node_id ===
+        claim.retainedCopy?.acceptancePullRequestId,
+    );
+    if (!original || !accepted) return null;
+    const verified = retainedRepair(
+      original,
+      accepted,
+      claim.retainedCopy.acceptedCommitSha,
+      claim.commitSha,
+      claim.path,
+    );
+    if (
+      !verified ||
+      JSON.stringify(verified) !== JSON.stringify(claim.retainedCopy.repair)
+    )
+      return null;
+    const acceptedCommit = accepted.evidence.commits.find(
+      (item) => item.sha === claim.retainedCopy?.acceptedCommitSha,
+    );
+    if (!acceptedCommit) return null;
+    return implementationCreditActors(
+      {
+        id: accepted.evidence.pull.user.node_id,
+        kind: accepted.evidence.pull.user.type,
+      },
+      [
+        acceptedCommit.author
+          ? {
+              id: acceptedCommit.author.node_id,
+              kind: acceptedCommit.author.type,
+            }
+          : null,
+      ],
+    ).map((actor) => actor.id);
+  }
   if (commit.parents.length > 1) {
     const resolutions = source.mergeResolutions?.filter(
       (resolution) => resolution.commitSha === commit.sha,

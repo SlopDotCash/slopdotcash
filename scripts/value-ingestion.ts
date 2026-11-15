@@ -568,9 +568,13 @@ export async function loadValueInputs(
         ...raw,
         evidence: await collectValueContext(github, raw.evidence, contextPaths),
       };
-      return recipe
-        ? hydrateValueMergeSource(collected, recipe, identity)
-        : collected;
+      return hydrateValueMergeSource(
+        collected,
+        recipe,
+        identity,
+        github,
+        repository,
+      );
     };
     const cached = sourceCache.get(id);
     if (cached) {

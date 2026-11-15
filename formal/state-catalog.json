@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "meaning": "Declared lifecycle candidates. This intentionally incomplete syntactic census cannot find every implicit state, establish reachability, or prove source/model correspondence. Review the open work listed in formal/README.md as well.",
-  "inventorySha256": "7b9f4e095f7a2123ab0e5750846889518773c6fa29427048326d32d708e53c9d",
+  "inventorySha256": "dc4036c50397a099e87f56fcc139ae76776765decbb1baecae29da03643ba6fc",
   "states": [
     {
       "path": "backend/fee-conversions/handler.ts",
@@ -50,7 +50,7 @@
     },
     {
       "path": "backend/payments/monthly.ts",
-      "line": 965,
+      "line": 955,
       "name": "status",
       "kind": "string-union",
       "values": ["failed", "finalized", "pending"],
@@ -67,7 +67,7 @@
     },
     {
       "path": "backend/payments/monthly.ts",
-      "line": 1577,
+      "line": 1567,
       "name": "chain_state",
       "kind": "string-union",
       "values": ["paid", "reserved"],
@@ -3181,7 +3181,7 @@
     },
     {
       "path": "src/lib/points-implementation-corrections.ts",
-      "line": 166,
+      "line": 345,
       "name": "status",
       "kind": "string-union",
       "values": ["already-applied", "applied", "held", "retained", "unchanged"],
@@ -4128,7 +4128,7 @@
     },
     {
       "path": "workers/slopbot/value-file-recovery.ts",
-      "line": 24,
+      "line": 25,
       "name": "mode",
       "kind": "string-union",
       "values": ["100644", "100755"],
