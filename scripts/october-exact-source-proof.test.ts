@@ -2135,3 +2135,135 @@ test("native collector uses the existing creator fallback for an excluded agent 
   expect(proof.sources[1].author?.id).toBe(origin.node_id);
   expect(proof.sources[1].commits[0].author?.id).toBe(agent.node_id);
 });
+
+async function pairedRepairSnapshot() {
+  const input = await snapshot();
+  input.accepted.commits[1].author = null as never;
+  input.plain.commits[1].author = null;
+  input.accepted.commitAttribution[1].actorNodeIds = [];
+  input.original.comments = [
+    {
+      node_id: "IC_original_pair",
+      html_url: `${input.original.pull.html_url}#issuecomment-10`,
+      body: "Finished the original implementation in integration PR #2.",
+      user: carrier,
+      created_at: "2026-10-02T12:00:00Z",
+      updated_at: "2026-10-02T12:00:00Z",
+    },
+  ];
+  input.accepted.comments = [
+    {
+      node_id: "IC_accepted_pair",
+      html_url: `${input.accepted.pull.html_url}#issuecomment-11`,
+      body: `Final source review: ${sha("b")}. Merging this reviewed head.`,
+      user: carrier,
+      created_at: "2026-10-02T13:00:00Z",
+      updated_at: "2026-10-02T13:00:00Z",
+    },
+  ];
+  for (const [id, comment] of [
+    [10, input.original.comments[0]],
+    [11, input.accepted.comments[0]],
+  ] as const)
+    input.responses.set(`${root}/issues/comments/${id}`, clone(comment));
+  input.responses.set(
+    `${root}/git/commits/${sha("b")}`,
+    clone(input.accepted.commits[1]),
+  );
+  const range = input.responses.get(
+    `${root}/compare/${sha("f")}...${sha("c")}?per_page=100&page=1`,
+  ) as { commits: unknown[] };
+  range.commits[1] = clone(input.accepted.commits[1]);
+  const claims = ["a", "b"].map((id) => ({
+    id: `paired_${id}`,
+    sourceId: input.plain.sourceId,
+    commitSha: sha(id),
+    path: "fix.ts",
+  }));
+  return { ...input, claims };
+}
+
+test("paired accepting-merger comments bind a null-author native repair without assigning an identity", async () => {
+  const input = await pairedRepairSnapshot();
+  const proof = await octoberOriginalContributorUnitProof(
+    input.github,
+    input.plain,
+    input.sources[1],
+    input.sources[0],
+    input.owners,
+    input.claims,
+  );
+  expect(proof.originalContributor?.repairs?.[0].authorNodeId).toBeNull();
+  expect(
+    proof.originalContributor?.repairs?.[0].reference.originalAcknowledgement
+      ?.comment.node_id,
+  ).toBe("IC_original_pair");
+  expect(proof.sources[0].commits[1].author).toBeNull();
+  expect(input.readPaths).toContain(`${root}/issues/comments/10`);
+  expect(input.readPaths).toContain(`${root}/issues/comments/11`);
+});
+
+for (const fault of [
+  "original-actor",
+  "accepting-actor",
+  "original-pr",
+  "original-edited",
+  "accepting-edited",
+  "ordering",
+  "late",
+  "head",
+  "original-ref",
+  "current-comment",
+  "unrelated-branch",
+  "original-before-created",
+  "accepted-before-created",
+  "negative-original-number",
+] as const) {
+  test(`paired null-author repair refuses ${fault}`, async () => {
+    const input = await pairedRepairSnapshot();
+    const first = input.original.comments[0];
+    const last = input.accepted.comments[0];
+    if (fault === "original-actor") first.user = origin;
+    if (fault === "accepting-actor") last.user = origin;
+    if (fault === "original-pr")
+      first.html_url = `https://github.com/${repository}/pull/9#issuecomment-10`;
+    if (fault === "original-edited") first.updated_at = "2026-10-02T12:30:00Z";
+    if (fault === "accepting-edited") last.updated_at = "2026-10-02T14:00:00Z";
+    if (fault === "ordering")
+      first.created_at = first.updated_at = "2026-10-02T14:00:00Z";
+    if (fault === "late")
+      last.created_at = last.updated_at = "2026-10-04T00:00:00Z";
+    if (fault === "head") last.body = `Final source ${sha("9")}`;
+    if (fault === "original-ref") first.body = "Finishing #99";
+    if (fault === "current-comment")
+      (
+        input.responses.get(`${root}/issues/comments/10`) as { body: string }
+      ).body = "Edited since capture";
+    if (fault === "original-before-created")
+      (
+        input.responses.get(`${root}/pulls/1`) as { created_at: string }
+      ).created_at = "2026-10-02T12:01:00Z";
+    if (fault === "accepted-before-created")
+      (
+        input.responses.get(`${root}/pulls/2`) as { created_at: string }
+      ).created_at = "2026-10-02T13:01:00Z";
+    if (fault === "negative-original-number") input.original.pull.number = -1;
+    if (fault === "unrelated-branch") {
+      input.accepted.commits[1].parents = [{ sha: sha("9") }];
+      input.responses.set(
+        `${root}/git/commits/${sha("b")}`,
+        clone(input.accepted.commits[1]),
+      );
+    }
+    await expect(
+      octoberOriginalContributorUnitProof(
+        input.github,
+        input.plain,
+        input.sources[1],
+        input.sources[0],
+        input.owners,
+        input.claims,
+      ),
+    ).rejects.toThrow();
+  });
+}

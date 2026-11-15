@@ -1705,9 +1705,9 @@ async function acknowledgedOriginalRepairs(
   const commits = accepted.commits.filter(
     (commit) =>
       claims.some((claim) => claim.commitSha === commit.sha) &&
-      commit.author &&
-      commit.author.id !== author &&
-      commit.author.id !== accepted.author?.id,
+      (commit.author === null ||
+        (commit.author.id !== author &&
+          commit.author.id !== accepted.author?.id)),
   );
   if (!commits.length) return [];
   const repairs: OriginalContributorRepair[] = [];
@@ -1738,7 +1738,101 @@ async function acknowledgedOriginalRepairs(
       integration.policy,
     ),
   };
+  const pairedPulls = commits.some((commit) => commit.author === null)
+    ? await Promise.all(
+        [original, integration].map((source) =>
+          github.get<Pull & { created_at: string }>(
+            `/repos/${source.evidence.repository}/pulls/${source.evidence.pull.number}`,
+          ),
+        ),
+      )
+    : [];
+  const currentPair =
+    pairedPulls.length === 2 &&
+    pairedPulls.every((pull, index) => {
+      const expected = [original, integration][index].evidence.pull;
+      return (
+        pull !== null &&
+        pull.node_id === expected.node_id &&
+        pull.number === expected.number &&
+        pull.html_url === expected.html_url &&
+        pull.head.sha === expected.head.sha &&
+        pull.state === expected.state &&
+        pull.merged_at === expected.merged_at &&
+        pull.merge_commit_sha === expected.merge_commit_sha &&
+        pull.updated_at === expected.updated_at &&
+        pull.user.node_id === expected.user.node_id &&
+        Number.isFinite(Date.parse(pull.created_at))
+      );
+    });
+  const freshComments = new Map<string, Promise<boolean>>();
+  const unchangedComment = (comment: ValueEvidence["comments"][number]) => {
+    const id = /#issuecomment-([1-9]\d*)$/u.exec(comment.html_url)?.[1];
+    if (!id) return Promise.resolve(false);
+    let read = freshComments.get(comment.html_url);
+    if (!read) {
+      read = github
+        .get<ValueEvidence["comments"][number]>(
+          `/repos/${accepted.repository}/issues/comments/${id}`,
+        )
+        .then(
+          (current) =>
+            current !== null &&
+            current.node_id === comment.node_id &&
+            current.html_url === comment.html_url &&
+            current.body === comment.body &&
+            current.created_at === comment.created_at &&
+            current.updated_at === comment.updated_at &&
+            current.user?.node_id === comment.user?.node_id &&
+            current.user?.type === comment.user?.type,
+        );
+      freshComments.set(comment.html_url, read);
+    }
+    return read;
+  };
   for (const commit of commits) {
+    if (commit.author === null) {
+      if (!currentPair || !pairedPulls[0] || !pairedPulls[1]) continue;
+      // An authenticated acceptance pair proves the repair relationship, not
+      // the identity of an unlinked Git author. Keep that author null.
+      for (const originalComment of original.evidence.comments) {
+        for (const acceptedComment of integration.evidence.comments) {
+          const reference = {
+            sourceDigests,
+            pull: pairedPulls[1],
+            acceptingPull: pairedPulls[1],
+            acknowledgement: acceptedComment,
+            originalAcknowledgement: {
+              pull: pairedPulls[0],
+              comment: originalComment,
+            },
+            headSha: accepted.headSha,
+          };
+          const repair: OriginalContributorRepair = {
+            sourceId: accepted.sourceId,
+            commitSha: commit.sha,
+            authorNodeId: null,
+            reference: { ...reference, digest: digest(encode(reference)) },
+          };
+          if (
+            isOriginalContributorRepair(
+              repair,
+              originalSource,
+              accepted,
+              commit,
+            ) &&
+            headContains(accepted.headSha, commit.sha) &&
+            (await unchangedComment(originalComment)) &&
+            (await unchangedComment(acceptedComment))
+          ) {
+            repairs.push(repair);
+            break;
+          }
+        }
+        if (repairs.some((repair) => repair.commitSha === commit.sha)) break;
+      }
+      continue;
+    }
     for (const source of [original, integration]) {
       const pull = source.evidence.pull;
       const acknowledgements = retainedAcknowledgements(source.evidence);

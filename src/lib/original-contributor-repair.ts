@@ -2,7 +2,7 @@ import {
   githubLinkDestinations,
   sameRepositoryCommitHints,
 } from "../../workers/slopbot/value-commit-hints";
-import type { Pull } from "../../workers/slopbot/value-evidence-types";
+import type { Comment, Pull } from "../../workers/slopbot/value-evidence-types";
 import { isCreditEligibleCommitAuthor } from "./commit-credit";
 import type {
   CorrectionCommit,
@@ -16,14 +16,18 @@ const digest = /^[a-f0-9]{64}$/u;
 export interface OriginalContributorRepair {
   sourceId: string;
   commitSha: string;
-  authorNodeId: string;
+  authorNodeId: string | null;
   reference: {
     sourceDigests: Record<string, string>;
     pull: Pull;
-    acceptingPull: Pull;
+    acceptingPull: Pull & { created_at?: string };
     acknowledgement?: NonNullable<
       OriginalContributorFollowup["reference"]
     >["acknowledgement"];
+    originalAcknowledgement?: {
+      pull: Pull & { created_at: string };
+      comment: Comment;
+    };
     headSha: string;
     bodyEdit?: {
       id: string;
@@ -97,14 +101,68 @@ export function isOriginalContributorRepair(
     bodyEdit?.lastEditedAt ??
     pull.updated_at;
   const edited = acknowledgement?.updated_at;
+  const originalAcknowledgement = reference.originalAcknowledgement;
+  const originalComment = originalAcknowledgement?.comment;
+  const originalPull = originalAcknowledgement?.pull;
+  const pairedNullRepair =
+    commit.author === null &&
+    repair.authorNodeId === null &&
+    commit.parentCount <= 1 &&
+    repair.sourceId === accepted.sourceId &&
+    historical === undefined &&
+    bodyEdit === undefined &&
+    originalPull?.node_id === original.sourceId &&
+    originalPull.html_url === original.sourceUrl &&
+    Number.isSafeInteger(originalPull.number) &&
+    originalPull.number > 0 &&
+    original.sourceUrl.endsWith(`/pull/${originalPull.number}`) &&
+    original.repository === accepted.repository &&
+    original.repositoryNodeId === accepted.repositoryNodeId &&
+    originalPull.head.sha === original.headSha &&
+    originalPull.state === "closed" &&
+    (original.occurredAt === null
+      ? originalPull.merged_at === null
+      : originalPull.merged_at !== null &&
+        Date.parse(originalPull.merged_at) ===
+          Date.parse(original.occurredAt)) &&
+    originalComment?.user?.node_id ===
+      reference.acceptingPull.merged_by?.node_id &&
+    originalComment?.user?.type === "User" &&
+    originalComment.node_id.length > 0 &&
+    originalComment.html_url.startsWith(
+      `${original.sourceUrl}#issuecomment-`,
+    ) &&
+    /^\d+$/u.test(originalComment.html_url.split("#issuecomment-")[1] ?? "") &&
+    originalComment.created_at === originalComment.updated_at &&
+    Number.isFinite(Date.parse(originalPull.created_at)) &&
+    Number.isFinite(Date.parse(reference.acceptingPull.created_at ?? "")) &&
+    Date.parse(originalComment.created_at) >=
+      Date.parse(originalPull.created_at) &&
+    Date.parse(occurredAt ?? "") >=
+      Date.parse(reference.acceptingPull.created_at ?? "") &&
+    Date.parse(originalComment.created_at) <= Date.parse(occurredAt ?? "") &&
+    Date.parse(occurredAt ?? "") <= Date.parse(accepted.occurredAt ?? "") &&
+    referencesOriginalContributorSource(
+      originalComment.body,
+      accepted.repository,
+      reference.acceptingPull.number,
+    ) &&
+    typeof acknowledgement?.html_url === "string" &&
+    acknowledgement.html_url.startsWith(
+      `${accepted.sourceUrl}#issuecomment-`,
+    ) &&
+    /^\d+$/u.test(acknowledgement.html_url.split("#issuecomment-")[1] ?? "");
+  const linkedRepair =
+    originalAcknowledgement === undefined &&
+    repair.authorNodeId === commit.author?.id &&
+    commit.author?.kind === "User" &&
+    /^[A-Za-z0-9_=-]{4,256}$/u.test(commit.author.id) &&
+    isCreditEligibleCommitAuthor(commit.author);
   return (
     (repair.sourceId === original.sourceId ||
       repair.sourceId === accepted.sourceId) &&
     repair.commitSha === commit.sha &&
-    repair.authorNodeId === commit.author?.id &&
-    commit.author?.kind === "User" &&
-    /^[A-Za-z0-9_=-]{4,256}$/u.test(commit.author.id) &&
-    isCreditEligibleCommitAuthor(commit.author) &&
+    (pairedNullRepair || linkedRepair) &&
     Object.keys(reference.sourceDigests).length === 2 &&
     digest.test(reference.sourceDigests[original.sourceId] ?? "") &&
     digest.test(reference.sourceDigests[accepted.sourceId] ?? "") &&
@@ -162,7 +220,8 @@ export function isOriginalContributorRepair(
     digest.test(referenceDigest) &&
     sha256Hex(JSON.stringify(reference)) === referenceDigest &&
     sha.test(reference.headSha) &&
-    (repair.sourceId === original.sourceId ||
+    (pairedNullRepair ||
+      repair.sourceId === original.sourceId ||
       referencesOriginalContributorSource(
         text,
         original.repository,
