@@ -420,6 +420,7 @@ async function main() {
     console.log(
       JSON.stringify({
         projectId: packet.projectId,
+        enforcementGeneration: generation,
         mode: "already-published",
         candidateDigest: packet.candidateDigest,
       }),
@@ -492,6 +493,7 @@ async function main() {
   console.log(
     JSON.stringify({
       projectId: packet.projectId,
+      enforcementGeneration: generation,
       mode:
         process.env.HISTORICAL_POINTS_APPLY === "true"
           ? "verified-import"
