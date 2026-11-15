@@ -3027,3 +3027,121 @@ test("a later null-author resolution cannot reuse the first carrier's merger pro
   };
   expect(() => apply(journal, input)).toThrow("unit scope");
 });
+
+function pairedNullRepair() {
+  const sample = acknowledgedRepair();
+  const { grouped, accepted, donor, commit } = sample;
+  if (grouped.proof.status !== "complete" || !grouped.proof.originalContributor)
+    throw Error("fixture");
+  commit.author = null;
+  const reference = structuredClone(sample.repair.reference);
+  reference.acknowledgement.body = `Final source ${accepted.headSha}`;
+  const originalAcknowledgement = {
+    pull: {
+      ...reference.pull,
+      node_id: donor.sourceId,
+      number: Number(donor.sourceUrl.split("/").at(-1)),
+      html_url: donor.sourceUrl,
+      head: { sha: donor.headSha },
+      merged_at: donor.occurredAt,
+      created_at: "2026-10-21T00:00:00Z",
+    },
+    comment: {
+      node_id: "IC_original_pair",
+      html_url: `${donor.sourceUrl}#issuecomment-10`,
+      body: `Finished in integration #${reference.pull.number}`,
+      user: { node_id: C.id, login: C.login, type: "User" },
+      created_at: "2026-10-22T23:59:58Z",
+      updated_at: "2026-10-22T23:59:58Z",
+    },
+  };
+  const payload = {
+    ...reference,
+    acceptingPull: {
+      ...reference.acceptingPull,
+      created_at: "2026-10-22T00:00:00Z",
+    },
+    acknowledgement: {
+      ...reference.acknowledgement,
+      created_at: "2026-10-22T23:59:59Z",
+      updated_at: "2026-10-22T23:59:59Z",
+      html_url: `${accepted.sourceUrl}#issuecomment-11`,
+    },
+    originalAcknowledgement,
+  };
+  const { digest: _, ...bound } = payload;
+  const repair = {
+    ...sample.repair,
+    authorNodeId: null,
+    reference: { ...bound, digest: sha256Hex(JSON.stringify(bound)) },
+  };
+  grouped.proof.originalContributor.repairs = [repair];
+  return { ...sample, repair };
+}
+
+test("paired merger acknowledgements preserve null repair authors and award the original whole pool", () => {
+  const { journal, input, commit } = pairedNullRepair();
+  const result = apply(journal, input);
+  expect(amounts(result.journal)).toEqual({ [A.id]: 30, [C.id]: 0 });
+  expect(commit.author).toBeNull();
+  expect(total(result.journal)).toBe(total(journal));
+  expect(apply(result.journal, input, true, LATER).journal).toBe(
+    result.journal,
+  );
+});
+
+for (const fault of [
+  "missing-pair",
+  "original-actor",
+  "accepted-actor",
+  "original-url",
+  "original-node",
+  "original-head",
+  "original-edited",
+  "accepted-edited",
+  "reversed",
+  "late",
+  "head",
+  "reference",
+  "author",
+  "ancestor",
+  "first-owner",
+  "unselected",
+] as const) {
+  test(`paired null repair domain rejects ${fault}`, () => {
+    const { journal, input, grouped, repair, commit } = pairedNullRepair();
+    const reference = repair.reference;
+    const original = reference.originalAcknowledgement;
+    if (fault === "missing-pair")
+      delete (reference as Partial<typeof reference>).originalAcknowledgement;
+    if (fault === "original-actor") original.comment.user.node_id = B.id;
+    if (fault === "accepted-actor")
+      reference.acknowledgement.user.node_id = B.id;
+    if (fault === "original-url")
+      original.comment.html_url =
+        "https://github.com/foreign/repo/pull/1#issuecomment-10";
+    if (fault === "original-node") original.pull.node_id = "PR_foreign";
+    if (fault === "original-head") original.pull.head.sha = sha("9");
+    if (fault === "original-edited")
+      original.comment.updated_at = "2026-10-23T00:00:02Z";
+    if (fault === "accepted-edited")
+      reference.acknowledgement.updated_at = "2026-10-23T00:00:02Z";
+    if (fault === "reversed")
+      original.comment.created_at = original.comment.updated_at =
+        "2026-10-23T00:00:02Z";
+    if (fault === "late")
+      reference.acknowledgement.created_at =
+        reference.acknowledgement.updated_at = "2026-10-30T00:00:00Z";
+    if (fault === "head")
+      reference.acknowledgement.body = `Final source ${sha("9")}`;
+    if (fault === "reference") original.comment.body = "Integration #999";
+    if (fault === "author") commit.author = B;
+    if (fault === "ancestor") commit.parentShas = [sha("9")];
+    if (fault === "first-owner") commit.firstAcceptedSourceId = "PR_other";
+    if (fault === "unselected" && grouped.proof.status === "complete")
+      grouped.proof.claims[1].commitSha = sha("f");
+    const { digest: _, ...payload } = reference;
+    reference.digest = sha256Hex(JSON.stringify(payload));
+    expect(() => apply(journal, input)).toThrow();
+  });
+}

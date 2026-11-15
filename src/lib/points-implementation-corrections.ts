@@ -114,6 +114,7 @@ export interface OriginalContributorFollowup {
     target: { id: string; number: number; url: string; repository: string };
     acknowledgement?: {
       node_id: string;
+      html_url?: string;
       body: string;
       user: { node_id: string; type: string } | null;
       created_at?: string;
@@ -809,7 +810,9 @@ export function originalContributorClaimScope(
         pull.merged_by?.node_id === carrier.id &&
         pull.merged_by.type === "User";
       if (
-        (!eligibleActor(commit.author) && !nativeResolution) ||
+        (!eligibleActor(commit.author) &&
+          !nativeResolution &&
+          !acknowledgedRepair) ||
         (commit.author !== null &&
           commit.author.id !== origin.id &&
           commit.author.id !== carrier.id &&
