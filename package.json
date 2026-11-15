@@ -111,6 +111,7 @@
     "./stories": "./vibestack/stories/meta.ts",
     "./stories/storybook": "./vibestack/stories/storybook.ts",
     "./design/eslint": "./vibestack/design/eslint.ts",
+    "./design/tokens": "./vibestack/design/tokens.ts",
     "./package.json": "./package.json"
   },
   "publishConfig": {
@@ -121,6 +122,7 @@
       "./stories": "./dist/stories/meta.js",
       "./stories/storybook": "./dist/stories/storybook.js",
       "./design/eslint": "./dist/design/eslint.js",
+      "./design/tokens": "./dist/design/tokens.js",
       "./package.json": "./package.json"
     }
   }
