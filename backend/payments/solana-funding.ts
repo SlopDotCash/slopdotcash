@@ -91,6 +91,18 @@ export async function handleSolanaFunding(
       ),
     });
   } catch (error) {
+    // An upgraded vault refuses a withdrawal of a locked month's funds
+    // (operator decision, 15 November 2026).
+    if (
+      body.operation === "withdraw" &&
+      error instanceof Error &&
+      error.message.includes("PledgedFunds")
+    )
+      return json(422, {
+        error: "funding_action_rejected",
+        message:
+          "These funds are locked for a month that has not been paid out yet. Withdraw only funds above the locked months.",
+      });
     if (error instanceof SolanaFundingError)
       return json(422, {
         error: "funding_action_rejected",
