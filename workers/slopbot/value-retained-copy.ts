@@ -128,6 +128,94 @@ function sameAuthorReopen(original: ValueEvidence, accepted: ValueEvidence) {
   return before !== null && before === history(accepted);
 }
 
+/** A same-author consolidation may retain only part of the original branch.
+ * Complete source capture and exact changed lines still bind each retained path.
+ * Unlinked commits keep the same authenticated PR author on both sides.
+ */
+function sameAuthorRetainedSubset(
+  original: ValueEvidence,
+  accepted: ValueEvidence,
+): boolean {
+  if (
+    original.pull.user.type !== "User" ||
+    accepted.pull.user.type !== "User" ||
+    original.pull.user.node_id !== accepted.pull.user.node_id ||
+    original.pull.number >= accepted.pull.number ||
+    original.pull.state !== "closed" ||
+    original.pull.merged_at !== null ||
+    !original.pull.closed_at ||
+    !accepted.pull.merged_at ||
+    !(
+      Date.parse(original.pull.closed_at) <= Date.parse(accepted.pull.merged_at)
+    ) ||
+    original.limitations.length ||
+    accepted.limitations.length ||
+    !(
+      original.relatedPullRequests.some(
+        (ref) => ref.id === accepted.pull.node_id,
+      ) ||
+      accepted.relatedPullRequests.some(
+        (ref) => ref.id === original.pull.node_id,
+      )
+    )
+  )
+    return false;
+  for (const evidence of [original, accepted]) {
+    if (
+      evidence.commits.length === 0 ||
+      evidence.commits.length !== evidence.pull.commits ||
+      evidence.commits.at(-1)?.sha !== evidence.pull.head.sha ||
+      evidence.commitAttribution.length !== evidence.commits.length ||
+      new Set(evidence.commits.map((commit) => commit.sha)).size !==
+        evidence.commits.length ||
+      !evidence.files.every(hasCompleteValuePatch)
+    )
+      return false;
+    for (const commit of evidence.commits) {
+      const entries = evidence.commitAttribution.filter(
+        (entry) => entry.sha === commit.sha,
+      );
+      const entry = entries[0];
+      if (
+        commit.parents.length !== 1 ||
+        entries.length !== 1 ||
+        entry.limitations.length ||
+        !entry.files ||
+        entry.changedPaths === null ||
+        entry.files.length !== entry.changedPaths.length ||
+        new Set(entry.changedPaths).size !== entry.files.length ||
+        !entry.files.every(
+          (file) =>
+            entry.changedPaths?.includes(file.filename) &&
+            hasCompleteValuePatch(file),
+        )
+      )
+        return false;
+    }
+  }
+  return original.commitAttribution.some((entry) => {
+    const commit = original.commits.find((item) => item.sha === entry.sha);
+    if (!commit) return false;
+    return entry.files?.some((file) => {
+      const identity = retainedEditIdentity(file);
+      if (identity === null) return false;
+      return accepted.commitAttribution.some((copy) => {
+        const retained = accepted.commits.find((item) => item.sha === copy.sha);
+        return (
+          (commit.author === null || commit.author.type === "User") &&
+          retained !== undefined &&
+          (retained.author?.node_id ?? null) ===
+            (commit.author?.node_id ?? null) &&
+          (retained.author?.type ?? null) === (commit.author?.type ?? null) &&
+          copy.files?.some(
+            (candidate) => retainedEditIdentity(candidate) === identity,
+          )
+        );
+      });
+    });
+  });
+}
+
 /** A direct PR reference is an acknowledgement only after GitHub resolved the
  * same immutable accepted PR and the merger explicitly says work was retained.
  * Link labels cannot turn a foreign destination into a local PR reference.
@@ -221,6 +309,7 @@ async function retainedCopySources(
   original: WorkUnitSource,
   sources: readonly WorkUnitSource[],
   octoberOriginalCredit: boolean,
+  acceptedSubset = false,
 ) {
   const evidence = original.evidence;
   const retained: { source: WorkUnitSource; linkedOnly: boolean }[] = [];
@@ -251,7 +340,9 @@ async function retainedCopySources(
       evidence.pull.user.type === "User" &&
       accepted.merged_by.type === "User" &&
       evidence.pull.user.node_id !== accepted.user.node_id;
-    let acknowledged = sameAuthorReopen(evidence, integration);
+    let acknowledged =
+      sameAuthorReopen(evidence, integration) ||
+      (acceptedSubset && sameAuthorRetainedSubset(evidence, integration));
     for (const comment of retainedAcknowledgements(evidence)) {
       if (
         comment.user?.type !== "Bot" &&
@@ -835,6 +926,7 @@ export async function retainedCopyBindings(
       original,
       sources,
       options.octoberOriginalCredit === true,
+      options.acceptedSubset === true,
     );
     if (!integrations.length && alreadyAcceptedPromotion(original, sources))
       continue;
