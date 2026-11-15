@@ -37,9 +37,13 @@ with `resume_run` from this repository's same manual workflow on main. The
 source commit must be the current main commit or one of its ancestors. The
 current collector reconstructs cached bytes and proofs again, so a reviewed
 collector repair can retain compatible source evidence from an earlier run.
-The frozen baseline, registry and campaign scope must still match. An uploaded
-checkpoint is not its own evidence of completeness. Applying corrections still
-requires the current main checkout and fresh authority and financial checks.
+The frozen journal prefix and campaign scope must still match. If another
+project changes the registry, the collector reconstructs the frozen registry
+from immutable revisions and verifies its full digest. It also checks that
+the selected project definitions, revisions, restrictions and repository plans
+still match. An archive without a verifiable frozen registry needs a new
+campaign. Applying corrections requires the current main checkout, a complete
+verified collection and fresh authority and financial checks.
 
 The optional `graphql_discussions=true` input reduces REST comment requests
 for new retained-copy discovery. GitHub's REST PR and reviews still anchor
@@ -67,8 +71,8 @@ remain intact. Displaced recipients receive zero-valued successor revisions.
 The domain validator checks actual Points projections as well as raw pool
 totals and refuses stale or incomplete connected pools.
 
-Immediately before a write the runner verifies it still uses current main
-and that the registry and account restrictions have not changed since planning.
+Immediately before a write the runner verifies it still uses current main and
+rechecks the selected project registry and current account restrictions.
 The unchanged atomic import guard checks private protection again, covering
 changes after the preflight. A pending public receipt is retained before import.
 Success requires the exact D1 batch digest, revision count and empty staging,
