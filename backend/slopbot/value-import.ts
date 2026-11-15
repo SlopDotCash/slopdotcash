@@ -53,7 +53,7 @@ export async function handleHistoricalValueImport(
         new TransformStream<Uint8Array, Uint8Array>({
           transform(chunk, controller) {
             received += chunk.byteLength;
-            if (received > 25 * 1024 * 1024)
+            if (received > 33 * 1024 * 1024)
               throw new Error("Historical assessment body limit");
             controller.enqueue(chunk);
           },
@@ -73,14 +73,14 @@ export async function handleHistoricalValueImport(
         throw new Error("Invalid historical assessment parts");
       input = await readBoundedJson(
         new Response(envelope.stream()),
-        25 * 1024 * 1024,
+        33 * 1024 * 1024,
         "historical assessment",
       );
       bundle = objects;
     } else
       input = await readBoundedJson(
         request as unknown as Response,
-        25 * 1024 * 1024,
+        33 * 1024 * 1024,
         "historical assessment",
       );
   } catch {
