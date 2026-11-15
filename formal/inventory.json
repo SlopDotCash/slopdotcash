@@ -8835,7 +8835,7 @@
     },
     {
       "path": "workers/slopbot/value-work-unit.ts",
-      "sha256": "5b752c8152aab698af3490a4700c9f6351e17971071c58446f684a77fb2ef817",
+      "sha256": "418b47f1c177e4d6deb946fa99e7521b01625a28517a961973f5157cf3ae2a3a",
       "models": [
         "formal/models/slopbot/bot_value_pipeline.qnt",
         "formal/models/slopbot/bot_work_partition.qnt",
