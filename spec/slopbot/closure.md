@@ -324,6 +324,10 @@ type CloseEvidence = { itemNode: str, revision: str, closedBy: CloseActor, close
 type GithubRefusal = { attemptId: int, status: int }
 pure def definitiveRefusal(status: int): bool =
   status == 401 or status == 403 or status == 404 or status == 410 or status == 422 or status == 429
+pure def lawAmbiguousResponseNeverReleases(status: int): bool =
+  (status == 408 or status == 500 or status == 502 or status == 503 or status == 504 or status == 0) implies
+    not(definitiveRefusal(status))
+pure val statusValues = Set(0, 401, 403, 404, 408, 410, 422, 429, 500, 502, 503, 504)
 pure def canConfirmClose(c: Closure, closeEvent: CloseEvidence): bool =
   c.attempt.state == Pending and c.attempt.requests == 1 and closeEvent.itemNode == c.identity.itemNode and
   closeEvent.revision == c.identity.revision and closeEvent.closedBy == SlopbotApp and closeEvent.closedAt > 0
@@ -374,7 +378,7 @@ pure def addModeratorLabel(c: Closure): Closure = { ...c, moderatorLabel: true }
 pure def alwaysNoticesOnlyForConfirmedScam(c: Closure): bool =
   (c.moderatorNotices.size() > 0 or c.moderatorLabel) implies closedBySlopbot(c) and c.triage.category == F::Scam
 pure def alwaysNoticesToModerators(c: Closure): bool = c.moderatorNotices.subseteq(slopModerators)
-pure def sometimesAllModeratorsNotified(c: Closure): bool = slopModerators.subseteq(c.moderatorNotices)
+pure def sometimesModeratorNotified(c: Closure): bool = c.moderatorNotices.size() > 0
 pure val fair_notifyModerator = "weak"
 pure def leadsToEveryModeratorNotified(c: Closure, later: Closure): bool =
   (closedBySlopbot(c) and c.triage.category == F::Scam) implies slopModerators.subseteq(later.moderatorNotices)
@@ -617,7 +621,7 @@ pure val grantValues = Set({ repository: 7, itemNode: "pr", revision: "head", at
   { repository: 7, itemNode: "pr", revision: "head", attemptId: 2 })
 pure val closeEvidence: CloseEvidence = { itemNode: "pr", revision: "head", closedBy: SlopbotApp, closedAt: 100 }
 pure val closeEventValues = Set(closeEvidence, { ...closeEvidence, closedBy: HumanActor })
-pure val refusalValues = Set({ attemptId: 1, status: 422 }, { attemptId: 1, status: 504 })
+pure val refusalValues = Set({ attemptId: 1, status: 422 })
 pure val recipientValues = Set(18633264, 202660855)
 pure val observedAtValues = Set(604800, 691200)
 pure val dueObservation: TimelineObservation = { itemNode: "pr", revision: "head", heldAt: 0, checkedAt: 604800,
@@ -639,7 +643,7 @@ pure val weight_decide = 20
 pure val weight_reserveClose = 20
 pure val weight_requestClose = 20
 pure val weight_confirmClose = 20
-pure val weight_rejectClose = 15
+pure val weight_rejectClose = 20
 pure val weight_confirmCloseComment = 8
 pure val weight_notifyModerator = 20
 pure val weight_notifyMaintainer = 10
@@ -651,7 +655,7 @@ pure val weight_commentSecurity = 6
 pure val weight_labelSecurityScam = 6
 pure val weight_reopenAfterAppeal = 20
 pure val weight_removeLabels = 20
-pure val weight_observeAppealOutcome = 2
+pure val weight_observeAppealOutcome = 5
 pure val weight_addModeratorLabel = 5
 pure val weight_supersedeHold = 5
 pure val weight_resolveMaintainerAction = 5
