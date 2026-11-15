@@ -249,6 +249,11 @@ function hasRetainedPullReference(
   );
   // Sentence punctuation followed by whitespace preserves dots inside URLs.
   return text.split(/(?<=[.!?])(?:\s+|$)|[\r\n]+/u).some((sentence) => {
+    const incorporated =
+      /^\s*incorporated\s+into\s+merged\b/iu.test(sentence) &&
+      !/\b(?:will|would|could|should|may|might|must|if|unless|but)\b/iu.test(
+        sentence,
+      );
     const includedFix =
       /\b(?:fix|fixes|correction|corrections)\b[^.!?\r\n]*\b(?:is|are|was|were)\s+included\s+in\b/iu.test(
         sentence,
@@ -258,10 +263,13 @@ function hasRetainedPullReference(
       ) &&
       !/\bbut\b/iu.test(sentence);
     if (
-      (!/\b(?:commits?|changes?|work)\b/iu.test(sentence) && !includedFix) ||
+      (!/\b(?:commits?|changes?|work)\b/iu.test(sentence) &&
+        !includedFix &&
+        !incorporated) ||
       !(rebase
         ? /\brebased\b/iu.test(sentence) && /\bauthorship\b/iu.test(sentence)
         : includedFix ||
+          incorporated ||
           /\b(?:retained|cherry[ -]picked|carried[ -]over)\b/iu.test(
             sentence,
           )) ||
