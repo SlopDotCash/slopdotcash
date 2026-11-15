@@ -29,6 +29,7 @@ import {
 import {
   type CorrectionActor,
   type CorrectionClaim,
+  type CorrectionCommit,
   type CorrectionSource,
   correctionClaimCommit,
   createPointsCorrectionBaseline,
@@ -1692,6 +1693,7 @@ async function exactOctoberOriginalContributorProof(
   original: WorkUnitSource,
   allowMergedOriginal = false,
   scopedClaims?: readonly CorrectionClaim[],
+  reviewedOriginal?: OriginalContributorBinding["reviewedOriginal"],
 ): Promise<HistoricalOrdinaryProof | null> {
   // Scoped units start at their first retained contributor commit. A later
   // original head can already include maintainer repairs to that same work.
@@ -1864,7 +1866,7 @@ async function exactOctoberOriginalContributorProof(
       merge,
       [anchor.sha, ...(scopedClaims ?? []).map((claim) => claim.commitSha)],
     );
-  if (scopedClaims)
+  if (scopedClaims && !reviewedOriginal)
     await authenticateOriginalFollowupParents(
       github,
       originalSource,
@@ -1921,6 +1923,7 @@ async function exactOctoberOriginalContributorProof(
       originalCommitSha: anchor.sha,
       acceptedCommitSha: anchor.sha,
       boundPaths,
+      ...(reviewedOriginal ? { reviewedOriginal } : {}),
       bindingDigest: digest(
         encode({
           original: await valueSourceDigest(original.evidence, original.policy),
@@ -1929,6 +1932,7 @@ async function exactOctoberOriginalContributorProof(
             integration.policy,
           ),
           ...(scopedClaims ? { claims: scopedClaims, repairs } : {}),
+          ...(reviewedOriginal ? { reviewedOriginal } : {}),
           pulls,
           merge,
           firstParent,
@@ -1941,8 +1945,103 @@ async function exactOctoberOriginalContributorProof(
   };
 }
 
+async function reviewedOriginalCommit(
+  github: Pick<GitHubClient, "get">,
+  original: WorkUnitSource,
+  currentSource: CorrectionSource,
+  accepted: CorrectionSource,
+  integration: WorkUnitSource,
+  claims: readonly CorrectionClaim[],
+): Promise<OriginalContributorBinding["reviewedOriginal"] | undefined> {
+  const selectedShas = new Set(
+    claims
+      .filter((claim) => claim.sourceId === accepted.sourceId)
+      .map((claim) => claim.commitSha),
+  );
+  if (original.evidence.commits.some((commit) => selectedShas.has(commit.sha)))
+    return undefined;
+  const native = new Map(
+    integration.evidence.commits.map((commit) => [commit.sha, commit]),
+  );
+  for (const review of [...original.evidence.reviews].sort(
+    (left, right) =>
+      Date.parse(left.submitted_at ?? "") -
+        Date.parse(right.submitted_at ?? "") || left.id - right.id,
+  )) {
+    if (
+      review.user?.type !== "User" ||
+      review.submitted_at === null ||
+      accepted.occurredAt === null ||
+      !(Date.parse(review.submitted_at) < Date.parse(accepted.occurredAt)) ||
+      !selectedShas.has(review.commit_id ?? "")
+    )
+      continue;
+    const commits: CorrectionCommit[] = [];
+    const seen = new Set<string>();
+    let current = review.commit_id;
+    while (current && !seen.has(current)) {
+      seen.add(current);
+      const commit = accepted.commits.find((item) => item.sha === current);
+      const retained = native.get(current);
+      if (
+        !commit ||
+        !retained ||
+        commit.parentCount !== 1 ||
+        commit.author?.kind !== "User" ||
+        commit.author.id !== original.evidence.pull.user.node_id ||
+        commit.firstAcceptedSourceId !== accepted.sourceId ||
+        !commit.files?.length
+      )
+        break;
+      commits.unshift({
+        ...commit,
+        parentShas: retained.parents.map((parent) => parent.sha),
+      });
+      if ([...selectedShas].every((sha) => seen.has(sha))) break;
+      current = retained.parents[0]?.sha;
+    }
+    if (
+      ![...selectedShas].every((sha) =>
+        commits.some((commit) => commit.sha === sha),
+      )
+    )
+      continue;
+    const currentReview = await github.get<ValueEvidence["reviews"][number]>(
+      `/repos/${accepted.repository}/pulls/${original.evidence.pull.number}/reviews/${review.id}`,
+    );
+    requireThat(
+      matchesRetainedProjection(currentReview, review),
+      "Historical original review changed during collection",
+    );
+    for (const commit of commits) {
+      const currentCommit = await github.get<{
+        sha: string;
+        parents: { sha: string }[];
+        author: { node_id: string; type: string } | null;
+      }>(`/repos/${accepted.repository}/commits/${commit.sha}`);
+      requireThat(
+        currentCommit !== null &&
+          currentCommit.sha === commit.sha &&
+          encode(currentCommit.parents.map((parent) => parent.sha)) ===
+            encode(commit.parentShas) &&
+          currentCommit.author?.type === "User" &&
+          currentCommit.author.node_id === commit.author?.id,
+        "Historical original commit identity changed during collection",
+      );
+    }
+    const retained = {
+      sourceDigest: await valueSourceDigest(original.evidence, original.policy),
+      currentSourceDigest: digest(encode(currentSource)),
+      review,
+      commits,
+    };
+    return { ...retained, digest: digest(encode(retained)) };
+  }
+  return undefined;
+}
+
 /** Bind a reviewed single-origin unit inside a multi-origin native merge. */
-export async function octoberOriginalContributorUnitProof(
+async function singleOriginalContributorUnitProof(
   github: Pick<GitHubClient, "get"> & Partial<Pick<GitHubClient, "graphql">>,
   accepted: CorrectionSource,
   original: WorkUnitSource,
@@ -1951,11 +2050,37 @@ export async function octoberOriginalContributorUnitProof(
   claims: readonly CorrectionClaim[],
   followups: readonly WorkUnitSource[] = [],
 ): Promise<HistoricalOrdinaryProof> {
-  const source = richSource(original.evidence, owners);
+  const currentSource = richSource(original.evidence, owners);
   const canonical = matchRetainedAcceptedSource(
     accepted,
     richSource(integration.evidence, owners),
   );
+  const reviewedOriginal = await reviewedOriginalCommit(
+    github,
+    original,
+    currentSource,
+    canonical,
+    integration,
+    claims,
+  );
+  if (reviewedOriginal) {
+    await authenticateOriginalFollowupParents(
+      github,
+      currentSource,
+      original.evidence,
+    );
+    reviewedOriginal.currentSourceDigest = digest(encode(currentSource));
+    const { digest: _digest, ...payload } = reviewedOriginal;
+    reviewedOriginal.digest = digest(encode(payload));
+  }
+  const source = reviewedOriginal
+    ? {
+        ...currentSource,
+        headSha: reviewedOriginal.commits.at(-1)?.sha ?? currentSource.headSha,
+        commitCount: reviewedOriginal.commits.length,
+        commits: reviewedOriginal.commits,
+      }
+    : currentSource;
   const proof = await exactOctoberOriginalContributorProof(
     github,
     canonical,
@@ -1964,8 +2089,13 @@ export async function octoberOriginalContributorUnitProof(
     original,
     true,
     claims.filter((claim) => claim.sourceId === accepted.sourceId),
+    reviewedOriginal,
   );
   requireThat(proof, "Reviewed unit lacks native original-head acceptance");
+  if (reviewedOriginal)
+    proof.sources = proof.sources.map((item) =>
+      item.sourceId === currentSource.sourceId ? currentSource : item,
+    );
   if (!followups.length) {
     requireThat(
       claims.every((claim) => claim.sourceId === accepted.sourceId),
@@ -2037,6 +2167,182 @@ export async function octoberOriginalContributorUnitProof(
       ),
     },
   };
+}
+
+/** Resolve reviewed revisions while retaining the complete current PR. */
+export async function octoberOriginalContributorUnitProof(
+  github: Pick<GitHubClient, "get"> & Partial<Pick<GitHubClient, "graphql">>,
+  accepted: CorrectionSource,
+  original: WorkUnitSource,
+  integration: WorkUnitSource,
+  owners: ReadonlyMap<string, string>,
+  claims: readonly CorrectionClaim[],
+  followups: readonly WorkUnitSource[] = [],
+): Promise<HistoricalOrdinaryProof> {
+  const evidence = [integration, ...followups];
+  if (
+    original.evidence.pull.merged_at !== null &&
+    !evidence.some(
+      (source) =>
+        source.evidence.pull.node_id === original.evidence.pull.node_id,
+    )
+  )
+    evidence.push(original);
+  const commits = new Map<string, ValueEvidence["commits"][number]>();
+  for (const source of evidence) {
+    for (const commit of source.evidence.commits) {
+      const previous = commits.get(commit.sha);
+      requireThat(
+        !previous || encode(previous) === encode(commit),
+        "Reviewed revision has conflicting native commit evidence",
+      );
+      commits.set(commit.sha, commit);
+    }
+  }
+  const ancestry = new Map<string, boolean>();
+  const reaches = async (head: string, ancestor: string): Promise<boolean> => {
+    const key = `${ancestor}\0${head}`;
+    const cached = ancestry.get(key);
+    if (cached !== undefined) return cached;
+    const pending = [head];
+    const seen = new Set<string>();
+    for (const sha of pending) {
+      if (sha === ancestor) {
+        ancestry.set(key, true);
+        return true;
+      }
+      if (seen.has(sha)) continue;
+      seen.add(sha);
+      pending.push(
+        ...(commits.get(sha)?.parents.map((parent) => parent.sha) ?? []),
+      );
+    }
+    const comparison = await nativeComparison(
+      github,
+      accepted.repository,
+      ancestor,
+      head,
+    );
+    const result =
+      ["ahead", "identical"].includes(comparison.status) &&
+      comparison.behind_by === 0 &&
+      comparison.merge_base_commit.sha === ancestor;
+    ancestry.set(key, result);
+    return result;
+  };
+  const anchors: string[] = [];
+  for (const review of [...original.evidence.reviews].sort(
+    (left, right) =>
+      Date.parse(left.submitted_at ?? "") -
+        Date.parse(right.submitted_at ?? "") || left.id - right.id,
+  )) {
+    if (
+      review.user?.type !== "User" ||
+      original.evidence.commits.some(
+        (commit) => commit.sha === review.commit_id,
+      ) ||
+      !claims.some((claim) => claim.commitSha === review.commit_id)
+    )
+      continue;
+    let current = review.commit_id;
+    const seen = new Set<string>();
+    const chain: string[] = [];
+    while (current && !seen.has(current)) {
+      seen.add(current);
+      const commit = commits.get(current);
+      if (
+        commit?.parents.length !== 1 ||
+        commit.author?.type !== "User" ||
+        commit.author.node_id !== original.evidence.pull.user.node_id
+      )
+        break;
+      if (claims.some((claim) => claim.commitSha === current))
+        chain.unshift(current);
+      current = commit.parents[0].sha;
+    }
+    if (chain.length && !anchors.includes(chain[0])) anchors.push(chain[0]);
+  }
+  const partitions: CorrectionClaim[][] = [];
+  const assigned = new Set<string>();
+  for (const anchor of anchors) {
+    const selected: CorrectionClaim[] = [];
+    for (const claim of claims)
+      if (!assigned.has(claim.id) && (await reaches(claim.commitSha, anchor)))
+        selected.push(claim);
+    if (!selected.length) continue;
+    partitions.push(selected);
+    for (const claim of selected) assigned.add(claim.id);
+  }
+  const remaining = claims.filter((claim) => !assigned.has(claim.id));
+  if (remaining.length) partitions.push(remaining);
+  if (partitions.length <= 1)
+    return singleOriginalContributorUnitProof(
+      github,
+      accepted,
+      original,
+      integration,
+      owners,
+      claims,
+      followups,
+    );
+  const sources = new Map<string, CorrectionSource>();
+  const parts: OriginalContributorBinding[] = [];
+  for (const selected of partitions) {
+    const acceptedEvidence = evidence
+      .filter((source) =>
+        selected.some(
+          (claim) => claim.sourceId === source.evidence.pull.node_id,
+        ),
+      )
+      .sort(
+        (left, right) =>
+          Date.parse(left.evidence.pull.merged_at ?? "") -
+          Date.parse(right.evidence.pull.merged_at ?? ""),
+      );
+    const first = acceptedEvidence[0];
+    requireThat(first, "Reviewed revision lacks its first acceptance");
+    const firstSource = richSource(first.evidence, owners);
+    const later: WorkUnitSource[] = [];
+    for (const source of evidence) {
+      if (source === first) continue;
+      if (
+        selected.some(
+          (claim) => claim.sourceId === source.evidence.pull.node_id,
+        )
+      ) {
+        later.push(source);
+        continue;
+      }
+      if (
+        source.evidence.pull.node_id === original.evidence.pull.node_id &&
+        source.evidence.pull.merged_at !== null &&
+        !selected.some(
+          (claim) => claim.commitSha === source.evidence.pull.head.sha,
+        ) &&
+        (await reaches(source.evidence.pull.head.sha, selected[0].commitSha))
+      )
+        later.push(source);
+    }
+    const proof = await singleOriginalContributorUnitProof(
+      github,
+      firstSource,
+      original,
+      first,
+      owners,
+      selected,
+      later,
+    );
+    requireThat(
+      proof.originalContributor,
+      "Reviewed revision lacks a native binding",
+    );
+    parts.push({
+      ...proof.originalContributor,
+      acceptedSourceId: firstSource.sourceId,
+    });
+    for (const source of proof.sources) sources.set(source.sourceId, source);
+  }
+  return { sources: [...sources.values()], originalContributorParts: parts };
 }
 
 /** Preserve one person's unit across independently verified originating PRs. */
@@ -2195,14 +2501,18 @@ export async function octoberOriginalContributorPartsProof(
       selected,
       followups,
     );
-    requireThat(
-      proof.originalContributor,
-      "Native original partition proof is missing",
-    );
-    parts.push({
-      ...proof.originalContributor,
-      acceptedSourceId: accepted.sourceId,
-    });
+    if (proof.originalContributorParts) {
+      parts.push(...proof.originalContributorParts);
+    } else {
+      requireThat(
+        proof.originalContributor,
+        "Native original partition proof is missing",
+      );
+      parts.push({
+        ...proof.originalContributor,
+        acceptedSourceId: accepted.sourceId,
+      });
+    }
     for (const source of proof.sources)
       authenticated.set(source.sourceId, source);
   }
@@ -3817,6 +4127,7 @@ async function collectWithEvidenceCache(
                 (source) => authenticated.get(source.sourceId) ?? source,
               );
               originalContributor = proof.originalContributor;
+              originalContributorParts = proof.originalContributorParts;
               if (
                 originalContributor &&
                 accepted.sourceId !== candidate.sourceId
@@ -3830,6 +4141,7 @@ async function collectWithEvidenceCache(
         }
         if (
           !originalContributor &&
+          !originalContributorParts &&
           octoberOriginalCredit &&
           candidate.occurredAt.startsWith("2026-10-")
         ) {
