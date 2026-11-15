@@ -190,7 +190,7 @@ pure def denyAppeal(a: Access, by: int, appealId: int, decision: int): Access =
   { ...a, decisions: a.decisions.append(decision),
     appeals: a.appeals.listMap(p => if (p.id == appealId) { ...p, status: AppealDenied, decidedBy: by } else p) }
 pure def appealAccess(a: Access, actor: int): bool = a.bans.some(b => b.target == actor)
-pure def alwaysAppealsDecidedByModerators(a: Access): bool = a.appeals.every(p =>
+pure def alwaysAppealsDecidedByModerators(a: Access): bool = a.lastAppeal >= 0 and a.appeals.every(p =>
   p.id > 0 and p.id <= a.lastAppeal and banFor(a, p.enforcement, p.target).enforcement > 0
     and (p.status == AppealOpen iff p.decidedBy == 0) and (p.status != AppealOpen implies isModerator(p.decidedBy))
     and (p.status == AppealGranted implies released(a, banFor(a, p.enforcement, p.target)))
