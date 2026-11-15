@@ -8,8 +8,11 @@ exclusive, expiring review claims on a single immutable review key. Source is
 classification and provider routing. This state owns the durable D1 token,
 its expiry, and the single authority to record completion for a review key.
 The [author slots](./routing.md) decide the new-author capacity that a
-claim consumes, and the closure composition owns close attempts. This unit
-reads both as typed observations: a claim needs the routing admission, and
+claim consumes, and the closure composition owns close attempts. A claim
+reads the author slots' own state and the routing decision: a reviewing
+route of a new author needs fewer than three slots occupied by the
+author's other reviews. `ownSlot` names this review key's slot in them.
+Close attempts are read as a typed observation, and
 a claim made while a close attempt is unresolved may only reconcile that
 attempt. Claim expiry never clears a possibly effective action.
 
@@ -26,25 +29,27 @@ expiry before inference. The positive integer token below orders successive
 generations for a single review key. Actual opaque tokens remain in the shell.
 
 ```quint
+import routing as R from "./routing"
 type ClaimStatus = NoReview | Running | Skipped | Failed | Completed
 type PriorStart = First | Retry | Reconcile
 type CloseAttempt = NoCloseAttempt | PendingClose | ConfirmedClose | RejectedClose
-type AuthorAdmission = { reviewing: bool, established: bool, occupiedByOthers: int }
 type ReviewLease = { status: ClaimStatus, token: int, now: int, expires: int,
   completedToken: int, callRecorded: bool, currentCalled: bool, kind: PriorStart, close: CloseAttempt }
 pure val leaseSeconds = 1200
 pure val initial: ReviewLease = { status: NoReview, token: 0, now: 0, expires: 0,
   completedToken: 0, callRecorded: false, currentCalled: false, kind: First, close: NoCloseAttempt }
-pure def admitted(a: AuthorAdmission): bool = not(a.reviewing) or a.established or a.occupiedByOthers < 3
+pure val ownSlot = 9
+pure def admitted(slots: R::AuthorSlots, key: int, route: R::Route): bool =
+  not(R::reviews(route)) or slots.established or R::occupiedByOthers(slots, key) < R::authorDailyCap
 pure def canObserveTime(s: ReviewLease, time: int): bool = time >= s.now
 pure def observeTime(s: ReviewLease, time: int): ReviewLease = { ...s, now: time }
 pure def ownsClaim(s: ReviewLease, token: int): bool =
   s.status == Running and token > 0 and token == s.token and s.now < s.expires
-pure def canClaim(s: ReviewLease, token: int, expires: int, admission: AuthorAdmission): bool =
+pure def canClaim(s: ReviewLease, token: int, expires: int, slots: R::AuthorSlots, route: R::Route): bool =
   token > s.token and token > 0 and expires > s.now and expires <= s.now + leaseSeconds
-    and (admitted(admission) or s.close == PendingClose) and
+    and (admitted(slots, ownSlot, route) or s.close == PendingClose) and
     (s.status == NoReview or s.status == Skipped or s.status == Failed or (s.status == Running and s.now >= s.expires))
-pure def claim(s: ReviewLease, token: int, expires: int, admission: AuthorAdmission): ReviewLease =
+pure def claim(s: ReviewLease, token: int, expires: int, slots: R::AuthorSlots, route: R::Route): ReviewLease =
   { ...s, status: Running, token: token, expires: expires, currentCalled: false,
     kind: if (s.close == PendingClose) Reconcile
       else if (s.callRecorded or s.status == Failed or s.status == Running) Retry else First }
@@ -92,9 +97,11 @@ pure def sometimesSkippedRetryIsFirst(s: ReviewLease): bool = s.status == Runnin
 pure val timeValues = Set(1, 2, 3, 4, 5)
 pure val tokenValues = Set(0, 1, 2, 3)
 pure val expiresValues = Set(1, 2, 3, 4, 5)
-pure val admissionValues = Set({ reviewing: true, established: false, occupiedByOthers: 1 },
-  { reviewing: true, established: false, occupiedByOthers: 3 }, { reviewing: true, established: true, occupiedByOthers: 3 },
-  { reviewing: false, established: false, occupiedByOthers: 3 })
+pure val busySlot: R::Slot = { key: 1, status: R::SlotRunning, leaseUntil: 3000, completedAt: 0, close: R::NoClose,
+  closedAt: 0, limited: true }
+pure val fullSlots: R::AuthorSlots = { ...R::initial, slots: List(busySlot, { ...busySlot, key: 2 }, { ...busySlot, key: 3 }) }
+pure val slotsValues = Set(R::initial, fullSlots, { ...fullSlots, established: true })
+pure val routeValues = Set(R::AdvisoryReview, R::SkipDraft)
 pure val weight_claim = 7
 pure val weight_finish = 8
 ```

@@ -53,23 +53,26 @@ type ReopenSource = { installation: int, repository: int, kind: ItemKind, number
 type ReopenObservation = { source: ReopenSource, node: str, currentRevision: str, author: int,
   itemState: ItemState, maintainer: bool, existingDebit: bool, reversalOnly: bool }
 type Body = { event: GithubEvent, deliveryId: str, valueCandidate: bool, value: ValueSource,
-  job: JobKind, reopen: ReopenSource, publicRepo: bool, selfSender: bool, qualityReceipt: bool }
+  job: JobKind, reopen: ReopenSource, publicRepo: bool, selfSender: bool, qualityReceipt: bool,
+  change: I::InstallEvent }
 type Request = { id: int, bytes: Bytes, phase: Ingress, status: int, result: Outcome, body: Body,
   valued: bool, scope: JobScope, completion: Outcome }
 type Webhook = { deliveryId: str, receipt: OrdinaryReceipt, firstEvent: GithubEvent, exists: bool,
   installationProcessed: bool, value: ValueSource, reopen: ReopenSource, confirmed: bool,
-  requests: List[Request], sends: int, install: I::Installation }
+  requests: List[Request], sends: int, install: I::Installation, installDelivery: int }
 pure val noValue: ValueSource = { installation: 0, repository: 0, owner: "", repo: "", pull: 0 }
 pure val noReopen: ReopenSource = { installation: 0, repository: 0, kind: IssueItem, number: 0,
   sender: 0, node: "", revision: "", occurred: 0 }
+pure val noChange: I::InstallEvent = { delivery: 0, kind: I::OtherInstallAction, sourceTime: 0, hasAccount: false,
+  validTime: false }
 pure val noBody: Body = { event: Other, deliveryId: "", valueCandidate: false, value: noValue,
-  job: NoJob, reopen: noReopen, publicRepo: false, selfSender: false, qualityReceipt: false }
+  job: NoJob, reopen: noReopen, publicRepo: false, selfSender: false, qualityReceipt: false, change: noChange }
 pure val noBytes: Bytes = { digest: "", length: 0 }
 pure val noRequest: Request = { id: 0, bytes: noBytes, phase: Disposed, status: 0, result: NoReply,
   body: noBody, valued: false, scope: NoScope, completion: NoReply }
 pure val initial: Webhook = { deliveryId: "", receipt: NoReceipt, firstEvent: Other, exists: false,
   installationProcessed: false, value: noValue, reopen: noReopen, confirmed: false, requests: List(), sends: 0,
-  install: I::initial }
+  install: I::initial, installDelivery: 0 }
 pure def request(w: Webhook, requestId: int): Request = w.requests.select(r => r.id == requestId).nthOr(0, noRequest)
 pure def updateRequest(r: Request, w: Webhook): Webhook =
   { ...w, requests: w.requests.listMap(old => if (old.id == r.id) r else old) }
@@ -90,7 +93,9 @@ pure def authenticate(w: Webhook, requestId: int, signedBytes: Bytes, verifiedHm
 pure def canDecode(w: Webhook, requestId: int): bool = request(w, requestId).phase == AwaitingDecode
 pure def decode(w: Webhook, requestId: int, decodedBytes: Bytes, strictUtf8: bool, jsonObject: bool, body: Body): Webhook =
   val r = request(w, requestId)
-  if (decodedBytes == r.bytes and strictUtf8 and jsonObject and body.deliveryId != "" and
+  val changeParsed = if (body.event == Installation) body.change.delivery > 0 and body.change.sourceTime >= 0
+    else body.change == noChange
+  if (decodedBytes == r.bytes and strictUtf8 and jsonObject and body.deliveryId != "" and changeParsed and
     (w.deliveryId == "" or body.deliveryId == w.deliveryId))
     updateRequest({ ...r, body: body, phase: CanClaim }, w)
   else answer(r, 400, Malformed, w)
@@ -103,8 +108,13 @@ pure def decode(w: Webhook, requestId: int, decodedBytes: Bytes, strictUtf8: boo
 A processed receipt replies as duplicate before the value or queue path.
 Concurrent pending requests can both advance. Installation receipts use
 a separate completion flag and require the retained event to have the
-installation kind. The [installation](./installation.md) change, its owner
-notices and the completion flag commit in one batch. A failed batch or an
+installation kind. The change applied is the one decoded from the
+authenticated bytes of this delivery, and the first claimed request fixes
+its GitHub delivery number, so a request for the same delivery ID cannot
+apply a different change. The [installation](./installation.md) change, its
+owner notices and the completion flag commit in one batch. This machine
+holds one delivery ID; the order of changes across deliveries is checked
+in the installation unit. A failed batch or an
 invalid GitHub source time leaves the flag unset, so a redelivery retries
 without running ordinary release.
 
@@ -118,16 +128,19 @@ pure def claim(w: Webhook, requestId: int): Webhook =
   val duplicate = if (installation) w.exists and (w.firstEvent != Installation or w.installationProcessed)
     else w.receipt == ProcessedReceipt
   val stored = if (w.exists) w else { ...w, exists: true, deliveryId: r.body.deliveryId,
-    firstEvent: r.body.event, receipt: PendingReceipt }
+    firstEvent: r.body.event, receipt: PendingReceipt,
+    installDelivery: if (w.installDelivery == 0) r.body.change.delivery else w.installDelivery }
   if (duplicate) answer(r, 202, Duplicate, w)
   else updateRequest({ ...r, phase: if (installation) InstallPending else InspectValue }, stored)
-pure def canFinishInstallation(w: Webhook, requestId: int): bool =
+pure def canFinishInstallation(w: Webhook, requestId: int, committed: bool): bool =
   request(w, requestId).phase == InstallPending and w.exists and w.firstEvent == Installation
-pure def finishInstallation(w: Webhook, requestId: int, installEvent: I::InstallEvent, committed: bool): Webhook =
+    and request(w, requestId).body.change.delivery == w.installDelivery and w.installDelivery > 0
+pure def finishInstallation(w: Webhook, requestId: int, committed: bool): Webhook =
   val r = request(w, requestId)
-  if (committed and I::canDeliver(w.install, installEvent) and (installEvent.validTime or not(installEvent.hasAccount)))
-    answer(r, 202, Ignored, { ...w, installationProcessed: true, install: I::deliver(w.install, installEvent) })
-  else if (committed and I::canDeliver(w.install, installEvent)) answer(r, 500, Failed, { ...w, install: I::deliver(w.install, installEvent) })
+  val change = r.body.change
+  if (committed and I::canDeliver(w.install, change) and (change.validTime or not(change.hasAccount)))
+    answer(r, 202, Ignored, { ...w, installationProcessed: true, install: I::deliver(w.install, change) })
+  else if (committed and I::canDeliver(w.install, change)) answer(r, 500, Failed, { ...w, install: I::deliver(w.install, change) })
   else answer(r, 503, Failed, w)
 pure def releaseOrdinary(w: Webhook): Webhook =
   if (w.reopen != noReopen) w
@@ -261,7 +274,10 @@ pure val sourceReopen: ReopenSource = { installation: 1, repository: 1, kind: Pu
 pure val reviewBody: Body = { ...noBody, event: PullRequest, deliveryId: "delivery", publicRepo: true, job: Review }
 pure val valueBody: Body = { ...reviewBody, valueCandidate: true, value: sourceValue, job: NoJob }
 pure val reopenBody: Body = { ...reviewBody, job: HumanReopen, valueCandidate: true, value: sourceValue, reopen: sourceReopen }
-pure val bodyValues = Set(reviewBody, valueBody, reopenBody, { ...reviewBody, event: Installation, job: NoJob })
+pure val createdChange: I::InstallEvent = { delivery: 1, kind: I::Created, sourceTime: 1, hasAccount: true, validTime: true }
+pure val bodyValues = Set(reviewBody, valueBody, reopenBody,
+  { ...reviewBody, event: Installation, job: NoJob, change: createdChange },
+  { ...reviewBody, event: Installation, job: NoJob, change: { ...createdChange, kind: I::Suspend, validTime: false } })
 pure val evidenceValues = Set({source: sourceReopen, node: "node", currentRevision: "next", author: 1,
   itemState: OpenItem, maintainer: true, existingDebit: true, reversalOnly: false})
 pure val requestIdValues = Set(1, 2)
@@ -274,10 +290,10 @@ pure val activeRegistry: RS::RegistryObservation = { lookup: RS::CurrentPath, re
 pure val registrationValues = Set(activeRegistry, { ...activeRegistry, rowActive: false },
   { ...activeRegistry, retirement: RS::OwnerRetired })
 pure val writeRegistrationValues = Set(activeRegistry, { ...activeRegistry, observedId: 2 })
-pure val installEventValues = Set({ delivery: 1, kind: I::Created, sourceTime: 1, hasAccount: true, validTime: true },
-  { delivery: 1, kind: I::Suspend, sourceTime: 1, hasAccount: true, validTime: false })
+pure val committedValues = Set(true, false)
 pure def alwaysInstallationFlagMatchesChange(w: Webhook): bool =
-  w.installationProcessed implies (w.firstEvent == Installation and w.install.processed.length() > 0)
+  w.installationProcessed implies (w.firstEvent == Installation and w.install.processed.includes(w.installDelivery)
+    and w.installDelivery > 0)
 pure val weight_receive = 4
 pure val weight_authenticate = 4
 pure val weight_decode = 4

@@ -30,6 +30,7 @@ project revision records its new current path. Until then it is
 unregistered for review, and its history remains readable by permanent ID.
 
 ```quint
+import installation as I from "./installation"
 type Restriction = Clear | Quarantined | Banned | RestrictionUnknown
 type FlagState = NotFlagged | Flagged | FlagUnknown
 type Retirement = NotRetired | OwnerRetired | RestrictionRetired | RetirementProofUnavailable
@@ -95,22 +96,27 @@ pure def lawOnlyContributorScopeAssessesValue(o: RegistryObservation): bool =
 
 A review, a value assessment and a GitHub write each need the derived scope
 and an active installation of the exact repository, and the repository must
-be public. Installation access alone never authorizes review. Registration
-alone never proves installation. A repository transferred to another
-account needs that account's installation to be active.
+be public. The installation row is the [installation](./installation.md)
+machine's own state. Visibility and coverage come from GitHub's repository
+read through that installation's token, which the shell performs: a
+repository the token cannot read is not covered, and an unreadable
+visibility is unknown, which never counts as public. Installation access
+alone never authorizes review. Registration alone never proves
+installation. A repository transferred to another account needs that
+account's installation to be active.
 
 ```quint
-type Authority = { scope: Scope, installationActive: bool, installationCoversRepository: bool, publicRepo: bool }
-pure def mayWrite(a: Authority): bool =
-  mayReview(a.scope) and a.installationActive and a.installationCoversRepository and a.publicRepo
-pure def mayValue(a: Authority): bool =
-  mayAssessValue(a.scope) and a.installationActive and a.installationCoversRepository and a.publicRepo
+type Visibility = PublicRepo | PrivateRepo | VisibilityUnknown
+type Authority = { scope: Scope, install: I::Installation, tokenReadsRepository: bool, visibility: Visibility }
+pure def installed(a: Authority): bool = I::active(a.install) and a.tokenReadsRepository and a.visibility == PublicRepo
+pure def mayWrite(a: Authority): bool = mayReview(a.scope) and installed(a)
+pure def mayValue(a: Authority): bool = mayAssessValue(a.scope) and installed(a)
 pure def lawInstallationAloneNeverAuthorizes(a: Authority): bool =
   a.scope == Unregistered implies not(mayWrite(a)) and not(mayValue(a))
 pure def lawInactiveInstallationNeverAuthorizes(a: Authority): bool =
-  not(a.installationActive) implies not(mayWrite(a)) and not(mayValue(a))
-pure def lawPrivateRepositoryNeverAuthorizes(a: Authority): bool =
-  not(a.publicRepo) implies not(mayWrite(a)) and not(mayValue(a))
+  not(I::active(a.install)) implies not(mayWrite(a)) and not(mayValue(a))
+pure def lawOnlyPublicRepositoryAuthorizes(a: Authority): bool =
+  a.visibility != PublicRepo implies not(mayWrite(a)) and not(mayValue(a))
 ```
 
 ### Samples cover each lookup, retirement and restriction
@@ -125,10 +131,12 @@ pure val oValues = Set(activeObservation, { ...activeObservation, observedId: 2 
   { ...activeObservation, retirement: RetirementProofUnavailable }, { ...activeObservation, restriction: Banned },
   { ...activeObservation, restriction: RestrictionUnknown }, { ...activeObservation, flags: Flagged },
   { ...activeObservation, flags: FlagUnknown })
-pure val fullAuthority: Authority = { scope: Contributor, installationActive: true,
-  installationCoversRepository: true, publicRepo: true }
+pure val activeInstall: I::Installation = { ...I::initial, known: true, sourceTime: 1 }
+pure val fullAuthority: Authority = { scope: Contributor, install: activeInstall, tokenReadsRepository: true,
+  visibility: PublicRepo }
 pure val aValues = Set(fullAuthority, { ...fullAuthority, scope: Unregistered },
   { ...fullAuthority, scope: SecurityOnly }, { ...fullAuthority, scope: ReversalOnly },
-  { ...fullAuthority, installationActive: false }, { ...fullAuthority, installationCoversRepository: false },
-  { ...fullAuthority, publicRepo: false })
+  { ...fullAuthority, install: { ...activeInstall, suspended: true } }, { ...fullAuthority, install: I::initial },
+  { ...fullAuthority, tokenReadsRepository: false }, { ...fullAuthority, visibility: PrivateRepo },
+  { ...fullAuthority, visibility: VisibilityUnknown })
 ```

@@ -30,7 +30,8 @@ applies at an equal time, so removal wins a tie. A first change for an
 unknown installation inserts the row in the state that change names.
 A delivery without an account completes without a change. A delivery whose
 source time is missing or invalid fails without recording completion, so
-GitHub's redelivery may retry it.
+GitHub's redelivery may retry it. A redelivery carries the same bytes, so
+the failure stays visible and retryable; it does not change the row.
 
 ```quint
 type InstallEventKind = Created | PermissionsAccepted | Deleted | Suspend | Unsuspend | OtherInstallAction
@@ -81,7 +82,11 @@ Each applied removal or suspension creates one idempotent notice per served
 project and owner, keyed by installation, change time and project. A stale
 or tied change that does not apply creates none. The notification service
 owns the recipients and delivery. The count below stands for those notice
-batches.
+batches. The served projects must be found by the permanent IDs of the
+repositories the installation covers, never by the mutable account login:
+a renamed account or a reused login must neither drop nor misroute a
+notice. That selection is an external obligation of the notification
+service.
 
 ```quint
 pure def lawStaleLossSendsNoNotice(i: Installation, e: InstallEvent): bool =
@@ -92,9 +97,11 @@ pure def lawAppliedLossSendsOneNotice(i: Installation, e: InstallEvent): bool =
 
 ### Every Slopbot effect requires an active installation
 
-An active installation is known, not removed and not suspended. Review,
-budget resume, value assessment, joint publication and historical import
-refuse otherwise. A removal or suspension does not delete history.
+An active installation is known, not removed and not suspended. The
+consumers that hold this row read `active` directly: review routing,
+budget resume, value request outcomes, joint publication, historical
+import, repository authority and the Inbox's access check, and each refuses
+or waits otherwise. A removal or suspension does not delete history.
 A later newer upsert restores a removed installation, and a later newer
 `unsuspend` lifts a suspension.
 
@@ -110,7 +117,8 @@ pure def sometimesActive(i: Installation): bool = active(i)
 pure def sometimesSuspended(i: Installation): bool = i.known and i.suspended and not(i.removed)
 pure def sometimesRemovedAndSuspended(i: Installation): bool = i.removed and i.suspended
 pure def sometimesRestoredAfterLoss(i: Installation): bool = active(i) and i.lostNotices > 0
-pure def sometimesInvalidTimeRetried(i: Installation): bool = i.failures > 0 and i.processed.length() > 0
+pure def sometimesInvalidTimeLeftRetryable(i: Installation): bool =
+  i.failures > 0 and not(i.processed.includes(8)) and i.processed.length() > 0
 pure val eValues = Set(
   { delivery: 1, kind: Created, sourceTime: 1, hasAccount: true, validTime: true },
   { delivery: 2, kind: Deleted, sourceTime: 2, hasAccount: true, validTime: true },
