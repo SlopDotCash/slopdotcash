@@ -1948,6 +1948,55 @@ test("reviewed unit keeps an invalid native carrier context held", async () => {
   ).rejects.toThrow();
 });
 
+test("native unit collector preserves a maintainer PR creator and binds the sole primary initiator", async () => {
+  const input = await snapshot();
+  input.original.pull.user = carrier;
+  const current = input.responses.get(`${root}/pulls/1`);
+  if (!current || typeof current !== "object") throw Error("fixture");
+  input.responses.set(`${root}/pulls/1`, { ...current, user: carrier });
+  const claims = [sha("a"), sha("b")].map((commitSha, index) => ({
+    id: `primary_claim_${index}`,
+    sourceId: input.plain.sourceId,
+    commitSha,
+    path: "fix.ts",
+  }));
+  const proof = await octoberOriginalContributorUnitProof(
+    input.github,
+    input.plain,
+    input.sources[1],
+    input.sources[0],
+    input.owners,
+    claims,
+  );
+  expect(proof.originalContributor?.originatingActor?.id).toBe(origin.node_id);
+  expect(
+    proof.sources.find((source) => source.sourceId === "PR_original")?.author
+      ?.id,
+  ).toBe(carrier.node_id);
+  expect(input.original.pull.user).toEqual(carrier);
+  expect(proof.originalContributor?.claimIds).toEqual(
+    claims.map((claim) => claim.id),
+  );
+});
+
+test("a changed-creator historical revision remains held without complete retained identity", async () => {
+  const input = await reviewedRevisionSnapshot();
+  input.original.pull.user = carrier;
+  const current = input.responses.get(`${root}/pulls/1`);
+  if (!current || typeof current !== "object") throw Error("fixture");
+  input.responses.set(`${root}/pulls/1`, { ...current, user: carrier });
+  await expect(
+    octoberOriginalContributorUnitProof(
+      input.github,
+      input.plain,
+      input.sources[1],
+      input.sources[0],
+      input.owners,
+      input.claims,
+    ),
+  ).rejects.toThrow("Retained-copy evidence");
+});
+
 async function historicalBodyRepairSnapshot() {
   const input = await bodyRepairSnapshot();
   input.body.lastEditedAt = "2026-10-03T00:30:00Z";

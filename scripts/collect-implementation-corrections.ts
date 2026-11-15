@@ -41,6 +41,7 @@ import {
   type OriginalContributorRepair,
   originalContributorClaimScope,
   originalContributorPrecedesFollowups,
+  originalContributorSource,
   type PointsImplementationCorrectionCandidate,
   type PointsImplementationCorrectionManifest,
   referencesOriginalContributorSource,
@@ -1076,6 +1077,20 @@ function richSource(
     }),
   };
   return result;
+}
+
+function soleOriginalPrimary(
+  source: CorrectionSource,
+): CorrectionActor | undefined {
+  const ordinary = source.commits.filter((commit) => commit.parentCount <= 1);
+  const actor = ordinary[0]?.author;
+  return verifiedHuman(actor) &&
+    ordinary.every(
+      (commit) =>
+        commit.author?.id === actor.id && commit.author.kind === actor.kind,
+    )
+    ? actor
+    : undefined;
 }
 
 export async function bindRetained(
@@ -2374,16 +2389,17 @@ async function singleOriginalContributorUnitProof(
     owners,
     true,
   );
-  const currentSource = verified.find(
+  const rawSource = verified.find(
     (source) => source.sourceId === original.evidence.pull.node_id,
   );
   const integrationSource = verified.find(
     (source) => source.sourceId === integration.evidence.pull.node_id,
   );
-  requireThat(
-    currentSource && integrationSource,
-    "Native unit source is missing",
-  );
+  requireThat(rawSource && integrationSource, "Native unit source is missing");
+  const primary = soleOriginalPrimary(rawSource);
+  const originatingActor =
+    primary?.id !== rawSource.author?.id ? primary : undefined;
+  const currentSource = originalContributorSource(rawSource, originatingActor);
   const canonical = matchRetainedAcceptedSource(accepted, integrationSource);
   const reviewedOriginal = await reviewedOriginalCommit(
     github,
@@ -2432,9 +2448,16 @@ async function singleOriginalContributorUnitProof(
       claims.filter((claim) => claim.sourceId === accepted.sourceId),
     ));
   requireThat(proof, "Reviewed unit lacks verified original acceptance");
+  if (originatingActor) rawSource.commits = currentSource.commits;
+  if (originatingActor && proof.originalContributor) {
+    proof.originalContributor.originatingActor = originatingActor;
+    proof.sources = proof.sources.map((item) =>
+      item.sourceId === rawSource.sourceId ? rawSource : item,
+    );
+  }
   if (reviewedOriginal)
     proof.sources = proof.sources.map((item) =>
-      item.sourceId === currentSource.sourceId ? currentSource : item,
+      item.sourceId === currentSource.sourceId ? rawSource : item,
     );
   if (!followups.length) {
     requireThat(
@@ -4456,9 +4479,17 @@ async function collectWithEvidenceCache(
               original && integration,
               "Original unit evidence disappeared",
             );
+            const verifiedOriginal = sources.find(
+              (source) => source.sourceId === originalId,
+            );
+            requireThat(
+              verifiedOriginal,
+              "Verified original source disappeared",
+            );
             if (
               original.evidence.pull.user.type === "User" &&
-              original.evidence.pull.user.node_id !== accepted.author?.id
+              (soleOriginalPrimary(verifiedOriginal)?.id ??
+                original.evidence.pull.user.node_id) !== accepted.author?.id
             ) {
               const proof = await octoberOriginalContributorUnitProof(
                 github,

@@ -2718,6 +2718,63 @@ for (const fault of [
   });
 }
 
+test("native unit credits its sole primary initiator while retaining the PR creator", () => {
+  const { journal, input, donor, accepted, grouped } = scopedUnlinkedOriginal();
+  if (grouped.proof.status !== "complete" || !grouped.proof.originalContributor)
+    throw Error("fixture");
+  donor.author = C;
+  donor.commits[0].author = A;
+  accepted.commits[0].author = A;
+  grouped.proof.originalContributor.originatingActor = A;
+  const result = apply(journal, input);
+  expect(amounts(result.journal)).toEqual({ [A.id]: 30, [C.id]: 0 });
+  expect(donor.author).toEqual(C);
+  expect(donor.commits[0].author).toEqual(A);
+  expect(total(result.journal)).toBe(total(journal));
+  expect(apply(result.journal, input, true, LATER).journal).toBe(
+    result.journal,
+  );
+  expect(apply(journal, input, false).journal).toBe(journal);
+});
+
+for (const fault of [
+  "wrong-origin",
+  "null-author",
+  "bot",
+  "mixed-authors",
+  "wrong-accepted",
+  "missing-scope",
+] as const) {
+  test(`sole primary origin refuses ${fault}`, () => {
+    const { journal, input, donor, accepted, grouped } =
+      scopedUnlinkedOriginal();
+    if (
+      grouped.proof.status !== "complete" ||
+      !grouped.proof.originalContributor
+    )
+      throw Error("fixture");
+    donor.author = C;
+    donor.commits[0].author = A;
+    accepted.commits[0].author = A;
+    const binding = grouped.proof.originalContributor;
+    binding.originatingActor = A;
+    if (fault === "wrong-origin") binding.originatingActor = B;
+    if (fault === "null-author") donor.commits[0].author = null;
+    if (fault === "bot") {
+      donor.commits[0].author = { ...A, kind: "Bot" };
+      binding.originatingActor = donor.commits[0].author;
+    }
+    if (fault === "mixed-authors") {
+      donor.commits.push(structuredClone(accepted.commits[1]));
+      donor.commitCount++;
+      donor.headSha = donor.commits[1].sha;
+    }
+    if (fault === "wrong-accepted") accepted.commits[0].author = B;
+    if (fault === "missing-scope") delete binding.claimIds;
+    expect(() => apply(journal, input)).toThrow();
+  });
+}
+
 function historicalAcknowledgedRepair() {
   const input = acknowledgedRepair();
   const reference = input.repair.reference;
