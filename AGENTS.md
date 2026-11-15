@@ -477,11 +477,16 @@ Generated points projections are build outputs; do not edit them by hand.
 
 ## Rewards, funding, and settlement
 
-Monthly allocations are private D1 records. The trusted `monthly-rewards.yml`
+Monthly allocations are D1 records. The trusted `monthly-rewards.yml`
 workflow freezes the complete ledger of the closed UTC month and writes each
 funded project's proposal to D1 once; a repeat run never adds or replaces
-rows. The owner changes amounts privately, and the owner or the automatic
-cutoff freezes the final allocation (`backend/payments/README.md`).
+rows. The owner changes amounts, and the owner or the automatic cutoff
+freezes the final allocation (`backend/payments/README.md`). A change below
+a contributor's proposed amount is a cut: it needs a 20 to 500 character
+reason, is public with its reason, and sends the contributor an Inbox notice.
+Cuts close 24 hours before the cutoff while automatic finalization is on, and
+the owner can finalize only 24 hours after the latest cut. Operator decision,
+15 November 2026.
 `cycles/` keeps only the format notes of historical cycles; do not add cycle
 files.
 
@@ -495,8 +500,9 @@ Review credit follows the canonical scoring policy.
 
 Automatic monthly payment is the PRD default for every project with funds
 committed in its vault. The owner sets the monthly amount during setup, can
-adjust allocations before execution, and can turn the default off; do not show
-adjustment history or require public reasons. Distribute the current
+adjust allocations before execution, and can turn the default off. Only cuts
+below the proposed amount are public, each with its required reason; other
+changes stay private. Distribute the current
 allocations at the monthly cutoff if the owner has not done so. The period is
 the calendar UTC month, starting with 2026-11, and the cutoff is 72 hours after
 the month ends (PRD sections 6 and 11). Keep internal reconciliation and prevent
@@ -574,7 +580,9 @@ refresh. Vault totals come from finalized on-chain counters cached in D1 with
 their observed time. A failed refresh shows the last value as stale, never
 zero. A monthly amount is shown to contributors only when the project's
 vault holds it; otherwise the pool reads as points only (PRD section 6,
-operator decision of 15 November 2026).
+operator decision of 15 November 2026). From December 2026 a month is
+promised only if the vault covered it on the 1st, and Slop's pages refuse a
+withdrawal below the promised amount.
 
 ## Project authority and IP
 

@@ -178,10 +178,12 @@ export function HowItWorksPage() {
       <section className="custody-proof money-states">
         <h2 id="payments">Payment stages</h2>
         <p>
-          After each UTC month ends, the owner has 72 hours to adjust awards.
-          When payments are enabled, the vault then pays funded awards
-          automatically unless the owner turned this off. Awards without a
-          wallet remain reserved.
+          After each UTC month ends, the owner has 72 hours to adjust awards. A
+          cut below the proposed amount needs a public reason, and the
+          contributor gets 24 hours of notice before the month locks. When
+          payments are enabled, the vault then pays funded awards automatically
+          unless the owner turned this off. Awards without a wallet remain
+          reserved.
         </p>
         <PaymentLifecycle />
       </section>

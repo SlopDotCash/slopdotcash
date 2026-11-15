@@ -350,14 +350,35 @@ test("owner edits monthly allocations privately, finalizes them and keeps sign-i
   await expect(secondBreakdown).toContainText("0.04 $TEST");
   await awards.getByLabel("Award for first-contributor").fill("1.8");
   await awards.getByLabel("Award for second-contributor").fill("1.5");
-  await awards
-    .getByRole("button", { name: "Save second-contributor", exact: true })
-    .click();
-  await expect(page.getByText("Allocation saved privately.")).toBeVisible();
+  // 1.5 is below the proposed 2.0: a cut needs a public reason first
+  // (operator decision, 15 November 2026). An increase does not.
+  const saveSecond = awards.getByRole("button", {
+    name: "Save second-contributor",
+    exact: true,
+  });
+  const reason = awards.getByLabel(
+    "Reason (shown publicly and sent to the contributor)",
+  );
+  await expect(reason).toHaveCount(1);
+  await expect(saveSecond).toBeDisabled();
+  await reason.fill("Too short.");
+  await expect(saveSecond).toBeDisabled();
+  await reason.fill("  Part of this work was reverted after merge.  ");
+  await saveSecond.click();
+  await expect(
+    page.getByText(
+      "Cut saved. The reason is public and the contributor was notified.",
+    ),
+  ).toBeVisible();
   await expect(secondBreakdown).toContainText("1.47 $TEST");
   await expect(secondBreakdown).toContainText("0.03 $TEST");
   expect(changes).toEqual([
-    { githubUserId: "2", grossBase: "1500000000", expectedSequence: 0 },
+    {
+      githubUserId: "2",
+      grossBase: "1500000000",
+      expectedSequence: 0,
+      reason: "Part of this work was reverted after merge.",
+    },
   ]);
   // Saving another row keeps this unchanged row's unsaved draft.
   await expect(awards.getByLabel("Award for first-contributor")).toHaveValue(
@@ -859,7 +880,7 @@ for (const status of [200, 403]) {
       0,
     );
     await expect(awards.getByRole("alert")).toContainText("account changed");
-    await expect(awards).not.toContainText("Allocation saved privately.");
+    await expect(awards).not.toContainText("Allocation saved.");
   });
 }
 
@@ -944,7 +965,7 @@ test("a departed allocation save keeps server acceptance without changing the ne
   expect(accepted).toBe(1);
   await expect(page).toHaveURL(/\/$/u);
   await expect(
-    page.getByText("Allocation saved privately.", { exact: true }),
+    page.getByText("Allocation saved.", { exact: true }),
   ).toHaveCount(0);
 });
 
