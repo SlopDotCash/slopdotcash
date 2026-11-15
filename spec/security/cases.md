@@ -1,7 +1,8 @@
-# Private case review, awards, remediation and disclosure
+# Private case review, awards and appeals
 
 PRD sections 8 and 10 keep receipt, remediation, award, payment and
 disclosure as independent states of one permanent private case
+(remediation and disclosure in [their own machine](./remediation.md))
 (`security_cases`, migrations `0026`, `0028`, `0061` and `0101`). Actor 1 is
 the representative reporter. Every other actor's authority comes from the
 current `Authority` snapshot, never from an event parameter: the shell
@@ -46,9 +47,6 @@ type Related = NotAssessed | Unrelated | RelatedParty
 type RelatedReview = ReviewNotApplicable | ReviewPending | ReviewApproved | ReviewRefused
 type AppealState = NoAppeal | AppealOpen | Upheld | Returned
 type TriageState = NoTriage | TriageQueued | TriageRunning | TriageComplete | TriageFailed | TriageUnavailable
-type Remediation = NotStarted | Investigating | Fixing | Retest | Resolved | MitigationVerified | Reopened
-type Disclosure = Embargoed | RedactionApproved | Disclosed
-type Recognition = PrivateRecognition | OptIn
 type Authority = { epoch: int, technical: List[int], financial: List[int], moderators: List[int], banned: List[int],
   relatedParties: List[int], programRestricted: bool }
 type AppealRecord = { from: Receipt, resolution: AppealState, by: int }
@@ -58,10 +56,7 @@ type PrivateCase = { reporter: int, submission: Submission, source: ReceiptSourc
   receipt: Receipt, severity: T::Severity, loss: T::LossFinding, inScope: bool, rootCause: int, duplicateOf: int,
   award: Award, grossChosen: M::Amount, commitment: Commitment, payment: PaymentState,
   related: Related, relatedReview: RelatedReview, deciders: List[int],
-  appeal: AppealState, appealFrom: Receipt, appealHistory: List[AppealRecord], triage: Triage,
-  remediation: Remediation, patchDigest: int, patchAuthor: int, verifiedPatch: int, patchReviewer: int, mitigatedDigest: int,
-  verifiedPatches: List[int], disclosure: Disclosure, approvedDigest: int, publishedDigest: int, embargoHistory: List[int],
-  recognition: Recognition }
+  appeal: AppealState, appealFrom: Receipt, appealHistory: List[AppealRecord], triage: Triage }
 pure val noAuthority: Authority = { epoch: 0, technical: List(), financial: List(), moderators: List(), banned: List(),
   relatedParties: List(), programRestricted: false }
 pure val noTriage: Triage = { state: NoTriage, appealRevision: 0, attempt: 0, startedAt: 0, escalated: false, belowFloor: false, returnDraft: false }
@@ -70,10 +65,7 @@ pure val initial: PrivateCase = { reporter: 1, submission: NotReceived, source: 
   receipt: Received, severity: T::SeverityUnset, loss: T::LossUnset, inScope: false, rootCause: 0, duplicateOf: 0,
   award: NotApplicable, grossChosen: M::zero, commitment: NoCommitment, payment: PaymentNotApplicable,
   related: NotAssessed, relatedReview: ReviewNotApplicable, deciders: List(),
-  appeal: NoAppeal, appealFrom: Received, appealHistory: List(), triage: noTriage,
-  remediation: NotStarted, patchDigest: 0, patchAuthor: 0, verifiedPatch: 0, patchReviewer: 0, mitigatedDigest: 0,
-  verifiedPatches: List(), disclosure: Embargoed, approvedDigest: 0, publishedDigest: 0, embargoHistory: List(),
-  recognition: PrivateRecognition }
+  appeal: NoAppeal, appealFrom: Received, appealHistory: List(), triage: noTriage }
 pure def historicalAllowed(terms: T::ReceiptTerms, history: Historical, gross: M::Amount): bool =
   history == NewReceipt or (terms.paidTerms and terms.fundingPolicy == T::Prefunded
     and (history == ImportedCapacityWait or T::amountAllowed(terms, gross)))
@@ -203,6 +195,10 @@ retired program, starts no new commitment. A standard award commits to a
 reviewed bounty-vault reservation or to a direct standard award. A full
 award never uses either: it stays approved with no payment rail until a
 full-award payment path is approved and released.
+The [direct standard award journal](../settlement/directBounty.md) admits only
+a `DirectAward` commitment of a standard split, through `D::caseApproval`.
+Settlement owns verified funds, partial direct legs, successor requests and
+exact payment proofs. A case and its fix form one financial work unit.
 
 ```quint
 type Rail = NoRail | VaultRail | DirectRail
@@ -249,7 +245,7 @@ pure def alwaysStandardAwardRail(c: PrivateCase): bool = (c.terms.split == T::St
 pure def alwaysRelatedApproval(c: PrivateCase): bool = (c.related == RelatedParty and c.award == Approved) implies
   c.relatedReview == ReviewApproved
 pure def alwaysProposalCommitsNothing(c: PrivateCase): bool = c.relatedReview == ReviewPending implies
-  c.award == Pending and c.commitment == NoCommitment and c.related == RelatedParty and T::amountAllowed(c.terms, c.grossChosen)
+  c.receipt == Confirmed and c.appeal != AppealOpen and c.award == Pending and c.commitment == NoCommitment and c.related == RelatedParty and T::amountAllowed(c.terms, c.grossChosen)
 pure def stepCommittedAwardPermanent(before: PrivateCase, after: PrivateCase): bool = committed(before) implies
   committed(after) and after.grossChosen == before.grossChosen and after.commitment == before.commitment
   and (before.award == Approved implies after.award == Approved)
@@ -335,84 +331,6 @@ pure def sometimesReturnedAndRedecided(c: PrivateCase): bool = c.appeal == Retur
 pure def sometimesSecondAppeal(c: PrivateCase): bool = c.appeal == AppealOpen and c.appealHistory.length() > 0
 ```
 
-## Story: Verify remediation and approve exact disclosure independently
-
-### The exact patch is reviewed independently before it resolves, and mitigation is verified separately
-
-A current technical approver or triager moves remediation. A recorded patch
-digest names its author. Resolution requires exact-revision tests of that
-digest by a different reviewer. Deployed mitigation is verified only after
-resolution, at the same digest. Reopening keeps every earlier verified patch.
-
-```quint
-pure def remediator(c: PrivateCase, by: int, checkedEpoch: int): bool = c.submission == Verified and by > 0
-  and (technicalNow(c, by, checkedEpoch) or triagerNow(c, by, checkedEpoch))
-pure def canProgressRemediation(c: PrivateCase, by: int, checkedEpoch: int, stage: Remediation): bool = remediator(c, by, checkedEpoch)
-  and (stage == Investigating or stage == Fixing) and c.remediation != Resolved and c.remediation != MitigationVerified
-pure def progressRemediation(c: PrivateCase, by: int, checkedEpoch: int, stage: Remediation): PrivateCase =
-  { ...c, remediation: stage, revision: c.revision + 1 }
-pure def canRecordPatch(c: PrivateCase, by: int, checkedEpoch: int, digest: int): bool = remediator(c, by, checkedEpoch) and digest > 0
-  and c.remediation != Resolved and c.remediation != MitigationVerified and not(c.verifiedPatches.includes(digest))
-pure def recordPatch(c: PrivateCase, by: int, checkedEpoch: int, digest: int): PrivateCase =
-  { ...c, remediation: Retest, patchDigest: digest, patchAuthor: by, verifiedPatch: 0, patchReviewer: 0, mitigatedDigest: 0, revision: c.revision + 1 }
-pure def canResolveRemediation(c: PrivateCase, by: int, checkedEpoch: int, testedDigest: int): bool = remediator(c, by, checkedEpoch)
-  and c.remediation == Retest and testedDigest == c.patchDigest and testedDigest > 0 and by != c.patchAuthor
-pure def resolveRemediation(c: PrivateCase, by: int, checkedEpoch: int, testedDigest: int): PrivateCase =
-  { ...c, remediation: Resolved, verifiedPatch: testedDigest, patchReviewer: by, verifiedPatches: c.verifiedPatches.append(testedDigest), revision: c.revision + 1 }
-pure def canVerifyMitigation(c: PrivateCase, by: int, checkedEpoch: int, deployedDigest: int): bool = remediator(c, by, checkedEpoch)
-  and c.remediation == Resolved and deployedDigest == c.verifiedPatch
-pure def verifyMitigation(c: PrivateCase, by: int, checkedEpoch: int, deployedDigest: int): PrivateCase =
-  { ...c, remediation: MitigationVerified, mitigatedDigest: deployedDigest, revision: c.revision + 1 }
-pure def canReopenRemediation(c: PrivateCase, by: int, checkedEpoch: int): bool = remediator(c, by, checkedEpoch)
-  and (c.remediation == Resolved or c.remediation == MitigationVerified)
-pure def reopenRemediation(c: PrivateCase, by: int, checkedEpoch: int): PrivateCase =
-  { ...c, remediation: Reopened, verifiedPatch: 0, patchReviewer: 0, mitigatedDigest: 0, revision: c.revision + 1 }
-pure def alwaysResolvedPatchReviewed(c: PrivateCase): bool = (c.remediation == Resolved or c.remediation == MitigationVerified) implies
-  c.verifiedPatch > 0 and c.verifiedPatch == c.patchDigest and c.patchReviewer != c.patchAuthor and c.patchReviewer > 0
-  and c.verifiedPatches.includes(c.verifiedPatch)
-pure def alwaysMitigationExact(c: PrivateCase): bool = (c.remediation == MitigationVerified) == (c.mitigatedDigest > 0)
-  and (c.mitigatedDigest > 0 implies c.mitigatedDigest == c.verifiedPatch)
-pure def stepVerifiedPatchesRetained(before: PrivateCase, after: PrivateCase): bool = before.verifiedPatches.every(d => after.verifiedPatches.includes(d))
-pure def sometimesMitigationVerified(c: PrivateCase): bool = c.remediation == MitigationVerified
-pure def sometimesReopened(c: PrivateCase): bool = c.remediation == Reopened and c.verifiedPatches.length() > 0
-```
-
-### Only separately approved exact redacted content is disclosed, with embargo history
-
-A current technical approver decides disclosure. Remediation, payment and an
-elapsed deadline never authorize it. Approving redacted content binds its
-exact digest. Recording disclosure needs the latest approval of the same
-bytes; changed bytes need a new approval. An explicit embargo change is kept
-in history. Recognition consent is the reporter's separate choice, which they
-may change; public credit names the reporter only with opt-in.
-
-```quint
-pure def canDecideDisclosure(c: PrivateCase, by: int, checkedEpoch: int, target: Disclosure, digest: int, embargoChange: int): bool =
-  c.submission == Verified and technicalNow(c, by, checkedEpoch) and c.disclosure != Disclosed and embargoChange >= 0
-    and (if (target == Embargoed) digest == 0 else if (target == RedactionApproved) digest > 0
-      else c.disclosure == RedactionApproved and digest == c.approvedDigest and digest > 0)
-pure def decideDisclosure(c: PrivateCase, by: int, checkedEpoch: int, target: Disclosure, digest: int, embargoChange: int): PrivateCase =
-  { ...c, disclosure: target, approvedDigest: if (target == Embargoed) 0 else if (target == RedactionApproved) digest else c.approvedDigest,
-    publishedDigest: if (target == Disclosed) digest else 0,
-    embargoHistory: if (embargoChange > 0) c.embargoHistory.append(embargoChange) else c.embargoHistory, revision: c.revision + 1 }
-pure def canSetRecognition(c: PrivateCase, by: int, choice: Recognition): bool = c.submission == Verified and by == c.reporter and choice != c.recognition
-pure def setRecognition(c: PrivateCase, by: int, choice: Recognition): PrivateCase = { ...c, recognition: choice, revision: c.revision + 1 }
-pure def publicCredit(c: PrivateCase): bool = c.disclosure == Disclosed and c.recognition == OptIn
-pure def alwaysExactDisclosure(c: PrivateCase): bool = (c.disclosure == Disclosed) == (c.publishedDigest > 0)
-  and (c.publishedDigest > 0 implies c.publishedDigest == c.approvedDigest)
-  and (c.disclosure == RedactionApproved implies c.approvedDigest > 0)
-pure def stepDisclosedPermanent(before: PrivateCase, after: PrivateCase): bool =
-  (before.disclosure == Disclosed implies after.disclosure == Disclosed and after.publishedDigest == before.publishedDigest)
-  and (after.embargoHistory == before.embargoHistory or after.embargoHistory == before.embargoHistory.append(after.embargoHistory.nthOr(before.embargoHistory.length(), 0)))
-pure def sometimesDisclosed(c: PrivateCase): bool = c.disclosure == Disclosed and c.embargoHistory.length() > 0
-pure def sometimesCreditWithdrawn(c: PrivateCase): bool = c.disclosure == Disclosed and c.recognition == PrivateRecognition
-```
-
-The [direct standard award journal](../settlement/directBounty.md) admits only
-a `DirectAward` commitment of a standard split, through `D::CaseApproval`.
-Settlement owns verified funds, partial direct legs, successor requests and
-exact payment proofs. A case and its fix form one financial work unit.
-
 ### Simulation samples cover roles, revocation, bans and every decision shape
 
 These input sets bound simulation only. Actors 2 and 3 are technical, 4 and 7
@@ -437,7 +355,7 @@ pure val decisionValues = Set(
   { finding: Confirmed, severity: T::High, loss: T::NotVerified, inScope: true, rootCause: 1, duplicateOf: 0, declareRelated: true },
   { finding: Rejected, severity: T::SeverityUnset, loss: T::LossUnset, inScope: false, rootCause: 0, duplicateOf: 0, declareRelated: false },
   { finding: Duplicate, severity: T::SeverityUnset, loss: T::LossUnset, inScope: true, rootCause: 1, duplicateOf: 9, declareRelated: false })
-pure val clearanceValues = Set(1, 2, 3, 4, 5, 6).fold(Set(), (cs, revision) => cs.union(Set(
+pure val clearanceValues = Set(2, 3, 4, 5).fold(Set(), (cs, revision) => cs.union(Set(
   { caseRevision: revision, firstQualifying: true, rootCauseFree: true, rail: DirectRail },
   { caseRevision: revision, firstQualifying: true, rootCauseFree: true, rail: VaultRail },
   { caseRevision: revision, firstQualifying: false, rootCauseFree: true, rail: DirectRail },
@@ -447,13 +365,6 @@ pure val appealRevisionValues = Set(2, 3, 4, 5, 6)
 pure val attemptValues = Set(1, 2)
 pure val resultValues = Set(Drafted({ returnCase: true, confidencePercent: 95 }), Drafted({ returnCase: false, confidencePercent: 40 }),
   TriageFailedResult, TriageUnavailableResult)
-pure val stageValues = Set(Investigating, Fixing)
-pure val targetValues = Set(Embargoed, RedactionApproved, Disclosed)
-pure val digestValues = Set(0, 1, 2)
-pure val testedDigestValues = Set(1, 2)
-pure val deployedDigestValues = Set(1, 2)
-pure val embargoChangeValues = Set(0, 1)
-pure val choiceValues = Set(OptIn, PrivateRecognition)
 pure val weight_decide = 8
 pure val weight_decideAward = 8
 pure val weight_appeal = 6

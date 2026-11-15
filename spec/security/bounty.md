@@ -146,6 +146,9 @@ pure def holdMatches(b: Bounty, h: Hold): bool = known(h.caseId) and h.rootCause
     else caseOf(b, h.caseId).commitment == C::FullAwardHeld)
 pure def alwaysHoldsMatchCases(b: Bounty): bool = b.holds.every(h => holdMatches(b, h))
   and caseIds.every(id => hasHold(b, id) == (C::committed(caseOf(b, id)) or caseOf(b, id).relatedReview == C::ReviewPending))
+pure def alwaysCasesKeepAwardRules(b: Bounty): bool = caseIds.every(id => C::alwaysProposalCommitsNothing(caseOf(b, id))
+  and C::alwaysCommitmentMatchesAward(caseOf(b, id)) and C::alwaysFullAwardHeld(caseOf(b, id)) and C::alwaysStandardAwardRail(caseOf(b, id))
+  and C::alwaysUnpaidHasNoAward(caseOf(b, id)) and C::alwaysVerifiedReceiptValid(caseOf(b, id)))
 pure def alwaysOneHoldPerRootCause(b: Bounty): bool =
   b.holds.every(h => b.holds.every(g => (g.rootCause == h.rootCause or g.caseId == h.caseId) implies g == h))
 pure def alwaysFullAwardBindsNoVault(b: Bounty): bool = b.holds.every(h => h.kind == VaultHold or h.kind == DirectHold implies
