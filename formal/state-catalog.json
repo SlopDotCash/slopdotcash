@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "meaning": "Declared lifecycle candidates. This intentionally incomplete syntactic census cannot find every implicit state, establish reachability, or prove source/model correspondence. Review the open work listed in formal/README.md as well.",
-  "inventorySha256": "f21a664018b69db1c9180594db58286c7f9e5c813b07595135626e8b5480a18f",
+  "inventorySha256": "47ed30b06aadbbe78bf973f81f8effb32e24895078fdd16d64330b1212f1a6a3",
   "states": [
     {
       "path": "backend/fee-conversions/handler.ts",
@@ -19,7 +19,7 @@
     },
     {
       "path": "backend/notifications/events.ts",
-      "line": 581,
+      "line": 610,
       "name": "stage",
       "kind": "string-union",
       "values": ["opened", "resolved"],
@@ -29,7 +29,8 @@
         "formal/models/api/points_dispute_decision.qnt",
         "formal/models/api/points_dispute_intake.qnt",
         "formal/models/api/points_dispute_lease.qnt",
-        "formal/models/api/wallet_claim_publication.qnt"
+        "formal/models/api/wallet_claim_publication.qnt",
+        "formal/models/rewards/monthly_owner_cuts.qnt"
       ],
       "lexicallyUnmentionedValues": ["opened"],
       "review": "candidate-only"
@@ -49,7 +50,7 @@
     },
     {
       "path": "backend/payments/monthly.ts",
-      "line": 863,
+      "line": 965,
       "name": "status",
       "kind": "string-union",
       "values": ["failed", "finalized", "pending"],
@@ -57,6 +58,7 @@
         "formal/models/rewards/monthly_coordinator.qnt",
         "formal/models/rewards/monthly_cutoff_queue.qnt",
         "formal/models/rewards/monthly_owner_completion.qnt",
+        "formal/models/rewards/monthly_owner_cuts.qnt",
         "formal/models/rewards/monthly_reserve.qnt",
         "formal/models/rewards/monthly_source_conflict.qnt"
       ],
@@ -65,7 +67,7 @@
     },
     {
       "path": "backend/payments/monthly.ts",
-      "line": 1350,
+      "line": 1577,
       "name": "chain_state",
       "kind": "string-union",
       "values": ["paid", "reserved"],
@@ -73,6 +75,7 @@
         "formal/models/rewards/monthly_coordinator.qnt",
         "formal/models/rewards/monthly_cutoff_queue.qnt",
         "formal/models/rewards/monthly_owner_completion.qnt",
+        "formal/models/rewards/monthly_owner_cuts.qnt",
         "formal/models/rewards/monthly_reserve.qnt",
         "formal/models/rewards/monthly_source_conflict.qnt"
       ],
@@ -2281,7 +2284,7 @@
     },
     {
       "path": "src/App.tsx",
-      "line": 451,
+      "line": 463,
       "name": "useState",
       "kind": "string-union",
       "values": ["deleting", "holding", "typing"],
@@ -2306,7 +2309,7 @@
     },
     {
       "path": "src/App.tsx",
-      "line": 1091,
+      "line": 1160,
       "name": "useState",
       "kind": "string-union",
       "values": ["blocked", "error", "loading", "ready"],
@@ -2906,7 +2909,7 @@
     },
     {
       "path": "src/VaultActions.tsx",
-      "line": 406,
+      "line": 423,
       "name": "result",
       "kind": "string-union",
       "values": [
@@ -3178,7 +3181,7 @@
     },
     {
       "path": "src/lib/points-implementation-corrections.ts",
-      "line": 198,
+      "line": 266,
       "name": "status",
       "kind": "string-union",
       "values": ["already-applied", "applied", "held", "retained", "unchanged"],
@@ -3708,7 +3711,7 @@
     },
     {
       "path": "workers/identity/index.ts",
-      "line": 45,
+      "line": 46,
       "name": "PrivateIntakeSkipReason",
       "kind": "string-union",
       "values": [

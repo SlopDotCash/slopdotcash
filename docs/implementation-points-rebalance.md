@@ -30,6 +30,14 @@ use the authenticated original PR creator as the fallback. Every selected carrie
 follow-up must descend from that original head. Other work units retain their
 own attribution.
 
+A fresh authenticated GitHub review may bind an earlier original PR revision
+that its current commit list has replaced. The review must pin the exact head,
+and every retained commit must form its complete selected native chain with the
+same linked primary author and verified first acceptance. The complete current
+PR stays in the proof. Disconnected reviewed revisions use separate native
+bindings, with disjoint claims and one verified recipient for the unchanged unit.
+Missing revision evidence retains the hold.
+
 Run the preview and reconcile value and duplicate work before recording.
 
 ## Collection and review
