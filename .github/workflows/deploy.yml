@@ -508,6 +508,14 @@ jobs:
       - name: Install frozen workspace dependencies
         run: bun install --frozen-lockfile --ignore-scripts
 
+      - name: Install the pinned merge collector for source tests
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends build-essential libcurl4-openssl-dev libssl-dev libexpat1-dev zlib1g-dev xz-utils
+          bun --no-env-file scripts/install-value-merge-git.ts "$RUNNER_TEMP/value-merge-git"
+          printf '%s\n' "$RUNNER_TEMP/value-merge-git/bin" >> "$GITHUB_PATH"
+
       # verify:code without formal:check: the Quint state-models job runs that
       # same check for this SHA, and the quality gate requires it. Running it
       # here too repeated about 15 minutes of model scenarios on every run.

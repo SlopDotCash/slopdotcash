@@ -29,6 +29,8 @@ import { consumeBuckets, sumBuckets } from "./verified-aggregation";
 export const POINTS_RULE = "slop-points-v1";
 export const OCTOBER_ORIGINAL_CONTRIBUTOR_DECISION =
   "The verified original contributor receives the full October 2026 replacement PR implementation Points. The pool value and occurrence date are preserved.";
+export const OCTOBER_DUPLICATE_RETIREMENT_DECISION =
+  "Owner-reviewed duplicate accepted work already rewarded by earlier sources.";
 export const POINTS_NOTICE =
   "Points have no cash value and cannot be transferred or redeemed.";
 export interface PointAward {
@@ -820,7 +822,8 @@ export function applyPointsSnapshot(
         ({ award, decision }) =>
           award.category === "merged-pull-request" &&
           award.occurredAt.startsWith("2026-10-") &&
-          decision?.reason === OCTOBER_ORIGINAL_CONTRIBUTOR_DECISION,
+          (decision?.reason === OCTOBER_ORIGINAL_CONTRIBUTOR_DECISION ||
+            decision?.reason === OCTOBER_DUPLICATE_RETIREMENT_DECISION),
       )
       .map(({ award }) => `${award.projectId}\0${award.sourceId}`),
   );

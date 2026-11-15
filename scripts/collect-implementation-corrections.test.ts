@@ -18,6 +18,20 @@ import {
   repository as valueRepository,
 } from "../tests/value-binary-fixture";
 import {
+  base,
+  commit,
+  makeOriginal,
+  actor as nativeActor,
+  repository,
+} from "../tests/value-promotion-fixture";
+import type { FileChange } from "../workers/slopbot/value-evidence-types";
+import {
+  collectNativeMergeAcceptance,
+  NATIVE_MERGE_CONTEXT,
+} from "../workers/slopbot/value-native-merge";
+import { prepareWorkUnitEvidence } from "../workers/slopbot/value-work-unit";
+import {
+  bindRetained,
   CollectionBudgetExhausted,
   CorrectionEvidenceCache,
   censusMonths,
@@ -34,6 +48,7 @@ import {
   type GraphqlExecutor,
   OutcomeCommitLineLoader,
 } from "./generate-leaderboard";
+import * as valueIngestion from "./value-ingestion";
 
 const dirs: string[] = [];
 afterEach(async () => {
@@ -2768,7 +2783,14 @@ test("resumed months keep a later month's verified author link like an uninterru
 });
 
 function relatedHistoricalFixture(
-  original: "empty" | "bound" | "ambiguous" | "wrong-head",
+  original:
+    | "empty"
+    | "bound"
+    | "ambiguous"
+    | "wrong-head"
+    | "disjoint"
+    | "incomplete-disjoint"
+    | "renamed-overlap",
   mixed?: "linked" | "binding-mismatch" | "linked-mismatch",
 ) {
   const f = valueFixture({ textOnly: true, direct: true });
@@ -2860,7 +2882,13 @@ function relatedHistoricalFixture(
           ? { sha: linkedSha }
           : f.pull.head,
     changed_files:
-      number === 1 && original === "empty" ? 0 : number === 2 && mixed ? 2 : 1,
+      number === 1 && original === "empty"
+        ? 0
+        : number === 1 && original === "incomplete-disjoint"
+          ? 2
+          : number === 2 && mixed
+            ? 2
+            : 1,
     commits:
       number === 1 && original === "empty" ? 0 : number === 2 && mixed ? 2 : 1,
   });
@@ -2971,6 +2999,18 @@ function relatedHistoricalFixture(
         ]);
       if (original === "empty" && /\/pulls\/1\/(commits|files)\?/u.test(full))
         return Response.json([]);
+      if (
+        ["disjoint", "incomplete-disjoint", "renamed-overlap"].includes(
+          original,
+        ) &&
+        full.includes(`/commits/${"e".repeat(40)}?`)
+      )
+        return Response.json({
+          sha: "e".repeat(40),
+          parents: [{ sha: f.pull.base.sha }],
+          stats: { additions: 1, deletions: 0, total: 1 },
+          files: [{ ...f.files[0], filename: "adjacent.ts" }],
+        });
       const remapped = full
         .replace(path, `/repos/${valueRepository.id}`)
         .replace(/\/(pulls|issues)\/2(?=\/|$)/u, "/$1/1");
@@ -3004,6 +3044,27 @@ function relatedHistoricalFixture(
           stats: { additions: 2, deletions: 0, total: 2 },
           files: [linkedFile],
         });
+      if (
+        ["disjoint", "incomplete-disjoint", "renamed-overlap"].includes(
+          original,
+        ) &&
+        full.includes("/pulls/1/files?") &&
+        Array.isArray(evidence)
+      )
+        evidence.forEach((file) => {
+          file.filename = "adjacent.ts";
+          if (original === "renamed-overlap") file.previous_filename = "fix.ts";
+        });
+      if (
+        ["disjoint", "incomplete-disjoint", "renamed-overlap"].includes(
+          original,
+        ) &&
+        full.includes("/pulls/1/commits?") &&
+        Array.isArray(evidence)
+      )
+        evidence.forEach((commit) => {
+          commit.sha = "e".repeat(40);
+        });
       return Response.json(evidence);
     },
     { preconnect: fetch.preconnect },
@@ -3034,6 +3095,65 @@ async function collectRelatedHistoricalSource(
   );
   return { journal, result, calls: network.calls };
 }
+
+test.each(["disjoint", "incomplete-disjoint", "renamed-overlap"] as const)(
+  "October reference path completeness and renames remain conservative (%s)",
+  async (scenario) => {
+    const network = relatedHistoricalFixture(scenario);
+    const inOctober = Object.assign(
+      async (input: RequestInfo | URL, init?: RequestInit) => {
+        const translated = init?.body
+          ? {
+              ...init,
+              body: String(init.body).replaceAll("2026-10", "2026-01"),
+            }
+          : init;
+        const response = await network.call(input, translated);
+        return new Response(
+          (await response.text())
+            .replaceAll("2026-01", "2026-10")
+            .replaceAll("2026-02", "2026-11"),
+          { status: response.status, headers: response.headers },
+        );
+      },
+      { preconnect: fetch.preconnect },
+    );
+    const journal = baseline([
+      {
+        ...award(),
+        sourceUrl: network.url,
+        occurredAt: "2026-10-15T00:00:00.000Z",
+      },
+    ]);
+    const result = await collectImplementationCorrections(
+      {
+        projects: ["asi"],
+        directory: await directory(),
+        month: "2026-10",
+        before: "2026-10-31T00:00:00.000Z",
+        octoberOriginalCredit: true,
+      },
+      {
+        journal,
+        registry: registry(),
+        token: "fixture-token",
+        transport: inOctober,
+        now: new Date("2026-10-31T23:59:59Z"),
+      },
+    );
+    if (scenario !== "disjoint") {
+      expect(result.receipt.completeProofs).toBe(0);
+      expect(result.manifest.candidates[0].proof.status).toBe("held");
+      return;
+    }
+    expect(result.receipt.completeProofs).toBe(1);
+    expect(result.manifest.candidates[0].sourceIds).toEqual(["PR_source"]);
+    expect(result.manifest.candidates[0].proof).toMatchObject({
+      status: "complete",
+      sources: [{ sourceId: "PR_source", commits: [{ author: null }] }],
+    });
+  },
+);
 
 test("an unrelated zero-commit reference does not poison the complete historical manifest", async () => {
   const { journal, result, calls } =
@@ -3153,3 +3273,584 @@ test("conflicting author evidence holds a historical retained source", async () 
     });
   }
 });
+
+test("grouped attribution restores cached actor batch halves through the normal loader adapter", async () => {
+  const original = makeOriginal();
+  const accepted = structuredClone(original);
+  const path = "elizaOS/asi";
+  for (const source of [original, accepted]) {
+    const evidence = source.evidence;
+    evidence.repository = path;
+    evidence.repositoryNodeId = "R_kgDOT23CXA";
+    evidence.repositoryPolicy = {
+      id: path,
+      projectId: "asi",
+      integrationBranch: "main",
+      expectedNodeId: "R_kgDOT23CXA",
+    };
+    evidence.pull.html_url = `https://github.com/${path}/pull/1`;
+    evidence.pull.base.ref = "main";
+    evidence.commits[0].author = null;
+    evidence.commitAttribution[0].actorNodeIds = [];
+    evidence.commits[0].sha = sha;
+    evidence.commitAttribution[0].sha = sha;
+    evidence.pull.head.sha = sha;
+  }
+  original.evidence.pull.node_id = "PR_original";
+  original.evidence.pull.number = 1;
+  original.evidence.pull.html_url = `https://github.com/${path}/pull/1`;
+  original.evidence.pull.merged_at = null;
+  original.evidence.pull.merge_commit_sha = null;
+  original.evidence.pull.merged_by = null;
+  original.evidence.pull.closed_at = "2026-01-14T00:00:00Z";
+  original.evidence.mergeCommitEvidence = null;
+  accepted.evidence.pull.node_id = "PR_source";
+  accepted.evidence.pull.number = 2;
+  accepted.evidence.pull.html_url = `https://github.com/${path}/pull/2`;
+  accepted.evidence.pull.user = {
+    node_id: actor.id,
+    login: actor.login,
+    type: "User",
+  };
+  accepted.evidence.pull.merged_by = accepted.evidence.pull.user;
+  accepted.evidence.pull.merged_at = "2026-01-15T00:00:00Z";
+  original.evidence.relatedPullRequests = [
+    {
+      id: "PR_source",
+      number: 2,
+      url: accepted.evidence.pull.html_url,
+      repository: path,
+    },
+  ];
+  original.evidence.comments = [
+    {
+      node_id: "IC_retained",
+      html_url: `${original.evidence.pull.html_url}#issuecomment-1`,
+      body: "Your commits are retained in #2.",
+      user: accepted.evidence.pull.user,
+      created_at: "2026-01-15T01:00:00Z",
+      updated_at: "2026-01-15T01:00:00Z",
+    },
+  ];
+  const extra = structuredClone(original.evidence.commits[0]);
+  extra.sha = "9".repeat(40);
+  extra.parents = [{ sha }];
+  original.evidence.commits.push(extra);
+  original.evidence.pull.head.sha = extra.sha;
+  original.evidence.pull.commits = 2;
+  const file = {
+    ...original.evidence.files[0],
+    filename: "unaccepted-test.ts",
+    patch: "@@ -0,0 +1 @@\n+unaccepted",
+  };
+  original.evidence.files.push(file);
+  original.evidence.commitAttribution.push({
+    sha: extra.sha,
+    actorNodeIds: [],
+    changedPaths: [file.filename],
+    files: [file],
+    limitations: [],
+  });
+  const evidence = await prepareWorkUnitEvidence(
+    [original, accepted],
+    [
+      {
+        ...valueRepository,
+        id: path,
+        projectId: "asi",
+        expectedNodeId: "R_kgDOT23CXA",
+      },
+    ],
+  );
+  expect(evidence.limitations).toEqual([]);
+  const digest = "d".repeat(64);
+  const workUnitId = `wu_${"b".repeat(64)}`;
+  const decision = {
+    status: "assessed",
+    latestDigest: digest,
+    evidence,
+    record: {
+      units: [
+        { workUnitId, claimIds: evidence.claims.map((claim) => claim.id) },
+      ],
+    },
+  } as unknown as Awaited<
+    ReturnType<typeof valueIngestion.loadValueInputs>
+  >["jointValueDecisions"] extends Map<string, infer T>
+    ? T
+    : never;
+  const received: string[][] = [];
+  const loader = spyOn(valueIngestion, "loadValueInputs").mockImplementation(
+    async (github) => {
+      const actors = await github.graphql<{ nodes: { id: string }[] }>(
+        "query FixtureValueActors($ids:[ID!]!){nodes(ids:$ids){id}}",
+        { ids: ["U_actor_one", "U_actor_two"] },
+      );
+      expect(actors.nodes.map((actor) => actor.id)).toEqual([
+        "U_actor_one",
+        "U_actor_two",
+      ]);
+      return {
+        jointValueDecisions: new Map([["PR_source", decision]]),
+        heldWorkUnits: [],
+      } as unknown as Awaited<
+        ReturnType<typeof valueIngestion.loadValueInputs>
+      >;
+    },
+  );
+  const baseTransport = transport(sha, {
+    ...fixture(),
+    number: 2,
+    url: accepted.evidence.pull.html_url,
+  }).call;
+  const actorTransport = Object.assign(
+    async (input: RequestInfo | URL, init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body));
+      if (!String(body.query).includes("FixtureValueActors"))
+        return baseTransport(input, init);
+      const ids = body.variables.ids as string[];
+      received.push(ids);
+      if (ids.length > 1)
+        return new Response("gateway failure", { status: 502 });
+      return Response.json({
+        data: {
+          nodes: ids.map((id) => ({ id })),
+          rateLimit: {
+            cost: 1,
+            limit: 5000,
+            remaining: 4900,
+            resetAt: "2026-02-01T00:00:00Z",
+          },
+        },
+      });
+    },
+    { preconnect: fetch.preconnect },
+  );
+  try {
+    const source = {
+      ...award(30, true),
+      sourceUrl: accepted.evidence.pull.html_url,
+    };
+    const journal = appendPointAwards(
+      emptyPointsJournal("2026-01-31T00:00:00.000Z"),
+      [source],
+      "f".repeat(64),
+      "slop-score-v2",
+      "2026-01-31T00:00:00.000Z",
+      new Map([
+        [
+          source.key,
+          {
+            sourceId: `value:${digest}`,
+            effectiveAt: when,
+            reason: "Retained assessed work unit",
+          },
+        ],
+      ]),
+    );
+    const dir = await directory();
+    const options = {
+      projects: ["asi"],
+      directory: dir,
+      month: "2026-01",
+      before: "2026-01-31T00:00:00.000Z",
+    };
+    const deps = {
+      journal,
+      registry: registry(),
+      token: "fixture-token",
+      transport: actorTransport,
+      now: new Date("2026-01-31T23:59:59Z"),
+    };
+    const result = await collectImplementationCorrections(options, deps);
+    expect(received.at(0)).toEqual(["U_actor_one", "U_actor_two"]);
+    expect(received.slice(-2)).toEqual([["U_actor_one"], ["U_actor_two"]]);
+    const liveCalls = received.length;
+    const replay = await collectImplementationCorrections(options, {
+      ...deps,
+      transport: Object.assign(
+        async () => {
+          throw Error("No replay network reads");
+        },
+        { preconnect: fetch.preconnect },
+      ),
+    });
+    expect(replay.receipt.manifestDigest).toBe(result.receipt.manifestDigest);
+    expect(received).toHaveLength(liveCalls);
+    expect(
+      result.receipt.limitations.filter(
+        (item) => item.reason !== "outside-reviewed-candidate-scope",
+      ),
+    ).toEqual([]);
+    expect(result.receipt.completeProofs).toBe(1);
+    expect(result.manifest.candidates[0].proof).toMatchObject({
+      status: "complete",
+      expectedClaimIds: evidence.claims.map((claim) => claim.id),
+      sources: expect.arrayContaining([
+        expect.objectContaining({ sourceId: "PR_original", commitCount: 2 }),
+      ]),
+    });
+  } finally {
+    loader.mockRestore();
+  }
+});
+
+for (const linkedAuthor of ["original", "conflicting"] as const) {
+  test(`October grouped work preserves verified original credit with ${linkedAuthor} author evidence`, async () => {
+    const original = makeOriginal();
+    const accepted = structuredClone(original);
+    const repo = "elizaOS/asi";
+    const originActor = { node_id: "U_origin", login: "origin", type: "User" };
+    const carrier = { node_id: actor.id, login: actor.login, type: "User" };
+    for (const source of [original, accepted]) {
+      Object.assign(source.evidence, {
+        repository: repo,
+        repositoryNodeId: "R_kgDOT23CXA",
+        repositoryPolicy: {
+          id: repo,
+          projectId: "asi",
+          integrationBranch: "main",
+          expectedNodeId: "R_kgDOT23CXA",
+        },
+      });
+      source.evidence.pull.user = carrier;
+      source.evidence.pull.base.ref = "main";
+      source.evidence.commits[0].sha = sha;
+      source.evidence.commits[0].author = originActor;
+      source.evidence.commitAttribution[0].sha = sha;
+      source.evidence.commitAttribution[0].actorNodeIds = [originActor.node_id];
+      source.evidence.pull.head.sha = sha;
+    }
+    original.evidence.pull.node_id = "PR_original";
+    original.evidence.pull.number = 1;
+    original.evidence.pull.html_url = `https://github.com/${repo}/pull/1`;
+    original.evidence.pull.merged_at = null;
+    original.evidence.pull.closed_at = "2026-10-14T00:00:00Z";
+    original.evidence.pull.merge_commit_sha = null;
+    original.evidence.pull.merged_by = null;
+    original.evidence.mergeCommitEvidence = null;
+    accepted.evidence.pull.node_id = "PR_source";
+    accepted.evidence.pull.number = 2;
+    accepted.evidence.pull.html_url = `https://github.com/${repo}/pull/2`;
+    accepted.evidence.pull.merged_at = "2026-10-15T00:00:00Z";
+    accepted.evidence.pull.merged_by = carrier;
+    if (linkedAuthor === "conflicting") {
+      accepted.evidence.commits[0].author = {
+        node_id: "U_other",
+        login: "other",
+        type: "User",
+      };
+      accepted.evidence.commitAttribution[0].actorNodeIds = ["U_other"];
+    }
+    const evidence = await prepareWorkUnitEvidence(
+      [original, accepted],
+      [
+        {
+          ...valueRepository,
+          id: repo,
+          projectId: "asi",
+          expectedNodeId: "R_kgDOT23CXA",
+        },
+      ],
+    );
+    expect(evidence.limitations).toEqual([]);
+    for (const claim of evidence.claims) {
+      claim.creditPullRequestId = original.evidence.pull.node_id;
+      claim.retainedCopy = {
+        acceptancePullRequestId: accepted.evidence.pull.node_id,
+        acceptedCommitSha: claim.commitSha,
+        preexistingCommitShas: [],
+      };
+    }
+
+    const digest = "d".repeat(64);
+    const workUnitId = `wu_${"b".repeat(64)}`;
+    const decision = {
+      status: "assessed",
+      latestDigest: digest,
+      evidence,
+      record: {
+        units: [{ workUnitId, claimIds: evidence.claims.map((c) => c.id) }],
+      },
+    };
+    const loader = spyOn(valueIngestion, "loadValueInputs").mockResolvedValue({
+      jointValueDecisions: new Map([["PR_source", decision]]),
+      heldWorkUnits: [],
+    } as never);
+    const node = fixture(sha);
+    node.commits.nodes[0].commit.oid = sha;
+    Object.assign(node, {
+      number: 2,
+      url: accepted.evidence.pull.html_url,
+      createdAt: "2026-10-01T00:00:00Z",
+      updatedAt: "2026-10-15T00:00:00Z",
+      mergedAt: "2026-10-15T00:00:00Z",
+    });
+    node.commits.nodes[0].commit.author.user = {
+      ...node.author,
+      id: linkedAuthor === "original" ? originActor.node_id : "U_other",
+      login: linkedAuthor === "original" ? originActor.login : "other",
+    };
+    const source = {
+      ...award(30, true),
+      sourceUrl: node.url,
+      occurredAt: "2026-10-15T00:00:00.000Z",
+    };
+    const journal = appendPointAwards(
+      emptyPointsJournal("2026-10-31T00:00:00.000Z"),
+      [source],
+      "f".repeat(64),
+      "slop-score-v2",
+      "2026-10-31T00:00:00.000Z",
+      new Map([
+        [
+          source.key,
+          {
+            sourceId: `value:${digest}`,
+            effectiveAt: source.occurredAt,
+            reason: "Retained assessed work unit",
+          },
+        ],
+      ]),
+    );
+    try {
+      const result = await collectImplementationCorrections(
+        {
+          projects: ["asi"],
+          directory: await directory(),
+          candidateMonth: "2026-10",
+          before: "2026-11-01T00:00:00.000Z",
+          octoberOriginalCredit: true,
+        },
+        {
+          journal,
+          registry: registry(),
+          token: "fixture-token",
+          transport: Object.assign(
+            async (input: RequestInfo | URL, init?: RequestInit) => {
+              const request = JSON.parse(String(init?.body));
+
+              if (
+                request.query.includes("LeaderboardSearchReferences") &&
+                !request.variables.searchQuery.includes("merged:2026-10")
+              )
+                return Response.json({
+                  data: {
+                    search: {
+                      issueCount: 0,
+                      pageInfo: { hasNextPage: false, endCursor: null },
+                      nodes: [],
+                    },
+                    rateLimit: {
+                      cost: 1,
+                      limit: 5000,
+                      remaining: 4900,
+                      resetAt: "2026-11-02T01:00:00Z",
+                    },
+                  },
+                });
+              return transport(sha, node).call(input, init);
+            },
+            { preconnect: fetch.preconnect },
+          ),
+          now: new Date("2026-11-02T00:00:00Z"),
+        },
+      );
+      const proof = result.manifest.candidates[0].proof;
+      if (linkedAuthor === "conflicting") {
+        expect(proof.status).toBe("held");
+        return;
+      }
+      expect(result.receipt.completeProofs).toBe(1);
+      expect(proof.status).toBe("complete");
+      if (proof.status !== "complete") throw Error("Missing proof");
+      expect(proof.originalContributor).toBeUndefined();
+      const applied = applyPointsImplementationCorrections(
+        journal,
+        result.manifest,
+        [{ candidateId: result.manifest.candidates[0].id, eligible: true }],
+        result.manifest.generatedAt,
+        new Map(),
+      );
+      expect(
+        [...latestPoints(applied.journal).values()].find(
+          (row) => row.award.actor.id === originActor.node_id,
+        )?.award.amount,
+      ).toBe(30);
+    } finally {
+      loader.mockRestore();
+    }
+  });
+}
+
+const head = "1".repeat(40),
+  later = "4".repeat(40),
+  merged = "5".repeat(40);
+const hash = (kind: string, bytes: Buffer) =>
+  createHash("sha1")
+    .update(`${kind} ${bytes.length}\0`)
+    .update(bytes)
+    .digest("hex");
+function nativeContextFixture() {
+  const source = makeOriginal();
+  source.evidence.pull.merge_commit_sha = merged;
+  source.evidence.pull.head.sha = head;
+  const one = commit(head),
+    two = commit(later);
+  two.parents = [{ sha: head }];
+  two.commit.message = "Follow up the accepted fix";
+  const added: FileChange = {
+    filename: "fix.ts",
+    status: "added",
+    additions: 1,
+    deletions: 0,
+    patch: "@@ -0,0 +1 @@\n+export const fixed = true;",
+    blob_url: null,
+  };
+  const changed: FileChange = {
+    ...added,
+    status: "modified",
+    additions: 1,
+    deletions: 1,
+    patch:
+      "@@ -1 +1 @@\n-export const fixed = true;\n+export const fixed = true; // reviewed",
+  };
+  source.evidence.files = [added];
+  source.evidence.commits = [one];
+  source.evidence.commitAttribution = [
+    {
+      sha: head,
+      actorNodeIds: [nativeActor.node_id],
+      changedPaths: ["fix.ts"],
+      files: [added],
+      limitations: [],
+    },
+  ];
+  source.evidence.mergeCommitEvidence = {
+    sha: merged,
+    html_url: `https://github.com/${repository.id}/commit/${merged}`,
+    parents: [{ sha: base }, { sha: later }],
+    stats: { additions: 1, deletions: 0, total: 1 },
+    files: [
+      {
+        ...added,
+        patch: "@@ -0,0 +1 @@\n+export const fixed = true; // reviewed",
+      },
+    ],
+  };
+  const carrier = structuredClone(source);
+  carrier.evidence.pull.node_id = "PR_carrier";
+  carrier.evidence.pull.number = 2;
+  carrier.evidence.pull.html_url = `https://github.com/${repository.id}/pull/2`;
+  carrier.evidence.pull.head.sha = later;
+  carrier.evidence.pull.commits = 2;
+  carrier.evidence.files = structuredClone(
+    source.evidence.mergeCommitEvidence.files,
+  );
+  carrier.evidence.commits = structuredClone([one, two]);
+  carrier.evidence.commitAttribution.push({
+    sha: later,
+    actorNodeIds: [nativeActor.node_id],
+    changedPaths: ["fix.ts"],
+    files: [changed],
+    limitations: [],
+  });
+  const values = new Map<string, unknown>();
+  function bind(ref: string, text: string) {
+    const blob = hash("blob", Buffer.from(text));
+    const bytes = Buffer.concat([
+      Buffer.from("100644 fix.ts\0"),
+      Buffer.from(blob, "hex"),
+    ]);
+    const tree = hash("tree", bytes);
+    values.set(`/repos/${repository.id}/git/commits/${ref}`, {
+      sha: ref,
+      tree: { sha: tree },
+    });
+    values.set(`/repos/${repository.id}/git/trees/${tree}?recursive=1`, {
+      sha: tree,
+      truncated: false,
+      tree: [{ path: "fix.ts", mode: "100644", type: "blob", sha: blob }],
+    });
+    values.set(`/repos/${repository.id}/contents/fix.ts?ref=${ref}`, {
+      type: "file",
+      encoding: "base64",
+      size: Buffer.byteLength(text),
+      sha: blob,
+      content: Buffer.from(text).toString("base64"),
+    });
+  }
+  bind(head, "export const fixed = true;\n");
+  bind(merged, "export const fixed = true; // reviewed\n");
+  values.set(
+    `/repos/${repository.id}/compare/${head}...${later}?per_page=100&page=1`,
+    {
+      status: "ahead",
+      merge_base_commit: { sha: head },
+      total_commits: 1,
+      commits: [two],
+    },
+  );
+  values.set(`/repos/${repository.id}/compare/${head}...${merged}?per_page=1`, {
+    status: "ahead",
+    merge_base_commit: { sha: head },
+    files: [changed],
+  });
+  const client = {
+    async get<T>(path: string): Promise<T | null> {
+      return structuredClone(values.get(path) ?? null) as T | null;
+    },
+  };
+  return { source, carrier, client, values, one, two };
+}
+async function preparedNativeContext() {
+  const f = nativeContextFixture();
+  const proof = await collectNativeMergeAcceptance(
+    f.client,
+    repository.id,
+    f.source.evidence,
+  );
+  if (!proof) throw Error("Missing proof");
+  f.source.evidence.nativeMergeAcceptance = proof;
+  f.source.evidence.limitations = [NATIVE_MERGE_CONTEXT];
+  return { ...f, proof };
+}
+
+test("grouped conversion retains a fully verified native ancestor context", async () => {
+  const { source, carrier } = await preparedNativeContext();
+  const group = await prepareWorkUnitEvidence([source, carrier], [repository]);
+  expect(group.limitations).toEqual([]);
+  const owners = new Map(
+    carrier.evidence.commits.map((c) => [
+      `${repository.id.toLowerCase()}\0${c.sha}`,
+      carrier.evidence.pull.node_id,
+    ]),
+  );
+  expect(
+    (await bindRetained(group.sources, owners, true)).map((s) => s.complete),
+  ).toEqual([true, true]);
+  expect(source.evidence.limitations).toEqual([NATIVE_MERGE_CONTEXT]);
+  expect(bindRetained(group.sources, owners)).rejects.toThrow(
+    "Full retained source",
+  );
+});
+for (const fault of [
+  "missing-carrier",
+  "forged-head",
+  "other-limitation",
+] as const) {
+  test(`grouped native context refuses ${fault}`, async () => {
+    const { source, carrier } = await preparedNativeContext();
+    if (fault === "forged-head")
+      carrier.evidence.pull.head.sha = "9".repeat(40);
+    if (fault === "other-limitation")
+      source.evidence.limitations.push("Uninspected source");
+    expect(
+      bindRetained(
+        fault === "missing-carrier" ? [source] : [source, carrier],
+        new Map(),
+        true,
+      ),
+    ).rejects.toThrow();
+  });
+}

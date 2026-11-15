@@ -238,7 +238,8 @@ async function privateD1(args: string[]): Promise<string> {
       {
         env: {
           ...process.env,
-          WRANGLER_LOG: "error",
+          // Wrangler emits the captured --json response at its normal log level.
+          WRANGLER_LOG: args.includes("--json") ? "log" : "error",
           WRANGLER_WRITE_LOGS: "false",
         },
         maxBuffer: 8 * 1024 * 1024,
