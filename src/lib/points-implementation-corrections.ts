@@ -91,6 +91,8 @@ interface CompleteCorrectionProof {
   originalContributor?: {
     /** Native identical-SHA acceptance with authenticated accepted-parent edges. */
     exactAcceptance?: true;
+    /** First accepted carrier when the recorded unit completes on its donor. */
+    acceptedSourceId?: string;
     originalSourceId: string;
     originalCommitSha: string;
     acceptedCommitSha: string;
@@ -197,6 +199,29 @@ function validParentShas(
     commit.parentShas.every(
       (parent) =>
         typeof parent === "string" && sha.test(parent) && parent !== commit.sha,
+    )
+  );
+}
+
+/** Unaccepted carrier-authored context cannot receive any accepted claim. */
+export function isOriginalContributorContext(
+  source: CorrectionSource,
+  accepted: CorrectionSource,
+): boolean {
+  return (
+    source.sourceId !== accepted.sourceId &&
+    source.occurredAt === null &&
+    source.complete &&
+    source.repositoryNodeId === accepted.repositoryNodeId &&
+    source.repository.toLowerCase() === accepted.repository.toLowerCase() &&
+    eligibleActor(source.author) &&
+    eligibleActor(accepted.author) &&
+    source.author.id === accepted.author.id &&
+    source.commits.every(
+      (commit) =>
+        !commit.retainedCopy &&
+        (commit.firstAcceptedSourceId === null ||
+          commit.firstAcceptedSourceId === accepted.sourceId),
     )
   );
 }
@@ -422,12 +447,28 @@ function deriveProof(
       }
     }
   }
-  const accepted = sources.get(candidate.sourceId);
+  const completion = sources.get(candidate.sourceId);
+  check(
+    completion &&
+      completion.sourceUrl === candidate.sourceUrl &&
+      completion.occurredAt === candidate.occurredAt,
+    "completion source does not match the recorded pool",
+  );
+  const acceptedSourceId = proof.originalContributor?.acceptedSourceId;
+  const accepted = acceptedSourceId
+    ? sources.get(acceptedSourceId)
+    : completion;
   check(
     accepted &&
-      accepted.sourceUrl === candidate.sourceUrl &&
-      accepted.occurredAt === candidate.occurredAt,
-    "completion source does not match the recorded pool",
+      (acceptedSourceId === undefined ||
+        (node.test(acceptedSourceId) &&
+          candidate.kind === "work-unit" &&
+          proof.originalContributor?.exactAcceptance === true &&
+          proof.originalContributor.originalSourceId === candidate.sourceId &&
+          accepted.sourceId !== candidate.sourceId &&
+          accepted.occurredAt !== null &&
+          accepted.occurredAt <= candidate.occurredAt)),
+    "accepted carrier does not bind the recorded original completion",
   );
   if (incomplete) return null;
   const actors = new Map<string, CorrectionActor>();
@@ -611,7 +652,12 @@ function deriveProof(
           (commit.files ?? []).map((file) => `${commit.sha}\0${file.path}`),
         );
       check(
-        sources.size === 2 &&
+        [...sources.values()].every(
+          (source) =>
+            source.sourceId === accepted.sourceId ||
+            source.sourceId === original.sourceId ||
+            isOriginalContributorContext(source, accepted),
+        ) &&
           claims.every((claim) => claim.sourceId === accepted.sourceId) &&
           accepted.commits.every(
             (commit) =>

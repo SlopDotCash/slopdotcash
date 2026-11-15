@@ -1369,3 +1369,112 @@ for (const fault of [
     }
     expect(() => apply(journal, input)).toThrow();
   });
+
+function donorCompletedGroupedReplacement() {
+  const sample = mergedDonorGroupedReplacement();
+  const { donor, accepted, grouped } = sample;
+  if (grouped.proof.status !== "complete" || !grouped.proof.originalContributor)
+    throw Error("fixture");
+  grouped.proof.originalContributor.acceptedSourceId = accepted.sourceId;
+  grouped.sourceId = donor.sourceId;
+  grouped.sourceUrl = donor.sourceUrl;
+  const occurredAt = donor.occurredAt;
+  if (!occurredAt) throw Error("fixture");
+  grouped.occurredAt = occurredAt;
+  const journal = initial(
+    [...latestPoints(sample.journal).values()].map(({ award: row }) => ({
+      ...row,
+      key: pointKey(
+        row.projectId,
+        row.actor.id,
+        row.category,
+        donor.sourceId,
+        row.workUnitId,
+      ),
+      sourceId: donor.sourceId,
+      sourceUrl: donor.sourceUrl,
+      occurredAt,
+    })),
+    true,
+  );
+  grouped.expectedPredecessors = [...latestPoints(journal).values()].map(
+    (row) => ({ key: row.award.key, revisionId: row.id }),
+  );
+  return { ...sample, journal, input: manifest(journal, [grouped]) };
+}
+
+test("a donor-completed joint pool keeps its date and value while binding first acceptance", () => {
+  const { journal, input, donor } = donorCompletedGroupedReplacement();
+  const result = apply(journal, input);
+  expect(
+    Object.fromEntries(
+      [...latestPoints(result.journal).values()].map(({ award }) => [
+        award.actor.id,
+        award.amount,
+      ]),
+    ),
+  ).toEqual({ [A.id]: 30, [C.id]: 0 });
+  expect(total(result.journal)).toBe(total(journal));
+  for (const { award } of latestPoints(result.journal).values()) {
+    expect(award.sourceId).toBe(donor.sourceId);
+    expect(award.occurredAt).toBe(String(donor.occurredAt));
+  }
+  expect(apply(result.journal, input, true, LATER).journal).toBe(
+    result.journal,
+  );
+});
+
+for (const fault of [
+  "missing-carrier",
+  "ordinary-pool",
+  "wrong-original",
+  "later-carrier",
+  "unverified-carrier",
+] as const) {
+  test(`donor-completed binding rejects ${fault}`, () => {
+    const { journal, input, grouped, accepted } =
+      donorCompletedGroupedReplacement();
+    if (
+      grouped.proof.status !== "complete" ||
+      !grouped.proof.originalContributor
+    )
+      throw Error("fixture");
+    const binding = grouped.proof.originalContributor;
+    if (fault === "missing-carrier") binding.acceptedSourceId = "PR_missing";
+    if (fault === "ordinary-pool")
+      Object.assign(grouped, { kind: "pull-request" });
+    if (fault === "wrong-original")
+      binding.originalSourceId = accepted.sourceId;
+    if (fault === "later-carrier")
+      accepted.occurredAt = "2026-10-24T00:00:00.000Z";
+    if (fault === "unverified-carrier") delete binding.exactAcceptance;
+    expect(() => apply(journal, input)).toThrow();
+  });
+}
+
+test("same-carrier unaccepted context remains connected without receiving claims", () => {
+  const { journal, input, grouped, accepted } =
+    donorCompletedGroupedReplacement();
+  if (grouped.proof.status !== "complete") throw Error("fixture");
+  const context: CorrectionSource = {
+    ...structuredClone(accepted),
+    sourceId: "PR_context",
+    sourceUrl: "https://github.com/SlopDotCash/asi/pull/3",
+    occurredAt: null,
+  };
+  for (const commit of context.commits) commit.firstAcceptedSourceId = null;
+  grouped.sourceIds.push(context.sourceId);
+  grouped.proof.sources.push(context);
+  const result = apply(journal, input);
+  expect(total(result.journal)).toBe(total(journal));
+  expect(
+    [...latestPoints(result.journal).values()].find(
+      (r) => r.award.actor.id === A.id,
+    )?.award.amount,
+  ).toBe(30);
+  context.author = B;
+  expect(() => apply(journal, input)).toThrow();
+  context.author = accepted.author;
+  context.occurredAt = accepted.occurredAt;
+  expect(() => apply(journal, input)).toThrow();
+});

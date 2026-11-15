@@ -31,6 +31,7 @@ import {
   type CorrectionClaim,
   type CorrectionSource,
   createPointsCorrectionBaseline,
+  isOriginalContributorContext,
   originalContributorPrecedesFollowups,
   type PointsImplementationCorrectionCandidate,
   type PointsImplementationCorrectionManifest,
@@ -1096,6 +1097,7 @@ interface HistoricalOrdinaryProof {
   sources: CorrectionSource[];
   originalContributor?: {
     exactAcceptance?: true;
+    acceptedSourceId?: string;
     originalSourceId: string;
     originalCommitSha: string;
     acceptedCommitSha: string;
@@ -1634,11 +1636,52 @@ export function isMergedOriginalContributor(
   );
 }
 
+/** Resolve semantic origin claims to their authenticated first acceptance. */
+export function firstAcceptedCorrectionClaims(
+  claims: readonly CorrectionClaim[],
+  sources: readonly CorrectionSource[],
+): CorrectionClaim[] {
+  return claims.map((claim) => {
+    const origin = sources.find((source) => source.sourceId === claim.sourceId);
+    const originalCommit = origin?.commits.find(
+      (commit) => commit.sha === claim.commitSha,
+    );
+    requireThat(
+      origin && originalCommit,
+      "Grouped claim origin lacks the exact commit",
+    );
+    requireThat(
+      originalCommit.files?.some((file) => file.path === claim.path),
+      "Grouped claim origin lacks the exact path",
+    );
+    const carriers = sources.filter(
+      (source) =>
+        source.repositoryNodeId === origin.repositoryNodeId &&
+        originalCommit.firstAcceptedSourceId === source.sourceId &&
+        source.commits.some(
+          (commit) =>
+            commit.sha === claim.commitSha &&
+            commit.author?.id === originalCommit.author?.id &&
+            commit.author?.kind === originalCommit.author?.kind &&
+            commit.parentCount <= 1 &&
+            commit.firstAcceptedSourceId === source.sourceId &&
+            commit.files?.some((file) => file.path === claim.path),
+        ),
+    );
+    requireThat(
+      carriers.length === 1,
+      "Grouped claim has no unique first acceptance",
+    );
+    return { ...claim, sourceId: carriers[0].sourceId };
+  });
+}
+
 /** Combine a verified ordinary replacement with its complete grouped path scope. */
 export function groupedOriginalContributorProof(
   accepted: CorrectionSource,
   original: HistoricalOrdinaryProof,
   claims: readonly CorrectionClaim[],
+  contextSources: readonly CorrectionSource[] = [],
 ): HistoricalOrdinaryProof {
   const originalAccepted = original.sources.find(
     (source) => source.sourceId === accepted.sourceId,
@@ -1659,7 +1702,10 @@ export function groupedOriginalContributorProof(
           commit.firstAcceptedSourceId ===
             accepted.commits[index].firstAcceptedSourceId,
       ) &&
-      claims.every((claim) => claim.sourceId === accepted.sourceId),
+      claims.every((claim) => claim.sourceId === accepted.sourceId) &&
+      contextSources.every((source) =>
+        isOriginalContributorContext(source, accepted),
+      ),
     "Grouped original credit requires one accepted replacement",
   );
   const acceptedPaths = accepted.commits
@@ -1702,6 +1748,7 @@ export function groupedOriginalContributorProof(
       ...original.sources.filter(
         (source) => source.sourceId !== accepted.sourceId,
       ),
+      ...contextSources,
     ],
     originalContributor: original.originalContributor,
   };
@@ -2526,24 +2573,45 @@ async function collectWithEvidenceCache(
           selectedClaims.length === unit.claimIds.length,
           "Grouped claim scope is incomplete",
         );
+        const claims = firstAcceptedCorrectionClaims(
+          selectedClaims.map((claim) => ({
+            id: claim.id,
+            sourceId:
+              claim.retainedCopy?.acceptancePullRequestId ??
+              claim.creditPullRequestId,
+            commitSha: claim.retainedCopy?.acceptedCommitSha ?? claim.commitSha,
+            path: claim.path,
+          })),
+          sources,
+        );
         let originalContributor: HistoricalOrdinaryProof["originalContributor"];
-        const accepted = sources.find((s) => s.sourceId === candidate.sourceId);
-        const donor = sources.find((s) => s.sourceId !== candidate.sourceId);
+        const accepted = sources.find((source) =>
+          claims.every((claim) => claim.sourceId === source.sourceId),
+        );
+        const donors = sources.filter((source) =>
+          isMergedOriginalContributor(accepted, source),
+        );
         const mergedDonor =
-          sources.length === 2 && isMergedOriginalContributor(accepted, donor)
-            ? donor
+          accepted &&
+          donors.length === 1 &&
+          sources.every(
+            (source) =>
+              source.sourceId === accepted.sourceId ||
+              source.sourceId === donors[0].sourceId ||
+              isOriginalContributorContext(source, accepted),
+          )
+            ? donors[0]
             : undefined;
         if (
           octoberOriginalCredit &&
           candidate.occurredAt.startsWith("2026-10-") &&
           (sources.length === 1 || mergedDonor) &&
-          selectedClaims.every(
-            (claim) =>
-              (claim.retainedCopy?.acceptancePullRequestId ??
-                claim.creditPullRequestId) === candidate.sourceId,
-          )
+          accepted &&
+          claims.every((claim) => claim.sourceId === accepted.sourceId) &&
+          (candidate.sourceId === accepted.sourceId ||
+            candidate.sourceId === mergedDonor?.sourceId)
         ) {
-          const read = reads.get(candidate.sourceId);
+          const read = reads.get(accepted.sourceId);
           requireThat(read, "Grouped completion source disappeared");
           requireThat(accepted, "Grouped accepted source disappeared");
           const original = mergedDonor
@@ -2552,7 +2620,7 @@ async function collectWithEvidenceCache(
                 accepted,
                 [
                   ...decision.evidence.sources.filter(
-                    (s) => s.evidence.pull.node_id === candidate.sourceId,
+                    (s) => s.evidence.pull.node_id === accepted.sourceId,
                   ),
                   ...decision.evidence.sources.filter(
                     (s) => s.evidence.pull.node_id === mergedDonor.sourceId,
@@ -2576,18 +2644,25 @@ async function collectWithEvidenceCache(
             const groupedOriginal = groupedOriginalContributorProof(
               accepted,
               original,
-              selectedClaims.map((claim) => ({
-                id: claim.id,
-                sourceId:
-                  claim.retainedCopy?.acceptancePullRequestId ??
-                  claim.creditPullRequestId,
-                commitSha:
-                  claim.retainedCopy?.acceptedCommitSha ?? claim.commitSha,
-                path: claim.path,
-              })),
+              claims,
+              sources.filter(
+                (source) =>
+                  !original.sources.some(
+                    (item) => item.sourceId === source.sourceId,
+                  ),
+              ),
             );
             sources = groupedOriginal.sources;
             originalContributor = groupedOriginal.originalContributor;
+            if (
+              originalContributor &&
+              accepted.sourceId !== candidate.sourceId
+            ) {
+              originalContributor = {
+                ...originalContributor,
+                acceptedSourceId: accepted.sourceId,
+              };
+            }
           }
         }
         candidate.sourceIds = sources.map((s) => s.sourceId).sort();
@@ -2597,14 +2672,7 @@ async function collectWithEvidenceCache(
           sources,
           decisionDigest: decision.latestDigest,
           expectedClaimIds: [...unit.claimIds],
-          claims: selectedClaims.map((claim) => ({
-            id: claim.id,
-            sourceId:
-              claim.retainedCopy?.acceptancePullRequestId ??
-              claim.creditPullRequestId,
-            commitSha: claim.retainedCopy?.acceptedCommitSha ?? claim.commitSha,
-            path: claim.path,
-          })),
+          claims,
           ...(originalContributor ? { originalContributor } : {}),
         };
       } catch (error) {

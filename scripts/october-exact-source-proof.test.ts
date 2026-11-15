@@ -4,6 +4,7 @@ import { collect, fixture } from "../tests/value-binary-fixture";
 import type { GitHubClient } from "../workers/slopbot/github";
 import type { WorkUnitSource } from "../workers/slopbot/value-work-unit-types";
 import {
+  firstAcceptedCorrectionClaims,
   groupedOriginalContributorProof,
   isMergedOriginalContributor,
   octoberOriginalContributorProof,
@@ -513,4 +514,44 @@ test("merged donor candidate gate preserves unrelated and same-author group beha
   expect(isMergedOriginalContributor(accepted, other)).toBe(false);
   donor.commits[0].firstAcceptedSourceId = donor.sourceId;
   expect(isMergedOriginalContributor(accepted, donor)).toBe(false);
+});
+
+test("grouped correction resolves origin claims to the unique census acceptance", async () => {
+  const input = await snapshot();
+  const proof = await octoberOriginalContributorProof(
+    input.github,
+    input.plain,
+    input.sources,
+    input.owners,
+  );
+  const [accepted, original] = proof.sources;
+  const commit = original.commits[0];
+  commit.firstAcceptedSourceId = accepted.sourceId;
+  const file = commit.files?.[0];
+  if (!file) throw Error("fixture");
+  const claim = {
+    id: "claim_origin",
+    sourceId: original.sourceId,
+    commitSha: commit.sha,
+    path: file.path,
+  };
+  const resolved = firstAcceptedCorrectionClaims([claim], proof.sources);
+  expect(resolved).toEqual([{ ...claim, sourceId: accepted.sourceId }]);
+  expect(claim.sourceId).toBe(original.sourceId);
+  const wrongOwner = clone(proof.sources);
+  wrongOwner[1].commits[0].firstAcceptedSourceId = "PR_missing";
+  expect(() => firstAcceptedCorrectionClaims([claim], wrongOwner)).toThrow();
+  expect(() =>
+    firstAcceptedCorrectionClaims(
+      [{ ...claim, path: "absent" }],
+      proof.sources,
+    ),
+  ).toThrow();
+  const wrongIdentity = clone(proof.sources);
+  wrongIdentity[0].repositoryNodeId = "R_other";
+  expect(() => firstAcceptedCorrectionClaims([claim], wrongIdentity)).toThrow();
+  const ambiguous = clone(accepted);
+  expect(() =>
+    firstAcceptedCorrectionClaims([claim], [...proof.sources, ambiguous]),
+  ).toThrow();
 });
