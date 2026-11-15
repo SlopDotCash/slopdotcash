@@ -277,10 +277,33 @@ export async function consumeWorkUnitHistory(
     latestDigest: history.current?.row.record_digest ?? null,
   };
   if (!history.current) return { ...common, status: "missing" as const };
-  const evidence = await prepareWorkUnitEvidence(sources, repositories);
+  let evidence = await prepareWorkUnitEvidence(sources, repositories);
   if (evidence.limitations.length)
     return { ...common, status: "incomplete" as const };
   const record = history.current.record;
+  // Older records predate supplemental repair-body metadata. Rebuild their
+  // exact source shape only when no recorded claim relies on that metadata.
+  if (
+    record.sourceDigest !== evidence.sourceDigest &&
+    !record.claims.some((claim) => claim.retainedCopy?.repair) &&
+    sources.some((source) => source.evidence.repairBodyEdit !== undefined)
+  ) {
+    const historical = await prepareWorkUnitEvidence(
+      sources.map((source) => {
+        const { repairBodyEdit: _repairBodyEdit, ...retained } =
+          source.evidence;
+        return { ...source, evidence: retained };
+      }),
+      repositories,
+    );
+    if (
+      historical.sourceDigest === record.sourceDigest &&
+      JSON.stringify(record.sources) ===
+        JSON.stringify(workUnitSourceBindings(historical, repositories)) &&
+      JSON.stringify(record.claims) === JSON.stringify(historical.claims)
+    )
+      evidence = historical;
+  }
   if (
     record.sourceDigest !== evidence.sourceDigest ||
     record.rubricVersion !== VALUE_RUBRIC_VERSION
