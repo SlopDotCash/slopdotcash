@@ -29,7 +29,9 @@
 // Existing accepted-promotion definitions are partial conformance evidence.
 // Synchronization proof requires the exact two ordered parents, pinned Git
 // version, matching patch digest and equal automatic/resolved trees. A missing,
-// malformed or nonempty resolution stays held. Incoming parent changes cannot
+// malformed resolution stays held. A nonempty resolution needs one authenticated
+// accepted copy with the same captured first parent and exact resolved blobs.
+// Incoming parent changes cannot
 // supply original implementation claims. This abstracts the canonical collector.
 module retained_copy_bindings {
   val ids = Set(1, 2)
@@ -71,8 +73,8 @@ module retained_copy_bindings {
   action fileEvidence(complete: bool): bool = all { s.phase == "file",
     s' = if (complete) s.with("phase", "matches")
       else finishedOrigin.with("limitations", s.limitations.union(Set(s.original))) }
-  action synchronization(complete: bool, empty: bool): bool = all { s.phase == "file",
-    s' = if (complete and empty) s
+  action synchronization(complete: bool, empty: bool, retainedCopy: bool): bool = all { s.phase == "file",
+    s' = if (complete and (empty or retainedCopy)) s
       else finishedOrigin.with("limitations", s.limitations.union(Set(s.original))) }
   action matchCandidate(id: int, kind: str): bool = all { s.phase == "matches", s.admitted.contains(id),
     not(s.compared.contains(id)), matchKinds.contains(kind),
@@ -100,7 +102,7 @@ module retained_copy_bindings {
     nondet proof = proofs.oneOf()
     nondet matchKind = matchKinds.oneOf()
     nondet yes = Set(false, true).oneOf()
-    any { begin(source), candidate(id, identity, proof, yes), admissions, fileEvidence(yes), synchronization(yes, yes),
+    any { begin(source), candidate(id, identity, proof, yes), admissions, fileEvidence(yes), synchronization(yes, yes, yes),
       matchCandidate(id, matchKind), bind, referenceFailure, returnResult, downstream(yes), s' = s }
   }
   val invariant = all { ids.contains(s.original), s.inspected.subseteq(ids), s.admitted.subseteq(s.inspected),
@@ -127,12 +129,15 @@ module retained_copy_bindings {
     .then(candidate(2, "foreign-repository", "none", false)).then(admissions).then(skipLast)
     .expect(not(s.usable) and s.owners.get(1) == 0 and invariant)
   run canonicalEmptySynchronizationPreservesOrdinaryClaimTest = init.then(oneIntegration("original", "comment"))
-    .then(synchronization(true, true)).then(matched("exact")).then(skipLast)
+    .then(synchronization(true, true, false)).then(matched("exact")).then(skipLast)
+    .expect(s.usable and s.owners.get(1) == 1 and invariant)
+  run exactResolutionCopyPreservesOriginalClaimTest = init.then(oneIntegration("original", "comment"))
+    .then(synchronization(true, false, true)).then(matched("exact")).then(skipLast)
     .expect(s.usable and s.owners.get(1) == 1 and invariant)
   run missingSynchronizationEvidenceIsHeldTest = init.then(oneIntegration("original", "comment"))
-    .then(synchronization(false, true)).then(skipLast).expect(not(s.usable) and invariant)
+    .then(synchronization(false, true, false)).then(skipLast).expect(not(s.usable) and invariant)
   run synchronizationResolutionEditsAreHeldTest = init.then(oneIntegration("original", "comment"))
-    .then(synchronization(true, false)).then(skipLast).expect(not(s.usable) and invariant)
+    .then(synchronization(true, false, false)).then(skipLast).expect(not(s.usable) and invariant)
   run manifestIdentityBindsTest = init.then(oneIntegration("original", "comment")).then(matched("manifest"))
     .then(skipLast).expect(s.owners.get(1) == 1 and invariant)
   run uniqueAncestorHunksBindTest = init.then(oneIntegration("original", "comment")).then(matched("ancestor"))

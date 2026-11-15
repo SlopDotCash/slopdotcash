@@ -504,6 +504,47 @@ function alreadyAcceptedPromotion(
   });
 }
 
+/** A narrow conflict-copy proof. Full-index canonical patches identify each
+ * resolved blob. A shared first parent preserves the original implementation
+ * antecedent while the second parent may be a newer integration branch.
+ */
+async function retainedResolutionSignature(
+  source: WorkUnitSource,
+  resolution: NonNullable<ValueEvidence["mergeResolutions"]>[number],
+): Promise<string | null> {
+  const commit = source.evidence.commits.find(
+    (entry) => entry.sha === resolution.commitSha,
+  );
+  if (
+    !commit ||
+    !mergeResolutionMatches(resolution, commit) ||
+    resolution.gitVersion !== MERGE_GIT_VERSION ||
+    !resolution.hadConflicts ||
+    !source.evidence.commits.some(
+      (entry) => entry.sha === commit.parents[0].sha,
+    ) ||
+    resolution.paths.length === 0 ||
+    (await sha256Hex(resolution.patch)) !== resolution.patchSha256
+  )
+    return null;
+  const files = resolution.patch.split(/^diff --git /mu).slice(1);
+  if (files.length !== resolution.paths.length) return null;
+  const identities: string[] = [];
+  const paths = new Set<string>();
+  for (const file of files) {
+    const match =
+      /^a\/(.+) b\/\1\nindex [a-f0-9]{40}\.\.([a-f0-9]{40}) (100644|100755)\n--- a\/\1\n\+\+\+ b\/\1\n/u.exec(
+        file,
+      );
+    if (!match || !resolution.paths.includes(match[1]) || paths.has(match[1]))
+      return null;
+    paths.add(match[1]);
+    identities.push(JSON.stringify([match[1], match[2], match[3]]));
+  }
+  if (new Set(identities).size !== resolution.paths.length) return null;
+  return JSON.stringify([commit.parents[0].sha, identities.sort()]);
+}
+
 export async function retainedCopyBindings(
   sources: readonly WorkUnitSource[],
   options: {
@@ -520,6 +561,7 @@ export async function retainedCopyBindings(
       acceptedCommitSha: string;
       path: string;
       preexistingCommitShas: string[];
+      mergeResolution?: true;
     }
   >();
   const limitations = new Set<string>();
@@ -638,12 +680,62 @@ export async function retainedCopyBindings(
             `${evidence.pull.node_id}: retained merge ${commit.sha} needs complete canonical resolution evidence`,
           );
         } else if (resolution.hadConflicts || resolution.paths.length > 0) {
-          limitations.add(
-            `${evidence.pull.node_id}: retained merge ${commit.sha} has resolution edits requiring joint reconciliation`,
+          const signature = await retainedResolutionSignature(
+            original,
+            resolution,
           );
+          const matches = [];
+          for (const { source: integration } of integrations) {
+            for (const candidate of integration.evidence.mergeResolutions ??
+              []) {
+              const acceptedCommit = integration.evidence.commits.find(
+                (entry) => entry.sha === candidate.commitSha,
+              );
+              if (
+                signature !== null &&
+                acceptedCommit !== undefined &&
+                Date.parse(commit.commit.author.date) <=
+                  Date.parse(acceptedCommit.commit.author.date) &&
+                Date.parse(acceptedCommit.commit.author.date) <=
+                  Date.parse(integration.evidence.pull.merged_at ?? "") &&
+                signature ===
+                  (await retainedResolutionSignature(integration, candidate))
+              )
+                matches.push({ integration, candidate });
+            }
+          }
+          if (matches.length !== 1) {
+            limitations.add(
+              `${evidence.pull.node_id}: retained merge ${commit.sha} has ${matches.length} exact resolution bindings`,
+            );
+          } else {
+            const { integration, candidate } = matches[0];
+            for (const path of resolution.paths) {
+              const key = JSON.stringify([
+                evidence.repositoryNodeId,
+                candidate.commitSha,
+                path,
+              ]);
+              if (bindings.has(key)) {
+                limitations.add(
+                  `${evidence.pull.node_id}: retained copy has competing original sources`,
+                );
+              } else
+                bindings.set(key, {
+                  original,
+                  originalCommitSha: commit.sha,
+                  integration,
+                  acceptedCommitSha: candidate.commitSha,
+                  path,
+                  preexistingCommitShas: [],
+                  mergeResolution: true,
+                });
+            }
+          }
         }
-        // Only an authenticated empty resolution proves synchronization alone.
-        // Incoming parent changes never become original implementation claims.
+        // Empty resolutions prove synchronization alone. Nonempty resolutions
+        // require the unique retained-copy binding above. Incoming parent
+        // changes never become original implementation claims.
         continue;
       }
       const attribution = evidence.commitAttribution.find(

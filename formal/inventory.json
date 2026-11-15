@@ -8731,7 +8731,7 @@
     },
     {
       "path": "workers/slopbot/value-retained-copy.ts",
-      "sha256": "a11b2a397a90553ad01a98651ac4596d0c51f01d69b606fda29bcec58255e8f3",
+      "sha256": "bbcae67b1b2e5fd285fc1409ff60fe6218f6cd2c4beb39ed8a0376062fb37e27",
       "models": [
         "formal/models/slopbot/bot_retained_acceptance.qnt",
         "formal/models/slopbot/retained_copy_bindings.qnt",
@@ -8835,7 +8835,7 @@
     },
     {
       "path": "workers/slopbot/value-work-unit.ts",
-      "sha256": "418b47f1c177e4d6deb946fa99e7521b01625a28517a961973f5157cf3ae2a3a",
+      "sha256": "b1e945af2b3e7802bb0b5adc9c77c9546e96f481048b7b031c06d777406fc069",
       "models": [
         "formal/models/slopbot/bot_value_pipeline.qnt",
         "formal/models/slopbot/bot_work_partition.qnt",
@@ -15555,7 +15555,7 @@
     },
     {
       "path": "formal/models/slopbot/retained_copy_bindings.qnt",
-      "sha256": "ba7dc9ba617634855b25e253a906dcf698dd7af8c929dfc272b059038d3a1cb7",
+      "sha256": "a352d388661d4d493529066991885089d26bbeb950c67f0b447f295d0ae0ae70",
       "sources": [
         "workers/slopbot/value-manifest-identity.ts",
         "workers/slopbot/value-retained-copy.ts",
@@ -15575,6 +15575,7 @@
         "changedAuthorNeedsCommentTest",
         "cleanResultStillNeedsOtherPublicationChecksTest",
         "competingOriginalsRetainFirstMapEntryAndHoldTest",
+        "exactResolutionCopyPreservesOriginalClaimTest",
         "foreignRepositoryCannotBindTest",
         "forgedOrLateCommentDoesNotAcknowledgeTest",
         "ignoringPartialResultLimitationsNegativeControlTest",

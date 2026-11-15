@@ -395,12 +395,15 @@ export async function prepareWorkUnitEvidence(
       // the original historical branch has since been renamed. Preserve a
       // linked primary author only when both immutable commits agree. An
       // unlinked or ineligible original author cannot hide a different one.
+      // A verified resolution copy has a shared implementation antecedent and
+      // resolved blob. Its accepting merger need not be the original resolver.
       const acceptedAuthor = copied.integration.evidence.commits.find(
         (commit) => commit.sha === copied.acceptedCommitSha,
       )?.author;
       if (
+        !copied.mergeResolution &&
         (acceptedAuthor?.node_id ?? null) !==
-        (originCommit.author?.node_id ?? null)
+          (originCommit.author?.node_id ?? null)
       )
         limitations.add(
           `${origin.pull.node_id}: retained primary author identity differs between commits`,

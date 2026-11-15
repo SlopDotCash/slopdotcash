@@ -419,3 +419,109 @@ test("short merge references authenticate the original formal review bytes", asy
   expect(changed.bindings.size).toBe(0);
   expect(changed.limitations).toHaveLength(1);
 });
+
+function copiedResolution() {
+  const source = sources();
+  const origin = source.original.evidence.commits[0];
+  const originalMerge = {
+    ...origin,
+    sha: "a".repeat(40),
+    parents: [{ sha: origin.sha }, { sha: "b".repeat(40) }],
+  };
+  const acceptedMerge = {
+    ...structuredClone(originalMerge),
+    sha: "c".repeat(40),
+    parents: [{ sha: origin.sha }, { sha: "d".repeat(40) }],
+  };
+  source.original.evidence.commits.push(originalMerge);
+  source.copy.evidence.commits.push(acceptedMerge);
+  const resolution = (commit: typeof originalMerge) => {
+    const patch = `diff --git a/fix.ts b/fix.ts\nindex ${"e".repeat(40)}..${"f".repeat(40)} 100644\n--- a/fix.ts\n+++ b/fix.ts\n@@ -1 +1 @@\n-conflict\n+resolved\n`;
+    return {
+      commitSha: commit.sha,
+      parents: commit.parents.map((parent) => parent.sha) as [string, string],
+      gitVersion: "git version 2.56.0",
+      automaticTree: "1".repeat(40),
+      resolvedTree: "2".repeat(40),
+      hadConflicts: true,
+      patch,
+      patchSha256: createHash("sha256").update(patch).digest("hex"),
+      paths: ["fix.ts"],
+    };
+  };
+  source.original.evidence.mergeResolutions = [resolution(originalMerge)];
+  source.copy.evidence.mergeResolutions = [resolution(acceptedMerge)];
+  return source;
+}
+
+test("canonical conflict copies retain one original resolution by path and resolved blob", async () => {
+  const { original, copy } = copiedResolution();
+  const result = await retainedCopyBindings([original, copy]);
+  expect(result.limitations).toEqual([]);
+  expect(result.bindings.size).toBe(2);
+  const resolution = [...result.bindings.values()].find(
+    (binding) => binding.acceptedCommitSha === "c".repeat(40),
+  );
+  expect(resolution?.originalCommitSha).toBe("a".repeat(40));
+  expect(resolution?.mergeResolution).toBe(true);
+  expect([...result.bindings]).toEqual([
+    ...(await retainedCopyBindings([original, copy])).bindings,
+  ]);
+});
+
+for (const invalid of [
+  "parent",
+  "blob",
+  "path",
+  "hash",
+  "identity",
+  "ambiguous",
+  "short-index",
+  "reference",
+  "competing-original",
+  "missing-antecedent",
+  "early-copy",
+] as const)
+  test(`canonical conflict copy refuses ${invalid} mismatch`, async () => {
+    const { original, copy, comment } = copiedResolution();
+    const candidate = copy.evidence.mergeResolutions?.[0];
+    if (!candidate) throw new Error("Missing copied resolution");
+    if (invalid === "missing-antecedent") copy.evidence.commits.shift();
+    if (invalid === "early-copy")
+      copy.evidence.commits[1].commit.author.date = "2026-09-01T00:00:00Z";
+    if (invalid === "parent") {
+      copy.evidence.commits[1].parents[0].sha = "3".repeat(40);
+      candidate.parents[0] = "3".repeat(40);
+    }
+    if (invalid === "blob")
+      candidate.patch = candidate.patch.replace("f".repeat(40), "4".repeat(40));
+    if (invalid === "path") {
+      candidate.patch = candidate.patch.replaceAll("fix.ts", "other.ts");
+      candidate.paths = ["other.ts"];
+    }
+    if (invalid === "identity") candidate.commitSha = "5".repeat(40);
+    if (invalid === "ambiguous")
+      copy.evidence.mergeResolutions?.push(structuredClone(candidate));
+    if (invalid === "short-index")
+      candidate.patch = candidate.patch.replace("f".repeat(40), "f".repeat(7));
+    if (invalid !== "hash")
+      candidate.patchSha256 = createHash("sha256")
+        .update(candidate.patch)
+        .digest("hex");
+    else candidate.patchSha256 = "6".repeat(64);
+    if (invalid === "reference") comment.user = original.evidence.pull.user;
+    const sources = [original, copy];
+    if (invalid === "competing-original") {
+      const competitor = structuredClone(original);
+      competitor.evidence.pull.node_id = "PR_competing";
+      sources.push(competitor);
+    }
+    const result = await retainedCopyBindings(sources);
+    expect(result.limitations.length).toBeGreaterThan(0);
+    if (invalid !== "competing-original")
+      expect(
+        [...result.bindings.values()].some(
+          (binding) => binding.acceptedCommitSha === "c".repeat(40),
+        ),
+      ).toBe(false);
+  });
