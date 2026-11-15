@@ -11,9 +11,15 @@ import {
   VAULT_SNAPSHOT_STALE_MS,
   type VaultSnapshot,
 } from "./lib/payments/contracts";
+import {
+  loadPoolFunding,
+  monthName,
+  poolFundingStatus,
+} from "./lib/pool-funding";
 import { useProjectMaintainer } from "./lib/project-api";
 import type { ProjectDefinition } from "./lib/projects.mjs";
 import { CANONICAL_UINT } from "./lib/record-validation.mjs";
+import { formatRewardMinor } from "./lib/reward-amount";
 import { NETWORK_NAMES } from "./lib/reward-asset.mjs";
 import { usePublicResource } from "./lib/use-public-resource";
 import { NetworkName } from "./Presentation";
@@ -335,6 +341,29 @@ export function EscrowFunding({
     useState<VaultConnection | null>(null);
   const [revision, setRevision] = useState(0);
   const totals = useVaultTotals(project, revision);
+  // What this month promises stays in the vault (operator decision,
+  // 15 November 2026).
+  const [funding] = usePublicResource(
+    !readOnly && project.reward.kind === "monthly-pool",
+    loadPoolFunding,
+    "Pool funding unavailable",
+  );
+  const status = poolFundingStatus(
+    project,
+    funding.status === "ready" ? funding.index : null,
+    new Date(),
+  );
+  const promised =
+    status.state === "funded"
+      ? {
+          minor: status.owedMinor.toString(),
+          display: formatRewardMinor(
+            status.owedMinor.toString(),
+            project.rewardAsset,
+          ),
+          month: monthName(status.period),
+        }
+      : undefined;
   const chain = project.escrow?.chain ?? "solana";
   if (readOnly && totals.status === "none") return null;
   return (
@@ -377,6 +406,7 @@ export function EscrowFunding({
                 deployment={deployment}
                 connectedWallet={connectedWallet ?? undefined}
                 projectId={project.id}
+                promised={promised}
                 onFinalized={() => setRevision((value) => value + 1)}
               />
             ))}

@@ -1,3 +1,4 @@
+import { mergeResolutionLineCounts } from "../../workers/slopbot/value-merge-resolution";
 import {
   valueAdditionCount,
   valueDeletionCount,
@@ -23,8 +24,20 @@ export function workUnitCreditActorIds(
   const commits = source.commits.filter(
     (commit) => commit.sha === claim.commitSha,
   );
-  if (commits.length !== 1 || commits[0].parents.length > 1) return null;
+  if (commits.length !== 1) return null;
   const commit = commits[0];
+  if (commit.parents.length > 1) {
+    const resolutions = source.mergeResolutions?.filter(
+      (resolution) => resolution.commitSha === commit.sha,
+    );
+    if (
+      resolutions?.length !== 1 ||
+      !mergeResolutionLineCounts(resolutions[0], commit)?.some(
+        (file) => file.path === claim.path,
+      )
+    )
+      return null;
+  }
   return implementationCreditActors(
     { id: source.pull.user.node_id, kind: source.pull.user.type },
     [
@@ -57,6 +70,24 @@ export function workUnitLineWeights(
     const source = evidence.sources.find(
       (item) => item.evidence.pull.node_id === sourceId,
     )?.evidence;
+    const commit = source?.commits?.find((item) => item.sha === commitSha);
+    if (commit && commit.parents.length > 1) {
+      const resolutions = source?.mergeResolutions?.filter(
+        (resolution) => resolution.commitSha === commitSha,
+      );
+      if (resolutions?.length !== 1) return null;
+      const files = mergeResolutionLineCounts(resolutions[0], commit);
+      const file = files?.find((item) => item.path === claim.path);
+      if (!file) return null;
+      const actorId = actors[0];
+      weights.set(
+        actorId,
+        (weights.get(actorId) ?? 0n) +
+          BigInt(file.additions) +
+          BigInt(file.deletions),
+      );
+      continue;
+    }
     const attribution = source?.commitAttribution?.filter(
       (item) => item.sha === commitSha,
     );

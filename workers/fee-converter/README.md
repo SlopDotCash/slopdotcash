@@ -806,18 +806,19 @@ Status, 12 November 2026: the production configuration selects `live` from
 `2026-11-12T00:00:00.000Z` by operator decision at the confirmed limits.
 This mode does not establish a deployed or qualified live trade.
 Steps 4 and 5 were not run, because no fee income existed to quote or spend.
-Step 2 was not verified: the Worker holds an `RPC_URL_ROBINHOOD` secret, and
-whether it serves state at the finalized block is unconfirmed. The first real
-order must still be verified as step 5 describes, and no burn is published
-before its finalized receipt. The steps below remain the procedure for any
-later activation, including staging.
+On 15 November 2026 UTC, the normal production tick verified a finalized-state
+read on the installed Robinhood Chain endpoint. The deployed settings and
+fee-wallet balances covering the native ceilings for one cycle were also
+verified. The first real order must still be verified as step 5 describes.
+Publish a burn only after its finalized receipt. Follow the steps below for
+any later activation, including staging.
 
 When eligible fee income is absent, keep the first-order qualification
 pending. Read-only prospective quotes can check route availability and limits,
 but do not seed the production fee journal or spend unrelated deposits to
 make a qualification pass. Reconcile the deployed configuration, production
 journal and finalized wallet state before choosing the first order. See the
-[12 November review](../../docs/slop-buyback.md#qualification-review-12-november-2026)
+[qualification evidence](../../docs/slop-buyback.md#production-readiness-check-15-november-2026-utc)
 for the current evidence and its limits.
 
 1. Confirm every limit above and the activation instant with the owner, and
@@ -844,6 +845,43 @@ for the current evidence and its limits.
 6. Raise the caps to the confirmed values by a reviewed change.
 7. To stop: land `BUYBACK_MODE = "off"`. Open sends are still reconciled while
    the converter runs. A deposit in transit keeps its share committed.
+
+### Restore the deployed Robinhood RPC
+
+If a normal recovery tick reports `buyback.finalizedRpc.status = "unavailable"`,
+the operator can replace the endpoint under the same live approval and limits.
+First publish the reviewed main source through the normal workflow. Confirm the
+candidate serves finalized and historical contract state on chain 4663,
+supports current-state fee estimation and receipt recovery, and provides
+`eth_sendRawTransaction` for production. The endpoint checks are read-only.
+
+1. In the `slop-production` GitHub environment, set
+   `SLOP_ROBINHOOD_RPC_REPLACEMENT` to the reviewed HTTPS URL. Keep it private.
+2. Dispatch the `slop.cash` workflow on `main` with
+   `rotate_robinhood_rpc_from` set to the exact currently active Worker
+   version UUID. The run requires that same version to be the latest upload.
+   The run checks the bound D1 journal for unresolved live sends, in-transit
+   bridge deposits and Robinhood signed gas reservations. It compares the
+   candidate's finalized contract probe to an independent chain block, then
+   uploads and verifies the same Worker as the immediate successor, with just
+   that secret replaced. Pages,
+   other services and the cron are outside this dispatch. The source, active
+   version and journal checks are point-in-time. Leave manual fee-converter
+   uploads, settings changes and deployments idle during this dispatch. A
+   scheduled run can still create work. Cloudflare reports secret binding
+   names and types. Preservation of their values relies on inheritance from
+   the checked latest upload.
+3. Retain the old and new UUIDs from the run. Observe an ordinary recovery tick
+   on the new version and compare its finalized block with an independent
+   endpoint. The next scheduled run can resume the approved live policy.
+   A successful probe leaves the first funded cycle pending.
+4. If promotion is ambiguous, read the active version before acting. For a
+   reviewed rollback, select the recorded old immutable version at 100%.
+   That version retains the former RPC binding. D1 contents are shared and
+   must be reconciled independently. Normal releases refuse an inactive latest
+   upload with a different rotation marker so they cannot silently inherit a
+   failed or rolled-back replacement. Resolve that upload explicitly before
+   resuming publication.
 
 ### An order nobody fills
 
@@ -990,3 +1028,26 @@ The registry discovery includes ordinary `escrow.deployments` and private
 bounty `securityBounty.settlement.deployments`. Both supply fee assets and
 vaults. A bounty-only project does not need an ordinary vault or reward token
 entry for its fees to be claimed and converted.
+
+### Bind the public Solana recovery pair
+
+The main release workflow accepts `rotate_solana_rpc_from`, the exact active
+fee-worker version UUID. Run it only after that same main revision has been
+published normally. It keeps Solana disabled, verifies the existing Solana
+fee key binding and a quiet Solana fee journal, and replays the reviewed
+211-block public recovery witness with 15-second requests.
+
+It then uploads a version-bound pair of endpoint secrets. `RPC_URL_SOLANA`
+uses `https://api.mainnet-beta.solana.com` and `SOLANA_RECOVERY_RPC_URL` uses
+`https://public.rpc.solanavibestation.com`. Other secret bindings are inherited.
+The old Worker version retains its prior bindings. Code, runtime, nonsecret
+settings and every other binding must match before the candidate can receive
+100% traffic. The same pinned active version and journal are checked again
+before promotion. Normal releases preserve both RPC rotation lineages and
+refuse an unpromoted candidate with a different lineage.
+
+The uploaded witness artifact contains public blocks and a synthetic absent
+identifier. It contains no signed transaction or credential. Successful
+binding changes do not activate Solana processing. Activation remains a
+separate reviewed network-list change after key, gas, vault and runtime
+readiness checks.

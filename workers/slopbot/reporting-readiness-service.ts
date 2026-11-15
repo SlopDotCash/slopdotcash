@@ -1,6 +1,7 @@
 import { WorkerEntrypoint } from "cloudflare:workers";
 import {
   type ReportingRefreshEnv,
+  refreshRegisteredMergeActivity,
   refreshRegisteredReporting,
 } from "./reporting-readiness";
 
@@ -8,5 +9,8 @@ import {
 export class ReportingReadinessRefresher extends WorkerEntrypoint<ReportingRefreshEnv> {
   refreshReportingReadiness() {
     return refreshRegisteredReporting(this.env);
+  }
+  refreshMergeActivity() {
+    return refreshRegisteredMergeActivity(this.env);
   }
 }

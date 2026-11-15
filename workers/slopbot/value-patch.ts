@@ -1,5 +1,6 @@
 import { decodeBase64 } from "../../src/lib/byte-encoding";
 import { gitObjectSha1 } from "./git-object";
+import { fullComparisonCounts } from "./value-comparison-counts";
 import type { EvidenceClient, FileChange } from "./value-evidence-types";
 
 function addedLines(file: FileChange): string[] | null {
@@ -19,7 +20,11 @@ function addedLines(file: FileChange): string[] | null {
 }
 
 export function valueAdditionCount(file: FileChange): number {
-  return addedLines(file)?.length ?? file.additions;
+  return (
+    addedLines(file)?.length ??
+    fullComparisonCounts(file)?.additions ??
+    file.additions
+  );
 }
 
 /** Derived deletion evidence does not overwrite GitHub's reported counts or patch. */
@@ -37,7 +42,11 @@ function removedLines(file: FileChange): string[] | null {
   return lines;
 }
 export function valueDeletionCount(file: FileChange): number {
-  return removedLines(file)?.length ?? file.deletions;
+  return (
+    removedLines(file)?.length ??
+    fullComparisonCounts(file)?.deletions ??
+    file.deletions
+  );
 }
 export function valuePatch(file: FileChange): string | undefined {
   const additions = addedLines(file);
@@ -65,13 +74,17 @@ export function valuePatch(file: FileChange): string | undefined {
 
 export function hasCompleteValuePatch(file: FileChange): boolean {
   const patch = valuePatch(file);
-  const lines = patch?.split("\n") ?? [];
+  if (patch === undefined) return false;
+  let additions = 0,
+    deletions = 0;
+  for (let index = 0; index < patch.length; index++) {
+    if (index !== 0 && patch.charCodeAt(index - 1) !== 10) continue;
+    if (patch.charCodeAt(index) === 43) additions++;
+    if (patch.charCodeAt(index) === 45) deletions++;
+  }
   return (
-    patch !== undefined &&
-    lines.filter((line) => line.startsWith("+")).length ===
-      valueAdditionCount(file) &&
-    lines.filter((line) => line.startsWith("-")).length ===
-      valueDeletionCount(file)
+    additions === valueAdditionCount(file) &&
+    deletions === valueDeletionCount(file)
   );
 }
 
@@ -114,32 +127,39 @@ export function addedValuePatchRecovery(
         continue;
       const key = JSON.stringify([ref, path]);
       if (!patches.has(key)) {
-        if (reads >= 16 || totalBytes >= 2 * 1024 * 1024) continue;
-        reads++;
+        const verified = await client.verifiedFile?.(repository, ref, path);
+        if (!verified && (reads >= 16 || totalBytes >= 2 * 1024 * 1024))
+          continue;
+        if (!verified) reads++;
         const encoded = path.split("/").map(encodeURIComponent).join("/");
-        const source = await client.get<{
-          type: string;
-          encoding: string;
-          content?: string;
-          size: number;
-          sha: string;
-        }>(`/repos/${repository}/contents/${encoded}?ref=${ref}`);
+        const source = verified
+          ? null
+          : await client.get<{
+              type: string;
+              encoding: string;
+              content?: string;
+              size: number;
+              sha: string;
+            }>(`/repos/${repository}/contents/${encoded}?ref=${ref}`);
         patches.set(key, null);
         if (
-          source?.type !== "file" ||
-          source.encoding !== "base64" ||
-          typeof source.content !== "string" ||
-          !Number.isSafeInteger(source.size) ||
-          source.size < 0 ||
-          source.size > 2 * 1024 * 1024 - totalBytes ||
-          !/^[a-f0-9]{40}$/u.test(source.sha)
+          !verified &&
+          (source?.type !== "file" ||
+            source.encoding !== "base64" ||
+            typeof source.content !== "string" ||
+            !Number.isSafeInteger(source.size) ||
+            source.size < 0 ||
+            source.size > 2 * 1024 * 1024 - totalBytes ||
+            !/^[a-f0-9]{40}$/u.test(source.sha))
         )
           continue;
         let bytes: Uint8Array;
         let text: string;
         try {
-          bytes = decodeBase64(source.content.replace(/\s+/gu, ""));
-          totalBytes += bytes.length;
+          bytes =
+            verified?.bytes ??
+            decodeBase64((source?.content ?? "").replace(/\s+/gu, ""));
+          if (!verified) totalBytes += bytes.length;
           text = new TextDecoder("utf-8", {
             fatal: true,
             ignoreBOM: true,
@@ -148,22 +168,27 @@ export function addedValuePatchRecovery(
           continue;
         }
         if (
-          bytes.length !== source.size ||
-          totalBytes > 2 * 1024 * 1024 ||
+          (!verified &&
+            (bytes.length !== source?.size || totalBytes > 2 * 1024 * 1024)) ||
           text.includes("\0")
         )
           continue;
         const digest = await gitObjectSha1("blob", bytes);
-        if (digest !== source.sha) continue;
-        const lines = text === "" ? [] : text.split("\n");
-        if (text.endsWith("\n")) lines.pop();
+        if (digest !== (verified?.sha ?? source?.sha)) continue;
+        let lineCount = 0;
+        for (let index = 0; index < text.length; index++)
+          if (text.charCodeAt(index) === 10) lineCount++;
+        if (text.length && !text.endsWith("\n")) lineCount++;
         const patch =
-          lines.length === 0
+          lineCount === 0
             ? ""
-            : `@@ -0,0 +1${lines.length === 1 ? "" : `,${lines.length}`} @@\n` +
-              lines.map((line) => `+${line}`).join("\n") +
+            : `@@ -0,0 +1${lineCount === 1 ? "" : `,${lineCount}`} @@\n+` +
+              text.replace(/\n(?=[\s\S])/gu, "\n+").replace(/\n$/u, "") +
               (text.endsWith("\n") ? "" : "\n\\ No newline at end of file");
-        patches.set(key, { patch, additions: lines.length });
+        patches.set(key, {
+          patch: client.internText?.(patch) ?? patch,
+          additions: lineCount,
+        });
       }
       const recovered = patches.get(key);
       if (recovered?.additions === file.additions) file.patch = recovered.patch;

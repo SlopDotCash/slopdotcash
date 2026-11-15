@@ -63,8 +63,14 @@ const lane = (name, server, browsers, shard, grep = "") => ({
   shard,
   grep,
 });
+// Operator exemption (PRD section 9): a manual run may set
+// skip_browser_tests. It then runs the smoke lane instead of the complete
+// lanes: the built site still has to load. No other event can set it.
+const skipBrowserTests =
+  process.env.GITHUB_EVENT_NAME === "workflow_dispatch" &&
+  process.env.SKIP_BROWSER_TESTS === "true";
 const lanes = [];
-if (ui)
+if (ui && !skipBrowserTests)
   lanes.push(
     // Preview includes the draft and email identity cases in both engines.
     lane("preview-1", "preview", "chromium firefox", "1/2"),
@@ -72,9 +78,9 @@ if (ui)
     lane("pages", "pages", "chromium", "1/1"),
   );
 // Root skill edits change raw Markdown and discovery bytes checked by Pages.
-if (!ui && changed(/^skills\/slop\//u))
+if (!ui && !skipBrowserTests && changed(/^skills\/slop\//u))
   lanes.push(lane("pages", "pages", "chromium", "1/1"));
-if (api)
+if (api && !skipBrowserTests)
   lanes.push(
     lane("registry-1", "registry", "chromium firefox", "1/2"),
     lane("registry-2", "registry", "chromium firefox", "2/2"),
@@ -110,14 +116,21 @@ const installer =
 // changes. The formal and LemmaScript inventory checks run on every pull
 // request either way.
 const allProofs = !pr || full || promotion;
+// Operator exemption (PRD section 12, STATE-05): a manual run may set
+// skip_proofs. It then repeats neither the state models nor the LemmaScript
+// proofs; both inventory checks still run. No other event can set it.
+const skipProofs =
+  process.env.GITHUB_EVENT_NAME === "workflow_dispatch" &&
+  process.env.SKIP_PROOFS === "true";
 const changedFiles = new Set(files);
 const formalTools = changed(
   /^(\.github\/workflows\/formal\.yml|scripts\/(ci-scope|check-formal|formal-models|formal-report|run-e2e-phase|quint-[\w-]+)\.mjs|formal\/tlc(-safety-views)?\.json|package\.json|bun\.lock)$/u,
 );
 const modelName = (path) =>
   path.slice(path.lastIndexOf("/") + 1, -".qnt".length);
-const formalModels =
-  allProofs || formalTools
+const formalModels = skipProofs
+  ? "none"
+  : allProofs || formalTools
     ? "all"
     : (existsSync("formal/models") ? listModels(".") : [])
         .filter(
@@ -133,16 +146,22 @@ const selectedModels =
   formalModels === "all" || formalModels === "none"
     ? 0
     : formalModels.split(" ").length;
-// About ten models per runner, at most the six shards of a complete run. A
-// selection of none skips the model jobs; it still names one shard so the
-// matrix is never empty.
+// A complete run spreads the models over FORMAL_SHARDS runners: each runner
+// checks its models one after another, so the slowest runner sets the length
+// of a release. A selection gets about ten models per runner, up to the same
+// number. A selection of none skips the model jobs; it still names one shard
+// so the matrix is never empty.
+const FORMAL_SHARDS = 16;
 const formalShards = JSON.stringify(
   Array.from(
     {
       length:
         formalModels === "all"
-          ? 6
-          : Math.max(1, Math.min(6, Math.ceil(selectedModels / 10))),
+          ? FORMAL_SHARDS
+          : Math.max(
+              1,
+              Math.min(FORMAL_SHARDS, Math.ceil(selectedModels / 10)),
+            ),
     },
     (_, index) => index + 1,
   ),
@@ -178,11 +197,12 @@ function proofInputs() {
   return seen;
 }
 const lemmascript =
-  allProofs ||
-  changed(
-    /^(\.github\/workflows\/lemmascript\.yml|scripts\/(ci-scope\.mjs|check-lemmascript\.mjs|lemmascript-[\w-]+\.mjs|run-e2e-phase\.mjs|setup-lemmascript\.sh)|lemmascript\.json|LemmaScript-files\.txt|package\.json|bun\.lock|tsconfig[^/]*\.json)$|^formal\/lemmascript\//u,
-  ) ||
-  [...proofInputs()].some((path) => changedFiles.has(path));
+  !skipProofs &&
+  (allProofs ||
+    changed(
+      /^(\.github\/workflows\/lemmascript\.yml|scripts\/(ci-scope\.mjs|check-lemmascript\.mjs|lemmascript-[\w-]+\.mjs|run-e2e-phase\.mjs|setup-lemmascript\.sh)|lemmascript\.json|LemmaScript-files\.txt|package\.json|bun\.lock|tsconfig[^/]*\.json)$|^formal\/lemmascript\//u,
+    ) ||
+    [...proofInputs()].some((path) => changedFiles.has(path)));
 for (const [key, value] of Object.entries({
   browser_matrix: JSON.stringify({ include: lanes }),
   formal_models: formalModels,

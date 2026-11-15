@@ -208,7 +208,9 @@ export function notificationTitle(n: Notification): string {
     case "payout_exception":
       return n.eventKey.startsWith("monthly-underfunded:")
         ? `The ${n.subject} monthly awards are underfunded.`
-        : `A payout from ${n.subject} is held and needs attention.`;
+        : n.eventKey.startsWith("monthly-cut:")
+          ? `The ${n.subject} owner set your monthly amount below the proposed amount.`
+          : `A payout from ${n.subject} is held and needs attention.`;
     case "slopbot_appeal_review":
       return n.eventKey.startsWith("slopbot-points-dispute:")
         ? "A Points dispute is awaiting review."
@@ -242,7 +244,9 @@ export function notificationAction(n: Notification): string {
     case "payout_exception":
       return n.eventKey.startsWith("monthly-underfunded:")
         ? "Open monthly awards"
-        : "Open project";
+        : n.eventKey.startsWith("monthly-cut:")
+          ? "Open month"
+          : "Open project";
     case "reinstatement_review":
       return "Open admin";
     case "project_ready":
