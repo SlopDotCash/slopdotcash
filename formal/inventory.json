@@ -4653,9 +4653,9 @@
     },
     {
       "path": "scripts/run-reviewed-historical-points.ts",
-      "sha256": "da51a0633e44e39c4a482650c7479545d0d415d3cb91999af576c34d4522c4d4",
+      "sha256": "35bd46b681b44320cd059f9f348e79a3be0ef3e20423355c63931e73730778f4",
       "models": ["formal/models/points/source_import.qnt"],
-      "candidateLines": [3, 226, 246, 315, 403],
+      "candidateLines": [3, 227, 247, 316, 404],
       "review": "mapped-abstraction"
     },
     {
@@ -8565,7 +8565,7 @@
     },
     {
       "path": "workers/slopbot/value-accepted-commit-census.ts",
-      "sha256": "d2762311aa4939faaa4664848ac3a4a91a65cc0379bbb4fdca8f6862ffc4202f",
+      "sha256": "81f5a040e5650741ec2c99713a24b7f7076f468057b783c7680218dea8f6932e",
       "models": [
         "formal/models/slopbot/bot_accepted_census.qnt",
         "formal/models/slopbot/bot_commit_census_fallback.qnt"
