@@ -835,3 +835,81 @@ test("unselected grouped context retains full-census merge counters with strict 
     ),
   ).toThrow("disagree");
 });
+
+test("native reviewed unit accepts a carrier-authored sync head with the original ordinary work", async () => {
+  const input = await snapshot();
+  const sync = input.accepted.commits[1];
+  sync.parents.push({ sha: sha("e") });
+  input.original.pull.head.sha = sync.sha;
+  input.original.pull.commits = 2;
+  input.original.pull.merged_at = "2026-10-03T00:00:02Z";
+  input.original.commits.push(clone(sync));
+  input.original.commitAttribution.push(
+    clone(input.accepted.commitAttribution[1]),
+  );
+  input.plain.commits[1].parentCount = 2;
+  input.responses.set(`${root}/pulls/1`, {
+    ...input.original.pull,
+    created_at: "2026-10-01T00:00:00Z",
+  });
+  input.responses.set(`${root}/git/commits/${sync.sha}`, clone(sync));
+  const range = input.responses.get(
+    `${root}/compare/${sha("f")}...${sha("c")}?per_page=100&page=1`,
+  ) as any;
+  range.commits[1] = clone(sync);
+  for (const [end, status, behind] of [
+    [sha("f"), "diverged", 1],
+    [sha("b"), "identical", 0],
+  ] as const)
+    input.responses.set(
+      `${root}/compare/${sync.sha}...${end}?per_page=100&page=1`,
+      {
+        status,
+        base_commit: { sha: sync.sha },
+        merge_base_commit: {
+          sha: status === "identical" ? sync.sha : sha("0"),
+        },
+        ahead_by: 0,
+        behind_by: behind,
+        total_commits: 0,
+        commits: [],
+      },
+    );
+  const claims = [
+    {
+      id: "claim_origin",
+      sourceId: input.plain.sourceId,
+      commitSha: sha("a"),
+      path: "fix.ts",
+    },
+  ];
+  const proof = await octoberOriginalContributorUnitProof(
+    input.github,
+    input.plain,
+    input.sources[1],
+    input.sources[0],
+    input.owners,
+    claims,
+  );
+  expect(proof.originalContributor?.originalCommitSha).toBe(sync.sha);
+  expect(proof.originalContributor?.boundPaths).toEqual(["fix.ts"]);
+  const { originalContributorClaimScope } = await import(
+    "../src/lib/points-implementation-corrections"
+  );
+  expect(
+    originalContributorClaimScope(proof.sources[1], proof.sources[0], claims),
+  ).toBe(true);
+  proof.sources[1].commits[1].author = {
+    id: "third",
+    login: "third",
+    kind: "User",
+  };
+  expect(
+    originalContributorClaimScope(proof.sources[1], proof.sources[0], claims),
+  ).toBe(false);
+  proof.sources[1].commits[1].author = proof.sources[0].author;
+  proof.sources[0].commits[0].parentShas = [sync.sha];
+  expect(
+    originalContributorClaimScope(proof.sources[1], proof.sources[0], claims),
+  ).toBe(false);
+});

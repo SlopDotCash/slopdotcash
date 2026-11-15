@@ -1993,3 +1993,38 @@ test("a grouped unit retains later connected sources without moving its own comp
   };
   expect(() => apply(journal, input)).toThrow("invalid source identity");
 });
+
+test("scoped native sync-head donor receives its complete reviewed pool", () => {
+  const { journal, input, donor, accepted, grouped } = scopedUnlinkedOriginal();
+  if (grouped.proof.status !== "complete" || !grouped.proof.originalContributor)
+    throw Error("fixture");
+  const sync = structuredClone(accepted.commits[1]);
+  sync.sha = sha("8");
+  sync.parentCount = 2;
+  sync.parentShas = [donor.headSha, sha("9")];
+  sync.additions = 100;
+  sync.deletions = 50;
+  delete sync.files;
+  donor.commits.push(structuredClone(sync));
+  donor.commitCount++;
+  donor.headSha = sync.sha;
+  accepted.commits.push(sync);
+  accepted.commitCount++;
+  accepted.commits[1].parentShas = [sync.sha];
+  const binding = grouped.proof.originalContributor;
+  binding.originalCommitSha = sync.sha;
+  binding.acceptedCommitSha = sync.sha;
+  binding.boundPaths = [...new Set(grouped.proof.claims.map((c) => c.path))];
+  const result = apply(journal, input);
+  expect(amounts(result.journal)).toEqual({ [A.id]: 30, [C.id]: 0 });
+  expect(total(result.journal)).toBe(total(journal));
+  expect(apply(result.journal, input, true, LATER).journal).toBe(
+    result.journal,
+  );
+  sync.author = null;
+  donor.commits[1].author = null;
+  expect(() => apply(journal, input)).toThrow("unit scope");
+  sync.author = B;
+  donor.commits[1].author = B;
+  expect(() => apply(journal, input)).toThrow("unit scope");
+});
