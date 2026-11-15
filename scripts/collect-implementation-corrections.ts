@@ -1762,6 +1762,8 @@ async function acknowledgedOriginalRepairs(
         pull.merge_commit_sha === expected.merge_commit_sha &&
         pull.updated_at === expected.updated_at &&
         pull.user.node_id === expected.user.node_id &&
+        pull.merged_by?.node_id === expected.merged_by?.node_id &&
+        pull.merged_by?.type === expected.merged_by?.type &&
         Number.isFinite(Date.parse(pull.created_at))
       );
     });

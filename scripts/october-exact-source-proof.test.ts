@@ -2218,6 +2218,7 @@ for (const fault of [
   "original-before-created",
   "accepted-before-created",
   "negative-original-number",
+  "current-merger",
 ] as const) {
   test(`paired null-author repair refuses ${fault}`, async () => {
     const input = await pairedRepairSnapshot();
@@ -2248,6 +2249,10 @@ for (const fault of [
         input.responses.get(`${root}/pulls/2`) as { created_at: string }
       ).created_at = "2026-10-02T13:01:00Z";
     if (fault === "negative-original-number") input.original.pull.number = -1;
+    if (fault === "current-merger")
+      (
+        input.responses.get(`${root}/pulls/2`) as { merged_by: typeof carrier }
+      ).merged_by = origin;
     if (fault === "unrelated-branch") {
       input.accepted.commits[1].parents = [{ sha: sha("9") }];
       input.responses.set(
