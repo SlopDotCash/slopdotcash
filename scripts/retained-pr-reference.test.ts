@@ -55,6 +55,72 @@ function sources() {
   return { original, copy, comment };
 }
 
+function nativeSources() {
+  const { original, copy } = sources();
+  original.evidence.comments = [];
+  original.evidence.commits[0].author = original.evidence.pull.user;
+  original.evidence.commitAttribution[0].actorNodeIds = [
+    original.evidence.pull.user.node_id,
+  ];
+  copy.evidence.commits = structuredClone(original.evidence.commits);
+  copy.evidence.commitAttribution = structuredClone(
+    original.evidence.commitAttribution,
+  );
+  return { original, copy };
+}
+
+test("a complete native original needs no copied-edit acknowledgement", async () => {
+  const { original, copy } = nativeSources();
+  const evidence = await prepareWorkUnitEvidence(
+    [original, copy],
+    [repository],
+  );
+  expect(evidence.limitations).toEqual([]);
+  expect(evidence.claims).toHaveLength(1);
+  expect(evidence.claims[0].retainedCopy).toBeUndefined();
+});
+
+test("a native commit outside the accepted range cannot create a claim", async () => {
+  const { original, copy } = nativeSources();
+  copy.evidence.acceptedRange = {
+    headSha: copy.evidence.pull.head.sha,
+    mergeSha: copy.evidence.pull.merge_commit_sha!,
+    parentSha: copy.evidence.commits[0].sha,
+    files: [{ path: "fix.ts", blobSha: "a".repeat(40), alreadyPresent: true }],
+  };
+  const evidence = await prepareWorkUnitEvidence(
+    [original, copy],
+    [repository],
+  );
+  expect(evidence.claims).toEqual([]);
+  expect(evidence.limitations.length).toBeGreaterThan(0);
+});
+
+for (const invalid of [
+  "parent",
+  "author",
+  "paths",
+  "incomplete",
+  "later-source",
+]) {
+  test(`native original refuses mismatched ${invalid}`, async () => {
+    const { original, copy } = nativeSources();
+    if (invalid === "parent")
+      copy.evidence.commits[0].parents = [{ sha: "9".repeat(40) }];
+    if (invalid === "author") copy.evidence.commits[0].author = null;
+    if (invalid === "paths")
+      copy.evidence.commitAttribution[0].changedPaths = [];
+    if (invalid === "incomplete")
+      original.evidence.limitations = ["Missing source evidence"];
+    if (invalid === "later-source") original.evidence.pull.number = 3;
+    const evidence = await prepareWorkUnitEvidence(
+      [original, copy],
+      [repository],
+    );
+    expect(evidence.limitations.length).toBeGreaterThan(0);
+  });
+}
+
 function withUnacceptedFinalPath() {
   const pair = sources();
   const evidence = pair.original.evidence;
