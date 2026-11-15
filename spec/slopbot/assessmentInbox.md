@@ -31,6 +31,8 @@ delivery of that pull request is running.
 
 ```quint
 import valueRequests as VR from "./valueRequests"
+import installation as I from "./installation"
+import repositoryScope as RS from "./repositoryScope"
 type PrKey = { repository: int, pullRequest: int }
 type RetryStatus = Retrying | ScheduledRetry | AwaitingAssessment
 type AssessmentItem = NoAssessment | Unresolved({ key: PrKey, since: int, retryAt: int, retryStatus: RetryStatus })
@@ -73,8 +75,9 @@ stands for byte equality of the manifest, including a changed or removed
 binding. The repository path is the current canonical GitHub path. Cursor
 parsing and the ordered page of up to 25 results lie outside this
 single-pull-request projection. A valid query and a current registry match
-are required before an item is published. When the first context read finds
-no gap for this binding, the read returns empty without consulting GitHub.
+are required before an item is published. The first context read projects
+the value request rows themselves; when it finds no open gap for this
+pull request, the read returns empty without consulting GitHub.
 
 ```quint
 type QueueRoute = BundledInbox | DirectQueue
@@ -82,33 +85,35 @@ type QueuePhase = Idle | Checking | Refused | Unavailable | Ready
 type RepoPermission = CurrentWriter | DeniedPermission | AuthorityUnavailable
 type RegistryBinding = { project: int, repository: int, path: str, manifest: int }
 type QueueRequest = { actor: int, expected: int, requestId: int, lifetime: int, route: QueueRoute,
-  binding: RegistryBinding, key: PrKey, validCursor: bool, contextHasGap: bool }
+  binding: RegistryBinding, key: PrKey, validCursor: bool }
 type AccessCheck = { actor: int, configuredAdmin: bool, permission: RepoPermission, repository: int, path: str,
-  installation: bool, publicRepo: bool }
-type QueueRead = { phase: QueuePhase, request: QueueRequest, item: AssessmentItem, status: int }
+  install: I::Installation, visibility: RS::Visibility }
+type QueueRead = { phase: QueuePhase, request: QueueRequest, contextGap: bool, item: AssessmentItem, status: int,
+  seenOutcomes: List[VR::Outcome] }
 pure val emptyBinding: RegistryBinding = { project: 0, repository: 0, path: "", manifest: 0 }
 pure val initial: QueueRead = { phase: Idle, request: { actor: 0, expected: 0, requestId: 0, lifetime: 0,
-  route: DirectQueue, binding: emptyBinding, key: { repository: 0, pullRequest: 0 }, validCursor: false,
-  contextHasGap: false }, item: NoAssessment, status: 0 }
+  route: DirectQueue, binding: emptyBinding, key: { repository: 0, pullRequest: 0 }, validCursor: false },
+  contextGap: false, item: NoAssessment, status: 0, seenOutcomes: List() }
 pure def validScope(binding: RegistryBinding, key: PrKey): bool =
   key.repository > 0 and key.pullRequest > 0 and binding.project > 0 and binding.repository == key.repository
     and binding.path != "" and binding.manifest > 0
 pure def authenticated(request: QueueRequest): bool =
   request.actor > 0 and (request.expected == 0 or request.expected == request.actor)
 pure def failureStatus(route: QueueRoute, code: int): int = if (route == BundledInbox) 200 else code
-pure def canRead(q: QueueRead, request: QueueRequest, by: int): bool =
+pure def canRead(q: QueueRead, request: QueueRequest, by: int, rows: List[VR::Delivery]): bool =
   by >= 0 and request.actor == by and request.requestId > q.request.requestId and request.lifetime > 0
-pure def read(q: QueueRead, request: QueueRequest, by: int): QueueRead =
-  if (not(authenticated(request))) { phase: Refused, request: request, item: NoAssessment,
-    status: if (request.actor == 0) 401 else 403 }
-  else if (not(request.validCursor)) { phase: Unavailable, request: request, item: NoAssessment,
-    status: failureStatus(request.route, 400) }
-  else if (not(validScope(request.binding, request.key)) or not(request.contextHasGap))
-    { phase: Ready, request: request, item: NoAssessment, status: 200 }
-  else { phase: Checking, request: request, item: NoAssessment, status: 0 }
-pure def lawMissingContextReturnsEmpty(q: QueueRead, request: QueueRequest, by: int): bool =
-  (authenticated(request) and request.validCursor and not(request.contextHasGap)) implies
-    (read(q, request, by).phase == Ready and not(present(read(q, request, by).item)))
+pure def read(q: QueueRead, request: QueueRequest, by: int, rows: List[VR::Delivery]): QueueRead =
+  val gap = present(assessmentFor(rows, request.key))
+  if (not(authenticated(request))) { phase: Refused, request: request, contextGap: gap, item: NoAssessment,
+    status: if (request.actor == 0) 401 else 403, seenOutcomes: List() }
+  else if (not(request.validCursor)) { phase: Unavailable, request: request, contextGap: gap, item: NoAssessment,
+    status: failureStatus(request.route, 400), seenOutcomes: List() }
+  else if (not(validScope(request.binding, request.key)) or not(gap))
+    { phase: Ready, request: request, contextGap: gap, item: NoAssessment, status: 200, seenOutcomes: List() }
+  else { phase: Checking, request: request, contextGap: gap, item: NoAssessment, status: 0, seenOutcomes: List() }
+pure def lawMissingContextReturnsEmpty(q: QueueRead, request: QueueRequest, by: int, rows: List[VR::Delivery]): bool =
+  (authenticated(request) and request.validCursor and not(present(assessmentFor(rows, request.key)))) implies
+    (read(q, request, by, rows).phase == Ready and not(present(read(q, request, by, rows).item)))
 ```
 
 ### Denial clears the item and uncertain authority is retryable
@@ -126,9 +131,10 @@ unavailable. A direct queue failure returns its own HTTP error.
 
 ```quint
 pure def exactInstallation(binding: RegistryBinding, access: AccessCheck): bool =
-  access.repository == binding.repository and access.path == binding.path and access.installation
+  access.repository == binding.repository and access.path == binding.path and I::active(access.install)
 pure def assessable(binding: RegistryBinding, access: AccessCheck): bool =
-  access.configuredAdmin or (exactInstallation(binding, access) and access.publicRepo and access.permission == CurrentWriter)
+  access.configuredAdmin or (exactInstallation(binding, access) and access.visibility == RS::PublicRepo
+    and access.permission == CurrentWriter)
 pure def accessUnavailable(binding: RegistryBinding, access: AccessCheck): bool =
   not(access.configuredAdmin) and (access.permission == AuthorityUnavailable or not(exactInstallation(binding, access)))
 pure def canComplete(q: QueueRead, requestId: int, currentBinding: RegistryBinding, access: AccessCheck, rows: List[VR::Delivery]): bool =
@@ -137,14 +143,14 @@ pure def complete(q: QueueRead, requestId: int, currentBinding: RegistryBinding,
   if (access.actor != q.request.actor or accessUnavailable(q.request.binding, access)
     or (assessable(q.request.binding, access) and currentBinding != q.request.binding))
     { ...q, phase: Unavailable, item: NoAssessment, status: failureStatus(q.request.route, 503) }
-  else { ...q, phase: Ready, status: 200, item:
+  else { ...q, phase: Ready, status: 200, seenOutcomes: VR::outcomesOf(rows), item:
     if (assessable(q.request.binding, access)) assessmentFor(rows, q.request.key) else NoAssessment }
 pure def alwaysPrivateItemsRequireAdmittedRead(q: QueueRead): bool =
   present(q.item) implies (q.phase == Ready and authenticated(q.request) and validScope(q.request.binding, q.request.key)
-    and q.request.validCursor and q.request.contextHasGap)
+    and q.request.validCursor and q.contextGap)
 pure def alwaysCheckingRequiresAdmittedScope(q: QueueRead): bool =
   q.phase == Checking implies (authenticated(q.request) and validScope(q.request.binding, q.request.key)
-    and q.request.validCursor and q.request.contextHasGap)
+    and q.request.validCursor and q.contextGap)
 pure def alwaysFailedReadHasNoItem(q: QueueRead): bool = (q.phase == Unavailable or q.phase == Refused) implies not(present(q.item))
 pure def stepOnlyCurrentOwnedResponsePublishes(before: QueueRead, via: str, after: QueueRead): bool =
   present(after.item) implies (via == "complete" and before.phase == Checking and after.request == before.request)
@@ -190,8 +196,7 @@ pure def sometimesDirectUnavailable(q: QueueRead): bool = q.phase == Unavailable
 pure def sometimesOrdinaryInboxSurvivesQueueFailure(q: QueueRead): bool =
   q.phase == Unavailable and q.request.route == BundledInbox and q.status == 200 and q.request.validCursor
 pure def sometimesExhaustedGapVisible(q: QueueRead): bool =
-  val shown = q.item
-  match shown { | Unresolved(u) => u.retryStatus == AwaitingAssessment | NoAssessment => false }
+  present(q.item) and q.seenOutcomes.length() > 0 and q.seenOutcomes.every(c => c == VR::AttemptsExhausted)
 ```
 
 ### Simulation exercises coincident and conflicting observations
@@ -202,9 +207,10 @@ These values bound simulation and do not limit accepted IDs or times.
 pure val sampleBinding: RegistryBinding = { project: 1, repository: 1, path: "org/repo", manifest: 1 }
 pure val sampleKey: PrKey = { repository: 1, pullRequest: 1 }
 pure val sampleRequest: QueueRequest = { actor: 1, expected: 1, requestId: 1, lifetime: 1, route: DirectQueue,
-  binding: sampleBinding, key: sampleKey, validCursor: true, contextHasGap: true }
+  binding: sampleBinding, key: sampleKey, validCursor: true }
+pure val activeInstall: I::Installation = { ...I::initial, known: true, sourceTime: 1 }
 pure val sampleAccess: AccessCheck = { actor: 1, configuredAdmin: false, permission: CurrentWriter, repository: 1,
-  path: "org/repo", installation: true, publicRepo: true }
+  path: "org/repo", install: activeInstall, visibility: RS::PublicRepo }
 pure val prKey: VR::PrKey = { installation: 1, repository: 1, owner: "org", repo: "repo", pull: 1 }
 pure val sampleGap: VR::Delivery = { ...VR::noDelivery, id: 1, key: prKey, receivedAt: 1, state: VR::Waiting,
   code: VR::SourceIncomplete, retryAt: 4, attempts: 1, incompleteSince: 2, updatedAt: 2 }
@@ -215,11 +221,12 @@ pure val sampleComplete: VR::Delivery = { ...sampleRunning, state: VR::Completed
 pure val sampleEarlyComplete: VR::Delivery = { ...sampleComplete, updatedAt: 1 }
 pure val requestValues = Set(sampleRequest, { ...sampleRequest, requestId: 2, route: BundledInbox },
   { ...sampleRequest, requestId: 3, expected: 2 }, { ...sampleRequest, requestId: 4, validCursor: false },
-  { ...sampleRequest, requestId: 5, actor: 0, expected: 0 }, { ...sampleRequest, requestId: 6, contextHasGap: false })
+  { ...sampleRequest, requestId: 5, actor: 0, expected: 0 }, { ...sampleRequest, requestId: 6, key: { repository: 1, pullRequest: 2 } })
 pure val currentBindingValues = Set(sampleBinding, { ...sampleBinding, manifest: 2 }, emptyBinding)
 pure val accessValues = Set(sampleAccess, { ...sampleAccess, configuredAdmin: true },
   { ...sampleAccess, permission: AuthorityUnavailable }, { ...sampleAccess, permission: DeniedPermission },
-  { ...sampleAccess, actor: 2 })
+  { ...sampleAccess, actor: 2 }, { ...sampleAccess, install: { ...activeInstall, suspended: true } },
+  { ...sampleAccess, visibility: RS::VisibilityUnknown })
 pure val rowsValues = Set(List(), List(sampleGap), List(sampleGap, sampleRunning), List(sampleGap, sampleComplete),
   List(sampleExhausted), List(sampleGap, sampleEarlyComplete))
 pure val candidateValues = Set(sampleGap, sampleRunning, sampleComplete, sampleExhausted, sampleEarlyComplete)
