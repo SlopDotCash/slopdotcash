@@ -1194,3 +1194,116 @@ test("a replay with only a partial recorded pool cannot be accepted as completed
     "partial recorded pool",
   );
 });
+
+function octoberGroupedReplacement() {
+  const sample = octoberReplacement();
+  const unit = `wu_${"e".repeat(64)}`;
+  const journal = initial(
+    [...latestPoints(sample.journal).values()].map(({ award: row }) => ({
+      ...row,
+      key: pointKey(
+        row.projectId,
+        row.actor.id,
+        row.category,
+        row.sourceId,
+        unit,
+      ),
+      workUnitId: unit,
+    })),
+    true,
+  );
+  const accepted = sample.proof.sources[0];
+  const claims = accepted.commits.flatMap((commit) =>
+    (commit.files ?? []).map((file, index) => ({
+      id: `claim_${commit.sha}_${index}`,
+      sourceId: accepted.sourceId,
+      commitSha: commit.sha,
+      path: file.path,
+    })),
+  );
+  const grouped: PointsImplementationCorrectionCandidate = {
+    ...sample.input.candidates[0],
+    kind: "work-unit",
+    workUnitId: unit,
+    expectedPredecessors: [...latestPoints(journal).values()].map((row) => ({
+      key: row.award.key,
+      revisionId: row.id,
+    })),
+    proof: {
+      ...sample.proof,
+      decisionDigest: VALUE,
+      expectedClaimIds: claims.map((claim) => claim.id),
+      claims,
+    },
+  };
+  return { journal, input: manifest(journal, [grouped]), grouped };
+}
+
+test("October grouped replacement preserves the whole recorded value for its sole original contributor", () => {
+  const { journal, input } = octoberGroupedReplacement();
+  const result = apply(journal, input);
+  expect(amounts(result.journal)).toEqual({ [A.id]: 30, [C.id]: 0 });
+  expect(total(result.journal)).toBe(total(journal));
+  expect(result.journal.revisions.slice(0, journal.revisions.length)).toEqual(
+    journal.revisions,
+  );
+  expect(apply(result.journal, input, true, LATER).journal).toBe(
+    result.journal,
+  );
+  expect(apply(journal, input, false).journal).toBe(journal);
+});
+
+test("exact grouped replacement requires and preserves its authenticated accepted parent graph", () => {
+  const { journal, input, grouped } = octoberGroupedReplacement();
+  if (grouped.proof.status !== "complete") throw Error("fixture");
+  const proof = grouped.proof;
+  const accepted = proof.sources[0];
+  const original = proof.sources[1];
+  original.headSha = accepted.commits[0].sha;
+  original.commits[0].sha = accepted.commits[0].sha;
+  accepted.commits[0].parentShas = [sha("0")];
+  accepted.commits[1].parentShas = [accepted.commits[0].sha];
+  if (!proof.originalContributor) throw Error("fixture");
+  proof.originalContributor.exactAcceptance = true;
+  proof.originalContributor.originalCommitSha = accepted.commits[0].sha;
+  expect(amounts(apply(journal, input).journal)).toEqual({
+    [A.id]: 30,
+    [C.id]: 0,
+  });
+  delete accepted.commits[1].parentShas;
+  expect(() => apply(journal, input)).toThrow("original head");
+});
+
+for (const fault of [
+  "partial-claims",
+  "foreign-source",
+  "extra-original",
+  "third-author",
+  "missing-files",
+  "wrong-value",
+] as const)
+  test(`October grouped replacement refuses ${fault}`, () => {
+    const { journal, input, grouped } = octoberGroupedReplacement();
+    if (grouped.kind !== "work-unit" || grouped.proof.status !== "complete")
+      throw Error("fixture");
+    const proof = grouped.proof;
+    if (fault === "partial-claims") {
+      proof.claims.pop();
+      proof.expectedClaimIds = proof.claims.map((claim) => claim.id);
+    }
+    if (fault === "foreign-source")
+      proof.claims[0].sourceId = proof.sources[1].sourceId;
+    if (fault === "extra-original") {
+      const other = structuredClone(proof.sources[1]);
+      other.sourceId = "PR_second_original";
+      other.sourceUrl = "https://github.com/SlopDotCash/asi/pull/11";
+      proof.sources.push(other);
+      grouped.sourceIds.push(other.sourceId);
+    }
+    if (fault === "third-author") proof.sources[0].commits[1].author = B;
+    if (fault === "missing-files") delete proof.sources[0].commits[1].files;
+    if (fault === "wrong-value") proof.decisionDigest = "b".repeat(64);
+    if (fault === "third-author")
+      expect(apply(journal, input).journal).toBe(journal);
+    else expect(() => apply(journal, input)).toThrow();
+  });

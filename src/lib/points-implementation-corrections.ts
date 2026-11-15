@@ -534,8 +534,7 @@ function deriveProof(
   if (proof.originalContributor !== undefined) {
     const binding = proof.originalContributor;
     check(
-      candidate.kind === "pull-request" &&
-        candidate.occurredAt.startsWith("2026-10-") &&
+      candidate.occurredAt.startsWith("2026-10-") &&
         binding &&
         (binding.exactAcceptance === undefined ||
           binding.exactAcceptance === true) &&
@@ -576,6 +575,34 @@ function deriveProof(
         ),
       "original-contributor proof does not bind verified accepted work",
     );
+    if (candidate.kind === "work-unit") {
+      const claims =
+        candidate.proof.status === "complete" ? candidate.proof.claims : [];
+      const acceptedPaths = accepted.commits
+        .filter(
+          (commit) =>
+            commit.parentCount <= 1 &&
+            commit.firstAcceptedSourceId === accepted.sourceId,
+        )
+        .flatMap((commit) =>
+          (commit.files ?? []).map((file) => `${commit.sha}\0${file.path}`),
+        );
+      check(
+        sources.size === 2 &&
+          claims.every((claim) => claim.sourceId === accepted.sourceId) &&
+          accepted.commits.every(
+            (commit) =>
+              commit.parentCount > 1 ||
+              commit.firstAcceptedSourceId !== accepted.sourceId ||
+              (commit.files !== undefined && commit.files.length > 0),
+          ) &&
+          sameSet(
+            acceptedPaths,
+            claims.map((claim) => `${claim.commitSha}\0${claim.path}`),
+          ),
+        "grouped original credit must cover one complete accepted replacement",
+      );
+    }
     check(
       binding.exactAcceptance !== true ||
         (binding.originalCommitSha === binding.acceptedCommitSha &&

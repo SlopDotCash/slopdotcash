@@ -3,7 +3,10 @@ import type { CorrectionSource } from "../src/lib/points-implementation-correcti
 import { collect, fixture } from "../tests/value-binary-fixture";
 import type { GitHubClient } from "../workers/slopbot/github";
 import type { WorkUnitSource } from "../workers/slopbot/value-work-unit-types";
-import { octoberOriginalContributorProof } from "./collect-implementation-corrections";
+import {
+  groupedOriginalContributorProof,
+  octoberOriginalContributorProof,
+} from "./collect-implementation-corrections";
 
 const sha = (value: string) => value.repeat(40);
 const origin = { node_id: "MDQ6VXNlcjQy", login: "origin", type: "User" };
@@ -220,6 +223,49 @@ test("October exact Git objects bind an earlier original without a copied-patch 
     input.owners,
   );
   expect(replay).toEqual(result);
+});
+
+test("grouped collector preserves exact original parent proofs and complete file evidence", async () => {
+  const input = await snapshot();
+  const ordinary = await octoberOriginalContributorProof(
+    input.github,
+    input.plain,
+    input.sources,
+    input.owners,
+  );
+  const accepted = structuredClone(ordinary.sources[0]);
+  for (const commit of accepted.commits) delete commit.parentShas;
+  const claims = accepted.commits.flatMap((commit) =>
+    (commit.files ?? []).map((file) => ({
+      id: `claim_${commit.sha}`,
+      sourceId: accepted.sourceId,
+      commitSha: commit.sha,
+      path: file.path,
+    })),
+  );
+  const grouped = groupedOriginalContributorProof(accepted, ordinary, claims);
+  expect(grouped.originalContributor?.exactAcceptance).toBe(true);
+  expect(grouped.sources[0].commits.map((commit) => commit.parentShas)).toEqual(
+    ordinary.sources[0].commits.map((commit) => commit.parentShas),
+  );
+  expect(grouped.sources[0].commits.map((commit) => commit.files)).toEqual(
+    accepted.commits.map((commit) => commit.files),
+  );
+  expect(() =>
+    groupedOriginalContributorProof(accepted, ordinary, claims.slice(1)),
+  ).toThrow("entire replacement");
+  expect(() =>
+    groupedOriginalContributorProof(
+      accepted,
+      ordinary,
+      claims.map((claim) => ({ ...claim, sourceId: "PR_other" })),
+    ),
+  ).toThrow("one accepted replacement");
+  const changed = structuredClone(accepted);
+  changed.commits[0].additions = (changed.commits[0].additions ?? 0) + 1;
+  expect(() =>
+    groupedOriginalContributorProof(changed, ordinary, claims),
+  ).toThrow("canonical census");
 });
 
 describe("October exact Git proof refuses incomplete or competing acceptance", () => {

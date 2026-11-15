@@ -28,6 +28,7 @@ import {
 } from "../src/lib/points";
 import {
   type CorrectionActor,
+  type CorrectionClaim,
   type CorrectionSource,
   createPointsCorrectionBaseline,
   originalContributorPrecedesFollowups,
@@ -1580,6 +1581,79 @@ export async function octoberOriginalContributorProof(
   );
 }
 
+/** Combine a verified ordinary replacement with its complete grouped path scope. */
+export function groupedOriginalContributorProof(
+  accepted: CorrectionSource,
+  original: HistoricalOrdinaryProof,
+  claims: readonly CorrectionClaim[],
+): HistoricalOrdinaryProof {
+  const originalAccepted = original.sources.find(
+    (source) => source.sourceId === accepted.sourceId,
+  );
+  matchRetainedAcceptedSource(accepted, originalAccepted);
+  requireThat(
+    originalAccepted &&
+      original.sources.length === 2 &&
+      original.originalContributor &&
+      originalAccepted.sourceId === accepted.sourceId &&
+      originalAccepted.sourceUrl === accepted.sourceUrl &&
+      originalAccepted.author?.id === accepted.author?.id &&
+      originalAccepted.author?.kind === accepted.author?.kind &&
+      originalAccepted.commits.every(
+        (commit, index) =>
+          commit.author?.id === accepted.commits[index].author?.id &&
+          commit.author?.kind === accepted.commits[index].author?.kind &&
+          commit.firstAcceptedSourceId ===
+            accepted.commits[index].firstAcceptedSourceId,
+      ) &&
+      claims.every((claim) => claim.sourceId === accepted.sourceId),
+    "Grouped original credit requires one accepted replacement",
+  );
+  const acceptedPaths = accepted.commits
+    .filter(
+      (commit) =>
+        commit.parentCount <= 1 &&
+        commit.firstAcceptedSourceId === accepted.sourceId,
+    )
+    .flatMap((commit) =>
+      (commit.files ?? []).map((file) => `${commit.sha}\0${file.path}`),
+    )
+    .sort();
+  requireThat(
+    accepted.commits.every(
+      (commit) =>
+        commit.parentCount > 1 ||
+        commit.firstAcceptedSourceId !== accepted.sourceId ||
+        (commit.files !== undefined && commit.files.length > 0),
+    ) &&
+      encode(acceptedPaths) ===
+        encode(
+          claims.map((claim) => `${claim.commitSha}\0${claim.path}`).sort(),
+        ),
+    "Grouped original credit does not cover the entire replacement",
+  );
+  const originals = new Map(
+    originalAccepted.commits.map((commit) => [commit.sha, commit]),
+  );
+  return {
+    sources: [
+      {
+        ...accepted,
+        commits: accepted.commits.map((commit) => ({
+          ...commit,
+          ...(originals.get(commit.sha)?.parentShas
+            ? { parentShas: originals.get(commit.sha)?.parentShas }
+            : {}),
+        })),
+      },
+      ...original.sources.filter(
+        (source) => source.sourceId !== accepted.sourceId,
+      ),
+    ],
+    originalContributor: original.originalContributor,
+  };
+}
+
 async function ordinaryRetainedProof(
   github: GitHubClient,
   read: SourceRead,
@@ -2391,7 +2465,7 @@ async function collectWithEvidenceCache(
           decision.latestDigest !== null,
           "Grouped decision digest unavailable",
         );
-        const sources = await bindRetained(decision.evidence.sources, owners);
+        let sources = await bindRetained(decision.evidence.sources, owners);
         const selectedClaims = decision.evidence.claims.filter((claim) =>
           unit.claimIds.includes(claim.id),
         );
@@ -2399,6 +2473,49 @@ async function collectWithEvidenceCache(
           selectedClaims.length === unit.claimIds.length,
           "Grouped claim scope is incomplete",
         );
+        let originalContributor: HistoricalOrdinaryProof["originalContributor"];
+        if (
+          octoberOriginalCredit &&
+          candidate.occurredAt.startsWith("2026-10-") &&
+          sources.length === 1 &&
+          selectedClaims.every(
+            (claim) =>
+              (claim.retainedCopy?.acceptancePullRequestId ??
+                claim.creditPullRequestId) === candidate.sourceId,
+          )
+        ) {
+          const read = reads.get(candidate.sourceId);
+          requireThat(read, "Grouped completion source disappeared");
+          const original = await ordinaryRetainedProof(
+            github,
+            read,
+            owners,
+            { cache, executor, allowNew: options.graphqlDiscussions === true },
+            true,
+          );
+          if (original.originalContributor) {
+            const accepted = sources.find(
+              (s) => s.sourceId === candidate.sourceId,
+            );
+            requireThat(accepted, "Grouped accepted source disappeared");
+            const groupedOriginal = groupedOriginalContributorProof(
+              accepted,
+              original,
+              selectedClaims.map((claim) => ({
+                id: claim.id,
+                sourceId:
+                  claim.retainedCopy?.acceptancePullRequestId ??
+                  claim.creditPullRequestId,
+                commitSha:
+                  claim.retainedCopy?.acceptedCommitSha ?? claim.commitSha,
+                path: claim.path,
+              })),
+            );
+            sources = groupedOriginal.sources;
+            originalContributor = groupedOriginal.originalContributor;
+          }
+        }
+        candidate.sourceIds = sources.map((s) => s.sourceId).sort();
         candidate.proof = {
           status: "complete",
           censusDigest,
@@ -2413,6 +2530,7 @@ async function collectWithEvidenceCache(
             commitSha: claim.retainedCopy?.acceptedCommitSha ?? claim.commitSha,
             path: claim.path,
           })),
+          ...(originalContributor ? { originalContributor } : {}),
         };
       } catch (error) {
         cache.assertUninterrupted();
