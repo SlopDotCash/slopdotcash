@@ -7581,7 +7581,7 @@
     },
     {
       "path": "workers/fee-converter/wrangler.toml",
-      "sha256": "eec63b89e0c6a97dedbea80f88a91256df5841b2880256be2c2fcb6352ca167e",
+      "sha256": "b369860dbab16dab769a582566c24235ca0c4a4a9a674b1c9c9e8718f94910f2",
       "models": ["formal/models/payments/payment_worker_run.qnt"],
       "candidateLines": [],
       "review": "mapped-abstraction"
