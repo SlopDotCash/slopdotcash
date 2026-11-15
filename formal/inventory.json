@@ -3385,7 +3385,7 @@
     },
     {
       "path": "playwright.config.ts",
-      "sha256": "f2a8fa41356504868bdb5c6ddaba1ddee18e2e60434a53da764940738e005543",
+      "sha256": "644d193fe6577749ad2dfa3c9e00435d562837c8aaecd476574884261459feae",
       "models": [
         "formal/models/release/ci_browser_evidence.qnt",
         "formal/models/release/ci_browser_runtime.qnt",
@@ -4588,7 +4588,7 @@
     },
     {
       "path": "scripts/run-e2e.mjs",
-      "sha256": "cd3e70857e1196ba771400046271481233f6395faed5d9b5a21f1897da196e85",
+      "sha256": "34339d88d875948a71f5842e77b822cda5fc1585cd197ae018afaf599b64d7fe",
       "models": [
         "formal/models/release/ci_browser_evidence.qnt",
         "formal/models/tooling/evidence_capture.qnt",
@@ -4598,7 +4598,7 @@
       ],
       "candidateLines": [
         54, 63, 64, 65, 66, 85, 103, 104, 197, 274, 320, 322, 432, 501, 529,
-        601, 602, 615, 631, 637, 667, 668, 702
+        601, 602, 615, 631, 638, 692, 693, 741
       ],
       "review": "mapped-abstraction"
     },
