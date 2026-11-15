@@ -36,6 +36,8 @@ import {
   isOriginalContributorFollowup,
   type OriginalContributorBinding,
   type OriginalContributorFollowup,
+  type OriginalContributorRepair,
+  isOriginalContributorRepair,
   originalContributorClaimScope,
   originalContributorPrecedesFollowups,
   type PointsImplementationCorrectionCandidate,
@@ -64,8 +66,12 @@ import {
 } from "../workers/slopbot/value-patch";
 import { isConfirmedMissingPublicReference } from "../workers/slopbot/value-reference-query";
 import { retainedCopyBindings } from "../workers/slopbot/value-retained-copy";
-import { retainedAcknowledgements } from "../workers/slopbot/value-retained-reference";
+import {
+  acknowledgementTime,
+  retainedAcknowledgements,
+} from "../workers/slopbot/value-retained-reference";
 import { valueSourceDigest } from "../workers/slopbot/value-review";
+import { sameRepositoryCommitHints } from "../workers/slopbot/value-commit-hints";
 import type { WorkUnitSource } from "../workers/slopbot/value-work-unit-types";
 import {
   collectSearchReferences,
@@ -1519,12 +1525,167 @@ async function authenticateNativeAcceptedRange(
   return { acceptedRange, retainedBaseRanges };
 }
 
+/** Bind third-party repairs only to statements by the accepting merger. */
+async function acknowledgedOriginalRepairs(
+  github: Pick<GitHubClient, "get"> & Partial<Pick<GitHubClient, "graphql">>,
+  original: WorkUnitSource,
+  integration: WorkUnitSource,
+  originalSource: CorrectionSource,
+  accepted: CorrectionSource,
+  claims: readonly CorrectionClaim[],
+): Promise<OriginalContributorRepair[]> {
+  const author = original.evidence.pull.user.node_id;
+  const commits = accepted.commits.filter(
+    (commit) =>
+      claims.some((claim) => claim.commitSha === commit.sha) &&
+      commit.author &&
+      commit.author.id !== author &&
+      commit.author.id !== accepted.author?.id,
+  );
+  if (!commits.length) return [];
+  const repairs: OriginalContributorRepair[] = [];
+  const parents = new Map(
+    [...accepted.commits, ...originalSource.commits].map((commit) => [
+      commit.sha,
+      commit.parentShas ?? [],
+    ]),
+  );
+  const headContains = (head: string, commitSha: string) => {
+    const pending = [head];
+    const visited = new Set<string>();
+    for (const current of pending) {
+      if (current === commitSha) return true;
+      if (visited.has(current)) continue;
+      visited.add(current);
+      pending.push(...(parents.get(current) ?? []));
+    }
+    return false;
+  };
+  const sourceDigests = {
+    [originalSource.sourceId]: await valueSourceDigest(
+      original.evidence,
+      original.policy,
+    ),
+    [accepted.sourceId]: await valueSourceDigest(
+      integration.evidence,
+      integration.policy,
+    ),
+  };
+  for (const commit of commits) {
+    for (const source of [original, integration]) {
+      const pull = source.evidence.pull;
+      const acknowledgements = retainedAcknowledgements(source.evidence);
+      const matching = acknowledgements.find(
+        (record) =>
+          record.user?.node_id ===
+            integration.evidence.pull.merged_by?.node_id &&
+          record.user?.type === "User" &&
+          Number.isFinite(Date.parse(acknowledgementTime(record))) &&
+          (!("updated_at" in record) ||
+            record.updated_at === acknowledgementTime(record)) &&
+          sameRepositoryCommitHints(
+            source.evidence.repository,
+            record.body,
+          ).includes(pull.head.sha) &&
+          (source === original ||
+            referencesOriginalContributorSource(
+              record.body,
+              source.evidence.repository,
+              original.evidence.pull.number,
+            )),
+      );
+      let reference:
+        | Omit<OriginalContributorRepair["reference"], "digest">
+        | undefined;
+      if (
+        matching &&
+        Number.isFinite(Date.parse(acknowledgementTime(matching)))
+      ) {
+        reference = {
+          sourceDigests,
+          pull,
+          acceptingPull: integration.evidence.pull,
+          acknowledgement: matching,
+          headSha: pull.head.sha,
+        };
+      } else if (
+        source === integration &&
+        sameRepositoryCommitHints(
+          source.evidence.repository,
+          pull.body ?? "",
+        ).includes(pull.head.sha) &&
+        referencesOriginalContributorSource(
+          pull.body ?? "",
+          source.evidence.repository,
+          original.evidence.pull.number,
+        )
+      ) {
+        const [owner, name] = source.evidence.repository.split("/");
+        if (!github.graphql) continue;
+        const data = await github.graphql<{
+          repository: {
+            pullRequest: {
+              id: string;
+              body: string;
+              headRefOid: string;
+              mergedAt: string;
+              updatedAt: string;
+              lastEditedAt: string | null;
+              editor: { id: string; __typename: string } | null;
+              author: { id: string; __typename: string };
+            };
+          };
+        }>(
+          "query SlopOriginalRepairBody($owner:String!,$name:String!,$number:Int!){repository(owner:$owner,name:$name){pullRequest(number:$number){id body headRefOid mergedAt updatedAt lastEditedAt editor{__typename ... on User{id}} author{__typename ... on User{id}}}} rateLimit{cost limit remaining resetAt}}",
+          { owner, name, number: pull.number },
+        );
+        const body = data.repository?.pullRequest;
+        if (
+          body?.id === pull.node_id &&
+          body.body === pull.body &&
+          body.headRefOid === pull.head.sha &&
+          body.mergedAt === pull.merged_at &&
+          body.updatedAt === pull.updated_at
+        ) {
+          reference = {
+            sourceDigests,
+            pull,
+            acceptingPull: integration.evidence.pull,
+            headSha: pull.head.sha,
+            bodyEdit: {
+              ...body,
+              editor: body.editor
+                ? { id: body.editor.id, type: body.editor.__typename }
+                : null,
+              author: { id: body.author.id, type: body.author.__typename },
+            },
+          };
+        }
+      }
+      if (!reference || !headContains(reference.headSha, commit.sha)) continue;
+      const repair: OriginalContributorRepair = {
+        sourceId: pull.node_id,
+        commitSha: commit.sha,
+        authorNodeId: commit.author?.id ?? "",
+        reference: { ...reference, digest: digest(encode(reference)) },
+      };
+      if (
+        isOriginalContributorRepair(repair, originalSource, accepted, commit)
+      ) {
+        repairs.push(repair);
+        break;
+      }
+    }
+  }
+  return repairs;
+}
+
 /** An identical Git object needs no textual acknowledgement of a rewrite.
  * Authenticate the native merge range and its parent order before retaining
  * the complete evidence in the cache and its digest in the correction proof.
  */
 async function exactOctoberOriginalContributorProof(
-  github: Pick<GitHubClient, "get">,
+  github: Pick<GitHubClient, "get"> & Partial<Pick<GitHubClient, "graphql">>,
   accepted: CorrectionSource,
   originalSource: CorrectionSource,
   integration: WorkUnitSource,
@@ -1709,6 +1870,16 @@ async function exactOctoberOriginalContributorProof(
       originalSource,
       original.evidence,
     );
+  const repairs = scopedClaims
+    ? await acknowledgedOriginalRepairs(
+        github,
+        original,
+        integration,
+        originalSource,
+        accepted,
+        scopedClaims,
+      )
+    : [];
   requireThat(
     scopedClaims
       ? originalContributorClaimScope(
@@ -1717,6 +1888,7 @@ async function exactOctoberOriginalContributorProof(
           scopedClaims,
           [],
           anchor.sha,
+          repairs,
         )
       : originalContributorPrecedesFollowups(
           { ...accepted, author: originalSource.author },
@@ -1740,7 +1912,10 @@ async function exactOctoberOriginalContributorProof(
     originalContributor: {
       exactAcceptance: true,
       ...(scopedClaims
-        ? { claimIds: scopedClaims.map((claim) => claim.id) }
+        ? {
+            claimIds: scopedClaims.map((claim) => claim.id),
+            ...(repairs.length ? { repairs } : {}),
+          }
         : {}),
       originalSourceId: originalSource.sourceId,
       originalCommitSha: anchor.sha,
@@ -1753,7 +1928,7 @@ async function exactOctoberOriginalContributorProof(
             integration.evidence,
             integration.policy,
           ),
-          ...(scopedClaims ? { claims: scopedClaims } : {}),
+          ...(scopedClaims ? { claims: scopedClaims, repairs } : {}),
           pulls,
           merge,
           firstParent,
@@ -1768,7 +1943,7 @@ async function exactOctoberOriginalContributorProof(
 
 /** Bind a reviewed single-origin unit inside a multi-origin native merge. */
 export async function octoberOriginalContributorUnitProof(
-  github: Pick<GitHubClient, "get">,
+  github: Pick<GitHubClient, "get"> & Partial<Pick<GitHubClient, "graphql">>,
   accepted: CorrectionSource,
   original: WorkUnitSource,
   integration: WorkUnitSource,
@@ -1837,6 +2012,7 @@ export async function octoberOriginalContributorUnitProof(
         binding: bindings[index],
       })),
       proof.originalContributor.originalCommitSha,
+      proof.originalContributor.repairs,
     ),
     "Reviewed native unit has an unverified selected follow-up",
   );
@@ -1865,7 +2041,7 @@ export async function octoberOriginalContributorUnitProof(
 
 /** Preserve one person's unit across independently verified originating PRs. */
 export async function octoberOriginalContributorPartsProof(
-  github: Pick<GitHubClient, "get">,
+  github: Pick<GitHubClient, "get"> & Partial<Pick<GitHubClient, "graphql">>,
   sourceEvidence: readonly WorkUnitSource[],
   owners: ReadonlyMap<string, string>,
   claims: readonly CorrectionClaim[],
@@ -2039,7 +2215,7 @@ export async function octoberOriginalContributorPartsProof(
 }
 
 export async function octoberOriginalContributorProof(
-  github: Pick<GitHubClient, "get">,
+  github: Pick<GitHubClient, "get"> & Partial<Pick<GitHubClient, "graphql">>,
   plain: CorrectionSource,
   sources: readonly WorkUnitSource[],
   owners: ReadonlyMap<string, string>,

@@ -12,7 +12,10 @@ import { mergeResolutionLineCounts } from "../../workers/slopbot/value-merge-res
  * the ordinary pointsSql financial guard remains mandatory at publication.
  */
 
-import { githubLinkDestinations } from "../../workers/slopbot/value-commit-hints";
+import {
+  githubLinkDestinations,
+  sameRepositoryCommitHints,
+} from "../../workers/slopbot/value-commit-hints";
 import type { Pull } from "../../workers/slopbot/value-evidence-types";
 import { isCreditEligibleCommitAuthor } from "./commit-credit";
 import { shareImplementationPoints } from "./implementation-allocation";
@@ -107,6 +110,31 @@ export interface OriginalContributorFollowup {
     digest: string;
   };
 }
+export interface OriginalContributorRepair {
+  sourceId: string;
+  commitSha: string;
+  authorNodeId: string;
+  reference: {
+    sourceDigests: Record<string, string>;
+    pull: Pull;
+    acceptingPull: Pull;
+    acknowledgement?: NonNullable<
+      OriginalContributorFollowup["reference"]
+    >["acknowledgement"];
+    headSha: string;
+    bodyEdit?: {
+      id: string;
+      body: string;
+      headRefOid: string;
+      mergedAt: string;
+      updatedAt: string;
+      lastEditedAt: string | null;
+      editor: { id: string; type: string } | null;
+      author: { id: string; type: string };
+    };
+    digest: string;
+  };
+}
 export interface OriginalContributorBinding {
   /** Native identical-SHA acceptance with authenticated accepted-parent edges. */
   exactAcceptance?: true;
@@ -115,6 +143,7 @@ export interface OriginalContributorBinding {
   /** First accepted carrier when the recorded unit completes on its donor. */
   acceptedSourceId?: string;
   followups?: OriginalContributorFollowup[];
+  repairs?: OriginalContributorRepair[];
   originalSourceId: string;
   originalCommitSha: string;
   acceptedCommitSha: string;
@@ -279,6 +308,88 @@ export function referencesOriginalContributorSource(
   );
 }
 
+/** The accepting merger acknowledges a repair at its exact retained source head. */
+export function isOriginalContributorRepair(
+  repair: OriginalContributorRepair,
+  original: CorrectionSource,
+  accepted: CorrectionSource,
+  commit: CorrectionCommit,
+): boolean {
+  const { digest: referenceDigest, ...reference } = repair.reference;
+  const pull = reference.pull;
+  const acknowledgement = reference.acknowledgement;
+  const source = repair.sourceId === original.sourceId ? original : accepted;
+  const text = acknowledgement?.body ?? pull.body ?? "";
+  const bodyEdit = reference.bodyEdit;
+  const bodyActor =
+    bodyEdit?.lastEditedAt === null ? bodyEdit.author : bodyEdit?.editor;
+  const actorId = acknowledgement?.user?.node_id ?? bodyActor?.id;
+  const actorType = acknowledgement?.user?.type ?? bodyActor?.type;
+  const occurredAt =
+    acknowledgement?.created_at ??
+    acknowledgement?.submitted_at ??
+    bodyEdit?.lastEditedAt ??
+    pull.updated_at;
+  const edited = acknowledgement?.updated_at;
+  return (
+    (repair.sourceId === original.sourceId ||
+      repair.sourceId === accepted.sourceId) &&
+    repair.commitSha === commit.sha &&
+    repair.authorNodeId === commit.author?.id &&
+    eligibleActor(commit.author) &&
+    Object.keys(reference.sourceDigests).length === 2 &&
+    digest.test(reference.sourceDigests[original.sourceId] ?? "") &&
+    digest.test(reference.sourceDigests[accepted.sourceId] ?? "") &&
+    pull.node_id === source.sourceId &&
+    Number.isSafeInteger(pull.number) &&
+    pull.number > 0 &&
+    source.sourceUrl.endsWith(`/pull/${pull.number}`) &&
+    pull.html_url === source.sourceUrl &&
+    pull.head.sha === source.headSha &&
+    pull.state === "closed" &&
+    (source.occurredAt === null
+      ? pull.merged_at === null
+      : pull.merged_at !== null &&
+        Date.parse(pull.merged_at) === Date.parse(source.occurredAt)) &&
+    accepted.occurredAt !== null &&
+    actorType === "User" &&
+    reference.acceptingPull.node_id === accepted.sourceId &&
+    Number.isSafeInteger(reference.acceptingPull.number) &&
+    accepted.sourceUrl.endsWith(`/pull/${reference.acceptingPull.number}`) &&
+    reference.acceptingPull.head.sha === accepted.headSha &&
+    reference.acceptingPull.html_url === accepted.sourceUrl &&
+    reference.acceptingPull.merged_at !== null &&
+    Date.parse(reference.acceptingPull.merged_at) ===
+      Date.parse(accepted.occurredAt) &&
+    reference.acceptingPull.merged_by?.type === "User" &&
+    actorId === reference.acceptingPull.merged_by.node_id &&
+    Number.isFinite(Date.parse(occurredAt ?? "")) &&
+    Date.parse(occurredAt ?? "") <= Date.parse(pull.updated_at) &&
+    (acknowledgement === undefined || acknowledgement.node_id.length > 0) &&
+    (edited === undefined || edited === occurredAt) &&
+    (acknowledgement !== undefined ||
+      (bodyEdit?.id === pull.node_id &&
+        bodyEdit.body === pull.body &&
+        bodyEdit.headRefOid === pull.head.sha &&
+        bodyEdit.mergedAt === pull.merged_at &&
+        bodyEdit.updatedAt === pull.updated_at)) &&
+    digest.test(referenceDigest) &&
+    sha256Hex(JSON.stringify(reference)) === referenceDigest &&
+    sha.test(reference.headSha) &&
+    (repair.sourceId === original.sourceId ||
+      referencesOriginalContributorSource(
+        text,
+        original.repository,
+        Number(original.sourceUrl.split("/").at(-1)),
+      )) &&
+    sameRepositoryCommitHints(source.repository, text).includes(
+      reference.headSha,
+    ) &&
+    (reference.headSha === original.headSha ||
+      reference.headSha === accepted.headSha)
+  );
+}
+
 /** Authenticate the later carrier range without counting intervening work. */
 export function isOriginalContributorFollowup(
   source: CorrectionSource,
@@ -325,7 +436,7 @@ export function isOriginalContributorFollowup(
       pull.head.sha === source.headSha &&
       pull.state === "closed" &&
       pull.merged_at !== null &&
-      new Date(pull.merged_at).toISOString() === source.occurredAt &&
+      Date.parse(pull.merged_at) === Date.parse(source.occurredAt) &&
       pull.user.type === "User" &&
       pull.user.node_id === accepted.author.id &&
       target.id === accepted.sourceId &&
@@ -460,6 +571,7 @@ export function originalContributorClaimScope(
     binding: OriginalContributorFollowup;
   }[] = [],
   anchorSha = original.headSha,
+  repairs: readonly OriginalContributorRepair[] = [],
 ): boolean {
   const origin = original.author;
   const carrier = accepted.author;
@@ -599,6 +711,21 @@ export function originalContributorClaimScope(
     )
   )
     return false;
+  if (
+    new Set(repairs.map((repair) => repair.commitSha)).size !==
+      repairs.length ||
+    repairs.some((repair) => {
+      const commit = graph.get(repair.commitSha);
+      return (
+        !commit ||
+        !claims.some((claim) => claim.commitSha === repair.commitSha) ||
+        !isOriginalContributorRepair(repair, original, accepted, commit) ||
+        !descends(commit.sha, anchorSha) ||
+        !descends(repair.reference.headSha, commit.sha)
+      );
+    })
+  )
+    return false;
   let hasOriginal = false;
   for (const claim of claims) {
     const source =
@@ -614,11 +741,18 @@ export function originalContributorClaimScope(
       !commit.files?.some((file) => file.path === claim.path)
     )
       return false;
+    const repair = repairs.find((repair) => repair.commitSha === commit.sha);
+    const acknowledgedRepair =
+      repair !== undefined &&
+      isOriginalContributorRepair(repair, original, accepted, commit) &&
+      descends(commit.sha, anchorSha) &&
+      descends(repair.reference.headSha, commit.sha);
     if (originals.has(commit.sha)) {
       if (
         commit.author !== null &&
         commit.author.id !== origin.id &&
-        commit.author.id !== carrier.id
+        commit.author.id !== carrier.id &&
+        !acknowledgedRepair
       )
         return false;
       if (commit.author?.id === carrier.id && !descends(commit.sha, anchorSha))
@@ -630,7 +764,9 @@ export function originalContributorClaimScope(
         hasOriginal = true;
     } else if (
       !eligibleActor(commit.author) ||
-      (commit.author.id !== origin.id && commit.author.id !== carrier.id) ||
+      (commit.author.id !== origin.id &&
+        commit.author.id !== carrier.id &&
+        !acknowledgedRepair) ||
       !descends(commit.sha, anchorSha)
     )
       return false;
@@ -1223,6 +1359,7 @@ function deriveProof(
               return { source, binding: followup };
             }),
             binding.originalCommitSha,
+            binding.repairs,
           ),
         "original-contributor unit scope does not bind the reviewed native claims",
       );

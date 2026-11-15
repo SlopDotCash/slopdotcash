@@ -1375,3 +1375,184 @@ test("the native collector partitions two original PRs by one contributor", asyn
     ),
   ).rejects.toThrow("different originating contributors");
 });
+
+async function repairSnapshot() {
+  const input = await snapshot();
+  const repairAuthor = {
+    node_id: "MDQ6VXNlcjQ0",
+    login: "repairer",
+    type: "User",
+  };
+  input.accepted.commits[1].author = repairAuthor;
+  input.plain.commits[1].author = {
+    id: repairAuthor.node_id,
+    login: repairAuthor.login,
+    kind: "User",
+  };
+  input.original.pull.head.sha = sha("b");
+  input.original.pull.commits = 2;
+  input.original.pull.updated_at = "2026-10-03T00:00:00Z";
+  input.original.commits.push(clone(input.accepted.commits[1]));
+  input.original.commitAttribution.push(
+    clone(input.accepted.commitAttribution[1]),
+  );
+  input.original.commitAttribution[1].actorNodeIds = [repairAuthor.node_id];
+  input.accepted.commitAttribution[1].actorNodeIds = [repairAuthor.node_id];
+  input.original.comments = [
+    {
+      node_id: "IC_repair",
+      body: `Repair pushed at ${sha("b")}`,
+      user: carrier,
+      created_at: "2026-10-02T12:00:00Z",
+      updated_at: "2026-10-02T12:00:00Z",
+      html_url: `https://github.com/${repository}/pull/1#issuecomment-1`,
+    },
+  ];
+  input.responses.set(`${root}/pulls/1`, {
+    ...input.original.pull,
+    created_at: "2026-10-01T00:00:00Z",
+  });
+  input.responses.set(
+    `${root}/git/commits/${sha("b")}`,
+    clone(input.accepted.commits[1]),
+  );
+  const range = input.responses.get(
+    `${root}/compare/${sha("f")}...${sha("c")}?per_page=100&page=1`,
+  ) as { commits: unknown[] };
+  range.commits[1] = clone(input.accepted.commits[1]);
+  const claims = ["a", "b"].map((id) => ({
+    id: `claim_${id}`,
+    sourceId: input.plain.sourceId,
+    commitSha: sha(id),
+    path: "fix.ts",
+  }));
+  return { ...input, claims };
+}
+
+test("native unit collector binds the merger's original-PR repair acknowledgement and retains the repair author", async () => {
+  const input = await repairSnapshot();
+  const proof = await octoberOriginalContributorUnitProof(
+    input.github,
+    input.plain,
+    input.sources[1],
+    input.sources[0],
+    input.owners,
+    input.claims,
+  );
+  expect(proof.originalContributor?.repairs).toHaveLength(1);
+  expect(proof.originalContributor?.repairs?.[0].authorNodeId).toBe(
+    "MDQ6VXNlcjQ0",
+  );
+  expect(proof.sources[0].commits[1].author?.id).toBe("MDQ6VXNlcjQ0");
+});
+
+for (const fault of [
+  "wrong-merger",
+  "wrong-head",
+  "edited",
+  "nonancestor",
+] as const) {
+  test(`native unit collector refuses repair ${fault}`, async () => {
+    const input = await repairSnapshot();
+    if (fault === "wrong-merger") input.original.comments[0].user = origin;
+    if (fault === "wrong-head")
+      input.original.comments[0].body = `Repair pushed at ${sha("9")}`;
+    if (fault === "edited")
+      input.original.comments[0].updated_at = "2026-10-03T00:00:00Z";
+    if (fault === "nonancestor") {
+      input.accepted.commits[1].parents = [{ sha: sha("9") }];
+      input.original.commits[1].parents = [{ sha: sha("9") }];
+      input.responses.set(
+        `${root}/git/commits/${sha("b")}`,
+        clone(input.accepted.commits[1]),
+      );
+    }
+    expect(
+      octoberOriginalContributorUnitProof(
+        input.github,
+        input.plain,
+        input.sources[1],
+        input.sources[0],
+        input.owners,
+        input.claims,
+      ),
+    ).rejects.toThrow();
+  });
+}
+
+async function bodyRepairSnapshot() {
+  const input = await repairSnapshot();
+  input.original.comments = [];
+  input.accepted.pull.body = `Incorporates #1. Accepted head ${sha("b")}`;
+  input.accepted.pull.updated_at = "2026-10-03T01:00:00Z";
+  input.responses.set(`${root}/pulls/2`, {
+    ...input.accepted.pull,
+    created_at: "2026-10-02T00:00:00Z",
+  });
+  const body = {
+    id: input.accepted.pull.node_id,
+    body: input.accepted.pull.body,
+    headRefOid: sha("b"),
+    mergedAt: input.accepted.pull.merged_at,
+    updatedAt: input.accepted.pull.updated_at,
+    lastEditedAt: "2026-10-03T00:30:00Z",
+    editor: { id: carrier.node_id, __typename: "User" },
+    author: { id: carrier.node_id, __typename: "User" },
+  };
+  const github = {
+    ...input.github,
+    async graphql<T>(): Promise<T> {
+      return { repository: { pullRequest: clone(body) } } as T;
+    },
+  };
+  return { ...input, github, body };
+}
+
+test("native unit collector binds a post-merge carrier body to its authenticated editor and source head", async () => {
+  const input = await bodyRepairSnapshot();
+  const proof = await octoberOriginalContributorUnitProof(
+    input.github,
+    input.plain,
+    input.sources[1],
+    input.sources[0],
+    input.owners,
+    input.claims,
+  );
+  expect(proof.originalContributor?.repairs?.[0].sourceId).toBe("PR_carrier");
+  expect(
+    proof.originalContributor?.repairs?.[0].reference.bodyEdit?.editor?.id,
+  ).toBe(carrier.node_id);
+});
+for (const fault of [
+  "editor",
+  "changed-body",
+  "changed-head",
+  "changed-id",
+  "changed-merge",
+  "future-edit",
+  "missing-metadata",
+] as const) {
+  test(`carrier body repair refuses ${fault}`, async () => {
+    const input = await bodyRepairSnapshot();
+    if (fault === "editor") input.body.editor.id = origin.node_id;
+    if (fault === "changed-body") input.body.body = "Other text";
+    if (fault === "changed-head") input.body.headRefOid = sha("9");
+    if (fault === "changed-id") input.body.id = "PR_other";
+    if (fault === "changed-merge") input.body.mergedAt = "2026-10-04T00:00:00Z";
+    if (fault === "future-edit")
+      input.body.lastEditedAt = "2026-10-04T00:00:00Z";
+    const github = input.github;
+    if (fault === "missing-metadata")
+      delete (github as Partial<typeof github>).graphql;
+    expect(
+      octoberOriginalContributorUnitProof(
+        github,
+        input.plain,
+        input.sources[1],
+        input.sources[0],
+        input.owners,
+        input.claims,
+      ),
+    ).rejects.toThrow();
+  });
+}
