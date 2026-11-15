@@ -1946,5 +1946,50 @@ test("scoped original preserves later-merged other-donor context without awardin
     [C.id]: 0,
   });
   other.commits[0].firstAcceptedSourceId = other.sourceId;
+  expect(amounts(apply(journal, input).journal)).toEqual({
+    [A.id]: 30,
+    [C.id]: 0,
+  });
+});
+
+test("a grouped unit retains later connected sources without moving its own completion", () => {
+  const { journal, input } = grouped();
+  const later = {
+    ...source(),
+    sourceId: "PR_later",
+    sourceUrl: "https://github.com/SlopDotCash/asi/pull/3",
+    occurredAt: "2026-01-02T00:00:00.000Z",
+    headSha: sha("8"),
+    commits: [
+      {
+        sha: sha("8"),
+        parentCount: 1,
+        author: B,
+        additions: 1,
+        deletions: 0,
+        firstAcceptedSourceId: "PR_later",
+        files: [{ path: "later.ts", additions: 1, deletions: 0 }],
+      },
+    ],
+    commitCount: 1,
+  };
+  for (const candidate of input.candidates) {
+    if (candidate.proof.status !== "complete") throw Error("fixture");
+    candidate.sourceIds.push(later.sourceId);
+    candidate.proof.sources.push(structuredClone(later));
+  }
+  const result = apply(journal, input);
+  expect(total(result.journal)).toBe(total(journal));
+  for (const row of latestPoints(result.journal).values())
+    expect(row.award.occurredAt).toBe(OCCURRED);
+  const first = input.candidates[0];
+  if (first.kind !== "work-unit" || first.proof.status !== "complete")
+    throw Error("fixture");
+  first.proof.claims[0] = {
+    ...first.proof.claims[0],
+    sourceId: later.sourceId,
+    commitSha: sha("8"),
+    path: "later.ts",
+  };
   expect(() => apply(journal, input)).toThrow("invalid source identity");
 });

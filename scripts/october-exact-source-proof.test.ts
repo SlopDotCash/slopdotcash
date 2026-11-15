@@ -10,6 +10,7 @@ import {
   octoberOriginalContributorProof,
   octoberOriginalContributorUnitProof,
   originalContributorFollowupProof,
+  restoreCanonicalMergeCounts,
 } from "./collect-implementation-corrections";
 
 const sha = (value: string) => value.repeat(40);
@@ -782,4 +783,55 @@ test("native unit proof binds an unlinked original while preserving unrelated ca
       claims,
     ),
   ).rejects.toThrow("unverified contributor");
+});
+
+test("unselected grouped context retains full-census merge counters with strict identity", async () => {
+  const input = await snapshot();
+  const proof = await octoberOriginalContributorProof(
+    input.github,
+    input.plain,
+    input.sources,
+    input.owners,
+  );
+  const source = proof.sources[0];
+  const commit: import("../src/lib/points-implementation-corrections").CorrectionCommit =
+    {
+      ...source.commits[0],
+      parentCount: 2,
+      additions: null,
+      deletions: null,
+    };
+  source.commits = [commit];
+  source.commitCount = 1;
+  const outcome = {
+    id: source.sourceId,
+    commits: [
+      {
+        oid: commit.sha,
+        parentCount: 2,
+        author: commit.author,
+        additions: 400,
+        deletions: 20,
+      },
+    ],
+  } as unknown as import("../src/lib/leaderboard").MergedPullRequestOutcome;
+  restoreCanonicalMergeCounts([source], new Map([[source.sourceId, outcome]]));
+  expect([commit.additions, commit.deletions]).toEqual([400, 20]);
+  commit.additions = 401;
+  expect(() =>
+    restoreCanonicalMergeCounts(
+      [source],
+      new Map([[source.sourceId, outcome]]),
+    ),
+  ).toThrow("disagree");
+  commit.additions = null;
+  const canonical = outcome.commits?.[0];
+  if (!canonical) throw Error("fixture");
+  canonical.parentCount = 1;
+  expect(() =>
+    restoreCanonicalMergeCounts(
+      [source],
+      new Map([[source.sourceId, outcome]]),
+    ),
+  ).toThrow("disagree");
 });

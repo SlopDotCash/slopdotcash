@@ -693,6 +693,11 @@ function deriveProof(
               copy.author?.kind === commit.author?.kind,
           ),
       );
+    const unclaimedContext =
+      candidate.kind === "work-unit" &&
+      proof.status === "complete" &&
+      "claims" in proof &&
+      !proof.claims.some((claim) => claim.sourceId === source.sourceId);
     const mergedOriginal =
       candidate.kind === "work-unit" &&
       proof.originalContributor?.exactAcceptance === true &&
@@ -710,7 +715,8 @@ function deriveProof(
         (source.occurredAt === null || instant(source.occurredAt)) &&
         (source.occurredAt === null ||
           source.occurredAt <= candidate.occurredAt ||
-          mergedOriginal) &&
+          mergedOriginal ||
+          unclaimedContext) &&
         sourceRepository(source.sourceUrl, candidate.projectId) ===
           source.repository.toLowerCase(),
       "invalid source identity",

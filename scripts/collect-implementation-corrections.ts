@@ -1700,6 +1700,35 @@ export function isMergedOriginalContributor(
   );
 }
 
+/** Restore reported merge counters from the complete immutable ownership census. */
+export function restoreCanonicalMergeCounts(
+  sources: readonly CorrectionSource[],
+  outcomes: ReadonlyMap<string, MergedPullRequestOutcome>,
+): void {
+  for (const source of sources) {
+    const outcome = outcomes.get(source.sourceId);
+    for (const commit of source.commits) {
+      if (commit.parentCount <= 1) continue;
+      const canonical = outcome?.commits?.find(
+        (item) => item.oid === commit.sha,
+      );
+      if (!canonical) continue;
+      requireThat(
+        canonical.parentCount === commit.parentCount &&
+          (canonical.author?.id ?? null) === (commit.author?.id ?? null) &&
+          (canonical.author?.kind ?? null) === (commit.author?.kind ?? null) &&
+          (commit.additions === null ||
+            commit.additions === canonical.additions) &&
+          (commit.deletions === null ||
+            commit.deletions === canonical.deletions),
+        "Canonical merge identity or counters disagree",
+      );
+      commit.additions = canonical.additions ?? null;
+      commit.deletions = canonical.deletions ?? null;
+    }
+  }
+}
+
 /** Resolve semantic origin claims to their authenticated first acceptance. */
 export function firstAcceptedCorrectionClaims(
   claims: readonly CorrectionClaim[],
@@ -2824,19 +2853,7 @@ async function collectWithEvidenceCache(
           "Grouped decision digest unavailable",
         );
         let sources = await bindRetained(decision.evidence.sources, owners);
-        for (const source of sources) {
-          const outcome = reads.get(source.sourceId)?.outcome;
-          for (const commit of source.commits) {
-            if (commit.parentCount <= 1) continue;
-            const canonical = outcome?.commits?.find(
-              (item) => item.oid === commit.sha,
-            );
-            if (canonical) {
-              commit.additions = canonical.additions ?? null;
-              commit.deletions = canonical.deletions ?? null;
-            }
-          }
-        }
+        restoreCanonicalMergeCounts(sources, outcomesById);
         const selectedClaims = decision.evidence.claims.filter((claim) =>
           unit.claimIds.includes(claim.id),
         );
@@ -2899,8 +2916,19 @@ async function collectWithEvidenceCache(
           (candidateSources.has(candidate.sourceId) ||
             candidate.sourceId === mergedDonor?.sourceId)
         ) {
-          const read = reads.get(accepted.sourceId);
-          requireThat(read, "Grouped completion source disappeared");
+          const acceptedOutcome = outcomesById.get(accepted.sourceId);
+          const read =
+            reads.get(accepted.sourceId) ??
+            (acceptedOutcome
+              ? {
+                  outcome: acceptedOutcome,
+                  repositoryNodeId: accepted.repositoryNodeId,
+                }
+              : undefined);
+          requireThat(
+            read,
+            "Grouped accepted source disappeared from the complete census",
+          );
           requireThat(accepted, "Grouped accepted source disappeared");
           const original =
             origin && (mergedDonor || followupSources.length > 0)
