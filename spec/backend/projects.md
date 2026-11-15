@@ -26,7 +26,9 @@ state. A read naming another actor or repository authorizes nothing, and an
 unavailable read is a retry, never a denial and never a grant. Repository
 facts come from the public GitHub read (`SLOP_GITHUB_READ_TOKEN`).
 Administrators (`ADMIN_GITHUB_IDS`) are a configuration snapshot held in the
-state.
+state. The actor `-1` is the project API's own scheduled jobs (the UTC month
+clock and the finalized vault snapshot); the shell supplies it only for work
+it starts itself, never for an HTTP request.
 
 ## Story: Create or publish a project without routine approval
 
@@ -61,6 +63,7 @@ pure val initial: Project = { creator: 0, steward: 0, referrer: 3, administrator
   revision: 0, history: List(), status: Paused, tier: Community, retirement: NotRetired,
   repositories: List(1), starts: List({ repositoryId: 1, month: 202611 }), fieldsComplete: false, branch: 0,
   license: noLicense, consent: C::Absent, month: 202611, economic: List(), asset: 1, funded: false }
+pure val platform = -1
 pure val noRevision: Revision = { number: 0, kind: Created, status: Paused, tier: Retired, by: 0 }
 pure def currentRevision(p: Project): Revision = p.history.nthOr(p.revision - 1, noRevision)
 pure def primary(p: Project): int = p.repositories.nthOr(0, 0)
@@ -202,11 +205,19 @@ pure def alwaysActiveRequirements(p: Project): bool =
 
 The server classifies the submitted manifest against the current one
 (`classifyRevisionChanges`): presentation, executable skill inputs and
-financial policy. A revision that changes nothing, or a field reserved to
-administrators (steward, authority, terms, status, listing tier, `skill`,
-`reviewSkill`), is refused. Status and tier are kept, except that missing
-skill fields pause the project, and an executable change pauses it when its
-admission clearance is not retained (the composition reads the clearance).
+financial policy. The five classification fields of `OwnerChange`
+(`presentation`, `executable`, `financial`, `restrictedField`,
+`fieldsComplete`) are that classifier's output over the stored and the
+submitted manifest, computed by the project API; a client never supplies
+them (shell obligation). A revision that changes nothing, or a field reserved
+to administrators (steward, authority, terms, status, listing tier, `skill`,
+`reviewSkill`), is refused. Status and tier are kept: an active project's
+revision that leaves the generated-skill fields incomplete is refused
+(`skill_content_incomplete`), and an executable change pauses an active
+project when its admission clearance is not retained (`scanRequired` in
+`publishOwnerRevision`; the composition reads the clearance). An owner-removed
+or delisted project accepts owner revisions and stays paused and retired, as
+the project API does.
 Financial policy applies from the next UTC calendar month; earlier months keep
 their terms. A funded project keeps its reward asset.
 
@@ -215,12 +226,13 @@ type Clearance = ClearanceRetained | ClearanceMissing
 type OwnerChange = { authority: AuthorityRead, expectedRevision: int, presentation: bool, executable: bool,
   financial: bool, restrictedField: bool, fieldsComplete: bool, asset: int, clearance: Clearance }
 pure def changeValid(p: Project, by: int, change: OwnerChange): bool =
-  p.revision > 0 and p.retirement == NotRetired and change.expectedRevision == p.revision and
+  p.revision > 0 and p.retirement != RestrictionRetired and change.expectedRevision == p.revision and
   currentAuthority(p, by, change.authority) and not(change.restrictedField) and
+  (change.fieldsComplete or p.status == Paused) and
   (change.presentation or change.executable or change.financial) and change.asset > 0 and
   (change.asset != p.asset implies change.financial and not(p.funded))
 pure def changed(by: int, change: OwnerChange, p: Project): Project =
-  val pauses = not(change.fieldsComplete) or (change.executable and change.clearance == ClearanceMissing)
+  val pauses = change.executable and change.clearance == ClearanceMissing
   { ...revised(OwnerUpdate, by, if (pauses) Paused else p.status, p.tier, p), fieldsComplete: change.fieldsComplete, asset: change.asset,
     economic: if (change.financial) p.economic.append({ fromMonth: p.month + 1, revision: p.revision + 1 }) else p.economic }
 pure def canPublishOwnerRevision(p: Project, by: int, change: OwnerChange): bool = changeValid(p, by, change)
@@ -256,7 +268,7 @@ original repository's eligibility and the economic terms do not change.
 ```quint
 type Append = { expectedRevision: int, authority: AuthorityRead, appended: AuthorityRead, facts: RepositoryFacts }
 pure def canAppendRepository(p: Project, by: int, appendEvidence: Append): bool =
-  p.revision > 0 and p.retirement == NotRetired and appendEvidence.expectedRevision == p.revision and p.repositories.length() < 20 and
+  p.revision > 0 and p.retirement != RestrictionRetired and appendEvidence.expectedRevision == p.revision and p.repositories.length() < 20 and
   currentAuthority(p, by, appendEvidence.authority) and authorized(by, appendEvidence.facts.repository, appendEvidence.appended) and
   appendEvidence.facts.repository > 0 and not(p.repositories.includes(appendEvidence.facts.repository)) and
   appendEvidence.facts.public and not(appendEvidence.facts.archived) and not(appendEvidence.facts.fork) and appendEvidence.facts.branch > 0
@@ -292,7 +304,7 @@ absent. A write that would change nothing is refused.
 ```quint
 type ConsentEdit = { authority: AuthorityRead, expectedRevision: int, checked: bool }
 pure def canEditConsent(p: Project, by: int, edit: ConsentEdit): bool =
-  p.revision > 0 and p.retirement == NotRetired and edit.expectedRevision == p.revision and
+  p.revision > 0 and p.retirement != RestrictionRetired and edit.expectedRevision == p.revision and
   currentAuthority(p, by, edit.authority) and C::savedEdit(p.consent, edit.checked) != p.consent
 pure def editConsent(p: Project, by: int, edit: ConsentEdit): Project =
   { ...revised(ConsentChanged, by, p.status, p.tier, p), consent: C::savedEdit(p.consent, edit.checked) }
@@ -304,24 +316,31 @@ pure val editValues = Set({ authority: owner1, expectedRevision: 2, checked: tru
 
 Removal rechecks current authority on the stored primary repository, even on
 a retry. It appends a paused, retired revision and never runs activation. A
-project that is already paused and retired returns success unchanged. History,
-earned Points, private cases and funded obligations are kept.
+project the owner already removed, or an administrator delisted, returns
+success unchanged. Removing a project that a restriction retired records the
+owner's removal as its own revision, so a later reinstatement never lists it
+again (PRD section 4: removal hides the project; the project API instead
+returns success without recording the removal). History, earned Points,
+private cases and funded obligations are kept.
 
 ```quint
 type Removal = { authority: AuthorityRead, expectedRevision: int }
 pure def canRemove(p: Project, by: int, removal: Removal): bool =
   p.revision > 0 and currentAuthority(p, by, removal.authority) and
   (p.retirement != NotRetired or removal.expectedRevision == p.revision)
+pure def ownerRetired(p: Project): bool = p.retirement == OwnerRemoved or p.retirement == AdminDelisted
 pure def remove(p: Project, by: int, removal: Removal): Project =
-  if (p.retirement != NotRetired) p else { ...revised(Removed, by, Paused, Retired, p), retirement: OwnerRemoved }
+  if (ownerRetired(p)) p else { ...revised(Removed, by, Paused, Retired, p), retirement: OwnerRemoved }
 pure val removalValues = Set({ authority: owner1, expectedRevision: 2 }, { authority: owner1, expectedRevision: 3 },
   { authority: { ...owner1, permission: PermissionUnavailable }, expectedRevision: 2 })
 pure def stepRemovalReplayAppendsNothing(before: Project, via: str, after: Project): bool =
-  (via == "remove" and before.retirement != NotRetired) implies
+  (via == "remove" and ownerRetired(before)) implies
     after.revision == before.revision and after.retirement == before.retirement and after.status == before.status
 pure def stepOwnerRemovalPermanent(before: Project, after: Project): bool =
   (before.retirement == OwnerRemoved implies after.retirement == OwnerRemoved) and
   (before.retirement == AdminDelisted implies after.retirement == AdminDelisted)
+pure def stepRemovalAlwaysRetires(before: Project, via: str, after: Project): bool =
+  via == "remove" implies (after.tier == Retired and after.status == Paused and ownerRetired(after))
 ```
 
 ## Story: Administrators handle exceptions and restrictions, not routine approval
@@ -364,21 +383,25 @@ pure def alwaysRetirementConsistent(p: Project): bool =
 A quarantine or ban appends a paused, retired revision in the same batch when
 the project is listed; a project already retired needs none. Reinstatement
 restores a paused Community revision only for a project the restriction
-retired: never featuring, activation or money. These registry steps have no
-sender of their own; the composition performs them with the enforcement
-decision.
+retired and the owner did not remove since: never featuring, activation or
+money. These registry steps are helpers, not events: they have no sender of
+their own, and only the composition performs them, with the enforcement
+decision, in the same batch.
 
 ```quint
-pure def canRetireForRestriction(p: Project): bool = p.revision > 0 and p.retirement == NotRetired
-pure def retireForRestriction(p: Project): Project =
-  { ...revised(RestrictionRetirement, 0, Paused, Retired, p), retirement: RestrictionRetired }
-pure def canRestoreCommunity(p: Project): bool = p.revision > 0 and p.retirement == RestrictionRetired
-pure def restoreCommunity(p: Project): Project =
-  { ...revised(CommunityRestored, 0, Paused, Community, p), retirement: NotRetired }
-pure def stepRestorationIsPausedCommunity(before: Project, via: str, after: Project): bool =
-  via == "restoreCommunity" implies after.status == Paused and after.tier == Community
-pure def stepOnlyReinstatementUnretires(before: Project, via: str, after: Project): bool =
-  (before.retirement != NotRetired and after.retirement == NotRetired) implies via == "restoreCommunity"
+pure def retirableForRestriction(p: Project): bool = p.revision > 0 and p.retirement == NotRetired
+pure def withRestrictionRetirement(retire: bool, p: Project): Project =
+  if (retire and retirableForRestriction(p)) { ...revised(RestrictionRetirement, 0, Paused, Retired, p), retirement: RestrictionRetired }
+  else p
+pure def restorable(p: Project): bool = p.revision > 0 and p.retirement == RestrictionRetired
+pure def withCommunityRestored(restore: bool, p: Project): Project =
+  if (restore and restorable(p)) { ...revised(CommunityRestored, 0, Paused, Community, p), retirement: NotRetired } else p
+pure def lawRestorationIsPausedCommunity(p: Project): bool =
+  restorable(p) implies (withCommunityRestored(true, p).status == Paused and withCommunityRestored(true, p).tier == Community)
+pure def lawRemovedNeverRestored(p: Project): bool =
+  ownerRetired(p) implies (withCommunityRestored(true, p).revision == p.revision and withCommunityRestored(true, p).tier == Retired)
+pure def stepNoRegistryEventUnretires(before: Project, after: Project): bool =
+  before.retirement != NotRetired implies after.retirement != NotRetired
 ```
 
 ### Funding is observed separately and the clock only advances
@@ -388,11 +411,12 @@ vault; it appends no revision and changes no placement.
 
 ```quint
 type FundingEvidence = { finalizedDeposits: int }
-pure def canRecordFunding(p: Project, funding: FundingEvidence): bool = p.revision > 0 and funding.finalizedDeposits > 0
-pure def recordFunding(p: Project, funding: FundingEvidence): Project = { ...p, funded: true }
+pure def canRecordFunding(p: Project, by: int, funding: FundingEvidence): bool =
+  by == platform and p.revision > 0 and funding.finalizedDeposits > 0
+pure def recordFunding(p: Project, by: int, funding: FundingEvidence): Project = { ...p, funded: true }
 pure val fundingValues = Set({ finalizedDeposits: 0 }, { finalizedDeposits: 1 })
-pure def canAdvanceMonth(p: Project, month: int): bool = month > p.month
-pure def advanceMonth(p: Project, month: int): Project = { ...p, month: month }
+pure def canAdvanceMonth(p: Project, by: int, month: int): bool = by == platform and month > p.month
+pure def advanceMonth(p: Project, by: int, month: int): Project = { ...p, month: month }
 pure val monthValues = Set(202612, 202701)
 pure def stepEveryManifestChangeAppendsRevision(before: Project, after: Project): bool =
   (before.status != after.status or before.tier != after.tier or before.retirement != after.retirement or
@@ -416,7 +440,8 @@ pure def sometimesUpdatePublished(p: Project): bool = p.update == UpdatePublishe
 pure def sometimesOwnerRemoved(p: Project): bool = p.retirement == OwnerRemoved
 pure def sometimesDelisted(p: Project): bool = p.retirement == AdminDelisted
 pure def sometimesHeldThenActive(p: Project): bool = p.status == Active and p.history.some(r => r.kind == AdminHold)
-pure def sometimesRestoredCommunity(p: Project): bool = p.history.some(r => r.kind == CommunityRestored) and p.tier == Community
+pure def sometimesRevisedWhileRemoved(p: Project): bool =
+  p.retirement == OwnerRemoved and p.history.some(r => r.kind == OwnerUpdate and r.tier == Retired)
 pure def sometimesFeatured(p: Project): bool = p.tier == Featured
 pure def sometimesPausedWithoutSkillFields(p: Project): bool = p.revision > 0 and not(p.fieldsComplete)
 pure def sometimesAppendedRepositoryDeferred(p: Project): bool =
@@ -425,8 +450,12 @@ pure def sometimesAppendedRepositoryDeferred(p: Project): bool =
 pure def sometimesNextMonthTerms(p: Project): bool = p.economic.length() > 0
 pure def sometimesLaterSteward(p: Project): bool = p.steward != p.creator and p.revision > 0
 pure def sometimesClosureEnabled(p: Project): bool = p.consent == C::Enabled
-pure val byValues = Set(0, 1, 2, 5)
-pure val pValues = Set(initial, { ...initial, application: ApplicationDecidedLegacy })
+pure val byValues = Set(-1, 0, 1, 2, 5)
+pure val pValues = Set(initial, { ...initial, application: ApplicationDecidedLegacy },
+  { ...initial, revision: 1, creator: 1, steward: 1, branch: 1, license: license1, tier: Retired, retirement: RestrictionRetired,
+    history: List({ number: 1, kind: RestrictionRetirement, status: Paused, tier: Retired, by: 0 }) },
+  { ...initial, revision: 1, creator: 1, steward: 1, branch: 1, license: license1, tier: Retired, retirement: OwnerRemoved,
+    history: List({ number: 1, kind: Removed, status: Paused, tier: Retired, by: 1 }) })
 pure val repositoryValues = Set(1, 2)
 pure val tierValues = Set(Community, Featured)
 pure val weight_create = 6
