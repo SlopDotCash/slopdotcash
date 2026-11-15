@@ -361,25 +361,68 @@ async function relatedPullRequests(
     )
       continue;
     const [targetOwner, targetName] = target.repository.split("/");
-    const result = await client
-      .graphql<{
-        repository: {
+    type ReferenceResult = {
+      repository: {
+        id?: string;
+        isPrivate: boolean;
+        nameWithOwner: string;
+        issueOrPullRequest: {
+          __typename: string;
           id?: string;
-          isPrivate: boolean;
-          nameWithOwner: string;
-          issueOrPullRequest: {
-            __typename: string;
-            id?: string;
-            number?: number;
-            url?: string;
-          } | null;
+          number?: number;
+          url?: string;
         } | null;
-      }>(VALUE_REFERENCE_QUERY, {
+      } | null;
+    };
+    let resolvedRepository = target.repository;
+    let result = await client
+      .graphql<ReferenceResult>(VALUE_REFERENCE_QUERY, {
         owner: targetOwner,
         name: targetName,
         number: target.number,
       })
       .catch(() => null);
+    if (result === null) {
+      const renamed = await client
+        .graphql<{
+          repository: {
+            id: string;
+            isPrivate: boolean;
+            nameWithOwner: string;
+          } | null;
+        }>(
+          "query SlopValueReferenceRepository($owner:String!,$name:String!){repository(owner:$owner,name:$name){id isPrivate nameWithOwner}}",
+          { owner: targetOwner, name: targetName },
+        )
+        .catch(() => null);
+      const identity = renamed?.repository;
+      if (
+        identity?.isPrivate === false &&
+        typeof identity.id === "string" &&
+        /^(?:R_[A-Za-z0-9_-]+|[A-Za-z0-9+/]+=*)$/u.test(identity.id) &&
+        typeof identity.nameWithOwner === "string" &&
+        /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/u.test(identity.nameWithOwner) &&
+        identity.nameWithOwner.toLowerCase() !== target.repository.toLowerCase()
+      ) {
+        const [owner, name] = identity.nameWithOwner.split("/");
+        const current = await client
+          .graphql<ReferenceResult>(VALUE_REFERENCE_QUERY, {
+            owner,
+            name,
+            number: target.number,
+          })
+          .catch(() => null);
+        if (
+          current?.repository?.id === identity.id &&
+          current.repository.isPrivate === false &&
+          current.repository.nameWithOwner.toLowerCase() ===
+            identity.nameWithOwner.toLowerCase()
+        ) {
+          result = current;
+          resolvedRepository = identity.nameWithOwner;
+        }
+      }
+    }
     // Failed discovery is retained as an explicit gap, never an empty success.
     const repo = result?.repository;
     if (repo?.isPrivate !== false) {
@@ -391,7 +434,7 @@ async function relatedPullRequests(
       !referenced &&
       typeof repo.id === "string" &&
       repo.id.length > 0 &&
-      repo.nameWithOwner.toLowerCase() === target.repository.toLowerCase()
+      repo.nameWithOwner.toLowerCase() === resolvedRepository.toLowerCase()
     ) {
       unavailablePublicReferences.push({
         repository: repo.nameWithOwner,
