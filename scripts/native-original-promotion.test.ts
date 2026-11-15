@@ -1,9 +1,16 @@
 import { expect, test } from "bun:test";
+import { execFileSync } from "node:child_process";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type { MergedPullRequestOutcome } from "../src/lib/leaderboard";
+import { collect, fixture } from "../tests/value-binary-fixture";
 import {
   mirroredOctoberSources,
   nativeOriginalBeforePromotion,
+  nativeSyncOriginal,
 } from "./collect-implementation-corrections";
+import { collectVerifiedMergeResolutions } from "./value-merge-resolution";
 
 const original = {
   id: "U_original",
@@ -151,6 +158,145 @@ for (const fault of [
       const held = await mirroredOctoberSources(client, [large, small], owners);
       expect(held.has(large.id)).toBe(true);
       expect(held.has(small.id)).toBe(fault !== "none");
+    }
+  });
+}
+
+async function synchronizedOriginal() {
+  const directory = mkdtempSync(join(tmpdir(), "native-sync-original-"));
+  const env = {
+    ...process.env,
+    GIT_CONFIG_NOSYSTEM: "1",
+    GIT_CONFIG_GLOBAL: "/dev/null",
+    GIT_AUTHOR_NAME: "Promotion fixture",
+    GIT_AUTHOR_EMAIL: "fixture@example.invalid",
+    GIT_COMMITTER_NAME: "Promotion fixture",
+    GIT_COMMITTER_EMAIL: "fixture@example.invalid",
+    GIT_AUTHOR_DATE: "2000-01-01T00:00:00Z",
+    GIT_COMMITTER_DATE: "2000-01-01T00:00:00Z",
+  };
+  const git = (args: string[], input?: string) =>
+    execFileSync("git", ["-C", directory, ...args], {
+      env,
+      input,
+      encoding: "utf8",
+      timeout: 20_000,
+      stdio: ["pipe", "pipe", "pipe"],
+    }).trim();
+  git(["init", "--bare", "--template="]);
+  const tree = (text: string) => {
+    const blob = git(["hash-object", "-w", "--stdin"], text);
+    return git(["mktree"], `100644 blob ${blob}\tfix.ts\n`);
+  };
+  const commit = (text: string, parents: string[]) =>
+    git(
+      [
+        "commit-tree",
+        tree(text),
+        ...parents.flatMap((parent) => ["-p", parent]),
+      ],
+      "Fixture\n",
+    );
+  const base = commit("base\n", []);
+  const first = commit("base\noriginal\n", [base]);
+  const repair = commit("base\noriginal\nrepair\n", [first]);
+  const sync = commit("base\noriginal\nrepair\n", [repair, first]);
+  const raw = await collect(fixture({ direct: true, textOnly: true }));
+  const actors = [
+    null,
+    { node_id: maintainer.id, login: maintainer.login, type: "User" },
+    { node_id: maintainer.id, login: maintainer.login, type: "User" },
+  ];
+  const shas = [first, repair, sync];
+  raw.pull.user = { node_id: original.id, login: original.login, type: "User" };
+  raw.pull.head.sha = sync;
+  raw.pull.commits = 3;
+  raw.commits = shas.map((sha, index) => ({
+    ...raw.commits[0],
+    sha,
+    author: actors[index],
+    committer: actors[index],
+    parents: (index === 0
+      ? [base]
+      : index === 1
+        ? [first]
+        : [repair, first]
+    ).map((sha) => ({ sha })),
+  }));
+  raw.commitAttribution = shas.map((sha, index) => ({
+    ...raw.commitAttribution[0],
+    sha,
+    actorNodeIds: actors[index] ? [actors[index].node_id] : [],
+  }));
+  raw.mergeResolutions = await collectVerifiedMergeResolutions(raw, directory);
+  const owners = new Map(
+    shas.map((sha) => [
+      `${raw.repository.toLowerCase()}\0${sha}`,
+      raw.pull.node_id,
+    ]),
+  );
+  return { directory, raw, owners, first, repair, sync, base };
+}
+
+for (const fault of [
+  "none",
+  "missing-resolution",
+  "changed-resolution",
+  "parent-order",
+  "foreign-author",
+  "prior-owner",
+  "early-maintainer",
+  "wrong-origin",
+  "wrong-origin-kind",
+  "incomplete",
+] as const) {
+  test(`native synchronization ${fault}`, async () => {
+    const input = await synchronizedOriginal();
+    try {
+      const { raw, owners } = input;
+      if (fault === "missing-resolution") raw.mergeResolutions = [];
+      if (fault === "changed-resolution") {
+        const resolution = raw.mergeResolutions?.[0];
+        if (!resolution) throw Error("Missing canonical merge fixture");
+        resolution.paths = ["fix.ts"];
+      }
+      if (fault === "parent-order") raw.commits[2].parents.reverse();
+      if (fault === "foreign-author")
+        raw.commits[1].author = {
+          node_id: "U_other",
+          login: "other",
+          type: "User",
+        };
+      if (fault === "prior-owner")
+        owners.set(
+          `${raw.repository.toLowerCase()}\0${input.first}`,
+          "PR_prior",
+        );
+      if (fault === "early-maintainer") {
+        raw.commits[0].author = {
+          node_id: maintainer.id,
+          login: maintainer.login,
+          type: "User",
+        };
+        raw.commits[1].author = {
+          node_id: original.id,
+          login: original.login,
+          type: "User",
+        };
+      }
+      if (fault === "wrong-origin-kind") raw.pull.user.type = "Bot";
+      if (fault === "incomplete") raw.limitations.push("Missing source");
+      const invoke = () =>
+        nativeSyncOriginal(
+          raw,
+          fault === "wrong-origin" ? maintainer : original,
+          maintainer,
+          owners,
+        );
+      if (fault === "incomplete") expect(invoke).toThrow();
+      else expect(invoke()).toBe(fault === "none");
+    } finally {
+      rmSync(input.directory, { recursive: true, force: true });
     }
   });
 }
