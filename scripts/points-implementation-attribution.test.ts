@@ -11,6 +11,7 @@ import {
   applyPointsSnapshot,
   awardForScore,
   latestPoints,
+  OCTOBER_ORIGINAL_CONTRIBUTOR_DECISION,
   type PointsJournal,
   pointKey,
 } from "../src/lib/points";
@@ -393,6 +394,46 @@ test("legacy-policy recipient corrections preserve the complete recorded PR tota
   );
   expect(amounts(corrected).get(PENALIZED_AUTHOR.id)).toBe(30);
   expect(amounts(corrected).get(PROJECT_OWNER.id)).toBe(90);
+});
+
+test("rolling scores preserve a verified October replacement allocation", () => {
+  const { empty, oldSnapshot } = setup();
+  const occurredAt = "2026-10-29T12:00:00.000Z";
+  const rows = legacyAwards(oldSnapshot).map((award) => ({
+    ...award,
+    occurredAt,
+    amount: award.actor.id === PENALIZED_AUTHOR.id ? 30 : 0,
+  }));
+  const journal = appendPointAwards(
+    empty,
+    rows,
+    hash(rows),
+    "slop-score-v2",
+    GENERATED_AT,
+    new Map(
+      rows.map((award) => [
+        award.key,
+        {
+          sourceId: award.sourceId,
+          effectiveAt: GENERATED_AT,
+          reason: OCTOBER_ORIGINAL_CONTRIBUTOR_DECISION,
+        },
+      ]),
+    ),
+  );
+  const next = input(true, REFRESHED_AT);
+  next.mergedPullRequestOutcomes[0].mergedAt = occurredAt;
+  const current = createLeaderboardSnapshot(next);
+  expect(
+    current.valueAssessmentCoverage?.[0].implementationAllocation?.weights,
+  ).toHaveLength(2);
+  const refreshed = applyPointsSnapshot(
+    journal,
+    current,
+    hash(current),
+    REFRESHED_AT,
+  );
+  expect(refreshed.revisions).toEqual(journal.revisions);
 });
 
 test("legacy-policy missing weights retain both prior awards across replay", () => {

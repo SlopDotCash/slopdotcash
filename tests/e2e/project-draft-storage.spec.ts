@@ -302,7 +302,14 @@ for (const fault of ["locks", "storage", "metadata"] as const)
       page.getByText("Draft saved on this device.", { exact: true }),
     ).toHaveCount(0);
     await page.getByRole("link", { name: "How it works", exact: true }).click();
+    const setupChecked = page.waitForResponse(
+      (response) =>
+        response.request().method() === "POST" &&
+        new URL(response.url()).pathname ===
+          "/api/v1/project-setup/eliza/check",
+    );
     await page.goBack();
+    await (await setupChecked).finished();
     await expect(
       page.getByLabel("Short description", { exact: true }),
     ).toHaveValue("This unsaved draft remains in this page");

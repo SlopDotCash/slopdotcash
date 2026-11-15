@@ -5,6 +5,7 @@ import {
 } from "../backend/pages";
 import { CloudflareProjectPersistence } from "../backend/projects/cloudflare-persistence";
 import { handleProjectArtifactRequest } from "../backend/projects/skill-publication";
+import { referralRedirect } from "../backend/referrals/codes";
 import { onRequest as socialMetadata } from "./index";
 
 export async function onRequest(
@@ -12,6 +13,8 @@ export async function onRequest(
 ): Promise<Response> {
   const { request, env } = context;
   if (env.SLOP_DB !== undefined) {
+    const referral = await referralRedirect(request, env.SLOP_DB);
+    if (referral !== null) return referral;
     const persistence = new CloudflareProjectPersistence(env.SLOP_DB);
     const { vetting, loadTemplate, livePin } = vettingContext(
       { ...env, SLOP_DB: env.SLOP_DB },

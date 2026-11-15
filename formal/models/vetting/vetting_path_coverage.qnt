@@ -1,12 +1,13 @@
 // @source workers/vetting/bounded-scan.ts
 // @conformance workers/vetting/agent-instruction-surfaces.test.ts
 // @conformance workers/vetting/nested-surface-directories.test.ts
-// Finite abstraction of three previously omitted content classes. Concrete
+// @conformance workers/vetting/source-content-coverage.test.ts
+// Finite abstraction of previously omitted content classes. Concrete
 // tests check path matching, deterministic findings, and actual review bytes.
 // Set identity abstracts the inventory hash; cryptographic collision resistance
 // and complete repository acquisition are external assumptions.
 module vetting_path_coverage {
-  val required = Set("markdown", "nestedInstruction", "nestedHook")
+  val required = Set("markdown", "nestedInstruction", "nestedHook", "unclassifiedText")
   var inventory: Set[str]
   var reviewed: Set[str]
   var published: bool
@@ -45,8 +46,14 @@ module vetting_path_coverage {
     .then(review("markdown")).expect(not(published) and inventory != required)
   run previousCoverageCannotBeReusedTest = init.then(classify("markdown"))
     .expect(inventory != Set())
-  run completeContentReviewTest = init.then(classify("markdown"))
+  run unclassifiedTextCannotBeOmittedTest = init.then(classify("markdown"))
     .then(classify("nestedInstruction")).then(classify("nestedHook"))
     .then(review("markdown")).then(review("nestedInstruction"))
-    .then(review("nestedHook")).then(publish).expect(published)
+    .then(review("nestedHook")).expect(not(published) and inventory != required)
+  run completeContentReviewTest = init.then(classify("markdown"))
+    .then(classify("nestedInstruction")).then(classify("nestedHook"))
+    .then(classify("unclassifiedText"))
+    .then(review("markdown")).then(review("nestedInstruction"))
+    .then(review("nestedHook")).then(review("unclassifiedText"))
+    .then(publish).expect(published)
 }

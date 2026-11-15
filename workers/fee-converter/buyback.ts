@@ -105,6 +105,15 @@ export interface BurnQuote {
   gasCostMicro: bigint;
 }
 
+export type FinalizedRpcObservation =
+  | {
+      status: "verified";
+      chainId: number;
+      blockNumber: string;
+      blockHash: string;
+    }
+  | { status: "unavailable" };
+
 export interface BuybackChainClient {
   /** Source networks only. */
   bridge?: {
@@ -120,6 +129,8 @@ export interface BuybackChainClient {
   };
   /** Robinhood Chain only. */
   market?: {
+    /** Diagnostic only. A failed probe leaves buyback accounting untouched. */
+    observeFinalizedRpc?(): Promise<FinalizedRpcObservation>;
     fill(terms: BridgeTerms): Promise<FillState>;
     quoteBuy(
       token: string,
@@ -204,6 +215,7 @@ export interface BuybackSummary {
   /** Deposits still without a proven outcome after this run. */
   inTransit: number;
   errors: number;
+  finalizedRpc?: FinalizedRpcObservation;
 }
 
 export interface BuybackHook {
@@ -912,6 +924,9 @@ export function createBuyback(options: BuybackOptions): BuybackHook {
       }
       await attempt("burn", async () => count("burn", await burn(context)));
       summary.inTransit = (await store.inTransit()).length;
+      const market = context.client.buyback?.market;
+      if (options.mode === "live" && market?.observeFinalizedRpc)
+        summary.finalizedRpc = await market.observeFinalizedRpc();
       return summary;
     },
   };

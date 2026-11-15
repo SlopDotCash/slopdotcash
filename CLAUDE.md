@@ -612,14 +612,26 @@ shared publication lock.
 
 Every release snapshots the current D1 registry, passes the full quality gate,
 and publishes through its branch's normal release job. Normal releases ingest
-live GitHub data. An explicit manual `main` run may set `use_published_data`
-to retain the last published production leaderboard and profiles after
-validation, with their original timestamps and history. This option cannot run
-on staging or with staging bootstrap; missing or invalid published data stops
-the release. It never uses the pull-request data adapter or skips code, browser,
-sandbox, source-identity or deployment checks. To publish new data without a
-commit, run the release workflow by hand (`workflow_dispatch`) with the option
-off. Every production release requires current main equivalence. Every
+live GitHub data. An explicit manual `main` or `development` run may set
+`use_published_data` to retain the last leaderboard and profiles published by
+that run's own environment (production or staging) after validation, with their
+original timestamps and history (operator decision, 13 November 2026). This
+option cannot run with staging bootstrap; missing or invalid published data
+stops the release. It never uses the pull-request data adapter or skips code, browser,
+sandbox, source-identity or deployment checks. An explicit manual `main` or
+`development` run may also set `skip_proofs` (operator decision, 14 November
+2026; PRD section 12, STATE-05): it repeats neither the Quint state-model
+stages nor the LemmaScript proofs. Both inventory checks and every code,
+browser, sandbox, source-identity and deployment check still run. A push
+release cannot skip them, pull requests still run the affected models and
+proofs, and scheduled nightly runs check all of them on the default branch.
+The same kind of run may set `skip_browser_tests` (operator decision,
+14 November 2026; PRD section 9): it runs the browser smoke lane instead of
+the complete browser lanes, and every other check still runs. A push release
+cannot skip them. A release that skipped either set is not evidence that
+the skipped checks passed.
+To publish new data without a commit, run the release workflow by hand
+(`workflow_dispatch`) with the `use_published_data` option off. Every production release requires current main equivalence. Every
 deployment is bound to its actual tested source SHA.
 
 The separate hourly health workflow authenticates GitHub private-reporting

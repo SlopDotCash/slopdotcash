@@ -456,6 +456,133 @@ function fixture(overrides: Record<string, unknown> = {}) {
 }
 
 describe("durable private report controls", () => {
+  test("a large receipt list shares current authority and storage reads without retaining access across requests", async () => {
+    const t = fixture();
+    t.deps.analyzer = undefined;
+    try {
+      const ids: string[] = [];
+      let firstCase = "";
+      for (let n = 0; n < 100; n++) {
+        const created = await t.create(
+          `receipt-list-${String(n).padStart(8, "0")}`,
+        );
+        expect(created.status).toBe(201);
+        const row = required(created.body.submission);
+        ids.push(row.id);
+        if (n === 0) firstCase = row.caseId;
+        t.advance(7 * 60 * 1000);
+      }
+      const own = required(
+        (await t.create("receipt-list-own", OWNER)).body.submission,
+      );
+      ids.push(own.id);
+      t.removePaidTerms();
+      let permission: "admin" | "read" | "unavailable" = "admin";
+      let authorityReads = 0;
+      t.deps.repositoryAccess = async () => {
+        authorityReads++;
+        if (permission === "unavailable")
+          throw new Error("Fixture authority outage");
+        return {
+          installation: "installed",
+          installationId: 1,
+          permission,
+          roleName: permission,
+          repository: {
+            id: 123456789,
+            node_id: "R_example",
+            full_name: REPOSITORY,
+            private: false,
+            owner: {
+              id: 987654321,
+              node_id: "O_example",
+              login: "example",
+              type: "Organization",
+            },
+          },
+        };
+      };
+      const storage = required(t.deps.reportStorage);
+      storage.get = async () => {
+        throw new Error("A receipt list must not read report text");
+      };
+      const expected = new Map<string, Submission>();
+      for (const id of ids) {
+        const receipt = await t.call(
+          OWNER,
+          "GET",
+          `security-submissions/${id}?view=receipt`,
+        );
+        expect(receipt.status).toBe(200);
+        expected.set(id, required(receipt.body.submission));
+        expect(receipt.body.report).toBeUndefined();
+      }
+      let storageReads = 0;
+      const db = t.deps.db;
+      const counted = (statement: D1QueryStatement): D1QueryStatement => ({
+        ...statement,
+        bind: (...values) => counted(statement.bind(...values)),
+        first: async <T>() => {
+          storageReads++;
+          return statement.first<T>();
+        },
+        all: async <T>() => {
+          storageReads++;
+          return statement.all<T>();
+        },
+      });
+      t.deps.db = { ...db, prepare: (sql) => counted(db.prepare(sql)) };
+      authorityReads = 0;
+      const listed = await t.call(OWNER, "GET", "security-submissions");
+      expect(listed.status).toBe(200);
+      expect(listed.body.authorityUnavailable).toBe(false);
+      expect(required(listed.body.submissions)).toHaveLength(ids.length);
+      expect(authorityReads).toBe(1);
+      expect(storageReads).toBeLessThan(20);
+      for (const receipt of required(listed.body.submissions))
+        expect(receipt).toEqual(required(expected.get(receipt.id)));
+
+      // Every later request rechecks both repository and explicit membership.
+      permission = "read";
+      const denied = await t.call(OWNER, "GET", "security-submissions");
+      expect(denied.body.submissions?.map((row) => row.id)).toEqual([own.id]);
+      expect(authorityReads).toBe(2);
+      t.sqlite
+        .prepare(
+          "INSERT INTO security_case_members(case_id,github_id,github_login,role,added_by_github_id,added_at) VALUES (?,?,?,'triager',?,?)",
+        )
+        .run(
+          firstCase,
+          OWNER.githubId,
+          OWNER.githubLogin,
+          OWNER.githubId,
+          START,
+        );
+      permission = "unavailable";
+      const unavailable = await t.call(OWNER, "GET", "security-submissions");
+      expect(unavailable.body.authorityUnavailable).toBe(true);
+      expect(unavailable.body.submissions?.map((row) => row.id).sort()).toEqual(
+        [own.id, ids[0]].sort(),
+      );
+      expect(authorityReads).toBe(3);
+      t.sqlite
+        .prepare(
+          "UPDATE security_case_members SET revoked_at=?,revoked_by_github_id=? WHERE case_id=? AND github_id=?",
+        )
+        .run(START, OWNER.githubId, firstCase, OWNER.githubId);
+      const revoked = await t.call(OWNER, "GET", "security-submissions");
+      expect(revoked.body.submissions?.map((row) => row.id)).toEqual([own.id]);
+      expect(authorityReads).toBe(4);
+      permission = "admin";
+      const restored = await t.call(OWNER, "GET", "security-submissions");
+      expect(restored.body.submissions).toHaveLength(ids.length);
+      expect(restored.body.authorityUnavailable).toBe(false);
+      expect(authorityReads).toBe(5);
+    } finally {
+      t.sqlite.close();
+    }
+  });
+
   test("an older receipt resolves outside the recent list without reading report text or widening access", async () => {
     const t = fixture();
     t.deps.analyzer = undefined;
@@ -2021,10 +2148,8 @@ describe("durable private report controls", () => {
         },
       },
     };
-    let reads = 0;
     t.deps.repositoryAccess = async () => {
-      if (++reads === 2) throw new Error("Fixture authority outage");
-      return access;
+      throw new Error("Fixture authority outage");
     };
     const interrupted = await t.call(OWNER, "GET", "security-submissions");
     expect(interrupted.status).toBe(200);
@@ -2095,14 +2220,15 @@ describe("durable private report controls", () => {
       prepare(sql) {
         const statement = db.prepare(sql);
         if (
-          sql !==
-          "SELECT * FROM security_submission_intake WHERE submission_id = ?"
+          !sql.startsWith(
+            "SELECT * FROM security_submission_intake WHERE submission_id IN (",
+          )
         )
           return statement;
         return {
           ...statement,
           bind(...values) {
-            if (values[0] === other.id)
+            if (values.includes(other.id))
               throw new Error("Fixture candidate storage failure");
             return statement.bind(...values);
           },

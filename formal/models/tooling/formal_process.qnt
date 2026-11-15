@@ -3,6 +3,8 @@
 // @source scripts/browser-process-ownership.mjs
 // @source scripts/run-e2e.mjs
 // @source scripts/check-lemmascript.mjs
+// @source contracts/solana/scripts/airdrop-local.mjs
+// @conformance contracts/solana/airdrop-local.test.ts
 // One launcher, one inherited process-group child and one detached managed
 // group. Ownership is captured while the launcher is alive and rechecked before
 // forced cleanup. Process-table or identity failure cannot authorize a signal.
@@ -155,4 +157,8 @@ module formal_process {
   run refusedCheckpointDuringInterruptCannotPassTest = init.then(startBrowser).then(interrupt)
     .then(invalidCheckpoint).then(exitCheckpoint).then(launcherExit(false)).then(killGroup)
     .then(drain).then(cleanup).then(report).expect(s.result=="fail")
+  run localAirdropDeadlineEscalatesAfterGraceTest = init.then(start).then(interrupt)
+    .expect(s.phase=="interrupting" and s.launcher and s.child)
+    .then(interruptDeadline).then(killGroup).then(drain).then(cleanup).then(report)
+    .expect(s.result=="fail" and not(s.launcher) and not(s.child) and s.pipes)
 }

@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { findRegisteredRepositoryById } from "../src/lib/repositories.mjs";
 import { fixture, repository } from "../tests/value-binary-fixture";
-import { loadValueInputs } from "./value-ingestion";
+import { loadValueInputs, type ValueInputProgress } from "./value-ingestion";
 
 function candidate(
   failure: "proof" | "transport" | "identity",
@@ -95,19 +95,26 @@ function candidate(
     },
     { preconnect: fetch.preconnect },
   );
-  const run = () =>
-    loadValueInputs(github, [], transport, undefined, [
-      {
-        id: acceptedId,
-        number: 2,
-        baseRefName,
-        url: `https://github.com/${target.id}/pull/2`,
-        headRefOid: f.pull.head.sha,
-        mergedAt: f.pull.merged_at,
-        updatedAt: f.pull.updated_at,
-        commits: [{ oid: f.pull.head.sha, author: null, parentCount: 1 }],
-      },
-    ]);
+  const run = (onProgress?: (progress: ValueInputProgress) => void) =>
+    loadValueInputs(
+      github,
+      [],
+      transport,
+      undefined,
+      [
+        {
+          id: acceptedId,
+          number: 2,
+          baseRefName,
+          url: `https://github.com/${target.id}/pull/2`,
+          headRefOid: f.pull.head.sha,
+          mergedAt: f.pull.merged_at,
+          updatedAt: f.pull.updated_at,
+          commits: [{ oid: f.pull.head.sha, author: null, parentCount: 1 }],
+        },
+      ],
+      onProgress,
+    );
   return { run, acceptedId, reads };
 }
 
@@ -125,9 +132,13 @@ test("unproven retained work becomes a source-specific attribution hold", async 
 });
 
 test("transport failures do not become successful attribution holds", async () => {
-  await expect(candidate("transport").run()).rejects.toThrow(
-    "Fixture transport unavailable",
-  );
+  const progress: ValueInputProgress[] = [];
+  await expect(
+    candidate("transport").run((entry) => progress.push(entry)),
+  ).rejects.toThrow("Fixture transport unavailable");
+  expect(progress).toEqual([
+    { phase: "commit-attributions", completed: 0, total: 1 },
+  ]);
 });
 
 test("repository identity failures do not become successful attribution holds", async () => {

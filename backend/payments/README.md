@@ -80,7 +80,9 @@ deployment before reading or advancing its cursor, including empty log pages.
 This check prevents new omissions; it does not repair a cursor advanced before
 the check was released. Audit such history from its trusted deployment boundary
 and reconcile retained events before treating that coverage as verified.
-Solana stores one finalized signature page per run in a durable discovery
+Solana checks the RPC genesis hash against the configured network trust root
+before reading vault snapshots or touching discovery and processing
+checkpoints. Solana stores one finalized signature page per run in a durable discovery
 interval. After it reaches the preceding cursor, it indexes that interval
 oldest first, at most 100 transactions per run. Migration `0012` adds the pending
 pages and generation/revision checkpoints. Indexing verifies only this project's
@@ -295,8 +297,10 @@ accepts the new journal batch. A correction cannot change or add accepted-work
 Points in a frozen month, a month with an owner allocation decision, or a month
 with a retained direct payment. A legacy obligation without an exact monthly
 binding protects the whole project; its period is never inferred from indexing
-time. A refusal stops the release before Pages publication and retains the
-previous Points history. Replaying an identical batch remains valid.
+time. The reviewed Base qualification is outside earned rewards under PRD
+section 11. The guard exempts its exact finalized payment and reservation source.
+A refusal stops the release before Pages publication and retains the previous
+Points history. Replaying an identical batch remains valid.
 
 1. **Proposal.** The trusted `monthly-rewards.yml` workflow runs on the first
    three days of each month, on `main` for `slop-private` and on

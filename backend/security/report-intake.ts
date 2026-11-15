@@ -19,9 +19,11 @@ import {
   type SecurityScreeningProposal,
 } from "./analysis";
 import {
+  CASE_COLUMNS,
   type CaseRow,
   caseInsertStatement,
   caseRoles,
+  currentReportingProject,
   eventStatement,
   IDEMPOTENCY_KEY,
   json,
@@ -986,25 +988,56 @@ export async function listStoredSubmissions(
   const manifests = (
     await deps.db
       .prepare(
-        "SELECT manifest FROM projects WHERE id IN (SELECT project_id FROM security_cases)",
+        "SELECT id, manifest, revision FROM projects WHERE id IN (SELECT project_id FROM security_cases)",
       )
-      .all<{ manifest: string }>()
+      .all<{ id: string; manifest: string; revision: number }>()
   ).results;
+  // Reuse one current project and authority result for this request only.
+  // A later list or action still performs its own permission check.
+  const reportingProjects = new Map<
+    string,
+    Promise<Awaited<ReturnType<typeof currentReportingProject>>>
+  >(
+    manifests.map(({ id, manifest, revision }) => [
+      id,
+      Promise.resolve({
+        manifest: JSON.parse(manifest) as ProjectDefinition,
+        revision,
+      }),
+    ]),
+  );
+  const projectFor = (id: string) =>
+    currentReportingProject({ ...deps, reportingProjects }, id);
+  const authorities = new Map<string, Promise<boolean>>();
+  const authorityFor = (id: string) => {
+    let result = authorities.get(id);
+    if (!result) {
+      result = projectFor(id).then((project) =>
+        project
+          ? repositoryReportingAuthority(
+              deps.repositoryAccess,
+              project.manifest,
+              actor,
+            )
+          : false,
+      );
+      authorities.set(id, result);
+    }
+    return result;
+  };
   const projects: string[] = [];
   let authorityUnavailable = false;
-  for (const { manifest: raw } of manifests) {
-    const manifest = JSON.parse(raw) as ProjectDefinition;
+  for (const { id } of manifests) {
+    const project = await projectFor(id);
+    if (!project) continue;
+    const { manifest } = project;
     try {
       if (
         manifest.securityBounty
           ? manifest.securityBounty.approvers.technical.some(
               (x) => x.githubId === actor.githubId,
             )
-          : await repositoryReportingAuthority(
-              deps.repositoryAccess,
-              manifest,
-              actor,
-            )
+          : await authorityFor(id)
       )
         projects.push(manifest.id);
     } catch (error) {
@@ -1024,22 +1057,79 @@ export async function listStoredSubmissions(
       )
       .all<SubmissionRow>()
   ).results;
+  const storedBySubmission = new Map<string, StoredIntake>();
+  for (const part of chunked([...own, ...candidates].map((row) => row.id))) {
+    const loaded = await deps.db
+      .prepare(
+        `SELECT * FROM security_submission_intake WHERE submission_id IN (${part.map(() => "?").join(",")})`,
+      )
+      .bind(...part)
+      .all<StoredIntake>();
+    for (const row of loaded.results)
+      storedBySubmission.set(row.submission_id, row);
+  }
+  const records = new Map<string, CaseRow>();
+  const triagers = new Set<string>();
+  const caseIds = [
+    ...new Set([...storedBySubmission.values()].map((row) => row.case_id)),
+  ];
+  for (const part of chunked(caseIds)) {
+    const loaded = await deps.db
+      .prepare(
+        `SELECT ${CASE_COLUMNS} FROM security_cases WHERE id IN (${part.map(() => "?").join(",")})`,
+      )
+      .bind(...part)
+      .all<CaseRow>();
+    for (const row of loaded.results) records.set(row.id, row);
+    const members = await deps.db
+      .prepare(
+        `SELECT case_id FROM security_case_members WHERE github_id=? AND revoked_at IS NULL AND case_id IN (${part.map(() => "?").join(",")})`,
+      )
+      .bind(actor.githubId, ...part)
+      .all<{ case_id: string }>();
+    for (const row of members.results) triagers.add(row.case_id);
+  }
+  const access = async (stored: StoredIntake) => {
+    const record = records.get(stored.case_id);
+    if (!record) fail(404, "not_found", "Report not found");
+    return {
+      record,
+      roles: await caseRoles(deps, record, actor, {
+        project: await projectFor(record.project_id),
+        triager: triagers.has(record.id),
+        authority: () => authorityFor(record.project_id),
+      }),
+    };
+  };
   const rows = await Promise.all(
-    own.map(async (row) => ({
-      createdAt: row.created_at,
-      submission: await decorateSubmission(
-        deps,
+    own.map(async (row) => {
+      const stored = storedBySubmission.get(row.id) ?? null;
+      const settled =
         // A failed settle shows the row as stored; the next read retries it.
-        await settle(deps, row).catch(() => row),
-        actor,
-      ),
-    })),
+        await settle(deps, row, stored ?? undefined).catch(() => row);
+      if (!stored)
+        return {
+          createdAt: row.created_at,
+          submission: { ...submissionView(settled), intake: null },
+        };
+      const { record, roles } = await access(stored);
+      return {
+        createdAt: row.created_at,
+        submission: decorateStoredSubmission(
+          settled,
+          stored,
+          record,
+          roles,
+          deps.now(),
+        ),
+      };
+    }),
   );
   for (const candidate of candidates) {
     try {
-      const stored = await storedIntake(deps, candidate.id);
+      const stored = storedBySubmission.get(candidate.id);
       if (!stored) fail(404, "not_found", "Report not found");
-      const { record, roles } = await accessFor(deps, stored, actor);
+      const { record, roles } = await access(stored);
       if (
         roles.has("security-maintainer") ||
         roles.has("triager") ||
@@ -1054,7 +1144,7 @@ export async function listStoredSubmissions(
             // showing as still sending or confirming until the reporter
             // happens to read first. A failed settle shows the row as
             // stored; the next read retries it.
-            await settle(deps, candidate).catch(() => candidate),
+            await settle(deps, candidate, stored).catch(() => candidate),
             stored,
             record,
             roles,

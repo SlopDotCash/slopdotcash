@@ -6,6 +6,7 @@ import {
   penaltyFeedProjects,
   VALUE_FEED_UNAVAILABLE_EXIT_CODE,
   ValueFeedUnavailableError,
+  type ValueInputProgress,
 } from "./value-ingestion";
 
 /**
@@ -220,7 +221,7 @@ export interface OutcomeCommitIdentity {
   author: GitHubActor | null;
 }
 
-interface NodeReference {
+export interface NodeReference {
   id: string;
   kind: "Issue" | "PullRequest";
   outcome: MergedPullRequestOutcome | null;
@@ -301,6 +302,95 @@ export class GraphqlUpstreamError extends Error {
   }
 }
 
+/** The commit exists, but GitHub could not compute one aggregate counter. */
+export class CommitStatisticsUnavailableError extends Error {
+  override readonly name = "CommitStatisticsUnavailableError";
+  constructor(
+    readonly ids: readonly string[],
+    readonly indices: readonly number[],
+    readonly data: JsonRecord,
+  ) {
+    super("GitHub commit statistics are temporarily unavailable");
+  }
+}
+
+/** Only the exact aggregate-counter query may use the historical REST path. */
+export function commitStatisticsFailure(
+  document: string,
+  value: unknown,
+  variables: GraphqlVariables,
+): CommitStatisticsUnavailableError | null {
+  if (
+    document !== OUTCOME_COMMIT_LINES_QUERY ||
+    !value ||
+    typeof value !== "object" ||
+    Array.isArray(value)
+  )
+    return null;
+  const envelope = value as JsonRecord;
+  const ids = variables.ids;
+  const data = envelope.data;
+  if (
+    !Array.isArray(ids) ||
+    ids.length === 0 ||
+    !ids.every((id) => typeof id === "string") ||
+    new Set(ids).size !== ids.length ||
+    !data ||
+    typeof data !== "object" ||
+    Array.isArray(data)
+  )
+    return null;
+  const nodes = (data as JsonRecord).nodes;
+  try {
+    parseRateLimit((data as JsonRecord).rateLimit);
+  } catch {
+    return null;
+  }
+  if (
+    !Array.isArray(nodes) ||
+    nodes.length !== ids.length ||
+    !Array.isArray(envelope.errors) ||
+    envelope.errors.length === 0
+  )
+    return null;
+  const indices = new Set<number>();
+  for (const value of envelope.errors) {
+    if (!value || typeof value !== "object" || Array.isArray(value))
+      return null;
+    const error = value as JsonRecord;
+    const path = error.path;
+    if (
+      error.type !== "SERVICE_UNAVAILABLE" ||
+      !Array.isArray(path) ||
+      path.length !== 3 ||
+      path[0] !== "nodes" ||
+      !Number.isInteger(path[1]) ||
+      path[1] < 0 ||
+      path[1] >= ids.length ||
+      !["additions", "deletions"].includes(path[2]) ||
+      nodes[path[1]] !== null
+    )
+      return null;
+    indices.add(path[1]);
+  }
+  if (
+    nodes.some((node, index) =>
+      node === null
+        ? !indices.has(index)
+        : !node ||
+          typeof node !== "object" ||
+          Array.isArray(node) ||
+          node.id !== ids[index],
+    )
+  )
+    return null;
+  return new CommitStatisticsUnavailableError(
+    ids as string[],
+    [...indices],
+    data as JsonRecord,
+  );
+}
+
 /**
  * Runs one `nodes(ids:)` query. When the gateway fails the whole batch, the
  * two halves are requested separately and reassembled in request order, down
@@ -370,7 +460,11 @@ export interface GenerationProgress {
     | "merged-pull-requests"
     | "resolved-issues"
     | "open-issues"
-    | "open-pull-requests";
+    | "open-pull-requests"
+    | "evidence-verification"
+    | "review-census"
+    | "participation-history"
+    | ValueInputProgress["phase"];
   completed: number;
   total: number;
 }
@@ -396,6 +490,8 @@ export interface GenerateOptions {
   retainedReviewAttributions?: ModelAttribution[];
   /** The site this build publishes; staging reads its registry from staging. */
   deploymentTier?: DeploymentTier;
+  /** Trusted production collection can retain public GitHub discussion reads. */
+  discussionCheckpoint?: { directory: string; deadlineMs: number };
   /** Shared only across the one complete-census retry in runGenerator. */
   sourceRecovery?: {
     unavailableSources: UnavailableSource[];
@@ -742,7 +838,17 @@ export class OutcomeCommitLineLoader {
   private readonly byId = new Map<string, CachedCommitLines>();
   private readonly idBySha = new Map<string, string>();
 
-  constructor(private readonly client: Pick<GraphqlExecutor, "execute">) {}
+  constructor(
+    private readonly client: Pick<GraphqlExecutor, "execute">,
+    private readonly recoverStatistics?: (
+      repositoryNodeId: string,
+      commit: OutcomeCommitIdentity,
+    ) => Promise<{
+      additions: number;
+      deletions: number;
+      author: GitHubActor | null;
+    }>,
+  ) {}
 
   async hydrate(
     repositoryNodeId: string,
@@ -799,11 +905,56 @@ export class OutcomeCommitLineLoader {
       }
     }
     const staged = new Map<string, CachedCommitLines>();
+    const recoveredAuthors = new Map<string, GitHubActor | null>();
     for (const batch of chunks([...pending.values()], GRAPHQL_PAGE_SIZE)) {
+      const statisticsClient = {
+        execute: async (document: string, variables: GraphqlVariables = {}) => {
+          try {
+            return await this.client.execute(document, variables);
+          } catch (error) {
+            if (
+              !(error instanceof CommitStatisticsUnavailableError) ||
+              !this.recoverStatistics
+            )
+              throw error;
+            if (JSON.stringify(error.ids) !== JSON.stringify(variables.ids))
+              throw new Error(
+                "Unavailable commit statistics changed request identity",
+              );
+            const nodes = [
+              ...asArray(error.data.nodes, "commit statistics.nodes"),
+            ];
+            for (const index of error.indices) {
+              const expected = pending.get(error.ids[index]);
+              if (!expected)
+                throw new Error(
+                  "Unavailable commit statistics are outside the requested batch",
+                );
+              const recovered = await this.recoverStatistics(
+                repositoryNodeId,
+                expected,
+              );
+              recoveredAuthors.set(
+                expected.id,
+                mergeCommitAuthor(expected.author, recovered.author),
+              );
+              nodes[index] = {
+                __typename: "Commit",
+                id: expected.id,
+                oid: expected.oid,
+                repository: { id: repositoryNodeId },
+                additions: recovered.additions,
+                deletions: recovered.deletions,
+              };
+            }
+            return { ...error.data, nodes };
+          }
+        },
+      };
       let data: JsonRecord;
       try {
         data = await executeNodeBatch(
-          this.client,
+          statisticsClient,
           OUTCOME_COMMIT_LINES_QUERY,
           batch.map((commit) => commit.id),
         );
@@ -839,7 +990,7 @@ export class OutcomeCommitLineLoader {
           outcome: {
             oid: expected.oid,
             parentCount: expected.parentCount,
-            author: expected.author,
+            author: recoveredAuthors.get(expected.id) ?? expected.author,
             additions,
             deletions,
           },
@@ -1759,7 +1910,7 @@ async function readGraphqlResponseBody(response: Response): Promise<string> {
 // opaque `after` cursor valid, because a smaller `first` returns fewer nodes
 // from the same position, so callers page more times over an unchanged result
 // set and every reported total stays comparable.
-function narrowedPageSize(
+export function narrowedPageSize(
   variables: GraphqlVariables,
 ): GraphqlVariables | null {
   const current = variables.pageSize;
@@ -2103,10 +2254,14 @@ export class GitHubGraphqlClient implements GraphqlExecutor {
       ? []
       : unavailableRequestedSources(envelope, activeVariables);
     const unavailableNode = unavailableSources.length > 0;
+    const statisticsFailure = restPath
+      ? null
+      : commitStatisticsFailure(document, envelope, activeVariables);
     if (
       Array.isArray(envelope.errors) &&
       envelope.errors.length > 0 &&
-      !unavailableNode
+      !unavailableNode &&
+      !statisticsFailure
     ) {
       const errors = envelope.errors.map(sanitizeGraphqlError).join("; ");
       throw new Error(`${apiLabel} rejected the leaderboard query: ${errors}`);
@@ -2154,6 +2309,7 @@ export class GitHubGraphqlClient implements GraphqlExecutor {
           (envelope.errors as unknown[]).map(sanitizeGraphqlError).join("; "),
         ),
       });
+    if (statisticsFailure) throw statisticsFailure;
     return data;
   }
 
@@ -2255,7 +2411,7 @@ function midpoint(from: Date, to: Date): Date {
   return new Date(from.getTime() + Math.max(1, seconds) * 1000);
 }
 
-function parseSearchReference(
+export function parseSearchReference(
   value: unknown,
   path: string,
   expectedKind: NodeReference["kind"],
@@ -2449,13 +2605,22 @@ export async function collectSearchReferences(
   stats: { searchSliceCount: number },
   commitLines = new OutcomeCommitLineLoader(client),
   repositoryNodeId = repository.expectedNodeId,
+  initialSearchPageSize = GRAPHQL_PAGE_SIZE,
 ): Promise<NodeReference[]> {
+  if (
+    !Number.isInteger(initialSearchPageSize) ||
+    initialSearchPageSize < 1 ||
+    initialSearchPageSize > GRAPHQL_PAGE_SIZE
+  )
+    throw new Error(
+      "Initial search page size must be an integer from 1 to 100",
+    );
   const searchQuery = `repo:${repository.owner}/${repository.name} ${kindQualifier} ${qualifier}:${searchRange(from, to)}`;
   stats.searchSliceCount += 1;
   const firstData = await client.execute(SEARCH_REFERENCES_QUERY, {
     searchQuery,
     after: null,
-    pageSize: GRAPHQL_PAGE_SIZE,
+    pageSize: initialSearchPageSize,
     withMergeCommits: qualifier === "merged",
   });
   const firstPage = parseSearchPage(firstData, (value, path) =>
@@ -2479,6 +2644,7 @@ export async function collectSearchReferences(
       stats,
       commitLines,
       repositoryNodeId,
+      initialSearchPageSize,
     );
     const right = await collectSearchReferences(
       client,
@@ -2491,6 +2657,7 @@ export async function collectSearchReferences(
       stats,
       commitLines,
       repositoryNodeId,
+      initialSearchPageSize,
     );
     const combined = dedupeByNodeId([...left, ...right]);
     if (combined.length !== firstPage.totalCount) {
@@ -2519,7 +2686,7 @@ export async function collectSearchReferences(
     const data = await client.execute(SEARCH_REFERENCES_QUERY, {
       searchQuery,
       after: pageInfo.endCursor,
-      pageSize: GRAPHQL_PAGE_SIZE,
+      pageSize: initialSearchPageSize,
       withMergeCommits: qualifier === "merged",
     });
     const page = parseSearchPage(data, (value, path) =>
@@ -2578,7 +2745,7 @@ export async function collectSearchReferences(
 // endpoint can paginate the complete immutable base/head range beyond that.
 const GITHUB_PULL_REQUEST_COMMIT_LIST_LIMIT = 250;
 
-async function completeOutcomeCommits(
+export async function completeOutcomeCommits(
   client: GraphqlExecutor,
   reference: NodeReference,
   repository: TargetRepository,
@@ -4581,6 +4748,7 @@ export async function generateLeaderboardFromGitHub(
     (pullRequest) => hydrationPlan.detailEligibleIds.has(pullRequest.id),
   );
   const dedupedClosedIssues = dedupeByNodeId(closedIssues);
+  onProgress({ phase: "evidence-verification", completed: 0, total: 1 });
   const { evidenceVerification, openIssues, openPullRequests } =
     await retrySlopSnapshot(async (attempt) => {
       if (attempt > 1) {
@@ -4626,6 +4794,8 @@ export async function generateLeaderboardFromGitHub(
       };
     });
 
+  onProgress({ phase: "evidence-verification", completed: 1, total: 1 });
+  onProgress({ phase: "review-census", completed: 0, total: 1 });
   const finalReviewCounts = await collectPullRequestReviewCounts(
     client,
     hydrationCandidates.map(({ outcome }) => ({ id: outcome.id })),
@@ -4648,6 +4818,7 @@ export async function generateLeaderboardFromGitHub(
     assertReviewCensusStable(closedCounts, finalClosedCounts);
   }
 
+  onProgress({ phase: "review-census", completed: 1, total: 1 });
   const allRecords = [
     ...dedupedOutcomes,
     ...dedupedMergedPullRequests,
@@ -4666,10 +4837,23 @@ export async function generateLeaderboardFromGitHub(
             Date.parse(current) > Date.parse(latest) ? current : latest,
           );
   let valueRestRequests = 0;
-  const github = GitHubClient.forToken(
-    options.evidenceToken ?? "",
-    githubIngestionReadTransport(),
+  const valueRead = githubIngestionReadTransport(
+    fetch,
+    undefined,
+    undefined,
+    undefined,
+    {
+      discussionCache: options.discussionCheckpoint && {
+        directory: options.discussionCheckpoint.directory,
+        repositories: collections.map(({ repository, preflight }) => ({
+          name: repository.id,
+          nodeId: preflight.id,
+        })),
+      },
+      quotaDeadlineMs: options.discussionCheckpoint?.deadlineMs,
+    },
   );
+  const github = GitHubClient.forToken(options.evidenceToken ?? "", valueRead);
   const { heldWorkUnits, ...valueInputs } = await loadValueInputs(
     {
       get: <T>(path: string) => {
@@ -4691,7 +4875,11 @@ export async function generateLeaderboardFromGitHub(
     undefined,
     probeUnavailableSources,
     dedupedOutcomes,
+    onProgress,
   );
+  // Some evidence lookups can record individual gaps. A collector deadline
+  // invalidates the entire attempt even if a helper caught its exception.
+  valueRead.assertNoCheckpoint();
   const censusIds = new Set(
     [...dedupedOutcomes, ...closedUnmergedPullRequests].map(
       (source) => source.id,
@@ -4728,12 +4916,14 @@ export async function generateLeaderboardFromGitHub(
       )),
     );
   }
+  onProgress({ phase: "participation-history", completed: 0, total: 1 });
   const participationBans = await loadParticipationBans({
     get: <T>(path: string) => {
       valueRestRequests += 1;
       return github.get<T>(path);
     },
   });
+  valueRead.assertNoCheckpoint();
   // History is a retained read, not GitHub collection. Keep reversals after
   // a PR leaves the rolling census or its project is paused/retired.
   const penalties: NonNullable<LeaderboardInput["penalties"]>[number][] = [];
@@ -4774,6 +4964,7 @@ export async function generateLeaderboardFromGitHub(
     penaltyHistory.push(...history);
     penalties.push(...history.filter((row) => row.reversedAt === null));
   }
+  onProgress({ phase: "participation-history", completed: 1, total: 1 });
   const fetchedAt = new Date().toISOString();
   const rateLimit = client.getRateLimit();
   const observedUnavailable = new Map<string, UnavailableSource>();
@@ -4937,17 +5128,49 @@ function progressLine(progress: GenerationProgress): string {
   return `[slop.cash] ${label}: ${progress.completed}/${progress.total}\n`;
 }
 
+function discussionCheckpointFromEnv() {
+  const directory = process.env.SLOP_DISCUSSION_CHECKPOINT;
+  const deadline = process.env.SLOP_DISCUSSION_DEADLINE_MS;
+  if (!directory && !deadline) return undefined;
+  const deadlineMs = Number(deadline);
+  if (
+    process.env.GITHUB_ACTIONS !== "true" ||
+    process.env.GITHUB_REF !== "refs/heads/main" ||
+    !["push", "workflow_dispatch"].includes(
+      process.env.GITHUB_EVENT_NAME ?? "",
+    ) ||
+    !directory ||
+    !Number.isSafeInteger(deadlineMs) ||
+    deadlineMs <= Date.now()
+  )
+    throw new Error(
+      "Invalid trusted production discussion checkpoint settings",
+    );
+  return { directory, deadlineMs };
+}
+
 if (import.meta.main) {
   const arguments_ = parseGenerationArguments(process.argv.slice(2));
   const acceptedReviewHistory = loadAcceptedReviewHistory();
   let lastProgressPhase: GenerationProgress["phase"] | null = null;
+  let latestProgress: GenerationProgress | null = null;
+  const heartbeat = setInterval(() => {
+    if (latestProgress) {
+      process.stderr.write(
+        `[slop.cash] waiting on ${latestProgress.phase.replaceAll("-", " ")}: ${latestProgress.completed}/${latestProgress.total}\n`,
+      );
+    }
+  }, 60_000);
+  heartbeat.unref();
   const snapshot = await runGenerator(DEFAULT_OUTPUT_PATH, undefined, {
     ...arguments_,
     deploymentTier: deploymentTier(process.env.VITE_SLOP_ENVIRONMENT),
+    discussionCheckpoint: discussionCheckpointFromEnv(),
     evaluatedContributions: loadEvaluatorAwardEvents(),
     retainedReviewEvents: acceptedReviewHistory.events,
     retainedReviewAttributions: acceptedReviewHistory.attributions,
     onProgress: (progress) => {
+      latestProgress = progress;
       const phaseChanged = progress.phase !== lastProgressPhase;
       lastProgressPhase = progress.phase;
       if (
@@ -4958,14 +5181,16 @@ if (import.meta.main) {
         process.stderr.write(progressLine(progress));
       }
     },
-  }).catch((error: unknown) => {
-    // error-policy:J2 a feed outage writes nothing; the caller keeps the last published snapshot.
-    if (!(error instanceof ValueFeedUnavailableError)) throw error;
-    process.stderr.write(
-      `[slop.cash] ${error.message} (${String(error.cause)}); no snapshot written\n`,
-    );
-    process.exit(VALUE_FEED_UNAVAILABLE_EXIT_CODE);
-  });
+  })
+    .finally(() => clearInterval(heartbeat))
+    .catch((error: unknown) => {
+      // error-policy:J2 a feed outage writes nothing; the caller keeps the last published snapshot.
+      if (!(error instanceof ValueFeedUnavailableError)) throw error;
+      process.stderr.write(
+        `[slop.cash] ${error.message} (${String(error.cause)}); no snapshot written\n`,
+      );
+      process.exit(VALUE_FEED_UNAVAILABLE_EXIT_CODE);
+    });
   process.stdout.write(
     `[slop.cash] wrote ${DEFAULT_OUTPUT_PATH} (${snapshot.leaders.length} leaders, ${snapshot.ledger.length} score events, ${snapshot.source.requestCount} GitHub requests, ${snapshot.source.rateLimit.remaining}/${snapshot.source.rateLimit.limit} GraphQL points remaining)\n`,
   );

@@ -1565,13 +1565,18 @@ async function ownerVault(
       manifestSha256: stored.manifestSha256,
     };
   }
-  const deployment = await deps.vaultSetup.register(
+  const verified = await deps.vaultSetup.register(
     creation,
     actor,
     input,
     transactionId,
   );
-  if (!deployment) return json(200, { status: "pending" });
+  if (!verified) return json(200, { status: "pending" });
+  // Included but not final: answer the verified deployment so the owner can
+  // fund it now. Nothing is registered, appended or observed before finality.
+  if (verified.evidence !== "finalized")
+    return json(200, { status: "pending", provisional: verified.deployment });
+  const { deployment } = verified;
   const updated = await appendRevision(request, deps, {
     current,
     actor,

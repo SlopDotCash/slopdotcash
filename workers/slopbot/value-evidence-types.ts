@@ -167,6 +167,11 @@ export interface ValueEvidence {
   mergeResolutions?: ValueMergeResolution[];
   retainedMergeReferences?: RetainedMergeReference[];
   relatedPullRequests: RelatedPullRequest[];
+  unavailablePublicReferences?: {
+    repository: string;
+    repositoryNodeId: string;
+    number: number;
+  }[];
   contextFiles?: {
     path: string;
     ref: string;
