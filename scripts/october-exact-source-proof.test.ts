@@ -677,7 +677,11 @@ test("accepted follow-up reference is rechecked against current canonical GitHub
     };
     commit.firstAcceptedSourceId = source.sourceId;
   });
-  const current = clone(evidence.pull);
+  let current = {
+    ...clone(evidence.pull),
+    user: { ...evidence.pull.user, url: "https://github.com/carrier" },
+    head: { ...evidence.pull.head, ref: "feature" },
+  };
   const github = { get: async <T>(): Promise<T> => current as T };
   const result = await originalContributorFollowupProof(
     github,
@@ -687,6 +691,20 @@ test("accepted follow-up reference is rechecked against current canonical GitHub
     input.sources[0].policy,
   );
   expect(result.reference?.target.id).toBe(accepted.sourceId);
+  delete (current.user as { node_id?: string }).node_id;
+  await expect(
+    originalContributorFollowupProof(
+      github,
+      accepted,
+      source,
+      evidence,
+      input.sources[0].policy,
+    ),
+  ).rejects.toThrow("changed during collection");
+  current = {
+    ...current,
+    user: { ...evidence.pull.user, url: "https://github.com/carrier" },
+  };
   current.body = "Changed unrelated description";
   await expect(
     originalContributorFollowupProof(

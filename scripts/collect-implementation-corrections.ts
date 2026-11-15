@@ -1699,6 +1699,36 @@ export function firstAcceptedCorrectionClaims(
   });
 }
 
+/** Compare every retained field against the complete provider representation. */
+function matchesRetainedProjection(
+  actual: unknown,
+  expected: unknown,
+): boolean {
+  if (Array.isArray(expected))
+    return (
+      Array.isArray(actual) &&
+      actual.length === expected.length &&
+      expected.every((value, index) =>
+        matchesRetainedProjection(actual[index], value),
+      )
+    );
+  if (expected !== null && typeof expected === "object")
+    return (
+      actual !== null &&
+      typeof actual === "object" &&
+      !Array.isArray(actual) &&
+      Object.entries(expected).every(
+        ([key, value]) =>
+          Object.hasOwn(actual, key) &&
+          matchesRetainedProjection(
+            (actual as Record<string, unknown>)[key],
+            value,
+          ),
+      )
+    );
+  return actual === expected;
+}
+
 /** Retain authenticated ancestry for accepted same-carrier follow-up sources. */
 export async function originalContributorFollowupProof(
   github: Pick<GitHubClient, "get">,
@@ -1738,12 +1768,7 @@ export async function originalContributorFollowupProof(
       `/repos/${source.repository}/pulls/${evidence.pull.number}`,
     );
     requireThat(
-      current &&
-        Object.keys(evidence.pull).every(
-          (key) =>
-            encode(current[key as keyof Pull]) ===
-            encode(evidence.pull[key as keyof Pull]),
-        ),
+      current && matchesRetainedProjection(current, evidence.pull),
       "Accepted follow-up statement changed during collection",
     );
     if (acknowledgement) {
@@ -1753,12 +1778,7 @@ export async function originalContributorFollowupProof(
         : `/repos/${source.repository}/pulls/${evidence.pull.number}/reviews/${acknowledgement.id}`;
       const currentRecord = await github.get<Record<string, unknown>>(path);
       requireThat(
-        currentRecord &&
-          Object.keys(acknowledgement).every(
-            (key) =>
-              encode(currentRecord[key]) ===
-              encode(acknowledgement[key as keyof typeof acknowledgement]),
-          ),
+        matchesRetainedProjection(currentRecord, acknowledgement),
         "Accepted follow-up acknowledgement changed during collection",
       );
     }
