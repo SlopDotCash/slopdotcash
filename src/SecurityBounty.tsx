@@ -2058,10 +2058,28 @@ function SubmissionsPanel({
   onKnownCases: (ids: string[]) => void;
 }) {
   const privateRequest = usePrivateRequest();
-  const [submissions, setSubmissions] = useState<Submission[] | null>(null);
+  const [recent, setRecent] = useState<Submission[] | null>(null);
+  const [focusedReceipt, setFocusedReceipt] = useState<{
+    id: string;
+    submission: Submission | null;
+  } | null>(null);
   const [authorityUnavailable, setAuthorityUnavailable] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [listError, setListError] = useState<string | null>(null);
+  const [receiptError, setReceiptError] = useState<string | null>(null);
   const generation = useRef(0);
+  const receiptUpdate = useRef(0);
+  const embeddedFocusId = readReport ? null : focusId;
+  const submissions = useMemo(
+    () =>
+      focusedReceipt && focusedReceipt.id === embeddedFocusId
+        ? [
+            ...(recent ?? []).filter((entry) => entry.id !== embeddedFocusId),
+            ...(focusedReceipt.submission ? [focusedReceipt.submission] : []),
+          ]
+        : recent,
+    [recent, focusedReceipt, embeddedFocusId],
+  );
+  const error = listError ?? receiptError;
   useEffect(() => {
     if (submissions === null) return;
     onKnownCases(
@@ -2079,21 +2097,73 @@ function SubmissionsPanel({
   }, [submissions, onLinkFallback, onKnownCases, focusId]);
   const load = useCallback(() => {
     const current = ++generation.current;
-    setError(null);
+    const initialReceiptUpdate = receiptUpdate.current;
+    const isCurrent = () => current === generation.current;
+    const acceptsReceipt = () =>
+      isCurrent() && initialReceiptUpdate === receiptUpdate.current;
+    setListError(null);
+    setReceiptError(null);
+    const readReceipt = async (id: string, isCurrentRead: () => boolean) => {
+      const body = await privateRequest<{
+        recipientGithubId: string;
+        submission: Submission;
+      }>(
+        "GET",
+        `security-submissions/${encodeURIComponent(id)}?view=receipt`,
+        undefined,
+        {
+          isCurrent: isCurrentRead,
+        },
+      );
+      if (
+        body?.recipientGithubId !== session.session.githubId ||
+        body.submission?.id !== id
+      )
+        throw new Error("The private report receipt could not be verified.");
+      return body.submission;
+    };
+    // A link to a specific Inbox receipt resolves independently of the recent list.
+    const receipt = embeddedFocusId
+      ? readReceipt(embeddedFocusId, acceptsReceipt).then(
+          (submission) => {
+            if (acceptsReceipt())
+              setFocusedReceipt({ id: embeddedFocusId, submission });
+            return submission;
+          },
+          (caught: unknown) => {
+            if (acceptsReceipt()) {
+              // A withdrawn or missing receipt supersedes an older cached row.
+              if (caught instanceof ProjectApiError && caught.status === 404)
+                setFocusedReceipt({ id: embeddedFocusId, submission: null });
+              setReceiptError(errorMessage(caught));
+            }
+            return null;
+          },
+        )
+      : null;
     privateRequest<{
       recipientGithubId: string;
       automatic: boolean;
       submissions: Submission[];
       authorityUnavailable?: boolean;
-    }>("GET", "security-submissions")
+    }>("GET", "security-submissions", undefined, { isCurrent })
       .then(async (body) => {
-        if (current !== generation.current) return;
+        if (!isCurrent()) return;
         if (body.recipientGithubId !== session.session.githubId)
           throw new Error("Your account changed. Reload your private reports.");
         // Keep the successful list if a stale receipt link is no longer readable.
-        setSubmissions(body.submissions);
+        setRecent(body.submissions);
         setAuthorityUnavailable(body.authorityUnavailable === true);
         onAvailability(body.automatic === true);
+        if (receipt) {
+          const submission = await receipt;
+          if (submission && acceptsReceipt())
+            pruneDrafts([
+              ...body.submissions.filter((entry) => entry.id !== submission.id),
+              submission,
+            ]);
+          return;
+        }
         // The recent list is bounded. A receipt link still identifies an older
         // report; resolve it through its own current authorization check.
         if (
@@ -2101,30 +2171,34 @@ function SubmissionsPanel({
           !body.submissions.some((entry) => entry.id === focusId)
         ) {
           try {
-            const focused = await privateRequest<{ submission: Submission }>(
-              "GET",
-              `security-submissions/${encodeURIComponent(focusId)}?view=receipt`,
-            );
-            if (current !== generation.current) return;
-            body.submissions = [...body.submissions, focused.submission];
-            setSubmissions(body.submissions);
+            const focused = await readReceipt(focusId, isCurrent);
+            if (!isCurrent()) return;
+            body.submissions = [...body.submissions, focused];
+            setRecent(body.submissions);
           } catch (caught) {
-            if (current === generation.current) setError(errorMessage(caught));
+            if (isCurrent()) setReceiptError(errorMessage(caught));
+            return;
           }
         }
         // Keep a linked report's draft until its authorization check resolves.
-        if (current === generation.current) pruneDrafts(body.submissions);
+        if (isCurrent()) pruneDrafts(body.submissions);
       })
       .catch((caught: unknown) => {
-        if (current !== generation.current) return;
+        if (!isCurrent()) return;
         // The manual path stays available whenever the list cannot load.
         onAvailability(false);
-        setError(errorMessage(caught));
+        setListError(errorMessage(caught));
       });
     return () => {
       generation.current++;
     };
-  }, [onAvailability, session.session.githubId, privateRequest, focusId]);
+  }, [
+    onAvailability,
+    session.session.githubId,
+    privateRequest,
+    focusId,
+    embeddedFocusId,
+  ]);
   useEffect(load, [load]);
   if (error && submissions === null)
     return (
@@ -2161,13 +2235,19 @@ function SubmissionsPanel({
       focused={submission.id === focusId}
       key={submission.id}
       onOpenCase={onOpenCase}
-      onUpdated={(updated) =>
-        setSubmissions((current) =>
-          (current ?? []).map((entry) =>
-            entry.id === updated.id ? updated : entry,
-          ),
-        )
-      }
+      onUpdated={(updated) => {
+        if (updated.id === embeddedFocusId) {
+          receiptUpdate.current++;
+          setFocusedReceipt({ id: updated.id, submission: updated });
+          setReceiptError(null);
+        }
+        setRecent(
+          (current) =>
+            current?.map((entry) =>
+              entry.id === updated.id ? updated : entry,
+            ) ?? null,
+        );
+      }}
       submission={submission}
       caseRecord={cases.find((record) => record.id === submission.caseId)}
     />

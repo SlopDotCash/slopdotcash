@@ -338,10 +338,16 @@ test("a delayed Inbox response cannot expose the prior recipient after an accoun
 
 test("private receipt response cannot be assigned to a later matching session", async ({
   page,
+  diagnostics,
 }, info) => {
   const foreignId = "ss_foreign_receipt";
   const foreignProject = "foreign-private-project";
   let privateReads = 0;
+  diagnostics.allowResponse(
+    404,
+    "GET",
+    `/api/v1/security-submissions/${foreignId}?view=receipt`,
+  );
   await page.route("**/api/v1/**", async (route) => {
     const path = new URL(route.request().url()).pathname;
     if (path === "/api/v1/projects")
@@ -367,6 +373,8 @@ test("private receipt response cannot be assigned to a later matching session", 
           cases: [],
         },
       });
+    if (path === `/api/v1/security-submissions/${foreignId}`)
+      return route.fulfill({ status: 404, json: { error: "not_found" } });
     if (path === "/api/v1/security-submissions") {
       privateReads++;
       // The private request used B's cookie after another tab changed sessions.
