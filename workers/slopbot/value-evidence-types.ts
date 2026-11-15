@@ -175,6 +175,16 @@ export interface ValueEvidence {
   commitAttribution: CommitAttribution[];
   mergeResolutions?: ValueMergeResolution[];
   retainedMergeReferences?: RetainedMergeReference[];
+  repairBodyEdit?: {
+    id: string;
+    body: string;
+    headRefOid: string;
+    mergedAt: string;
+    updatedAt: string;
+    lastEditedAt: string | null;
+    editor: { id: string; type: string } | null;
+    author: { id: string; type: string };
+  };
   relatedPullRequests: RelatedPullRequest[];
   unavailablePublicReferences?: {
     repository: string;
