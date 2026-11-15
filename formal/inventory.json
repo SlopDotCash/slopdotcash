@@ -4188,13 +4188,13 @@
     },
     {
       "path": "scripts/prepare-implementation-corrections.ts",
-      "sha256": "2b19797704349a416c6e6fad3fec76e1d53657d57bd12bcd5e0cf9457c3fac72",
+      "sha256": "dbd164a901e509ebc44f04b2132da176d0f5a115f090cf2fccd4ab49d617fc81",
       "models": [
         "formal/models/points/historical_implementation_allocation.qnt"
       ],
       "candidateLines": [
-        4, 30, 42, 250, 327, 362, 374, 375, 376, 386, 391, 395, 397, 410, 411,
-        427, 433
+        4, 30, 42, 251, 328, 363, 375, 376, 377, 387, 392, 396, 398, 411, 412,
+        428, 434
       ],
       "review": "mapped-abstraction"
     },
@@ -4766,7 +4766,7 @@
     },
     {
       "path": "scripts/value-ingestion.ts",
-      "sha256": "ae5193c9905211b71957315479e127cb507d69aa0ae56cf69d317005ce7e5034",
+      "sha256": "e08a7fd1873352d2cff19961460a24ecf1b68c007807acb4b87c560016cad06e",
       "models": [
         "formal/models/points/implementation_credit.qnt",
         "formal/models/points/implementation_credit_gate.qnt",
@@ -4774,8 +4774,8 @@
         "formal/models/slopbot/value_ingestion.qnt"
       ],
       "candidateLines": [
-        66, 77, 124, 125, 126, 127, 129, 130, 197, 198, 199, 201, 202, 737, 757,
-        879, 915, 954, 978
+        66, 77, 124, 125, 126, 127, 129, 130, 197, 198, 199, 201, 202, 735, 755,
+        877, 913, 952, 976
       ],
       "review": "mapped-abstraction"
     },
