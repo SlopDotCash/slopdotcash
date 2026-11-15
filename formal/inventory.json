@@ -71,12 +71,12 @@
     },
     {
       "path": ".github/workflows/points-implementation-corrections.yml",
-      "sha256": "6077695066c3fa201a0ad3fc473b7e03f3c536b240ce46f5e9631b9b53df9979",
+      "sha256": "0a356db3786c3e3633e88250dea626747d1bd9303f5bbd5dd3e6a7e1740240d8",
       "models": [
         "formal/models/points/historical_discussion_evidence.qnt",
         "formal/models/points/historical_implementation_allocation.qnt"
       ],
-      "candidateLines": [74, 102, 178],
+      "candidateLines": [78, 106, 184],
       "review": "mapped-abstraction"
     },
     {
@@ -3486,15 +3486,16 @@
     },
     {
       "path": "scripts/collect-implementation-corrections.ts",
-      "sha256": "799c56e9face33410b45fe00c90a16b2d998832e180bddfa25f2b417ca4b9dd7",
+      "sha256": "b2ea3f1fefece8dc23d1896ab2dbb44e9866fa383307b5996102f4e70e80f345",
       "models": [
         "formal/models/points/historical_discussion_evidence.qnt",
         "formal/models/points/historical_implementation_allocation.qnt"
       ],
       "candidateLines": [
-        4, 11, 13, 85, 165, 242, 248, 251, 256, 266, 282, 288, 304, 305, 315,
-        318, 415, 461, 482, 507, 553, 560, 676, 687, 852, 1219, 1779, 1838,
-        1874, 1899, 1928, 1930
+        4, 11, 13, 96, 176, 253, 259, 262, 267, 277, 293, 299, 315, 316, 326,
+        329, 426, 472, 493, 518, 564, 571, 687, 698, 863, 1312, 1348, 1377,
+        1382, 1395, 1520, 1878, 1889, 2179, 2769, 2828, 3012, 3049, 3068, 3097,
+        3099
       ],
       "review": "mapped-abstraction"
     },
@@ -4082,11 +4083,11 @@
     },
     {
       "path": "scripts/points-protection-sql.ts",
-      "sha256": "c99faa1aa420adfd67d891bd821900f60589f15ed60008f840ec4a786cc0a65b",
+      "sha256": "fbbc01cce4c4f9c6c8a14c0e990d3d6b48c9cf97361f46728c64a5ad88ec9fec",
       "models": [
         "formal/models/points/historical_implementation_allocation.qnt"
       ],
-      "candidateLines": [22],
+      "candidateLines": [3, 11, 44],
       "review": "mapped-abstraction"
     },
     {
@@ -4134,13 +4135,13 @@
     },
     {
       "path": "scripts/prepare-implementation-corrections.ts",
-      "sha256": "f7e376620e1c8b8d227b4066ddb99998e852ebb2ef86dac7d1c7b3064a042547",
+      "sha256": "2b19797704349a416c6e6fad3fec76e1d53657d57bd12bcd5e0cf9457c3fac72",
       "models": [
         "formal/models/points/historical_implementation_allocation.qnt"
       ],
       "candidateLines": [
-        4, 30, 42, 250, 313, 347, 359, 360, 361, 370, 375, 379, 381, 393, 394,
-        410, 416, 426
+        4, 30, 42, 250, 327, 362, 374, 375, 376, 386, 391, 395, 397, 410, 411,
+        427, 433
       ],
       "review": "mapped-abstraction"
     },
@@ -6051,7 +6052,7 @@
     },
     {
       "path": "src/lib/implementation-lines.ts",
-      "sha256": "a26025e0f5d68a6720bd3f3fb34f13b84e889321ac1ff6618fe154ae4aa840b4",
+      "sha256": "d2d2e54a69bd1457b2c99cef83f765dd3b53afea3c1a54b66f115a5f4c0e3bd9",
       "models": [
         "formal/models/points/implementation_allocation.qnt",
         "formal/models/points/implementation_credit.qnt"
@@ -6314,13 +6315,14 @@
     },
     {
       "path": "src/lib/points-implementation-corrections.ts",
-      "sha256": "5fb22145fe1ef43ca8d7c941a0beaa5a923a51e767db8d8864edb7e44f8c962f",
+      "sha256": "233f40098678d06547d40ab12f9b596272ea22a1acbfbc717359e5ae712fb88c",
       "models": [
         "formal/models/points/historical_implementation_allocation.qnt"
       ],
       "candidateLines": [
-        83, 91, 102, 116, 123, 243, 400, 559, 564, 659, 731, 766, 794, 895, 896,
-        897
+        111, 134, 145, 159, 166, 312, 369, 370, 371, 375, 465, 467, 471, 542,
+        548, 575, 576, 663, 698, 891, 950, 1023, 1039, 1238, 1244, 1249, 1357,
+        1438, 1473, 1501, 1603, 1604, 1605
       ],
       "review": "mapped-abstraction"
     },
@@ -6334,7 +6336,7 @@
     },
     {
       "path": "src/lib/points.ts",
-      "sha256": "0f7bb496f9744cf73eabdec0c7b0b2e1eea140d349e3bd45f10568cd27048a6c",
+      "sha256": "c163d395dae0f4e175cd7ce691fb68be25312f514c96728b01cb5ca23105d3c8",
       "models": [
         "formal/models/points/implementation_allocation.qnt",
         "formal/models/points/journal_publication.qnt",
@@ -6345,7 +6347,7 @@
         "formal/models/rewards/bucket_aggregation.qnt",
         "formal/models/ui/ui_review_pool.qnt"
       ],
-      "candidateLines": [378, 833, 1068, 1075, 1084],
+      "candidateLines": [380, 844, 1079, 1086, 1095],
       "review": "mapped-abstraction"
     },
     {
@@ -8524,14 +8526,14 @@
     },
     {
       "path": "workers/slopbot/value-evidence.ts",
-      "sha256": "8136d242744bb4db5691805f0acca5630e74db9ca9872ee1411c44fd1fdf44e1",
+      "sha256": "8af0ff415f46f1f8dad5885fe0ea3ca8f2904576ca4998d428fa3abc2e24f164",
       "models": [
         "formal/models/points/historical_discussion_evidence.qnt",
         "formal/models/slopbot/bot_evidence_integrity.qnt",
         "formal/models/slopbot/bot_value_dispute_actor.qnt"
       ],
       "candidateLines": [
-        62, 73, 82, 96, 435, 436, 627, 647, 690, 699, 718, 1059, 1078
+        62, 73, 82, 96, 435, 436, 627, 647, 690, 699, 718, 1060, 1079
       ],
       "review": "mapped-abstraction"
     },
@@ -8631,7 +8633,7 @@
     },
     {
       "path": "workers/slopbot/value-merge-resolution.ts",
-      "sha256": "bd8889156f15c3ed08fe5979097867c0b12ffa7bc30f5cab8570e1c4345b303a",
+      "sha256": "6f943fdc4909f9167c7717617bf99817ce736fe913f7a0c1099438793a73413d",
       "models": ["formal/models/slopbot/bot_historical_import.qnt"],
       "candidateLines": [],
       "review": "mapped-abstraction"
@@ -8731,23 +8733,23 @@
     },
     {
       "path": "workers/slopbot/value-retained-copy.ts",
-      "sha256": "84ba4b03b81023044cfb2e735b0f3bc3e23fcb1efc40cf56a87d97a2fd7d9a15",
+      "sha256": "bbcae67b1b2e5fd285fc1409ff60fe6218f6cd2c4beb39ed8a0376062fb37e27",
       "models": [
         "formal/models/slopbot/bot_retained_acceptance.qnt",
         "formal/models/slopbot/retained_copy_bindings.qnt",
         "formal/models/slopbot/retained_recipient_scope.qnt"
       ],
-      "candidateLines": [33, 60, 260, 266, 290, 324],
+      "candidateLines": [40, 67, 240, 312, 318, 342, 376],
       "review": "mapped-abstraction"
     },
     {
       "path": "workers/slopbot/value-retained-reference.ts",
-      "sha256": "23a49fdb7dcdcfb4819b8870e8dd6f2d6f39d748827a3df0ff05f9aca635e6ef",
+      "sha256": "51fc95b25209f650bd948e9b3ce0f6098f991af61012a81892fa802ee7795b4e",
       "models": [
         "formal/models/slopbot/bot_retained_acceptance.qnt",
         "formal/models/slopbot/retained_copy_bindings.qnt"
       ],
-      "candidateLines": [84, 109],
+      "candidateLines": [23, 103, 128],
       "review": "mapped-abstraction"
     },
     {
@@ -8835,7 +8837,7 @@
     },
     {
       "path": "workers/slopbot/value-work-unit.ts",
-      "sha256": "418b47f1c177e4d6deb946fa99e7521b01625a28517a961973f5157cf3ae2a3a",
+      "sha256": "b1e945af2b3e7802bb0b5adc9c77c9546e96f481048b7b031c06d777406fc069",
       "models": [
         "formal/models/slopbot/bot_value_pipeline.qnt",
         "formal/models/slopbot/bot_work_partition.qnt",
@@ -15555,7 +15557,7 @@
     },
     {
       "path": "formal/models/slopbot/retained_copy_bindings.qnt",
-      "sha256": "6eb78955df6d54ff148079ae2f31314a2e6b3776e5c7113ae21e65c983fcd1fb",
+      "sha256": "a352d388661d4d493529066991885089d26bbeb950c67f0b447f295d0ae0ae70",
       "sources": [
         "workers/slopbot/value-manifest-identity.ts",
         "workers/slopbot/value-retained-copy.ts",
@@ -15568,21 +15570,27 @@
         "acknowledgedPromotionStillChecksFilesTest",
         "ambiguousAncestorHunksDoNotBindTest",
         "authenticatedCommentBindsTest",
+        "authenticatedFormalReviewBindsTest",
         "authenticatedPrReferenceBindsTest",
         "botMergerCannotAcknowledgeTest",
+        "canonicalEmptySynchronizationPreservesOrdinaryClaimTest",
         "changedAuthorNeedsCommentTest",
         "cleanResultStillNeedsOtherPublicationChecksTest",
         "competingOriginalsRetainFirstMapEntryAndHoldTest",
+        "exactResolutionCopyPreservesOriginalClaimTest",
         "foreignRepositoryCannotBindTest",
         "forgedOrLateCommentDoesNotAcknowledgeTest",
         "ignoringPartialResultLimitationsNegativeControlTest",
         "incompleteOriginalFileIsHeldTest",
         "independentlyAcceptedPromotionNeedsNoNewBindingTest",
+        "invalidFormalReviewIsHeldTest",
         "laterFailureReturnsPartialMapWithLimitationsTest",
         "manifestIdentityBindsTest",
+        "missingSynchronizationEvidenceIsHeldTest",
         "referenceLookupRejectsWithoutReturningPartialMapTest",
         "sameAuthorReopenBindsTest",
         "samePrCannotBindItselfTest",
+        "synchronizationResolutionEditsAreHeldTest",
         "twoExactMatchesAreAmbiguousTest",
         "uniqueAncestorHunksBindTest",
         "zeroExactMatchesIsHeldTest"
