@@ -140,6 +140,8 @@ export function prepareOctoberPreview(input: {
   reviewedPacketSha256: string;
   currentRegistry: Uint8Array;
   now?: Date;
+  /** Current GitHub owner authority, verified by the trusted October runner. */
+  verifiedOwnerProjectIds?: ReadonlySet<string>;
 }) {
   if (sha256Hex(input.approvedTerms) !== APPROVED_TERMS_SHA)
     throw new Error("Owner-approved terms digest does not match");
@@ -276,11 +278,14 @@ export function prepareOctoberPreview(input: {
       policy.id !== id ||
       policy.status !== "active" ||
       entry.restriction !== "clear" ||
-      policy.authority.state !== "verified" ||
-      policy.terms.receiptPolicy.state !== "active"
+      (!(
+        policy.authority.state === "verified" &&
+        policy.terms.receiptPolicy.state === "active"
+      ) &&
+        !input.verifiedOwnerProjectIds?.has(id))
     )
       throw new Error(
-        `${id} needs active clearance, verified authority and active receipts`,
+        `${id} needs active clearance and verified current owner authority`,
       );
     const route = ESCROW_NETWORKS[network];
     const vaults = policy.escrow?.deployments ?? [];

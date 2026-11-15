@@ -509,7 +509,12 @@ reward start. Payout-recognition awards are excluded. Existing deduplication
 and signed penalties are preserved. This cross-check validates the reviewed
 packet and creates no new valuation. Fresh private reads bind the packet to
 exact current registry bytes, enforcement generation, the Points batch,
-account eligibility and protected financial state.
+account eligibility and protected financial state. The runner verifies the
+packet reviewer's current owner or repository-admin authority through the same
+Slopbot App installation reader as the monthly owner API. Historical October
+payments may retain unknown license and inbound terms when that live authority
+is verified. This exception changes neither those stored terms nor the ordinary
+automatic proposal admission rule.
 
 Applying uses `prepare-october-rewards.ts` and the existing single-transaction
 D1 file importer. It records proposals only. Exact header and recipient-row
