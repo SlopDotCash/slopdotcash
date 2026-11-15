@@ -35,34 +35,35 @@ pure def submitReport(b: BrowserSession, submissionKey: int): BrowserSession = {
 
 ### Sign-in keeps only a safe same-origin return destination
 
-PRD section 3 keeps the return destination through sign-in. The shell
-parses the requested `next` value (`src/lib/login-return.ts`) into a
-`ReturnRequest`: a same-origin path starting with one `/`, with no
-backslash, that is not the login page itself. Anything else returns to `/`.
-`next=earnings` is the shell's alias for `/earnings`. A private report
-draft is never a permitted draft across an account change: authentication
-erases it (below). A server answer that the session expired, was revoked
-or the account closed ends the browser session exactly like sign-out.
+PRD section 3 keeps the return destination through sign-in. The shell's
+parser (`src/lib/login-return.ts`) turns the requested `next` value into a
+`ParsedNext`: `SameOriginPath` with the decoded path when the value is a
+same-origin path starting with exactly one `/` and holding no backslash
+(`next=earnings` is its alias for `/earnings`), and `ForeignOrMalformed`
+otherwise; that parse is a shell obligation over the raw value. This machine
+decides the rest: only a same-origin path that is not the login page itself
+is kept, and anything else returns to `/`, so the saved destination is never
+empty and never loops back to sign-in. A private report draft is never a
+permitted draft across an account change: authentication erases it (below).
+A server answer that the session expired, was revoked or the account closed
+ends the browser session exactly like sign-out.
 
 ```quint
-type ReturnRequest = { path: str, startsWithSlash: bool, protocolRelative: bool, backslash: bool,
-  sameOrigin: bool, loginPage: bool }
-pure def safeReturn(r: ReturnRequest): bool =
-  r.path != "" and r.startsWithSlash and not(r.protocolRelative) and not(r.backslash) and r.sameOrigin and not(r.loginPage)
-pure def canSaveReturn(b: BrowserSession, request: ReturnRequest): bool = b.navigation.actor == 0
-pure def saveReturn(b: BrowserSession, request: ReturnRequest): BrowserSession =
-  { ...b, returnPath: if (safeReturn(request)) request.path else "/" }
-pure def lawProtocolRelativeRefused(r: ReturnRequest): bool = r.protocolRelative implies not(safeReturn(r))
-pure def lawLoginLoopRefused(r: ReturnRequest): bool = r.loginPage implies not(safeReturn(r))
+type ParsedNext = SameOriginPath({ path: str }) | ForeignOrMalformed
+pure val loginPath = "/login"
+pure def returnFor(request: ParsedNext): str = match request {
+  | SameOriginPath(p) => if (p.path != "" and p.path != loginPath) p.path else "/"
+  | _ => "/"
+}
+pure def canSaveReturn(b: BrowserSession, request: ParsedNext): bool = b.navigation.actor == 0
+pure def saveReturn(b: BrowserSession, request: ParsedNext): BrowserSession = { ...b, returnPath: returnFor(request) }
+pure def alwaysReturnPathSafe(b: BrowserSession): bool = b.returnPath != "" and b.returnPath != loginPath
 pure def stepServerEndClearsPrivateState(before: BrowserSession, via: str, after: BrowserSession): bool =
   via == "serverSessionEnded" implies after.draft == D::initial and after.details.opened.size() == 0 and after.navigation.actor == 0
 pure def stepSignInKeepsReturnPath(before: BrowserSession, via: str, after: BrowserSession): bool =
   via == "authenticate" implies after.returnPath == before.returnPath
-pure val requestValues = Set({ path: "/inbox", startsWithSlash: true, protocolRelative: false, backslash: false, sameOrigin: true, loginPage: false },
-  { path: "//evil.example", startsWithSlash: true, protocolRelative: true, backslash: false, sameOrigin: false, loginPage: false },
-  { path: "/login", startsWithSlash: true, protocolRelative: false, backslash: false, sameOrigin: true, loginPage: true },
-  { path: "/a%5Cb", startsWithSlash: true, protocolRelative: false, backslash: true, sameOrigin: true, loginPage: false })
-pure val rValues = requestValues
+pure val requestValues = Set(SameOriginPath({ path: "/inbox" }), SameOriginPath({ path: "/login" }),
+  SameOriginPath({ path: "" }), ForeignOrMalformed)
 pure def sometimesSafeReturnKept(b: BrowserSession): bool = b.navigation.actor > 0 and b.returnPath == "/inbox"
 ```
 
