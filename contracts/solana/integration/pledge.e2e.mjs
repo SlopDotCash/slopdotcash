@@ -109,7 +109,7 @@ const pledge = (project, period, amount, owner = payer) =>
       systemProgram: SystemProgram.programId,
     })
     .signers(owner === payer ? [] : [owner])
-    .rpc();
+    .rpc({ commitment: "confirmed" });
 const expire = (project, period) =>
   program.methods
     .expirePledge(period)
@@ -118,12 +118,12 @@ const expire = (project, period) =>
       monthPledge: pledgeAt(project, period),
       month: monthAt(project, period),
     })
-    .rpc();
+    .rpc({ commitment: "confirmed" });
 const setMonthly = (project, cap, enabled) =>
   program.methods
     .setMonthlyCommitment(bn(cap), enabled)
     .accountsStrict({ owner: payer.publicKey, project })
-    .rpc();
+    .rpc({ commitment: "confirmed" });
 let ownerTokens;
 async function ownerTokenAccount() {
   ownerTokens ??= await createAccount(
@@ -146,7 +146,7 @@ const withdraw = async (project, gross) =>
       destination: await ownerTokenAccount(),
       tokenProgram: TOKEN_PROGRAM_ID,
     })
-    .rpc();
+    .rpc({ commitment: "confirmed" });
 function handCommit(project, name, gross) {
   const source = sha(`pledge-hand:${name}`);
   const award = Buffer.from(
@@ -163,7 +163,7 @@ function handCommit(project, name, gross) {
       obligation: pda(Buffer.from("award"), project.toBuffer(), award),
       systemProgram: SystemProgram.programId,
     })
-    .rpc();
+    .rpc({ commitment: "confirmed" });
 }
 /**
  * The signed commit_monthly for `period` with one leaf of `total`. `pledge` is the pledge
@@ -419,7 +419,7 @@ test("a bounty project cannot pledge", async () => {
       systemProgram: SystemProgram.programId,
       config: configAddress(program.programId),
     })
-    .rpc();
+    .rpc({ commitment: "confirmed" });
   await assert.rejects(
     pledge(project, await currentPeriod(), 1),
     /WrongPurpose/,
@@ -500,7 +500,7 @@ test("migrate_project grows a 332-byte Project, which then pledges through the a
         project,
         systemProgram: SystemProgram.programId,
       })
-      .rpc(),
+      .rpc({ commitment: "confirmed" }),
     /NotLegacyProject/,
   );
   assert.deepEqual(await reader(), {

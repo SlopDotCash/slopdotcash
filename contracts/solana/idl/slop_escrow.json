@@ -1321,25 +1321,6 @@
           }
         },
         {
-          "name": "month",
-          "pda": {
-            "seeds": [
-              {
-                "kind": "const",
-                "value": [109, 111, 110, 116, 104]
-              },
-              {
-                "kind": "account",
-                "path": "project"
-              },
-              {
-                "kind": "arg",
-                "path": "period"
-              }
-            ]
-          }
-        },
-        {
           "name": "system_program",
           "address": "11111111111111111111111111111111"
         }
@@ -2111,7 +2092,7 @@
     {
       "code": 6041,
       "name": "PledgePeriodClosed",
-      "msg": "The period is past, more than 11 months ahead, already committed or its pledge has closed"
+      "msg": "The period is past, more than 11 months ahead, or its pledge has closed"
     }
   ],
   "types": [
