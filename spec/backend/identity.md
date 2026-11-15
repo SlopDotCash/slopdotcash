@@ -4,16 +4,25 @@ PRD sections 3 and 9 make GitHub the only login method. The identity Worker
 (`workers/identity/handler.ts`, `persistence.ts`, `contracts.ts`,
 `rate-limit.ts`, migrations 0002, 0006 and 0108) runs the GitHub
 authorization-code flow with PKCE and returns a one-time identity assertion
-bound to one audience. Every start and poll request counts in its client's
-fixed one-minute window (12 starts, 120 polls); this model counts starts and
-refused requests, and abstracts the counting of successful polls. Web sign-in consumes the `slop-points-web` audience
+bound to one audience. Every start and poll request, admitted or refused,
+counts in its client's fixed one-minute D1 window (12 starts, 120 polls)
+before it is handled. Web sign-in consumes the `slop-points-web` audience
 ([Accounts](./accounts.md)); the contributor session exchange consumes
 `private-trace-api` ([Session exchange](../contributor/sessionExchange.md)).
 The local development handoff uses the same flow store but never issues a
 production assertion.
 
-This machine is the whole server-side store: flows, assertions and the exact
-D1 rate windows. Time is the Worker's trusted clock in seconds. Model flow,
+This machine is the whole server-side store: flows, assertions and the D1
+rate windows. Time is the Worker's trusted clock in seconds.
+
+The authenticated sender `by` matters only for three internal senders, which
+the shell establishes from its own code paths, never from a request:
+`githubExchange` is the Worker's callback handler after its own GitHub token
+exchange and `/user` read, and is the only source of a flow's GitHub
+identity or callback failure; `workerClock` advances the trusted clock; and
+`identityCron` is the hourly cleanup. Browser and backend requests (start,
+callback claim, poll, consume) need no sender: their authority is the state,
+cookie, capability or token they present. Model flow,
 state, capability and token identifiers stand for random 256-bit values: the
 shell stores only their SHA-256 digests and compares in constant time. The
 token of a production flow is derived deterministically from that flow, so
@@ -22,8 +31,9 @@ the model uses the flow ID as the token.
 External shell obligations, not modeled here: HTTPS-only routing; the fixed
 public origin and callback; the `__Host-` state cookie attributes; PKCE
 verifier encryption with flow-bound associated data; the GitHub token
-exchange and `/user` read; clearing the access token; and the approximate
-edge rate-limit shield in front of the exact D1 counters.
+exchange and `/user` read; clearing the access token; the approximate edge
+rate-limit shield in front of the D1 counters; and the 503 answer when
+either limiter fails, which handles nothing.
 
 ## Story: Start and complete a GitHub sign-in flow
 
@@ -50,6 +60,9 @@ type Assertion = { token: int, audience: Audience, github: GitHubIdentity,
   createdAt: int, expiresAt: int, consumed: bool, consumedAt: int }
 type RateScope = StartScope | PollScope
 type RateWindow = { client: int, scope: RateScope, count: int, expiresAt: int }
+pure val githubExchange = -1
+pure val workerClock = -2
+pure val identityCron = -3
 type Identity = { now: int, flows: List[Flow], assertions: List[Assertion], windows: List[RateWindow],
   lastFlow: int, issued: List[int], localDelivered: List[int], consumedTokens: List[int] }
 pure val flowLifetime = 300
@@ -120,7 +133,8 @@ update moves the flow to processing and clears the stored verifier, so a
 replayed callback finds nothing to claim. Any later failure ends the flow:
 GitHub's `error` parameter, a verifier that cannot be decrypted, a failed
 token exchange, no identity, a web identity without a node ID, or expiry
-while GitHub answered. Only a processing flow can fail.
+while GitHub answered. Only a processing flow can fail, and only the
+callback handler's own exchange completes or fails it.
 
 ```quint
 pure def flowByState(s: Identity, oauthState: int): Flow = s.flows.select(f => f.oauthState == oauthState).nthOr(0, absentFlow)
@@ -130,15 +144,16 @@ pure def canClaimCallback(s: Identity, oauthState: int, cookie: int): bool =
 pure def claimCallback(s: Identity, oauthState: int, cookie: int): Identity =
   val f = flowByState(s, oauthState)
   { ...s, flows: replaceFlow(s.flows, { ...f, status: CallbackProcessing, pkceStored: false }) }
-pure def canFailCallback(s: Identity, flowId: int): bool = flowById(s, flowId).status == CallbackProcessing and flowId > 0
-pure def failCallback(s: Identity, flowId: int): Identity =
+pure def canFailCallback(s: Identity, by: int, flowId: int): bool =
+  by == githubExchange and flowById(s, flowId).status == CallbackProcessing and flowId > 0
+pure def failCallback(s: Identity, by: int, flowId: int): Identity =
   { ...s, flows: replaceFlow(s.flows, { ...flowById(s, flowId), status: CallbackFailed }) }
 pure def identityComplete(f: Flow, github: GitHubIdentity): bool =
   github.actor > 0 and github.login != "" and ((f.audience == PointsWeb or f.mode == LocalHandoff) implies github.nodeId > 0)
-pure def canCompleteCallback(s: Identity, flowId: int, github: GitHubIdentity): bool =
+pure def canCompleteCallback(s: Identity, by: int, flowId: int, github: GitHubIdentity): bool =
   val f = flowById(s, flowId)
-  flowId > 0 and f.status == CallbackProcessing and live(s, f) and identityComplete(f, github)
-pure def completeCallback(s: Identity, flowId: int, github: GitHubIdentity): Identity =
+  by == githubExchange and flowId > 0 and f.status == CallbackProcessing and live(s, f) and identityComplete(f, github)
+pure def completeCallback(s: Identity, by: int, flowId: int, github: GitHubIdentity): Identity =
   { ...s, flows: replaceFlow(s.flows, { ...flowById(s, flowId), status: CallbackComplete, github: github }) }
 pure def alwaysVerifierOnlyWhilePending(s: Identity): bool = s.flows.every(f => f.pkceStored iff f.status == Pending)
 pure def alwaysIdentityAfterCallback(s: Identity): bool = s.flows.every(f =>
@@ -150,8 +165,12 @@ pure def alwaysIdentityAfterCallback(s: Identity): bool = s.flows.every(f =>
 
 A poll names the flow, its capability and its audience. Production and local
 flows answer only their own poll route. Before the callback completes, a
-poll is told to wait; a failed callback, a used flow, a wrong capability,
-a wrong audience or an expired flow are refused without revealing which.
+poll is told to wait. An unknown or expired flow, a wrong capability and a
+wrong audience all answer the same `flow_unavailable`; a poll on the other
+route answers `wrong_flow`; a failed callback answers `callback_failed` and a
+used flow `flow_consumed`. Every poll first counts in its client's poll
+window; an over-limit poll is refused (`refuseRateLimited`) and handled no
+further.
 A production poll first stores the flow's one deterministic assertion. The
 insert itself requires the parent flow to be callback-complete, so a delayed
 poll cannot recreate the token after it was issued and purged. The stored
@@ -170,14 +189,18 @@ pure def pollOutcome(s: Identity, flowId: int, capability: int, audience: Audien
   else if (f.status == CallbackFailed) PollCallbackFailed
   else if (f.status == AssertionIssued) PollConsumed
   else PollReady
-pure def canStoreAssertion(s: Identity, flowId: int, capability: int, audience: Audience): bool =
+pure def canPollAnswered(s: Identity, client: int, flowId: int, capability: int, audience: Audience, localRoute: bool): bool =
+  client > 0 and admitted(s, client, PollScope) and pollOutcome(s, flowId, capability, audience, localRoute) != PollReady
+pure def pollAnswered(s: Identity, client: int, flowId: int, capability: int, audience: Audience, localRoute: bool): Identity =
+  { ...s, windows: countRequest(s, client, PollScope) }
+pure def canStoreAssertion(s: Identity, client: int, flowId: int, capability: int, audience: Audience): bool =
   val row = assertionFor(s, flowId)
-  pollOutcome(s, flowId, capability, audience, false) == PollReady
+  client > 0 and admitted(s, client, PollScope) and pollOutcome(s, flowId, capability, audience, false) == PollReady
     and (hasAssertion(s, flowId) implies not(row.consumed) and s.now < row.expiresAt)
-pure def storeAssertion(s: Identity, flowId: int, capability: int, audience: Audience): Identity =
+pure def storeAssertion(s: Identity, client: int, flowId: int, capability: int, audience: Audience): Identity =
   val f = flowById(s, flowId)
-  if (hasAssertion(s, flowId)) s else
-    { ...s, assertions: s.assertions.append({ token: flowId, audience: f.audience, github: f.github,
+  if (hasAssertion(s, flowId)) { ...s, windows: countRequest(s, client, PollScope) } else
+    { ...s, windows: countRequest(s, client, PollScope), assertions: s.assertions.append({ token: flowId, audience: f.audience, github: f.github,
       createdAt: s.now, expiresAt: s.now + assertionLifetime, consumed: false, consumedAt: 0 }) }
 pure def canIssueAssertion(s: Identity, flowId: int, capability: int, audience: Audience): bool =
   val row = assertionFor(s, flowId)
@@ -185,10 +208,10 @@ pure def canIssueAssertion(s: Identity, flowId: int, capability: int, audience: 
     and not(row.consumed) and s.now < row.expiresAt
 pure def issueAssertion(s: Identity, flowId: int, capability: int, audience: Audience): Identity =
   { ...s, flows: replaceFlow(s.flows, { ...flowById(s, flowId), status: AssertionIssued }), issued: s.issued.append(flowId) }
-pure def canPollLocal(s: Identity, flowId: int, capability: int): bool =
-  pollOutcome(s, flowId, capability, PointsWeb, true) == PollReady
-pure def pollLocal(s: Identity, flowId: int, capability: int): Identity =
-  { ...s, flows: replaceFlow(s.flows, { ...flowById(s, flowId), status: AssertionIssued }),
+pure def canPollLocal(s: Identity, client: int, flowId: int, capability: int): bool =
+  client > 0 and admitted(s, client, PollScope) and pollOutcome(s, flowId, capability, PointsWeb, true) == PollReady
+pure def pollLocal(s: Identity, client: int, flowId: int, capability: int): Identity =
+  { ...s, windows: countRequest(s, client, PollScope), flows: replaceFlow(s.flows, { ...flowById(s, flowId), status: AssertionIssued }),
     localDelivered: s.localDelivered.append(flowId) }
 pure def alwaysIssuedOnce(s: Identity): bool =
   s.issued.every(id => s.issued.select(x => x == id).length() == 1 and not(s.localDelivered.includes(id)))
@@ -246,12 +269,12 @@ It never touches live flows. Removing an issued flow's row does not let a
 delayed poll recreate its assertion: the poll needs the parent flow.
 
 ```quint
-pure def canAdvanceTime(s: Identity, now: int): bool = now >= s.now
-pure def advanceTime(s: Identity, now: int): Identity = { ...s, now: now }
-pure def canPurgeExpired(s: Identity): bool =
+pure def canAdvanceTime(s: Identity, by: int, now: int): bool = by == workerClock and now >= s.now
+pure def advanceTime(s: Identity, by: int, now: int): Identity = { ...s, now: now }
+pure def canPurgeExpired(s: Identity, by: int): bool = by == identityCron and (
   s.flows.some(f => f.expiresAt <= s.now) or s.assertions.some(a => a.expiresAt <= s.now)
-    or s.windows.some(w => w.expiresAt <= s.now)
-pure def purgeExpired(s: Identity): Identity =
+    or s.windows.some(w => w.expiresAt <= s.now))
+pure def purgeExpired(s: Identity, by: int): Identity =
   { ...s, flows: s.flows.select(f => f.expiresAt > s.now), assertions: s.assertions.select(a => a.expiresAt > s.now),
     windows: s.windows.select(w => w.expiresAt > s.now) }
 pure def movedForward(f: FlowStatus, g: FlowStatus): bool = g == f
@@ -284,8 +307,8 @@ pure def leadsToCallbackSettles(s: Identity, later: Identity): bool =
   flowById(s, 1).status == CallbackProcessing implies flowById(later, 1).status != CallbackProcessing
 pure val fair_failCallback = "weak"
 pure val sampleStarted: Identity = start(initial, 1, PointsWeb, Production)
-pure val sampleComplete: Identity = completeCallback(claimCallback(sampleStarted, 1, 1), 1, { actor: 7, login: "octo", nodeId: 70 })
-pure val sampleIssued: Identity = issueAssertion(storeAssertion(sampleComplete, 1, 1, PointsWeb), 1, 1, PointsWeb)
+pure val sampleComplete: Identity = completeCallback(claimCallback(sampleStarted, 1, 1), githubExchange, 1, { actor: 7, login: "octo", nodeId: 70 })
+pure val sampleIssued: Identity = issueAssertion(storeAssertion(sampleComplete, 1, 1, 1, PointsWeb), 1, 1, PointsWeb)
 pure val sValues = Set(initial).union(Set(sampleStarted)).union(Set(sampleComplete)).union(Set(sampleIssued))
 pure val audienceValues = Set(PointsWeb, PrivateTrace)
 pure val wValues = Set({ client: 2, scope: StartScope, count: 12, expiresAt: 60 }, { client: 2, scope: PollScope, count: 3, expiresAt: 60 },
@@ -299,6 +322,8 @@ pure val capabilityValues = Set(1, 2, 9)
 pure val nowValues = Set(0, 30, 89, 90, 120, 299, 300, 400, 3700)
 pure val githubValues = Set({ actor: 7, login: "octo", nodeId: 70 }, { actor: 7, login: "octo", nodeId: 0 },
   { actor: 8, login: "other", nodeId: 80 }, { actor: 0, login: "", nodeId: 0 })
+pure val byValues = Set(githubExchange, workerClock, identityCron, 0)
+pure val localRouteValues = Set(true, false)
 pure val weight_start = 6
 pure val weight_claimCallback = 6
 pure val weight_completeCallback = 6

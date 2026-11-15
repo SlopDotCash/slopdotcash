@@ -17,6 +17,16 @@ public projections. Provider delivery is distinct from enrollment; in-app
 notices ([Notifications](../operations/notifications.md)) do not depend on
 any field here.
 
+Mail consent here is the only consent source for the mail queues, and they
+are not modeled here: an external composition obligation on
+[Notifications](../operations/notifications.md). When a write turns a
+category off (a consent save, an unsubscribe or closure), the same commit
+must move that recipient's `queued` and `retrying` mail of that category to
+`suppressed`: non-essential activity mail when activity is withdrawn (DEV
+trigger `activity_email_opt_out`, migration 0033), and security and
+essential activity mail when security is withdrawn (`security_email_opt_out`,
+migration 0111).
+
 ## Story: Verify a notification address and choose consent
 
 > As a member, I want to verify an address I control and choose security and
@@ -78,10 +88,16 @@ pure def requestVerification(e: Enrollment, now: int, id: int, requestKey: int, 
     .append({ id: id, requestKey: requestKey, address: address, addressKey: addressKey, tokenDigest: id,
       activity: activity, security: security, delivery: Queued, createdAt: now, expiresAt: now + verificationLifetime,
       cancelled: false, consumed: false, version: 0 }) }
-pure def lawReplayNeverAddsARequest(e: Enrollment, now: int, requestKey: int, address: str, addressKey: str,
+pure def lawAcceptedRequestThenReplays(e: Enrollment, now: int, id: int, requestKey: int, address: str, addressKey: str,
   activity: bool, security: bool, others: int): bool =
-  requestOutcome(e, now, requestKey, address, addressKey, activity, security, others, true) == RequestReplayed
-    implies ownByKey(e, requestKey).length() > 0
+  requestOutcome(e, now, requestKey, address, addressKey, activity, security, others, true) == RequestAccepted
+    implies requestOutcome(requestVerification(e, now, id, requestKey, address, addressKey, activity, security),
+      now, requestKey, address, addressKey, activity, security, others, true) == RequestReplayed
+pure def lawChangedReplayConflicts(e: Enrollment, now: int, id: int, requestKey: int, address: str, addressKey: str,
+  activity: bool, security: bool, others: int): bool =
+  requestOutcome(e, now, requestKey, address, addressKey, activity, security, others, true) == RequestAccepted
+    implies requestOutcome(requestVerification(e, now, id, requestKey, address, addressKey, activity, security),
+      now, requestKey, address, addressKey, not(activity), security, others, true) == IdempotencyConflict
 pure def lawFourthRequestInAnHourRefused(e: Enrollment, now: int, requestKey: int, address: str, addressKey: str, others: int): bool =
   (ownByKey(e, requestKey).length() == 0 and requestKey > 0 and address != "" and addressKey != ""
     and recentRequests(e, now, hourWindow) + others >= hourlyLimit)

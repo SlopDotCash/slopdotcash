@@ -14,7 +14,11 @@ are not changed by any transition here.
 The authenticated sender `by` is the web session ID the shell resolved from
 the presented `__Host-slop_points` cookie by its SHA-256 digest; 0 means no
 valid cookie. The account behind a session comes from this state, never from
-the request. The clock is the service's trusted clock in seconds. Session,
+the request. Negative senders are the service's own internal paths, which
+the shell establishes from its code, never from a request: the identity
+Worker's GitHub callback handler, clock and hourly job (`I::githubExchange`,
+`I::workerClock`, `I::identityCron`), the X callback handler after its own
+OAuth exchange (`xCallback`), and the private mail service (`mailService`). The clock is the service's trusted clock in seconds. Session,
 verification, destination-version and unsubscribe identifiers stand for
 random values and are issued here from counters that never repeat.
 
@@ -42,7 +46,7 @@ import email as E from "./email"
 import xConnection as X from "./xConnection"
 type Membership = Open | Closed
 type Member = { actor: int, githubId: int, login: str, membership: Membership, public: bool,
-  joinedAt: int, closedAt: int, closures: List[int], xLink: X::XLink, telegramLinked: bool, email: E::Enrollment }
+  joinedAt: int, closedAt: int, xLink: X::XLink, telegramLinked: bool, email: E::Enrollment }
 type Session = { id: int, actor: int, expiresAt: int }
 type HistoricalAward = { actor: int, at: int, points: int }
 type Accounts = { now: int, identity: I::Identity, members: List[Member], sessions: List[Session], lastSession: int,
@@ -51,8 +55,10 @@ type Accounts = { now: int, identity: I::Identity, members: List[Member], sessio
 pure val sessionLifetime = 60 * 60
 pure val participationPointsEnd = 1792800000
 pure val launchClock = 1794614400
+pure val xCallback = -5
+pure val mailService = -6
 pure val absentMember: Member = { actor: 0, githubId: 0, login: "", membership: Closed, public: false,
-  joinedAt: 0, closedAt: 0, closures: List(), xLink: X::noLink, telegramLinked: false, email: E::newEnrollment(1, 0) }
+  joinedAt: 0, closedAt: 0, xLink: X::noLink, telegramLinked: false, email: E::newEnrollment(1, 0) }
 pure def memberByGithub(s: Accounts, githubId: int): Member = s.members.select(m => m.githubId == githubId).nthOr(0, absentMember)
 pure def memberByActor(s: Accounts, actor: int): Member = s.members.select(m => m.actor == actor).nthOr(0, absentMember)
 pure def hasGithubMember(s: Accounts, githubId: int): bool = s.members.some(m => m.githubId == githubId)
@@ -78,8 +84,7 @@ pure def alwaysIdentityStoreValid(s: Accounts): bool =
     and I::alwaysIdentityAfterCallback(s.identity) and I::alwaysAssertionsMatchTheirFlow(s.identity)
     and I::alwaysVerifierOnlyWhilePending(s.identity) and I::alwaysLocalFlowsHaveNoAssertion(s.identity)
 pure def stepMembersPermanent(before: Accounts, after: Accounts): bool = before.members.every(m =>
-  after.members.some(n => n.actor == m.actor and n.githubId == m.githubId and n.joinedAt == m.joinedAt
-    and m.closures.every(c => n.closures.includes(c)) and n.closures.length() >= m.closures.length()))
+  after.members.some(n => n.actor == m.actor and n.githubId == m.githubId and n.joinedAt == m.joinedAt))
 pure def stepSessionIdsFresh(before: Accounts, after: Accounts): bool =
   before.lastSession <= after.lastSession and before.now <= after.now
     and after.sessions.every(x => before.sessions.includes(x) or x.id > before.lastSession)
@@ -116,7 +121,7 @@ pure def joined(s: Accounts, token: int): Member =
     { ...prior, login: g.login, membership: Open, public: true, closedAt: 0,
       xLink: if (prior.xLink.xId != "") { ...prior.xLink, public: true } else prior.xLink }
   else { actor: g.nodeId, githubId: g.actor, login: g.login, membership: Open, public: true, joinedAt: s.now,
-    closedAt: 0, closures: List(), xLink: X::noLink, telegramLinked: false, email: E::newEnrollment(g.actor, 0) }
+    closedAt: 0, xLink: X::noLink, telegramLinked: false, email: E::newEnrollment(g.actor, 0) }
 pure def admitMember(token: int, s: Accounts): Accounts =
   val m = joined(s, token)
   { ...s, identity: I::consume(s.identity, token, I::PointsWeb), sessions: openSession(s, m.actor),
@@ -154,7 +159,8 @@ assertion and answers `account_closed` with the closure time and no
 session; a join that races closure ends the same way. An explicit reopen,
 after the visibility notice, opens the membership publicly with a new
 session. X stays disconnected and email consent stays withdrawn until the
-person connects or opts in again; the closure history is kept.
+person connects or opts in again. Reopening clears the closure time, as
+DEV does (`closed_at=NULL`); no closure history is kept.
 
 ```quint
 pure def canRefuseClosedSignIn(s: Accounts, token: int): bool =
@@ -186,12 +192,12 @@ pure def signOut(s: Accounts, by: int): Accounts = { ...s, sessions: s.sessions.
 pure def canRevokeSession(s: Accounts, by: int, target: int): bool = senderActor(s, by) > 0 and target > 0
 pure def revokeSession(s: Accounts, by: int, target: int): Accounts =
   { ...s, sessions: s.sessions.select(x => not(x.id == target and x.actor == senderActor(s, by))) }
-pure def canAdvanceTime(s: Accounts, now: int): bool = now >= s.now
-pure def advanceTime(s: Accounts, now: int): Accounts = { ...s, now: now, identity: I::advanceTime(s.identity, now) }
-pure def canPurgeExpired(s: Accounts): bool = s.sessions.some(x => x.expiresAt <= s.now)
-  or s.xRegistry.flows.some(f => f.expiresAt <= s.now) or I::canPurgeExpired(s.identity)
-pure def purgeExpired(s: Accounts): Accounts =
-  { ...s, sessions: s.sessions.select(x => x.expiresAt > s.now), identity: I::purgeExpired(s.identity),
+pure def canAdvanceTime(s: Accounts, by: int, now: int): bool = by == I::workerClock and now >= s.now
+pure def advanceTime(s: Accounts, by: int, now: int): Accounts = { ...s, now: now, identity: I::advanceTime(s.identity, by, now) }
+pure def canPurgeExpired(s: Accounts, by: int): bool = by == I::identityCron and (s.sessions.some(x => x.expiresAt <= s.now)
+  or s.xRegistry.flows.some(f => f.expiresAt <= s.now) or I::canPurgeExpired(s.identity, by))
+pure def purgeExpired(s: Accounts, by: int): Accounts =
+  { ...s, sessions: s.sessions.select(x => x.expiresAt > s.now), identity: I::purgeExpired(s.identity, by),
     xRegistry: { ...s.xRegistry, flows: s.xRegistry.flows.select(f => f.expiresAt > s.now) } }
 pure def stepRevocationStaysInAccount(before: Accounts, via: str, after: Accounts): bool =
   via == "revokeSession" implies before.sessions.select(x => not(after.sessions.includes(x))).length() <= 1
@@ -206,25 +212,22 @@ pure def lawSignOutKeepsOtherSessions(s: Accounts, by: int): bool =
 ### Active memberships are public and a hide request is refused
 
 Visibility can only be set to public; `public: false` answers
-`public_visibility_required`. Closed accounts are private.
+`public_visibility_required` and changes nothing. Closed accounts are
+private.
 
 ```quint
-type VisibilityOutcome = VisibilitySaved | PublicVisibilityRequired
-pure def visibilityOutcome(requestPublic: bool): VisibilityOutcome = if (requestPublic) VisibilitySaved else PublicVisibilityRequired
-pure def canPublishMembership(s: Accounts, by: int): bool = senderActor(s, by) > 0
-pure def publishMembership(s: Accounts, by: int): Accounts =
+pure def canPublishMembership(s: Accounts, by: int, requestPublic: bool): bool = senderActor(s, by) > 0 and requestPublic
+pure def publishMembership(s: Accounts, by: int, requestPublic: bool): Accounts =
   { ...s, members: replaceMember(s.members, { ...memberByActor(s, senderActor(s, by)), public: true }) }
 pure def alwaysPublicMembershipIsOpen(s: Accounts): bool = s.members.every(m => m.public implies m.membership == Open)
 pure def stepActiveMembershipNeverHidden(before: Accounts, after: Accounts): bool = before.members.every(m =>
   (m.public and memberByActor(after, m.actor).membership == Open) implies memberByActor(after, m.actor).public)
-pure def lawHideRequestRefused(requestPublic: bool): bool =
-  visibilityOutcome(requestPublic) == VisibilitySaved iff requestPublic
 ```
 
 ### Public reads show only public open members and never publish anything
 
-The people directory lists public members in actor order, 25 per page. A
-member lookup by login answers a member only when exactly one member has
+The people directory lists exactly the public members; its order and
+25-row paging are the shell's presentation of that set. A member lookup by login answers a member only when exactly one member has
 that login (compared case-insensitively by the shell) and that member is
 public; a login collision fails closed. The public X profile read needs both
 the link and the membership to be public. These reads change no state.
@@ -269,11 +272,11 @@ pure def canClose(s: Accounts, by: int, confirmation: str): bool =
 pure def close(s: Accounts, by: int, confirmation: str): Accounts =
   val m = memberByActor(s, senderActor(s, by))
   { ...s, members: replaceMember(s.members, { ...m, membership: Closed, public: false, closedAt: s.now,
-      closures: m.closures.append(s.now), xLink: X::noLink, telegramLinked: false, email: E::closeEnrollment(m.email) }),
+      xLink: X::noLink, telegramLinked: false, email: E::closeEnrollment(m.email) }),
     sessions: s.sessions.select(x => x.actor != m.actor), xRegistry: X::dropActorFlows(s.xRegistry, m.actor) }
 pure def alwaysClosedPrivate(s: Accounts): bool = s.members.every(m => if (m.membership == Closed)
     not(m.public) and m.xLink == X::noLink and not(m.telegramLinked) and m.closedAt > 0
-      and m.closures.includes(m.closedAt) and not(m.email.preference.activity) and not(m.email.preference.security)
+      and not(m.email.preference.activity) and not(m.email.preference.security)
       and m.email.verifications.every(v => v.consumed or v.cancelled)
       and not(s.sessions.some(x => x.actor == m.actor)) and not(s.xRegistry.flows.some(f => f.actor == m.actor))
     else m.closedAt == 0)
@@ -308,7 +311,8 @@ Starting needs a live session and a configured X client; it replaces the
 member's earlier flows. The callback claims the flow only while its
 originating session is live. The commit rechecks the session at the
 verification time, reserves the ID to this member if it is free, and writes
-the public link with the username and verification time. A cancel, a failed
+the public link with the username and verification time. Only the X callback
+handler, after its own exchange with X, commits or fails a flow. A cancel, a failed
 exchange, a storage failure, a dead session or another member's reservation
 ends the flow and keeps the previous link. Disconnect deletes the link and
 the member's flows and keeps the reservation; reconnecting needs OAuth
@@ -321,15 +325,16 @@ pure def canClaimXCallback(s: Accounts, flowId: int, browserCap: int): bool =
   val f = X::xFlowById(s.xRegistry, flowId)
   X::canClaimX(s.xRegistry, s.now, flowId, browserCap, liveSessionOf(s, f.session, f.actor))
 pure def claimXCallback(s: Accounts, flowId: int, browserCap: int): Accounts = { ...s, xRegistry: X::claimX(s.xRegistry, flowId) }
-pure def canCommitX(s: Accounts, flowId: int, xIdentity: X::XProviderIdentity): bool =
+pure def canCommitX(s: Accounts, by: int, flowId: int, xIdentity: X::XProviderIdentity): bool =
   val f = X::xFlowById(s.xRegistry, flowId)
-  X::canCommitX(s.xRegistry, flowId, xIdentity, liveSessionOf(s, f.session, f.actor), f.actor)
-pure def commitX(s: Accounts, flowId: int, xIdentity: X::XProviderIdentity): Accounts =
+  by == xCallback and X::canCommitX(s.xRegistry, flowId, xIdentity, liveSessionOf(s, f.session, f.actor), f.actor)
+pure def commitX(s: Accounts, by: int, flowId: int, xIdentity: X::XProviderIdentity): Accounts =
   val f = X::xFlowById(s.xRegistry, flowId)
   { ...s, xRegistry: X::commitClaims(s.xRegistry, s.now, flowId, xIdentity, f.actor),
     members: replaceMember(s.members, { ...memberByActor(s, f.actor), xLink: X::committedLink(s.now, xIdentity) }) }
-pure def canFailX(s: Accounts, flowId: int): bool = flowId > 0 and X::xFlowById(s.xRegistry, flowId).status == X::XProcessing
-pure def failX(s: Accounts, flowId: int): Accounts = { ...s, xRegistry: X::endXFlow(s.xRegistry, flowId) }
+pure def canFailX(s: Accounts, by: int, flowId: int): bool =
+  by == xCallback and flowId > 0 and X::xFlowById(s.xRegistry, flowId).status == X::XProcessing
+pure def failX(s: Accounts, by: int, flowId: int): Accounts = { ...s, xRegistry: X::endXFlow(s.xRegistry, flowId) }
 pure def canDisconnectX(s: Accounts, by: int): bool = senderActor(s, by) > 0
 pure def disconnectX(s: Accounts, by: int): Accounts =
   val m = memberByActor(s, senderActor(s, by))
@@ -360,9 +365,9 @@ pure def stepFailedXKeepsLink(before: Accounts, via: str, after: Accounts): bool
 
 The account service supplies the clock, fresh identifiers and the count of
 other accounts' recent requests for the same address to the
-[email component](./email.md). Unsubscribe uses only its capability. The
-private mail service records verification delivery and issues the
-unsubscribe capability of each mail it sends.
+[email component](./email.md). Unsubscribe uses only its capability. Only
+the private mail service (`mailService`) records verification delivery and
+issues the unsubscribe capability of each mail it sends.
 
 ```quint
 pure def otherAccountsRecent(s: Accounts, githubId: int, addressKey: str): int =
@@ -377,9 +382,9 @@ pure def requestEmail(s: Accounts, by: int, requestKey: int, address: str, addre
   val m = senderMember(s, by)
   { ...s, lastEmailId: s.lastEmailId + 1,
     members: withEmail(s, m, E::requestVerification(m.email, s.now, s.lastEmailId + 1, requestKey, address, addressKey, activity, security)) }
-pure def canMarkEmailDelivery(s: Accounts, githubId: int, id: int, nextState: E::DeliveryState): bool =
-  hasGithubMember(s, githubId) and E::canMarkDelivery(memberByGithub(s, githubId).email, s.now, id, nextState)
-pure def markEmailDelivery(s: Accounts, githubId: int, id: int, nextState: E::DeliveryState): Accounts =
+pure def canMarkEmailDelivery(s: Accounts, by: int, githubId: int, id: int, nextState: E::DeliveryState): bool =
+  by == mailService and hasGithubMember(s, githubId) and E::canMarkDelivery(memberByGithub(s, githubId).email, s.now, id, nextState)
+pure def markEmailDelivery(s: Accounts, by: int, githubId: int, id: int, nextState: E::DeliveryState): Accounts =
   val m = memberByGithub(s, githubId)
   { ...s, members: withEmail(s, m, E::markDelivery(m.email, s.now, id, nextState)) }
 pure def canVerifyEmail(s: Accounts, by: int, token: int, checkedRevision: int): bool =
@@ -392,9 +397,9 @@ pure def canSetEmailConsent(s: Accounts, by: int, activity: bool, choice: E::Sec
 pure def setEmailConsent(s: Accounts, by: int, activity: bool, choice: E::SecurityChoice, suppliedVersion: int, checkedRevision: int): Accounts =
   val m = senderMember(s, by)
   { ...s, members: withEmail(s, m, E::setConsent(m.email, activity, choice, suppliedVersion, checkedRevision)) }
-pure def canIssueUnsubscribe(s: Accounts, githubId: int): bool =
-  hasGithubMember(s, githubId) and E::canIssueUnsubscribe(memberByGithub(s, githubId).email, s.lastUnsubscribe + 1)
-pure def issueUnsubscribe(s: Accounts, githubId: int): Accounts =
+pure def canIssueUnsubscribe(s: Accounts, by: int, githubId: int): bool =
+  by == mailService and hasGithubMember(s, githubId) and E::canIssueUnsubscribe(memberByGithub(s, githubId).email, s.lastUnsubscribe + 1)
+pure def issueUnsubscribe(s: Accounts, by: int, githubId: int): Accounts =
   val m = memberByGithub(s, githubId)
   { ...s, lastUnsubscribe: s.lastUnsubscribe + 1, members: withEmail(s, m, E::issueUnsubscribe(m.email, s.lastUnsubscribe + 1)) }
 pure def unsubscribeHolder(s: Accounts, token: int): Member =
@@ -437,17 +442,17 @@ pure def identityStart(s: Accounts, client: int, audience: I::Audience): Account
 pure def canIdentityStart(s: Accounts, client: int, audience: I::Audience): bool = I::canStart(s.identity, client, audience, I::Production)
 pure def canIdentityClaimCallback(s: Accounts, oauthState: int, cookie: int): bool = I::canClaimCallback(s.identity, oauthState, cookie)
 pure def identityClaimCallback(s: Accounts, oauthState: int, cookie: int): Accounts = { ...s, identity: I::claimCallback(s.identity, oauthState, cookie) }
-pure def canIdentityFailCallback(s: Accounts, flowId: int): bool = I::canFailCallback(s.identity, flowId)
-pure def identityFailCallback(s: Accounts, flowId: int): Accounts = { ...s, identity: I::failCallback(s.identity, flowId) }
-pure def canIdentityCompleteCallback(s: Accounts, flowId: int, github: I::GitHubIdentity): bool =
-  I::canCompleteCallback(s.identity, flowId, github)
-pure def identityCompleteCallback(s: Accounts, flowId: int, github: I::GitHubIdentity): Accounts =
-  { ...s, identity: I::completeCallback(s.identity, flowId, github) }
-pure def canIdentityPoll(s: Accounts, flowId: int, capability: int, audience: I::Audience): bool =
-  I::canStoreAssertion(s.identity, flowId, capability, audience)
-    and I::canIssueAssertion(I::storeAssertion(s.identity, flowId, capability, audience), flowId, capability, audience)
-pure def identityPoll(s: Accounts, flowId: int, capability: int, audience: I::Audience): Accounts =
-  { ...s, identity: I::issueAssertion(I::storeAssertion(s.identity, flowId, capability, audience), flowId, capability, audience) }
+pure def canIdentityFailCallback(s: Accounts, by: int, flowId: int): bool = I::canFailCallback(s.identity, by, flowId)
+pure def identityFailCallback(s: Accounts, by: int, flowId: int): Accounts = { ...s, identity: I::failCallback(s.identity, by, flowId) }
+pure def canIdentityCompleteCallback(s: Accounts, by: int, flowId: int, github: I::GitHubIdentity): bool =
+  I::canCompleteCallback(s.identity, by, flowId, github)
+pure def identityCompleteCallback(s: Accounts, by: int, flowId: int, github: I::GitHubIdentity): Accounts =
+  { ...s, identity: I::completeCallback(s.identity, by, flowId, github) }
+pure def canIdentityPoll(s: Accounts, client: int, flowId: int, capability: int, audience: I::Audience): bool =
+  I::canStoreAssertion(s.identity, client, flowId, capability, audience)
+    and I::canIssueAssertion(I::storeAssertion(s.identity, client, flowId, capability, audience), flowId, capability, audience)
+pure def identityPoll(s: Accounts, client: int, flowId: int, capability: int, audience: I::Audience): Accounts =
+  { ...s, identity: I::issueAssertion(I::storeAssertion(s.identity, client, flowId, capability, audience), flowId, capability, audience) }
 pure val launchGithubOld: I::GitHubIdentity = { actor: 11, login: "octo", nodeId: 1102 }
 pure val launchGithubNew: I::GitHubIdentity = { actor: 22, login: "newcomer", nodeId: 2201 }
 pure val launchIdentity: I::Identity = { now: launchClock, lastFlow: 4, windows: List(),
@@ -469,7 +474,7 @@ pure val launchIdentity: I::Identity = { now: launchClock, lastFlow: 4, windows:
       expiresAt: launchClock + I::assertionLifetime, consumed: false, consumedAt: 0 }),
   issued: List(1, 2, 3, 4), localDelivered: List(), consumedTokens: List() }
 pure val legacyMember: Member = { actor: 1101, githubId: 11, login: "octo", membership: Open, public: false,
-  joinedAt: participationPointsEnd - 1000, closedAt: 0, closures: List(),
+  joinedAt: participationPointsEnd - 1000, closedAt: 0,
   xLink: { xId: "123456789012345678901234567890", username: "octo_x", verifiedAt: participationPointsEnd - 900, public: false },
   telegramLinked: true, email: E::newEnrollment(11, 900) }
 pure val initial: Accounts = { now: launchClock, identity: launchIdentity, members: List(legacyMember), sessions: List(),
@@ -484,7 +489,8 @@ pure def sometimesTwoSessions(s: Accounts): bool = s.sessions.select(x => x.acto
 pure def sometimesNewMemberWithoutWelcome(s: Accounts): bool = s.members.some(m => m.actor == 2201 and welcomeShown(m) == 0)
 pure def sometimesClosed(s: Accounts): bool = s.members.some(m => m.membership == Closed)
 pure def sometimesClosedSignInRefused(s: Accounts): bool = s.refusedSignIns.length() > 0 and s.members.some(m => m.membership == Closed)
-pure def sometimesReopened(s: Accounts): bool = s.members.some(m => m.membership == Open and m.closures.length() > 0)
+pure def sometimesReopened(s: Accounts): bool =
+  memberByActor(s, 1101).membership == Open and not(memberByActor(s, 1101).telegramLinked)
 pure def sometimesExpiredSessionKept(s: Accounts): bool = s.sessions.some(x => x.expiresAt <= s.now)
 pure def sometimesXConnected(s: Accounts): bool = s.members.some(m => m.actor == 2201 and m.xLink.xId != "")
 pure def sometimesXDisconnectedReserved(s: Accounts): bool =
@@ -516,7 +522,7 @@ pure val weight_identityStart = 3
 pure val weight_identityClaimCallback = 3
 pure val weight_identityCompleteCallback = 3
 pure val weight_identityPoll = 3
-pure val byValues = Set(0, 1, 2, 3)
+pure val byValues = Set(0, 1, 2, 3, -1, -2, -3, -5, -6)
 pure val targetValues = Set(1, 2, 3)
 pure val tokenValues = Set(1, 2, 3, 4, 5)
 pure val clientValues = Set(1)

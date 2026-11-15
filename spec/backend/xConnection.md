@@ -13,10 +13,12 @@ The OAuth adapter exchanges the code with X using PKCE and reads
 the token in a `finally` block; a failed revocation never undoes a verified
 link and no token is retained. An X ID is a decimal string of 1–30 digits
 (it can exceed the JavaScript safe integer range) and a username is 1–15
-ASCII letters, digits or underscores. The shell parses the provider's answer
-against those patterns and fills `XProviderIdentity.wellFormed`; the
-provider answer is the only source of the ID, so an entered handle cannot
-create a link. A connection grants no Points, posting, messaging or other
+ASCII letters, digits or underscores. The account service's X callback
+handler, after its own exchange, parses the provider's answer against those
+patterns and fills `XProviderIdentity.wellFormed`; it is the only sender of
+the commit and failure events ([Accounts](./accounts.md), `xCallback`), so
+the provider answer is the only source of the ID and an entered handle
+cannot create a link. A connection grants no Points, posting, messaging or other
 authority.
 
 ## Story: Connect an X profile to a member's public profile
