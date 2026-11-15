@@ -4,7 +4,7 @@ import { fixture, repository } from "../tests/value-binary-fixture";
 import { loadValueInputs, type ValueInputProgress } from "./value-ingestion";
 
 function candidate(
-  failure: "proof" | "transport" | "identity",
+  failure: "proof" | "transport" | "identity" | "pull-number",
   baseRefName = "main",
   related = true,
   useRepositoryAlias = false,
@@ -16,9 +16,11 @@ function candidate(
   const route = useRepositoryAlias
     ? `${target.owner}/${target.name}`
     : target.id;
+  const isOriginalPull = (number: number) =>
+    number === 1 || (number === 3 && failure === "pull-number");
   const pullId = (number: number) =>
-    number === 1 ? originalId : `PR_accepted_${number}`;
-  const carrierNumbers = useRepositoryAlias ? [2, 3] : [2];
+    isOriginalPull(number) ? originalId : `PR_accepted_${number}`;
+  const carrierNumbers = useRepositoryAlias ? [2, 4] : [2];
   const reads: string[] = [];
   const remap = <T>(value: T): T =>
     JSON.parse(
@@ -35,20 +37,20 @@ function candidate(
       const rawPath = path
         .replaceAll(`${target.owner}/${target.name}`, repository.id)
         .replaceAll(target.id, repository.id)
-        .replace(/\/(pulls|issues)\/[23](?=\/|$)/gu, "/$1/1");
+        .replace(/\/(pulls|issues)\/[234](?=\/|$)/gu, "/$1/1");
       const result = await f.client.get<unknown>(rawPath);
       if (
         failure === "identity" &&
         path === `/repos/${target.owner}/${target.name}`
       )
         (result as { node_id: string }).node_id = "R_wrong";
-      const pullNumber = /\/pulls\/([123])$/u.exec(path)?.[1];
+      const pullNumber = /\/pulls\/([1234])$/u.exec(path)?.[1];
       if (pullNumber) {
         const pull = result as typeof f.pull;
         pull.number = Number(pullNumber);
         pull.node_id = pullId(pull.number);
         pull.html_url = `https://github.com/${route}/pull/${pullNumber}`;
-        if (pullNumber === "1") {
+        if (isOriginalPull(pull.number)) {
           Object.assign(pull, {
             merged_at: null,
             merge_commit_sha: null,
@@ -56,7 +58,7 @@ function candidate(
           });
         }
       }
-      if (/\/pulls\/[123]\/commits\?/u.test(path))
+      if (/\/pulls\/[1234]\/commits\?/u.test(path))
         for (const commit of result as { author: unknown }[])
           commit.author = null;
       return remap(result) as T | null;
@@ -66,20 +68,21 @@ function candidate(
       variables: Record<string, unknown>,
     ): Promise<T> {
       const number = Number(variables.number);
+      const referenceNumber = failure === "pull-number" && number === 4 ? 3 : 1;
       return {
         repository: {
           pullRequest: {
             id: pullId(number),
             timelineItems: {
               nodes:
-                number !== 1 && related
+                !isOriginalPull(number) && related
                   ? [
                       {
                         source: {
                           __typename: "PullRequest",
                           id: originalId,
-                          number: 1,
-                          url: `https://github.com/${route}/pull/1`,
+                          number: referenceNumber,
+                          url: `https://github.com/${route}/pull/${referenceNumber}`,
                           repository: {
                             nameWithOwner: route,
                             isPrivate: false,
@@ -162,6 +165,19 @@ test("two merged PRs can resolve the same retained original through a registered
     ),
   ).toHaveLength(1);
   expect(result.retainedCommitAuthors.size).toBe(0);
+});
+
+test("a registered alias cannot give a cached source a different PR number", async () => {
+  const { run } = candidate("pull-number", "main", true, true);
+  const progress: ValueInputProgress[] = [];
+  await expect(run((entry) => progress.push(entry))).rejects.toThrow(
+    "Joint source identity changed between records",
+  );
+  expect(progress).toContainEqual({
+    phase: "commit-attributions",
+    completed: 1,
+    total: 2,
+  });
 });
 
 test("transport failures do not become successful attribution holds", async () => {
