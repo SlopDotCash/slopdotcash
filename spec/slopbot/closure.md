@@ -260,7 +260,8 @@ limited coverage or mode off), a certain label, an uncertain finding for the
 maintainer hold, a security-only comment, or a close candidate. A close
 candidate starts its close attempt, which reserves capacity only after a
 later recheck. A budget-blocked or failed confirm call leaves the revision
-triaged and retryable; it never decides.
+triaged and retryable; it never decides. The initial observation, with
+sequence number zero, is unusable, so every decision is made on a real read.
 
 ```quint
 type Phase = Unreviewed | Triaged | Decided
@@ -305,6 +306,8 @@ pure def canDecide(c: Closure): bool = c.phase == Triaged and
   (if (c.gate.source.scope == SecurityOnly) mayPostSecurity(c) else mayPostOrdinary(c) and not(needsConfirm(c)))
 pure def decide(c: Closure): Closure =
   { ...c, phase: Decided, outcome: outcomeFor(c), decidedScope: c.gate.source.scope, decidedSeq: c.gate.seq }
+pure def alwaysUnobservedIsUnusable(c: Closure): bool =
+  c.gate.seq >= 0 and (c.gate.seq == 0 implies not(sourceUsable(c.gate.source, c.identity)))
 pure def alwaysOutcomeOnlyWhenDecided(c: Closure): bool = (c.phase == Decided) iff (c.outcome != Undecided)
 pure def alwaysConfirmOnlyAfterTriage(c: Closure): bool = c.hasConfirm implies c.phase != Unreviewed
 pure def alwaysOrdinaryOutcomesActive(c: Closure): bool =
