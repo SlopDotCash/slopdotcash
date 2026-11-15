@@ -107,26 +107,29 @@ export interface OriginalContributorFollowup {
     digest: string;
   };
 }
+export interface OriginalContributorBinding {
+  /** Native identical-SHA acceptance with authenticated accepted-parent edges. */
+  exactAcceptance?: true;
+  /** Exact reviewed unit within a multi-origin native integration. */
+  claimIds?: string[];
+  /** First accepted carrier when the recorded unit completes on its donor. */
+  acceptedSourceId?: string;
+  followups?: OriginalContributorFollowup[];
+  originalSourceId: string;
+  originalCommitSha: string;
+  acceptedCommitSha: string;
+  boundPaths: string[];
+  bindingDigest: string;
+}
 interface CompleteCorrectionProof {
   status: "complete";
   /** Digest of the complete accepted-source ownership census. */
   censusDigest: string;
   sources: CorrectionSource[];
   /** Verified retained implementation for the October 2026 replacement rule. */
-  originalContributor?: {
-    /** Native identical-SHA acceptance with authenticated accepted-parent edges. */
-    exactAcceptance?: true;
-    /** Exact reviewed unit within a multi-origin native integration. */
-    claimIds?: string[];
-    /** First accepted carrier when the recorded unit completes on its donor. */
-    acceptedSourceId?: string;
-    followups?: OriginalContributorFollowup[];
-    originalSourceId: string;
-    originalCommitSha: string;
-    acceptedCommitSha: string;
-    boundPaths: string[];
-    bindingDigest: string;
-  };
+  originalContributor?: OriginalContributorBinding;
+  /** Independent native subproofs for one unit by the same verified person. */
+  originalContributorParts?: OriginalContributorBinding[];
 }
 export type PointsImplementationCorrectionCandidate =
   | (CorrectionCandidateBase & {
@@ -786,6 +789,124 @@ function deriveProof(
   const proof = candidate.proof;
   if (proof.status === "held") return null;
   check(digest.test(proof.censusDigest), "invalid ownership census digest");
+  if (proof.originalContributorParts !== undefined) {
+    check(
+      candidate.kind === "work-unit" &&
+        candidate.proof.status === "complete" &&
+        candidate.occurredAt.startsWith("2026-10-") &&
+        proof.originalContributor === undefined &&
+        proof.originalContributorParts.length >= 2 &&
+        sameSet(
+          proof.originalContributorParts.map((part) => part.originalSourceId),
+          proof.originalContributorParts.map((part) => part.originalSourceId),
+        ),
+      "invalid multi-original native unit",
+    );
+    const parts = proof.originalContributorParts;
+    const claims = candidate.proof.claims;
+    check(
+      sameSet(
+        candidate.proof.expectedClaimIds,
+        claims.map((claim) => claim.id),
+      ) &&
+        parts.every(
+          (part) =>
+            part.exactAcceptance === true &&
+            Array.isArray(part.claimIds) &&
+            part.claimIds.length > 0,
+        ) &&
+        sameSet(
+          parts.flatMap((part) => part.claimIds ?? []),
+          claims.map((claim) => claim.id),
+        ) &&
+        parts.some(
+          (part) =>
+            (part.acceptedSourceId ?? candidate.sourceId) ===
+              candidate.sourceId ||
+            part.originalSourceId === candidate.sourceId ||
+            part.followups?.some(
+              (followup) => followup.sourceId === candidate.sourceId,
+            ),
+        ),
+      "native subproofs do not partition the complete unit",
+    );
+    const completion = proof.sources.find(
+      (source) => source.sourceId === candidate.sourceId,
+    );
+    check(
+      completion &&
+        completion.sourceUrl === candidate.sourceUrl &&
+        completion.occurredAt === candidate.occurredAt,
+      "completion source does not match the recorded pool",
+    );
+    let result: DerivedProof | null = null;
+    for (const part of parts) {
+      const acceptedId = part.acceptedSourceId ?? candidate.sourceId;
+      const accepted = proof.sources.find(
+        (source) => source.sourceId === acceptedId,
+      );
+      check(
+        accepted &&
+          accepted.occurredAt !== null &&
+          accepted.occurredAt <= candidate.occurredAt,
+        "native subproof acceptance exceeds the unit completion",
+      );
+      const selected = claims.filter((claim) =>
+        part.claimIds?.includes(claim.id),
+      );
+      const partSourceIds = new Set([
+        accepted.sourceId,
+        part.originalSourceId,
+        ...(part.followups ?? []).map((followup) => followup.sourceId),
+      ]);
+      const partCompletion = proof.sources
+        .filter(
+          (source) =>
+            partSourceIds.has(source.sourceId) &&
+            source.occurredAt !== null &&
+            source.occurredAt <= candidate.occurredAt,
+        )
+        .sort(
+          (left, right) =>
+            (right.occurredAt ?? "").localeCompare(left.occurredAt ?? "") ||
+            left.sourceId.localeCompare(right.sourceId),
+        )[0];
+      check(
+        partCompletion?.occurredAt,
+        "native subproof lacks a verified completion source",
+      );
+      const binding = {
+        ...part,
+        acceptedSourceId:
+          partCompletion.sourceId === accepted.sourceId
+            ? undefined
+            : accepted.sourceId,
+      };
+      const derived = deriveProof({
+        ...candidate,
+        sourceId: partCompletion.sourceId,
+        sourceUrl: partCompletion.sourceUrl,
+        occurredAt: partCompletion.occurredAt,
+        proof: {
+          ...candidate.proof,
+          originalContributorParts: undefined,
+          originalContributor: binding,
+          expectedClaimIds: selected.map((claim) => claim.id),
+          claims: selected,
+        },
+      });
+      if (derived === null) return null;
+      check(
+        derived.actors.size === 1 &&
+          (!result ||
+            [...derived.actors.keys()][0] === [...result.actors.keys()][0]),
+        "native subproofs identify different originating contributors",
+      );
+      if (result) result.scopes.push(...derived.scopes);
+      else result = derived;
+    }
+    return result;
+  }
   check(
     sameSet(
       candidate.sourceIds,
@@ -1372,7 +1493,8 @@ export function applyPointsImplementationCorrections(
     );
     const usesOctoberDecision =
       candidate.proof.status === "complete" &&
-      candidate.proof.originalContributor !== undefined;
+      (candidate.proof.originalContributor !== undefined ||
+        candidate.proof.originalContributorParts !== undefined);
     const proof =
       appliedOctoberDecision && !usesOctoberDecision
         ? null

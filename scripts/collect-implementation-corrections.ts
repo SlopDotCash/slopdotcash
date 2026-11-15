@@ -34,6 +34,7 @@ import {
   createPointsCorrectionBaseline,
   isOriginalContributorContext,
   isOriginalContributorFollowup,
+  type OriginalContributorBinding,
   type OriginalContributorFollowup,
   originalContributorClaimScope,
   originalContributorPrecedesFollowups,
@@ -1118,17 +1119,8 @@ async function bindRetained(
 
 interface HistoricalOrdinaryProof {
   sources: CorrectionSource[];
-  originalContributor?: {
-    exactAcceptance?: true;
-    claimIds?: string[];
-    acceptedSourceId?: string;
-    followups?: OriginalContributorFollowup[];
-    originalSourceId: string;
-    originalCommitSha: string;
-    acceptedCommitSha: string;
-    boundPaths: string[];
-    bindingDigest: string;
-  };
+  originalContributor?: OriginalContributorBinding;
+  originalContributorParts?: OriginalContributorBinding[];
 }
 
 function firstAcceptedOrdinary(source: CorrectionSource) {
@@ -1864,6 +1856,173 @@ export async function octoberOriginalContributorUnitProof(
         }),
       ),
     },
+  };
+}
+
+/** Preserve one person's unit across independently verified originating PRs. */
+export async function octoberOriginalContributorPartsProof(
+  github: Pick<GitHubClient, "get">,
+  sourceEvidence: readonly WorkUnitSource[],
+  owners: ReadonlyMap<string, string>,
+  claims: readonly CorrectionClaim[],
+  originatingClaims: ReadonlyMap<string, readonly string[]>,
+  completionSourceId: string,
+): Promise<HistoricalOrdinaryProof> {
+  requireThat(
+    originatingClaims.size >= 2,
+    "Native unit needs multiple originals",
+  );
+  const originals = [...originatingClaims.keys()].map((id) => {
+    const source = sourceEvidence.find(
+      (item) => item.evidence.pull.node_id === id,
+    );
+    requireThat(
+      source && source.evidence.pull.user.type === "User",
+      "Native unit original identity is unavailable",
+    );
+    return source;
+  });
+  const originId = originals[0].evidence.pull.user.node_id;
+  requireThat(
+    originals.every((source) => source.evidence.pull.user.node_id === originId),
+    "Native unit has different originating contributors",
+  );
+  const sources = sourceEvidence.map((source) => {
+    const converted = richSource(source.evidence, owners);
+    return {
+      ...converted,
+      commits: converted.commits.map((commit) => {
+        const original = source.evidence.commits.find(
+          (item) => item.sha === commit.sha,
+        );
+        requireThat(original, "Native original commit disappeared");
+        return {
+          ...commit,
+          parentShas: original.parents.map((parent) => parent.sha),
+        };
+      }),
+    };
+  });
+  const graph = new Map<string, string[]>();
+  for (const source of sources)
+    for (const commit of source.commits) {
+      const parents = commit.parentShas;
+      requireThat(parents, "Native original partition lacks parent edges");
+      const previous = graph.get(commit.sha);
+      requireThat(
+        !previous || encode(previous) === encode(parents),
+        "Native original partition has inconsistent parent edges",
+      );
+      graph.set(commit.sha, parents);
+    }
+  const reaches = (head: string, ancestor: string) => {
+    const pending = [head];
+    const seen = new Set<string>();
+    for (const sha of pending) {
+      if (sha === ancestor) return true;
+      if (seen.has(sha)) continue;
+      seen.add(sha);
+      pending.push(...(graph.get(sha) ?? []));
+    }
+    return false;
+  };
+  const partition = new Map<string, CorrectionClaim[]>();
+  const assigned = new Set<string>();
+  for (const [id, claimIds] of originatingClaims) {
+    const ownClaims = claims.filter((claim) => claimIds.includes(claim.id));
+    requireThat(
+      ownClaims.length === claimIds.length &&
+        ownClaims.length > 0 &&
+        ownClaims.every((claim) => !assigned.has(claim.id)),
+      "Native original claims overlap or are unavailable",
+    );
+    for (const claim of ownClaims) assigned.add(claim.id);
+    partition.set(id, ownClaims);
+  }
+  for (const claim of claims) {
+    if (assigned.has(claim.id)) continue;
+    const matching = [...partition].filter(([, originalClaims]) =>
+      originalClaims.some(
+        (original) =>
+          original.path === claim.path &&
+          reaches(claim.commitSha, original.commitSha),
+      ),
+    );
+    requireThat(
+      matching.length === 1,
+      "Native follow-up has an ambiguous original partition",
+    );
+    matching[0][1].push(claim);
+  }
+  const authenticated = new Map<string, CorrectionSource>();
+  const parts: OriginalContributorBinding[] = [];
+  for (const original of originals) {
+    const selected = partition.get(original.evidence.pull.node_id);
+    requireThat(selected?.length, "Native original partition disappeared");
+    const accepted = sources
+      .filter((source) =>
+        selected.some((claim) => claim.sourceId === source.sourceId),
+      )
+      .sort(
+        (left, right) =>
+          (left.occurredAt ?? "").localeCompare(right.occurredAt ?? "") ||
+          left.sourceId.localeCompare(right.sourceId),
+      )[0];
+    const integration = sourceEvidence.find(
+      (source) => source.evidence.pull.node_id === accepted?.sourceId,
+    );
+    requireThat(
+      accepted && integration && accepted.author?.id !== originId,
+      "Native original partition lacks an accepted carrier",
+    );
+    const followups = sourceEvidence.filter(
+      (source) =>
+        source.evidence.pull.node_id !== accepted.sourceId &&
+        (selected.some(
+          (claim) => claim.sourceId === source.evidence.pull.node_id,
+        ) ||
+          (source.evidence.pull.node_id === completionSourceId &&
+            source.evidence.pull.node_id !== original.evidence.pull.node_id &&
+            (source.evidence.pull.user.node_id === originId ||
+              source.evidence.pull.user.node_id === accepted.author?.id) &&
+            source.evidence.pull.merged_at !== null &&
+            (source.evidence.pull.node_id === original.evidence.pull.node_id ||
+              originatingClaims
+                .get(original.evidence.pull.node_id)
+                ?.some((claimId) => {
+                  const claim = claims.find((item) => item.id === claimId);
+                  return (
+                    claim &&
+                    reaches(source.evidence.pull.head.sha, claim.commitSha)
+                  );
+                })) &&
+            source.evidence.pull.merged_at >= (accepted.occurredAt ?? ""))),
+    );
+    const proof = await octoberOriginalContributorUnitProof(
+      github,
+      accepted,
+      original,
+      integration,
+      owners,
+      selected,
+      followups,
+    );
+    requireThat(
+      proof.originalContributor,
+      "Native original partition proof is missing",
+    );
+    parts.push({
+      ...proof.originalContributor,
+      acceptedSourceId: accepted.sourceId,
+    });
+    for (const source of proof.sources)
+      authenticated.set(source.sourceId, source);
+  }
+  return {
+    sources: sources.map(
+      (source) => authenticated.get(source.sourceId) ?? source,
+    ),
+    originalContributorParts: parts,
   };
 }
 
@@ -3289,6 +3448,7 @@ async function collectWithEvidenceCache(
           sources,
         );
         let originalContributor: HistoricalOrdinaryProof["originalContributor"];
+        let originalContributorParts: OriginalContributorBinding[] | undefined;
         const claimedSources = sources
           .filter((source) =>
             claims.some((claim) => claim.sourceId === source.sourceId),
@@ -3475,6 +3635,45 @@ async function collectWithEvidenceCache(
             }
           }
         }
+        if (
+          !originalContributor &&
+          octoberOriginalCredit &&
+          candidate.occurredAt.startsWith("2026-10-")
+        ) {
+          const originatingClaims = new Map<string, string[]>();
+          for (const claim of selectedClaims) {
+            const original = sources.find(
+              (source) => source.sourceId === claim.creditPullRequestId,
+            );
+            const acceptedClaim = claims.find((item) => item.id === claim.id);
+            const carrier = sources.find(
+              (source) => source.sourceId === acceptedClaim?.sourceId,
+            );
+            if (
+              !original ||
+              !carrier ||
+              original.author?.id === carrier.author?.id ||
+              !original.commits.some((commit) => commit.sha === claim.commitSha)
+            )
+              continue;
+            const ids = originatingClaims.get(original.sourceId) ?? [];
+            ids.push(claim.id);
+            originatingClaims.set(original.sourceId, ids);
+          }
+          if (originatingClaims.size >= 2) {
+            const proof = await octoberOriginalContributorPartsProof(
+              github,
+              decision.evidence.sources,
+              owners,
+              claims,
+              originatingClaims,
+              candidate.sourceId,
+            );
+            sources = proof.sources;
+            restoreCanonicalMergeCounts(sources, outcomesById);
+            originalContributorParts = proof.originalContributorParts;
+          }
+        }
         candidate.sourceIds = sources.map((s) => s.sourceId).sort();
         candidate.proof = {
           status: "complete",
@@ -3484,6 +3683,7 @@ async function collectWithEvidenceCache(
           expectedClaimIds: [...unit.claimIds],
           claims,
           ...(originalContributor ? { originalContributor } : {}),
+          ...(originalContributorParts ? { originalContributorParts } : {}),
         };
       } catch (error) {
         cache.assertUninterrupted();
