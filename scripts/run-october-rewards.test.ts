@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test";
+import { generateKeyPairSync } from "node:crypto";
 import { readFileSync } from "node:fs";
 import {
   appendPointAwards,
@@ -12,6 +13,7 @@ import { sqliteD1 } from "../tests/sqlite-d1";
 import { pointsSql } from "./generate-points";
 import {
   assertOctoberReviewedWeights,
+  currentOwnerVerifier,
   importOctoberPlan,
   octoberQueryRows,
   preparePrivateOctoberPlan,
@@ -358,6 +360,146 @@ test("cross-period and before-start deduplication precede the reward window", as
     expect(() =>
       assertOctoberReviewedWeights(changed, laterJournal, finalBytes),
     ).not.toThrow();
+  } finally {
+    f.sqlite.close();
+  }
+});
+
+test("historical unknown license terms use fresh owner authority without changing the manifest", async () => {
+  const f = fixture();
+  try {
+    const row = f.source.registry.projects[0];
+    const manifest = JSON.parse(row.manifestText);
+    manifest.authority = {
+      ...manifest.authority,
+      state: "unverified",
+      reason: "missing-repository-proof",
+      proof: null,
+    };
+    manifest.terms.receiptPolicy = {
+      state: "pending-authority-activation",
+      activatedAt: null,
+      bindings: [],
+    };
+    manifest.terms.copyright = {
+      model: "unknown",
+      claimedLegalHolder: null,
+      notice: null,
+      legalCapacity: null,
+      governanceResolution: null,
+    };
+    manifest.terms.repositoryLicense = {
+      state: "unknown",
+      spdx: null,
+      url: null,
+      commitSha: null,
+      fileSha256: null,
+    };
+    manifest.terms.inbound = {
+      mode: "unknown",
+      termsUrl: null,
+      commitSha: null,
+      fileSha256: null,
+      version: null,
+      acceptance: null,
+    };
+    const manifestText = JSON.stringify(manifest);
+    const manifestSha = sha256Hex(manifestText);
+    f.sqlite
+      .query(
+        "INSERT INTO project_revisions(project_id,revision,manifest,manifest_sha256,reason,created_at) VALUES('eliza',4,?,?,?,?)",
+      )
+      .run(
+        manifestText,
+        manifestSha,
+        "synthetic historical unknown terms",
+        now.toISOString(),
+      );
+    f.sqlite
+      .query(
+        "UPDATE projects SET revision=4,manifest=?,manifest_sha256=? WHERE id='eliza'",
+      )
+      .run(manifestText, manifestSha);
+    f.source.packet.projects[0].revision = 4;
+    f.source.packet.projects[0].manifestSha256 = manifestSha;
+    await expect(preparePrivateOctoberPlan(f.options())).rejects.toThrow(
+      "verified current owner",
+    );
+    await expect(
+      preparePrivateOctoberPlan({
+        ...f.options(),
+        verifyOwner: async () => {
+          throw new Error("No current admin");
+        },
+      }),
+    ).rejects.toThrow("No current admin");
+    const checks: string[] = [];
+    const { plan } = await preparePrivateOctoberPlan({
+      ...f.options(),
+      verifyOwner: async (current, actor) => {
+        checks.push(current.id, actor);
+      },
+    });
+    expect(checks).toEqual(["eliza", "7002"]);
+    expect(plan.reviews.projects[0].manifest).toBe(manifestText);
+    expect(
+      JSON.parse(plan.reviews.projects[0].manifest).terms.inbound.mode,
+    ).toBe("unknown");
+  } finally {
+    f.sqlite.close();
+  }
+});
+
+test("current owner verifier uses scoped Slopbot identity and rejects downgraded permission", async () => {
+  const f = fixture();
+  try {
+    const manifest = JSON.parse(f.source.registry.projects[0].manifestText);
+    const { privateKey } = generateKeyPairSync("rsa", { modulusLength: 2048 });
+    const env = {
+      SLOPBOT_APP_ID: "123",
+      SLOPBOT_APP_PRIVATE_KEY: privateKey
+        .export({ type: "pkcs8", format: "pem" })
+        .toString(),
+    };
+    let permission = "admin";
+    const fetcher = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = new URL(String(input));
+      if (url.pathname === "/user/7002")
+        return Response.json({ id: 7002, login: "fixture-owner" });
+      if (url.pathname.endsWith("/installation"))
+        return Response.json({ id: 456, suspended_at: null });
+      if (url.pathname === "/app/installations/456/access_tokens") {
+        expect(JSON.parse(String(init?.body))).toEqual({
+          repository_ids: [Number(manifest.authority.repositoryId)],
+          permissions: { metadata: "read" },
+        });
+        return Response.json({ token: "synthetic-scoped-installation-token" });
+      }
+      if (url.pathname.endsWith("/collaborators/fixture-owner/permission"))
+        return Response.json({
+          permission,
+          role_name: permission,
+          user: { id: 7002 },
+        });
+      if (url.pathname.startsWith("/repos/"))
+        return Response.json({
+          id: Number(manifest.authority.repositoryId),
+          node_id: manifest.authority.repositoryNodeId,
+          full_name: manifest.repositories[0].id,
+          private: false,
+          owner: {
+            id: Number(manifest.steward.github.actorId),
+            node_id: manifest.steward.github.nodeId,
+            login: manifest.steward.github.login,
+            type: manifest.steward.github.type,
+          },
+        });
+      throw new Error("Unexpected authority request");
+    }) as typeof fetch;
+    const verify = currentOwnerVerifier(env, fetcher);
+    await verify(manifest, "7002");
+    permission = "read";
+    await expect(verify(manifest, "7002")).rejects.toThrow();
   } finally {
     f.sqlite.close();
   }

@@ -4,12 +4,14 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { promisify } from "node:util";
 import type { D1QueryStatement } from "../backend/d1";
+import { verifyProjectAuthority } from "../backend/payments/monthly";
 import { PARTICIPATION_BAN_QUERY } from "../backend/projects/account-bans";
 import {
   CloudflareProjectPersistence,
   type ProjectD1Database,
 } from "../backend/projects/cloudflare-persistence";
 import { publicRestrictionOf } from "../backend/projects/enforcement";
+import type { RepositoryAccessReader } from "../backend/projects/setup";
 import { githubUserIdFromNodeId } from "../src/lib/github-actor";
 import { payoutExclusionFor } from "../src/lib/payout-exclusions.mjs";
 import {
@@ -19,6 +21,7 @@ import {
 } from "../src/lib/points";
 import { assertProjectDefinition } from "../src/lib/project-schema.mjs";
 import { sha256Hex } from "../src/lib/sha256";
+import { readRepositoryAccess } from "../workers/slopbot/repository-access";
 import { loadPublishedPoints } from "./generate-points";
 import { pointProtectionQuery } from "./points-protection-sql";
 import { prepareGuardedOctoberImport } from "./prepare-october-rewards";
@@ -260,6 +263,11 @@ export async function preparePrivateOctoberPlan(options: {
   journal: PointsJournal | (() => Promise<PointsJournal>);
   query: Query;
   now: Date;
+  /** Uses the same live authority check as the owner monthly API. */
+  verifyOwner?: (
+    project: ReturnType<typeof assertProjectDefinition>,
+    reviewerGithubId: string,
+  ) => Promise<void>;
 }): Promise<{
   plan: Plan;
   registryBytes: Uint8Array;
@@ -282,6 +290,7 @@ export async function preparePrivateOctoberPlan(options: {
     new TextDecoder("utf-8", { fatal: true }).decode(packetBytes),
   ) as {
     projects: { id: string }[];
+    reviewerGithubId: string;
   };
   if (
     !Array.isArray(packet.projects) ||
@@ -290,6 +299,7 @@ export async function preparePrivateOctoberPlan(options: {
   )
     throw new Error("Unknown October project");
   const projects = [];
+  const verifiedOwnerProjectIds = new Set<string>();
   for (const { id } of packet.projects) {
     const rows = await query(
       `SELECT id,status,revision,manifest,manifest_sha256 FROM projects WHERE id=${quote(id)}`,
@@ -299,6 +309,10 @@ export async function preparePrivateOctoberPlan(options: {
     if (row.status !== "active")
       throw new Error("October project is not active");
     const manifest = assertProjectDefinition(JSON.parse(String(row.manifest)));
+    if (options.verifyOwner) {
+      await options.verifyOwner(manifest, packet.reviewerGithubId);
+      verifiedOwnerProjectIds.add(id);
+    }
     projects.push({
       id,
       revision: row.revision,
@@ -322,6 +336,7 @@ export async function preparePrivateOctoberPlan(options: {
     reviewedPacketSha256,
     currentRegistry: new TextEncoder().encode(JSON.stringify(registry)),
     now,
+    verifiedOwnerProjectIds,
   };
   const plan = prepareGuardedOctoberImport(input);
   const existingProjects = await query(
@@ -390,6 +405,66 @@ export async function importOctoberPlan(
   await verifyOctoberReadback(plan, query);
 }
 
+/** Reuse the private Slopbot App reader and ordinary owner-action policy. */
+export function currentOwnerVerifier(
+  env: {
+    SLOPBOT_APP_ID?: string;
+    SLOPBOT_APP_PRIVATE_KEY?: string;
+  } = process.env,
+  fetcher: typeof fetch = fetch,
+) {
+  const appId = env.SLOPBOT_APP_ID;
+  const privateKey = env.SLOPBOT_APP_PRIVATE_KEY;
+  if (!appId || !privateKey)
+    throw new Error("Current owner authority reader unavailable");
+  return async (
+    project: ReturnType<typeof assertProjectDefinition>,
+    reviewerGithubId: string,
+  ) => {
+    if (!/^[1-9][0-9]{0,19}$/u.test(reviewerGithubId))
+      throw new Error("Invalid owner identity");
+    const response = await fetcher(
+      `https://api.github.com/user/${reviewerGithubId}`,
+      {
+        headers: {
+          accept: "application/vnd.github+json",
+          "user-agent": "slop-october-owner-check",
+        },
+        redirect: "error",
+        signal: AbortSignal.timeout(15000),
+      },
+    );
+    if (!response.ok) throw new Error("Current owner identity unavailable");
+    const user = (await response.json()) as { id?: unknown; login?: unknown };
+    if (String(user.id) !== reviewerGithubId || typeof user.login !== "string")
+      throw new Error("Current owner identity differs");
+    const reader: RepositoryAccessReader = (repository, actor) => {
+      const [owner, repo] = repository.path.split("/");
+      return readRepositoryAccess(
+        { SLOPBOT_APP_ID: appId, SLOPBOT_APP_PRIVATE_KEY: privateKey },
+        {
+          owner,
+          repo,
+          repositoryId: repository.githubId,
+          login: actor.githubLogin,
+          githubId: actor.githubId,
+          includeRepository: true,
+        },
+        fetcher,
+      );
+    };
+    if (
+      !(await verifyProjectAuthority(
+        project,
+        { githubId: reviewerGithubId, githubLogin: user.login },
+        reader,
+        "owner",
+      ))
+    )
+      throw new Error("Current owner permission unavailable");
+  };
+}
+
 export async function runOctoberRewards(): Promise<void> {
   let phase = "trusted invocation";
   try {
@@ -436,6 +511,7 @@ export async function runOctoberRewards(): Promise<void> {
         },
         query,
         now: new Date(),
+        verifyOwner: currentOwnerVerifier(),
       });
     await writeFile(join(directory, "reviewed-packet.json"), packetBytes, {
       flag: "wx",
