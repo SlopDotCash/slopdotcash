@@ -1546,18 +1546,26 @@ async function exactOctoberOriginalContributorProof(
   );
   const acceptedRange: Comparison[] = [];
   const observed = new Set<string>();
-  for (let page = 1; page <= Math.ceil((expected.size + 1) / 100); page++) {
+  let acceptedCount: number | null = null;
+  for (
+    let page = 1;
+    page <= Math.ceil((acceptedCount ?? expected.size + 1) / 100);
+    page++
+  ) {
     const range = await comparison(merge.parents[0].sha, merge.sha, page);
     requireThat(
       range.status === "ahead" &&
         range.behind_by === 0 &&
         range.merge_base_commit.sha === merge.parents[0].sha &&
-        range.total_commits === expected.size + 1 &&
+        range.total_commits > 0 &&
+        range.total_commits <= expected.size + 1 &&
+        (acceptedCount === null || range.total_commits === acceptedCount) &&
         range.ahead_by === range.total_commits &&
         range.commits.length ===
           Math.min(100, range.total_commits - (page - 1) * 100),
       "October exact accepted range differs from the complete census",
     );
+    acceptedCount = range.total_commits;
     for (const commit of range.commits) {
       const canonical =
         commit.sha === merge.sha ? merge : expected.get(commit.sha);
@@ -1574,13 +1582,62 @@ async function exactOctoberOriginalContributorProof(
     acceptedRange.push(range);
   }
   requireThat(
-    observed.size === expected.size + 1,
+    observed.size === acceptedCount &&
+      observed.has(merge.sha) &&
+      observed.has(anchor.sha) &&
+      accepted.commits.every(
+        (commit) =>
+          !correctionClaimCommit(commit) ||
+          commit.firstAcceptedSourceId !== accepted.sourceId ||
+          observed.has(commit.sha),
+      ) &&
+      (scopedClaims ?? []).every((claim) => observed.has(claim.commitSha)),
     "October exact accepted range is incomplete",
   );
   await authenticateOriginalFollowupParents(
     github,
     accepted,
     integration.evidence,
+  );
+  // GitHub's PR list can retain commits that reached the base while the PR was
+  // open. Authenticate every omitted object and prove its frontier already
+  // belongs to the native first parent. The complete PR census stays retained.
+  const omitted = new Map(
+    accepted.commits
+      .filter((commit) => !observed.has(commit.sha))
+      .map((commit) => [commit.sha, commit]),
+  );
+  const nonHeads = new Set(
+    [...omitted.values()].flatMap((commit) =>
+      (commit.parentShas ?? []).filter((parent) => omitted.has(parent)),
+    ),
+  );
+  const retainedBaseRanges: Comparison[] = [];
+  const inherited = new Set<string>();
+  for (const commit of omitted.values()) {
+    if (nonHeads.has(commit.sha)) continue;
+    const baseRange = await comparison(commit.sha, merge.parents[0].sha);
+    requireThat(
+      ["ahead", "identical"].includes(baseRange.status) &&
+        baseRange.behind_by === 0 &&
+        baseRange.merge_base_commit.sha === commit.sha,
+      "October omitted PR commit is not in the native accepted base",
+    );
+    retainedBaseRanges.push(baseRange);
+    const pending = [commit.sha];
+    for (const id of pending) {
+      if (inherited.has(id)) continue;
+      inherited.add(id);
+      pending.push(
+        ...(omitted.get(id)?.parentShas ?? []).filter((parent) =>
+          omitted.has(parent),
+        ),
+      );
+    }
+  }
+  requireThat(
+    inherited.size === omitted.size,
+    "October omitted PR ancestry is incomplete",
   );
   requireThat(
     scopedClaims
@@ -1626,6 +1683,7 @@ async function exactOctoberOriginalContributorProof(
           firstParent,
           secondParent,
           acceptedRange,
+          ...(retainedBaseRanges.length ? { retainedBaseRanges } : {}),
         }),
       ),
     },
