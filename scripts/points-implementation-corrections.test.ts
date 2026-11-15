@@ -2465,7 +2465,7 @@ for (const fault of [
     const { journal, input, donor, grouped, binding } =
       reviewedOriginalReplacement();
     const retained = binding.reviewedOriginal;
-    if (!retained) throw Error("fixture");
+    if (!retained?.review) throw Error("fixture");
     if (fault === "digest") retained.digest = "9".repeat(64);
     if (fault === "current-head") donor.headSha = sha("f");
     if (fault === "review-source")
@@ -3142,6 +3142,90 @@ for (const fault of [
       grouped.proof.claims[1].commitSha = sha("f");
     const { digest: _, ...payload } = reference;
     reference.digest = sha256Hex(JSON.stringify(payload));
+    expect(() => apply(journal, input)).toThrow();
+  });
+}
+
+function bodyOriginalReplacement() {
+  const sample = reviewedOriginalReplacement();
+  const { binding, donor } = sample;
+  const retained = binding.reviewedOriginal;
+  if (!retained) throw Error("fixture");
+  delete retained.review;
+  const head = retained.commits.at(-1)?.sha;
+  if (!head) throw Error("fixture head");
+  const body = `Verified original head ${head}.`;
+  const user = { node_id: C.id, login: C.login, type: "User" };
+  retained.bodyReference = {
+    kind: "pre-merge-body",
+    headSha: head,
+    headCommittedAt: "2026-10-20T00:00:00Z",
+    createdAt: "2026-10-19T00:00:00Z",
+    pull: {
+      node_id: donor.sourceId,
+      number: 10,
+      html_url: donor.sourceUrl,
+      state: "closed",
+      merged_at: donor.occurredAt,
+      updated_at: "2026-10-23T00:00:03Z",
+      head: { sha: donor.headSha },
+      body,
+      user,
+      merged_by: user,
+    } as NonNullable<typeof retained.bodyReference>["pull"],
+    metadata: {
+      id: donor.sourceId,
+      body,
+      headRefOid: donor.headSha,
+      mergedAt: donor.occurredAt ?? "",
+      updatedAt: "2026-10-23T00:00:03Z",
+      lastEditedAt: "2026-10-22T00:00:00Z",
+      author: { id: C.id, type: "User" },
+      editor: { id: C.id, type: "User" },
+    },
+  };
+  const { digest: _, ...payload } = retained;
+  retained.digest = sha256Hex(JSON.stringify(payload));
+  return sample;
+}
+test("authenticated pre-merge body binds a historical native original without a formal review", () => {
+  const { journal, input, donor } = bodyOriginalReplacement();
+  const before = structuredClone(donor);
+  expect(amounts(apply(journal, input).journal)).toEqual({
+    [A.id]: 30,
+    [C.id]: 0,
+  });
+  expect(donor).toEqual(before);
+});
+for (const fault of [
+  "editor",
+  "late",
+  "head",
+  "commit-time",
+  "number",
+  "author",
+  "mixed-primary",
+  "created-after-edit",
+] as const) {
+  test(`historical body original rejects ${fault}`, () => {
+    const { journal, input, binding } = bodyOriginalReplacement();
+    const retained = binding.reviewedOriginal,
+      reference = retained?.bodyReference;
+    if (!retained || !reference) throw Error("fixture");
+    if (fault === "editor" && reference.metadata.editor)
+      reference.metadata.editor.id = B.id;
+    if (fault === "late")
+      reference.metadata.lastEditedAt = "2026-10-24T00:00:00Z";
+    if (fault === "head") reference.metadata.headRefOid = sha("9");
+    if (fault === "commit-time")
+      reference.headCommittedAt = "2026-10-22T00:00:01Z";
+    if (fault === "number") reference.pull.number = 99;
+    if (fault === "author") reference.metadata.author.id = B.id;
+    if (fault === "created-after-edit")
+      reference.createdAt = "2026-10-22T00:00:01Z";
+    if (fault === "mixed-primary") retained.commits[0].author = B;
+    const { digest: _, ...payload } = retained;
+    retained.digest = sha256Hex(JSON.stringify(payload));
     expect(() => apply(journal, input)).toThrow();
   });
 }
