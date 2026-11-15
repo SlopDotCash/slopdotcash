@@ -125,6 +125,13 @@
       "review": "mapped-abstraction"
     },
     {
+      "path": ".github/workflows/reviewed-historical-points.yml",
+      "sha256": "1d6e2eb6a397c8f0aef50bc0371457ea7559de11a6ef64763625796cc7d61ba8",
+      "models": ["formal/models/points/source_import.qnt"],
+      "candidateLines": [],
+      "review": "mapped-abstraction"
+    },
+    {
       "path": ".github/workflows/unsafe-destination-transitions.yml",
       "sha256": "2ea9e462c83f121340201d7582e92f35604da7f4dc2f1ea5f9a7102eb1bfb6ed",
       "models": ["formal/models/release/trusted_base_gate.qnt"],
@@ -4582,6 +4589,13 @@
       "review": "mapped-abstraction"
     },
     {
+      "path": "scripts/reviewed-historical-points.ts",
+      "sha256": "6a758409cccd18d66f983c0fb72d77431f98823689dcb188e65111a4f149dde0",
+      "models": ["formal/models/points/source_import.qnt"],
+      "candidateLines": [366],
+      "review": "mapped-abstraction"
+    },
+    {
       "path": "scripts/run-e2e-phase.mjs",
       "sha256": "08d0368c0b925438b62d8dc80b4bd4d6c2b65c038c22929d377e1e8d845dcab1",
       "models": [
@@ -4636,6 +4650,13 @@
       "candidateLines": [36],
       "review": "reviewed-no-independent-state",
       "statelessReason": "Pure schema, hash and Ed25519 verification of supplied receipt bytes. It has no keys, persistence or state transition; a valid signature establishes byte/key continuity only. Receipt completion and upload lifecycles are modeled separately."
+    },
+    {
+      "path": "scripts/run-reviewed-historical-points.ts",
+      "sha256": "da51a0633e44e39c4a482650c7479545d0d415d3cb91999af576c34d4522c4d4",
+      "models": ["formal/models/points/source_import.qnt"],
+      "candidateLines": [3, 226, 246, 315, 403],
+      "review": "mapped-abstraction"
     },
     {
       "path": "scripts/run-security-payments.mjs",
@@ -4801,7 +4822,7 @@
     },
     {
       "path": "scripts/value-ingestion.ts",
-      "sha256": "ae5193c9905211b71957315479e127cb507d69aa0ae56cf69d317005ce7e5034",
+      "sha256": "e08a7fd1873352d2cff19961460a24ecf1b68c007807acb4b87c560016cad06e",
       "models": [
         "formal/models/points/implementation_credit.qnt",
         "formal/models/points/implementation_credit_gate.qnt",
@@ -4809,8 +4830,8 @@
         "formal/models/slopbot/value_ingestion.qnt"
       ],
       "candidateLines": [
-        66, 77, 124, 125, 126, 127, 129, 130, 197, 198, 199, 201, 202, 737, 757,
-        879, 915, 954, 978
+        66, 77, 124, 125, 126, 127, 129, 130, 197, 198, 199, 201, 202, 735, 755,
+        877, 913, 952, 976
       ],
       "review": "mapped-abstraction"
     },
@@ -14039,12 +14060,15 @@
     },
     {
       "path": "formal/models/points/source_import.qnt",
-      "sha256": "61f1924b02c8cc40324233f3aee978d5eb5e55d97a3a98a7ed22b67d2a79fcea",
+      "sha256": "36660dc1dae7e19cef16f731f55d5fcc38491e9bb4426395407fa392b31b2654",
       "sources": [
+        ".github/workflows/reviewed-historical-points.yml",
         "scripts/backfill-points.ts",
         "scripts/check-direct-payment-disclosures.ts",
         "scripts/prepare-payments-import.ts",
         "scripts/prepare-points-import.ts",
+        "scripts/reviewed-historical-points.ts",
+        "scripts/run-reviewed-historical-points.ts",
         "src/lib/payments/escrow-cycle.ts"
       ],
       "scenarios": [
