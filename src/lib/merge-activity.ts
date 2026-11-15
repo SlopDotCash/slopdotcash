@@ -128,3 +128,35 @@ export function mergeActivityLine(
   ];
   return `Merging: ${parts.join(" · ")}`;
 }
+
+/** The short card form: last merge, waiting outside pull requests, median. */
+export function mergeActivityCardLine(
+  rows: readonly RepositoryMergeActivity[] | undefined,
+  now: Date,
+): string | null {
+  if (!rows?.length) return null;
+  let last: string | null = null;
+  let waiting = 0;
+  let capped = false;
+  let busiest = rows[0];
+  for (const row of rows) {
+    if (row.lastMergedAt && (last === null || row.lastMergedAt > last))
+      last = row.lastMergedAt;
+    waiting += row.waitingOutside;
+    capped ||= row.waitingCapped;
+    if (row.mergedOutsideLast30Days > busiest.mergedOutsideLast30Days)
+      busiest = row;
+  }
+  const parts = [
+    last ? `Last merge ${ago(last, now)}` : "No merge found",
+    `${waiting}${capped ? "+" : ""} outside ${
+      waiting === 1 && !capped ? "PR" : "PRs"
+    } waiting 7+ days`,
+  ];
+  if (
+    busiest.medianHoursToMerge !== null &&
+    busiest.mergedOutsideLast30Days > 0
+  )
+    parts.push(`median merge ${duration(busiest.medianHoursToMerge)}`);
+  return parts.join(" · ");
+}
