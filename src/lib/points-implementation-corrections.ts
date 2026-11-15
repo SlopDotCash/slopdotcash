@@ -303,7 +303,7 @@ export function isOriginalContributorFollowup(
     return false;
   if (
     claims &&
-    (!claims.length ||
+    ((!claims.length && !scoped) ||
       claims.some((claim) => claim.sourceId !== source.sourceId))
   )
     return false;
@@ -495,12 +495,13 @@ export function originalContributorClaimScope(
     acceptedAnchor.author?.kind !== anchor.author?.kind
   )
     return false;
-  const graph = new Map<string, CorrectionCommit>();
+  const graph = new Map<string, CorrectionCommit & { parentShas: string[] }>();
   for (const source of [accepted, ...followups.map((item) => item.source)]) {
     for (const commit of source.commits) {
       const previous = graph.get(commit.sha);
       const parentShas = commit.parentShas ?? previous?.parentShas;
-      if (!validParentShas({ ...commit, parentShas })) return false;
+      if (!parentShas || !validParentShas({ ...commit, parentShas }))
+        return false;
       if (
         previous &&
         (JSON.stringify(previous.parentShas) !== JSON.stringify(parentShas) ||
@@ -534,7 +535,8 @@ export function originalContributorClaimScope(
   for (const commit of original.commits) {
     const existing = graph.get(commit.sha);
     const parentShas = commit.parentShas ?? existing?.parentShas;
-    if (!validParentShas({ ...commit, parentShas })) return false;
+    if (!parentShas || !validParentShas({ ...commit, parentShas }))
+      return false;
     if (
       existing &&
       (JSON.stringify(existing.parentShas) !== JSON.stringify(parentShas) ||
@@ -548,7 +550,7 @@ export function originalContributorClaimScope(
   const remaining = new Map(
     [...graph].map(([id, commit]) => [
       id,
-      commit.parentShas!.filter((parent) => graph.has(parent)).length,
+      commit.parentShas.filter((parent) => graph.has(parent)).length,
     ]),
   );
   const ready = [...remaining]
@@ -556,8 +558,8 @@ export function originalContributorClaimScope(
     .map(([id]) => id);
   for (const id of ready)
     for (const [child, commit] of graph) {
-      if (!commit.parentShas!.includes(id)) continue;
-      const count = remaining.get(child)! - 1;
+      if (!commit.parentShas.includes(id)) continue;
+      const count = (remaining.get(child) ?? 0) - 1;
       remaining.set(child, count);
       if (count === 0) ready.push(child);
     }
@@ -764,11 +766,11 @@ export function correctionClaimCommit(commit: CorrectionCommit): boolean {
     commit.parentCount <= 1 ||
     Boolean(
       commit.mergeResolution &&
-      commit.parentShas &&
-      mergeResolutionLineCounts(commit.mergeResolution, {
-        sha: commit.sha,
-        parents: commit.parentShas.map((sha) => ({ sha })),
-      })?.length,
+        commit.parentShas &&
+        mergeResolutionLineCounts(commit.mergeResolution, {
+          sha: commit.sha,
+          parents: commit.parentShas.map((sha) => ({ sha })),
+        })?.length,
     )
   );
 }

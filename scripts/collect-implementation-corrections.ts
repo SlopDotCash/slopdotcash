@@ -1806,7 +1806,7 @@ export async function octoberOriginalContributorUnitProof(
     (item) => item.sourceId === accepted.sourceId,
   );
   requireThat(
-    authenticated && proof.originalContributor,
+    authenticated && proof.originalContributor && verifiedHuman(source.author),
     "Native accepted proof disappeared",
   );
   const followupSources: CorrectionSource[] = [];
@@ -1825,7 +1825,7 @@ export async function octoberOriginalContributorUnitProof(
         (evidence) => nativeAcceptance.push(evidence),
         {
           anchorSha: proof.originalContributor.originalCommitSha,
-          origin: source.author!,
+          origin: source.author,
         },
       ),
     );
