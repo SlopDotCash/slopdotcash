@@ -2298,3 +2298,107 @@ for (const fault of [
     expect(() => apply(journal, input)).toThrow();
   });
 }
+
+function acknowledgedRepair() {
+  const sample = scopedUnlinkedOriginal();
+  const { donor, accepted, grouped } = sample;
+  if (grouped.proof.status !== "complete" || !grouped.proof.originalContributor)
+    throw Error("fixture");
+  const commit = accepted.commits[1];
+  commit.author = B;
+  const pull = {
+    node_id: accepted.sourceId,
+    number: Number(accepted.sourceUrl.split("/").at(-1)),
+    html_url: accepted.sourceUrl,
+    state: "closed",
+    head: { sha: accepted.headSha },
+    body: `Retains #${donor.sourceUrl.split("/").at(-1)} at ${accepted.headSha}`,
+    merged_at: accepted.occurredAt,
+    updated_at: "2026-10-24T00:00:00Z",
+    merged_by: { node_id: C.id, type: "User" },
+  } as import("../workers/slopbot/value-evidence-types").Pull;
+  const reference = {
+    sourceDigests: {
+      [donor.sourceId]: "1".repeat(64),
+      [accepted.sourceId]: "2".repeat(64),
+    },
+    pull,
+    acceptingPull: structuredClone(pull),
+    headSha: accepted.headSha,
+    acknowledgement: {
+      node_id: "IC_repair",
+      body: pull.body ?? "",
+      user: { node_id: C.id, type: "User" },
+      created_at: "2026-10-23T00:00:01Z",
+      updated_at: "2026-10-23T00:00:01Z",
+    },
+  };
+  const repair = {
+    sourceId: accepted.sourceId,
+    commitSha: commit.sha,
+    authorNodeId: B.id,
+    reference: { ...reference, digest: sha256Hex(JSON.stringify(reference)) },
+  };
+  grouped.proof.originalContributor.repairs = [repair];
+  return { ...sample, repair, commit };
+}
+
+test("accepted merger acknowledgement binds a distinct repair author without moving the original's pool", () => {
+  const { journal, input, commit } = acknowledgedRepair();
+  const result = apply(journal, input);
+  expect(amounts(result.journal)).toEqual({ [A.id]: 30, [C.id]: 0 });
+  expect(commit.author).toEqual(B);
+  expect(total(result.journal)).toBe(total(journal));
+  expect(apply(result.journal, input, true, LATER).journal).toBe(
+    result.journal,
+  );
+});
+
+for (const fault of [
+  "missing",
+  "digest",
+  "actor",
+  "source",
+  "head",
+  "number",
+  "reference",
+  "edited",
+  "future",
+  "ancestor",
+  "duplicate",
+  "unused",
+  "cycle",
+  "source-digest",
+] as const) {
+  test(`accepted repair refuses ${fault}`, () => {
+    const { journal, input, grouped, repair, commit } = acknowledgedRepair();
+    if (
+      grouped.proof.status !== "complete" ||
+      !grouped.proof.originalContributor
+    )
+      throw Error("fixture");
+    const reference = repair.reference;
+    if (fault === "missing") delete grouped.proof.originalContributor.repairs;
+    if (fault === "actor") reference.acknowledgement.user.node_id = B.id;
+    if (fault === "source") repair.sourceId = "PR_unrelated";
+    if (fault === "head") reference.pull.head.sha = sha("9");
+    if (fault === "number") reference.pull.number = 999;
+    if (fault === "reference")
+      reference.acknowledgement.body = `Unrelated #999 ${reference.headSha}`;
+    if (fault === "edited")
+      reference.acknowledgement.updated_at = "2026-10-24T00:00:00Z";
+    if (fault === "future")
+      reference.acknowledgement.created_at =
+        reference.acknowledgement.updated_at = "2026-10-25T00:00:00Z";
+    if (fault === "ancestor") commit.parentShas = [sha("9")];
+    if (fault === "cycle") commit.parentShas = [reference.headSha];
+    if (fault === "duplicate")
+      grouped.proof.originalContributor.repairs?.push(structuredClone(repair));
+    if (fault === "unused") repair.commitSha = sha("9");
+    if (fault === "source-digest") reference.sourceDigests = {};
+    const { digest: _, ...payload } = reference;
+    reference.digest =
+      fault === "digest" ? "0".repeat(64) : sha256Hex(JSON.stringify(payload));
+    expect(() => apply(journal, input)).toThrow();
+  });
+}
