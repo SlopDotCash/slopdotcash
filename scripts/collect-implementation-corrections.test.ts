@@ -2783,7 +2783,14 @@ test("resumed months keep a later month's verified author link like an uninterru
 });
 
 function relatedHistoricalFixture(
-  original: "empty" | "bound" | "ambiguous" | "wrong-head",
+  original:
+    | "empty"
+    | "bound"
+    | "ambiguous"
+    | "wrong-head"
+    | "disjoint"
+    | "incomplete-disjoint"
+    | "renamed-overlap",
   mixed?: "linked" | "binding-mismatch" | "linked-mismatch",
 ) {
   const f = valueFixture({ textOnly: true, direct: true });
@@ -2875,7 +2882,13 @@ function relatedHistoricalFixture(
           ? { sha: linkedSha }
           : f.pull.head,
     changed_files:
-      number === 1 && original === "empty" ? 0 : number === 2 && mixed ? 2 : 1,
+      number === 1 && original === "empty"
+        ? 0
+        : number === 1 && original === "incomplete-disjoint"
+          ? 2
+          : number === 2 && mixed
+            ? 2
+            : 1,
     commits:
       number === 1 && original === "empty" ? 0 : number === 2 && mixed ? 2 : 1,
   });
@@ -2986,6 +2999,18 @@ function relatedHistoricalFixture(
         ]);
       if (original === "empty" && /\/pulls\/1\/(commits|files)\?/u.test(full))
         return Response.json([]);
+      if (
+        ["disjoint", "incomplete-disjoint", "renamed-overlap"].includes(
+          original,
+        ) &&
+        full.includes(`/commits/${"e".repeat(40)}?`)
+      )
+        return Response.json({
+          sha: "e".repeat(40),
+          parents: [{ sha: f.pull.base.sha }],
+          stats: { additions: 1, deletions: 0, total: 1 },
+          files: [{ ...f.files[0], filename: "adjacent.ts" }],
+        });
       const remapped = full
         .replace(path, `/repos/${valueRepository.id}`)
         .replace(/\/(pulls|issues)\/2(?=\/|$)/u, "/$1/1");
@@ -3019,6 +3044,27 @@ function relatedHistoricalFixture(
           stats: { additions: 2, deletions: 0, total: 2 },
           files: [linkedFile],
         });
+      if (
+        ["disjoint", "incomplete-disjoint", "renamed-overlap"].includes(
+          original,
+        ) &&
+        full.includes("/pulls/1/files?") &&
+        Array.isArray(evidence)
+      )
+        evidence.forEach((file) => {
+          file.filename = "adjacent.ts";
+          if (original === "renamed-overlap") file.previous_filename = "fix.ts";
+        });
+      if (
+        ["disjoint", "incomplete-disjoint", "renamed-overlap"].includes(
+          original,
+        ) &&
+        full.includes("/pulls/1/commits?") &&
+        Array.isArray(evidence)
+      )
+        evidence.forEach((commit) => {
+          commit.sha = "e".repeat(40);
+        });
       return Response.json(evidence);
     },
     { preconnect: fetch.preconnect },
@@ -3049,6 +3095,65 @@ async function collectRelatedHistoricalSource(
   );
   return { journal, result, calls: network.calls };
 }
+
+test.each(["disjoint", "incomplete-disjoint", "renamed-overlap"] as const)(
+  "October reference path completeness and renames remain conservative (%s)",
+  async (scenario) => {
+    const network = relatedHistoricalFixture(scenario);
+    const inOctober = Object.assign(
+      async (input: RequestInfo | URL, init?: RequestInit) => {
+        const translated = init?.body
+          ? {
+              ...init,
+              body: String(init.body).replaceAll("2026-10", "2026-01"),
+            }
+          : init;
+        const response = await network.call(input, translated);
+        return new Response(
+          (await response.text())
+            .replaceAll("2026-01", "2026-10")
+            .replaceAll("2026-02", "2026-11"),
+          { status: response.status, headers: response.headers },
+        );
+      },
+      { preconnect: fetch.preconnect },
+    );
+    const journal = baseline([
+      {
+        ...award(),
+        sourceUrl: network.url,
+        occurredAt: "2026-10-15T00:00:00.000Z",
+      },
+    ]);
+    const result = await collectImplementationCorrections(
+      {
+        projects: ["asi"],
+        directory: await directory(),
+        month: "2026-10",
+        before: "2026-10-31T00:00:00.000Z",
+        octoberOriginalCredit: true,
+      },
+      {
+        journal,
+        registry: registry(),
+        token: "fixture-token",
+        transport: inOctober,
+        now: new Date("2026-10-31T23:59:59Z"),
+      },
+    );
+    if (scenario !== "disjoint") {
+      expect(result.receipt.completeProofs).toBe(0);
+      expect(result.manifest.candidates[0].proof.status).toBe("held");
+      return;
+    }
+    expect(result.receipt.completeProofs).toBe(1);
+    expect(result.manifest.candidates[0].sourceIds).toEqual(["PR_source"]);
+    expect(result.manifest.candidates[0].proof).toMatchObject({
+      status: "complete",
+      sources: [{ sourceId: "PR_source", commits: [{ author: null }] }],
+    });
+  },
+);
 
 test("an unrelated zero-commit reference does not poison the complete historical manifest", async () => {
   const { journal, result, calls } =
