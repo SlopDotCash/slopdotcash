@@ -989,3 +989,61 @@ for (const invalid of ["actor", "time", "source-id"])
       ).rejects.toThrow("authenticated retention acknowledgement");
     }
   });
+
+const incorporatedBody =
+  "Incorporated into merged #2 on the current visual foundation, including the applicable workflow fixes and validation. Closing this overlapping branch to avoid applying duplicate route, form or fixture changes. Original commits and discussion remain available. Final combined release validation continues separately.";
+
+test("a merger's contemporaneous incorporated notice binds exact copied work", async () => {
+  const { original, copy, comment } = sources();
+  comment.body = incorporatedBody;
+  comment.created_at = comment.updated_at = "2026-10-02T10:00:02Z";
+  const binding = await retainedCommitCreditSources(copy, [original, copy]);
+  expect(binding.size).toBe(1);
+  expect([...binding.values()][0].originalPullRequestId).toBe(
+    original.evidence.pull.node_id,
+  );
+  const file = copy.evidence.commitAttribution[0].files?.[0];
+  if (!file) throw new Error("Missing copied file");
+  file.patch += "\n+unrelated";
+  await expect(
+    retainedCommitCreditSources(copy, [original, copy]),
+  ).rejects.toThrow("0 exact copy bindings");
+});
+
+for (const body of [
+  "Not incorporated into merged #2.",
+  "If incorporated into merged #2, retain this branch.",
+  "Will be incorporated into merged #2.",
+  "Incorporated into merged #3. See #2.",
+  '"Incorporated into merged #2" is a suggested message.',
+  "Incorporated into merged #3, but see #2.",
+  "Incorporated into merged other/repository#2.",
+  "Incorporated into merged [#2](https://github.com/other/repository/pull/2).",
+])
+  test(`incorporated notices refuse unsupported text: ${body}`, async () => {
+    const { original, copy, comment } = sources();
+    comment.body = body;
+    await expect(
+      retainedCommitCreditSources(copy, [original, copy]),
+    ).rejects.toThrow("authenticated retention acknowledgement");
+  });
+
+for (const fault of ["merger", "source", "before-merge"] as const)
+  test(`incorporated notice preserves ${fault} binding`, async () => {
+    const { original, copy, comment } = sources();
+    comment.body = incorporatedBody;
+    if (fault === "merger")
+      comment.user = { ...comment.user, node_id: "U_other" };
+    if (fault === "source") original.evidence.relatedPullRequests = [];
+    if (fault === "before-merge")
+      comment.created_at = comment.updated_at = "2026-10-02T09:59:59Z";
+    if (fault === "source") {
+      expect(
+        (await retainedCommitCreditSources(copy, [original, copy])).size,
+      ).toBe(0);
+    } else {
+      await expect(
+        retainedCommitCreditSources(copy, [original, copy]),
+      ).rejects.toThrow("authenticated retention acknowledgement");
+    }
+  });
