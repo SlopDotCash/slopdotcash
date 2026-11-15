@@ -15,6 +15,7 @@ import {
 } from "./value-branch-policy";
 import {
   githubLinkDestinations,
+  sameRepositoryCommitHints,
   withoutClosedCodeFences,
   withoutClosedCodeSpans,
 } from "./value-commit-hints";
@@ -1200,6 +1201,53 @@ export async function collectValueEvidence(
       ? { unavailablePublicReferences: related.unavailablePublicReferences }
       : {}),
   };
+  // A narrowly discovered repair keeps the authenticated editor record with
+  // the source. Ordinary PR bodies do not incur an additional provider read.
+  if (
+    pull.merged_at?.startsWith("2026-10-") &&
+    pull.body &&
+    related.references.length &&
+    commits.some((commit) => commit.author?.node_id !== pull.user.node_id) &&
+    sameRepositoryCommitHints(repository, pull.body).includes(pull.head.sha) &&
+    client.graphql
+  ) {
+    const [owner, name] = repository.split("/");
+    const result = await client.graphql<{
+      repository: {
+        pullRequest: {
+          id: string;
+          body: string;
+          headRefOid: string;
+          mergedAt: string;
+          updatedAt: string;
+          lastEditedAt: string | null;
+          editor: { id: string; __typename: string } | null;
+          author: { id: string; __typename: string };
+        };
+      };
+    }>(
+      "query SlopRetainedRepairBody($owner:String!,$name:String!,$number:Int!){repository(owner:$owner,name:$name){pullRequest(number:$number){id body headRefOid mergedAt updatedAt lastEditedAt editor{__typename ... on User{id}} author{__typename ... on User{id}}}} rateLimit{cost limit remaining resetAt}}",
+      { owner, name, number: pull.number },
+    );
+    const body = result.repository?.pullRequest;
+    if (
+      body?.id === pull.node_id &&
+      body.body === pull.body &&
+      body.headRefOid === pull.head.sha &&
+      body.mergedAt === pull.merged_at &&
+      body.updatedAt === pull.updated_at &&
+      typeof body.author?.id === "string" &&
+      typeof body.author.__typename === "string"
+    )
+      evidence.repairBodyEdit = {
+        ...body,
+        editor: body.editor
+          ? { id: body.editor.id, type: body.editor.__typename }
+          : null,
+        author: { id: body.author.id, type: body.author.__typename },
+      };
+    else limitations.push("Retained repair body changed during collection");
+  }
   limitations.push(...(await binarySourceLimitations(evidence)));
   return evidence;
 }
