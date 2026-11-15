@@ -110,8 +110,10 @@ pure def redispatch(q: JobQueue): JobQueue = withCopy(q.now, q)
 pure def canRecordDispatch(q: JobQueue): bool = canRedispatch(q) and q.copies.length() > 0
 pure def recordDispatch(q: JobQueue): JobQueue = { ...q, durable: { ...q.durable, queuedAt: q.now } }
 pure def leadsToDueRowIsSent(q: JobQueue, later: JobQueue): bool =
-  canRedispatch(q) implies (later.copies.length() > q.copies.length() or later.durable.resolved)
+  canRedispatch(q) implies (later.copies.length() > q.copies.length() or later.durable.queuedAt > q.durable.queuedAt
+    or later.durable.resolved)
 pure val fair_redispatch = "weak"
+pure val fair_recordDispatch = "weak"
 ```
 
 ### A dead-lettered job stays visible and has no recovery route until the owner decides one
