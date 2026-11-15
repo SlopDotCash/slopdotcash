@@ -82,6 +82,7 @@ import {
   collectSearchReferences,
   commitStatisticsFailure,
   completeOutcomeCommits,
+  executeNodeBatch,
   GitHubGraphqlClient,
   type GraphqlExecutor,
   GraphqlUpstreamError,
@@ -3892,7 +3893,18 @@ async function collectWithEvidenceCache(
         {
           get: github.get.bind(github),
           fileText: github.fileText.bind(github),
-          graphql: executor.execute as GitHubClient["graphql"],
+          graphql: ((
+            query: string,
+            variables: Record<string, unknown> = {},
+          ) => {
+            const typedVariables = variables as NonNullable<
+              Parameters<GraphqlExecutor["execute"]>[1]
+            >;
+            const { ids, ...remaining } = typedVariables;
+            return Array.isArray(ids)
+              ? executeNodeBatch(executor, query, ids, remaining)
+              : executor.execute(query, typedVariables);
+          }) as GitHubClient["graphql"],
         },
         [
           ...new Map(
