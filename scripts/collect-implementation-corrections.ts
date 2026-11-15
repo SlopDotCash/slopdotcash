@@ -74,6 +74,7 @@ import {
   historicalDiscussionQuery,
   validateHistoricalDiscussion,
 } from "./historical-discussion-evidence";
+import { assertCorrectionRegistry } from "./points-correction-registry";
 import { retainedCommitCreditSources } from "./retained-commit-credit";
 import { fetchProjectRegistry } from "./sync-project-registry.mjs";
 import { loadValueInputs, ValueFeedUnavailableError } from "./value-ingestion";
@@ -1459,9 +1460,14 @@ async function collectWithEvidenceCache(
     );
     requireThat(
       encode(campaign.baseline) === encode(baseline) &&
-        encode(campaign.projects) === encode(options.projects) &&
-        campaign.registryDigest === registryDigest,
-      "Campaign baseline or canonical registry changed; use a new campaign directory",
+        encode(campaign.projects) === encode(options.projects),
+      "Campaign baseline or selected projects changed; use a new campaign directory",
+    );
+    assertCorrectionRegistry(
+      campaign.registryDigest,
+      campaign.through,
+      campaign.projects,
+      registry,
     );
   }
   const plans: RepositoryPlan[] = [];
@@ -1897,7 +1903,8 @@ async function collectWithEvidenceCache(
     schemaVersion: "slop-implementation-correction-collection-v1",
     through: campaign.through,
     before: campaign.before,
-    registryDigest,
+    projects: campaign.projects,
+    registryDigest: campaign.registryDigest,
     censusDigest,
     ownershipComplete,
     initialSearchPageSize,

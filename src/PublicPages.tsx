@@ -324,8 +324,11 @@ export function HowItWorksPage() {
             <h3>Is there a referral program?</h3>
             <div>
               <p>
-                Not yet. Referrals are recorded, but none pay until the program
-                is switched on.{" "}
+                Yes. You can refer a project today: sign in on slop.cash once,
+                then send its maintainer <code>slop.cash/r/</code> followed by
+                your GitHub login. The referral is recorded when the project
+                lists. A referrer receives SLOP only after a project they
+                brought in has paid its contributors.{" "}
                 <ExternalLinkAnchor href="https://record.slop.cash/referrals">
                   Referral terms
                 </ExternalLinkAnchor>
