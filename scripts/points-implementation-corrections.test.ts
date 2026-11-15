@@ -2028,3 +2028,54 @@ test("scoped native sync-head donor receives its complete reviewed pool", () => 
   donor.commits[1].author = B;
   expect(() => apply(journal, input)).toThrow("unit scope");
 });
+
+test("scoped native unit preserves its pool and unrelated work in a later carrier", () => {
+  const { journal, input, grouped, accepted, followup } =
+    laterAcceptedFollowup();
+  if (grouped.proof.status !== "complete" || !grouped.proof.originalContributor)
+    throw Error("fixture");
+  const original = grouped.proof.sources[1];
+  original.headSha = accepted.commits[0].sha;
+  original.commits[0].sha = accepted.commits[0].sha;
+  accepted.commits[0].parentShas = [sha("0")];
+  accepted.commits[1].parentShas = [accepted.commits[0].sha];
+  grouped.proof.originalContributor.exactAcceptance = true;
+  grouped.proof.originalContributor.originalCommitSha = original.headSha;
+  grouped.proof.originalContributor.acceptedCommitSha = original.headSha;
+  grouped.proof.originalContributor.claimIds = [
+    ...grouped.proof.expectedClaimIds,
+  ];
+  const unrelated = structuredClone(followup.commits[0]);
+  unrelated.sha = sha("8");
+  unrelated.author = B;
+  unrelated.parentShas = [accepted.headSha];
+  followup.commits.push(unrelated);
+  followup.commitCount++;
+  const binding = grouped.proof.originalContributor.followups?.[0];
+  if (!binding) throw Error("fixture");
+  binding.commits.push({
+    sha: unrelated.sha,
+    parentShas: [...unrelated.parentShas],
+  });
+  followup.commits[0].parentShas = [unrelated.sha];
+  binding.commits[0].parentShas = [unrelated.sha];
+  const result = apply(journal, input);
+  expect(
+    Object.fromEntries(
+      [...latestPoints(result.journal).values()].map(({ award }) => [
+        award.actor.id,
+        award.amount,
+      ]),
+    ),
+  ).toEqual({ [A.id]: 30, [C.id]: 0 });
+  expect(total(result.journal)).toBe(total(journal));
+  expect(followup.commits[1].author).toEqual(B);
+  expect(apply(result.journal, input, true, LATER).journal).toBe(
+    result.journal,
+  );
+  expect(apply(journal, input, false).journal).toBe(journal);
+  const lastClaim = grouped.proof.claims.at(-1);
+  if (!lastClaim) throw Error("Missing fixture claim");
+  lastClaim.commitSha = unrelated.sha;
+  expect(() => apply(journal, input)).toThrow("unit scope");
+});

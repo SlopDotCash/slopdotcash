@@ -1383,6 +1383,146 @@ async function authenticateOriginalFollowupParents(
   }
 }
 
+type NativeComparison = {
+  status: string;
+  ahead_by: number;
+  behind_by: number;
+  total_commits: number;
+  base_commit: { sha: string };
+  merge_base_commit: { sha: string };
+  commits: { sha: string; parents: { sha: string }[] }[];
+};
+
+async function nativeComparison(
+  github: Pick<GitHubClient, "get">,
+  repository: string,
+  base: string,
+  head: string,
+  page = 1,
+): Promise<NativeComparison> {
+  const result = await github.get<NativeComparison>(
+    `/repos/${repository}/compare/${base}...${head}?per_page=100&page=${page}`,
+  );
+  requireThat(
+    result?.base_commit?.sha === base &&
+      /^[a-f0-9]{40}$/u.test(result.merge_base_commit?.sha ?? "") &&
+      Number.isSafeInteger(result.ahead_by) &&
+      result.ahead_by >= 0 &&
+      Number.isSafeInteger(result.behind_by) &&
+      result.behind_by >= 0 &&
+      Number.isSafeInteger(result.total_commits) &&
+      result.total_commits >= 0 &&
+      Array.isArray(result.commits),
+    "October exact source comparison is incomplete",
+  );
+  return result;
+}
+
+async function authenticateNativeAcceptedRange(
+  github: Pick<GitHubClient, "get">,
+  source: CorrectionSource,
+  evidence: ValueEvidence,
+  merge: { sha: string; parents: { sha: string }[] },
+  requiredShas: readonly string[],
+) {
+  const comparison = (base: string, head: string, page = 1) =>
+    nativeComparison(github, source.repository, base, head, page);
+  const expected = new Map(
+    evidence.commits.map((commit) => [commit.sha, commit]),
+  );
+  const acceptedRange: NativeComparison[] = [];
+  const observed = new Set<string>();
+  let acceptedCount: number | null = null;
+  for (
+    let page = 1;
+    page <= Math.ceil((acceptedCount ?? expected.size + 1) / 100);
+    page++
+  ) {
+    const range = await comparison(merge.parents[0].sha, merge.sha, page);
+    requireThat(
+      range.status === "ahead" &&
+        range.behind_by === 0 &&
+        range.merge_base_commit.sha === merge.parents[0].sha &&
+        range.total_commits > 0 &&
+        range.total_commits <= expected.size + 1 &&
+        (acceptedCount === null || range.total_commits === acceptedCount) &&
+        range.ahead_by === range.total_commits &&
+        range.commits.length ===
+          Math.min(100, range.total_commits - (page - 1) * 100),
+      "October exact accepted range differs from the complete census",
+    );
+    acceptedCount = range.total_commits;
+    for (const commit of range.commits) {
+      const canonical =
+        commit.sha === merge.sha ? merge : expected.get(commit.sha);
+      requireThat(
+        canonical &&
+          !observed.has(commit.sha) &&
+          Array.isArray(commit.parents) &&
+          encode(commit.parents.map(({ sha }) => sha)) ===
+            encode(canonical.parents.map(({ sha }) => sha)),
+        "October exact accepted range has an unknown or repeated Git object",
+      );
+      observed.add(commit.sha);
+    }
+    acceptedRange.push(range);
+  }
+  requireThat(
+    observed.size === acceptedCount &&
+      observed.has(merge.sha) &&
+      requiredShas.every((sha) => observed.has(sha)) &&
+      source.commits.every(
+        (commit) =>
+          !correctionClaimCommit(commit) ||
+          commit.firstAcceptedSourceId !== source.sourceId ||
+          observed.has(commit.sha),
+      ),
+    "October exact accepted range is incomplete",
+  );
+  await authenticateOriginalFollowupParents(github, source, evidence);
+  // GitHub's PR list can retain commits that reached the base while the PR was
+  // open. Authenticate every omitted object and prove its frontier already
+  // belongs to the native first parent. The complete PR census stays retained.
+  const omitted = new Map(
+    source.commits
+      .filter((commit) => !observed.has(commit.sha))
+      .map((commit) => [commit.sha, commit]),
+  );
+  const nonHeads = new Set(
+    [...omitted.values()].flatMap((commit) =>
+      (commit.parentShas ?? []).filter((parent) => omitted.has(parent)),
+    ),
+  );
+  const retainedBaseRanges: NativeComparison[] = [];
+  const inherited = new Set<string>();
+  for (const commit of omitted.values()) {
+    if (nonHeads.has(commit.sha)) continue;
+    const baseRange = await comparison(commit.sha, merge.parents[0].sha);
+    requireThat(
+      ["ahead", "identical"].includes(baseRange.status) &&
+        baseRange.behind_by === 0 &&
+        baseRange.merge_base_commit.sha === commit.sha,
+      "October omitted PR commit is not in the native accepted base",
+    );
+    retainedBaseRanges.push(baseRange);
+    const pending = [commit.sha];
+    for (const id of pending) {
+      if (inherited.has(id)) continue;
+      inherited.add(id);
+      pending.push(
+        ...(omitted.get(id)?.parentShas ?? []).filter((parent) =>
+          omitted.has(parent),
+        ),
+      );
+    }
+  }
+  requireThat(
+    inherited.size === omitted.size,
+    "October omitted PR ancestry is incomplete",
+  );
+  return { acceptedRange, retainedBaseRanges };
+}
+
 /** An identical Git object needs no textual acknowledgement of a rewrite.
  * Authenticate the native merge range and its parent order before retaining
  * the complete evidence in the cache and its digest in the correction proof.
@@ -1501,36 +1641,11 @@ async function exactOctoberOriginalContributorProof(
       ) === encode(merge.parents.map(({ sha }) => sha)),
     "October exact source lacks a pinned native merge",
   );
-  type Comparison = {
-    status: string;
-    ahead_by: number;
-    behind_by: number;
-    total_commits: number;
-    base_commit: { sha: string };
-    merge_base_commit: { sha: string };
-    commits: { sha: string; parents: { sha: string }[] }[];
-  };
-  const comparison = async (base: string, head: string, page = 1) => {
-    const result = await github.get<Comparison>(
-      `/repos/${accepted.repository}/compare/${base}...${head}?per_page=100&page=${page}`,
-    );
-    requireThat(
-      result?.base_commit?.sha === base &&
-        /^[a-f0-9]{40}$/u.test(result.merge_base_commit?.sha ?? "") &&
-        Number.isSafeInteger(result.ahead_by) &&
-        result.ahead_by >= 0 &&
-        Number.isSafeInteger(result.behind_by) &&
-        result.behind_by >= 0 &&
-        Number.isSafeInteger(result.total_commits) &&
-        result.total_commits >= 0 &&
-        Array.isArray(result.commits),
-      "October exact source comparison is incomplete",
-    );
-    return result;
-  };
+  const comparison = (base: string, head: string, page = 1) =>
+    nativeComparison(github, accepted.repository, base, head, page);
   const firstParent = await comparison(anchor.sha, merge.parents[0].sha);
   const secondParent = await comparison(anchor.sha, merge.parents[1].sha);
-  const isAncestor = (result: Comparison) =>
+  const isAncestor = (result: NativeComparison) =>
     ["ahead", "identical"].includes(result.status) &&
     result.behind_by === 0 &&
     result.merge_base_commit.sha === anchor.sha;
@@ -1541,104 +1656,14 @@ async function exactOctoberOriginalContributorProof(
       isAncestor(secondParent),
     "October exact original was not newly accepted through the PR head",
   );
-  const expected = new Map(
-    integration.evidence.commits.map((commit) => [commit.sha, commit]),
-  );
-  const acceptedRange: Comparison[] = [];
-  const observed = new Set<string>();
-  let acceptedCount: number | null = null;
-  for (
-    let page = 1;
-    page <= Math.ceil((acceptedCount ?? expected.size + 1) / 100);
-    page++
-  ) {
-    const range = await comparison(merge.parents[0].sha, merge.sha, page);
-    requireThat(
-      range.status === "ahead" &&
-        range.behind_by === 0 &&
-        range.merge_base_commit.sha === merge.parents[0].sha &&
-        range.total_commits > 0 &&
-        range.total_commits <= expected.size + 1 &&
-        (acceptedCount === null || range.total_commits === acceptedCount) &&
-        range.ahead_by === range.total_commits &&
-        range.commits.length ===
-          Math.min(100, range.total_commits - (page - 1) * 100),
-      "October exact accepted range differs from the complete census",
+  const { acceptedRange, retainedBaseRanges } =
+    await authenticateNativeAcceptedRange(
+      github,
+      accepted,
+      integration.evidence,
+      merge,
+      [anchor.sha, ...(scopedClaims ?? []).map((claim) => claim.commitSha)],
     );
-    acceptedCount = range.total_commits;
-    for (const commit of range.commits) {
-      const canonical =
-        commit.sha === merge.sha ? merge : expected.get(commit.sha);
-      requireThat(
-        canonical &&
-          !observed.has(commit.sha) &&
-          Array.isArray(commit.parents) &&
-          encode(commit.parents.map(({ sha }) => sha)) ===
-            encode(canonical.parents.map(({ sha }) => sha)),
-        "October exact accepted range has an unknown or repeated Git object",
-      );
-      observed.add(commit.sha);
-    }
-    acceptedRange.push(range);
-  }
-  requireThat(
-    observed.size === acceptedCount &&
-      observed.has(merge.sha) &&
-      observed.has(anchor.sha) &&
-      accepted.commits.every(
-        (commit) =>
-          !correctionClaimCommit(commit) ||
-          commit.firstAcceptedSourceId !== accepted.sourceId ||
-          observed.has(commit.sha),
-      ) &&
-      (scopedClaims ?? []).every((claim) => observed.has(claim.commitSha)),
-    "October exact accepted range is incomplete",
-  );
-  await authenticateOriginalFollowupParents(
-    github,
-    accepted,
-    integration.evidence,
-  );
-  // GitHub's PR list can retain commits that reached the base while the PR was
-  // open. Authenticate every omitted object and prove its frontier already
-  // belongs to the native first parent. The complete PR census stays retained.
-  const omitted = new Map(
-    accepted.commits
-      .filter((commit) => !observed.has(commit.sha))
-      .map((commit) => [commit.sha, commit]),
-  );
-  const nonHeads = new Set(
-    [...omitted.values()].flatMap((commit) =>
-      (commit.parentShas ?? []).filter((parent) => omitted.has(parent)),
-    ),
-  );
-  const retainedBaseRanges: Comparison[] = [];
-  const inherited = new Set<string>();
-  for (const commit of omitted.values()) {
-    if (nonHeads.has(commit.sha)) continue;
-    const baseRange = await comparison(commit.sha, merge.parents[0].sha);
-    requireThat(
-      ["ahead", "identical"].includes(baseRange.status) &&
-        baseRange.behind_by === 0 &&
-        baseRange.merge_base_commit.sha === commit.sha,
-      "October omitted PR commit is not in the native accepted base",
-    );
-    retainedBaseRanges.push(baseRange);
-    const pending = [commit.sha];
-    for (const id of pending) {
-      if (inherited.has(id)) continue;
-      inherited.add(id);
-      pending.push(
-        ...(omitted.get(id)?.parentShas ?? []).filter((parent) =>
-          omitted.has(parent),
-        ),
-      );
-    }
-  }
-  requireThat(
-    inherited.size === omitted.size,
-    "October omitted PR ancestry is incomplete",
-  );
   requireThat(
     scopedClaims
       ? originalContributorClaimScope(originalSource, accepted, scopedClaims)
@@ -1698,6 +1723,7 @@ export async function octoberOriginalContributorUnitProof(
   integration: WorkUnitSource,
   owners: ReadonlyMap<string, string>,
   claims: readonly CorrectionClaim[],
+  followups: readonly WorkUnitSource[] = [],
 ): Promise<HistoricalOrdinaryProof> {
   const source = richSource(original.evidence, owners);
   const canonical = matchRetainedAcceptedSource(
@@ -1711,10 +1737,74 @@ export async function octoberOriginalContributorUnitProof(
     integration,
     original,
     true,
-    claims,
+    claims.filter((claim) => claim.sourceId === accepted.sourceId),
   );
   requireThat(proof, "Reviewed unit lacks native original-head acceptance");
-  return proof;
+  if (!followups.length) {
+    requireThat(
+      claims.every((claim) => claim.sourceId === accepted.sourceId),
+      "Reviewed unit lacks complete follow-up sources",
+    );
+    return proof;
+  }
+  const authenticated = proof.sources.find(
+    (item) => item.sourceId === accepted.sourceId,
+  );
+  requireThat(
+    authenticated && proof.originalContributor,
+    "Native accepted proof disappeared",
+  );
+  const followupSources: CorrectionSource[] = [];
+  const bindings: OriginalContributorFollowup[] = [];
+  const nativeAcceptance: unknown[] = [];
+  for (const followup of followups) {
+    const converted = richSource(followup.evidence, owners);
+    bindings.push(
+      await originalContributorFollowupProof(
+        github,
+        authenticated,
+        converted,
+        followup.evidence,
+        followup.policy,
+        claims.filter((claim) => claim.sourceId === converted.sourceId),
+        (evidence) => nativeAcceptance.push(evidence),
+      ),
+    );
+    followupSources.push(converted);
+  }
+  requireThat(
+    originalContributorClaimScope(
+      source,
+      authenticated,
+      claims,
+      followupSources.map((followup, index) => ({
+        source: followup,
+        binding: bindings[index],
+      })),
+    ),
+    "Reviewed native unit has an unverified selected follow-up",
+  );
+  return {
+    sources: [...proof.sources, ...followupSources],
+    originalContributor: {
+      ...proof.originalContributor,
+      claimIds: claims.map((claim) => claim.id),
+      followups: bindings,
+      bindingDigest: digest(
+        encode({
+          original: proof.originalContributor.bindingDigest,
+          claims,
+          followups: bindings,
+          nativeAcceptance,
+          followupSourceDigests: await Promise.all(
+            followups.map((followup) =>
+              valueSourceDigest(followup.evidence, followup.policy),
+            ),
+          ),
+        }),
+      ),
+    },
+  };
 }
 
 export async function octoberOriginalContributorProof(
@@ -2025,6 +2115,12 @@ export async function originalContributorFollowupProof(
   source: CorrectionSource,
   evidence: ValueEvidence,
   policy: { sha: string; text: string },
+  claims?: readonly CorrectionClaim[],
+  retainNativeAcceptance?: (evidence: {
+    merge: { sha: string; parents: { sha: string }[] };
+    acceptedRange: NativeComparison[];
+    retainedBaseRanges: NativeComparison[];
+  }) => void,
 ): Promise<OriginalContributorFollowup> {
   const reference = evidence.relatedPullRequests.find(
     (target) =>
@@ -2045,6 +2141,7 @@ export async function originalContributorFollowupProof(
       )
     : undefined;
   if (
+    claims === undefined &&
     reference &&
     (referencesOriginalContributorSource(
       evidence.pull.body ?? "",
@@ -2089,7 +2186,44 @@ export async function originalContributorFollowupProof(
     );
     return binding;
   }
-  await authenticateOriginalFollowupParents(github, source, evidence);
+  if (claims) {
+    const current = await github.get<Pull>(
+      `/repos/${source.repository}/pulls/${evidence.pull.number}`,
+    );
+    requireThat(
+      current && matchesRetainedProjection(current, evidence.pull),
+      "Selected native follow-up changed during collection",
+    );
+    const merge = evidence.mergeCommitEvidence;
+    requireThat(
+      merge &&
+        merge.sha === evidence.pull.merge_commit_sha &&
+        merge.parents.length === 2 &&
+        merge.parents[1].sha === source.headSha,
+      "Selected follow-up lacks a pinned native merge",
+    );
+    const currentMerge = await github.get<{
+      sha: string;
+      parents: { sha: string }[];
+    }>(`/repos/${source.repository}/git/commits/${merge.sha}`);
+    requireThat(
+      currentMerge?.sha === merge.sha &&
+        Array.isArray(currentMerge.parents) &&
+        encode(currentMerge.parents.map((parent) => parent.sha)) ===
+          encode(merge.parents.map((parent) => parent.sha)),
+      "Selected follow-up native merge changed",
+    );
+    const acceptance = await authenticateNativeAcceptedRange(
+      github,
+      source,
+      evidence,
+      merge,
+      claims.map((claim) => claim.commitSha),
+    );
+    retainNativeAcceptance?.({ merge: currentMerge, ...acceptance });
+  } else {
+    await authenticateOriginalFollowupParents(github, source, evidence);
+  }
   const commits: OriginalContributorFollowup["commits"] = [];
   let total = 0;
   for (let page = 1; page === 1 || commits.length < total; page++) {
@@ -2143,7 +2277,7 @@ export async function originalContributorFollowupProof(
     commits,
   };
   requireThat(
-    isOriginalContributorFollowup(source, accepted, binding),
+    isOriginalContributorFollowup(source, accepted, binding, claims),
     "Invalid accepted follow-up source",
   );
   return binding;
@@ -3224,12 +3358,13 @@ async function collectWithEvidenceCache(
           octoberOriginalCredit &&
           accepted &&
           candidate.occurredAt.startsWith("2026-10-") &&
-          claimedSources.length === 1
+          claimedSources.length > 0
         ) {
           const originalIds = new Set(
             selectedClaims.map((claim) => claim.creditPullRequestId),
           );
-          originalIds.delete(accepted.sourceId);
+          for (const claimed of claimedSources)
+            originalIds.delete(claimed.sourceId);
           if (originalIds.size === 1) {
             const originalId = [...originalIds][0];
             const original = decision.evidence.sources.find(
@@ -3253,6 +3388,12 @@ async function collectWithEvidenceCache(
                 integration,
                 owners,
                 claims,
+                decision.evidence.sources.filter((source) =>
+                  followupSources.some(
+                    (followup) =>
+                      followup.sourceId === source.evidence.pull.node_id,
+                  ),
+                ),
               );
               const authenticated = new Map(
                 proof.sources.map((source) => [source.sourceId, source]),
