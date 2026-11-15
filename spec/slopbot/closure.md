@@ -543,7 +543,8 @@ pure def sometimesMaintainerReopened(c: Closure): bool = c.maintainerReopened an
 ### An upheld appeal reopens Slopbot's current close and removes Slopbot's labels
 
 Source `finishAppeal`: an upheld appeal of this revision reopens the item
-only while Slopbot's own close is current; a later human close stays. The
+only while Slopbot's own close is current, read fresh from GitHub for the
+exact item and revision (`CurrentItemState`); a later human close stays. The
 finding and uncertain labels are removed and GitHub must confirm removal or
 absence. A maintainer reopen removes the same labels. The appeal and debit
 journals own their resolutions; this model only consumes the outcome.
@@ -556,10 +557,12 @@ pure def canObserveAppealOutcome(c: Closure, appealOutcome: AppealOutcome): bool
   appealOutcome.itemNode == c.identity.itemNode and appealOutcome.revision == c.identity.revision and
   appealOutcome.verdict == AppealUpheld and not(c.appealUpheld)
 pure def observeAppealOutcome(c: Closure, appealOutcome: AppealOutcome): Closure = { ...c, appealUpheld: true }
-pure def canReopenAfterAppeal(c: Closure): bool = c.appealUpheld and closedBySlopbot(c) and not(c.slopbotReopened) and
-  c.source.identity == c.identity and c.source.item == ItemClosed and c.source.closedBy == ClosedBySlopbot and
-  c.source.installation == InstallationActive
-pure def reopenAfterAppeal(c: Closure): Closure = { ...c, slopbotReopened: true }
+type CurrentItemState = { itemNode: str, revision: str, item: ItemState, closedBy: ClosedBy, installation: InstallationStatus }
+pure def canReopenAfterAppeal(c: Closure, itemNow: CurrentItemState): bool =
+  c.appealUpheld and closedBySlopbot(c) and not(c.slopbotReopened) and
+  itemNow.itemNode == c.identity.itemNode and itemNow.revision == c.identity.revision and
+  itemNow.item == ItemClosed and itemNow.closedBy == ClosedBySlopbot and itemNow.installation == InstallationActive
+pure def reopenAfterAppeal(c: Closure, itemNow: CurrentItemState): Closure = { ...c, slopbotReopened: true }
 pure def canRemoveLabels(c: Closure, removal: RemovalEvidence): bool =
   (c.appealUpheld or c.maintainerReopened) and (c.findingLabel or c.uncertainLabel) and
   removal.itemNode == c.identity.itemNode and removal.revision == c.identity.revision and removal.confirmedRemoval
@@ -633,6 +636,8 @@ pure val reopenValues = Set({ itemNode: "pr", revision: "head", actor: 9, role: 
   { itemNode: "pr", revision: "head", actor: 6, role: ReopenByOther, at: 50 })
 pure val appellantValues = Set(5, 6)
 pure val appealOutcomeValues = Set({ itemNode: "pr", revision: "head", verdict: AppealUpheld })
+pure val itemNowValues = Set({ itemNode: "pr", revision: "head", item: ItemClosed, closedBy: ClosedBySlopbot,
+  installation: InstallationActive })
 pure val removalValues = Set({ itemNode: "pr", revision: "head", confirmedRemoval: true })
 pure val weight_observeSource = 3
 pure val weight_observeParticipation = 3
