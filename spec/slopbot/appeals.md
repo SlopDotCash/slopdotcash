@@ -13,7 +13,11 @@ appeal leaves the finding standing.
 One instance is one appeal, keyed `appeal:<item node>:<revision>`: at most
 one per item revision. The appealed finding, its debit and the project scope
 come from an `AppealSubject` that the [closure](./closure.md) decision and
-the [penalty journal](../points/penalties.md) supply. Value disputes use the
+the [penalty journal](../points/penalties.md) supply. The debit is either
+zero (no debit row: not closed, not penalty eligible, or a zero-debit
+category) or exactly the published table debit of the subject's category
+under the row's table version, so escalation by debit always follows the
+table. Value disputes use the
 same phases with their own subject in [value disputes](./valueDisputes.md).
 Upheld effects on GitHub and on the debit belong to closure and the penalty
 journal, which consume this machine's outcome.
@@ -31,7 +35,8 @@ keeps the first appeal.
 ```quint
 import categories as F from "./categories"
 type ProjectScope = ScopeActive | ScopeSecurityOnly | ScopeRetired
-type AppealSubject = { item: str, revision: str, author: int, category: F::Category, debit: int, scope: ProjectScope }
+type AppealSubject = { item: str, revision: str, author: int, category: F::Category, tableVersion: int, debit: int,
+  scope: ProjectScope }
 type DraftChoice = NoDraft | DraftUphold | DraftDeny
 type Escalation = NotEscalated | MaliciousFinding | HighDebit | LowConfidence | DraftRejected | Overdue |
   ParticipationBan | RetiredProject
@@ -44,7 +49,8 @@ type Appeal = { opened: bool, subject: AppealSubject, appellant: int, openedAt: 
   draft: DraftChoice, draftConfidence: int, escalation: Escalation, notices: Set[int], ban: BanStatus,
   resolution: Resolution, via: ResolvedVia, resolvedBy: int,
   postedDraft: bool, postedEscalation: bool, postedResolution: bool, journal: List[Entry] }
-pure val noSubject: AppealSubject = { item: "", revision: "", author: 0, category: F::NoFinding, debit: 0, scope: ScopeActive }
+pure val noSubject: AppealSubject = { item: "", revision: "", author: 0, category: F::NoFinding, tableVersion: 0, debit: 0,
+  scope: ScopeActive }
 pure val initial: Appeal = { opened: false, subject: noSubject, appellant: 0, openedAt: 0, now: 0, queuedAt: 0,
   draft: NoDraft, draftConfidence: 0, escalation: NotEscalated, notices: Set(), ban: BanUnknown,
   resolution: Unresolved, via: NotResolved, resolvedBy: 0,
@@ -53,8 +59,14 @@ pure val slopModerators: Set[int] = Set(18633264, 202660855)
 pure val resolutionSeconds = 604800
 pure val requeueSeconds = 86400
 pure def validSubject(subject: AppealSubject): bool = subject.item != "" and subject.revision != "" and
-  subject.author > 0 and subject.category != F::NoFinding and subject.debit >= 0 and
+  subject.author > 0 and subject.category != F::NoFinding and
+  (subject.debit == 0 or (F::knownTableVersion(subject.tableVersion) and
+    subject.debit == F::debitFor(subject.tableVersion, subject.category))) and
   (subject.scope != ScopeRetired or subject.debit > 0)
+pure def lawDebitFollowsTable(subject: AppealSubject): bool =
+  validSubject(subject) implies (subject.debit == 0 or subject.debit == F::debitFor(subject.tableVersion, subject.category))
+pure def lawHighDebitOnlyForScam(subject: AppealSubject): bool =
+  (validSubject(subject) and subject.debit >= F::escalationDebit) implies subject.category == F::Scam
 pure def canOpen(a: Appeal, by: int, subject: AppealSubject): bool =
   not(a.opened) and validSubject(subject) and by == subject.author
 pure def open(a: Appeal, by: int, subject: AppealSubject): Appeal =
@@ -251,10 +263,12 @@ pure def leadsToModeratorOrResolution(a: Appeal, later: Appeal): bool =
 ### Simulation samples cover authors and others, high and low stakes, bans and moderators
 
 ```quint
-pure val spamSubject: AppealSubject = { item: "pr", revision: "head", author: 5, category: F::Spam, debit: 30, scope: ScopeActive }
+pure val spamSubject: AppealSubject = { item: "pr", revision: "head", author: 5, category: F::Spam, tableVersion: 1,
+  debit: 30, scope: ScopeActive }
 pure val subjectValues = Set(spamSubject, { ...spamSubject, category: F::Scam, debit: 240 },
   { ...spamSubject, category: F::Duplicate, debit: 0 }, { ...spamSubject, scope: ScopeRetired },
-  { ...spamSubject, scope: ScopeRetired, debit: 0 }, { ...spamSubject, category: F::NoFinding })
+  { ...spamSubject, scope: ScopeRetired, debit: 0 }, { ...spamSubject, category: F::NoFinding },
+  { ...spamSubject, debit: 240 }, { ...spamSubject, tableVersion: 2 })
 pure val byValues = Set(5, 6, 18633264)
 pure val authorityValues = Set({ actor: 6, item: "pr", role: CurrentMaintainer }, { actor: 6, item: "pr", role: NotMaintainer },
   { actor: 6, item: "pr", role: RoleUnavailable }, { actor: 18633264, item: "pr", role: CurrentMaintainer })

@@ -39,7 +39,8 @@ type Credit = { source: int, bucket: Bucket, points: int }
 type ReversalReason = AppealUpheld | MaintainerReopen
 type PenaltyRow = { item: str, bucket: Bucket, revision: str, category: F::Category, tableVersion: int,
   debit: int, recordedAt: int, moderatorReview: bool, reversed: bool, reason: ReversalReason, reversedAt: int }
-type Reopen = { item: str, revision: str, at: int }
+type ReopenRole = VerifiedMaintainer | NotVerifiedMaintainer
+type Reopen = { item: str, revision: str, at: int, actor: int, role: ReopenRole }
 type Frozen = { bucket: Bucket, weight: int }
 type Penalties = { credits: List[Credit], rows: List[PenaltyRow], reopens: List[Reopen], frozen: List[Frozen] }
 pure val initial: Penalties = { credits: List(), rows: List(), reopens: List(), frozen: List() }
@@ -96,7 +97,9 @@ pure def sometimesReopenBeforeRecord(p: Penalties): bool = p.reopens.length() > 
 ### A reversal restores the debit once and covers only its own revision or an earlier debit
 
 An upheld appeal binds the revision it was opened on and its open time; a
-confirmed maintainer reopen binds the reopened revision and its event time.
+confirmed maintainer reopen binds the reopened revision, its event time and the
+reopening actor, whose current maintainer role GitHub verified; any other
+reopen records nothing here.
 Either reverses the item's debit only when the debit was recorded for that
 revision or at or before that time, so a newer head's debit after a push
 survives an older appeal or reopen. A reversed row is otherwise immutable and
@@ -104,7 +107,8 @@ is never reversed again.
 
 ```quint
 type ReversalAuthority = { item: str, revision: str, at: int, reason: ReversalReason }
-pure def canConfirmReopen(p: Penalties, reopen: Reopen): bool = reopen.item != "" and reopen.revision != "" and reopen.at > 0
+pure def canConfirmReopen(p: Penalties, reopen: Reopen): bool = reopen.item != "" and reopen.revision != "" and reopen.at > 0 and
+  reopen.actor > 0 and reopen.role == VerifiedMaintainer
 pure def confirmReopen(p: Penalties, reopen: Reopen): Penalties = { ...p, reopens: p.reopens.append(reopen) }
 pure def covers(r: PenaltyRow, authority: ReversalAuthority): bool =
   r.item == authority.item and (r.revision == authority.revision or r.recordedAt <= authority.at)
@@ -181,7 +185,9 @@ pure val spamClose: ConfirmedClose = { item: "pr", repository: 7, revision: "h1"
 pure val closeValues = Set(spamClose, { ...spamClose, revision: "h2", closedAt: 300 },
   { ...spamClose, category: F::Scam }, { ...spamClose, category: F::Duplicate },
   { ...spamClose, item: "pr2", category: F::Busywork, closedAt: 200 })
-pure val reopenValues = Set({ item: "pr", revision: "h1", at: 150 }, { item: "pr", revision: "h1", at: 50 })
+pure val reopenValues = Set({ item: "pr", revision: "h1", at: 150, actor: 9, role: VerifiedMaintainer },
+  { item: "pr", revision: "h1", at: 50, actor: 9, role: VerifiedMaintainer },
+  { item: "pr", revision: "h1", at: 50, actor: 5, role: NotVerifiedMaintainer })
 pure val authorityValues = Set({ item: "pr", revision: "h1", at: 150, reason: MaintainerReopen },
   { item: "pr", revision: "h1", at: 150, reason: AppealUpheld }, { item: "pr", revision: "h1", at: 50, reason: AppealUpheld },
   { item: "pr2", revision: "h9", at: 250, reason: AppealUpheld })
