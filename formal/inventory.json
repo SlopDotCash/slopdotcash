@@ -692,9 +692,9 @@
     },
     {
       "path": "backend/projects/merge-activity.ts",
-      "sha256": "a7ea9dade75ccc28aa82a05bd8471bb226d6d401fa030e1373f67bb06daede5f",
+      "sha256": "108bed3fa102252aeb5b9193f184e00eaccd5e5d92193d3d399e87e7985255fe",
       "models": ["formal/models/api/api_merge_activity.qnt"],
-      "candidateLines": [30, 167, 274, 354, 359, 389, 392],
+      "candidateLines": [30, 167, 285, 341, 373, 378, 408, 411],
       "review": "mapped-abstraction"
     },
     {
@@ -9600,7 +9600,7 @@
     },
     {
       "path": "formal/models/api/api_merge_activity.qnt",
-      "sha256": "e76a3d68cda5a9320abab1bdbc453b240fb69c46a06bba0ffa4169780989553d",
+      "sha256": "f36ab822536b67e6412eea6bc8e6061c683a59c169abc32e8102bb9ffd36c196",
       "sources": [
         "backend/projects/merge-activity.ts",
         "migrations/0125_repository_merge_activity.sql",
@@ -9609,7 +9609,9 @@
       "scenarios": [
         "failureKeepsValuesTest",
         "freshRowIsNotDueTest",
-        "neverReadIsNotPublishedTest"
+        "neverReadIsNotPublishedTest",
+        "transferredPathIsDroppedTest",
+        "unlistedPathIsNotReadTest"
       ]
     },
     {

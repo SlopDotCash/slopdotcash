@@ -17,9 +17,9 @@
   ],
   "counts": {
     "files": 771,
-    "functions": 11623,
+    "functions": 11625,
     "selectedContractTargets": 188,
-    "unprovedFunctions": 11435,
+    "unprovedFunctions": 11437,
     "nonTypeScriptFiles": 57
   },
   "limits": [
@@ -657,7 +657,7 @@
 {"name":"<ArrowFunction@3173>","kind":"ArrowFunction","line":3173,"sha256":"237127b1b58c702ffe2bcc8c8d7a113d14c943e5c580c1a3b883fdd601e1d20f","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
 {"name":"publicMessage","kind":"ArrowFunction","line":3245,"sha256":"a90a73f1b07ceac45c7562a46cbed50c333c152e964132a3038fe526063d4806","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]}
 ]},
-{"path":"backend/projects/merge-activity.ts","sha256":"a7ea9dade75ccc28aa82a05bd8471bb226d6d401fa030e1373f67bb06daede5f","language":"typescript","disposition":"callables-inventoried","functions":[
+{"path":"backend/projects/merge-activity.ts","sha256":"108bed3fa102252aeb5b9193f184e00eaccd5e5d92193d3d399e87e7985255fe","language":"typescript","disposition":"callables-inventoried","functions":[
 {"name":"median","kind":"FunctionDeclaration","line":61,"sha256":"848cb42b1074fd366f598fa4396db5ae439998a32d54a55518f28df1b51b0259","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":["library-semantics-review"]},
 {"name":"<ArrowFunction@63>","kind":"ArrowFunction","line":63,"sha256":"25d7aa65d7f7b3d5a68eb63b347661b65d825eab321a84a4b2ace656cfd61b96","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
 {"name":"summarizeMergeActivity","kind":"FunctionDeclaration","line":71,"sha256":"6077633a187c64e1254a69ed741c1f5016191ddbb530d05dc61f1fcb694c5022","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
@@ -670,14 +670,16 @@
 {"name":"graphql","kind":"FunctionDeclaration","line":147,"sha256":"5ad1fb9dbc1904694b3450c72a6d87c4c05c757f88833cd18399bd694192a763","status":"unproved","candidate":"requires-effect-or-language-boundary","syntaxFeatures":["await","runtime-effect","throw-unreachable-model"]},
 {"name":"<ArrowFunction@166>","kind":"ArrowFunction","line":166,"sha256":"1193b7f146e455598bb4c70918d65f57fc9659854581e636d571b48f0a2b9b08","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
 {"name":"readMergeActivity","kind":"FunctionDeclaration","line":175,"sha256":"fe5193df9947b488aedf393a028d34b8f9d5381e613f76a79d55d3a9c3669772","status":"unproved","candidate":"requires-effect-or-language-boundary","syntaxFeatures":["await","library-semantics-review","throw-unreachable-model"]},
-{"name":"measuredRepositories","kind":"FunctionDeclaration","line":273,"sha256":"0202f693d407e297c69ef3ac7e4950faad7a084bae22ea5ea83a61284aa278b1","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
-{"name":"<ArrowFunction@277>","kind":"ArrowFunction","line":277,"sha256":"f5eac254e8ecb39d878a82f5d9edff03300ebfc203b0fb320397b95aaf066dc5","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
-{"name":"due","kind":"FunctionDeclaration","line":299,"sha256":"93fec09c8107f7fbecac3222107f221ec0e9f4a94a639326f136f6dffebdd60b","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
-{"name":"refreshMergeActivity","kind":"FunctionDeclaration","line":311,"sha256":"0fafa4955ac924685d19a3728777fd59f0ef04f03771141a93c42449c9458d87","status":"unproved","candidate":"requires-effect-or-language-boundary","syntaxFeatures":["await","library-semantics-review","throw-unreachable-model"]},
-{"name":"<ArrowFunction@324>","kind":"ArrowFunction","line":324,"sha256":"cc1b5750669716e10edce3f93b2f56c03a86a6a278c8dd09cfc220b0daa81c3c","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
-{"name":"<ArrowFunction@338>","kind":"ArrowFunction","line":338,"sha256":"a41ec4d34cc550e757dad5bd24402a55c3ae4a960599fd53f450eefde00d5e64","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
-{"name":"handleMergeActivityApi","kind":"FunctionDeclaration","line":405,"sha256":"cafe1e6ba5b5a76151db29fbbc5bc03b3b801905af39425966a9109032db5963","status":"unproved","candidate":"requires-effect-or-language-boundary","syntaxFeatures":["await"]},
-{"name":"<ArrowFunction@453>","kind":"ArrowFunction","line":453,"sha256":"e83c282c098155992960d17b211d9617596aacaf8bbb8759cdaa9286724e1a0c","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]}
+{"name":"listedRepositories","kind":"FunctionDeclaration","line":273,"sha256":"dc847286a55cecbaebb3191576eb8ba0320fe4c7dfc43bb320c6dcb77d3e1a36","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
+{"name":"<ArrowFunction@275>","kind":"ArrowFunction","line":275,"sha256":"f5eac254e8ecb39d878a82f5d9edff03300ebfc203b0fb320397b95aaf066dc5","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
+{"name":"measuredRepositories","kind":"FunctionDeclaration","line":284,"sha256":"4eae766be2aaefaa1588bb8751753ddaa993d337c8d38f3159a19d72ceb091ec","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
+{"name":"due","kind":"FunctionDeclaration","line":304,"sha256":"93fec09c8107f7fbecac3222107f221ec0e9f4a94a639326f136f6dffebdd60b","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
+{"name":"refreshMergeActivity","kind":"FunctionDeclaration","line":317,"sha256":"bb48b8672cfb97ebbcbce63d2af326d5753154318c833c95a187040575412541","status":"unproved","candidate":"requires-effect-or-language-boundary","syntaxFeatures":["await","library-semantics-review","throw-unreachable-model"]},
+{"name":"<ArrowFunction@330>","kind":"ArrowFunction","line":330,"sha256":"cc1b5750669716e10edce3f93b2f56c03a86a6a278c8dd09cfc220b0daa81c3c","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
+{"name":"<ArrowFunction@335>","kind":"ArrowFunction","line":335,"sha256":"0dffa34869e177aa82e8aceb1cb379da3811e92c69c48394da7c231ea4813448","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
+{"name":"<ArrowFunction@357>","kind":"ArrowFunction","line":357,"sha256":"a41ec4d34cc550e757dad5bd24402a55c3ae4a960599fd53f450eefde00d5e64","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
+{"name":"handleMergeActivityApi","kind":"FunctionDeclaration","line":424,"sha256":"cafe1e6ba5b5a76151db29fbbc5bc03b3b801905af39425966a9109032db5963","status":"unproved","candidate":"requires-effect-or-language-boundary","syntaxFeatures":["await"]},
+{"name":"<ArrowFunction@472>","kind":"ArrowFunction","line":472,"sha256":"e83c282c098155992960d17b211d9617596aacaf8bbb8759cdaa9286724e1a0c","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]}
 ]},
 {"path":"backend/projects/pool-funding.ts","sha256":"bcc15b08284f517a02d24105670d9aeb3f5a1f5bba30e085fb2d82662aa6dc15","language":"typescript","disposition":"callables-inventoried","functions":[
 {"name":"recentPeriods","kind":"FunctionDeclaration","line":49,"sha256":"58f90c14aa2236ed1280523f0628392aa0bab397a14f66e92b41397459118b40","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
