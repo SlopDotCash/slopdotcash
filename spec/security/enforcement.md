@@ -494,7 +494,7 @@ pure def alwaysFlagPauseHasNoRevision(e: Enforcement): bool = e.restriction == F
 pure def alwaysUnbannedReviewedFindings(e: Enforcement): bool =
   (e.restriction != ServiceBan and e.restriction != ModeratorBan) implies e.findings.subseteq(e.reviewedFindings)
 pure def alwaysReviewedAreFindings(e: Enforcement): bool = e.reviewedFindings.subseteq(e.findings)
-pure def noticeTo(entry: int, to: Recipient): Notice = { entry: entry, to: to }
+pure def noticeTo(entry: int, recipient: Recipient): Notice = { entry: entry, to: recipient }
 pure def alwaysNoticesPerEntry(e: Enforcement): bool =
   e.journal.every(j => e.notices.includes(noticeTo(j.seq, ListingAccount)) and e.notices.includes(noticeTo(j.seq, StewardAccount)))
 pure def alwaysJournalNumbered(e: Enforcement): bool =
