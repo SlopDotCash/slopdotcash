@@ -1,7 +1,9 @@
 import { describe, expect, test } from "bun:test";
+import { createHash } from "node:crypto";
 import type { CorrectionSource } from "../src/lib/points-implementation-corrections";
 import { collect, fixture } from "../tests/value-binary-fixture";
 import type { GitHubClient } from "../workers/slopbot/github";
+import { NATIVE_MERGE_CONTEXT } from "../workers/slopbot/value-native-merge";
 import type { WorkUnitSource } from "../workers/slopbot/value-work-unit-types";
 import {
   bindRetained,
@@ -1830,3 +1832,118 @@ for (const fault of [
     ).rejects.toThrow();
   });
 }
+
+async function nativeUnitContextSnapshot() {
+  const input = await snapshot();
+  input.original.pull.merged_at = "2026-10-03T00:00:01Z";
+  input.original.pull.closed_at = input.original.pull.merged_at;
+  input.original.pull.merge_commit_sha = input.accepted.pull.merge_commit_sha;
+  input.original.mergeCommitEvidence = clone(
+    input.accepted.mergeCommitEvidence,
+  );
+  const historicalText = "export const one = 1;\nexport const two = 2;\n";
+  const acceptedText = "export const one = 1;\nexport const two = 2;\n";
+  const objectHash = (kind: string, bytes: Buffer) =>
+    createHash("sha1")
+      .update(`${kind} ${bytes.length}\0`)
+      .update(bytes)
+      .digest("hex");
+  const tree = (commitSha: string, text: string) => {
+    const blobSha = objectHash("blob", Buffer.from(text));
+    const bytes = Buffer.concat([
+      Buffer.from("100644 fix.ts\0"),
+      Buffer.from(blobSha, "hex"),
+    ]);
+    return {
+      commitSha,
+      treeSha: objectHash("tree", bytes),
+      entries: [{ path: "fix.ts", mode: "100644", type: "blob", sha: blobSha }],
+    };
+  };
+  const trees = [tree(sha("a"), historicalText), tree(sha("c"), acceptedText)];
+  input.original.nativeMergeAcceptance = {
+    schemaVersion: 1,
+    headSha: sha("a"),
+    mergeSha: sha("c"),
+    parentSha: sha("f"),
+    integratedHeadSha: sha("b"),
+    ancestry: [clone(input.accepted.commits[1])],
+    trees,
+    retainedFiles: [
+      {
+        sourcePath: "fix.ts",
+        acceptedPath: "fix.ts",
+        historical: {
+          blobSha: trees[0].entries[0].sha,
+          mode: "100644",
+          text: historicalText,
+        },
+        accepted: {
+          blobSha: trees[1].entries[0].sha,
+          mode: "100644",
+          text: acceptedText,
+        },
+      },
+    ],
+  };
+  input.original.limitations = [NATIVE_MERGE_CONTEXT];
+  input.responses.set(`${root}/pulls/1`, {
+    ...input.original.pull,
+    created_at: "2026-10-01T00:00:00Z",
+  });
+  const converted = await bindRetained(input.sources, input.owners, true);
+  const accepted = converted.find(
+    (source) => source.sourceId === input.accepted.pull.node_id,
+  );
+  if (!accepted) throw Error("Missing accepted fixture");
+  return {
+    ...input,
+    acceptedSource: accepted,
+    claims: [
+      {
+        id: "native_original",
+        sourceId: accepted.sourceId,
+        commitSha: sha("a"),
+        path: "fix.ts",
+      },
+      {
+        id: "native_followup",
+        sourceId: accepted.sourceId,
+        commitSha: sha("b"),
+        path: "fix.ts",
+      },
+    ],
+  };
+}
+
+test("reviewed unit validates native carrier context before building its original proof", async () => {
+  const input = await nativeUnitContextSnapshot();
+  const result = await octoberOriginalContributorUnitProof(
+    input.github,
+    input.acceptedSource,
+    input.sources[1],
+    input.sources[0],
+    input.owners,
+    input.claims,
+  );
+  expect(result.originalContributor?.claimIds).toEqual(
+    input.claims.map((claim) => claim.id),
+  );
+  expect(result.sources.every((source) => source.complete)).toBe(true);
+  expect(input.original.limitations).toEqual([NATIVE_MERGE_CONTEXT]);
+});
+
+test("reviewed unit keeps an invalid native carrier context held", async () => {
+  const input = await nativeUnitContextSnapshot();
+  input.accepted.pull.head.sha = sha("9");
+  await expect(
+    octoberOriginalContributorUnitProof(
+      input.github,
+      input.acceptedSource,
+      input.sources[1],
+      input.sources[0],
+      input.owners,
+      input.claims,
+    ),
+  ).rejects.toThrow();
+});
