@@ -17,10 +17,22 @@ import {
   fixture as valueFixture,
   repository as valueRepository,
 } from "../tests/value-binary-fixture";
-import { makeOriginal } from "../tests/value-promotion-fixture";
+import {
+  makeOriginal,
+  actor as nativeActor,
+  base,
+  commit,
+  repository,
+} from "../tests/value-promotion-fixture";
+import type { FileChange } from "../workers/slopbot/value-evidence-types";
+import {
+  collectNativeMergeAcceptance,
+  NATIVE_MERGE_CONTEXT,
+} from "../workers/slopbot/value-native-merge";
 import { prepareWorkUnitEvidence } from "../workers/slopbot/value-work-unit";
 import {
   CollectionBudgetExhausted,
+  bindRetained,
   CorrectionEvidenceCache,
   censusMonths,
   collectImplementationCorrections,
@@ -3324,3 +3336,175 @@ test("the grouped collector binds the reviewed accepted subset without weakening
     loader.mockRestore();
   }
 });
+
+const head = "1".repeat(40),
+  later = "4".repeat(40),
+  merged = "5".repeat(40);
+const hash = (kind: string, bytes: Buffer) =>
+  createHash("sha1")
+    .update(`${kind} ${bytes.length}\0`)
+    .update(bytes)
+    .digest("hex");
+function nativeContextFixture() {
+  const source = makeOriginal();
+  source.evidence.pull.merge_commit_sha = merged;
+  source.evidence.pull.head.sha = head;
+  const one = commit(head),
+    two = commit(later);
+  two.parents = [{ sha: head }];
+  two.commit.message = "Follow up the accepted fix";
+  const added: FileChange = {
+    filename: "fix.ts",
+    status: "added",
+    additions: 1,
+    deletions: 0,
+    patch: "@@ -0,0 +1 @@\n+export const fixed = true;",
+    blob_url: null,
+  };
+  const changed: FileChange = {
+    ...added,
+    status: "modified",
+    additions: 1,
+    deletions: 1,
+    patch:
+      "@@ -1 +1 @@\n-export const fixed = true;\n+export const fixed = true; // reviewed",
+  };
+  source.evidence.files = [added];
+  source.evidence.commits = [one];
+  source.evidence.commitAttribution = [
+    {
+      sha: head,
+      actorNodeIds: [nativeActor.node_id],
+      changedPaths: ["fix.ts"],
+      files: [added],
+      limitations: [],
+    },
+  ];
+  source.evidence.mergeCommitEvidence = {
+    sha: merged,
+    html_url: `https://github.com/${repository.id}/commit/${merged}`,
+    parents: [{ sha: base }, { sha: later }],
+    stats: { additions: 1, deletions: 0, total: 1 },
+    files: [
+      {
+        ...added,
+        patch: "@@ -0,0 +1 @@\n+export const fixed = true; // reviewed",
+      },
+    ],
+  };
+  const carrier = structuredClone(source);
+  carrier.evidence.pull.node_id = "PR_carrier";
+  carrier.evidence.pull.number = 2;
+  carrier.evidence.pull.html_url = `https://github.com/${repository.id}/pull/2`;
+  carrier.evidence.pull.head.sha = later;
+  carrier.evidence.pull.commits = 2;
+  carrier.evidence.files = structuredClone(
+    source.evidence.mergeCommitEvidence.files,
+  );
+  carrier.evidence.commits = structuredClone([one, two]);
+  carrier.evidence.commitAttribution.push({
+    sha: later,
+    actorNodeIds: [nativeActor.node_id],
+    changedPaths: ["fix.ts"],
+    files: [changed],
+    limitations: [],
+  });
+  const values = new Map<string, unknown>();
+  function bind(ref: string, text: string) {
+    const blob = hash("blob", Buffer.from(text));
+    const bytes = Buffer.concat([
+      Buffer.from("100644 fix.ts\0"),
+      Buffer.from(blob, "hex"),
+    ]);
+    const tree = hash("tree", bytes);
+    values.set(`/repos/${repository.id}/git/commits/${ref}`, {
+      sha: ref,
+      tree: { sha: tree },
+    });
+    values.set(`/repos/${repository.id}/git/trees/${tree}?recursive=1`, {
+      sha: tree,
+      truncated: false,
+      tree: [{ path: "fix.ts", mode: "100644", type: "blob", sha: blob }],
+    });
+    values.set(`/repos/${repository.id}/contents/fix.ts?ref=${ref}`, {
+      type: "file",
+      encoding: "base64",
+      size: Buffer.byteLength(text),
+      sha: blob,
+      content: Buffer.from(text).toString("base64"),
+    });
+  }
+  bind(head, "export const fixed = true;\n");
+  bind(merged, "export const fixed = true; // reviewed\n");
+  values.set(
+    `/repos/${repository.id}/compare/${head}...${later}?per_page=100&page=1`,
+    {
+      status: "ahead",
+      merge_base_commit: { sha: head },
+      total_commits: 1,
+      commits: [two],
+    },
+  );
+  values.set(`/repos/${repository.id}/compare/${head}...${merged}?per_page=1`, {
+    status: "ahead",
+    merge_base_commit: { sha: head },
+    files: [changed],
+  });
+  const client = {
+    async get<T>(path: string): Promise<T | null> {
+      return structuredClone(values.get(path) ?? null) as T | null;
+    },
+  };
+  return { source, carrier, client, values, one, two };
+}
+async function preparedNativeContext() {
+  const f = nativeContextFixture();
+  const proof = await collectNativeMergeAcceptance(
+    f.client,
+    repository.id,
+    f.source.evidence,
+  );
+  if (!proof) throw Error("Missing proof");
+  f.source.evidence.nativeMergeAcceptance = proof;
+  f.source.evidence.limitations = [NATIVE_MERGE_CONTEXT];
+  return { ...f, proof };
+}
+
+test("grouped conversion retains a fully verified native ancestor context", async () => {
+  const { source, carrier } = await preparedNativeContext();
+  const group = await prepareWorkUnitEvidence([source, carrier], [repository]);
+  expect(group.limitations).toEqual([]);
+  const owners = new Map(
+    carrier.evidence.commits.map((c) => [
+      `${repository.id.toLowerCase()}\0${c.sha}`,
+      carrier.evidence.pull.node_id,
+    ]),
+  );
+  expect(
+    (await bindRetained(group.sources, owners, true)).map((s) => s.complete),
+  ).toEqual([true, true]);
+  expect(source.evidence.limitations).toEqual([NATIVE_MERGE_CONTEXT]);
+  expect(bindRetained(group.sources, owners)).rejects.toThrow(
+    "Full retained source",
+  );
+});
+for (const fault of [
+  "missing-carrier",
+  "forged-head",
+  "other-limitation",
+] as const) {
+  test(`grouped native context refuses ${fault}`, async () => {
+    const { source, carrier } = await preparedNativeContext();
+    if (fault === "forged-head")
+      carrier.evidence.pull.head.sha = "9".repeat(40);
+    if (fault === "other-limitation")
+      source.evidence.limitations.push("Uninspected source");
+    expect(
+      bindRetained(
+        fault === "missing-carrier" ? [source] : [source, carrier],
+        new Map(),
+        true,
+      ),
+    ).rejects.toThrow();
+  });
+}
