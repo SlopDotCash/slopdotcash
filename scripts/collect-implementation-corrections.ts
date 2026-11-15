@@ -1841,6 +1841,15 @@ async function acknowledgedOriginalRepairs(
     for (const source of [original, integration]) {
       const pull = source.evidence.pull;
       const acknowledgements = retainedAcknowledgements(source.evidence);
+      const bodyHints = sameRepositoryCommitHints(
+        source.evidence.repository,
+        pull.body ?? "",
+      );
+      const bodyHeadHint = bodyHints.includes(pull.head.sha)
+        ? pull.head.sha
+        : source === original
+          ? bodyHints.find((hint) => pull.head.sha.startsWith(hint))
+          : undefined;
       const matching = acknowledgements.find(
         (record) =>
           record.user?.node_id ===
@@ -1875,16 +1884,13 @@ async function acknowledgedOriginalRepairs(
           headSha: pull.head.sha,
         };
       } else if (
-        source === integration &&
-        sameRepositoryCommitHints(
-          source.evidence.repository,
-          pull.body ?? "",
-        ).includes(pull.head.sha) &&
-        referencesOriginalContributorSource(
-          pull.body ?? "",
-          source.evidence.repository,
-          original.evidence.pull.number,
-        )
+        bodyHeadHint !== undefined &&
+        (source === original ||
+          referencesOriginalContributorSource(
+            pull.body ?? "",
+            source.evidence.repository,
+            original.evidence.pull.number,
+          ))
       ) {
         const [owner, name] = source.evidence.repository.split("/");
         if (!github.graphql) continue;
@@ -1913,11 +1919,20 @@ async function acknowledgedOriginalRepairs(
           body.mergedAt === pull.merged_at &&
           body.updatedAt === pull.updated_at
         ) {
+          let resolvedHead: OriginalContributorRepair["reference"]["resolvedHead"];
+          if (bodyHeadHint !== pull.head.sha) {
+            const resolved = await github.get<{ sha: string }>(
+              `/repos/${source.evidence.repository}/commits/${bodyHeadHint}`,
+            );
+            if (resolved?.sha !== pull.head.sha) continue;
+            resolvedHead = { hint: bodyHeadHint, commitSha: resolved.sha };
+          }
           reference = {
             sourceDigests,
             pull,
             acceptingPull: integration.evidence.pull,
             headSha: pull.head.sha,
+            ...(resolvedHead ? { resolvedHead } : {}),
             bodyEdit: {
               ...body,
               editor: body.editor
