@@ -1,5 +1,6 @@
 import { decodeBase64 } from "../../src/lib/byte-encoding";
 import { gitObjectSha1 } from "./git-object";
+import { fullComparisonCounts } from "./value-comparison-counts";
 import type { EvidenceClient, FileChange } from "./value-evidence-types";
 
 function addedLines(file: FileChange): string[] | null {
@@ -19,7 +20,11 @@ function addedLines(file: FileChange): string[] | null {
 }
 
 export function valueAdditionCount(file: FileChange): number {
-  return addedLines(file)?.length ?? file.additions;
+  return (
+    addedLines(file)?.length ??
+    fullComparisonCounts(file)?.additions ??
+    file.additions
+  );
 }
 
 /** Derived deletion evidence does not overwrite GitHub's reported counts or patch. */
@@ -37,7 +42,11 @@ function removedLines(file: FileChange): string[] | null {
   return lines;
 }
 export function valueDeletionCount(file: FileChange): number {
-  return removedLines(file)?.length ?? file.deletions;
+  return (
+    removedLines(file)?.length ??
+    fullComparisonCounts(file)?.deletions ??
+    file.deletions
+  );
 }
 export function valuePatch(file: FileChange): string | undefined {
   const additions = addedLines(file);
