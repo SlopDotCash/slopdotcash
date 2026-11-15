@@ -2,12 +2,18 @@
 lemma lawClosureWithdrawsEverything_ensures(e: Enrollment, now: int)
   ensures (lawClosureWithdrawsEverything(e, now) == true)
 {
-  var after := closeEnrollment(e);
-  assert |after.verifications| == |e.verifications|;
-  forall v | v in after.verifications
+  var xs := e.verifications;
+  var ys := closeEnrollment(e).verifications;
+  assert |ys| == |xs|;
+  forall i | 0 <= i < |ys|
+    ensures !pending(ys[i], now)
+  {
+    assert ys[i] == (if !(xs[i].consumed) then xs[i].(cancelled := true) else xs[i]);
+  }
+  forall v | v in ys
     ensures !pending(v, now)
   {
-    var i :| 0 <= i < |after.verifications| && after.verifications[i] == v;
-    assert v == (if !(e.verifications[i].consumed) then e.verifications[i].(cancelled := true) else e.verifications[i]);
+    var i :| 0 <= i < |ys| && ys[i] == v;
   }
+  assert !(exists v :: v in ys && !(!(pending(v, now))));
 }
