@@ -11,14 +11,18 @@ clearance generation inside the SQL write). It also derives what consumers
 read: collection and skill publication, the Slopbot review scope, monthly
 eligibility and the setup status.
 
-Two inputs come from other areas and are typed evidence, never caller claims:
-the account standing from [participation restrictions](./access.md) (the
-`project-account-bans` list read for the acting account) and the registry-wide
-repository read from the [registry](./backend/projectRegistry.md) (which
-project, if any, lists the repository's permanent id, and whether a
-restriction binds it). The manifest policy result is the deterministic
-`assertProjectPolicyTransition` check of the stored manifest. The admission
-outcome is the recorded state of the [assessment machine](./security/admission.md).
+Three inputs come from other areas and are typed evidence, never caller
+claims: the account standing from [participation restrictions](./access.md)
+(the moderator account-ban list read for the acting account and for the
+steward the manifest names), the registry-wide repository read and project
+closure from the [registry](./backend/projectRegistry.md) (which project, if
+any, lists the repository's permanent id or path, and which restricted
+project closes this one), and the admission outcome, which only the signed
+vetting service submits from the recorded state of the
+[assessment machine](./security/admission.md). The manifest policy result is
+the project API's deterministic `assertProjectPolicyTransition` check of the
+stored manifest at the current revision. Clock and finalized-funding events
+come only from the project API's own scheduled jobs (`-1`).
 
 ## Story: Perform every project action on registry and security together
 
@@ -33,6 +37,7 @@ import closureConsent as C from "./backend/closureConsent"
 import projects as P from "./backend/projects"
 import enforcement as E from "./security/enforcement"
 import admission as A from "./security/admission"
+import projectRegistry as R from "./backend/projectRegistry"
 type Registry = { project: P::Project, security: E::Enforcement }
 pure val initial: Registry = { project: P::initial, security: E::initial }
 pure def sync(p: P::Project, e: E::Enforcement): E::Enforcement =
@@ -48,35 +53,43 @@ pure def alwaysChildFactsHold(c: Registry): bool =
 pure def alwaysAdministratorsAgree(c: Registry): bool =
   c.project.administrators.every(a => c.security.administrators.contains(a)) and
   c.security.administrators.forall(a => c.project.administrators.includes(a))
+pure def stepOnlyReinstatementUnretires(before: Registry, via: str, after: Registry): bool =
+  (before.project.retirement != P::NotRetired and after.project.retirement == P::NotRetired) implies
+    (via == "reinstate" and before.project.retirement == P::RestrictionRetired and after.project.tier == P::Community and
+     after.project.status == P::Paused)
 ```
 
 ### Account bans and registry conflicts refuse new projects and owner writes
 
-A banned maintainer cannot create a project, publish a stored application or
-publish an owner revision, as the actor or as the named steward
-(`maintainer_banned`). An unavailable ban read refuses. No project can be
-created for a repository another project lists or a restriction binds.
+A banned maintainer cannot create a project, publish a stored application,
+publish an owner revision, append, edit consent or activate it, whether the
+banned account acts itself or is the steward the manifest names
+(`assertMaintainerNotBanned`, `maintainer_banned`). An unavailable ban read
+refuses. An account this project's own moderator decision banned is refused
+too. No project can be created for a repository another project lists or a
+restriction binds.
 
 ```quint
 type BanRead = NotBanned | AccountBanned | BanUnavailable
-type AccountStanding = { actor: int, ban: BanRead }
+type AccountStanding = { actor: int, steward: int, actorBan: BanRead, stewardBan: BanRead }
 type RegistryRead = { repository: int, listedBy: int, restricted: bool }
-pure def unbanned(by: int, account: AccountStanding): bool = account.actor == by and account.ban == NotBanned
+pure def unbanned(by: int, steward: int, account: AccountStanding): bool =
+  account.actor == by and account.steward == steward and account.actorBan == NotBanned and account.stewardBan == NotBanned
 pure def repositoryFree(repository: int, read: RegistryRead): bool = read.repository == repository and read.listedBy == 0 and not(read.restricted)
 pure def lawConflictsRefuseCreation(repository: int, read: RegistryRead): bool =
   (read.listedBy != 0 or read.restricted) implies not(repositoryFree(repository, read))
-pure def lawBanOrUnavailableRefusesOwnerWrite(by: int, account: AccountStanding): bool =
-  account.ban != NotBanned implies not(unbanned(by, account))
+pure def lawBanOrUnavailableRefusesOwnerWrite(by: int, steward: int, account: AccountStanding): bool =
+  (account.actorBan != NotBanned or account.stewardBan != NotBanned) implies not(unbanned(by, steward, account))
 pure val readValues = Set({ repository: 1, listedBy: 0, restricted: false }, { repository: 1, listedBy: 9, restricted: false },
   { repository: 1, listedBy: 0, restricted: true })
 pure def canCreate(c: Registry, by: int, creation: P::Creation, account: AccountStanding, registry: RegistryRead): bool =
-  P::canCreate(c.project, by, creation) and unbanned(by, account) and repositoryFree(P::primary(c.project), registry) and
+  P::canCreate(c.project, by, creation) and unbanned(by, creation.facts.owner, account) and repositoryFree(P::primary(c.project), registry) and
   c.security.restriction == E::Clear
 pure def create(c: Registry, by: int, creation: P::Creation, account: AccountStanding, registry: RegistryRead): Registry =
   val p = P::create(c.project, by, creation)
   { project: p, security: sync(p, c.security) }
 pure def canPublishApplication(c: Registry, by: int, creation: P::Creation, account: AccountStanding, registry: RegistryRead): bool =
-  P::canPublishApplication(c.project, by, creation) and unbanned(by, account) and repositoryFree(P::primary(c.project), registry) and
+  P::canPublishApplication(c.project, by, creation) and unbanned(by, creation.facts.owner, account) and repositoryFree(P::primary(c.project), registry) and
   c.security.restriction == E::Clear
 pure def publishApplication(c: Registry, by: int, creation: P::Creation, account: AccountStanding, registry: RegistryRead): Registry =
   val p = P::publishApplication(c.project, by, creation)
@@ -99,46 +112,52 @@ retired.
 
 ```quint
 type ManifestPolicy = PolicyAccepts | PolicyRefuses
-pure def restrictionPlan(p: P::Project, policy: ManifestPolicy): E::RevisionPlan =
-  if (p.retirement != P::NotRetired) E::RevisionNotNeeded else if (policy == PolicyAccepts) E::RevisionAppended else E::RevisionPending
-pure def retiredFor(plan: E::RevisionPlan, p: P::Project): P::Project =
-  if (plan == E::RevisionAppended and P::canRetireForRestriction(p)) P::retireForRestriction(p) else p
+type PolicyCheck = { revision: int, result: ManifestPolicy }
+pure def policyCurrent(p: P::Project, policy: PolicyCheck): bool = policy.revision == p.revision
+pure def restrictionPlan(p: P::Project, policy: PolicyCheck): E::RevisionPlan =
+  if (p.retirement != P::NotRetired) E::RevisionNotNeeded else if (policy.result == PolicyAccepts) E::RevisionAppended else E::RevisionPending
+pure def retiredFor(plan: E::RevisionPlan, p: P::Project): P::Project = P::withRestrictionRetirement(plan == E::RevisionAppended, p)
 pure def canRequestAssessment(c: Registry, by: int, repository: int, requestOrigin: E::RequestOrigin, assessmentId: int, authority: P::AuthorityRead): bool =
   c.project.revision > 0 and E::canRequestAssessment(c.security, by, repository, requestOrigin, assessmentId) and
   ((requestOrigin == E::SetupCheck or requestOrigin == E::OwnerRescan) implies
     (c.project.retirement == P::NotRetired and (by == E::vettingService or P::currentAuthority(c.project, by, authority))))
 pure def requestAssessment(c: Registry, by: int, repository: int, requestOrigin: E::RequestOrigin, assessmentId: int, authority: P::AuthorityRead): Registry =
   { ...c, security: E::requestAssessment(c.security, by, repository, requestOrigin, assessmentId) }
-pure def canRecordResult(c: Registry, scanOutcome: A::Outcome, policy: ManifestPolicy): bool =
-  E::canRecordResult(c.security, scanOutcome, if (scanOutcome.disposition == A::DMalicious) restrictionPlan(c.project, policy) else E::RevisionNotNeeded)
-pure def recordResult(c: Registry, scanOutcome: A::Outcome, policy: ManifestPolicy): Registry =
+pure def canRecordResult(c: Registry, by: int, scanOutcome: A::Outcome, policy: PolicyCheck): bool =
+  policyCurrent(c.project, policy) and
+  E::canRecordResult(c.security, by, scanOutcome, if (scanOutcome.disposition == A::DMalicious) restrictionPlan(c.project, policy) else E::RevisionNotNeeded)
+pure def recordResult(c: Registry, by: int, scanOutcome: A::Outcome, policy: PolicyCheck): Registry =
   val malicious = scanOutcome.disposition == A::DMalicious
   val plan = if (malicious) restrictionPlan(c.project, policy) else E::RevisionNotNeeded
   val p = if (malicious) retiredFor(plan, c.project) else c.project
-  { project: p, security: sync(p, E::recordResult(c.security, scanOutcome, plan)) }
-pure def canObserveEvidence(c: Registry, repository: int, evidenceRead: E::EvidenceRead): bool = E::canObserveEvidence(c.security, repository, evidenceRead)
-pure def observeEvidence(c: Registry, repository: int, evidenceRead: E::EvidenceRead): Registry =
-  { ...c, security: E::observeEvidence(c.security, repository, evidenceRead) }
-pure val policyValues = Set(PolicyAccepts, PolicyRefuses)
+  { project: p, security: sync(p, E::recordResult(c.security, by, scanOutcome, plan)) }
+pure def canObserveEvidence(c: Registry, by: int, repository: int, evidenceRead: E::EvidenceRead): bool =
+  E::canObserveEvidence(c.security, by, repository, evidenceRead)
+pure def observeEvidence(c: Registry, by: int, repository: int, evidenceRead: E::EvidenceRead): Registry =
+  { ...c, security: E::observeEvidence(c.security, by, repository, evidenceRead) }
+pure val policyValues = tuples(1.to(5), Set(PolicyAccepts, PolicyRefuses)).map(x => { revision: x._1, result: x._2 })
 ```
 
 ### Activation needs current clearance and no restriction, and owner writes need a clear project
 
-The setup check activates a paused project only when every repository clears
-and no restriction holds. Owner revisions, appended repositories, consent
-edits and placements are refused while any restriction holds. An owner
+The setup check activates a paused project only when every repository clears,
+no restriction holds and neither the acting account nor the steward is
+banned (activation is an owner-participation revision). Owner revisions,
+appended repositories, consent edits and placements are refused while any
+restriction holds (`project_restricted`). An owner
 revision's clearance input is the composed clearance, so an executable change
 pauses an active project whose admission is not retained.
 
 ```quint
 pure def clearanceOf(e: E::Enforcement): P::Clearance = if (E::cleared(e)) P::ClearanceRetained else P::ClearanceMissing
-pure def canActivate(c: Registry, by: int, check: P::SetupCheck): bool =
-  P::canActivate(c.project, by, check) and E::mayContribute(c.security)
-pure def activate(c: Registry, by: int, check: P::SetupCheck): Registry =
+pure def canActivate(c: Registry, by: int, check: P::SetupCheck, account: AccountStanding): bool =
+  P::canActivate(c.project, by, check) and E::mayContribute(c.security) and unbanned(by, c.project.steward, account) and
+  not(c.security.accountBans.includes(by))
+pure def activate(c: Registry, by: int, check: P::SetupCheck, account: AccountStanding): Registry =
   val p = P::activate(c.project, by, check)
   { project: p, security: sync(p, c.security) }
 pure def ownerWriteAllowed(c: Registry, by: int, account: AccountStanding): bool =
-  c.security.restriction == E::Clear and unbanned(by, account)
+  c.security.restriction == E::Clear and unbanned(by, c.project.steward, account) and not(c.security.accountBans.includes(by))
 pure def canPublishOwnerRevision(c: Registry, by: int, change: P::OwnerChange, account: AccountStanding): bool =
   P::canPublishOwnerRevision(c.project, by, change) and ownerWriteAllowed(c, by, account) and change.clearance == clearanceOf(c.security)
 pure def publishOwnerRevision(c: Registry, by: int, change: P::OwnerChange, account: AccountStanding): Registry =
@@ -163,7 +182,7 @@ pure def editConsent(c: Registry, by: int, edit: P::ConsentEdit, account: Accoun
 pure def canRemove(c: Registry, by: int, removal: P::Removal): bool = P::canRemove(c.project, by, removal)
 pure def remove(c: Registry, by: int, removal: P::Removal): Registry =
   val p = P::remove(c.project, by, removal)
-  { project: p, security: sync(p, c.security) }
+  { project: p, security: E::withRevisionLanded(p.tier == P::Retired, sync(p, c.security)) }
 pure def canAdminRevise(c: Registry, by: int, kind: P::AdminKind, steward: int): bool =
   P::canAdminRevise(c.project, by, kind, steward) and c.security.restriction == E::Clear
 pure def adminRevise(c: Registry, by: int, kind: P::AdminKind, steward: int): Registry =
@@ -173,10 +192,10 @@ pure def canPlace(c: Registry, by: int, tier: P::Tier): bool = P::canPlace(c.pro
 pure def place(c: Registry, by: int, tier: P::Tier): Registry =
   val p = P::place(c.project, by, tier)
   { project: p, security: sync(p, c.security) }
-pure def canRecordFunding(c: Registry, funding: P::FundingEvidence): bool = P::canRecordFunding(c.project, funding)
-pure def recordFunding(c: Registry, funding: P::FundingEvidence): Registry = { ...c, project: P::recordFunding(c.project, funding) }
-pure def canAdvanceMonth(c: Registry, month: int): bool = P::canAdvanceMonth(c.project, month)
-pure def advanceMonth(c: Registry, month: int): Registry = { ...c, project: P::advanceMonth(c.project, month) }
+pure def canRecordFunding(c: Registry, by: int, funding: P::FundingEvidence): bool = P::canRecordFunding(c.project, by, funding)
+pure def recordFunding(c: Registry, by: int, funding: P::FundingEvidence): Registry = { ...c, project: P::recordFunding(c.project, by, funding) }
+pure def canAdvanceMonth(c: Registry, by: int, month: int): bool = P::canAdvanceMonth(c.project, by, month)
+pure def advanceMonth(c: Registry, by: int, month: int): Registry = { ...c, project: P::advanceMonth(c.project, by, month) }
 ```
 
 ### Flags, restrictions and reinstatement change the registry only through their revisions
@@ -184,9 +203,13 @@ pure def advanceMonth(c: Registry, month: int): Registry = { ...c, project: P::a
 Flags are filed on registered projects that the owner has not removed and
 administrators have not delisted. A flag pause appends no revision. A
 moderator quarantine or ban appends the restriction's revision with the
-record, or marks it pending; an administrator later appends it, and
-reinstatement is refused until it lands. Reinstatement restores a paused
-Community listing for a project the restriction retired.
+record, or marks it pending when the current revision's policy check refuses
+it; an administrator later appends it under a passing policy check, or the
+owner's removal lands a paused, retired revision, and reinstatement is
+refused until one lands. Reinstatement restores a paused Community listing
+only for a project the restriction retired; a project the owner removed
+during the restriction stays removed. Every moderator decision carries the
+revision and sequence its preview confirmed.
 
 ```quint
 pure def canFlag(c: Registry, by: int, receipt: int, standing: E::FlagStanding): bool =
@@ -196,45 +219,49 @@ pure def flag(c: Registry, by: int, receipt: int, standing: E::FlagStanding): Re
   { ...c, security: E::flag(c.security, by, receipt, standing) }
 pure def canWithdrawFlag(c: Registry, by: int, receipt: int): bool = E::canWithdrawFlag(c.security, by, receipt)
 pure def withdrawFlag(c: Registry, by: int, receipt: int): Registry = { ...c, security: E::withdrawFlag(c.security, by, receipt) }
-pure def canAdvanceDay(c: Registry, day: int): bool = E::canAdvanceDay(c.security, day)
-pure def advanceDay(c: Registry, day: int): Registry = { ...c, security: E::advanceDay(c.security, day) }
+pure def canAdvanceDay(c: Registry, by: int, day: int): bool = E::canAdvanceDay(c.security, by, day)
+pure def advanceDay(c: Registry, by: int, day: int): Registry = { ...c, security: E::advanceDay(c.security, by, day) }
 pure def canReinstateFlagPause(c: Registry, by: int, pins: List[E::PinRead]): bool = E::canReinstateFlagPause(c.security, by, pins)
 pure def reinstateFlagPause(c: Registry, by: int, pins: List[E::PinRead]): Registry =
   { ...c, security: E::reinstateFlagPause(c.security, by, pins) }
-pure def canQuarantine(c: Registry, by: int, policy: ManifestPolicy): bool =
-  c.project.revision > 0 and E::canQuarantine(c.security, by, restrictionPlan(c.project, policy))
-pure def quarantine(c: Registry, by: int, policy: ManifestPolicy): Registry =
+pure def canQuarantine(c: Registry, by: int, fence: E::Fence, policy: PolicyCheck): bool =
+  c.project.revision > 0 and policyCurrent(c.project, policy) and E::canQuarantine(c.security, by, fence, restrictionPlan(c.project, policy))
+pure def quarantine(c: Registry, by: int, fence: E::Fence, policy: PolicyCheck): Registry =
   val plan = restrictionPlan(c.project, policy)
   val p = retiredFor(plan, c.project)
-  { project: p, security: sync(p, E::quarantine(c.security, by, plan)) }
-pure def canBan(c: Registry, by: int, policy: ManifestPolicy): bool =
-  c.project.revision > 0 and E::canBan(c.security, by, restrictionPlan(c.project, policy))
-pure def ban(c: Registry, by: int, policy: ManifestPolicy): Registry =
+  { project: p, security: sync(p, E::quarantine(c.security, by, fence, plan)) }
+pure def canBan(c: Registry, by: int, fence: E::Fence, policy: PolicyCheck): bool =
+  c.project.revision > 0 and policyCurrent(c.project, policy) and E::canBan(c.security, by, fence, restrictionPlan(c.project, policy))
+pure def ban(c: Registry, by: int, fence: E::Fence, policy: PolicyCheck): Registry =
   val plan = restrictionPlan(c.project, policy)
   val p = retiredFor(plan, c.project)
-  { project: p, security: sync(p, E::ban(c.security, by, plan)) }
-pure def canDecideMalice(c: Registry, by: int, accounts: List[int]): bool = E::canDecideMalice(c.security, by, accounts)
-pure def decideMalice(c: Registry, by: int, accounts: List[int]): Registry = { ...c, security: E::decideMalice(c.security, by, accounts) }
-pure def canSettleRestrictionRevision(c: Registry, by: int): bool = E::canSettlePendingRevision(c.security, by)
-pure def settleRestrictionRevision(c: Registry, by: int): Registry =
-  val p = if (P::canRetireForRestriction(c.project)) P::retireForRestriction(c.project) else c.project
+  { project: p, security: sync(p, E::ban(c.security, by, fence, plan)) }
+pure def canDecideMalice(c: Registry, by: int, fence: E::Fence, accounts: List[int]): bool = E::canDecideMalice(c.security, by, fence, accounts)
+pure def decideMalice(c: Registry, by: int, fence: E::Fence, accounts: List[int]): Registry =
+  { ...c, security: E::decideMalice(c.security, by, fence, accounts) }
+pure def canSettleRestrictionRevision(c: Registry, by: int, policy: PolicyCheck): bool =
+  E::canSettlePendingRevision(c.security, by) and policyCurrent(c.project, policy) and policy.result == PolicyAccepts
+pure def settleRestrictionRevision(c: Registry, by: int, policy: PolicyCheck): Registry =
+  val p = P::withRestrictionRetirement(true, c.project)
   { project: p, security: sync(p, E::settlePendingRevision(c.security, by)) }
 pure def canRequestAppeal(c: Registry, by: int): bool = E::canRequestAppeal(c.security, by)
 pure def requestAppeal(c: Registry, by: int): Registry = { ...c, security: E::requestAppeal(c.security, by) }
-pure def canDenyAppeal(c: Registry, by: int): bool = E::canDenyAppeal(c.security, by)
-pure def denyAppeal(c: Registry, by: int): Registry = { ...c, security: E::denyAppeal(c.security, by) }
-pure def canReinstate(c: Registry, by: int, pins: List[E::PinRead]): bool = E::canReinstate(c.security, by, pins)
-pure def reinstate(c: Registry, by: int, pins: List[E::PinRead]): Registry =
-  val p = if (P::canRestoreCommunity(c.project)) P::restoreCommunity(c.project) else c.project
-  { project: p, security: sync(p, E::reinstate(c.security, by, pins)) }
-pure def canGrantExemption(c: Registry, by: int, request: E::GrantRequest): bool = E::canGrantExemption(c.security, by, request)
-pure def grantExemption(c: Registry, by: int, request: E::GrantRequest): Registry = { ...c, security: E::grantExemption(c.security, by, request) }
+pure def canDenyAppeal(c: Registry, by: int, fence: E::Fence): bool = E::canDenyAppeal(c.security, by, fence)
+pure def denyAppeal(c: Registry, by: int, fence: E::Fence): Registry = { ...c, security: E::denyAppeal(c.security, by, fence) }
+pure def canReinstate(c: Registry, by: int, fence: E::Fence, pins: List[E::PinRead]): bool = E::canReinstate(c.security, by, fence, pins)
+pure def reinstate(c: Registry, by: int, fence: E::Fence, pins: List[E::PinRead]): Registry =
+  val p = P::withCommunityRestored(true, c.project)
+  { project: p, security: sync(p, E::reinstate(c.security, by, fence, pins)) }
+pure def canGrantExemption(c: Registry, by: int, fence: E::Fence, request: E::GrantRequest): bool =
+  E::canGrantExemption(c.security, by, fence, request)
+pure def grantExemption(c: Registry, by: int, fence: E::Fence, request: E::GrantRequest): Registry =
+  { ...c, security: E::grantExemption(c.security, by, fence, request) }
 pure def canRevokeExemption(c: Registry, by: int, repository: int, grantId: int, decision: int): bool =
   E::canRevokeExemption(c.security, by, repository, grantId, decision)
 pure def revokeExemption(c: Registry, by: int, repository: int, grantId: int, decision: int): Registry =
   { ...c, security: E::revokeExemption(c.security, by, repository, grantId, decision) }
-pure def canRecognizeFrozen(c: Registry, row: E::FrozenRow): bool = E::canRecognizeFrozen(c.security, row)
-pure def recognizeFrozen(c: Registry, row: E::FrozenRow): Registry = { ...c, security: E::recognizeFrozen(c.security, row) }
+pure def canRecognizeFrozen(c: Registry, by: int, row: E::FrozenRow): bool = E::canRecognizeFrozen(c.security, by, row)
+pure def recognizeFrozen(c: Registry, by: int, row: E::FrozenRow): Registry = { ...c, security: E::recognizeFrozen(c.security, by, row) }
 pure def alwaysRestrictionRetiresRegistry(c: Registry): bool =
   (c.security.restriction != E::Clear and c.security.restriction != E::FlagQuarantine and not(c.security.revisionPending))
     implies c.project.tier == P::Retired and c.project.status == P::Paused
@@ -248,60 +275,73 @@ pure def alwaysRestrictedProjectRegistered(c: Registry): bool = c.security.restr
 ### Collection and skills need an active, unrestricted, cleared project at the current revision
 
 A repository's work is collected only while the project is active and listed,
-no restriction holds, every repository clears, and the repository's own start
-month has come. The observation must be complete and name the same project,
-revision, manifest digest and generations as the current registry. A paused
-project with current clearance and no restriction serves skill bytes for
-inspection; discovery and installation need an active project.
+no restriction holds on it or on a project sharing one of its repository ids
+or paths, every repository clears, and the repository's own start month has
+come. The collector's observation must be a complete snapshot taken at the
+current revision, enforcement record count and clearance generation, which
+this machine computes from its own state; a stale or partial observation
+collects nothing. A paused project with current clearance and no restriction
+serves skill bytes for inspection; discovery and installation need an active
+project.
 
 ```quint
-type RegistryObservation = { revision: int, manifestDigest: int, enforcementGeneration: int, clearanceGeneration: int }
-type WorkEvidence = { captured: RegistryObservation, currentRegistry: RegistryObservation, complete: bool }
+type RegistryObservation = { revision: int, enforcementGeneration: int, clearanceGeneration: int }
+type Coverage = CompleteSnapshot | PartialSnapshot
+type WorkEvidence = { captured: RegistryObservation, coverage: Coverage }
 type TemplateEvidence = { checkedDigest: int, renderedDigest: int }
+pure def observation(c: Registry): RegistryObservation =
+  { revision: c.project.revision, enforcementGeneration: c.security.journal.length(), clearanceGeneration: c.security.seq }
 pure def currentEvidence(c: Registry, evidence: WorkEvidence): bool =
-  evidence.complete and evidence.captured.manifestDigest > 0 and evidence.captured.revision == c.project.revision and
-  evidence.captured.revision > 0 and evidence.captured == evidence.currentRegistry
-pure def mayCollect(c: Registry, evidence: WorkEvidence, repository: int, period: int): bool =
-  currentEvidence(c, evidence) and c.project.status == P::Active and P::listed(c.project) and E::mayContribute(c.security) and
-  c.project.repositories.includes(repository) and P::repositoryEligible(c.project, repository, period)
-pure def mayServeSkill(c: Registry, evidence: WorkEvidence, template: TemplateEvidence): bool =
-  currentEvidence(c, evidence) and P::listed(c.project) and c.project.fieldsComplete and E::mayContribute(c.security) and
-  template.checkedDigest > 0 and template.checkedDigest == template.renderedDigest
-pure def mayDiscoverSkill(c: Registry, evidence: WorkEvidence, template: TemplateEvidence): bool =
-  mayServeSkill(c, evidence, template) and c.project.status == P::Active
-pure def lawRestrictionStopsCollection(c: Registry, evidence: WorkEvidence, repository: int, period: int): bool =
-  c.security.restriction != E::Clear implies not(mayCollect(c, evidence, repository, period)) and not(mayServeSkill(c, evidence, { checkedDigest: 1, renderedDigest: 1 }))
-pure def lawPauseStopsCollection(c: Registry, evidence: WorkEvidence, repository: int, period: int): bool =
-  (c.project.status == P::Paused or c.project.tier == P::Retired) implies not(mayCollect(c, evidence, repository, period))
-pure def lawStaleObservationStopsCollection(c: Registry, evidence: WorkEvidence, repository: int, period: int): bool =
-  (not(evidence.complete) or evidence.captured != evidence.currentRegistry or evidence.captured.revision != c.project.revision)
-    implies not(mayCollect(c, evidence, repository, period))
-pure def lawAppendedRepositoryWaitsForItsMonth(c: Registry, evidence: WorkEvidence, repository: int, period: int): bool =
-  mayCollect(c, evidence, repository, period) implies P::repositoryEligible(c.project, repository, period)
-pure def lawUnclearedRepositoryStopsAll(c: Registry, evidence: WorkEvidence, repository: int, period: int): bool =
-  c.security.repositories.some(r => not(E::repositoryCleared(c.security, r))) implies not(mayCollect(c, evidence, repository, period))
-pure def lawPausedProjectNotDiscoverable(c: Registry, evidence: WorkEvidence, template: TemplateEvidence): bool =
-  c.project.status == P::Paused implies not(mayDiscoverSkill(c, evidence, template))
+  evidence.coverage == CompleteSnapshot and c.project.revision > 0 and evidence.captured == observation(c)
+pure def unclosed(c: Registry, closure: R::Closure): bool = closure.project == c.security.projectId and closure.source == 0
+pure def mayCollect(c: Registry, evidence: WorkEvidence, closure: R::Closure, repository: int, period: int): bool =
+  currentEvidence(c, evidence) and unclosed(c, closure) and c.project.status == P::Active and P::listed(c.project) and
+  E::mayContribute(c.security) and c.project.repositories.includes(repository) and P::repositoryEligible(c.project, repository, period)
+pure def mayServeSkill(c: Registry, evidence: WorkEvidence, closure: R::Closure, template: TemplateEvidence): bool =
+  currentEvidence(c, evidence) and unclosed(c, closure) and P::listed(c.project) and c.project.fieldsComplete and
+  E::mayContribute(c.security) and template.checkedDigest > 0 and template.checkedDigest == template.renderedDigest
+pure def mayDiscoverSkill(c: Registry, evidence: WorkEvidence, closure: R::Closure, template: TemplateEvidence): bool =
+  mayServeSkill(c, evidence, closure, template) and c.project.status == P::Active
+pure def lawRestrictionStopsCollection(c: Registry, evidence: WorkEvidence, closure: R::Closure, repository: int, period: int): bool =
+  (c.security.restriction != E::Clear or closure.source != 0) implies
+    (not(mayCollect(c, evidence, closure, repository, period)) and
+     not(mayServeSkill(c, evidence, closure, { checkedDigest: 1, renderedDigest: 1 })))
+pure def lawPauseStopsCollection(c: Registry, evidence: WorkEvidence, closure: R::Closure, repository: int, period: int): bool =
+  (c.project.status == P::Paused or c.project.tier == P::Retired) implies not(mayCollect(c, evidence, closure, repository, period))
+pure def lawStaleObservationStopsCollection(c: Registry, evidence: WorkEvidence, closure: R::Closure, repository: int, period: int): bool =
+  (evidence.coverage != CompleteSnapshot or evidence.captured.revision != c.project.revision or
+    evidence.captured.enforcementGeneration != c.security.journal.length() or evidence.captured.clearanceGeneration != c.security.seq)
+    implies not(mayCollect(c, evidence, closure, repository, period))
+pure def lawAppendedRepositoryWaitsForItsMonth(c: Registry, evidence: WorkEvidence, closure: R::Closure, repository: int, period: int): bool =
+  mayCollect(c, evidence, closure, repository, period) implies P::repositoryEligible(c.project, repository, period)
+pure def lawUnclearedRepositoryStopsAll(c: Registry, evidence: WorkEvidence, closure: R::Closure, repository: int, period: int): bool =
+  c.security.repositories.some(r => not(E::repositoryCleared(c.security, r))) implies not(mayCollect(c, evidence, closure, repository, period))
+pure def lawPausedProjectNotDiscoverable(c: Registry, evidence: WorkEvidence, closure: R::Closure, template: TemplateEvidence): bool =
+  c.project.status == P::Paused implies not(mayDiscoverSkill(c, evidence, closure, template))
 ```
 
 ### Slopbot scope and monthly eligibility derive from the same state
 
-Slopbot reviews only registered repositories. An active, unrestricted, cleared
-project gets full review. A paused, flagged or quarantined project gets
-security-only review (comment and scam label). Removed and delisted projects
-get no review. Slopbot's scope for a banned project is not decided by the PRD
-or an owner decision, so it is an explicit gate that consumers treat as no
-review until an owner decides. The monthly close reads the project's
-registered, paused, retired and collection facts at its revision; a paused or
-restricted project has no allocation for the month.
+Slopbot reviews only registered repositories. An active, unrestricted,
+unclosed, cleared project gets full review. A paused, flagged, quarantined or
+banned project, and one closed by another project's restriction, gets
+security-only review (comment and scam label): the retirement a quarantine or
+ban applies keeps the security review (owner decision D12,
+`src/lib/project-capabilities.mjs`). Removed and delisted projects get no
+review. When Slopbot cannot read the evidence that a restriction retired the
+listing, it treats the retirement as the owner's and gives no review
+(`workers/slopbot/registry.ts`). The monthly close reads the project's
+registered, paused, retired and collection facts at its revision; a paused
+or restricted project has no allocation for the month.
 
 ```quint
-type ReviewScope = Unregistered | FullReview | SecurityOnly | NoReview | BanScopeUndecided
-pure def reviewScope(c: Registry, repository: int, period: int): ReviewScope =
+type ReviewScope = Unregistered | FullReview | SecurityOnly | NoReview
+type RetirementEvidence = RetirementProven | RetirementUnavailable
+pure def reviewScope(c: Registry, closure: R::Closure, retirementRead: RetirementEvidence, repository: int, period: int): ReviewScope =
   if (c.project.revision == 0 or not(c.project.repositories.includes(repository))) Unregistered
-  else if (c.project.retirement == P::OwnerRemoved or c.project.retirement == P::AdminDelisted) NoReview
-  else if (c.security.restriction == E::ServiceBan or c.security.restriction == E::ModeratorBan) BanScopeUndecided
-  else if (c.project.status == P::Active and c.security.restriction == E::Clear and E::cleared(c.security) and
+  else if (P::ownerRetired(c.project)) NoReview
+  else if (c.project.retirement == P::RestrictionRetired and retirementRead == RetirementUnavailable) NoReview
+  else if (c.project.status == P::Active and c.security.restriction == E::Clear and unclosed(c, closure) and E::cleared(c.security) and
     P::repositoryEligible(c.project, repository, period)) FullReview
   else SecurityOnly
 type MonthlyEligibility = { revision: int, registered: bool, paused: bool, retired: bool, collectionAllowed: bool }
@@ -309,9 +349,13 @@ pure def monthlyEligibility(c: Registry): MonthlyEligibility =
   { revision: c.project.revision, registered: c.project.revision > 0,
     paused: c.project.status == P::Paused or c.security.restriction != E::Clear, retired: c.project.tier == P::Retired,
     collectionAllowed: E::mayContribute(c.security) }
-pure def lawFlaggedProjectSecurityOnly(c: Registry, repository: int, period: int): bool =
-  (c.security.restriction == E::FlagQuarantine or c.security.restriction == E::ModeratorQuarantine) implies
-    reviewScope(c, repository, period) != FullReview
+pure def lawRestrictedProjectSecurityOnly(c: Registry, closure: R::Closure, repository: int, period: int): bool =
+  (c.project.revision > 0 and c.project.repositories.includes(repository) and not(P::ownerRetired(c.project)) and
+    (c.security.restriction != E::Clear or closure.source != 0))
+    implies reviewScope(c, closure, RetirementProven, repository, period) == SecurityOnly
+pure def lawOwnerRetirementEndsReview(c: Registry, closure: R::Closure, repository: int, period: int): bool =
+  (c.project.revision > 0 and c.project.repositories.includes(repository) and P::ownerRetired(c.project))
+    implies reviewScope(c, closure, RetirementProven, repository, period) == NoReview
 pure def lawRestrictedMonthSkipped(c: Registry): bool =
   c.security.restriction != E::Clear implies monthlyEligibility(c).paused
 ```
@@ -344,6 +388,25 @@ pure def lawReadyMeansCollectable(c: Registry, check: P::SetupCheck): bool =
   setupState(c, check) == SetupReady implies E::mayContribute(c.security) and c.project.status == P::Active
 ```
 
+### A cleared, ready project is activated by the setup refresh
+
+PRD section 4: a clean scan of the last uncleared repository reactivates the
+project. The setup refresh (`refreshProjectSetup`) reruns the setup check for
+the creator after each recorded result. While the creator's authority and
+installation reads verify and nothing else changes, a paused project that
+clears, has its skill fields, open participation, no restriction and no ban
+does not stay paused.
+
+```quint
+pure def readyToActivate(c: Registry): bool =
+  c.project.revision > 0 and c.project.status == P::Paused and c.project.retirement == P::NotRetired and
+  c.project.fieldsComplete and c.project.participation == P::OpenParticipation and E::mayContribute(c.security) and
+  not(c.security.accountBans.includes(c.project.creator))
+pure def leadsToActivation(c: Registry, later: Registry): bool =
+  readyToActivate(c) implies (later.project.status == P::Active or not(readyToActivate(later)))
+pure val fair_activate = "weak"
+```
+
 ### Reachable composed outcomes
 
 ```quint
@@ -355,15 +418,26 @@ pure def sometimesBannedRetired(c: Registry): bool = c.security.restriction == E
 pure def sometimesRestoredAfterRestriction(c: Registry): bool =
   c.security.restriction == E::Clear and c.project.history.some(r => r.kind == P::CommunityRestored)
 pure def sometimesPendingRestrictionRevision(c: Registry): bool = c.security.revisionPending and c.project.retirement == P::NotRetired
+pure def sometimesRemovedDuringRestriction(c: Registry): bool =
+  c.security.restriction != E::Clear and c.project.retirement == P::OwnerRemoved and not(c.security.revisionPending)
 pure def sometimesAppendedAwaitingScan(c: Registry): bool =
   c.project.repositories.length() == 2 and c.project.status == P::Paused and not(E::cleared(c.security))
-pure val byValues = Set(0, 1, 2, 3, 5, 6)
+pure def sometimesExemptionLapsedWithSteward(c: Registry): bool =
+  c.security.exempt.contains(1) and c.project.steward != E::exemptStewardOf(c.security, 1) and not(E::repositoryCleared(c.security, 1))
+pure def sometimesExemptAfterSetupCheck(c: Registry): bool =
+  c.security.exempt.contains(1) and E::cleared(c.security) and c.project.status == P::Active and
+  E::latestOf(c.security, 1).state == E::NotAssessed
+pure val byValues = Set(-1, 0, 1, 2, 3, 5, 6)
 pure val goodStanding: E::FlagStanding = { actor: 2, revision: 1, accountAgeDays: 30, acceptedContributions: 1, maintainer: E::ReadNo, banned: E::ReadNo }
 pure val standingValues = Set(goodStanding, { ...goodStanding, actor: 3 }, { ...goodStanding, revision: 2 }, { ...goodStanding, actor: 3, revision: 2 })
 pure val repositoryValues = Set(1, 2)
 pure val assessmentIdValues = Set(1, 2, 3)
 pure val creationValues = Set(P::creation1)
-pure val accountValues = Set({ actor: 1, ban: NotBanned }, { actor: 2, ban: NotBanned }, { actor: 1, ban: AccountBanned })
+pure val accountValues = Set({ actor: 1, steward: 1, actorBan: NotBanned, stewardBan: NotBanned },
+  { actor: 2, steward: 1, actorBan: NotBanned, stewardBan: NotBanned },
+  { actor: 1, steward: 4, actorBan: NotBanned, stewardBan: NotBanned },
+  { actor: 1, steward: 1, actorBan: AccountBanned, stewardBan: NotBanned },
+  { actor: 2, steward: 1, actorBan: NotBanned, stewardBan: AccountBanned })
 pure val registryValues = Set({ repository: 1, listedBy: 0, restricted: false }, { repository: 2, listedBy: 0, restricted: false })
 pure val authorityValues = Set(P::owner1)
 pure val checkValues = Set({ authority: P::owner1, installations: List({ repository: 1, installation: P::Installed }, { repository: 2, installation: P::Installed }) },
@@ -374,20 +448,18 @@ pure val changeValues = Set(P::change1, { ...P::change1, expectedRevision: 3, ex
 pure val weight_publishUpdate = 4
 pure val appendEvidenceValues = Set({ ...P::append1, expectedRevision: 1 }, P::append1)
 pure val editValues = Set({ authority: P::owner1, expectedRevision: 2, checked: true })
-pure val removalValues = Set({ authority: P::owner1, expectedRevision: 2 })
+pure val removalValues = Set({ authority: P::owner1, expectedRevision: 2 }, { authority: P::owner1, expectedRevision: 3 })
 pure val requestValues = Set(E::goodGrant)
+pure val fenceValues = E::fenceValues
 pure val rowValues = Set({ projectId: 1, repository: 1 })
 pure val pinsValues = Set(List({ repository: 1, pin: E::PinMatches }, { repository: 2, pin: E::PinMatches }))
-pure val scanOutcomeValues = Set(
-  { assessment: 1, repository: 1, revision: 1, disposition: A::DClean, reused: false, retained: true },
-  { assessment: 1, repository: 1, revision: 1, disposition: A::DMalicious, reused: false, retained: true },
-  { assessment: 2, repository: 1, revision: 1, disposition: A::DClean, reused: false, retained: true },
-  { assessment: 3, repository: 2, revision: 2, disposition: A::DClean, reused: false, retained: true })
+pure val scanOutcomeValues = tuples(Set(1, 2, 3), 1.to(3), Set(A::DClean, A::DMalicious)).map(x =>
+  { assessment: x._1, repository: if (x._1 == 3) 2 else 1, revision: x._2, disposition: x._3,
+    confirmation: if (x._3 == A::DMalicious) A::ReproducibleBehavior else A::NoConfirmation, reused: false, retained: true })
+pure val closureValues = Set({ project: 1, source: 0 }, { project: 1, source: 2 })
 pure val evidenceValues = Set(
-  { captured: { revision: 2, manifestDigest: 1, enforcementGeneration: 1, clearanceGeneration: 1 },
-    currentRegistry: { revision: 2, manifestDigest: 1, enforcementGeneration: 1, clearanceGeneration: 1 }, complete: true },
-  { captured: { revision: 2, manifestDigest: 1, enforcementGeneration: 1, clearanceGeneration: 1 },
-    currentRegistry: { revision: 2, manifestDigest: 1, enforcementGeneration: 2, clearanceGeneration: 1 }, complete: true })
+  { captured: { revision: 2, enforcementGeneration: 0, clearanceGeneration: 1 }, coverage: CompleteSnapshot },
+  { captured: { revision: 2, enforcementGeneration: 0, clearanceGeneration: 1 }, coverage: PartialSnapshot })
 pure val periodValues = Set(202611, 202612)
 pure val stewardValues = Set(0, 4)
 pure val evidenceReadValues = Set({ assessment: 1, present: false })
@@ -405,4 +477,7 @@ pure val weight_reinstateFlagPause = 6
 pure val weight_quarantine = 4
 pure val weight_ban = 3
 pure val weight_appendRepository = 4
+pure val weight_grantExemption = 4
+pure val weight_adminRevise = 3
+pure val weight_remove = 3
 ```
