@@ -161,11 +161,20 @@ function hasRetainedPullReference(
   );
   // Sentence punctuation followed by whitespace preserves dots inside URLs.
   return text.split(/(?<=[.!?])(?:\s+|$)|[\r\n]+/u).some((sentence) => {
+    const includedFix =
+      /\b(?:fix|fixes|correction|corrections)\b[^.!?\r\n]*\b(?:is|are|was|were)\s+included\s+in\b/iu.test(
+        sentence,
+      ) &&
+      !/\b(?:will|would|could|should|may|might|must|if|unless)\b/iu.test(
+        sentence,
+      ) &&
+      !/\bbut\b/iu.test(sentence);
     if (
-      !/\b(?:commits?|changes?|work)\b/iu.test(sentence) ||
+      (!/\b(?:commits?|changes?|work)\b/iu.test(sentence) && !includedFix) ||
       !(rebase
         ? /\brebased\b/iu.test(sentence) && /\bauthorship\b/iu.test(sentence)
-        : /\b(?:retained|cherry[ -]picked|carried[ -]over)\b/iu.test(
+        : includedFix ||
+          /\b(?:retained|cherry[ -]picked|carried[ -]over)\b/iu.test(
             sentence,
           )) ||
       /\b(?:not|never|no|neither|without|cannot)\b|\b\p{L}+n['’]t\b/iu.test(
