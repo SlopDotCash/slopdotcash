@@ -1189,6 +1189,120 @@ function firstAcceptedOrdinary(source: CorrectionSource) {
   );
 }
 
+/** Zero-delta branch synchronization keeps the original work's native identity. */
+async function nativeOriginalWithSyncMerges(
+  github: Pick<GitHubClient, "get">,
+  original: MergedPullRequestOutcome,
+  maintainer: CorrectionActor,
+  owners: ReadonlyMap<string, string>,
+): Promise<boolean> {
+  const repository = repositoryIdFromUrl(original.url);
+  const evidence = await collectValueEvidence(
+    github,
+    repository,
+    original.number,
+  );
+  if (
+    evidence.pull.node_id !== original.id ||
+    evidence.pull.user.node_id !== original.author?.id ||
+    evidence.pull.user.type !== original.author?.kind ||
+    evidence.pull.head.sha !== original.headRefOid ||
+    evidence.pull.updated_at !== original.updatedAt ||
+    evidence.pull.merged_at !== original.mergedAt ||
+    evidence.commits.length !== original.commits?.length ||
+    evidence.commits.some((commit, index) => {
+      const observed = original.commits?.[index];
+      return (
+        commit.sha !== observed?.oid ||
+        commit.parents.length !== observed.parentCount ||
+        commit.author?.node_id !== observed.author?.id ||
+        commit.author?.type !== observed.author?.kind
+      );
+    })
+  )
+    return false;
+  const identity = await github.get<{
+    id: number;
+    node_id: string;
+    private: boolean;
+    full_name: string;
+  }>(`/repos/${repository}`);
+  if (identity?.private !== false) return false;
+  const hydrated = await hydrateValueMergeSource(
+    { evidence, policy: { sha: evidence.pull.base.sha, text: "" } },
+    await mergeRecipe(evidence),
+    identity,
+  );
+  return nativeSyncOriginal(
+    hydrated.evidence,
+    original.author,
+    maintainer,
+    owners,
+  );
+}
+
+/** Verify a complete source whose only merge work is zero-delta synchronization. */
+export function nativeSyncOriginal(
+  evidence: ValueEvidence,
+  expectedOrigin: CorrectionActor | null,
+  maintainer: CorrectionActor,
+  owners: ReadonlyMap<string, string>,
+): boolean {
+  if (
+    !verifiedHuman(expectedOrigin) ||
+    !verifiedHuman(maintainer) ||
+    evidence.pull.user.node_id !== expectedOrigin.id ||
+    evidence.pull.user.type !== expectedOrigin.kind
+  )
+    return false;
+  const source = richSource(evidence, owners);
+  const origin = source.author;
+  if (!verifiedHuman(origin)) return false;
+  const commits = new Map(
+    evidence.commits.map((commit) => [commit.sha, commit]),
+  );
+  const originShas = new Set<string>();
+  const repairs: string[] = [];
+  for (const commit of source.commits) {
+    if (commit.parentCount > 1) {
+      const raw = commits.get(commit.sha);
+      const resolutions = evidence.mergeResolutions?.filter(
+        (resolution) => resolution.commitSha === commit.sha,
+      );
+      if (!raw || resolutions?.length !== 1) return false;
+      const changes = mergeResolutionLineCounts(resolutions[0], raw);
+      if (changes === null || changes.length > 0) return false;
+      continue;
+    }
+    if (commit.firstAcceptedSourceId !== source.sourceId) return false;
+    const actors = implementationCreditActors(origin, [commit.author]);
+    if (actors.length !== 1) return false;
+    if (actors[0].id === origin.id) originShas.add(commit.sha);
+    else if (actors[0].id === maintainer.id) repairs.push(commit.sha);
+    else return false;
+  }
+  if (!originShas.size) return false;
+  const ancestors = (head: string) => {
+    const found = new Set<string>();
+    const pending = [head];
+    for (const sha of pending) {
+      if (found.has(sha)) continue;
+      found.add(sha);
+      pending.push(
+        ...(commits.get(sha)?.parents.map((parent) => parent.sha) ?? []),
+      );
+    }
+    return found;
+  };
+  const reachable = ancestors(source.headSha);
+  return (
+    source.commits.every((commit) => reachable.has(commit.sha)) &&
+    repairs.every((sha) =>
+      [...originShas].some((originSha) => ancestors(sha).has(originSha)),
+    )
+  );
+}
+
 /** A broad later integration must not make an earlier accepted native PR look
  * like copied work just because the integration PR was opened first. Keep the
  * larger pool held. Release only the smaller source after exact native ancestry
@@ -1224,7 +1338,7 @@ export async function nativeOriginalBeforePromotion(
     !larger.headRefOid ||
     commits.some(
       (commit) =>
-        commit.parentCount !== 1 ||
+        (commit.parentCount !== 1 && commit.parentCount !== 2) ||
         !largerShas.has(commit.oid) ||
         owners.get(`${repository.toLowerCase()}\0${commit.oid}`) !==
           original.id,
@@ -1283,6 +1397,13 @@ export async function nativeOriginalBeforePromotion(
     ancestry.merge_base_commit?.sha !== small.merge_commit_sha
   )
     return false;
+  if (commits.some((commit) => commit.parentCount === 2))
+    return nativeOriginalWithSyncMerges(
+      github,
+      original,
+      larger.author,
+      owners,
+    );
   const native = new Map<
     string,
     {
