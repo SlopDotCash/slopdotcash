@@ -828,12 +828,18 @@ lemma initialHolds_ensures()
   ensures inv(initialHolds())
 {
   var b := initialHolds();
-  assert settlement__money_validAmount(settlement__money_zero);
-  settlement__half_lawHalfValid_ensures(settlement__money_zero);
-  settlement__money_lawZeroOrder_ensures(settlement__half_half(settlement__money_zero).quotient);
-  settlement__money_lawAdditionValid_ensures(settlement__money_zero, settlement__money_zero);
-  settlement__half_lawHalfValid_ensures(acquired(b));
-  settlement__money_lawZeroOrder_ensures(settlement__half_half(acquired(b)).quotient);
+  var z := settlement__money_zero;
+  assert b.income == z && b.committed == z && b.purchased == z && b.localSlopCommitted == z;
+  assert b.burned == z && b.burnCommitted == z && b.burnQuantity == z && b.localSlopIncome == z;
+  assert settlement__money_validAmount(z);
+  var a := settlement__money_addAmounts(z, z);
+  assert acquired(b) == a;
+  settlement__money_lawAdditionValid_ensures(z, z);
+  settlement__half_lawHalfValid_ensures(z);
+  settlement__half_lawHalfValid_ensures(a);
+  settlement__money_lawZeroOrder_ensures(settlement__half_half(z).quotient);
+  settlement__money_lawZeroOrder_ensures(settlement__half_half(a).quotient);
+  assert !openSend(b.burn);
   assert alwaysShareBounded(b);
   assert alwaysLocalShareBounded(b);
   assert alwaysBurnBounded(b);
