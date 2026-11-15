@@ -4,7 +4,8 @@ PRD sections 8 and 10 require the first verified qualifying report for each
 underlying finding, one award obligation per finding and verified funds before
 a vault reservation. CLAUDE.md requires that full-award cases never reserve
 or pay through a 75/25 vault. This machine holds every private
-[case](./cases.md) of one project (two representative cases here), the
+[case](./cases.md) of one project (two representative cases here, `first`
+and `second`), the
 project's root-cause holds (`security_award_reservations`,
 `security_direct_awards` and pending related-party proposals in Slop
 development `backend/security/handler.ts`), the latest finalized bounty-vault
@@ -26,23 +27,23 @@ type HoldKind = ProposalHold | VaultHold | DirectHold | FullAwardHold
 type Hold = { caseId: int, rootCause: int, kind: HoldKind, fundsObservedAt: int }
 type FundsSnapshot = { finalized: bool, observedAt: int, asset: str, free: M::Amount }
 type RouteObservation = { asset: str, qualified: bool, observedAt: int }
-type Bounty = { cases: int -> C::PrivateCase, holds: List[Hold], funds: FundsSnapshot, reserved: M::Amount,
+type Bounty = { first: C::PrivateCase, second: C::PrivateCase, holds: List[Hold], funds: FundsSnapshot, reserved: M::Amount,
   route: RouteObservation, clockMs: int }
 pure val caseIds: List[int] = List(1, 2)
 pure val noFunds: FundsSnapshot = { finalized: false, observedAt: 0, asset: "", free: M::zero }
-pure val noCases: int -> C::PrivateCase = Map()
-pure val initial: Bounty = { cases: noCases.put(1, C::initial).put(2, C::initial), holds: List(), funds: noFunds, reserved: M::zero,
+pure val initial: Bounty = { first: C::initial, second: C::initial, holds: List(), funds: noFunds, reserved: M::zero,
   route: { asset: "", qualified: false, observedAt: 0 }, clockMs: 3 }
-pure def caseOf(b: Bounty, id: int): C::PrivateCase = b.cases.getOr(id, C::initial)
+pure def caseOf(b: Bounty, id: int): C::PrivateCase = if (id == 1) b.first else b.second
+pure def putCase(id: int, c: C::PrivateCase, b: Bounty): Bounty = if (id == 1) { ...b, first: c } else { ...b, second: c }
 pure def known(id: int): bool = caseIds.includes(id)
 pure def canReceive(b: Bounty, id: int, source: C::ReceiptSource, terms: T::ReceiptTerms, reportVersion: int): bool =
   known(id) and C::canReceive(caseOf(b, id), source, terms, C::NewReceipt, M::zero, reportVersion)
 pure def receive(b: Bounty, id: int, source: C::ReceiptSource, terms: T::ReceiptTerms, reportVersion: int): Bounty =
-  { ...b, cases: b.cases.put(id, C::receive(caseOf(b, id), source, terms, C::NewReceipt, M::zero, reportVersion)) }
+  putCase(id, C::receive(caseOf(b, id), source, terms, C::NewReceipt, M::zero, reportVersion), b)
 pure def canObserveAuthority(b: Bounty, snapshot: C::Authority): bool =
   caseIds.every(id => C::canObserveAuthority(caseOf(b, id), snapshot))
 pure def observeAuthority(b: Bounty, snapshot: C::Authority): Bounty =
-  { ...b, cases: b.cases.put(1, C::observeAuthority(caseOf(b, 1), snapshot)).put(2, C::observeAuthority(caseOf(b, 2), snapshot)) }
+  { ...b, first: C::observeAuthority(b.first, snapshot), second: C::observeAuthority(b.second, snapshot) }
 pure def canAdvanceClock(b: Bounty, nowMs: int): bool = nowMs > b.clockMs
 pure def advanceClock(b: Bounty, nowMs: int): Bounty = { ...b, clockMs: nowMs }
 pure def canObserveFunds(b: Bounty, funds: FundsSnapshot): bool = funds.observedAt > b.funds.observedAt
@@ -100,7 +101,7 @@ pure def holdFor(b: Bounty, id: int, after: C::PrivateCase): Hold =
     kind: if (after.commitment == C::VaultReservation) VaultHold else if (after.commitment == C::DirectAward) DirectHold
       else if (after.commitment == C::FullAwardHeld) FullAwardHold else ProposalHold }
 pure def withHold(id: int, after: C::PrivateCase, amount: M::Amount, b: Bounty): Bounty =
-  { ...b, cases: b.cases.put(id, after), holds: b.holds.select(h => h.caseId != id).append(holdFor(b, id, after)),
+  { ...putCase(id, after, b), holds: b.holds.select(h => h.caseId != id).append(holdFor(b, id, after)),
     reserved: if (after.commitment == C::VaultReservation) M::addAmounts(b.reserved, amount) else b.reserved }
 ```
 
@@ -110,26 +111,26 @@ pure def withHold(id: int, after: C::PrivateCase, amount: M::Amount, b: Bounty):
 pure def canDecide(b: Bounty, id: int, by: int, checkedEpoch: int, version: int, decision: C::Decision): bool =
   known(id) and C::canDecide(caseOf(b, id), by, checkedEpoch, version, decision)
 pure def decide(b: Bounty, id: int, by: int, checkedEpoch: int, version: int, decision: C::Decision): Bounty =
-  { ...b, cases: b.cases.put(id, C::decide(caseOf(b, id), by, checkedEpoch, version, decision)) }
+  putCase(id, C::decide(caseOf(b, id), by, checkedEpoch, version, decision), b)
 pure def canDecideAward(b: Bounty, id: int, by: int, checkedEpoch: int, amount: M::Amount): bool = known(id) and not(hasHold(b, id))
   and C::canDecideAward(caseOf(b, id), by, checkedEpoch, amount, clearanceFor(b, id, amount))
 pure def decideAward(b: Bounty, id: int, by: int, checkedEpoch: int, amount: M::Amount): Bounty =
   withHold(id, C::decideAward(caseOf(b, id), by, checkedEpoch, amount, clearanceFor(b, id, amount)), amount, b)
 pure def canDeclineAward(b: Bounty, id: int, by: int, checkedEpoch: int): bool = known(id) and C::canDeclineAward(caseOf(b, id), by, checkedEpoch)
 pure def declineAward(b: Bounty, id: int, by: int, checkedEpoch: int): Bounty =
-  { ...b, cases: b.cases.put(id, C::declineAward(caseOf(b, id), by, checkedEpoch)) }
+  putCase(id, C::declineAward(caseOf(b, id), by, checkedEpoch), b)
 pure def canReviewRelated(b: Bounty, id: int, by: int, checkedEpoch: int, approve: bool): bool = known(id)
   and C::canReviewRelated(caseOf(b, id), by, checkedEpoch, approve, clearanceFor(b, id, caseOf(b, id).grossChosen))
 pure def reviewRelated(b: Bounty, id: int, by: int, checkedEpoch: int, approve: bool): Bounty =
   val gross = caseOf(b, id).grossChosen
   val after = C::reviewRelated(caseOf(b, id), by, checkedEpoch, approve, clearanceFor(b, id, gross))
-  if (approve) withHold(id, after, gross, b) else { ...b, cases: b.cases.put(id, after), holds: b.holds.select(h => h.caseId != id) }
+  if (approve) withHold(id, after, gross, b) else { ...putCase(id, after, b), holds: b.holds.select(h => h.caseId != id) }
 pure def canAppeal(b: Bounty, id: int, by: int): bool = known(id) and C::canAppeal(caseOf(b, id), by)
-pure def appeal(b: Bounty, id: int, by: int): Bounty = { ...b, cases: b.cases.put(id, C::appeal(caseOf(b, id), by)) }
+pure def appeal(b: Bounty, id: int, by: int): Bounty = putCase(id, C::appeal(caseOf(b, id), by), b)
 pure def canDecideAppeal(b: Bounty, id: int, by: int, checkedEpoch: int, uphold: bool): bool = known(id)
   and C::canDecideAppeal(caseOf(b, id), by, checkedEpoch, uphold)
 pure def decideAppeal(b: Bounty, id: int, by: int, checkedEpoch: int, uphold: bool): Bounty =
-  { ...b, cases: b.cases.put(id, C::decideAppeal(caseOf(b, id), by, checkedEpoch, uphold)) }
+  putCase(id, C::decideAppeal(caseOf(b, id), by, checkedEpoch, uphold), b)
 ```
 
 ### One root cause holds at most one proposal or award obligation
