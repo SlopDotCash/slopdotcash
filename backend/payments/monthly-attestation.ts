@@ -32,7 +32,7 @@ import { assertProjectDefinition } from "../../src/lib/project-schema.mjs";
 import { sha256Hex } from "../../src/lib/sha256";
 import type { D1TransactionalDatabase } from "../d1";
 import { chainAwards, holdsAward } from "./chain-awards";
-import { monthPledged } from "./month-pledges";
+import { monthPledged, pledgeKeepsMonth } from "./month-pledges";
 import { automaticMonthlyPayment, MonthlyPaymentError } from "./monthly";
 import type {
   MonthlyAttestationPlan,
@@ -80,21 +80,31 @@ export async function prepareMonthlyAttestation(
       "This month is outside its commitment window.",
     );
   const project = await deps.getProject(request.projectId);
-  // A month pledged on chain is the owner's consent to reserve it, whatever
-  // the automatic default, a pause or a restriction says (operator decision,
-  // 15 November 2026). The contract still checks the pledge and the cap.
-  const pledged =
-    !!project && (await monthPledged(deps.db, project.id, period));
-  if (
-    !project ||
-    (!pledged &&
-      (project.manifest.status !== "active" ||
-        (await deps.restricted(project))))
-  )
+  if (!project)
     reject("project_restricted", "The project cannot create new commitments.");
   const deployment = project.manifest.escrow?.deployments.find(
     (d) => d.network === request.network,
   );
+  // A month pledged on chain in the vault that pays it is the owner's
+  // consent to reserve it, whatever the automatic default says, and while
+  // the project is paused or restricted; never for a retired project
+  // (operator decision, 15 November 2026). The contract still checks the
+  // pledge and the cap.
+  const pledged = pledgeKeepsMonth(
+    !!deployment &&
+      (await monthPledged(deps.db, {
+        projectId: project.id,
+        network: deployment.network,
+        vault: deployment.vault,
+        period,
+      })),
+    project.manifest,
+  );
+  if (
+    !pledged &&
+    (project.manifest.status !== "active" || (await deps.restricted(project)))
+  )
+    reject("project_restricted", "The project cannot create new commitments.");
   if (!deployment || !deps.networks.includes(request.network))
     reject(
       "vault_not_served",

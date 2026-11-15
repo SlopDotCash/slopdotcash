@@ -127,8 +127,21 @@ test("pledges read with a snapshot are stored per month; null marks no pledge su
     { period: "2026-12", amount: "250000000", open: 0, block_number: "13" },
     { period: "2027-01", amount: "250000000", open: 1, block_number: "13" },
   ]);
-  expect(await monthPledged(db as never, "acme", "2026-12")).toBe(true);
-  expect(await monthPledged(db as never, "acme", "2027-02")).toBe(false);
+  const scope = (period: string, vault = deployment.vault) => ({
+    projectId: "acme",
+    network: deployment.network,
+    vault,
+    period,
+  });
+  expect(await monthPledged(db as never, scope("2026-12"))).toBe(true);
+  expect(await monthPledged(db as never, scope("2027-02"))).toBe(false);
+  // A pledge in another vault of the project gives this one no consent.
+  expect(
+    await monthPledged(
+      db as never,
+      scope("2026-12", "0x3333333333333333333333333333333333333333"),
+    ),
+  ).toBe(false);
   expect(
     await otherOpenPledges(db as never, {
       projectId: "acme",

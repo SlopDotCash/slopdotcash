@@ -9,7 +9,7 @@ import {
   periodEnd,
 } from "../../src/lib/payments/monthly-allocation";
 import type { D1TransactionalDatabase } from "../d1";
-import { MONTH_PLEDGED_SQL, monthlyConsent } from "./month-pledges";
+import { runConsent, runPledgedSql } from "./month-pledges";
 import type {
   MonthlyAttestationRequest,
   MonthlyAuthorization,
@@ -37,7 +37,7 @@ export async function publishMonthlyAuthorizations(deps: {
     try {
       if (
         !deps.networks.includes(request.network) ||
-        !(await monthlyConsent(deps.db, request.projectId, request.period))
+        !(await runConsent(deps.db, request))
       )
         continue;
       const cutoff = monthlyCutoff(deps.schedule, request.period);
@@ -102,7 +102,7 @@ export async function publishMonthlyAuthorizations(deps: {
       // check. Only the atomic inserts can decide whether this month publishes.
       await deps.db
         .prepare(
-          `INSERT INTO monthly_payment_authorizations(project_id,period,network,snapshot_sha256,authorization,published_at) SELECT project_id,period,network,snapshot_sha256,?,? FROM monthly_payment_runs WHERE project_id=? AND period=? AND network=? AND snapshot_sha256=? AND obligations_created_at IS NOT NULL AND (${MONTH_PLEDGED_SQL} OR COALESCE((SELECT automatic FROM monthly_payment_settings WHERE project_id=? ORDER BY sequence DESC LIMIT 1),1)=1) ON CONFLICT DO NOTHING`,
+          `INSERT INTO monthly_payment_authorizations(project_id,period,network,snapshot_sha256,authorization,published_at) SELECT project_id,period,network,snapshot_sha256,?,? FROM monthly_payment_runs WHERE project_id=? AND period=? AND network=? AND snapshot_sha256=? AND obligations_created_at IS NOT NULL AND (${runPledgedSql("monthly_payment_runs")} OR COALESCE((SELECT automatic FROM monthly_payment_settings WHERE project_id=? ORDER BY sequence DESC LIMIT 1),1)=1) ON CONFLICT DO NOTHING`,
         )
         .bind(
           text,
@@ -112,14 +112,12 @@ export async function publishMonthlyAuthorizations(deps: {
           request.network,
           request.snapshotSha256,
           request.projectId,
-          request.period,
-          request.projectId,
         )
         .run();
       if (attempt)
         await deps.db
           .prepare(
-            `INSERT INTO monthly_payment_authorization_attempts(project_id,period,network,source_sequence,authorization,published_at) SELECT project_id,period,network,?,?,? FROM monthly_payment_authorizations a WHERE project_id=? AND period=? AND network=? AND snapshot_sha256=? AND (${MONTH_PLEDGED_SQL} OR COALESCE((SELECT automatic FROM monthly_payment_settings WHERE project_id=? ORDER BY sequence DESC LIMIT 1),1)=1) AND NOT EXISTS(SELECT 1 FROM monthly_payment_authorization_attempts n WHERE n.project_id=a.project_id AND n.period=a.period AND n.network=a.network AND (length(n.source_sequence)>length(?) OR (length(n.source_sequence)=length(?) AND n.source_sequence>?))) ON CONFLICT DO NOTHING`,
+            `INSERT INTO monthly_payment_authorization_attempts(project_id,period,network,source_sequence,authorization,published_at) SELECT project_id,period,network,?,?,? FROM monthly_payment_authorizations a WHERE project_id=? AND period=? AND network=? AND snapshot_sha256=? AND (${runPledgedSql("a")} OR COALESCE((SELECT automatic FROM monthly_payment_settings WHERE project_id=? ORDER BY sequence DESC LIMIT 1),1)=1) AND NOT EXISTS(SELECT 1 FROM monthly_payment_authorization_attempts n WHERE n.project_id=a.project_id AND n.period=a.period AND n.network=a.network AND (length(n.source_sequence)>length(?) OR (length(n.source_sequence)=length(?) AND n.source_sequence>?))) ON CONFLICT DO NOTHING`,
           )
           .bind(
             attempt.sourceSequence,
@@ -129,8 +127,6 @@ export async function publishMonthlyAuthorizations(deps: {
             request.period,
             request.network,
             request.snapshotSha256,
-            request.projectId,
-            request.period,
             request.projectId,
             attempt.sourceSequence,
             attempt.sourceSequence,
@@ -144,8 +140,7 @@ export async function publishMonthlyAuthorizations(deps: {
         request.network,
       );
       if (saved?.authorization !== text) {
-        if (!(await monthlyConsent(deps.db, request.projectId, request.period)))
-          continue;
+        if (!(await runConsent(deps.db, request))) continue;
         throw new Error("Monthly authorization publication conflict");
       }
       published.push(

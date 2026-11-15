@@ -75,7 +75,13 @@ import {
   MONTH_PLEDGED_SQL,
   monthPledged,
   otherOpenPledges,
+  pledgeKeepsMonth,
 } from "./month-pledges";
+
+/** The project bound as ?1 is not retired, read from its current manifest. */
+const NOT_RETIRED_SQL =
+  "EXISTS(SELECT 1 FROM projects WHERE id=? AND json_extract(manifest,'$.listingTier') IS NOT 'retired')";
+
 import type {
   MonthlyReleaseCheck,
   MonthlyReleaseRequest,
@@ -534,7 +540,7 @@ async function freezeMonthlyPeriod(
   });
   const inserted = await db
     .prepare(
-      `INSERT INTO monthly_payment_runs(project_id,period,trigger,actor_id,allocation_sequence,snapshot,snapshot_sha256,network,vault,total_gross_base,frozen_at,obligations_created_at) SELECT ?,?,?,?,?,?,?,?,?,?,?,NULL WHERE (SELECT COALESCE(MAX(sequence),0) FROM monthly_allocation_changes WHERE project_id=? AND period=?)=? AND (?='owner' OR ${MONTH_PLEDGED_SQL} OR COALESCE((SELECT automatic FROM monthly_payment_settings WHERE project_id=? ORDER BY sequence DESC LIMIT 1),1)=1) AND EXISTS(SELECT 1 FROM projects WHERE id=? AND revision=? AND manifest_sha256=? AND (status='active' OR ${MONTH_PLEDGED_SQL})) AND NOT EXISTS (${PARTICIPATION_BAN_QUERY}) ON CONFLICT(project_id,period) DO NOTHING`,
+      `INSERT INTO monthly_payment_runs(project_id,period,trigger,actor_id,allocation_sequence,snapshot,snapshot_sha256,network,vault,total_gross_base,frozen_at,obligations_created_at) SELECT ?,?,?,?,?,?,?,?,?,?,?,NULL WHERE (SELECT COALESCE(MAX(sequence),0) FROM monthly_allocation_changes WHERE project_id=? AND period=?)=? AND (?='owner' OR (${MONTH_PLEDGED_SQL} AND ${NOT_RETIRED_SQL}) OR COALESCE((SELECT automatic FROM monthly_payment_settings WHERE project_id=? ORDER BY sequence DESC LIMIT 1),1)=1) AND EXISTS(SELECT 1 FROM projects WHERE id=? AND revision=? AND manifest_sha256=? AND (status='active' OR (${MONTH_PLEDGED_SQL} AND json_extract(manifest,'$.listingTier') IS NOT 'retired'))) AND NOT EXISTS (${PARTICIPATION_BAN_QUERY}) ON CONFLICT(project_id,period) DO NOTHING`,
     )
     .bind(
       project.id,
@@ -553,20 +559,34 @@ async function freezeMonthlyPeriod(
       sequence,
       input.trigger,
       project.id,
+      deployment.network,
+      deployment.vault,
       period,
+      project.id,
       project.id,
       project.id,
       project.revision,
       project.manifestSha256,
       project.id,
+      deployment.network,
+      deployment.vault,
       period,
       input.actorId,
     )
     .run();
   if (inserted.meta?.changes === 1) return "frozen";
-  // A month pledged on chain freezes whatever the automatic default or a
-  // pause says (operator decision, 15 November 2026).
-  const pledged = await monthPledged(db, project.id, period);
+  // A month pledged on chain in this vault freezes whatever the automatic
+  // default or a pause says, unless the project is retired (operator
+  // decision, 15 November 2026).
+  const pledged = pledgeKeepsMonth(
+    await monthPledged(db, {
+      projectId: project.id,
+      network: deployment.network,
+      vault: deployment.vault,
+      period,
+    }),
+    project.manifest,
+  );
   if (input.actorId) await assertMonthlyParticipation(db, input.actorId);
   if (await loadRun(db, project.id, period)) return "already-frozen";
   const current = await db
@@ -846,11 +866,22 @@ export async function coordinateMonthlyPayments(input: {
         if (now.getTime() < cutoff.getTime()) continue;
         const project = await input.projects.getProject(projectId);
         if (!project) throw new Error(`Project ${projectId} is not registered`);
-        // An owner's on-chain pledge for the month is consent to reserve it:
-        // the month freezes even with automatic payment off, or while the
-        // project is paused or restricted (operator decision, 15 November
-        // 2026). Contributors did the work the pledge promised.
-        const pledged = await monthPledged(db, projectId, period);
+        // An owner's on-chain pledge for the month, in the vault that pays
+        // it, is consent to reserve it: the month freezes even with
+        // automatic payment off, or while the project is paused or
+        // restricted, but never once it is retired (operator decision,
+        // 15 November 2026). Contributors did the work the pledge promised.
+        const served = servedDeployment(project.manifest, input.networks);
+        const pledged = pledgeKeepsMonth(
+          !!served &&
+            (await monthPledged(db, {
+              projectId,
+              network: served.network,
+              vault: served.vault,
+              period,
+            })),
+          project.manifest,
+        );
         if (!pledged && !(await automaticMonthlyPayment(db, projectId))) {
           report.waiting.push({ key, reason: "automatic-off" });
           continue;

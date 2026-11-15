@@ -78,29 +78,62 @@ export function storedMonthPledges(
 }
 
 /**
- * The SQL condition that the month bound as (?1 project, ?2 period) was
- * pledged on chain: a stored pledge above zero, open or since closed. A
- * closed pledge was either reserved or lapsed after its commit window, which
- * the window checks already refuse.
+ * The SQL condition that the month bound as (?1 project, ?2 network,
+ * ?3 vault, ?4 period) was pledged on chain in that vault: a stored pledge
+ * above zero, open or since closed. A closed pledge was either reserved or
+ * lapsed after its commit window, which the window checks already refuse.
+ * A pledge in any other vault of the project, such as a replaced one, gives
+ * no consent.
  */
 export const MONTH_PLEDGED_SQL =
-  "EXISTS(SELECT 1 FROM vault_month_pledges WHERE project_id=? AND period=? AND amount<>'0')";
+  "EXISTS(SELECT 1 FROM vault_month_pledges WHERE project_id=? AND network=? AND vault=? AND period=? AND amount<>'0')";
 
 /**
- * True when the owner pledged this month on chain. A pledge is the owner's
- * consent to reserve the month, whatever the automatic default, a pause or a
- * restriction says (operator decision, 15 November 2026).
+ * The same condition for a frozen run, correlated to the row `alias` that has
+ * `project_id`, `period` and `network`: a pledge in the vault the run pays.
+ */
+export function runPledgedSql(alias: string): string {
+  return `EXISTS(SELECT 1 FROM monthly_payment_runs pr JOIN vault_month_pledges pp ON pp.project_id=pr.project_id AND pp.network=pr.network AND pp.vault=pr.vault AND pp.period=pr.period WHERE pr.project_id=${alias}.project_id AND pr.period=${alias}.period AND pr.network=${alias}.network AND pp.amount<>'0')`;
+}
+
+/** The vault that pays a month, and the month. */
+export type PledgeScope = {
+  projectId: string;
+  network: string;
+  vault: string;
+  period: string;
+};
+
+const scopeBinds = (scope: PledgeScope) => [
+  scope.projectId,
+  scope.network,
+  scope.vault,
+  scope.period,
+];
+
+/**
+ * True when the owner pledged this month on chain in the vault that pays it.
+ * A pledge is the owner's consent to reserve the month, whatever the
+ * automatic default says, and while the project is paused or restricted;
+ * never for a retired project (operator decision, 15 November 2026).
  */
 export async function monthPledged(
   db: Pick<D1Database, "prepare">,
-  projectId: string,
-  period: string,
+  scope: PledgeScope,
 ): Promise<boolean> {
   const row = await db
     .prepare(`SELECT ${MONTH_PLEDGED_SQL} pledged`)
-    .bind(projectId, period)
+    .bind(...scopeBinds(scope))
     .first<{ pledged: number }>();
   return row?.pledged === 1;
+}
+
+/** A pledge lets a paused or restricted project's month go ahead; retirement ends it. */
+export function pledgeKeepsMonth(
+  pledged: boolean,
+  manifest: { listingTier?: string },
+): boolean {
+  return pledged && manifest.listingTier !== "retired";
 }
 
 /**
@@ -125,18 +158,34 @@ export async function otherOpenPledges(
 
 /**
  * Whether a closed month may be committed on chain: the owner's automatic
- * default is on, or the owner pledged the month on chain.
+ * default is on, or the owner pledged the month in the vault that pays it.
  */
 export async function monthlyConsent(
   db: Pick<D1Database, "prepare">,
-  projectId: string,
-  period: string,
+  scope: PledgeScope,
 ): Promise<boolean> {
   const row = await db
     .prepare(
       `SELECT (${MONTH_PLEDGED_SQL} OR COALESCE((SELECT automatic FROM monthly_payment_settings WHERE project_id=? ORDER BY sequence DESC LIMIT 1),1)=1) consent`,
     )
-    .bind(projectId, period, projectId)
+    .bind(...scopeBinds(scope), scope.projectId)
+    .first<{ consent: number }>();
+  return row?.consent === 1;
+}
+
+/**
+ * `monthlyConsent` for a frozen run, judged against the vault the run pays.
+ * Without a run only the automatic default counts.
+ */
+export async function runConsent(
+  db: Pick<D1Database, "prepare">,
+  run: { projectId: string; period: string; network: string },
+): Promise<boolean> {
+  const row = await db
+    .prepare(
+      `SELECT (${runPledgedSql("q")} OR COALESCE((SELECT automatic FROM monthly_payment_settings WHERE project_id=q.project_id ORDER BY sequence DESC LIMIT 1),1)=1) consent FROM (SELECT ? project_id, ? period, ? network) q`,
+    )
+    .bind(run.projectId, run.period, run.network)
     .first<{ consent: number }>();
   return row?.consent === 1;
 }

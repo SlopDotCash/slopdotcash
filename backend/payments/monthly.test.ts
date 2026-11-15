@@ -1650,9 +1650,15 @@ describe("monthly coordinator", () => {
   });
 
   describe("a month pledged on chain (operator decision, 15 November 2026)", () => {
-    const pledge = (period: string, amount: string, open = 1) => {
-      const selected = project.manifest.escrow?.deployments[0];
-      if (!selected) throw new Error("Missing fixture deployment");
+    const pledge = (
+      period: string,
+      amount: string,
+      open = 1,
+      vaultAddress?: string,
+    ) => {
+      const fixture = project.manifest.escrow?.deployments[0];
+      if (!fixture) throw new Error("Missing fixture deployment");
+      const selected = { ...fixture, vault: vaultAddress ?? fixture.vault };
       sqlite
         .prepare(
           "INSERT INTO vault_month_pledges(project_id,network,vault,period,amount,open,block_number,observed_at) VALUES(?,?,?,?,?,?,'100',?)",
@@ -1718,6 +1724,51 @@ describe("monthly coordinator", () => {
       const report = await coordinate(afterCutoff);
       expect(report.failures).toEqual([]);
       expect(report.frozen).toEqual([`${project.id}/2082-11`]);
+    });
+
+    test("a pledge in another vault of the project gives no consent", async () => {
+      await owner().setAutomatic(project.id, actor, false);
+      vault("1000");
+      pledge(
+        "2082-11",
+        "1000",
+        1,
+        "0x9000000000000000000000000000000000000009",
+      );
+      expect((await coordinate(afterCutoff)).waiting).toEqual([
+        { key: `${project.id}/2082-11`, reason: "automatic-off" },
+      ]);
+      expect(count("monthly_payment_runs")).toBe(0);
+    });
+
+    test("a retired project's pledged month does not freeze", async () => {
+      const manifest = {
+        ...project.manifest,
+        status: "paused" as const,
+        listingTier: "retired" as const,
+      };
+      const text = JSON.stringify(manifest);
+      expect(
+        await new CloudflareProjectPersistence(db).appendProjectRevision(
+          {
+            projectId: project.id,
+            expectedRevision: project.revision,
+            manifest,
+            manifestText: text,
+            manifestSha256: await sha256Hex(text),
+            reason: "Retired after the owner pledged the month",
+            actor,
+            at: afterCutoff.toISOString(),
+          },
+          0,
+        ),
+      ).toBe("updated");
+      vault("1000");
+      pledge("2082-11", "1000");
+      expect((await coordinate(afterCutoff)).waiting).toEqual([
+        { key: `${project.id}/2082-11`, reason: "project-restricted" },
+      ]);
+      expect(count("monthly_payment_runs")).toBe(0);
     });
 
     test("a pledge for another month gives no consent for this one", async () => {

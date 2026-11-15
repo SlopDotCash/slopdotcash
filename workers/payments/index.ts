@@ -11,8 +11,8 @@ import {
 import { chainPledgeReaders } from "../../backend/payments/month-pledge-readers";
 import {
   chainPeriod,
-  monthlyConsent,
   pledgeReadPeriods,
+  runConsent,
   type StoredMonthPledges,
   storedMonthPledges,
 } from "../../backend/payments/month-pledges";
@@ -422,11 +422,7 @@ export async function runMonthlyCommitments(
         .run();
       // A month pledged on chain may be admitted with automatic payment off
       // (operator decision, 15 November 2026).
-      const automatic = await monthlyConsent(
-        env.PAYMENTS_DB,
-        plan.request.projectId,
-        plan.request.period,
-      );
+      const automatic = await runConsent(env.PAYMENTS_DB, plan.request);
       const cutoff = monthlyCutoff(schedule, plan.request.period);
       const closes = monthlyCutoff(
         schedule,
