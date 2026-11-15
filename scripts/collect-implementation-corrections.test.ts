@@ -129,7 +129,7 @@ function fixture(merge = sha) {
     },
   };
 }
-function transport(merge = sha) {
+function transport(merge = sha, node = fixture(merge)) {
   let requests = 0;
   const searchPageSizes: number[] = [];
   const call = Object.assign(
@@ -154,23 +154,21 @@ function transport(merge = sha) {
           search: {
             issueCount: 1,
             pageInfo: { hasNextPage: false, endCursor: null },
-            nodes: [fixture(merge)],
+            nodes: [node],
           },
         };
-      else if (query.includes("CorrectionMetadata"))
-        data = { nodes: [fixture(merge)] };
+      else if (query.includes("CorrectionMetadata")) data = { nodes: [node] };
       else if (query.includes("LeaderboardOutcomeCommitLines"))
         data = {
-          nodes: [
-            {
-              __typename: "Commit",
-              id: "C_source",
-              oid: sha,
-              additions: 2,
-              deletions: 1,
-              repository: { id: "R_kgDOT23CXA" },
-            },
-          ],
+          nodes: (body.variables.ids as string[]).map((id) => ({
+            __typename: "Commit",
+            id,
+            oid: node.commits.nodes.find(({ commit }) => commit.id === id)
+              ?.commit.oid,
+            additions: 2,
+            deletions: 1,
+            repository: { id: "R_kgDOT23CXA" },
+          })),
         };
       else throw new Error(`Unexpected fixture query: ${query.slice(0, 70)}`);
       return new Response(
@@ -436,6 +434,168 @@ test("a complete census supplies source proofs without another metadata or stati
   const repeated = await collectImplementationCorrections(options, deps);
   expect(operations).toHaveLength(count);
   expect(repeated.receipt.manifestDigest).toBe(result.receipt.manifestDigest);
+});
+
+test("a complete census binds the head without assuming chronological commit order", async () => {
+  const ancestor = "c".repeat(40);
+  for (const list of [
+    "head-first",
+    "head-missing",
+    "head-duplicated",
+  ] as const) {
+    const node = fixture();
+    node.url = "https://github.com/elizaOS/asi/pull/1";
+    const head = node.commits.nodes[0];
+    const earlier = {
+      commit: { ...head.commit, id: "C_ancestor", oid: ancestor },
+    };
+    node.commits.nodes =
+      list === "head-first"
+        ? [head, earlier]
+        : list === "head-missing"
+          ? [earlier]
+          : [head, head];
+    node.commits.totalCount = node.commits.nodes.length;
+    const options = {
+      projects: ["asi"],
+      directory: await directory(),
+      month: "2026-01",
+      before: "2026-01-31T00:00:00.000Z",
+    };
+    const network = transport(sha, node);
+    const journal = baseline([{ ...award(), sourceUrl: node.url }]);
+    const collection = collectImplementationCorrections(options, {
+      journal,
+      registry: registry(),
+      token: "private-test-token",
+      transport: network.call,
+      now: new Date("2026-01-31T23:59:59Z"),
+    });
+    if (list === "head-missing") {
+      await expect(collection).rejects.toThrow(
+        "Complete census source identity or commit evidence is invalid",
+      );
+    } else if (list === "head-duplicated") {
+      await expect(collection).rejects.toThrow(
+        "commit totals do not match complete unique evidence",
+      );
+    } else {
+      const result = await collection;
+      expect(result.receipt.ownershipComplete).toBe(true);
+      expect(result.receipt.completeProofs).toBe(1);
+      const candidate = result.manifest.candidates[0];
+      expect(candidate.proof).toMatchObject({
+        status: "complete",
+        sources: [{ headSha: sha, commits: [{ sha }, { sha: ancestor }] }],
+      });
+      const corrected = applyPointsImplementationCorrections(
+        journal,
+        result.manifest,
+        [{ candidateId: candidate.id, eligible: true }],
+        result.manifest.generatedAt,
+        new Map(),
+      );
+      expect(corrected.dispositions[0].status).toBe("unchanged");
+    }
+  }
+});
+
+test("October opt-in holds both sides of a merged donor's shared commit", async () => {
+  const donor = fixture();
+  Object.assign(donor, {
+    url: "https://github.com/elizaOS/asi/pull/1",
+    mergedAt: "2026-10-15T00:00:02Z",
+    updatedAt: "2026-10-15T00:00:02Z",
+  });
+  const carrier = {
+    ...donor,
+    id: "PR_carrier",
+    number: 2,
+    url: "https://github.com/elizaOS/asi/pull/2",
+    mergedAt: "2026-10-15T00:00:00Z",
+    updatedAt: "2026-10-15T00:00:00Z",
+    author: {
+      ...donor.author,
+      id: "MDQ6VXNlcjQz",
+      login: "carrier",
+      url: "https://github.com/carrier",
+      avatarUrl: "https://avatars.githubusercontent.com/u/43",
+    },
+  };
+  const base = transport();
+  const network = Object.assign(
+    async (input: RequestInfo | URL, init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body));
+      if (body.query.includes("LeaderboardSearchReferences"))
+        return Response.json({
+          data: {
+            search: {
+              issueCount: 2,
+              nodes: [carrier, donor],
+              pageInfo: { hasNextPage: false, endCursor: null },
+            },
+            rateLimit: {
+              cost: 1,
+              remaining: 4900,
+              limit: 5000,
+              resetAt: "2026-11-01T01:00:00Z",
+            },
+          },
+        });
+      const response = await base.call(input, init);
+      if (!body.query.includes("CorrectionRepository")) return response;
+      const repository = await response.json();
+      repository.data.repository.createdAt = "2026-10-01T00:00:00Z";
+      return Response.json(repository);
+    },
+    { preconnect: fetch.preconnect },
+  );
+  const before = "2026-11-01T00:00:00.000Z";
+  const journal = appendPointAwards(
+    emptyPointsJournal(before),
+    [donor, carrier].map((pull) => ({
+      ...award(),
+      key: pointKey("asi", actor.id, "merged-pull-request", pull.id),
+      sourceId: pull.id,
+      sourceUrl: pull.url,
+      workUnitId: `history_${pull.id}`,
+      occurredAt: new Date(pull.mergedAt).toISOString(),
+    })),
+    "f".repeat(64),
+    "github-merged-history-v1",
+    before,
+  );
+  const options = {
+    projects: ["asi"],
+    directory: await directory(),
+    before,
+    octoberOriginalCredit: true,
+  };
+  const dependencies = {
+    journal,
+    registry: registry(),
+    token: "fixture-token",
+    transport: network,
+    now: new Date(before),
+  };
+  const completed = await collectImplementationCorrections(
+    options,
+    dependencies,
+  );
+  expect(completed.receipt.ownershipComplete).toBe(true);
+  expect(completed.receipt.heldProofs).toBe(2);
+  expect(completed.receipt.limitations.map((entry) => entry.reason)).toEqual([
+    "October replacement shares accepted commits with a merged donor PR",
+    "October replacement shares accepted commits with a merged donor PR",
+  ]);
+  await expect(
+    collectImplementationCorrections(
+      { ...options, octoberOriginalCredit: false },
+      dependencies,
+    ),
+  ).rejects.toThrow(
+    "October original credit policy differs from the frozen campaign",
+  );
 });
 
 test("complete census reuse holds absent or mismatched recorded sources", async () => {
@@ -2083,6 +2243,327 @@ test("a counter error without rate accounting is never admitted for cached recov
     expect(envelope.errors).toBeUndefined();
   }
 });
+
+function discussionTransport(
+  result:
+    | "complete"
+    | "overflow"
+    | "quota"
+    | "missing-rate"
+    | "recorded-before-cap",
+) {
+  const base = transport();
+  const calls = {
+    pull: 0,
+    reviews: 0,
+    comments: 0,
+    inline: 0,
+    timeline: 0,
+    envelope: 0,
+  };
+  const rateLimit = {
+    cost: 1,
+    limit: 5000,
+    remaining: 4900,
+    resetAt: "2026-02-01T01:00:00Z",
+  };
+  const page = {
+    nodes: [],
+    totalCount: 0,
+    pageInfo: { hasNextPage: false, endCursor: null },
+  };
+  const call = Object.assign(
+    async (input: RequestInfo | URL, init?: RequestInit) => {
+      const { pathname } = new URL(String(input));
+      if (pathname.endsWith("/asi/pulls/1")) {
+        calls.pull++;
+        const node = fixture();
+        return Response.json({
+          node_id: node.id,
+          number: node.number,
+          html_url: node.url,
+          updated_at: node.updatedAt,
+          merged_at: node.mergedAt,
+          head: { sha },
+          state: "closed",
+          body: node.body,
+          comments: 0,
+          review_comments: 0,
+        });
+      }
+      if (pathname.endsWith("/reviews")) {
+        calls.reviews++;
+        return Response.json([]);
+      }
+      if (pathname.endsWith("/issues/1/comments")) {
+        calls.comments++;
+        return Response.json([]);
+      }
+      if (pathname.endsWith("/pulls/1/comments")) {
+        calls.inline++;
+        return Response.json([]);
+      }
+      const { query } = JSON.parse(String(init?.body)) as { query: string };
+      if (query.includes("HistoricalValueDiscussion")) {
+        calls.envelope++;
+        if (result === "quota")
+          return Response.json(
+            { message: "Secondary rate limit" },
+            { status: 403, headers: { "retry-after": "17" } },
+          );
+        const node = fixture();
+        return Response.json({
+          data: {
+            rateLimit:
+              result === "missing-rate"
+                ? undefined
+                : result === "recorded-before-cap"
+                  ? { ...rateLimit, cost: 4901, remaining: 99 }
+                  : rateLimit,
+            repository: {
+              ...node.repository,
+              nameWithOwner: "elizaOS/asi",
+              pullRequest: {
+                ...node,
+                id: node.id,
+                state: "MERGED",
+                comments:
+                  result === "overflow"
+                    ? { ...page, pageInfo: { hasNextPage: true } }
+                    : page,
+                reviewThreads: page,
+                timelineItems: { ...page, totalCount: 36 },
+              },
+            },
+          },
+        });
+      }
+      if (query.includes("CROSS_REFERENCED_EVENT")) {
+        calls.timeline++;
+        return Response.json({
+          data: {
+            rateLimit,
+            repository: {
+              pullRequest: { id: "PR_source", timelineItems: page },
+            },
+          },
+        });
+      }
+      if (query.includes("LeaderboardSearchReferences")) {
+        const node = fixture();
+        (node.commits.nodes[0].commit.author as { user: unknown }).user = null;
+        return Response.json({
+          data: {
+            rateLimit,
+            search: { issueCount: 1, pageInfo: page.pageInfo, nodes: [node] },
+          },
+        });
+      }
+      return base.call(input, init);
+    },
+    { preconnect: fetch.preconnect },
+  );
+  return { call, calls };
+}
+
+async function discussionCampaign(
+  which: Parameters<typeof discussionTransport>[0],
+) {
+  const network = discussionTransport(which);
+  const options = {
+    projects: ["asi"],
+    directory: await directory(),
+    before: "2026-01-31T00:00:00.000Z",
+    month: "2026-01",
+  };
+  const dependencies = {
+    journal: baseline(),
+    registry: registry(),
+    token: "fixture-token",
+    now: new Date("2026-01-31T23:59:59Z"),
+    transport: network.call,
+    quotaNow: () => 1_000_000,
+  };
+  return { options, dependencies, calls: network.calls };
+}
+
+test("historical discussion opt-in only fetches new envelopes and replays exact saved evidence in apply mode", async () => {
+  const graph = await discussionCampaign("complete");
+  const graphFirst = await collectImplementationCorrections(
+    { ...graph.options, graphqlDiscussions: true },
+    graph.dependencies,
+  );
+  expect(graphFirst.receipt.completeProofs).toBe(1);
+  expect(graph.calls).toEqual({
+    pull: 1,
+    reviews: 1,
+    comments: 0,
+    inline: 0,
+    timeline: 0,
+    envelope: 1,
+  });
+  const replay = await collectImplementationCorrections(
+    graph.options,
+    graph.dependencies,
+  );
+  expect(replay.receipt.requests).toBe(0);
+  expect(replay.receipt.manifestDigest).toBe(graphFirst.receipt.manifestDigest);
+  expect(graph.calls).toEqual({
+    pull: 1,
+    reviews: 1,
+    comments: 0,
+    inline: 0,
+    timeline: 0,
+    envelope: 1,
+  });
+
+  const rest = await discussionCampaign("complete");
+  const restFirst = await collectImplementationCorrections(
+    rest.options,
+    rest.dependencies,
+  );
+  expect(restFirst.receipt.manifestDigest).toBe(
+    graphFirst.receipt.manifestDigest,
+  );
+  const covered = await collectImplementationCorrections(
+    { ...rest.options, graphqlDiscussions: true },
+    rest.dependencies,
+  );
+  expect(covered.receipt.requests).toBe(0);
+  expect(rest.calls).toEqual({
+    pull: 1,
+    reviews: 1,
+    comments: 1,
+    inline: 1,
+    timeline: 1,
+    envelope: 0,
+  });
+});
+
+test("historical discussion falls back once per REST page when a GraphQL connection is partial", async () => {
+  const { options, dependencies, calls } = await discussionCampaign("overflow");
+  const filled = await collectImplementationCorrections(
+    { ...options, graphqlDiscussions: true },
+    dependencies,
+  );
+  expect(filled.receipt.completeProofs).toBe(1);
+  expect(calls).toEqual({
+    pull: 1,
+    reviews: 1,
+    comments: 1,
+    inline: 1,
+    timeline: 1,
+    envelope: 1,
+  });
+});
+
+test("historical discussion never replays an envelope missing rate evidence", async () => {
+  const { options, dependencies, calls } =
+    await discussionCampaign("missing-rate");
+  const first = await collectImplementationCorrections(
+    { ...options, graphqlDiscussions: true },
+    dependencies,
+  );
+  expect(first.receipt.completeProofs).toBe(1);
+  expect(calls).toEqual({
+    pull: 1,
+    reviews: 1,
+    comments: 1,
+    inline: 1,
+    timeline: 1,
+    envelope: 1,
+  });
+  const replay = await collectImplementationCorrections(
+    { ...options, graphqlDiscussions: true },
+    dependencies,
+  );
+  expect(replay.receipt.manifestDigest).toBe(first.receipt.manifestDigest);
+  expect(replay.receipt.requests).toBe(0);
+});
+
+test("a live budget error after recording a complete envelope keeps exact replay semantics", async () => {
+  const { options, dependencies, calls } = await discussionCampaign(
+    "recorded-before-cap",
+  );
+  const first = await collectImplementationCorrections(
+    { ...options, graphqlDiscussions: true },
+    dependencies,
+  );
+  expect(first.receipt.completeProofs).toBe(1);
+  expect(first.receipt.reportedGraphqlCost).toBeGreaterThan(4900);
+  expect(calls).toEqual({
+    pull: 1,
+    reviews: 1,
+    comments: 0,
+    inline: 0,
+    timeline: 0,
+    envelope: 1,
+  });
+  const replay = await collectImplementationCorrections(options, dependencies);
+  expect(replay.receipt.manifestDigest).toBe(first.receipt.manifestDigest);
+  expect(replay.receipt.requests).toBe(0);
+});
+
+test("historical discussion secondary quota remains sticky across the optional fallback", async () => {
+  const { options, dependencies, calls } = await discussionCampaign("quota");
+  await expect(
+    collectImplementationCorrections(
+      { ...options, graphqlDiscussions: true },
+      dependencies,
+    ),
+  ).rejects.toMatchObject({ kind: "quota", retryAtMs: 1_019_000 });
+  await expect(
+    readFile(join(options.directory, "manifest.json"), "utf8"),
+  ).rejects.toThrow();
+  expect(calls.envelope).toBe(1);
+  expect(calls.inline + calls.comments + calls.timeline).toBe(0);
+});
+
+test.each([true, false])(
+  "historical discussion waits for a late sibling quota stop (GraphQL enabled: %s)",
+  async (graphqlDiscussions) => {
+    const { options, dependencies } = await discussionCampaign("complete");
+    let quotaReads = 0;
+    const transport = Object.assign(
+      async (input: RequestInfo | URL, init?: RequestInit) => {
+        const { pathname } = new URL(String(input));
+        if (
+          pathname.endsWith("/reviews") ||
+          (!graphqlDiscussions && pathname.endsWith("/issues/1/comments"))
+        )
+          return new Response(null, { status: 404 });
+        const lateRead = graphqlDiscussions
+          ? pathname === "/graphql" &&
+            String(init?.body).includes("HistoricalValueDiscussion")
+          : pathname.endsWith("/pulls/1/comments");
+        if (!lateRead) return dependencies.transport(input, init);
+        quotaReads += 1;
+        if (graphqlDiscussions && quotaReads === 1)
+          return Response.json(
+            { message: "Transient gateway failure" },
+            { status: 503 },
+          );
+        await Bun.sleep(30);
+        return Response.json(
+          { message: "Secondary rate limit" },
+          { status: 403, headers: { "retry-after": "17" } },
+        );
+      },
+      { preconnect: fetch.preconnect },
+    );
+    await expect(
+      collectImplementationCorrections(
+        { ...options, graphqlDiscussions },
+        { ...dependencies, transport },
+      ),
+    ).rejects.toMatchObject({ kind: "quota", retryAtMs: 1_019_000 });
+    expect(quotaReads).toBe(graphqlDiscussions ? 2 : 1);
+    for (const filename of ["manifest.json", "collection-receipt.json"])
+      await expect(
+        readFile(join(options.directory, filename), "utf8"),
+      ).rejects.toThrow();
+  },
+);
 
 function promotedCommitTransport(
   quotaOnFebruarySearch: boolean,

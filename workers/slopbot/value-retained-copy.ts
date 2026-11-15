@@ -2,19 +2,26 @@
  * discovery hint, never sufficient evidence for assigning implementation credit.
  */
 
+import { sha256Hex } from "../../src/lib/async-sha256.mjs";
 import {
   githubLinkDestinations,
   sameRepositoryCommitHints,
 } from "./value-commit-hints";
 import type { FileChange, ValueEvidence } from "./value-evidence-types";
 import { retainedManifestIdentity } from "./value-manifest-identity";
+import { MERGE_GIT_VERSION } from "./value-merge-profile";
+import { mergeResolutionMatches } from "./value-merge-resolution";
 import {
   hasCompleteValuePatch,
   valueAdditionCount,
   valueDeletionCount,
   valuePatch,
 } from "./value-patch";
-import { hasRetainedMergeReference } from "./value-retained-reference";
+import {
+  acknowledgementTime,
+  hasRetainedMergeReference,
+  retainedAcknowledgements,
+} from "./value-retained-reference";
 import type { WorkUnitSource } from "./value-work-unit-types";
 import {
   type CandidateHunkFile,
@@ -129,6 +136,7 @@ function hasRetainedPullReference(
   original: ValueEvidence,
   body: string,
   accepted: ValueEvidence,
+  rebase = false,
 ): boolean {
   const pull = accepted.pull;
   if (
@@ -155,7 +163,11 @@ function hasRetainedPullReference(
   return text.split(/(?<=[.!?])(?:\s+|$)|[\r\n]+/u).some((sentence) => {
     if (
       !/\b(?:commits?|changes?|work)\b/iu.test(sentence) ||
-      !/\b(?:retained|cherry[ -]picked|carried[ -]over)\b/iu.test(sentence) ||
+      !(rebase
+        ? /\brebased\b/iu.test(sentence) && /\bauthorship\b/iu.test(sentence)
+        : /\b(?:retained|cherry[ -]picked|carried[ -]over)\b/iu.test(
+            sentence,
+          )) ||
       /\b(?:not|never|no|neither|without|cannot)\b|\b\p{L}+n['’]t\b/iu.test(
         sentence,
       )
@@ -199,11 +211,12 @@ function hasRetainedPullReference(
 async function retainedCopySources(
   original: WorkUnitSource,
   sources: readonly WorkUnitSource[],
-): Promise<WorkUnitSource[]> {
+  octoberOriginalCredit: boolean,
+) {
   const evidence = original.evidence;
+  const retained: { source: WorkUnitSource; linkedOnly: boolean }[] = [];
   if (evidence.pull.merged_at !== null || evidence.indirectAcceptance)
-    return [];
-  const retained: WorkUnitSource[] = [];
+    return retained;
   for (const source of sources) {
     const integration = source.evidence;
     const accepted = integration.pull;
@@ -221,11 +234,20 @@ async function retainedCopySources(
       )
     )
       continue;
+    const octoberReplacement =
+      octoberOriginalCredit &&
+      accepted.merged_at.startsWith("2026-10-") &&
+      evidence.pull.state === "closed" &&
+      evidence.pull.number < accepted.number &&
+      evidence.pull.user.type === "User" &&
+      accepted.merged_by.type === "User" &&
+      evidence.pull.user.node_id !== accepted.user.node_id;
     let acknowledged = sameAuthorReopen(evidence, integration);
-    for (const comment of evidence.comments) {
+    for (const comment of retainedAcknowledgements(evidence)) {
       if (
+        comment.user?.type !== "Bot" &&
         comment.user?.node_id === accepted.merged_by?.node_id &&
-        Date.parse(comment.created_at) >=
+        Date.parse(acknowledgementTime(comment)) >=
           Date.parse(accepted.merged_at as string) &&
         // GitHub numbers PRs in creation order. A lower number proves this
         // PR existed before the accepted PR was opened. A duplicate opened
@@ -244,7 +266,37 @@ async function retainedCopySources(
       )
         acknowledged = true;
     }
-    if (acknowledged) retained.push(source);
+    if (
+      !acknowledged &&
+      octoberReplacement &&
+      evidence.comments.some(
+        (comment) =>
+          comment.user?.type !== "Bot" &&
+          comment.user?.node_id === accepted.merged_by?.node_id &&
+          comment.updated_at === comment.created_at &&
+          Date.parse(comment.created_at) <=
+            Date.parse(evidence.pull.closed_at ?? "") &&
+          Date.parse(comment.created_at) <
+            Date.parse(accepted.merged_at ?? "") &&
+          hasRetainedPullReference(evidence, comment.body, integration, true),
+      )
+    )
+      acknowledged = true;
+    // An outgoing reference only discovers the source. Without an authenticated
+    // acknowledgement, both commits must independently name that contributor.
+    const linkedOnly =
+      !acknowledged &&
+      octoberReplacement &&
+      accepted.user.node_id === accepted.merged_by.node_id &&
+      integration.relatedPullRequests.some(
+        (reference) =>
+          reference.id === evidence.pull.node_id &&
+          reference.number === evidence.pull.number &&
+          reference.url === evidence.pull.html_url &&
+          reference.repository.toLowerCase() ===
+            evidence.repository.toLowerCase(),
+      );
+    if (acknowledged || linkedOnly) retained.push({ source, linkedOnly });
   }
   return retained;
 }
@@ -452,9 +504,53 @@ function alreadyAcceptedPromotion(
   });
 }
 
+/** A narrow conflict-copy proof. Full-index canonical patches identify each
+ * resolved blob. A shared first parent preserves the original implementation
+ * antecedent while the second parent may be a newer integration branch.
+ */
+async function retainedResolutionSignature(
+  source: WorkUnitSource,
+  resolution: NonNullable<ValueEvidence["mergeResolutions"]>[number],
+): Promise<string | null> {
+  const commit = source.evidence.commits.find(
+    (entry) => entry.sha === resolution.commitSha,
+  );
+  if (
+    !commit ||
+    !mergeResolutionMatches(resolution, commit) ||
+    resolution.gitVersion !== MERGE_GIT_VERSION ||
+    !resolution.hadConflicts ||
+    !source.evidence.commits.some(
+      (entry) => entry.sha === commit.parents[0].sha,
+    ) ||
+    resolution.paths.length === 0 ||
+    (await sha256Hex(resolution.patch)) !== resolution.patchSha256
+  )
+    return null;
+  const files = resolution.patch.split(/^diff --git /mu).slice(1);
+  if (files.length !== resolution.paths.length) return null;
+  const identities: string[] = [];
+  const paths = new Set<string>();
+  for (const file of files) {
+    const match =
+      /^a\/(.+) b\/\1\nindex [a-f0-9]{40}\.\.([a-f0-9]{40}) (100644|100755)\n--- a\/\1\n\+\+\+ b\/\1\n/u.exec(
+        file,
+      );
+    if (!match || !resolution.paths.includes(match[1]) || paths.has(match[1]))
+      return null;
+    paths.add(match[1]);
+    identities.push(JSON.stringify([match[1], match[2], match[3]]));
+  }
+  if (new Set(identities).size !== resolution.paths.length) return null;
+  return JSON.stringify([commit.parents[0].sha, identities.sort()]);
+}
+
 export async function retainedCopyBindings(
   sources: readonly WorkUnitSource[],
-  options: { ordinaryCommitsOnly?: boolean } = {},
+  options: {
+    ordinaryCommitsOnly?: boolean;
+    octoberOriginalCredit?: boolean;
+  } = {},
 ) {
   const bindings = new Map<
     string,
@@ -465,11 +561,16 @@ export async function retainedCopyBindings(
       acceptedCommitSha: string;
       path: string;
       preexistingCommitShas: string[];
+      mergeResolution?: true;
     }
   >();
   const limitations = new Set<string>();
   for (const original of sources) {
-    const integrations = await retainedCopySources(original, sources);
+    const integrations = await retainedCopySources(
+      original,
+      sources,
+      options.octoberOriginalCredit === true,
+    );
     if (!integrations.length && alreadyAcceptedPromotion(original, sources))
       continue;
     const evidence = original.evidence;
@@ -499,7 +600,7 @@ export async function retainedCopyBindings(
       for (const candidate of sources) {
         const other = candidate.evidence;
         if (
-          integrations.includes(candidate) ||
+          integrations.some(({ source }) => source === candidate) ||
           !other.pull.merged_at ||
           other.repositoryNodeId !== evidence.repositoryNodeId ||
           !(
@@ -528,7 +629,7 @@ export async function retainedCopyBindings(
               // The same accepted commit can be carried by an intermediate
               // PR and the acknowledged final integration. It is one copy,
               // not another original requiring a separate acknowledgement.
-              return !integrations.some(({ evidence: accepted }) =>
+              return !integrations.some(({ source: { evidence: accepted } }) =>
                 accepted.commitAttribution.some(
                   (retained) =>
                     retained.sha === commit.sha &&
@@ -564,11 +665,83 @@ export async function retainedCopyBindings(
       // A source's branch-sync merge is not one of those implementation claims.
       // Full joint preparation retains its existing merge-resolution gate.
       if (options.ordinaryCommitsOnly && commit.parents.length > 1) continue;
+      if (commit.parents.length > 1) {
+        const resolutions = (evidence.mergeResolutions ?? []).filter(
+          (resolution) => resolution.commitSha === commit.sha,
+        );
+        const resolution = resolutions[0];
+        if (
+          resolutions.length !== 1 ||
+          !mergeResolutionMatches(resolution, commit) ||
+          resolution.gitVersion !== MERGE_GIT_VERSION ||
+          (await sha256Hex(resolution.patch)) !== resolution.patchSha256
+        ) {
+          limitations.add(
+            `${evidence.pull.node_id}: retained merge ${commit.sha} needs complete canonical resolution evidence`,
+          );
+        } else if (resolution.hadConflicts || resolution.paths.length > 0) {
+          const signature = await retainedResolutionSignature(
+            original,
+            resolution,
+          );
+          const matches = [];
+          for (const { source: integration } of integrations) {
+            for (const candidate of integration.evidence.mergeResolutions ??
+              []) {
+              const acceptedCommit = integration.evidence.commits.find(
+                (entry) => entry.sha === candidate.commitSha,
+              );
+              if (
+                signature !== null &&
+                acceptedCommit !== undefined &&
+                Date.parse(commit.commit.author.date) <=
+                  Date.parse(acceptedCommit.commit.author.date) &&
+                Date.parse(acceptedCommit.commit.author.date) <=
+                  Date.parse(integration.evidence.pull.merged_at ?? "") &&
+                signature ===
+                  (await retainedResolutionSignature(integration, candidate))
+              )
+                matches.push({ integration, candidate });
+            }
+          }
+          if (matches.length !== 1) {
+            limitations.add(
+              `${evidence.pull.node_id}: retained merge ${commit.sha} has ${matches.length} exact resolution bindings`,
+            );
+          } else {
+            const { integration, candidate } = matches[0];
+            for (const path of resolution.paths) {
+              const key = JSON.stringify([
+                evidence.repositoryNodeId,
+                candidate.commitSha,
+                path,
+              ]);
+              if (bindings.has(key)) {
+                limitations.add(
+                  `${evidence.pull.node_id}: retained copy has competing original sources`,
+                );
+              } else
+                bindings.set(key, {
+                  original,
+                  originalCommitSha: commit.sha,
+                  integration,
+                  acceptedCommitSha: candidate.commitSha,
+                  path,
+                  preexistingCommitShas: [],
+                  mergeResolution: true,
+                });
+            }
+          }
+        }
+        // Empty resolutions prove synchronization alone. Nonempty resolutions
+        // require the unique retained-copy binding above. Incoming parent
+        // changes never become original implementation claims.
+        continue;
+      }
       const attribution = evidence.commitAttribution.find(
         (a) => a.sha === commit.sha,
       );
       if (
-        commit.parents.length > 1 ||
         !attribution?.files ||
         attribution.limitations.length ||
         attribution.changedPaths === null ||
@@ -584,46 +757,55 @@ export async function retainedCopyBindings(
       }
       for (const file of attribution.files) {
         const identity = retainedEditIdentity(file);
-        const matches = integrations.flatMap((integration) =>
-          integration.evidence.commitAttribution.flatMap((accepted) => {
-            const known = integration.evidence.commits.find(
-              (c) => c.sha === accepted.sha,
-            );
-            if (
-              !known ||
-              known.parents.length > 1 ||
-              accepted.limitations.length
-            )
-              return [];
-            return (accepted.files ?? []).flatMap((candidate) => {
-              if (identity === null) return [];
-              const prior =
-                retainedEditIdentity(candidate) === identity ||
-                (retainedManifestIdentity(file, commit) !== null &&
-                  retainedManifestIdentity(file, commit) ===
-                    retainedManifestIdentity(candidate, known))
+        const matches = integrations.flatMap(
+          ({ source: integration, linkedOnly }) =>
+            integration.evidence.commitAttribution.flatMap((accepted) => {
+              const known = integration.evidence.commits.find(
+                (c) => c.sha === accepted.sha,
+              );
+              if (
+                !known ||
+                known.parents.length > 1 ||
+                accepted.limitations.length ||
+                (linkedOnly &&
+                  (commit.author?.type !== "User" ||
+                    known.author?.type !== "User" ||
+                    commit.author.node_id !== evidence.pull.user.node_id ||
+                    known.author.node_id !== evidence.pull.user.node_id))
+              )
+                return [];
+              return (accepted.files ?? []).flatMap((candidate) => {
+                if (identity === null) return [];
+                const prior =
+                  retainedEditIdentity(candidate) === identity ||
+                  (retainedManifestIdentity(file, commit) !== null &&
+                    retainedManifestIdentity(file, commit) ===
+                      retainedManifestIdentity(candidate, known))
+                    ? []
+                    : preexistingHunks(
+                        file,
+                        candidate,
+                        integration,
+                        accepted.sha,
+                      );
+                return prior === null
                   ? []
-                  : preexistingHunks(
-                      file,
-                      candidate,
-                      integration,
-                      accepted.sha,
-                    );
-              return prior === null
-                ? []
-                : [
-                    {
-                      original,
-                      originalCommitSha: commit.sha,
-                      integration,
-                      acceptedCommitSha: accepted.sha,
-                      path: file.filename,
-                      preexistingCommitShas: prior,
-                    },
-                  ];
-            });
-          }),
+                  : [
+                      {
+                        original,
+                        originalCommitSha: commit.sha,
+                        integration,
+                        acceptedCommitSha: accepted.sha,
+                        path: file.filename,
+                        preexistingCommitShas: prior,
+                      },
+                    ];
+              });
+            }),
         );
+        // October requires a full accepted anchor commit, while rebasing can
+        // legitimately alter other original paths. Ambiguity still fails closed.
+        if (!matches.length && options.octoberOriginalCredit) continue;
         if (matches.length !== 1) {
           limitations.add(
             `${evidence.pull.node_id}: retained ${commit.sha}:${file.filename} has ${matches.length} exact copy bindings`,

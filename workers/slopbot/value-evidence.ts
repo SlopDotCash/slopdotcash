@@ -53,6 +53,7 @@ import {
   valuePatch,
 } from "./value-patch";
 import { collectAcceptedPatchReplay } from "./value-patch-replay";
+import { VALUE_REFERENCE_QUERY } from "./value-reference-query";
 import { collectRetainedMergeReferences } from "./value-retained-reference";
 
 function fileChange({
@@ -192,6 +193,13 @@ async function collectCommitChanges(
         commit.parents[0].sha,
         commit.sha,
       );
+      await recoverFullValueComparisons(
+        client,
+        root.slice("/repos/".length),
+        commit.files,
+        commit.parents[0].sha,
+        commit.sha,
+      );
     }
     for (const kind of ["additions", "deletions"] as const)
       if (
@@ -205,21 +213,6 @@ async function collectCommitChanges(
         ) !== commit.stats[kind]
       )
         limitations.push(`Incomplete ${label.toLowerCase()} ${kind}`);
-  }
-  if (
-    commit !== null &&
-    commit.parents.length === 1 &&
-    limitations.length === 0
-  ) {
-    await recoverFullValueComparisons(
-      client,
-      root.slice("/repos/".length),
-      commit.files.filter((file) =>
-        /(^|\/)package\.json$/u.test(file.filename),
-      ),
-      commit.parents[0].sha,
-      commit.sha,
-    );
   }
   return { commit, limitations };
 }
@@ -255,9 +248,15 @@ async function relatedPullRequests(
 ) {
   const references = new Map<string, RelatedPullRequest>();
   const limitations: string[] = [];
+  const unavailablePublicReferences: {
+    repository: string;
+    repositoryNodeId: string;
+    number: number;
+  }[] = [];
   if (!client.graphql)
     return {
       references: [],
+      unavailablePublicReferences,
       limitations: ["Related PR evidence is unavailable"],
     };
   const addIncoming = (nodes: readonly RelatedPullRequestTimelineNode[]) => {
@@ -355,6 +354,7 @@ async function relatedPullRequests(
     const result = await client
       .graphql<{
         repository: {
+          id?: string;
           isPrivate: boolean;
           nameWithOwner: string;
           issueOrPullRequest: {
@@ -364,10 +364,11 @@ async function relatedPullRequests(
             url?: string;
           } | null;
         } | null;
-      }>(
-        `query($owner:String!,$name:String!,$number:Int!){repository(owner:$owner,name:$name){isPrivate nameWithOwner issueOrPullRequest(number:$number){__typename ... on PullRequest{id number url}}} rateLimit{cost limit remaining resetAt}}`,
-        { owner: targetOwner, name: targetName, number: target.number },
-      )
+      }>(VALUE_REFERENCE_QUERY, {
+        owner: targetOwner,
+        name: targetName,
+        number: target.number,
+      })
       .catch(() => null);
     // Failed discovery is retained as an explicit gap, never an empty success.
     const repo = result?.repository;
@@ -376,6 +377,19 @@ async function relatedPullRequests(
       continue;
     }
     const referenced = repo.issueOrPullRequest;
+    if (
+      !referenced &&
+      typeof repo.id === "string" &&
+      repo.id.length > 0 &&
+      repo.nameWithOwner.toLowerCase() === target.repository.toLowerCase()
+    ) {
+      unavailablePublicReferences.push({
+        repository: repo.nameWithOwner,
+        repositoryNodeId: repo.id,
+        number: target.number,
+      });
+      continue;
+    }
     if (!referenced) {
       limitations.push(
         `Outgoing reference is unavailable: ${target.repository}#${target.number}`,
@@ -401,6 +415,7 @@ async function relatedPullRequests(
     references: [...references.values()].sort((a, b) =>
       a.id.localeCompare(b.id),
     ),
+    unavailablePublicReferences,
     limitations: [...new Set(limitations)],
   };
 }
@@ -958,6 +973,7 @@ export async function collectValueEvidence(
           repositoryDatabaseId: repositoryIdentity.id,
           pull,
           comments,
+          reviews,
         })
       : { references: [], limitations: [] };
   limitations.push(...retained.limitations);
@@ -1102,6 +1118,9 @@ export async function collectValueEvidence(
     ...(noChangePromotion === null ? {} : { noChangePromotion }),
     commitAttribution,
     relatedPullRequests: related.references,
+    ...(related.unavailablePublicReferences.length
+      ? { unavailablePublicReferences: related.unavailablePublicReferences }
+      : {}),
   };
   limitations.push(...(await binarySourceLimitations(evidence)));
   return evidence;

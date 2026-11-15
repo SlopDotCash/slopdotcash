@@ -14,7 +14,7 @@
     },
     {
       "path": ".github/workflows/deploy.yml",
-      "sha256": "04ddbeeaf726b928757f8c88b4637da8174c14cb572b940f1a354bbce1abde6b",
+      "sha256": "4485f292377d2b2d5d06a29bcacad6e8775f28f1f37d3ceff5e04aca93f3d46f",
       "models": [
         "formal/models/release/ci_browser_evidence.qnt",
         "formal/models/release/ci_browser_runtime.qnt",
@@ -38,6 +38,13 @@
         "formal/models/release/ci_coverage.qnt"
       ],
       "candidateLines": [194],
+      "review": "mapped-abstraction"
+    },
+    {
+      "path": ".github/workflows/fee-worker-bindings.yml",
+      "sha256": "8aca0460d92dd212ff4ce662b8dd95a4005237e7ffdd6acc346b5cbb18c883f7",
+      "models": ["formal/models/release/workflow_authority.qnt"],
+      "candidateLines": [],
       "review": "mapped-abstraction"
     },
     {
@@ -71,11 +78,12 @@
     },
     {
       "path": ".github/workflows/points-implementation-corrections.yml",
-      "sha256": "d0e0fec28b3a4c52a7838377ddbce56fb090198cf25c4c21be096d5bc239b2d1",
+      "sha256": "0a356db3786c3e3633e88250dea626747d1bd9303f5bbd5dd3e6a7e1740240d8",
       "models": [
+        "formal/models/points/historical_discussion_evidence.qnt",
         "formal/models/points/historical_implementation_allocation.qnt"
       ],
-      "candidateLines": [70, 98, 172],
+      "candidateLines": [78, 106, 184],
       "review": "mapped-abstraction"
     },
     {
@@ -3485,14 +3493,16 @@
     },
     {
       "path": "scripts/collect-implementation-corrections.ts",
-      "sha256": "d3b1f4276d5edcd3b12242367fdfdca2d98cf38f5c5a64139e77e2d4211b3500",
+      "sha256": "b2ea3f1fefece8dc23d1896ab2dbb44e9866fa383307b5996102f4e70e80f345",
       "models": [
+        "formal/models/points/historical_discussion_evidence.qnt",
         "formal/models/points/historical_implementation_allocation.qnt"
       ],
       "candidateLines": [
-        4, 11, 13, 78, 158, 235, 241, 244, 249, 259, 275, 281, 297, 298, 308,
-        311, 394, 440, 461, 486, 523, 530, 637, 648, 813, 1094, 1649, 1708,
-        1744, 1769, 1798, 1800
+        4, 11, 13, 96, 176, 253, 259, 262, 267, 277, 293, 299, 315, 316, 326,
+        329, 426, 472, 493, 518, 564, 571, 687, 698, 863, 1312, 1348, 1377,
+        1382, 1395, 1520, 1878, 1889, 2179, 2769, 2828, 3012, 3049, 3068, 3097,
+        3099
       ],
       "review": "mapped-abstraction"
     },
@@ -3932,8 +3942,18 @@
     {
       "path": "scripts/historical-discussion-evidence.ts",
       "sha256": "775b0fecfa0ec23199522eca53b257000ff59e67653037706e598ad72e84c4be",
-      "models": ["formal/models/points/fresh_discussion_evidence.qnt"],
+      "models": [
+        "formal/models/points/fresh_discussion_evidence.qnt",
+        "formal/models/points/historical_discussion_evidence.qnt"
+      ],
       "candidateLines": [9, 148, 149],
+      "review": "mapped-abstraction"
+    },
+    {
+      "path": "scripts/inspect-fee-worker-bindings.ts",
+      "sha256": "31f2de50f42886755d7aeadb05dcdfa9c6eae7e1c9d691d0d600e38486ee544c",
+      "models": ["formal/models/release/workflow_authority.qnt"],
+      "candidateLines": [],
       "review": "mapped-abstraction"
     },
     {
@@ -4081,11 +4101,11 @@
     },
     {
       "path": "scripts/points-protection-sql.ts",
-      "sha256": "c99faa1aa420adfd67d891bd821900f60589f15ed60008f840ec4a786cc0a65b",
+      "sha256": "fbbc01cce4c4f9c6c8a14c0e990d3d6b48c9cf97361f46728c64a5ad88ec9fec",
       "models": [
         "formal/models/points/historical_implementation_allocation.qnt"
       ],
-      "candidateLines": [22],
+      "candidateLines": [3, 11, 44],
       "review": "mapped-abstraction"
     },
     {
@@ -4133,13 +4153,13 @@
     },
     {
       "path": "scripts/prepare-implementation-corrections.ts",
-      "sha256": "f7e376620e1c8b8d227b4066ddb99998e852ebb2ef86dac7d1c7b3064a042547",
+      "sha256": "2b19797704349a416c6e6fad3fec76e1d53657d57bd12bcd5e0cf9457c3fac72",
       "models": [
         "formal/models/points/historical_implementation_allocation.qnt"
       ],
       "candidateLines": [
-        4, 30, 42, 250, 313, 347, 359, 360, 361, 370, 375, 379, 381, 393, 394,
-        410, 416, 426
+        4, 30, 42, 250, 327, 362, 374, 375, 376, 386, 391, 395, 397, 410, 411,
+        427, 433
       ],
       "review": "mapped-abstraction"
     },
@@ -6051,7 +6071,7 @@
     },
     {
       "path": "src/lib/implementation-lines.ts",
-      "sha256": "a26025e0f5d68a6720bd3f3fb34f13b84e889321ac1ff6618fe154ae4aa840b4",
+      "sha256": "d2d2e54a69bd1457b2c99cef83f765dd3b53afea3c1a54b66f115a5f4c0e3bd9",
       "models": [
         "formal/models/points/implementation_allocation.qnt",
         "formal/models/points/implementation_credit.qnt"
@@ -6314,13 +6334,14 @@
     },
     {
       "path": "src/lib/points-implementation-corrections.ts",
-      "sha256": "5fb22145fe1ef43ca8d7c941a0beaa5a923a51e767db8d8864edb7e44f8c962f",
+      "sha256": "233f40098678d06547d40ab12f9b596272ea22a1acbfbc717359e5ae712fb88c",
       "models": [
         "formal/models/points/historical_implementation_allocation.qnt"
       ],
       "candidateLines": [
-        83, 91, 102, 116, 123, 243, 400, 559, 564, 659, 731, 766, 794, 895, 896,
-        897
+        111, 134, 145, 159, 166, 312, 369, 370, 371, 375, 465, 467, 471, 542,
+        548, 575, 576, 663, 698, 891, 950, 1023, 1039, 1238, 1244, 1249, 1357,
+        1438, 1473, 1501, 1603, 1604, 1605
       ],
       "review": "mapped-abstraction"
     },
@@ -6334,7 +6355,7 @@
     },
     {
       "path": "src/lib/points.ts",
-      "sha256": "0f7bb496f9744cf73eabdec0c7b0b2e1eea140d349e3bd45f10568cd27048a6c",
+      "sha256": "c163d395dae0f4e175cd7ce691fb68be25312f514c96728b01cb5ca23105d3c8",
       "models": [
         "formal/models/points/implementation_allocation.qnt",
         "formal/models/points/journal_publication.qnt",
@@ -6345,7 +6366,7 @@
         "formal/models/rewards/bucket_aggregation.qnt",
         "formal/models/ui/ui_review_pool.qnt"
       ],
-      "candidateLines": [378, 833, 1068, 1075, 1084],
+      "candidateLines": [380, 844, 1079, 1086, 1095],
       "review": "mapped-abstraction"
     },
     {
@@ -7380,12 +7401,12 @@
     },
     {
       "path": "workers/fee-converter/solana-expiry.ts",
-      "sha256": "f83c189758694048c045147134ddd34d82141109f67760f4dccf42d73edd4380",
+      "sha256": "039e4bd625340ac30844b48dfad082c5b04defd1b267499579ffedac1e515a07",
       "models": [
         "formal/models/fees/solana_expiry.qnt",
         "formal/models/payments/solana_history_retirement.qnt"
       ],
-      "candidateLines": [29, 57, 126, 139, 161],
+      "candidateLines": [29, 57, 127, 140, 162],
       "review": "mapped-abstraction"
     },
     {
@@ -8216,14 +8237,14 @@
     },
     {
       "path": "workers/slopbot/github.ts",
-      "sha256": "3a3f39affb5a364a06f089adca73c4d8099e1cb882f05e2bb8359e57c255c3a8",
+      "sha256": "b4ea743257f98a6c68589df778dfa291a7777a802ebd3b3543894ce7c70ce39b",
       "models": [
         "formal/models/points/github_ingestion_read.qnt",
         "formal/models/slopbot/bot_repository_access.qnt"
       ],
       "candidateLines": [
-        43, 77, 88, 105, 114, 115, 116, 118, 122, 123, 126, 164, 167, 220, 221,
-        252
+        44, 78, 89, 106, 115, 116, 117, 119, 123, 124, 127, 170, 173, 226, 227,
+        258
       ],
       "review": "mapped-abstraction"
     },
@@ -8418,9 +8439,9 @@
     },
     {
       "path": "workers/slopbot/value-accepted-range.ts",
-      "sha256": "1c1e3497f38fb59a1a08164f90c2face0a767155928ac922133335bccf12b2ac",
+      "sha256": "c14d35e7671b860be2415dab2107b05ff12943ecf2d97afc7a3f901ad2d2da25",
       "models": ["formal/models/slopbot/bot_patch_replay.qnt"],
-      "candidateLines": [40, 53, 84, 98],
+      "candidateLines": [41, 67, 77, 108, 141, 142, 143, 146],
       "review": "mapped-abstraction"
     },
     {
@@ -8461,6 +8482,13 @@
       "sha256": "e25393fd745105cf27f8425768319a51c7036a9afd9ab80528692f49a8700d8b",
       "models": ["formal/models/slopbot/bot_retained_acceptance.qnt"],
       "candidateLines": [],
+      "review": "mapped-abstraction"
+    },
+    {
+      "path": "workers/slopbot/value-comparison-counts.ts",
+      "sha256": "145d51cb69053c4afbb6699110716e1ee832c828d71d446f3f5abdc5f832afb0",
+      "models": ["formal/models/slopbot/bot_evidence_integrity.qnt"],
+      "candidateLines": [44],
       "review": "mapped-abstraction"
     },
     {
@@ -8509,7 +8537,7 @@
     },
     {
       "path": "workers/slopbot/value-evidence-types.ts",
-      "sha256": "ad975bab5bacdda9fef837efc8afcc55b446342cbfaeb1134922e053326f9324",
+      "sha256": "444f51baaf88c002018cbd1523fce819c6e22f74de0bfe3a7bac711484a74c32",
       "models": [],
       "candidateLines": [14, 69, 89],
       "review": "reviewed-no-independent-state",
@@ -8517,14 +8545,15 @@
     },
     {
       "path": "workers/slopbot/value-evidence.ts",
-      "sha256": "377760084401d38301f40347da22389ad9b09679b4b7db1a534796a805380fad",
+      "sha256": "8af0ff415f46f1f8dad5885fe0ea3ca8f2904576ca4998d428fa3abc2e24f164",
       "models": [
         "formal/models/points/fresh_discussion_evidence.qnt",
+        "formal/models/points/historical_discussion_evidence.qnt",
         "formal/models/slopbot/bot_evidence_integrity.qnt",
         "formal/models/slopbot/bot_value_dispute_actor.qnt"
       ],
       "candidateLines": [
-        61, 72, 81, 95, 420, 421, 612, 632, 675, 684, 703, 1044, 1063
+        62, 73, 82, 96, 435, 436, 627, 647, 690, 699, 718, 1060, 1079
       ],
       "review": "mapped-abstraction"
     },
@@ -8624,7 +8653,7 @@
     },
     {
       "path": "workers/slopbot/value-merge-resolution.ts",
-      "sha256": "bd8889156f15c3ed08fe5979097867c0b12ffa7bc30f5cab8570e1c4345b303a",
+      "sha256": "6f943fdc4909f9167c7717617bf99817ce736fe913f7a0c1099438793a73413d",
       "models": ["formal/models/slopbot/bot_historical_import.qnt"],
       "candidateLines": [],
       "review": "mapped-abstraction"
@@ -8655,9 +8684,9 @@
     },
     {
       "path": "workers/slopbot/value-patch.ts",
-      "sha256": "734c46c390a5b84e5c871f7ed10d61e85b45246396306bdb7a9475ffed67360e",
+      "sha256": "738a535d89021a23140ab2ff72ef893c54bbeadf6cb80ca2a22d8895ebca838b",
       "models": ["formal/models/slopbot/bot_patch_replay.qnt"],
-      "candidateLines": [7, 28, 97],
+      "candidateLines": [8, 33, 106],
       "review": "mapped-abstraction"
     },
     {
@@ -8708,6 +8737,14 @@
       "review": "mapped-abstraction"
     },
     {
+      "path": "workers/slopbot/value-reference-query.ts",
+      "sha256": "56ede5f192c73cee94ac0518b14d90862f93ccef3c171023c83af6da5e7b885e",
+      "models": [],
+      "candidateLines": [],
+      "review": "reviewed-no-independent-state",
+      "statelessReason": "Pure classification of one fixed source-discovery query and its explicit public missing-item envelope; retains no state, performs no I/O and grants no source or payment credit."
+    },
+    {
       "path": "workers/slopbot/value-requests.ts",
       "sha256": "f70ef5e2459232e165a964728025b293f2e42fae1cdba382c8b701348c499086",
       "models": ["formal/models/slopbot/bot_webhook_delivery.qnt"],
@@ -8716,23 +8753,23 @@
     },
     {
       "path": "workers/slopbot/value-retained-copy.ts",
-      "sha256": "84ba4b03b81023044cfb2e735b0f3bc3e23fcb1efc40cf56a87d97a2fd7d9a15",
+      "sha256": "bbcae67b1b2e5fd285fc1409ff60fe6218f6cd2c4beb39ed8a0376062fb37e27",
       "models": [
         "formal/models/slopbot/bot_retained_acceptance.qnt",
         "formal/models/slopbot/retained_copy_bindings.qnt",
         "formal/models/slopbot/retained_recipient_scope.qnt"
       ],
-      "candidateLines": [33, 60, 260, 266, 290, 324],
+      "candidateLines": [40, 67, 240, 312, 318, 342, 376],
       "review": "mapped-abstraction"
     },
     {
       "path": "workers/slopbot/value-retained-reference.ts",
-      "sha256": "23a49fdb7dcdcfb4819b8870e8dd6f2d6f39d748827a3df0ff05f9aca635e6ef",
+      "sha256": "51fc95b25209f650bd948e9b3ce0f6098f991af61012a81892fa802ee7795b4e",
       "models": [
         "formal/models/slopbot/bot_retained_acceptance.qnt",
         "formal/models/slopbot/retained_copy_bindings.qnt"
       ],
-      "candidateLines": [84, 109],
+      "candidateLines": [23, 103, 128],
       "review": "mapped-abstraction"
     },
     {
@@ -8820,7 +8857,7 @@
     },
     {
       "path": "workers/slopbot/value-work-unit.ts",
-      "sha256": "5b752c8152aab698af3490a4700c9f6351e17971071c58446f684a77fb2ef817",
+      "sha256": "b1e945af2b3e7802bb0b5adc9c77c9546e96f481048b7b031c06d777406fc069",
       "models": [
         "formal/models/slopbot/bot_value_pipeline.qnt",
         "formal/models/slopbot/bot_work_partition.qnt",
@@ -13588,6 +13625,25 @@
       ]
     },
     {
+      "path": "formal/models/points/historical_discussion_evidence.qnt",
+      "sha256": "46f413d41b67007c2b2c31236fbc55a3da58761eaafb2aa9f998e0d10a87c884",
+      "sources": [
+        ".github/workflows/points-implementation-corrections.yml",
+        "scripts/collect-implementation-corrections.ts",
+        "scripts/historical-discussion-evidence.ts",
+        "workers/slopbot/value-evidence.ts"
+      ],
+      "scenarios": [
+        "completeGraphqlPathTest",
+        "disabledPathTest",
+        "incompleteFallbackHoldsTest",
+        "incompleteGraphqlFallsBackTest",
+        "legacyPathTest",
+        "quotaNeverLooksLikeDiscoveryTest",
+        "savedGraphqlReplaysWithNewReadsDisabledTest"
+      ]
+    },
+    {
       "path": "formal/models/points/historical_implementation_allocation.qnt",
       "sha256": "c07b44a520ca2813f4fcce5957fec806fcf0913ce9f0bbed6d2f510b34301592",
       "sources": [
@@ -14273,14 +14329,16 @@
     },
     {
       "path": "formal/models/release/workflow_authority.qnt",
-      "sha256": "3bedb06af6fff9642566ae771b68e1003473ed51229b0616f935759fad105ded",
+      "sha256": "fcdc9e60224b6cab3d2a7aace830daca9a21c7655b5184ac72caae60f7480388",
       "sources": [
         ".github/workflows/cancel-closed-pr-runs.yml",
+        ".github/workflows/fee-worker-bindings.yml",
         ".github/workflows/monthly-rewards.yml",
         ".github/workflows/private-intake-watch.yml",
         ".github/workflows/production-watch.yml",
         ".github/workflows/referral-root-watch.yml",
         ".github/workflows/vetting-controller.yml",
+        "scripts/inspect-fee-worker-bindings.ts",
         "scripts/run-vetting-controller.ts"
       ],
       "scenarios": [
@@ -14781,11 +14839,12 @@
     },
     {
       "path": "formal/models/slopbot/bot_evidence_integrity.qnt",
-      "sha256": "e2c330169501163aa243c4d87059fa8270b5a8da67a73601841e9fca71aa7c12",
+      "sha256": "fcec5ea85857bf4d8f4b1115f63e2513f235c29f97863e33cae6d06ea631aaba",
       "sources": [
         "workers/slopbot/git-object.ts",
         "workers/slopbot/value-binary.ts",
         "workers/slopbot/value-blob.ts",
+        "workers/slopbot/value-comparison-counts.ts",
         "workers/slopbot/value-context.ts",
         "workers/slopbot/value-evidence.ts",
         "workers/slopbot/value-file-comparisons.ts",
@@ -15537,7 +15596,7 @@
     },
     {
       "path": "formal/models/slopbot/retained_copy_bindings.qnt",
-      "sha256": "6eb78955df6d54ff148079ae2f31314a2e6b3776e5c7113ae21e65c983fcd1fb",
+      "sha256": "a352d388661d4d493529066991885089d26bbeb950c67f0b447f295d0ae0ae70",
       "sources": [
         "workers/slopbot/value-manifest-identity.ts",
         "workers/slopbot/value-retained-copy.ts",
@@ -15550,21 +15609,27 @@
         "acknowledgedPromotionStillChecksFilesTest",
         "ambiguousAncestorHunksDoNotBindTest",
         "authenticatedCommentBindsTest",
+        "authenticatedFormalReviewBindsTest",
         "authenticatedPrReferenceBindsTest",
         "botMergerCannotAcknowledgeTest",
+        "canonicalEmptySynchronizationPreservesOrdinaryClaimTest",
         "changedAuthorNeedsCommentTest",
         "cleanResultStillNeedsOtherPublicationChecksTest",
         "competingOriginalsRetainFirstMapEntryAndHoldTest",
+        "exactResolutionCopyPreservesOriginalClaimTest",
         "foreignRepositoryCannotBindTest",
         "forgedOrLateCommentDoesNotAcknowledgeTest",
         "ignoringPartialResultLimitationsNegativeControlTest",
         "incompleteOriginalFileIsHeldTest",
         "independentlyAcceptedPromotionNeedsNoNewBindingTest",
+        "invalidFormalReviewIsHeldTest",
         "laterFailureReturnsPartialMapWithLimitationsTest",
         "manifestIdentityBindsTest",
+        "missingSynchronizationEvidenceIsHeldTest",
         "referenceLookupRejectsWithoutReturningPartialMapTest",
         "sameAuthorReopenBindsTest",
         "samePrCannotBindItselfTest",
+        "synchronizationResolutionEditsAreHeldTest",
         "twoExactMatchesAreAmbiguousTest",
         "uniqueAncestorHunksBindTest",
         "zeroExactMatchesIsHeldTest"

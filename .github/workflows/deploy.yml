@@ -21,13 +21,13 @@ on:
         description: "Manual main or development release only: retain the last leaderboard and profiles published by that environment, with their original timestamps"
         type: boolean
         default: false
+      discussion_resume_run:
+        description: "Optional trusted main run ID whose public GitHub discussion reads can be revalidated during a fresh release"
+        type: string
       rotate_robinhood_rpc_from:
         description: "Manual main only: rotate the fee-converter Robinhood RPC from this active Worker version UUID"
         type: string
         default: ""
-      discussion_resume_run:
-        description: "Optional trusted main run ID whose public GitHub discussion reads can be revalidated during a fresh release"
-        type: string
       skip_proofs:
         description: "Manual main or development release only: do not repeat the Quint state-model and LemmaScript proof runs; every other check and all deployment verification still run"
         type: boolean

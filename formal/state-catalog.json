@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "meaning": "Declared lifecycle candidates. This intentionally incomplete syntactic census cannot find every implicit state, establish reachability, or prove source/model correspondence. Review the open work listed in formal/README.md as well.",
-  "inventorySha256": "82a53a66c69c5e708a08946c2101973d29946d8250b4bf92838ce03209d35915",
+  "inventorySha256": "81b3b24aea5250f2bd3e23365abdb00f2868d5c84aebd69dde985790bcce942f",
   "states": [
     {
       "path": "backend/fee-conversions/handler.ts",
@@ -2140,6 +2140,36 @@
       "review": "candidate-only"
     },
     {
+      "path": "scripts/prepare-implementation-corrections.ts",
+      "line": 266,
+      "name": "CorrectionPhase",
+      "kind": "string-union",
+      "values": [
+        "allocation validation",
+        "collection and registry verification",
+        "participation restrictions read",
+        "preview or receipt generation",
+        "private financial protection read",
+        "protected import and readback",
+        "public Points read",
+        "trusted invocation"
+      ],
+      "models": [
+        "formal/models/points/historical_implementation_allocation.qnt"
+      ],
+      "lexicallyUnmentionedValues": [
+        "allocation validation",
+        "collection and registry verification",
+        "participation restrictions read",
+        "preview or receipt generation",
+        "private financial protection read",
+        "protected import and readback",
+        "public Points read",
+        "trusted invocation"
+      ],
+      "review": "candidate-only"
+    },
+    {
       "path": "scripts/prior-cycle-accrual.ts",
       "line": 37,
       "name": "PriorCycleNotReadyReason",
@@ -3144,7 +3174,7 @@
     },
     {
       "path": "src/lib/points-implementation-corrections.ts",
-      "line": 123,
+      "line": 166,
       "name": "status",
       "kind": "string-union",
       "values": ["already-applied", "applied", "held", "retained", "unchanged"],
@@ -3910,7 +3940,7 @@
     },
     {
       "path": "workers/slopbot/github.ts",
-      "line": 191,
+      "line": 197,
       "name": "Exemption",
       "kind": "string-union",
       "values": ["exempt", "not-exempt", "unknown"],
