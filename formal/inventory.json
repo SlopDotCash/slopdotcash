@@ -8561,7 +8561,7 @@
     },
     {
       "path": "workers/slopbot/value-binary.ts",
-      "sha256": "a09ce4693b2b93e7e9c3d2cfdfe9ddbf504d5813cf37b83e9fc8a0b3d38d8768",
+      "sha256": "de6cf316572aed5e528d571272c9127182aaa0cddfd695df4b6ce83faf58bed4",
       "models": ["formal/models/slopbot/bot_evidence_integrity.qnt"],
       "candidateLines": [42],
       "review": "mapped-abstraction"
@@ -8652,22 +8652,22 @@
     },
     {
       "path": "workers/slopbot/value-evidence-types.ts",
-      "sha256": "f5a07aa79facfac7f8aeeba0f5a2f9c320f8aa89177dd59aef001cb6e7f7895d",
+      "sha256": "1fa387374929e9de4df83bc8895c81830db715eb5ba9e9e431b70ff45f018d12",
       "models": [],
-      "candidateLines": [22, 77, 97],
+      "candidateLines": [22, 83, 103],
       "review": "reviewed-no-independent-state",
       "statelessReason": "Type declarations of value evidence and its proof records; no runtime code or state transition."
     },
     {
       "path": "workers/slopbot/value-evidence.ts",
-      "sha256": "2948d241b762489279a14e093adb9ff2cbc31ed286572742e0c7ed2d39f9212b",
+      "sha256": "95c1c37b45e9bc728e4f5346d1f33487bf742ea6062d28cd6ce3681ec68a4e9b",
       "models": [
         "formal/models/points/historical_discussion_evidence.qnt",
         "formal/models/slopbot/bot_evidence_integrity.qnt",
         "formal/models/slopbot/bot_value_dispute_actor.qnt"
       ],
       "candidateLines": [
-        72, 85, 94, 110, 498, 499, 690, 710, 753, 762, 781, 1137, 1156
+        73, 86, 95, 111, 499, 500, 691, 711, 754, 763, 782, 1138, 1157
       ],
       "review": "mapped-abstraction"
     },
