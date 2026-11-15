@@ -8488,9 +8488,9 @@
     },
     {
       "path": "workers/slopbot/value-commit-hints.ts",
-      "sha256": "e298be56f5b9144effdbddce151a9dbab595212347b7ae5f28448c95d2859dfd",
+      "sha256": "a4933408c9f52b7f1f84918e5811cd466423acc956cf1873136bd28c9b1c813b",
       "models": ["formal/models/slopbot/bot_retained_acceptance.qnt"],
-      "candidateLines": [84, 89, 92, 93, 102, 105],
+      "candidateLines": [104, 109, 112, 113, 122, 125],
       "review": "mapped-abstraction"
     },
     {
