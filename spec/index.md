@@ -20,6 +20,7 @@ specification migration. Product implementation follows after review.
 - [Points and source integrity](./points/)
 - [Security admission and private reports](./security/)
 - [Vaults and settlement](./settlement/)
+- [On-chain escrow contracts](./contracts/)
 - [Received fees and program allocations](./fees/)
 - [Operations and release](./operations/)
 - [Cross-machine account ownership](./composition.md)
