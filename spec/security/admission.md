@@ -299,18 +299,31 @@ pure def stepAttemptsCount(before: Scan, after: Scan): bool = after.attempts >= 
 
 ### The outcome is what enforcement reads
 
+The signed result request carries this record. Enforcement accepts it only
+from the authenticated vetting service, only for the pending assessment of the
+same repository and requested revision, and a malicious outcome only with its
+trusted confirmation. The commit and template binding is checked against the
+stored assignment before the record is formed (`commit_mismatch`).
+
 ```quint
-type Outcome = { assessment: int, repository: int, revision: int, disposition: Disposition, reused: bool, retained: bool }
+type Outcome = { assessment: int, repository: int, revision: int, disposition: Disposition, confirmation: Confirmation,
+  reused: bool, retained: bool }
 pure def isRecorded(s: Scan): bool = s.phase == Recorded
 pure def outcomeOf(s: Scan): Outcome =
   { assessment: s.assignment.assessment, repository: s.assignment.repository, revision: s.assignment.revision,
-    disposition: s.recorded, reused: s.reused, retained: s.retained }
+    disposition: s.recorded, confirmation: s.confirmation, reused: s.reused, retained: s.retained }
 pure def validOutcome(o: Outcome): bool =
   o.assessment > 0 and o.repository > 0 and o.revision > 0 and o.disposition != NoDisposition and
-  (o.disposition == DIncomplete or o.retained)
+  (o.disposition == DIncomplete or o.retained) and
+  (o.disposition == DMalicious implies o.confirmation != NoConfirmation)
 pure def lawRecordedOutcomeValid(s: Scan): bool =
-  (isRecorded(s) and alwaysPublishingDecided(s) and alwaysRecordedMatchesDisposition(s) and alwaysAssignmentValid(s))
-    implies validOutcome(outcomeOf(s))
+  (isRecorded(s) and alwaysPublishingDecided(s) and alwaysRecordedMatchesDisposition(s) and alwaysAssignmentValid(s) and
+    alwaysMaliceConfirmed(s)) implies validOutcome(outcomeOf(s))
+pure def lawUnconfirmedMaliceRefused(o: Outcome): bool =
+  (o.disposition == DMalicious and o.confirmation == NoConfirmation) implies not(validOutcome(o))
+pure val oValues = Set({ assessment: 1, repository: 1, revision: 1, disposition: DMalicious, confirmation: NoConfirmation, reused: false, retained: true },
+  { assessment: 1, repository: 1, revision: 1, disposition: DMalicious, confirmation: ReproducibleBehavior, reused: false, retained: true },
+  { assessment: 1, repository: 1, revision: 1, disposition: DClean, confirmation: NoConfirmation, reused: false, retained: true })
 pure val sValues = Set(initial, { ...initial, phase: Recorded, disposition: DClean, recorded: DClean, retained: true })
 pure def sometimesCleanRecorded(s: Scan): bool = s.phase == Recorded and s.recorded == DClean and not(s.reused)
 pure def sometimesReusedClean(s: Scan): bool = s.phase == Recorded and s.recorded == DClean and s.reused
