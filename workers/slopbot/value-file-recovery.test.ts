@@ -239,3 +239,46 @@ for (const changed of [false, true]) {
     else expect(file?.patch).toBe(source.files[0].patch);
   });
 }
+
+test("recovery accepts reordered GitHub object keys while binding array and nested values", async () => {
+  const initial = {
+    number: 3214,
+    head: { sha: "a".repeat(40), ref: "fix", repo: { updated_at: "before" } },
+    base: { sha: "b".repeat(40), ref: "main", repo: { updated_at: "before" } },
+    labels: [{ id: 1, name: "accepted", color: "ffffff" }],
+    _links: { self: { href: "/pulls/3214" }, comments: { href: "/comments" } },
+    milestone: { title: "before" },
+  };
+  let value: unknown = initial;
+  const capture = valueFileRecoveryCapture({
+    get: async <T>(_path: string) => structuredClone(value) as T,
+  });
+  const path = "/repos/example/repo/pulls/3214";
+  await capture.client.get(path);
+  value = {
+    _links: { comments: { href: "/comments" }, self: { href: "/pulls/3214" } },
+    labels: [{ color: "ffffff", name: "accepted", id: 1 }],
+    base: { repo: { updated_at: "after" }, ref: "main", sha: "b".repeat(40) },
+    head: { repo: { updated_at: "after" }, ref: "fix", sha: "a".repeat(40) },
+    milestone: { title: "after" },
+    number: 3214,
+  };
+  await expect(capture.client.get(path)).resolves.toEqual(value);
+  value = { ...initial, labels: [{ ...initial.labels[0], name: "changed" }] };
+  await expect(capture.client.get(path)).rejects.toThrow(
+    "Source metadata changed",
+  );
+});
+
+test("recovery keeps GitHub array order significant", async () => {
+  let value = { labels: [{ id: 1 }, { id: 2 }] };
+  const capture = valueFileRecoveryCapture({
+    get: async <T>(_path: string) => structuredClone(value) as T,
+  });
+  const path = "/repos/example/repo/pulls/3214";
+  await capture.client.get(path);
+  value = { labels: [...value.labels].reverse() };
+  await expect(capture.client.get(path)).rejects.toThrow(
+    "Source metadata changed",
+  );
+});
