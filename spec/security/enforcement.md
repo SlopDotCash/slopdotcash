@@ -14,7 +14,10 @@ Community revision after reinstatement) is in the
 
 Identities are permanent GitHub actor ids. The actor `0` is the signed
 vetting service (`VETTING_RESULT_PUBLIC_KEYS`); the shell supplies it only
-after verifying the Ed25519 request signature. Administrators
+after verifying the Ed25519 request signature. The actor `-1` is the project
+API's own scheduled and read jobs (the UTC day clock, the retained-evidence
+read and the migration-0075 read); the shell supplies it only for work it
+starts itself, never for an HTTP request. Administrators
 (`ADMIN_GITHUB_IDS`) and moderators (administrators who are also in
 `PROJECT_MODERATOR_GITHUB_IDS`) are a configuration snapshot held in the
 state, so no guard takes a caller's role claim. An empty moderator set closes
@@ -29,7 +32,7 @@ import admission as A from "./admission"
 type Restriction = Clear | FlagQuarantine | ModeratorQuarantine | ServiceBan | ModeratorBan
 type Appeal = NoAppeal | AppealRequested | AppealGranted | AppealDenied
 type AState = NotAssessed | APending | AIncomplete | AClean | AMalicious
-type Assessment = { id: int, state: AState, requestSeq: int, requestEpoch: int, reused: bool, verified: bool, snapshot: List[int] }
+type Assessment = { id: int, state: AState, revision: int, requestSeq: int, requestEpoch: int, reused: bool, verified: bool, snapshot: List[int] }
 type Flag = { receipt: int, actor: int, filedDay: int }
 type Grant = { id: int, repository: int, seq: int, approver: int, steward: int, revision: int, decision: int,
   branch: int, head: int, scope: int, limitations: int }
@@ -44,22 +47,28 @@ type Enforcement = { projectId: int, repositories: List[int], original: Set[int]
   revisionPending: bool, findings: Set[int], reviewedFindings: Set[int], accountBans: List[int],
   seq: int, assessmentIds: Set[int], latest: int -> Assessment,
   flags: List[Flag], withdrawn: Set[int], resolved: List[int], clockDay: int,
-  grants: List[Grant], grantSeq: int -> int, exempt: Set[int], revocations: List[int],
+  grants: List[Grant], grantSeq: int -> int, exempt: Set[int], exemptSteward: int -> int, revocations: List[int],
   journal: List[JournalEntry], notices: List[Notice] }
-pure val unassessed: Assessment = { id: 0, state: NotAssessed, requestSeq: 0, requestEpoch: 0, reused: false, verified: false, snapshot: List() }
+pure val unassessed: Assessment = { id: 0, state: NotAssessed, revision: 0, requestSeq: 0, requestEpoch: 0, reused: false, verified: false, snapshot: List() }
 pure val initial: Enforcement = { projectId: 1, repositories: List(1), original: Set(1), frozen: Set(),
   creator: 0, steward: 0, revision: 0, administrators: Set(5, 6, 7), moderators: Set(5, 6),
   restriction: Clear, epoch: 0, restrictedBy: Set(), appeal: NoAppeal, appellants: Set(),
   revisionPending: false, findings: Set(), reviewedFindings: Set(), accountBans: List(),
   seq: 0, assessmentIds: Set(), latest: Map(),
   flags: List(), withdrawn: Set(), resolved: List(), clockDay: 0,
-  grants: List(), grantSeq: Map(), exempt: Set(), revocations: List(),
+  grants: List(), grantSeq: Map(), exempt: Set(), exemptSteward: Map(), revocations: List(),
   journal: List(), notices: List() }
 pure val vettingService = 0
+pure val platform = -1
 pure def latestOf(e: Enforcement, repository: int): Assessment =
   if (e.latest.keys().contains(repository)) e.latest.get(repository) else unassessed
 pure def grantSeqOf(e: Enforcement, repository: int): int =
   if (e.grantSeq.keys().contains(repository)) e.grantSeq.get(repository) else 0
+pure def exemptStewardOf(e: Enforcement, repository: int): int =
+  if (e.exemptSteward.keys().contains(repository)) e.exemptSteward.get(repository) else 0
+type Fence = { revision: int, sequence: int }
+pure def fenced(e: Enforcement, fence: Fence): bool = fence.revision == e.revision and fence.sequence == e.journal.length() + 1
+pure val fenceValues = tuples(1.to(4), 1.to(4)).map(x => { revision: x._1, sequence: x._2 })
 pure def alwaysModeratorsAreAdministrators(e: Enforcement): bool = e.moderators.subseteq(e.administrators)
 pure def alwaysRepositoriesRegistered(e: Enforcement): bool =
   e.repositories.length() > 0 and e.repositories.every(r => r > 0)
@@ -73,10 +82,12 @@ changes queue nothing and keep it. An existing row, a pending or incomplete
 investigation, a malicious result, or a clean result whose retained evidence
 fails its read is not clearance. The migration-0075 set covers only the
 repositories a project listed when it was recorded, ignores pending or
-incomplete investigations, and never covers malice. An owner-approved grant
-covers its repository until an assessment is requested after the grant;
-that later assessment then controls. The project clears only when every
-repository clears.
+incomplete investigations, and never covers malice (CLAUDE.md: explicit
+investigations control nonexempt admission). An owner-approved grant covers
+its repository only while the project's current steward is the steward the
+grant bound (`g.steward_id` in `backend/vetting/persistence.ts`), and only
+until an assessment is requested after the grant; that later assessment then
+controls. The project clears only when every repository clears.
 
 ```quint
 type Basis = Scanned | FrozenExemption | OwnerApprovedExemption | NotCleared
@@ -86,7 +97,7 @@ pure def frozenCovers(e: Enforcement, repository: int): bool =
   e.frozen.contains(repository) and latestOf(e, repository).state != AMalicious
 pure def grantCovers(e: Enforcement, repository: int): bool =
   e.exempt.contains(repository) and latestOf(e, repository).state != AMalicious and
-  latestOf(e, repository).requestSeq < grantSeqOf(e, repository)
+  latestOf(e, repository).requestSeq < grantSeqOf(e, repository) and exemptStewardOf(e, repository) == e.steward
 pure def repositoryCleared(e: Enforcement, repository: int): bool =
   assessedClean(e, repository) or frozenCovers(e, repository) or grantCovers(e, repository)
 pure def cleared(e: Enforcement): bool = e.repositories.every(r => repositoryCleared(e, r))
@@ -95,7 +106,11 @@ pure def basis(e: Enforcement, repository: int): Basis =
   else if (grantCovers(e, repository)) OwnerApprovedExemption else NotCleared
 pure def mayContribute(e: Enforcement): bool = e.restriction == Clear and cleared(e)
 pure def lawExemptionNeverShownAsScan(e: Enforcement, repository: int): bool =
-  basis(e, repository) == Scanned implies latestOf(e, repository).state == AClean and latestOf(e, repository).verified
+  ((e.exempt.contains(repository) or e.frozen.contains(repository)) and latestOf(e, repository).state != AClean)
+    implies basis(e, repository) != Scanned
+pure def lawExemptionLapsesWithSteward(e: Enforcement, repository: int): bool =
+  (exemptStewardOf(e, repository) != e.steward and not(e.frozen.contains(repository)) and not(assessedClean(e, repository)))
+    implies not(repositoryCleared(e, repository))
 pure def lawRestrictionsBlockWork(e: Enforcement): bool = e.restriction != Clear implies not(mayContribute(e))
 pure def lawIncompleteInvestigationBlocksGrant(e: Enforcement, repository: int): bool =
   (latestOf(e, repository).requestSeq >= grantSeqOf(e, repository) and latestOf(e, repository).state != AClean and
@@ -104,9 +119,13 @@ pure def lawIncompleteInvestigationBlocksGrant(e: Enforcement, repository: int):
 
 ### Assessments are queued by setup, owner rescan, administrator investigation or flag recovery
 
-Creation, a setup check of an unscanned repository and the signed refresh
-queue initial admission. The owner may request a new scan only after an
-incomplete result (`requestScan`). An administrator may queue an explicit
+A setup check (by the owner or the signed refresh) queues initial admission
+only for a repository that is not cleared: unscanned, or an earlier pending
+or incomplete scan no exemption covers (`runSetupCheck` and the vetting
+refresh queue only `unscanned` or `stale` clearance). A frozen or
+owner-approved exemption is kept by the setup check. The owner may request a
+new scan only after an incomplete result that no exemption covers
+(`requestScan`). An administrator may queue an explicit
 investigation of any listed repository at any time; it controls clearance
 even after an owner-approved grant. During a flag-only pause the signed
 refresh queues a fresh scan when the latest one is not fresh or does not
@@ -123,27 +142,33 @@ pure def freshClean(e: Enforcement, repository: int): bool =
 pure def coversActiveFlags(e: Enforcement, repository: int): bool =
   e.flags.every(f => activeFlag(e, f) implies latestOf(e, repository).snapshot.includes(f.receipt))
 pure def canRequestAssessment(e: Enforcement, by: int, repository: int, requestOrigin: RequestOrigin, assessmentId: int): bool =
-  e.repositories.includes(repository) and assessmentId > 0 and not(e.assessmentIds.contains(assessmentId)) and
+  e.revision > 0 and e.repositories.includes(repository) and assessmentId > 0 and not(e.assessmentIds.contains(assessmentId)) and
   latestOf(e, repository).state != APending and
-  (if (requestOrigin == SetupCheck) by >= 0 and e.restriction == Clear and latestOf(e, repository).state == NotAssessed
-   else if (requestOrigin == OwnerRescan) by > 0 and e.restriction == Clear and latestOf(e, repository).state == AIncomplete
+  (if (requestOrigin == SetupCheck) by >= 0 and e.restriction == Clear and latestOf(e, repository).state == NotAssessed and
+     not(repositoryCleared(e, repository))
+   else if (requestOrigin == OwnerRescan) by > 0 and e.restriction == Clear and latestOf(e, repository).state == AIncomplete and
+     not(repositoryCleared(e, repository))
    else if (requestOrigin == AdminInvestigation) e.administrators.contains(by)
    else by == vettingService and e.restriction == FlagQuarantine and
      (not(freshClean(e, repository)) or not(coversActiveFlags(e, repository))))
-pure def pendingAssessment(id: int, requestSeq: int, requestEpoch: int, snapshot: List[int]): Assessment =
-  { id: id, state: APending, requestSeq: requestSeq, requestEpoch: requestEpoch, reused: false, verified: false, snapshot: snapshot }
+pure def pendingAssessment(id: int, revision: int, requestSeq: int, requestEpoch: int, snapshot: List[int]): Assessment =
+  { id: id, state: APending, revision: revision, requestSeq: requestSeq, requestEpoch: requestEpoch, reused: false, verified: false, snapshot: snapshot }
 pure def requestAssessment(e: Enforcement, by: int, repository: int, requestOrigin: RequestOrigin, assessmentId: int): Enforcement =
   { ...e, seq: e.seq + 1, assessmentIds: e.assessmentIds.union(Set(assessmentId)),
-    latest: e.latest.put(repository, pendingAssessment(assessmentId, e.seq + 1, e.epoch, activeReceipts(e))) }
+    latest: e.latest.put(repository, pendingAssessment(assessmentId, e.revision, e.seq + 1, e.epoch, activeReceipts(e))) }
 pure def alwaysLatestIdsRequested(e: Enforcement): bool =
   e.repositories.every(r => latestOf(e, r).state == NotAssessed or e.assessmentIds.contains(latestOf(e, r).id))
 pure def alwaysSequencedRequests(e: Enforcement): bool =
-  e.repositories.every(r => latestOf(e, r).requestSeq <= e.seq and latestOf(e, r).requestEpoch <= e.epoch)
+  e.repositories.every(r => latestOf(e, r).requestSeq <= e.seq and latestOf(e, r).requestEpoch <= e.epoch and
+    latestOf(e, r).revision <= e.revision)
 ```
 
 ### A recorded result updates its repository once and confirmed malice bans at once
 
-Only the scanOutcome of the repository's pending assessment is accepted, once.
+Only the authenticated vetting service records a result, and only the
+scanOutcome of the repository's pending assessment at the revision it was
+requested for is accepted, once. A malicious outcome needs its trusted
+confirmation (`A::validOutcome`).
 A clean result resolves exactly the flags its request captured, and only
 when every repository's latest clean assessment captured them (migrations
 `0060` and `0123`); a reused clean result resolves flags but never lifts a
@@ -170,11 +195,12 @@ pure def restrictionEntry(e: Enforcement, issuer: Issuer, actor: int, kind: Reco
   e.journal.append({ seq: e.journal.length() + 1, kind: kind, issuer: issuer, actor: actor, result: plan })
 pure def owners(e: Enforcement): List[Notice] =
   e.notices.append({ entry: e.journal.length() + 1, to: ListingAccount }).append({ entry: e.journal.length() + 1, to: StewardAccount })
-pure def canRecordResult(e: Enforcement, scanOutcome: A::Outcome, plan: RevisionPlan): bool =
-  A::validOutcome(scanOutcome) and e.repositories.includes(scanOutcome.repository) and scanOutcome.revision <= e.revision and
+pure def canRecordResult(e: Enforcement, by: int, scanOutcome: A::Outcome, plan: RevisionPlan): bool =
+  by == vettingService and A::validOutcome(scanOutcome) and e.repositories.includes(scanOutcome.repository) and
+  scanOutcome.revision == latestOf(e, scanOutcome.repository).revision and
   latestOf(e, scanOutcome.repository).id == scanOutcome.assessment and latestOf(e, scanOutcome.repository).state == APending and
   (scanOutcome.disposition == A::DMalicious or plan == RevisionNotNeeded)
-pure def recordResult(e: Enforcement, scanOutcome: A::Outcome, plan: RevisionPlan): Enforcement =
+pure def recordResult(e: Enforcement, by: int, scanOutcome: A::Outcome, plan: RevisionPlan): Enforcement =
   val updated = withResult(scanOutcome, e)
   if (scanOutcome.disposition == A::DClean) { ...updated, resolved: updated.resolved.concat(newlyResolved(updated)) }
   else if (scanOutcome.disposition == A::DMalicious)
@@ -187,15 +213,17 @@ pure def recordResult(e: Enforcement, scanOutcome: A::Outcome, plan: RevisionPla
       journal: restrictionEntry(e, ByVettingService, 0, RecordBan, plan), notices: owners(e) }
   else updated
 pure val scanOutcomeValues = Set(
-  { assessment: 1, repository: 1, revision: 1, disposition: A::DClean, reused: false, retained: true },
-  { assessment: 1, repository: 1, revision: 1, disposition: A::DClean, reused: true, retained: true },
-  { assessment: 1, repository: 1, revision: 1, disposition: A::DIncomplete, reused: false, retained: false },
-  { assessment: 1, repository: 1, revision: 1, disposition: A::DMalicious, reused: false, retained: true },
-  { assessment: 2, repository: 1, revision: 1, disposition: A::DClean, reused: false, retained: true },
-  { assessment: 2, repository: 1, revision: 1, disposition: A::DMalicious, reused: false, retained: true },
-  { assessment: 3, repository: 2, revision: 2, disposition: A::DClean, reused: false, retained: true },
-  { assessment: 3, repository: 2, revision: 2, disposition: A::DMalicious, reused: false, retained: true },
-  { assessment: 1, repository: 1, revision: 1, disposition: A::DClean, reused: false, retained: false })
+  { assessment: 1, repository: 1, revision: 1, disposition: A::DClean, confirmation: A::NoConfirmation, reused: false, retained: true },
+  { assessment: 1, repository: 1, revision: 1, disposition: A::DClean, confirmation: A::NoConfirmation, reused: true, retained: true },
+  { assessment: 1, repository: 1, revision: 1, disposition: A::DIncomplete, confirmation: A::NoConfirmation, reused: false, retained: false },
+  { assessment: 1, repository: 1, revision: 1, disposition: A::DMalicious, confirmation: A::ReproducibleBehavior, reused: false, retained: true },
+  { assessment: 2, repository: 1, revision: 1, disposition: A::DClean, confirmation: A::NoConfirmation, reused: false, retained: true },
+  { assessment: 2, repository: 1, revision: 1, disposition: A::DMalicious, confirmation: A::ReproducibleBehavior, reused: false, retained: true },
+  { assessment: 3, repository: 2, revision: 2, disposition: A::DClean, confirmation: A::NoConfirmation, reused: false, retained: true },
+  { assessment: 3, repository: 2, revision: 2, disposition: A::DMalicious, confirmation: A::ReproducibleBehavior, reused: false, retained: true },
+  { assessment: 1, repository: 1, revision: 1, disposition: A::DClean, confirmation: A::NoConfirmation, reused: false, retained: false },
+  { assessment: 1, repository: 1, revision: 1, disposition: A::DMalicious, confirmation: A::NoConfirmation, reused: false, retained: true },
+  { assessment: 1, repository: 1, revision: 2, disposition: A::DClean, confirmation: A::NoConfirmation, reused: false, retained: true })
 pure def alwaysMaliceBanned(e: Enforcement): bool =
   e.repositories.some(r => latestOf(e, r).state == AMalicious) implies (e.restriction == ServiceBan or e.restriction == ModeratorBan)
 pure def alwaysServiceBanFindings(e: Enforcement): bool = e.restriction == ServiceBan implies e.findings.size() > 0
@@ -210,10 +238,10 @@ until a later read finds it again.
 
 ```quint
 type EvidenceRead = { assessment: int, present: bool }
-pure def canObserveEvidence(e: Enforcement, repository: int, evidenceRead: EvidenceRead): bool =
-  e.repositories.includes(repository) and latestOf(e, repository).id == evidenceRead.assessment and
+pure def canObserveEvidence(e: Enforcement, by: int, repository: int, evidenceRead: EvidenceRead): bool =
+  by == platform and e.repositories.includes(repository) and latestOf(e, repository).id == evidenceRead.assessment and
   (latestOf(e, repository).state == AClean or latestOf(e, repository).state == AMalicious)
-pure def observeEvidence(e: Enforcement, repository: int, evidenceRead: EvidenceRead): Enforcement =
+pure def observeEvidence(e: Enforcement, by: int, repository: int, evidenceRead: EvidenceRead): Enforcement =
   { ...e, latest: e.latest.put(repository, { ...latestOf(e, repository), verified: evidenceRead.present }) }
 pure val evidenceReadValues = Set({ assessment: 1, present: false }, { assessment: 1, present: true }, { assessment: 2, present: false })
 ```
@@ -231,7 +259,9 @@ pure def canAppendRepository(e: Enforcement, repository: int): bool =
 pure def appendRepository(e: Enforcement, repository: int): Enforcement =
   { ...e, repositories: e.repositories.append(repository), latest: e.latest.put(repository, unassessed) }
 pure def lawMissingAssessmentIsUnassessed(e: Enforcement, repository: int): bool =
-  not(e.latest.keys().contains(repository)) implies latestOf(e, repository) == unassessed and not(repositoryCleared(e, repository) and not(e.frozen.contains(repository)) and not(e.exempt.contains(repository)))
+  not(e.latest.keys().contains(repository)) implies
+    (latestOf(e, repository).state == NotAssessed and
+     (repositoryCleared(e, repository) implies (e.frozen.contains(repository) or e.exempt.contains(repository))))
 pure def canObserveRevision(e: Enforcement, revision: int, steward: int, creator: int): bool =
   revision > e.revision and steward > 0 and creator > 0 and (e.creator == 0 or creator == e.creator)
 pure def observeRevision(e: Enforcement, revision: int, steward: int, creator: int): Enforcement =
@@ -251,9 +281,9 @@ insert after the migration. It names the project and the repository.
 
 ```quint
 type FrozenRow = { projectId: int, repository: int }
-pure def canRecognizeFrozen(e: Enforcement, row: FrozenRow): bool =
-  row.projectId == e.projectId and e.original.contains(row.repository) and not(e.frozen.contains(row.repository))
-pure def recognizeFrozen(e: Enforcement, row: FrozenRow): Enforcement = { ...e, frozen: e.frozen.union(Set(row.repository)) }
+pure def canRecognizeFrozen(e: Enforcement, by: int, row: FrozenRow): bool =
+  by == platform and row.projectId == e.projectId and e.original.contains(row.repository) and not(e.frozen.contains(row.repository))
+pure def recognizeFrozen(e: Enforcement, by: int, row: FrozenRow): Enforcement = { ...e, frozen: e.frozen.union(Set(row.repository)) }
 pure val rowValues = Set({ projectId: 1, repository: 1 }, { projectId: 2, repository: 1 }, { projectId: 1, repository: 2 })
 pure def alwaysFrozenOriginalOnly(e: Enforcement): bool = e.frozen.subseteq(e.original)
 ```
@@ -269,7 +299,9 @@ an organization is never the collaborator identity. The grant records the
 branch and head observed, the review scope and limitations, the approver and
 the owner decision, and binds the current revision, repository and steward.
 A restriction, a malicious latest result, missing installation, unavailable
-or denied authority, a changed revision or a second active grant refuses it.
+or denied authority, a changed revision, an enforcement record written since
+the administrator's preview (`stale_revision`) or a second active grant
+refuses it.
 Revocation needs a new decision, keeps the grant and restores ordinary
 admission.
 
@@ -278,15 +310,16 @@ type Access = AccessVerified | AccessDenied | AccessUnavailable | InstallationMi
 type StewardCheck = { actor: int, repository: int, access: Access }
 type GrantRequest = { id: int, repository: int, revision: int, steward: int, check: StewardCheck, decision: int,
   branch: int, head: int, scope: int, limitations: int }
-pure def canGrantExemption(e: Enforcement, by: int, request: GrantRequest): bool =
-  e.administrators.contains(by) and e.restriction == Clear and e.repositories.includes(request.repository) and
+pure def canGrantExemption(e: Enforcement, by: int, fence: Fence, request: GrantRequest): bool =
+  e.administrators.contains(by) and fenced(e, fence) and e.restriction == Clear and e.repositories.includes(request.repository) and
   request.id > 0 and not(e.grants.some(g => g.id == request.id)) and not(e.exempt.contains(request.repository)) and
   request.revision == e.revision and request.steward == e.steward and
   (request.check.actor == e.steward or request.check.actor == e.creator) and request.check.repository == request.repository and
   request.check.access == AccessVerified and e.repositories.every(r => latestOf(e, r).state != AMalicious) and
   request.decision > 0 and request.branch > 0 and request.head > 0 and request.scope > 0 and request.limitations > 0
-pure def grantExemption(e: Enforcement, by: int, request: GrantRequest): Enforcement =
+pure def grantExemption(e: Enforcement, by: int, fence: Fence, request: GrantRequest): Enforcement =
   { ...e, seq: e.seq + 1, exempt: e.exempt.union(Set(request.repository)), grantSeq: e.grantSeq.put(request.repository, e.seq + 1),
+    exemptSteward: e.exemptSteward.put(request.repository, request.steward),
     grants: e.grants.append({ id: request.id, repository: request.repository, seq: e.seq + 1, approver: by,
       steward: request.steward, revision: request.revision, decision: request.decision, branch: request.branch,
       head: request.head, scope: request.scope, limitations: request.limitations }) }
@@ -305,7 +338,7 @@ pure def revokeExemption(e: Enforcement, by: int, repository: int, grantId: int,
 pure val grantIdValues = Set(11, 12)
 pure val decisionValues = Set(0, 1)
 pure def alwaysExemptionGranted(e: Enforcement): bool =
-  e.exempt.forall(r => e.repositories.includes(r) and grantSeqOf(e, r) > 0 and grantSeqOf(e, r) <= e.seq and
+  e.exempt.forall(r => e.repositories.includes(r) and grantSeqOf(e, r) > 0 and grantSeqOf(e, r) <= e.seq and exemptStewardOf(e, r) > 0 and
     e.grants.some(g => g.repository == r and g.seq == grantSeqOf(e, r)))
 pure def alwaysGrantsAudited(e: Enforcement): bool =
   e.grants.every(g => g.approver > 0 and g.decision > 0 and g.branch > 0 and g.head > 0 and g.scope > 0 and g.limitations > 0)
@@ -360,8 +393,8 @@ pure def flag(e: Enforcement, by: int, receipt: int, standing: FlagStanding): En
 pure def canWithdrawFlag(e: Enforcement, by: int, receipt: int): bool =
   e.flags.some(f => f.actor == by and f.receipt == receipt) and not(e.withdrawn.contains(receipt))
 pure def withdrawFlag(e: Enforcement, by: int, receipt: int): Enforcement = { ...e, withdrawn: e.withdrawn.union(Set(receipt)) }
-pure def canAdvanceDay(e: Enforcement, day: int): bool = day >= e.clockDay
-pure def advanceDay(e: Enforcement, day: int): Enforcement = { ...e, clockDay: day }
+pure def canAdvanceDay(e: Enforcement, by: int, day: int): bool = by == platform and day >= e.clockDay
+pure def advanceDay(e: Enforcement, by: int, day: int): Enforcement = { ...e, clockDay: day }
 pure val dayValues = Set(0, 89, 90)
 pure val receiptValues = Set(1, 2, 3)
 pure def alwaysFlagTimes(e: Enforcement): bool = e.flags.every(f => f.filedDay <= e.clockDay and f.receipt > 0 and f.actor > 0)
@@ -404,6 +437,9 @@ A moderator quarantines only a clear project. A moderator ban applies to a
 clear, flag-paused or quarantined project. A vetting-service Ban waits for a
 moderator decision: ban the project and the responsible accounts the
 moderator selects from the evidence, or reinstate it through the appeal path.
+Every moderator decision confirms the revision and the next enforcement
+sequence its preview showed (`expectedRevision`, `expectedSequence`); a record
+written in between refuses it (`stale_revision`).
 Current stewardship and the original application never select accounts. A
 decision that closes an open project appeal needs a moderator who neither
 placed the restriction nor filed the appeal. Account bans are recorded for
@@ -413,48 +449,54 @@ them.
 ```quint
 pure def independent(e: Enforcement, by: int): bool =
   e.moderators.contains(by) and not(e.restrictedBy.contains(by)) and not(e.appellants.contains(by))
-pure def canQuarantine(e: Enforcement, by: int, plan: RevisionPlan): bool =
-  e.moderators.contains(by) and e.restriction == Clear
-pure def quarantine(e: Enforcement, by: int, plan: RevisionPlan): Enforcement =
+pure def canQuarantine(e: Enforcement, by: int, fence: Fence, plan: RevisionPlan): bool =
+  e.moderators.contains(by) and fenced(e, fence) and e.restriction == Clear
+pure def quarantine(e: Enforcement, by: int, fence: Fence, plan: RevisionPlan): Enforcement =
   { ...e, restriction: ModeratorQuarantine, epoch: e.epoch + 1, restrictedBy: Set(by), appeal: NoAppeal, appellants: Set(),
     revisionPending: plan == RevisionPending, journal: restrictionEntry(e, ByModerator, by, RecordQuarantine, plan), notices: owners(e) }
-pure def canBan(e: Enforcement, by: int, plan: RevisionPlan): bool =
-  e.moderators.contains(by) and (e.restriction == Clear or e.restriction == FlagQuarantine or e.restriction == ModeratorQuarantine)
-pure def ban(e: Enforcement, by: int, plan: RevisionPlan): Enforcement =
+pure def canBan(e: Enforcement, by: int, fence: Fence, plan: RevisionPlan): bool =
+  e.moderators.contains(by) and fenced(e, fence) and (e.restriction == Clear or e.restriction == FlagQuarantine or e.restriction == ModeratorQuarantine)
+pure def ban(e: Enforcement, by: int, fence: Fence, plan: RevisionPlan): Enforcement =
   { ...e, restriction: ModeratorBan, epoch: e.epoch + 1,
     restrictedBy: if (e.restriction == Clear) Set(by) else e.restrictedBy.union(Set(by)),
     appeal: if (e.restriction == Clear) NoAppeal else e.appeal, appellants: if (e.restriction == Clear) Set() else e.appellants,
     revisionPending: e.revisionPending or plan == RevisionPending,
     journal: restrictionEntry(e, ByModerator, by, RecordBan, plan), notices: owners(e) }
-pure def canDecideMalice(e: Enforcement, by: int, accounts: List[int]): bool =
-  e.moderators.contains(by) and e.restriction == ServiceBan and accounts.every(a => a > 0) and
+pure def canDecideMalice(e: Enforcement, by: int, fence: Fence, accounts: List[int]): bool =
+  e.moderators.contains(by) and fenced(e, fence) and e.restriction == ServiceBan and accounts.every(a => a > 0) and
   (e.appeal == AppealRequested implies independent(e, by))
-pure def decideMalice(e: Enforcement, by: int, accounts: List[int]): Enforcement =
+pure def decideMalice(e: Enforcement, by: int, fence: Fence, accounts: List[int]): Enforcement =
   { ...e, restriction: ModeratorBan, restrictedBy: e.restrictedBy.union(Set(by)),
     appeal: if (e.appeal == AppealRequested) AppealDenied else e.appeal,
     accountBans: e.accountBans.concat(accounts), journal: entry(e, RecordBan, ByModerator, by), notices: owners(e) }
 pure val accountsValues = Set(List(), List(1), List(2), List(0))
 pure def canSettlePendingRevision(e: Enforcement, by: int): bool = e.administrators.contains(by) and e.revisionPending
 pure def settlePendingRevision(e: Enforcement, by: int): Enforcement = { ...e, revisionPending: false }
+pure def withRevisionLanded(landed: bool, e: Enforcement): Enforcement =
+  if (landed and e.restriction != Clear) { ...e, revisionPending: false } else e
 ```
 
-### The steward, the listing account or a moderator files one open project appeal
+### The steward, the listing account, a banned account or a moderator files one open project appeal
 
-Filing records the request and notifies the moderators who did not place the
-restriction. It neither lifts the restriction nor grants project access.
-Banned-account appeals belong to [participation restrictions](../access.md).
+The steward, the listing account, an account this project's decision banned
+(`banned-account`) or a moderator may file the project appeal
+(`requestReinstatement`). Filing records the request and notifies the
+moderators who did not place the restriction. It neither lifts the
+restriction nor grants project access. An account appeal filed while the
+project is clear, and the account reinstatement decision, belong to
+[participation restrictions](../access.md).
 
 ```quint
 pure def canRequestAppeal(e: Enforcement, by: int): bool =
   by > 0 and e.revision > 0 and e.restriction != Clear and e.appeal != AppealRequested and
-  (by == e.steward or by == e.creator or e.moderators.contains(by))
+  (by == e.steward or by == e.creator or e.accountBans.includes(by) or e.moderators.contains(by))
 pure def requestAppeal(e: Enforcement, by: int): Enforcement =
   { ...e, appeal: AppealRequested, appellants: e.appellants.union(Set(by)),
     journal: entry(e, RecordAppeal, ByAppellant, by),
     notices: owners(e).append({ entry: e.journal.length() + 1, to: IndependentModerators }) }
-pure def canDenyAppeal(e: Enforcement, by: int): bool =
-  e.appeal == AppealRequested and e.restriction != Clear and e.restriction != ServiceBan and independent(e, by)
-pure def denyAppeal(e: Enforcement, by: int): Enforcement =
+pure def canDenyAppeal(e: Enforcement, by: int, fence: Fence): bool =
+  fenced(e, fence) and e.appeal == AppealRequested and e.restriction != Clear and e.restriction != ServiceBan and independent(e, by)
+pure def denyAppeal(e: Enforcement, by: int, fence: Fence): Enforcement =
   { ...e, appeal: AppealDenied, journal: entry(e, RecordDeny, ByModerator, by), notices: owners(e) }
 ```
 
@@ -469,14 +511,14 @@ flags it found. The registry restores a paused Community listing only if the
 project was listed when the restriction began.
 
 ```quint
-pure def canReinstate(e: Enforcement, by: int, pins: List[PinRead]): bool =
-  e.appeal == AppealRequested and e.restriction != Clear and independent(e, by) and not(e.revisionPending) and
+pure def canReinstate(e: Enforcement, by: int, fence: Fence, pins: List[PinRead]): bool =
+  fenced(e, fence) and e.appeal == AppealRequested and e.restriction != Clear and independent(e, by) and not(e.revisionPending) and
   allFresh(e) and pinsMatch(e, pins)
-pure def reinstate(e: Enforcement, by: int, pins: List[PinRead]): Enforcement =
+pure def reinstate(e: Enforcement, by: int, fence: Fence, pins: List[PinRead]): Enforcement =
   { ...e, restriction: Clear, restrictedBy: Set(), appeal: AppealGranted, appellants: Set(),
     reviewedFindings: e.findings, resolved: e.resolved.concat(activeReceipts(e)),
     journal: entry(e, RecordReinstate, ByModerator, by), notices: owners(e) }
-pure val byValues = Set(0, 1, 2, 3, 5, 6, 7)
+pure val byValues = Set(-1, 0, 1, 2, 3, 5, 6, 7)
 pure val repositoryValues = Set(1, 2)
 pure val assessmentIdValues = Set(1, 2, 3)
 pure val planValues = Set(RevisionAppended, RevisionNotNeeded, RevisionPending)
@@ -561,6 +603,13 @@ pure def sometimesUnverifiedEvidence(e: Enforcement): bool = latestOf(e, 1).stat
 pure def sometimesSingleFlagResolved(e: Enforcement): bool = e.resolved.length() > 0 and e.restriction == Clear and e.journal.length() == 0
 pure def sometimesRevisionPending(e: Enforcement): bool = e.revisionPending
 pure def sometimesCleared(e: Enforcement): bool = mayContribute(e) and latestOf(e, 1).state == AClean
+pure def sometimesBannedAccountAppealed(e: Enforcement): bool =
+  e.appeal == AppealRequested and e.appellants.exists(a => e.accountBans.includes(a) and a != e.steward and a != e.creator)
+pure def readyToLiftFlagPause(e: Enforcement): bool =
+  e.restriction == FlagQuarantine and allFresh(e) and not(twoActiveFlaggers(e))
+pure def leadsToFlagPauseLifted(e: Enforcement, later: Enforcement): bool =
+  readyToLiftFlagPause(e) implies (later.restriction != FlagQuarantine or not(readyToLiftFlagPause(later)))
+pure val fair_reinstateFlagPause = "weak"
 pure val weight_requestAssessment = 4
 pure val weight_recordResult = 4
 pure val weight_flag = 4
