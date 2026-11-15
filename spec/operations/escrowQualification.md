@@ -23,22 +23,33 @@ in the plan are stablecoin micro-units. Gas is integer gwei for EVM networks, wi
 lamports for Solana. The Base ceiling covers the reviewed upgrade and the
 whole sequence across wallets. The evidence reader checks Slop's Base vault
 or the first qualifying Solana or Robinhood vault. Testnet, deployment bytes,
-asset identity and current signing authority must match the plan.
+asset identity and current signing authority must match the plan. Owner
+authorization is state this machine owns: the repository owner, authenticated
+as the `by` sender, approves a reviewed plan or activation by its review
+identifier, and only an approval recorded here satisfies a plan or an
+activation. The remaining evidence fields are the verdicts of the named
+evidence reader.
 
 ```quint
 type Network = Base | Solana | Robinhood | Ethereum
 type QualificationPhase = AwaitingPlan | Ready | AwaitingReceipt | Uncertain | Stopped
 type StepKind = SupportingWrite | Deposit | Payout
 type Plan = { network: Network, vault: str, asset: str, review: str, monthlyCap: int, automatic: bool }
-type PlanEvidence = { nonMoneyLive: bool, exactAssetAndVault: bool, currentAuthority: bool, exactDeployment: bool, applicableTestnet: bool, ownerAuthorized: bool }
+type PlanEvidence = { nonMoneyLive: bool, exactAssetAndVault: bool, currentAuthority: bool, exactDeployment: bool, applicableTestnet: bool }
+type Approver = RepositoryOwner | Operator | Agent
 type FreshChecks = { currentAuthority: bool, exactPlanAuthorized: bool, eligible: bool, simulationPassed: bool, reconciled: bool }
 type Operation = { key: str, transaction: str, kind: StepKind, gasLimit: int, gross: int, net: int, fee: int, actor: int }
 type Result = { network: Network, vault: str, transaction: str, finalized: bool, exactOperation: bool, succeeded: bool, actualGas: int }
 type RecordedOutcome = { plan: Plan, operation: Operation, result: Result }
-type Qualification = { completed: int, activated: int, ethereumActive: bool, phase: QualificationPhase, plan: Plan, qualifiedPlans: List[Plan], spent: int, deposited: bool, paid: bool, pending: Operation, records: Set[str], transactions: List[str], history: List[RecordedOutcome], retransmissions: int, historicalSolana: List[ExistingSolanaStep] }
+type Qualification = { completed: int, activated: int, ethereumActive: bool, phase: QualificationPhase, plan: Plan, qualifiedPlans: List[Plan], spent: int, deposited: bool, paid: bool, pending: Operation, records: Set[str], transactions: List[str], history: List[RecordedOutcome], retransmissions: int, historicalSolana: List[ExistingSolanaStep], ownerApprovals: List[str] }
 pure val emptyPlan: Plan = { network: Base, vault: "", asset: "", review: "", monthlyCap: 0, automatic: false }
 pure val emptyOperation: Operation = { key: "", transaction: "", kind: SupportingWrite, gasLimit: 0, gross: 0, net: 0, fee: 0, actor: 0 }
-pure val initial: Qualification = { completed: 0, activated: 0, ethereumActive: false, phase: AwaitingPlan, plan: emptyPlan, qualifiedPlans: List(), spent: 0, deposited: false, paid: false, pending: emptyOperation, records: Set(), transactions: List(), history: List(), retransmissions: 0, historicalSolana: List() }
+pure val initial: Qualification = { completed: 0, activated: 0, ethereumActive: false, phase: AwaitingPlan, plan: emptyPlan, qualifiedPlans: List(), spent: 0, deposited: false, paid: false, pending: emptyOperation, records: Set(), transactions: List(), history: List(), retransmissions: 0, historicalSolana: List(), ownerApprovals: List() }
+pure def canApprove(q: Qualification, review: str, by: Approver): bool = by == RepositoryOwner and review != ""
+  and not(q.ownerApprovals.includes(review))
+pure def approve(q: Qualification, review: str, by: Approver): Qualification = { ...q, ownerApprovals: q.ownerApprovals.append(review) }
+pure def stepApprovalsOnlyByOwner(before: Qualification, via: str, after: Qualification): bool =
+  after.ownerApprovals != before.ownerApprovals implies via == "approve"
 pure def networkFor(position: int): Network =
   if (position == 0) Base else if (position == 1) Solana else if (position == 2) Robinhood else Ethereum
 pure def stablecoin(network: Network): str = if (network == Robinhood) "USDG" else "USDC"
@@ -48,9 +59,9 @@ pure def validPlan(plan: Plan, position: int): bool = position >= 0 and position
   and plan.vault != "" and plan.asset == stablecoin(plan.network) and plan.review != ""
   and plan.monthlyCap == 1000000000 and not(plan.automatic)
 pure def completeEvidence(evidence: PlanEvidence): bool = evidence.nonMoneyLive and evidence.exactAssetAndVault
-  and evidence.currentAuthority and evidence.exactDeployment and evidence.applicableTestnet and evidence.ownerAuthorized
+  and evidence.currentAuthority and evidence.exactDeployment and evidence.applicableTestnet
 pure def canAdmitPlan(q: Qualification, plan: Plan, evidence: PlanEvidence): bool =
-  q.phase == AwaitingPlan and validPlan(plan, q.completed) and completeEvidence(evidence)
+  q.phase == AwaitingPlan and validPlan(plan, q.completed) and completeEvidence(evidence) and q.ownerApprovals.includes(plan.review)
 pure def admitPlan(q: Qualification, plan: Plan, evidence: PlanEvidence): Qualification =
   { ...q, phase: Ready, plan: plan }
 pure def alwaysOrderedQualification(q: Qualification): bool = q.completed == q.qualifiedPlans.length() and q.completed >= 0 and q.completed <= 3
@@ -160,16 +171,16 @@ requires current authority, exact deployment and asset checks, finalized
 evidence, and its own explicit activation. It uses no qualification vault.
 
 ```quint
-type ActivationEvidence = { network: Network, vault: str, review: str, currentAuthority: bool, exactDeployment: bool, exactAsset: bool, finalized: bool, ownerAuthorized: bool }
+type ActivationEvidence = { network: Network, vault: str, review: str, currentAuthority: bool, exactDeployment: bool, exactAsset: bool, finalized: bool }
 pure def canCompleteLane(q: Qualification, reconciled: bool): bool = q.phase == Ready and q.paid and reconciled
 pure def completeLane(q: Qualification, reconciled: bool): Qualification = { ...q, completed: q.completed + 1, phase: AwaitingPlan, plan: emptyPlan, qualifiedPlans: q.qualifiedPlans.append(q.plan), spent: 0, deposited: false, paid: false, records: Set() }
-pure def validActivation(activation: ActivationEvidence): bool = activation.currentAuthority and activation.exactDeployment
-  and activation.exactAsset and activation.finalized and activation.ownerAuthorized
+pure def validActivation(q: Qualification, activation: ActivationEvidence): bool = activation.currentAuthority and activation.exactDeployment
+  and activation.exactAsset and activation.finalized and q.ownerApprovals.includes(activation.review)
 pure def canActivateLane(q: Qualification, activation: ActivationEvidence): bool =
   val retained = q.qualifiedPlans.nthOr(q.activated, emptyPlan)
   q.activated >= 0 and q.activated < q.completed and q.activated < q.qualifiedPlans.length()
     and activation.network == networkFor(q.activated) and activation.network == retained.network
-    and activation.vault == retained.vault and activation.review == retained.review and validActivation(activation)
+    and activation.vault == retained.vault and activation.review == retained.review and validActivation(q, activation)
 pure def activateLane(q: Qualification, activation: ActivationEvidence): Qualification = { ...q, activated: q.activated + 1 }
 pure def alwaysActivationWithinQualification(q: Qualification): bool = q.activated >= 0 and q.activated <= q.completed
 pure def stepActivationIsSingleNetwork(before: Qualification, after: Qualification): bool =
@@ -178,7 +189,7 @@ pure def sharedEvmQualified(q: Qualification): bool = q.qualifiedPlans.some(p =>
   and q.qualifiedPlans.some(p => p.network == Robinhood) and q.activated == 3
 pure def canActivateEthereum(q: Qualification, activation: ActivationEvidence): bool =
   q.completed == 3 and q.phase == AwaitingPlan and not(q.ethereumActive) and sharedEvmQualified(q)
-    and activation.network == Ethereum and activation.vault == "" and validActivation(activation)
+    and activation.network == Ethereum and activation.vault == "" and validActivation(q, activation)
 pure def activateEthereum(q: Qualification, activation: ActivationEvidence): Qualification = { ...q, ethereumActive: true }
 pure def alwaysEthereumAfterSequence(q: Qualification): bool = q.ethereumActive implies q.completed == 3 and q.phase == AwaitingPlan
   and sharedEvmQualified(q)
@@ -247,8 +258,11 @@ pure def sometimesHistoricalRecorded(q: Qualification): bool = q.historicalSolan
 pure val planValues = Set(Base, Solana, Robinhood, Ethereum).map(network =>
   { network: network, vault: "vault", asset: stablecoin(network), review: "plan", monthlyCap: 1000000000, automatic: false })
 pure val evidenceValues = Set(
-  { nonMoneyLive: true, exactAssetAndVault: true, currentAuthority: true, exactDeployment: true, applicableTestnet: true, ownerAuthorized: true },
-  { nonMoneyLive: true, exactAssetAndVault: true, currentAuthority: true, exactDeployment: true, applicableTestnet: false, ownerAuthorized: true })
+  { nonMoneyLive: true, exactAssetAndVault: true, currentAuthority: true, exactDeployment: true, applicableTestnet: true },
+  { nonMoneyLive: true, exactAssetAndVault: true, currentAuthority: true, exactDeployment: true, applicableTestnet: false })
+pure val reviewValues = Set("plan", "ethereum-activation", "")
+pure val byValues = Set(RepositoryOwner, Agent)
+pure val weight_approve = 20
 pure val checksValues = Set(
   { currentAuthority: true, exactPlanAuthorized: true, eligible: true, simulationPassed: true, reconciled: true },
   { currentAuthority: true, exactPlanAuthorized: true, eligible: true, simulationPassed: false, reconciled: true })
@@ -265,9 +279,9 @@ pure val resultValues = sampleNetworks.fold(Set(), (results, network) =>
   results.union(Set(SupportingWrite, Deposit, Payout).fold(Set(), (byTransaction, kind) =>
     byTransaction.union(Set(true, false).map(succeeded => { network: network, vault: "vault", transaction: sampleTransaction(network, kind),
       finalized: true, exactOperation: true, succeeded: succeeded, actualGas: 1 })))))
-pure val activationValues = Set(Base, Solana, Robinhood, Ethereum).fold(Set(), (records, network) =>
-  records.union(Set(true, false).map(owner => { network: network, vault: if (network == Ethereum) "" else "vault", review: "plan", currentAuthority: true,
-    exactDeployment: true, exactAsset: true, finalized: true, ownerAuthorized: owner })))
+pure val activationValues = Set(Base, Solana, Robinhood, Ethereum).map(network =>
+  { network: network, vault: if (network == Ethereum) "" else "vault", review: if (network == Ethereum) "ethereum-activation" else "plan",
+    currentAuthority: true, exactDeployment: true, exactAsset: true, finalized: true })
 pure val flowValues = Set(
   { created: true, deposited: true, refunded: true, reserved: true, paid: true, claimed: true, accounted: true, conversionInspected: true },
   { created: true, deposited: true, refunded: true, reserved: true, paid: true, claimed: true, accounted: true, conversionInspected: false })
