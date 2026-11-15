@@ -52,6 +52,7 @@ import {
   valueAdditionCount,
   valueDeletionCount,
 } from "../workers/slopbot/value-patch";
+import { isConfirmedMissingPublicReference } from "../workers/slopbot/value-reference-query";
 import { retainedCopyBindings } from "../workers/slopbot/value-retained-copy";
 import type { WorkUnitSource } from "../workers/slopbot/value-work-unit-types";
 import {
@@ -537,7 +538,14 @@ export class CorrectionEvidenceCache {
       response.ok &&
       validJson &&
       completeGraphql &&
-      (!parsed?.errors || recoverableStatistics) &&
+      (!parsed?.errors ||
+        recoverableStatistics ||
+        (graphqlRequest &&
+          isConfirmedMissingPublicReference(
+            graphqlRequest.query,
+            graphqlRequest.variables ?? {},
+            parsed,
+          ))) &&
       (graphqlRequest?.query !== historicalDiscussionQuery ||
         historicalDiscussionHasRateLimit(parsed?.data))
     ) {
@@ -640,7 +648,13 @@ function cachedExecutor(
     );
     requireThat(
       value.data &&
-        (!value.errors || statisticsFailure) &&
+        (!value.errors ||
+          statisticsFailure ||
+          isConfirmedMissingPublicReference(
+            query,
+            candidateVariables,
+            value,
+          )) &&
         (query !== historicalDiscussionQuery ||
           historicalDiscussionHasRateLimit(value.data)),
       "Cached GraphQL response is incomplete",
