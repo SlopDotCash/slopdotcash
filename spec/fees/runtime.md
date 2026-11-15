@@ -2,8 +2,12 @@
 
 PRD section 6 (received-fee handling, BUY-07), section 11 and CLAUDE.md
 "Rewards, funding, and settlement" govern when the fee-wallet Worker may run
-and sign. The release workflow publishes the Worker only while the repository
-variable `SLOP_FEE_CONVERTER_RELEASE` is `enabled`. Its preflight reads the
+and sign. The production release publishes the Worker only while the
+repository variable `SLOP_FEE_CONVERTER_RELEASE` is `enabled`. The staging
+release publishes its isolated staging Worker on every staging release, with
+no variable, and refuses any mode other than dry run: a second live signer
+must never compete for the production wallets, and testnet qualification
+never uses production credentials. Its preflight reads the
 reviewed `wrangler.toml` modes, networks and native limits and the Worker
 secret inventory. Fee handling starts only after the owner verifies that each
 fee wallet is funded and its limits and readiness are correct (#1285). The
@@ -18,9 +22,9 @@ authority from it. The `by` sender is authenticated by the shell:
 
 ## Story: Publish the fee Worker only from a reviewed release and its preflight
 
-### The release variable gates publication, never a running Worker
+### The release variable gates production publication, never a running Worker
 
-Turning the variable off stops later publications. It does not stop a Worker
+Turning the variable off stops later production publications. It does not stop a Worker
 version that is already published; only a later publication in `Off` mode
 does. A publication carries the exact source it was built from, and sources
 only advance.
@@ -31,23 +35,24 @@ type Mode = Off | DryRun | Live
 type Environment = Production | Staging
 type Sender = ReleaseWorkflow | Owner | Worker | Other
 type WorkerConfig = { source: int, converterMode: Mode, buybackMode: Mode, networks: List[Network],
-  keys: List[Network], nativeLimits: List[Network], wallet: int }
+  keys: List[Network], nativeLimits: List[Network], evmWallet: int, solanaWallet: int }
 type Runtime = { environment: Environment, variableEnabled: bool, published: bool, source: int,
   converterMode: Mode, buybackMode: Mode, networks: List[Network], keys: List[Network], nativeLimits: List[Network],
-  wallet: int, ready: Readiness, replacementActive: bool, publications: int }
+  evmWallet: int, solanaWallet: int, ready: Readiness, replacementActive: bool, publications: int }
 type Readiness = { base: bool, ethereum: bool, robinhood: bool, solana: bool }
 pure val initial: Runtime = { environment: Production, variableEnabled: false, published: false, source: 0,
   converterMode: Off, buybackMode: Off, networks: List(), keys: List(), nativeLimits: List(),
-  wallet: 1, ready: noReadiness, replacementActive: false, publications: 0 }
+  evmWallet: 1, solanaWallet: 2, ready: noReadiness, replacementActive: false, publications: 0 }
 pure val noReadiness: Readiness = { base: false, ethereum: false, robinhood: false, solana: false }
 pure def readyFor(ready: Readiness, network: Network): bool =
   if (network == Base) ready.base else if (network == Ethereum) ready.ethereum else if (network == Robinhood) ready.robinhood else ready.solana
 pure def setReady(ready: Readiness, network: Network, value: bool): Readiness =
   if (network == Base) { ...ready, base: value } else if (network == Ethereum) { ...ready, ethereum: value }
   else if (network == Robinhood) { ...ready, robinhood: value } else { ...ready, solana: value }
-pure def keepEnabled(ready: Readiness, networks: List[Network]): Readiness =
-  { base: ready.base and listed(networks, Base), ethereum: ready.ethereum and listed(networks, Ethereum),
-    robinhood: ready.robinhood and listed(networks, Robinhood), solana: ready.solana and listed(networks, Solana) }
+pure def walletOf(r: Runtime, network: Network): int = if (network == Solana) r.solanaWallet else r.evmWallet
+pure def keepEnabled(ready: Readiness, networks: List[Network], evmKept: bool, solanaKept: bool): Readiness =
+  { base: ready.base and evmKept and listed(networks, Base), ethereum: ready.ethereum and evmKept and listed(networks, Ethereum),
+    robinhood: ready.robinhood and evmKept and listed(networks, Robinhood), solana: ready.solana and solanaKept and listed(networks, Solana) }
 pure def canChooseEnvironment(r: Runtime, environment: Environment): bool = r.publications == 0 and not(r.published)
 pure def chooseEnvironment(r: Runtime, environment: Environment): Runtime = { ...r, environment: environment }
 pure def canSetReleaseVariable(r: Runtime, variable: bool, by: Sender): bool = by == Owner and variable != r.variableEnabled
@@ -65,8 +70,10 @@ converting network is any network with a verified USDC target: Base,
 Ethereum and Solana. Live conversion needs every enabled network's key, and
 native limits for every converting network. A buyback that is not off needs
 Robinhood Chain enabled and a converter that is not off. A live buyback needs
-a live converter and Robinhood Chain native limits. Staging never runs the
-buyback.
+a live converter and Robinhood Chain native limits. Base, Ethereum and
+Robinhood Chain share one EVM fee wallet; Solana has its own. A staging
+publication runs the converter in dry run only, with no buyback and no
+signing key.
 
 ```quint
 pure def converts(network: Network): bool = network != Robinhood
@@ -76,42 +83,48 @@ pure def dailyCeilingOf(network: Network): int =
   if (network == Base) 1000000 else if (network == Ethereum) 10000000 else if (network == Robinhood) 2000000 else 20000000
 pure def listed(networks: List[Network], network: Network): bool = networks.includes(network)
 pure def preflightPasses(environment: Environment, config: WorkerConfig): bool =
-  config.source > 0 and config.wallet > 0
+  config.source > 0 and config.evmWallet > 0 and config.solanaWallet > 0 and config.evmWallet != config.solanaWallet
     and (config.converterMode == Live implies
       config.networks.every(n => listed(config.keys, n)) and config.networks.every(n => not(converts(n)) or listed(config.nativeLimits, n)))
     and (config.buybackMode != Off implies listed(config.networks, Robinhood) and config.converterMode != Off)
     and (config.buybackMode == Live implies config.converterMode == Live and listed(config.nativeLimits, Robinhood)
       and listed(config.keys, Robinhood))
-    and (environment == Staging implies config.buybackMode == Off)
+    and (environment == Staging implies config.converterMode == DryRun and config.buybackMode == Off and config.keys == List())
 pure def canPublish(r: Runtime, config: WorkerConfig, by: Sender): bool =
-  by == ReleaseWorkflow and r.variableEnabled and config.source > r.source and preflightPasses(r.environment, config)
+  by == ReleaseWorkflow and (r.environment == Production implies r.variableEnabled) and config.source > r.source
+    and preflightPasses(r.environment, config)
 pure def publish(r: Runtime, config: WorkerConfig, by: Sender): Runtime =
   { ...r, published: true, source: config.source, converterMode: config.converterMode, buybackMode: config.buybackMode,
     networks: config.networks, keys: config.keys, nativeLimits: config.nativeLimits,
-    ready: if (config.wallet == r.wallet) keepEnabled(r.ready, config.networks) else noReadiness,
-    wallet: config.wallet, publications: r.publications + 1 }
+    ready: keepEnabled(r.ready, config.networks, config.evmWallet == r.evmWallet, config.solanaWallet == r.solanaWallet),
+    evmWallet: config.evmWallet, solanaWallet: config.solanaWallet, publications: r.publications + 1 }
 pure def alwaysPublishedPassedPreflight(r: Runtime): bool = r.published implies preflightPasses(r.environment,
   { source: r.source, converterMode: r.converterMode, buybackMode: r.buybackMode, networks: r.networks,
-    keys: r.keys, nativeLimits: r.nativeLimits, wallet: r.wallet })
+    keys: r.keys, nativeLimits: r.nativeLimits, evmWallet: r.evmWallet, solanaWallet: r.solanaWallet })
 pure def alwaysUnpublishedInert(r: Runtime): bool = not(r.published) implies
-  r.converterMode == Off and r.buybackMode == Off and r.source == 0 and r.publications == 0
+  r.converterMode == Off and r.buybackMode == Off and r.source == 0 and r.publications == 0 and r.keys == List()
 pure def alwaysBuybackNeedsLiveConverter(r: Runtime): bool =
   (r.buybackMode == Live implies r.converterMode == Live) and (r.buybackMode != Off implies r.converterMode != Off)
 pure def alwaysStagingBuybackOff(r: Runtime): bool = r.environment == Staging implies r.buybackMode == Off
+pure def alwaysStagingNeverSigns(r: Runtime): bool = r.environment == Staging implies
+  r.converterMode != Live and r.keys == List() and not(networkSigns(r, Base)) and not(networkSigns(r, Solana))
 pure def stepPublicationOnlyByRelease(before: Runtime, via: str, after: Runtime): bool =
   (after.source != before.source or after.converterMode != before.converterMode or after.buybackMode != before.buybackMode)
     implies via == "publish"
 pure def stepSourceAdvances(before: Runtime, after: Runtime): bool = after.source >= before.source
 pure def sometimesLiveBuyback(r: Runtime): bool = r.buybackMode == Live and r.published
 pure def sometimesPublishedDryRun(r: Runtime): bool = r.published and r.converterMode == DryRun
-pure def sometimesPublishedThenDisabled(r: Runtime): bool = r.published and not(r.variableEnabled)
+pure def sometimesPublishedThenDisabled(r: Runtime): bool = r.published and not(r.variableEnabled) and r.environment == Production
+pure def sometimesStagingDryRun(r: Runtime): bool = r.published and r.environment == Staging and r.converterMode == DryRun
 ```
 
 ### Signing needs a live mode and owner-verified readiness for the exact wallet
 
 Readiness is recorded per network by the owner after the wallet is funded and
-its limits are verified. A publication that changes the fee wallet clears
-every readiness record; one that drops a network clears that network's record.
+its limits are verified. A publication that changes the shared EVM fee wallet
+clears the Base, Ethereum and Robinhood Chain records; one that changes the
+Solana fee wallet clears the Solana record; one that drops a network clears
+that network's record.
 Same-nonce EVM fee replacement has its own owner activation, independent of
 source approval.
 
@@ -141,19 +154,23 @@ pure def lawSigningNeedsLiveAndReadiness(r: Runtime, network: Network): bool =
 pure def lawRobinhoodNeverConverts(r: Runtime): bool = not(conversionSigns(r, Robinhood))
 pure def sometimesSigningReady(r: Runtime): bool = conversionSigns(r, Base)
 pure def sometimesReadinessWithdrawn(r: Runtime): bool = r.published and r.converterMode == Live and r.ready == noReadiness and r.publications > 1
+pure def sometimesSolanaKeptAcrossEvmWalletChange(r: Runtime): bool = r.ready.solana and not(r.ready.base) and r.evmWallet != 1
 ```
 
 ### Simulation samples cover complete, incomplete and staging configurations
 
 ```quint
 pure val liveAll: WorkerConfig = { source: 1, converterMode: Live, buybackMode: Live, networks: List(Base, Robinhood, Solana),
-  keys: List(Base, Robinhood, Solana), nativeLimits: List(Base, Robinhood, Solana), wallet: 1 }
+  keys: List(Base, Robinhood, Solana), nativeLimits: List(Base, Robinhood, Solana), evmWallet: 1, solanaWallet: 2 }
 pure val configValues = Set(liveAll, { ...liveAll, source: 2, buybackMode: Off },
   { ...liveAll, source: 2, converterMode: DryRun, buybackMode: DryRun },
   { ...liveAll, source: 3, converterMode: Off, buybackMode: Off },
   { ...liveAll, source: 3, keys: List(Base) },
   { ...liveAll, source: 2, converterMode: DryRun, buybackMode: Live },
-  { ...liveAll, source: 4, wallet: 2, buybackMode: Off })
+  { ...liveAll, source: 4, evmWallet: 3, buybackMode: Off },
+  { ...liveAll, source: 2, converterMode: DryRun, buybackMode: Off, keys: List() },
+  { ...liveAll, source: 3, converterMode: Live, buybackMode: Off, keys: List() })
+pure val environmentValues = Set(Production, Staging)
 pure val networkValues = Set(Base, Robinhood, Solana, Ethereum)
 pure val byValues = Set(ReleaseWorkflow, Owner, Other)
 ```
