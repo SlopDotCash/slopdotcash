@@ -3169,7 +3169,7 @@ test("conflicting author evidence holds a historical retained source", async () 
   }
 });
 
-test("the grouped collector binds the reviewed accepted subset without weakening ordinary attribution", async () => {
+test("grouped attribution restores cached actor batch halves through the normal loader adapter", async () => {
   const original = makeOriginal();
   const accepted = structuredClone(original);
   const path = "elizaOS/asi";
@@ -3274,10 +3274,53 @@ test("the grouped collector binds the reviewed accepted subset without weakening
   >["jointValueDecisions"] extends Map<string, infer T>
     ? T
     : never;
-  const loader = spyOn(valueIngestion, "loadValueInputs").mockResolvedValue({
-    jointValueDecisions: new Map([["PR_source", decision]]),
-    heldWorkUnits: [],
-  } as unknown as Awaited<ReturnType<typeof valueIngestion.loadValueInputs>>);
+  const received: string[][] = [];
+  const loader = spyOn(valueIngestion, "loadValueInputs").mockImplementation(
+    async (github) => {
+      const actors = await github.graphql<{ nodes: { id: string }[] }>(
+        "query FixtureValueActors($ids:[ID!]!){nodes(ids:$ids){id}}",
+        { ids: ["U_actor_one", "U_actor_two"] },
+      );
+      expect(actors.nodes.map((actor) => actor.id)).toEqual([
+        "U_actor_one",
+        "U_actor_two",
+      ]);
+      return {
+        jointValueDecisions: new Map([["PR_source", decision]]),
+        heldWorkUnits: [],
+      } as unknown as Awaited<
+        ReturnType<typeof valueIngestion.loadValueInputs>
+      >;
+    },
+  );
+  const baseTransport = transport(sha, {
+    ...fixture(),
+    number: 2,
+    url: accepted.evidence.pull.html_url,
+  }).call;
+  const actorTransport = Object.assign(
+    async (input: RequestInfo | URL, init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body));
+      if (!String(body.query).includes("FixtureValueActors"))
+        return baseTransport(input, init);
+      const ids = body.variables.ids as string[];
+      received.push(ids);
+      if (ids.length > 1)
+        return new Response("gateway failure", { status: 502 });
+      return Response.json({
+        data: {
+          nodes: ids.map((id) => ({ id })),
+          rateLimit: {
+            cost: 1,
+            limit: 5000,
+            remaining: 4900,
+            resetAt: "2026-02-01T00:00:00Z",
+          },
+        },
+      });
+    },
+    { preconnect: fetch.preconnect },
+  );
   try {
     const source = {
       ...award(30, true),
@@ -3300,25 +3343,35 @@ test("the grouped collector binds the reviewed accepted subset without weakening
         ],
       ]),
     );
-    const result = await collectImplementationCorrections(
-      {
-        projects: ["asi"],
-        directory: await directory(),
-        month: "2026-01",
-        before: "2026-01-31T00:00:00.000Z",
-      },
-      {
-        journal,
-        registry: registry(),
-        token: "fixture-token",
-        transport: transport(sha, {
-          ...fixture(),
-          number: 2,
-          url: accepted.evidence.pull.html_url,
-        }).call,
-        now: new Date("2026-01-31T23:59:59Z"),
-      },
-    );
+    const dir = await directory();
+    const options = {
+      projects: ["asi"],
+      directory: dir,
+      month: "2026-01",
+      before: "2026-01-31T00:00:00.000Z",
+    };
+    const deps = {
+      journal,
+      registry: registry(),
+      token: "fixture-token",
+      transport: actorTransport,
+      now: new Date("2026-01-31T23:59:59Z"),
+    };
+    const result = await collectImplementationCorrections(options, deps);
+    expect(received.at(0)).toEqual(["U_actor_one", "U_actor_two"]);
+    expect(received.slice(-2)).toEqual([["U_actor_one"], ["U_actor_two"]]);
+    const liveCalls = received.length;
+    const replay = await collectImplementationCorrections(options, {
+      ...deps,
+      transport: Object.assign(
+        async () => {
+          throw Error("No replay network reads");
+        },
+        { preconnect: fetch.preconnect },
+      ),
+    });
+    expect(replay.receipt.manifestDigest).toBe(result.receipt.manifestDigest);
+    expect(received).toHaveLength(liveCalls);
     expect(
       result.receipt.limitations.filter(
         (item) => item.reason !== "outside-reviewed-candidate-scope",
