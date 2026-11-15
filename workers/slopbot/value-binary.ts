@@ -196,16 +196,7 @@ export async function binarySourceLimitations(
   const proofs = groups.flatMap((files) =>
     files.flatMap((file) => (file.addedBinary ? [file.addedBinary] : [])),
   );
-  if (
-    proofs.length > 48 ||
-    proofs.reduce(
-      (sum, proof) =>
-        sum +
-        (Number.isSafeInteger(proof.size) && proof.size > 0 ? proof.size : 0),
-      0,
-    ) >
-      2 * 1024 * 1024
-  )
+  if (proofs.length > 48)
     return ["Added binary evidence exceeds the recovery budget"];
   const limitations: string[] = [];
   const submitted = evidence.files.filter(
@@ -230,15 +221,36 @@ export async function binarySourceLimitations(
       "Added binary evidence requires direct, unchanged acceptance",
     );
   }
+  const content = new Map<string, { size: number; bytes: string }>();
   for (const files of groups) {
     for (const file of files) {
-      if (
-        file.addedBinary !== undefined &&
-        !(await validAddedBinaryProof(file))
-      )
+      const proof = file.addedBinary;
+      if (proof === undefined) continue;
+      if (!(await validAddedBinaryProof(file))) {
         limitations.push(`Invalid added binary proof: ${file.filename}`);
+        continue;
+      }
+      const previous = content.get(proof.blobSha);
+      if (
+        previous &&
+        (previous.size !== proof.size || previous.bytes !== proof.contentBase64)
+      ) {
+        limitations.push(`Conflicting added binary proof: ${file.filename}`);
+        continue;
+      }
+      content.set(proof.blobSha, {
+        size: proof.size,
+        bytes: proof.contentBase64,
+      });
     }
   }
+  // Submitted, accepted and attribution scopes repeat the same immutable bytes.
+  // Every proof above is checked, while the byte budget counts each object once.
+  if (
+    [...content.values()].reduce((sum, proof) => sum + proof.size, 0) >
+    2 * 1024 * 1024
+  )
+    limitations.push("Added binary evidence exceeds the recovery budget");
   for (const file of evidence.mergeCommitEvidence?.files ?? []) {
     if (
       file.addedBinary &&
