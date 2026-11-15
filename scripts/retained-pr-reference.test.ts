@@ -387,7 +387,7 @@ for (const kind of [
     ).rejects.toThrow("authenticated retention acknowledgement");
   });
 
-test("October exact copies can bind through two linked commit authors without a merger comment", async () => {
+test("exact copies preserve the same linked primary author without a merger comment", async () => {
   const { original, copy } = sources();
   original.evidence.comments = [];
   copy.evidence.relatedPullRequests = [
@@ -400,21 +400,70 @@ test("October exact copies can bind through two linked commit authors without a 
   ];
   original.evidence.commits[0].author = original.evidence.pull.user;
   copy.evidence.commits[0].author = original.evidence.pull.user;
+  original.evidence.pull.closed_at = "2026-10-02T09:30:00Z";
+  copy.evidence.pull.merged_by = {
+    node_id: "U_other_merger",
+    login: "other-merger",
+    type: "User",
+  };
   const options = { ordinaryCommitsOnly: true, octoberOriginalCredit: true };
   const retained = await retainedCopyBindings([original, copy], options);
   expect(retained.bindings.size).toBe(1);
   expect(retained.limitations).toEqual([]);
-  expect((await retainedCopyBindings([original, copy])).bindings.size).toBe(0);
+  expect((await retainedCopyBindings([original, copy])).bindings.size).toBe(1);
   copy.evidence.pull.merged_at = "2026-11-02T10:00:00Z";
   expect(
     (await retainedCopyBindings([original, copy], options)).bindings.size,
-  ).toBe(0);
+  ).toBe(1);
   copy.evidence.pull.merged_at = "2026-10-02T10:00:00Z";
   copy.evidence.commits[0].author = null;
   expect(
     (await retainedCopyBindings([original, copy], options)).bindings.size,
   ).toBe(0);
 });
+
+for (const invalid of [
+  "different-primary",
+  "unlinked-primary",
+  "bot-primary",
+  "late-original",
+  "incomplete-original",
+  "incomplete-accepted",
+  "missing-reference",
+] as const)
+  test(`linked primary copy refuses ${invalid}`, async () => {
+    const { original, copy } = sources();
+    original.evidence.comments = [];
+    original.evidence.pull.closed_at = "2026-10-02T09:30:00Z";
+    original.evidence.commits[0].author = original.evidence.pull.user;
+    copy.evidence.commits[0].author = original.evidence.pull.user;
+    copy.evidence.relatedPullRequests = [
+      {
+        id: original.evidence.pull.node_id,
+        number: original.evidence.pull.number,
+        url: original.evidence.pull.html_url,
+        repository: repository.id,
+      },
+    ];
+    if (invalid === "different-primary")
+      copy.evidence.commits[0].author = copy.evidence.pull.user;
+    if (invalid === "unlinked-primary") copy.evidence.commits[0].author = null;
+    if (invalid === "bot-primary")
+      copy.evidence.commits[0].author = {
+        ...original.evidence.pull.user,
+        type: "Bot",
+      };
+    if (invalid === "late-original")
+      original.evidence.pull.closed_at = "2026-10-03T00:00:00Z";
+    if (invalid === "incomplete-original")
+      original.evidence.limitations = ["Missing original evidence"];
+    if (invalid === "incomplete-accepted")
+      copy.evidence.limitations = ["Missing accepted evidence"];
+    if (invalid === "missing-reference") copy.evidence.relatedPullRequests = [];
+    expect((await retainedCopyBindings([original, copy])).bindings.size).toBe(
+      0,
+    );
+  });
 
 test("October unlinked copies still require the eventual merger's exact rebase acknowledgement", async () => {
   const { original, copy, comment } = sources();
@@ -437,6 +486,108 @@ test("October unlinked copies still require the eventual merger's exact rebase a
   expect(
     (await retainedCopyBindings([original, copy], options)).bindings.size,
   ).toBe(0);
+});
+
+function intermediatePrimaryCopy() {
+  const { original, copy } = sources();
+  original.evidence.comments = [];
+  original.evidence.pull.closed_at = "2026-10-02T09:00:00Z";
+  original.evidence.commits[0].author = original.evidence.pull.user;
+  original.evidence.commitAttribution[0].actorNodeIds = [
+    original.evidence.pull.user.node_id,
+  ];
+  const intermediate = structuredClone(original);
+  Object.assign(intermediate.evidence.pull, {
+    node_id: "PR_intermediate",
+    number: 2,
+    html_url: `https://github.com/${repository.id}/pull/2`,
+    user: copy.evidence.pull.user,
+    closed_at: "2026-10-02T09:30:00Z",
+  });
+  Object.assign(copy.evidence.pull, {
+    number: 3,
+    html_url: `https://github.com/${repository.id}/pull/3`,
+    head: { sha: "4".repeat(40) },
+  });
+  copy.evidence.commits[0].sha = "4".repeat(40);
+  copy.evidence.commits[0].author = original.evidence.pull.user;
+  copy.evidence.commitAttribution[0].sha = "4".repeat(40);
+  copy.evidence.commitAttribution[0].actorNodeIds = [
+    original.evidence.pull.user.node_id,
+  ];
+  const reference = (source: typeof original) => ({
+    id: source.evidence.pull.node_id,
+    number: source.evidence.pull.number,
+    url: source.evidence.pull.html_url,
+    repository: repository.id,
+  });
+  original.evidence.relatedPullRequests = [reference(copy)];
+  intermediate.evidence.relatedPullRequests = [
+    reference(original),
+    reference(copy),
+  ];
+  copy.evidence.relatedPullRequests = [
+    reference(original),
+    reference(intermediate),
+  ];
+  return { original, intermediate, copy };
+}
+
+test("an identical native intermediate preserves the earlier linked author's original in either source order", async () => {
+  const { original, intermediate, copy } = intermediatePrimaryCopy();
+  for (const ordered of [
+    [original, intermediate, copy],
+    [copy, intermediate, original],
+  ]) {
+    const result = await retainedCopyBindings(ordered, {
+      acceptedSubset: true,
+    });
+    expect(result.limitations).toEqual([]);
+    expect(result.bindings.size).toBe(1);
+    expect([...result.bindings.values()][0].original).toBe(original);
+  }
+});
+
+for (const invalid of ["sha", "author", "repository", "reference"] as const)
+  test(`intermediate source cannot claim the earlier native original with wrong ${invalid}`, async () => {
+    const { original, intermediate, copy } = intermediatePrimaryCopy();
+    if (invalid === "sha") {
+      intermediate.evidence.commits[0].sha = "5".repeat(40);
+      intermediate.evidence.commitAttribution[0].sha = "5".repeat(40);
+    }
+    if (invalid === "author")
+      intermediate.evidence.commits[0].author = intermediate.evidence.pull.user;
+    if (invalid === "repository")
+      original.evidence.repositoryNodeId = "R_other_repository";
+    if (invalid === "reference") intermediate.evidence.relatedPullRequests = [];
+    const result = await retainedCopyBindings([original, intermediate, copy], {
+      acceptedSubset: true,
+    });
+    expect(result.bindings.size).toBe(1);
+    if (invalid === "repository")
+      expect([...result.bindings.values()][0].original).toBe(intermediate);
+    else expect(result.limitations.length).toBeGreaterThan(0);
+  });
+
+test("an earlier source without its own accepted binding cannot erase the intermediate proof", async () => {
+  const { original, intermediate, copy } = intermediatePrimaryCopy();
+  copy.evidence.relatedPullRequests = copy.evidence.relatedPullRequests.filter(
+    (reference) => reference.id !== original.evidence.pull.node_id,
+  );
+  for (const ordered of [
+    [original, intermediate, copy],
+    [copy, intermediate, original],
+  ]) {
+    const result = await retainedCopyBindings(ordered, {
+      acceptedSubset: true,
+    });
+    expect(
+      [...result.bindings.values()].every(
+        (binding) => binding.original === intermediate,
+      ),
+    ).toBe(true);
+    expect(result.limitations.length).toBeGreaterThan(0);
+  }
 });
 
 function fourCommitsWithSourceMerges() {
