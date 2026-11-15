@@ -520,7 +520,11 @@ test("discovers projects and one points-ranked homepage leaderboard", async ({
     ).toHaveCount(0);
   }
   const elizaCard = page.locator('a.project-card[href="/projects/eliza"]');
-  await expect(elizaCard.getByText("$1k", { exact: true })).toBeVisible();
+  // The frozen project has a pledge and no verified vault funding.
+  await expect(
+    elizaCard.getByText("Points only", { exact: true }),
+  ).toBeVisible();
+  await expect(elizaCard.getByText("$1k", { exact: true })).toHaveCount(0);
   // The external prize is a community listing that also earns points.
   await expect(
     community.locator('a.project-row[href="/projects/delta-star"]'),
