@@ -134,8 +134,9 @@ pure def usableExpiry(b: Binding, network: str, vault: str, version: int): int =
 pure def lawReplacedClaimCannotBind(b: Binding, c: Consent, network: str, vault: str, version: int): bool =
   c.claim != authorizedClaim(b) implies not(usable(b, c, network, vault, version))
 pure def lawStoredConsentUsableImmediately(b: Binding, by: str, signature: EvmConsentSignature): bool =
-  canBindAuthorize(b, by, signature) implies
-    usableExpiry(bindAuthorize(b, by, signature), signature.network, signature.vault, signature.version) >= signature.expiresAt
+  canBindAuthorize(b, by, signature) implies bindAuthorize(b, by, signature).consents.some(c =>
+    usable(bindAuthorize(b, by, signature), c, signature.network, signature.vault, signature.version)
+      and c.expiresAt == signature.expiresAt)
 ```
 
 ### A Solana binding is one half-signed transaction per generation that only the wallet slot completes
