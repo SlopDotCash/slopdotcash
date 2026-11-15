@@ -1417,12 +1417,9 @@ function ProjectMergeActivity({ project }: { project: ProjectDefinition }) {
     return (
       <p className="project-merge-activity">Merge activity unavailable.</p>
     );
+  // A repository not read yet shows nothing rather than an empty claim.
   const line = mergeActivityLine(state.index.get(project.id), new Date());
-  return (
-    <p className="project-merge-activity">
-      {line ?? "Merge activity not checked yet."}
-    </p>
-  );
+  return line ? <p className="project-merge-activity">{line}</p> : null;
 }
 
 function ProjectBountyIntroduction({
