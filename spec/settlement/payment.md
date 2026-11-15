@@ -200,7 +200,6 @@ pure val vaultEvidenceSample: VaultPaymentEvidence = { obligation: 1, gross: Lis
 pure val vaultEvidenceValues = Set(vaultEvidenceSample, { ...vaultEvidenceSample, fee: List(3) })
 pure val attemptValues = Set(0, 1, 2)
 pure val consentValues = Set(0, 1, 2)
-pure val heightValues = Set(0, 1, 2)
 pure val failureValues = Set({ attempt: 1, height: 2, status: FinalizedReverted }, { attempt: 1, height: 2, status: ReceiptMissing },
   { attempt: 1, height: 2, status: NotFinal }, { attempt: 2, height: 2, status: FinalizedReverted }, { attempt: 1, height: 0, status: FinalizedReverted })
 pure val evidenceValues = Set(

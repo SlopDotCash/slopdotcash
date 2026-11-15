@@ -221,10 +221,9 @@ and by hand.
 
 ```quint
 pure def obligationMatches(s: MonthlySettlement, actor: int): bool =
-  val stage = obligationOf(s, actor).progress
-  (stage == MO::Reserved implies chainMatches(s, actor))
-    and (stage == MO::Paid implies chainMatches(s, actor) and chainPaid(s, actor))
-    and (stage == MO::Conflicted implies chainHolds(s, actor) and not(chainMatches(s, actor)))
+  (obligationOf(s, actor).progress == MO::Reserved implies chainMatches(s, actor))
+    and (obligationOf(s, actor).progress == MO::Paid implies chainMatches(s, actor) and chainPaid(s, actor))
+    and (obligationOf(s, actor).progress == MO::Conflicted implies chainHolds(s, actor) and not(chainMatches(s, actor)))
 pure def alwaysObligationsMatchVault(s: MonthlySettlement): bool = MO::obligationActors(s.month).every(actor => obligationMatches(s, actor))
 pure def alwaysOneAwardPerObligation(s: MonthlySettlement): bool = MO::obligationActors(s.month).every(actor =>
   E::awardActorsFor(s.escrow, s.month.project, s.month.period).select(a => a == actor).length() <= 1)
@@ -266,7 +265,6 @@ pure val settingsSequenceValues = Set(1)
 pure val amountValues = Set(List(2))
 pure val expectedSequenceValues = Set(0, 1)
 pure val factValues = Set({ actor: 9, role: MO::ProjectOwner, banned: false, revision: 1 })
-pure val sourceValues = Set(monthKey(1), monthKey(4))
 pure val eligibilityValues = Set(MO::eligible)
 pure val snapshotValues = Set(MO::snapshotSample)
 pure val earlierUnreservedValues = Set(List(0))
@@ -280,6 +278,7 @@ pure val evValues = Set(
 pure val actorValues = Set(1, 2, 3)
 pure val byValues = Set("owner")
 pure def monthKey(actor: int): E::SourceKey = { origin: "eliza", period: 202611, actor: actor }
+pure val sourceValues = Set(monthKey(1)).union(Set(monthKey(4)))
 pure val rootSample: E::RootAuthorization = { period: 202611, vault: "vault", network: E::Base, allocationDigest: "a", root: "r",
   wholeGross: List(10), remainingGross: List(10), leafCount: 3, sourceSequence: 0, frozenAt: 0, signer: "attester" }
 pure val authorizationValues = Set(rootSample, { ...rootSample, root: "q", remainingGross: List(8), leafCount: 2, sourceSequence: 1 })
