@@ -29,9 +29,8 @@ async function mount(
   action: (path: string, route: Route) => Promise<void>,
 ) {
   await page.route("**/api/v1/**", async (route) => {
-    const path = new URL(route.request().url()).pathname.slice(
-      "/api/v1/".length,
-    );
+    const url = new URL(route.request().url());
+    const path = url.pathname.slice("/api/v1/".length);
     if (path === "project-session")
       return route.fulfill({
         json: { session: { githubId: "42", githubLogin: "fixture-reporter" } },
@@ -57,6 +56,13 @@ async function mount(
           automatic: true,
           submissions: [current()],
         },
+      });
+    if (
+      path === `security-submissions/${id}` &&
+      url.searchParams.get("view") === "receipt"
+    )
+      return route.fulfill({
+        json: { recipientGithubId: "42", submission: current() },
       });
     return action(path, route);
   });
