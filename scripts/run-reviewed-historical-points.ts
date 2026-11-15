@@ -154,6 +154,34 @@ export async function verifyHistoricalValueRecords(
   packet: HistoricalPointsPacket,
   query: Query,
 ): Promise<void> {
+  const verifiedDuplicateRecords = new Map<string, string>();
+  for (const retirement of packet.duplicateRetirements ?? []) {
+    for (const { rewardedUnit } of retirement.coverage) {
+      if (!rewardedUnit) continue;
+      if (!/^[a-f0-9]{64}$/u.test(rewardedUnit.recordDigest))
+        throw Error("Invalid duplicate coverage record digest");
+      const verified = verifiedDuplicateRecords.get(rewardedUnit.recordDigest);
+      if (verified !== undefined) {
+        if (verified !== rewardedUnit.recordJson)
+          throw Error("Duplicate coverage record changed");
+        continue;
+      }
+      const rows = await query(
+        `SELECT record_json,record_digest FROM slopbot_work_unit_journal j WHERE record_digest=${quote(rewardedUnit.recordDigest)} AND NOT EXISTS (SELECT 1 FROM slopbot_work_unit_predecessors p WHERE p.predecessor_digest=j.record_digest)`,
+      );
+      if (
+        rows.length !== 1 ||
+        rows[0].record_digest !== rewardedUnit.recordDigest ||
+        rows[0].record_json !== rewardedUnit.recordJson ||
+        sha256Hex(rewardedUnit.recordJson) !== rewardedUnit.recordDigest
+      )
+        throw Error("Duplicate coverage record is missing or changed");
+      verifiedDuplicateRecords.set(
+        rewardedUnit.recordDigest,
+        rewardedUnit.recordJson,
+      );
+    }
+  }
   const expected = new Set(
     packet.valueSnapshot?.valueAssessmentCoverage?.flatMap((row) =>
       row.recordDigest ? [row.recordDigest] : [],

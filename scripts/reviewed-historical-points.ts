@@ -12,16 +12,20 @@ import {
   assertPointsJournal,
   assertPointsJournalExtension,
   latestPoints,
+  OCTOBER_DUPLICATE_RETIREMENT_DECISION,
   OCTOBER_ORIGINAL_CONTRIBUTOR_DECISION,
   type PointsJournal,
   pointKey,
 } from "../src/lib/points";
 import {
   applyPointsImplementationCorrections,
+  type CorrectionSource,
   type PointsImplementationCorrectionManifest,
 } from "../src/lib/points-implementation-corrections";
 import { sha256Hex } from "../src/lib/sha256";
+import { VALUE_TIERS } from "../src/lib/value-assessment";
 import { allocateWeightedRows } from "../src/lib/weighted-allocation";
+import { mergeResolutionLineCounts } from "../workers/slopbot/value-merge-resolution";
 import { pointProtectionQuery } from "./points-protection-sql";
 
 export interface HistoricalPointsPacket {
@@ -69,6 +73,27 @@ export interface HistoricalPointsPacket {
     claimIds: string[];
     expectedPredecessors: { key: string; revisionId: string }[];
   }[];
+  duplicateRetirements?: {
+    sourceId: string;
+    workUnitId: string;
+    source: CorrectionSource;
+    earlierSources: CorrectionSource[];
+    coverage: {
+      commitSha: string;
+      path: string;
+      sourceId: string;
+      rewardedUnit?: {
+        recordDigest: string;
+        recordJson: string;
+        claimId: string;
+        workUnitId: string;
+        awardSourceId: string;
+      };
+    }[];
+    evidence: string;
+    evidenceSha256: string;
+    expectedPredecessors: { key: string; revisionId: string }[];
+  }[];
 }
 const hash = (value: unknown) => sha256Hex(JSON.stringify(value));
 function check(value: unknown, message: string): asserts value {
@@ -89,7 +114,10 @@ export function decodeHistoricalPacket(
     new TextDecoder("utf-8", { fatal: true }).decode(bytes),
   ) as HistoricalPointsPacket;
   check(
-    Object.keys(packet).sort().join(",") ===
+    Object.keys(packet)
+      .filter((key) => key !== "duplicateRetirements")
+      .sort()
+      .join(",") ===
       "baselineDigest,baselineRevisionCount,candidateDigest,corrections,manifestSha256,producerGithubId,projectId,recipientCorrections,reviewedAt,reviewerGithubId,revision,schemaVersion,sourceAudit,valueKeys,valueSnapshot",
     "Unexpected reviewed packet fields",
   );
@@ -166,6 +194,11 @@ export function decodeHistoricalPacket(
   check(
     Array.isArray(packet.recipientCorrections),
     "Missing recipient correction disposition",
+  );
+  check(
+    packet.duplicateRetirements === undefined ||
+      Array.isArray(packet.duplicateRetirements),
+    "Invalid duplicate retirement disposition",
   );
   return packet;
 }
@@ -470,6 +503,275 @@ export function reconstructHistoricalPoints(
             sourceId: evidence,
             effectiveAt: packet.reviewedAt,
             reason: OCTOBER_ORIGINAL_CONTRIBUTOR_DECISION,
+          },
+        ]),
+      ),
+    );
+  }
+  const retiringSources = new Set(
+    (packet.duplicateRetirements ?? []).map((item) => item.sourceId),
+  );
+  const rewardedAwards = [...latestPoints(result).values()].map(
+    (row) => row.award,
+  );
+  for (const retirement of packet.duplicateRetirements ?? []) {
+    const unitKey = JSON.stringify([
+      retirement.sourceId,
+      retirement.workUnitId,
+    ]);
+    check(!correctedUnits.has(unitKey), "Duplicate owner correction");
+    correctedUnits.add(unitKey);
+    const source = retirement.source;
+    check(
+      /^[a-f0-9]{64}$/u.test(retirement.evidenceSha256),
+      "Invalid duplicate dossier digest",
+    );
+    const earlier = new Map(
+      retirement.earlierSources.map((item) => [item.sourceId, item]),
+    );
+    check(
+      source.sourceId === retirement.sourceId &&
+        source.repositoryNodeId === packet.sourceAudit.repositoryNodeId &&
+        earlier.size === retirement.earlierSources.length &&
+        !earlier.has(source.sourceId),
+      "Invalid duplicate source identity",
+    );
+    for (const item of [source, ...earlier.values()]) {
+      const audited = packet.sourceAudit.sources.find(
+        (row) => row.id === item.sourceId,
+      );
+      check(
+        item.complete &&
+          item.commitCount === item.commits.length &&
+          item.commits.length > 0 &&
+          new Set(item.commits.map((commit) => commit.sha)).size ===
+            item.commits.length &&
+          audited?.headSha === item.headSha &&
+          audited.mergedAt === item.occurredAt &&
+          item.repositoryNodeId === source.repositoryNodeId &&
+          item.repository.toLowerCase() === source.repository.toLowerCase() &&
+          item.sourceUrl ===
+            `https://github.com/${packet.sourceAudit.repository}/pull/${audited.number}`,
+        "Duplicate source is incomplete or outside the audit",
+      );
+      if (item !== source)
+        check(
+          item.occurredAt !== null &&
+            source.occurredAt !== null &&
+            item.occurredAt <= source.occurredAt,
+          "Duplicate coverage is not an earlier accepted source",
+        );
+    }
+    const expected: string[] = [];
+    for (const commit of source.commits) {
+      check(
+        /^[a-f0-9]{40}$/u.test(commit.sha) &&
+          Number.isSafeInteger(commit.parentCount) &&
+          commit.parentCount >= 0 &&
+          commit.parentShas?.length === commit.parentCount &&
+          commit.parentShas.every((parent) => /^[a-f0-9]{40}$/u.test(parent)),
+        "Duplicate commit identity is incomplete",
+      );
+      if (commit.parentCount > 1) {
+        const resolutionFiles =
+          commit.mergeResolution &&
+          mergeResolutionLineCounts(commit.mergeResolution, {
+            sha: commit.sha,
+            parents: commit.parentShas.map((sha) => ({ sha })),
+          });
+        check(
+          resolutionFiles &&
+            JSON.stringify(resolutionFiles) === JSON.stringify(commit.files),
+          "Duplicate merge has unreviewed resolution work",
+        );
+        if (resolutionFiles.length === 0) continue;
+      }
+      check(
+        commit.files &&
+          commit.files.length > 0 &&
+          new Set(commit.files.map((file) => file.path)).size ===
+            commit.files.length,
+        "Duplicate commit lacks complete paths",
+      );
+      for (const file of commit.files) {
+        const key = `${commit.sha}\0${file.path}`;
+        expected.push(key);
+        const matches = retirement.coverage.filter(
+          (row) => row.commitSha === commit.sha && row.path === file.path,
+        );
+        check(
+          matches.length === 1,
+          "Duplicate claim coverage is missing or repeated",
+        );
+        const owner = earlier.get(matches[0].sourceId);
+        const retained = owner?.commits.find((item) => item.sha === commit.sha);
+        const retainedFile = retained?.files?.find(
+          (item) => item.path === file.path,
+        );
+        check(
+          owner &&
+            !retiringSources.has(owner.sourceId) &&
+            retained &&
+            retained.parentCount === commit.parentCount &&
+            commit.firstAcceptedSourceId === owner.sourceId &&
+            retained.firstAcceptedSourceId === owner.sourceId &&
+            JSON.stringify(retained.parentShas) ===
+              JSON.stringify(commit.parentShas) &&
+            retained.author?.id === commit.author?.id &&
+            retained.author?.kind === commit.author?.kind &&
+            Number.isSafeInteger(file.additions) &&
+            file.additions >= 0 &&
+            Number.isSafeInteger(file.deletions) &&
+            file.deletions >= 0 &&
+            retainedFile?.additions === file.additions &&
+            retainedFile?.deletions === file.deletions,
+          "Earlier source does not cover the exact duplicate claim",
+        );
+        const unit = matches[0].rewardedUnit;
+        if (unit) {
+          check(
+            !retiringSources.has(unit.awardSourceId),
+            "Duplicate coverage relies on another retired pool",
+          );
+          check(
+            hash(JSON.parse(unit.recordJson)) === unit.recordDigest &&
+              sha256Hex(unit.recordJson) === unit.recordDigest,
+            "Rewarded claim record changed",
+          );
+          const record = JSON.parse(unit.recordJson);
+          const claim = record.claims?.find(
+            (item: { id: string }) => item.id === unit.claimId,
+          );
+          const group = record.units?.find(
+            (item: { workUnitId: string }) =>
+              item.workUnitId === unit.workUnitId,
+          );
+          const recordSource = record.sources?.find(
+            (item: { pullRequestNodeId: string }) =>
+              item.pullRequestNodeId === owner.sourceId,
+          );
+          const unitClaims =
+            record.claims?.filter((item: { id: string }) =>
+              group?.claimIds.includes(item.id),
+            ) ?? [];
+          const acceptanceSources = unitClaims
+            .map(
+              (item: {
+                creditPullRequestId: string;
+                retainedCopy?: { acceptancePullRequestId: string };
+              }) =>
+                record.sources.find(
+                  (source: { pullRequestNodeId: string }) =>
+                    source.pullRequestNodeId ===
+                    (item.retainedCopy?.acceptancePullRequestId ??
+                      item.creditPullRequestId),
+                ),
+            )
+            .filter(Boolean)
+            .sort(
+              (
+                a: { occurredAt: string; pullRequestNodeId: string },
+                b: { occurredAt: string; pullRequestNodeId: string },
+              ) =>
+                Date.parse(a.occurredAt) - Date.parse(b.occurredAt) ||
+                a.pullRequestNodeId.localeCompare(b.pullRequestNodeId),
+            );
+          check(
+            record.projectId === packet.projectId &&
+              recordSource?.repositoryNodeId === owner.repositoryNodeId &&
+              recordSource.headSha === owner.headSha &&
+              claim?.repositoryNodeId === source.repositoryNodeId &&
+              claim.commitSha === commit.sha &&
+              claim.path === file.path &&
+              claim.creditPullRequestId === owner.sourceId &&
+              group?.claimIds.includes(unit.claimId) &&
+              group.assessment?.status === "assessed" &&
+              Object.hasOwn(VALUE_TIERS, group.assessment.tier) &&
+              VALUE_TIERS[group.assessment.tier as keyof typeof VALUE_TIERS] >
+                0 &&
+              acceptanceSources.at(-1)?.pullRequestNodeId ===
+                unit.awardSourceId,
+            "Rewarded unit does not cover the duplicate claim",
+          );
+        }
+        check(
+          rewardedAwards.some(
+            (award) =>
+              award.projectId === packet.projectId &&
+              award.category === "merged-pull-request" &&
+              award.amount > 0 &&
+              (unit
+                ? award.sourceId === unit.awardSourceId &&
+                  award.workUnitId === unit.workUnitId
+                : award.sourceId === owner.sourceId),
+          ),
+          "Duplicate claim lacks a retained rewarded pool",
+        );
+      }
+    }
+    check(
+      expected.length > 0 &&
+        retirement.coverage.length === expected.length &&
+        retirement.coverage.every((row) =>
+          expected.includes(`${row.commitSha}\0${row.path}`),
+        ),
+      "Duplicate retirement has extra or empty coverage",
+    );
+    const evidence = JSON.parse(retirement.evidence);
+    check(
+      sha256Hex(retirement.evidence) === retirement.evidenceSha256 &&
+        evidence.sourceId === retirement.sourceId &&
+        evidence.workUnitId === retirement.workUnitId &&
+        evidence.sourceSha256 === hash(source) &&
+        evidence.coverageSha256 === hash(retirement.coverage) &&
+        evidence.earlierSourcesSha256 === hash(retirement.earlierSources),
+      "Duplicate retirement dossier changed",
+    );
+    const candidate = packet.corrections.candidates.find(
+      (item) =>
+        item.sourceId === source.sourceId &&
+        item.workUnitId === retirement.workUnitId,
+    );
+    const rows = [...latestPoints(result).values()].filter(
+      ({ award }) =>
+        award.projectId === packet.projectId &&
+        award.sourceId === retirement.sourceId &&
+        award.workUnitId === retirement.workUnitId &&
+        award.category === "merged-pull-request",
+    );
+    check(
+      candidate &&
+        rows.length > 0 &&
+        rows.every(
+          ({ award }) =>
+            award.occurredAt === source.occurredAt &&
+            award.occurredAt.startsWith("2026-10-") &&
+            award.sourceUrl === source.sourceUrl,
+        ) &&
+        rows.length === retirement.expectedPredecessors.length &&
+        new Set(retirement.expectedPredecessors.map((row) => row.key)).size ===
+          rows.length &&
+        rows.every((row) =>
+          retirement.expectedPredecessors.some(
+            (prior) =>
+              prior.key === row.award.key && prior.revisionId === row.id,
+          ),
+        ),
+      "Duplicate pool changed after owner review",
+    );
+    result = appendPointAwards(
+      result,
+      rows.map(({ award }) => ({ ...award, amount: 0 })),
+      hash(retirement),
+      "slop-score-v2",
+      packet.reviewedAt,
+      new Map(
+        rows.map(({ award }) => [
+          award.key,
+          {
+            sourceId: `owner_duplicate_${retirement.evidenceSha256}`,
+            effectiveAt: packet.reviewedAt,
+            reason: OCTOBER_DUPLICATE_RETIREMENT_DECISION,
           },
         ]),
       ),
