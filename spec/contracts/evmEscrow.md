@@ -17,7 +17,7 @@ replaces logic and needs its own specification before its rules are relied on.
 
 ## Story: Deploy the factory with separate keys
 
-### The factory is initialized once with distinct upgrade, identity and registrar keys
+### The factory is initialized once with an upgrade key apart from the fee recipient and identity, and an identity apart from the registrar
 
 `EscrowFactory.initialize` runs atomically in the proxy's constructor. The
 upgrade authority differs from the fee recipient and the identity authority,
@@ -287,8 +287,12 @@ pure def commitBountyAward(e: Escrow, source: int, actor: int, gross: int, by: s
 
 ### Reserved principal and fees are exactly the unpaid awards, and paid totals are exactly the paid awards
 
-Each source has one award, whose fee is the purpose's fee of its gross. A
-paid award names the binding version and destination it paid.
+Each source has one award, whose fee is the purpose's fee of its gross; an
+ordinary award reserved before fees rounded up holds floor(gross / 50),
+which `commitMonthly` still accepts. The model creates only ceiling-fee
+awards, so that compatibility path is never simulated. A paid award's
+binding version and destination are model-only fields; the contract keeps
+the version per actor and names both in the `Paid` event.
 
 ```quint
 pure def alwaysReservedMatchesAwards(e: Escrow): bool =
@@ -297,7 +301,8 @@ pure def alwaysPaidMatchesAwards(e: Escrow): bool =
   e.vault.paid == L::paidPrincipal(e.vault.awards) and e.vault.payoutFees == L::paidFees(e.vault.awards)
 pure def alwaysAwardsWellFormed(e: Escrow): bool = L::uniqueSources(e.vault.awards) and e.vault.awards.every(a =>
   a.source > 0 and a.actor > 0 and L::awardGrossAdmissible(e.vault.key.purpose, a.gross)
-    and a.fee == L::awardFee(e.vault.key.purpose, a.gross) and a.committedAt > 0 and a.committedAt <= e.now
+    and (a.fee == L::awardFee(e.vault.key.purpose, a.gross) or (e.vault.key.purpose == L::Ordinary and a.fee == a.gross / 50))
+    and a.committedAt > 0 and a.committedAt <= e.now
     and (a.paid == (a.paidVersion > 0)) and (a.paid implies a.paidTo != ""))
 pure def stepAwardsRetained(before: Escrow, after: Escrow): bool = before.vault.awards.every(a =>
   after.vault.awards.some(b => b.source == a.source and b.actor == a.actor and b.gross == a.gross and b.fee == a.fee

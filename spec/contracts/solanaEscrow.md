@@ -112,7 +112,7 @@ pure def sometimesToken2022Funded(p: Program): bool = not(p.native) and p.mint.k
 project ID and purpose, so a second project for that key fails. The
 identity authority and fee recipient must be the Config's, nonzero and
 distinct from each other and the owner, and the owner is not the rotation
-authority. The binding delay is zero through 30 days and the rotation delay
+authority. Any project ID is accepted, the all-zero one included. The binding delay is zero through 30 days and the rotation delay
 zero through 90 days; new deployments use zero. A native vault keeps its
 rent-exempt minimum forever.
 
@@ -129,13 +129,13 @@ pure def opened(project: str, p: Program, network: str, identity: str, feeRecipi
     identityAuthority: identity, feeRecipient: feeRecipient, bindingDelay: delay, rotationDelay: rotationDelay }
 pure def canInitialize(p: Program, project: str, network: str, identity: str, feeRecipient: str, delay: int,
   rotationDelay: int, purpose: L::Purpose, mint: MintFacts, by: str): bool =
-  projectKeysValid(p, identity, feeRecipient, delay, rotationDelay, by) and project != "" and admittedMint(mint)
+  projectKeysValid(p, identity, feeRecipient, delay, rotationDelay, by) and admittedMint(mint)
 pure def initialize(p: Program, project: str, network: str, identity: str, feeRecipient: str, delay: int,
   rotationDelay: int, purpose: L::Purpose, mint: MintFacts, by: str): Program =
   { ...opened(project, p, network, identity, feeRecipient, delay, rotationDelay, purpose, by), native: false, mint: mint }
 pure def canInitializeNative(p: Program, project: str, network: str, identity: str, feeRecipient: str, delay: int,
   rotationDelay: int, purpose: L::Purpose, rent: int, by: str): bool =
-  projectKeysValid(p, identity, feeRecipient, delay, rotationDelay, by) and project != "" and rent > 0
+  projectKeysValid(p, identity, feeRecipient, delay, rotationDelay, by) and rent > 0
 pure def initializeNative(p: Program, project: str, network: str, identity: str, feeRecipient: str, delay: int,
   rotationDelay: int, purpose: L::Purpose, rent: int, by: str): Program =
   { ...opened(project, p, network, identity, feeRecipient, delay, rotationDelay, purpose, by), native: true, rent: rent }
@@ -146,7 +146,13 @@ pure def initializeNative(p: Program, project: str, network: str, identity: str,
 The 316-byte build had no accrued-fee or monthly-outstanding counters: it
 sent fees out at once and had no monthly gate. Anyone may call
 `migrate_project`, paying any extra rent, once the current build is
-deployed; no other instruction reads the old layout.
+deployed; no other instruction reads the old layout. The model creates the
+earlier build's project with deposits only. The program also carries over
+that build's obligations with their recorded fee, payout fees already sent
+(counted in `payout_fees` but never accrued) and expired months that left
+the outstanding count. The rules on fees accounted, paid totals, award fees
+and monthly outstanding gross therefore cover projects created by the
+current build and migrated projects without such history.
 
 ```quint
 pure def canCreateLegacyProject(p: Program, project: str, identity: str, feeRecipient: str, amount: int, by: str): bool =
@@ -163,7 +169,7 @@ pure def alwaysProjectShape(p: Program): bool =
     and p.awards.length() == 0 and p.months.length() == 0 and p.bindings.length() == 0)
     and (p.layout == LegacyLayout implies p.awards.length() == 0 and p.months.length() == 0 and p.bindings.length() == 0
       and p.accruedFees == 0 and p.monthlyOutstanding == 0 and p.reserved == 0)
-    and (p.layout != NoProject implies p.owner != "" and p.project != "" and p.identityAuthority != "" and p.feeRecipient != ""
+    and (p.layout != NoProject implies p.owner != "" and p.identityAuthority != "" and p.feeRecipient != ""
       and p.identityAuthority != p.owner and p.identityAuthority != p.feeRecipient and p.feeRecipient != p.owner
       and p.bindingDelay >= 0 and p.bindingDelay <= maxDelay and p.rotationDelay >= 0 and p.rotationDelay <= maxRotationDelay)
     and (p.native implies p.rent > 0)
@@ -269,24 +275,24 @@ pure def sometimesUnsolicited(p: Program): bool = p.unsolicited > 0
 `commit` is for an ordinary project and refuses while an admitted month has
 uncommitted gross (`MonthlyOutstanding`). `commit_bounty` is for a bounty
 project and needs a gross divisible by four. Both reserve the whole gross
-from the free balance and the vault, refuse a zero actor or gross, and
-create the source's origin and obligation accounts, so a source commits
+from the free balance and the vault, refuse a zero actor or gross but not
+a zero source digest, and create the source's origin and obligation accounts, so a source commits
 once.
 
 ```quint
 pure def recordable(p: Program, source: int, actor: int, gross: int): bool =
-  gross > 0 and actor > 0 and source > 0 and not(L::hasSource(p.awards, source))
+  gross > 0 and actor > 0 and not(L::hasSource(p.awards, source))
 pure def fundable(p: Program, gross: int): bool = p.vaultAmount >= held(p) + gross and free(p) >= gross
 pure def canCommit(p: Program, source: int, actor: int, gross: int, by: str): bool =
   live(p) and by == p.owner and p.purpose == L::Ordinary and p.monthlyOutstanding == 0
     and recordable(p, source, actor, gross) and fundable(p, gross)
 pure def commit(p: Program, source: int, actor: int, gross: int, by: str): Program =
-  { ...p, reserved: p.reserved + gross, awards: p.awards.append(L::newAward(source, actor, gross, M::ordinaryFee(gross), p.now)) }
+  { ...p, reserved: p.reserved + gross, awards: p.awards.append(L::newAward(source, actor, gross, L::awardFee(p.purpose, gross), p.now)) }
 pure def canCommitBounty(p: Program, source: int, actor: int, gross: int, by: str): bool =
   live(p) and by == p.owner and p.purpose == L::Bounty and gross % 4 == 0
     and recordable(p, source, actor, gross) and fundable(p, gross)
 pure def commitBounty(p: Program, source: int, actor: int, gross: int, by: str): Program =
-  { ...p, reserved: p.reserved + gross, awards: p.awards.append(L::newAward(source, actor, gross, gross / 4, p.now)) }
+  { ...p, reserved: p.reserved + gross, awards: p.awards.append(L::newAward(source, actor, gross, L::awardFee(p.purpose, gross), p.now)) }
 ```
 
 ### Reserves are exactly the unpaid awards plus outstanding monthly gross, and paid totals are exactly the paid awards
@@ -296,7 +302,7 @@ pure def alwaysReservedMatches(p: Program): bool =
   p.reserved == L::unpaidPrincipal(p.awards) + L::unpaidFees(p.awards) + p.monthlyOutstanding
 pure def alwaysPaidMatches(p: Program): bool = p.paid == L::paidPrincipal(p.awards) and p.payoutFees == L::paidFees(p.awards)
 pure def alwaysAwardsWellFormed(p: Program): bool = L::uniqueSources(p.awards) and p.awards.every(a =>
-  a.source > 0 and a.actor > 0 and L::awardGrossAdmissible(p.purpose, a.gross)
+  a.actor > 0 and L::awardGrossAdmissible(p.purpose, a.gross)
     and a.fee == L::awardFee(p.purpose, a.gross) and a.committedAt > 0 and a.committedAt <= p.now
     and (a.paid == (a.paidVersion > 0)) and (a.paid implies a.paidTo != ""))
 pure def stepAwardsRetained(before: Program, after: Program): bool = before.awards.every(a =>
@@ -619,7 +625,7 @@ pure val accountValues = Set(
   { kind: Token2022, initialized: false, extensions: List() },
   { kind: Token2022, initialized: true, extensions: List("MemoTransfer") })
 pure val amountValues = Set(54, 100)
-pure val sourceValues = Set(1, 2, 10)
+pure val sourceValues = Set(0, 1, 2, 10)
 pure val actorValues = Set(1, 2)
 pure val grossValues = Set(0, 4, 50, 51)
 pure val capValues = Set(0, 54, 100)

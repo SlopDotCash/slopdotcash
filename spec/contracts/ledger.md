@@ -55,7 +55,10 @@ Each award is keyed by its source digest: `awardId` and `award_id_for` derive
 the only valid ID from the source, and `consumedSources` or the origin
 account refuses a second award for it. The reserved principal and fee are
 the sums over unpaid awards, so paying one award never consumes another's
-reserve. A paid award records the binding version and destination it paid.
+reserve. The payment event names the binding version and destination it
+paid, and the actor's binding keeps the last paid version; neither contract
+stores them on the award, so `paidTo` and `paidVersion` are model-only
+fields.
 
 ```quint
 type Award = { source: int, actor: int, gross: int, fee: int, committedAt: int, paid: bool, paidTo: str, paidVersion: int }
