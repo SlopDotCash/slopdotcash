@@ -8606,12 +8606,12 @@
     },
     {
       "path": "workers/slopbot/value-consumption.ts",
-      "sha256": "7aea9c52ded47438a77577902a6d2fb201a06a3137eee38be3f0a82a56116a80",
+      "sha256": "c55d6452751b90444f55fc35c22767a19cc534e31d2714333390c3071cb3417d",
       "models": [
         "formal/models/slopbot/bot_value_budget.qnt",
         "formal/models/slopbot/bot_value_history.qnt"
       ],
-      "candidateLines": [121, 130, 133, 143, 157],
+      "candidateLines": [121, 130, 144, 154, 168],
       "review": "mapped-abstraction"
     },
     {
@@ -8936,9 +8936,9 @@
     },
     {
       "path": "workers/slopbot/value-work-unit-consumption.ts",
-      "sha256": "23b9e0421a5cfe004fcd7d0d8afebbd56da0f258d99505cd688d1bafde7c5844",
+      "sha256": "2c5068f61b785a0c429b4edb3a3e1e1365f15a4508c6163a28161db7646faa9d",
       "models": ["formal/models/slopbot/bot_value_history.qnt"],
-      "candidateLines": [208, 279, 282, 288, 305, 333, 334],
+      "candidateLines": [208, 279, 282, 311, 328, 356, 357],
       "review": "mapped-abstraction"
     },
     {
@@ -15510,7 +15510,7 @@
     },
     {
       "path": "formal/models/slopbot/bot_value_history.qnt",
-      "sha256": "9c77d2c2802edbb0e942ef10b43bfa683700a0fae8b9683e41ee47210603aae5",
+      "sha256": "5f3b7ef4dc2d27c4785a981d715e860dc1e77ec2842ca086f25c0d0824b33ad4",
       "sources": [
         "workers/slopbot/value-consumption.ts",
         "workers/slopbot/value-work-unit-consumption.ts",
