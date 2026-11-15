@@ -14,6 +14,10 @@
  * one before (`vault_month_starts`, migration 0127), so a page can tell
  * whether a month was funded on the 1st and whether money was withdrawn
  * since.
+ *
+ * A vault whose contract supports month pledges (migration 0128) also carries
+ * its open pledged total and its pledge for each month from the previous one
+ * on; `openPledgedGross` is null for a vault without pledge support.
  */
 
 import { ESCROW_NETWORKS } from "../../src/lib/escrow-policy.mjs";
@@ -33,6 +37,16 @@ type StoredRow = {
   total_gross_withdrawn: string;
   block_time: string;
   observed_at: string;
+  open_pledged_gross: string | null;
+};
+
+type PledgeRow = {
+  project_id: string;
+  network: string;
+  vault: string;
+  period: string;
+  amount: string;
+  open: number;
 };
 
 type StartRow = {
@@ -88,7 +102,7 @@ export async function handlePoolFundingApi(
     const { results } = await deps.db
       .prepare(
         `SELECT project_id, network, vault, free_balance, total_gross_withdrawn,
-                block_time, observed_at
+                block_time, observed_at, open_pledged_gross
            FROM vault_snapshots
           ORDER BY project_id, network, vault`,
       )
@@ -116,6 +130,26 @@ export async function handlePoolFundingApi(
       });
       starts.set(key, list);
     }
+    const { results: pledgeRows } = await deps.db
+      .prepare(
+        `SELECT project_id, network, vault, period, amount, open
+           FROM vault_month_pledges
+          WHERE period >= ? AND amount <> '0'
+          ORDER BY period`,
+      )
+      .bind(previous)
+      .all<PledgeRow>();
+    const pledges = new Map<string, unknown[]>();
+    for (const row of pledgeRows ?? []) {
+      const key = `${row.project_id}\n${row.network}\n${row.vault}`;
+      const list = pledges.get(key) ?? [];
+      list.push({
+        period: row.period,
+        amount: row.amount,
+        open: row.open === 1,
+      });
+      pledges.set(key, list);
+    }
     const projects = new Map<string, unknown[]>();
     for (const row of results ?? []) {
       if (deps.tier !== "staging" && isTestnetNetwork(row.network)) continue;
@@ -129,6 +163,12 @@ export async function handlePoolFundingApi(
         observedAt: row.observed_at,
         monthStarts:
           starts.get(`${row.project_id}\n${row.network}\n${row.vault}`) ?? [],
+        openPledgedGross: row.open_pledged_gross,
+        pledges:
+          row.open_pledged_gross === null
+            ? []
+            : (pledges.get(`${row.project_id}\n${row.network}\n${row.vault}`) ??
+              []),
       });
       projects.set(row.project_id, list);
     }

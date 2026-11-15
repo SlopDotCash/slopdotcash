@@ -7,10 +7,19 @@ import {
   type VaultSnapshot,
 } from "../../src/lib/payments/contracts";
 import type { D1TransactionalDatabase as D1Database } from "../d1";
+import type { StoredMonthPledges } from "./month-pledges";
 import { firstDecreasedCounter, vaultCounterHeader } from "./verified-evidence";
 
 /** One finalized vault read, as both chain adapters' `readVaultTotals` return it. */
 export type { VaultTotals };
+/**
+ * A vault read with its month pledges (migration 0128): null when the vault's
+ * contract has no pledge support, undefined when they were not read, which
+ * leaves the stored pledges as they are.
+ */
+export type VaultRead = VaultTotals & {
+  monthPledges?: StoredMonthPledges | null;
+};
 export interface SnapshotDeployment {
   projectId: string;
   network: string;
@@ -23,7 +32,7 @@ export interface SnapshotDeployment {
 type VaultTotalsReader<D extends SnapshotDeployment> = (
   deployment: D,
   rpcUrl: string,
-) => Promise<VaultTotals>;
+) => Promise<VaultRead>;
 
 const CUMULATIVE = [
   "totalDeposited",
@@ -66,7 +75,7 @@ function sameAddress(chain: PaymentChain, a: string, b: string) {
 export async function storeVaultSnapshot(
   db: D1Database,
   deployment: SnapshotDeployment,
-  totals: VaultTotals,
+  totals: VaultRead,
   observedAt: string,
 ): Promise<"stored" | "older"> {
   if (
@@ -173,7 +182,62 @@ export async function storeVaultSnapshot(
     throw new Error("Vault snapshot conflicts with stored counters or asset");
   }
   await recordMonthStart(db, deployment, totals, blockTime, observedAt);
+  if (totals.monthPledges !== undefined)
+    await recordMonthPledges(
+      db,
+      deployment,
+      totals.monthPledges,
+      totals.blockNumber,
+      observedAt,
+    );
   return "stored";
+}
+
+/**
+ * Stores the pledges read with this snapshot. Each month's row keeps the read
+ * of the newest block. A failure fails the refresh, so the next one retries:
+ * the coordinator relies on these rows to freeze a pledged month.
+ */
+async function recordMonthPledges(
+  db: D1Database,
+  deployment: SnapshotDeployment,
+  read: StoredMonthPledges | null,
+  blockNumber: string,
+  observedAt: string,
+): Promise<void> {
+  const statements = [
+    db
+      .prepare(
+        "UPDATE vault_snapshots SET open_pledged_gross=? WHERE project_id=? AND network=? AND vault=? AND block_number=? AND observed_at=?",
+      )
+      .bind(
+        read?.openPledgedGross ?? null,
+        deployment.projectId,
+        deployment.network,
+        deployment.vault,
+        blockNumber,
+        observedAt,
+      ),
+    ...(read?.pledges ?? []).map((pledge) =>
+      db
+        .prepare(
+          "INSERT INTO vault_month_pledges(project_id,network,vault,period,amount,open,block_number,observed_at) VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(project_id,network,vault,period) DO UPDATE SET amount=excluded.amount,open=excluded.open,block_number=excluded.block_number,observed_at=excluded.observed_at WHERE CAST(excluded.block_number AS INTEGER)>=CAST(vault_month_pledges.block_number AS INTEGER)",
+        )
+        .bind(
+          deployment.projectId,
+          deployment.network,
+          deployment.vault,
+          pledge.period,
+          pledge.amount,
+          pledge.open ? 1 : 0,
+          blockNumber,
+          observedAt,
+        ),
+    ),
+  ];
+  const results = await db.batch(statements);
+  if (results.some((result) => !result.success))
+    throw new Error("Vault pledge write failed");
 }
 
 /**

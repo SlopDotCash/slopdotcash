@@ -8,6 +8,13 @@ import {
   indexPaymentEvent,
   type PaymentChainAdapter,
 } from "../../backend/payments/ledger";
+import { chainPledgeReaders } from "../../backend/payments/month-pledge-readers";
+import {
+  chainPeriod,
+  pledgeReadPeriods,
+  type StoredMonthPledges,
+  storedMonthPledges,
+} from "../../backend/payments/month-pledges";
 import {
   automaticMonthlyPayment,
   coordinateMonthlyPayments,
@@ -643,6 +650,44 @@ export async function readDeploymentVaultTotals(
   });
 }
 /**
+ * Reads the vault's month pledges at the totals' block (EVM) or at the
+ * finalized commitment (Solana), from the previous month to eleven months
+ * ahead. Null when the vault's contract has no pledge support, including
+ * every vault while the adapters have no pledge reader.
+ */
+export async function readDeploymentMonthPledges(
+  deployment: DeploymentView<"chain" | "vault", "programId" | "projectPda">,
+  rpcUrl: string,
+  totals: Pick<VaultTotals, "blockNumber" | "blockTime">,
+  readers = chainPledgeReaders,
+): Promise<StoredMonthPledges | null> {
+  const periods = pledgeReadPeriods(new Date(totals.blockTime)).map(
+    chainPeriod,
+  );
+  if (chainFamily(deployment.chain) === "evm") {
+    if (!readers.evm) return null;
+    const read = await readers.evm({
+      rpcUrl,
+      vault: deployment.vault,
+      periods,
+      blockTag: `0x${BigInt(totals.blockNumber).toString(16)}`,
+    });
+    return read === null ? null : storedMonthPledges(read);
+  }
+  if (!readers.solana) return null;
+  if (!deployment.programId || !deployment.projectPda)
+    throw new Error("Solana project deployment missing");
+  const read = await readers.solana({
+    rpcUrl,
+    network: deployment.network,
+    programId: deployment.programId,
+    projectPda: deployment.projectPda,
+    periods,
+  });
+  return read === null ? null : storedMonthPledges(read);
+}
+
+/**
  * The cron's chain read: discover the served networks' vaults in the D1
  * registry, store each vault's finalized counters in vault_snapshots, then
  * scan its finalized payment events. Failures are returned, not thrown, so
@@ -666,7 +711,22 @@ export async function syncRegistryVaults(env: PaymentsWorkerEnvironment) {
             rpcUrl,
             genesisHash: paymentSolanaGenesis(env, deployment.network),
           });
-        return readDeploymentVaultTotals(deployment, rpcUrl);
+        const totals = await readDeploymentVaultTotals(deployment, rpcUrl);
+        // A failed pledge read keeps the stored pledges and is reported; the
+        // counters still refresh.
+        try {
+          return {
+            ...totals,
+            monthPledges: await readDeploymentMonthPledges(
+              deployment,
+              rpcUrl,
+              totals,
+            ),
+          };
+        } catch (error) {
+          failures.push(error);
+          return totals;
+        }
       },
     );
   } catch (error) {
