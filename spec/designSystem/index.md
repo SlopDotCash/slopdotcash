@@ -42,7 +42,8 @@ pure def onPageAndCard(role: Role, least: int): List[Pair] = List(pair(role, Bac
 pure val requiredContrast: List[Pair] =
   List(pair(Foreground, Background, 45), pair(Foreground, Muted, 45), pair(MutedForeground, Popover, 45),
     pair(CardForeground, Card, 45), pair(PopoverForeground, Popover, 45), pair(PrimaryForeground, Primary, 45),
-    pair(SecondaryForeground, Secondary, 45), pair(AccentForeground, Accent, 45), pair(DestructiveForeground, Destructive, 45))
+    pair(SecondaryForeground, Secondary, 45), pair(MutedForeground, Muted, 45), pair(AccentForeground, Accent, 45),
+    pair(DestructiveForeground, Destructive, 45))
     .concat(onPageAndCard(MutedForeground, 45)).concat(onPageAndCard(Primary, 45)).concat(onPageAndCard(Destructive, 45))
     .concat(onPageAndCard(Ok, 45)).concat(onPageAndCard(Warn, 45)).concat(onPageAndCard(Info, 45))
     .concat(onPageAndCard(Input, 30)).concat(onPageAndCard(Ring, 30))
@@ -54,6 +55,7 @@ pure def lawForegroundsAreReadable(role: Role): bool =
     | PopoverForeground => required(PopoverForeground, Popover) == 45
     | PrimaryForeground => required(PrimaryForeground, Primary) == 45
     | SecondaryForeground => required(SecondaryForeground, Secondary) == 45
+    | MutedForeground => required(MutedForeground, Muted) == 45
     | AccentForeground => required(AccentForeground, Accent) == 45
     | DestructiveForeground => required(DestructiveForeground, Destructive) == 45
     | _ => true

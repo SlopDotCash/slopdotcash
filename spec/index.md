@@ -14,6 +14,8 @@ specification migration. Product implementation follows after review.
 - [Scope, authority and verification evidence](./governance.md)
 - [Participation restrictions and retained rights](./access.md)
 - [Frontend](./frontend/)
+- [Interface components](./ui/)
+- [Design system](./designSystem/)
 - [Backend and account records](./backend/)
 - [Contributor skills and work](./contributor/)
 - [Slopbot](./slopbot/)
