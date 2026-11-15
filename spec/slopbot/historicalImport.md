@@ -78,7 +78,7 @@ pure def eligibleSource(s: Imports, src: ImportSource, p: Producer): bool =
 pure def distinctSources(sources: List[ImportSource]): bool =
   sources.every(src => sources.select(o => o.repository == src.repository and o.pull == src.pull).length() == 1)
 pure def sourceIds(sources: List[ImportSource]): List[SourceKey] =
-  sources.foldl(List(), (ids, src) => ids.append({ repository: src.repository, pull: src.pull }))
+  sources.listMap(src => { repository: src.repository, pull: src.pull })
 pure def acceptable(s: Imports, request: ImportRequest): bool =
   request.admin.actor > 0 and request.admin.verifiedAdministrator and request.producerRevision != ""
     and I::active(s.install) and subscription(request.producer) and labelled(request.producer)
