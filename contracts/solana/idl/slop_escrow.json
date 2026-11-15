@@ -171,6 +171,49 @@
       "args": []
     },
     {
+      "name": "close_month_pledge",
+      "discriminator": [146, 123, 254, 246, 152, 119, 200, 238],
+      "accounts": [
+        {
+          "name": "owner",
+          "docs": ["Receives the pledge account's rent."],
+          "writable": true,
+          "signer": true,
+          "relations": ["project"]
+        },
+        {
+          "name": "project",
+          "relations": ["month_pledge"]
+        },
+        {
+          "name": "month_pledge",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [112, 108, 101, 100, 103, 101]
+              },
+              {
+                "kind": "account",
+                "path": "project"
+              },
+              {
+                "kind": "arg",
+                "path": "period"
+              }
+            ]
+          }
+        }
+      ],
+      "args": [
+        {
+          "name": "_period",
+          "type": "u32"
+        }
+      ]
+    },
+    {
       "name": "commit",
       "discriminator": [223, 140, 142, 165, 229, 208, 156, 74],
       "accounts": [
@@ -2093,6 +2136,11 @@
       "code": 6041,
       "name": "PledgePeriodClosed",
       "msg": "The period is past, more than 11 months ahead, or its pledge has closed"
+    },
+    {
+      "code": 6042,
+      "name": "PledgeOpen",
+      "msg": "The pledge is still open"
     }
   ],
   "types": [

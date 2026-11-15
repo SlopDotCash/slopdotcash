@@ -1201,7 +1201,38 @@ export function solanaExpirePledgeInstruction(
     data: instruction("expire_pledge", u32(period(pledgePeriod))),
   };
 }
-/** One pledge as stored on chain; a period with no pledge reads amount 0 and closed. */
+/**
+ * The owner's `close_month_pledge`: the owner (signer, receives the rent), the project and
+ * the pledge PDA. The program refuses an open pledge.
+ */
+export function solanaClosePledgeInstruction(
+  config: { programId: string; projectPda: string; owner: string },
+  plan: { wallet: string; period: number },
+): SolanaPledgeInstruction {
+  publicKeyBytes(plan.wallet);
+  if (plan.wallet !== config.owner)
+    throw new Error("Only the vault owner can close a pledge");
+  return {
+    program: config.programId,
+    accounts: [
+      { key: plan.wallet, write: true },
+      { key: config.projectPda, write: false },
+      {
+        key: solanaMonthPledgeAddress(
+          config.programId,
+          config.projectPda,
+          plan.period,
+        ),
+        write: true,
+      },
+    ],
+    data: instruction("close_month_pledge", u32(period(plan.period))),
+  };
+}
+/**
+ * One pledge as stored on chain. A period with no pledge account (never pledged, or closed
+ * by its owner with `close_month_pledge`) reads amount 0 and closed.
+ */
 export interface SolanaMonthPledge {
   period: number;
   amount: bigint;

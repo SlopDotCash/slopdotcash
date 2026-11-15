@@ -352,7 +352,8 @@ one of the next 11. One `MonthPledge` PDA per project and period
 (`["pledge", project, period u32 LE]`, 54 bytes) records the amount and whether it is
 open; `Project.pledged_open` is the sum of open pledges. Clients pledge several periods
 in one transaction, one instruction each; twelve fit in one legacy transaction.
-The account is never closed.
+The owner pays the account's rent (about 0.0013 SOL) and gets it back with
+`close_month_pledge` once the pledge has closed.
 
 - A pledge must fit: free balance stays at or above `pledged_open` after it, otherwise
   `InsufficientFreeBalance`. A pledge can be raised, never lowered (`PledgeTooLow`); an
@@ -366,9 +367,11 @@ The account is never closed.
   monthly award commits are unchanged.
 - `commit_monthly` takes an optional last account, `month_pledge`, the period's pledge
   PDA. An open pledge is the owner's consent to that period: the month records even when
-  monthly commitments are off, up to the larger of the monthly cap and the pledge. So
-  `set_monthly_commitment(_, false)` or a lowered cap after pledging stops only unpledged
-  months. A month never takes funds another period's open pledge holds (`PledgedFunds`).
+  monthly commitments are off. With them off the limit is the pledge alone, whatever the
+  cap says; with them on it is the larger of the monthly cap and the pledge
+  (`MonthlyCapExceeded` above it). So `set_monthly_commitment(_, false)` or a lowered cap
+  after pledging stops only unpledged months, and turning monthly off never lets a month
+  take more than its pledge. A month never takes funds another period's open pledge holds (`PledgedFunds`).
   On success the pledge closes and leaves `pledged_open`; any amount above the recorded
   total is free again. `MonthPledged { project, period, amount }` and
   `PledgeClosed { project, period, amount, reserved }` are emitted.
@@ -380,21 +383,34 @@ The account is never closed.
   never committed once the period's window has closed (00:00 UTC on the 4th of the
   second month after it), so pledged funds return to the owner if the executor misses
   the whole window. Before that, or on a closed pledge, it fails `PledgeNotLapsed`.
+- `close_month_pledge(period)` is the owner's. It deletes a pledge that has already
+  closed (committed or lapsed) and returns its rent to the owner; an open pledge fails
+  `PledgeOpen`. A closed pledge's period is always before the current one (its window
+  opened after the period ended), so `pledge_month` can never reopen it. A closed period
+  with no account reads amount 0 and closed, the same as a period never pledged.
 
 `adapter.ts` reads pledges with `readSolanaMonthPledges` (the open total and each
 requested period from one finalized `getMultipleAccounts`; `null` for a Project of the
-332-byte layout) and builds `pledge_month` and `expire_pledge` instructions.
-`month-pledge.ts` plans and simulates the owner's unsigned transactions
-(`prepareSolanaPledgeMonths`, `prepareSolanaExpirePledge`, `solanaPledgeMonthsMessage`);
-it never signs or sends.
+332-byte layout) and builds `pledge_month`, `expire_pledge` and `close_month_pledge`
+instructions. `month-pledge.ts` plans and simulates the owner's unsigned transactions
+(`prepareSolanaPledgeMonths`, `prepareSolanaExpirePledge`, `prepareSolanaClosePledge`,
+`solanaPledgeMonthsMessage`); it never signs or sends.
 
-Upgrading a live deployment: after the program upgrade the program cannot read a 332-byte
-Project until `migrate_project` grows it to 340 bytes. Every live ordinary vault (Eliza,
-Teeny's brain, Hyperliquid Source and pumpfun-source on 15 November 2026) needs this
-once, right after the upgrade and before the next `commit_monthly`; until then every
-instruction on that project fails. `config-plan.mjs migrate` plans one unsigned
-transaction per unmigrated project; any payer signs it, and it only adds rent and a zero
-`pledged_open`. A migrated project behaves exactly as before until its owner pledges.
+Upgrading a live deployment, in this order:
+
+1. Release the site and executor that pass `month_pledge` to `commit_monthly` and read
+   both Project sizes (SlopDotCash/slopdotcash#2828) first, and confirm it is live. The
+   new program accepts a commit without the account, but such a commit counts the
+   period's own pledge against it, so the executor must name the pledge before any owner
+   can pledge.
+2. Upgrade the program.
+3. Right after the upgrade, run `migrate_project` on every live ordinary vault (Eliza,
+   Teeny's brain, Hyperliquid Source and pumpfun-source on 15 November 2026). The new
+   program cannot read a 332-byte Project, so every instruction on an unmigrated vault
+   fails (deposits, withdrawals, payments and `commit_monthly`) until it is migrated.
+   `config-plan.mjs migrate` plans one unsigned transaction per unmigrated project; any
+   payer signs it, and it only adds rent and a zero `pledged_open`. A migrated project
+   behaves exactly as before until its owner pledges.
 
 What stays: the program is upgradeable by its upgrade authority, which can replace these
 rules, so a pledge holds funds against the vault owner, not against that key. The owner

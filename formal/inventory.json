@@ -1720,7 +1720,7 @@
     },
     {
       "path": "contracts/solana/adapter.ts",
-      "sha256": "75dbdb565ba72e3b20cfb170275a5dafb88dda13106b6bc880a2fed9398638a4",
+      "sha256": "4e37538cb85e4da6d15284b78cc0ce9b0d72c8beade532f7b22b53eb9cb66a53",
       "models": [
         "formal/models/payments/chain_evidence.qnt",
         "formal/models/payments/solana_scan_checkpoint.qnt",
@@ -1729,7 +1729,7 @@
       "candidateLines": [
         47, 68, 82, 84, 196, 212, 244, 252, 271, 292, 305, 315, 333, 376, 395,
         404, 449, 456, 457, 460, 714, 720, 723, 725, 730, 754, 895, 896, 924,
-        953, 966, 974, 981, 1010, 1025, 1211, 1233
+        953, 966, 974, 981, 1010, 1025, 1242, 1264
       ],
       "review": "mapped-abstraction"
     },
@@ -1807,9 +1807,9 @@
     },
     {
       "path": "contracts/solana/month-pledge.ts",
-      "sha256": "3f105bc29f7cf796a0953c6cf74772a3addfe9d4de4448dc6edf9ee1c8e25837",
+      "sha256": "734a70aa1f5d39a772cb95b88a0ece50cb1e8e44e0f1c3d268ecfeeb7e8321d5",
       "models": ["formal/models/contracts/solana_month_pledge.qnt"],
-      "candidateLines": [42],
+      "candidateLines": [46],
       "review": "mapped-abstraction"
     },
     {
@@ -1877,7 +1877,7 @@
     },
     {
       "path": "contracts/solana/programs/slop-escrow/src/lib.rs",
-      "sha256": "c52b3e5a5edd1bc6a57a602f410b5b51ab7c33db0964f69253bb721be704bf2f",
+      "sha256": "4898a324ed34491b78732a4f0f1427e7678bc23b5876f49f4a232aac4d8479d2",
       "models": [
         "formal/models/contracts/binding_veto_policy.qnt",
         "formal/models/contracts/solana_month_pledge.qnt",
@@ -1886,7 +1886,7 @@
         "formal/models/payments/solana_binding_completion.qnt",
         "formal/models/rewards/escrow_balances.qnt"
       ],
-      "candidateLines": [33, 1182],
+      "candidateLines": [33, 1190],
       "review": "mapped-abstraction"
     },
     {
@@ -11719,7 +11719,7 @@
     },
     {
       "path": "formal/models/contracts/solana_month_pledge.qnt",
-      "sha256": "ff8cb44722d43138f1e6aafdec6696f40a14971e6a255e0a724cb6e470ad3536",
+      "sha256": "18685e1a7b5b327ee53588de10afcbb5ab5dba9255af67e37a80251efd8adcb6",
       "sources": [
         "contracts/solana/integration/pledge-preload.mjs",
         "contracts/solana/month-pledge.ts",
@@ -11727,14 +11727,18 @@
       ],
       "scenarios": [
         "capAbovePledgeRefusedTest",
+        "deletedPledgeDeletesOnceTest",
+        "deletedPledgeNeverReopensTest",
         "lapseAfterWindowTest",
         "lapsedPledgeClosesOnceTest",
         "noLapseInsideWindowTest",
+        "openPledgeNotDeletedTest",
         "otherPledgeProtectedTest",
         "pastPeriodRefusedTest",
         "pledgeBlocksSpendTest",
         "pledgeMustFitTest",
         "raiseOnlyTest",
+        "switchOffCapsAtPledgeTest",
         "switchOffStillCommitsTest",
         "switchOffWithoutPledgeRefusedTest",
         "unnamedCommitClosesByExpireTest"
