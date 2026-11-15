@@ -21,9 +21,11 @@ idempotency keys are unique per actor across all of that actor's runs
 actor already used on its other runs reach this instance as observations of
 the storage service, and reusing one here is a conflict. That this mirror
 equals the union of the keys of the actor's other instances is a composition
-obligation. Every environment fact has a fixed sender: the clock service, the
-standing service, the identity Worker's intake job and the storage service
-are distinct non-positive identities that no GitHub actor can present. The HMAC upload
+obligation. Every environment fact (clock, participation standing, private
+intake status, storage results, other runs' objects and keys) has one fixed
+sender, the Slop server runtime (`serverRuntime`), a non-positive identity
+that no GitHub actor and no capability holder can present; the event name
+says which fact it is. The HMAC upload
 capability is derived from the actor, run, intent idempotency key and digest;
 this model names a capability by its intent key, and the shell proves the
 derivation and hashing. Hex-format validation of digests, the `Digest:
@@ -64,10 +66,7 @@ pure val intentLifetime = 300
 pure val eventClockSkew = 300
 pure val intakeMaxAge = 86400
 pure val intakeClockSkew = 300
-pure val clockService = -1
-pure val standingService = -2
-pure val intakeService = -3
-pure val storageService = -4
+pure val serverRuntime = -1
 pure val noRequest: CreateRequest = { clientRun: "", project: 0, repository: "", policyRevision: "",
   provider: "", model: "", client: "", clientVersion: "" }
 pure val noIntent: Intent = { key: "", digest: "", size: 0, contentType: TextPlain, expiresAt: 0, consumed: false }
@@ -86,15 +85,15 @@ pure def alwaysAttachedState(s: TraceServer): bool =
 
 ### The clock, private-intake observation and ban state come from their owning services
 
-The hourly identity Worker (sender `intakeService`) renews the private-intake
+The hourly identity Worker job, through the server runtime, renews the private-intake
 observation (`private_intake_status`): a verified enabled status no older than
 24 hours. The server accepts a verification time at most five minutes in the
 future (clock skew, `cloudflare-persistence.ts` `age < -300000`). Missing,
 disabled, stale or further-future status refuses only the byte upload.
 The participation standing is the composed fact of the
 [access area](../access.md): an account is banned while any
-per-enforcement ban lacks its reinstatement. Only the standing service
-(sender `standingService`) mirrors that fact, for this run's owner and with a
+per-enforcement ban lacks its reinstatement. Only the server runtime mirrors
+that fact, for this run's owner and with a
 strictly increasing observation epoch, so a delayed or replayed observation
 cannot undo a later ban. No other transition changes the standing. The shell
 evaluates it inside the same D1 statement as each write (`NOT EXISTS
@@ -105,17 +104,17 @@ obligation.
 ```quint
 pure def intakeFresh(s: TraceServer): bool = s.intake.observed and s.intake.enabled
   and s.intake.verifiedAt <= s.now + intakeClockSkew and s.now - s.intake.verifiedAt <= intakeMaxAge
-pure def canObserveTime(s: TraceServer, by: int, t: int): bool = by == clockService and t >= s.now and t <= 9007199254740000
+pure def canObserveTime(s: TraceServer, by: int, t: int): bool = by == serverRuntime and t >= s.now and t <= 9007199254740000
 pure def observeTime(s: TraceServer, by: int, t: int): TraceServer = { ...s, now: t, reply: ReplyNone }
-pure def canRenewIntake(s: TraceServer, by: int, verifiedAt: int): bool = by == intakeService
+pure def canRenewIntake(s: TraceServer, by: int, verifiedAt: int): bool = by == serverRuntime
   and verifiedAt >= 0 and verifiedAt <= s.now + intakeClockSkew and verifiedAt >= s.intake.verifiedAt
 pure def renewIntake(s: TraceServer, by: int, intakeEnabled: bool, verifiedAt: int): TraceServer =
   { ...s, intake: { observed: true, enabled: intakeEnabled, verifiedAt: verifiedAt }, reply: ReplyNone }
 pure def canObserveStanding(s: TraceServer, by: int, actor: int, epoch: int): bool =
-  by == standingService and actor == s.owner and epoch > s.standingEpoch
+  by == serverRuntime and actor == s.owner and epoch > s.standingEpoch
 pure def observeStanding(s: TraceServer, by: int, actor: int, epoch: int, banned: bool): TraceServer =
   { ...s, banned: banned, standingEpoch: epoch, reply: ReplyNone }
-pure def alwaysIntakeWithinSkew(s: TraceServer): bool = s.intake.verifiedAt >= 0
+pure def alwaysIntakeWithinSkew(s: TraceServer): bool = s.now >= 0 and s.intake.verifiedAt >= 0
   and s.intake.verifiedAt <= s.now + intakeClockSkew and s.standingEpoch >= 0
 pure def stepClockMonotone(before: TraceServer, after: TraceServer): bool = before.now <= after.now
 pure def stepStandingOnlyFromService(before: TraceServer, via: str, after: TraceServer): bool =
@@ -208,7 +207,7 @@ pure def beginPut(s: TraceServer, key: str, digest: str, byteCount: int, content
   else { ...s, reservation: List(blob),
     puts: s.puts.append({ key: key, blob: blob, authorizedAt: s.now, stage: PutReserved }), reply: ReplyNone }
 pure def reservedPut(s: TraceServer, key: str): bool = s.puts.some(p => p.key == key and p.stage == PutReserved)
-pure def canWriteBytes(s: TraceServer, by: int, key: str): bool = by == storageService and reservedPut(s, key)
+pure def canWriteBytes(s: TraceServer, by: int, key: str): bool = by == serverRuntime and reservedPut(s, key)
 pure def writeBytes(s: TraceServer, by: int, key: str, succeeds: bool): TraceServer =
   val p = s.puts.select(x => x.key == key and x.stage == PutReserved).nthOr(0, noPut)
   val conflicting = s.objects.some(o => o.digest == p.blob.digest and o != p.blob)
@@ -233,10 +232,10 @@ pure def attachPut(s: TraceServer, key: str): TraceServer =
     puts: s.puts.listMap(x => if (x.key == key and x.stage == PutWritten) { ...x, stage: PutAttached } else x),
     reply: ReplyCreated }
 pure def canObserveForeignObject(s: TraceServer, by: int, blob: TraceObject): bool =
-  by == storageService and blob.digest != "" and not(s.objects.some(o => o.digest == blob.digest))
+  by == serverRuntime and blob.digest != "" and not(s.objects.some(o => o.digest == blob.digest))
 pure def observeForeignObject(s: TraceServer, by: int, blob: TraceObject): TraceServer =
   { ...s, objects: s.objects.append(blob), reply: ReplyNone }
-pure def canObserveOtherRunKey(s: TraceServer, by: int, keyKind: KeyKind, key: str): bool = by == storageService and key != ""
+pure def canObserveOtherRunKey(s: TraceServer, by: int, keyKind: KeyKind, key: str): bool = by == serverRuntime and key != ""
   and (if (keyKind == IntentKey) not(s.intents.some(i => i.key == key)) and not(s.otherRunIntentKeys.includes(key))
        else not(s.events.some(e => e.key == key)) and not(s.otherRunEventKeys.includes(key)))
 pure def observeOtherRunKey(s: TraceServer, by: int, keyKind: KeyKind, key: str): TraceServer =
@@ -329,12 +328,12 @@ pure def stepEventsAppendOnly(before: TraceServer, after: TraceServer): bool =
 pure def stepBannedAddsNothing(before: TraceServer, after: TraceServer): bool = (before.banned and after.banned) implies
   after.createKey == before.createKey and after.intents == before.intents and after.reservation == before.reservation
     and after.attached == before.attached and after.state == before.state and after.events == before.events
-pure def lawOtherActorAddsNoIntent(s: TraceServer, by: int, key: str, digest: str, byteCount: int, contentType: ContentType): bool =
-  by != s.owner implies createIntent(s, by, key, digest, byteCount, contentType).intents == s.intents
-pure def lawOtherActorAddsNoEvent(s: TraceServer, by: int, key: str, kind: EventKind, source: EventSource, occurredAt: int, githubObject: str): bool =
-  by != s.owner implies appendEvent(s, by, key, kind, source, occurredAt, githubObject).events == s.events
-pure def lawOtherActorCannotFinalize(s: TraceServer, by: int, key: str): bool =
-  by != s.owner implies finalize(s, by, key).state == s.state
+pure def lawOtherActorAddsNoIntent(s: TraceServer, actor: int, key: str, digest: str, byteCount: int, contentType: ContentType): bool =
+  actor != s.owner implies createIntent(s, actor, key, digest, byteCount, contentType).intents == s.intents
+pure def lawOtherActorAddsNoEvent(s: TraceServer, actor: int, key: str, kind: EventKind, source: EventSource, occurredAt: int, githubObject: str): bool =
+  actor != s.owner implies appendEvent(s, actor, key, kind, source, occurredAt, githubObject).events == s.events
+pure def lawOtherActorCannotFinalize(s: TraceServer, actor: int, key: str): bool =
+  actor != s.owner implies finalize(s, actor, key).state == s.state
 ```
 
 ### The author's own pull_request_opened event is the only closure run evidence
@@ -375,14 +374,14 @@ pure def sometimesBannedCreate(s: TraceServer): bool = s.reply == ReplyBanned an
 These input sets bound simulation only.
 
 ```quint
-pure val byValues = Set(1, 2, clockService, standingService, intakeService, storageService)
+pure val byValues = Set(1, serverRuntime)
 pure val actorValues = Set(1, 2)
 pure val epochValues = Set(1, 2)
 pure val keyValues = Set("k1", "k2")
 pure val digestValues = Set("d1", "d2")
-pure val byteCountValues = Set(0, 1, 2)
+pure val byteCountValues = Set(0, 2)
 pure val tValues = Set(0, 1, 301, 90000)
-pure val verifiedAtValues = Set(0, 1, 301, 700)
+pure val verifiedAtValues = Set(0, 700)
 pure val occurredAtValues = Set(0, 1000)
 pure val githubObjectValues = Set("", "PR_a")
 pure val requestA: CreateRequest = { clientRun: "run-a", project: 1, repository: "o/r", policyRevision: "rev",
@@ -405,8 +404,8 @@ pure val weight_beginPut = 10
 pure val weight_writeBytes = 8
 pure val weight_attachPut = 8
 pure val weight_renewIntake = 6
-pure val weight_observeStanding = 3
+pure val weight_observeStanding = 1
 pure val weight_observeOtherRunKey = 2
-pure val weight_finalize = 4
-pure val weight_appendEvent = 5
+pure val weight_finalize = 6
+pure val weight_appendEvent = 8
 ```

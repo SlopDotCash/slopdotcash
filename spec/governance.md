@@ -75,7 +75,7 @@ pure def record(l: Ledger, by: int, id: int, revision: int, result: EvidenceKind
 pure def canReview(l: Ledger, by: int, id: int): bool = maintainer(l, by) and
   l.obligations.some(o => o.id == id and o.kind != Missing and o.resultRevision == l.revision and o.recorder != by)
 pure def review(l: Ledger, by: int, id: int): Ledger =
-  { ...l, obligations: l.obligations.listMap(o => if (o.id == id) { ...o, reviewer: by } else o) }
+  { ...l, completionRevision: 0, obligations: l.obligations.listMap(o => if (o.id == id) { ...o, reviewer: by } else o) }
 pure def canChangeRevision(l: Ledger, by: int, revision: int): bool = l.recorders.includes(by) and by > 0 and revision > l.revision
 pure def changeRevision(l: Ledger, by: int, revision: int): Ledger =
   { ...l, revision: revision, obligations: l.obligations.listMap(o => cleared(o)) }
@@ -144,8 +144,8 @@ covers a bound inventory with at least one requirement and one release gate,
 every obligation discharged and independently reviewed at the current
 revision, and no open blocking defect. It is bound to the revision it was
 made for and to the evidence it saw: a later revision, an inventory change, a
-new obligation, any new or waived result, or a new blocking defect needs a
-new record.
+new obligation, any new, reviewed or waived result, or a new blocking defect
+needs a new record.
 
 ```quint
 pure def mvpComplete(l: Ledger): bool = l.inventory != "" and l.blockingDefects == 0
@@ -186,14 +186,17 @@ pure val oValues = Set(missing(1, ModelObligation), { ...missing(1, ModelObligat
   { ...missing(1, ModelObligation), resultRevision: 1, kind: Waived, approval: 1 },
   { ...missing(1, ModelObligation), resultRevision: 1, kind: TimedOut, recorder: 3 },
   { ...missing(1, ModelObligation), resultRevision: 1, kind: Skipped, recorder: 3 })
-pure val byValues = Set(1, 2, 3, 4)
+pure val byValues = Set(1, 3)
+pure val resultValues = Set(Simulated, Proved, Conformant, LiveVerified, TimedOut, Skipped, Failed, FiniteVerified)
 pure val revisionValues = Set(1, 2)
 pure val boundValues = Set(0, 3)
 pure val decisionValues = Set(0, 1)
 pure val inventoryValues = Set("", "inv-a")
-pure val weight_record = 8
-pure val weight_review = 8
-pure val weight_addObligation = 5
-pure val weight_recordCompletion = 4
+pure val weight_record = 12
+pure val weight_review = 12
+pure val weight_addObligation = 8
+pure val weight_bindInventory = 4
+pure val weight_recordCompletion = 8
+pure val weight_approvePhase = 4
 pure val weight_changeRevision = 1
 ```
