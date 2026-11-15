@@ -1,13 +1,13 @@
 // An active flag's receipt is among the receipts a reinstatement resolves.
-lemma ActiveReceiptsCover(e: Enforcement, f: Flag)
-  requires f in e.flags && activeFlag(e, f)
-  ensures f.receipt in activeReceipts(e)
+lemma ActiveReceiptsCover(e: Enforcement, g: Flag)
+  requires g in e.flags && activeFlag(e, g)
+  ensures g.receipt in activeReceipts(e)
 {
   var s := ProofLib.Filter((f: Flag) => activeFlag(e, f), e.flags);
-  ProofLib.FilterMember((f: Flag) => activeFlag(e, f), e.flags, f);
-  assert f in s;
-  var i :| 0 <= i < |s| && s[i] == f;
-  assert activeReceipts(e)[i] == f.receipt;
+  ProofLib.FilterMember((f: Flag) => activeFlag(e, f), e.flags, g);
+  assert g in s;
+  var i :| 0 <= i < |s| && s[i] == g;
+  assert activeReceipts(e)[i] == g.receipt;
 }
 
 // Every receipt a reinstatement resolves names a filed flag.
