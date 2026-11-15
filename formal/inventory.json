@@ -8115,7 +8115,7 @@
     },
     {
       "path": "workers/payments/index.ts",
-      "sha256": "cee6424f121760e7f5b9257911bb31dcb175bc474781645ad5b345faaf410f5f",
+      "sha256": "adc5c0562a70be275cc1abcb82ee3a2043660152b4a8fb307b7e23e39fd30098",
       "models": [
         "formal/models/payments/payment_reopen_landing.qnt",
         "formal/models/payments/payment_unsigned_retirement.qnt",
@@ -8126,9 +8126,9 @@
         "formal/models/rewards/monthly_reserve.qnt"
       ],
       "candidateLines": [
-        75, 111, 128, 131, 137, 138, 142, 169, 179, 183, 185, 189, 191, 202,
-        203, 205, 207, 209, 215, 218, 221, 225, 237, 238, 240, 241, 246, 296,
-        343, 354, 375, 383, 386, 417, 500, 598, 599, 658, 696, 697
+        72, 108, 125, 128, 134, 135, 139, 166, 176, 180, 182, 186, 188, 199,
+        200, 202, 204, 206, 212, 215, 218, 222, 234, 235, 237, 238, 243, 293,
+        340, 351, 372, 380, 383, 414, 497, 595, 596, 655, 693, 694
       ],
       "review": "mapped-abstraction"
     },
