@@ -8575,9 +8575,9 @@
     },
     {
       "path": "workers/slopbot/value-file-recovery.ts",
-      "sha256": "6dcad2e20c2c248ccbe902d071dfd487794b9cecf9b58016bbc51953ac013f76",
+      "sha256": "a1fd9df08ee3dc334e9f6a3d56ba056cd4073b3cdfd7fa5e23a8aa6d27487558",
       "models": ["formal/models/slopbot/bot_evidence_integrity.qnt"],
-      "candidateLines": [152, 153, 213, 246],
+      "candidateLines": [159, 160, 220, 253],
       "review": "mapped-abstraction"
     },
     {
