@@ -995,8 +995,8 @@ function richSource(
                 kind: commit.author.type,
               }
             : null,
-          additions: files?.reduce((n, file) => n + file.additions, 0) ?? null,
-          deletions: files?.reduce((n, file) => n + file.deletions, 0) ?? null,
+          additions: null,
+          deletions: null,
           ...(files?.length
             ? {
                 files,
@@ -1928,6 +1928,12 @@ export function groupedOriginalContributorProof(
         ...accepted,
         commits: accepted.commits.map((commit) => ({
           ...commit,
+          ...(commit.parentCount > 1
+            ? {
+                additions: originals.get(commit.sha)?.additions ?? null,
+                deletions: originals.get(commit.sha)?.deletions ?? null,
+              }
+            : {}),
           ...(originals.get(commit.sha)?.parentShas
             ? { parentShas: originals.get(commit.sha)?.parentShas }
             : {}),
@@ -2757,6 +2763,19 @@ async function collectWithEvidenceCache(
           "Grouped decision digest unavailable",
         );
         let sources = await bindRetained(decision.evidence.sources, owners);
+        for (const source of sources) {
+          const outcome = reads.get(source.sourceId)?.outcome;
+          for (const commit of source.commits) {
+            if (commit.parentCount <= 1) continue;
+            const canonical = outcome?.commits?.find(
+              (item) => item.oid === commit.sha,
+            );
+            if (canonical) {
+              commit.additions = canonical.additions ?? null;
+              commit.deletions = canonical.deletions ?? null;
+            }
+          }
+        }
         const selectedClaims = decision.evidence.claims.filter((claim) =>
           unit.claimIds.includes(claim.id),
         );

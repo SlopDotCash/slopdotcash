@@ -645,7 +645,11 @@ function deriveProof(
             ),
           "invalid or duplicate commit file",
         );
-        if (commit.additions !== null && commit.deletions !== null)
+        if (
+          !commit.mergeResolution &&
+          commit.additions !== null &&
+          commit.deletions !== null
+        )
           check(
             commit.files.reduce((n, file) => n + BigInt(file.additions), 0n) ===
               BigInt(commit.additions) &&

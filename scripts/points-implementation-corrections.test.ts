@@ -1802,3 +1802,37 @@ for (const fault of ["missing", "hash", "author"] as const) {
     expect(() => apply(journal, input)).toThrow();
   });
 }
+
+test("resolution deltas retain the same immutable reported merge counts in other pools", () => {
+  const { journal, grouped, commit } = claimedResolution();
+  commit.additions = 100;
+  commit.deletions = 80;
+  const otherAward = {
+    ...award(B, 10, "PR_other", "wu_other"),
+    occurredAt: grouped.occurredAt,
+  };
+  const combined = appendPointAwards(
+    journal,
+    [otherAward],
+    "9".repeat(64),
+    "slop-score-v2",
+    BASELINE,
+  );
+  const other = otherCandidate(combined);
+  if (other.proof.status !== "complete") throw Error("fixture");
+  other.occurredAt = grouped.occurredAt;
+  other.proof.sources[0].occurredAt = grouped.occurredAt;
+  other.proof.sources[0].headSha = sha("9");
+  other.proof.sources[0].commits[0].sha = sha("9");
+  const imported = {
+    ...structuredClone(commit),
+    firstAcceptedSourceId: SOURCE,
+  };
+  delete (imported as { mergeResolution?: unknown }).mergeResolution;
+  delete (imported as { files?: unknown }).files;
+  other.proof.sources[0].commits.push(imported);
+  other.proof.sources[0].commitCount++;
+  const result = apply(combined, manifest(combined, [grouped, other]));
+  expect(total(result.journal)).toBe(total(combined));
+  expect(amounts(result.journal)[A.id]).toBe(30);
+});
