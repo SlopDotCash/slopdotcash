@@ -32,6 +32,8 @@ import {
   type ProjectApiDependencies,
   refreshProjectSetup,
 } from "../../../backend/projects/handler";
+import { handleMergeActivityApi } from "../../../backend/projects/merge-activity";
+import { handlePoolFundingApi } from "../../../backend/projects/pool-funding";
 import { slopbotRepositoryAccess } from "../../../backend/projects/repository-access";
 import {
   flaggerAuthority,
@@ -485,6 +487,10 @@ export async function onRequest(context: PagesContext): Promise<Response> {
   if (referralCode !== null) return referralCode;
   const referralsResponse = await handleReferralsApi(request, { db });
   if (referralsResponse !== null) return referralsResponse;
+  const mergeActivity = await handleMergeActivityApi(request, { db });
+  if (mergeActivity !== null) return mergeActivity;
+  const poolFunding = await handlePoolFundingApi(request, { db, tier });
+  if (poolFunding !== null) return poolFunding;
   const feeConversionsResponse = await handleFeeConversionsApi(request, {
     db,
     adminGithubIds,

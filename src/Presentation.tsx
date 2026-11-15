@@ -1,5 +1,9 @@
 import { ArrowRight, CircleAlert, RotateCcw, Wallet } from "lucide-react";
 import { type ReactNode, useEffect, useRef, useState } from "react";
+import {
+  MAINNET_EXECUTION,
+  mainnetExecutionEnabled,
+} from "../workers/payment-executor/mainnet-execution.mjs";
 import { Link } from "./Link";
 import { loginHref } from "./lib/browser-deployment";
 import type { CycleIndexEntry } from "./lib/cycle-index";
@@ -777,13 +781,30 @@ export function WalletConnection<T extends { id: string; name: string }>({
   );
 }
 
-export function paymentStateLabel(project: ProjectDefinition): string {
-  return project.reward.paymentMode === "enabled" ? "Enabled" : "Disabled";
+/**
+ * Payments are on when the project has a recorded vault on a network that
+ * executes payouts. Mainnet networks follow the reviewed switch in
+ * `workers/payment-executor/mainnet-execution.mjs`; test networks are not on
+ * that switch. The legacy `reward.paymentMode` field is not read by the payout
+ * engine, so it does not decide this label (operator decision, 15 November
+ * 2026).
+ */
+export function paymentsOn(project: ProjectDefinition): boolean {
+  if (project.reward.kind === "external-prize-share") return false;
+  return (project.escrow?.deployments ?? []).some(
+    (deployment) =>
+      !Object.hasOwn(MAINNET_EXECUTION, deployment.network) ||
+      mainnetExecutionEnabled(deployment.network),
+  );
 }
 
-/** "Live" only when a recorded vault can pay: payments must be enabled too. */
+export function paymentStateLabel(project: ProjectDefinition): string {
+  return paymentsOn(project) ? "Enabled" : "Disabled";
+}
+
+/** "Live" only when a recorded vault is on a network that pays out. */
 export function vaultStateLabel(project: ProjectDefinition): string {
   if (project.reward.kind === "external-prize-share") return "Not applicable";
   if (!project.escrow?.deployments.length) return "Not set up";
-  return project.reward.paymentMode === "enabled" ? "Live" : "Set up";
+  return paymentsOn(project) ? "Live" : "Set up";
 }

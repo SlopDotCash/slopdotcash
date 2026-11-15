@@ -172,7 +172,48 @@ export async function storeVaultSnapshot(
       return "older";
     throw new Error("Vault snapshot conflicts with stored counters or asset");
   }
+  await recordMonthStart(db, deployment, totals, blockTime, observedAt);
   return "stored";
+}
+
+/**
+ * Keeps the first stored read of each UTC month (migration 0127), so pages
+ * can tell whether a month was funded on the 1st (operator decision,
+ * 15 November 2026). It never fails the refresh: a missed row only means
+ * that month is not shown as promised.
+ */
+async function recordMonthStart(
+  db: D1Database,
+  deployment: SnapshotDeployment,
+  totals: VaultTotals,
+  blockTime: string,
+  observedAt: string,
+): Promise<void> {
+  if (totals.freeBalance === null) return;
+  try {
+    await db
+      .prepare(
+        "INSERT INTO vault_month_starts(project_id,network,vault,period,free_balance,total_gross_withdrawn,block_number,block_time,observed_at) SELECT ?,?,?,?,?,?,?,?,? WHERE NOT EXISTS (SELECT 1 FROM vault_month_starts WHERE project_id=? AND network=? AND vault=? AND period=?)",
+      )
+      .bind(
+        deployment.projectId,
+        deployment.network,
+        deployment.vault,
+        blockTime.slice(0, 7),
+        totals.freeBalance,
+        totals.totalGrossWithdrawn,
+        totals.blockNumber,
+        blockTime,
+        observedAt,
+        deployment.projectId,
+        deployment.network,
+        deployment.vault,
+        blockTime.slice(0, 7),
+      )
+      .run();
+  } catch {
+    // The month start is display evidence only; the refresh stands.
+  }
 }
 
 /** One failing vault never stops the others; failures are reported together. */

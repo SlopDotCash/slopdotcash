@@ -1,5 +1,10 @@
 /** Complete object closure for the fixed Git merge operation, without checkout. */
+
 import { execFileSync } from "node:child_process";
+import {
+  type ValueFileRequest,
+  validValueFileRequest,
+} from "../workers/slopbot/value-file-recovery";
 import type { ValueMergeInput } from "../workers/slopbot/value-merge-profile";
 
 const OID = /^[a-f0-9]{40}$/u;
@@ -59,6 +64,7 @@ function gitReader(repository: string) {
 export function requiredMergeObjects(
   inputs: readonly ValueMergeInput[],
   repository: string,
+  fileRequests: readonly ValueFileRequest[] = [],
 ): MergeObjectClosure {
   const text = gitReader(repository);
   if (
@@ -96,6 +102,18 @@ export function requiredMergeObjects(
             commit.parents[right].sha,
           ]);
     }
+  }
+  for (const request of fileRequests) {
+    if (
+      !validValueFileRequest(request) ||
+      !inputs.some(
+        (input) =>
+          input.repository === request.repository &&
+          input.repositoryNodeId === request.repositoryNodeId,
+      )
+    )
+      throw new Error("Invalid recovered file repository");
+    addRoot(request.ref);
   }
   for (const row of text(["rev-list", "--parents", ...ordered(roots), "--"])
     .trim()
@@ -174,6 +192,11 @@ export function requiredMergeObjects(
       const entry = entries.get(input.pull.head.sha)?.get(file.filename);
       if (entry?.type === "blob") blobs.add(entry.sha);
     }
+  for (const request of fileRequests) {
+    const entry = entries.get(request.ref)?.get(request.path);
+    if (entry?.type === "blob" && ["100644", "100755"].includes(entry.mode))
+      blobs.add(entry.sha);
+  }
   const addChangedObject = (mode: string, sha: string) => {
     if (mode === "000000" && sha === "0".repeat(40)) return;
     if (mode === "160000") return; // A gitlink never grants a submodule fetch.
@@ -271,6 +294,7 @@ export function requiredMergeObjects(
 export function verifyMergeObjectStore(
   inputs: readonly ValueMergeInput[],
   repository: string,
+  fileRequests: readonly ValueFileRequest[] = [],
 ): MergeObjectClosure {
   const text = gitReader(repository);
   text(["fsck", "--full", "--strict", "--no-reflogs", "--no-dangling"]);
@@ -292,5 +316,5 @@ export function verifyMergeObjectStore(
     )
       throw new Error("Expanded object limit");
   }
-  return requiredMergeObjects(inputs, repository);
+  return requiredMergeObjects(inputs, repository, fileRequests);
 }

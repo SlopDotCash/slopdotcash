@@ -5,6 +5,14 @@ import type { TargetRepository } from "../../src/lib/repositories.mjs";
 // moving evidence prevents assessment; pagination limits never imply coverage.
 export interface EvidenceClient {
   get<T>(path: string): Promise<T | null>;
+  /** Invocation-local sharing of byte-identical immutable evidence text. */
+  internText?(text: string): string;
+  /** Private verifier-provided immutable text bytes, never uploaded source. */
+  verifiedFile?(
+    repository: string,
+    ref: string,
+    path: string,
+  ): Promise<{ sha: string; bytes: Uint8Array } | null>;
   graphql?<T>(query: string, variables: Record<string, unknown>): Promise<T>;
 }
 
@@ -152,6 +160,7 @@ export interface ValueEvidence {
   mergeCommitEvidence: CommitChangeEvidence | null;
   acceptedRange?: AcceptedValueRange;
   acceptedPatchReplay?: AcceptedPatchReplay;
+  nativeMergeAcceptance?: NativeMergeAcceptance;
   indirectAcceptance?: IndirectValueAcceptance;
   commits: Commit[];
   reviews: Review[];
@@ -167,6 +176,11 @@ export interface ValueEvidence {
   mergeResolutions?: ValueMergeResolution[];
   retainedMergeReferences?: RetainedMergeReference[];
   relatedPullRequests: RelatedPullRequest[];
+  unavailablePublicReferences?: {
+    repository: string;
+    repositoryNodeId: string;
+    number: number;
+  }[];
   contextFiles?: {
     path: string;
     ref: string;
@@ -272,4 +286,20 @@ export interface IndirectRetainedFile {
   acceptedPath: string;
   historical: TextVersion | null;
   accepted: TextVersion | null;
+}
+
+/** Complete native ancestor acceptance, verified jointly with its carrier. */
+export interface NativeMergeAcceptance {
+  schemaVersion: 1;
+  headSha: string;
+  mergeSha: string;
+  parentSha: string;
+  integratedHeadSha: string;
+  ancestry: Commit[];
+  trees: {
+    commitSha: string;
+    treeSha: string;
+    entries: { path: string; mode: string; type: string; sha: string }[];
+  }[];
+  retainedFiles: IndirectRetainedFile[];
 }

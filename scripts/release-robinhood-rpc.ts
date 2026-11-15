@@ -4,6 +4,10 @@ import { isAbsolute, join } from "node:path";
 import { parseBuybackConfig } from "../workers/fee-converter/buyback-config";
 import { parseConfig } from "../workers/fee-converter/config";
 import { createEvmClient } from "../workers/fee-converter/evm";
+import {
+  qualifySolanaRpcPair,
+  SOLANA_PUBLIC_PAIR,
+} from "./qualify-solana-rpc-pair";
 
 const worker = "slop-fee-converter";
 const configPath = "workers/fee-converter/wrangler.toml";
@@ -15,6 +19,7 @@ const sourceSha = /^[a-f0-9]{40}$/u;
 const blockHash = /^0x[a-f0-9]{64}$/u;
 const quantity = /^0x(?:0|[1-9a-f][0-9a-f]*)$/u;
 const rotationLabel = "; Robinhood RPC rotation from ";
+const solanaRotationLabel = "; Solana RPC rotation from ";
 
 type VersionLabel = {
   id: string;
@@ -43,27 +48,45 @@ function check(condition: unknown, message: string): asserts condition {
 }
 class RotationError extends Error {}
 
-function rotationLineage(version: VersionLabel): string {
+function rotationLineage(version: VersionLabel, label = rotationLabel): string {
   const message = version.annotations?.["workers/message"] ?? "";
-  if (!message.includes(rotationLabel)) return "";
-  const lineage = message.slice(
-    message.lastIndexOf(rotationLabel) + rotationLabel.length,
-  );
-  check(uuid.test(lineage), "Invalid retained Robinhood RPC rotation marker.");
+  if (!message.includes(label)) return "";
+  const lineage = message
+    .slice(message.lastIndexOf(label) + label.length)
+    .split(";")[0];
+  check(uuid.test(lineage), "Invalid retained RPC rotation marker.");
   return lineage;
+}
+function inheritedRotationSuffix(version: VersionLabel): string {
+  return [rotationLabel, solanaRotationLabel]
+    .map((label) => {
+      const lineage = rotationLineage(version, label);
+      return lineage ? label + lineage : "";
+    })
+    .join("");
+}
+export function rotationMessage(
+  sha: string,
+  before: VersionLabel,
+  kind: "robinhood" | "solana",
+) {
+  const changed = kind === "solana" ? solanaRotationLabel : rotationLabel;
+  const retained = kind === "solana" ? rotationLabel : solanaRotationLabel;
+  const lineage = rotationLineage(before, retained);
+  return `slop.cash release ${sha}${lineage ? retained + lineage : ""}${changed}${before.id}`;
 }
 
 export function checkInheritedVersion(
   state: WorkerState,
   active: VersionLabel,
 ) {
-  const latestLineage = rotationLineage(state.latest);
-  const activeLineage = rotationLineage(active);
+  const latestLineage = inheritedRotationSuffix(state.latest);
+  const activeLineage = inheritedRotationSuffix(active);
   check(
     state.latest.id === active.id || latestLineage === activeLineage,
     "The latest fee-converter upload has a different Robinhood RPC rotation. Reconcile it before publishing.",
   );
-  return activeLineage;
+  return rotationLineage(active);
 }
 
 export function requireRotationBase(
@@ -98,7 +121,10 @@ function same(a: unknown, b: unknown) {
   return JSON.stringify(stable(a)) === JSON.stringify(stable(b));
 }
 
-function normalizedBindings(version: Version) {
+function normalizedBindings(
+  version: Version,
+  changedSecrets: readonly string[] = [],
+) {
   const bindings = version.resources?.bindings;
   check(
     Array.isArray(bindings) &&
@@ -124,6 +150,7 @@ function normalizedBindings(version: Version) {
     "The active fee-converter binding inventory did not match the live program.",
   );
   return bindings
+    .filter((entry) => !changedSecrets.includes(entry.name))
     .map((entry) =>
       entry.type.startsWith("secret_")
         ? { name: entry.name, type: entry.type }
@@ -136,7 +163,11 @@ export function requireSameWorker(
   before: Version,
   after: Version,
   sha: string,
+  kind: "robinhood" | "solana" = "robinhood",
 ) {
+  const changedSecrets =
+    kind === "solana" ? ["RPC_URL_SOLANA", "SOLANA_RECOVERY_RPC_URL"] : [];
+  const label = kind === "solana" ? solanaRotationLabel : rotationLabel;
   check(
     Number.isSafeInteger(before.number) &&
       before.number > 0 &&
@@ -148,13 +179,30 @@ export function requireSameWorker(
   const uploaded = after.resources;
   check(
     after.annotations?.["workers/tag"] === sha &&
-      rotationLineage(after) === before.id &&
+      rotationLineage(after, label) === before.id &&
+      rotationLineage(
+        after,
+        kind === "solana" ? rotationLabel : solanaRotationLabel,
+      ) ===
+        rotationLineage(
+          before,
+          kind === "solana" ? rotationLabel : solanaRotationLabel,
+        ) &&
+      (kind !== "solana" ||
+        changedSecrets.every((name) =>
+          after.resources?.bindings?.some(
+            (entry) => entry.name === name && entry.type === "secret_text",
+          ),
+        )) &&
       typeof original?.script?.etag === "string" &&
       original.script.etag.length > 0 &&
       original.script.etag === uploaded?.script?.etag &&
       original.script_runtime &&
       same(original.script_runtime, uploaded.script_runtime) &&
-      same(normalizedBindings(before), normalizedBindings(after)),
+      same(
+        normalizedBindings(before, changedSecrets),
+        normalizedBindings(after, changedSecrets),
+      ),
     "The uploaded fee-converter code, runtime or bindings differ from the pinned version.",
   );
 }
@@ -356,7 +404,40 @@ export function requireQuietJournal(response: {
   );
 }
 
-async function checkJournal(version: Version, databaseId: string) {
+export const unresolvedSolanaWork = `SELECT
+  (SELECT COUNT(*) FROM fee_conversions c WHERE c.network='solana' AND c.mode='live'
+    AND (c.state IN ('submitted','unknown') OR
+      (c.kind='bridge' AND c.state='finalized' AND NOT EXISTS(SELECT 1 FROM fee_bridge_outcomes o WHERE o.bridge_id=c.id)))) AS openSends,
+  (SELECT COUNT(*) FROM fee_native_gas WHERE network='solana'
+    AND (state='reserved' OR (state='signed' AND actual_wei IS NULL))) AS openGas,
+  (SELECT COUNT(*) FROM fee_converter_locks WHERE network='solana' AND expires_at >= strftime('%Y-%m-%dT%H:%M:%fZ','now')) AS activeLocks`;
+export function requireQuietSolanaJournal(response: {
+  success?: boolean;
+  result?: { success?: boolean; results?: Record<string, unknown>[] }[];
+}) {
+  const row = response.result?.[0]?.results?.[0];
+  const counts = [row?.openSends, row?.openGas, row?.activeLocks];
+  check(
+    response.success === true &&
+      response.result?.length === 1 &&
+      response.result[0].success === true &&
+      response.result[0].results?.length === 1 &&
+      counts.every(
+        (value) => Number.isSafeInteger(value) && Number(value) >= 0,
+      ),
+    "Could not verify the Solana fee journal.",
+  );
+  check(
+    counts.every((value) => value === 0),
+    "Solana has unresolved fee sends, gas reservations or an active lease. Reconcile before changing RPC bindings.",
+  );
+}
+
+async function checkJournal(
+  version: Version,
+  databaseId: string,
+  solana = false,
+) {
   const database = version.resources?.bindings?.find(
     (entry) => entry.name === "FEE_DB",
   );
@@ -375,12 +456,15 @@ async function checkJournal(version: Version, databaseId: string) {
         authorization: `Bearer ${process.env.CLOUDFLARE_API_TOKEN}`,
         "content-type": "application/json",
       },
-      body: JSON.stringify({ sql: unresolvedFeeWork }),
+      body: JSON.stringify({
+        sql: solana ? unresolvedSolanaWork : unresolvedFeeWork,
+      }),
       signal: AbortSignal.timeout(20_000),
     },
   );
   check(response.ok, "Could not verify the bound fee-converter journal.");
-  requireQuietJournal(await response.json());
+  if (solana) requireQuietSolanaJournal(await response.json());
+  else requireQuietJournal(await response.json());
 }
 
 function requireLiveMain(sha: string) {
@@ -434,20 +518,25 @@ async function main() {
     const [latest, ...active] = await Promise.all(
       [state.latest.id, ...ids].map((id) => inspectVersion(get, id)),
     );
-    const lineages = active.map((version) =>
-      checkInheritedVersion({ ...state, latest }, version),
-    );
+    const lineages = active.map((version) => {
+      checkInheritedVersion({ ...state, latest }, version);
+      return inheritedRotationSuffix(version);
+    });
     check(
       new Set(lineages).size === 1,
       "Active fee-converter versions have different RPC rotations.",
     );
-    const suffix = lineages[0] ? rotationLabel + lineages[0] : "";
+    const suffix = inheritedRotationSuffix(active[0]);
     console.log(`slop.cash release ${sha}${suffix}`);
     return;
   }
-  const expectedVersion = process.env.SLOP_ROBINHOOD_RPC_EXPECTED_VERSION ?? "";
+  const solana = mode === "rotate-solana";
+  const expectedVersion =
+    (solana
+      ? process.env.SLOP_SOLANA_RPC_EXPECTED_VERSION
+      : process.env.SLOP_ROBINHOOD_RPC_EXPECTED_VERSION) ?? "";
   check(
-    mode === "rotate" &&
+    (mode === "rotate" || solana) &&
       process.env.GITHUB_EVENT_NAME === "workflow_dispatch" &&
       process.env.SLOP_FEE_CONVERTER_RELEASE === "enabled" &&
       uuid.test(expectedVersion),
@@ -459,7 +548,9 @@ async function main() {
     isAbsolute(output) && isAbsolute(runnerTemp),
     "The protected release runner and summary paths are unavailable.",
   );
-  const url = secureRpcUrl(process.env.SLOP_ROBINHOOD_RPC_REPLACEMENT);
+  const url = solana
+    ? null
+    : secureRpcUrl(process.env.SLOP_ROBINHOOD_RPC_REPLACEMENT);
   delete process.env.SLOP_ROBINHOOD_RPC_REPLACEMENT;
   const state = await workerState(get);
   requireRotationBase(state, expectedVersion);
@@ -478,11 +569,41 @@ async function main() {
   const database =
     config.d1_databases?.find((entry) => entry.binding === "FEE_DB")
       ?.database_id ?? "";
-  await checkJournal(before, database);
-  const observed = await qualifyRpc(url, config.vars ?? {});
-  console.log(
-    JSON.stringify({ event: "robinhood_rpc_candidate_verified", ...observed }),
-  );
+  if (solana) {
+    const networks = parseConfig(config.vars ?? {}).networks.map(
+      (entry) => entry.network,
+    );
+    check(
+      !networks.includes("solana") &&
+        before.resources?.bindings?.some(
+          (entry) =>
+            entry.name === "FEE_CONVERTER_NETWORKS" &&
+            entry.type === "plain_text" &&
+            entry.text === networks.join(","),
+        ),
+      "Solana must remain disabled while its RPC bindings are qualified.",
+    );
+    check(
+      before.resources?.bindings?.some(
+        (entry) =>
+          entry.name === "FEE_WALLET_KEY_SOLANA" &&
+          entry.type === "secret_text",
+      ),
+      "The existing Solana fee key is unavailable.",
+    );
+  }
+  await checkJournal(before, database, solana);
+  if (solana) await qualifySolanaRpcPair(runnerTemp);
+  else {
+    check(url !== null, "Robinhood candidate URL unavailable");
+    const observed = await qualifyRpc(url, config.vars ?? {});
+    console.log(
+      JSON.stringify({
+        event: "robinhood_rpc_candidate_verified",
+        ...observed,
+      }),
+    );
+  }
 
   const temporary = mkdtempSync(join(runnerTemp, "slop-robinhood-rpc-"));
   try {
@@ -501,10 +622,21 @@ async function main() {
       state.active.id,
     );
     requireLiveMain(sha);
-    writeFileSync(secrets, JSON.stringify({ [binding]: url }), {
-      mode: 0o600,
-      flag: "wx",
-    });
+    writeFileSync(
+      secrets,
+      JSON.stringify(
+        solana
+          ? {
+              RPC_URL_SOLANA: SOLANA_PUBLIC_PAIR[0],
+              SOLANA_RECOVERY_RPC_URL: SOLANA_PUBLIC_PAIR[1],
+            }
+          : { [binding]: url },
+      ),
+      {
+        mode: 0o600,
+        flag: "wx",
+      },
+    );
     const upload = runWrangler([
       "versions",
       "upload",
@@ -512,7 +644,7 @@ async function main() {
       configPath,
       `--secrets-file=${secrets}`,
       `--tag=${sha}`,
-      `--message=${description}${rotationLabel}${expectedVersion}`,
+      `--message=${rotationMessage(sha, before, solana ? "solana" : "robinhood")}`,
     ]);
     rmSync(secrets);
     const ids = [
@@ -532,8 +664,8 @@ async function main() {
       }),
     );
     const after = await inspectVersion(get, candidate);
-    requireSameWorker(before, after, sha);
-    await checkJournal(before, database);
+    requireSameWorker(before, after, sha, solana ? "solana" : "robinhood");
+    await checkJournal(before, database, solana);
     requireRotationBase(
       await workerState(get),
       expectedVersion,
@@ -562,8 +694,8 @@ async function main() {
       deployed.active.annotations?.["workers/message"] === description,
       "The active deployment source tag could not be verified after rotation.",
     );
-    requireSameWorker(before, immutable, sha);
-    const summary = `Fee converter Robinhood RPC rotation from ${expectedVersion} to ${candidate} at 100% on ${sha}.\n`;
+    requireSameWorker(before, immutable, sha, solana ? "solana" : "robinhood");
+    const summary = `Fee converter ${solana ? "Solana public-pair" : "Robinhood RPC"} rotation from ${expectedVersion} to ${candidate} at 100% on ${sha}.\n`;
     appendFileSync(output, summary);
     console.log(summary.trim());
   } finally {

@@ -18,6 +18,20 @@ import {
   repository as valueRepository,
 } from "../tests/value-binary-fixture";
 import {
+  base,
+  commit,
+  makeOriginal,
+  actor as nativeActor,
+  repository,
+} from "../tests/value-promotion-fixture";
+import type { FileChange } from "../workers/slopbot/value-evidence-types";
+import {
+  collectNativeMergeAcceptance,
+  NATIVE_MERGE_CONTEXT,
+} from "../workers/slopbot/value-native-merge";
+import { prepareWorkUnitEvidence } from "../workers/slopbot/value-work-unit";
+import {
+  bindRetained,
   CollectionBudgetExhausted,
   CorrectionEvidenceCache,
   censusMonths,
@@ -34,6 +48,7 @@ import {
   type GraphqlExecutor,
   OutcomeCommitLineLoader,
 } from "./generate-leaderboard";
+import * as valueIngestion from "./value-ingestion";
 
 const dirs: string[] = [];
 afterEach(async () => {
@@ -129,7 +144,7 @@ function fixture(merge = sha) {
     },
   };
 }
-function transport(merge = sha) {
+function transport(merge = sha, node = fixture(merge)) {
   let requests = 0;
   const searchPageSizes: number[] = [];
   const call = Object.assign(
@@ -154,23 +169,21 @@ function transport(merge = sha) {
           search: {
             issueCount: 1,
             pageInfo: { hasNextPage: false, endCursor: null },
-            nodes: [fixture(merge)],
+            nodes: [node],
           },
         };
-      else if (query.includes("CorrectionMetadata"))
-        data = { nodes: [fixture(merge)] };
+      else if (query.includes("CorrectionMetadata")) data = { nodes: [node] };
       else if (query.includes("LeaderboardOutcomeCommitLines"))
         data = {
-          nodes: [
-            {
-              __typename: "Commit",
-              id: "C_source",
-              oid: sha,
-              additions: 2,
-              deletions: 1,
-              repository: { id: "R_kgDOT23CXA" },
-            },
-          ],
+          nodes: (body.variables.ids as string[]).map((id) => ({
+            __typename: "Commit",
+            id,
+            oid: node.commits.nodes.find(({ commit }) => commit.id === id)
+              ?.commit.oid,
+            additions: 2,
+            deletions: 1,
+            repository: { id: "R_kgDOT23CXA" },
+          })),
         };
       else throw new Error(`Unexpected fixture query: ${query.slice(0, 70)}`);
       return new Response(
@@ -436,6 +449,168 @@ test("a complete census supplies source proofs without another metadata or stati
   const repeated = await collectImplementationCorrections(options, deps);
   expect(operations).toHaveLength(count);
   expect(repeated.receipt.manifestDigest).toBe(result.receipt.manifestDigest);
+});
+
+test("a complete census binds the head without assuming chronological commit order", async () => {
+  const ancestor = "c".repeat(40);
+  for (const list of [
+    "head-first",
+    "head-missing",
+    "head-duplicated",
+  ] as const) {
+    const node = fixture();
+    node.url = "https://github.com/elizaOS/asi/pull/1";
+    const head = node.commits.nodes[0];
+    const earlier = {
+      commit: { ...head.commit, id: "C_ancestor", oid: ancestor },
+    };
+    node.commits.nodes =
+      list === "head-first"
+        ? [head, earlier]
+        : list === "head-missing"
+          ? [earlier]
+          : [head, head];
+    node.commits.totalCount = node.commits.nodes.length;
+    const options = {
+      projects: ["asi"],
+      directory: await directory(),
+      month: "2026-01",
+      before: "2026-01-31T00:00:00.000Z",
+    };
+    const network = transport(sha, node);
+    const journal = baseline([{ ...award(), sourceUrl: node.url }]);
+    const collection = collectImplementationCorrections(options, {
+      journal,
+      registry: registry(),
+      token: "private-test-token",
+      transport: network.call,
+      now: new Date("2026-01-31T23:59:59Z"),
+    });
+    if (list === "head-missing") {
+      await expect(collection).rejects.toThrow(
+        "Complete census source identity or commit evidence is invalid",
+      );
+    } else if (list === "head-duplicated") {
+      await expect(collection).rejects.toThrow(
+        "commit totals do not match complete unique evidence",
+      );
+    } else {
+      const result = await collection;
+      expect(result.receipt.ownershipComplete).toBe(true);
+      expect(result.receipt.completeProofs).toBe(1);
+      const candidate = result.manifest.candidates[0];
+      expect(candidate.proof).toMatchObject({
+        status: "complete",
+        sources: [{ headSha: sha, commits: [{ sha }, { sha: ancestor }] }],
+      });
+      const corrected = applyPointsImplementationCorrections(
+        journal,
+        result.manifest,
+        [{ candidateId: candidate.id, eligible: true }],
+        result.manifest.generatedAt,
+        new Map(),
+      );
+      expect(corrected.dispositions[0].status).toBe("unchanged");
+    }
+  }
+});
+
+test("October opt-in holds both sides of a merged donor's shared commit", async () => {
+  const donor = fixture();
+  Object.assign(donor, {
+    url: "https://github.com/elizaOS/asi/pull/1",
+    mergedAt: "2026-10-15T00:00:02Z",
+    updatedAt: "2026-10-15T00:00:02Z",
+  });
+  const carrier = {
+    ...donor,
+    id: "PR_carrier",
+    number: 2,
+    url: "https://github.com/elizaOS/asi/pull/2",
+    mergedAt: "2026-10-15T00:00:00Z",
+    updatedAt: "2026-10-15T00:00:00Z",
+    author: {
+      ...donor.author,
+      id: "MDQ6VXNlcjQz",
+      login: "carrier",
+      url: "https://github.com/carrier",
+      avatarUrl: "https://avatars.githubusercontent.com/u/43",
+    },
+  };
+  const base = transport();
+  const network = Object.assign(
+    async (input: RequestInfo | URL, init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body));
+      if (body.query.includes("LeaderboardSearchReferences"))
+        return Response.json({
+          data: {
+            search: {
+              issueCount: 2,
+              nodes: [carrier, donor],
+              pageInfo: { hasNextPage: false, endCursor: null },
+            },
+            rateLimit: {
+              cost: 1,
+              remaining: 4900,
+              limit: 5000,
+              resetAt: "2026-11-01T01:00:00Z",
+            },
+          },
+        });
+      const response = await base.call(input, init);
+      if (!body.query.includes("CorrectionRepository")) return response;
+      const repository = await response.json();
+      repository.data.repository.createdAt = "2026-10-01T00:00:00Z";
+      return Response.json(repository);
+    },
+    { preconnect: fetch.preconnect },
+  );
+  const before = "2026-11-01T00:00:00.000Z";
+  const journal = appendPointAwards(
+    emptyPointsJournal(before),
+    [donor, carrier].map((pull) => ({
+      ...award(),
+      key: pointKey("asi", actor.id, "merged-pull-request", pull.id),
+      sourceId: pull.id,
+      sourceUrl: pull.url,
+      workUnitId: `history_${pull.id}`,
+      occurredAt: new Date(pull.mergedAt).toISOString(),
+    })),
+    "f".repeat(64),
+    "github-merged-history-v1",
+    before,
+  );
+  const options = {
+    projects: ["asi"],
+    directory: await directory(),
+    before,
+    octoberOriginalCredit: true,
+  };
+  const dependencies = {
+    journal,
+    registry: registry(),
+    token: "fixture-token",
+    transport: network,
+    now: new Date(before),
+  };
+  const completed = await collectImplementationCorrections(
+    options,
+    dependencies,
+  );
+  expect(completed.receipt.ownershipComplete).toBe(true);
+  expect(completed.receipt.heldProofs).toBe(2);
+  expect(completed.receipt.limitations.map((entry) => entry.reason)).toEqual([
+    "October replacement shares accepted commits with a merged donor PR",
+    "October replacement shares accepted commits with a merged donor PR",
+  ]);
+  await expect(
+    collectImplementationCorrections(
+      { ...options, octoberOriginalCredit: false },
+      dependencies,
+    ),
+  ).rejects.toThrow(
+    "October original credit policy differs from the frozen campaign",
+  );
 });
 
 test("complete census reuse holds absent or mismatched recorded sources", async () => {
@@ -2993,3 +3168,343 @@ test("conflicting author evidence holds a historical retained source", async () 
     });
   }
 });
+
+test("the grouped collector binds the reviewed accepted subset without weakening ordinary attribution", async () => {
+  const original = makeOriginal();
+  const accepted = structuredClone(original);
+  const path = "elizaOS/asi";
+  for (const source of [original, accepted]) {
+    const evidence = source.evidence;
+    evidence.repository = path;
+    evidence.repositoryNodeId = "R_kgDOT23CXA";
+    evidence.repositoryPolicy = {
+      id: path,
+      projectId: "asi",
+      integrationBranch: "main",
+      expectedNodeId: "R_kgDOT23CXA",
+    };
+    evidence.pull.html_url = `https://github.com/${path}/pull/1`;
+    evidence.pull.base.ref = "main";
+    evidence.commits[0].author = null;
+    evidence.commitAttribution[0].actorNodeIds = [];
+    evidence.commits[0].sha = sha;
+    evidence.commitAttribution[0].sha = sha;
+    evidence.pull.head.sha = sha;
+  }
+  original.evidence.pull.node_id = "PR_original";
+  original.evidence.pull.number = 1;
+  original.evidence.pull.html_url = `https://github.com/${path}/pull/1`;
+  original.evidence.pull.merged_at = null;
+  original.evidence.pull.merge_commit_sha = null;
+  original.evidence.pull.merged_by = null;
+  original.evidence.pull.closed_at = "2026-01-14T00:00:00Z";
+  original.evidence.mergeCommitEvidence = null;
+  accepted.evidence.pull.node_id = "PR_source";
+  accepted.evidence.pull.number = 2;
+  accepted.evidence.pull.html_url = `https://github.com/${path}/pull/2`;
+  accepted.evidence.pull.user = {
+    node_id: actor.id,
+    login: actor.login,
+    type: "User",
+  };
+  accepted.evidence.pull.merged_by = accepted.evidence.pull.user;
+  accepted.evidence.pull.merged_at = "2026-01-15T00:00:00Z";
+  original.evidence.relatedPullRequests = [
+    {
+      id: "PR_source",
+      number: 2,
+      url: accepted.evidence.pull.html_url,
+      repository: path,
+    },
+  ];
+  original.evidence.comments = [
+    {
+      node_id: "IC_retained",
+      html_url: `${original.evidence.pull.html_url}#issuecomment-1`,
+      body: "Your commits are retained in #2.",
+      user: accepted.evidence.pull.user,
+      created_at: "2026-01-15T01:00:00Z",
+      updated_at: "2026-01-15T01:00:00Z",
+    },
+  ];
+  const extra = structuredClone(original.evidence.commits[0]);
+  extra.sha = "9".repeat(40);
+  extra.parents = [{ sha }];
+  original.evidence.commits.push(extra);
+  original.evidence.pull.head.sha = extra.sha;
+  original.evidence.pull.commits = 2;
+  const file = {
+    ...original.evidence.files[0],
+    filename: "unaccepted-test.ts",
+    patch: "@@ -0,0 +1 @@\n+unaccepted",
+  };
+  original.evidence.files.push(file);
+  original.evidence.commitAttribution.push({
+    sha: extra.sha,
+    actorNodeIds: [],
+    changedPaths: [file.filename],
+    files: [file],
+    limitations: [],
+  });
+  const evidence = await prepareWorkUnitEvidence(
+    [original, accepted],
+    [
+      {
+        ...valueRepository,
+        id: path,
+        projectId: "asi",
+        expectedNodeId: "R_kgDOT23CXA",
+      },
+    ],
+  );
+  expect(evidence.limitations).toEqual([]);
+  const digest = "d".repeat(64);
+  const workUnitId = `wu_${"b".repeat(64)}`;
+  const decision = {
+    status: "assessed",
+    latestDigest: digest,
+    evidence,
+    record: {
+      units: [
+        { workUnitId, claimIds: evidence.claims.map((claim) => claim.id) },
+      ],
+    },
+  } as unknown as Awaited<
+    ReturnType<typeof valueIngestion.loadValueInputs>
+  >["jointValueDecisions"] extends Map<string, infer T>
+    ? T
+    : never;
+  const loader = spyOn(valueIngestion, "loadValueInputs").mockResolvedValue({
+    jointValueDecisions: new Map([["PR_source", decision]]),
+    heldWorkUnits: [],
+  } as unknown as Awaited<ReturnType<typeof valueIngestion.loadValueInputs>>);
+  try {
+    const source = {
+      ...award(30, true),
+      sourceUrl: accepted.evidence.pull.html_url,
+    };
+    const journal = appendPointAwards(
+      emptyPointsJournal("2026-01-31T00:00:00.000Z"),
+      [source],
+      "f".repeat(64),
+      "slop-score-v2",
+      "2026-01-31T00:00:00.000Z",
+      new Map([
+        [
+          source.key,
+          {
+            sourceId: `value:${digest}`,
+            effectiveAt: when,
+            reason: "Retained assessed work unit",
+          },
+        ],
+      ]),
+    );
+    const result = await collectImplementationCorrections(
+      {
+        projects: ["asi"],
+        directory: await directory(),
+        month: "2026-01",
+        before: "2026-01-31T00:00:00.000Z",
+      },
+      {
+        journal,
+        registry: registry(),
+        token: "fixture-token",
+        transport: transport(sha, {
+          ...fixture(),
+          number: 2,
+          url: accepted.evidence.pull.html_url,
+        }).call,
+        now: new Date("2026-01-31T23:59:59Z"),
+      },
+    );
+    expect(
+      result.receipt.limitations.filter(
+        (item) => item.reason !== "outside-reviewed-candidate-scope",
+      ),
+    ).toEqual([]);
+    expect(result.receipt.completeProofs).toBe(1);
+    expect(result.manifest.candidates[0].proof).toMatchObject({
+      status: "complete",
+      expectedClaimIds: evidence.claims.map((claim) => claim.id),
+      sources: expect.arrayContaining([
+        expect.objectContaining({ sourceId: "PR_original", commitCount: 2 }),
+      ]),
+    });
+  } finally {
+    loader.mockRestore();
+  }
+});
+
+const head = "1".repeat(40),
+  later = "4".repeat(40),
+  merged = "5".repeat(40);
+const hash = (kind: string, bytes: Buffer) =>
+  createHash("sha1")
+    .update(`${kind} ${bytes.length}\0`)
+    .update(bytes)
+    .digest("hex");
+function nativeContextFixture() {
+  const source = makeOriginal();
+  source.evidence.pull.merge_commit_sha = merged;
+  source.evidence.pull.head.sha = head;
+  const one = commit(head),
+    two = commit(later);
+  two.parents = [{ sha: head }];
+  two.commit.message = "Follow up the accepted fix";
+  const added: FileChange = {
+    filename: "fix.ts",
+    status: "added",
+    additions: 1,
+    deletions: 0,
+    patch: "@@ -0,0 +1 @@\n+export const fixed = true;",
+    blob_url: null,
+  };
+  const changed: FileChange = {
+    ...added,
+    status: "modified",
+    additions: 1,
+    deletions: 1,
+    patch:
+      "@@ -1 +1 @@\n-export const fixed = true;\n+export const fixed = true; // reviewed",
+  };
+  source.evidence.files = [added];
+  source.evidence.commits = [one];
+  source.evidence.commitAttribution = [
+    {
+      sha: head,
+      actorNodeIds: [nativeActor.node_id],
+      changedPaths: ["fix.ts"],
+      files: [added],
+      limitations: [],
+    },
+  ];
+  source.evidence.mergeCommitEvidence = {
+    sha: merged,
+    html_url: `https://github.com/${repository.id}/commit/${merged}`,
+    parents: [{ sha: base }, { sha: later }],
+    stats: { additions: 1, deletions: 0, total: 1 },
+    files: [
+      {
+        ...added,
+        patch: "@@ -0,0 +1 @@\n+export const fixed = true; // reviewed",
+      },
+    ],
+  };
+  const carrier = structuredClone(source);
+  carrier.evidence.pull.node_id = "PR_carrier";
+  carrier.evidence.pull.number = 2;
+  carrier.evidence.pull.html_url = `https://github.com/${repository.id}/pull/2`;
+  carrier.evidence.pull.head.sha = later;
+  carrier.evidence.pull.commits = 2;
+  carrier.evidence.files = structuredClone(
+    source.evidence.mergeCommitEvidence.files,
+  );
+  carrier.evidence.commits = structuredClone([one, two]);
+  carrier.evidence.commitAttribution.push({
+    sha: later,
+    actorNodeIds: [nativeActor.node_id],
+    changedPaths: ["fix.ts"],
+    files: [changed],
+    limitations: [],
+  });
+  const values = new Map<string, unknown>();
+  function bind(ref: string, text: string) {
+    const blob = hash("blob", Buffer.from(text));
+    const bytes = Buffer.concat([
+      Buffer.from("100644 fix.ts\0"),
+      Buffer.from(blob, "hex"),
+    ]);
+    const tree = hash("tree", bytes);
+    values.set(`/repos/${repository.id}/git/commits/${ref}`, {
+      sha: ref,
+      tree: { sha: tree },
+    });
+    values.set(`/repos/${repository.id}/git/trees/${tree}?recursive=1`, {
+      sha: tree,
+      truncated: false,
+      tree: [{ path: "fix.ts", mode: "100644", type: "blob", sha: blob }],
+    });
+    values.set(`/repos/${repository.id}/contents/fix.ts?ref=${ref}`, {
+      type: "file",
+      encoding: "base64",
+      size: Buffer.byteLength(text),
+      sha: blob,
+      content: Buffer.from(text).toString("base64"),
+    });
+  }
+  bind(head, "export const fixed = true;\n");
+  bind(merged, "export const fixed = true; // reviewed\n");
+  values.set(
+    `/repos/${repository.id}/compare/${head}...${later}?per_page=100&page=1`,
+    {
+      status: "ahead",
+      merge_base_commit: { sha: head },
+      total_commits: 1,
+      commits: [two],
+    },
+  );
+  values.set(`/repos/${repository.id}/compare/${head}...${merged}?per_page=1`, {
+    status: "ahead",
+    merge_base_commit: { sha: head },
+    files: [changed],
+  });
+  const client = {
+    async get<T>(path: string): Promise<T | null> {
+      return structuredClone(values.get(path) ?? null) as T | null;
+    },
+  };
+  return { source, carrier, client, values, one, two };
+}
+async function preparedNativeContext() {
+  const f = nativeContextFixture();
+  const proof = await collectNativeMergeAcceptance(
+    f.client,
+    repository.id,
+    f.source.evidence,
+  );
+  if (!proof) throw Error("Missing proof");
+  f.source.evidence.nativeMergeAcceptance = proof;
+  f.source.evidence.limitations = [NATIVE_MERGE_CONTEXT];
+  return { ...f, proof };
+}
+
+test("grouped conversion retains a fully verified native ancestor context", async () => {
+  const { source, carrier } = await preparedNativeContext();
+  const group = await prepareWorkUnitEvidence([source, carrier], [repository]);
+  expect(group.limitations).toEqual([]);
+  const owners = new Map(
+    carrier.evidence.commits.map((c) => [
+      `${repository.id.toLowerCase()}\0${c.sha}`,
+      carrier.evidence.pull.node_id,
+    ]),
+  );
+  expect(
+    (await bindRetained(group.sources, owners, true)).map((s) => s.complete),
+  ).toEqual([true, true]);
+  expect(source.evidence.limitations).toEqual([NATIVE_MERGE_CONTEXT]);
+  expect(bindRetained(group.sources, owners)).rejects.toThrow(
+    "Full retained source",
+  );
+});
+for (const fault of [
+  "missing-carrier",
+  "forged-head",
+  "other-limitation",
+] as const) {
+  test(`grouped native context refuses ${fault}`, async () => {
+    const { source, carrier } = await preparedNativeContext();
+    if (fault === "forged-head")
+      carrier.evidence.pull.head.sha = "9".repeat(40);
+    if (fault === "other-limitation")
+      source.evidence.limitations.push("Uninspected source");
+    expect(
+      bindRetained(
+        fault === "missing-carrier" ? [source] : [source, carrier],
+        new Map(),
+        true,
+      ),
+    ).rejects.toThrow();
+  });
+}

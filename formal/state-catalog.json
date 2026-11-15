@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "meaning": "Declared lifecycle candidates. This intentionally incomplete syntactic census cannot find every implicit state, establish reachability, or prove source/model correspondence. Review the open work listed in formal/README.md as well.",
-  "inventorySha256": "efefc63d659e0c37dda71fd19955accaf031938e03a511c437ba1c71d9ee14da",
+  "inventorySha256": "9a2f4ff1c23eade9b5a4d3cff84ab2f06213d5865b55995d448e017963fc71f5",
   "states": [
     {
       "path": "backend/fee-conversions/handler.ts",
@@ -19,7 +19,7 @@
     },
     {
       "path": "backend/notifications/events.ts",
-      "line": 581,
+      "line": 610,
       "name": "stage",
       "kind": "string-union",
       "values": ["opened", "resolved"],
@@ -29,7 +29,8 @@
         "formal/models/api/points_dispute_decision.qnt",
         "formal/models/api/points_dispute_intake.qnt",
         "formal/models/api/points_dispute_lease.qnt",
-        "formal/models/api/wallet_claim_publication.qnt"
+        "formal/models/api/wallet_claim_publication.qnt",
+        "formal/models/rewards/monthly_owner_cuts.qnt"
       ],
       "lexicallyUnmentionedValues": ["opened"],
       "review": "candidate-only"
@@ -49,7 +50,7 @@
     },
     {
       "path": "backend/payments/monthly.ts",
-      "line": 863,
+      "line": 965,
       "name": "status",
       "kind": "string-union",
       "values": ["failed", "finalized", "pending"],
@@ -57,6 +58,7 @@
         "formal/models/rewards/monthly_coordinator.qnt",
         "formal/models/rewards/monthly_cutoff_queue.qnt",
         "formal/models/rewards/monthly_owner_completion.qnt",
+        "formal/models/rewards/monthly_owner_cuts.qnt",
         "formal/models/rewards/monthly_reserve.qnt",
         "formal/models/rewards/monthly_source_conflict.qnt"
       ],
@@ -65,7 +67,7 @@
     },
     {
       "path": "backend/payments/monthly.ts",
-      "line": 1350,
+      "line": 1577,
       "name": "chain_state",
       "kind": "string-union",
       "values": ["paid", "reserved"],
@@ -73,6 +75,7 @@
         "formal/models/rewards/monthly_coordinator.qnt",
         "formal/models/rewards/monthly_cutoff_queue.qnt",
         "formal/models/rewards/monthly_owner_completion.qnt",
+        "formal/models/rewards/monthly_owner_cuts.qnt",
         "formal/models/rewards/monthly_reserve.qnt",
         "formal/models/rewards/monthly_source_conflict.qnt"
       ],
@@ -2136,6 +2139,36 @@
       "review": "candidate-only"
     },
     {
+      "path": "scripts/prepare-implementation-corrections.ts",
+      "line": 266,
+      "name": "CorrectionPhase",
+      "kind": "string-union",
+      "values": [
+        "allocation validation",
+        "collection and registry verification",
+        "participation restrictions read",
+        "preview or receipt generation",
+        "private financial protection read",
+        "protected import and readback",
+        "public Points read",
+        "trusted invocation"
+      ],
+      "models": [
+        "formal/models/points/historical_implementation_allocation.qnt"
+      ],
+      "lexicallyUnmentionedValues": [
+        "allocation validation",
+        "collection and registry verification",
+        "participation restrictions read",
+        "preview or receipt generation",
+        "private financial protection read",
+        "protected import and readback",
+        "public Points read",
+        "trusted invocation"
+      ],
+      "review": "candidate-only"
+    },
+    {
       "path": "scripts/prior-cycle-accrual.ts",
       "line": 37,
       "name": "PriorCycleNotReadyReason",
@@ -2156,6 +2189,16 @@
       "values": ["CLOSED", "OPEN"],
       "models": ["formal/models/points/github_census.qnt"],
       "lexicallyUnmentionedValues": ["CLOSED", "OPEN"],
+      "review": "candidate-only"
+    },
+    {
+      "path": "scripts/value-file-recovery.ts",
+      "line": 118,
+      "name": "mode",
+      "kind": "string-union",
+      "values": ["100644", "100755"],
+      "models": ["formal/models/slopbot/merge_evidence_acquisition.qnt"],
+      "lexicallyUnmentionedValues": ["100644", "100755"],
       "review": "candidate-only"
     },
     {
@@ -2241,7 +2284,7 @@
     },
     {
       "path": "src/App.tsx",
-      "line": 451,
+      "line": 463,
       "name": "useState",
       "kind": "string-union",
       "values": ["deleting", "holding", "typing"],
@@ -2266,7 +2309,7 @@
     },
     {
       "path": "src/App.tsx",
-      "line": 1091,
+      "line": 1160,
       "name": "useState",
       "kind": "string-union",
       "values": ["blocked", "error", "loading", "ready"],
@@ -2866,7 +2909,7 @@
     },
     {
       "path": "src/VaultActions.tsx",
-      "line": 406,
+      "line": 423,
       "name": "result",
       "kind": "string-union",
       "values": [
@@ -3138,7 +3181,7 @@
     },
     {
       "path": "src/lib/points-implementation-corrections.ts",
-      "line": 123,
+      "line": 198,
       "name": "status",
       "kind": "string-union",
       "values": ["already-applied", "applied", "held", "retained", "unchanged"],
@@ -3668,7 +3711,7 @@
     },
     {
       "path": "workers/identity/index.ts",
-      "line": 45,
+      "line": 46,
       "name": "PrivateIntakeSkipReason",
       "kind": "string-union",
       "values": [
@@ -3904,7 +3947,7 @@
     },
     {
       "path": "workers/slopbot/github.ts",
-      "line": 191,
+      "line": 199,
       "name": "Exemption",
       "kind": "string-union",
       "values": ["exempt", "not-exempt", "unknown"],
@@ -4081,6 +4124,16 @@
         "formal/models/slopbot/bot_value_budget.qnt"
       ],
       "lexicallyUnmentionedValues": [],
+      "review": "candidate-only"
+    },
+    {
+      "path": "workers/slopbot/value-file-recovery.ts",
+      "line": 24,
+      "name": "mode",
+      "kind": "string-union",
+      "values": ["100644", "100755"],
+      "models": ["formal/models/slopbot/bot_evidence_integrity.qnt"],
+      "lexicallyUnmentionedValues": ["100644", "100755"],
       "review": "candidate-only"
     },
     {

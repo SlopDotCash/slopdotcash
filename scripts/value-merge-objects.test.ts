@@ -251,3 +251,53 @@ test("a malformed extra object is refused even when reconstruction does not need
     rmSync(f.root, { recursive: true, force: true });
   }
 });
+
+test("selected file recovery extends closure only for immutable requested snapshots", async () => {
+  const f = fixture();
+  try {
+    const request = {
+      repository: f.input.repository,
+      repositoryNodeId: f.input.repositoryNodeId,
+      ref: f.ancestor,
+      path: "obsolete.txt",
+    };
+    const output = join(f.root, "recovery.bundle");
+    await createValueMergeBundle([f.input], f.full, output, [request]);
+    f.git(f.compact, ["init", "--bare", "--template=", f.compact]);
+    f.git(f.compact, ["bundle", "unbundle", output]);
+    expect(
+      verifyMergeObjectStore([f.input], f.compact, [request]).blobs,
+    ).toContain(f.obsoleteBlob);
+    const { recoverValueFiles } = await import("./value-file-recovery");
+    const { verifiedValueFileClient } = await import(
+      "../workers/slopbot/value-file-recovery"
+    );
+    const proof = recoverValueFiles(f.compact, [request]);
+    const client = await verifiedValueFileClient<{
+      get<T>(path: string): Promise<T | null>;
+      verifiedFile?: import("../workers/slopbot/value-evidence-types").EvidenceClient["verifiedFile"];
+    }>({ get: async () => null }, [request], proof);
+    const bytes = await client.verifiedFile?.(
+      request.repository,
+      request.ref,
+      request.path,
+    );
+    expect(new TextDecoder().decode(bytes?.bytes)).toBe(
+      "unrelated historical contents\n",
+    );
+    expect(
+      await client.verifiedFile?.(
+        request.repository,
+        request.ref,
+        "witness.txt",
+      ),
+    ).toBeNull();
+    expect(() =>
+      requiredMergeObjects([f.input], f.full, [
+        { ...request, repositoryNodeId: "R_wrong" },
+      ]),
+    ).toThrow();
+  } finally {
+    rmSync(f.root, { recursive: true, force: true });
+  }
+});

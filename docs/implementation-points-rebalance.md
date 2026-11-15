@@ -11,6 +11,27 @@ awards. `points-implementation-corrections.yml` is the manual, trusted-main path
 for those historical allocations. It does not reevaluate old work, replace the
 legacy scoring rules, move money, or alter historical settlements.
 
+For the October 2026 owner decision, set `october_original_credit=true` when
+collecting a reviewed payout project. This selects October pools for correction
+and still checks ownership across the repository census. A verified replacement
+receives the ordinary pool's full implementation credit for its original
+contributor. The proof binds an accepted commit to the original and checks
+immutable identities across the original and carried work. A carrier's commit
+inside the original PR requires an exact Git parent path from an original
+contributor commit. The collector checks those edges against immutable GitHub
+commit reads. Distinct contributors, missing parent evidence and ambiguous
+accepted copies require review. A legacy collection or rolling
+snapshot retains an already recorded October original-contributor allocation.
+For a native integration containing several original PRs, each reviewed work
+unit retains the complete integration census and binds only its exact claim IDs
+to one original. Exact shared Git objects establish the original source without
+a description reference. Unlinked commits retain their null author metadata and
+use the authenticated original PR creator as the fallback. Every selected carrier
+follow-up must descend from that original head. Other work units retain their
+own attribution.
+
+Run the preview and reconcile value and duplicate work before recording.
+
 ## Collection and review
 
 Select the project by its current D1 registry ID. The collector inventories
@@ -37,9 +58,13 @@ with `resume_run` from this repository's same manual workflow on main. The
 source commit must be the current main commit or one of its ancestors. The
 current collector reconstructs cached bytes and proofs again, so a reviewed
 collector repair can retain compatible source evidence from an earlier run.
-The frozen baseline, registry and campaign scope must still match. An uploaded
-checkpoint is not its own evidence of completeness. Applying corrections still
-requires the current main checkout and fresh authority and financial checks.
+The frozen journal prefix and campaign scope must still match. If another
+project changes the registry, the collector reconstructs the frozen registry
+from immutable revisions and verifies its full digest. It also checks that
+the selected project definitions, revisions, restrictions and repository plans
+still match. An archive without a verifiable frozen registry needs a new
+campaign. Applying corrections requires the current main checkout, a complete
+verified collection and fresh authority and financial checks.
 
 The optional `graphql_discussions=true` input reduces REST comment requests
 for new retained-copy discovery. GitHub's REST PR and reviews still anchor
@@ -48,6 +73,15 @@ identity and reconciles every comment count with REST. Missing pages, count
 mismatches, and ambiguous references fall back to the original REST reads.
 The retained-copy proof checks the original and accepted patches before
 allocating Points. Resuming a campaign reuses its recorded discussion reads.
+
+An exact copied edit can retain a verified linked primary author without a
+merger acknowledgement. Both complete source records must name that same
+eligible primary author, and the earlier closed source must have an immutable
+resolved reference from the accepted PR. This does not transfer credit through
+an unlinked author or a PR creator fallback. When an intermediate PR carries
+the identical native original commit, two independently complete copy bindings
+retain the earlier source whose creator is that linked author. The intermediate
+source and its own follow-up commits remain in the evidence.
 
 ## Private eligibility and recording
 
@@ -67,8 +101,8 @@ remain intact. Displaced recipients receive zero-valued successor revisions.
 The domain validator checks actual Points projections as well as raw pool
 totals and refuses stale or incomplete connected pools.
 
-Immediately before a write the runner verifies it still uses current main
-and that the registry and account restrictions have not changed since planning.
+Immediately before a write the runner verifies it still uses current main and
+rechecks the selected project registry and current account restrictions.
 The unchanged atomic import guard checks private protection again, covering
 changes after the preflight. A pending public receipt is retained before import.
 Success requires the exact D1 batch digest, revision count and empty staging,
