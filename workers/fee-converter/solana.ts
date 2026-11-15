@@ -896,15 +896,26 @@ export function createSolanaClient(options: SolanaClientOptions): ChainClient {
       { commitment: "confirmed", encoding: "base64" },
     ]);
     if (info.value === null) throw new Error("project account missing");
-    return solanaUint(
-      solanaAccount(
-        info.value,
-        escrow.programId,
-        PROJECT_SIZE,
-        PROJECT_DISCRIMINATOR,
-      ),
-      ACCRUED_FEES_OFFSET,
-    );
+    // Before the month-pledge program upgrade a Project is 332 bytes; after
+    // `migrate_project` it is 340, with `pledged_open` appended after every
+    // field read here (operator decision, 15 November 2026).
+    let mismatch: unknown;
+    for (const size of new Set([PROJECT_SIZE, 332, 340])) {
+      try {
+        return solanaUint(
+          solanaAccount(
+            info.value,
+            escrow.programId,
+            size,
+            PROJECT_DISCRIMINATOR,
+          ),
+          ACCRUED_FEES_OFFSET,
+        );
+      } catch (error) {
+        mismatch = error;
+      }
+    }
+    throw mismatch;
   }
 
   /** Token balance change of `owner`'s `mint` accounts in one transaction. */

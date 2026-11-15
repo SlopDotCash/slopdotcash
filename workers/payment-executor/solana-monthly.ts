@@ -5,7 +5,6 @@ import type { MonthlyAuthorization } from "../../backend/payments/monthly-attest
 import {
   OBLIGATION_DISCRIMINATOR,
   OBLIGATION_SIZE,
-  PROJECT_SIZE,
   type SolanaEscrowConfig,
   solanaAccount,
   solanaAllocationProof,
@@ -40,6 +39,7 @@ import {
   type PublicSolanaExecutorEnvironment,
   preflightSolanaDeployment,
   readSolanaAccount,
+  readSolanaProject,
   solanaTransactionStatus,
   verifiedSignerSignature,
 } from "./solana";
@@ -353,10 +353,9 @@ export async function submitSolanaMonthly(
         alreadyCommitted: false,
         notAdmitted: true,
       };
-    const state = await readSolanaAccount(
+    const state = await readSolanaProject(
       config,
       config.projectPda,
-      PROJECT_SIZE,
       discriminator("Project"),
     );
     if (!state) throw new Error("Project missing");

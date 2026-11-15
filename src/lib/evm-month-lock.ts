@@ -28,6 +28,7 @@ const pledgeAbi = parseAbi([
   "function openPledgedGross() view returns (uint128)",
   "function monthPledges(uint32) view returns (uint128 amount, bool open)",
   "function pledgeMonths(uint32 fromPeriod, uint8 count, uint128 amount)",
+  "function currentPeriod() view returns (uint32)",
 ]);
 
 /** The contract's refusal of a withdrawal that would take locked funds. */
@@ -58,12 +59,11 @@ function pledgeCalldata(fromPeriod: number, count: number, amount: bigint) {
       });
 }
 
-/** "2026-12" for the month containing `now`, then the next `count - 1`. */
-export function lockPeriods(now: Date, count: number): string[] {
+/** `from` ("2026-12") and the next `count - 1` months. */
+export function lockPeriods(from: string, count: number): string[] {
+  const [year, month] = from.split("-").map(Number);
   return Array.from({ length: count }, (_, index) =>
-    new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + index, 1))
-      .toISOString()
-      .slice(0, 7),
+    new Date(Date.UTC(year, month - 1 + index, 1)).toISOString().slice(0, 7),
   );
 }
 
@@ -77,8 +77,8 @@ export function lockEnds(period: string): Date {
   return new Date(Date.UTC(year, month + 1, 4));
 }
 
-/** Plain words for the contract's refusal to release locked funds. */
-export function pledgedFundsRefusal(caught: unknown): Error | null {
+/** The text of a wallet or RPC error and everything nested in it. */
+function errorText(caught: unknown): string[] {
   const seen = new Set<unknown>();
   const text: string[] = [];
   const collect = (value: unknown, depth: number) => {
@@ -90,15 +90,66 @@ export function pledgedFundsRefusal(caught: unknown): Error | null {
       collect((value as Record<string, unknown>)[key], depth + 1);
   };
   collect(caught, 0);
-  return text.some(
-    (part) =>
-      part.toLowerCase().includes(PLEDGED_FUNDS_SELECTOR) ||
-      part.includes("PledgedFunds"),
-  )
-    ? new Error(
-        "These funds are locked for a month that has not been paid out yet. Withdraw only funds above the locked months.",
-      )
-    : null;
+  return text;
+}
+
+/** One of the contract's custom errors, by selector or by name. */
+function contractError(caught: unknown, name: string): boolean {
+  const selector = toFunctionSelector(`${name}()`);
+  return errorText(caught).some(
+    (part) => part.toLowerCase().includes(selector) || part.includes(name),
+  );
+}
+
+const LOCKED_FUNDS =
+  "These funds are locked for a month that has not been paid out yet. Withdraw only funds above the locked months.";
+
+/** Plain words for the contract's refusal to release locked funds. */
+export function pledgedFundsRefusal(caught: unknown): Error | null {
+  return contractError(caught, "PledgedFunds") ? new Error(LOCKED_FUNDS) : null;
+}
+
+/** Plain words for the contract's refusal of a lock. */
+export function lockRefusal(caught: unknown): Error | null {
+  const words: [string, string][] = [
+    [
+      "PledgeTooLow",
+      "A month in this range is already locked at a higher amount. A lock can be raised, never lowered.",
+    ],
+    [
+      "InsufficientFreeBalance",
+      "The vault's free funds cannot cover these months. Deposit more first, or lock fewer months.",
+    ],
+    [
+      "InvalidInput",
+      "The months changed while the lock was sent, for example at the start of a new month. Review the lock again.",
+    ],
+    [
+      "MonthlyAlreadyCommitted",
+      "A month in this range is already reserved for payout.",
+    ],
+    ["WrongPurpose", "This vault cannot lock months."],
+  ];
+  for (const [name, text] of words)
+    if (contractError(caught, name)) return new Error(text);
+  return null;
+}
+
+/**
+ * True when the call reverted with no data: a vault contract without the
+ * pledge functions. A wallet or RPC failure is not that.
+ */
+function emptyRevert(caught: unknown): boolean {
+  const data = (caught as { data?: unknown } | null)?.data;
+  const nested = (caught as { error?: { data?: unknown } } | null)?.error?.data;
+  if (data === "0x" || nested === "0x") return true;
+  return (
+    data === undefined &&
+    nested === undefined &&
+    /^execution reverted\.?$/iu.test(
+      String((caught as { message?: unknown } | null)?.message ?? "").trim(),
+    )
+  );
 }
 
 async function call(
@@ -112,7 +163,7 @@ async function call(
     { to: deployment.vault, data },
     "latest",
   ]);
-  if (typeof result !== "string" || !/^0x[0-9a-fA-F]*$/.test(result))
+  if (typeof result !== "string" || !/^0x[0-9a-fA-F]+$/.test(result))
     throw new Error("The wallet returned an invalid vault read.");
   return result as `0x${string}`;
 }
@@ -129,23 +180,23 @@ export async function readWalletPledges(
   openPledgedGross: bigint;
   pledges: Map<string, { amount: bigint; open: boolean }>;
 } | null> {
-  let open: bigint;
+  let raw: `0x${string}`;
   try {
-    open = decodeFunctionResult({
-      abi: pledgeAbi,
-      functionName: "openPledgedGross",
-      data: await call(
-        wallet,
-        deployment,
-        encodeFunctionData({
-          abi: pledgeAbi,
-          functionName: "openPledgedGross",
-        }),
-      ),
-    });
-  } catch {
-    return null;
+    raw = await call(
+      wallet,
+      deployment,
+      encodeFunctionData({ abi: pledgeAbi, functionName: "openPledgedGross" }),
+    );
+  } catch (caught) {
+    // Only an empty revert means the vault has no pledge support.
+    if (emptyRevert(caught)) return null;
+    throw caught;
   }
+  const open = decodeFunctionResult({
+    abi: pledgeAbi,
+    functionName: "openPledgedGross",
+    data: raw,
+  });
   const pledges = new Map<string, { amount: bigint; open: boolean }>();
   for (const period of periods) {
     const [amount, isOpen] = decodeFunctionResult({
@@ -177,15 +228,19 @@ export async function assertWithdrawalOutsideLocks(
   freeBalance: string | null,
   gross: string,
 ): Promise<boolean> {
-  const read = await readWalletPledges(deployment, wallet, []);
+  let read: Awaited<ReturnType<typeof readWalletPledges>>;
+  try {
+    read = await readWalletPledges(deployment, wallet, []);
+  } catch {
+    // Unreadable now: the contract still refuses locked funds when sent.
+    return false;
+  }
   if (!read) return false;
   if (
     freeBalance !== null &&
     BigInt(freeBalance) - BigInt(gross) < read.openPledgedGross
   )
-    throw new Error(
-      "These funds are locked for a month that has not been paid out yet. Withdraw only funds above the locked months.",
-    );
+    throw new Error(LOCKED_FUNDS);
   return true;
 }
 
@@ -212,7 +267,6 @@ export async function reviewMonthLock(input: {
   amount: string;
   minimumMinor: bigint;
   deposit: string;
-  now: Date;
 }): Promise<MonthLockReview> {
   const { deployment, wallet } = input;
   if (!LOCK_MONTH_COUNTS.includes(input.count as 1))
@@ -242,7 +296,24 @@ export async function reviewMonthLock(input: {
     throw new Error(
       "Lock at least the project's monthly amount, or the month is not funded.",
     );
-  const periods = lockPeriods(input.now, input.count);
+  // The contract's own month: a lock must start at or after it, and a month
+  // computed in the browser can already be past by the time it is mined.
+  const current = decodeFunctionResult({
+    abi: pledgeAbi,
+    functionName: "currentPeriod",
+    data: await call(
+      wallet,
+      deployment,
+      encodeFunctionData({ abi: pledgeAbi, functionName: "currentPeriod" }),
+    ),
+  });
+  const currentText = String(current);
+  if (!/^\d{4}(0[1-9]|1[0-2])$/u.test(currentText))
+    throw new Error("The vault returned an invalid month.");
+  const periods = lockPeriods(
+    `${currentText.slice(0, 4)}-${currentText.slice(4)}`,
+    input.count,
+  );
   const read = await readWalletPledges(deployment, wallet, periods);
   if (!read) throw new Error("This vault cannot lock months yet.");
   let added = 0n;
@@ -323,22 +394,30 @@ export async function sendMonthLock(
 ): Promise<{ kind: "transaction" | "batch"; id: string }> {
   const call = lockCall(deployment, review);
   if (review.deposit)
-    return {
-      kind: "batch",
-      id: await sendVaultBatch(
-        deployment,
-        wallet,
-        review.deposit.amount,
-        beforeSend,
-        "ordinary",
-        "finalized",
-        [call],
-      ),
-    };
+    try {
+      return {
+        kind: "batch",
+        id: await sendVaultBatch(
+          deployment,
+          wallet,
+          review.deposit.amount,
+          beforeSend,
+          "ordinary",
+          "finalized",
+          [call],
+        ),
+      };
+    } catch (caught) {
+      throw lockRefusal(caught) ?? caught;
+    }
   const request = wallet.evmRequest;
   if (!request) throw new Error("Choose an EVM wallet.");
   const transaction = { from: wallet.address, ...call };
-  await request("eth_estimateGas", [transaction]);
+  try {
+    await request("eth_estimateGas", [transaction]);
+  } catch (caught) {
+    throw lockRefusal(caught) ?? caught;
+  }
   await assertVaultWalletAccount(wallet, walletVaultConfig(deployment, wallet));
   beforeSend();
   const hash = await request("eth_sendTransaction", [transaction]);

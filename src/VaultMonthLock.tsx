@@ -80,8 +80,17 @@ export function VaultMonthLock({
   onLocked: () => void;
 }) {
   const [count, setCount] = useState<number>(1);
+  // A lock can only be raised: start at the monthly amount or the highest
+  // month already locked, whichever is more.
+  const highest = pledges
+    .filter((pledge) => pledge.open)
+    .reduce(
+      (most, pledge) =>
+        BigInt(pledge.amount) > most ? BigInt(pledge.amount) : most,
+      monthlyMinor,
+    );
   const [amount, setAmount] = useState(
-    formatBaseUnits(monthlyMinor.toString(), decimals, { grouping: false }),
+    formatBaseUnits(highest.toString(), decimals, { grouping: false }),
   );
   const [deposit, setDeposit] = useState("");
   const [review, setReview] = useState<MonthLockReview | null>(null);
@@ -122,7 +131,6 @@ export function VaultMonthLock({
           amount,
           minimumMinor: monthlyMinor,
           deposit,
-          now: new Date(),
         });
         if (mounted.current) setReview(result);
       },

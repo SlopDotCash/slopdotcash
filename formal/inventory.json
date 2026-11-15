@@ -5801,11 +5801,11 @@
     },
     {
       "path": "src/VaultMonthLock.tsx",
-      "sha256": "704a9d5ca50fb2dac0ca18ea0e97affd34d676a00b72fb02d6e30e00b25e88f6",
+      "sha256": "be9a09741980bbc2b67874a551354f1dd23195167fe2dd6f1a7eb41b40dcde4f",
       "models": ["formal/models/ui/ui_vault_month_lock.qnt"],
       "candidateLines": [
-        1, 30, 82, 83, 86, 87, 88, 94, 97, 163, 164, 166, 169, 176, 182, 191,
-        199, 207, 213, 214, 241, 339
+        1, 30, 82, 92, 95, 96, 97, 103, 106, 171, 172, 174, 177, 184, 190, 199,
+        207, 215, 221, 222, 249, 347
       ],
       "review": "mapped-abstraction"
     },
@@ -6037,9 +6037,9 @@
     },
     {
       "path": "src/lib/evm-month-lock.ts",
-      "sha256": "2805773c4ccaa32b5324b0c56efa745c2d72f8ac9dbcd3174101bd0049c67119",
+      "sha256": "0bf7f19a9a4740232cabc2612f806b1ad01c73e5dbe6659a320a5fa8578ce53f",
       "models": ["formal/models/ui/ui_vault_month_lock.qnt"],
-      "candidateLines": [225, 234, 293, 296, 334, 353, 362, 372, 373],
+      "candidateLines": [279, 288, 364, 367, 406, 432, 441, 451, 452],
       "review": "mapped-abstraction"
     },
     {
@@ -7571,7 +7571,7 @@
     },
     {
       "path": "workers/fee-converter/solana.ts",
-      "sha256": "3898bf9e23c947848019465d63b2e8933de5f114daf490551724d704cfb5c2ce",
+      "sha256": "8639a4808706ead40466aad437846957c5b7822291df9a6db44fd3d1bf95d21a",
       "models": [
         "formal/models/fees/buyback_bridge_order.qnt",
         "formal/models/fees/fee_conversion.qnt",
@@ -7580,10 +7580,10 @@
       ],
       "candidateLines": [
         22, 144, 166, 352, 380, 382, 396, 638, 695, 703, 714, 724, 860, 863,
-        866, 867, 1020, 1022, 1031, 1034, 1103, 1104, 1106, 1107, 1110, 1112,
-        1150, 1167, 1195, 1196, 1393, 1406, 1407, 1408, 1409, 1410, 1416, 1424,
-        1430, 1436, 1450, 1455, 1457, 1474, 1480, 1483, 1493, 1496, 1502, 1504,
-        1734, 1744, 1745, 1750, 1754, 1759
+        866, 867, 1031, 1033, 1042, 1045, 1114, 1115, 1117, 1118, 1121, 1123,
+        1161, 1178, 1206, 1207, 1404, 1417, 1418, 1419, 1420, 1421, 1427, 1435,
+        1441, 1447, 1461, 1466, 1468, 1485, 1491, 1494, 1504, 1507, 1513, 1515,
+        1745, 1755, 1756, 1761, 1765, 1770
       ],
       "review": "mapped-abstraction"
     },
@@ -8067,7 +8067,7 @@
     },
     {
       "path": "workers/payment-executor/solana-monthly.ts",
-      "sha256": "73e999f9dd963ad994633cfade5d14aecb79b3cdd82ff4c8fa591789d2211cd1",
+      "sha256": "ac85b1ccd2494c303dd83b96f2066fe85cb1fa8ea50f42b99fae5fb4b4db83c7",
       "models": [
         "formal/models/rewards/monthly_execution_recovery.qnt",
         "formal/models/rewards/monthly_month_pledge.qnt",
@@ -8075,13 +8075,13 @@
       ],
       "candidateLines": [
         99, 100, 102, 103, 104, 106, 109, 120, 165, 210, 218, 226, 234, 285,
-        289, 356, 362, 363
+        289, 356, 361, 362
       ],
       "review": "mapped-abstraction"
     },
     {
       "path": "workers/payment-executor/solana.ts",
-      "sha256": "990de8f1bcf05b6e9b3a03b2f4f99f696a97498168109226c73088281ca351ee",
+      "sha256": "0b0acb8a592ec582a2b22955687de80afd59d67a81220431ffa4c47593b94686",
       "models": [
         "formal/models/payments/payment_binding.qnt",
         "formal/models/payments/solana_binding_completion.qnt",
@@ -8089,9 +8089,9 @@
         "formal/models/rewards/monthly_execution_recovery.qnt"
       ],
       "candidateLines": [
-        159, 195, 249, 325, 326, 328, 329, 331, 334, 337, 339, 347, 356, 365,
-        422, 432, 433, 434, 436, 437, 438, 439, 441, 443, 444, 451, 452, 453,
-        454, 463, 478, 531, 537, 643, 654, 664, 732, 733, 747, 760, 771
+        167, 189, 225, 278, 354, 355, 357, 358, 360, 363, 366, 368, 376, 385,
+        394, 451, 461, 462, 463, 465, 466, 467, 468, 470, 472, 473, 480, 481,
+        482, 483, 492, 507, 560, 566, 672, 683, 693, 761, 762, 776, 789, 800
       ],
       "review": "mapped-abstraction"
     },

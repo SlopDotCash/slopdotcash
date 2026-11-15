@@ -5,6 +5,7 @@ import {
   assertWithdrawalOutsideLocks,
   lockEnds,
   lockPeriods,
+  lockRefusal,
   PLEDGED_FUNDS_SELECTOR,
   pledgedFundsRefusal,
   readWalletPledges,
@@ -22,17 +23,25 @@ const abi = parseAbi([
   "function monthPledges(uint32) view returns (uint128 amount, bool open)",
 ]);
 
-/** A wallet whose vault either has the pledge getters or reverts on them. */
+/**
+ * A wallet whose vault has the pledge getters, reverts on them with no data,
+ * or whose RPC fails.
+ */
 function wallet(
-  pledges: Record<number, bigint> | null,
+  pledges: Record<number, bigint> | null | "rpc-down",
   open = 0n,
 ): VaultConnection {
   return {
     address: deployment.owner,
     evmRequest: async (method: string, params: unknown[]) => {
       if (method !== "eth_call") throw new Error(`Unexpected ${method}`);
+      if (pledges === "rpc-down")
+        throw Object.assign(new Error("Request timed out"), { code: -32603 });
       if (pledges === null)
-        throw Object.assign(new Error("execution reverted"), { code: 3 });
+        throw Object.assign(new Error("execution reverted"), {
+          code: 3,
+          data: "0x",
+        });
       const { data } = params[0] as { data: `0x${string}` };
       const call = decodeFunctionData({ abi, data });
       if (call.functionName === "openPledgedGross")
@@ -47,16 +56,21 @@ function wallet(
 }
 
 test("locks start in the current UTC month and end on the 4th two months later", () => {
-  expect(lockPeriods(new Date("2026-12-31T23:59:00Z"), 3)).toEqual([
-    "2026-12",
-    "2027-01",
-    "2027-02",
-  ]);
+  expect(lockPeriods("2026-12", 3)).toEqual(["2026-12", "2027-01", "2027-02"]);
   expect(lockEnds("2026-12").toISOString()).toBe("2027-02-04T00:00:00.000Z");
   expect(lockEnds("2026-11").toISOString()).toBe("2027-01-04T00:00:00.000Z");
 });
 
-test("the contract's refusal of locked funds reads in plain words", () => {
+test("the contract's refusals read in plain words", () => {
+  expect(PLEDGED_FUNDS_SELECTOR).toBe("0x498acb6b");
+  expect(
+    lockRefusal({ message: "execution reverted", data: "0x655126bb" })?.message,
+  ).toContain("never lowered");
+  expect(lockRefusal({ data: "0xa3bf9d5b" })?.message).toContain("free funds");
+  expect(lockRefusal({ data: "0xb4fa3fb3" })?.message).toContain(
+    "Review the lock again",
+  );
+  expect(lockRefusal(new Error("user rejected"))).toBeNull();
   const refusal = pledgedFundsRefusal({
     message: "execution reverted",
     data: `${PLEDGED_FUNDS_SELECTOR}`,
@@ -68,6 +82,21 @@ test("the contract's refusal of locked funds reads in plain words", () => {
     }),
   ).not.toBeNull();
   expect(pledgedFundsRefusal(new Error("insufficient funds"))).toBeNull();
+});
+
+test("an RPC failure is not read as a vault without pledge support", async () => {
+  await expect(
+    readWalletPledges(deployment, wallet("rpc-down"), []),
+  ).rejects.toThrow("Request timed out");
+  // The withdrawal review falls back; the contract still refuses locked funds.
+  expect(
+    await assertWithdrawalOutsideLocks(
+      deployment,
+      wallet("rpc-down"),
+      "100",
+      "100",
+    ),
+  ).toBe(false);
 });
 
 test("a vault without pledge support reads null and keeps the page's guard", async () => {

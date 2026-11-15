@@ -148,6 +148,36 @@ export async function preflightSolanaDeployment(
   await verifySolanaDeployment(config);
   return config;
 }
+/**
+ * Project account sizes the executor reads: before the month-pledge program
+ * upgrade (332 bytes) and after `migrate_project` appends `pledged_open`
+ * (340 bytes; operator decision, 15 November 2026). Every field the
+ * executor reads sits before the appended one.
+ */
+const PROJECT_SIZES = [...new Set([PROJECT_SIZE, 332, 340])];
+
+/** Reads the Project account at either size; null when it does not exist. */
+export async function readSolanaProject(
+  config: SolanaEscrowConfig,
+  address: string,
+  disc: string,
+) {
+  const response = (await solanaRpc(config, "getAccountInfo", [
+    address,
+    { commitment: "finalized", encoding: "base64" },
+  ])) as { value: unknown };
+  if (response.value === null) return null;
+  let mismatch: unknown;
+  for (const size of PROJECT_SIZES) {
+    try {
+      return solanaAccount(response.value, config.programId, size, disc);
+    } catch (error) {
+      mismatch = error;
+    }
+  }
+  throw mismatch;
+}
+
 export async function readSolanaAccount(
   config: SolanaEscrowConfig,
   address: string,
@@ -200,10 +230,9 @@ async function readAward(
   input: Pick<Input, "network" | "vault" | "obligationId" | "githubUserId">,
 ): Promise<Context> {
   const config = await preflightSolanaDeployment(env, input);
-  const project = await readSolanaAccount(
+  const project = await readSolanaProject(
     config,
     config.projectPda,
-    PROJECT_SIZE,
     "cda8bdcab5f78e13",
   );
   if (
