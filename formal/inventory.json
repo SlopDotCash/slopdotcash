@@ -8783,14 +8783,15 @@
     },
     {
       "path": "workers/slopbot/value-retained-copy.ts",
-      "sha256": "20b89c3b20b59823a9093118d69bfbfca97e449ea13b46b13e4994340f5bd18c",
+      "sha256": "4ce51e0d656be922c3db78a840d5a6bbe37753c5e4384419737f0f9653f4893b",
       "models": [
         "formal/models/slopbot/bot_retained_acceptance.qnt",
         "formal/models/slopbot/retained_copy_bindings.qnt",
         "formal/models/slopbot/retained_recipient_scope.qnt"
       ],
       "candidateLines": [
-        40, 67, 144, 338, 412, 418, 442, 476, 616, 680, 785, 812, 813, 814, 818
+        40, 67, 144, 338, 389, 429, 435, 468, 511, 545, 685, 749, 854, 881, 882,
+        883, 887
       ],
       "review": "mapped-abstraction"
     },

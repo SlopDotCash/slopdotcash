@@ -74,6 +74,15 @@ mismatches, and ambiguous references fall back to the original REST reads.
 The retained-copy proof checks the original and accepted patches before
 allocating Points. Resuming a campaign reuses its recorded discussion reads.
 
+An exact copied edit can retain a verified linked primary author without a
+merger acknowledgement. Both complete source records must name that same
+eligible primary author, and the earlier closed source must have an immutable
+resolved reference from the accepted PR. This does not transfer credit through
+an unlinked author or a PR creator fallback. When an intermediate PR carries
+the identical native original commit, two independently complete copy bindings
+retain the earlier source whose creator is that linked author. The intermediate
+source and its own follow-up commits remain in the evidence.
+
 ## Private eligibility and recording
 
 The reconcile job uses the production environment and publication lock. It
