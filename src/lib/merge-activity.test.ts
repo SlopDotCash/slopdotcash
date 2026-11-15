@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
 import {
+  mergeActivityCardLine,
   mergeActivityLine,
   type RepositoryMergeActivity,
 } from "./merge-activity";
@@ -62,4 +63,23 @@ test("no outside merges and nothing waiting read plainly; no rows read as unchec
     "Merging: no merge found · no outside pull request waiting 7+ days · no outside pull request merged in 30 days · checked 15 Nov",
   );
   expect(mergeActivityLine(undefined, NOW)).toBeNull();
+});
+
+test("the card line is short: last merge, waiting outside PRs, median", () => {
+  expect(mergeActivityCardLine([row({ waitingOutside: 201 })], NOW)).toBe(
+    "Last merge 1 day ago · 201 outside PRs waiting 7+ days · median merge 3 days",
+  );
+  expect(
+    mergeActivityCardLine(
+      [
+        row({
+          waitingOutside: 1,
+          mergedOutsideLast30Days: 0,
+          medianHoursToMerge: null,
+        }),
+      ],
+      NOW,
+    ),
+  ).toBe("Last merge 1 day ago · 1 outside PR waiting 7+ days");
+  expect(mergeActivityCardLine(undefined, NOW)).toBeNull();
 });
