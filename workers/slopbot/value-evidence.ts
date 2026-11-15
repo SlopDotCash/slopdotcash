@@ -201,6 +201,11 @@ async function collectCommitChanges(
         commit.sha,
       );
     }
+    if (client.verifiedFile)
+      await addedValuePatchRecovery(client, root.slice("/repos/".length))(
+        commit.files,
+        commit.sha,
+      );
     for (const kind of ["additions", "deletions"] as const)
       if (
         commit.files.reduce(

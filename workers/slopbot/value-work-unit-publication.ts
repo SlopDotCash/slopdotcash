@@ -6,6 +6,11 @@ import type { Job } from "./contracts";
 import { GitHubClient } from "./github";
 import { requireRegisteredRepository } from "./registry";
 import type { ReviewEnv } from "./review";
+import {
+  type ValueFileRecovery,
+  type ValueFileRequest,
+  verifiedValueFileClient,
+} from "./value-file-recovery";
 import { latestValueRecord } from "./value-journal";
 import type { ValueClaim } from "./value-processing";
 import { isSubscriptionProvenance } from "./value-producer";
@@ -92,6 +97,7 @@ export async function publishWorkUnitAssessment(
   legacyPredecessors: readonly string[],
   revisionReason: string | null,
   claim?: ValueClaim,
+  verifiedFiles?: { requests: ValueFileRequest[]; recovery: ValueFileRecovery },
 ) {
   if (
     !claim &&
@@ -137,7 +143,13 @@ export async function publishWorkUnitAssessment(
     evidence.sources.map((source) => source.evidence),
   );
   const current = await verifyCurrentWorkUnitSource(
-    github,
+    verifiedFiles
+      ? await verifiedValueFileClient(
+          github,
+          verifiedFiles.requests,
+          verifiedFiles.recovery,
+        )
+      : github,
     evidence,
     result,
     repositories,

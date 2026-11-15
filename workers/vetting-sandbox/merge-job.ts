@@ -4,8 +4,10 @@ import { createHash } from "node:crypto";
 import { createReadStream } from "node:fs";
 import { readFile, stat, writeFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
+import { recoverValueFiles } from "../../scripts/value-file-recovery";
 import { verifyMergeObjectStore } from "../../scripts/value-merge-objects";
 import { collectVerifiedMergeResolutions } from "../../scripts/value-merge-resolution";
+import type { ValueFileRequest } from "../slopbot/value-file-recovery";
 import {
   MERGE_PROFILE,
   type ValueMergeInput,
@@ -25,6 +27,7 @@ export async function runMergeJob(root: string) {
     inputs: ValueMergeInput[];
     bundleBytes: number;
     bundleSha256: string;
+    fileRequests?: ValueFileRequest[];
   };
   if (
     input.profile !== MERGE_PROFILE ||
@@ -64,19 +67,24 @@ export async function runMergeJob(root: string) {
   git("-C", repository, "bundle", "verify", BUNDLE);
   // unbundle does not follow URLs, refs or config supplied by the uploader.
   git("-C", repository, "bundle", "unbundle", BUNDLE);
-  verifyMergeObjectStore(input.inputs, repository);
+  verifyMergeObjectStore(input.inputs, repository, input.fileRequests);
   const results = [];
-  for (const source of input.inputs)
-    results.push({
-      inputSha256: createHash("sha256")
-        .update(JSON.stringify(source))
-        .digest("hex"),
-      mergeResolutions: await collectVerifiedMergeResolutions(
-        source,
-        repository,
-      ),
-    });
-  const bytes = JSON.stringify(results);
+  if (!input.fileRequests)
+    for (const source of input.inputs)
+      results.push({
+        inputSha256: createHash("sha256")
+          .update(JSON.stringify(source))
+          .digest("hex"),
+        mergeResolutions: await collectVerifiedMergeResolutions(
+          source,
+          repository,
+        ),
+      });
+  const bytes = JSON.stringify(
+    input.fileRequests
+      ? recoverValueFiles(repository, input.fileRequests)
+      : results,
+  );
   if (Buffer.byteLength(bytes) > MAX_FILE)
     throw new Error("Complete merge result exceeds limit");
   await writeFile(RESULT, bytes, { flag: "wx", mode: 0o600 });

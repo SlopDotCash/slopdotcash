@@ -11,6 +11,12 @@ import {
   validValueContextSelections,
 } from "./value-context";
 import { collectValueEvidence, findRepository } from "./value-evidence";
+import {
+  type ValueFileRecovery,
+  type ValueFileRequest,
+  valueFileRecoveryCapture,
+  verifiedValueFileClient,
+} from "./value-file-recovery";
 import { mergeInput, mergeRecipe } from "./value-merge-profile";
 import {
   isSubscriptionProvenance,
@@ -117,6 +123,10 @@ export async function importSubscriptionAssessment(
     env.SLOPBOT_APP_PRIVATE_KEY,
     Number(input.installationId),
   );
+  const capture = valueFileRecoveryCapture(github);
+  let verifiedFiles:
+    | { requests: ValueFileRequest[]; recovery: ValueFileRecovery }
+    | undefined;
   const sources: WorkUnitSource[] = [];
   const repositories: TargetRepository[] = [];
   for (const selection of selections) {
@@ -145,7 +155,7 @@ export async function importSubscriptionAssessment(
       { repositoryDatabaseId: identity.id, repositoryNodeId: identity.node_id },
     ]);
     const collected = await collectValueEvidence(
-      github,
+      capture.client,
       repository.id,
       selection.number,
       repository,
@@ -183,10 +193,50 @@ export async function importSubscriptionAssessment(
       throw new Error("A Git bundle must bind one public repository");
     const verifier = env.VALUE_MERGE_VERIFIER;
     if (!verifier) throw new Error("Merge reconstruction is unavailable");
-    const reconstructed = await verifier.reconstruct(
-      sources.map(({ evidence }) => mergeInput(evidence)),
-      bundle,
-    );
+    const inputs = sources.map(({ evidence }) => mergeInput(evidence));
+    const requests = capture.requests(sources.map(({ evidence }) => evidence));
+    let reconstructed: Awaited<
+      ReturnType<NonNullable<typeof verifier>["reconstruct"]>
+    >;
+    if (verifier.recover) {
+      const [filesBundle, mergeBundle] = bundle.tee();
+      const recovered = await verifier.recover(inputs, requests, filesBundle);
+      verifiedFiles = { requests, recovery: recovered };
+      const complete = await verifiedValueFileClient(
+        github,
+        requests,
+        recovered,
+      );
+      const fresh = valueFileRecoveryCapture(complete);
+      for (const [index, selection] of selections.entries()) {
+        const recollected = await collectValueEvidence(
+          fresh.client,
+          repositories[index].id,
+          selection.number,
+          repositories[index],
+        );
+        const currentInput = mergeInput(recollected);
+        if (
+          JSON.stringify({ ...currentInput, commitAttribution: [] }) !==
+          JSON.stringify({ ...inputs[index], commitAttribution: [] })
+        )
+          throw new Error("File recovery source identity changed");
+        sources[index].evidence = await collectValueContext(
+          complete,
+          recollected,
+          selection.contextPaths,
+        );
+      }
+      for (const [path, signature] of capture.metadata)
+        if (fresh.metadata.get(path) !== signature)
+          throw new Error("Recovery source metadata changed");
+      reconstructed = await verifier.reconstruct(
+        sources.map(({ evidence }) => mergeInput(evidence)),
+        mergeBundle,
+      );
+    } else {
+      reconstructed = await verifier.reconstruct(inputs, bundle);
+    }
     if (reconstructed.length !== sources.length)
       throw new Error("Incomplete merge reconstruction");
     for (const [index, source] of sources.entries()) {
@@ -227,6 +277,8 @@ export async function importSubscriptionAssessment(
       input.supersedes,
       input.legacyPredecessors,
       input.revisionReason as string | null,
+      undefined,
+      verifiedFiles,
     );
   } else {
     if (input.supersedes !== null && !digest(input.supersedes))

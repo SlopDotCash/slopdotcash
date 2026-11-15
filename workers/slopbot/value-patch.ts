@@ -123,32 +123,39 @@ export function addedValuePatchRecovery(
         continue;
       const key = JSON.stringify([ref, path]);
       if (!patches.has(key)) {
-        if (reads >= 16 || totalBytes >= 2 * 1024 * 1024) continue;
-        reads++;
+        const verified = await client.verifiedFile?.(repository, ref, path);
+        if (!verified && (reads >= 16 || totalBytes >= 2 * 1024 * 1024))
+          continue;
+        if (!verified) reads++;
         const encoded = path.split("/").map(encodeURIComponent).join("/");
-        const source = await client.get<{
-          type: string;
-          encoding: string;
-          content?: string;
-          size: number;
-          sha: string;
-        }>(`/repos/${repository}/contents/${encoded}?ref=${ref}`);
+        const source = verified
+          ? null
+          : await client.get<{
+              type: string;
+              encoding: string;
+              content?: string;
+              size: number;
+              sha: string;
+            }>(`/repos/${repository}/contents/${encoded}?ref=${ref}`);
         patches.set(key, null);
         if (
-          source?.type !== "file" ||
-          source.encoding !== "base64" ||
-          typeof source.content !== "string" ||
-          !Number.isSafeInteger(source.size) ||
-          source.size < 0 ||
-          source.size > 2 * 1024 * 1024 - totalBytes ||
-          !/^[a-f0-9]{40}$/u.test(source.sha)
+          !verified &&
+          (source?.type !== "file" ||
+            source.encoding !== "base64" ||
+            typeof source.content !== "string" ||
+            !Number.isSafeInteger(source.size) ||
+            source.size < 0 ||
+            source.size > 2 * 1024 * 1024 - totalBytes ||
+            !/^[a-f0-9]{40}$/u.test(source.sha))
         )
           continue;
         let bytes: Uint8Array;
         let text: string;
         try {
-          bytes = decodeBase64(source.content.replace(/\s+/gu, ""));
-          totalBytes += bytes.length;
+          bytes =
+            verified?.bytes ??
+            decodeBase64((source?.content ?? "").replace(/\s+/gu, ""));
+          if (!verified) totalBytes += bytes.length;
           text = new TextDecoder("utf-8", {
             fatal: true,
             ignoreBOM: true,
@@ -157,13 +164,13 @@ export function addedValuePatchRecovery(
           continue;
         }
         if (
-          bytes.length !== source.size ||
-          totalBytes > 2 * 1024 * 1024 ||
+          (!verified &&
+            (bytes.length !== source?.size || totalBytes > 2 * 1024 * 1024)) ||
           text.includes("\0")
         )
           continue;
         const digest = await gitObjectSha1("blob", bytes);
-        if (digest !== source.sha) continue;
+        if (digest !== (verified?.sha ?? source?.sha)) continue;
         const lines = text === "" ? [] : text.split("\n");
         if (text.endsWith("\n")) lines.pop();
         const patch =

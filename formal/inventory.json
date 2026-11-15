@@ -3558,9 +3558,9 @@
     },
     {
       "path": "scripts/create-value-merge-bundle.ts",
-      "sha256": "f711c6c987e6c82c401bd2f0c4c2f0d39254eafa663aefc09b931d3786db4684",
+      "sha256": "3eac13f85a1a4cf075d9587e41bc407da93da78f799db7f4bf0b8b25fcf4200d",
       "models": ["formal/models/slopbot/merge_evidence_acquisition.qnt"],
-      "candidateLines": [10, 104, 113, 115, 119],
+      "candidateLines": [10, 106, 115, 117, 121],
       "review": "mapped-abstraction"
     },
     {
@@ -4719,6 +4719,13 @@
       "review": "mapped-abstraction"
     },
     {
+      "path": "scripts/value-file-recovery.ts",
+      "sha256": "cf7b7a5075e438922074c95e80807f06e41f99a0eaab6ae62ed9a9e991f82184",
+      "models": ["formal/models/slopbot/merge_evidence_acquisition.qnt"],
+      "candidateLines": [90, 91, 105, 124],
+      "review": "mapped-abstraction"
+    },
+    {
       "path": "scripts/value-ingestion.ts",
       "sha256": "ae5193c9905211b71957315479e127cb507d69aa0ae56cf69d317005ce7e5034",
       "models": [
@@ -4742,7 +4749,7 @@
     },
     {
       "path": "scripts/value-merge-objects.ts",
-      "sha256": "17aa4e44da1b372b524948bcd6bffab6722465781cdb0815f01f90b32001a387",
+      "sha256": "6558293780060ed0a0aae28f9ccaab0b46a2b43ee5282f1f2231d83693cb6020",
       "models": ["formal/models/slopbot/merge_evidence_acquisition.qnt"],
       "candidateLines": [],
       "review": "mapped-abstraction"
@@ -8455,7 +8462,7 @@
     },
     {
       "path": "workers/slopbot/value-blob.ts",
-      "sha256": "758ec1167fd428076efe081ad0d09e54d4eb4759f946e6432912b89b0f0ee5f6",
+      "sha256": "ab36547d6fe219db8686b5409b3a296a05956b5efcac2e1e39debb4450d8edd7",
       "models": ["formal/models/slopbot/bot_evidence_integrity.qnt"],
       "candidateLines": [],
       "review": "mapped-abstraction"
@@ -8539,22 +8546,22 @@
     },
     {
       "path": "workers/slopbot/value-evidence-types.ts",
-      "sha256": "444f51baaf88c002018cbd1523fce819c6e22f74de0bfe3a7bac711484a74c32",
+      "sha256": "2487ed2dd0d05c6c178b46a360b7fcfb4aa4cb584704615eab986e66d7a7ab62",
       "models": [],
-      "candidateLines": [14, 69, 89],
+      "candidateLines": [20, 75, 95],
       "review": "reviewed-no-independent-state",
       "statelessReason": "Type declarations of value evidence and its proof records; no runtime code or state transition."
     },
     {
       "path": "workers/slopbot/value-evidence.ts",
-      "sha256": "8af0ff415f46f1f8dad5885fe0ea3ca8f2904576ca4998d428fa3abc2e24f164",
+      "sha256": "21a09736c96fa96bae9f975fa6ff34a5b03400e855965367d7f079ae69f65842",
       "models": [
         "formal/models/points/historical_discussion_evidence.qnt",
         "formal/models/slopbot/bot_evidence_integrity.qnt",
         "formal/models/slopbot/bot_value_dispute_actor.qnt"
       ],
       "candidateLines": [
-        62, 73, 82, 96, 435, 436, 627, 647, 690, 699, 718, 1060, 1079
+        62, 73, 82, 96, 440, 441, 632, 652, 695, 704, 723, 1065, 1084
       ],
       "review": "mapped-abstraction"
     },
@@ -8563,6 +8570,13 @@
       "sha256": "8207b1c2c486982bf8536e45f777bf20c44c99368f41fcc031fdad0e8e617207",
       "models": ["formal/models/slopbot/bot_evidence_integrity.qnt"],
       "candidateLines": [18, 35, 42, 65, 66, 89, 142],
+      "review": "mapped-abstraction"
+    },
+    {
+      "path": "workers/slopbot/value-file-recovery.ts",
+      "sha256": "6cd1f6acfa5e4b3d1ed1452000574a73f466c183e8b51071e07c5bf8a8f03796",
+      "models": ["formal/models/slopbot/bot_evidence_integrity.qnt"],
+      "candidateLines": [152, 153, 212, 233],
       "review": "mapped-abstraction"
     },
     {
@@ -8588,7 +8602,7 @@
     },
     {
       "path": "workers/slopbot/value-import.ts",
-      "sha256": "4144a20f2b4a030e98d123bea0eec25a1ca380bc450142112d84b828b5743223",
+      "sha256": "27bce279c8baf35092820d52a3045452ab543deeca8358af03f9c7fba515884a",
       "models": [
         "formal/models/slopbot/bot_historical_import.qnt",
         "formal/models/slopbot/historical_subscription_intake.qnt"
@@ -8647,7 +8661,7 @@
     },
     {
       "path": "workers/slopbot/value-merge-profile.ts",
-      "sha256": "3e70f86c28e39bd47f58590f4a3d6cad82a38fe7c97f9e395a358b790b6ac294",
+      "sha256": "a2722b7e8defe0356642203d5d12f738a44af8f3c5f2414ad8e373b86f694309",
       "models": ["formal/models/slopbot/bot_value_freshness.qnt"],
       "candidateLines": [],
       "review": "mapped-abstraction"
@@ -8685,7 +8699,7 @@
     },
     {
       "path": "workers/slopbot/value-patch.ts",
-      "sha256": "738a535d89021a23140ab2ff72ef893c54bbeadf6cb80ca2a22d8895ebca838b",
+      "sha256": "c3322854a90e6f30ea6eaf6cfe0c39016bebc024eb445b50ebb28112a214921b",
       "models": ["formal/models/slopbot/bot_patch_replay.qnt"],
       "candidateLines": [8, 33, 106],
       "review": "mapped-abstraction"
@@ -8828,7 +8842,7 @@
     },
     {
       "path": "workers/slopbot/value-work-unit-publication.ts",
-      "sha256": "48c9fd759c2f440205d8767d58edd17aa493c0e132049dc14ac06c3f45d4543a",
+      "sha256": "86c84cd57960fae9d56185ad964715183afd3619ed2a6608223fcb1dd3ccd7bd",
       "models": [
         "formal/models/slopbot/bot_publication_transaction.qnt",
         "formal/models/slopbot/bot_value_freshness.qnt",
@@ -9074,16 +9088,16 @@
     },
     {
       "path": "workers/vetting-sandbox/merge-job.ts",
-      "sha256": "2463d78a95139e8e4feda5ea2bac1e6f047a5f8bc1e83ac75f4cedd8b23edf3d",
+      "sha256": "83528d5e9fee381b6dc6552664e2ae579fa87b4e82c5c02b8cfe4f23a51f6525",
       "models": ["formal/models/vetting/vetting_merge_isolation.qnt"],
-      "candidateLines": [5, 41, 72, 82],
+      "candidateLines": [5, 44, 76, 90],
       "review": "mapped-abstraction"
     },
     {
       "path": "workers/vetting-sandbox/merge.ts",
-      "sha256": "ca8c7c514dcf8731f6e4194de7b0ca2e1fb43ff9aa46981eed3fe29e738705f6",
+      "sha256": "b790cfb09a42ea1d504fa749a42486f12d770a7ff130a5e8ebc36ea0ac6916f6",
       "models": ["formal/models/vetting/vetting_merge_isolation.qnt"],
-      "candidateLines": [38, 43, 47, 70, 78, 79, 80, 82, 84, 85, 86],
+      "candidateLines": [59, 64, 68, 92, 100, 101, 102, 104, 106, 107, 108],
       "review": "mapped-abstraction"
     },
     {
@@ -14824,7 +14838,7 @@
     },
     {
       "path": "formal/models/slopbot/bot_evidence_integrity.qnt",
-      "sha256": "fcec5ea85857bf4d8f4b1115f63e2513f235c29f97863e33cae6d06ea631aaba",
+      "sha256": "b8e798c1917e15323727a0f4a6cd682482795694125f0e4181e0f9b9e9166a1e",
       "sources": [
         "workers/slopbot/git-object.ts",
         "workers/slopbot/value-binary.ts",
@@ -14833,6 +14847,7 @@
         "workers/slopbot/value-context.ts",
         "workers/slopbot/value-evidence.ts",
         "workers/slopbot/value-file-comparisons.ts",
+        "workers/slopbot/value-file-recovery.ts",
         "workers/slopbot/value-tree.ts"
       ],
       "scenarios": ["completeEvidenceTest", "corruptBlobRefusedTest"]
@@ -15509,10 +15524,11 @@
     },
     {
       "path": "formal/models/slopbot/merge_evidence_acquisition.qnt",
-      "sha256": "d8061a6527c74628614177af9032ae19c800444b64750fc001273b477d9de482",
+      "sha256": "2db5753a8d2b12bffc5aa350980454fb07048667607dc235cb6ec48f33e183a7",
       "sources": [
         "scripts/collect-value-evidence.ts",
         "scripts/create-value-merge-bundle.ts",
+        "scripts/value-file-recovery.ts",
         "scripts/value-merge-ingestion.ts",
         "scripts/value-merge-objects.ts",
         "scripts/value-merge-resolution.ts"

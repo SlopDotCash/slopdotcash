@@ -1,0 +1,152 @@
+import { expect, test } from "bun:test";
+import { createHash } from "node:crypto";
+import { gzipSync } from "node:zlib";
+import { fixture, repository } from "../../tests/value-binary-fixture";
+import { collectValueEvidence } from "./value-evidence";
+import {
+  type ValueFileRecovery,
+  type ValueFileRequest,
+  verifiedValueFileClient,
+} from "./value-file-recovery";
+
+const sha = (type: string, bytes: Uint8Array) =>
+  createHash("sha1")
+    .update(`${type} ${bytes.length}\0`)
+    .update(bytes)
+    .digest("hex");
+function recovery(
+  requests: ValueFileRequest[],
+  bytes: Uint8Array,
+): ValueFileRecovery {
+  const blob = sha("blob", bytes);
+  return {
+    inputSha256: createHash("sha256")
+      .update(JSON.stringify(requests))
+      .digest("hex"),
+    entries: requests.map((request) => ({
+      ...request,
+      treeSha: "d".repeat(40),
+      mode: "100644",
+      blobSha: blob,
+    })),
+    blobs: [
+      {
+        sha: blob,
+        sha256: createHash("sha256").update(bytes).digest("hex"),
+        size: bytes.length,
+        gzipBase64: gzipSync(bytes).toString("base64"),
+      },
+    ],
+  };
+}
+
+test("normal collection recovers a complete oversized added text from verified private bundle bytes", async () => {
+  const source = fixture({ direct: true, textOnly: true });
+  const text = "export const retained = true;\n".repeat(100000);
+  const bytes = new TextEncoder().encode(text);
+  const head = source.pull.head.sha;
+  const merged = source.pull.merge_commit_sha;
+  if (!merged) throw new Error("Missing merge");
+  source.bind(head, new Map([["fix.ts", bytes]]), [source.pull.base.sha]);
+  source.bind(merged, new Map([["fix.ts", bytes]]), [
+    source.pull.base.sha,
+    head,
+  ]);
+  source.files[0].additions = 100000;
+  delete source.files[0].patch;
+  const client = {
+    ...source.client,
+    async get<T>(path: string): Promise<T | null> {
+      const result = await source.client.get<T>(path);
+      if (result && path.includes("/commits/") && !path.includes("/git/"))
+        (result as unknown as { stats: unknown }).stats = {
+          additions: 100000,
+          deletions: 0,
+          total: 100000,
+        };
+      return result;
+    },
+  };
+  const before = await collectValueEvidence(
+    client,
+    repository.id,
+    1,
+    repository,
+  );
+  expect(before.limitations).toContain("Full diff required: fix.ts");
+  const requests = [head, merged].map((ref) => ({
+    repository: repository.id,
+    repositoryNodeId: repository.expectedNodeId ?? "",
+    ref,
+    path: "fix.ts",
+  }));
+  const verified = await verifiedValueFileClient(
+    client,
+    requests,
+    recovery(requests, bytes),
+  );
+  const after = await collectValueEvidence(
+    verified,
+    repository.id,
+    1,
+    repository,
+  );
+  expect(after.limitations).toEqual([]);
+  expect(after.files[0].additions).toBe(100000);
+  expect(after.files[0].patch?.split("\n").length).toBe(100001);
+  expect(after.commitAttribution[0].changedPaths).toEqual(["fix.ts"]);
+});
+
+for (const invalid of [
+  "request",
+  "blob",
+  "size",
+  "utf8",
+  "duplicate",
+] as const) {
+  test(`private recovery rejects ${invalid} corruption`, async () => {
+    const requests = [
+      {
+        repository: "example/repo",
+        repositoryNodeId: "R_example",
+        ref: "a".repeat(40),
+        path: "a.txt",
+      },
+    ];
+    const bytes =
+      invalid === "utf8"
+        ? new Uint8Array([255])
+        : new TextEncoder().encode("kept\n");
+    const proof = recovery(requests, bytes);
+    if (invalid === "request") proof.entries[0].path = "other.txt";
+    if (invalid === "blob") proof.blobs[0].sha256 = "0".repeat(64);
+    if (invalid === "size") proof.blobs[0].size = 1;
+    if (invalid === "duplicate") proof.blobs.push(proof.blobs[0]);
+    await expect(
+      verifiedValueFileClient({ get: async () => null }, requests, proof),
+    ).rejects.toThrow();
+  });
+}
+
+for (const text of ["", "kept\n"]) {
+  test(`verified file recovery preserves ${text ? "nonempty" : "empty"} exact text`, async () => {
+    const requests = [
+      {
+        repository: "example/repo",
+        repositoryNodeId: "R_example",
+        ref: "a".repeat(40),
+        path: "a.txt",
+      },
+    ];
+    const bytes = new TextEncoder().encode(text);
+    const client = await verifiedValueFileClient<
+      import("./value-evidence-types").EvidenceClient
+    >({ get: async () => null }, requests, recovery(requests, bytes));
+    expect(
+      new TextDecoder().decode(
+        (await client.verifiedFile?.("example/repo", "a".repeat(40), "a.txt"))
+          ?.bytes,
+      ),
+    ).toBe(text);
+  });
+}
