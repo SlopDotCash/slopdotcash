@@ -34,6 +34,7 @@ import valueRequests as VR from "./valueRequests"
 type PrKey = { repository: int, pullRequest: int }
 type RetryStatus = Retrying | ScheduledRetry | AwaitingAssessment
 type AssessmentItem = NoAssessment | Unresolved({ key: PrKey, since: int, retryAt: int, retryStatus: RetryStatus })
+pure def present(i: AssessmentItem): bool = match i { | Unresolved(u) => true | NoAssessment => false }
 type AssessmentSummary = { since: int, retryAt: int, running: bool }
 pure def keyOf(d: VR::Delivery): PrKey = { repository: d.key.repository, pullRequest: d.key.pull }
 pure def resolvesGap(candidate: VR::Delivery, gap: VR::Delivery): bool =
@@ -57,7 +58,7 @@ pure def lawEarlierFinalOutcomeCannotResolve(candidate: VR::Delivery, gap: VR::D
   candidate.updatedAt < gap.incompleteSince implies not(resolvesGap(candidate, gap))
 pure def lawOtherPullCannotResolve(candidate: VR::Delivery, gap: VR::Delivery): bool =
   keyOf(candidate) != keyOf(gap) implies not(resolvesGap(candidate, gap))
-pure def lawEmptyRowsHaveNoAssessment(key: PrKey): bool = assessmentFor(List(), key) == NoAssessment
+pure def lawEmptyRowsHaveNoAssessment(key: PrKey): bool = not(present(assessmentFor(List(), key)))
 ```
 
 ## Story: Keep a private assessment read bound to the current authority
@@ -107,7 +108,7 @@ pure def read(q: QueueRead, request: QueueRequest, by: int): QueueRead =
   else { phase: Checking, request: request, item: NoAssessment, status: 0 }
 pure def lawMissingContextReturnsEmpty(q: QueueRead, request: QueueRequest, by: int): bool =
   (authenticated(request) and request.validCursor and not(request.contextHasGap)) implies
-    (read(q, request, by).phase == Ready and read(q, request, by).item == NoAssessment)
+    (read(q, request, by).phase == Ready and not(present(read(q, request, by).item)))
 ```
 
 ### Denial clears the item and uncertain authority is retryable
@@ -139,22 +140,22 @@ pure def complete(q: QueueRead, requestId: int, currentBinding: RegistryBinding,
   else { ...q, phase: Ready, status: 200, item:
     if (assessable(q.request.binding, access)) assessmentFor(rows, q.request.key) else NoAssessment }
 pure def alwaysPrivateItemsRequireAdmittedRead(q: QueueRead): bool =
-  q.item != NoAssessment implies (q.phase == Ready and authenticated(q.request) and validScope(q.request.binding, q.request.key)
+  present(q.item) implies (q.phase == Ready and authenticated(q.request) and validScope(q.request.binding, q.request.key)
     and q.request.validCursor and q.request.contextHasGap)
 pure def alwaysCheckingRequiresAdmittedScope(q: QueueRead): bool =
   q.phase == Checking implies (authenticated(q.request) and validScope(q.request.binding, q.request.key)
     and q.request.validCursor and q.request.contextHasGap)
-pure def alwaysFailedReadHasNoItem(q: QueueRead): bool = (q.phase == Unavailable or q.phase == Refused) implies q.item == NoAssessment
+pure def alwaysFailedReadHasNoItem(q: QueueRead): bool = (q.phase == Unavailable or q.phase == Refused) implies not(present(q.item))
 pure def stepOnlyCurrentOwnedResponsePublishes(before: QueueRead, via: str, after: QueueRead): bool =
-  after.item != NoAssessment implies (via == "complete" and before.phase == Checking and after.request == before.request)
+  present(after.item) implies (via == "complete" and before.phase == Checking and after.request == before.request)
 pure def lawDeniedOrUncertainAuthorityHasNoItem(q: QueueRead, requestId: int, currentBinding: RegistryBinding, access: AccessCheck, rows: List[VR::Delivery]): bool =
   (access.actor != q.request.actor or not(assessable(q.request.binding, access)) or accessUnavailable(q.request.binding, access))
-    implies complete(q, requestId, currentBinding, access, rows).item == NoAssessment
+    implies not(present(complete(q, requestId, currentBinding, access, rows).item))
 pure def lawBundledUnavailableKeepsOrdinaryInbox(q: QueueRead, requestId: int, currentBinding: RegistryBinding, access: AccessCheck, rows: List[VR::Delivery]): bool =
   (q.request.route == BundledInbox and complete(q, requestId, currentBinding, access, rows).phase == Unavailable)
     implies complete(q, requestId, currentBinding, access, rows).status == 200
 pure def lawDifferentManifestNeverPublishes(q: QueueRead, requestId: int, currentBinding: RegistryBinding, access: AccessCheck, rows: List[VR::Delivery]): bool =
-  currentBinding != q.request.binding implies complete(q, requestId, currentBinding, access, rows).item == NoAssessment
+  currentBinding != q.request.binding implies not(present(complete(q, requestId, currentBinding, access, rows).item))
 ```
 
 ### A departed page or changed actor cannot display a late queue response
@@ -168,6 +169,7 @@ departed view. Reading the queue never claims a worker attempt.
 ```quint
 type BrowserRead = { actor: int, requestId: int, lifetime: int, sessionAvailable: bool, currentActor: int, recipient: int }
 type BrowserQueue = Suppressed | QueueRetry | RefreshInbox | QueueReady({ item: AssessmentItem })
+pure def suppressed(b: BrowserQueue): bool = match b { | Suppressed => true | QueueRetry => false | RefreshInbox => false | QueueReady(x) => false }
 pure def browserQueue(q: QueueRead, browser: BrowserRead): BrowserQueue =
   if (browser.actor <= 0 or browser.actor != q.request.actor or browser.requestId != q.request.requestId
     or browser.lifetime != q.request.lifetime) Suppressed
@@ -178,11 +180,11 @@ pure def browserQueue(q: QueueRead, browser: BrowserRead): BrowserQueue =
   else if (q.phase == Ready) (if (browser.recipient == browser.actor) QueueReady({ item: q.item }) else RefreshInbox)
   else Suppressed
 pure def lawDepartedViewCannotDisplay(q: QueueRead, browser: BrowserRead): bool =
-  (browser.lifetime != q.request.lifetime or browser.requestId != q.request.requestId) implies browserQueue(q, browser) == Suppressed
+  (browser.lifetime != q.request.lifetime or browser.requestId != q.request.requestId) implies suppressed(browserQueue(q, browser))
 pure def lawChangedActorCannotDisplay(q: QueueRead, browser: BrowserRead): bool =
-  (browser.sessionAvailable and browser.currentActor != browser.actor) implies browserQueue(q, browser) == Suppressed
-pure def sometimesQueueVisible(q: QueueRead): bool = q.phase == Ready and q.item != NoAssessment
-pure def sometimesQueueEmpty(q: QueueRead): bool = q.phase == Ready and q.item == NoAssessment
+  (browser.sessionAvailable and browser.currentActor != browser.actor) implies suppressed(browserQueue(q, browser))
+pure def sometimesQueueVisible(q: QueueRead): bool = q.phase == Ready and present(q.item)
+pure def sometimesQueueEmpty(q: QueueRead): bool = q.phase == Ready and not(present(q.item))
 pure def sometimesQueueRefused(q: QueueRead): bool = q.phase == Refused
 pure def sometimesDirectUnavailable(q: QueueRead): bool = q.phase == Unavailable and q.request.route == DirectQueue and q.status == 503
 pure def sometimesOrdinaryInboxSurvivesQueueFailure(q: QueueRead): bool =

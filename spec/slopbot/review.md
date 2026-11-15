@@ -68,6 +68,8 @@ failure and goes to Surplus. A valid answer must come from the model the
 step requested.
 
 ```quint
+pure val noCall: CallRecord = { kind: Triage, provider: OrbioSonnet, outcome: CallFailed, servedModel: "",
+  known: false, amount: 0, customerCharge: 0 }
 pure def expectedModel(provider: Provider): str =
   if (provider == SurplusTerra) "gpt-6.1-terra"
   else if (provider == OrbioSonnet) "anthropic/claude-sonnet-5.5" else "claude-sonnet-5.5"
@@ -113,8 +115,7 @@ pure def alwaysLimitedNamesUnreviewedContent(r: Review): bool =
   (r.status == Limited implies r.unreviewed > 0) and (r.status == Complete implies r.unreviewed == 0)
 pure def alwaysOutcomeFollowsAValidAnswer(r: Review): bool =
   (r.status == Answered or r.status == Limited or r.status == Complete) implies
-    (r.calls.length() > 0 and r.calls.nthOr(r.calls.length() - 1, { kind: Triage, provider: OrbioSonnet,
-      outcome: CallFailed, servedModel: "", known: false, amount: 0, customerCharge: 0 }).outcome == CallOk)
+    (r.calls.length() > 0 and r.calls.nthOr(r.calls.length() - 1, noCall).outcome == CallOk)
 pure def alwaysConfirmedNeedsConfirmCall(r: Review): bool =
   r.confirmed implies r.calls.some(c => c.kind == Confirm and c.outcome == CallOk) and r.finding
 pure def alwaysEnforcementNeedsFullConfirmedReview(r: Review): bool =

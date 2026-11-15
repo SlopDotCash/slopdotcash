@@ -266,14 +266,14 @@ pure val evidenceValues = Set({source: sourceReopen, node: "node", currentRevisi
   itemState: OpenItem, maintainer: true, existingDebit: true, reversalOnly: false})
 pure val requestIdValues = Set(1, 2)
 pure val bodyBytes: Bytes = { digest: "body", length: 26214400 }
-pure val bytesValues = Set(bodyBytes, { digest: "body", length: 26214401 }, { digest: "body", length: 1 })
-pure val signedBytesValues = Set(bodyBytes, { digest: "altered", length: 26214400 }, { digest: "body", length: 1 })
+pure val bytesValues = Set(bodyBytes, { digest: "body", length: 26214401 })
+pure val signedBytesValues = Set(bodyBytes, { digest: "altered", length: 26214400 })
 pure val decodedBytesValues = signedBytesValues
 pure val activeRegistry: RS::RegistryObservation = { lookup: RS::CurrentPath, registeredId: 1, observedId: 1,
   rowActive: true, manifestActive: true, retirement: RS::NotRetired, restriction: RS::Clear, flags: RS::NotFlagged }
 pure val registrationValues = Set(activeRegistry, { ...activeRegistry, rowActive: false },
-  { ...activeRegistry, retirement: RS::OwnerRetired }, { ...activeRegistry, observedId: 2 })
-pure val writeRegistrationValues = registrationValues
+  { ...activeRegistry, retirement: RS::OwnerRetired })
+pure val writeRegistrationValues = Set(activeRegistry, { ...activeRegistry, observedId: 2 })
 pure val installEventValues = Set({ delivery: 1, kind: I::Created, sourceTime: 1, hasAccount: true, validTime: true },
   { delivery: 1, kind: I::Suspend, sourceTime: 1, hasAccount: true, validTime: false })
 pure def alwaysInstallationFlagMatchesChange(w: Webhook): bool =

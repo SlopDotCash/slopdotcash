@@ -363,4 +363,6 @@ pure val weight_recordCall = 4
 pure val weight_saveUsage = 4
 pure val weight_retain = 5
 pure val weight_publish = 4
+pure val weight_captureFence = 4
+pure val weight_configure = 3
 ```

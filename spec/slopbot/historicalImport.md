@@ -47,8 +47,8 @@ type ImportRequest = { admin: AdministratorEvidence, producerRevision: str, inst
   mode: ImportMode, sources: List[ImportSource], producer: Producer, assessmentKey: int }
 type ImportResult = NoImport | Imported | Refused
 type ImportedRecord = { key: int, producer: Producer }
-type Imports = { records: List[ImportedRecord], last: ImportResult, refusals: int }
-pure val initial: Imports = { records: List(), last: NoImport, refusals: 0 }
+type Imports = { records: List[ImportedRecord], keys: Set[int], last: ImportResult, refusals: int }
+pure val initial: Imports = { records: List(), keys: Set(), last: NoImport, refusals: 0 }
 pure def subscription(p: Producer): bool = match p { | SubscriptionProducer(x) => true | ApiProducer(x) => false }
 pure def claudeChannel(p: Producer): bool =
   match p { | SubscriptionProducer(x) => x.channel == ClaudeSubscription | ApiProducer(x) => false }
@@ -68,10 +68,11 @@ pure def acceptable(s: Imports, request: ImportRequest): bool =
     and request.installationActive and subscription(request.producer) and labelled(request.producer)
     and request.sources.length() > 0 and (request.mode == Joint or request.sources.length() == 1)
     and distinctSources(request.sources) and request.sources.every(src => eligibleSource(src, request.producer))
-    and request.assessmentKey > 0 and not(s.records.some(r => r.key == request.assessmentKey))
+    and request.assessmentKey > 0 and not(s.keys.contains(request.assessmentKey))
 pure def submit(s: Imports, request: ImportRequest): Imports =
   if (acceptable(s, request))
-    { ...s, records: s.records.append({ key: request.assessmentKey, producer: request.producer }), last: Imported }
+    { ...s, records: s.records.append({ key: request.assessmentKey, producer: request.producer }),
+      keys: s.keys.union(Set(request.assessmentKey)), last: Imported }
   else { ...s, last: Refused, refusals: s.refusals + 1 }
 pure def lawDeclarationIsNotReceipt(p: Producer): bool = subscription(p) implies not(billingProof(p))
 pure def lawApiProducerNeverImported(s: Imports, request: ImportRequest): bool =
@@ -83,7 +84,8 @@ pure def lawClaudeOnlyForSlopSlice(s: Imports, request: ImportRequest): bool =
 pure def lawNonAdministratorRefused(s: Imports, request: ImportRequest): bool =
   not(request.admin.verifiedAdministrator) implies not(acceptable(s, request))
 pure def alwaysImportedOnceEach(s: Imports): bool =
-  s.records.every(r => r.key > 0 and subscription(r.producer) and s.records.select(o => o.key == r.key).length() == 1)
+  s.records.every(r => r.key > 0 and subscription(r.producer) and s.keys.contains(r.key))
+    and s.keys.size() == s.records.length()
 pure def stepImportsAreAppendOnly(before: Imports, after: Imports): bool =
   before.records.every(r => after.records.includes(r)) and after.refusals >= before.refusals
 pure def sometimesImported(s: Imports): bool = s.records.length() > 0

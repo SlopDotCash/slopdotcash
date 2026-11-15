@@ -28,6 +28,8 @@ after the remaining claim time, at least 1 second and at most the
 retries a copy at most five times, so its sixth failed delivery moves it to
 the dead-letter queue. A send whose acknowledgement was lost can create a
 second copy, so a copy is only a request to run the idempotent handler.
+A waiting copy is delivered no earlier than its retry time, so its delivery
+advances the clock to that time when the clock is behind it.
 
 ```quint
 type JobKind = NoKind | ReviewJob | MaintainerHoldJob | AppealCommandJob | AppealDueJob | HumanSignalJob
@@ -45,9 +47,9 @@ pure val noDurable: Durable = { exists: false, resolved: false, dueAt: 0, queued
 pure val noCopy: Copy = { id: 0, state: Acked, deliveries: 0, availableAt: 0 }
 pure val initial: JobQueue = { now: 1, kind: NoKind, copies: List(), nextId: 1, durable: noDurable,
   operatorRequeues: 0 }
-pure def copyOf(q: JobQueue, copyId: int): Copy = q.copies.select(c => c.id == copyId).nthOr(0, noCopy)
-pure def putCopy(c: Copy, q: JobQueue): JobQueue =
-  { ...q, copies: q.copies.listMap(old => if (old.id == c.id) c else old) }
+pure def copyOf(q: JobQueue, copyId: int): Copy = q.copies.nthOr(copyId - 1, noCopy)
+pure def putCopy(prior: Copy, c: Copy, q: JobQueue): JobQueue =
+  { ...q, copies: q.copies.listMap(old => if (old == prior) c else old) }
 pure def withCopy(now: int, q: JobQueue): JobQueue =
   { ...q, copies: q.copies.append({ id: q.nextId, state: Queued, deliveries: 0, availableAt: now }),
     nextId: q.nextId + 1 }
@@ -63,21 +65,22 @@ pure def canDuplicate(q: JobQueue): bool = q.kind != NoKind and q.copies.length(
 pure def duplicate(q: JobQueue): JobQueue = withCopy(q.now, q)
 pure def canDeliver(q: JobQueue, copyId: int): bool =
   val c = copyOf(q, copyId)
-  c.id > 0 and (c.state == Queued or (c.state == Waiting and c.availableAt <= q.now))
+  c.id == copyId and copyId > 0 and (c.state == Queued or c.state == Waiting)
 pure def deliver(q: JobQueue, copyId: int): JobQueue =
   val c = copyOf(q, copyId)
-  putCopy({ ...c, state: Delivered, deliveries: c.deliveries + 1 }, q)
+  putCopy(c, { ...c, state: Delivered, deliveries: c.deliveries + 1 },
+    { ...q, now: if (c.availableAt > q.now) c.availableAt else q.now })
 pure def retryDelay(result: HandlerResult, remaining: int): int =
   if (result == Busy) (if (remaining < 1) 1 else if (remaining > claimSeconds) claimSeconds else remaining) else 60
 pure def canHandle(q: JobQueue, copyId: int, result: HandlerResult, remaining: int): bool =
-  copyOf(q, copyId).state == Delivered
+  copyId > 0 and copyOf(q, copyId).id == copyId and copyOf(q, copyId).state == Delivered
 pure def handle(q: JobQueue, copyId: int, result: HandlerResult, remaining: int): JobQueue =
   val c = copyOf(q, copyId)
   if (result == Done)
-    putCopy({ ...c, state: Acked, availableAt: 0 },
+    putCopy(c, { ...c, state: Acked, availableAt: 0 },
       { ...q, durable: if (q.durable.exists) { ...q.durable, resolved: true } else q.durable })
-  else if (c.deliveries >= maxDeliveries) putCopy({ ...c, state: DeadLettered, availableAt: 0 }, q)
-  else putCopy({ ...c, state: Waiting, availableAt: q.now + retryDelay(result, remaining) }, q)
+  else if (c.deliveries >= maxDeliveries) putCopy(c, { ...c, state: DeadLettered, availableAt: 0 }, q)
+  else putCopy(c, { ...c, state: Waiting, availableAt: q.now + retryDelay(result, remaining) }, q)
 pure def lawBusyDelayStaysWithinClaim(remaining: int): bool =
   retryDelay(Busy, remaining) >= 1 and retryDelay(Busy, remaining) <= claimSeconds
 pure def lawOtherRetriesWaitOneMinute(result: HandlerResult, remaining: int): bool =
@@ -122,12 +125,14 @@ pure def requeue(q: JobQueue, admin: AdministratorEvidence): JobQueue =
   withCopy(q.now, { ...q, operatorRequeues: q.operatorRequeues + 1 })
 pure def alwaysDeliveriesBounded(q: JobQueue): bool =
   q.copies.every(c => c.deliveries >= 0 and c.deliveries <= maxDeliveries and c.id > 0 and c.id < q.nextId)
+    and q.nextId == q.copies.length() + 1 and q.now >= 1
 pure def alwaysDeadLetterOnlyAfterRetries(q: JobQueue): bool =
   q.copies.every(c => c.state == DeadLettered implies c.deliveries == maxDeliveries)
 pure def alwaysWaitingHasTime(q: JobQueue): bool =
-  q.copies.every(c => c.state == Waiting implies c.availableAt > 0 and c.deliveries > 0)
+  q.copies.every(c => c.state == Waiting implies c.availableAt > 0 and c.deliveries > 0 and c.deliveries < maxDeliveries)
 pure def alwaysQueuedUndelivered(q: JobQueue): bool =
-  q.copies.every(c => (c.state == Queued implies c.deliveries == 0) and (c.state == Delivered implies c.deliveries > 0))
+  q.copies.every(c => (c.state == Queued implies c.deliveries == 0) and (c.state == Delivered implies c.deliveries > 0)
+    and (c.state == Acked implies c.availableAt == 0))
 pure def alwaysDurableOnlyForDurableKinds(q: JobQueue): bool =
   (q.durable.exists implies durableKind(q.kind)) and (q.kind == NoKind implies q.copies.length() == 0)
 pure def alwaysRequeueNeedsNonDurableKind(q: JobQueue): bool =
@@ -145,10 +150,10 @@ pure def sometimesHoldResent(q: JobQueue): bool =
 pure val kindValues = Set(ReviewJob, MaintainerHoldJob, AppealDueJob, AppealCommandJob)
 pure val dueAtValues = Set(0, 2)
 pure val secondsValues = Set(1200, 86400)
-pure val copyIdValues = Set(1, 2)
+pure val copyIdValues = Set(1)
 pure val remainingValues = Set(0, 30, 5000)
 pure val adminValues = Set({ actor: 1, verifiedAdministrator: true }, { actor: 1, verifiedAdministrator: false })
 pure val weight_deliver = 12
 pure val weight_handle = 12
-pure val weight_elapse = 6
+pure val weight_elapse = 2
 ```
