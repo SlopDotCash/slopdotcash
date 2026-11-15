@@ -3842,16 +3842,38 @@ async function collectWithEvidenceCache(
             const carrier = sources.find(
               (source) => source.sourceId === acceptedClaim?.sourceId,
             );
+            if (!carrier) continue;
+            let verifiedOriginal = original;
             if (
-              !original ||
-              !carrier ||
-              original.author?.id === carrier.author?.id ||
-              !original.commits.some((commit) => commit.sha === claim.commitSha)
+              !verifiedOriginal ||
+              verifiedOriginal.author?.id === carrier.author?.id
+            ) {
+              const retainedOriginals = sources.filter(
+                (source) =>
+                  source.sourceId !== carrier.sourceId &&
+                  verifiedHuman(source.author) &&
+                  source.author.id !== carrier.author?.id &&
+                  source.commits.some(
+                    (commit) =>
+                      commit.sha === claim.commitSha &&
+                      (commit.author === null ||
+                        commit.author.id === source.author?.id),
+                  ),
+              );
+              if (retainedOriginals.length === 1)
+                verifiedOriginal = retainedOriginals[0];
+            }
+            if (
+              !verifiedOriginal ||
+              verifiedOriginal.author?.id === carrier.author?.id ||
+              !verifiedOriginal.commits.some(
+                (commit) => commit.sha === claim.commitSha,
+              )
             )
               continue;
-            const ids = originatingClaims.get(original.sourceId) ?? [];
+            const ids = originatingClaims.get(verifiedOriginal.sourceId) ?? [];
             ids.push(claim.id);
-            originatingClaims.set(original.sourceId, ids);
+            originatingClaims.set(verifiedOriginal.sourceId, ids);
           }
           if (originatingClaims.size >= 2) {
             const proof = await octoberOriginalContributorPartsProof(

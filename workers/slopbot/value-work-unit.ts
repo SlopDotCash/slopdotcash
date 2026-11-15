@@ -15,6 +15,10 @@ import {
 import type { ValueEvidence } from "./value-evidence-types";
 import { mergeResolutionMatches } from "./value-merge-resolution";
 import {
+  NATIVE_MERGE_CONTEXT,
+  nativeMergeCarrierMatches,
+} from "./value-native-merge";
+import {
   NO_CHANGE_PROMOTION_CONTEXT,
   noChangePromotionMatches,
 } from "./value-no-change-promotion";
@@ -108,11 +112,17 @@ export async function prepareWorkUnitEvidence(
       );
     ids.add(pull.node_id);
     projects.add(repository.projectId);
+    const nativeMerge = await nativeMergeCarrierMatches(evidence, sources);
+    if (evidence.nativeMergeAcceptance && !nativeMerge)
+      limitations.add(`${pull.node_id}: invalid native ancestor acceptance`);
     const noChangePromotion = noChangePromotionMatches(evidence);
     if (evidence.noChangePromotion && !noChangePromotion)
       limitations.add(`${pull.node_id}: invalid unchanged promotion proof`);
     for (const limitation of evidence.limitations)
-      if (!(noChangePromotion && limitation === NO_CHANGE_PROMOTION_CONTEXT))
+      if (
+        !(noChangePromotion && limitation === NO_CHANGE_PROMOTION_CONTEXT) &&
+        !(nativeMerge && limitation === NATIVE_MERGE_CONTEXT)
+      )
         limitations.add(`${pull.node_id}: ${limitation}`);
     for (const limitation of await binarySourceLimitations(evidence))
       limitations.add(`${pull.node_id}: ${limitation}`);
