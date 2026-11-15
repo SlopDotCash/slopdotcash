@@ -13,7 +13,11 @@ import {
   collectBranchPolicy,
   matchesHistoricalIntegrationBranch,
 } from "./value-branch-policy";
-import { githubLinkDestinations } from "./value-commit-hints";
+import {
+  githubLinkDestinations,
+  withoutClosedCodeFences,
+  withoutClosedCodeSpans,
+} from "./value-commit-hints";
 import type {
   AcceptedPatchReplay,
   AcceptedValueRange,
@@ -333,7 +337,9 @@ async function relatedPullRequests(
     // Link destinations own the reference scope. In release notes, a label
     // such as #412 may point to an upstream repository rather than this one.
     // owner/repo starts only at a name boundary, so each run is read once.
-    const referencesText = githubLinkDestinations(text);
+    const referencesText = githubLinkDestinations(
+      withoutClosedCodeSpans(withoutClosedCodeFences(text)),
+    );
     for (const match of referencesText.matchAll(
       /https:\/\/(?:redirect\.)?github\.com\/([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+)\/(?:pull|issues)\/(\d+)\b|(?<![\w/])(?:(?<![.-])([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+)[ \t]*)?#(\d+)\b/gu,
     )) {

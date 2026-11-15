@@ -8488,9 +8488,9 @@
     },
     {
       "path": "workers/slopbot/value-commit-hints.ts",
-      "sha256": "e25393fd745105cf27f8425768319a51c7036a9afd9ab80528692f49a8700d8b",
+      "sha256": "e298be56f5b9144effdbddce151a9dbab595212347b7ae5f28448c95d2859dfd",
       "models": ["formal/models/slopbot/bot_retained_acceptance.qnt"],
-      "candidateLines": [],
+      "candidateLines": [84, 89, 92, 93, 102, 105],
       "review": "mapped-abstraction"
     },
     {
@@ -8554,14 +8554,14 @@
     },
     {
       "path": "workers/slopbot/value-evidence.ts",
-      "sha256": "1c4de27bf17b1c501d61831e82abefbca3d5faec02b9e986424ae07d6b37ae5a",
+      "sha256": "fba9930baa3b12238972cc744641d6c2d7bb80fc6d3210f1c5321eab342f5165",
       "models": [
         "formal/models/points/historical_discussion_evidence.qnt",
         "formal/models/slopbot/bot_evidence_integrity.qnt",
         "formal/models/slopbot/bot_value_dispute_actor.qnt"
       ],
       "candidateLines": [
-        63, 76, 85, 101, 488, 489, 680, 700, 743, 752, 771, 1113, 1132
+        67, 80, 89, 105, 494, 495, 686, 706, 749, 758, 777, 1119, 1138
       ],
       "review": "mapped-abstraction"
     },
