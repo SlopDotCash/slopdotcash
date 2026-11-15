@@ -33,6 +33,7 @@ pure def canStart(w: Window, upper: int): bool = w.phase != Building and upper >
 pure def start(w: Window, upper: int): Window =
   { ...w, phase: Building, from: upper - windowDays, to: upper, records: List(), censusComplete: false }
 pure def alwaysExactWindow(w: Window): bool = w.to - w.from == windowDays and w.publishedTo - w.publishedFrom == windowDays
+pure def alwaysBuildingAhead(w: Window): bool = w.phase == Building implies w.to >= w.publishedTo
 ```
 
 ### Each permanent ID is recorded once with the reason it counts or not

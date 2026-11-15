@@ -55,12 +55,15 @@ pure def retry(r: Read): Read =
 pure def alwaysAttemptsBounded(r: Read): bool = r.attempt >= 0 and r.attempt <= maxAttempts and r.sent == r.attempt
 pure def alwaysWritesSentOnce(r: Read): bool = not(retryable(r)) implies r.sent <= 1
 pure def alwaysCheckpointFinal(r: Read): bool = r.checkpoint iff r.phase == Checkpointed
+pure def alwaysWaitingRetryable(r: Read): bool = r.phase == Waiting implies (retryable(r) and r.attempt < maxAttempts and r.attempt >= 1)
 pure def stepCheckpointRefusesLater(before: Read, after: Read): bool = before.checkpoint implies (after.checkpoint and after.sent == before.sent)
 pure def lawAuthorizationNotRetried(primaryDelay: int, retryAfter: int): bool =
   (primaryDelay <= 0 and retryAfter <= 0) implies delayFor({ status: 403, primaryDelay: primaryDelay, retryAfter: retryAfter }) < 0
 pure def lawUnhintedLimitWaitsOneMinute(status: int): bool = status == 429 implies delayFor({ status: status, primaryDelay: 0, retryAfter: 0 }) == 60000
 pure def sometimesRetriedThenReturned(r: Read): bool = r.phase == Returned and r.attempt > 1
-pure def sometimesRepeatedLimitReturned(r: Read): bool = r.phase == Returned and r.attempt == maxAttempts and r.returnedStatus == 429
+pure def lawFifthLimitIsReturned(status: int): bool = status == 429 implies
+  respond({ ...initial, attempt: maxAttempts, sent: maxAttempts }, { status: status, primaryDelay: 0, retryAfter: 1000 }).phase == Returned
+pure def sometimesSecondAttempt(r: Read): bool = r.attempt >= 2
 pure def sometimesWriteReturnedOnce(r: Read): bool = r.phase == Returned and r.method == Write and r.returnedStatus == 429
 pure def sometimesCheckpointed(r: Read): bool = r.phase == Checkpointed
 ```
@@ -78,20 +81,16 @@ because each part path is its own digest.
 type Part = { digest: int, bytes: int }
 type PartsManifest = { total: int, digest: int, parts: List[Part] }
 type ReadPart = { digest: int, bytes: int, content: int }
-type PartScan = { index: int, ok: bool }
 pure def manifestValid(m: PartsManifest, partSize: int): bool =
   partSize > 0 and m.total > 0 and m.digest > 0 and m.parts.length() > 0 and
   m.parts.every(p => p.digest > 0 and p.bytes > 0 and p.bytes <= partSize) and
   m.parts.foldl(0, (acc, p) => acc + p.bytes) == m.total
-pure def partsMatch(m: PartsManifest, read: List[ReadPart]): bool =
-  read.length() == m.parts.length() and
-  m.parts.foldl({ index: 0, ok: true }, (acc, p) => { index: acc.index + 1,
-    ok: acc.ok and read.nthOr(acc.index, { digest: 0, bytes: 0, content: 0 }).digest == p.digest and
-      read.nthOr(acc.index, { digest: 0, bytes: 0, content: 0 }).bytes == p.bytes }).ok
+pure def partOf(p: ReadPart): Part = { digest: p.digest, bytes: p.bytes }
+pure def partsMatch(m: PartsManifest, read: List[ReadPart]): bool = read.listMap(p => partOf(p)) == m.parts
 pure def accepted(m: PartsManifest, partSize: int, read: List[ReadPart], wholeDigest: int): bool =
   manifestValid(m, partSize) and partsMatch(m, read) and wholeDigest == m.digest
 pure def lawMixedGenerationRefused(m: PartsManifest, read: List[ReadPart], wholeDigest: int): bool =
-  (read.length() == m.parts.length() and read.some(p => not(m.parts.some(q => q.digest == p.digest)))) implies
+  read.some(p => not(m.parts.includes(partOf(p)))) implies
     not(accepted(m, 4, read, wholeDigest))
 pure def lawDigestMismatchRefused(m: PartsManifest, read: List[ReadPart], wholeDigest: int): bool =
   wholeDigest != m.digest implies not(accepted(m, 4, read, wholeDigest))
@@ -104,9 +103,6 @@ pure val xValues = Set({ status: 200, primaryDelay: 0, retryAfter: 0 }, { status
   { status: 403, primaryDelay: 0, retryAfter: 0 }, { status: 403, primaryDelay: 5000, retryAfter: 0 },
   { status: 429, primaryDelay: 0, retryAfter: 200000 }, { status: 429, primaryDelay: 0, retryAfter: 1000 })
 pure val atValues = Set(1000, 2000, 3000, 4000, 5000, 60000, 1000000)
-pure val weight_retry = 10
-pure val weight_tick = 10
-pure val weight_respond = 5
 pure val statusValues = Set(403, 429)
 pure val primaryDelayValues = Set(0, 5000)
 pure val retryAfterValues = Set(0, 1000)

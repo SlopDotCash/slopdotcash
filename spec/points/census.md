@@ -25,7 +25,7 @@ type CensusPhase = Empty | Collecting | Incomplete | Ready | Published
 type ProjectView = { registered: bool, paused: bool, retired: bool, legacy: bool, quarantined: bool }
 type AuthorKind = HumanAuthor | BotAuthor | SlopbotAuthor | UnknownAuthor
 type ItemKind = IssueItem | PullRequestItem
-type Item = { id: int, kind: ItemKind, open: bool, author: AuthorKind, diffAvailable: bool, assigned: bool,
+type Item = { id: int, kind: ItemKind, open: bool, author: AuthorKind, diffAvailable: bool, hasAssignee: bool,
   claimed: bool, draft: bool, reviewRequested: bool, approved: bool, changesRequested: bool,
   securityLabel: bool, humanGated: bool, epic: bool }
 type Page = { cursor: int, next: int, totalCount: int, items: List[Item] }
@@ -89,7 +89,7 @@ pure def decide(i: Item): Decision =
   else if (i.securityLabel) SecurityLabel
   else if (i.humanGated) HumanGated
   else if (i.epic) Epic
-  else if (i.assigned) Assigned
+  else if (i.hasAssignee) Assigned
   else if (i.claimed) Claimed
   else if (i.draft) DraftItem
   else if (i.reviewRequested) ReviewRequested
@@ -100,7 +100,7 @@ pure def offered(c: Census): List[Item] = c.items.select(i => decide(i) == Offer
 pure def lawUnknownAuthorFailsClosed(i: Item): bool = i.author == UnknownAuthor implies decide(i) != Offered
 pure def lawUnavailableDiffFailsClosed(i: Item): bool = (i.kind == PullRequestItem and not(i.diffAvailable)) implies decide(i) != Offered
 pure def lawOfferedIsUnblocked(i: Item): bool = decide(i) == Offered implies
-  (i.open and i.author == HumanAuthor and not(i.assigned or i.claimed or i.draft or i.reviewRequested or
+  (i.open and i.author == HumanAuthor and not(i.hasAssignee or i.claimed or i.draft or i.reviewRequested or
     i.approved or i.changesRequested or i.securityLabel or i.humanGated or i.epic))
 ```
 
@@ -116,7 +116,7 @@ pure def alwaysCompleteWhenReady(c: Census): bool = (c.phase == Ready or c.phase
   (c.terminalSeen and c.items.length() == c.totalCount)
 pure def alwaysFailedKeepsSnapshot(c: Census): bool =
   (c.phase == Collecting or c.phase == Ready or c.phase == Incomplete) implies c.publishedSnapshot == c.previousSnapshot
-pure def alwaysWindowForward(c: Census): bool = c.phase == Collecting implies c.lowerDay >= c.publishedLower
+pure def alwaysWindowForward(c: Census): bool = (c.phase == Collecting or c.phase == Ready) implies c.lowerDay >= c.publishedLower
 pure def stepPublishedWindowNeverRegresses(before: Census, after: Census): bool = after.publishedLower >= before.publishedLower
 pure def sometimesPublished(c: Census): bool = c.phase == Published and c.items.length() > 0
 pure def sometimesIncomplete(c: Census): bool = c.phase == Incomplete and c.countChanges == 2
@@ -127,14 +127,14 @@ pure def sometimesRetainedButNotOffered(c: Census): bool = c.phase == Ready and 
 ### Simulation samples include repeated cursors, count changes and blocked items
 
 ```quint
-pure val human: Item = { id: 1, kind: PullRequestItem, open: true, author: HumanAuthor, diffAvailable: true, assigned: false,
+pure val human: Item = { id: 1, kind: PullRequestItem, open: true, author: HumanAuthor, diffAvailable: true, hasAssignee: false,
   claimed: false, draft: false, reviewRequested: false, approved: false, changesRequested: false,
   securityLabel: false, humanGated: false, epic: false }
 pure val pageValues = Set(
   { cursor: 0, next: 5, totalCount: 2, items: List(human) },
   { cursor: 5, next: 0, totalCount: 2, items: List({ ...human, id: 2, author: UnknownAuthor }) },
   { cursor: 5, next: 0, totalCount: 3, items: List({ ...human, id: 3 }) },
-  { cursor: 0, next: 0, totalCount: 1, items: List({ ...human, id: 4, assigned: true }) },
+  { cursor: 0, next: 0, totalCount: 1, items: List({ ...human, id: 4, hasAssignee: true }) },
   { cursor: 5, next: 5, totalCount: 2, items: List(human) })
 pure val projectValues = Set({ registered: true, paused: false, retired: false, legacy: false, quarantined: false },
   { registered: true, paused: true, retired: false, legacy: false, quarantined: false },

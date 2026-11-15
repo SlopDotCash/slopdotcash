@@ -165,9 +165,15 @@ pure def sometimesWrongEnvironment(r: Recovery): bool =
 pure def sometimesUnverified(r: Recovery): bool =
   val decision = r.outcome
   match decision { | UnverifiedCopy => true | _ => false }
-pure def sometimesBootstrapped(r: Recovery): bool = r.outcome == Bootstrapped
-pure def sometimesBootstrapRefused(r: Recovery): bool = r.outcome == BootstrapRefused
-pure def sometimesUnavailable(r: Recovery): bool = r.outcome == SourceUnavailable
+pure def sometimesBootstrapped(r: Recovery): bool =
+  val decision = r.outcome
+  match decision { | Bootstrapped => true | _ => false }
+pure def sometimesBootstrapRefused(r: Recovery): bool =
+  val decision = r.outcome
+  match decision { | BootstrapRefused => true | _ => false }
+pure def sometimesUnavailable(r: Recovery): bool =
+  val decision = r.outcome
+  match decision { | SourceUnavailable => true | _ => false }
 pure def sometimesStagingPagesOnly(r: Recovery): bool =
   val decision = r.outcome
   match decision { | Recovered(history) => history.origin == Staging | _ => false }
