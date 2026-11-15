@@ -35,6 +35,16 @@ export interface OriginalContributorRepair {
       editor: { id: string; type: string } | null;
       author: { id: string; type: string };
     };
+    historicalBodyEdit?: {
+      id: string;
+      createdAt: string;
+      editedAt: string;
+      updatedAt: string;
+      deletedAt: null;
+      diff: string;
+      editor: { id: string; type: string };
+      headCommit: { sha: string; committedAt: string };
+    };
     digest: string;
   };
 }
@@ -71,15 +81,19 @@ export function isOriginalContributorRepair(
   const pull = reference.pull;
   const acknowledgement = reference.acknowledgement;
   const source = repair.sourceId === original.sourceId ? original : accepted;
-  const text = acknowledgement?.body ?? pull.body ?? "";
+  const historical = reference.historicalBodyEdit;
+  const text = acknowledgement?.body ?? historical?.diff ?? pull.body ?? "";
   const bodyEdit = reference.bodyEdit;
   const bodyActor =
     bodyEdit?.lastEditedAt === null ? bodyEdit.author : bodyEdit?.editor;
-  const actorId = acknowledgement?.user?.node_id ?? bodyActor?.id;
-  const actorType = acknowledgement?.user?.type ?? bodyActor?.type;
+  const actorId =
+    acknowledgement?.user?.node_id ?? historical?.editor?.id ?? bodyActor?.id;
+  const actorType =
+    acknowledgement?.user?.type ?? historical?.editor?.type ?? bodyActor?.type;
   const occurredAt =
     acknowledgement?.created_at ??
     acknowledgement?.submitted_at ??
+    historical?.editedAt ??
     bodyEdit?.lastEditedAt ??
     pull.updated_at;
   const edited = acknowledgement?.updated_at;
@@ -121,6 +135,22 @@ export function isOriginalContributorRepair(
     Date.parse(occurredAt ?? "") <= Date.parse(pull.updated_at) &&
     (acknowledgement !== undefined ||
       Date.parse(occurredAt ?? "") <= Date.parse(accepted.occurredAt)) &&
+    (historical === undefined ||
+      (acknowledgement === undefined &&
+        repair.sourceId === accepted.sourceId &&
+        typeof historical.id === "string" &&
+        historical.id.length > 0 &&
+        historical.deletedAt === null &&
+        historical.editor?.type === "User" &&
+        historical.editor.id === reference.acceptingPull.merged_by?.node_id &&
+        historical.createdAt === historical.editedAt &&
+        historical.updatedAt === historical.editedAt &&
+        typeof historical.diff === "string" &&
+        historical.diff.length > 0 &&
+        historical.headCommit?.sha === reference.headSha &&
+        Number.isFinite(Date.parse(historical.headCommit.committedAt)) &&
+        Date.parse(historical.headCommit.committedAt) <=
+          Date.parse(historical.editedAt))) &&
     (acknowledgement === undefined || acknowledgement.node_id.length > 0) &&
     (edited === undefined || edited === occurredAt) &&
     (acknowledgement !== undefined ||

@@ -1569,6 +1569,127 @@ async function authenticateNativeAcceptedRange(
   return { acceptedRange, retainedBaseRanges };
 }
 
+/** Re-read a complete GitHub body-edit history without replacing the current body. */
+async function historicalRepairBody(
+  github: Pick<GitHubClient, "get"> & Partial<Pick<GitHubClient, "graphql">>,
+  original: WorkUnitSource,
+  integration: WorkUnitSource,
+): Promise<
+  OriginalContributorRepair["reference"]["historicalBodyEdit"] | undefined
+> {
+  if (!github.graphql) return undefined;
+  const evidence = integration.evidence;
+  const pull = evidence.pull;
+  const [owner, name] = evidence.repository.split("/");
+  type Edit = {
+    id: string;
+    createdAt: string;
+    editedAt: string;
+    updatedAt: string;
+    deletedAt: string | null;
+    diff: string | null;
+    editor: { id: string; __typename: string } | null;
+  };
+  const data = await github.graphql<{
+    repository: {
+      id: string;
+      pullRequest: {
+        id: string;
+        body: string;
+        headRefOid: string;
+        mergedAt: string | null;
+        updatedAt: string;
+        lastEditedAt: string | null;
+        userContentEdits: {
+          totalCount: number;
+          nodes: Edit[];
+          pageInfo: { hasNextPage: boolean };
+        };
+      };
+    };
+  }>(
+    "query SlopHistoricalRepairBody($owner:String!,$name:String!,$number:Int!){repository(owner:$owner,name:$name){id pullRequest(number:$number){id body headRefOid mergedAt updatedAt lastEditedAt userContentEdits(first:100){totalCount nodes{id createdAt editedAt updatedAt deletedAt diff editor{__typename ... on User{id}}} pageInfo{hasNextPage}}}} rateLimit{cost limit remaining resetAt}}",
+    { owner, name, number: pull.number },
+  );
+  const current = data.repository?.pullRequest;
+  const history = current?.userContentEdits;
+  if (
+    data.repository?.id !== evidence.repositoryNodeId ||
+    current?.id !== pull.node_id ||
+    current.body !== pull.body ||
+    current.headRefOid !== pull.head.sha ||
+    current.mergedAt !== pull.merged_at ||
+    current.updatedAt !== pull.updated_at ||
+    !history ||
+    history.pageInfo?.hasNextPage !== false ||
+    !Array.isArray(history.nodes) ||
+    history.nodes.some(
+      (edit) => !edit || typeof edit.id !== "string" || !edit.id,
+    ) ||
+    !Number.isSafeInteger(history.totalCount) ||
+    history.totalCount !== history.nodes.length ||
+    new Set(history.nodes.map((edit) => edit.id)).size !==
+      history.nodes.length ||
+    !history.nodes.some(
+      (edit) =>
+        edit.diff === current.body &&
+        edit.editedAt === current.lastEditedAt &&
+        edit.deletedAt === null,
+    )
+  )
+    return undefined;
+  const edits = history.nodes
+    .filter(
+      (edit) =>
+        typeof edit.id === "string" &&
+        edit.id.length > 0 &&
+        edit.deletedAt === null &&
+        edit.editor?.__typename === "User" &&
+        edit.editor.id === pull.merged_by?.node_id &&
+        edit.createdAt === edit.editedAt &&
+        edit.updatedAt === edit.editedAt &&
+        Number.isFinite(Date.parse(edit.editedAt)) &&
+        Date.parse(edit.editedAt) <= Date.parse(pull.merged_at ?? "") &&
+        typeof edit.diff === "string" &&
+        sameRepositoryCommitHints(evidence.repository, edit.diff).includes(
+          pull.head.sha,
+        ) &&
+        referencesOriginalContributorSource(
+          edit.diff,
+          evidence.repository,
+          original.evidence.pull.number,
+        ),
+    )
+    .sort(
+      (a, b) =>
+        Date.parse(b.editedAt) - Date.parse(a.editedAt) ||
+        a.id.localeCompare(b.id),
+    );
+  if (!edits.length) return undefined;
+  const head = await github.get<{ sha: string; committer: { date: string } }>(
+    `/repos/${evidence.repository}/git/commits/${pull.head.sha}`,
+  );
+  if (
+    head?.sha !== pull.head.sha ||
+    !Number.isFinite(Date.parse(head.committer?.date))
+  )
+    return undefined;
+  const edit = edits.find(
+    (entry) => Date.parse(head.committer.date) <= Date.parse(entry.editedAt),
+  );
+  if (!edit || typeof edit.diff !== "string" || !edit.editor) return undefined;
+  return {
+    id: edit.id,
+    createdAt: edit.createdAt,
+    editedAt: edit.editedAt,
+    updatedAt: edit.updatedAt,
+    deletedAt: null,
+    diff: edit.diff,
+    editor: { id: edit.editor.id, type: edit.editor.__typename },
+    headCommit: { sha: head.sha, committedAt: head.committer.date },
+  };
+}
+
 /** Bind third-party repairs only to statements by the accepting merger. */
 async function acknowledgedOriginalRepairs(
   github: Pick<GitHubClient, "get"> & Partial<Pick<GitHubClient, "graphql">>,
@@ -1705,6 +1826,19 @@ async function acknowledgedOriginalRepairs(
             },
           };
         }
+      }
+      if (
+        reference?.bodyEdit &&
+        Date.parse(reference.bodyEdit.lastEditedAt ?? "") >
+          Date.parse(integration.evidence.pull.merged_at ?? "")
+      ) {
+        const historicalBodyEdit = await historicalRepairBody(
+          github,
+          original,
+          integration,
+        );
+        if (historicalBodyEdit)
+          reference = { ...reference, historicalBodyEdit };
       }
       if (!reference || !headContains(reference.headSha, commit.sha)) continue;
       const repair: OriginalContributorRepair = {
