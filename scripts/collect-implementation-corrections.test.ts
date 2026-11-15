@@ -18,10 +18,10 @@ import {
   repository as valueRepository,
 } from "../tests/value-binary-fixture";
 import {
-  makeOriginal,
-  actor as nativeActor,
   base,
   commit,
+  makeOriginal,
+  actor as nativeActor,
   repository,
 } from "../tests/value-promotion-fixture";
 import type { FileChange } from "../workers/slopbot/value-evidence-types";
@@ -31,8 +31,8 @@ import {
 } from "../workers/slopbot/value-native-merge";
 import { prepareWorkUnitEvidence } from "../workers/slopbot/value-work-unit";
 import {
-  CollectionBudgetExhausted,
   bindRetained,
+  CollectionBudgetExhausted,
   CorrectionEvidenceCache,
   censusMonths,
   collectImplementationCorrections,

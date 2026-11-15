@@ -62,13 +62,13 @@ import type {
 } from "../workers/slopbot/value-evidence-types";
 import { mergeResolutionLineCounts } from "../workers/slopbot/value-merge-resolution";
 import {
+  NATIVE_MERGE_CONTEXT,
+  nativeMergeCarrierMatches,
+} from "../workers/slopbot/value-native-merge";
+import {
   valueAdditionCount,
   valueDeletionCount,
 } from "../workers/slopbot/value-patch";
-import {
-  nativeMergeCarrierMatches,
-  NATIVE_MERGE_CONTEXT,
-} from "../workers/slopbot/value-native-merge";
 import { isConfirmedMissingPublicReference } from "../workers/slopbot/value-reference-query";
 import { retainedCopyBindings } from "../workers/slopbot/value-retained-copy";
 import {
