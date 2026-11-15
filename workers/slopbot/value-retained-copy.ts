@@ -575,6 +575,193 @@ function alreadyAcceptedNative(
   });
 }
 
+/** A rejected later duplicate remains contextual evidence. Every changed line
+ * must already be a native original commit in the named accepted carrier.
+ * This creates no copy binding and never changes an implementation recipient.
+ */
+function rejectedDuplicateContext(
+  duplicate: WorkUnitSource,
+  sources: readonly WorkUnitSource[],
+): boolean {
+  const evidence = duplicate.evidence;
+  const closedAt = Date.parse(evidence.pull.closed_at ?? "");
+  if (
+    evidence.pull.state !== "closed" ||
+    evidence.pull.merged_at !== null ||
+    evidence.indirectAcceptance ||
+    evidence.limitations.length ||
+    !Number.isFinite(closedAt) ||
+    evidence.pull.user.type !== "User" ||
+    !evidence.commits.length ||
+    evidence.commits.length !== evidence.pull.commits ||
+    evidence.commitAttribution.length !== evidence.commits.length ||
+    new Set(evidence.commits.map((commit) => commit.sha)).size !==
+      evidence.commits.length ||
+    evidence.commits.at(-1)?.sha !== evidence.pull.head.sha ||
+    !evidence.files.length
+  )
+    return false;
+  const edits = evidence.files.map(retainedEditIdentity);
+  if (edits.includes(null) || new Set(edits).size !== edits.length)
+    return false;
+  const complete = evidence.commits.every((commit, index) => {
+    const entries = evidence.commitAttribution.filter(
+      (entry) => entry.sha === commit.sha,
+    );
+    const entry = entries[0];
+    return (
+      commit.parents.length === 1 &&
+      (index === 0 ||
+        commit.parents[0].sha === evidence.commits[index - 1].sha) &&
+      entries.length === 1 &&
+      entry.limitations.length === 0 &&
+      !!entry.files?.length &&
+      entry.files.length === entry.changedPaths?.length &&
+      entry.files.every(
+        (file) =>
+          entry.changedPaths?.includes(file.filename) &&
+          edits.includes(retainedEditIdentity(file)),
+      )
+    );
+  });
+  const commitEdits = evidence.commitAttribution.flatMap((entry) =>
+    (entry.files ?? []).map(retainedEditIdentity),
+  );
+  const firstChangedAt = Math.min(
+    ...evidence.commits.map((commit) => Date.parse(commit.commit.author.date)),
+  );
+  if (
+    !complete ||
+    !Number.isFinite(firstChangedAt) ||
+    firstChangedAt > closedAt ||
+    !edits.every(
+      (edit) => commitEdits.filter((value) => value === edit).length === 1,
+    )
+  )
+    return false;
+  const related = (number: number) =>
+    sources.filter(
+      ({ evidence: candidate }) =>
+        candidate.repositoryNodeId === evidence.repositoryNodeId &&
+        candidate.pull.number === number &&
+        candidate.limitations.length === 0 &&
+        evidence.relatedPullRequests.some(
+          (ref) =>
+            ref.number === number &&
+            ref.id === candidate.pull.node_id &&
+            ref.url === candidate.pull.html_url &&
+            ref.repository.toLowerCase() === evidence.repository.toLowerCase(),
+        ),
+    );
+  for (const comment of evidence.comments) {
+    const time = Date.parse(comment.created_at);
+    // Match the affirmative closure statement itself, never a quoted link,
+    // hypothetical action, edited text or an unrelated commenter's assertion.
+    const statement =
+      /^closing as a duplicate of #([1-9][0-9]*), incorporated in #([1-9][0-9]*)\.(?:\s|$)/iu.exec(
+        comment.body,
+      );
+    if (
+      !statement ||
+      comment.user?.type !== "User" ||
+      comment.updated_at !== comment.created_at ||
+      !Number.isFinite(time) ||
+      time > closedAt
+    )
+      continue;
+    const originals = related(Number(statement[1]));
+    const carriers = related(Number(statement[2]));
+    if (originals.length !== 1 || carriers.length !== 1) continue;
+    const original = originals[0].evidence;
+    const carrier = carriers[0].evidence;
+    const merge = carrier.mergeCommitEvidence;
+    if (
+      original.pull.number >= evidence.pull.number ||
+      original.pull.user.type !== "User" ||
+      original.pull.user.node_id === evidence.pull.user.node_id ||
+      original.commits.length !== original.pull.commits ||
+      original.commits.at(-1)?.sha !== original.pull.head.sha ||
+      new Set(original.commits.map((commit) => commit.sha)).size !==
+        original.commits.length ||
+      original.commitAttribution.length !== original.commits.length ||
+      !edits.every((edit) =>
+        original.files.some((file) => retainedEditIdentity(file) === edit),
+      ) ||
+      !edits.every((edit) =>
+        carrier.files.some((file) => retainedEditIdentity(file) === edit),
+      ) ||
+      carrier.pull.number >= evidence.pull.number ||
+      carrier.pull.state !== "closed" ||
+      carrier.acceptedRange !== undefined ||
+      carrier.indirectAcceptance !== undefined ||
+      carrier.pull.merged_by?.node_id !== comment.user.node_id ||
+      carrier.pull.merged_by.type !== "User" ||
+      !Number.isFinite(Date.parse(carrier.pull.merged_at ?? "")) ||
+      !merge ||
+      merge.sha !== carrier.pull.merge_commit_sha ||
+      !merge.parents.some((parent) => parent.sha === carrier.pull.head.sha) ||
+      carrier.commits.length !== carrier.pull.commits ||
+      carrier.commits.at(-1)?.sha !== carrier.pull.head.sha
+    )
+      continue;
+    const commits = new Map(
+      carrier.commits.map((commit) => [commit.sha, commit]),
+    );
+    const order = new Map(
+      carrier.commits.map((commit, index) => [commit.sha, index]),
+    );
+    if (
+      commits.size !== carrier.commits.length ||
+      carrier.commits.some((commit, index) =>
+        commit.parents.some((parent) => (order.get(parent.sha) ?? -1) >= index),
+      )
+    )
+      continue;
+    const ancestors = new Set<string>();
+    const pending = [carrier.pull.head.sha];
+    while (pending.length) {
+      const sha = pending.pop();
+      if (sha === undefined || ancestors.has(sha)) continue;
+      ancestors.add(sha);
+      for (const parent of commits.get(sha)?.parents ?? [])
+        pending.push(parent.sha);
+    }
+    const originalEdits = original.commitAttribution.flatMap((entry) => {
+      const commit = original.commits.find((item) => item.sha === entry.sha);
+      const copies = carrier.commits.filter((item) => item.sha === entry.sha);
+      const accepted = carrier.commitAttribution.filter(
+        (item) => item.sha === entry.sha,
+      );
+      if (
+        commit?.parents.length !== 1 ||
+        commit.author?.type !== "User" ||
+        commit.author.node_id !== original.pull.user.node_id ||
+        !(Date.parse(commit.commit.author.date) < firstChangedAt) ||
+        !ancestors.has(commit.sha) ||
+        copies.length !== 1 ||
+        JSON.stringify(copies[0]) !== JSON.stringify(commit) ||
+        accepted.length !== 1 ||
+        JSON.stringify(accepted[0]) !== JSON.stringify(entry) ||
+        entry.limitations.length ||
+        !entry.files?.length ||
+        entry.changedPaths?.length !== entry.files.length ||
+        !entry.files.every((file) =>
+          entry.changedPaths?.includes(file.filename),
+        )
+      )
+        return [];
+      return entry.files.map(retainedEditIdentity);
+    });
+    if (
+      edits.every(
+        (edit) => originalEdits.filter((value) => value === edit).length === 1,
+      )
+    )
+      return true;
+  }
+  return false;
+}
+
 /** A narrow conflict-copy proof. Full-index canonical patches identify each
  * resolved blob. A shared first parent preserves the original implementation
  * antecedent while the second parent may be a newer integration branch.
@@ -638,7 +825,11 @@ export async function retainedCopyBindings(
   >();
   const limitations = new Set<string>();
   for (const original of sources) {
-    if (options.acceptedSubset && alreadyAcceptedNative(original, sources))
+    if (
+      options.acceptedSubset &&
+      (alreadyAcceptedNative(original, sources) ||
+        rejectedDuplicateContext(original, sources))
+    )
       continue;
     const integrations = await retainedCopySources(
       original,
