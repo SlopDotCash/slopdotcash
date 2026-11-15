@@ -1,9 +1,12 @@
 // @source scripts/october-reward-review.ts
 // @source scripts/prepare-october-rewards.ts
+// @source scripts/run-october-rewards.ts
+// @source .github/workflows/october-rewards.yml
 // @source scripts/prepare-monthly-rewards.ts
 // @source scripts/points-protection-sql.ts
 // @source migrations/0081_monthly_asset_amount_range.sql
 // @evidence scripts/prepare-october-rewards.test.ts
+// @evidence scripts/run-october-rewards.test.ts
 // Two selected October projects, one reviewed proposal per project. Base 0
 // means absent, 1 exactly matches the reviewed parent/children, 2 differs
 // from the review or lacks children. The input digest, registry revision,
