@@ -11,7 +11,7 @@ lemma observeTime_ensures(b: Binding, timestamp: int)
   ensures (inv(b) ==> canObserveTime(b, timestamp) ==> stepEvidenceIdentityFixed(b, observeTime(b, timestamp)))
 {
   if inv(b) && canObserveTime(b, timestamp) {
-    backend__wallets_timestamp_ensures(b.wallet, timestamp);
+    backend__wallets_observeTime_ensures(b.wallet, timestamp);
   }
 }
 
