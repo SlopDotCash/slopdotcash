@@ -174,7 +174,6 @@ pure def stepSendNeedsCurrentQualifiedReport(before: Journey, after: Journey): b
     and after.forwarding.activeClaim.reportVersion == before.screening.version and after.forwarding.activeClaim.digest == before.screening.digest
 pure def alwaysSendFollowsReceipt(r: Journey): bool = r.forwarding.attempt >= 0 and (r.forwarding.attempt > 0 implies received(r))
 pure def sometimesSendInFlight(r: Journey): bool = r.forwarding.phase == F::Submitting
-pure def sometimesFailedThenRevised(r: Journey): bool = r.forwarding.phase == F::Failed and r.screening.version > 1
 ```
 
 ### Simulation samples

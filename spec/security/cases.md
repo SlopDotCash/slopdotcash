@@ -28,7 +28,9 @@ A Slop or GitHub-verified receipt is created by the intake and forwarding
 specifications with terms the [program](./program.md) issued at receipt. A
 legacy reporter claim stays a claim until a current technical approver
 verifies that the GitHub advisory names this reporter, freezing the terms in
-force at the maintainer-attested receipt time, or rejects the link. Cases
+force at the maintainer-attested receipt time, or rejects the link. The
+receipt guard checks the full term validity (`T::validReceipt`); the terms
+then never change (`stepReceiptFrozen`). Cases
 received before discretionary awards arrive through the migration import
 with their reserved or capacity-exhausted award. The receipt, its source and
 its terms are immutable once verified.
@@ -90,8 +92,9 @@ pure def verifyLink(c: PrivateCase, by: int, checkedEpoch: int, terms: T::Receip
 pure def canRejectLink(c: PrivateCase, by: int, checkedEpoch: int): bool = c.submission == Claimed and technicalNow(c, by, checkedEpoch)
 pure def rejectLink(c: PrivateCase, by: int, checkedEpoch: int): PrivateCase = { ...c, submission: LinkRejected, revision: c.revision + 1 }
 pure def alwaysUnpaidHasNoAward(c: PrivateCase): bool = c.terms.paidTerms == (c.award != NotApplicable)
-pure def alwaysVerifiedReceiptValid(c: PrivateCase): bool = (c.submission == Verified implies T::validReceipt(c.terms)
-  and c.source != NoSource and c.reportVersion > 0 and c.revision > 0) and (c.submission != Verified implies c.award == NotApplicable)
+pure def alwaysVerifiedReceiptValid(c: PrivateCase): bool = (c.submission == Verified implies c.terms.revision > 0
+  and c.terms.receivedAt > 0 and c.source != NoSource and c.reportVersion > 0 and c.revision > 0)
+  and (c.submission != Verified implies c.award == NotApplicable)
 pure def stepReceiptFrozen(before: PrivateCase, after: PrivateCase): bool = after.reporter == before.reporter and
   (before.submission == Verified implies after.submission == Verified and after.terms == before.terms and after.source == before.source)
   and (before.submission == LinkRejected implies after.submission == LinkRejected) and after.revision >= before.revision
