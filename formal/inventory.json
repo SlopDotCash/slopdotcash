@@ -78,7 +78,7 @@
     },
     {
       "path": ".github/workflows/october-rewards.yml",
-      "sha256": "406613e6398dd4f8d71fb9b40fe4e8e19c8a358619f92645c6ffd161af252492",
+      "sha256": "6d4e921c7f5a1b002d2352eeb82e049751b5d09e13aac92956d1ad4f7bf8aa45",
       "models": [
         "formal/models/release/workflow_authority.qnt",
         "formal/models/rewards/october_proposal_import.qnt"
@@ -4063,9 +4063,9 @@
     },
     {
       "path": "scripts/october-reward-review.ts",
-      "sha256": "94f232ff2a7c7078c72ffc716938d953f2432029330578663d3045156211b156",
+      "sha256": "7cb741fdebd3da4f3a04c49be7bbd212d38658611055e8b9ce8bc7c4e5817a40",
       "models": ["formal/models/rewards/october_proposal_import.qnt"],
-      "candidateLines": [243, 277, 279, 280],
+      "candidateLines": [245, 279, 282, 283],
       "review": "mapped-abstraction"
     },
     {
@@ -4624,9 +4624,9 @@
     },
     {
       "path": "scripts/run-october-rewards.ts",
-      "sha256": "d6f570a0613480e40125d3665e29855efa815980cfc1a4a99a0efb31a7b65fc0",
+      "sha256": "c6105948339092ee835a21d5fd9c6b9dd09eee506732e7852a2908de5dd486a6",
       "models": ["formal/models/rewards/october_proposal_import.qnt"],
-      "candidateLines": [3, 155, 295, 299, 307, 440, 444, 448],
+      "candidateLines": [3, 158, 305, 309, 321, 519, 523, 527],
       "review": "mapped-abstraction"
     },
     {
@@ -8660,14 +8660,14 @@
     },
     {
       "path": "workers/slopbot/value-evidence.ts",
-      "sha256": "e8150f8cba37cecbaf9bdd32f77b6d2cef8e7f55cbfd49e60ae0326876a35272",
+      "sha256": "2948d241b762489279a14e093adb9ff2cbc31ed286572742e0c7ed2d39f9212b",
       "models": [
         "formal/models/points/historical_discussion_evidence.qnt",
         "formal/models/slopbot/bot_evidence_integrity.qnt",
         "formal/models/slopbot/bot_value_dispute_actor.qnt"
       ],
       "candidateLines": [
-        72, 85, 94, 110, 499, 500, 691, 711, 754, 763, 782, 1138, 1157
+        72, 85, 94, 110, 498, 499, 690, 710, 753, 762, 781, 1137, 1156
       ],
       "review": "mapped-abstraction"
     },
