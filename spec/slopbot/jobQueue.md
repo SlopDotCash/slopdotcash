@@ -134,7 +134,8 @@ pure def alwaysQueuedUndelivered(q: JobQueue): bool =
   q.copies.every(c => (c.state == Queued implies c.deliveries == 0) and (c.state == Delivered implies c.deliveries > 0)
     and (c.state == Acked implies c.availableAt == 0))
 pure def alwaysDurableOnlyForDurableKinds(q: JobQueue): bool =
-  (q.durable.exists implies durableKind(q.kind)) and (q.kind == NoKind implies q.copies.length() == 0)
+  (q.durable.exists implies durableKind(q.kind)) and (q.durable.resolved implies q.durable.exists)
+    and (q.kind == NoKind implies q.copies.length() == 0)
 pure def alwaysRequeueNeedsNonDurableKind(q: JobQueue): bool =
   q.operatorRequeues > 0 implies not(durableKind(q.kind)) and q.kind != NoKind
 pure def stepTerminalCopiesStay(before: JobQueue, after: JobQueue): bool =
