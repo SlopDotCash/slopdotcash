@@ -211,6 +211,7 @@ pure def canRecordMerge(c: Contribution, by: int, view: F::ProjectView): bool = 
 pure def recordMerge(c: Contribution, by: int, view: F::ProjectView): Contribution =
   { ...c, phase: Accepted, credited: not(c.banned) and F::collected(view) }
 pure def canRecordClose(c: Contribution, by: int, closer: Closer): bool = by == githubCollector and c.phase == Submitted and closer != NoCloser
+  and c.closures < 9007199254740000
 pure def recordClose(c: Contribution, by: int, closer: Closer): Contribution =
   { ...c, phase: Closed, closedBy: closer, closures: c.closures + 1, reopenedByMaintainer: false }
 pure def canReopen(c: Contribution, by: int, byMaintainer: bool): bool = by == githubCollector and c.phase == Closed
@@ -224,7 +225,7 @@ pure def canRecordRun(c: Contribution, traceRun: TS::TraceServer): bool = submit
 pure def recordRun(c: Contribution, traceRun: TS::TraceServer): Contribution = { ...c, runRecorded: true }
 pure def alwaysCreditNeedsMerge(c: Contribution): bool = c.credited implies c.phase == Accepted
 pure def alwaysClosedHasCloser(c: Contribution): bool = ((c.phase == Closed) iff (c.closedBy != NoCloser))
-  and (c.phase == Closed implies c.closures > 0) and c.appeals >= 0 and c.standingEpoch >= 0
+  and (c.phase == Closed implies c.closures > 0) and c.closures >= 0 and c.appeals >= 0 and c.standingEpoch >= 0
 pure def stepCreditNeedsClearStanding(before: Contribution, after: Contribution): bool =
   (not(before.credited) and after.credited) implies not(after.banned)
 pure def stepAcceptedFinal(before: Contribution, after: Contribution): bool = before.phase == Accepted implies after.phase == Accepted

@@ -1,5 +1,6 @@
 lemma retain_ensures(i: Installation)
   ensures (inv(i) ==> canRetain(i) ==> alwaysIdentities(retain(i)))
+  ensures (inv(i) ==> canRetain(i) ==> alwaysLocalMatchesActive(retain(i)))
   ensures (inv(i) ==> canRetain(i) ==> alwaysSuccessHasReadback(retain(i)))
   ensures (inv(i) ==> canRetain(i) ==> alwaysCandidateVerified(retain(i)))
   ensures (inv(i) ==> canRetain(i) ==> alwaysCleanupFacts(retain(i)))
@@ -11,6 +12,7 @@ lemma retain_ensures(i: Installation)
   ensures (inv(i) ==> canRetain(i) ==> stepCommittedTarget(i, "retain", retain(i)))
   ensures (inv(i) ==> canRetain(i) ==> stepOtherAttemptsUntouched(i, retain(i)))
   ensures (inv(i) ==> canRetain(i) ==> stepWrapperDeathKeepsLock(i, "retain", retain(i)))
+  ensures (inv(i) ==> canRetain(i) ==> stepProjectFixed(i, retain(i)))
 {
   if inv(i) && canRetain(i) && !retainedVersion(i, i.target) {
     var next := retain(i);
@@ -22,6 +24,7 @@ lemma retain_ensures(i: Installation)
 
 lemma commit_ensures(i: Installation, relativeLink: bool, atomicRename: bool)
   ensures (inv(i) ==> canCommit(i, relativeLink, atomicRename) ==> alwaysIdentities(commit(i, relativeLink, atomicRename)))
+  ensures (inv(i) ==> canCommit(i, relativeLink, atomicRename) ==> alwaysLocalMatchesActive(commit(i, relativeLink, atomicRename)))
   ensures (inv(i) ==> canCommit(i, relativeLink, atomicRename) ==> alwaysSuccessHasReadback(commit(i, relativeLink, atomicRename)))
   ensures (inv(i) ==> canCommit(i, relativeLink, atomicRename) ==> alwaysCandidateVerified(commit(i, relativeLink, atomicRename)))
   ensures (inv(i) ==> canCommit(i, relativeLink, atomicRename) ==> alwaysCleanupFacts(commit(i, relativeLink, atomicRename)))
@@ -33,6 +36,7 @@ lemma commit_ensures(i: Installation, relativeLink: bool, atomicRename: bool)
   ensures (inv(i) ==> canCommit(i, relativeLink, atomicRename) ==> stepCommittedTarget(i, "commit", commit(i, relativeLink, atomicRename)))
   ensures (inv(i) ==> canCommit(i, relativeLink, atomicRename) ==> stepOtherAttemptsUntouched(i, commit(i, relativeLink, atomicRename)))
   ensures (inv(i) ==> canCommit(i, relativeLink, atomicRename) ==> stepWrapperDeathKeepsLock(i, "commit", commit(i, relativeLink, atomicRename)))
+  ensures (inv(i) ==> canCommit(i, relativeLink, atomicRename) ==> stepProjectFixed(i, commit(i, relativeLink, atomicRename)))
 {
   if inv(i) && canCommit(i, relativeLink, atomicRename) {
     var next := commit(i, relativeLink, atomicRename);
@@ -47,6 +51,7 @@ lemma commit_ensures(i: Installation, relativeLink: bool, atomicRename: bool)
 
 lemma recordFailure_ensures(i: Installation, temporaryLinkRemoved: bool)
   ensures (inv(i) ==> canRecordFailure(i) ==> alwaysIdentities(recordFailure(i, temporaryLinkRemoved)))
+  ensures (inv(i) ==> canRecordFailure(i) ==> alwaysLocalMatchesActive(recordFailure(i, temporaryLinkRemoved)))
   ensures (inv(i) ==> canRecordFailure(i) ==> alwaysSuccessHasReadback(recordFailure(i, temporaryLinkRemoved)))
   ensures (inv(i) ==> canRecordFailure(i) ==> alwaysCandidateVerified(recordFailure(i, temporaryLinkRemoved)))
   ensures (inv(i) ==> canRecordFailure(i) ==> alwaysCleanupFacts(recordFailure(i, temporaryLinkRemoved)))
@@ -58,6 +63,7 @@ lemma recordFailure_ensures(i: Installation, temporaryLinkRemoved: bool)
   ensures (inv(i) ==> canRecordFailure(i) ==> stepCommittedTarget(i, "recordFailure", recordFailure(i, temporaryLinkRemoved)))
   ensures (inv(i) ==> canRecordFailure(i) ==> stepOtherAttemptsUntouched(i, recordFailure(i, temporaryLinkRemoved)))
   ensures (inv(i) ==> canRecordFailure(i) ==> stepWrapperDeathKeepsLock(i, "recordFailure", recordFailure(i, temporaryLinkRemoved)))
+  ensures (inv(i) ==> canRecordFailure(i) ==> stepProjectFixed(i, recordFailure(i, temporaryLinkRemoved)))
 {
   if inv(i) && canRecordFailure(i) && i.phase.LinkReady? && temporaryLinkRemoved {
     var next := recordFailure(i, temporaryLinkRemoved);
@@ -72,6 +78,7 @@ lemma recordFailure_ensures(i: Installation, temporaryLinkRemoved: bool)
 
 lemma cleanup_ensures(i: Installation, succeeds: bool)
   ensures (inv(i) ==> canCleanup(i) ==> alwaysIdentities(cleanup(i, succeeds)))
+  ensures (inv(i) ==> canCleanup(i) ==> alwaysLocalMatchesActive(cleanup(i, succeeds)))
   ensures (inv(i) ==> canCleanup(i) ==> alwaysSuccessHasReadback(cleanup(i, succeeds)))
   ensures (inv(i) ==> canCleanup(i) ==> alwaysCandidateVerified(cleanup(i, succeeds)))
   ensures (inv(i) ==> canCleanup(i) ==> alwaysCleanupFacts(cleanup(i, succeeds)))
@@ -83,6 +90,7 @@ lemma cleanup_ensures(i: Installation, succeeds: bool)
   ensures (inv(i) ==> canCleanup(i) ==> stepCommittedTarget(i, "cleanup", cleanup(i, succeeds)))
   ensures (inv(i) ==> canCleanup(i) ==> stepOtherAttemptsUntouched(i, cleanup(i, succeeds)))
   ensures (inv(i) ==> canCleanup(i) ==> stepWrapperDeathKeepsLock(i, "cleanup", cleanup(i, succeeds)))
+  ensures (inv(i) ==> canCleanup(i) ==> stepProjectFixed(i, cleanup(i, succeeds)))
 {
   if inv(i) && canCleanup(i) && succeeds {
     var next := cleanup(i, succeeds);

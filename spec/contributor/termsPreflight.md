@@ -54,6 +54,8 @@ pure def canBeginResearch(t: TermsPreflight): bool = t.acknowledged and t.projec
 pure def beginResearch(t: TermsPreflight): TermsPreflight = { ...t, researching: true }
 pure def alwaysAcknowledgedExact(t: TermsPreflight): bool = t.acknowledged implies t.policyRead and t.revisionMatches and haveDocuments(t)
 pure def alwaysCachedDocumentsVerified(t: TermsPreflight): bool = (t.documents == FromCache implies t.cache == CacheVerified)
+  and (not(t.policyRead) implies t.documents == NoDocuments and t.cache == NoCache)
+  and (t.cache != NoCache implies t.documentsRequired)
   and (t.documents == NotRequired implies not(t.documentsRequired))
   and ((t.documents == FromNetwork or t.documents == FromCache) implies t.documentsRequired)
 pure def alwaysResearchNeedsActiveProject(t: TermsPreflight): bool = t.researching implies t.acknowledged and t.projectActive
