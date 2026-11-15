@@ -34,10 +34,10 @@ import {
   createPointsCorrectionBaseline,
   isOriginalContributorContext,
   isOriginalContributorFollowup,
+  isOriginalContributorRepair,
   type OriginalContributorBinding,
   type OriginalContributorFollowup,
   type OriginalContributorRepair,
-  isOriginalContributorRepair,
   originalContributorClaimScope,
   originalContributorPrecedesFollowups,
   type PointsImplementationCorrectionCandidate,
@@ -50,6 +50,7 @@ import {
   type TargetRepository,
 } from "../src/lib/repositories.mjs";
 import { GitHubClient } from "../workers/slopbot/github";
+import { sameRepositoryCommitHints } from "../workers/slopbot/value-commit-hints";
 import {
   collectValueEvidence,
   collectValueReferenceEvidence,
@@ -71,7 +72,6 @@ import {
   retainedAcknowledgements,
 } from "../workers/slopbot/value-retained-reference";
 import { valueSourceDigest } from "../workers/slopbot/value-review";
-import { sameRepositoryCommitHints } from "../workers/slopbot/value-commit-hints";
 import type { WorkUnitSource } from "../workers/slopbot/value-work-unit-types";
 import {
   collectSearchReferences,

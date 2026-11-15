@@ -2700,7 +2700,7 @@
 {"name":"closureDiscussionSignals","kind":"FunctionDeclaration","line":2,"sha256":"576656f1c1ca68c108485cc02cf163ccc03265df25260e9578f37d0fef4d553a","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
 {"name":"<ArrowFunction@7>","kind":"ArrowFunction","line":7,"sha256":"7a6eac81cd7dcd40eaf3380cbcb075d93c1221869080c12f50b5cba7acf0f631","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]}
 ]},
-{"path":"scripts/collect-implementation-corrections.ts","sha256":"5386c63fe15d80b7f8c024d11a577687913ba05114f3e6ae5d62d6e1b199053f","language":"typescript","disposition":"callables-inventoried","functions":[
+{"path":"scripts/collect-implementation-corrections.ts","sha256":"f160bda40f766e293d198fa45a829fe518f180d36bb1634776f8d1673406ecd8","language":"typescript","disposition":"callables-inventoried","functions":[
 {"name":"digest","kind":"ArrowFunction","line":102,"sha256":"55bc78af566118f11a0a6af29de5fd1deb04dbcab8bd153f3a7b287bc15d1d67","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
 {"name":"encode","kind":"ArrowFunction","line":104,"sha256":"4c4e3de6db0749eed8e298d82a452a8e7808c47e30fb152ed09456fa1e259f51","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
 {"name":"canonicalTime","kind":"ArrowFunction","line":105,"sha256":"cb4a986b2ea7619bf1c1d5deabd2bd87c43b48f4b7f2673fb77b5471a0e5e31c","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
