@@ -35,6 +35,7 @@ import {
   hasBountyOverview,
   homeProjects,
 } from "./lib/home-projects";
+import { loadMergeActivity, mergeActivityLine } from "./lib/merge-activity";
 import {
   findHistoricalProject,
   findProject,
@@ -47,6 +48,7 @@ import { SOURCE_REPOSITORY } from "./lib/source-repository";
 import { useCopyFeedback } from "./lib/use-copy-feedback";
 import { useCycleIndex } from "./lib/use-cycle-index";
 import { useDirectTransfers } from "./lib/use-direct-transfers";
+import { usePublicResource } from "./lib/use-public-resource";
 import { type DataState, useSnapshot } from "./lib/use-snapshot";
 import {
   AccountPage,
@@ -1402,6 +1404,27 @@ function ProjectRewardSummary({ project }: { project: ProjectDefinition }) {
   );
 }
 
+/** #1993: how promptly the project merges outside work, from the daily D1 read. */
+function ProjectMergeActivity({ project }: { project: ProjectDefinition }) {
+  const active = project.status === "active";
+  const [state] = usePublicResource(
+    active,
+    loadMergeActivity,
+    "Merge activity unavailable",
+  );
+  if (!active || state.status === "loading") return null;
+  if (state.status === "error")
+    return (
+      <p className="project-merge-activity">Merge activity unavailable.</p>
+    );
+  const line = mergeActivityLine(state.index.get(project.id), new Date());
+  return (
+    <p className="project-merge-activity">
+      {line ?? "Merge activity not checked yet."}
+    </p>
+  );
+}
+
 function ProjectBountyIntroduction({
   project,
 }: {
@@ -1452,6 +1475,7 @@ function ProjectPage({
         <div className="shell">
           <ProjectHeader project={project} />
           <ProjectRewardSummary project={project} />
+          <ProjectMergeActivity project={project} />
           {project.reward.reviewBudget ? (
             <p>{reviewBudgetLabel(project.reward.reviewBudget)}</p>
           ) : null}
