@@ -51,8 +51,7 @@ type Retained = { attempt: int, key: str, result: str, sizeBand: int }
 type ValueInference = { now: int, month: int, key: str, group: List[Source], authority: Authority,
   config: Mode, monthlyCap: int, maximum: int, requests: List[Request], attempts: List[Attempt],
   retained: Retained, published: Retained, occupied: Set[int] }
-type ReleaseSettings = { reviewedRelease: bool, mode: Mode, cap: int, maximum: int }
-type ProviderReceipt = { verified: bool, provider: Provider, known: bool, actual: int, estimate: int }
+type ReleaseSettings = { mode: Mode, cap: int, maximum: int }
 pure val emptyAuthority: Authority = { revision: 0, generation: 0, manifest: "", installation: 0, active: false }
 pure val reviewedAuthority: Authority = { revision: 1, generation: 1, manifest: "manifest-one", installation: 1, active: true }
 pure val noRequest: Request = { token: 0, deadline: 0, inputDigest: "", group: List(),
@@ -142,8 +141,10 @@ Alerts-only holds no numeric amount. Capped mode requires the explicit
 operator cap and route maximum, includes current-month usage and outstanding
 reservations, and refuses while any uncapped attempt remains outstanding.
 External usage of the same global budget enters admission as trusted amounts.
-The budget settings come only from the reviewed release's configuration,
-never from a request.
+The budget settings are read from the deployed Worker's environment at
+each run, never from a request. That the environment is the reviewed
+release's configuration is a deployment obligation of the release
+workflow, not something this unit can check.
 
 ```quint
 pure def hasReservation(a: Attempt): bool = a.stage != Admitted
@@ -162,7 +163,6 @@ pure def unboundedHold(v: ValueInference): bool =
   v.attempts.some(a => not(a.limited) and hasReservation(a) and not(a.reconciled))
 pure def validBudget(mode: Mode, cap: int, maximum: int): bool =
   mode == AlertsOnly or (mode == Capped and cap > 0 and maximum > 0 and maximum <= cap)
-pure def canConfigure(v: ValueInference, settings: ReleaseSettings): bool = settings.reviewedRelease
 pure def configure(v: ValueInference, settings: ReleaseSettings): ValueInference =
   { ...v, config: if (validBudget(settings.mode, settings.cap, settings.maximum)) settings.mode else MissingConfig,
     monthlyCap: settings.cap, maximum: settings.maximum }
@@ -233,10 +233,13 @@ estimate for spending and an unresolved reservation. No age-based action
 releases a hold. Every call row also enters the global
 [cost ledger](./spendAlerts.md), which owns the $500 milestones and provider
 failure notices. A provider call interrupted after it started stays in
-`Calling` and keeps its slot until a verified provider receipt for that
-exact call reconciles it as a recorded failed call. Without such a receipt
-the attempt stays occupied and the request stays visible in the
-[incomplete-assessment Inbox](./assessmentInbox.md) for administrators.
+`Calling` and keeps its slot: no timer releases it and no later call may
+reuse the attempt. Neither the PRD nor the development worker defines how
+such an attempt is reconciled. A provider receipt service or an operator
+decision would each be new policy, so recovery of an interrupted call is
+an owner decision; until it is recorded, the attempt stays occupied and
+the request stays visible in the
+[incomplete-assessment Inbox](./assessmentInbox.md).
 
 ```quint
 pure def canSaveUsage(v: ValueInference, attemptId: int): bool =
@@ -269,15 +272,8 @@ pure def reconcile(v: ValueInference, attemptId: int): ValueInference =
   val a = attempt(v, attemptId)
   val occupied = if (a.allCalls.length() == 0) v.occupied.exclude(Set(attemptId)) else v.occupied
   putAttempt({ ...a, reconciled: true }, { ...v, occupied: occupied })
-pure def canReconcileInterrupted(v: ValueInference, attemptId: int, receipt: ProviderReceipt): bool =
-  val a = attempt(v, attemptId)
-  a.stage == Calling and receipt.verified and receipt.provider == providerFor(a.routeStep)
-    and receipt.actual >= 0 and receipt.estimate >= 0
-pure def reconcileInterrupted(v: ValueInference, attemptId: int, receipt: ProviderReceipt): ValueInference =
-  val a = attempt(v, attemptId)
-  putAttempt({ ...a, stage: RouteDone, routeStep: a.routeStep + 1, allCalls: a.allCalls.append({ provider: receipt.provider,
-    seenModel: "", result: FailedCall, known: receipt.known, actual: receipt.actual, estimate: receipt.estimate,
-    output: "", sizeBand: 0, customerCharge: 0 }) }, v)
+pure def alwaysInterruptedCallKeepsItsSlot(v: ValueInference): bool =
+  v.attempts.every(a => (a.stage == HeldBudget or a.stage == Calling) implies v.occupied.contains(a.id))
 pure def alwaysCallsAreFree(v: ValueInference): bool =
   v.attempts.every(a => a.allCalls.every(c => c.customerCharge == 0))
 pure def alwaysRetainedBandIsValid(v: ValueInference): bool =
@@ -339,11 +335,8 @@ pure val capValues = Set(0, 5)
 pure val maximumValues = Set(0, 2)
 pure val otherUsedValues = Set(0, 2)
 pure val otherHeldValues = Set(0, 2)
-pure val settingsValues = Set({ reviewedRelease: true, mode: AlertsOnly, cap: 0, maximum: 0 },
-  { reviewedRelease: true, mode: Capped, cap: 5, maximum: 2 }, { reviewedRelease: true, mode: Capped, cap: 0, maximum: 2 },
-  { reviewedRelease: false, mode: AlertsOnly, cap: 0, maximum: 0 })
-pure val receiptValues = Set({ verified: true, provider: OrbioSonnet, known: true, actual: 1, estimate: 1 },
-  { verified: false, provider: OrbioSonnet, known: true, actual: 1, estimate: 1 })
+pure val settingsValues = Set({ mode: AlertsOnly, cap: 0, maximum: 0 },
+  { mode: Capped, cap: 5, maximum: 2 }, { mode: Capped, cap: 0, maximum: 2 })
 pure val resultDigestValues = Set("result")
 pure val sampleCharge: Charge = { provider: OrbioSonnet, seenModel: "anthropic/claude-sonnet-5.5", result: ValidResult,
   known: true, actual: 1, estimate: 1, output: "result", sizeBand: 2, customerCharge: 0 }

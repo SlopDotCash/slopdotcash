@@ -72,6 +72,9 @@ have no dispatch record. It sends the stored identifier-only job first and
 then writes the dispatch record. A lost record lets a later run send the
 job again; the review claim and completed-revision check absorb the
 duplicate. A later claim of the same key makes an older block obsolete.
+Once a block is due and its installation active, the run eventually
+records its dispatch unless a newer claim or a lost installation
+intervenes.
 
 ```quint
 pure def resumable(s: BudgetState): bool =
@@ -95,6 +98,9 @@ pure def stepSendNeedsActiveInstallation(before: BudgetState, after: BudgetState
   after.sends > before.sends implies (I::active(before.install) and before.status == Failed and before.current.id > 0)
 pure def stepNewClaimRetiresBlock(before: BudgetState, after: BudgetState): bool =
   after.token > before.token implies after.current.id == 0
+pure def leadsToDueBlockIsDispatched(s: BudgetState, later: BudgetState): bool =
+  resumable(s) implies (later.current.dispatched or later.token > s.token or not(I::active(later.install)))
+pure val fair_recordDispatch = "weak"
 pure def sometimesBlocked(s: BudgetState): bool = heldBack(s)
 pure def sometimesResumed(s: BudgetState): bool = s.blockCount > 0 and s.sends > 0 and s.status == Running
 pure def sometimesSuspendedBlockWaits(s: BudgetState): bool =
