@@ -76,7 +76,8 @@ pure def interrupt(s: Scan): Scan = resetRun(Queued, s)
 pure def alwaysQueuedHoldsNoRun(s: Scan): bool =
   (s.phase == Queued or s.phase == Acquiring) implies
     s.inventory == 0 and s.reviewed == 0 and s.blocked == 0 and not(s.deterministic) and s.primary == NotRun and
-    s.disposition == NoDisposition and not(s.retained) and not(s.reused)
+    s.disposition == NoDisposition and not(s.retained) and not(s.reused) and s.refusal == NoRefusal and
+    not(s.synthesis) and s.confirmation == NoConfirmation and s.specialist == NotRun and not(s.escalated)
 ```
 
 ### Acquisition binds one shallow fetch of the exact commit
