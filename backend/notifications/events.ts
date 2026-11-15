@@ -389,6 +389,35 @@ export function notifyMonthlyUnderfunded<S>(
 }
 
 /**
+ * An owner cut a contributor's monthly amount below the proposal (PRD
+ * section 6, operator decision of 15 November 2026). The contributor gets one
+ * notice per cut change, keyed by its sequence. The statement reads the
+ * committed cut record, so a refused change writes nothing. `detail` is the
+ * caller's plain-language summary of that record.
+ */
+export function notifyMonthlyCut<S>(
+  db: Preparer<S>,
+  projectId: string,
+  period: string,
+  sequence: number,
+  detail: string,
+  at: string,
+): S {
+  return db
+    .prepare(
+      `${INSERT}
+       SELECT 'monthly-cut:' || c.project_id || ':' || c.period || ':' || c.sequence,
+              c.github_user_id, 'payout_exception', c.project_id, ?,
+              '/cycles/' || c.project_id || '/' || c.period, c.created_at, ?
+         FROM monthly_allocation_cut_reasons c
+        WHERE c.project_id = ? AND c.period = ? AND c.sequence = ?
+          AND ${GITHUB_ID("c.github_user_id")}
+       ${ONCE}`,
+    )
+    .bind(detail, at, projectId, period, sequence);
+}
+
+/**
  * An ADM-06 enforcement record reaches the applicant who listed the project
  * and its current GitHub steward. The row carries no reason or evidence
  * reference: those stay in the admin panel. The project page shows the

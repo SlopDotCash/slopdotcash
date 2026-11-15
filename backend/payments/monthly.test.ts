@@ -42,14 +42,38 @@ import {
 } from "../projects/cloudflare-persistence";
 import { handlePaymentsApi } from "./handler";
 import {
+  CUT_NOTICE_MS,
   coordinateMonthlyPayments,
+  monthlyOwnerService as cutAwareOwnerService,
   MonthlyPaymentError,
-  monthlyOwnerService,
+  type monthlyCuts,
   verifyProjectAuthority,
 } from "./monthly";
 import { prepareMonthlyAttestation } from "./monthly-attestation";
 import type { MonthlyAttestationPlan } from "./monthly-attestation-types";
 import { publishMonthlyAuthorizations } from "./monthly-publication";
+
+// Tests below that predate public cut reasons are about other properties.
+// They supply a valid reason so that a cut is not refused for lacking one;
+// the cut rules themselves are tested with the service as built.
+const LEGACY_CUT_REASON = "Adjusted in an earlier owner allocation test.";
+const monthlyOwnerService = (
+  deps: Parameters<typeof cutAwareOwnerService>[0],
+) => {
+  const service = cutAwareOwnerService(deps);
+  return {
+    ...service,
+    changeAllocation: (
+      ...[projectId, period, actor, change]: Parameters<
+        typeof service.changeAllocation
+      >
+    ) =>
+      service.changeAllocation(projectId, period, actor, {
+        reason: LEGACY_CUT_REASON,
+        ...change,
+      }),
+  };
+};
 
 const testAttester = privateKeyToAccount(`0x${"01".repeat(32)}`);
 const deployment = {
@@ -104,7 +128,9 @@ const schedule = parseMonthlySchedule(
     }
   ).vars.MONTHLY_PAYMENT_SCHEDULE,
 );
-const beforeCutoff = new Date("2082-12-03T23:30:00.000Z");
+// More than 24 hours before the cutoff, so a cut is still open (operator
+// decision, 15 November 2026: cuts close 24 hours before the cutoff).
+const beforeCutoff = new Date("2082-12-02T23:30:00.000Z");
 const afterCutoff = new Date("2082-12-04T00:00:00.000Z");
 
 let db: ProjectD1Database;
@@ -157,6 +183,22 @@ const owner = (
     now: () => clock,
   });
 const actor = { githubId: OWNER, githubLogin: "owner" };
+/**
+ * A cut below the proposed amount writes its change row in one batch with its
+ * public record and notice. Runs `hook` once before the next batch, as the
+ * single-statement hooks below do before a plain allocation INSERT.
+ */
+function beforeCutBatch(hook: () => Promise<void>) {
+  const batch = db.batch.bind(db);
+  db.batch = async (statements) => {
+    db.batch = batch;
+    await hook();
+    return batch(statements);
+  };
+  return () => {
+    db.batch = batch;
+  };
+}
 for (const worker of [false, true]) {
   test(`${worker ? "worker" : "coordinator"} reports an isolated payment database without a project registry as a failure`, async () => {
     // The configured isolated test stack has real registry and payment DBs.
@@ -511,6 +553,16 @@ for (const mutation of ["allocation", "enable", "disable"] as const) {
         },
       });
     };
+    const restoreBatch =
+      mutation === "allocation"
+        ? beforeCutBatch(async () => {
+            if (!held) {
+              held = true;
+              reachedInsert();
+              await released;
+            }
+          })
+        : () => {};
     const pending =
       mutation === "allocation"
         ? service.changeAllocation(project.id, "2082-11", actor, {
@@ -577,6 +629,7 @@ for (const mutation of ["allocation", "enable", "disable"] as const) {
     } finally {
       releaseInsert();
       db.prepare = prepare;
+      restoreBatch();
       await pending.catch(() => {});
     }
   });
@@ -797,6 +850,8 @@ for (const automatic of [false, true]) {
         grossBase: "300",
         expectedSequence: 0,
       });
+      // The cut gives B 24 hours of notice before the owner can finalize.
+      clock = new Date(clock.getTime() + CUT_NOTICE_MS);
       await owner().finalize(project.id, "2082-11", actor, 1);
     }
     expect(count("monthly_payment_runs")).toBe(1);
@@ -868,6 +923,13 @@ describe("monthly coordinator", () => {
           },
         };
       };
+      const restoreBatch = beforeCutBatch(async () => {
+        db.prepare = prepare;
+        expect(await service.setAutomatic(project.id, actor, true)).toEqual({
+          automatic: true,
+        });
+        enabled = true;
+      });
       try {
         const change = service.changeAllocation(project.id, "2082-11", actor, {
           githubUserId: B,
@@ -878,6 +940,7 @@ describe("monthly coordinator", () => {
         else expect((await change).proposal?.allocationSequence).toBe(1);
       } finally {
         db.prepare = prepare;
+        restoreBatch();
       }
       expect(enabled).toBe(true);
       expect(count("monthly_allocation_changes")).toBe(after ? 0 : 1);
@@ -955,6 +1018,8 @@ describe("monthly coordinator", () => {
         expect(
           changed.proposal?.allocations.map((row) => row.grossBase),
         ).toEqual(["600", "300"]);
+        // The cut gives B 24 hours of notice before the owner can finalize.
+        clock = new Date(afterCutoff.getTime() + CUT_NOTICE_MS);
         const finalized = await owner().finalize(
           project.id,
           "2082-11",
@@ -1379,7 +1444,8 @@ describe("monthly coordinator", () => {
     ]);
     expect(count("monthly_payment_obligations")).toBe(0);
     // The steward gets one Inbox payout exception for the month, however
-    // often the coordinator retries; it names no amount or contributor.
+    // often the coordinator retries; it names no amount or contributor. The
+    // cut above already sent B its own notice.
     expect(
       sqlite
         .prepare(
@@ -1387,6 +1453,13 @@ describe("monthly coordinator", () => {
         )
         .all(),
     ).toEqual([
+      {
+        event_key: `monthly-cut:${project.id}:2082-11:1`,
+        recipient_github_id: B,
+        kind: "payout_exception",
+        subject: project.id,
+        action_path: `/cycles/${project.id}/2082-11`,
+      },
       {
         event_key: `monthly-underfunded:${project.id}:2082-11`,
         recipient_github_id: project.manifest.steward.github.actorId,
@@ -1890,11 +1963,13 @@ describe("monthly coordinator", () => {
       }),
       "allocations_changed",
     );
+    // After the cut's 24-hour notice, a stale sequence is still refused.
+    clock = new Date(clock.getTime() + CUT_NOTICE_MS);
     await rejects(
       service.finalize(project.id, "2082-11", actor, 0),
       "allocations_changed",
     );
-    // The view shows current amounts, never who changed them or when.
+    // The view shows current amounts, never who changed them.
     const view = await service.view(project.id, "2082-11", actor);
     expect(JSON.stringify(view)).not.toContain(OWNER);
     expect(view.proposal?.allocations.map((row) => row.grossBase)).toEqual([
@@ -1912,7 +1987,8 @@ describe("monthly coordinator", () => {
   });
 
   test("monthly HTTP writes distinguish storage outages from allocation races", async () => {
-    clock = beforeCutoff;
+    // Early enough that a cut 24 hours later is still before the notice window.
+    clock = new Date("2082-12-01T12:00:00.000Z");
     const service = owner();
     const token = "w".repeat(43);
     sqlite
@@ -1988,7 +2064,13 @@ describe("monthly coordinator", () => {
     // Another real owner operation commits after our read and before our INSERT.
     // The losing write must remain a conflict, including the freeze trigger.
     const prepare = db.prepare.bind(db);
+    let restoreBatch = () => {};
     const beforeAllocationWrite = (competing: () => Promise<unknown>) => {
+      // A cut writes in a batch; any other change runs its INSERT alone.
+      restoreBatch = beforeCutBatch(async () => {
+        db.prepare = prepare;
+        await competing();
+      });
       db.prepare = (query) => {
         const statement = prepare(query);
         if (!query.startsWith("INSERT INTO monthly_allocation_changes("))
@@ -2001,6 +2083,7 @@ describe("monthly coordinator", () => {
               ...bound,
               async run() {
                 db.prepare = prepare;
+                restoreBatch();
                 await competing();
                 return bound.run();
               },
@@ -2030,6 +2113,8 @@ describe("monthly coordinator", () => {
       ).toEqual(["500", "300"]);
 
       vault("1000");
+      // The cut of A gives 24 hours of notice before the owner can finalize.
+      clock = new Date(clock.getTime() + CUT_NOTICE_MS);
       beforeAllocationWrite(() =>
         service.finalize(project.id, "2082-11", actor, 2),
       );
@@ -2043,6 +2128,7 @@ describe("monthly coordinator", () => {
       expect(count("monthly_payment_obligations")).toBe(2);
     } finally {
       db.prepare = prepare;
+      restoreBatch();
     }
   });
 });
@@ -3553,7 +3639,16 @@ test("an allocation queued across its automatic cutoff cannot change the propose
     .toISOString()
     .slice(0, 7);
   const end = Date.UTC(current.getUTCFullYear(), current.getUTCMonth(), 1);
-  const local = await createMonthlyAllocationFixture({ deployment, period });
+  // B is proposed below the cap so the change is an increase: a cut this
+  // close to the cutoff is refused earlier, by its 24-hour notice window.
+  const local = await createMonthlyAllocationFixture({
+    deployment,
+    period,
+    rows: [
+      { githubUserId: A, grossBase: "600" },
+      { githubUserId: B, grossBase: "300" },
+    ],
+  });
   // Measured after the fixture, so its setup time never eats the margin.
   const deadline = Math.ceil(Date.now() / 1000) * 1000 + 1000;
   const prepare = local.db.prepare.bind(local.db);
@@ -3596,7 +3691,7 @@ test("an allocation queued across its automatic cutoff cannot change the propose
     await expect(
       service.changeAllocation(local.project.id, period, actor, {
         githubUserId: B,
-        grossBase: "100",
+        grossBase: "400",
         expectedSequence: 0,
       }),
     ).rejects.toMatchObject({ code: "cutoff_passed" });
@@ -3609,4 +3704,209 @@ test("an allocation queued across its automatic cutoff cannot change the propose
   } finally {
     local.sqlite.close();
   }
+});
+
+describe("owner cuts (operator decision, 15 November 2026)", () => {
+  const REASON = "Most of this month's work was reverted after merge.";
+  const service = () =>
+    cutAwareOwnerService({
+      db,
+      ...projects(),
+      networks: () => ["base-sepolia"],
+      verifyAuthority: async () => true,
+      schedule: () => schedule,
+      now: () => clock,
+    });
+  const cutRows = () =>
+    sqlite
+      .query(
+        "SELECT sequence,github_user_id,proposed_gross_base,gross_base,reason FROM monthly_allocation_cut_reasons ORDER BY sequence",
+      )
+      .all();
+  const cutNotices = () =>
+    sqlite
+      .query(
+        "SELECT event_key,recipient_github_id,kind,subject,detail,action_path FROM notifications WHERE event_key LIKE 'monthly-cut:%' ORDER BY event_key",
+      )
+      .all() as Record<string, unknown>[];
+  const publicCuts = async () => {
+    const response = await handlePaymentsApi(
+      new Request(
+        `https://slop.cash/api/v1/payments/projects/${project.id}/monthly/2082-11/cuts`,
+      ),
+      { db },
+    );
+    expect(response.status).toBe(200);
+    return (await response.json()) as {
+      projectId: string;
+      period: string;
+      cuts: Awaited<ReturnType<typeof monthlyCuts>>;
+    };
+  };
+
+  test("a cut without a reason of 20 to 500 characters is refused and writes nothing", async () => {
+    clock = beforeCutoff;
+    for (const reason of [
+      undefined,
+      "",
+      "Too short.",
+      " ".repeat(30),
+      "x".repeat(501),
+    ])
+      await rejects(
+        service().changeAllocation(project.id, "2082-11", actor, {
+          githubUserId: B,
+          grossBase: "300",
+          expectedSequence: 0,
+          ...(reason === undefined ? {} : { reason }),
+        }),
+        "cut_reason_required",
+      );
+    expect(count("monthly_allocation_changes")).toBe(0);
+    expect(cutRows()).toEqual([]);
+    expect(cutNotices()).toEqual([]);
+  });
+
+  test("a cut stores its trimmed reason and sends the contributor one notice", async () => {
+    clock = beforeCutoff;
+    const view = await service().changeAllocation(
+      project.id,
+      "2082-11",
+      actor,
+      {
+        githubUserId: B,
+        grossBase: "300",
+        expectedSequence: 0,
+        reason: `  ${REASON}  `,
+      },
+    );
+    expect(view.proposal?.latestCutAt).toBe(beforeCutoff.toISOString());
+    expect(cutRows()).toEqual([
+      {
+        sequence: 1,
+        github_user_id: B,
+        proposed_gross_base: "400",
+        gross_base: "300",
+        reason: REASON,
+      },
+    ]);
+    const notices = cutNotices();
+    expect(notices).toEqual([
+      {
+        event_key: `monthly-cut:${project.id}:2082-11:1`,
+        recipient_github_id: B,
+        kind: "payout_exception",
+        subject: project.id,
+        detail: expect.any(String),
+        action_path: `/cycles/${project.id}/2082-11`,
+      },
+    ]);
+    const detail = String(notices[0]?.detail ?? "");
+    expect(detail).toContain("November 2082");
+    expect(detail).toContain(`Owner's reason: ${REASON}`);
+    expect(detail).toContain("The month locks at 2082-12-04 00:00 UTC");
+    expect(detail).toContain("not before 2082-12-03 23:30 UTC");
+    expect(detail).not.toMatch(/earned|owed|—/u);
+  });
+
+  test("with automatic finalization on, a cut is refused in the final 24 hours before the cutoff", async () => {
+    clock = new Date(afterCutoff.getTime() - CUT_NOTICE_MS);
+    await rejects(
+      service().changeAllocation(project.id, "2082-11", actor, {
+        githubUserId: B,
+        grossBase: "300",
+        expectedSequence: 0,
+        reason: REASON,
+      }),
+      "cut_notice_window",
+    );
+    expect(count("monthly_allocation_changes")).toBe(0);
+    // A change at the proposed amount is not a cut and needs no notice.
+    const same = await service().changeAllocation(
+      project.id,
+      "2082-11",
+      actor,
+      { githubUserId: B, grossBase: "400", expectedSequence: 0 },
+    );
+    expect(same.proposal?.allocationSequence).toBe(1);
+    // With automatic finalization off there is no cutoff to protect.
+    await service().setAutomatic(project.id, actor, false);
+    await service().changeAllocation(project.id, "2082-11", actor, {
+      githubUserId: B,
+      grossBase: "300",
+      expectedSequence: 1,
+      reason: REASON,
+    });
+    expect(cutRows()).toHaveLength(1);
+  });
+
+  test("the owner cannot finalize until 24 hours after the latest cut", async () => {
+    clock = afterCutoff;
+    await service().setAutomatic(project.id, actor, false);
+    await service().changeAllocation(project.id, "2082-11", actor, {
+      githubUserId: B,
+      grossBase: "300",
+      expectedSequence: 0,
+      reason: REASON,
+    });
+    clock = new Date(afterCutoff.getTime() + CUT_NOTICE_MS - 1);
+    const refused = await service()
+      .finalize(project.id, "2082-11", actor, 1)
+      .catch((error: unknown) => error);
+    expect(refused).toMatchObject({ status: 409, code: "cut_notice_pending" });
+    expect((refused as Error).message).toContain("2082-12-05 00:00 UTC");
+    expect(count("monthly_payment_runs")).toBe(0);
+    clock = new Date(afterCutoff.getTime() + CUT_NOTICE_MS);
+    const finalized = await service().finalize(project.id, "2082-11", actor, 1);
+    expect(finalized.run?.awards.map((award) => award.grossBase)).toEqual([
+      "600",
+      "300",
+    ]);
+  });
+
+  test("an increase needs no reason and the public list shows only current cuts", async () => {
+    clock = beforeCutoff;
+    expect(await publicCuts()).toEqual({
+      projectId: project.id,
+      period: "2082-11",
+      cuts: [],
+    });
+    await service().changeAllocation(project.id, "2082-11", actor, {
+      githubUserId: A,
+      grossBase: "500",
+      expectedSequence: 0,
+      reason: REASON,
+    });
+    await service().changeAllocation(project.id, "2082-11", actor, {
+      githubUserId: B,
+      grossBase: "300",
+      expectedSequence: 1,
+      reason: "A duplicate pull request was merged by mistake.",
+    });
+    // Back to the proposed amount: no reason needed, no longer a cut.
+    await service().changeAllocation(project.id, "2082-11", actor, {
+      githubUserId: B,
+      grossBase: "400",
+      expectedSequence: 2,
+    });
+    expect(await publicCuts()).toEqual({
+      projectId: project.id,
+      period: "2082-11",
+      cuts: [
+        {
+          githubUserId: A,
+          login: "first",
+          proposedGrossBase: "600",
+          grossBase: "500",
+          reason: REASON,
+          cutAt: beforeCutoff.toISOString(),
+        },
+      ],
+    });
+    // History stays in D1, and each cut sent its own notice.
+    expect(cutRows()).toHaveLength(2);
+    expect(cutNotices()).toHaveLength(2);
+    // The public list names no owner.
+    expect(JSON.stringify(await publicCuts())).not.toContain(OWNER);
+  });
 });

@@ -264,19 +264,20 @@
     },
     {
       "path": "backend/notifications/events.ts",
-      "sha256": "add7bb997bec2e9d2ad5579466bf3c2663a16f5dd7c9c82d502e383a24e66df0",
+      "sha256": "d4334ce219f2489015dfedf889bf9366935d7bb2b4efd41e8e90593d524bed02",
       "models": [
         "formal/models/api/api_inbox.qnt",
         "formal/models/api/api_mail_delivery.qnt",
         "formal/models/api/points_dispute_decision.qnt",
         "formal/models/api/points_dispute_intake.qnt",
         "formal/models/api/points_dispute_lease.qnt",
-        "formal/models/api/wallet_claim_publication.qnt"
+        "formal/models/api/wallet_claim_publication.qnt",
+        "formal/models/rewards/monthly_owner_cuts.qnt"
       ],
       "candidateLines": [
         15, 29, 107, 115, 116, 142, 145, 154, 160, 173, 228, 257, 265, 274, 283,
-        290, 304, 310, 324, 346, 354, 375, 395, 403, 437, 467, 483, 498, 530,
-        556, 585, 649, 666
+        290, 304, 310, 324, 346, 354, 375, 408, 424, 432, 466, 496, 512, 527,
+        559, 585, 614, 678, 695
       ],
       "review": "mapped-abstraction"
     },
@@ -353,7 +354,7 @@
     },
     {
       "path": "backend/payments/handler.ts",
-      "sha256": "b0e3b3b8b350e6a129af4b2f06fdb9597e93a4ec9d242a931dd5852e5ab76faa",
+      "sha256": "8e54af53a539d04a6890ff56f7c3745a390de86c8443fee6778fff04a9168d3e",
       "models": [
         "formal/models/api/api_payment_wallet_protocol.qnt",
         "formal/models/payments/binding_consent_renewal.qnt",
@@ -367,12 +368,13 @@
         "formal/models/payments/solana_binding_api.qnt",
         "formal/models/payments/solana_binding_completion.qnt",
         "formal/models/rewards/monthly_owner_completion.qnt",
+        "formal/models/rewards/monthly_owner_cuts.qnt",
         "formal/models/ui/ui_earnings_actor_binding.qnt",
         "formal/models/ui/ui_payout_consent_lifetime.qnt"
       ],
       "candidateLines": [
-        109, 214, 281, 325, 330, 377, 399, 405, 428, 450, 628, 649, 663, 783,
-        839, 877, 886, 901, 1040, 1103, 1120, 1210, 1211, 1265
+        110, 215, 282, 341, 346, 393, 415, 421, 444, 466, 644, 665, 679, 803,
+        859, 897, 906, 921, 1060, 1123, 1140, 1230, 1231, 1285
       ],
       "review": "mapped-abstraction"
     },
@@ -425,18 +427,20 @@
     },
     {
       "path": "backend/payments/monthly.ts",
-      "sha256": "aa6f78dc84179de25268e18224c9f2d457e740724c0dd2c74664a18fcdb6a4a2",
+      "sha256": "6fe28107c89a76e63f2e6f89cfa989e81bcc4715ffce0fd2114678e5510ebfaf",
       "models": [
         "formal/models/rewards/monthly_coordinator.qnt",
         "formal/models/rewards/monthly_cutoff_queue.qnt",
         "formal/models/rewards/monthly_owner_completion.qnt",
+        "formal/models/rewards/monthly_owner_cuts.qnt",
         "formal/models/rewards/monthly_reserve.qnt",
         "formal/models/rewards/monthly_source_conflict.qnt"
       ],
       "candidateLines": [
-        73, 116, 124, 230, 320, 431, 460, 462, 476, 486, 495, 501, 519, 627,
-        631, 654, 659, 682, 729, 756, 765, 785, 863, 981, 1036, 1082, 1144,
-        1225, 1247, 1256, 1269, 1275, 1306, 1332, 1338, 1342, 1397, 1414
+        80, 123, 131, 330, 420, 531, 560, 562, 576, 586, 595, 601, 619, 727,
+        731, 754, 759, 782, 829, 856, 865, 885, 965, 1084, 1139, 1187, 1282,
+        1284, 1315, 1317, 1320, 1413, 1435, 1444, 1457, 1463, 1507, 1533, 1539,
+        1543, 1598, 1615
       ],
       "review": "mapped-abstraction"
     },
@@ -3351,6 +3355,13 @@
       "review": "mapped-abstraction"
     },
     {
+      "path": "migrations/0126_monthly_allocation_cuts.sql",
+      "sha256": "00a4eb97b1b88939fdefc0611937edbb5bdfa6f7977821a985f406b0f1ebdf02",
+      "models": ["formal/models/rewards/monthly_owner_cuts.qnt"],
+      "candidateLines": [27, 29],
+      "review": "mapped-abstraction"
+    },
+    {
       "path": "package.json",
       "sha256": "d4829e85818eb386ab656a7e785502d2df48c97ee6ea159c28718561d032c86a",
       "models": ["formal/models/tooling/formal_toolchain.qnt"],
@@ -4182,12 +4193,12 @@
     },
     {
       "path": "scripts/prepare-monthly-rewards.ts",
-      "sha256": "5c521c7c740e730718d4103dc2e9a608e7c2915f190831c5309df163f88ff402",
+      "sha256": "9cf482a8b88f9c49b5b834ebce825b1c5a13eb0d850b6e01857a7595641a191f",
       "models": [
         "formal/models/rewards/monthly_coordinator.qnt",
         "formal/models/rewards/monthly_reserve.qnt"
       ],
-      "candidateLines": [14, 79, 80, 81, 149, 160, 194, 209, 259],
+      "candidateLines": [15, 80, 81, 82, 150, 161, 195, 210, 260],
       "review": "mapped-abstraction"
     },
     {
@@ -5025,7 +5036,7 @@
     },
     {
       "path": "src/CyclePages.tsx",
-      "sha256": "25632fb1d9295845eacebfeaf9b71c152892b979e4742d2f2fa47e32fd3991fe",
+      "sha256": "d986ce6b90166837b45f302215c0c2892657b9c646f48201d9ef768397a2ca0a",
       "models": [
         "formal/models/ui/ui_cycle_archive.qnt",
         "formal/models/ui/ui_cycle_publication.qnt",
@@ -5033,12 +5044,12 @@
         "formal/models/ui/ui_record_display.qnt"
       ],
       "candidateLines": [
-        2, 47, 48, 54, 55, 64, 74, 75, 81, 83, 84, 90, 107, 112, 115, 116, 119,
-        120, 125, 127, 130, 132, 155, 167, 173, 175, 205, 213, 215, 222, 238,
-        244, 280, 292, 303, 328, 352, 353, 426, 443, 444, 481, 485, 499, 504,
-        505, 507, 508, 511, 512, 518, 519, 532, 537, 546, 548, 552, 561, 563,
-        567, 568, 573, 587, 595, 596, 597, 603, 605, 611, 612, 614, 643, 653,
-        664, 689
+        2, 48, 49, 55, 56, 65, 75, 76, 82, 84, 85, 91, 108, 113, 116, 117, 120,
+        121, 126, 128, 131, 133, 156, 168, 174, 176, 206, 214, 216, 223, 239,
+        245, 281, 293, 304, 330, 354, 355, 373, 379, 380, 381, 382, 384, 385,
+        388, 392, 478, 495, 496, 533, 537, 551, 556, 557, 559, 560, 563, 564,
+        570, 571, 584, 589, 598, 600, 604, 613, 615, 619, 620, 625, 639, 647,
+        648, 649, 655, 657, 663, 664, 666, 695, 705, 716, 741
       ],
       "review": "mapped-abstraction"
     },
@@ -5204,7 +5215,7 @@
     },
     {
       "path": "src/OwnerAwards.tsx",
-      "sha256": "1490f51ca746b8b1860f6beac5f9bdac3b96715d5865931f6a4f7cda5526cb22",
+      "sha256": "b95c1ee5b52753f058e285d262cdfa82547864f15f9496a3c6a48d7b4cb603c2",
       "models": [
         "formal/models/ui/ui_calendar_views.qnt",
         "formal/models/ui/ui_explicit_signout.qnt",
@@ -5214,9 +5225,9 @@
         "formal/models/ui/ui_transaction.qnt"
       ],
       "candidateLines": [
-        6, 9, 72, 105, 107, 110, 117, 118, 126, 127, 138, 141, 142, 143, 144,
-        145, 148, 149, 199, 259, 261, 269, 287, 288, 382, 407, 454, 477, 487,
-        543, 566, 601, 620, 741, 742, 771, 772, 776, 781, 787, 804
+        6, 9, 88, 121, 123, 126, 133, 134, 142, 143, 154, 160, 161, 162, 163,
+        164, 167, 168, 218, 278, 280, 288, 306, 307, 408, 437, 498, 521, 531,
+        587, 610, 645, 664, 823, 845, 846, 875, 876, 880, 885, 891, 908
       ],
       "review": "mapped-abstraction"
     },
@@ -5575,11 +5586,11 @@
     },
     {
       "path": "src/PublicPages.tsx",
-      "sha256": "824c95a9ae4f88b8d4f889436e6a42c3bf4b488ad497aa4ece449b72dfba4e62",
+      "sha256": "7419513f3dcdcac764bfad9a945df4dde8c57909bc45d13d963737df662362ea",
       "models": ["formal/models/ui/ui_record_display.qnt"],
       "candidateLines": [
-        214, 299, 310, 348, 371, 372, 374, 375, 408, 410, 421, 570, 571, 573,
-        574, 622, 624, 723
+        216, 301, 312, 350, 373, 374, 376, 377, 410, 412, 423, 572, 573, 575,
+        576, 624, 626, 725
       ],
       "review": "mapped-abstraction",
       "statelessReason": "Public explanatory/sponsor rendering derives from supplied registry/snapshot props; no local state/effect or mutation. Child state remains separately modeled."
@@ -6251,14 +6262,14 @@
     },
     {
       "path": "src/lib/notifications.ts",
-      "sha256": "24d5a7adb62abcb1bec1d805a1f18755c6b5eab85d79c5c1432c0601fd700876",
+      "sha256": "b18d0141b2986018252ea9b9e45c4a79ee78bf1eaa33a8e132df0646d22e0890",
       "models": [
         "formal/models/api/inbox_mark_read.qnt",
         "formal/models/api/inbox_queries.qnt",
         "formal/models/ui/ui_inbox_reads.qnt",
         "formal/models/ui/ui_incomplete_assessments.qnt"
       ],
-      "candidateLines": [73, 191, 274, 275],
+      "candidateLines": [73, 191, 278, 279],
       "review": "mapped-abstraction",
       "statelessReason": "Pure response/cursor validation and labels. Read, acknowledgement and delivery transitions are owned by Inbox/backend; no independent retained state."
     },
@@ -6303,7 +6314,7 @@
     },
     {
       "path": "src/lib/payments/monthly-allocation.ts",
-      "sha256": "d6b9cb56f2d5d1796af470541d835a5d4025f92b4753a3ab31c4b65b543f8df1",
+      "sha256": "d9911b22bc17e1b21abed9723f67e230bd3c6d47cf9210d36a8b66611ccac22c",
       "models": ["formal/models/rewards/monthly_coordinator.qnt"],
       "candidateLines": [],
       "review": "mapped-abstraction"
@@ -6896,6 +6907,13 @@
         "formal/models/ui/ui_resources.qnt"
       ],
       "candidateLines": [],
+      "review": "mapped-abstraction"
+    },
+    {
+      "path": "src/lib/use-monthly-cuts.ts",
+      "sha256": "dc596ae6118eaedb9d12189a9fe851d0a5910efa6fe2a4a2d3b61aea025b7a8d",
+      "models": ["formal/models/rewards/monthly_owner_cuts.qnt"],
+      "candidateLines": [73, 79, 80, 81, 82],
       "review": "mapped-abstraction"
     },
     {
@@ -14639,6 +14657,26 @@
         "missingRegistryRefusesMutationTest",
         "newBanStillRefusesTest",
         "unchangedPausedProjectMayUpdateSettingTest"
+      ]
+    },
+    {
+      "path": "formal/models/rewards/monthly_owner_cuts.qnt",
+      "sha256": "4270cfe39d99fa700a607c60fc9ec257d610e0c879527d320ff81e359ba21f46",
+      "sources": [
+        "backend/notifications/events.ts",
+        "backend/payments/handler.ts",
+        "backend/payments/monthly.ts",
+        "migrations/0126_monthly_allocation_cuts.sql",
+        "src/lib/use-monthly-cuts.ts"
+      ],
+      "scenarios": [
+        "coordinatorFreezeUnchangedTest",
+        "cutNeedsReasonTest",
+        "cutWithReasonNotifiesTest",
+        "finalWindowRefusesCutTest",
+        "finalizeWaitsAfterCutTest",
+        "increaseNeedsNoReasonTest",
+        "optOutAllowsLateCutTest"
       ]
     },
     {

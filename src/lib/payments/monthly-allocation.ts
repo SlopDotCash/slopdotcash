@@ -1,9 +1,10 @@
 /**
- * Private monthly allocations (PRD sections 6 and 7). A closed UTC month gets
- * one proposed allocation from the complete ledger. The owner may change any
- * amount privately until the month is frozen; the frozen execution snapshot is
- * the only input to award reservation. No public reason or adjustment history
- * exists. Amounts are integer base units of the project asset.
+ * Monthly allocations (PRD sections 6 and 7). A closed UTC month gets one
+ * proposed allocation from the complete ledger. The owner may change any
+ * amount until the month is frozen; the frozen execution snapshot is the only
+ * input to award reservation. A cut below the proposed amount needs a public
+ * reason (operator decision, 15 November 2026); other changes stay private.
+ * Amounts are integer base units of the project asset.
  */
 import { isBaseUnits } from "../escrow-policy.mjs";
 import { sha256Hex } from "../sha256";
