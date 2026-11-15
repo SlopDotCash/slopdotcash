@@ -1366,6 +1366,50 @@ test("the native collector partitions two original PRs by one contributor", asyn
       (part) => part.claimIds ?? [],
     ),
   ).toContain(repair.id);
+  second.evidence.commits[0].parents = [{ sha: sha("a") }];
+  const acceptedSecond = accepted.commits.find(
+    (commit) => commit.sha === sha("d"),
+  );
+  if (!acceptedSecond) throw Error("fixture");
+  acceptedSecond.parents = [{ sha: sha("a") }];
+  accepted.commits[1].parents = [{ sha: sha("d") }];
+  for (const commit of accepted.commits)
+    input.responses.set(`${root}/git/commits/${commit.sha}`, clone(commit));
+  range.commits.splice(
+    0,
+    range.commits.length,
+    ...clone(accepted.commits),
+    clone(accepted.mergeCommitEvidence),
+  );
+  const sharedAncestor = await octoberOriginalContributorPartsProof(
+    input.github,
+    [...input.sources, second],
+    input.owners,
+    [...claims, repair],
+    originals,
+    accepted.pull.node_id,
+  );
+  expect(
+    sharedAncestor.originalContributorParts?.flatMap(
+      (part) => part.claimIds ?? [],
+    ),
+  ).toContain(repair.id);
+  const otherOrigin = {
+    ...origin,
+    node_id: "MDQ6VXNlcjQ0",
+    login: "other-origin",
+  };
+  second.evidence.pull.user = otherOrigin;
+  await expect(
+    octoberOriginalContributorPartsProof(
+      input.github,
+      [...input.sources, second],
+      input.owners,
+      [...claims, repair],
+      originals,
+      accepted.pull.node_id,
+    ),
+  ).rejects.toThrow("multiple originating contributors");
   second.evidence.pull.user = carrier;
   await expect(
     octoberOriginalContributorPartsProof(
@@ -1376,7 +1420,7 @@ test("the native collector partitions two original PRs by one contributor", asyn
       originals,
       accepted.pull.node_id,
     ),
-  ).rejects.toThrow("different originating contributors");
+  ).rejects.toThrow("accepted carrier");
 });
 
 async function repairSnapshot() {
