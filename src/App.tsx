@@ -35,7 +35,11 @@ import {
   hasBountyOverview,
   homeProjects,
 } from "./lib/home-projects";
-import { loadMergeActivity, mergeActivityLine } from "./lib/merge-activity";
+import {
+  loadMergeActivity,
+  mergeActivityCardLine,
+  mergeActivityLine,
+} from "./lib/merge-activity";
 import {
   findHistoricalProject,
   findProject,
@@ -613,7 +617,13 @@ function bountyFundingLabel(terms: SecurityBountyTerms): string {
   return terms.funding.state === "pledged" ? "Pledged" : "Funding verified";
 }
 
-function ProjectCard({ project }: { project: ProjectDefinition }) {
+function ProjectCard({
+  project,
+  merge,
+}: {
+  project: ProjectDefinition;
+  merge?: string | null;
+}) {
   const bounty = hasProjectCardBounty(project)
     ? project.securityBounty
     : undefined;
@@ -663,12 +673,23 @@ function ProjectCard({ project }: { project: ProjectDefinition }) {
             + {reviewBudgetLabel(project.reward.reviewBudget)}
           </small>
         ) : null}
+        {merge ? (
+          <small className="project-money-state project-merge-activity">
+            {merge}
+          </small>
+        ) : null}
       </div>
     </Link>
   );
 }
 
-function ProjectRow({ project }: { project: ProjectDefinition }) {
+function ProjectRow({
+  project,
+  merge,
+}: {
+  project: ProjectDefinition;
+  merge?: string | null;
+}) {
   const bounty = hasProjectCardBounty(project)
     ? project.securityBounty
     : undefined;
@@ -686,6 +707,9 @@ function ProjectRow({ project }: { project: ProjectDefinition }) {
         <span className="project-row-name">
           <strong>{project.name}</strong>
           <small>{project.description}</small>
+          {merge ? (
+            <small className="project-merge-activity">{merge}</small>
+          ) : null}
         </span>
         <span className="project-row-amount">{amount}</span>
         <ChevronRight aria-hidden="true" />
@@ -696,7 +720,13 @@ function ProjectRow({ project }: { project: ProjectDefinition }) {
 
 const COMMUNITY_PAGE_SIZE = 10;
 
-function CommunityProjects({ projects }: { projects: ProjectDefinition[] }) {
+function CommunityProjects({
+  projects,
+  mergeLine,
+}: {
+  projects: ProjectDefinition[];
+  mergeLine: (project: ProjectDefinition) => string | null;
+}) {
   const [page, setPage] = useState(0);
   if (projects.length === 0) return null;
   const pages = Math.ceil(projects.length / COMMUNITY_PAGE_SIZE);
@@ -713,7 +743,11 @@ function CommunityProjects({ projects }: { projects: ProjectDefinition[] }) {
       <h3 id="community-projects">Community</h3>
       <ul className="project-rows">
         {visible.map((project) => (
-          <ProjectRow key={project.id} project={project} />
+          <ProjectRow
+            key={project.id}
+            project={project}
+            merge={mergeLine(project)}
+          />
         ))}
       </ul>
       {pages > 1 ? (
@@ -826,6 +860,17 @@ function SecurityBounties() {
 function HomePage() {
   const featuredProjects = homeProjects();
   const listedCommunityProjects = communityProjects();
+  // One shared read of the daily merge activity (#1993) for every card.
+  const [merge] = usePublicResource(
+    true,
+    loadMergeActivity,
+    "Merge activity unavailable",
+  );
+  const now = new Date();
+  const mergeLine = (project: ProjectDefinition) =>
+    project.status === "active" && merge.status === "ready"
+      ? mergeActivityCardLine(merge.index.get(project.id), now)
+      : null;
   return (
     <main>
       <section className="hero shell">
@@ -853,12 +898,19 @@ function HomePage() {
                 <h3 id="featured-projects">Featured</h3>
                 <div className="project-grid">
                   {featuredProjects.map((project) => (
-                    <ProjectCard key={project.id} project={project} />
+                    <ProjectCard
+                      key={project.id}
+                      project={project}
+                      merge={mergeLine(project)}
+                    />
                   ))}
                 </div>
               </section>
             ) : null}
-            <CommunityProjects projects={listedCommunityProjects} />
+            <CommunityProjects
+              projects={listedCommunityProjects}
+              mergeLine={mergeLine}
+            />
           </>
         )}
       </section>
