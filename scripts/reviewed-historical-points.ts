@@ -105,10 +105,17 @@ export function decodeHistoricalPacket(
   encoded: string,
   digest: string,
 ): HistoricalPointsPacket {
+  return decodeHistoricalPacketBytes(
+    gunzipSync(Buffer.from(encoded, "base64")),
+    digest,
+  );
+}
+
+export function decodeHistoricalPacketBytes(
+  bytes: Uint8Array,
+  digest: string,
+): HistoricalPointsPacket {
   check(/^[a-f0-9]{64}$/u.test(digest), "Invalid reviewed packet digest");
-  const bytes = gunzipSync(Buffer.from(encoded, "base64"), {
-    maxOutputLength: 32 * 1024 * 1024,
-  });
   check(sha256Hex(bytes) === digest, "Reviewed packet changed");
   const packet = JSON.parse(
     new TextDecoder("utf-8", { fatal: true }).decode(bytes),
