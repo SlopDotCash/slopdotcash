@@ -525,3 +525,56 @@ for (const invalid of [
         ),
       ).toBe(false);
   });
+
+for (const body of [
+  "The account-preference fix is included in #2.",
+  "The payment-ordering fix and the later Solidity formatting correction are included in #2.",
+])
+  test(`included-fix acknowledgement binds exact accepted copies: ${body}`, async () => {
+    const { original, copy, comment } = sources();
+    comment.body = body;
+    const result = await retainedCommitCreditSources(copy, [original, copy]);
+    expect(result.size).toBe(1);
+    copy.evidence.commitAttribution[0].files![0].patch += "\n+unrelated";
+    await expect(
+      retainedCommitCreditSources(copy, [original, copy]),
+    ).rejects.toThrow("0 exact copy bindings");
+  });
+
+for (const body of [
+  "The fix is not included in #2.",
+  "The fix will be included in #2.",
+  "The fix would be included in #2.",
+  "If accepted, the fix is included in #2.",
+  "The fixes are included in #3. See #2.",
+  "The fixture is included in #2.",
+  "The fix is included in other/repository#2.",
+  "The fix is included in #3, but see #2.",
+])
+  test(`included-fix acknowledgement refuses unrelated or prospective text: ${body}`, async () => {
+    const { original, copy, comment } = sources();
+    comment.body = body;
+    await expect(
+      retainedCommitCreditSources(copy, [original, copy]),
+    ).rejects.toThrow("authenticated retention acknowledgement");
+  });
+
+for (const invalid of ["actor", "time", "source-id"])
+  test(`included-fix acknowledgement retains ${invalid} binding`, async () => {
+    const { original, copy, comment } = sources();
+    comment.body = "The fix is included in #2.";
+    if (invalid === "actor")
+      comment.user = { ...comment.user, node_id: "U_other" };
+    if (invalid === "time") comment.created_at = "2026-10-02T09:00:00Z";
+    if (invalid === "source-id")
+      original.evidence.relatedPullRequests[0].id = "PR_other";
+    if (invalid === "source-id") {
+      expect(
+        (await retainedCommitCreditSources(copy, [original, copy])).size,
+      ).toBe(0);
+    } else {
+      await expect(
+        retainedCommitCreditSources(copy, [original, copy]),
+      ).rejects.toThrow("authenticated retention acknowledgement");
+    }
+  });
