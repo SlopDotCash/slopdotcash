@@ -1047,3 +1047,73 @@ for (const fault of ["merger", "source", "before-merge"] as const)
       ).rejects.toThrow("authenticated retention acknowledgement");
     }
   });
+
+function nativeAndRewrittenCopy() {
+  const { original, copy } = withUnacceptedFinalPath();
+  original.evidence.commits[0].author = original.evidence.pull.user;
+  original.evidence.commitAttribution[0].actorNodeIds = [
+    original.evidence.pull.user.node_id,
+  ];
+  const rewritten = structuredClone(original.evidence.commits[0]);
+  rewritten.sha = "e".repeat(40);
+  const attribution = structuredClone(original.evidence.commitAttribution[0]);
+  attribution.sha = rewritten.sha;
+  copy.evidence.commits = [
+    structuredClone(original.evidence.commits[0]),
+    rewritten,
+  ];
+  copy.evidence.commitAttribution = [
+    structuredClone(original.evidence.commitAttribution[0]),
+    attribution,
+  ];
+  copy.evidence.pull.commits = 2;
+  return { original, copy };
+}
+
+for (const reverse of [false, true])
+  test(`accepted subset preserves exact native identity beside a rewritten copy, reversed=${reverse}`, async () => {
+    const { original, copy } = nativeAndRewrittenCopy();
+    const result = await retainedCopyBindings(
+      reverse ? [copy, original] : [original, copy],
+      { ordinaryCommitsOnly: true, acceptedSubset: true },
+    );
+    expect(result.limitations).toEqual([]);
+    expect(result.bindings.size).toBe(1);
+    expect([...result.bindings.values()][0].acceptedCommitSha).toBe(
+      original.evidence.commits[0].sha,
+    );
+  });
+
+for (const fault of [
+  "author",
+  "parent",
+  "attribution",
+  "two-rewrites",
+  "full-scope",
+] as const)
+  test(`native identity preference refuses ${fault}`, async () => {
+    const { original, copy } = nativeAndRewrittenCopy();
+    if (fault === "author")
+      copy.evidence.commits[0].author = {
+        node_id: "U_other",
+        login: "other",
+        type: "User",
+      };
+    if (fault === "parent")
+      copy.evidence.commits[0].parents = [{ sha: "f".repeat(40) }];
+    if (fault === "attribution")
+      copy.evidence.commitAttribution[0].actorNodeIds = ["U_other"];
+    if (fault === "two-rewrites") {
+      copy.evidence.commits[0].sha = "f".repeat(40);
+      copy.evidence.commitAttribution[0].sha = "f".repeat(40);
+    }
+    const result = await retainedCopyBindings([original, copy], {
+      ordinaryCommitsOnly: true,
+      acceptedSubset: fault !== "full-scope",
+    });
+    expect(
+      result.limitations.some((value) =>
+        value.includes("2 exact copy bindings"),
+      ),
+    ).toBe(true);
+  });
