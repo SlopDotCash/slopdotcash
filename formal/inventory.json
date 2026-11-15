@@ -2876,7 +2876,8 @@
       "models": [
         "formal/models/payments/payment_history.qnt",
         "formal/models/rewards/monthly_coordinator.qnt",
-        "formal/models/rewards/monthly_owner_completion.qnt"
+        "formal/models/rewards/monthly_owner_completion.qnt",
+        "formal/models/rewards/october_proposal_import.qnt"
       ],
       "candidateLines": [
         89, 91, 93, 95, 97, 100, 102, 104, 106, 108, 110, 112, 119, 121, 124,
@@ -4051,6 +4052,13 @@
       "review": "mapped-abstraction"
     },
     {
+      "path": "scripts/october-reward-review.ts",
+      "sha256": "94f232ff2a7c7078c72ffc716938d953f2432029330578663d3045156211b156",
+      "models": ["formal/models/rewards/october_proposal_import.qnt"],
+      "candidateLines": [243, 277, 279, 280],
+      "review": "mapped-abstraction"
+    },
+    {
       "path": "scripts/path-containment.ts",
       "sha256": "accb2ad70fe19a813707dd14a2b48d3ba1eef4b1fbf23562225fb6bb684cc852",
       "models": [],
@@ -4139,7 +4147,8 @@
       "path": "scripts/points-protection-sql.ts",
       "sha256": "fbbc01cce4c4f9c6c8a14c0e990d3d6b48c9cf97361f46728c64a5ad88ec9fec",
       "models": [
-        "formal/models/points/historical_implementation_allocation.qnt"
+        "formal/models/points/historical_implementation_allocation.qnt",
+        "formal/models/rewards/october_proposal_import.qnt"
       ],
       "candidateLines": [3, 11, 44],
       "review": "mapped-abstraction"
@@ -4211,9 +4220,17 @@
       "sha256": "9cf482a8b88f9c49b5b834ebce825b1c5a13eb0d850b6e01857a7595641a191f",
       "models": [
         "formal/models/rewards/monthly_coordinator.qnt",
-        "formal/models/rewards/monthly_reserve.qnt"
+        "formal/models/rewards/monthly_reserve.qnt",
+        "formal/models/rewards/october_proposal_import.qnt"
       ],
       "candidateLines": [15, 80, 81, 82, 150, 161, 195, 210, 260],
+      "review": "mapped-abstraction"
+    },
+    {
+      "path": "scripts/prepare-october-rewards.ts",
+      "sha256": "eef124152bccdef5314ca94768e1723da54d21db7d7c25693e7cf4bd4bb31d63",
+      "models": ["formal/models/rewards/october_proposal_import.qnt"],
+      "candidateLines": [2, 15, 41, 139],
       "review": "mapped-abstraction"
     },
     {
@@ -14760,6 +14777,22 @@
         "differentActorRefusedTest",
         "evmMatchingNeedsNoNewFundsTest",
         "solanaWholeMonthNeedsFundsTest"
+      ]
+    },
+    {
+      "path": "formal/models/rewards/october_proposal_import.qnt",
+      "sha256": "d60c591ff074716079493206d3344f761832654944d8d6447c136e90ca370fd4",
+      "sources": [
+        "migrations/0081_monthly_asset_amount_range.sql",
+        "scripts/october-reward-review.ts",
+        "scripts/points-protection-sql.ts",
+        "scripts/prepare-monthly-rewards.ts",
+        "scripts/prepare-october-rewards.ts"
+      ],
+      "scenarios": [
+        "exactReplayTest",
+        "partialReadbackRollbackTest",
+        "protectedOrStaleTest"
       ]
     },
     {
