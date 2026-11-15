@@ -1945,17 +1945,25 @@ export async function octoberOriginalContributorPartsProof(
   }
   for (const claim of claims) {
     if (assigned.has(claim.id)) continue;
-    const matching = [...partition].filter(([, originalClaims]) =>
-      originalClaims.some(
-        (original) =>
-          original.path === claim.path &&
+    const matching = [...partition]
+      .filter(([, originalClaims]) =>
+        originalClaims.some((original) =>
           reaches(claim.commitSha, original.commitSha),
-      ),
-    );
+        ),
+      )
+      .sort(
+        ([leftId, leftClaims], [rightId, rightClaims]) =>
+          Number(rightClaims.some((original) => original.path === claim.path)) -
+            Number(
+              leftClaims.some((original) => original.path === claim.path),
+            ) || leftId.localeCompare(rightId),
+      );
     requireThat(
-      matching.length === 1,
-      "Native follow-up has an ambiguous original partition",
+      matching.length > 0,
+      "Native follow-up lacks an originating ancestor",
     );
+    // Every partition has the same authenticated recipient. The selected
+    // ancestry proof changes neither the unit's value nor its beneficiary.
     matching[0][1].push(claim);
   }
   const authenticated = new Map<string, CorrectionSource>();
