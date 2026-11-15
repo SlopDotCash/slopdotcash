@@ -116,6 +116,8 @@ interface CompleteCorrectionProof {
   originalContributor?: {
     /** Native identical-SHA acceptance with authenticated accepted-parent edges. */
     exactAcceptance?: true;
+    /** Exact reviewed unit within a multi-origin native integration. */
+    claimIds?: string[];
     /** First accepted carrier when the recorded unit completes on its donor. */
     acceptedSourceId?: string;
     followups?: OriginalContributorFollowup[];
@@ -412,6 +414,103 @@ export function isOriginalContributorFollowup(
   );
 }
 
+/** Verify a single reviewed unit while retaining the full integration census. */
+export function originalContributorClaimScope(
+  original: CorrectionSource,
+  accepted: CorrectionSource,
+  claims: readonly CorrectionClaim[],
+): boolean {
+  const origin = original.author;
+  const carrier = accepted.author;
+  if (
+    !eligibleActor(origin) ||
+    !eligibleActor(carrier) ||
+    origin.id === carrier.id ||
+    original.repositoryNodeId !== accepted.repositoryNodeId ||
+    !original.complete ||
+    original.commitCount !== original.commits.length ||
+    !accepted.complete ||
+    accepted.commitCount !== accepted.commits.length ||
+    !claims.length ||
+    new Set(claims.map((claim) => claim.id)).size !== claims.length
+  )
+    return false;
+  const originals = new Map(
+    original.commits.map((commit) => [commit.sha, commit]),
+  );
+  const graph = new Map(accepted.commits.map((commit) => [commit.sha, commit]));
+  if (
+    originals.size !== original.commits.length ||
+    graph.size !== accepted.commits.length ||
+    !originals.has(original.headSha) ||
+    !graph.has(accepted.headSha) ||
+    accepted.commits.some((commit) => !validParentShas(commit)) ||
+    original.commits.some((commit) => {
+      const copy = graph.get(commit.sha);
+      return (
+        commit.parentCount > 1 ||
+        (commit.author !== null &&
+          (!eligibleActor(commit.author) ||
+            (commit.author.id !== origin.id &&
+              commit.author.id !== carrier.id))) ||
+        !copy ||
+        copy.firstAcceptedSourceId !== accepted.sourceId ||
+        copy.author?.id !== commit.author?.id ||
+        copy.author?.kind !== commit.author?.kind
+      );
+    })
+  )
+    return false;
+  const descends = (child: string, ancestor: string) => {
+    const pending = [child];
+    const visited = new Set<string>();
+    for (const current of pending) {
+      if (current === ancestor) return true;
+      if (visited.has(current)) continue;
+      visited.add(current);
+      pending.push(...(graph.get(current)?.parentShas ?? []));
+    }
+    return false;
+  };
+  if (
+    !original.commits.every((commit) => descends(original.headSha, commit.sha))
+  )
+    return false;
+  const resolvedOriginal = {
+    ...original,
+    commits: original.commits.map((commit) => ({
+      ...commit,
+      author: commit.author ?? origin,
+      parentShas: graph.get(commit.sha)?.parentShas,
+    })),
+  };
+  if (!originalContributorPrecedesFollowups(resolvedOriginal, carrier))
+    return false;
+  let hasOriginal = false;
+  for (const claim of claims) {
+    const commit = graph.get(claim.commitSha);
+    if (
+      claim.sourceId !== accepted.sourceId ||
+      !commit ||
+      !correctionClaimCommit(commit) ||
+      commit.firstAcceptedSourceId !== accepted.sourceId ||
+      !commit.files?.some((file) => file.path === claim.path)
+    )
+      return false;
+    if (originals.has(commit.sha)) {
+      hasOriginal = true;
+      continue;
+    }
+    if (
+      !eligibleActor(commit.author) ||
+      (commit.author.id !== origin.id && commit.author.id !== carrier.id) ||
+      !descends(commit.sha, original.headSha)
+    )
+      return false;
+  }
+  return hasOriginal;
+}
+
 /** A carrier's commits count as follow-ups only after the verified contributor
  * has started work in the authenticated original PR history. */
 export function originalContributorPrecedesFollowups(
@@ -575,10 +674,30 @@ function deriveProof(
   );
   let incomplete = false;
   for (const source of sources.values()) {
+    const nativeCarrier = proof.originalContributor?.claimIds
+      ? sources.get(
+          proof.originalContributor.acceptedSourceId ?? candidate.sourceId,
+        )
+      : undefined;
+    const nativeContext =
+      nativeCarrier &&
+      source.commits.every(
+        (commit) =>
+          commit.parentCount <= 1 &&
+          commit.firstAcceptedSourceId === nativeCarrier.sourceId &&
+          nativeCarrier.commits.some(
+            (copy) =>
+              copy.sha === commit.sha &&
+              copy.parentCount === commit.parentCount &&
+              copy.author?.id === commit.author?.id &&
+              copy.author?.kind === commit.author?.kind,
+          ),
+      );
     const mergedOriginal =
       candidate.kind === "work-unit" &&
       proof.originalContributor?.exactAcceptance === true &&
-      proof.originalContributor.originalSourceId === source.sourceId &&
+      (proof.originalContributor.originalSourceId === source.sourceId ||
+        nativeContext) &&
       source.sourceId !== candidate.sourceId &&
       source.occurredAt !== null &&
       source.occurredAt >= candidate.occurredAt;
@@ -819,6 +938,40 @@ function deriveProof(
     const acceptedCommit = accepted.commits.find(
       (commit) => commit.sha === binding.acceptedCommitSha,
     );
+    if (binding.claimIds !== undefined) {
+      check(
+        candidate.kind === "work-unit" &&
+          candidate.proof.status === "complete" &&
+          binding.exactAcceptance === true &&
+          original &&
+          acceptedCommit &&
+          binding.originalCommitSha === original.headSha &&
+          binding.acceptedCommitSha === original.headSha &&
+          acceptedCommit.files &&
+          sameSet(
+            binding.boundPaths,
+            acceptedCommit.files.map((file) => file.path),
+          ) &&
+          sameSet(
+            binding.claimIds,
+            candidate.proof.claims.map((claim) => claim.id),
+          ) &&
+          originalContributorClaimScope(
+            original,
+            accepted,
+            candidate.proof.claims,
+          ),
+        "original-contributor unit scope does not bind the reviewed native claims",
+      );
+      if (incomplete) return null;
+      const origin = original.author;
+      check(eligibleActor(origin), "original unit creator is unavailable");
+      return {
+        actors: new Map([[origin.id, origin]]),
+        weights: new Map([[origin.id, 1n]]),
+        scopes,
+      };
+    }
     check(
       original &&
         original.sourceId !== accepted.sourceId &&

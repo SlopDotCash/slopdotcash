@@ -22,6 +22,14 @@ contributor commit. The collector checks those edges against immutable GitHub
 commit reads. Distinct contributors, missing parent evidence and ambiguous
 accepted copies require review. A legacy collection or rolling
 snapshot retains an already recorded October original-contributor allocation.
+For a native integration containing several original PRs, each reviewed work
+unit retains the complete integration census and binds only its exact claim IDs
+to one original. Exact shared Git objects establish the original source without
+a description reference. Unlinked commits retain their null author metadata and
+use the authenticated original PR creator as the fallback. Every selected carrier
+follow-up must descend from that original head. Other work units retain their
+own attribution.
+
 Run the preview and reconcile value and duplicate work before recording.
 
 ## Collection and review

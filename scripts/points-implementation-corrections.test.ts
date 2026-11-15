@@ -1836,3 +1836,115 @@ test("resolution deltas retain the same immutable reported merge counts in other
   expect(total(result.journal)).toBe(total(combined));
   expect(amounts(result.journal)[A.id]).toBe(30);
 });
+
+function scopedUnlinkedOriginal() {
+  const sample = mergedDonorGroupedReplacement();
+  const { grouped, accepted, donor } = sample;
+  if (grouped.proof.status !== "complete" || !grouped.proof.originalContributor)
+    throw Error("fixture");
+  donor.commits[0].author = null;
+  accepted.commits[0].author = null;
+  const third = structuredClone(accepted.commits[1]);
+  third.sha = sha("f");
+  third.author = B;
+  third.parentShas = [accepted.headSha];
+  accepted.commits.push(third);
+  accepted.commitCount++;
+  accepted.headSha = third.sha;
+  grouped.proof.originalContributor.claimIds = grouped.proof.claims.map(
+    (claim) => claim.id,
+  );
+  return sample;
+}
+
+test("reviewed native unit awards the original creator without rewriting null commit authors", () => {
+  const { journal, input, donor, accepted } = scopedUnlinkedOriginal();
+  const result = apply(journal, input);
+  expect(amounts(result.journal)).toEqual({ [A.id]: 30, [C.id]: 0 });
+  expect(donor.commits[0].author).toBeNull();
+  expect(accepted.commits).toHaveLength(3);
+  expect(total(result.journal)).toBe(total(journal));
+  expect(apply(result.journal, input, true, LATER).journal).toBe(
+    result.journal,
+  );
+  expect(apply(journal, input, false).journal).toBe(journal);
+});
+
+for (const fault of [
+  "claim-scope",
+  "third-author-claim",
+  "missing-origin",
+  "disconnected-followup",
+  "linked-other-origin",
+  "wrong-copy",
+] as const)
+  test(`native unit original proof refuses ${fault}`, () => {
+    const { journal, input, donor, accepted, grouped } =
+      scopedUnlinkedOriginal();
+    if (
+      grouped.proof.status !== "complete" ||
+      !grouped.proof.originalContributor
+    )
+      throw Error("fixture");
+    if (fault === "claim-scope")
+      grouped.proof.originalContributor.claimIds = [];
+    if (fault === "third-author-claim")
+      grouped.proof.claims[1].commitSha = sha("f");
+    if (fault === "missing-origin") {
+      grouped.proof.claims = grouped.proof.claims.slice(1);
+      grouped.proof.expectedClaimIds = grouped.proof.claims.map(
+        (claim) => claim.id,
+      );
+      grouped.proof.originalContributor.claimIds = [
+        ...grouped.proof.expectedClaimIds,
+      ];
+    }
+    if (fault === "disconnected-followup")
+      accepted.commits[1].parentShas = [sha("0")];
+    if (fault === "linked-other-origin") donor.commits[0].author = B;
+    if (fault === "wrong-copy") accepted.commits[0].author = B;
+    expect(() => apply(journal, input)).toThrow();
+  });
+
+test("scoped native original keeps maintainer follow-ups in the original PR with its initiator", () => {
+  const { journal, input, donor, accepted, grouped } = scopedUnlinkedOriginal();
+  if (grouped.proof.status !== "complete" || !grouped.proof.originalContributor)
+    throw Error("fixture");
+  donor.commits.push(structuredClone(accepted.commits[1]));
+  donor.commitCount++;
+  donor.headSha = donor.commits[1].sha;
+  const binding = grouped.proof.originalContributor;
+  binding.originalCommitSha = donor.headSha;
+  binding.acceptedCommitSha = donor.headSha;
+  const files = donor.commits[1].files;
+  if (!files) throw Error("fixture");
+  binding.boundPaths = files.map((file) => file.path);
+  expect(amounts(apply(journal, input).journal)).toEqual({
+    [A.id]: 30,
+    [C.id]: 0,
+  });
+  donor.commits[0].author = C;
+  accepted.commits[0].author = C;
+  expect(() => apply(journal, input)).toThrow("unit scope");
+});
+
+test("scoped original preserves later-merged other-donor context without awarding it", () => {
+  const { journal, input, donor, accepted, grouped } = scopedUnlinkedOriginal();
+  if (grouped.proof.status !== "complete") throw Error("fixture");
+  const other = structuredClone(donor);
+  other.sourceId = "PR_other_donor";
+  other.sourceUrl = "https://github.com/SlopDotCash/asi/pull/12";
+  other.author = B;
+  other.headSha = accepted.commits[2].sha;
+  other.commits = [structuredClone(accepted.commits[2])];
+  other.commitCount = 1;
+  other.occurredAt = "2026-10-23T00:00:04.000Z";
+  grouped.proof.sources.push(other);
+  grouped.sourceIds.push(other.sourceId);
+  expect(amounts(apply(journal, input).journal)).toEqual({
+    [A.id]: 30,
+    [C.id]: 0,
+  });
+  other.commits[0].firstAcceptedSourceId = other.sourceId;
+  expect(() => apply(journal, input)).toThrow("invalid source identity");
+});

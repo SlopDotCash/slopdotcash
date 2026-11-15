@@ -35,6 +35,7 @@ import {
   isOriginalContributorContext,
   isOriginalContributorFollowup,
   type OriginalContributorFollowup,
+  originalContributorClaimScope,
   originalContributorPrecedesFollowups,
   type PointsImplementationCorrectionCandidate,
   type PointsImplementationCorrectionManifest,
@@ -1119,6 +1120,7 @@ interface HistoricalOrdinaryProof {
   sources: CorrectionSource[];
   originalContributor?: {
     exactAcceptance?: true;
+    claimIds?: string[];
     acceptedSourceId?: string;
     followups?: OriginalContributorFollowup[];
     originalSourceId: string;
@@ -1242,13 +1244,18 @@ async function exactOctoberOriginalContributorProof(
   integration: WorkUnitSource,
   original: WorkUnitSource,
   allowMergedOriginal = false,
+  scopedClaims?: readonly CorrectionClaim[],
 ): Promise<HistoricalOrdinaryProof | null> {
   const anchor = originalSource.commits.find(
     (commit) => commit.sha === originalSource.headSha,
   );
   if (
     anchor?.parentCount !== 1 ||
-    anchor.author?.id !== originalSource.author?.id ||
+    (anchor.author?.id !== originalSource.author?.id &&
+      !(
+        scopedClaims &&
+        (anchor.author === null || anchor.author.id === accepted.author?.id)
+      )) ||
     !firstAcceptedOrdinary(accepted).some(
       (commit) =>
         commit.sha === anchor.sha && commit.author?.id === anchor.author?.id,
@@ -1284,7 +1291,8 @@ async function exactOctoberOriginalContributorProof(
           ))) &&
       original.evidence.repositoryDatabaseId ===
         integration.evidence.repositoryDatabaseId &&
-      (references(integration.evidence, originalPull) ||
+      (scopedClaims !== undefined ||
+        references(integration.evidence, originalPull) ||
         references(original.evidence, acceptedPull)),
     "October exact source lacks a same-repository resolved PR reference",
   );
@@ -1418,10 +1426,12 @@ async function exactOctoberOriginalContributorProof(
     integration.evidence,
   );
   requireThat(
-    originalContributorPrecedesFollowups(
-      { ...accepted, author: originalSource.author },
-      accepted.author,
-    ),
+    scopedClaims
+      ? originalContributorClaimScope(originalSource, accepted, scopedClaims)
+      : originalContributorPrecedesFollowups(
+          { ...accepted, author: originalSource.author },
+          accepted.author,
+        ),
     "October exact accepted source has an unverified contributor or follow-up",
   );
   const files = accepted.commits.find(
@@ -1435,6 +1445,9 @@ async function exactOctoberOriginalContributorProof(
     sources: [accepted, originalSource],
     originalContributor: {
       exactAcceptance: true,
+      ...(scopedClaims
+        ? { claimIds: scopedClaims.map((claim) => claim.id) }
+        : {}),
       originalSourceId: originalSource.sourceId,
       originalCommitSha: anchor.sha,
       acceptedCommitSha: anchor.sha,
@@ -1446,6 +1459,7 @@ async function exactOctoberOriginalContributorProof(
             integration.evidence,
             integration.policy,
           ),
+          ...(scopedClaims ? { claims: scopedClaims } : {}),
           pulls,
           merge,
           firstParent,
@@ -1455,6 +1469,33 @@ async function exactOctoberOriginalContributorProof(
       ),
     },
   };
+}
+
+/** Bind a reviewed single-origin unit inside a multi-origin native merge. */
+export async function octoberOriginalContributorUnitProof(
+  github: Pick<GitHubClient, "get">,
+  accepted: CorrectionSource,
+  original: WorkUnitSource,
+  integration: WorkUnitSource,
+  owners: ReadonlyMap<string, string>,
+  claims: readonly CorrectionClaim[],
+): Promise<HistoricalOrdinaryProof> {
+  const source = richSource(original.evidence, owners);
+  const canonical = matchRetainedAcceptedSource(
+    accepted,
+    richSource(integration.evidence, owners),
+  );
+  const proof = await exactOctoberOriginalContributorProof(
+    github,
+    canonical,
+    source,
+    integration,
+    original,
+    true,
+    claims,
+  );
+  requireThat(proof, "Reviewed unit lacks native original-head acceptance");
+  return proof;
 }
 
 export async function octoberOriginalContributorProof(
@@ -2928,6 +2969,51 @@ async function collectWithEvidenceCache(
                 acceptedSourceId: accepted.sourceId,
               };
             }
+          }
+        }
+        if (
+          !originalContributor &&
+          octoberOriginalCredit &&
+          accepted &&
+          candidate.occurredAt.startsWith("2026-10-") &&
+          claimedSources.length === 1
+        ) {
+          const originalIds = new Set(
+            selectedClaims.map((claim) => claim.creditPullRequestId),
+          );
+          originalIds.delete(accepted.sourceId);
+          if (originalIds.size === 1) {
+            const originalId = [...originalIds][0];
+            const original = decision.evidence.sources.find(
+              (source) => source.evidence.pull.node_id === originalId,
+            );
+            const integration = decision.evidence.sources.find(
+              (source) => source.evidence.pull.node_id === accepted.sourceId,
+            );
+            requireThat(
+              original && integration,
+              "Original unit evidence disappeared",
+            );
+            const proof = await octoberOriginalContributorUnitProof(
+              github,
+              accepted,
+              original,
+              integration,
+              owners,
+              claims,
+            );
+            const authenticated = new Map(
+              proof.sources.map((source) => [source.sourceId, source]),
+            );
+            sources = sources.map(
+              (source) => authenticated.get(source.sourceId) ?? source,
+            );
+            originalContributor = proof.originalContributor;
+            if (originalContributor && accepted.sourceId !== candidate.sourceId)
+              originalContributor = {
+                ...originalContributor,
+                acceptedSourceId: accepted.sourceId,
+              };
           }
         }
         candidate.sourceIds = sources.map((s) => s.sourceId).sort();

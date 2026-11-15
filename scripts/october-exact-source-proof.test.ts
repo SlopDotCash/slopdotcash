@@ -8,6 +8,7 @@ import {
   groupedOriginalContributorProof,
   isMergedOriginalContributor,
   octoberOriginalContributorProof,
+  octoberOriginalContributorUnitProof,
   originalContributorFollowupProof,
 } from "./collect-implementation-corrections";
 
@@ -715,4 +716,70 @@ test("accepted follow-up reference is rechecked against current canonical GitHub
       input.sources[0].policy,
     ),
   ).rejects.toThrow("changed during collection");
+});
+
+test("native unit proof binds an unlinked original while preserving unrelated carrier work", async () => {
+  const input = await snapshot();
+  input.original.commits[0].author = null;
+  input.accepted.commits[0].author = null;
+  input.original.commitAttribution[0].actorNodeIds = [];
+  input.accepted.commitAttribution[0].actorNodeIds = [];
+  input.plain.commits[0].author = null;
+  input.accepted.relatedPullRequests = [];
+  const claims = [
+    {
+      id: "claim_origin",
+      sourceId: input.plain.sourceId,
+      commitSha: sha("a"),
+      path: "fix.ts",
+    },
+    {
+      id: "claim_followup",
+      sourceId: input.plain.sourceId,
+      commitSha: sha("b"),
+      path: "fix.ts",
+    },
+  ];
+  const proof = await octoberOriginalContributorUnitProof(
+    input.github,
+    input.plain,
+    input.sources[1],
+    input.sources[0],
+    input.owners,
+    claims,
+  );
+  expect(proof.originalContributor?.claimIds).toEqual(
+    claims.map((claim) => claim.id),
+  );
+  expect(proof.sources[0].commits).toHaveLength(2);
+  expect(proof.sources[1].commits[0].author).toBeNull();
+  input.plain.commits[1].author = {
+    id: "MDQ6VXNlcjQ0",
+    login: "third",
+    kind: "User",
+  };
+  input.accepted.commits[1].author = {
+    node_id: "MDQ6VXNlcjQ0",
+    login: "third",
+    type: "User",
+  };
+  const unrelated = await octoberOriginalContributorUnitProof(
+    input.github,
+    input.plain,
+    input.sources[1],
+    input.sources[0],
+    input.owners,
+    claims.slice(0, 1),
+  );
+  expect(unrelated.sources[0].commits[1].author?.login).toBe("third");
+  await expect(
+    octoberOriginalContributorUnitProof(
+      input.github,
+      input.plain,
+      input.sources[1],
+      input.sources[0],
+      input.owners,
+      claims,
+    ),
+  ).rejects.toThrow("unverified contributor");
 });
