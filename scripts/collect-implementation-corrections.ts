@@ -2607,16 +2607,16 @@ async function singleOriginalContributorUnitProof(
   owners: ReadonlyMap<string, string>,
   claims: readonly CorrectionClaim[],
   followups: readonly WorkUnitSource[] = [],
+  contextSources: readonly WorkUnitSource[] = [],
 ): Promise<HistoricalOrdinaryProof> {
   // Resolve a native carrier deferral only against this complete supplied group.
   // Keep the raw sources for their digest and fresh GitHub identity checks below.
   const verified = await bindRetained(
     [
       ...new Map(
-        [original, integration, ...followups].map((source) => [
-          source.evidence.pull.node_id,
-          source,
-        ]),
+        [original, integration, ...followups, ...contextSources].map(
+          (source) => [source.evidence.pull.node_id, source],
+        ),
       ).values(),
     ],
     owners,
@@ -2781,6 +2781,7 @@ export async function octoberOriginalContributorUnitProof(
   owners: ReadonlyMap<string, string>,
   claims: readonly CorrectionClaim[],
   followups: readonly WorkUnitSource[] = [],
+  contextSources: readonly WorkUnitSource[] = [],
 ): Promise<HistoricalOrdinaryProof> {
   const evidence = [integration, ...followups];
   if (
@@ -2917,6 +2918,7 @@ export async function octoberOriginalContributorUnitProof(
       owners,
       claims,
       followups,
+      contextSources,
     );
   const sources = new Map<string, CorrectionSource>();
   const parts: OriginalContributorBinding[] = [];
@@ -2964,6 +2966,7 @@ export async function octoberOriginalContributorUnitProof(
       owners,
       selected,
       later,
+      contextSources,
     );
     requireThat(
       proof.originalContributor,
@@ -4855,6 +4858,7 @@ async function collectWithEvidenceCache(
                       followup.sourceId === source.evidence.pull.node_id,
                   ),
                 ),
+                decision.evidence.sources,
               );
               const authenticated = new Map(
                 proof.sources.map((source) => [source.sourceId, source]),
