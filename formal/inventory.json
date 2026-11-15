@@ -8895,7 +8895,7 @@
     },
     {
       "path": "workers/slopbot/value-retained-copy.ts",
-      "sha256": "1e81da6a05075c9e16d8c7c81339c26429bd7047fc59d346421aabf19db41c4d",
+      "sha256": "0df58283e903afb4a6677a2f6bfb3231ceff49f0c1f4a148ce4a7a54f655f219",
       "models": [
         "formal/models/slopbot/bot_retained_acceptance.qnt",
         "formal/models/slopbot/retained_copy_bindings.qnt",

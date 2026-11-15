@@ -1220,7 +1220,7 @@ export async function retainedCopyBindings(
       }
       for (const file of attribution.files) {
         const identity = retainedEditIdentity(file);
-        const matches = integrations.flatMap(
+        let matches = integrations.flatMap(
           ({ source: integration, linkedOnly }) =>
             integration.evidence.commitAttribution.flatMap((accepted) => {
               const known = integration.evidence.commits.find(
@@ -1266,6 +1266,28 @@ export async function retainedCopyBindings(
               });
             }),
         );
+        if (options.acceptedSubset && matches.length > 1) {
+          // A retained native commit is the original, even when the carrier
+          // also contains a rewritten copy of its patch. Require the complete
+          // commit and attribution observation before preferring that identity.
+          const native = matches.filter(
+            (match) => match.acceptedCommitSha === commit.sha,
+          );
+          if (
+            native.length === 1 &&
+            JSON.stringify(
+              native[0].integration.evidence.commits.find(
+                (entry) => entry.sha === commit.sha,
+              ),
+            ) === JSON.stringify(commit) &&
+            JSON.stringify(
+              native[0].integration.evidence.commitAttribution.find(
+                (entry) => entry.sha === commit.sha,
+              ),
+            ) === JSON.stringify(attribution)
+          )
+            matches = native;
+        }
         // October requires a full accepted anchor commit, while rebasing can
         // legitimately alter other original paths. Ambiguity still fails closed.
         if (!matches.length && options.octoberOriginalCredit) continue;
