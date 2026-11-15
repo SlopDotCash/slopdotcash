@@ -240,6 +240,7 @@ pure def alwaysRestrictionRetiresRegistry(c: Registry): bool =
     implies c.project.tier == P::Retired and c.project.status == P::Paused
 pure def alwaysRestrictionRetirementHasRestriction(c: Registry): bool =
   c.project.retirement == P::RestrictionRetired implies c.security.restriction != E::Clear and c.security.restriction != E::FlagQuarantine
+pure def alwaysRestrictedProjectRegistered(c: Registry): bool = c.security.restriction != E::Clear implies c.project.revision > 0
 ```
 
 ## Story: Consumers read one derived view of the project
