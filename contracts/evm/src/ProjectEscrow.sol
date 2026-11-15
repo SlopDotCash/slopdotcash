@@ -190,6 +190,7 @@ contract ProjectEscrow is Initializable, UUPSUpgradeable {
     error PledgeTooLow();
     error PledgeNotLapsed();
     error PledgedFunds();
+    error PledgedMonthOpen();
 
     event Deposited(address indexed depositor, uint128 amount);
     event AwardCommitted(bytes32 indexed id, uint64 indexed actorId, uint128 gross, uint128 fee, bytes32 sourceDigest);
@@ -509,9 +510,16 @@ contract ProjectEscrow is Initializable, UUPSUpgradeable {
     }
 
     /// @param sourceDigest Unique per award origin (project/cycle/actor/allocation), not a whole-cycle digest.
+    /// While the period whose commit window is open has an open pledge, the owner cannot commit by hand:
+    /// each new award moves ordinarySourceSequence, which would make the pledged reservation stale.
     function commitAward(bytes32 id, uint64 actorId, uint128 gross, bytes32 sourceDigest) external onlyOwner {
         if (purpose != Purpose.Ordinary) revert WrongPurpose();
         if (pendingMonthlyGross != 0) revert MonthlyLeavesPending();
+        // The open window belongs to the month before the one containing now - MONTHLY_CUTOFF_DELAY.
+        if (openPledgedGross != 0) {
+            uint32 open = periodAt(block.timestamp - MONTHLY_CUTOFF_DELAY);
+            if (monthPledges[open % 100 == 1 ? open - 89 : open - 1].open) revert PledgedMonthOpen();
+        }
         commit(id, actorId, gross, sourceDigest, payoutFee(gross));
     }
 
@@ -547,10 +555,9 @@ contract ProjectEscrow is Initializable, UUPSUpgradeable {
         if (purpose != Purpose.Ordinary) revert WrongPurpose();
         uint32 current = currentPeriod();
         // YYYYMM orders like time, and the same month next year is current + 100.
-        if (
-            count == 0 || count > 12 || amount == 0 || fromPeriod < current || fromPeriod % 100 == 0
-                || fromPeriod % 100 > 12
-        ) revert InvalidInput();
+        if (count == 0 || count > 12 || amount == 0 || fromPeriod < current || (fromPeriod - 1) % 100 >= 12) {
+            revert InvalidInput();
+        }
         uint256 added;
         uint32 period = fromPeriod;
         for (uint256 i; i < count; ++i) {
@@ -567,8 +574,10 @@ contract ProjectEscrow is Initializable, UUPSUpgradeable {
             }
             period = period % 100 == 12 ? period + 89 : period + 1;
         }
-        if (added > freeBalance || freeBalance - added < openPledgedGross) revert InsufficientFreeBalance();
-        openPledgedGross += uint128(added);
+        // Every open pledge, this call's included, must fit in freeBalance (itself a uint128).
+        uint256 total = openPledgedGross + added;
+        if (total > freeBalance) revert InsufficientFreeBalance();
+        openPledgedGross = uint128(total);
     }
 
     /// @notice Anyone closes an open pledge whose period was never reserved, once the period's commit window
@@ -583,25 +592,31 @@ contract ProjectEscrow is Initializable, UUPSUpgradeable {
 
     /// @notice The UTC calendar month (YYYYMM) containing the current block.
     function currentPeriod() public view returns (uint32) {
+        return periodAt(block.timestamp);
+    }
+
+    function periodAt(uint256 time) private pure returns (uint32) {
         // The mean Gregorian year puts the estimate within one year; monthStart settles it exactly.
-        uint256 year = 1970 + block.timestamp / 31_556_952;
-        if (monthStart(year, 1) > block.timestamp) --year;
-        else if (monthStart(year + 1, 1) <= block.timestamp) ++year;
+        uint256 year = 1970 + time / 31_556_952;
+        if (monthStart(year, 1) > time) --year;
+        else if (monthStart(year + 1, 1) <= time) ++year;
         uint256 month = 12;
-        while (monthStart(year, month) > block.timestamp) --month;
+        while (monthStart(year, month) > time) --month;
         return uint32(year * 100 + month);
     }
 
     /// @dev The cap a period's allocation may use: monthlyCap while commitments are on, raised to an open
     /// pledge. A pledge is the owner's consent, so turning commitments off or lowering the cap after pledging
-    /// cannot stop a pledged period.
+    /// cannot stop a pledged period. While commitments are off, a pledged period's cap is the pledge alone.
     function monthlyCapFor(uint32 period) private view returns (uint128) {
         MonthPledge storage pledge = monthPledges[period];
+        bool enabled = monthlyEnabled;
+        uint128 cap = enabled ? monthlyCap : 0;
         if (!pledge.open) {
-            if (!monthlyEnabled) revert MonthlyDisabled();
-            return monthlyCap;
+            if (!enabled) revert MonthlyDisabled();
+            return cap;
         }
-        return pledge.amount > monthlyCap ? pledge.amount : monthlyCap;
+        return pledge.amount > cap ? pledge.amount : cap;
     }
 
     /// @dev Closes an open pledge; a period without one is unchanged. The pledge amount stays as a record.

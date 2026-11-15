@@ -209,8 +209,11 @@ async function rpc(config: EvmRpc, method: string, params: unknown[]) {
   if (body.id !== 1) throw new EvmRpcUnavailable("RPC request failed");
   if (body.error) {
     const error = object(body.error);
+    // Providers report an empty revert either with data "0x" or with no data
+    // field at all (mainnet.base.org answers {"code":3,"message":"execution
+    // reverted"}). A revert that carries data is never empty.
     throw new EvmRpcError(
-      error.data === "0x" &&
+      (error.data === "0x" || !("data" in error)) &&
         typeof error.message === "string" &&
         /revert/i.test(error.message),
     );
@@ -1622,8 +1625,9 @@ export function buildExpirePledgeCalldata(period: number): `0x${string}` {
 }
 
 /** The vault's open pledge total and the pledge of each requested period, all read at one block
- * (default the latest finalized block). Returns null only when the vault's implementation has no
- * pledge support, proved by an empty revert of openPledgedGross(); any other failure throws. */
+ * (default the latest finalized block). Returns null only when the address holds no code or its
+ * implementation has no pledge support, proved by an empty revert of openPledgedGross(); any
+ * other failure throws. */
 export async function readEvmMonthPledges(input: {
   rpcUrl: string;
   vault: string;
@@ -1641,6 +1645,8 @@ export async function readEvmMonthPledges(input: {
   const blockTag = QUANTITY.test(tag)
     ? tag
     : `0x${quantity(object(await rpc(config, "eth_getBlockByNumber", [tag, false])).number).toString(16)}`;
+  if ((await rpc(config, "eth_getCode", [input.vault, blockTag])) === "0x")
+    return null;
   let open: string;
   try {
     open = await getter(config, input.vault, "openPledgedGross()", blockTag);

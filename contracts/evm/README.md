@@ -325,11 +325,19 @@ could withdraw at any time. A month pledge (operator decision, 15 November
   `freeBalance >= openPledgedGross`, else `PledgedFunds`. The owner pays by hand
   only from unpledged funds. Deposits, leaves, payments, releases and fee claims
   are unchanged.
+- While the period whose commit window is open has an open pledge, owner
+  `commitAward` reverts `PledgedMonthOpen`. Each new award moves
+  `ordinarySourceSequence`, so without this the owner could make every signed
+  reservation of the pledged month stale until the pledge lapsed. Awards by hand
+  work again once that month is reserved and its leaves are proven, or once its
+  window has closed.
 - An open pledge is consent to reserve its period: `reserveMonthly` and
-  `commitMonthly` accept the period even while monthly commitments are off,
-  and the cap is `max(monthlyCap, pledge)`. Turning monthly off or cutting the
-  cap affects only unpledged months. A reserve may use its own period's pledge
-  but never another period's.
+  `commitMonthly` accept the period even while monthly commitments are off.
+  With monthly commitments on, the cap is `max(monthlyCap, pledge)`; with them
+  off, the cap is the pledge alone, so a small pledge cannot reopen a stale
+  `monthlyCap`. Turning monthly off or cutting the cap affects only unpledged
+  months. A reserve may use its own period's pledge but never another
+  period's.
 - A pledge closes when its period is reserved (`PledgeClosed(period, amount,
   true)`); any pledge above the reserved gross returns to unpledged free funds.
   If the period is never reserved, anyone may call `expirePledge(period)` once
@@ -351,18 +359,22 @@ whole commit window.
 `test/MonthPledge.t.sol` covers each rule, including the three routes the
 pledge closes (a direct withdrawal during the month, monthly turned off or
 the cap cut before the reserve, and a reserve that would use another month's
-pledge), and `test/MonthPledgeInvariant.t.sol` checks
+pledge), the owner-award starvation route and the pledge-only cap with monthly
+off, and `test/MonthPledgeInvariant.t.sol` checks
 `freeBalance >= openPledgedGross` and the open-pledge sum over random
 sequences. The adapter builds `buildPledgeMonthsCalldata` and
 `buildExpirePledgeCalldata`, reads `readEvmMonthPledges` (`null` when the
 vault's implementation has no pledge support) and exports
-`EVM_PLEDGE_EVENT_TOPICS`. `pledge.integration.ts` runs them on Anvil; with
+`EVM_PLEDGE_EVENT_TOPICS`. The reader also returns `null` for an address with no
+code, and treats a revert reported with no `data` field (how `mainnet.base.org`
+answers) as an empty revert; `pledge.test.ts` covers those answers.
+`pledge.integration.ts` runs them on Anvil; with
 `SLOP_PLEDGE_LEGACY_ROOT` set to a pre-pledge `contracts/evm` tree it first
 deploys that code, then upgrades the funded vault and checks every existing
 storage slot and counter is unchanged.
 
-The implementation is 24,387 bytes of the 24,576-byte limit, so a later change
-to `ProjectEscrow` has about 190 bytes before it must shrink something.
+The implementation is 24,519 bytes of the 24,576-byte limit, so a later change
+to `ProjectEscrow` has about 57 bytes before it must shrink something.
 
 ## Accounting
 

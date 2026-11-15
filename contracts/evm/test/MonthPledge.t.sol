@@ -508,6 +508,99 @@ contract MonthPledgeTest {
     }
 
     // ------------------------------------------------------------------
+    // Owner awards cannot make a pledged reservation stale
+    // ------------------------------------------------------------------
+
+    /// @dev Review finding: each owner award moved ordinarySourceSequence, so an owner could refresh it
+    /// before every signed reservation landed until the pledge lapsed, then withdraw everything.
+    function test_ownerCannotStarveAPledgedMonth() public {
+        pledge(NOV, 1, FUNDS);
+        vm.prank(OWNER);
+        vault.setMonthlyCommitment(CAP, false);
+        vm.warp(NOV_OPENS);
+        ProjectEscrow.MonthlyReservation memory r = reservation(vault, 900e6);
+        bytes memory signature = signReserve(vault, NOV, r);
+        usdc.mint(OWNER, 1);
+        vm.prank(OWNER);
+        vault.deposit(1);
+        bytes32 source = keccak256("owner bump");
+        bytes32 id = vault.awardId(source);
+        vm.prank(OWNER);
+        vm.expectRevert(ProjectEscrow.PledgedMonthOpen.selector);
+        vault.commitAward(id, 777, 1, source);
+        // The reservation signed before the attempt still lands.
+        vm.prank(ANYONE);
+        vault.reserveMonthly(NOV, r, signature);
+        check(vault.pendingMonthlyGross() == 900e6 && vault.openPledgedGross() == 0, "pledged month reserved");
+        // Once the month is reserved and its leaf proven, awards by hand work again.
+        ProjectEscrow.MonthlyAward[] memory e = entries(900e6, 1, 900e6);
+        (, ProjectEscrow.AllocationNode[] memory proof) = MonthlyTree.build(e, 0);
+        vault.commitMonthlyLeaf(NOV, e[0], 0, proof);
+        vm.prank(OWNER);
+        vault.commitAward(id, 777, 1, source);
+    }
+
+    function test_ownerAwardsOnlyStopWhileThePledgedWindowIsOpen() public {
+        pledge(NOV, 2, 1_000e6);
+        // During November the open window is October's, which has no pledge.
+        bytes32 first = keccak256("in november");
+        bytes32 firstId = vault.awardId(first);
+        vm.prank(OWNER);
+        vault.commitAward(firstId, 9, 1e6, first);
+        // Last second before November's window opens, then the first second inside it.
+        vm.warp(NOV_OPENS - 1);
+        bytes32 second = keccak256("before the window");
+        bytes32 secondId = vault.awardId(second);
+        vm.prank(OWNER);
+        vault.commitAward(secondId, 9, 1e6, second);
+        vm.warp(NOV_OPENS);
+        bytes32 third = keccak256("inside the window");
+        bytes32 thirdId = vault.awardId(third);
+        vm.prank(OWNER);
+        vm.expectRevert(ProjectEscrow.PledgedMonthOpen.selector);
+        vault.commitAward(thirdId, 9, 1e6, third);
+        // An unpledged vault is unaffected at the same moment.
+        ProjectEscrow unpledged = newVault(keccak256("unpledged"), Purpose.Ordinary);
+        bytes32 otherId = unpledged.awardId(third);
+        vm.prank(OWNER);
+        unpledged.commitAward(otherId, 9, 1e6, third);
+        // November lapses unreserved; December's window is then open and December is pledged.
+        vm.warp(NOV_CLOSES);
+        vault.expirePledge(NOV);
+        vm.prank(OWNER);
+        vm.expectRevert(ProjectEscrow.PledgedMonthOpen.selector);
+        vault.commitAward(thirdId, 9, 1e6, third);
+    }
+
+    // ------------------------------------------------------------------
+    // With monthly off, the pledge alone is the cap
+    // ------------------------------------------------------------------
+
+    /// @dev Review finding: with monthly off, a 1-unit pledge reopened the whole stale monthlyCap.
+    function test_withMonthlyOffThePledgeAloneIsTheCap() public {
+        vm.prank(OWNER);
+        vault.setMonthlyCommitment(CAP, false);
+        pledge(NOV, 1, 1);
+        vm.warp(NOV_OPENS);
+        expectReserveRevert(vault, NOV, CAP, ProjectEscrow.MonthlyCapExceeded.selector);
+        expectReserveRevert(vault, NOV, 2, ProjectEscrow.MonthlyCapExceeded.selector);
+        reserve(vault, NOV, 1);
+        check(vault.pendingMonthlyGross() == 1 && vault.openPledgedGross() == 0, "one unit reserved");
+    }
+
+    function test_withMonthlyOffTheLegacyCommitIsCappedAtThePledge() public {
+        vm.prank(OWNER);
+        vault.setMonthlyCommitment(CAP, false);
+        pledge(NOV, 1, 400e6);
+        vm.warp(NOV_OPENS);
+        ProjectEscrow.MonthlyAward[] memory e = entries(201e6, 2, 6);
+        bytes memory signature = signLegacy(vault, NOV, e);
+        vm.prank(ANYONE);
+        vm.expectRevert(ProjectEscrow.MonthlyCapExceeded.selector);
+        vault.commitMonthly(NOV, e, signature);
+    }
+
+    // ------------------------------------------------------------------
     // Lapse
     // ------------------------------------------------------------------
 
