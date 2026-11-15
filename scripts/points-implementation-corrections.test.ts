@@ -2268,7 +2268,6 @@ test("one contributor retains one whole unit across separate original PRs", () =
 for (const fault of [
   "missing-claim",
   "repeated-claim",
-  "different-origin",
   "duplicate-original",
   "ordinary",
   "unscoped",
@@ -2276,7 +2275,7 @@ for (const fault of [
   "expected-scope",
 ] as const) {
   test(`multi-original native unit rejects ${fault}`, () => {
-    const { journal, input, grouped, second, accepted } = multiOriginalPrUnit();
+    const { journal, input, grouped, accepted } = multiOriginalPrUnit();
     if (
       grouped.proof.status !== "complete" ||
       !grouped.proof.originalContributorParts
@@ -2287,7 +2286,6 @@ for (const fault of [
       parts[0].claimIds = parts[0].claimIds?.slice(1);
     if (fault === "repeated-claim")
       parts[1].claimIds?.push(parts[0].claimIds?.[0] ?? "missing_claim");
-    if (fault === "different-origin") second.author = B;
     if (fault === "duplicate-original")
       parts[1].originalSourceId = parts[0].originalSourceId;
     if (fault === "ordinary") Object.assign(grouped, { kind: "pull-request" });
@@ -3257,6 +3255,109 @@ for (const fault of [
     if (fault === "different-accepted") accepted.commits[0].author = B;
     if (fault === "missing-copies") delete binding.copiedClaims;
     if (fault === "missing-claims") delete binding.claimIds;
+    expect(() => apply(journal, input)).toThrow();
+  });
+}
+
+test("different verified original contributors share one native unit by accepted lines", () => {
+  const { journal, input, second, accepted } = multiOriginalPrUnit();
+  second.author = B;
+  second.commits[0].author = B;
+  const commit = accepted.commits.find((c) => c.sha === second.headSha);
+  if (!commit) throw Error("fixture");
+  commit.author = B;
+  const result = apply(journal, input);
+  expect(amounts(result.journal)).toEqual({ [A.id]: 24, [B.id]: 6, [C.id]: 0 });
+  expect(total(result.journal)).toBe(total(journal));
+  expect(apply(result.journal, input, true, LATER).journal).toBe(
+    result.journal,
+  );
+});
+
+test("independent carrier claims retain ordinary changed-line credit beside verified original parts", () => {
+  const { journal, input, grouped, accepted } = multiOriginalPrUnit();
+  if (grouped.proof.status !== "complete") throw Error("fixture");
+  const commit = {
+    sha: sha("8"),
+    parentCount: 1,
+    parentShas: [sha("0")],
+    author: C,
+    firstAcceptedSourceId: accepted.sourceId,
+    additions: 5,
+    deletions: 0,
+    files: [{ path: "independent.ts", additions: 5, deletions: 0 }],
+  };
+  accepted.commits.push(commit);
+  accepted.commitCount++;
+  const claim = {
+    id: "claim_independent",
+    sourceId: accepted.sourceId,
+    commitSha: commit.sha,
+    path: "independent.ts",
+  };
+  grouped.proof.claims.push(claim);
+  grouped.proof.expectedClaimIds.push(claim.id);
+  grouped.proof.independentClaimIds = [claim.id];
+  const result = apply(journal, input);
+  expect(amounts(result.journal)).toEqual({ [A.id]: 15, [C.id]: 15 });
+  expect(total(result.journal)).toBe(total(journal));
+  grouped.proof.independentClaimIds.push(grouped.proof.claims[0].id);
+  expect(() => apply(journal, input)).toThrow("partition");
+});
+
+test("independent claim metadata requires a complete original partition", () => {
+  const { journal, input, grouped } = scopedUnlinkedOriginal();
+  if (grouped.proof.status !== "complete") throw Error("fixture");
+  grouped.proof.independentClaimIds = [];
+  expect(() => apply(journal, input)).toThrow("independent claims require");
+});
+
+test("complete zero-line multi-origin parts share the unchanged pool equally", () => {
+  const { journal, input, grouped, second } = multiOriginalPrUnit();
+  second.author = B;
+  second.commits[0].author = B;
+  if (grouped.proof.status !== "complete") throw Error("fixture");
+  for (const commit of grouped.proof.sources.flatMap(
+    (source) => source.commits,
+  )) {
+    if (commit.sha === second.headSha) commit.author = B;
+    commit.additions = 0;
+    commit.deletions = 0;
+    for (const file of commit.files ?? []) {
+      file.additions = 0;
+      file.deletions = 0;
+    }
+  }
+  expect(amounts(apply(journal, input).journal)).toEqual({
+    [A.id]: 15,
+    [B.id]: 15,
+    [C.id]: 0,
+  });
+});
+
+for (const fault of [
+  "missing-lines",
+  "foreign-claim",
+  "duplicate-independent",
+] as const) {
+  test(`multi-origin changed-line allocation refuses ${fault}`, () => {
+    const { journal, input, grouped, second, accepted } = multiOriginalPrUnit();
+    if (grouped.proof.status !== "complete") throw Error("fixture");
+    second.author = B;
+    second.commits[0].author = B;
+    const acceptedSecond = accepted.commits.find(
+      (commit) => commit.sha === second.headSha,
+    );
+    if (!acceptedSecond) throw Error("fixture");
+    acceptedSecond.author = B;
+    if (fault === "missing-lines") delete accepted.commits[0].files;
+    if (fault === "foreign-claim")
+      grouped.proof.independentClaimIds = ["foreign_claim"];
+    if (fault === "duplicate-independent")
+      grouped.proof.independentClaimIds = [
+        grouped.proof.claims[0].id,
+        grouped.proof.claims[0].id,
+      ];
     expect(() => apply(journal, input)).toThrow();
   });
 }
