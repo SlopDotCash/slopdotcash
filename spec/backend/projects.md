@@ -138,7 +138,8 @@ pure val creationValues = Set(creation1, { ...creation1, closureChecked: true },
   { ...creation1, authority: { ...owner1, permission: PermissionUnavailable } }, { ...creation1, fieldsComplete: false },
   { ...creation1, license: { ...license1, digest: 0 } }, { ...creation1, facts: { ...facts1, public: false } })
 pure def alwaysCreatedFacts(p: Project): bool =
-  p.revision > 0 implies p.creator > 0 and p.steward > 0 and p.branch > 0 and licenseRecorded(p.license)
+  (p.revision > 0 implies p.creator > 0 and p.steward > 0 and p.branch > 0 and licenseRecorded(p.license)) and
+  (p.revision == 0 implies p.creator == 0 and p.retirement == NotRetired and p.status == Paused)
 pure def alwaysPublishedApplicationCreated(p: Project): bool =
   p.application == ApplicationPublished implies p.revision > 0 and p.creator == p.applicant
 pure def stepCreatorFixed(before: Project, after: Project): bool =
@@ -237,6 +238,7 @@ pure val changeValues = Set(change1, { ...change1, expectedRevision: 1 }, { ...c
   { ...change1, authority: { ...owner1, actor: 2 } }, { ...change1, authority: { ...owner1, actor: 2 }, expectedRevision: 1 })
 pure def alwaysEconomicTermsPrecedeNothing(p: Project): bool =
   p.economic.every(t => t.revision > 0 and t.revision <= p.revision and t.fromMonth > 202611 and t.fromMonth <= p.month + 1)
+pure def alwaysClockStarted(p: Project): bool = p.month >= 202611
 pure def stepEconomicTermsRetained(before: Project, after: Project): bool =
   after.economic.length() >= before.economic.length() and before.economic.every(t => after.economic.includes(t))
 pure def stepFundedAssetFixed(before: Project, after: Project): bool = before.funded implies after.asset == before.asset
@@ -267,7 +269,8 @@ pure val appendEvidenceValues = Set(append1, { ...append1, expectedRevision: 1 }
   { ...append1, facts: { ...facts2, fork: true } }, { ...append1, facts: { ...facts2, archived: true } },
   { ...append1, appended: { ...owner1, repository: 2, installation: InstallationMissing } },
   { ...append1, facts: facts1, appended: owner1 })
-pure def alwaysRepositoryBound(p: Project): bool = p.repositories.length() >= 1 and p.repositories.length() <= 20
+pure def alwaysRepositoryBound(p: Project): bool =
+  p.repositories.length() >= 1 and p.repositories.length() <= 20 and (p.revision == 0 implies p.repositories.length() == 1)
 pure def alwaysRepositoryStarts(p: Project): bool =
   p.starts.every(start => start.month >= 0 and p.repositories.includes(start.repositoryId)) and
   p.repositories.every(id => p.starts.select(start => start.repositoryId == id).length() == 1)
@@ -368,7 +371,7 @@ decision.
 pure def canRetireForRestriction(p: Project): bool = p.revision > 0 and p.retirement == NotRetired
 pure def retireForRestriction(p: Project): Project =
   { ...revised(RestrictionRetirement, 0, Paused, Retired, p), retirement: RestrictionRetired }
-pure def canRestoreCommunity(p: Project): bool = p.retirement == RestrictionRetired
+pure def canRestoreCommunity(p: Project): bool = p.revision > 0 and p.retirement == RestrictionRetired
 pure def restoreCommunity(p: Project): Project =
   { ...revised(CommunityRestored, 0, Paused, Community, p), retirement: NotRetired }
 pure def stepRestorationIsPausedCommunity(before: Project, via: str, after: Project): bool =
