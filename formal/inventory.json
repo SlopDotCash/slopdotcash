@@ -427,7 +427,7 @@
     },
     {
       "path": "backend/payments/monthly.ts",
-      "sha256": "bbb1544b2c0ab87f581d2e20adcb00c273af31de43e59baa960d8df461c830bb",
+      "sha256": "b7e29120fd8a93747e77529a6385532cb808397d7463b94f1d7c16e031691e45",
       "models": [
         "formal/models/rewards/monthly_coordinator.qnt",
         "formal/models/rewards/monthly_cutoff_queue.qnt",
@@ -437,10 +437,10 @@
         "formal/models/rewards/monthly_source_conflict.qnt"
       ],
       "candidateLines": [
-        80, 123, 131, 330, 420, 531, 560, 562, 576, 586, 595, 601, 619, 727,
-        731, 754, 759, 782, 829, 856, 865, 885, 965, 1084, 1139, 1187, 1282,
-        1284, 1315, 1317, 1320, 1439, 1461, 1470, 1483, 1489, 1533, 1559, 1565,
-        1569, 1624, 1641
+        79, 121, 125, 128, 129, 142, 320, 410, 521, 550, 552, 566, 576, 585,
+        591, 609, 717, 721, 744, 749, 772, 819, 846, 855, 875, 955, 1074, 1129,
+        1177, 1272, 1274, 1305, 1307, 1310, 1429, 1451, 1460, 1473, 1479, 1523,
+        1549, 1555, 1559, 1614, 1631
       ],
       "review": "mapped-abstraction"
     },
@@ -2067,7 +2067,7 @@
     },
     {
       "path": "functions/api/v1/[[path]].ts",
-      "sha256": "10f92dadf24957f92fb651ef6671a21b4cf0d513331ae942f4d77ebfb7e322f7",
+      "sha256": "ed8af23b205a7723a97586a8e3da2404fd73ab17fe0fa25d96f204c9ebfba834",
       "models": [
         "formal/models/api/api_request_composition.qnt",
         "formal/models/api/identity_consumer_exchange.qnt",
