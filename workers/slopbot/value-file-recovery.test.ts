@@ -184,3 +184,58 @@ test("recovery binds nested PR data outside embedded head and base repositories"
     capture.client.get("/repos/example/repo/pulls/1"),
   ).rejects.toThrow("Source metadata changed");
 });
+
+for (const changed of [false, true]) {
+  test(`ordinary commit added patches use immutable contents recovery, changed=${changed}`, async () => {
+    const source = fixture({ direct: true, textOnly: true });
+    const bytes = new TextEncoder().encode("export const retained = true;\n");
+    const head = source.pull.head.sha;
+    const merged = source.pull.merge_commit_sha;
+    if (!merged) throw Error("fixture merge");
+    source.bind(head, new Map([["fix.ts", bytes]]), [source.pull.base.sha]);
+    source.bind(merged, new Map([["fix.ts", bytes]]), [
+      source.pull.base.sha,
+      head,
+    ]);
+    source.files[0].additions = 1;
+    source.files[0].deletions = 0;
+    source.files[0].patch = "@@ -0,0 +1 @@\n+export const retained = true;";
+    const client = {
+      ...source.client,
+      async get<T>(path: string): Promise<T | null> {
+        const result = await source.client.get<T>(path);
+        if (result && path.includes("/commits/") && !path.includes("/git/")) {
+          const commit = result as unknown as {
+            stats: unknown;
+            files: { patch?: string }[];
+          };
+          commit.stats = { additions: 1, deletions: 0, total: 1 };
+          commit.files = commit.files.map((file) => {
+            const copy = { ...file };
+            delete copy.patch;
+            return copy;
+          });
+        }
+        if (
+          changed &&
+          result &&
+          path.includes("/contents/") &&
+          path.includes(head)
+        ) {
+          const contents = result as unknown as { content: string };
+          contents.content = Buffer.from("changed bytes\n").toString("base64");
+        }
+        return result;
+      },
+    };
+    const evidence = await collectValueEvidence(
+      client,
+      repository.id,
+      1,
+      repository,
+    );
+    const file = evidence.commitAttribution[0].files?.[0];
+    if (changed) expect(file?.patch).toBeUndefined();
+    else expect(file?.patch).toBe(source.files[0].patch);
+  });
+}
