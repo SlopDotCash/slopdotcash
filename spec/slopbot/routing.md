@@ -171,7 +171,7 @@ pure def alwaysSlotsWellFormed(a: AuthorSlots): bool =
     and (s.status == SlotRunning implies s.leaseUntil > 0) and (s.status != SlotRunning implies s.leaseUntil == 0)
     and (s.status == SlotCompleted implies s.completedAt > 0) and (s.close == CloseConfirmed implies s.closedAt > 0))
 pure def stepPendingCloseNeverExpires(before: AuthorSlots, after: AuthorSlots): bool =
-  before.slots.every(s => s.close == ClosePending implies slotOf(after, s.key).close != NoClose)
+  before.slots.every(s => s.close == ClosePending implies after.slots.some(o => o.key == s.key and o.close != NoClose))
 pure def sometimesCapReached(a: AuthorSlots): bool = not(a.established) and occupiedByOthers(a, 9) >= authorDailyCap
 pure def sometimesEstablishedPastCap(a: AuthorSlots): bool =
   a.established and a.slots.select(s => occupies(s, a.now)).length() > authorDailyCap
