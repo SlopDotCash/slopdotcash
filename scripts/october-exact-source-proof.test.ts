@@ -4,6 +4,7 @@ import { collect, fixture } from "../tests/value-binary-fixture";
 import type { GitHubClient } from "../workers/slopbot/github";
 import type { WorkUnitSource } from "../workers/slopbot/value-work-unit-types";
 import {
+  bindRetained,
   firstAcceptedCorrectionClaims,
   groupedOriginalContributorProof,
   isMergedOriginalContributor,
@@ -1661,6 +1662,166 @@ for (const fault of [
       octoberOriginalContributorUnitProof(
         input.github,
         input.plain,
+        input.sources[1],
+        input.sources[0],
+        input.owners,
+        input.claims,
+      ),
+    ).rejects.toThrow();
+  });
+}
+
+async function copiedUnitSnapshot() {
+  const input = await snapshot();
+  const acceptedCopy = input.accepted.commits[0];
+  const file = input.accepted.commitAttribution[0].files?.[0];
+  if (!file) throw new Error("Missing fixture file");
+  acceptedCopy.sha = sha("d");
+  input.accepted.commitAttribution[0].sha = acceptedCopy.sha;
+  input.accepted.commits[1].parents = [{ sha: acceptedCopy.sha }];
+  input.accepted.commitAttribution[1].files = [
+    {
+      ...file,
+      patch: "@@ -2 +2,2 @@\n export const two = 2;\n+export const three = 3;",
+    },
+  ];
+  input.original.relatedPullRequests = [
+    {
+      id: input.accepted.pull.node_id,
+      number: 2,
+      url: input.accepted.pull.html_url,
+      repository,
+    },
+  ];
+  input.original.comments = [
+    {
+      node_id: "IC_copied",
+      html_url: `${input.original.pull.html_url}#issuecomment-2`,
+      user: carrier,
+      body: "Your commits are carried over unchanged, with authorship, in #2.",
+      created_at: "2026-10-03T01:00:00Z",
+      updated_at: "2026-10-03T01:00:00Z",
+    },
+  ];
+  const unrelated = clone(acceptedCopy);
+  unrelated.sha = sha("e");
+  unrelated.author = {
+    node_id: "U_unrelated",
+    login: "unrelated",
+    type: "User",
+  };
+  unrelated.parents = [{ sha: input.accepted.commits[1].sha }];
+  input.accepted.commits.push(unrelated);
+  input.accepted.commitAttribution.push({
+    sha: unrelated.sha,
+    actorNodeIds: [unrelated.author.node_id],
+    changedPaths: ["other.ts"],
+    files: [
+      {
+        ...file,
+        filename: "other.ts",
+      },
+    ],
+    limitations: [],
+  });
+  input.accepted.pull.head.sha = unrelated.sha;
+  input.accepted.pull.commits = 3;
+  const merge = input.accepted.mergeCommitEvidence;
+  if (!merge) throw new Error("Missing fixture merge");
+  merge.parents[1].sha = unrelated.sha;
+  for (const commit of [...input.original.commits, ...input.accepted.commits])
+    input.responses.set(`${root}/git/commits/${commit.sha}`, clone(commit));
+  input.responses.set(`${root}/pulls/1`, {
+    ...input.original.pull,
+    created_at: "2026-10-01T00:00:00Z",
+  });
+  input.responses.set(`${root}/pulls/2`, {
+    ...input.accepted.pull,
+    created_at: "2026-10-02T00:00:00Z",
+  });
+  input.responses.set(
+    `${root}/compare/${sha("f")}...${sha("c")}?per_page=100&page=1`,
+    {
+      status: "ahead",
+      base_commit: { sha: sha("f") },
+      merge_base_commit: { sha: sha("f") },
+      ahead_by: 4,
+      behind_by: 0,
+      total_commits: 4,
+      commits: [
+        ...clone(input.accepted.commits),
+        clone(input.accepted.mergeCommitEvidence),
+      ],
+    },
+  );
+  const owners = new Map(
+    input.accepted.commits.map((c) => [
+      `${repository.toLowerCase()}\0${c.sha}`,
+      input.accepted.pull.node_id,
+    ]),
+  );
+  const sources = await bindRetained(input.sources, owners, true);
+  const accepted = sources.find(
+    (s) => s.sourceId === input.accepted.pull.node_id,
+  );
+  if (!accepted) throw new Error("Missing accepted source");
+  const claims = [sha("d"), sha("b")].map((commitSha, index) => ({
+    id: `copied_claim_${index}`,
+    sourceId: accepted.sourceId,
+    commitSha,
+    path: "fix.ts",
+  }));
+  return { ...input, owners, acceptedSource: accepted, claims };
+}
+
+test("a reviewed copied unit retains unrelated carrier work without granting it the original's pool", async () => {
+  const input = await copiedUnitSnapshot();
+  const proof = await octoberOriginalContributorUnitProof(
+    input.github,
+    input.acceptedSource,
+    input.sources[1],
+    input.sources[0],
+    input.owners,
+    input.claims,
+  );
+  expect(proof.originalContributor?.copiedClaims).toHaveLength(1);
+  expect(proof.originalContributor?.claimIds).toEqual(
+    input.claims.map((c) => c.id),
+  );
+  expect(proof.sources[0].commits).toHaveLength(3);
+});
+for (const fault of [
+  "foreign-claim",
+  "copy-author",
+  "first-owner",
+  "missing-copy",
+  "copy-path",
+] as const) {
+  test(`copied unit refuses ${fault}`, async () => {
+    const input = await copiedUnitSnapshot();
+    if (fault === "foreign-claim")
+      input.claims.push({
+        id: "foreign",
+        sourceId: input.acceptedSource.sourceId,
+        commitSha: sha("e"),
+        path: "other.ts",
+      });
+    if (fault === "copy-author") input.accepted.commits[0].author = carrier;
+    if (fault === "first-owner")
+      input.owners.set(
+        `${repository.toLowerCase()}\0${sha("d")}`,
+        "PR_earlier",
+      );
+    if (fault === "missing-copy") {
+      input.original.comments = [];
+      input.original.relatedPullRequests = [];
+      input.accepted.relatedPullRequests = [];
+    }
+    if (fault === "copy-path") input.claims[0].path = "other.ts";
+    await expect(
+      octoberOriginalContributorUnitProof(
+        input.github,
+        input.acceptedSource,
         input.sources[1],
         input.sources[0],
         input.owners,

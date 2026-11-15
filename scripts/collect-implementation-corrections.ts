@@ -2068,6 +2068,154 @@ async function reviewedOriginalCommit(
   return undefined;
 }
 
+/** Bind exact copied claims without treating unrelated carrier work as theirs. */
+async function copiedOriginalContributorUnitProof(
+  github: Pick<GitHubClient, "get"> & Partial<Pick<GitHubClient, "graphql">>,
+  accepted: CorrectionSource,
+  original: WorkUnitSource,
+  integration: WorkUnitSource,
+  owners: ReadonlyMap<string, string>,
+  claims: readonly CorrectionClaim[],
+): Promise<HistoricalOrdinaryProof | null> {
+  if (original.evidence.pull.merged_at !== null) return null;
+  const source = richSource(original.evidence, owners);
+  if (
+    claims.some(
+      (claim) =>
+        source.commits.some((commit) => commit.sha === claim.commitSha) ||
+        original.evidence.reviews.some(
+          (review) => review.commit_id === claim.commitSha,
+        ),
+    )
+  )
+    return null;
+  if (!originalContributorPrecedesFollowups(source, accepted.author))
+    return null;
+  const retained = await retainedCopyBindings([integration, original], {
+    ordinaryCommitsOnly: true,
+    acceptedSubset: true,
+  });
+  requireThat(!retained.limitations.length, "Copied unit source is incomplete");
+  const copiedClaims: NonNullable<OriginalContributorBinding["copiedClaims"]> =
+    [];
+  for (const claim of claims) {
+    const matches = [...retained.bindings.values()].filter(
+      (binding) =>
+        binding.original === original &&
+        binding.integration === integration &&
+        binding.acceptedCommitSha === claim.commitSha &&
+        binding.path === claim.path,
+    );
+    if (!matches.length) continue;
+    requireThat(
+      matches.length === 1,
+      "Copied unit has ambiguous original claims",
+    );
+    const binding = matches[0];
+    copiedClaims.push({
+      claimId: claim.id,
+      originalCommitSha: binding.originalCommitSha,
+      acceptedCommitSha: binding.acceptedCommitSha,
+      path: binding.path,
+      bindingDigest: digest(encode(binding)),
+    });
+  }
+  if (
+    !copiedClaims.some(
+      (claim) => claim.originalCommitSha !== claim.acceptedCommitSha,
+    )
+  )
+    return null;
+  const merge = integration.evidence.mergeCommitEvidence;
+  requireThat(
+    merge && merge.parents.length === 2,
+    "Copied unit lacks native acceptance",
+  );
+  await authenticateNativeAcceptedRange(
+    github,
+    accepted,
+    integration.evidence,
+    merge,
+    claims.map((claim) => claim.commitSha),
+  );
+  await authenticateOriginalFollowupParents(github, source, original.evidence);
+  const repairs = await acknowledgedOriginalRepairs(
+    github,
+    original,
+    integration,
+    source,
+    accepted,
+    claims,
+  );
+  const anchor = copiedClaims.find((candidate) =>
+    originalContributorClaimScope(
+      source,
+      accepted,
+      claims,
+      [],
+      candidate.originalCommitSha,
+      repairs,
+      copiedClaims,
+      candidate.acceptedCommitSha,
+    ),
+  );
+  requireThat(anchor, "Copied unit has an unrelated selected follow-up");
+  const originalPull = await github.get<Pull>(
+    `/repos/${source.repository}/pulls/${original.evidence.pull.number}`,
+  );
+  const acceptedPull = await github.get<Pull>(
+    `/repos/${accepted.repository}/pulls/${integration.evidence.pull.number}`,
+  );
+  requireThat(
+    originalPull?.node_id === source.sourceId &&
+      originalPull.number === original.evidence.pull.number &&
+      originalPull.html_url === source.sourceUrl &&
+      originalPull.state === "closed" &&
+      originalPull.merged_at === null &&
+      originalPull.user.node_id === original.evidence.pull.user.node_id &&
+      originalPull.head.sha === source.headSha &&
+      originalPull.updated_at === original.evidence.pull.updated_at &&
+      acceptedPull?.node_id === accepted.sourceId &&
+      acceptedPull.number === integration.evidence.pull.number &&
+      acceptedPull.html_url === accepted.sourceUrl &&
+      acceptedPull.user.node_id === integration.evidence.pull.user.node_id &&
+      acceptedPull.merged_at === integration.evidence.pull.merged_at &&
+      acceptedPull.head.sha === accepted.headSha &&
+      acceptedPull.merge_commit_sha === merge.sha &&
+      acceptedPull.updated_at === integration.evidence.pull.updated_at,
+    "Copied unit source changed during verification",
+  );
+  return {
+    sources: [accepted, source],
+    originalContributor: {
+      originalSourceId: source.sourceId,
+      originalCommitSha: anchor.originalCommitSha,
+      acceptedCommitSha: anchor.acceptedCommitSha,
+      boundPaths:
+        accepted.commits
+          .find((commit) => commit.sha === anchor.acceptedCommitSha)
+          ?.files?.map((file) => file.path) ?? [],
+      claimIds: claims.map((claim) => claim.id),
+      copiedClaims,
+      ...(repairs.length ? { repairs } : {}),
+      bindingDigest: digest(
+        encode({
+          original: await valueSourceDigest(original.evidence, original.policy),
+          accepted: await valueSourceDigest(
+            integration.evidence,
+            integration.policy,
+          ),
+          claims,
+          copiedClaims,
+          repairs,
+          originalPull,
+          acceptedPull,
+        }),
+      ),
+    },
+  };
+}
+
 /** Bind a reviewed single-origin unit inside a multi-origin native merge. */
 async function singleOriginalContributorUnitProof(
   github: Pick<GitHubClient, "get"> & Partial<Pick<GitHubClient, "graphql">>,
@@ -2109,7 +2257,7 @@ async function singleOriginalContributorUnitProof(
         commits: reviewedOriginal.commits,
       }
     : currentSource;
-  const proof = await exactOctoberOriginalContributorProof(
+  const exact = await exactOctoberOriginalContributorProof(
     github,
     canonical,
     source,
@@ -2119,7 +2267,17 @@ async function singleOriginalContributorUnitProof(
     claims.filter((claim) => claim.sourceId === accepted.sourceId),
     reviewedOriginal,
   );
-  requireThat(proof, "Reviewed unit lacks native original-head acceptance");
+  const proof =
+    exact ??
+    (await copiedOriginalContributorUnitProof(
+      github,
+      canonical,
+      original,
+      integration,
+      owners,
+      claims.filter((claim) => claim.sourceId === accepted.sourceId),
+    ));
+  requireThat(proof, "Reviewed unit lacks verified original acceptance");
   if (reviewedOriginal)
     proof.sources = proof.sources.map((item) =>
       item.sourceId === currentSource.sourceId ? currentSource : item,

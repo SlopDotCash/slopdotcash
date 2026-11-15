@@ -7,6 +7,7 @@
 // @source scripts/generate-points.ts
 // @source .github/workflows/points-implementation-corrections.yml
 // @evidence scripts/points-implementation-corrections.test.ts
+// @evidence scripts/october-exact-source-proof.test.ts
 // @evidence workers/slopbot/value-original-repair.test.ts
 // @evidence scripts/points-correction-registry.test.ts
 // @evidence scripts/prepare-implementation-corrections.test.ts

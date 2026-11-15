@@ -3533,7 +3533,7 @@
     },
     {
       "path": "scripts/collect-implementation-corrections.ts",
-      "sha256": "7d07c047ebecb97771aad57fd4c172821ee3bcee0751c83a121ebddd3ee100a6",
+      "sha256": "1d0fd330f67bbebef5f43bc3d93741910704e357a5781f91c51fbc7a8bd08066",
       "models": [
         "formal/models/points/historical_discussion_evidence.qnt",
         "formal/models/points/historical_implementation_allocation.qnt"
@@ -3542,8 +3542,8 @@
         4, 11, 13, 109, 189, 266, 272, 275, 280, 290, 306, 312, 328, 329, 339,
         342, 439, 485, 506, 531, 577, 584, 700, 711, 876, 1229, 1252, 1261,
         1418, 1474, 1533, 1539, 1540, 1543, 1583, 1585, 1589, 1835, 1879, 1884,
-        2235, 2237, 2244, 2255, 2433, 2435, 2439, 2574, 2978, 2989, 3279, 3870,
-        3940, 4131, 4245, 4265, 4294, 4296
+        2173, 2393, 2395, 2402, 2413, 2591, 2593, 2597, 2732, 3136, 3147, 3437,
+        4028, 4098, 4289, 4403, 4423, 4452, 4454
       ],
       "review": "mapped-abstraction"
     },
@@ -6418,14 +6418,14 @@
     },
     {
       "path": "src/lib/points-implementation-corrections.ts",
-      "sha256": "863c55164aa19a2df3c667ddd5fe03bd454545666417b1fdda56dcc077c96caa",
+      "sha256": "bb87844dba8d17ed425281343b9dfde069d0111706605107e60ad22a693a251e",
       "models": [
         "formal/models/points/historical_implementation_allocation.qnt"
       ],
       "candidateLines": [
-        204, 216, 227, 241, 248, 383, 440, 441, 442, 446, 629, 631, 635, 751,
-        757, 784, 785, 872, 877, 1029, 1222, 1284, 1370, 1386, 1585, 1592, 1597,
-        1705, 1786, 1821, 1849, 1951, 1952, 1953
+        211, 223, 234, 248, 255, 390, 447, 448, 449, 453, 672, 674, 678, 798,
+        804, 831, 832, 919, 924, 1076, 1269, 1331, 1429, 1445, 1644, 1651, 1656,
+        1764, 1845, 1880, 1908, 2010, 2011, 2012
       ],
       "review": "mapped-abstraction"
     },
@@ -13770,7 +13770,7 @@
     },
     {
       "path": "formal/models/points/historical_implementation_allocation.qnt",
-      "sha256": "702f7a83ef15d75cf2ddf9fbcbb8bfaad3682627aae8b40747ab7bce27c39eac",
+      "sha256": "19dab37383086667e3da24133419d8ded2b428701b9c403d38550cc8137ae954",
       "sources": [
         ".github/workflows/points-implementation-corrections.yml",
         "scripts/collect-implementation-corrections.ts",
