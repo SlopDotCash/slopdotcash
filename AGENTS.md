@@ -574,7 +574,9 @@ refresh. Vault totals come from finalized on-chain counters cached in D1 with
 their observed time. A failed refresh shows the last value as stale, never
 zero. A monthly amount is shown to contributors only when the project's
 vault holds it; otherwise the pool reads as points only (PRD section 6,
-operator decision of 15 November 2026).
+operator decision of 15 November 2026). From December 2026 a month is
+promised only if the vault covered it on the 1st, and Slop's pages refuse a
+withdrawal below the promised amount.
 
 ## Project authority and IP
 

@@ -40,7 +40,12 @@ import {
   mergeActivityCardLine,
   mergeActivityLine,
 } from "./lib/merge-activity";
-import { asShown, loadPoolFunding } from "./lib/pool-funding";
+import {
+  asShown,
+  loadPoolFunding,
+  monthName,
+  poolFundingStatus,
+} from "./lib/pool-funding";
 import {
   findHistoricalProject,
   findProject,
@@ -1427,14 +1432,18 @@ function ProjectRewardSummary({
     loadPoolFunding,
     "Pool funding unavailable",
   );
-  const project = asShown(
-    registered,
-    funding.status === "ready" ? funding.index : null,
-    new Date(),
-  );
+  const index = funding.status === "ready" ? funding.index : null;
+  const now = new Date();
+  const project = asShown(registered, index, now);
+  const status = poolFundingStatus(registered, index, now);
   return (
     <div className="project-overview">
       <div className="project-state-summary">
+        {status.state === "withdrawn" ? (
+          <p className="project-reward-status">
+            {`Funds were withdrawn from the vault during ${monthName(status.period)}; it no longer covers this month's amount.`}
+          </p>
+        ) : null}
         {projectRewardSummaries(project).map((summary) => (
           <p className="project-reward-status" key={summary.kind}>
             {summary.kind === "monthly-pool" ? (

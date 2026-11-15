@@ -3,6 +3,7 @@ import {
   asShown,
   type PoolFundingIndex,
   poolFunded,
+  poolFundingStatus,
   type VaultFreeBalance,
 } from "./pool-funding";
 import type { ProjectDefinition } from "./projects.mjs";
@@ -102,4 +103,92 @@ test("a points-only pool and other reward kinds pass through unchanged", () => {
     reward: { kind: "external-prize-share" },
   } as unknown as ProjectDefinition;
   expect(asShown(prize, null, NOW)).toBe(prize);
+});
+
+const DEC = (iso: string) => new Date(`2026-12-${iso}Z`);
+const START = (
+  free: string,
+  withdrawn = "0",
+  blockTime = "2026-12-01T00:04:00Z",
+) => ({
+  period: "2026-12",
+  freeBalance: free,
+  totalGrossWithdrawn: withdrawn,
+  blockTime,
+});
+
+test("from December a month is promised only if the 1st covered it and last month", () => {
+  // 250 for December plus 250 for November, which pays out from the 4th.
+  const both = index({
+    freeBalance: "500000000",
+    totalGrossWithdrawn: "0",
+    monthStarts: [START("500000000")],
+  });
+  expect(
+    poolFundingStatus(project("250000000"), both, DEC("02T10:00:00")).state,
+  ).toBe("funded");
+  const oneMonth = index({
+    freeBalance: "250000000",
+    totalGrossWithdrawn: "0",
+    monthStarts: [START("250000000")],
+  });
+  expect(
+    poolFundingStatus(project("250000000"), oneMonth, DEC("02T10:00:00")).state,
+  ).toBe("points");
+});
+
+test("a deposit after the 1st does not make that month promised", () => {
+  const late = index({
+    freeBalance: "900000000",
+    totalGrossWithdrawn: "0",
+    monthStarts: [START("0")],
+  });
+  expect(
+    poolFundingStatus(project("250000000"), late, DEC("10T00:00:00")).state,
+  ).toBe("points");
+  const firstReadLate = index({
+    freeBalance: "900000000",
+    totalGrossWithdrawn: "0",
+    monthStarts: [START("900000000", "0", "2026-12-01T02:00:00Z")],
+  });
+  expect(
+    poolFundingStatus(project("250000000"), firstReadLate, DEC("10T00:00:00"))
+      .state,
+  ).toBe("points");
+});
+
+test("after November is reserved, the vault needs only December's amount", () => {
+  const reserved = index({
+    freeBalance: "250000000",
+    totalGrossWithdrawn: "0",
+    monthStarts: [START("500000000")],
+  });
+  expect(
+    poolFundingStatus(project("250000000"), reserved, DEC("05T00:00:00")).state,
+  ).toBe("funded");
+});
+
+test("a withdrawal during the month that leaves it short is shown as withdrawn", () => {
+  const pulled = index({
+    freeBalance: "100000000",
+    totalGrossWithdrawn: "400000000",
+    monthStarts: [START("500000000")],
+  });
+  const status = poolFundingStatus(
+    project("250000000"),
+    pulled,
+    DEC("10T00:00:00"),
+  );
+  expect(status).toEqual({ state: "withdrawn", period: "2026-12" });
+  expect(
+    poolFundingStatus(
+      project("250000000"),
+      index({ freeBalance: "500000000", monthStarts: [START("500000000")] }),
+      DEC("02T00:00:00"),
+    ),
+  ).toEqual({ state: "funded", period: "2026-12", owedMinor: 500000000n });
+  expect(
+    asShown(project("250000000"), pulled, DEC("10T00:00:00")).reward
+      .monthlyCapMinor,
+  ).toBe("0");
 });

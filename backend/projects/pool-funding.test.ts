@@ -7,6 +7,7 @@ const ROWS = [
     network: "base-mainnet",
     vault: "0xabc",
     free_balance: "250000000",
+    total_gross_withdrawn: "0",
     block_time: "2026-11-15T11:00:00.000Z",
     observed_at: "2026-11-15T11:05:00.000Z",
   },
@@ -15,18 +16,35 @@ const ROWS = [
     network: "base-sepolia",
     vault: "0xdef",
     free_balance: "5",
+    total_gross_withdrawn: "0",
     block_time: "2026-11-15T11:00:00.000Z",
     observed_at: "2026-11-15T11:05:00.000Z",
   },
 ];
 
+const STARTS = [
+  {
+    project_id: "demo",
+    network: "base-mainnet",
+    vault: "0xabc",
+    period: "2026-11",
+    free_balance: "250000000",
+    total_gross_withdrawn: "0",
+    block_time: "2026-11-01T00:04:00.000Z",
+  },
+];
+let bound: unknown[] = [];
+
 const db = {
-  prepare: () => ({
-    bind() {
+  prepare: (sql: string) => ({
+    bind(...values: unknown[]) {
+      bound = values;
       return this;
     },
     async all() {
-      return { results: ROWS };
+      return {
+        results: sql.includes("vault_month_starts") ? STARTS : ROWS,
+      };
     },
   }),
 } as never;
@@ -34,7 +52,7 @@ const db = {
 async function read(tier: string) {
   const response = await handlePoolFundingApi(
     new Request("https://slop.cash/api/v1/pool-funding"),
-    { db, tier },
+    { db, tier, now: () => new Date("2026-11-15T12:00:00Z") },
   );
   expect(response?.status).toBe(200);
   expect(response?.headers.get("cache-control")).toContain("max-age=60");
@@ -42,7 +60,7 @@ async function read(tier: string) {
     schema: string;
     projects: Array<{
       projectId: string;
-      vaults: Array<Record<string, string>>;
+      vaults: Array<Record<string, unknown>>;
     }>;
   };
 }
@@ -58,12 +76,23 @@ test("production serves mainnet vault balances only", async () => {
           network: "base-mainnet",
           vault: "0xabc",
           freeBalance: "250000000",
+          totalGrossWithdrawn: "0",
           blockTime: "2026-11-15T11:00:00.000Z",
           observedAt: "2026-11-15T11:05:00.000Z",
+          monthStarts: [
+            {
+              period: "2026-11",
+              freeBalance: "250000000",
+              totalGrossWithdrawn: "0",
+              blockTime: "2026-11-01T00:04:00.000Z",
+            },
+          ],
         },
       ],
     },
   ]);
+  // This month and the one before.
+  expect(bound).toEqual(["2026-10", "2026-11"]);
 });
 
 test("staging keeps testnet vaults", async () => {
