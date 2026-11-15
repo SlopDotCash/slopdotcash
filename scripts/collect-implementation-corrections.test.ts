@@ -3495,6 +3495,194 @@ test("grouped attribution restores cached actor batch halves through the normal 
   }
 });
 
+for (const linkedAuthor of ["original", "conflicting"] as const) {
+  test(`October grouped work preserves verified original credit with ${linkedAuthor} author evidence`, async () => {
+    const original = makeOriginal();
+    const accepted = structuredClone(original);
+    const repo = "elizaOS/asi";
+    const originActor = { node_id: "U_origin", login: "origin", type: "User" };
+    const carrier = { node_id: actor.id, login: actor.login, type: "User" };
+    for (const source of [original, accepted]) {
+      Object.assign(source.evidence, {
+        repository: repo,
+        repositoryNodeId: "R_kgDOT23CXA",
+        repositoryPolicy: {
+          id: repo,
+          projectId: "asi",
+          integrationBranch: "main",
+          expectedNodeId: "R_kgDOT23CXA",
+        },
+      });
+      source.evidence.pull.user = carrier;
+      source.evidence.pull.base.ref = "main";
+      source.evidence.commits[0].sha = sha;
+      source.evidence.commits[0].author = originActor;
+      source.evidence.commitAttribution[0].sha = sha;
+      source.evidence.commitAttribution[0].actorNodeIds = [originActor.node_id];
+      source.evidence.pull.head.sha = sha;
+    }
+    original.evidence.pull.node_id = "PR_original";
+    original.evidence.pull.number = 1;
+    original.evidence.pull.html_url = `https://github.com/${repo}/pull/1`;
+    original.evidence.pull.merged_at = null;
+    original.evidence.pull.closed_at = "2026-10-14T00:00:00Z";
+    original.evidence.pull.merge_commit_sha = null;
+    original.evidence.pull.merged_by = null;
+    original.evidence.mergeCommitEvidence = null;
+    accepted.evidence.pull.node_id = "PR_source";
+    accepted.evidence.pull.number = 2;
+    accepted.evidence.pull.html_url = `https://github.com/${repo}/pull/2`;
+    accepted.evidence.pull.merged_at = "2026-10-15T00:00:00Z";
+    accepted.evidence.pull.merged_by = carrier;
+    if (linkedAuthor === "conflicting") {
+      accepted.evidence.commits[0].author = {
+        node_id: "U_other",
+        login: "other",
+        type: "User",
+      };
+      accepted.evidence.commitAttribution[0].actorNodeIds = ["U_other"];
+    }
+    const evidence = await prepareWorkUnitEvidence(
+      [original, accepted],
+      [
+        {
+          ...valueRepository,
+          id: repo,
+          projectId: "asi",
+          expectedNodeId: "R_kgDOT23CXA",
+        },
+      ],
+    );
+    expect(evidence.limitations).toEqual([]);
+    for (const claim of evidence.claims) {
+      claim.creditPullRequestId = original.evidence.pull.node_id;
+      claim.retainedCopy = {
+        acceptancePullRequestId: accepted.evidence.pull.node_id,
+        acceptedCommitSha: claim.commitSha,
+        preexistingCommitShas: [],
+      };
+    }
+
+    const digest = "d".repeat(64);
+    const workUnitId = `wu_${"b".repeat(64)}`;
+    const decision = {
+      status: "assessed",
+      latestDigest: digest,
+      evidence,
+      record: {
+        units: [{ workUnitId, claimIds: evidence.claims.map((c) => c.id) }],
+      },
+    };
+    const loader = spyOn(valueIngestion, "loadValueInputs").mockResolvedValue({
+      jointValueDecisions: new Map([["PR_source", decision]]),
+      heldWorkUnits: [],
+    } as never);
+    const node = fixture(sha);
+    node.commits.nodes[0].commit.oid = sha;
+    Object.assign(node, {
+      number: 2,
+      url: accepted.evidence.pull.html_url,
+      createdAt: "2026-10-01T00:00:00Z",
+      updatedAt: "2026-10-15T00:00:00Z",
+      mergedAt: "2026-10-15T00:00:00Z",
+    });
+    node.commits.nodes[0].commit.author.user = {
+      ...node.author,
+      id: linkedAuthor === "original" ? originActor.node_id : "U_other",
+      login: linkedAuthor === "original" ? originActor.login : "other",
+    };
+    const source = {
+      ...award(30, true),
+      sourceUrl: node.url,
+      occurredAt: "2026-10-15T00:00:00.000Z",
+    };
+    const journal = appendPointAwards(
+      emptyPointsJournal("2026-10-31T00:00:00.000Z"),
+      [source],
+      "f".repeat(64),
+      "slop-score-v2",
+      "2026-10-31T00:00:00.000Z",
+      new Map([
+        [
+          source.key,
+          {
+            sourceId: `value:${digest}`,
+            effectiveAt: source.occurredAt,
+            reason: "Retained assessed work unit",
+          },
+        ],
+      ]),
+    );
+    try {
+      const result = await collectImplementationCorrections(
+        {
+          projects: ["asi"],
+          directory: await directory(),
+          candidateMonth: "2026-10",
+          before: "2026-11-01T00:00:00.000Z",
+          octoberOriginalCredit: true,
+        },
+        {
+          journal,
+          registry: registry(),
+          token: "fixture-token",
+          transport: Object.assign(
+            async (input: RequestInfo | URL, init?: RequestInit) => {
+              const request = JSON.parse(String(init?.body));
+
+              if (
+                request.query.includes("LeaderboardSearchReferences") &&
+                !request.variables.searchQuery.includes("merged:2026-10")
+              )
+                return Response.json({
+                  data: {
+                    search: {
+                      issueCount: 0,
+                      pageInfo: { hasNextPage: false, endCursor: null },
+                      nodes: [],
+                    },
+                    rateLimit: {
+                      cost: 1,
+                      limit: 5000,
+                      remaining: 4900,
+                      resetAt: "2026-11-02T01:00:00Z",
+                    },
+                  },
+                });
+              return transport(sha, node).call(input, init);
+            },
+            { preconnect: fetch.preconnect },
+          ),
+          now: new Date("2026-11-02T00:00:00Z"),
+        },
+      );
+      const proof = result.manifest.candidates[0].proof;
+      if (linkedAuthor === "conflicting") {
+        expect(proof.status).toBe("held");
+        return;
+      }
+      expect(result.receipt.completeProofs).toBe(1);
+      expect(proof.status).toBe("complete");
+      if (proof.status !== "complete") throw Error("Missing proof");
+      expect(proof.originalContributor).toBeUndefined();
+      const applied = applyPointsImplementationCorrections(
+        journal,
+        result.manifest,
+        [{ candidateId: result.manifest.candidates[0].id, eligible: true }],
+        result.manifest.generatedAt,
+        new Map(),
+      );
+      expect(
+        [...latestPoints(applied.journal).values()].find(
+          (row) => row.award.actor.id === originActor.node_id,
+        )?.award.amount,
+      ).toBe(30);
+    } finally {
+      loader.mockRestore();
+    }
+  });
+}
+
 const head = "1".repeat(40),
   later = "4".repeat(40),
   merged = "5".repeat(40);
