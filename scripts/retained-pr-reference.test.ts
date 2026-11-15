@@ -6,6 +6,7 @@ import {
   repository,
 } from "../tests/value-promotion-fixture";
 import { retainedCopyBindings } from "../workers/slopbot/value-retained-copy";
+import { prepareWorkUnitEvidence } from "../workers/slopbot/value-work-unit";
 import { collectRetainedMergeReferences } from "../workers/slopbot/value-retained-reference";
 import { retainedCommitCreditSources } from "./retained-commit-credit";
 
@@ -53,6 +54,108 @@ function sources() {
   original.evidence.comments.push(comment);
   return { original, copy, comment };
 }
+
+function withUnacceptedFinalPath() {
+  const pair = sources();
+  const evidence = pair.original.evidence;
+  const commit = structuredClone(evidence.commits[0]);
+  commit.sha = "9".repeat(40);
+  commit.parents = [{ sha: evidence.commits[0].sha }];
+  evidence.commits.push(commit);
+  evidence.pull.head.sha = commit.sha;
+  evidence.pull.commits = evidence.commits.length;
+  const extra = {
+    ...structuredClone(evidence.commitAttribution[0].files![0]),
+    filename: "unaccepted-test.ts",
+    patch: "@@ -0,0 +1 @@\n+unaccepted",
+  };
+  evidence.files.push(extra);
+  evidence.commitAttribution.push({
+    sha: commit.sha,
+    actorNodeIds: [],
+    changedPaths: [extra.filename],
+    files: [extra],
+    limitations: [],
+  });
+  return pair;
+}
+
+test("joint preparation credits the exact retained subset of a complete original", async () => {
+  const { original, copy } = withUnacceptedFinalPath();
+  const evidence = await prepareWorkUnitEvidence(
+    [original, copy],
+    [repository],
+  );
+  expect(evidence.limitations).toEqual([]);
+  expect(evidence.claims.map((claim) => claim.path)).toEqual(["fix.ts"]);
+  expect(
+    evidence.sources.find(
+      (source) => source.evidence.pull.node_id === "PR_original",
+    )?.evidence.commits.length,
+  ).toBe(2);
+  const ordinary = await retainedCopyBindings([original, copy]);
+  expect(ordinary.limitations).toContain(
+    `PR_original: retained ${"9".repeat(40)}:unaccepted-test.ts has 0 exact copy bindings`,
+  );
+});
+
+test("accepted subset still requires at least one exact retained anchor", async () => {
+  const { original, copy } = withUnacceptedFinalPath();
+  copy.evidence.commitAttribution[0].files![0].patch += "\n+different";
+  const evidence = await prepareWorkUnitEvidence(
+    [original, copy],
+    [repository],
+  );
+  expect(
+    evidence.limitations.some((reason) =>
+      reason.includes("0 exact copy bindings"),
+    ),
+  ).toBe(true);
+});
+
+test("accepted subset retains incomplete-source and wrong-author holds", async () => {
+  const { original, copy } = withUnacceptedFinalPath();
+  copy.evidence.commits[0].author = {
+    node_id: "U_other",
+    login: "other",
+    type: "User",
+  };
+  let evidence = await prepareWorkUnitEvidence([original, copy], [repository]);
+  expect(evidence.limitations).toContain(
+    "PR_original: retained primary author identity differs between commits",
+  );
+  original.evidence.limitations.push("Missing source evidence");
+  evidence = await prepareWorkUnitEvidence([original, copy], [repository]);
+  expect(evidence.limitations).toContain(
+    "PR_original: Missing source evidence",
+  );
+});
+
+test("accepted subset refuses two matching accepted copies", async () => {
+  const { original, copy, comment } = withUnacceptedFinalPath();
+  const second = structuredClone(copy);
+  Object.assign(second.evidence.pull, {
+    node_id: "PR_other_copy",
+    number: 3,
+    html_url: `https://github.com/${repository.id}/pull/3`,
+  });
+  original.evidence.relatedPullRequests.push({
+    id: second.evidence.pull.node_id,
+    number: 3,
+    url: second.evidence.pull.html_url,
+    repository: repository.id,
+  });
+  comment.body = "Your commits are retained in #2 and #3.";
+  const evidence = await prepareWorkUnitEvidence(
+    [original, copy, second],
+    [repository],
+  );
+  expect(
+    evidence.limitations.some((reason) =>
+      reason.includes("2 exact copy bindings"),
+    ),
+  ).toBe(true);
+});
 
 for (const reference of [
   "#2",
