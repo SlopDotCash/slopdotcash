@@ -1947,3 +1947,106 @@ test("reviewed unit keeps an invalid native carrier context held", async () => {
     ),
   ).rejects.toThrow();
 });
+
+async function historicalBodyRepairSnapshot() {
+  const input = await bodyRepairSnapshot();
+  input.body.lastEditedAt = "2026-10-03T00:30:00Z";
+  const edit = {
+    id: "UCE_before_merge",
+    createdAt: "2026-10-02T20:00:00Z",
+    editedAt: "2026-10-02T20:00:00Z",
+    updatedAt: "2026-10-02T20:00:00Z",
+    deletedAt: null as string | null,
+    diff: input.body.body,
+    editor: { id: carrier.node_id, __typename: "User" },
+  };
+  const current = {
+    ...clone(edit),
+    id: "UCE_after_merge",
+    createdAt: input.body.lastEditedAt,
+    editedAt: input.body.lastEditedAt,
+    updatedAt: input.body.lastEditedAt,
+  };
+  const history = {
+    totalCount: 2,
+    nodes: [current, edit],
+    pageInfo: { hasNextPage: false },
+  };
+  const head = {
+    ...clone(input.accepted.commits[1]),
+    committer: { date: "2026-10-02T19:00:00Z" },
+  };
+  input.responses.set(`${root}/git/commits/${sha("b")}`, head);
+  const github = {
+    ...input.github,
+    async graphql<T>(query: string): Promise<T> {
+      return {
+        repository: {
+          id: input.accepted.repositoryNodeId,
+          pullRequest: {
+            ...clone(input.body),
+            ...(query.includes("SlopHistoricalRepairBody")
+              ? { userContentEdits: clone(history) }
+              : {}),
+          },
+        },
+      } as T;
+    },
+  };
+  return { ...input, github, edit, current, history, head };
+}
+
+test("an authenticated pre-merge body edit survives a later current-body edit", async () => {
+  const input = await historicalBodyRepairSnapshot();
+  const proof = await octoberOriginalContributorUnitProof(
+    input.github,
+    input.plain,
+    input.sources[1],
+    input.sources[0],
+    input.owners,
+    input.claims,
+  );
+  const reference = proof.originalContributor?.repairs?.[0].reference;
+  expect(reference?.historicalBodyEdit?.id).toBe(input.edit.id);
+  expect(reference?.bodyEdit?.lastEditedAt).toBe(input.body.lastEditedAt);
+  expect(reference?.pull.body).toBe(input.accepted.pull.body);
+});
+
+for (const fault of [
+  "actor",
+  "post-merge",
+  "head",
+  "changed-current",
+  "deleted",
+  "changed-edit",
+  "missing-page",
+  "future-head",
+] as const) {
+  test(`historical body repair refuses ${fault}`, async () => {
+    const input = await historicalBodyRepairSnapshot();
+    if (fault === "actor") input.edit.editor.id = origin.node_id;
+    if (fault === "post-merge")
+      input.edit.createdAt =
+        input.edit.editedAt =
+        input.edit.updatedAt =
+          "2026-10-04T00:00:00Z";
+    if (fault === "head") input.edit.diff = `Incorporates #1 at ${sha("9")}`;
+    if (fault === "changed-current")
+      input.current.diff = "Different current body";
+    if (fault === "deleted") input.edit.deletedAt = input.edit.editedAt;
+    if (fault === "changed-edit") input.edit.updatedAt = "2026-10-02T21:00:00Z";
+    if (fault === "missing-page") input.history.pageInfo.hasNextPage = true;
+    if (fault === "future-head")
+      input.head.committer.date = "2026-10-03T00:10:00Z";
+    await expect(
+      octoberOriginalContributorUnitProof(
+        input.github,
+        input.plain,
+        input.sources[1],
+        input.sources[0],
+        input.owners,
+        input.claims,
+      ),
+    ).rejects.toThrow();
+  });
+}

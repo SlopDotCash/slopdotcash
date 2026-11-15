@@ -2717,3 +2717,91 @@ for (const fault of [
     expect(() => apply(journal, input)).toThrow();
   });
 }
+
+function historicalAcknowledgedRepair() {
+  const input = acknowledgedRepair();
+  const reference = input.repair.reference;
+  const text = reference.acknowledgement.body;
+  delete (reference as Partial<typeof reference>).acknowledgement;
+  Object.assign(reference, {
+    bodyEdit: {
+      id: reference.pull.node_id,
+      body: reference.pull.body,
+      headRefOid: reference.pull.head.sha,
+      mergedAt: reference.pull.merged_at,
+      updatedAt: reference.pull.updated_at,
+      lastEditedAt: "2026-10-24T00:00:00Z",
+      editor: { id: C.id, type: "User" },
+      author: { id: C.id, type: "User" },
+    },
+    historicalBodyEdit: {
+      id: "UCE_authenticated",
+      createdAt: "2026-10-22T22:00:00Z",
+      editedAt: "2026-10-22T22:00:00Z",
+      updatedAt: "2026-10-22T22:00:00Z",
+      deletedAt: null,
+      diff: text,
+      editor: { id: C.id, type: "User" },
+      headCommit: {
+        sha: reference.headSha,
+        committedAt: "2026-10-22T21:00:00Z",
+      },
+    },
+  });
+  const { digest: _, ...payload } = reference;
+  reference.digest = sha256Hex(JSON.stringify(payload));
+  return input;
+}
+
+test("an authenticated historical body keeps an original's pool after later body edits", () => {
+  const { journal, input } = historicalAcknowledgedRepair();
+  const result = apply(journal, input);
+  expect(amounts(result.journal)).toEqual({ [A.id]: 30, [C.id]: 0 });
+  expect(apply(result.journal, input, true, LATER).journal).toBe(
+    result.journal,
+  );
+});
+for (const fault of [
+  "actor",
+  "date",
+  "text",
+  "head",
+  "future-head",
+  "deleted",
+  "missing-editor",
+  "missing-head",
+] as const) {
+  test(`historical repair domain refuses ${fault}`, () => {
+    const { journal, input, repair } = historicalAcknowledgedRepair();
+    const reference = repair.reference as typeof repair.reference & {
+      historicalBodyEdit: {
+        id: string;
+        createdAt: string;
+        editedAt: string;
+        updatedAt: string;
+        deletedAt: string | null;
+        diff: string;
+        editor: { id: string; type: string } | null;
+        headCommit: { sha: string; committedAt: string } | null;
+      };
+    };
+    const historical = reference.historicalBodyEdit;
+    if (fault === "actor" && historical.editor) historical.editor.id = B.id;
+    if (fault === "date")
+      historical.createdAt =
+        historical.editedAt =
+        historical.updatedAt =
+          "2026-10-25T00:00:00Z";
+    if (fault === "text") historical.diff = `Other #999 ${reference.headSha}`;
+    if (fault === "head" && historical.headCommit)
+      historical.headCommit.sha = sha("9");
+    if (fault === "future-head" && historical.headCommit)
+      historical.headCommit.committedAt = "2026-10-23T00:00:00Z";
+    if (fault === "deleted") historical.deletedAt = historical.editedAt;
+    if (fault === "missing-editor") historical.editor = null;
+    if (fault === "missing-head") historical.headCommit = null;
+    const { digest: _, ...payload } = reference;
+    reference.digest = sha256Hex(JSON.stringify(payload));
+    expect(() => apply(journal, input)).toThrow();
+  });
+}
