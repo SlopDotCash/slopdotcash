@@ -34,6 +34,8 @@ export interface CorrectionActor {
 export interface CorrectionCommit {
   sha: string;
   parentCount: number;
+  /** Recorded only for an original PR that needs an authenticated follow-up graph. */
+  parentShas?: string[];
   author: CorrectionActor | null;
   additions: number | null;
   deletions: number | null;
@@ -183,6 +185,90 @@ function eligibleActor(
 ): value is CorrectionActor & { kind: "User" } {
   return value?.kind === "User" && isCreditEligibleCommitAuthor(value);
 }
+function validParentShas(
+  commit: CorrectionCommit,
+): commit is CorrectionCommit & { parentShas: string[] } {
+  return (
+    Array.isArray(commit.parentShas) &&
+    commit.parentShas.length === commit.parentCount &&
+    new Set(commit.parentShas).size === commit.parentCount &&
+    commit.parentShas.every(
+      (parent) =>
+        typeof parent === "string" && sha.test(parent) && parent !== commit.sha,
+    )
+  );
+}
+
+/** A carrier's commits count as follow-ups only after the verified contributor
+ * has started work in the authenticated original PR history. */
+export function originalContributorPrecedesFollowups(
+  original: CorrectionSource,
+  carrier: CorrectionActor | null,
+): boolean {
+  const origin = original.author;
+  if (
+    !eligibleActor(origin) ||
+    !eligibleActor(carrier) ||
+    origin.id === carrier.id
+  )
+    return false;
+  const ordinary = original.commits.filter((commit) => commit.parentCount <= 1);
+  if (
+    !ordinary.some((commit) => commit.author?.id === origin.id) ||
+    ordinary.some(
+      (commit) =>
+        !eligibleActor(commit.author) ||
+        (commit.author.id !== origin.id && commit.author.id !== carrier.id),
+    )
+  )
+    return false;
+  if (ordinary.every((commit) => commit.author?.id === origin.id)) return true;
+
+  const bySha = new Map(original.commits.map((commit) => [commit.sha, commit]));
+  if (bySha.size !== original.commits.length || !bySha.has(original.headSha))
+    return false;
+  const pending = new Map<string, number>();
+  const children = new Map<string, CorrectionCommit[]>();
+  const ready: CorrectionCommit[] = [];
+  for (const commit of original.commits) {
+    if (!validParentShas(commit)) return false;
+    const parents = commit.parentShas.filter((parent) => bySha.has(parent));
+    pending.set(commit.sha, parents.length);
+    if (!parents.length) ready.push(commit);
+    for (const parent of parents) {
+      const descendants = children.get(parent) ?? [];
+      descendants.push(commit);
+      children.set(parent, descendants);
+    }
+  }
+  const reachable = new Set([original.headSha]);
+  for (const oid of reachable) {
+    for (const parent of bySha.get(oid)?.parentShas ?? [])
+      if (bySha.has(parent)) reachable.add(parent);
+  }
+  if (reachable.size !== bySha.size) return false;
+  const afterOrigin = new Set<string>();
+  for (const commit of ready) {
+    const hasOriginalAncestor = afterOrigin.has(commit.sha);
+    const startedByOrigin =
+      commit.parentCount <= 1 && commit.author?.id === origin.id;
+    if (
+      commit.parentCount <= 1 &&
+      commit.author?.id === carrier.id &&
+      !hasOriginalAncestor
+    )
+      return false;
+    for (const child of children.get(commit.sha) ?? []) {
+      if (hasOriginalAncestor || startedByOrigin) afterOrigin.add(child.sha);
+      const waiting = (pending.get(child.sha) ?? 0) - 1;
+      pending.set(child.sha, waiting);
+      if (waiting === 0) ready.push(child);
+    }
+  }
+  // A cycle refuses the source even if another branch supplied a valid origin.
+  return ready.length === original.commits.length;
+}
+
 function sourceRepository(url: string, projectId: string): string {
   const parsed = new URL(url);
   const match = /^\/([^/]+\/[^/]+)\/pull\/[1-9][0-9]*$/u.exec(parsed.pathname);
@@ -293,6 +379,7 @@ function deriveProof(
       check(
         sha.test(commit.sha) &&
           count(commit.parentCount) &&
+          (commit.parentShas === undefined || validParentShas(commit)) &&
           (commit.additions === null || count(commit.additions)) &&
           (commit.deletions === null || count(commit.deletions)) &&
           (commit.firstAcceptedSourceId === null ||
@@ -489,11 +576,7 @@ function deriveProof(
     const carrier = accepted.author;
     if (
       incomplete ||
-      original.commits.some(
-        (commit) =>
-          commit.parentCount <= 1 &&
-          (!eligibleActor(commit.author) || commit.author.id !== origin.id),
-      ) ||
+      !originalContributorPrecedesFollowups(original, carrier) ||
       accepted.commits.some(
         (commit) =>
           commit !== acceptedCommit &&
@@ -754,6 +837,7 @@ export function applyPointsImplementationCorrections(
       "source scope omits a recorded implementation pool",
     );
   const commitIdentities = new Map<string, string>();
+  const commitParents = new Map<string, string>();
   for (const plan of plans) {
     if (plan.candidate.proof.status !== "complete") continue;
     for (const source of plan.candidate.proof.sources)
@@ -772,6 +856,15 @@ export function applyPointsImplementationCorrections(
           "immutable commit evidence conflicts",
         );
         commitIdentities.set(key, identity);
+        if (commit.parentShas !== undefined) {
+          const parents = JSON.stringify(commit.parentShas);
+          const priorParents = commitParents.get(key);
+          check(
+            priorParents === undefined || priorParents === parents,
+            "immutable commit parent evidence conflicts",
+          );
+          commitParents.set(key, parents);
+        }
       }
   }
   // Existing positive pools can overlap because an ordinary PR award and a

@@ -16,8 +16,11 @@ collecting a reviewed payout project. This selects October pools for correction
 and still checks ownership across the repository census. A verified replacement
 receives the ordinary pool's full implementation credit for its original
 contributor. The proof binds an accepted commit to the original and checks
-immutable identities across the original and carried work. Distinct contributors
-or ambiguous accepted copies require review. A legacy collection or rolling
+immutable identities across the original and carried work. A carrier's commit
+inside the original PR requires an exact Git parent path from an original
+contributor commit. The collector checks those edges against immutable GitHub
+commit reads. Distinct contributors, missing parent evidence and ambiguous
+accepted copies require review. A legacy collection or rolling
 snapshot retains an already recorded October original-contributor allocation.
 Run the preview and reconcile value and duplicate work before recording.
 

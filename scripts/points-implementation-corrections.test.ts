@@ -303,6 +303,83 @@ test("an already correct October replacement records the verified allocation dec
   expect(replay.journal).toBe(result.journal);
 });
 
+function octoberOriginalWithFollowup() {
+  const sample = octoberReplacement();
+  const original = sample.proof.sources[1];
+  const contributorCommit = original.commits[0];
+  contributorCommit.parentShas = [sha("0")];
+  const baseSync = {
+    ...contributorCommit,
+    sha: sha("d"),
+    parentCount: 2,
+    parentShas: [contributorCommit.sha, sha("9")],
+    additions: null,
+    deletions: null,
+  };
+  const followup = {
+    ...contributorCommit,
+    sha: sha("e"),
+    author: C as CorrectionActor | null,
+    parentShas: [baseSync.sha] as string[] | undefined,
+  };
+  original.headSha = followup.sha;
+  original.commits = [followup, baseSync, contributorCommit];
+  original.commitCount = original.commits.length;
+  return { ...sample, original, contributorCommit, followup, baseSync };
+}
+
+test("an authenticated carrier follow-up in the original PR preserves original contributor credit", () => {
+  const { journal, input } = octoberOriginalWithFollowup();
+  const result = apply(journal, input);
+  expect(result.dispositions[0].status).toBe("applied");
+  expect(amounts(result.journal)).toEqual({ [A.id]: 30, [C.id]: 0 });
+  expect(total(result.journal)).toBe(total(journal));
+});
+
+test("October original-PR follow-ups require complete acyclic Git evidence and the same linked carrier", () => {
+  const cases = [
+    (sample: ReturnType<typeof octoberOriginalWithFollowup>) => {
+      sample.followup.parentShas = undefined;
+    },
+    (sample: ReturnType<typeof octoberOriginalWithFollowup>) => {
+      sample.followup.parentShas = [sha("8")];
+    },
+    (sample: ReturnType<typeof octoberOriginalWithFollowup>) => {
+      sample.followup.author = null;
+    },
+    (sample: ReturnType<typeof octoberOriginalWithFollowup>) => {
+      sample.followup.author = B;
+    },
+    (sample: ReturnType<typeof octoberOriginalWithFollowup>) => {
+      sample.baseSync.parentShas = [
+        sample.contributorCommit.sha,
+        sample.followup.sha,
+      ];
+    },
+    (sample: ReturnType<typeof octoberOriginalWithFollowup>) => {
+      sample.original.headSha = sample.baseSync.sha;
+      sample.contributorCommit.parentShas = [sample.followup.sha];
+      sample.followup.parentShas = [sha("8")];
+      sample.baseSync.parentShas = [sample.contributorCommit.sha, sha("7")];
+    },
+  ];
+  for (const mutate of cases) {
+    const sample = octoberOriginalWithFollowup();
+    mutate(sample);
+    const result = apply(sample.journal, sample.input);
+    expect(result.dispositions[0].status).toBe("held");
+    expect(result.journal).toBe(sample.journal);
+  }
+  const malformed = octoberOriginalWithFollowup();
+  malformed.baseSync.parentShas = [
+    malformed.contributorCommit.sha,
+    malformed.contributorCommit.sha,
+  ];
+  expect(() => apply(malformed.journal, malformed.input)).toThrow(
+    "invalid commit proof",
+  );
+});
+
 test("October replacement proof holds competing contributors and rejects false anchors", () => {
   const { journal, input, proof } = octoberReplacement();
   proof.sources[0].commits[1].author = B;

@@ -30,6 +30,7 @@ import {
   type CorrectionActor,
   type CorrectionSource,
   createPointsCorrectionBaseline,
+  originalContributorPrecedesFollowups,
   type PointsImplementationCorrectionCandidate,
   type PointsImplementationCorrectionManifest,
 } from "../src/lib/points-implementation-corrections";
@@ -1173,7 +1174,37 @@ function matchRetainedAcceptedSource(
   return accepted;
 }
 
+async function authenticateOriginalFollowupParents(
+  github: GitHubClient,
+  source: CorrectionSource,
+  evidence: ValueEvidence,
+): Promise<void> {
+  for (const [index, commit] of evidence.commits.entries()) {
+    const parentShas = commit.parents.map(({ sha }) => sha);
+    requireThat(
+      /^[a-f0-9]{40}$/u.test(commit.sha) &&
+        parentShas.every((parent) => /^[a-f0-9]{40}$/u.test(parent)) &&
+        new Set(parentShas).size === parentShas.length &&
+        !parentShas.includes(commit.sha),
+      "October original Git parent evidence is malformed",
+    );
+    const immutable = await github.get<{
+      sha: string;
+      parents: { sha: string }[];
+    }>(`/repos/${source.repository}/git/commits/${commit.sha}`);
+    requireThat(
+      immutable?.sha === commit.sha &&
+        Array.isArray(immutable.parents) &&
+        encode(immutable.parents.map((parent) => parent?.sha)) ===
+          encode(parentShas),
+      "October original Git parent evidence is unavailable or inconsistent",
+    );
+    source.commits[index].parentShas = parentShas;
+  }
+}
+
 async function octoberOriginalContributorProof(
+  github: GitHubClient,
   plain: CorrectionSource,
   sources: readonly WorkUnitSource[],
   owners: ReadonlyMap<string, string>,
@@ -1202,13 +1233,18 @@ async function octoberOriginalContributorProof(
         (commit) => commit.sha === originalSource.headSha,
       ) &&
       new Set(originalSource.commits.map((commit) => commit.sha)).size ===
-        originalSource.commits.length &&
-      originalCommits.length > 0 &&
-      originalCommits.every(
-        (commit) =>
-          verifiedHuman(commit.author) && commit.author.id === originalActor.id,
-      ),
+        originalSource.commits.length,
     "October replacement does not have a sole verified original contributor",
+  );
+  if (originalCommits.some((commit) => commit.author?.id === carrier.id))
+    await authenticateOriginalFollowupParents(
+      github,
+      originalSource,
+      original.evidence,
+    );
+  requireThat(
+    originalContributorPrecedesFollowups(originalSource, carrier),
+    "October replacement does not have a verified original contributor preceding every carrier follow-up",
   );
   const accepted = matchRetainedAcceptedSource(
     plain,
@@ -1225,6 +1261,23 @@ async function octoberOriginalContributorProof(
       ),
     "Retained accepted commit author differs from the canonical census",
   );
+  // The rich original proof captures merge parents but does not fetch merger
+  // line totals. A shared SHA can carry its already verified census totals.
+  const canonicalCommits = new Map(
+    plain.commits.map((commit) => [commit.sha, commit]),
+  );
+  for (const commit of originalSource.commits) {
+    const canonical = canonicalCommits.get(commit.sha);
+    if (!canonical || commit.parentCount <= 1) continue;
+    requireThat(
+      canonical.parentCount === commit.parentCount &&
+        canonical.author?.id === commit.author?.id &&
+        canonical.author?.kind === commit.author?.kind,
+      "Shared October merge disagrees with the canonical census",
+    );
+    commit.additions = canonical.additions;
+    commit.deletions = canonical.deletions;
+  }
   const retained = await retainedCopyBindings(sources, {
     ordinaryCommitsOnly: true,
     octoberOriginalCredit: true,
@@ -1480,7 +1533,7 @@ async function ordinaryRetainedProof(
     });
   }
   if (possibleOriginals.length)
-    return octoberOriginalContributorProof(plain, sources, owners);
+    return octoberOriginalContributorProof(github, plain, sources, owners);
   const converted = await bindRetained(sources, owners);
   const accepted = matchRetainedAcceptedSource(
     plain,
