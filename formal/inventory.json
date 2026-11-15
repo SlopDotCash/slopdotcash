@@ -3493,7 +3493,7 @@
     },
     {
       "path": "scripts/collect-implementation-corrections.ts",
-      "sha256": "9030eeec79df7987ec8713a92d83188f3dd9cf7fe3fb7a0afb8c1c0bcbba040b",
+      "sha256": "f3df4f97f36604af25030d2cd1b3890119a08480356f0f4be75c5d8c04005aa3",
       "models": [
         "formal/models/points/historical_discussion_evidence.qnt",
         "formal/models/points/historical_implementation_allocation.qnt"
@@ -3501,8 +3501,8 @@
       "candidateLines": [
         4, 11, 13, 96, 176, 253, 259, 262, 267, 277, 293, 299, 315, 316, 326,
         329, 426, 472, 493, 518, 564, 571, 687, 698, 863, 1198, 1221, 1230,
-        1387, 1443, 1502, 1508, 1509, 1512, 1609, 1649, 1654, 1829, 2231, 2242,
-        2532, 3123, 3182, 3367, 3418, 3437, 3466, 3468
+        1387, 1443, 1502, 1508, 1509, 1512, 1648, 1692, 1697, 1889, 2293, 2304,
+        2594, 3185, 3244, 3429, 3480, 3499, 3528, 3530
       ],
       "review": "mapped-abstraction"
     },
@@ -6343,14 +6343,14 @@
     },
     {
       "path": "src/lib/points-implementation-corrections.ts",
-      "sha256": "de93d8b683b01f7633d719a97ea79faf4bd8801a85724ca67f24b2db7da00b52",
+      "sha256": "74b1b6b47fc4ac95fee123d12d6685e5c630482d6cb447dd204f2b97de705508",
       "models": [
         "formal/models/points/historical_implementation_allocation.qnt"
       ],
       "candidateLines": [
-        111, 134, 145, 159, 166, 320, 377, 378, 379, 383, 515, 517, 521, 632,
-        638, 665, 666, 753, 788, 981, 1040, 1125, 1141, 1340, 1346, 1351, 1459,
-        1540, 1575, 1603, 1705, 1706, 1707
+        111, 134, 145, 159, 166, 323, 380, 381, 382, 386, 566, 568, 572, 664,
+        670, 697, 698, 785, 820, 1013, 1072, 1157, 1173, 1372, 1378, 1383, 1491,
+        1572, 1607, 1635, 1737, 1738, 1739
       ],
       "review": "mapped-abstraction"
     },

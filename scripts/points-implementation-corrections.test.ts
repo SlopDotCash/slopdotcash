@@ -2079,3 +2079,67 @@ test("scoped native unit preserves its pool and unrelated work in a later carrie
   lastClaim.commitSha = unrelated.sha;
   expect(() => apply(journal, input)).toThrow("unit scope");
 });
+
+test("a scoped original can retain later accepted commits outside the first carrier", () => {
+  const { journal, input, donor, accepted, grouped } = scopedUnlinkedOriginal();
+  if (grouped.proof.status !== "complete" || !grouped.proof.originalContributor)
+    throw Error("fixture");
+  const extra = structuredClone(accepted.commits[0]);
+  extra.sha = sha("6");
+  extra.author = A;
+  extra.firstAcceptedSourceId = "PR_later_origin";
+  extra.parentShas = [donor.headSha];
+  donor.commits.push(extra);
+  donor.commitCount++;
+  donor.headSha = extra.sha;
+  const result = apply(journal, input);
+  expect(amounts(result.journal)).toEqual({ [A.id]: 30, [C.id]: 0 });
+  expect(total(result.journal)).toBe(total(journal));
+  expect(donor.commits).toHaveLength(2);
+});
+
+for (const fault of ["third-party", "disconnected", "earlier-owner"] as const) {
+  test(`partial native claim scope refuses ${fault} in a selected follow-up`, () => {
+    const { journal, input, grouped, accepted, followup } =
+      laterAcceptedFollowup();
+    if (
+      grouped.proof.status !== "complete" ||
+      !grouped.proof.originalContributor
+    )
+      throw Error("fixture");
+    const original = grouped.proof.sources[1];
+    original.headSha = accepted.commits[0].sha;
+    original.commits[0].sha = original.headSha;
+    accepted.commits[0].parentShas = [sha("0")];
+    accepted.commits[1].parentShas = [original.headSha];
+    const binding = grouped.proof.originalContributor;
+    binding.exactAcceptance = true;
+    binding.originalCommitSha = original.headSha;
+    binding.acceptedCommitSha = original.headSha;
+    binding.claimIds = [...grouped.proof.expectedClaimIds];
+    if (fault === "third-party") followup.author = B;
+    if (fault === "disconnected") {
+      followup.commits[0].parentShas = [sha("7")];
+      binding.followups![0].commits[0].parentShas = [sha("7")];
+    }
+    if (fault === "earlier-owner")
+      followup.commits[0].firstAcceptedSourceId = original.sourceId;
+    expect(() => apply(journal, input)).toThrow();
+  });
+}
+
+test("selected maintainer repairs may precede the original PR's later head", () => {
+  const { journal, input, donor, accepted } = scopedUnlinkedOriginal();
+  const later = structuredClone(donor.commits[0]);
+  later.sha = sha("6");
+  later.author = A;
+  later.parentShas = [donor.headSha];
+  donor.commits.push(later);
+  donor.commitCount++;
+  donor.headSha = later.sha;
+  accepted.commits.push(structuredClone(later));
+  accepted.commitCount++;
+  const result = apply(journal, input);
+  expect(amounts(result.journal)).toEqual({ [A.id]: 30, [C.id]: 0 });
+  expect(total(result.journal)).toBe(total(journal));
+});

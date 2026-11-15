@@ -1536,9 +1536,47 @@ async function exactOctoberOriginalContributorProof(
   allowMergedOriginal = false,
   scopedClaims?: readonly CorrectionClaim[],
 ): Promise<HistoricalOrdinaryProof | null> {
-  const anchor = originalSource.commits.find(
-    (commit) => commit.sha === originalSource.headSha,
-  );
+  // Scoped units start at their first retained contributor commit. A later
+  // original head can already include maintainer repairs to that same work.
+  const retainedOriginal = originalSource.commits.find((commit) => {
+    const nativeAcceptance = accepted.commits.some(
+      (copy) =>
+        copy.sha === commit.sha &&
+        copy.firstAcceptedSourceId === accepted.sourceId &&
+        copy.author?.id === commit.author?.id,
+    );
+    if (!scopedClaims)
+      return commit.sha === originalSource.headSha && nativeAcceptance;
+    return (
+      nativeAcceptance &&
+      commit.parentCount <= 1 &&
+      (commit.author === null ||
+        commit.author.id === originalSource.author?.id) &&
+      scopedClaims.some(
+        (claim) =>
+          claim.commitSha === commit.sha &&
+          claim.sourceId === accepted.sourceId,
+      )
+    );
+  });
+  const anchor =
+    retainedOriginal ??
+    (scopedClaims
+      ? originalSource.commits.find(
+          (commit) =>
+            commit.sha === originalSource.headSha &&
+            commit.parentCount === 2 &&
+            verifiedHuman(commit.author) &&
+            (commit.author.id === originalSource.author?.id ||
+              commit.author.id === accepted.author?.id) &&
+            accepted.commits.some(
+              (copy) =>
+                copy.sha === commit.sha &&
+                copy.firstAcceptedSourceId === accepted.sourceId &&
+                copy.author?.id === commit.author?.id,
+            ),
+        )
+      : undefined);
   if (
     !anchor ||
     (anchor.parentCount !== 1 && !(scopedClaims && anchor.parentCount === 2)) ||
@@ -1574,18 +1612,19 @@ async function exactOctoberOriginalContributorProof(
       (originalSource.occurredAt === null ||
         (allowMergedOriginal &&
           originalSource.occurredAt >= accepted.occurredAt &&
-          originalSource.commits.every(
-            (commit) =>
-              (commit.parentCount <= 1 ||
-                (scopedClaims && commit.parentCount === 2)) &&
-              commit.firstAcceptedSourceId === accepted.sourceId &&
-              accepted.commits.some(
-                (copy) =>
-                  copy.sha === commit.sha &&
-                  copy.author?.id === commit.author?.id &&
-                  copy.author?.kind === commit.author?.kind,
-              ),
-          ))) &&
+          (scopedClaims !== undefined ||
+            originalSource.commits.every(
+              (commit) =>
+                (commit.parentCount <= 1 ||
+                  (scopedClaims && commit.parentCount === 2)) &&
+                commit.firstAcceptedSourceId === accepted.sourceId &&
+                accepted.commits.some(
+                  (copy) =>
+                    copy.sha === commit.sha &&
+                    copy.author?.id === commit.author?.id &&
+                    copy.author?.kind === commit.author?.kind,
+                ),
+            )))) &&
       original.evidence.repositoryDatabaseId ===
         integration.evidence.repositoryDatabaseId &&
       (scopedClaims !== undefined ||
@@ -1618,8 +1657,12 @@ async function exactOctoberOriginalContributorProof(
   }
   requireThat(
     Date.parse(pulls[0]?.created_at ?? "") <
-      Date.parse(pulls[1]?.created_at ?? ""),
-    "October exact original must precede the accepted PR",
+      Date.parse(
+        scopedClaims
+          ? (pulls[1]?.merged_at ?? "")
+          : (pulls[1]?.created_at ?? ""),
+      ),
+    "October exact original must precede acceptance",
   );
   const mergeSha = acceptedPull.merge_commit_sha;
   const merge = await github.get<{
@@ -1664,9 +1707,21 @@ async function exactOctoberOriginalContributorProof(
       merge,
       [anchor.sha, ...(scopedClaims ?? []).map((claim) => claim.commitSha)],
     );
+  if (scopedClaims)
+    await authenticateOriginalFollowupParents(
+      github,
+      originalSource,
+      original.evidence,
+    );
   requireThat(
     scopedClaims
-      ? originalContributorClaimScope(originalSource, accepted, scopedClaims)
+      ? originalContributorClaimScope(
+          originalSource,
+          accepted,
+          scopedClaims,
+          [],
+          anchor.sha,
+        )
       : originalContributorPrecedesFollowups(
           { ...accepted, author: originalSource.author },
           accepted.author,
@@ -1768,6 +1823,10 @@ export async function octoberOriginalContributorUnitProof(
         followup.policy,
         claims.filter((claim) => claim.sourceId === converted.sourceId),
         (evidence) => nativeAcceptance.push(evidence),
+        {
+          anchorSha: proof.originalContributor.originalCommitSha,
+          origin: source.author!,
+        },
       ),
     );
     followupSources.push(converted);
@@ -1781,6 +1840,7 @@ export async function octoberOriginalContributorUnitProof(
         source: followup,
         binding: bindings[index],
       })),
+      proof.originalContributor.originalCommitSha,
     ),
     "Reviewed native unit has an unverified selected follow-up",
   );
@@ -2121,6 +2181,7 @@ export async function originalContributorFollowupProof(
     acceptedRange: NativeComparison[];
     retainedBaseRanges: NativeComparison[];
   }) => void,
+  scoped?: { anchorSha: string; origin: CorrectionActor },
 ): Promise<OriginalContributorFollowup> {
   const reference = evidence.relatedPullRequests.find(
     (target) =>
@@ -2224,6 +2285,7 @@ export async function originalContributorFollowupProof(
   } else {
     await authenticateOriginalFollowupParents(github, source, evidence);
   }
+  const ancestorSha = scoped?.anchorSha ?? accepted.headSha;
   const commits: OriginalContributorFollowup["commits"] = [];
   let total = 0;
   for (let page = 1; page === 1 || commits.length < total; page++) {
@@ -2235,13 +2297,13 @@ export async function originalContributorFollowupProof(
       merge_base_commit: { sha: string };
       commits: { sha: string; parents: { sha: string }[] }[];
     }>(
-      `/repos/${source.repository}/compare/${accepted.headSha}...${source.headSha}?per_page=100&page=${page}`,
+      `/repos/${source.repository}/compare/${ancestorSha}...${source.headSha}?per_page=100&page=${page}`,
     );
     requireThat(
       result &&
         result.status === "ahead" &&
         result.behind_by === 0 &&
-        result.merge_base_commit?.sha === accepted.headSha &&
+        result.merge_base_commit?.sha === ancestorSha &&
         Number.isSafeInteger(result.total_commits) &&
         result.total_commits > 0 &&
         result.ahead_by === result.total_commits &&
@@ -2273,11 +2335,11 @@ export async function originalContributorFollowupProof(
   }
   const binding = {
     sourceId: source.sourceId,
-    ancestorSha: accepted.headSha,
+    ancestorSha,
     commits,
   };
   requireThat(
-    isOriginalContributorFollowup(source, accepted, binding, claims),
+    isOriginalContributorFollowup(source, accepted, binding, claims, scoped),
     "Invalid accepted follow-up source",
   );
   return binding;
