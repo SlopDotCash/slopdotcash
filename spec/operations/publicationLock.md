@@ -60,13 +60,11 @@ pure def finish(l: Locks, id: int): Locks = val r = runOf(l, id)
   { ...withHolder(r.environment, 0, l), runs: setPhase(l, id, if (r.source == branchHead(l, r.environment)) Published else Superseded) }
 pure def canRunHealthJob(l: Locks, by: Actor): bool = by == HealthJob
 pure def runHealthJob(l: Locks, by: Actor): Locks = { ...l, healthRuns: l.healthRuns + 1 }
-pure def holders(l: Locks, environment: Environment): int = l.runs.foldl(0, (t, r) =>
-  if (r.environment == environment and r.phase == Holding) t + 1 else t)
-pure def alwaysOneHolderPerEnvironment(l: Locks): bool = holders(l, Production) <= 1 and holders(l, Staging) <= 1
-  and (l.production == 0 iff holders(l, Production) == 0) and (l.staging == 0 iff holders(l, Staging) == 0)
-  and (l.production > 0 implies runOf(l, l.production).phase == Holding and runOf(l, l.production).environment == Production)
-  and (l.staging > 0 implies runOf(l, l.staging).phase == Holding and runOf(l, l.staging).environment == Staging)
-pure def alwaysRunsWellFormed(l: Locks): bool = l.runs.every(r => r.id > 0 and runOf(l, r.id) == r
+pure def alwaysOneHolderPerEnvironment(l: Locks): bool =
+  l.runs.every(r => r.phase == Holding implies holder(l, r.environment) == r.id)
+    and (l.production > 0 implies runOf(l, l.production).phase == Holding and runOf(l, l.production).environment == Production)
+    and (l.staging > 0 implies runOf(l, l.staging).phase == Holding and runOf(l, l.staging).environment == Staging)
+pure def alwaysRunsWellFormed(l: Locks): bool = l.mainHead > 0 and l.developmentHead > 0 and l.runs.every(r => r.id > 0 and runOf(l, r.id) == r
   and r.source > 0 and r.source <= branchHead(l, r.environment))
 pure def stepHealthJobNeverLocks(before: Locks, via: str, after: Locks): bool =
   via == "runHealthJob" implies after.production == before.production and after.staging == before.staging and after.runs == before.runs
