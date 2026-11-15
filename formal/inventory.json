@@ -7371,12 +7371,12 @@
     },
     {
       "path": "workers/fee-converter/solana-expiry.ts",
-      "sha256": "f83c189758694048c045147134ddd34d82141109f67760f4dccf42d73edd4380",
+      "sha256": "039e4bd625340ac30844b48dfad082c5b04defd1b267499579ffedac1e515a07",
       "models": [
         "formal/models/fees/solana_expiry.qnt",
         "formal/models/payments/solana_history_retirement.qnt"
       ],
-      "candidateLines": [29, 57, 126, 139, 161],
+      "candidateLines": [29, 57, 127, 140, 162],
       "review": "mapped-abstraction"
     },
     {
