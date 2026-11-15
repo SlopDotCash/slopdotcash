@@ -1301,7 +1301,13 @@ export async function retainedCopyBindings(
         exactPaths++;
       }
     }
-    if (options.acceptedSubset && exactPaths === 0)
+    // A reference-only link discovers a source; without one exact copy it
+    // makes no retention claim that could hold the accepted PR.
+    if (
+      options.acceptedSubset &&
+      exactPaths === 0 &&
+      integrations.some(({ linkedOnly }) => !linkedOnly)
+    )
       for (const limitation of unmatched) limitations.add(limitation);
   }
   return { bindings, limitations: [...limitations].sort() };

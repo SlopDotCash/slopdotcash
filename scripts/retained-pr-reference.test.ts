@@ -465,6 +465,79 @@ for (const invalid of [
     );
   });
 
+/** The linked author closes #1 and a rewritten #2 that names it is merged.
+ * No edit of #1 is copied exactly, so #1 has no retained work in #2.
+ */
+function rewrittenLinkedSources(creator: "contributor" | "maintainer") {
+  const { original, copy, comment } = sources();
+  const author = original.evidence.pull.user;
+  original.evidence.comments = [];
+  original.evidence.pull.closed_at = "2026-10-02T09:30:00Z";
+  original.evidence.commits[0].author = author;
+  original.evidence.commitAttribution[0].actorNodeIds = [author.node_id];
+  if (creator === "contributor") copy.evidence.pull.user = author;
+  const sha = "7".repeat(40);
+  const rewritten = {
+    ...copy.evidence.files[0],
+    additions: 2,
+    patch:
+      "@@ -0,0 +1,2 @@\n+export const fixed = true;\n+export const reviewed = true;",
+    blob_url: `https://github.com/${repository.id}/blob/${sha}/fix.ts`,
+  };
+  copy.evidence.pull.head.sha = sha;
+  copy.evidence.commits[0] = { ...copy.evidence.commits[0], sha, author };
+  copy.evidence.files = [rewritten];
+  copy.evidence.commitAttribution[0] = {
+    ...copy.evidence.commitAttribution[0],
+    sha,
+    actorNodeIds: [author.node_id],
+    files: [rewritten],
+  };
+  copy.evidence.relatedPullRequests = [
+    {
+      id: original.evidence.pull.node_id,
+      number: original.evidence.pull.number,
+      url: original.evidence.pull.html_url,
+      repository: repository.id,
+    },
+  ];
+  return { original, copy, comment };
+}
+
+for (const creator of ["contributor", "maintainer"] as const)
+  test(`a linked reference without an exact copy does not hold the accepted PR (${creator} opened it)`, async () => {
+    const { original, copy } = rewrittenLinkedSources(creator);
+    const evidence = await prepareWorkUnitEvidence(
+      [original, copy],
+      [repository],
+    );
+    expect(evidence.limitations).toEqual([]);
+    expect(
+      evidence.claims.every((claim) => claim.retainedCopy === undefined),
+    ).toBe(true);
+    const retained = await retainedCopyBindings([original, copy], {
+      acceptedSubset: true,
+    });
+    expect(retained.bindings.size).toBe(0);
+    expect(retained.limitations).toEqual([]);
+  });
+
+test("an acknowledged source without an exact copy still holds the accepted PR", async () => {
+  const { original, copy, comment } = rewrittenLinkedSources("maintainer");
+  original.evidence.comments = [comment];
+  const limitation = `${original.evidence.pull.node_id}: retained ${original.evidence.commits[0].sha}:fix.ts has 0 exact copy bindings`;
+  const retained = await retainedCopyBindings([original, copy], {
+    acceptedSubset: true,
+  });
+  expect(retained.bindings.size).toBe(0);
+  expect(retained.limitations).toEqual([limitation]);
+  const evidence = await prepareWorkUnitEvidence(
+    [original, copy],
+    [repository],
+  );
+  expect(evidence.limitations).toContain(limitation);
+});
+
 test("October unlinked copies still require the eventual merger's exact rebase acknowledgement", async () => {
   const { original, copy, comment } = sources();
   original.evidence.commits[0].author = original.evidence.pull.user;
