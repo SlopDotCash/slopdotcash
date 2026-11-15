@@ -79,11 +79,23 @@ Each entry names one immutable actor and the UTC months it covers, from
 Entries for one actor never overlap. A revision may add an entry only from
 a month after the open month, and may close an entry only from a month after
 the open month; entries that already cover the open month or earlier keep
-those months.
+those months. The open month is the calendar UTC month of the observed
+clock: it advances only when the observed time reaches the next month's
+start, and a revision is accepted only while the clock is still inside the
+open month, so the registry can never lag the real month.
 
 ```quint
-type ExclusionRegistry = { project: str, openPeriod: int, revision: int, entries: List[Exclusion], history: List[List[Exclusion]] }
-pure val initial: ExclusionRegistry = { project: "eliza", openPeriod: 202611, revision: 1, entries: List(), history: List(List()) }
+type ExclusionRegistry = { project: str, now: int, openPeriod: int, revision: int, entries: List[Exclusion], history: List[List[Exclusion]] }
+pure val initial: ExclusionRegistry = { project: "eliza", now: 1793491200, openPeriod: 202611, revision: 1, entries: List(), history: List(List()) }
+pure def nextPeriod(period: int): int = if (period % 100 == 12) (period / 100 + 1) * 100 + 1 else period + 1
+pure def monthStart(period: int): int =
+  val month = period % 100
+  val year = period / 100 - (if (month <= 2) 1 else 0)
+  val era = year / 400
+  val yearOfEra = year - era * 400
+  val dayOfYear = (153 * (if (month > 2) month - 3 else month + 9) + 2) / 5
+  (era * 146097 + yearOfEra * 365 + yearOfEra / 4 - yearOfEra / 100 + dayOfYear - 719468) * 86400
+pure def clockInOpenMonth(r: ExclusionRegistry): bool = r.now >= monthStart(r.openPeriod) and r.now < monthStart(nextPeriod(r.openPeriod))
 pure def validPeriod(period: int): bool = period >= 200001 and period <= 999912 and period % 100 >= 1 and period % 100 <= 12
 pure def validEntry(e: Exclusion): bool = e.actor > 0 and validPeriod(e.fromPeriod) and (e.untilPeriod == 0 or (validPeriod(e.untilPeriod) and e.untilPeriod > e.fromPeriod))
 pure def overlapping(a: Exclusion, b: Exclusion): bool = a.actor == b.actor and
@@ -102,13 +114,17 @@ pure val novemberEmptyProjects = List("slopdotcash", "eliza", "thenetwork", "asi
 pure def novemberException(project: str, entries: List[Exclusion]): bool =
   novemberEmptyProjects.includes(project) implies not(entries.some(e => covers(e, 202611)))
 pure def canRevise(r: ExclusionRegistry, entries: List[Exclusion], by: str): bool =
-  by == "owner" and validList(entries) and novemberException(r.project, entries)
+  by == "owner" and clockInOpenMonth(r) and validList(entries) and novemberException(r.project, entries)
     and prospective(r.entries, entries, r.openPeriod)
 pure def revise(r: ExclusionRegistry, entries: List[Exclusion], by: str): ExclusionRegistry =
   { ...r, revision: r.revision + 1, entries: entries, history: r.history.append(entries) }
-pure def canOpenNextPeriod(r: ExclusionRegistry): bool = r.openPeriod % 100 >= 1
-pure def openNextPeriod(r: ExclusionRegistry): ExclusionRegistry =
-  { ...r, openPeriod: if (r.openPeriod % 100 == 12) (r.openPeriod / 100 + 1) * 100 + 1 else r.openPeriod + 1 }
+pure def canObserveClock(r: ExclusionRegistry, now: int): bool = now > r.now
+pure def observeClock(r: ExclusionRegistry, now: int): ExclusionRegistry = { ...r, now: now }
+pure def canOpenNextPeriod(r: ExclusionRegistry): bool = r.now >= monthStart(nextPeriod(r.openPeriod))
+pure def openNextPeriod(r: ExclusionRegistry): ExclusionRegistry = { ...r, openPeriod: nextPeriod(r.openPeriod) }
+pure val fair_openNextPeriod = "weak"
+pure def leadsToOpenMonthCurrent(r: ExclusionRegistry, later: ExclusionRegistry): bool =
+  canOpenNextPeriod(r) implies later.openPeriod > r.openPeriod
 ```
 
 ### Who is excluded in the open month or earlier never changes
@@ -117,6 +133,7 @@ pure def openNextPeriod(r: ExclusionRegistry): ExclusionRegistry =
 pure def lawRevisionKeepsPastMonths(previous: List[Exclusion], entries: List[Exclusion], openPeriod: int, actor: int, period: int): bool =
   (prospective(previous, entries, openPeriod) and period <= openPeriod) implies excludedIn(previous, actor, period) == excludedIn(entries, actor, period)
 pure def alwaysValidList(r: ExclusionRegistry): bool = validList(r.entries) and novemberException(r.project, r.entries)
+pure def alwaysOpenMonthNotAhead(r: ExclusionRegistry): bool = r.now >= monthStart(r.openPeriod)
 pure def stepHistoryAppendOnly(before: ExclusionRegistry, after: ExclusionRegistry): bool =
   after.history.length() >= before.history.length() and before.history.every(h => after.history.includes(h))
     and after.revision >= before.revision and after.openPeriod >= before.openPeriod
@@ -138,6 +155,7 @@ pure val openPeriodValues = Set(202611, 202612)
 pure val actorValues = Set(1, 2)
 pure val periodValues = Set(202611, 202612, 202701, 202702)
 pure val byValues = Set("owner", "anyone")
+pure val nowValues = Set(1793500000, 1796083200, 1798761600)
 pure val sValues = Set({ project: "eliza", period: 202612, digest: "d", coverage: CompleteCoverage,
   rows: List({ actor: 1, acceptedWork: List(10), participation: 30, recognition: 5 }, { actor: 2, acceptedWork: List(25), participation: 0, recognition: 0 },
     { actor: 3, acceptedWork: List(0), participation: 30, recognition: 0 }) })

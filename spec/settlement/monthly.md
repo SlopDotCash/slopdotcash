@@ -36,25 +36,28 @@ import payoutExclusions as X from "./payoutExclusions"
 type Role = ProjectOwner | Steward | RepositoryAdmin | Writer | NoRole
 type AuthorityFact = { actor: int, role: Role, banned: bool, revision: int }
 type Eligibility = { revision: int, active: bool, verifiedPool: bool, paused: bool, restricted: bool, retired: bool,
-  vaultRegistered: bool, networkServed: bool }
-type RevisionFact = { number: int, effectivePeriod: int, monthlyAmount: M::Amount, maximum: M::Amount }
+  vaultRegistered: bool, networkServed: bool, receiptPolicyActive: bool, monthlyPoolReward: bool }
+type RevisionFact = { number: int, effectivePeriod: int, monthlyAmount: M::Amount, maximum: M::Amount, rewardStartAt: int,
+  vault: str, asset: str, feePolicy: str, exclusions: List[X::Exclusion] }
 type MonthlyPhase = Unopened | Collecting | NoProposal | Proposed | Frozen | Funded | Completed
 type SkipReason = NoSkip | Unfunded | NotEligible | WindowPassed
 type Trigger = NoTrigger | OwnerTrigger | AutomaticTrigger
-type ObligationState = Created | Reserved | Paid
+type ObligationState = Created | Reserved | Paid | Conflicted
 type SourceKey = { project: str, period: int, actor: int }
 type Obligation = { actor: int, amount: M::Amount, source: SourceKey, progress: ObligationState }
 type BanExclusion = { actor: int, ban: int }
 type Monthly = { project: str, period: int, phase: MonthlyPhase, skip: SkipReason, now: int, automatic: bool, settingsSequence: int,
-  eligibility: Eligibility, revision: RevisionFact, cap: M::Amount, snapshotDigest: str, exclusions: List[X::Exclusion],
-  shares: List[A::Share], total: M::Amount, sequence: int, trigger: Trigger, frozenSequence: int,
+  eligibility: Eligibility, revision: RevisionFact, currentRevision: RevisionFact, cap: M::Amount, snapshotDigest: str,
+  exclusions: List[X::Exclusion], shares: List[A::Share], total: M::Amount, sequence: int, trigger: Trigger, frozenSequence: int, frozenBy: int,
   obligations: List[Obligation], banned: List[BanExclusion], underfundedNotice: bool, coordinatorRetries: int }
-pure val noRevision: RevisionFact = { number: 0, effectivePeriod: 0, monthlyAmount: M::zero, maximum: M::zero }
+pure val noRevision: RevisionFact = { number: 0, effectivePeriod: 0, monthlyAmount: M::zero, maximum: M::zero, rewardStartAt: 0,
+  vault: "", asset: "", feePolicy: "", exclusions: List() }
 pure val noEligibility: Eligibility = { revision: 0, active: false, verifiedPool: false, paused: false, restricted: false,
-  retired: false, vaultRegistered: false, networkServed: false }
+  retired: false, vaultRegistered: false, networkServed: false, receiptPolicyActive: false, monthlyPoolReward: false }
 pure val initial: Monthly = { project: "eliza", period: 0, phase: Unopened, skip: NoSkip, now: 1793491200, automatic: true,
-  settingsSequence: 0, eligibility: noEligibility, revision: noRevision, cap: M::zero, snapshotDigest: "", exclusions: List(),
-  shares: List(), total: M::zero, sequence: 0, trigger: NoTrigger, frozenSequence: 0, obligations: List(), banned: List(),
+  settingsSequence: 0, eligibility: noEligibility, revision: noRevision, currentRevision: noRevision, cap: M::zero,
+  snapshotDigest: "", exclusions: List(), shares: List(), total: M::zero, sequence: 0, trigger: NoTrigger, frozenSequence: 0,
+  frozenBy: 0, obligations: List(), banned: List(),
   underfundedNotice: false, coordinatorRetries: 0 }
 pure val firstAutomaticPeriod = 202611
 pure val cutoffSeconds = 259200
@@ -81,6 +84,9 @@ pure def observeClock(m: Monthly, now: int): Monthly = { ...m, now: now }
 pure def canObserveEligibility(m: Monthly, eligibility: Eligibility): bool =
   m.phase != Unopened and eligibility.revision >= m.eligibility.revision
 pure def observeEligibility(m: Monthly, eligibility: Eligibility): Monthly = { ...m, eligibility: eligibility }
+pure def canObserveRevision(m: Monthly, revision: RevisionFact): bool =
+  m.phase != Unopened and revision.number > 0 and revision.number >= m.currentRevision.number and revision != m.currentRevision
+pure def observeRevision(m: Monthly, revision: RevisionFact): Monthly = { ...m, currentRevision: revision }
 pure def canObserveSettings(m: Monthly, automatic: bool, settingsSequence: int): bool =
   m.phase != Unopened and settingsSequence > m.settingsSequence
 pure def observeSettings(m: Monthly, automatic: bool, settingsSequence: int): Monthly =
@@ -90,11 +96,14 @@ pure def observeSettings(m: Monthly, automatic: bool, settingsSequence: int): Mo
 ### The trusted workflow proposes in the first three days for an active, funded, verified project
 
 The proposal is stored once, during the first three UTC days after the month
-ends, for an active verified monthly-pool project that has a registered vault,
-whose escrow policy is effective for the month and whose monthly amount is
-positive. The pool equals that revision's monthly amount: unallocated funds
-never raise a later month. Weights come only from a complete accepted-work
-snapshot minus payout exclusions. A month with no weighted contributor gets
+ends, for an active verified monthly-pool project with an active receipt
+policy, a reward start before the month ends and a registered vault, whose
+escrow policy is effective for the month and whose monthly amount is
+positive. The revision used is the current one the month observed. The pool
+equals that revision's monthly amount: unallocated funds never raise a later
+month. Weights come only from a complete accepted-work snapshot minus that
+revision's own payout exclusion list; for the November 2026 exception
+projects that list covers nobody in 2026-11. A month with no weighted contributor gets
 an empty proposal that pays nothing. The shared allocator breaks equal
 remainders by permanent actor ID. A paused project gets no proposal; a later
 run inside the window proposes it once it is active again.
@@ -103,10 +112,12 @@ run inside the window proposes it once it is active again.
 pure def proposalWindowOpen(m: Monthly): bool = m.now >= monthEnd(m.period) and m.now < monthEnd(m.period) + proposalWindowSeconds
 pure def projectMayPropose(e: Eligibility, revision: RevisionFact): bool = e.revision == revision.number and e.revision > 0
   and e.active and e.verifiedPool and not(e.paused) and not(e.retired) and e.vaultRegistered
+  and e.receiptPolicyActive and e.monthlyPoolReward
 pure def canPropose(m: Monthly, snapshot: X::WorkSnapshot, exclusions: List[X::Exclusion], revision: RevisionFact): bool =
   val weights = X::rewardWeights(snapshot, exclusions)
-  m.phase == Collecting and proposalWindowOpen(m) and projectMayPropose(m.eligibility, revision)
-    and revision.effectivePeriod <= m.period and M::validAmount(revision.monthlyAmount) and M::positiveAmount(revision.monthlyAmount)
+  m.phase == Collecting and proposalWindowOpen(m) and revision == m.currentRevision and projectMayPropose(m.eligibility, revision)
+    and revision.rewardStartAt < monthEnd(m.period) and exclusions == revision.exclusions
+    and X::novemberException(m.project, exclusions) and revision.effectivePeriod <= m.period and M::validAmount(revision.monthlyAmount) and M::positiveAmount(revision.monthlyAmount)
     and M::withinMaximum(revision.monthlyAmount, revision.maximum)
     and X::usableSnapshot(snapshot, m.project, m.period)
     and (weights.length() == 0 or A::canCommitAllocation(revision.monthlyAmount, weights))
@@ -119,10 +130,16 @@ pure def propose(m: Monthly, snapshot: X::WorkSnapshot, exclusions: List[X::Excl
 
 ### A month that is not proposed in its window gets no proposal
 
+The reason comes from the current revision and eligibility the month
+observed: an eligible project with no positive monthly amount is unfunded;
+an inactive, paused or unregistered project is not eligible; an eligible
+funded project whose proposal never ran in the window, for example because
+its snapshot was incomplete, passed its window.
+
 ```quint
 pure def skipReason(m: Monthly): SkipReason =
-  if (not(M::positiveAmount(m.revision.monthlyAmount)) and m.eligibility.active) Unfunded
-  else if (not(m.eligibility.active) or m.eligibility.paused or not(m.eligibility.vaultRegistered)) NotEligible else WindowPassed
+  if (not(m.eligibility.active) or m.eligibility.paused or not(m.eligibility.vaultRegistered) or m.currentRevision.number == 0) NotEligible
+  else if (not(M::positiveAmount(m.currentRevision.monthlyAmount))) Unfunded else WindowPassed
 pure def canCloseProposalWindow(m: Monthly): bool = m.phase == Collecting and m.now >= monthEnd(m.period) + proposalWindowSeconds
 pure def closeProposalWindow(m: Monthly): Monthly = { ...m, phase: NoProposal, skip: skipReason(m) }
 ```
@@ -165,21 +182,26 @@ The owner path needs the same authority and current sequence. The automatic
 path needs the cutoff, the automatic default, a month from 2026-11 on, and a
 project that is not paused or restricted and whose vault network is served.
 Either path writes the single run record with its trigger and the sequence
-it froze. The automatic worker is weakly fair while its guard holds; a
+it froze; the owner path also records the acting account. Financial terms
+apply prospectively: neither path freezes once the project's vault, asset or
+fee policy differs from the revision that sized the proposal
+(`financial_policy_changed`). The automatic worker is weakly fair while its guard holds; a
 persistent outage violates that assumption and is surfaced operationally.
 
 ```quint
+pure def financialTermsSame(proposed: RevisionFact, observed: RevisionFact): bool =
+  proposed.vault == observed.vault and proposed.asset == observed.asset and proposed.feePolicy == observed.feePolicy
 pure def canFinalize(m: Monthly, expectedSequence: int, fact: AuthorityFact): bool =
-  m.phase == Proposed and manages(fact, m) and expectedSequence == m.sequence
+  m.phase == Proposed and manages(fact, m) and expectedSequence == m.sequence and financialTermsSame(m.revision, m.currentRevision)
 pure def finalize(m: Monthly, expectedSequence: int, fact: AuthorityFact): Monthly =
-  { ...m, phase: Frozen, trigger: OwnerTrigger, frozenSequence: m.sequence }
+  { ...m, phase: Frozen, trigger: OwnerTrigger, frozenSequence: m.sequence, frozenBy: fact.actor }
 pure def automaticMayFreeze(m: Monthly): bool = m.automatic and m.now >= cutoff(m) and m.period >= firstAutomaticPeriod
   and not(m.eligibility.paused) and not(m.eligibility.restricted) and m.eligibility.networkServed
-pure def canAutoFreeze(m: Monthly): bool = m.phase == Proposed and automaticMayFreeze(m)
+pure def canAutoFreeze(m: Monthly): bool = m.phase == Proposed and automaticMayFreeze(m) and financialTermsSame(m.revision, m.currentRevision)
 pure def autoFreeze(m: Monthly): Monthly = { ...m, phase: Frozen, trigger: AutomaticTrigger, frozenSequence: m.sequence }
 pure val fair_autoFreeze = "weak"
 pure def leadsToCutoffFrozen(m: Monthly, later: Monthly): bool =
-  canAutoFreeze(m) implies (later.phase != Proposed or not(automaticMayFreeze(later)))
+  canAutoFreeze(m) implies (later.phase != Proposed or not(canAutoFreeze(later)))
 ```
 
 ## Story: Create obligations only when the whole month is covered
@@ -225,7 +247,10 @@ the amount, so the contract refuses a second award for it whether it is
 committed by hand or as a monthly leaf. A reserved obligation waits without
 expiry until its contributor binds a wallet. A later ban or a project pause
 never removes a funded obligation. The month completes when every obligation
-is paid.
+is paid. A finalized award under an obligation's source key with another
+actor or gross (the owner can commit any source by hand on chain) makes the
+obligation conflicted (`award_conflict`): it can never be reserved or paid
+through this month, and the month cannot complete.
 
 ```quint
 type AwardFact = { source: SourceKey, actor: int, gross: M::Amount, paid: bool }
@@ -239,7 +264,16 @@ pure def recordReserved(m: Monthly, award: AwardFact): Monthly =
 pure def canRecordPaid(m: Monthly, award: AwardFact): bool =
   val o = obligationFor(m, award.actor)
   m.phase == Funded and o.actor > 0 and o.progress == Reserved and award.source == o.source and M::equalAmounts(award.gross, o.amount) and award.paid
+pure def obligationBySource(m: Monthly, source: SourceKey): Obligation =
+  m.obligations.select(o => o.source == source).nthOr(0, { actor: 0, amount: M::zero, source: keyFor(m, 0), progress: Created })
+pure def canRecordConflict(m: Monthly, award: AwardFact): bool =
+  val o = obligationBySource(m, award.source)
+  m.phase == Funded and o.actor > 0 and o.progress == Created and award.source == o.source
+    and not(award.actor == o.actor and M::equalAmounts(award.gross, o.amount))
+pure def recordConflict(m: Monthly, award: AwardFact): Monthly =
+  { ...m, obligations: m.obligations.listMap(o => if (o.source == award.source) { ...o, progress: Conflicted } else o) }
 pure def obligationActors(m: Monthly): List[int] = m.obligations.listMap(o => o.actor)
+pure def obligationTotal(m: Monthly): M::Amount = m.obligations.foldl(M::zero, (sum, o) => M::addAmounts(sum, o.amount))
 pure def createdTotal(m: Monthly): M::Amount =
   m.obligations.foldl(M::zero, (sum, o) => M::addAmounts(sum, if (o.progress == Created) o.amount else M::zero))
 pure def createdCount(m: Monthly): int = m.obligations.select(o => o.progress == Created).length()
@@ -282,6 +316,10 @@ pure def alwaysFrozenRecord(m: Monthly): bool =
   ((m.phase == Frozen or m.phase == Funded or m.phase == Completed) implies m.trigger != NoTrigger and m.frozenSequence == m.sequence)
     and (m.trigger == AutomaticTrigger implies m.period >= firstAutomaticPeriod)
     and ((m.phase == Unopened or m.phase == Collecting or m.phase == NoProposal or m.phase == Proposed) implies m.trigger == NoTrigger)
+    and ((m.trigger == OwnerTrigger) == (m.frozenBy > 0))
+pure def alwaysExclusionsFromRevision(m: Monthly): bool = proposedPhase(m.phase) implies
+  m.exclusions == m.revision.exclusions and X::novemberException(m.project, m.exclusions)
+    and m.revision.rewardStartAt < monthEnd(m.period)
 ```
 
 ### Frozen amounts, recorded triggers and obligation progress never move backwards
@@ -291,11 +329,12 @@ pure def frozenPhase(phase: MonthlyPhase): bool = phase == Frozen or phase == Fu
 pure def stepFrozenStable(before: Monthly, after: Monthly): bool = frozenPhase(before.phase) implies
   frozenPhase(after.phase) and after.total == before.total and after.shares == before.shares and after.trigger == before.trigger
     and after.frozenSequence == before.frozenSequence and after.snapshotDigest == before.snapshotDigest and after.cap == before.cap
-pure def rank(progress: ObligationState): int = if (progress == Created) 0 else if (progress == Reserved) 1 else 2
+pure def rank(progress: ObligationState): int = if (progress == Created) 0 else if (progress == Reserved or progress == Conflicted) 1 else 2
 pure def stepObligationsMonotone(before: Monthly, after: Monthly): bool =
   (before.obligations.length() > 0 implies after.obligations.length() == before.obligations.length())
     and before.obligations.every(o => after.obligations.some(n => n.actor == o.actor and n.amount == o.amount
-      and n.source == o.source and rank(n.progress) >= rank(o.progress)))
+      and n.source == o.source and rank(n.progress) >= rank(o.progress)
+      and ((o.progress == Conflicted) == (n.progress == Conflicted) or o.progress == Created)))
     and before.banned.every(b => after.banned.includes(b))
 pure def stepSequenceCounts(before: Monthly, via: str, after: Monthly): bool =
   if (via == "adjust") after.sequence == before.sequence + 1 else after.sequence == before.sequence
@@ -311,12 +350,17 @@ pure def sometimesWalletlessReserve(m: Monthly): bool = m.phase == Funded and m.
 pure def sometimesCompleted(m: Monthly): bool = m.phase == Completed and M::positiveAmount(m.total) and m.obligations.length() > 0
 pure def sometimesEmptyMonth(m: Monthly): bool = m.phase == Completed and m.shares.length() == 0
 pure def sometimesBanExcluded(m: Monthly): bool = m.phase == Funded and m.banned.length() > 0
+pure def sometimesConflicted(m: Monthly): bool = m.obligations.some(o => o.progress == Conflicted)
 pure def sometimesUnderfundedThenFunded(m: Monthly): bool = m.phase == Funded and m.underfundedNotice
 pure def sometimesAutomaticFreeze(m: Monthly): bool = m.trigger == AutomaticTrigger
 pure def sometimesOwnerAdjustedAndFinalized(m: Monthly): bool = m.trigger == OwnerTrigger and m.sequence > 0
 pure def sometimesAdjustAfterCutoffWithDefaultOff(m: Monthly): bool = m.phase == Proposed and m.sequence > 0 and not(m.automatic)
   and m.now >= cutoff(m)
 pure def sometimesSkipped(m: Monthly): bool = m.phase == NoProposal and m.skip == NotEligible
+pure def sometimesWindowPassed(m: Monthly): bool = m.phase == NoProposal and m.skip == WindowPassed
+pure def sometimesUnfunded(m: Monthly): bool = m.phase == NoProposal and m.skip == Unfunded
+pure def sometimesPolicyChangedBlocksFreeze(m: Monthly): bool = m.phase == Proposed and m.now >= cutoff(m) and m.automatic
+  and not(financialTermsSame(m.revision, m.currentRevision))
 pure def sometimesEarlierMonthNotAutomatic(m: Monthly): bool = m.period < firstAutomaticPeriod and m.phase == Proposed and m.now >= cutoff(m)
 ```
 
@@ -330,10 +374,13 @@ at 1796083200; its cutoff is 1796342400.
 pure val periodValues = Set(202611, 202610)
 pure val nowValues = Set(1793491300, 1796083300, 1796342400, 1796342600, 1796343000)
 pure val eligible: Eligibility = { revision: 1, active: true, verifiedPool: true, paused: false, restricted: false,
-  retired: false, vaultRegistered: true, networkServed: true }
+  retired: false, vaultRegistered: true, networkServed: true, receiptPolicyActive: true, monthlyPoolReward: true }
 pure val eligibilityValues = Set(eligible, { ...eligible, paused: true }, { ...eligible, revision: 2 })
-pure val revisionSample: RevisionFact = { number: 1, effectivePeriod: 202609, monthlyAmount: List(10), maximum: M::maxU128 }
-pure val revisionValues = Set(revisionSample, { ...revisionSample, monthlyAmount: List(0) }, { ...revisionSample, effectivePeriod: 202612 })
+pure val revisionSample: RevisionFact = { number: 1, effectivePeriod: 202609, monthlyAmount: List(10), maximum: M::maxU128,
+  rewardStartAt: 1790000000, vault: "vault", asset: "usdc", feePolicy: "v2", exclusions: List() }
+pure val revisionValues = Set(revisionSample, { ...revisionSample, monthlyAmount: List(0) }, { ...revisionSample, effectivePeriod: 202612 },
+  { ...revisionSample, number: 2, asset: "other" },
+  { ...revisionSample, exclusions: List({ actor: 3, relationship: X::RelatedParty, fromPeriod: 202610, untilPeriod: 0 }) })
 pure val snapshotSample: X::WorkSnapshot = { project: "eliza", period: 202611, digest: "d", coverage: X::CompleteCoverage,
   rows: List({ actor: 1, acceptedWork: List(10), participation: 30, recognition: 0 }, { actor: 2, acceptedWork: List(30), participation: 0, recognition: 5 },
     { actor: 3, acceptedWork: List(10), participation: 0, recognition: 0 }) }
@@ -358,8 +405,10 @@ pure val awardValues = Set(awardFact(1, List(2), false)).union(Set(awardFact(1, 
   .union(Set(awardFact(2, List(7), false))).union(Set(awardFact(2, List(7), true))).union(Set(awardFact(2, List(6), false)))
 pure val weight_observeClock = 6
 pure val weight_propose = 6
+pure val weight_observeRevision = 4
 pure val weight_adjust = 4
 pure val weight_createObligations = 6
 pure val weight_recordReserved = 6
 pure val weight_recordPaid = 6
+pure val weight_recordConflict = 3
 ```
