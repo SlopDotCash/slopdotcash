@@ -513,6 +513,68 @@ function alreadyAcceptedPromotion(
   });
 }
 
+/** A closed branch whose complete implementation is already present by SHA
+ * keeps ordinary Git attribution. It needs no inferred copied-edit identity.
+ */
+function alreadyAcceptedNative(
+  original: WorkUnitSource,
+  sources: readonly WorkUnitSource[],
+): boolean {
+  const evidence = original.evidence;
+  if (
+    evidence.pull.state !== "closed" ||
+    evidence.pull.merged_at !== null ||
+    evidence.indirectAcceptance ||
+    evidence.limitations.length ||
+    evidence.commits.length === 0 ||
+    new Set(evidence.commits.map((commit) => commit.sha)).size !==
+      evidence.commits.length ||
+    evidence.commits.length !== evidence.pull.commits ||
+    evidence.commitAttribution.length !== evidence.commits.length ||
+    evidence.commits.at(-1)?.sha !== evidence.pull.head.sha ||
+    evidence.commits.some((commit) => commit.parents.length !== 1)
+  )
+    return false;
+  return sources.some(({ evidence: accepted }) => {
+    if (
+      accepted.repositoryNodeId !== evidence.repositoryNodeId ||
+      accepted.pull.number <= evidence.pull.number ||
+      !accepted.pull.merged_at ||
+      accepted.limitations.length ||
+      !Number.isFinite(Date.parse(accepted.pull.merged_at))
+    )
+      return false;
+    return evidence.commits.every((commit) => {
+      const originalPaths = evidence.commitAttribution.filter(
+        (entry) => entry.sha === commit.sha,
+      );
+      const copies = accepted.commits.filter(
+        (entry) => entry.sha === commit.sha,
+      );
+      const acceptedPaths = accepted.commitAttribution.filter(
+        (entry) => entry.sha === commit.sha,
+      );
+      return (
+        copies.length === 1 &&
+        JSON.stringify(copies[0].parents) === JSON.stringify(commit.parents) &&
+        JSON.stringify(copies[0].author) === JSON.stringify(commit.author) &&
+        commit.author?.type === "User" &&
+        originalPaths.length === 1 &&
+        acceptedPaths.length === 1 &&
+        originalPaths[0].limitations.length === 0 &&
+        acceptedPaths[0].limitations.length === 0 &&
+        originalPaths[0].changedPaths !== null &&
+        originalPaths[0].files?.length ===
+          originalPaths[0].changedPaths.length &&
+        originalPaths[0].files.every((file) =>
+          originalPaths[0].changedPaths?.includes(file.filename),
+        ) &&
+        JSON.stringify(originalPaths[0]) === JSON.stringify(acceptedPaths[0])
+      );
+    });
+  });
+}
+
 /** A narrow conflict-copy proof. Full-index canonical patches identify each
  * resolved blob. A shared first parent preserves the original implementation
  * antecedent while the second parent may be a newer integration branch.
@@ -576,6 +638,8 @@ export async function retainedCopyBindings(
   >();
   const limitations = new Set<string>();
   for (const original of sources) {
+    if (options.acceptedSubset && alreadyAcceptedNative(original, sources))
+      continue;
     const integrations = await retainedCopySources(
       original,
       sources,
