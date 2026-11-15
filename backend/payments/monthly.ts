@@ -16,7 +16,6 @@
  * reserve the same award twice. Change records other than cuts stay internal
  * for dispute handling and reconciliation and are never published.
  */
-import { readBoundedJson } from "../../src/lib/browser-json";
 import {
   ESCROW_NETWORKS,
   type EscrowDeployment,
@@ -55,7 +54,6 @@ import {
   type D1TransactionalDatabase as D1Database,
   isConstraintFailure,
 } from "../d1";
-import { githubHeaders } from "../github";
 import {
   notifyMonthlyCut,
   notifyMonthlyUnderfunded,
@@ -65,9 +63,10 @@ import {
   PARTICIPATION_BAN_QUERY,
 } from "../projects/account-bans";
 import {
-  currentRepositoryPath,
-  type RepositoryFacts,
-  repositoryIdentityMatches,
+  manifestMatchesRepository,
+  type RepositoryAccessReader,
+  readRepositoryAccess,
+  setupAuthority,
 } from "../projects/setup";
 import { chainAwards, holdsAward } from "./chain-awards";
 import type {
@@ -105,7 +104,7 @@ type MonthlyAuthority = "maintainer" | "owner";
 export async function verifyProjectAuthority(
   project: ProjectDefinition,
   actor: GithubActor,
-  token?: string,
+  repositoryAccess: RepositoryAccessReader | undefined,
   level: MonthlyAuthority = "maintainer",
 ): Promise<boolean> {
   if (
@@ -117,49 +116,40 @@ export async function verifyProjectAuthority(
       "owner_required",
       "Only the current project steward can manage this project's awards.",
     );
-  async function github(path: string, label: string) {
-    const response = await fetch(`https://api.github.com/${path}`, {
-      headers: githubHeaders(token, "Slop-monthly-awards"),
-      // Workers support manual, not error; the status check below refuses redirects.
-      redirect: "manual",
-      signal: AbortSignal.timeout(30000),
-    });
-    if (!response.ok)
-      throw new MonthlyPaymentError(
-        503,
-        "github_unavailable",
-        "GitHub authority could not be checked. Retry.",
-      );
-    return readBoundedJson(response, 1048576, label);
-  }
-  const target = currentRepositoryPath(project.repositories[0]);
-  const identity = (await github(
-    `repos/${target}`,
-    "Project repository identity",
-  )) as RepositoryFacts;
-  if (!repositoryIdentityMatches(project, identity))
+  const checked = await readRepositoryAccess(repositoryAccess, project, actor);
+  const authority = setupAuthority(checked, actor, project.repositories[0].id);
+  if (authority.state === "retry")
     throw new MonthlyPaymentError(
-      409,
-      "repository_changed",
-      "The GitHub repository identity differs from the project policy.",
+      503,
+      "github_unavailable",
+      "GitHub authority could not be checked. Retry.",
     );
-  const permission = (await github(
-    `repos/${target}/collaborators/${encodeURIComponent(actor.githubLogin)}/permission`,
-    "GitHub owner authority",
-  )) as { permission?: string; user?: { id?: number } };
   if (
-    !permission.permission ||
-    !["admin", "maintain", "write"].includes(permission.permission) ||
-    String(permission.user?.id) !== actor.githubId
+    authority.state !== "verified" ||
+    checked.state !== "read" ||
+    checked.access.installation !== "installed"
   )
     throw new MonthlyPaymentError(
       403,
       "owner_required",
       "Current GitHub maintainer authority could not be verified.",
     );
+  const identity = checked.access.repository;
+  if (identity === undefined)
+    throw new MonthlyPaymentError(
+      503,
+      "github_unavailable",
+      "GitHub repository identity could not be checked. Retry.",
+    );
+  if (!manifestMatchesRepository(project, identity))
+    throw new MonthlyPaymentError(
+      409,
+      "repository_changed",
+      "The GitHub repository identity differs from the project policy.",
+    );
   const owner =
     actor.githubId === String(project.steward.github.actorId) ||
-    permission.permission === "admin";
+    checked.access.permission === "admin";
   if (level === "owner" && !owner)
     throw new MonthlyPaymentError(
       403,
