@@ -3493,17 +3493,17 @@
     },
     {
       "path": "scripts/collect-implementation-corrections.ts",
-      "sha256": "068a602dde91c154aee5a0607f90ef6d4afc1b3283a759ce32b53de327113d2e",
+      "sha256": "3e696fa29cbe149b942bfed474145d630d0f05cb930bfb0a43e66e71ce6a25b7",
       "models": [
         "formal/models/points/historical_discussion_evidence.qnt",
         "formal/models/points/historical_implementation_allocation.qnt"
       ],
       "candidateLines": [
-        4, 11, 13, 104, 184, 261, 267, 270, 275, 285, 301, 307, 323, 324, 334,
-        337, 434, 480, 501, 526, 572, 579, 695, 706, 871, 1201, 1224, 1233,
-        1390, 1446, 1505, 1511, 1512, 1515, 1555, 1557, 1561, 1807, 1851, 1856,
-        2207, 2209, 2216, 2227, 2405, 2407, 2411, 2546, 2950, 2961, 3251, 3842,
-        3901, 4092, 4206, 4226, 4255, 4257
+        4, 11, 13, 108, 188, 265, 271, 274, 279, 289, 305, 311, 327, 328, 338,
+        341, 438, 484, 505, 530, 576, 583, 699, 710, 875, 1228, 1251, 1260,
+        1417, 1473, 1532, 1538, 1539, 1542, 1582, 1584, 1588, 1834, 1878, 1883,
+        2234, 2236, 2243, 2254, 2432, 2434, 2438, 2573, 2977, 2988, 3278, 3869,
+        3928, 4119, 4233, 4253, 4282, 4284
       ],
       "review": "mapped-abstraction"
     },
@@ -5088,7 +5088,7 @@
     },
     {
       "path": "src/FundingStatus.tsx",
-      "sha256": "1bff39e6c7fba5566228d733e88e0002b21d0056de44066de14fab5c3c45d64c",
+      "sha256": "4167cd53d85c2cf4665c2ce46ded23ddec1e0c56ca29548194304cc1e40eeffe",
       "models": ["formal/models/ui/ui_record_display.qnt"],
       "candidateLines": [],
       "review": "mapped-abstraction",
@@ -5191,7 +5191,7 @@
     },
     {
       "path": "src/OwnerAwards.tsx",
-      "sha256": "3e62b652f1ac51297436959ebd6f28fa96466bbe598016672401aed9e681ae6e",
+      "sha256": "1490f51ca746b8b1860f6beac5f9bdac3b96715d5865931f6a4f7cda5526cb22",
       "models": [
         "formal/models/ui/ui_calendar_views.qnt",
         "formal/models/ui/ui_explicit_signout.qnt",
@@ -5201,9 +5201,9 @@
         "formal/models/ui/ui_transaction.qnt"
       ],
       "candidateLines": [
-        6, 9, 71, 104, 106, 109, 116, 117, 125, 126, 137, 140, 141, 142, 143,
-        144, 147, 148, 198, 258, 260, 268, 286, 287, 381, 406, 453, 476, 486,
-        542, 565, 600, 619, 740, 741, 770, 771, 775, 780, 786, 803
+        6, 9, 72, 105, 107, 110, 117, 118, 126, 127, 138, 141, 142, 143, 144,
+        145, 148, 149, 199, 259, 261, 269, 287, 288, 382, 407, 454, 477, 487,
+        543, 566, 601, 620, 741, 742, 771, 772, 776, 781, 787, 804
       ],
       "review": "mapped-abstraction"
     },
@@ -5386,7 +5386,7 @@
     },
     {
       "path": "src/Presentation.tsx",
-      "sha256": "85625ee969a4c427e274998d070b812276386608a0ea5cccf0cf6dcdaa5f4483",
+      "sha256": "41484669dd1a876590b46046d6f01505225424e5ad7c83a1ea30a0eb50b64e81",
       "models": [
         "formal/models/ui/ui_document_head.qnt",
         "formal/models/ui/ui_navigation.qnt",
@@ -5394,9 +5394,9 @@
         "formal/models/ui/ui_record_deadlines.qnt"
       ],
       "candidateLines": [
-        2, 43, 45, 170, 232, 233, 235, 236, 238, 240, 245, 250, 251, 257, 259,
-        261, 262, 263, 269, 271, 273, 351, 432, 442, 443, 448, 462, 464, 469,
-        472, 476, 484, 488, 507, 595, 603, 607, 611, 613, 621, 623, 720
+        2, 47, 49, 174, 236, 237, 239, 240, 242, 244, 249, 254, 255, 261, 263,
+        265, 266, 267, 273, 275, 277, 355, 436, 446, 447, 452, 466, 468, 473,
+        476, 480, 488, 492, 511, 599, 607, 611, 615, 617, 625, 627, 724
       ],
       "review": "mapped-abstraction"
     },
