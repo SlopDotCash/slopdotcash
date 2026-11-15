@@ -7,7 +7,7 @@ export interface EvidenceClient {
   get<T>(path: string): Promise<T | null>;
   /** Invocation-local sharing of byte-identical immutable evidence text. */
   internText?(text: string): string;
-  /** Private verifier-provided immutable text bytes, never uploaded source. */
+  /** Private verifier-provided immutable file bytes, never uploaded source. */
   verifiedFile?(
     repository: string,
     ref: string,
