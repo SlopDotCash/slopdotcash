@@ -1028,3 +1028,26 @@ The registry discovery includes ordinary `escrow.deployments` and private
 bounty `securityBounty.settlement.deployments`. Both supply fee assets and
 vaults. A bounty-only project does not need an ordinary vault or reward token
 entry for its fees to be claimed and converted.
+
+### Bind the public Solana recovery pair
+
+The main release workflow accepts `rotate_solana_rpc_from`, the exact active
+fee-worker version UUID. Run it only after that same main revision has been
+published normally. It keeps Solana disabled, verifies the existing Solana
+fee key binding and a quiet Solana fee journal, and replays the reviewed
+211-block public recovery witness with 15-second requests.
+
+It then uploads a version-bound pair of endpoint secrets. `RPC_URL_SOLANA`
+uses `https://api.mainnet-beta.solana.com` and `SOLANA_RECOVERY_RPC_URL` uses
+`https://public.rpc.solanavibestation.com`. Other secret bindings are inherited.
+The old Worker version retains its prior bindings. Code, runtime, nonsecret
+settings and every other binding must match before the candidate can receive
+100% traffic. The same pinned active version and journal are checked again
+before promotion. Normal releases preserve both RPC rotation lineages and
+refuse an unpromoted candidate with a different lineage.
+
+The uploaded witness artifact contains public blocks and a synthetic absent
+identifier. It contains no signed transaction or credential. Successful
+binding changes do not activate Solana processing. Activation remains a
+separate reviewed network-list change after key, gas, vault and runtime
+readiness checks.
