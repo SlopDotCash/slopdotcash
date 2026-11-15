@@ -31,6 +31,7 @@ import {
   type ValueContextSelection,
 } from "../workers/slopbot/value-context";
 import {
+  type CompleteValueReferenceDiscussion,
   collectValueEvidence,
   collectValueReferenceEvidence,
 } from "../workers/slopbot/value-evidence";
@@ -46,6 +47,7 @@ import {
 } from "../workers/slopbot/value-work-unit-consumption";
 import type { workUnitHistory } from "../workers/slopbot/value-work-unit-journal";
 import type { WorkUnitSource } from "../workers/slopbot/value-work-unit-types";
+import type { ValueReferenceDiscussionSource } from "./historical-discussion-evidence";
 import {
   RetainedAttributionIncompleteError,
   retainedCommitCreditSources,
@@ -449,7 +451,12 @@ export interface ValueInputProgress {
 }
 
 export async function loadValueInputs(
-  github: Pick<GitHubClient, "get" | "graphql" | "fileText">,
+  github: Pick<GitHubClient, "get" | "graphql" | "fileText"> & {
+    readReferenceDiscussion?: (
+      source: ValueReferenceDiscussionSource,
+      pull: Pull,
+    ) => Promise<CompleteValueReferenceDiscussion | null>;
+  },
   outcomes: readonly AttributionOutcome[],
   transport: Fetch = fetch,
   unavailableJointSources?: (
@@ -678,7 +685,8 @@ export async function loadValueInputs(
     outcome: (typeof outcomes)[number],
     repositoryId: string,
   ) {
-    if (!outcome.mergedAt) return;
+    const mergedAt = outcome.mergedAt;
+    if (!mergedAt) return;
     // Every branch credits primary authors. Read retained-copy evidence only
     // for known ordinary unlinked commits first accepted by this PR; a later
     // promotion cannot trigger another attribution pass for imported work.
@@ -696,21 +704,44 @@ export async function loadValueInputs(
         .map((commit) => commit.oid),
     );
     if (eligibleCommitShas.size === 0) return;
-    await repositoryIdentity(repositoryId);
+    const { identity } = await repositoryIdentity(repositoryId);
+    const assertAttributionSource = (pull: Pull) => {
+      if (
+        pull.node_id !== outcome.id ||
+        pull.number !== outcome.number ||
+        pull.html_url !== outcome.url ||
+        pull.head.sha !== outcome.headRefOid ||
+        pull.merged_at !== mergedAt ||
+        Date.parse(pull.updated_at) !== Date.parse(outcome.updatedAt)
+      )
+        throw new Error("Attribution source changed after the outcome census");
+    };
+    const readReferenceDiscussion = github.readReferenceDiscussion;
     const discovery = await collectValueReferenceEvidence(
       github,
       repositoryId,
       outcome.number,
+      readReferenceDiscussion
+        ? (pull) => {
+            assertAttributionSource(pull);
+            const headSha = outcome.headRefOid;
+            if (!headSha) return Promise.resolve(null);
+            return readReferenceDiscussion(
+              {
+                repository: repositoryId,
+                repositoryNodeId: identity.node_id,
+                id: outcome.id,
+                number: outcome.number,
+                url: outcome.url,
+                headSha,
+                mergedAt,
+              },
+              pull,
+            );
+          }
+        : undefined,
     );
-    if (
-      discovery.pull.node_id !== outcome.id ||
-      discovery.pull.number !== outcome.number ||
-      discovery.pull.html_url !== outcome.url ||
-      discovery.pull.head.sha !== outcome.headRefOid ||
-      discovery.pull.merged_at !== outcome.mergedAt ||
-      Date.parse(discovery.pull.updated_at) !== Date.parse(outcome.updatedAt)
-    )
-      throw new Error("Attribution source changed after the outcome census");
+    assertAttributionSource(discovery.pull);
     if (discovery.limitations.length) {
       implementationAttributionHolds.set(outcome.id, discovery.limitations);
       return;

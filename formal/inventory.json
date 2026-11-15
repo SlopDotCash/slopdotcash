@@ -3842,9 +3842,10 @@
     },
     {
       "path": "scripts/generate-leaderboard.ts",
-      "sha256": "91125d6d6bb1bfa52d585f45fa2c9391e74ab73bbc9a599e05b25e363f0e7a57",
+      "sha256": "84b450c854e49ab7ffa618f0ad1c505b0f6bbe5fab35ebcf225bde951a69680b",
       "models": [
         "formal/models/points/commit_line_cache.qnt",
+        "formal/models/points/fresh_discussion_evidence.qnt",
         "formal/models/points/github_budget_window.qnt",
         "formal/models/points/github_census.qnt",
         "formal/models/points/implementation_credit.qnt",
@@ -3854,15 +3855,15 @@
         "formal/models/ui/ui_score_selection.qnt"
       ],
       "candidateLines": [
-        29, 184, 195, 204, 284, 296, 298, 301, 495, 583, 604, 640, 671, 736,
-        768, 858, 891, 900, 909, 928, 1018, 1214, 1449, 1511, 1519, 1577, 1630,
-        1633, 1826, 1835, 1840, 1847, 1930, 1931, 2078, 2079, 2136, 2162, 2190,
-        2192, 2196, 2230, 2233, 2234, 2237, 2239, 2250, 2277, 2486, 2489, 2738,
-        2858, 2979, 2992, 3003, 3004, 3191, 3192, 3383, 3399, 3411, 3418, 3444,
-        3454, 3458, 3462, 3466, 3521, 3540, 3567, 3584, 3618, 3619, 3621, 3637,
-        3654, 3655, 3656, 3665, 3670, 3850, 4208, 4230, 4239, 4289, 4324, 4330,
-        4337, 4406, 4492, 4650, 4890, 4900, 4902, 4915, 4946, 4948, 4949, 4953,
-        4957, 5013, 5067, 5118, 5121, 5157
+        35, 190, 201, 210, 290, 302, 304, 307, 505, 593, 614, 650, 681, 746,
+        778, 868, 901, 910, 919, 938, 1028, 1224, 1459, 1521, 1529, 1587, 1640,
+        1643, 1836, 1845, 1850, 1857, 1940, 1941, 2107, 2108, 2191, 2224, 2252,
+        2254, 2258, 2268, 2270, 2282, 2292, 2302, 2327, 2330, 2331, 2334, 2336,
+        2361, 2413, 2624, 2627, 2876, 2996, 3117, 3130, 3141, 3142, 3329, 3330,
+        3521, 3537, 3549, 3556, 3582, 3592, 3596, 3600, 3604, 3659, 3678, 3705,
+        3722, 3756, 3757, 3759, 3775, 3792, 3793, 3794, 3803, 3808, 3988, 4346,
+        4368, 4377, 4427, 4462, 4468, 4475, 4544, 4630, 4788, 5043, 5053, 5055,
+        5068, 5099, 5101, 5102, 5106, 5110, 5166, 5220, 5271, 5274, 5310
       ],
       "review": "mapped-abstraction"
     },
@@ -3926,6 +3927,13 @@
       "sha256": "96cd3b41a85caf5442d3fa7e84a52a7af67048307bdc30e53bfebc6145c8f85f",
       "models": ["formal/models/points/ingestion_retry.qnt"],
       "candidateLines": [],
+      "review": "mapped-abstraction"
+    },
+    {
+      "path": "scripts/historical-discussion-evidence.ts",
+      "sha256": "775b0fecfa0ec23199522eca53b257000ff59e67653037706e598ad72e84c4be",
+      "models": ["formal/models/points/fresh_discussion_evidence.qnt"],
+      "candidateLines": [9, 148, 149],
       "review": "mapped-abstraction"
     },
     {
@@ -4689,16 +4697,17 @@
     },
     {
       "path": "scripts/value-ingestion.ts",
-      "sha256": "ae5193c9905211b71957315479e127cb507d69aa0ae56cf69d317005ce7e5034",
+      "sha256": "aca21bef34e09755738dad34164e36c640ba68411231a5f850118d4cb1cb791f",
       "models": [
+        "formal/models/points/fresh_discussion_evidence.qnt",
         "formal/models/points/implementation_credit.qnt",
         "formal/models/points/implementation_credit_gate.qnt",
         "formal/models/slopbot/value_feed_deadline.qnt",
         "formal/models/slopbot/value_ingestion.qnt"
       ],
       "candidateLines": [
-        66, 77, 124, 125, 126, 127, 129, 130, 197, 198, 199, 201, 202, 737, 757,
-        879, 915, 954, 978
+        68, 79, 126, 127, 128, 129, 131, 132, 199, 200, 201, 203, 204, 768, 788,
+        910, 946, 985, 1009
       ],
       "review": "mapped-abstraction"
     },
@@ -8508,12 +8517,15 @@
     },
     {
       "path": "workers/slopbot/value-evidence.ts",
-      "sha256": "3622e480334ddfdc8a5a774a712fe83d5a8e2d21145ce367f5d1854c04a30a28",
+      "sha256": "377760084401d38301f40347da22389ad9b09679b4b7db1a534796a805380fad",
       "models": [
+        "formal/models/points/fresh_discussion_evidence.qnt",
         "formal/models/slopbot/bot_evidence_integrity.qnt",
         "formal/models/slopbot/bot_value_dispute_actor.qnt"
       ],
-      "candidateLines": [61, 72, 81, 95, 559, 579, 622, 631, 650, 991, 1010],
+      "candidateLines": [
+        61, 72, 81, 95, 420, 421, 612, 632, 675, 684, 703, 1044, 1063
+      ],
       "review": "mapped-abstraction"
     },
     {
@@ -13511,6 +13523,23 @@
         "laterFailureDiscardsStagedTest",
         "oldCacheSurvivesFailureTest",
         "partialLoadNotPublishedTest"
+      ]
+    },
+    {
+      "path": "formal/models/points/fresh_discussion_evidence.qnt",
+      "sha256": "9c8f20fdb4fe8315135607d9c966f3e8de63a8546c441f3a9331fe5cff000f2d",
+      "sources": [
+        "scripts/generate-leaderboard.ts",
+        "scripts/historical-discussion-evidence.ts",
+        "scripts/value-ingestion.ts",
+        "workers/slopbot/value-evidence.ts"
+      ],
+      "scenarios": [
+        "completeProbeTest",
+        "keepRequiredTimelinePointTest",
+        "probePreservesFallbackTest",
+        "quotaCheckpointDoesNotDiscoverTest",
+        "untrustedClientUsesRestTest"
       ]
     },
     {

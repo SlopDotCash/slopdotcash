@@ -1,12 +1,14 @@
 import { expect, test } from "bun:test";
 import { findRegisteredRepositoryById } from "../src/lib/repositories.mjs";
 import { fixture, repository } from "../tests/value-binary-fixture";
+import { validateHistoricalDiscussion } from "./historical-discussion-evidence";
 import { loadValueInputs, type ValueInputProgress } from "./value-ingestion";
 
 function candidate(
   failure: "proof" | "transport" | "identity",
   baseRefName = "main",
   related = true,
+  countedDiscussion = false,
 ) {
   const f = fixture({ textOnly: true, direct: true });
   const target = findRegisteredRepositoryById("SlopDotCash/asi");
@@ -14,6 +16,25 @@ function candidate(
   const originalId = "PR_original";
   const acceptedId = "PR_accepted";
   const reads: string[] = [];
+  const timeline = (number: number) =>
+    number === 2 && related
+      ? [
+          {
+            source: {
+              __typename: "PullRequest",
+              id: originalId,
+              number: 1,
+              url: `https://github.com/${target.id}/pull/1`,
+              repository: { nameWithOwner: target.id, isPrivate: false },
+            },
+          },
+        ]
+      : [];
+  const page = <T>(nodes: T[]) => ({
+    nodes,
+    totalCount: nodes.length,
+    pageInfo: { hasNextPage: false, endCursor: null },
+  });
   const remap = <T>(value: T): T =>
     JSON.parse(
       JSON.stringify(value)
@@ -64,30 +85,45 @@ function candidate(
         repository: {
           pullRequest: {
             id: number === 1 ? originalId : acceptedId,
-            timelineItems: {
-              nodes:
-                number === 2 && related
-                  ? [
-                      {
-                        source: {
-                          __typename: "PullRequest",
-                          id: originalId,
-                          number: 1,
-                          url: `https://github.com/${target.id}/pull/1`,
-                          repository: {
-                            nameWithOwner: target.id,
-                            isPrivate: false,
-                          },
-                        },
-                      },
-                    ]
-                  : [],
-              pageInfo: { hasNextPage: false, endCursor: null },
-            },
+            timelineItems: page(timeline(number)),
           },
         },
       } as T;
     },
+    readReferenceDiscussion: countedDiscussion
+      ? async (
+          source: Parameters<typeof validateHistoricalDiscussion>[1],
+          pull: Parameters<typeof validateHistoricalDiscussion>[2],
+        ) => {
+          const verified = validateHistoricalDiscussion(
+            {
+              repository: {
+                id: target.expectedNodeId,
+                isPrivate: false,
+                nameWithOwner: target.id,
+                pullRequest: {
+                  id: acceptedId,
+                  number: 2,
+                  url: `https://github.com/${target.id}/pull/2`,
+                  state: "MERGED",
+                  headRefOid: f.pull.head.sha,
+                  mergedAt: f.pull.merged_at,
+                  updatedAt: f.pull.updated_at,
+                  body: f.pull.body,
+                  comments: page([]),
+                  reviewThreads: page([]),
+                  timelineItems: page(timeline(2)),
+                },
+              },
+            },
+            source,
+            pull,
+          );
+          if (!verified) throw new Error("Fixture discussion was not verified");
+          reads.push("counted discussion");
+          return verified;
+        }
+      : undefined,
   };
   const transport = Object.assign(
     async () => {
@@ -129,6 +165,28 @@ test("unproven retained work becomes a source-specific attribution hold", async 
   ).toBeGreaterThan(0);
   expect(result.retainedCommitAuthors.size).toBe(0);
   expect(result.valueDecisions.size).toBe(0);
+});
+
+test("counted discovery still requires the full retained-copy proof", async () => {
+  const previous = candidate("proof");
+  const optimized = candidate("proof", "main", true, true);
+  const before = await previous.run();
+  const after = await optimized.run();
+  expect(optimized.reads).toContain("counted discussion");
+  expect(after.retainedCommitAuthors).toEqual(before.retainedCommitAuthors);
+  expect(after.implementationAttributionHolds).toEqual(
+    before.implementationAttributionHolds,
+  );
+  expect(after.implementationAttributionHolds.has(optimized.acceptedId)).toBe(
+    true,
+  );
+  expect(
+    optimized.reads.filter((path) =>
+      /\/(?:files|commits)(?:\/|\?)/u.test(path),
+    ),
+  ).toEqual(
+    previous.reads.filter((path) => /\/(?:files|commits)(?:\/|\?)/u.test(path)),
+  );
 });
 
 test("transport failures do not become successful attribution holds", async () => {
