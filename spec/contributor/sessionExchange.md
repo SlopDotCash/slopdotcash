@@ -14,7 +14,12 @@ completes the provider flow, read by the identity Worker from GitHub `/user`;
 request metadata never chooses that identity. The model carries phases,
 server-fixed lifetimes and immutable references, never assertions, tokens or
 poll capabilities. The run row that the create request reaches is the
-[server trace run](./traceServer.md); this unit sees its reply.
+[server trace run](./traceServer.md); this unit sees its reply. Server-side
+facts have fixed senders that no client can present: the identity Worker
+(`identityWorker`: flow start, rate limiting, callback, poll answers and
+purge), the trace API (`traceApi`: assertion verdict, bearer signing and run
+creation), the standing service (`standingService`) and the clock
+(`clockService`). The client's own steps carry no sender.
 
 ## Story: Exchange one fresh assertion for a private-use session
 
@@ -22,8 +27,11 @@ poll capabilities. The run row that the create request reaches is the
 
 The identity Worker fixes every lifetime: a five-minute flow, a 90-second
 assertion and a ten-minute contributor session. Start commit and response are
-separate. Starts and polls are rate limited (12 starts and 120 polls per
-minute per client digest); a limited start ends the invocation. A valid reply
+separate. The identity Worker rate limits starts and polls per client
+digest (`workers/identity/index.ts`: 12 starts and 120 polls per window);
+the counting spans invocations and is shell conformance, and this machine
+sees only the Worker's verdict. A limited start ends the invocation and a
+limited poll fails it. A valid reply
 presents the exact trusted browser URL. Poll sleeps use the server delay from
 one to ten seconds, never below the initial delay. The deadline is checked
 before waiting; the clock may cross it before the request arrives. The server
@@ -49,28 +57,32 @@ type CreateKind = NoCreate | RowCreated | RowExisting | RowConflict | RowBanned
 type CreateAnswer = { kind: CreateKind, row: RunLookup }
 type Exchange = { phase: ExchangePhase, now: int, attempt: int, flowExpires: int, assertionIssuedAt: int, assertionExpires: int,
   bearerIssuedAt: int, bearerExpires: int, initialDelay: int, retryDelay: int, actor: int, key: str, flow: FlowStatus,
-  poll: PollResult, displayed: bool, assertionConsumed: bool, minted: bool, role: Role, banned: bool,
+  poll: PollResult, displayed: bool, assertionConsumed: bool, minted: bool, role: Role, banned: bool, standingEpoch: int,
   created: CreateKind, snapshot: RunLookup, result: Outcome }
+pure val identityWorker = -1
+pure val traceApi = -2
+pure val standingService = -3
+pure val clockService = -4
 pure val flowLifetime = 300
 pure val assertionLifetime = 90
 pure val bearerLifetime = 600
 pure val noLookup: RunLookup = { serverId: "", status: NoRow }
 pure val initial: Exchange = { phase: Idle, now: 0, attempt: 0, flowExpires: 0, assertionIssuedAt: 0, assertionExpires: 0,
   bearerIssuedAt: 0, bearerExpires: 0, initialDelay: 1, retryDelay: 1, actor: 0, key: "", flow: FlowNone,
-  poll: NoPoll, displayed: false, assertionConsumed: false, minted: false, role: NoRole, banned: false,
+  poll: NoPoll, displayed: false, assertionConsumed: false, minted: false, role: NoRole, banned: false, standingEpoch: 0,
   created: NoCreate, snapshot: noLookup, result: Pending }
 pure def complete(result: Outcome, e: Exchange): Exchange = { ...e, phase: Done, result: result }
 pure def canBegin(e: Exchange, attempt: int, key: str): bool = (e.phase == Idle or e.phase == Done)
   and attempt > e.attempt and attempt > 0 and key != ""
 pure def begin(e: Exchange, attempt: int, key: str): Exchange =
-  { ...initial, phase: Starting, now: e.now, attempt: attempt, key: key, banned: e.banned }
-pure def canObserveTime(e: Exchange, time: int): bool = time >= e.now and time <= 9007199254740000
-pure def observeTime(e: Exchange, time: int): Exchange = { ...e, now: time }
-pure def canAcceptStart(e: Exchange, delay: int): bool = e.phase == Starting and 1 <= delay and delay <= 10
-pure def acceptStart(e: Exchange, delay: int): Exchange = { ...e, phase: StartReply, flow: FlowPending,
+  { ...initial, phase: Starting, now: e.now, attempt: attempt, key: key, standingEpoch: e.standingEpoch }
+pure def canObserveTime(e: Exchange, by: int, time: int): bool = by == clockService and time >= e.now and time <= 9007199254740000
+pure def observeTime(e: Exchange, by: int, time: int): Exchange = { ...e, now: time }
+pure def canAcceptStart(e: Exchange, by: int, delay: int): bool = by == identityWorker and e.phase == Starting and 1 <= delay and delay <= 10
+pure def acceptStart(e: Exchange, by: int, delay: int): Exchange = { ...e, phase: StartReply, flow: FlowPending,
   flowExpires: e.now + flowLifetime, initialDelay: delay, retryDelay: delay }
-pure def canLimitStart(e: Exchange): bool = e.phase == Starting
-pure def limitStart(e: Exchange): Exchange = complete(StartLimited, e)
+pure def canLimitStart(e: Exchange, by: int): bool = by == identityWorker and e.phase == Starting
+pure def limitStart(e: Exchange, by: int): Exchange = complete(StartLimited, e)
 pure def canReceiveStart(e: Exchange, attempt: int): bool = e.phase == StartReply and attempt == e.attempt
 pure def receiveStart(e: Exchange, attempt: int, valid: bool): Exchange =
   if (valid) { ...e, phase: Waiting, displayed: true } else complete(StartError, e)
@@ -78,21 +90,24 @@ pure def receiveStart(e: Exchange, attempt: int, valid: bool): Exchange =
 
 ### The provider callback is claimed once and either completes or fails terminally
 
+The identity Worker claims the callback, reads the numeric actor from GitHub
+`/user` and completes the flow, or marks it failed.
+
 ```quint
-pure def canBeginCallback(e: Exchange): bool = e.displayed and e.flow == FlowPending and e.now < e.flowExpires
-pure def beginCallback(e: Exchange): Exchange = { ...e, flow: CallbackProcessing }
-pure def canCompleteCallback(e: Exchange, actor: int): bool = e.flow == CallbackProcessing and actor > 0
-pure def completeCallback(e: Exchange, actor: int): Exchange = { ...e, flow: CallbackComplete, actor: actor }
-pure def canFailCallback(e: Exchange): bool = e.flow == CallbackProcessing
-pure def failCallback(e: Exchange): Exchange = { ...e, flow: CallbackFailed }
-pure def canPurgeExpired(e: Exchange): bool = e.flow != FlowNone and e.flow != FlowPurged and e.now >= e.flowExpires
-  and not(e.flow == AssertionIssued and e.now < e.assertionExpires)
-pure def purgeExpired(e: Exchange): Exchange = { ...e, flow: FlowPurged }
+pure def canBeginCallback(e: Exchange, by: int): bool = by == identityWorker and e.displayed and e.flow == FlowPending and e.now < e.flowExpires
+pure def beginCallback(e: Exchange, by: int): Exchange = { ...e, flow: CallbackProcessing }
+pure def canCompleteCallback(e: Exchange, by: int, actor: int): bool = by == identityWorker and e.flow == CallbackProcessing and actor > 0
+pure def completeCallback(e: Exchange, by: int, actor: int): Exchange = { ...e, flow: CallbackComplete, actor: actor }
+pure def canFailCallback(e: Exchange, by: int): bool = by == identityWorker and e.flow == CallbackProcessing
+pure def failCallback(e: Exchange, by: int): Exchange = { ...e, flow: CallbackFailed }
+pure def canPurgeExpired(e: Exchange, by: int): bool = by == identityWorker and e.flow != FlowNone and e.flow != FlowPurged
+  and e.now >= e.flowExpires and not(e.flow == AssertionIssued and e.now < e.assertionExpires)
+pure def purgeExpired(e: Exchange, by: int): Exchange = { ...e, flow: FlowPurged }
 pure def canWaitPoll(e: Exchange): bool = e.phase == Waiting and e.now <= 9007199254740000
 pure def waitPoll(e: Exchange): Exchange = if (e.now >= e.flowExpires) complete(FlowTimeout, e)
   else { ...e, phase: Polling, now: e.now + e.retryDelay }
-pure def canAcceptPoll(e: Exchange): bool = e.phase == Polling
-pure def acceptPoll(e: Exchange): Exchange =
+pure def canAcceptPoll(e: Exchange, by: int): bool = by == identityWorker and e.phase == Polling
+pure def acceptPoll(e: Exchange, by: int): Exchange =
   if (e.flow == FlowPurged) { ...e, phase: PollReply, poll: FlowGone }
   else if (e.flow == CallbackFailed) { ...e, phase: PollReply, poll: FlowFailed }
   else if (e.now >= e.flowExpires) { ...e, phase: PollReply, poll: FlowExpired }
@@ -100,8 +115,8 @@ pure def acceptPoll(e: Exchange): Exchange =
   else if (e.flow == CallbackComplete) { ...e, phase: PollReply, poll: AssertionReturned, flow: AssertionIssued,
     assertionIssuedAt: e.now, assertionExpires: e.now + assertionLifetime }
   else { ...e, phase: PollReply, poll: PollPending }
-pure def canLimitPoll(e: Exchange): bool = e.phase == Polling
-pure def limitPoll(e: Exchange): Exchange = { ...e, phase: PollReply, poll: PollLimited }
+pure def canLimitPoll(e: Exchange, by: int): bool = by == identityWorker and e.phase == Polling
+pure def limitPoll(e: Exchange, by: int): Exchange = { ...e, phase: PollReply, poll: PollLimited }
 pure def canReceivePoll(e: Exchange, attempt: int, retry: int): bool = e.phase == PollReply and attempt == e.attempt
   and (e.poll != PollPending or (retry >= e.initialDelay and retry <= 10))
 pure def receivePoll(e: Exchange, attempt: int, retry: int, valid: bool): Exchange =
@@ -116,28 +131,35 @@ pure def receivePoll(e: Exchange, attempt: int, retry: int, valid: bool): Exchan
 ### Assertion consumption survives signing errors and a lost session reply
 
 The trace API consumes a valid assertion of the exact audience atomically
-before issuing the bearer; `exactAssertion` is the identity service's
-verdict on the presented assertion's digest and audience. A signing failure
+before issuing the bearer; `exactAssertion` is the trace API's verdict on
+the presented assertion's digest and audience, and `signed` its signing
+result, delivered only by the trace API. A signing failure
 can consume an assertion without issuing a usable token. The exchange issues
 only the contributor role; operator status is never issued by this endpoint.
 Current server authentication checks the bearer deadline and the actor's
-participation standing before accepting the create request. The standing
-mirrors the [access area](../access.md) ban fact for the authenticated actor
-(composition obligation). An accepted request may commit and reply after its
+participation standing before accepting the create request. Only the
+standing service mirrors the [access area](../access.md) ban fact, for the
+actor the callback authenticated and with a strictly increasing epoch;
+a new invocation starts with no standing fact for its not yet known actor
+(composition obligation: the mirror equals the access fact at the create
+statement). An accepted request may commit and reply after its
 prior authentication check.
 
 ```quint
-pure def canExchange(e: Exchange): bool = e.phase == Exchanging
-pure def exchange(e: Exchange, exactAssertion: bool, signed: bool): Exchange =
+pure def canExchange(e: Exchange, by: int): bool = by == traceApi and e.phase == Exchanging
+pure def exchange(e: Exchange, by: int, exactAssertion: bool, signed: bool): Exchange =
   if (not(exactAssertion) or e.now >= e.assertionExpires or e.assertionConsumed) complete(IdentityRefused, e)
   else { ...e, phase: AuthReply, assertionConsumed: true, minted: signed, role: if (signed) ContributorRole else NoRole,
     bearerIssuedAt: e.now, bearerExpires: e.now + bearerLifetime }
 pure def canReceiveBearer(e: Exchange, attempt: int): bool = e.phase == AuthReply and attempt == e.attempt
 pure def receiveBearer(e: Exchange, attempt: int, valid: bool): Exchange =
   if (valid and e.minted) { ...e, phase: Authenticating } else complete(SessionError, e)
-pure def observeStanding(e: Exchange, banned: bool): Exchange = { ...e, banned: banned }
-pure def canAuthenticateCreate(e: Exchange): bool = e.phase == Authenticating
-pure def authenticateCreate(e: Exchange): Exchange =
+pure def canObserveStanding(e: Exchange, by: int, actor: int, epoch: int): bool =
+  by == standingService and actor > 0 and actor == e.actor and epoch > e.standingEpoch
+pure def observeStanding(e: Exchange, by: int, actor: int, epoch: int, banned: bool): Exchange =
+  { ...e, banned: banned, standingEpoch: epoch }
+pure def canAuthenticateCreate(e: Exchange, by: int): bool = by == traceApi and e.phase == Authenticating
+pure def authenticateCreate(e: Exchange, by: int): Exchange =
   if (e.now >= e.bearerExpires) complete(RunRefused, e)
   else if (e.banned) complete(BannedRefused, e)
   else { ...e, phase: Inserting }
@@ -162,9 +184,9 @@ pure def consistentCreate(reply: CreateAnswer): bool =
   if (reply.kind == RowCreated) reply.row.serverId != "" and reply.row.status == AwaitingTrace
   else if (reply.kind == RowExisting) reply.row.serverId != "" and reply.row.status != NoRow
   else reply.kind != NoCreate and reply.row == noLookup
-pure def canCommitCreate(e: Exchange, reply: CreateAnswer): bool = e.phase == Inserting and consistentCreate(reply)
-  and (e.banned implies reply.kind != RowCreated)
-pure def commitCreate(e: Exchange, reply: CreateAnswer): Exchange =
+pure def canCommitCreate(e: Exchange, by: int, reply: CreateAnswer): bool = by == traceApi and e.phase == Inserting
+  and consistentCreate(reply) and (e.banned implies reply.kind != RowCreated)
+pure def commitCreate(e: Exchange, by: int, reply: CreateAnswer): Exchange =
   { ...e, phase: CreateReply, created: reply.kind, snapshot: reply.row }
 pure def canReceiveCreate(e: Exchange, attempt: int): bool = e.phase == CreateReply and attempt == e.attempt
 pure def receiveCreate(e: Exchange, attempt: int, exactSchema: bool): Exchange =
@@ -177,7 +199,7 @@ pure def canTransportFails(e: Exchange): bool = e.phase == Starting or e.phase =
 pure def transportFails(e: Exchange): Exchange = complete(TransportError, e)
 pure def flowRank(flow: FlowStatus): int = if (flow == FlowNone) 0 else if (flow == FlowPending) 1
   else if (flow == CallbackProcessing) 2 else if (flow == CallbackComplete) 3 else if (flow == FlowPurged) 5 else 4
-pure def alwaysClock(e: Exchange): bool = 0 <= e.now and 1 <= e.initialDelay and e.initialDelay <= e.retryDelay and e.retryDelay <= 10
+pure def alwaysClock(e: Exchange): bool = 0 <= e.now and 0 <= e.standingEpoch and 1 <= e.initialDelay and e.initialDelay <= e.retryDelay and e.retryDelay <= 10
 pure def alwaysActor(e: Exchange): bool = (e.flow == CallbackComplete or e.flow == AssertionIssued) implies e.actor > 0
 pure def stepPurgedStaysPurged(before: Exchange, via: str, after: Exchange): bool =
   (before.flow == FlowPurged and via != "begin") implies after.flow == FlowPurged
@@ -214,6 +236,33 @@ pure def sometimesCallbackFailed(e: Exchange): bool = e.result == FlowRefused
 pure def sometimesBannedRefused(e: Exchange): bool = e.result == BannedRefused
 pure def sometimesConflict(e: Exchange): bool = e.result == RunConflict
 pure def sometimesStartLimited(e: Exchange): bool = e.result == StartLimited
+pure def stepStandingFromService(before: Exchange, via: str, after: Exchange): bool =
+  before.standingEpoch <= after.standingEpoch
+    and ((before.banned != after.banned and via != "begin") implies via == "observeStanding")
+pure def consistentExchange(e: Exchange): bool = alwaysClock(e) and alwaysActor(e) and alwaysLifetimes(e)
+  and alwaysContributorOnly(e) and alwaysEvidenceOrder(e) and alwaysReply(e) and alwaysActiveInvocation(e) and alwaysReady(e)
+```
+
+### Every invocation ends
+
+The identity Worker and the trace API answer every request they receive, and
+the client takes each of its own next steps; a poll that keeps reporting
+pending moves the clock forward by its delay until the flow deadline. Under
+that fairness every started invocation reaches `Done`, with success or a
+named failure.
+
+```quint
+pure def leadsToDone(e: Exchange, later: Exchange): bool = (e.phase != Idle and e.phase != Done) implies later.phase == Done
+pure val fair_acceptStart = "weak"
+pure val fair_receiveStart = "weak"
+pure val fair_waitPoll = "weak"
+pure val fair_acceptPoll = "weak"
+pure val fair_receivePoll = "weak"
+pure val fair_exchange = "weak"
+pure val fair_receiveBearer = "weak"
+pure val fair_authenticateCreate = "weak"
+pure val fair_commitCreate = "weak"
+pure val fair_receiveCreate = "weak"
 ```
 
 ### Simulation uses representative deadlines and actor-scoped response outcomes
@@ -222,6 +271,8 @@ pure def sometimesStartLimited(e: Exchange): bool = e.result == StartLimited
 pure val attemptValues = Set(1, 2)
 pure val keyValues = Set("key-a", "key-b")
 pure val actorValues = Set(1, 2)
+pure val byValues = Set(identityWorker, traceApi, standingService, clockService, 1)
+pure val epochValues = Set(1, 2)
 pure val delayValues = Set(1, 2)
 pure val retryValues = Set(1, 2)
 pure val timeValues = Set(1, 3, 100, 400)
@@ -243,4 +294,5 @@ pure val weight_transportFails = 1
 pure val weight_receiveCreate = 8
 pure val weight_waitPoll = 8
 pure val weight_acceptPoll = 8
+pure val weight_observeStanding = 6
 ```

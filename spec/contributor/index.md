@@ -3,12 +3,18 @@
 Contributors use live repository authority and approved work. Ordinary
 GitHub submission ([work and review](./workflow.md) `submit`) reads no
 installation, local receipt, session, trace or opened-run state: the work
-model imports none of those machines, and its law
+model imports none of the installation, receipt, session or opened-run
+machines, it reads the [server trace run](./traceServer.md) only in
+`recordRun`, after submission, and its law
 `lawSubmissionIgnoresStarsForksAndRuns` shows that stars, forks and the
 recorded run do not change the submission guard. Evidence collection,
 attribution records and closure eligibility remain separate from submission.
-Every contributor write path on the Slop API consults the account's
-participation standing, which the [access area](../access.md) owns.
+The contributor write paths modeled here (server run, upload intent, capability
+upload, attachment, finalization, progress events, session run creation) and
+the start of work refuse while a mirrored ban holds. The mirror is set only by
+the standing service, with an increasing epoch; that it equals the
+participation standing the [access area](../access.md) owns is a composition
+obligation.
 
 - [Contributor command completion](./commandCompletion.md)
 - [Discovery lock and child ownership](./discoveryLock.md)
