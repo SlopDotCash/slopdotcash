@@ -8246,14 +8246,14 @@
     },
     {
       "path": "workers/slopbot/github.ts",
-      "sha256": "b4ea743257f98a6c68589df778dfa291a7777a802ebd3b3543894ce7c70ce39b",
+      "sha256": "e40641d523e39c9a55a26fb79517ad3f431599399d0f81dbc9adada87685faf9",
       "models": [
         "formal/models/points/github_ingestion_read.qnt",
         "formal/models/slopbot/bot_repository_access.qnt"
       ],
       "candidateLines": [
-        44, 78, 89, 106, 115, 116, 117, 119, 123, 124, 127, 170, 173, 226, 227,
-        258
+        46, 80, 91, 108, 117, 118, 119, 121, 125, 126, 129, 172, 175, 228, 229,
+        260
       ],
       "review": "mapped-abstraction"
     },
@@ -8527,7 +8527,7 @@
     },
     {
       "path": "workers/slopbot/value-context.ts",
-      "sha256": "e7f2b9df5e105397f84a085d1f35acacf8ab7046035d763c9b6380090ad2b63f",
+      "sha256": "3b9dd80d1109fc4bc9b9fb64cc4b413d768547fd23227c7f2591ece0b3218933",
       "models": ["formal/models/slopbot/bot_evidence_integrity.qnt"],
       "candidateLines": [],
       "review": "mapped-abstraction"
@@ -8546,37 +8546,37 @@
     },
     {
       "path": "workers/slopbot/value-evidence-types.ts",
-      "sha256": "2487ed2dd0d05c6c178b46a360b7fcfb4aa4cb584704615eab986e66d7a7ab62",
+      "sha256": "c745a3b5451b112decd2ff27613f6ef20b34ca02e119af87cbcb7964e4809a3a",
       "models": [],
-      "candidateLines": [20, 75, 95],
+      "candidateLines": [22, 77, 97],
       "review": "reviewed-no-independent-state",
       "statelessReason": "Type declarations of value evidence and its proof records; no runtime code or state transition."
     },
     {
       "path": "workers/slopbot/value-evidence.ts",
-      "sha256": "21a09736c96fa96bae9f975fa6ff34a5b03400e855965367d7f079ae69f65842",
+      "sha256": "0a601ab0ed0a3f7d7f6912ec447ffe6385263fdec30a812ba0bd10d3ee37ed45",
       "models": [
         "formal/models/points/historical_discussion_evidence.qnt",
         "formal/models/slopbot/bot_evidence_integrity.qnt",
         "formal/models/slopbot/bot_value_dispute_actor.qnt"
       ],
       "candidateLines": [
-        62, 73, 82, 96, 440, 441, 632, 652, 695, 704, 723, 1065, 1084
+        63, 76, 85, 101, 445, 446, 637, 657, 700, 709, 728, 1070, 1089
       ],
       "review": "mapped-abstraction"
     },
     {
       "path": "workers/slopbot/value-file-comparisons.ts",
-      "sha256": "8207b1c2c486982bf8536e45f777bf20c44c99368f41fcc031fdad0e8e617207",
+      "sha256": "10048f46717b3fedddb24d6f335d07de229bb88578105c25dc1542e1b5ec2875",
       "models": ["formal/models/slopbot/bot_evidence_integrity.qnt"],
-      "candidateLines": [18, 35, 42, 65, 66, 89, 142],
+      "candidateLines": [18, 35, 42, 65, 66, 95, 148],
       "review": "mapped-abstraction"
     },
     {
       "path": "workers/slopbot/value-file-recovery.ts",
-      "sha256": "6cd1f6acfa5e4b3d1ed1452000574a73f466c183e8b51071e07c5bf8a8f03796",
+      "sha256": "6dcad2e20c2c248ccbe902d071dfd487794b9cecf9b58016bbc51953ac013f76",
       "models": ["formal/models/slopbot/bot_evidence_integrity.qnt"],
-      "candidateLines": [152, 153, 212, 233],
+      "candidateLines": [152, 153, 213, 246],
       "review": "mapped-abstraction"
     },
     {
@@ -8602,7 +8602,7 @@
     },
     {
       "path": "workers/slopbot/value-import.ts",
-      "sha256": "27bce279c8baf35092820d52a3045452ab543deeca8358af03f9c7fba515884a",
+      "sha256": "1e08182fd274199d12bb615faf1f96740c64b57e01eda68e1056b573dd1dac63",
       "models": [
         "formal/models/slopbot/bot_historical_import.qnt",
         "formal/models/slopbot/historical_subscription_intake.qnt"
@@ -8647,6 +8647,13 @@
         "formal/models/slopbot/historical_subscription_intake.qnt"
       ],
       "candidateLines": [86, 119, 173, 195],
+      "review": "mapped-abstraction"
+    },
+    {
+      "path": "workers/slopbot/value-json-digest.ts",
+      "sha256": "f727d71c49fb630a6344441e3f786bfda51201f122753c4255f4d775ddf88572",
+      "models": ["formal/models/slopbot/bot_evidence_integrity.qnt"],
+      "candidateLines": [10, 76],
       "review": "mapped-abstraction"
     },
     {
@@ -8699,9 +8706,9 @@
     },
     {
       "path": "workers/slopbot/value-patch.ts",
-      "sha256": "c3322854a90e6f30ea6eaf6cfe0c39016bebc024eb445b50ebb28112a214921b",
+      "sha256": "f6192da7e06f2ae94721a545617a910bbb6e61a17c78d8723ce676c7e79a7dfc",
       "models": ["formal/models/slopbot/bot_patch_replay.qnt"],
-      "candidateLines": [8, 33, 106],
+      "candidateLines": [8, 33, 110],
       "review": "mapped-abstraction"
     },
     {
@@ -8789,7 +8796,7 @@
     },
     {
       "path": "workers/slopbot/value-review.ts",
-      "sha256": "d56e43c51a76a609894896e33ecc69ef0bf05ac2f09c244c1337cc3a3ffe2fec",
+      "sha256": "3f2ab4c4971a19dcbf686824c4a0f907a6c39aa0142f9a96d1832e1622c6d01a",
       "models": ["formal/models/slopbot/bot_producer_provenance.qnt"],
       "candidateLines": [98],
       "review": "mapped-abstraction"
@@ -8842,7 +8849,7 @@
     },
     {
       "path": "workers/slopbot/value-work-unit-publication.ts",
-      "sha256": "86c84cd57960fae9d56185ad964715183afd3619ed2a6608223fcb1dd3ccd7bd",
+      "sha256": "e2c91e3bf9b82690a83d3bb4ef277031655a3cb81b6a4ed890caa1dddacceab5",
       "models": [
         "formal/models/slopbot/bot_publication_transaction.qnt",
         "formal/models/slopbot/bot_value_freshness.qnt",
@@ -14838,7 +14845,7 @@
     },
     {
       "path": "formal/models/slopbot/bot_evidence_integrity.qnt",
-      "sha256": "b8e798c1917e15323727a0f4a6cd682482795694125f0e4181e0f9b9e9166a1e",
+      "sha256": "662225a5f2595f25fe8d0c6a6ed524a06b1ffb854ea45890ce9969085fe8cb50",
       "sources": [
         "workers/slopbot/git-object.ts",
         "workers/slopbot/value-binary.ts",
@@ -14848,6 +14855,7 @@
         "workers/slopbot/value-evidence.ts",
         "workers/slopbot/value-file-comparisons.ts",
         "workers/slopbot/value-file-recovery.ts",
+        "workers/slopbot/value-json-digest.ts",
         "workers/slopbot/value-tree.ts"
       ],
       "scenarios": ["completeEvidenceTest", "corruptBlobRefusedTest"]

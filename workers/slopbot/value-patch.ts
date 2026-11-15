@@ -74,13 +74,17 @@ export function valuePatch(file: FileChange): string | undefined {
 
 export function hasCompleteValuePatch(file: FileChange): boolean {
   const patch = valuePatch(file);
-  const lines = patch?.split("\n") ?? [];
+  if (patch === undefined) return false;
+  let additions = 0,
+    deletions = 0;
+  for (let index = 0; index < patch.length; index++) {
+    if (index !== 0 && patch.charCodeAt(index - 1) !== 10) continue;
+    if (patch.charCodeAt(index) === 43) additions++;
+    if (patch.charCodeAt(index) === 45) deletions++;
+  }
   return (
-    patch !== undefined &&
-    lines.filter((line) => line.startsWith("+")).length ===
-      valueAdditionCount(file) &&
-    lines.filter((line) => line.startsWith("-")).length ===
-      valueDeletionCount(file)
+    additions === valueAdditionCount(file) &&
+    deletions === valueDeletionCount(file)
   );
 }
 
@@ -171,15 +175,20 @@ export function addedValuePatchRecovery(
           continue;
         const digest = await gitObjectSha1("blob", bytes);
         if (digest !== (verified?.sha ?? source?.sha)) continue;
-        const lines = text === "" ? [] : text.split("\n");
-        if (text.endsWith("\n")) lines.pop();
+        let lineCount = 0;
+        for (let index = 0; index < text.length; index++)
+          if (text.charCodeAt(index) === 10) lineCount++;
+        if (text.length && !text.endsWith("\n")) lineCount++;
         const patch =
-          lines.length === 0
+          lineCount === 0
             ? ""
-            : `@@ -0,0 +1${lines.length === 1 ? "" : `,${lines.length}`} @@\n` +
-              lines.map((line) => `+${line}`).join("\n") +
+            : `@@ -0,0 +1${lineCount === 1 ? "" : `,${lineCount}`} @@\n+` +
+              text.replace(/\n(?=[\s\S])/gu, "\n+").replace(/\n$/u, "") +
               (text.endsWith("\n") ? "" : "\n\\ No newline at end of file");
-        patches.set(key, { patch, additions: lines.length });
+        patches.set(key, {
+          patch: client.internText?.(patch) ?? patch,
+          additions: lineCount,
+        });
       }
       const recovered = patches.get(key);
       if (recovered?.additions === file.additions) file.patch = recovered.patch;

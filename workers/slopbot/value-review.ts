@@ -1,4 +1,3 @@
-import { sha256Hex } from "../../src/lib/async-sha256.mjs";
 import {
   VALUE_ASSESSMENT_SCHEMA,
   VALUE_RUBRIC_VERSION,
@@ -12,6 +11,7 @@ import {
   runValueInference,
   type ValueInferenceBudget,
 } from "./value-inference";
+import { valueJsonDigest } from "./value-json-digest";
 import { valueModelSource } from "./value-model-source";
 import type { SubscriptionResult } from "./value-producer";
 
@@ -72,7 +72,7 @@ export function valueSourceDigest(
   policy: { sha: string; text: string },
 ) {
   const { collectedAt: _collectedAt, ...sourceEvidence } = evidence;
-  return sha256Hex(JSON.stringify({ policy, evidence: sourceEvidence }));
+  return Promise.resolve(valueJsonDigest({ policy, evidence: sourceEvidence }));
 }
 
 export function validateEvidenceAssessment(

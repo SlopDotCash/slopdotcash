@@ -125,7 +125,11 @@ export async function importSubscriptionAssessment(
   );
   const capture = valueFileRecoveryCapture(github);
   let verifiedFiles:
-    | { requests: ValueFileRequest[]; recovery: ValueFileRecovery }
+    | {
+        requests: ValueFileRequest[];
+        recovery: ValueFileRecovery;
+        internText?: (text: string) => string;
+      }
     | undefined;
   const sources: WorkUnitSource[] = [];
   const repositories: TargetRepository[] = [];
@@ -207,6 +211,7 @@ export async function importSubscriptionAssessment(
         requests,
         recovered,
       );
+      verifiedFiles.internText = complete.internText;
       const fresh = valueFileRecoveryCapture(complete);
       for (const [index, selection] of selections.entries()) {
         const recollected = await collectValueEvidence(

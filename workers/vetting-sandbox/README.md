@@ -134,6 +134,10 @@ those verified bytes, keeps raw GitHub counts, and repeats metadata checks.
 The second isolated operation reconstructs merges from the resulting complete
 canonical input. Publication performs another full source and policy recheck.
 Ordinary network file/context budgets and the merge recipe profile stay intact.
+Request-local text sharing and incremental canonical source hashing bound
+repeated file evidence without changing its digest. Each final source is still
+recollected and its complete source and policy digest checked before the
+verified equal original object is reused.
 Binary and symlink content remain outside this text recovery route. Missing or
 oversized operation evidence retains its hold.
 

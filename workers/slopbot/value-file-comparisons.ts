@@ -75,8 +75,14 @@ export async function recoverFullValueComparisons(
       file.fullComparison = {
         baseSha,
         headSha,
-        before: { blobSha: before.sha, text: beforeText },
-        after: { blobSha: after.sha, text: afterText },
+        before: {
+          blobSha: before.sha,
+          text: client.internText?.(beforeText) ?? beforeText,
+        },
+        after: {
+          blobSha: after.sha,
+          text: client.internText?.(afterText) ?? afterText,
+        },
       };
     } catch {
       // Invalid UTF-8 remains an explicit missing-diff limitation.
@@ -129,7 +135,7 @@ export async function recoverAddedValueComparisons(
       file.addedComparison = {
         baseSha,
         headSha,
-        after: { blobSha: blob.sha, text },
+        after: { blobSha: blob.sha, text: client.internText?.(text) ?? text },
       };
     } catch {
       // Binary or invalid UTF-8 remains an explicit evidence gap.
@@ -180,7 +186,7 @@ export async function recoverRemovedValueComparisons(
       file.removedComparison = {
         baseSha,
         headSha,
-        before: { blobSha: blob.sha, text },
+        before: { blobSha: blob.sha, text: client.internText?.(text) ?? text },
       };
     } catch {
       // Binary or invalid UTF-8 remains an explicit evidence gap.

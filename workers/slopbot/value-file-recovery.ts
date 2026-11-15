@@ -189,7 +189,8 @@ export async function verifiedValueFileClient<T extends EvidenceClient>(
   client: T,
   requests: readonly ValueFileRequest[],
   recovery: ValueFileRecovery,
-): Promise<T> {
+  internText?: (text: string) => string,
+): Promise<T & EvidenceClient> {
   if (
     recovery.inputSha256 !== (await sha256Hex(JSON.stringify(requests))) ||
     !Array.isArray(recovery.entries) ||
@@ -226,7 +227,19 @@ export async function verifiedValueFileClient<T extends EvidenceClient>(
   const required = new Set(
     recovery.entries.flatMap((entry) => (entry.blobSha ? [entry.blobSha] : [])),
   );
-  const blobs = new Map<string, { sha: string; bytes: Uint8Array }>();
+  const blobs = new Map<string, { sha: string; text: string }>();
+  const textPool = new Map<string, string>();
+  const wrapped = Object.create(client) as T & EvidenceClient;
+  wrapped.internText =
+    internText ??
+    client.internText ??
+    ((text) => {
+      if (text.length < 1024) return text;
+      const existing = textPool.get(text);
+      if (existing !== undefined) return existing;
+      textPool.set(text, text);
+      return text;
+    });
   let expanded = 0;
   for (const blob of recovery.blobs) {
     if (
@@ -261,15 +274,20 @@ export async function verifiedValueFileClient<T extends EvidenceClient>(
     }).decode(bytes);
     if (text.includes("\0")) throw new Error("Recovered Git blob is not text");
     expanded += bytes.length;
-    blobs.set(blob.sha, { sha: blob.sha, bytes });
+    blobs.set(blob.sha, {
+      sha: blob.sha,
+      text: wrapped.internText(text),
+    });
   }
   if (required.size) throw new Error("Missing recovered Git blob");
-  const wrapped = Object.create(client) as T;
   wrapped.verifiedFile = async (repository, ref, path) => {
     const entry = entries.get(
       JSON.stringify([repository.toLowerCase(), ref, path]),
     );
-    return entry?.blobSha ? (blobs.get(entry.blobSha) ?? null) : null;
+    const blob = entry?.blobSha ? blobs.get(entry.blobSha) : null;
+    return blob
+      ? { sha: blob.sha, bytes: new TextEncoder().encode(blob.text) }
+      : null;
   };
   return wrapped;
 }
