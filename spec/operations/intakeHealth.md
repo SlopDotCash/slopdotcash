@@ -56,7 +56,9 @@ pure def stepOnlyRenewersWrite(before: Health, via: str, after: Health): bool =
   after.observation != before.observation implies via == "renew"
 pure def stepObservationAdvances(before: Health, after: Health): bool = observedAt(after) >= observedAt(before)
 pure def sometimesSkippedKeepsObservation(h: Health): bool = h.skips > 0 and observedAt(h) > 0
-pure def sometimesWriteFailed(h: Health): bool = h.last == WriteFailed
+pure def failedLast(result: RenewalResult): bool = match result { | WriteFailed => true | _ => false }
+pure def renewedLast(result: RenewalResult): bool = match result { | Renewed => true | _ => false }
+pure def sometimesWriteFailed(h: Health): bool = failedLast(h.last)
 pure def sometimesDisabled(h: Health): bool =
   val observation = h.observation
   match observation { | Observed(o) => not(o.enabled) | _ => false }
@@ -86,7 +88,7 @@ pure def lawReadinessNeedsEnabledRenewal(observation: Observation, now: int): bo
 pure def sometimesReady(h: Health): bool = traceCollectionReady(h)
 pure def sometimesExpired(h: Health): bool =
   val observation = h.observation
-  observedAt(h) > 0 and not(traceCollectionReady(h)) and h.last == Renewed
+  observedAt(h) > 0 and not(traceCollectionReady(h)) and renewedLast(h.last)
     and (match observation { | Observed(o) => o.enabled | _ => false })
 ```
 
