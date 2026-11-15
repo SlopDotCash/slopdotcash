@@ -32,9 +32,12 @@ import {
   type CorrectionSource,
   createPointsCorrectionBaseline,
   isOriginalContributorContext,
+  isOriginalContributorFollowup,
+  type OriginalContributorFollowup,
   originalContributorPrecedesFollowups,
   type PointsImplementationCorrectionCandidate,
   type PointsImplementationCorrectionManifest,
+  referencesOriginalContributorSource,
 } from "../src/lib/points-implementation-corrections";
 import { assertProjectRegistry } from "../src/lib/project-schema.mjs";
 import {
@@ -57,6 +60,7 @@ import {
 } from "../workers/slopbot/value-patch";
 import { isConfirmedMissingPublicReference } from "../workers/slopbot/value-reference-query";
 import { retainedCopyBindings } from "../workers/slopbot/value-retained-copy";
+import { retainedAcknowledgements } from "../workers/slopbot/value-retained-reference";
 import { valueSourceDigest } from "../workers/slopbot/value-review";
 import type { WorkUnitSource } from "../workers/slopbot/value-work-unit-types";
 import {
@@ -1098,6 +1102,7 @@ interface HistoricalOrdinaryProof {
   originalContributor?: {
     exactAcceptance?: true;
     acceptedSourceId?: string;
+    followups?: OriginalContributorFollowup[];
     originalSourceId: string;
     originalCommitSha: string;
     acceptedCommitSha: string;
@@ -1676,12 +1681,154 @@ export function firstAcceptedCorrectionClaims(
   });
 }
 
+/** Retain authenticated ancestry for accepted same-carrier follow-up sources. */
+export async function originalContributorFollowupProof(
+  github: Pick<GitHubClient, "get">,
+  accepted: CorrectionSource,
+  source: CorrectionSource,
+  evidence: ValueEvidence,
+  policy: { sha: string; text: string },
+): Promise<OriginalContributorFollowup> {
+  const reference = evidence.relatedPullRequests.find(
+    (target) =>
+      target.id === accepted.sourceId &&
+      target.url === accepted.sourceUrl &&
+      target.repository.toLowerCase() === accepted.repository.toLowerCase(),
+  );
+  const acknowledgement = reference
+    ? retainedAcknowledgements(evidence).find(
+        (record) =>
+          record.user?.type === "User" &&
+          record.user.node_id === accepted.author?.id &&
+          referencesOriginalContributorSource(
+            record.body,
+            reference.repository,
+            reference.number,
+          ),
+      )
+    : undefined;
+  if (
+    reference &&
+    (referencesOriginalContributorSource(
+      evidence.pull.body ?? "",
+      reference.repository,
+      reference.number,
+    ) ||
+      acknowledgement)
+  ) {
+    const current = await github.get<Pull>(
+      `/repos/${source.repository}/pulls/${evidence.pull.number}`,
+    );
+    requireThat(
+      current &&
+        Object.keys(evidence.pull).every(
+          (key) =>
+            encode(current[key as keyof Pull]) ===
+            encode(evidence.pull[key as keyof Pull]),
+        ),
+      "Accepted follow-up statement changed during collection",
+    );
+    if (acknowledgement) {
+      const isComment = "created_at" in acknowledgement;
+      const path = isComment
+        ? `/repos/${source.repository}/issues/comments/${acknowledgement.html_url.split("issuecomment-")[1]}`
+        : `/repos/${source.repository}/pulls/${evidence.pull.number}/reviews/${acknowledgement.id}`;
+      const currentRecord = await github.get<Record<string, unknown>>(path);
+      requireThat(
+        currentRecord &&
+          Object.keys(acknowledgement).every(
+            (key) =>
+              encode(currentRecord[key]) ===
+              encode(acknowledgement[key as keyof typeof acknowledgement]),
+          ),
+        "Accepted follow-up acknowledgement changed during collection",
+      );
+    }
+    const retained = {
+      sourceDigest: await valueSourceDigest(evidence, policy),
+      pull: current,
+      target: reference,
+      ...(acknowledgement ? { acknowledgement } : {}),
+    };
+    const binding = {
+      sourceId: source.sourceId,
+      ancestorSha: accepted.headSha,
+      commits: [],
+      reference: { ...retained, digest: digest(encode(retained)) },
+    };
+    requireThat(
+      isOriginalContributorFollowup(source, accepted, binding),
+      "Invalid accepted follow-up statement",
+    );
+    return binding;
+  }
+  await authenticateOriginalFollowupParents(github, source, evidence);
+  const commits: OriginalContributorFollowup["commits"] = [];
+  let total = 0;
+  for (let page = 1; page === 1 || commits.length < total; page++) {
+    const result = await github.get<{
+      status: string;
+      ahead_by: number;
+      behind_by: number;
+      total_commits: number;
+      merge_base_commit: { sha: string };
+      commits: { sha: string; parents: { sha: string }[] }[];
+    }>(
+      `/repos/${source.repository}/compare/${accepted.headSha}...${source.headSha}?per_page=100&page=${page}`,
+    );
+    requireThat(
+      result &&
+        result.status === "ahead" &&
+        result.behind_by === 0 &&
+        result.merge_base_commit?.sha === accepted.headSha &&
+        Number.isSafeInteger(result.total_commits) &&
+        result.total_commits > 0 &&
+        result.ahead_by === result.total_commits &&
+        (page === 1 || result.total_commits === total) &&
+        result.commits.length ===
+          Math.min(100, result.total_commits - (page - 1) * 100),
+      "Follow-up does not descend from the complete accepted source",
+    );
+    total = result.total_commits;
+    commits.push(
+      ...result.commits.map((commit) => ({
+        sha: commit.sha,
+        parentShas: commit.parents.map((parent) => parent.sha),
+      })),
+    );
+  }
+  for (const commit of commits) {
+    const immutable = await github.get<{
+      sha: string;
+      parents: { sha: string }[];
+    }>(`/repos/${source.repository}/git/commits/${commit.sha}`);
+    requireThat(
+      immutable?.sha === commit.sha &&
+        Array.isArray(immutable.parents) &&
+        encode(immutable.parents.map((parent) => parent.sha)) ===
+          encode(commit.parentShas),
+      "Follow-up comparison parent graph disagrees with immutable Git objects",
+    );
+  }
+  const binding = {
+    sourceId: source.sourceId,
+    ancestorSha: accepted.headSha,
+    commits,
+  };
+  requireThat(
+    isOriginalContributorFollowup(source, accepted, binding),
+    "Invalid accepted follow-up source",
+  );
+  return binding;
+}
+
 /** Combine a verified ordinary replacement with its complete grouped path scope. */
 export function groupedOriginalContributorProof(
   accepted: CorrectionSource,
   original: HistoricalOrdinaryProof,
   claims: readonly CorrectionClaim[],
   contextSources: readonly CorrectionSource[] = [],
+  followups: readonly OriginalContributorFollowup[] = [],
 ): HistoricalOrdinaryProof {
   const originalAccepted = original.sources.find(
     (source) => source.sourceId === accepted.sourceId,
@@ -1702,34 +1849,57 @@ export function groupedOriginalContributorProof(
           commit.firstAcceptedSourceId ===
             accepted.commits[index].firstAcceptedSourceId,
       ) &&
-      claims.every((claim) => claim.sourceId === accepted.sourceId) &&
-      contextSources.every((source) =>
-        isOriginalContributorContext(source, accepted),
+      contextSources.every(
+        (source) =>
+          isOriginalContributorContext(source, accepted) ||
+          isOriginalContributorFollowup(
+            source,
+            accepted,
+            followups.find((item) => item.sourceId === source.sourceId),
+          ),
       ),
     "Grouped original credit requires one accepted replacement",
   );
-  const acceptedPaths = accepted.commits
-    .filter(
-      (commit) =>
-        commit.parentCount <= 1 &&
-        commit.firstAcceptedSourceId === accepted.sourceId,
-    )
-    .flatMap((commit) =>
-      (commit.files ?? []).map((file) => `${commit.sha}\0${file.path}`),
-    )
-    .sort();
+  const acceptedSources = [
+    accepted,
+    ...contextSources.filter((source) =>
+      followups.some((item) => item.sourceId === source.sourceId),
+    ),
+  ];
   requireThat(
-    accepted.commits.every(
-      (commit) =>
-        commit.parentCount > 1 ||
-        commit.firstAcceptedSourceId !== accepted.sourceId ||
-        (commit.files !== undefined && commit.files.length > 0),
-    ) &&
-      encode(acceptedPaths) ===
-        encode(
-          claims.map((claim) => `${claim.commitSha}\0${claim.path}`).sort(),
+    followups.length === acceptedSources.length - 1 &&
+      new Set(followups.map((item) => item.sourceId)).size ===
+        followups.length &&
+      claims.every((claim) =>
+        acceptedSources.some((source) => source.sourceId === claim.sourceId),
+      ),
+    "Grouped original credit requires one accepted replacement with complete follow-up scope",
+  );
+  requireThat(
+    claims.length > 0 &&
+      new Set(claims.map((claim) => claim.id)).size === claims.length &&
+      claims.every((claim) =>
+        acceptedSources.some(
+          (source) =>
+            source.sourceId === claim.sourceId &&
+            source.commits.some(
+              (commit) =>
+                commit.sha === claim.commitSha &&
+                commit.parentCount <= 1 &&
+                commit.firstAcceptedSourceId === source.sourceId &&
+                commit.files?.some((file) => file.path === claim.path),
+            ),
         ),
-    "Grouped original credit does not cover the entire replacement",
+      ) &&
+      acceptedSources.every((source) =>
+        source.commits.every(
+          (commit) =>
+            commit.parentCount > 1 ||
+            commit.firstAcceptedSourceId !== source.sourceId ||
+            (commit.files !== undefined && commit.files.length > 0),
+        ),
+      ),
+    "Grouped original credit does not cover the canonical selected claims",
   );
   const originals = new Map(
     originalAccepted.commits.map((commit) => [commit.sha, commit]),
@@ -1750,7 +1920,10 @@ export function groupedOriginalContributorProof(
       ),
       ...contextSources,
     ],
-    originalContributor: original.originalContributor,
+    originalContributor: {
+      ...original.originalContributor,
+      ...(followups.length ? { followups: [...followups] } : {}),
+    },
   };
 }
 
@@ -2585,62 +2758,96 @@ async function collectWithEvidenceCache(
           sources,
         );
         let originalContributor: HistoricalOrdinaryProof["originalContributor"];
-        const accepted = sources.find((source) =>
-          claims.every((claim) => claim.sourceId === source.sourceId),
-        );
+        const claimedSources = sources
+          .filter((source) =>
+            claims.some((claim) => claim.sourceId === source.sourceId),
+          )
+          .sort(
+            (a, b) =>
+              (a.occurredAt ?? "").localeCompare(b.occurredAt ?? "") ||
+              a.sourceId.localeCompare(b.sourceId),
+          );
+        const accepted = claimedSources[0];
         const donors = sources.filter((source) =>
           isMergedOriginalContributor(accepted, source),
         );
-        const mergedDonor =
+        const mergedDonor = donors.length === 1 ? donors[0] : undefined;
+        const closedOriginals = sources.filter(
+          (source) =>
+            source.occurredAt === null &&
+            source.author?.id !== accepted?.author?.id,
+        );
+        const closedOriginal =
+          closedOriginals.length === 1 ? closedOriginals[0] : undefined;
+        const origin = mergedDonor ?? closedOriginal;
+        const followupSources = claimedSources.slice(1);
+        const candidateSources = new Set(
+          claimedSources.map((source) => source.sourceId),
+        );
+        const originalCandidate =
           accepted &&
-          donors.length === 1 &&
+          (sources.length === 1 || origin) &&
           sources.every(
             (source) =>
-              source.sourceId === accepted.sourceId ||
-              source.sourceId === donors[0].sourceId ||
+              candidateSources.has(source.sourceId) ||
+              source.sourceId === origin?.sourceId ||
               isOriginalContributorContext(source, accepted),
-          )
-            ? donors[0]
-            : undefined;
+          );
         if (
           octoberOriginalCredit &&
           candidate.occurredAt.startsWith("2026-10-") &&
-          (sources.length === 1 || mergedDonor) &&
+          originalCandidate &&
           accepted &&
-          claims.every((claim) => claim.sourceId === accepted.sourceId) &&
-          (candidate.sourceId === accepted.sourceId ||
+          (candidateSources.has(candidate.sourceId) ||
             candidate.sourceId === mergedDonor?.sourceId)
         ) {
           const read = reads.get(accepted.sourceId);
           requireThat(read, "Grouped completion source disappeared");
           requireThat(accepted, "Grouped accepted source disappeared");
-          const original = mergedDonor
-            ? await octoberOriginalContributorProof(
-                github,
-                accepted,
-                [
-                  ...decision.evidence.sources.filter(
-                    (s) => s.evidence.pull.node_id === accepted.sourceId,
-                  ),
-                  ...decision.evidence.sources.filter(
-                    (s) => s.evidence.pull.node_id === mergedDonor.sourceId,
-                  ),
-                ],
-                owners,
-                true,
-              )
-            : await ordinaryRetainedProof(
-                github,
-                read,
-                owners,
-                {
-                  cache,
-                  executor,
-                  allowNew: options.graphqlDiscussions === true,
-                },
-                true,
-              );
+          const original =
+            origin && (mergedDonor || followupSources.length > 0)
+              ? await octoberOriginalContributorProof(
+                  github,
+                  accepted,
+                  [
+                    ...decision.evidence.sources.filter(
+                      (s) => s.evidence.pull.node_id === accepted.sourceId,
+                    ),
+                    ...decision.evidence.sources.filter(
+                      (s) => s.evidence.pull.node_id === origin.sourceId,
+                    ),
+                  ],
+                  owners,
+                  Boolean(mergedDonor),
+                )
+              : await ordinaryRetainedProof(
+                  github,
+                  read,
+                  owners,
+                  {
+                    cache,
+                    executor,
+                    allowNew: options.graphqlDiscussions === true,
+                  },
+                  true,
+                );
           if (original.originalContributor) {
+            const followups: OriginalContributorFollowup[] = [];
+            for (const followup of followupSources) {
+              const retained = decision.evidence.sources.find(
+                (source) => source.evidence.pull.node_id === followup.sourceId,
+              );
+              requireThat(retained, "Accepted follow-up evidence disappeared");
+              followups.push(
+                await originalContributorFollowupProof(
+                  github,
+                  accepted,
+                  followup,
+                  retained.evidence,
+                  retained.policy,
+                ),
+              );
+            }
             const groupedOriginal = groupedOriginalContributorProof(
               accepted,
               original,
@@ -2651,6 +2858,7 @@ async function collectWithEvidenceCache(
                     (item) => item.sourceId === source.sourceId,
                   ),
               ),
+              followups,
             );
             sources = groupedOriginal.sources;
             originalContributor = groupedOriginal.originalContributor;

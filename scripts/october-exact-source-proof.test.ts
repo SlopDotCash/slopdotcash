@@ -8,6 +8,7 @@ import {
   groupedOriginalContributorProof,
   isMergedOriginalContributor,
   octoberOriginalContributorProof,
+  originalContributorFollowupProof,
 } from "./collect-implementation-corrections";
 
 const sha = (value: string) => value.repeat(40);
@@ -253,9 +254,10 @@ test("grouped collector preserves exact original parent proofs and complete file
   expect(grouped.sources[0].commits.map((commit) => commit.files)).toEqual(
     accepted.commits.map((commit) => commit.files),
   );
-  expect(() =>
-    groupedOriginalContributorProof(accepted, ordinary, claims.slice(1)),
-  ).toThrow("entire replacement");
+  expect(
+    groupedOriginalContributorProof(accepted, ordinary, claims.slice(1))
+      .sources,
+  ).toHaveLength(2);
   expect(() =>
     groupedOriginalContributorProof(
       accepted,
@@ -554,4 +556,145 @@ test("grouped correction resolves origin claims to the unique census acceptance"
   expect(() =>
     firstAcceptedCorrectionClaims([claim], [...proof.sources, ambiguous]),
   ).toThrow();
+});
+
+test("later accepted follow-up collection authenticates the exact ancestor range", async () => {
+  const input = await snapshot();
+  const ordinary = await octoberOriginalContributorProof(
+    input.github,
+    input.plain,
+    input.sources,
+    input.owners,
+  );
+  const accepted = ordinary.sources[0];
+  const evidence = clone(input.sources[0].evidence);
+  const commit = clone(evidence.commits[0]);
+  commit.sha = sha("9");
+  commit.parents = [{ ...commit.parents[0], sha: accepted.headSha }];
+  evidence.commits = [commit];
+  const source: CorrectionSource = {
+    ...clone(accepted),
+    sourceId: "PR_followup",
+    headSha: commit.sha,
+    occurredAt: "2026-10-30T00:00:00.000Z",
+    commitCount: 1,
+    commits: [
+      {
+        sha: commit.sha,
+        parentCount: 1,
+        author: accepted.author,
+        additions: 1,
+        deletions: 0,
+        files: [{ path: "fix.ts", additions: 1, deletions: 0 }],
+        firstAcceptedSourceId: "PR_followup",
+      },
+    ],
+  };
+  const response = {
+    status: "ahead",
+    ahead_by: 1,
+    behind_by: 0,
+    total_commits: 1,
+    merge_base_commit: { sha: accepted.headSha },
+    commits: [commit],
+  };
+  const github = {
+    get: async <T>(path: string): Promise<T> =>
+      (path.includes("/git/commits/") ? commit : response) as T,
+  };
+  const proof = await originalContributorFollowupProof(
+    github,
+    accepted,
+    source,
+    evidence,
+    input.sources[0].policy,
+  );
+  expect(proof.ancestorSha).toBe(accepted.headSha);
+  expect(source.commits[0].parentShas).toEqual([accepted.headSha]);
+  response.behind_by = 1;
+  await expect(
+    originalContributorFollowupProof(
+      github,
+      accepted,
+      source,
+      evidence,
+      input.sources[0].policy,
+    ),
+  ).rejects.toThrow("does not descend");
+  response.behind_by = 0;
+  response.commits.push(commit);
+  response.total_commits = 2;
+  response.ahead_by = 2;
+  await expect(
+    originalContributorFollowupProof(
+      github,
+      accepted,
+      source,
+      evidence,
+      input.sources[0].policy,
+    ),
+  ).rejects.toThrow("Invalid accepted follow-up");
+});
+
+test("accepted follow-up reference is rechecked against current canonical GitHub bytes", async () => {
+  const input = await snapshot();
+  const original = await octoberOriginalContributorProof(
+    input.github,
+    input.plain,
+    input.sources,
+    input.owners,
+  );
+  const accepted = original.sources[0];
+  const evidence = clone(input.sources[0].evidence);
+  Object.assign(evidence.pull, {
+    node_id: "PR_followup",
+    number: 9,
+    html_url: `https://github.com/${repository}/pull/9`,
+    body: `Promote #${input.sources[0].evidence.pull.number}`,
+    merged_at: "2026-10-30T00:00:00Z",
+  });
+  evidence.pull.user = { ...carrier };
+  evidence.pull.merged_by = { ...origin };
+  evidence.relatedPullRequests = [
+    {
+      id: accepted.sourceId,
+      number: input.sources[0].evidence.pull.number,
+      url: accepted.sourceUrl,
+      repository,
+    },
+  ];
+  const source: CorrectionSource = {
+    ...clone(accepted),
+    sourceId: evidence.pull.node_id,
+    sourceUrl: evidence.pull.html_url,
+    occurredAt: new Date(String(evidence.pull.merged_at)).toISOString(),
+  };
+  source.commits.forEach((commit) => {
+    commit.author = {
+      id: carrier.node_id,
+      login: carrier.login,
+      kind: carrier.type,
+    };
+    commit.firstAcceptedSourceId = source.sourceId;
+  });
+  const current = clone(evidence.pull);
+  const github = { get: async <T>(): Promise<T> => current as T };
+  const result = await originalContributorFollowupProof(
+    github,
+    accepted,
+    source,
+    evidence,
+    input.sources[0].policy,
+  );
+  expect(result.reference?.target.id).toBe(accepted.sourceId);
+  current.body = "Changed unrelated description";
+  await expect(
+    originalContributorFollowupProof(
+      github,
+      accepted,
+      source,
+      evidence,
+      input.sources[0].policy,
+    ),
+  ).rejects.toThrow("changed during collection");
 });

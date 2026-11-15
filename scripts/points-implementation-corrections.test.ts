@@ -16,6 +16,7 @@ import {
   type PointsImplementationCorrectionCandidate,
   type PointsImplementationCorrectionManifest,
 } from "../src/lib/points-implementation-corrections";
+import { sha256Hex } from "../src/lib/sha256";
 
 const A: CorrectionActor = {
   id: "MDQ6VXNlcjQy",
@@ -1289,7 +1290,6 @@ for (const fault of [
     const proof = grouped.proof;
     if (fault === "partial-claims") {
       proof.claims.pop();
-      proof.expectedClaimIds = proof.claims.map((claim) => claim.id);
     }
     if (fault === "foreign-source")
       proof.claims[0].sourceId = proof.sources[1].sourceId;
@@ -1365,7 +1365,6 @@ for (const fault of [
       Object.assign(grouped, { kind: "pull-request" });
     if (fault === "partial-claims") {
       grouped.proof.claims.pop();
-      grouped.proof.expectedClaimIds = grouped.proof.claims.map((c) => c.id);
     }
     expect(() => apply(journal, input)).toThrow();
   });
@@ -1478,3 +1477,272 @@ test("same-carrier unaccepted context remains connected without receiving claims
   context.occurredAt = accepted.occurredAt;
   expect(() => apply(journal, input)).toThrow();
 });
+
+function laterAcceptedFollowup() {
+  const sample = octoberGroupedReplacement();
+  const { grouped } = sample;
+  if (grouped.proof.status !== "complete" || !grouped.proof.originalContributor)
+    throw Error("fixture");
+  const accepted = grouped.proof.sources[0];
+  const followup: CorrectionSource = {
+    ...structuredClone(accepted),
+    sourceId: "PR_followup",
+    sourceUrl: "https://github.com/SlopDotCash/asi/pull/4",
+    headSha: sha("9"),
+    occurredAt: "2026-10-24T00:00:00.000Z",
+    commits: [
+      {
+        sha: sha("9"),
+        parentCount: 1,
+        parentShas: [accepted.headSha],
+        author: C,
+        firstAcceptedSourceId: "PR_followup",
+        additions: 3,
+        deletions: 0,
+        files: [{ path: "followup.ts", additions: 3, deletions: 0 }],
+      },
+    ],
+    commitCount: 1,
+  };
+  grouped.proof.sources.push(followup);
+  grouped.sourceIds.push(followup.sourceId);
+  grouped.proof.claims.push({
+    id: "claim_followup",
+    sourceId: followup.sourceId,
+    commitSha: followup.headSha,
+    path: "followup.ts",
+  });
+  grouped.proof.expectedClaimIds.push("claim_followup");
+  grouped.proof.originalContributor.acceptedSourceId = accepted.sourceId;
+  grouped.proof.originalContributor.followups = [
+    {
+      sourceId: followup.sourceId,
+      ancestorSha: accepted.headSha,
+      commits: [{ sha: followup.headSha, parentShas: [accepted.headSha] }],
+    },
+  ];
+  grouped.sourceId = followup.sourceId;
+  grouped.sourceUrl = followup.sourceUrl;
+  grouped.occurredAt = String(followup.occurredAt);
+  const journal = initial(
+    [...latestPoints(sample.journal).values()].map(({ award: row }) => ({
+      ...row,
+      key: pointKey(
+        row.projectId,
+        row.actor.id,
+        row.category,
+        followup.sourceId,
+        row.workUnitId,
+      ),
+      sourceId: followup.sourceId,
+      sourceUrl: followup.sourceUrl,
+      occurredAt: String(followup.occurredAt),
+    })),
+    true,
+  );
+  grouped.expectedPredecessors = [...latestPoints(journal).values()].map(
+    (row) => ({ key: row.award.key, revisionId: row.id }),
+  );
+  return {
+    ...sample,
+    journal,
+    input: manifest(journal, [grouped]),
+    accepted,
+    followup,
+  };
+}
+
+test("one original retains the full joint value across later accepted carrier follow-ups", () => {
+  const { journal, input, followup } = laterAcceptedFollowup();
+  const result = apply(journal, input);
+  expect(
+    [...latestPoints(result.journal).values()].find(
+      (row) => row.award.actor.id === A.id,
+    )?.award.amount,
+  ).toBe(30);
+  expect(total(result.journal)).toBe(total(journal));
+  for (const row of latestPoints(result.journal).values()) {
+    expect(row.award.sourceId).toBe(followup.sourceId);
+    expect(row.award.occurredAt).toBe(String(followup.occurredAt));
+  }
+  expect(apply(result.journal, input, true, LATER).journal).toBe(
+    result.journal,
+  );
+});
+for (const fault of [
+  "other-author",
+  "earlier-source",
+  "wrong-ancestor",
+  "unrelated-parent",
+  "partial-claims",
+  "unbound-source",
+  "duplicate-binding",
+] as const) {
+  test(`joint accepted follow-up rejects ${fault}`, () => {
+    const { journal, input, grouped, followup } = laterAcceptedFollowup();
+    if (
+      grouped.proof.status !== "complete" ||
+      !grouped.proof.originalContributor?.followups
+    )
+      throw Error("fixture");
+    const bindings = grouped.proof.originalContributor.followups;
+    if (fault === "other-author") followup.commits[0].author = B;
+    if (fault === "earlier-source")
+      followup.occurredAt = "2026-10-01T00:00:00.000Z";
+    if (fault === "wrong-ancestor") bindings[0].ancestorSha = sha("8");
+    if (fault === "unrelated-parent")
+      bindings[0].commits[0].parentShas = [sha("8")];
+    if (fault === "partial-claims") {
+      grouped.proof.claims.pop();
+    }
+    if (fault === "unbound-source") bindings.length = 0;
+    if (fault === "duplicate-binding")
+      bindings.push(structuredClone(bindings[0]));
+    expect(() => apply(journal, input)).toThrow();
+  });
+}
+
+function referencedFollowup() {
+  const sample = laterAcceptedFollowup();
+  if (
+    sample.grouped.proof.status !== "complete" ||
+    !sample.grouped.proof.originalContributor?.followups
+  )
+    throw Error("fixture");
+  const accepted = sample.accepted,
+    followup = sample.followup;
+  const reference = {
+    sourceDigest: "a".repeat(64),
+    pull: {
+      node_id: followup.sourceId,
+      number: 4,
+      html_url: followup.sourceUrl,
+      title: "Follow-up",
+      body: "Promote the accepted fix from #1.",
+      user: { node_id: C.id, login: C.login, type: C.kind },
+      merged_by: { node_id: C.id, login: C.login, type: C.kind },
+      state: "closed",
+      merged_at: followup.occurredAt,
+      closed_at: followup.occurredAt,
+      merge_commit_sha: sha("7"),
+      updated_at: followup.occurredAt,
+      head: { sha: followup.headSha },
+      base: { sha: sha("8"), ref: "main" },
+      changed_files: 1,
+      comments: 0,
+      review_comments: 0,
+      commits: 1,
+    },
+    target: {
+      id: accepted.sourceId,
+      number: 1,
+      url: accepted.sourceUrl,
+      repository: accepted.repository,
+    },
+  };
+  const binding = sample.grouped.proof.originalContributor.followups[0];
+  Object.assign(binding, {
+    commits: [],
+    reference: { ...reference, digest: sha256Hex(JSON.stringify(reference)) },
+  });
+  return { ...sample, binding };
+}
+
+test("resolved carrier statement permits a later accepted follow-up on a divergent branch", () => {
+  const { journal, input, followup } = referencedFollowup();
+  followup.commits[0].parentShas = [sha("8")];
+  const result = apply(journal, input);
+  expect(
+    [...latestPoints(result.journal).values()].find(
+      (row) => row.award.actor.id === A.id,
+    )?.award.amount,
+  ).toBe(30);
+  expect(total(result.journal)).toBe(total(journal));
+});
+for (const fault of [
+  "changed-statement",
+  "foreign-link-label",
+  "wrong-target",
+  "wrong-number",
+  "wrong-head",
+  "different-unit",
+] as const) {
+  test(`referenced follow-up rejects ${fault}`, () => {
+    const { journal, input, grouped, binding } = referencedFollowup();
+    if (!binding.reference) throw Error("fixture");
+    const r = binding.reference;
+    if (fault === "changed-statement") r.pull.body = "unrelated";
+    if (fault === "foreign-link-label")
+      r.pull.body = "Promote [#1](https://github.com/other/repo/pull/1).";
+    if (fault === "wrong-target") r.target.id = "PR_other";
+    if (fault === "wrong-number") r.target.number = 99;
+    if (fault === "wrong-head") r.pull.head.sha = sha("6");
+    if (fault !== "changed-statement") {
+      const { digest: _, ...payload } = r;
+      r.digest = sha256Hex(JSON.stringify(payload));
+    }
+    if (fault === "different-unit") grouped.workUnitId = `wu_${"f".repeat(64)}`;
+    expect(() => apply(journal, input)).toThrow();
+  });
+}
+
+test("canonical selected claims may omit superseded raw paths while preserving the full source proof", () => {
+  const { journal, input, grouped } = octoberGroupedReplacement();
+  if (grouped.proof.status !== "complete") throw Error("fixture");
+  const commit = grouped.proof.sources[0].commits[0];
+  const unclaimed = {
+    ...structuredClone(commit),
+    sha: sha("8"),
+    author: C,
+    files: [{ path: "superseded.sql", additions: 2, deletions: 0 }],
+    additions: 2,
+    deletions: 0,
+  };
+  grouped.proof.sources[0].commits.push(unclaimed);
+  grouped.proof.sources[0].commitCount++;
+  expect(
+    [...latestPoints(apply(journal, input).journal).values()].find(
+      (row) => row.award.actor.id === A.id,
+    )?.award.amount,
+  ).toBe(30);
+});
+
+test("authenticated review reference accepts another maintainer as merger", () => {
+  const { journal, input, binding } = referencedFollowup();
+  if (!binding.reference) throw Error("fixture");
+  const ref = binding.reference;
+  ref.pull.body = "No outgoing body reference";
+  if (ref.pull.merged_by) ref.pull.merged_by.node_id = B.id;
+  ref.acknowledgement = {
+    node_id: "PRR_followup",
+    body: "Promotes #1",
+    user: { node_id: C.id, type: "User" },
+    submitted_at: "2026-10-24T00:00:01Z",
+  };
+  const { digest: _, ...payload } = ref;
+  ref.digest = sha256Hex(JSON.stringify(payload));
+  expect(
+    [...latestPoints(apply(journal, input).journal).values()].find(
+      (row) => row.award.actor.id === A.id,
+    )?.award.amount,
+  ).toBe(30);
+});
+
+for (const fault of ["cycle", "foreign-node"] as const) {
+  test(`native follow-up graph rejects ${fault}`, () => {
+    const { journal, input, grouped } = laterAcceptedFollowup();
+    if (
+      grouped.proof.status !== "complete" ||
+      !grouped.proof.originalContributor?.followups
+    )
+      throw Error("fixture");
+    const binding = grouped.proof.originalContributor.followups[0];
+    if (fault === "cycle") binding.commits[0].parentShas.push(sha("8"));
+    binding.commits.push({
+      sha: sha("8"),
+      parentShas:
+        fault === "cycle" ? [binding.commits[0].sha] : [binding.ancestorSha],
+    });
+    expect(() => apply(journal, input)).toThrow();
+  });
+}
