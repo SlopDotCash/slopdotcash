@@ -341,7 +341,10 @@ Points history. Replaying an identical batch remains valid.
    unchanged. `POST .../monthly-settings` (`automatic`) turns
    the automatic default off or on again. Write or maintain permission can
    read the month and prepare its commitment, but cannot change allocations,
-   the automatic default, finalization or reserve release.
+   the automatic default, finalization or reserve release. The same Slopbot
+   installation reader used by project setup verifies current permission and
+   the immutable public repository and steward identity for every monthly read
+   or action.
 3. **Execution snapshot.** `POST .../monthly/:YYYY-MM/finalize`
    (`expectedSequence`) freezes the current allocations now. Otherwise the
    payments Worker's scheduled coordinator freezes them at the cutoff,
