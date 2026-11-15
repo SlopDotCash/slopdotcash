@@ -937,6 +937,7 @@ async function retainedResolutionSignature(
     !commit ||
     !mergeResolutionMatches(resolution, commit) ||
     resolution.gitVersion !== MERGE_GIT_VERSION ||
+    resolution.kind === "combined-parent-delta" ||
     !resolution.hadConflicts ||
     !source.evidence.commits.some(
       (entry) => entry.sha === commit.parents[0].sha,
@@ -1107,7 +1108,11 @@ export async function retainedCopyBindings(
           limitations.add(
             `${evidence.pull.node_id}: retained merge ${commit.sha} needs complete canonical resolution evidence`,
           );
-        } else if (resolution.hadConflicts || resolution.paths.length > 0) {
+        } else if (
+          (resolution.kind !== "combined-parent-delta" &&
+            resolution.hadConflicts) ||
+          resolution.paths.length > 0
+        ) {
           const signature = await retainedResolutionSignature(
             original,
             resolution,

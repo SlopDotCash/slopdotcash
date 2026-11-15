@@ -2571,3 +2571,53 @@ for (const fault of [
     expect(() => apply(journal, input)).toThrow();
   });
 }
+
+test("verified nine-parent delta uses the existing author fallback and keeps its pool", () => {
+  const { journal, input, units } = grouped();
+  const first = input.candidates[0];
+  if (first.proof.status !== "complete" || first.kind !== "work-unit")
+    throw Error("fixture");
+  const source = first.proof.sources[0];
+  source.author = A;
+  const parents = Array.from({ length: 9 }, (_, i) =>
+    (i + 1).toString(16).repeat(40),
+  );
+  const blob = "c".repeat(40),
+    result = "d".repeat(40),
+    path = "one.ts";
+  const patch = `diff --combined ${path}\nindex ${parents.map(() => blob).join(",")}..${result}\n${parents.map(() => `--- a/${path}\n`).join("")}+++ b/${path}\n@@@@@@@@@@ ${parents.map(() => "-1 ").join("")}+1,2 @@@@@@@@@@\n         old\n+++++++++new\n`;
+  const commit = source.commits[0];
+  commit.parentCount = 9;
+  commit.parentShas = parents;
+  commit.author = null;
+  commit.mergeResolution = {
+    kind: "combined-parent-delta",
+    commitSha: commit.sha,
+    parents,
+    parentTrees: parents.map(() => "e".repeat(40)),
+    gitVersion: "git version 2.56.0",
+    resolvedTree: "f".repeat(40),
+    patch,
+    patchSha256: sha256Hex(patch),
+    paths: [path],
+    files: [
+      {
+        path,
+        parents: parents.map(() => ({ mode: "100644", blobSha: blob })),
+        result: { mode: "100644", blobSha: result },
+      },
+    ],
+  };
+  const other = input.candidates[1];
+  if (other.proof.status !== "complete") throw Error("fixture");
+  other.proof.sources[0].author = A;
+  other.proof.sources[0].commits[0] = structuredClone(commit);
+  const value = apply(journal, input);
+  expect(
+    [...latestPoints(value.journal).values()].find(
+      (row) => row.award.workUnitId === units[0] && row.award.actor.id === A.id,
+    )?.award.amount,
+  ).toBe(7);
+  expect(total(value.journal)).toBe(total(journal));
+  expect(apply(value.journal, input, true, LATER).journal).toBe(value.journal);
+});

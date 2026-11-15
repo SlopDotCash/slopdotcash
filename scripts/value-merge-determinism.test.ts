@@ -88,7 +88,10 @@ test("merge proof bytes do not depend on unrelated objects in the supplied bundl
     const first = await collectMergeResolutions(evidence, compact);
     const second = await collectMergeResolutions(evidence, expanded);
     expect(first.mergeResolutions?.[0].paths).toEqual(["witness.txt"]);
-    expect(first.mergeResolutions?.[0].hadConflicts).toBe(true);
+    const resolution = first.mergeResolutions?.[0];
+    if (!resolution || resolution.kind === "combined-parent-delta")
+      throw Error("Expected two-parent fixture");
+    expect(resolution.hadConflicts).toBe(true);
     expect(second.mergeResolutions).toEqual(first.mergeResolutions);
     expect(first.mergeResolutions?.[0].patch).toMatch(
       /\nindex [a-f0-9]{40}\.\.[a-f0-9]{40} 100644\n/u,
