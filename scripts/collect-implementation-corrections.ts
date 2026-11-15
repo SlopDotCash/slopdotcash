@@ -55,6 +55,7 @@ import {
 } from "../workers/slopbot/value-patch";
 import { isConfirmedMissingPublicReference } from "../workers/slopbot/value-reference-query";
 import { retainedCopyBindings } from "../workers/slopbot/value-retained-copy";
+import { valueSourceDigest } from "../workers/slopbot/value-review";
 import type { WorkUnitSource } from "../workers/slopbot/value-work-unit-types";
 import {
   collectSearchReferences,
@@ -1093,6 +1094,7 @@ async function bindRetained(
 interface HistoricalOrdinaryProof {
   sources: CorrectionSource[];
   originalContributor?: {
+    exactAcceptance?: true;
     originalSourceId: string;
     originalCommitSha: string;
     acceptedCommitSha: string;
@@ -1175,7 +1177,7 @@ function matchRetainedAcceptedSource(
 }
 
 async function authenticateOriginalFollowupParents(
-  github: GitHubClient,
+  github: Pick<GitHubClient, "get">,
   source: CorrectionSource,
   evidence: ValueEvidence,
 ): Promise<void> {
@@ -1203,8 +1205,219 @@ async function authenticateOriginalFollowupParents(
   }
 }
 
-async function octoberOriginalContributorProof(
-  github: GitHubClient,
+/** An identical Git object needs no textual acknowledgement of a rewrite.
+ * Authenticate the native merge range and its parent order before retaining
+ * the complete evidence in the cache and its digest in the correction proof.
+ */
+async function exactOctoberOriginalContributorProof(
+  github: Pick<GitHubClient, "get">,
+  accepted: CorrectionSource,
+  originalSource: CorrectionSource,
+  integration: WorkUnitSource,
+  original: WorkUnitSource,
+): Promise<HistoricalOrdinaryProof | null> {
+  const anchor = originalSource.commits.find(
+    (commit) => commit.sha === originalSource.headSha,
+  );
+  if (
+    anchor?.parentCount !== 1 ||
+    anchor.author?.id !== originalSource.author?.id ||
+    !firstAcceptedOrdinary(accepted).some(
+      (commit) =>
+        commit.sha === anchor.sha && commit.author?.id === anchor.author?.id,
+    )
+  )
+    return null;
+  const originalPull = original.evidence.pull;
+  const acceptedPull = integration.evidence.pull;
+  const references = (source: ValueEvidence, target: Pull) =>
+    source.relatedPullRequests.some(
+      (reference) =>
+        reference.id === target.node_id &&
+        reference.number === target.number &&
+        reference.url === target.html_url &&
+        reference.repository.toLowerCase() ===
+          accepted.repository.toLowerCase(),
+    );
+  requireThat(
+    accepted.occurredAt?.startsWith("2026-10-") &&
+      original.evidence.repositoryDatabaseId ===
+        integration.evidence.repositoryDatabaseId &&
+      (references(integration.evidence, originalPull) ||
+        references(original.evidence, acceptedPull)),
+    "October exact source lacks a same-repository resolved PR reference",
+  );
+  const pulls = await Promise.all(
+    [originalPull, acceptedPull].map((pull) =>
+      github.get<Pull & { created_at: string }>(
+        `/repos/${accepted.repository}/pulls/${pull.number}`,
+      ),
+    ),
+  );
+  for (const [index, expected] of [originalPull, acceptedPull].entries()) {
+    const current = pulls[index];
+    requireThat(
+      current?.node_id === expected.node_id &&
+        current.number === expected.number &&
+        current.html_url === expected.html_url &&
+        current.state === expected.state &&
+        current.head.sha === expected.head.sha &&
+        current.merge_commit_sha === expected.merge_commit_sha &&
+        current.merged_at === expected.merged_at &&
+        current.updated_at === expected.updated_at &&
+        current.user.node_id === expected.user.node_id &&
+        Number.isFinite(Date.parse(current.created_at)),
+      "October exact source changed during collection",
+    );
+  }
+  requireThat(
+    Date.parse(pulls[0]?.created_at ?? "") <
+      Date.parse(pulls[1]?.created_at ?? ""),
+    "October exact original must precede the accepted PR",
+  );
+  const mergeSha = acceptedPull.merge_commit_sha;
+  const merge = await github.get<{
+    sha: string;
+    parents: { sha: string }[];
+  }>(`/repos/${accepted.repository}/git/commits/${mergeSha}`);
+  requireThat(
+    merge &&
+      /^[a-f0-9]{40}$/u.test(mergeSha ?? "") &&
+      merge.sha === mergeSha &&
+      Array.isArray(merge.parents) &&
+      merge.parents.length === 2 &&
+      merge.parents.every(({ sha }) => /^[a-f0-9]{40}$/u.test(sha)) &&
+      merge.parents[0].sha !== merge.parents[1].sha &&
+      merge.parents[1].sha === accepted.headSha &&
+      integration.evidence.mergeCommitEvidence?.sha === merge.sha &&
+      encode(
+        integration.evidence.mergeCommitEvidence.parents.map(({ sha }) => sha),
+      ) === encode(merge.parents.map(({ sha }) => sha)),
+    "October exact source lacks a pinned native merge",
+  );
+  type Comparison = {
+    status: string;
+    ahead_by: number;
+    behind_by: number;
+    total_commits: number;
+    base_commit: { sha: string };
+    merge_base_commit: { sha: string };
+    commits: { sha: string; parents: { sha: string }[] }[];
+  };
+  const comparison = async (base: string, head: string, page = 1) => {
+    const result = await github.get<Comparison>(
+      `/repos/${accepted.repository}/compare/${base}...${head}?per_page=100&page=${page}`,
+    );
+    requireThat(
+      result?.base_commit?.sha === base &&
+        /^[a-f0-9]{40}$/u.test(result.merge_base_commit?.sha ?? "") &&
+        Number.isSafeInteger(result.ahead_by) &&
+        result.ahead_by >= 0 &&
+        Number.isSafeInteger(result.behind_by) &&
+        result.behind_by >= 0 &&
+        Number.isSafeInteger(result.total_commits) &&
+        result.total_commits >= 0 &&
+        Array.isArray(result.commits),
+      "October exact source comparison is incomplete",
+    );
+    return result;
+  };
+  const firstParent = await comparison(anchor.sha, merge.parents[0].sha);
+  const secondParent = await comparison(anchor.sha, merge.parents[1].sha);
+  const isAncestor = (result: Comparison) =>
+    ["ahead", "identical"].includes(result.status) &&
+    result.behind_by === 0 &&
+    result.merge_base_commit.sha === anchor.sha;
+  requireThat(
+    !isAncestor(firstParent) &&
+      ["behind", "diverged"].includes(firstParent.status) &&
+      firstParent.behind_by > 0 &&
+      isAncestor(secondParent),
+    "October exact original was not newly accepted through the PR head",
+  );
+  const expected = new Map(
+    integration.evidence.commits.map((commit) => [commit.sha, commit]),
+  );
+  const acceptedRange: Comparison[] = [];
+  const observed = new Set<string>();
+  for (let page = 1; page <= Math.ceil((expected.size + 1) / 100); page++) {
+    const range = await comparison(merge.parents[0].sha, merge.sha, page);
+    requireThat(
+      range.status === "ahead" &&
+        range.behind_by === 0 &&
+        range.merge_base_commit.sha === merge.parents[0].sha &&
+        range.total_commits === expected.size + 1 &&
+        range.ahead_by === range.total_commits &&
+        range.commits.length ===
+          Math.min(100, range.total_commits - (page - 1) * 100),
+      "October exact accepted range differs from the complete census",
+    );
+    for (const commit of range.commits) {
+      const canonical =
+        commit.sha === merge.sha ? merge : expected.get(commit.sha);
+      requireThat(
+        canonical &&
+          !observed.has(commit.sha) &&
+          Array.isArray(commit.parents) &&
+          encode(commit.parents.map(({ sha }) => sha)) ===
+            encode(canonical.parents.map(({ sha }) => sha)),
+        "October exact accepted range has an unknown or repeated Git object",
+      );
+      observed.add(commit.sha);
+    }
+    acceptedRange.push(range);
+  }
+  requireThat(
+    observed.size === expected.size + 1,
+    "October exact accepted range is incomplete",
+  );
+  await authenticateOriginalFollowupParents(
+    github,
+    accepted,
+    integration.evidence,
+  );
+  requireThat(
+    originalContributorPrecedesFollowups(
+      { ...accepted, author: originalSource.author },
+      accepted.author,
+    ),
+    "October exact accepted source has an unverified contributor or follow-up",
+  );
+  const files = accepted.commits.find(
+    (commit) => commit.sha === anchor.sha,
+  )?.files;
+  requireThat(
+    files?.length,
+    "October exact original lacks complete file evidence",
+  );
+  return {
+    sources: [accepted, originalSource],
+    originalContributor: {
+      exactAcceptance: true,
+      originalSourceId: originalSource.sourceId,
+      originalCommitSha: anchor.sha,
+      acceptedCommitSha: anchor.sha,
+      boundPaths: files.map((file) => file.path).sort(),
+      bindingDigest: digest(
+        encode({
+          original: await valueSourceDigest(original.evidence, original.policy),
+          accepted: await valueSourceDigest(
+            integration.evidence,
+            integration.policy,
+          ),
+          pulls,
+          merge,
+          firstParent,
+          secondParent,
+          acceptedRange,
+        }),
+      ),
+    },
+  };
+}
+
+export async function octoberOriginalContributorProof(
+  github: Pick<GitHubClient, "get">,
   plain: CorrectionSource,
   sources: readonly WorkUnitSource[],
   owners: ReadonlyMap<string, string>,
@@ -1261,6 +1474,14 @@ async function octoberOriginalContributorProof(
       ),
     "Retained accepted commit author differs from the canonical census",
   );
+  const exact = await exactOctoberOriginalContributorProof(
+    github,
+    accepted,
+    originalSource,
+    integration,
+    original,
+  );
+  if (exact) return exact;
   // The rich original proof captures merge parents but does not fetch merger
   // line totals. A shared SHA can carry its already verified census totals.
   const canonicalCommits = new Map(

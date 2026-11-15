@@ -89,6 +89,8 @@ interface CompleteCorrectionProof {
   sources: CorrectionSource[];
   /** Verified retained implementation for the October 2026 replacement rule. */
   originalContributor?: {
+    /** Native identical-SHA acceptance with authenticated accepted-parent edges. */
+    exactAcceptance?: true;
     originalSourceId: string;
     originalCommitSha: string;
     acceptedCommitSha: string;
@@ -535,6 +537,8 @@ function deriveProof(
       candidate.kind === "pull-request" &&
         candidate.occurredAt.startsWith("2026-10-") &&
         binding &&
+        (binding.exactAcceptance === undefined ||
+          binding.exactAcceptance === true) &&
         digest.test(binding.bindingDigest) &&
         Array.isArray(binding.boundPaths) &&
         binding.boundPaths.length > 0,
@@ -572,11 +576,23 @@ function deriveProof(
         ),
       "original-contributor proof does not bind verified accepted work",
     );
+    check(
+      binding.exactAcceptance !== true ||
+        (binding.originalCommitSha === binding.acceptedCommitSha &&
+          binding.originalCommitSha === original.headSha &&
+          accepted.commits.every(validParentShas)),
+      "exact original-contributor proof does not bind the original head",
+    );
     const origin = original.author;
     const carrier = accepted.author;
     if (
       incomplete ||
       !originalContributorPrecedesFollowups(original, carrier) ||
+      (binding.exactAcceptance === true &&
+        !originalContributorPrecedesFollowups(
+          { ...accepted, author: origin },
+          carrier,
+        )) ||
       accepted.commits.some(
         (commit) =>
           commit !== acceptedCommit &&

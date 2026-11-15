@@ -396,6 +396,85 @@ test("October replacement proof holds competing contributors and rejects false a
   );
 });
 
+function octoberExactReplacement() {
+  const sample = octoberReplacement();
+  const accepted = sample.proof.sources[0];
+  const original = sample.proof.sources[1];
+  original.headSha = accepted.commits[0].sha;
+  original.commits[0].sha = accepted.commits[0].sha;
+  accepted.commits[0].parentShas = [sha("0")];
+  accepted.commits[1].parentShas = [accepted.commits[0].sha];
+  const binding = sample.proof.originalContributor;
+  if (!binding) throw new Error("missing exact-source fixture binding");
+  binding.exactAcceptance = true;
+  binding.originalCommitSha = accepted.commits[0].sha;
+  return sample;
+}
+
+test("exact October objects preserve the original allocation and private eligibility gates", () => {
+  const sample = octoberExactReplacement();
+  const result = apply(sample.journal, sample.input);
+  expect(result.dispositions[0].status).toBe("applied");
+  expect(amounts(result.journal)).toEqual({ [A.id]: 30, [C.id]: 0 });
+  expect(total(result.journal)).toBe(total(sample.journal));
+  expect(
+    result.journal.revisions.slice(0, sample.journal.revisions.length),
+  ).toEqual(sample.journal.revisions);
+  expect(apply(sample.journal, sample.input, false).journal).toBe(
+    sample.journal,
+  );
+  expect(
+    apply(
+      sample.journal,
+      sample.input,
+      true,
+      RECORDED,
+      new Map([[A.id, "2026-10-01T00:00:00.000Z"]]),
+    ).journal,
+  ).toBe(sample.journal);
+  expect(apply(result.journal, sample.input, true, LATER).journal).toBe(
+    result.journal,
+  );
+});
+
+test("exact October source objects require authenticated descendant follow-ups", () => {
+  const cases = [
+    (sample: ReturnType<typeof octoberExactReplacement>) => {
+      sample.proof.sources[0].commits[1].parentShas = [sha("f")];
+    },
+    (sample: ReturnType<typeof octoberExactReplacement>) => {
+      sample.proof.sources[0].commits[1].author = null;
+    },
+    (sample: ReturnType<typeof octoberExactReplacement>) => {
+      sample.proof.sources[0].commits[1].author = B;
+    },
+    (sample: ReturnType<typeof octoberExactReplacement>) => {
+      sample.proof.sources[0].commits[0].parentShas = [sha("b")];
+    },
+  ];
+  for (const mutate of cases) {
+    const sample = octoberExactReplacement();
+    mutate(sample);
+    const result = apply(sample.journal, sample.input);
+    expect(result.dispositions[0].status).toBe("held");
+    expect(result.journal).toBe(sample.journal);
+  }
+  const missing = octoberExactReplacement();
+  missing.proof.sources[0].commits[1].parentShas = undefined;
+  expect(() => apply(missing.journal, missing.input)).toThrow(
+    "exact original-contributor proof does not bind the original head",
+  );
+});
+
+test("retained acknowledgement bindings with unchanged SHAs keep their prior schema and behavior", () => {
+  const sample = octoberExactReplacement();
+  delete sample.proof.originalContributor?.exactAcceptance;
+  delete sample.proof.sources[0].commits[1].parentShas;
+  const result = apply(sample.journal, sample.input);
+  expect(result.dispositions[0].status).toBe("applied");
+  expect(amounts(result.journal)).toEqual({ [A.id]: 30, [C.id]: 0 });
+});
+
 test("old v1 pool is shared in whole Points without revaluing or rewriting its history", () => {
   const journal = initial();
   const result = apply(journal);
