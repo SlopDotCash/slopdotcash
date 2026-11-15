@@ -31,7 +31,7 @@ export const MEDIAN_WINDOW_DAYS = 30;
 const REFRESH_AFTER_MS = 20 * 60 * 60 * 1000;
 const RETRY_AFTER_MS = 60 * 60 * 1000;
 /** Repositories read per scheduled run, so one run stays short. */
-export const REPOSITORIES_PER_RUN = 8;
+export const REPOSITORIES_PER_RUN = 15;
 const OPEN_PAGE = 50;
 const OPEN_PAGES = 6;
 const MERGED_PAGE = 100;
