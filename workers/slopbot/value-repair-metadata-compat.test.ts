@@ -46,10 +46,23 @@ function addMetadata(source: ReturnType<typeof makeOriginal>) {
     author: { id: pull.user.node_id, type: "User" },
   };
 }
-async function jointFixture(metadata = false) {
+async function jointFixture(metadata = false, extraSource = false) {
   const source = makeOriginal();
   if (metadata) addMetadata(source);
-  const evidence = await prepareWorkUnitEvidence([source], [repository]);
+  const sources = [source];
+  if (extraSource) {
+    const other = makeOriginal();
+    other.evidence.pull.node_id = "PR_other";
+    other.evidence.pull.number = 2;
+    other.evidence.pull.html_url = `https://github.com/${repository.id}/pull/2`;
+    other.evidence.pull.head.sha = "8".repeat(40);
+    other.evidence.commits[0].sha = other.evidence.pull.head.sha;
+    other.evidence.commitAttribution[0].sha = other.evidence.pull.head.sha;
+    other.evidence.commits[0].parents = [{ sha: "7".repeat(40) }];
+    other.evidence.evidenceUrls = [other.evidence.pull.html_url];
+    sources.push(other);
+  }
+  const evidence = await prepareWorkUnitEvidence(sources, [repository]);
   const unit = {
     claimIds: evidence.claims.map((c) => c.id),
     assessment: assessment(),
@@ -85,13 +98,15 @@ async function jointFixture(metadata = false) {
     throughSequence: 1,
     current: { row, record },
   };
-  return { source, record, history };
+  return { source, sources, record, history };
 }
 async function consume(input: Awaited<ReturnType<typeof jointFixture>>) {
   return consumeWorkUnitHistory(
     input.history,
-    [input.source],
-    new Map([[input.source.evidence.pull.node_id, null]]),
+    input.sources,
+    new Map(
+      input.sources.map((source) => [source.evidence.pull.node_id, null]),
+    ),
     [repository],
   );
 }
@@ -200,7 +215,7 @@ test("ordinary historical source permits only the supplemental metadata differen
   expect((await read()).status).toBe("stale");
 });
 
-test("a record with any metadata-bound repair claim cannot use old-shape fallback", async () => {
+test("an altered repair claim cannot match the exact retained source shape", async () => {
   const input = await jointFixture();
   const original = structuredClone(input.record.claims[0]);
   input.record.claims[0] = {
@@ -218,4 +233,36 @@ test("a record with any metadata-bound repair claim cannot use old-shape fallbac
   const raw = JSON.stringify(input.source);
   expect((await consume(input)).status).toBe("stale");
   expect(JSON.stringify(input.source)).toBe(raw);
+});
+
+test("mixed source metadata retains the bound source and restores only the old unbound shape", async () => {
+  const input = await jointFixture(true, true);
+  const other = input.sources[1];
+  addMetadata(other);
+  const raw = JSON.stringify(input.sources);
+  const result = await consume(input);
+  expect(result.status).toBe("assessed");
+  if (!("evidence" in result)) throw Error("Expected assessed evidence");
+  expect(result.evidence.sources[0].evidence.repairBodyEdit).toEqual(
+    input.source.evidence.repairBodyEdit,
+  );
+  expect(result.evidence.sources[1].evidence.repairBodyEdit).toBeUndefined();
+  expect(JSON.stringify(input.sources)).toBe(raw);
+  const metadata = input.source.evidence.repairBodyEdit;
+  if (!metadata?.editor) throw Error("Missing bound metadata");
+  metadata.editor.id = "U_other";
+  expect((await consume(input)).status).toBe("stale");
+});
+
+test("mixed metadata compatibility refuses source and claim substitution", async () => {
+  for (const field of ["body", "binding", "claim", "missing-bound"] as const) {
+    const input = await jointFixture(true, true);
+    addMetadata(input.sources[1]);
+    if (field === "body") input.sources[1].evidence.pull.body = "changed";
+    if (field === "binding")
+      input.record.sources[1].sourceDigest = "f".repeat(64);
+    if (field === "claim") input.record.claims[0].path = "foreign.ts";
+    if (field === "missing-bound") delete input.source.evidence.repairBodyEdit;
+    expect((await consume(input)).status).not.toBe("assessed");
+  }
 });
