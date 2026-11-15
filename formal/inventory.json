@@ -1427,7 +1427,7 @@
     },
     {
       "path": "contracts/evm/adapter.ts",
-      "sha256": "f6eee7031911c5b3b8bdb3371357a53f19369faf066ce5fc7618c49c11e5f4b6",
+      "sha256": "1593e3882e638abb465527f3caf19bc689a87e633c132944a3f0af8887479d9f",
       "models": [
         "formal/models/contracts/vault_setup_resolution.qnt",
         "formal/models/payments/chain_evidence.qnt",
@@ -1439,7 +1439,7 @@
         650, 974, 977, 986, 992, 996, 1000, 1029, 1072, 1080, 1089, 1097, 1117,
         1120, 1162, 1234, 1259, 1260, 1270, 1277, 1282, 1283, 1299, 1300, 1302,
         1314, 1317, 1349, 1375, 1377, 1480, 1487, 1538, 1540, 1549, 1553, 1555,
-        1575, 1576
+        1575, 1576, 1625, 1639, 1640
       ],
       "review": "mapped-abstraction"
     },
@@ -1588,7 +1588,7 @@
     },
     {
       "path": "contracts/evm/src/ProjectEscrow.sol",
-      "sha256": "79d7b63d7db428bb46658267a7719f22786a66aff8a91b86c6b64381cc551f08",
+      "sha256": "3442e353a19ca35d4937f5203976fd8d23b9456c692ec1f82219bb1233ad6532",
       "models": [
         "formal/models/contracts/binding_veto_policy.qnt",
         "formal/models/contracts/evm_factory_authority.qnt",
@@ -1598,7 +1598,7 @@
         "formal/models/payments/authority_rotation.qnt",
         "formal/models/rewards/escrow_balances.qnt"
       ],
-      "candidateLines": [94, 340, 524, 934, 1012, 1016, 1017, 1029, 1030],
+      "candidateLines": [102, 359, 621, 1044, 1122, 1126, 1127, 1139, 1140],
       "review": "mapped-abstraction"
     },
     {

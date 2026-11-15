@@ -16,11 +16,11 @@
     "build outputs"
   ],
   "counts": {
-    "files": 770,
-    "functions": 11423,
+    "files": 772,
+    "functions": 11428,
     "selectedContractTargets": 188,
-    "unprovedFunctions": 11235,
-    "nonTypeScriptFiles": 57
+    "unprovedFunctions": 11240,
+    "nonTypeScriptFiles": 59
   },
   "limits": [
     "Inventory is accounting, not verification. Contract targets are not counted as proved without successful current evidence.",
@@ -1809,7 +1809,7 @@
 {"name":"reusableSourceInventory","kind":"FunctionDeclaration","line":100,"sha256":"9ef98279c2aa0eb11168b38bd1967ced34fa70818f0d27fc2a3a17309071302b","status":"contract-target-unconfirmed","candidate":"selected-runtime-contract","syntaxFeatures":[]},
 {"name":"sameScanEvidence","kind":"FunctionDeclaration","line":116,"sha256":"74df715dc09b75c9af72359ada24956bf0d80b138d2970c2551f01d87e622c10","status":"contract-target-unconfirmed","candidate":"selected-runtime-contract","syntaxFeatures":[]}
 ]},
-{"path":"contracts/evm/adapter.ts","sha256":"f6eee7031911c5b3b8bdb3371357a53f19369faf066ce5fc7618c49c11e5f4b6","language":"typescript","disposition":"callables-inventoried","functions":[
+{"path":"contracts/evm/adapter.ts","sha256":"1593e3882e638abb465527f3caf19bc689a87e633c132944a3f0af8887479d9f","language":"typescript","disposition":"callables-inventoried","functions":[
 {"name":"isCanonicalEvmReceipt","kind":"FunctionDeclaration","line":23,"sha256":"47a93ba7fd2a83749f03fff025e30b912dd84e06321c02ceab8cce8b9edd0882","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":["library-semantics-review"]},
 {"name":"same","kind":"ArrowFunction","line":37,"sha256":"0fe8aba5af8ed884dea5e8f6cd3fa7dc3ca1bf47c9a8332764280efb8d930dec","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":["library-semantics-review"]},
 {"name":"toHex","kind":"ArrowFunction","line":122,"sha256":"09b19453c92d680a8d2ec5aa41769f60466a6ce8f17bd148ef52bd1792a5f8bc","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
@@ -1898,7 +1898,12 @@
 {"name":"buildCommitMonthlyCalldata","kind":"FunctionDeclaration","line":1454,"sha256":"1d060ca59d72e9601e00c05811afbee0e2dc2c55d756451ad736ed500bda0135","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":["library-semantics-review","throw-unreachable-model"]},
 {"name":"<ArrowFunction@1464>","kind":"ArrowFunction","line":1464,"sha256":"8230a5ccdd37b90409dce80a6c17dcdd96383f7e329802228ace9abcbfd399cc","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
 {"name":"readVaultTotals","kind":"FunctionDeclaration","line":1484,"sha256":"8ff4515db208cb99d3f3428fc568f4f44f29aa674528d87c4e9d4df6fcb9e792","status":"unproved","candidate":"requires-effect-or-language-boundary","syntaxFeatures":["await","library-semantics-review","throw-unreachable-model"]},
-{"name":"<ArrowFunction@1504>","kind":"ArrowFunction","line":1504,"sha256":"040fe40887e3020ef52db0fc276cb48d8e2aab0b9f046778a98f74bd56119586","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]}
+{"name":"<ArrowFunction@1504>","kind":"ArrowFunction","line":1504,"sha256":"040fe40887e3020ef52db0fc276cb48d8e2aab0b9f046778a98f74bd56119586","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
+{"name":"pledgePeriodWord","kind":"FunctionDeclaration","line":1591,"sha256":"bdf691780e83d48282098a5af0ae635a8cb8eb9bd5a7eef012716df7545152f0","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":["throw-unreachable-model"]},
+{"name":"buildPledgeMonthsCalldata","kind":"FunctionDeclaration","line":1609,"sha256":"555301ed6515df34afc5a300ceea88726b1dc8f55f2132595a4d76f699976eb3","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":["throw-unreachable-model"]},
+{"name":"buildExpirePledgeCalldata","kind":"FunctionDeclaration","line":1620,"sha256":"e96faf9fe603a4e2ea4e1431276c991c8fc1a8c7502118e1aa9ed31af44defb8","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
+{"name":"readEvmMonthPledges","kind":"FunctionDeclaration","line":1627,"sha256":"b7dcd899b388cf16ec5b760a7ca2140b88f899e44df610408e5b0a68c1c85bec","status":"unproved","candidate":"requires-effect-or-language-boundary","syntaxFeatures":["await","throw-unreachable-model"]},
+{"name":"<ArrowFunction@1652>","kind":"ArrowFunction","line":1652,"sha256":"7939c6f3ed4bb8b7a1b49234079fa3ca889a4ae0dcd8a2a2b2c21467ae4716d1","status":"unproved","candidate":"requires-effect-or-language-boundary","syntaxFeatures":["await","throw-unreachable-model"]}
 ]},
 {"path":"contracts/evm/factories.ts","sha256":"6d70f888ea86c1667d515cbbbf175b252590c5adbccc56a6d8ecf8671d8ca025","language":"typescript","disposition":"no-function-body","functions":[
 
@@ -1960,7 +1965,7 @@
 {"path":"contracts/evm/script/DeployUpgradeImplementations.s.sol","sha256":"d5259a20380b50621693c6cd205ed2bc245fc2c5d4209ceb27e69245d27624f5","language":"solidity","disposition":"outside-typescript-toolchain","functions":[
 
 ]},
-{"path":"contracts/evm/src/ProjectEscrow.sol","sha256":"79d7b63d7db428bb46658267a7719f22786a66aff8a91b86c6b64381cc551f08","language":"solidity","disposition":"outside-typescript-toolchain","functions":[
+{"path":"contracts/evm/src/ProjectEscrow.sol","sha256":"3442e353a19ca35d4937f5203976fd8d23b9456c692ec1f82219bb1233ad6532","language":"solidity","disposition":"outside-typescript-toolchain","functions":[
 
 ]},
 {"path":"contracts/evm/src/ReferralDistributor.sol","sha256":"20d05115aee7a42cecbbf3acf5d86144feed2a5313494ca20e2d0e1177afe66f","language":"solidity","disposition":"outside-typescript-toolchain","functions":[
@@ -1988,6 +1993,12 @@
 
 ]},
 {"path":"contracts/evm/test/FeeConverterFixture.sol","sha256":"290a0a8762bed0f0f39278efd77bf1bd78431df160966fc026e4ff970faf5e94","language":"solidity","disposition":"outside-typescript-toolchain","functions":[
+
+]},
+{"path":"contracts/evm/test/MonthPledge.t.sol","sha256":"1703906ad19705096d381e6727e6a8dfea533b6b2cb338bdabb3f98c56c57746","language":"solidity","disposition":"outside-typescript-toolchain","functions":[
+
+]},
+{"path":"contracts/evm/test/MonthPledgeInvariant.t.sol","sha256":"90e00768bdd315743075c0e67a2cf40c899b50a60536d89a1293988f0df7f3a6","language":"solidity","disposition":"outside-typescript-toolchain","functions":[
 
 ]},
 {"path":"contracts/evm/test/MonthlyCommitment.t.sol","sha256":"8e232ee5b5dc257af5ffe9a6382255d8585f68ecf71ffc660a2b9ac8de41f997","language":"solidity","disposition":"outside-typescript-toolchain","functions":[
