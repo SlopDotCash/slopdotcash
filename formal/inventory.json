@@ -3485,14 +3485,14 @@
     },
     {
       "path": "scripts/collect-implementation-corrections.ts",
-      "sha256": "d34eccb25c2e49eb2890aae21dc679f942924bfbc22e3eee42e4b5b14817895f",
+      "sha256": "d3b1f4276d5edcd3b12242367fdfdca2d98cf38f5c5a64139e77e2d4211b3500",
       "models": [
         "formal/models/points/historical_implementation_allocation.qnt"
       ],
       "candidateLines": [
-        4, 11, 13, 77, 157, 234, 240, 243, 248, 258, 274, 280, 296, 297, 307,
-        310, 393, 439, 460, 485, 522, 529, 636, 647, 812, 1093, 1643, 1702,
-        1738, 1763, 1791, 1793
+        4, 11, 13, 78, 158, 235, 241, 244, 249, 259, 275, 281, 297, 298, 308,
+        311, 394, 440, 461, 486, 523, 530, 637, 648, 813, 1094, 1649, 1708,
+        1744, 1769, 1798, 1800
       ],
       "review": "mapped-abstraction"
     },
@@ -4063,6 +4063,15 @@
       "review": "mapped-abstraction"
     },
     {
+      "path": "scripts/points-correction-registry.ts",
+      "sha256": "ead9398dbbdbb0b2ba09657c4b7b2ddea920e58fdcdc66f998e3c4c0bc4837a3",
+      "models": [
+        "formal/models/points/historical_implementation_allocation.qnt"
+      ],
+      "candidateLines": [15, 105, 109, 117],
+      "review": "mapped-abstraction"
+    },
+    {
       "path": "scripts/points-protection-sql.ts",
       "sha256": "c99faa1aa420adfd67d891bd821900f60589f15ed60008f840ec4a786cc0a65b",
       "models": [
@@ -4116,13 +4125,13 @@
     },
     {
       "path": "scripts/prepare-implementation-corrections.ts",
-      "sha256": "d44654ff84297c1445aee7095d8961b1c093b93df31681c092108dc4955c4eac",
+      "sha256": "f7e376620e1c8b8d227b4066ddb99998e852ebb2ef86dac7d1c7b3064a042547",
       "models": [
         "formal/models/points/historical_implementation_allocation.qnt"
       ],
       "candidateLines": [
-        4, 29, 40, 238, 301, 335, 347, 348, 349, 358, 363, 367, 369, 381, 382,
-        398, 404, 414
+        4, 30, 42, 250, 313, 347, 359, 360, 361, 370, 375, 379, 381, 393, 394,
+        410, 416, 426
       ],
       "review": "mapped-abstraction"
     },
@@ -13551,11 +13560,12 @@
     },
     {
       "path": "formal/models/points/historical_implementation_allocation.qnt",
-      "sha256": "fdd3e11c9680b44501ae2daf20c6a641399c4fb24f3cd8de1b76c32229aa967b",
+      "sha256": "c07b44a520ca2813f4fcce5957fec806fcf0913ce9f0bbed6d2f510b34301592",
       "sources": [
         ".github/workflows/points-implementation-corrections.yml",
         "scripts/collect-implementation-corrections.ts",
         "scripts/generate-points.ts",
+        "scripts/points-correction-registry.ts",
         "scripts/points-protection-sql.ts",
         "scripts/prepare-implementation-corrections.ts",
         "src/lib/points-implementation-corrections.ts"
