@@ -1556,3 +1556,113 @@ for (const fault of [
     ).rejects.toThrow();
   });
 }
+
+async function reviewedRevisionSnapshot() {
+  const input = await snapshot();
+  const historical = clone(input.original.commits[0]);
+  const current = {
+    ...clone(historical),
+    sha: sha("e"),
+    parents: [{ sha: sha("d") }],
+  };
+  input.original.commits = [current];
+  input.original.pull.head.sha = current.sha;
+  input.original.commitAttribution[0].sha = current.sha;
+  input.original.reviews = [
+    {
+      id: 23,
+      node_id: "PRR_historical",
+      html_url: `${input.original.pull.html_url}#pullrequestreview-23`,
+      user: carrier,
+      body: "Checked the original change.",
+      state: "COMMENTED",
+      submitted_at: "2026-10-02T00:00:00Z",
+      commit_id: historical.sha,
+    },
+  ];
+  input.responses.set(`${root}/pulls/1`, {
+    ...input.original.pull,
+    created_at: "2026-10-01T00:00:00Z",
+  });
+  input.responses.set(
+    `${root}/pulls/1/reviews/23`,
+    clone(input.original.reviews[0]),
+  );
+  input.responses.set(`${root}/commits/${historical.sha}`, historical);
+  input.responses.set(`${root}/git/commits/${current.sha}`, current);
+  const claims = [
+    {
+      id: "claim_historical",
+      sourceId: input.plain.sourceId,
+      commitSha: historical.sha,
+      path: "fix.ts",
+    },
+  ];
+  return { ...input, claims };
+}
+
+test("a freshly verified review binds a historical original revision while retaining the current PR", async () => {
+  const input = await reviewedRevisionSnapshot();
+  const proof = await octoberOriginalContributorUnitProof(
+    input.github,
+    input.plain,
+    input.sources[1],
+    input.sources[0],
+    input.owners,
+    input.claims,
+  );
+  expect(
+    proof.originalContributor?.reviewedOriginal?.commits.map(
+      (commit) => commit.sha,
+    ),
+  ).toEqual([sha("a")]);
+  expect(
+    proof.sources.find((source) => source.sourceId === "PR_original")?.headSha,
+  ).toBe(sha("e"));
+  expect(input.readPaths).toContain(`${root}/pulls/1/reviews/23`);
+  expect(input.readPaths).toContain(`${root}/commits/${sha("a")}`);
+});
+
+for (const fault of [
+  "review",
+  "current-head",
+  "author",
+  "parents",
+  "late-review",
+] as const) {
+  test(`reviewed original revision refuses ${fault}`, async () => {
+    const input = await reviewedRevisionSnapshot();
+    if (fault === "review")
+      (
+        input.responses.get(`${root}/pulls/1/reviews/23`) as { body: string }
+      ).body = "Changed";
+    if (fault === "current-head")
+      (
+        input.responses.get(`${root}/pulls/1`) as { head: { sha: string } }
+      ).head = { sha: sha("9") };
+    if (fault === "author")
+      (
+        input.responses.get(`${root}/commits/${sha("a")}`) as {
+          author: typeof origin;
+        }
+      ).author = carrier;
+    if (fault === "parents")
+      (
+        input.responses.get(`${root}/commits/${sha("a")}`) as {
+          parents: { sha: string }[];
+        }
+      ).parents = [{ sha: sha("9") }];
+    if (fault === "late-review")
+      input.original.reviews[0].submitted_at = "2026-10-04T00:00:00Z";
+    await expect(
+      octoberOriginalContributorUnitProof(
+        input.github,
+        input.plain,
+        input.sources[1],
+        input.sources[0],
+        input.owners,
+        input.claims,
+      ),
+    ).rejects.toThrow();
+  });
+}
