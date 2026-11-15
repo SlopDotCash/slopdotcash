@@ -466,8 +466,10 @@ pure def pay(e: Escrow, source: SourceKey, binding: PayableBinding, ev: ChainEve
     reservedPrincipal: M::subtractAmounts(e.reservedPrincipal, net), reservedFees: M::subtractAmounts(e.reservedFees, award.fee),
     paidNet: M::addAmounts(e.paidNet, net), payoutFees: M::addAmounts(e.payoutFees, award.fee),
     accruedFees: M::addAmounts(e.accruedFees, award.fee),
-    awards: e.awards.listMap(a => if (a.source == source)
-      { ...a, paid: true, destination: binding.destination, bindingVersion: binding.version, paidIn: ev.transaction } else a) }
+    awards: e.awards.select(a => a.source != source).append(markPaid(award, binding.destination, binding.version, ev.transaction)) }
+pure def markPaid(a: Award, destination: str, version: int, transaction: str): Award =
+  { source: a.source, actor: a.actor, gross: a.gross, fee: a.fee, origin: a.origin, period: a.period, index: a.index,
+    committedAt: a.committedAt, paid: true, destination: destination, bindingVersion: version, paidIn: transaction }
 ```
 
 ### An identity-authority rotation observed at the factory changes only who signs next
