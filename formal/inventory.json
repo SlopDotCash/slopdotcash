@@ -41,6 +41,13 @@
       "review": "mapped-abstraction"
     },
     {
+      "path": ".github/workflows/fee-worker-bindings.yml",
+      "sha256": "8aca0460d92dd212ff4ce662b8dd95a4005237e7ffdd6acc346b5cbb18c883f7",
+      "models": ["formal/models/release/workflow_authority.qnt"],
+      "candidateLines": [],
+      "review": "mapped-abstraction"
+    },
+    {
       "path": ".github/workflows/formal.yml",
       "sha256": "cd4f3e4e5a7ac15e7efdc933917fe766f7405ab85bd6a1a9aae4d22e7f910901",
       "models": [
@@ -3936,6 +3943,13 @@
       "sha256": "ff8fe26a58076a2fee4f15c5832969d526dc5a3c552bd13d2d9549271bd8e4b5",
       "models": ["formal/models/points/historical_discussion_evidence.qnt"],
       "candidateLines": [9, 146, 147],
+      "review": "mapped-abstraction"
+    },
+    {
+      "path": "scripts/inspect-fee-worker-bindings.ts",
+      "sha256": "31f2de50f42886755d7aeadb05dcdfa9c6eae7e1c9d691d0d600e38486ee544c",
+      "models": ["formal/models/release/workflow_authority.qnt"],
+      "candidateLines": [],
       "review": "mapped-abstraction"
     },
     {
@@ -14292,14 +14306,16 @@
     },
     {
       "path": "formal/models/release/workflow_authority.qnt",
-      "sha256": "3bedb06af6fff9642566ae771b68e1003473ed51229b0616f935759fad105ded",
+      "sha256": "fcdc9e60224b6cab3d2a7aace830daca9a21c7655b5184ac72caae60f7480388",
       "sources": [
         ".github/workflows/cancel-closed-pr-runs.yml",
+        ".github/workflows/fee-worker-bindings.yml",
         ".github/workflows/monthly-rewards.yml",
         ".github/workflows/private-intake-watch.yml",
         ".github/workflows/production-watch.yml",
         ".github/workflows/referral-root-watch.yml",
         ".github/workflows/vetting-controller.yml",
+        "scripts/inspect-fee-worker-bindings.ts",
         "scripts/run-vetting-controller.ts"
       ],
       "scenarios": [
