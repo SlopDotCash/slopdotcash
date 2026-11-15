@@ -115,3 +115,45 @@ lemma ban_ensures(a: Access, by_: int, enforcement: int, target: int)
     }
   }
 }
+
+lemma release_ensures(a: Access, by_: int, decision: int, enforcement: int, target: int)
+  ensures (inv(a) ==> canRelease(a, by_, decision, enforcement, target) ==> alwaysProjectBansConfirmed(release(a, by_, decision, enforcement, target)))
+  ensures (inv(a) ==> canRelease(a, by_, decision, enforcement, target) ==> alwaysBansDecidedOnConfirmedMalice(release(a, by_, decision, enforcement, target)))
+  ensures (inv(a) ==> canRelease(a, by_, decision, enforcement, target) ==> alwaysReleasesIndependent(release(a, by_, decision, enforcement, target)))
+  ensures (inv(a) ==> canRelease(a, by_, decision, enforcement, target) ==> alwaysAppealsDecidedByModerators(release(a, by_, decision, enforcement, target)))
+  ensures (inv(a) ==> canRelease(a, by_, decision, enforcement, target) ==> alwaysAwardsIdentified(release(a, by_, decision, enforcement, target)))
+  ensures (inv(a) ==> canRelease(a, by_, decision, enforcement, target) ==> stepBanRecordsPermanent(a, release(a, by_, decision, enforcement, target)))
+  ensures (inv(a) ==> canRelease(a, by_, decision, enforcement, target) ==> stepFundedAwardsPreserved(a, release(a, by_, decision, enforcement, target)))
+  ensures (inv(a) ==> canRelease(a, by_, decision, enforcement, target) ==> stepNewAwardOnlyWhenAllowed(a, release(a, by_, decision, enforcement, target)))
+{
+  if inv(a) && canRelease(a, by_, decision, enforcement, target) {
+    var added := Release(decision, enforcement, target, by_);
+    var after := release(a, by_, decision, enforcement, target);
+    assert after.releases == a.releases + [added];
+    assert after.bans == a.bans;
+    forall r | r in a.releases + [added]
+      ensures |ProofLib.Filter((o: Release) => ((o.enforcement == r.enforcement) && (o.target == r.target)), a.releases + [added])| == 1
+    {
+      ProofLib.FilterAppend((o: Release) => ((o.enforcement == r.enforcement) && (o.target == r.target)), a.releases, added);
+      if added.enforcement == r.enforcement && added.target == r.target {
+        ProofLib.FilterNone((o: Release) => ((o.enforcement == r.enforcement) && (o.target == r.target)), a.releases);
+      }
+    }
+  }
+}
+
+lemma grantAppeal_ensures(a: Access, by_: int, appealId: int, decision: int)
+  ensures (inv(a) ==> canGrantAppeal(a, by_, appealId, decision) ==> alwaysProjectBansConfirmed(grantAppeal(a, by_, appealId, decision)))
+  ensures (inv(a) ==> canGrantAppeal(a, by_, appealId, decision) ==> alwaysBansDecidedOnConfirmedMalice(grantAppeal(a, by_, appealId, decision)))
+  ensures (inv(a) ==> canGrantAppeal(a, by_, appealId, decision) ==> alwaysReleasesIndependent(grantAppeal(a, by_, appealId, decision)))
+  ensures (inv(a) ==> canGrantAppeal(a, by_, appealId, decision) ==> alwaysAppealsDecidedByModerators(grantAppeal(a, by_, appealId, decision)))
+  ensures (inv(a) ==> canGrantAppeal(a, by_, appealId, decision) ==> alwaysAwardsIdentified(grantAppeal(a, by_, appealId, decision)))
+  ensures (inv(a) ==> canGrantAppeal(a, by_, appealId, decision) ==> stepBanRecordsPermanent(a, grantAppeal(a, by_, appealId, decision)))
+  ensures (inv(a) ==> canGrantAppeal(a, by_, appealId, decision) ==> stepFundedAwardsPreserved(a, grantAppeal(a, by_, appealId, decision)))
+  ensures (inv(a) ==> canGrantAppeal(a, by_, appealId, decision) ==> stepNewAwardOnlyWhenAllowed(a, grantAppeal(a, by_, appealId, decision)))
+{
+  if inv(a) && canGrantAppeal(a, by_, appealId, decision) {
+    var p := appealById(a, appealId);
+    release_ensures(a, by_, decision, p.enforcement, p.target);
+  }
+}
