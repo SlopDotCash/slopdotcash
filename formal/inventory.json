@@ -4624,9 +4624,9 @@
     },
     {
       "path": "scripts/run-october-rewards.ts",
-      "sha256": "d4f72d23f9415d2194b6e0b3dc30c00ae50b46441b6d557de4dfe7360300c9e4",
+      "sha256": "c6105948339092ee835a21d5fd9c6b9dd09eee506732e7852a2908de5dd486a6",
       "models": ["formal/models/rewards/october_proposal_import.qnt"],
-      "candidateLines": [3, 158, 305, 309, 321, 516, 520, 524],
+      "candidateLines": [3, 158, 305, 309, 321, 519, 523, 527],
       "review": "mapped-abstraction"
     },
     {

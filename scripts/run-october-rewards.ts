@@ -410,7 +410,10 @@ export function currentOwnerVerifier(
   env: {
     SLOPBOT_APP_ID?: string;
     SLOPBOT_APP_PRIVATE_KEY?: string;
-  } = process.env,
+  } = {
+    SLOPBOT_APP_ID: process.env.SLOPBOT_APP_ID,
+    SLOPBOT_APP_PRIVATE_KEY: process.env.SLOPBOT_APP_PRIVATE_KEY,
+  },
   fetcher: typeof fetch = fetch,
 ) {
   const appId = env.SLOPBOT_APP_ID;
