@@ -3532,17 +3532,17 @@
     },
     {
       "path": "scripts/collect-implementation-corrections.ts",
-      "sha256": "57b130f98b5a999a3a51d904b1daa9d0def1dc0eaf32ce64db56e84a321ec757",
+      "sha256": "7d07c047ebecb97771aad57fd4c172821ee3bcee0751c83a121ebddd3ee100a6",
       "models": [
         "formal/models/points/historical_discussion_evidence.qnt",
         "formal/models/points/historical_implementation_allocation.qnt"
       ],
       "candidateLines": [
-        4, 11, 13, 108, 188, 265, 271, 274, 279, 289, 305, 311, 327, 328, 338,
-        341, 438, 484, 505, 530, 576, 583, 699, 710, 875, 1228, 1251, 1260,
-        1417, 1473, 1532, 1538, 1539, 1542, 1582, 1584, 1588, 1833, 1877, 1882,
-        2127, 2129, 2133, 2264, 2668, 2679, 2969, 3560, 3630, 3821, 3933, 3953,
-        3982, 3984
+        4, 11, 13, 109, 189, 266, 272, 275, 280, 290, 306, 312, 328, 329, 339,
+        342, 439, 485, 506, 531, 577, 584, 700, 711, 876, 1229, 1252, 1261,
+        1418, 1474, 1533, 1539, 1540, 1543, 1583, 1585, 1589, 1835, 1879, 1884,
+        2235, 2237, 2244, 2255, 2433, 2435, 2439, 2574, 2978, 2989, 3279, 3870,
+        3940, 4131, 4245, 4265, 4294, 4296
       ],
       "review": "mapped-abstraction"
     },
@@ -6401,14 +6401,14 @@
     },
     {
       "path": "src/lib/points-implementation-corrections.ts",
-      "sha256": "c13ccca57ace31a4aff4a5bf6090720e3d335f55d9405e1f7490cc2cd4e57047",
+      "sha256": "863c55164aa19a2df3c667ddd5fe03bd454545666417b1fdda56dcc077c96caa",
       "models": [
         "formal/models/points/historical_implementation_allocation.qnt"
       ],
       "candidateLines": [
-        136, 148, 159, 173, 180, 315, 372, 373, 374, 378, 561, 563, 567, 683,
-        689, 716, 717, 804, 809, 957, 1150, 1209, 1295, 1311, 1510, 1517, 1522,
-        1630, 1711, 1746, 1774, 1876, 1877, 1878
+        204, 216, 227, 241, 248, 383, 440, 441, 442, 446, 629, 631, 635, 751,
+        757, 784, 785, 872, 877, 1029, 1222, 1284, 1370, 1386, 1585, 1592, 1597,
+        1705, 1786, 1821, 1849, 1951, 1952, 1953
       ],
       "review": "mapped-abstraction"
     },
@@ -8646,9 +8646,9 @@
     },
     {
       "path": "workers/slopbot/value-file-recovery.ts",
-      "sha256": "6dcad2e20c2c248ccbe902d071dfd487794b9cecf9b58016bbc51953ac013f76",
+      "sha256": "90995e337e60a876e50e30315ff75a8913c6427b7cf7c6cce313fd1c44e434e2",
       "models": ["formal/models/slopbot/bot_evidence_integrity.qnt"],
-      "candidateLines": [152, 153, 213, 246],
+      "candidateLines": [171, 172, 232, 265],
       "review": "mapped-abstraction"
     },
     {

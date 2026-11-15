@@ -26,8 +26,9 @@ import { prepareWorkUnitEvidence } from "./value-work-unit";
 
 /** Synthetic transport exercises canonical import and final recollection, with
  * an unresolved fixture verdict. It makes no model-backed value assertion. */
-for (const changed of [false, true])
-  test(`subscription import ${changed ? "refuses changed metadata" : "rechecks recovered files through normal journal publication"}`, async () => {
+for (const variant of ["unchanged", "changed", "repository activity"] as const)
+  test(`subscription import ${variant === "changed" ? "refuses changed metadata" : variant === "repository activity" ? "ignores repository and milestone counters that move between reads" : "rechecks recovered files through normal journal publication"}`, async () => {
+    const changed = variant === "changed";
     const source = fixture({ direct: true, textOnly: true });
     const bytes = new TextEncoder().encode(
       "retained large text evidence\n".repeat(100000),
@@ -64,6 +65,37 @@ for (const changed of [false, true])
         if (changed && recoveryCompleted && path.endsWith("/pulls/1") && value)
           (value as unknown as { title: string }).title =
             "Changed after recovery";
+        // GitHub's pull body embeds the base and head repositories and the
+        // milestone. A push to any branch, a new issue or a star moves their
+        // timestamps and counters between reads; the PR itself is unchanged.
+        if (
+          variant === "repository activity" &&
+          path.endsWith("/pulls/1") &&
+          value
+        ) {
+          const activity = {
+            id: 42,
+            node_id: repository.expectedNodeId,
+            full_name: repository.id,
+            pushed_at: `2026-10-20T10:00:${String(collections).padStart(2, "0")}Z`,
+            updated_at: `2026-10-20T10:00:${String(collections).padStart(2, "0")}Z`,
+            open_issues_count: 100 + collections,
+            stargazers_count: 200 + collections,
+          };
+          const pull = value as unknown as {
+            base: Record<string, unknown>;
+            head: Record<string, unknown>;
+            milestone: unknown;
+          };
+          pull.base.repo = { ...activity };
+          pull.head.repo = { ...activity };
+          pull.milestone = {
+            number: 1,
+            open_issues: collections,
+            closed_issues: 10,
+            updated_at: activity.updated_at,
+          };
+        }
         return value;
       },
     };

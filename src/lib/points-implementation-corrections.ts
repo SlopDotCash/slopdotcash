@@ -17,7 +17,10 @@ import {
  * the ordinary pointsSql financial guard remains mandatory at publication.
  */
 
-import type { Pull } from "../../workers/slopbot/value-evidence-types";
+import type {
+  Pull,
+  ValueEvidence,
+} from "../../workers/slopbot/value-evidence-types";
 import { isCreditEligibleCommitAuthor } from "./commit-credit";
 import { shareImplementationPoints } from "./implementation-allocation";
 import {
@@ -126,11 +129,76 @@ export interface OriginalContributorBinding {
   acceptedSourceId?: string;
   followups?: OriginalContributorFollowup[];
   repairs?: OriginalContributorRepair[];
+  /** A previously reviewed native commit, retained separately from the current PR head. */
+  reviewedOriginal?: {
+    sourceDigest: string;
+    currentSourceDigest: string;
+    review: ValueEvidence["reviews"][number];
+    commits: CorrectionCommit[];
+    digest: string;
+  };
   originalSourceId: string;
   originalCommitSha: string;
   acceptedCommitSha: string;
   boundPaths: string[];
   bindingDigest: string;
+}
+
+function reviewedOriginalSource(
+  source: CorrectionSource,
+  accepted: CorrectionSource,
+  binding: OriginalContributorBinding,
+): CorrectionSource {
+  const retained = binding.reviewedOriginal;
+  if (!retained) return source;
+  const { digest: retainedDigest, ...evidence } = retained;
+  const { review, commits } = retained;
+  const head = commits.at(-1);
+  check(
+    binding.exactAcceptance === true &&
+      binding.claimIds !== undefined &&
+      digest.test(retained.sourceDigest) &&
+      retained.currentSourceDigest === sha256Hex(JSON.stringify(source)) &&
+      digest.test(retainedDigest) &&
+      sha256Hex(JSON.stringify(evidence)) === retainedDigest &&
+      review.node_id.length > 0 &&
+      Number.isSafeInteger(review.id) &&
+      review.html_url ===
+        `${source.sourceUrl}#pullrequestreview-${review.id}` &&
+      head !== undefined &&
+      review.commit_id === head.sha &&
+      commits.some((commit) => commit.sha === binding.originalCommitSha) &&
+      new Set(commits.map((commit) => commit.sha)).size === commits.length &&
+      review.user?.type === "User" &&
+      Number.isFinite(Date.parse(review.submitted_at ?? "")) &&
+      accepted.occurredAt !== null &&
+      Date.parse(review.submitted_at ?? "") < Date.parse(accepted.occurredAt) &&
+      commits.every(
+        (commit, index) =>
+          !source.commits.some((current) => current.sha === commit.sha) &&
+          commit.parentCount === 1 &&
+          validParentShas(commit) &&
+          (index === 0 || commit.parentShas?.[0] === commits[index - 1].sha) &&
+          commit.author?.kind === "User" &&
+          commit.author.id === source.author?.id &&
+          commit.firstAcceptedSourceId === accepted.sourceId &&
+          !commit.retainedCopy &&
+          commit.files !== undefined &&
+          commit.files.length > 0 &&
+          accepted.commits.some(
+            (copy) =>
+              copy.sha === commit.sha &&
+              copy.author?.id === commit.author?.id &&
+              copy.author?.kind === commit.author?.kind &&
+              copy.parentCount === commit.parentCount &&
+              JSON.stringify(copy.parentShas) ===
+                JSON.stringify(commit.parentShas) &&
+              JSON.stringify(copy.files) === JSON.stringify(commit.files),
+          ),
+      ),
+    "reviewed original commits do not bind their authenticated PR revision",
+  );
+  return { ...source, headSha: head.sha, commitCount: commits.length, commits };
 }
 interface CompleteCorrectionProof {
   status: "complete";
@@ -811,8 +879,12 @@ function deriveProof(
         proof.originalContributor === undefined &&
         proof.originalContributorParts.length >= 2 &&
         sameSet(
-          proof.originalContributorParts.map((part) => part.originalSourceId),
-          proof.originalContributorParts.map((part) => part.originalSourceId),
+          proof.originalContributorParts.map(
+            (part) => `${part.originalSourceId}\0${part.originalCommitSha}`,
+          ),
+          proof.originalContributorParts.map(
+            (part) => `${part.originalSourceId}\0${part.originalCommitSha}`,
+          ),
         ),
       "invalid multi-original native unit",
     );
@@ -1196,7 +1268,10 @@ function deriveProof(
         binding.boundPaths.length > 0,
       "original-contributor proof is invalid outside the October replacement rule",
     );
-    const original = sources.get(binding.originalSourceId);
+    const currentOriginal = sources.get(binding.originalSourceId);
+    const original = currentOriginal
+      ? reviewedOriginalSource(currentOriginal, accepted, binding)
+      : undefined;
     const originalCommit = original?.commits.find(
       (commit) => commit.sha === binding.originalCommitSha,
     );
