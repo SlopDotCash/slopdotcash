@@ -17,6 +17,7 @@ import {
 import { GitHubClient } from "../workers/slopbot/github";
 import { resolveGitHubToken } from "./generate-leaderboard";
 import { loadPublishedPoints, pointsSql } from "./generate-points";
+import { assertCorrectionRegistry } from "./points-correction-registry";
 import {
   type PointProtectionScope,
   pointProtectionQuery,
@@ -36,6 +37,7 @@ export function verifyCorrectionCollection(
   apply: boolean,
 ): void {
   const receipt = value as Record<string, unknown> | null;
+  const projects = receipt?.projects;
   const complete = manifest.candidates.filter(
     (candidate) => candidate.proof.status === "complete",
   ).length;
@@ -43,7 +45,11 @@ export function verifyCorrectionCollection(
     receipt?.schemaVersion !== "slop-implementation-correction-collection-v1" ||
     receipt.manifestDigest !== pointsImplementationCorrectionDigest(manifest) ||
     receipt.through !== manifest.generatedAt ||
-    receipt.registryDigest !== digest(currentRegistry) ||
+    (projects !== undefined &&
+      (!Array.isArray(projects) ||
+        manifest.candidates.some(
+          (candidate) => !projects.includes(candidate.projectId),
+        ))) ||
     receipt.totalPositivePools !== manifest.candidates.length ||
     receipt.completeProofs !== complete ||
     receipt.heldProofs !== manifest.candidates.length - complete ||
@@ -53,6 +59,12 @@ export function verifyCorrectionCollection(
     throw new Error(
       "Collection receipt or current registry does not authorize this correction",
     );
+  assertCorrectionRegistry(
+    receipt.registryDigest,
+    manifest.generatedAt,
+    Array.isArray(projects) ? projects : undefined,
+    currentRegistry,
+  );
 }
 
 export function correctionScopes(
