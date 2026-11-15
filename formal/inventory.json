@@ -4590,9 +4590,9 @@
     },
     {
       "path": "scripts/reviewed-historical-points.ts",
-      "sha256": "6a758409cccd18d66f983c0fb72d77431f98823689dcb188e65111a4f149dde0",
+      "sha256": "d5f40d43098113e372c946bf3afa1c641ad566f8cb3e68eeb013825c069247d4",
       "models": ["formal/models/points/source_import.qnt"],
-      "candidateLines": [366],
+      "candidateLines": [399, 688],
       "review": "mapped-abstraction"
     },
     {
@@ -4653,9 +4653,9 @@
     },
     {
       "path": "scripts/run-reviewed-historical-points.ts",
-      "sha256": "35bd46b681b44320cd059f9f348e79a3be0ef3e20423355c63931e73730778f4",
+      "sha256": "b127198c25053eb6409412ef21a61ff63b8b39d8801214d27b131cf3e9168ae0",
       "models": ["formal/models/points/source_import.qnt"],
-      "candidateLines": [3, 227, 247, 316, 404],
+      "candidateLines": [3, 253, 273, 342, 430],
       "review": "mapped-abstraction"
     },
     {
@@ -6477,7 +6477,7 @@
     },
     {
       "path": "src/lib/points.ts",
-      "sha256": "c163d395dae0f4e175cd7ce691fb68be25312f514c96728b01cb5ca23105d3c8",
+      "sha256": "ac4a1284e7fa425c2d0b1b0ccfd586155b0178f8466401598e13bd453ef13d1f",
       "models": [
         "formal/models/points/implementation_allocation.qnt",
         "formal/models/points/journal_publication.qnt",
@@ -6488,7 +6488,7 @@
         "formal/models/rewards/bucket_aggregation.qnt",
         "formal/models/ui/ui_review_pool.qnt"
       ],
-      "candidateLines": [380, 844, 1079, 1086, 1095],
+      "candidateLines": [382, 847, 1082, 1089, 1098],
       "review": "mapped-abstraction"
     },
     {

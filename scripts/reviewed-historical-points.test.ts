@@ -138,6 +138,275 @@ function fixture() {
   };
   return { packet, baseline, candidate };
 }
+
+function duplicateRetirementFixture() {
+  const f = fixture();
+  const original = f.baseline.revisions[0].award;
+  const earlierAward = {
+    ...original,
+    key: pointKey("feed", actor.id, "merged-pull-request", "PR_earlier"),
+    sourceId: "PR_earlier",
+    sourceUrl: "https://github.com/feedforagents/feed/pull/2",
+    workUnitId: "earlier",
+    occurredAt: "2026-10-14T00:00:00.000Z",
+  };
+  const baseline = appendPointAwards(
+    f.baseline,
+    [earlierAward],
+    "e".repeat(64),
+    "slop-score-v2",
+    time,
+  );
+  const current = latestPoints(baseline);
+  const originalRow = current.get(original.key);
+  const earlierRow = current.get(earlierAward.key);
+  if (!originalRow || !earlierRow || !original.workUnitId)
+    throw Error("fixture");
+  const candidate = f.packet.corrections.candidates[0];
+  if (candidate.proof.status !== "complete") throw Error("fixture");
+  const source = structuredClone(candidate.proof.sources[0]);
+  source.commits[0].parentShas = ["a".repeat(40)];
+  source.commits[0].files = [{ path: "work.ts", additions: 1, deletions: 0 }];
+  const earlier = {
+    ...structuredClone(source),
+    sourceId: earlierAward.sourceId,
+    sourceUrl: earlierAward.sourceUrl,
+    occurredAt: earlierAward.occurredAt,
+  };
+  source.commits[0].firstAcceptedSourceId = earlier.sourceId;
+  earlier.commits[0].firstAcceptedSourceId = earlier.sourceId;
+  const coverage = [
+    {
+      commitSha: source.commits[0].sha,
+      path: "work.ts",
+      sourceId: earlier.sourceId,
+    },
+  ];
+  const evidence = JSON.stringify({
+    sourceId: source.sourceId,
+    workUnitId: original.workUnitId,
+    sourceSha256: hash(source),
+    earlierSourcesSha256: hash([earlier]),
+    coverageSha256: hash(coverage),
+  });
+  const retirement: NonNullable<
+    HistoricalPointsPacket["duplicateRetirements"]
+  >[number] = {
+    sourceId: source.sourceId,
+    workUnitId: original.workUnitId,
+    source,
+    earlierSources: [earlier],
+    coverage,
+    evidence,
+    evidenceSha256: sha256Hex(evidence),
+    expectedPredecessors: [{ key: original.key, revisionId: originalRow.id }],
+  };
+  f.packet.baselineDigest = hash(baseline);
+  f.packet.baselineRevisionCount = baseline.revisions.length;
+  f.packet.corrections.baseline = createPointsCorrectionBaseline(baseline);
+  candidate.proof = { status: "held" };
+  f.packet.corrections.candidates.push({
+    ...structuredClone(candidate),
+    id: "earlier",
+    sourceId: earlier.sourceId,
+    sourceUrl: earlier.sourceUrl,
+    occurredAt: earlierAward.occurredAt,
+    workUnitId: "earlier",
+    sourceIds: [earlier.sourceId],
+    expectedPredecessors: [
+      { key: earlierAward.key, revisionId: earlierRow.id },
+    ],
+  });
+  f.packet.sourceAudit.sources.push({
+    id: earlier.sourceId,
+    number: 2,
+    headSha: earlier.headSha,
+    mergedAt: earlierAward.occurredAt,
+  });
+  f.packet.duplicateRetirements = [retirement];
+  const expected = appendPointAwards(
+    baseline,
+    [{ ...original, amount: 0 }],
+    hash(retirement),
+    "slop-score-v2",
+    time,
+    new Map([
+      [
+        original.key,
+        {
+          sourceId: `owner_duplicate_${retirement.evidenceSha256}`,
+          effectiveAt: time,
+          reason:
+            "Owner-reviewed duplicate accepted work already rewarded by earlier sources.",
+        },
+      ],
+    ]),
+  );
+  f.packet.candidateDigest = hash(expected);
+  return { ...f, baseline, expected, retirement };
+}
+
+test("reviewed duplicate retirement removes only a fully covered later pool", () => {
+  const f = duplicateRetirementFixture();
+  const result = reconstructHistoricalPoints(
+    f.packet,
+    f.baseline,
+    time,
+    new Map(),
+  );
+  expect(result).toEqual(f.expected);
+  expect(
+    [...latestPoints(result).values()].map((row) => row.award.amount).sort(),
+  ).toEqual([0, 30]);
+});
+
+test("duplicate coverage can bind a previously rewarded joint claim", async () => {
+  const f = duplicateRetirementFixture(),
+    r = f.retirement;
+  const claimId = "d".repeat(64);
+  const record = {
+    sources: [
+      {
+        pullRequestNodeId: r.earlierSources[0].sourceId,
+        repositoryNodeId: "R_feed",
+        headSha: r.earlierSources[0].headSha,
+        occurredAt: r.earlierSources[0].occurredAt,
+      },
+    ],
+    projectId: "feed",
+    claims: [
+      {
+        id: claimId,
+        repositoryNodeId: "R_feed",
+        commitSha: r.source.commits[0].sha,
+        path: "work.ts",
+        creditPullRequestId: r.earlierSources[0].sourceId,
+      },
+    ],
+    units: [
+      {
+        workUnitId: "earlier",
+        claimIds: [claimId],
+        assessment: { status: "assessed", tier: "small" },
+      },
+    ],
+  };
+  const recordJson = JSON.stringify(record);
+  r.coverage[0].rewardedUnit = {
+    recordDigest: hash(record),
+    recordJson,
+    claimId,
+    workUnitId: "earlier",
+    awardSourceId: r.earlierSources[0].sourceId,
+  };
+  const dossier = JSON.parse(r.evidence);
+  dossier.coverageSha256 = hash(r.coverage);
+  r.evidence = JSON.stringify(dossier);
+  r.evidenceSha256 = sha256Hex(r.evidence);
+  const prior = f.baseline.revisions[0].award;
+  f.packet.candidateDigest = hash(
+    appendPointAwards(
+      f.baseline,
+      [{ ...prior, amount: 0 }],
+      hash(r),
+      "slop-score-v2",
+      time,
+      new Map([
+        [
+          prior.key,
+          {
+            sourceId: `owner_duplicate_${r.evidenceSha256}`,
+            effectiveAt: time,
+            reason:
+              "Owner-reviewed duplicate accepted work already rewarded by earlier sources.",
+          },
+        ],
+      ]),
+    ),
+  );
+  expect(
+    reconstructHistoricalPoints(f.packet, f.baseline, time, new Map())
+      .revisions,
+  ).toHaveLength(3);
+  let calls = 0;
+  await verifyHistoricalValueRecords(f.packet, async () => {
+    calls++;
+    return [{ record_digest: hash(record), record_json: recordJson }];
+  });
+  expect(calls).toBe(1);
+  const originalUnit = structuredClone(r.coverage[0].rewardedUnit);
+  for (const fault of ["head", "zero", "source"] as const) {
+    const altered = structuredClone(record);
+    if (fault === "head") altered.sources[0].headSha = "f".repeat(40);
+    if (fault === "zero") altered.units[0].assessment.tier = "none";
+    const binding = {
+      ...originalUnit,
+      recordJson: JSON.stringify(altered),
+      recordDigest: hash(altered),
+    };
+    if (fault === "source") binding.awardSourceId = "PR_wrong";
+    r.coverage[0].rewardedUnit = binding;
+    const changedDossier = JSON.parse(r.evidence);
+    changedDossier.coverageSha256 = hash(r.coverage);
+    r.evidence = JSON.stringify(changedDossier);
+    r.evidenceSha256 = sha256Hex(r.evidence);
+    expect(() =>
+      reconstructHistoricalPoints(f.packet, f.baseline, time, new Map()),
+    ).toThrow("Rewarded unit");
+  }
+  r.coverage[0].rewardedUnit = originalUnit;
+  r.coverage[0].rewardedUnit.claimId = "e".repeat(64);
+  expect(() =>
+    reconstructHistoricalPoints(f.packet, f.baseline, time, new Map()),
+  ).toThrow();
+});
+
+for (const fault of [
+  "same-source",
+  "missing-coverage",
+  "changed-lines",
+  "later-source",
+  "unrewarded",
+  "stale-predecessor",
+  "extra-coverage",
+  "incomplete",
+  "source-head",
+  "retired-coverage",
+  "unproved-merge",
+] as const) {
+  test(`duplicate retirement refuses ${fault}`, () => {
+    const f = duplicateRetirementFixture(),
+      r = f.retirement;
+    if (fault === "same-source") r.earlierSources[0].sourceId = r.sourceId;
+    if (fault === "missing-coverage") r.coverage = [];
+    if (fault === "changed-lines") {
+      const file = r.earlierSources[0].commits[0].files?.[0];
+      if (!file) throw Error("fixture");
+      file.additions++;
+    }
+    if (fault === "later-source")
+      r.earlierSources[0].occurredAt = "2026-10-16T00:00:00.000Z";
+    if (fault === "unrewarded") r.earlierSources[0].sourceId = "PR_unrewarded";
+    if (fault === "stale-predecessor")
+      r.expectedPredecessors[0].revisionId = "f".repeat(64);
+    if (fault === "extra-coverage")
+      r.coverage.push({ ...r.coverage[0], path: "foreign.ts" });
+    if (fault === "incomplete") r.source.complete = false;
+    if (fault === "source-head") r.source.headSha = "f".repeat(40);
+    if (fault === "retired-coverage")
+      f.packet.duplicateRetirements?.push({
+        ...structuredClone(r),
+        sourceId: r.earlierSources[0].sourceId,
+      });
+    if (fault === "unproved-merge") {
+      r.source.commits[0].parentCount = 2;
+      r.source.commits[0].parentShas = ["a".repeat(40), "c".repeat(40)];
+    }
+    expect(() =>
+      reconstructHistoricalPoints(f.packet, f.baseline, time, new Map()),
+    ).toThrow();
+  });
+}
 test("reviewed packet reproduces canonical one-project candidate and rejects altered bytes", () => {
   const f = fixture(),
     bytes = Buffer.from(JSON.stringify(f.packet));
