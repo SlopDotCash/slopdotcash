@@ -1,6 +1,7 @@
 import type { ProjectDefinition } from "./lib/projects.mjs";
 import {
   paymentStateLabel,
+  paymentsOn,
   StatusBadge,
   vaultStateLabel,
 } from "./Presentation";
@@ -20,9 +21,7 @@ export function FundingStatus({
       >
         Vault: {vaultStateLabel(project)}
       </StatusBadge>
-      <StatusBadge
-        tone={project.reward.paymentMode === "enabled" ? "success" : "neutral"}
-      >
+      <StatusBadge tone={paymentsOn(project) ? "success" : "neutral"}>
         Payments: {paymentStateLabel(project)}
       </StatusBadge>
     </div>
