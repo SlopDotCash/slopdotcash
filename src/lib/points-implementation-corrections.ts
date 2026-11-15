@@ -132,6 +132,8 @@ export interface OriginalContributorBinding {
     path: string;
     bindingDigest: string;
   }[];
+  /** Sole verified primary author when a maintainer opened the original PR. */
+  originatingActor?: CorrectionActor;
   /** First accepted carrier when the recorded unit completes on its donor. */
   acceptedSourceId?: string;
   followups?: OriginalContributorFollowup[];
@@ -149,6 +151,28 @@ export interface OriginalContributorBinding {
   acceptedCommitSha: string;
   boundPaths: string[];
   bindingDigest: string;
+}
+
+export function originalContributorSource(
+  source: CorrectionSource,
+  originatingActor?: CorrectionActor,
+): CorrectionSource {
+  if (originatingActor === undefined) return source;
+  actor(originatingActor);
+  const ordinary = source.commits.filter((commit) => commit.parentCount <= 1);
+  check(
+    source.complete &&
+      source.commitCount === source.commits.length &&
+      eligibleActor(originatingActor) &&
+      ordinary.length > 0 &&
+      ordinary.every(
+        (commit) =>
+          commit.author?.id === originatingActor.id &&
+          commit.author.kind === originatingActor.kind,
+      ),
+    "original primary author is not uniquely verified",
+  );
+  return { ...source, author: originatingActor };
 }
 
 function reviewedOriginalSource(
@@ -1315,7 +1339,17 @@ function deriveProof(
         binding.boundPaths.length > 0,
       "original-contributor proof is invalid outside the October replacement rule",
     );
-    const currentOriginal = sources.get(binding.originalSourceId);
+    check(
+      binding.originatingActor === undefined ||
+        (candidate.kind === "work-unit" &&
+          binding.exactAcceptance === true &&
+          binding.claimIds !== undefined),
+      "sole primary origin requires reviewed native claim scope",
+    );
+    const rawOriginal = sources.get(binding.originalSourceId);
+    const currentOriginal = rawOriginal
+      ? originalContributorSource(rawOriginal, binding.originatingActor)
+      : undefined;
     const original = currentOriginal
       ? reviewedOriginalSource(currentOriginal, accepted, binding)
       : undefined;
