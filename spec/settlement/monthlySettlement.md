@@ -152,8 +152,8 @@ pure def alwaysNoAwardWithoutObligation(s: MonthlySettlement): bool = s.month.ph
 pure def alwaysChildRules(s: MonthlySettlement): bool =
   MO::alwaysAllocationConserved(s.month) and MO::alwaysObligationsMatchShares(s.month) and MO::alwaysCompletedPaid(s.month)
     and E::alwaysGrossConserved(s.escrow) and E::alwaysAwards(s.escrow)
-pure def sometimesManualThenLeaf(s: MonthlySettlement): bool =
-  E::hasAwardOf(s.escrow, E::ManualAward) and E::hasAwardOf(s.escrow, E::MonthlyLeaf)
+pure def sometimesManualObligation(s: MonthlySettlement): bool = E::hasAwardOf(s.escrow, E::ManualAward)
+pure def sometimesLeafObligation(s: MonthlySettlement): bool = E::hasAwardOf(s.escrow, E::MonthlyLeaf)
 pure def sometimesMonthReserved(s: MonthlySettlement): bool = s.month.obligations.length() >= 2
   and MO::allReserved(s.month)
 pure def sometimesPoolBlocksManual(s: MonthlySettlement): bool =
@@ -199,6 +199,14 @@ pure val proofValues = Set(leafBase).union(Set({ ...leafBase, index: 1, source: 
 pure val grossValues = Set(List(1))
 pure val releaseValues = Set({ period: 202611, expectedRemaining: List(10), releasedGross: List(10), signer: "attester" },
   { period: 202611, expectedRemaining: List(8), releasedGross: List(8), signer: "attester" })
-pure val weight_materialize = 8
+pure val weight_materialize = 12
 pure val weight_deposit = 4
+pure val weight_propose = 12
+pure val weight_autoFreeze = 12
+pure val weight_createObligations = 12
+pure val weight_commitObligation = 12
+pure val weight_admitRoot = 12
+pure val weight_observeClock = 4
+pure val weight_withdraw = 1
+pure val weight_releaseReserve = 1
 ```

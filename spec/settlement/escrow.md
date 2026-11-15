@@ -590,10 +590,12 @@ pure val bindingValues = Set({ actor: 1, destination: "w1", version: 1 }, { acto
 pure val weight_deposit = 6
 pure val weight_admitRoot = 8
 pure val weight_materialize = 8
-pure val weight_releaseReserve = 4
+pure val weight_releaseReserve = 10
 pure val weight_pay = 6
 pure val weight_withdraw = 4
 pure val weight_setMonthly = 2
+pure val weight_claimFees = 2
+pure val weight_observeAuthority = 1
 pure val weight_releaseLeaf = 8
-pure val weight_commitAward = 4
+pure val weight_commitAward = 8
 ```
