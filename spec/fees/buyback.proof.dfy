@@ -26,14 +26,10 @@ lemma SmallDigitsValid(f: (settlement__money_SafeConversion, int) -> settlement_
 
 // Unchanged cumulative totals satisfy the monotonic step rule.
 lemma UnchangedCumulative(before: Buyback, after: Buyback)
-  requires after.income == before.income && after.purchased == before.purchased
-  requires after.burned == before.burned && after.localSlopIncome == before.localSlopIncome
+  requires after.income == before.income
   ensures stepIncomeMonotonic(before, after)
 {
   settlement__money_lawEqualReflexive_ensures(before.income);
-  settlement__money_lawEqualReflexive_ensures(before.purchased);
-  settlement__money_lawEqualReflexive_ensures(before.burned);
-  settlement__money_lawEqualReflexive_ensures(before.localSlopIncome);
 }
 
 // Advancing the clock can only expire entries from the rolling window.
@@ -211,36 +207,6 @@ lemma Shrinks(a: seq<int>, b: seq<int>)
 }
 
 // A larger acquisition has a half no smaller than before.
-lemma AcquiredGrows(purchased: seq<int>, local: seq<int>, purchased2: seq<int>, local2: seq<int>)
-  requires settlement__money_validAmount(purchased) && settlement__money_validAmount(local)
-  requires settlement__money_validAmount(purchased2) && settlement__money_validAmount(local2)
-  requires settlement__money_compareAmounts(purchased, purchased2) <= 0
-  requires settlement__money_compareAmounts(local, local2) <= 0
-  ensures settlement__money_validAmount(settlement__money_addAmounts(purchased, local))
-  ensures settlement__money_validAmount(settlement__money_addAmounts(purchased2, local2))
-  ensures settlement__money_compareAmounts(settlement__money_addAmounts(purchased, local), settlement__money_addAmounts(purchased2, local2)) <= 0
-{
-  settlement__money_lawAdditionValid_ensures(purchased, local);
-  settlement__money_lawAdditionValid_ensures(purchased2, local);
-  settlement__money_lawAdditionValid_ensures(purchased2, local2);
-  settlement__money_lawAddOrder_ensures(purchased, purchased2, local);
-  settlement__money_lawAddCommutative_ensures(purchased2, local);
-  settlement__money_lawAddCommutative_ensures(purchased2, local2);
-  settlement__money_lawAddOrder_ensures(local, local2, purchased2);
-  settlement__money_lawNumericOrderTransitive_ensures(settlement__money_addAmounts(purchased, local), settlement__money_addAmounts(purchased2, local), settlement__money_addAmounts(purchased2, local2));
-}
-
-lemma BurnUnderLargerAcquisition(b: Buyback, after: Buyback)
-  requires alwaysBurnBounded(b) && alwaysLocalShareBounded(b)
-  requires settlement__money_validAmount(after.purchased) && settlement__money_validAmount(after.localSlopCommitted)
-  requires settlement__money_compareAmounts(b.purchased, after.purchased) <= 0
-  requires settlement__money_compareAmounts(b.localSlopCommitted, after.localSlopCommitted) <= 0
-  ensures settlement__money_compareAmounts(b.burnCommitted, settlement__half_half(acquired(after)).quotient) <= 0
-{
-  AcquiredGrows(b.purchased, b.localSlopCommitted, after.purchased, after.localSlopCommitted);
-  ShareUnderLargerIncome(b.burnCommitted, acquired(b), acquired(after));
-}
-
 lemma selectSource_ensures(b: Buyback, sourceNetwork: fees__runtime_Network)
   ensures (inv(b) ==> canSelectSource(b, sourceNetwork) ==> alwaysSourcesOnce(selectSource(b, sourceNetwork)))
   ensures (inv(b) ==> canSelectSource(b, sourceNetwork) ==> alwaysRuntimeSound(selectSource(b, sourceNetwork)))
@@ -285,7 +251,6 @@ lemma advanceClock_ensures(b: Buyback, now: int)
     var after := advanceClock(b, now);
     UnchangedCumulative(b, after);
     WindowAfter(b.bridgeSpends, b.clock, now);
-    WindowAfter(b.purchaseSpends, b.clock, now);
     DayAfter(b.bridgeNative, b.clock, now);
   }
 }
@@ -311,9 +276,6 @@ lemma recordIncome_ensures(b: Buyback, key: IncomeKey, incomeAmount: seq<int>, c
     var after := recordIncome(b, key, incomeAmount, chainTime);
     Grows(b.income, incomeAmount);
     ShareUnderLargerIncome(b.committed, b.income, after.income);
-    settlement__money_lawEqualReflexive_ensures(b.purchased);
-    settlement__money_lawEqualReflexive_ensures(b.burned);
-    settlement__money_lawEqualReflexive_ensures(b.localSlopIncome);
   }
 }
 
@@ -511,7 +473,6 @@ lemma settleOrder_ensures(b: Buyback, receipt: SendReceipt)
       Shrinks(b.committed, settlement__money_smallAmount(b.orderAmount));
       settlement__money_lawNumericOrderTransitive_ensures(after.committed, b.committed, settlement__half_half(b.income).quotient);
       WindowRelease(b.bridgeSpends, b.order, b.clock);
-      WindowRelease(b.purchaseSpends, b.order, b.clock);
       DayRelease(b.bridgeNative, b.order, b.clock);
       WindowRelease(b.bridgeNative, b.order, b.clock);
     }
@@ -638,210 +599,15 @@ lemma closeOrder_ensures(b: Buyback)
   }
 }
 
-lemma reserveLocalShare_ensures(b: Buyback, amount: int)
-  ensures (inv(b) ==> canReserveLocalShare(b, amount) ==> alwaysSourcesOnce(reserveLocalShare(b, amount)))
-  ensures (inv(b) ==> canReserveLocalShare(b, amount) ==> alwaysRuntimeSound(reserveLocalShare(b, amount)))
-  ensures (inv(b) ==> canReserveLocalShare(b, amount) ==> alwaysShareBounded(reserveLocalShare(b, amount)))
-  ensures (inv(b) ==> canReserveLocalShare(b, amount) ==> alwaysWindowLimits(reserveLocalShare(b, amount)))
-  ensures (inv(b) ==> canReserveLocalShare(b, amount) ==> alwaysJournalPastAndPositive(reserveLocalShare(b, amount)))
-  ensures (inv(b) ==> canReserveLocalShare(b, amount) ==> alwaysPendingOrderReserved(reserveLocalShare(b, amount)))
-  ensures (inv(b) ==> canReserveLocalShare(b, amount) ==> alwaysPoolNonNegative(reserveLocalShare(b, amount)))
-  ensures (inv(b) ==> canReserveLocalShare(b, amount) ==> alwaysLocalShareBounded(reserveLocalShare(b, amount)))
-  ensures (inv(b) ==> canReserveLocalShare(b, amount) ==> alwaysSourceLegsOnly(reserveLocalShare(b, amount)))
-  ensures (inv(b) ==> canReserveLocalShare(b, amount) ==> alwaysBurnBounded(reserveLocalShare(b, amount)))
-  ensures (inv(b) ==> canReserveLocalShare(b, amount) ==> stepNewSourceUnseen(b, reserveLocalShare(b, amount)))
-  ensures (inv(b) ==> canReserveLocalShare(b, amount) ==> stepOrderOutcomeOnce(b, reserveLocalShare(b, amount)))
-  ensures (inv(b) ==> canReserveLocalShare(b, amount) ==> stepIncomeMonotonic(b, reserveLocalShare(b, amount)))
-  ensures (inv(b) ==> canReserveLocalShare(b, amount) ==> stepJournalRetained(b, reserveLocalShare(b, amount)))
-  ensures (inv(b) ==> canReserveLocalShare(b, amount) ==> stepSignaturesNeedLiveBuyback(b, "reserveLocalShare", reserveLocalShare(b, amount)))
-{
-  if inv(b) && canReserveLocalShare(b, amount) {
-    var after := reserveLocalShare(b, amount);
-    UnchangedCumulative(b, after);
-    SmallAmountNonnegativeValid(amount);
-    settlement__money_lawAdditionValid_ensures(b.committed, settlement__money_smallAmount(amount));
-  }
-}
-
-lemma purchase_ensures(b: Buyback, quote: PurchaseQuote)
-  ensures (inv(b) ==> canPurchase(b, quote) ==> alwaysSourcesOnce(purchase(b, quote)))
-  ensures (inv(b) ==> canPurchase(b, quote) ==> alwaysRuntimeSound(purchase(b, quote)))
-  ensures (inv(b) ==> canPurchase(b, quote) ==> alwaysShareBounded(purchase(b, quote)))
-  ensures (inv(b) ==> canPurchase(b, quote) ==> alwaysWindowLimits(purchase(b, quote)))
-  ensures (inv(b) ==> canPurchase(b, quote) ==> alwaysJournalPastAndPositive(purchase(b, quote)))
-  ensures (inv(b) ==> canPurchase(b, quote) ==> alwaysPendingOrderReserved(purchase(b, quote)))
-  ensures (inv(b) ==> canPurchase(b, quote) ==> alwaysPoolNonNegative(purchase(b, quote)))
-  ensures (inv(b) ==> canPurchase(b, quote) ==> alwaysLocalShareBounded(purchase(b, quote)))
-  ensures (inv(b) ==> canPurchase(b, quote) ==> alwaysSourceLegsOnly(purchase(b, quote)))
-  ensures (inv(b) ==> canPurchase(b, quote) ==> alwaysBurnBounded(purchase(b, quote)))
-  ensures (inv(b) ==> canPurchase(b, quote) ==> stepNewSourceUnseen(b, purchase(b, quote)))
-  ensures (inv(b) ==> canPurchase(b, quote) ==> stepOrderOutcomeOnce(b, purchase(b, quote)))
-  ensures (inv(b) ==> canPurchase(b, quote) ==> stepIncomeMonotonic(b, purchase(b, quote)))
-  ensures (inv(b) ==> canPurchase(b, quote) ==> stepJournalRetained(b, purchase(b, quote)))
-  ensures (inv(b) ==> canPurchase(b, quote) ==> stepSignaturesNeedLiveBuyback(b, "purchase", purchase(b, quote)))
-{
-  if inv(b) && canPurchase(b, quote) {
-    var after := purchase(b, quote);
-    UnchangedCumulative(b, after);
-    WindowAppendsNow(b.purchaseSpends, b.clock, Spend(quote.tx, b.clock, quote.spent, false));
-  }
-}
-
-lemma settlePurchase_ensures(b: Buyback, swap: SwapReceipt)
-  ensures (inv(b) ==> canSettlePurchase(b, swap) ==> alwaysSourcesOnce(settlePurchase(b, swap)))
-  ensures (inv(b) ==> canSettlePurchase(b, swap) ==> alwaysRuntimeSound(settlePurchase(b, swap)))
-  ensures (inv(b) ==> canSettlePurchase(b, swap) ==> alwaysShareBounded(settlePurchase(b, swap)))
-  ensures (inv(b) ==> canSettlePurchase(b, swap) ==> alwaysWindowLimits(settlePurchase(b, swap)))
-  ensures (inv(b) ==> canSettlePurchase(b, swap) ==> alwaysJournalPastAndPositive(settlePurchase(b, swap)))
-  ensures (inv(b) ==> canSettlePurchase(b, swap) ==> alwaysPendingOrderReserved(settlePurchase(b, swap)))
-  ensures (inv(b) ==> canSettlePurchase(b, swap) ==> alwaysPoolNonNegative(settlePurchase(b, swap)))
-  ensures (inv(b) ==> canSettlePurchase(b, swap) ==> alwaysLocalShareBounded(settlePurchase(b, swap)))
-  ensures (inv(b) ==> canSettlePurchase(b, swap) ==> alwaysSourceLegsOnly(settlePurchase(b, swap)))
-  ensures (inv(b) ==> canSettlePurchase(b, swap) ==> alwaysBurnBounded(settlePurchase(b, swap)))
-  ensures (inv(b) ==> canSettlePurchase(b, swap) ==> stepNewSourceUnseen(b, settlePurchase(b, swap)))
-  ensures (inv(b) ==> canSettlePurchase(b, swap) ==> stepOrderOutcomeOnce(b, settlePurchase(b, swap)))
-  ensures (inv(b) ==> canSettlePurchase(b, swap) ==> stepIncomeMonotonic(b, settlePurchase(b, swap)))
-  ensures (inv(b) ==> canSettlePurchase(b, swap) ==> stepJournalRetained(b, settlePurchase(b, swap)))
-  ensures (inv(b) ==> canSettlePurchase(b, swap) ==> stepSignaturesNeedLiveBuyback(b, "settlePurchase", settlePurchase(b, swap)))
-{
-  if inv(b) && canSettlePurchase(b, swap) {
-    var after := settlePurchase(b, swap);
-    settlement__money_lawEqualReflexive_ensures(b.income);
-    settlement__money_lawEqualReflexive_ensures(b.burned);
-    settlement__money_lawEqualReflexive_ensures(b.localSlopIncome);
-    settlement__money_lawEqualReflexive_ensures(b.purchased);
-    settlement__money_lawEqualReflexive_ensures(b.localSlopCommitted);
-    if swap.succeeded {
-      Grows(b.purchased, swap.output);
-      BurnUnderLargerAcquisition(b, after);
-    } else {
-      WindowRelease(b.purchaseSpends, b.purchase.tx, b.clock);
-    }
-  }
-}
-
-lemma receiveSlopFee_ensures(b: Buyback, key: IncomeKey, quantity: seq<int>, chainTime: int)
-  ensures (inv(b) ==> canReceiveSlopFee(b, key, quantity, chainTime) ==> alwaysSourcesOnce(receiveSlopFee(b, key, quantity, chainTime)))
-  ensures (inv(b) ==> canReceiveSlopFee(b, key, quantity, chainTime) ==> alwaysRuntimeSound(receiveSlopFee(b, key, quantity, chainTime)))
-  ensures (inv(b) ==> canReceiveSlopFee(b, key, quantity, chainTime) ==> alwaysShareBounded(receiveSlopFee(b, key, quantity, chainTime)))
-  ensures (inv(b) ==> canReceiveSlopFee(b, key, quantity, chainTime) ==> alwaysWindowLimits(receiveSlopFee(b, key, quantity, chainTime)))
-  ensures (inv(b) ==> canReceiveSlopFee(b, key, quantity, chainTime) ==> alwaysJournalPastAndPositive(receiveSlopFee(b, key, quantity, chainTime)))
-  ensures (inv(b) ==> canReceiveSlopFee(b, key, quantity, chainTime) ==> alwaysPendingOrderReserved(receiveSlopFee(b, key, quantity, chainTime)))
-  ensures (inv(b) ==> canReceiveSlopFee(b, key, quantity, chainTime) ==> alwaysPoolNonNegative(receiveSlopFee(b, key, quantity, chainTime)))
-  ensures (inv(b) ==> canReceiveSlopFee(b, key, quantity, chainTime) ==> alwaysLocalShareBounded(receiveSlopFee(b, key, quantity, chainTime)))
-  ensures (inv(b) ==> canReceiveSlopFee(b, key, quantity, chainTime) ==> alwaysSourceLegsOnly(receiveSlopFee(b, key, quantity, chainTime)))
-  ensures (inv(b) ==> canReceiveSlopFee(b, key, quantity, chainTime) ==> alwaysBurnBounded(receiveSlopFee(b, key, quantity, chainTime)))
-  ensures (inv(b) ==> canReceiveSlopFee(b, key, quantity, chainTime) ==> stepNewSourceUnseen(b, receiveSlopFee(b, key, quantity, chainTime)))
-  ensures (inv(b) ==> canReceiveSlopFee(b, key, quantity, chainTime) ==> stepOrderOutcomeOnce(b, receiveSlopFee(b, key, quantity, chainTime)))
-  ensures (inv(b) ==> canReceiveSlopFee(b, key, quantity, chainTime) ==> stepIncomeMonotonic(b, receiveSlopFee(b, key, quantity, chainTime)))
-  ensures (inv(b) ==> canReceiveSlopFee(b, key, quantity, chainTime) ==> stepJournalRetained(b, receiveSlopFee(b, key, quantity, chainTime)))
-  ensures (inv(b) ==> canReceiveSlopFee(b, key, quantity, chainTime) ==> stepSignaturesNeedLiveBuyback(b, "receiveSlopFee", receiveSlopFee(b, key, quantity, chainTime)))
-{
-  if inv(b) && canReceiveSlopFee(b, key, quantity, chainTime) {
-    var after := receiveSlopFee(b, key, quantity, chainTime);
-    settlement__money_lawEqualReflexive_ensures(b.income);
-    settlement__money_lawEqualReflexive_ensures(b.burned);
-    settlement__money_lawEqualReflexive_ensures(b.purchased);
-    Grows(b.localSlopIncome, quantity);
-    var total := settlement__money_addAmounts(b.localSlopIncome, quantity);
-    settlement__half_lawHalfValid_ensures(total);
-    settlement__money_lawEqualReflexive_ensures(settlement__half_half(total).quotient);
-    ShareUnderLargerIncome(b.localSlopCommitted, b.localSlopIncome, total);
-    BurnUnderLargerAcquisition(b, after);
-  }
-}
-
-lemma burn_ensures(b: Buyback, burnRequest: BurnRequest)
-  ensures (inv(b) ==> canBurn(b, burnRequest) ==> alwaysSourcesOnce(burn(b, burnRequest)))
-  ensures (inv(b) ==> canBurn(b, burnRequest) ==> alwaysRuntimeSound(burn(b, burnRequest)))
-  ensures (inv(b) ==> canBurn(b, burnRequest) ==> alwaysShareBounded(burn(b, burnRequest)))
-  ensures (inv(b) ==> canBurn(b, burnRequest) ==> alwaysWindowLimits(burn(b, burnRequest)))
-  ensures (inv(b) ==> canBurn(b, burnRequest) ==> alwaysJournalPastAndPositive(burn(b, burnRequest)))
-  ensures (inv(b) ==> canBurn(b, burnRequest) ==> alwaysPendingOrderReserved(burn(b, burnRequest)))
-  ensures (inv(b) ==> canBurn(b, burnRequest) ==> alwaysPoolNonNegative(burn(b, burnRequest)))
-  ensures (inv(b) ==> canBurn(b, burnRequest) ==> alwaysLocalShareBounded(burn(b, burnRequest)))
-  ensures (inv(b) ==> canBurn(b, burnRequest) ==> alwaysSourceLegsOnly(burn(b, burnRequest)))
-  ensures (inv(b) ==> canBurn(b, burnRequest) ==> alwaysBurnBounded(burn(b, burnRequest)))
-  ensures (inv(b) ==> canBurn(b, burnRequest) ==> stepNewSourceUnseen(b, burn(b, burnRequest)))
-  ensures (inv(b) ==> canBurn(b, burnRequest) ==> stepOrderOutcomeOnce(b, burn(b, burnRequest)))
-  ensures (inv(b) ==> canBurn(b, burnRequest) ==> stepIncomeMonotonic(b, burn(b, burnRequest)))
-  ensures (inv(b) ==> canBurn(b, burnRequest) ==> stepJournalRetained(b, burn(b, burnRequest)))
-  ensures (inv(b) ==> canBurn(b, burnRequest) ==> stepSignaturesNeedLiveBuyback(b, "burn", burn(b, burnRequest)))
-{
-  if inv(b) && canBurn(b, burnRequest) {
-    var after := burn(b, burnRequest);
-    UnchangedCumulative(b, after);
-    var h := settlement__half_half(acquired(b)).quotient;
-    settlement__money_lawAdditionValid_ensures(b.purchased, b.localSlopCommitted);
-    settlement__half_lawHalfValid_ensures(acquired(b));
-    settlement__money_lawNumericOrderTotal_ensures(b.burnCommitted, h);
-    settlement__money_lawSubtractionValid_ensures(h, b.burnCommitted);
-    settlement__money_lawSubtractionReconstructs_ensures(h, b.burnCommitted);
-    settlement__money_lawAddCongruence_ensures(burnRequest.quantity, settlement__money_subtractAmounts(h, b.burnCommitted), b.burnCommitted);
-    settlement__money_lawAddCommutative_ensures(b.burnCommitted, burnRequest.quantity);
-    settlement__money_lawEqualOrder_ensures(settlement__money_addAmounts(burnRequest.quantity, b.burnCommitted), settlement__money_addAmounts(settlement__money_subtractAmounts(h, b.burnCommitted), b.burnCommitted), h);
-    settlement__money_lawEqualOrder_ensures(settlement__money_addAmounts(settlement__money_subtractAmounts(h, b.burnCommitted), b.burnCommitted), h, h);
-    settlement__money_lawEqualReflexive_ensures(h);
-    settlement__money_lawAdditionValid_ensures(b.burnCommitted, burnRequest.quantity);
-    settlement__money_lawEqualReflexive_ensures(after.burnCommitted);
-  }
-}
-
-lemma settleBurn_ensures(b: Buyback, receipt: SendReceipt)
-  ensures (inv(b) ==> canSettleBurn(b, receipt) ==> alwaysSourcesOnce(settleBurn(b, receipt)))
-  ensures (inv(b) ==> canSettleBurn(b, receipt) ==> alwaysRuntimeSound(settleBurn(b, receipt)))
-  ensures (inv(b) ==> canSettleBurn(b, receipt) ==> alwaysShareBounded(settleBurn(b, receipt)))
-  ensures (inv(b) ==> canSettleBurn(b, receipt) ==> alwaysWindowLimits(settleBurn(b, receipt)))
-  ensures (inv(b) ==> canSettleBurn(b, receipt) ==> alwaysJournalPastAndPositive(settleBurn(b, receipt)))
-  ensures (inv(b) ==> canSettleBurn(b, receipt) ==> alwaysPendingOrderReserved(settleBurn(b, receipt)))
-  ensures (inv(b) ==> canSettleBurn(b, receipt) ==> alwaysPoolNonNegative(settleBurn(b, receipt)))
-  ensures (inv(b) ==> canSettleBurn(b, receipt) ==> alwaysLocalShareBounded(settleBurn(b, receipt)))
-  ensures (inv(b) ==> canSettleBurn(b, receipt) ==> alwaysSourceLegsOnly(settleBurn(b, receipt)))
-  ensures (inv(b) ==> canSettleBurn(b, receipt) ==> alwaysBurnBounded(settleBurn(b, receipt)))
-  ensures (inv(b) ==> canSettleBurn(b, receipt) ==> stepNewSourceUnseen(b, settleBurn(b, receipt)))
-  ensures (inv(b) ==> canSettleBurn(b, receipt) ==> stepOrderOutcomeOnce(b, settleBurn(b, receipt)))
-  ensures (inv(b) ==> canSettleBurn(b, receipt) ==> stepIncomeMonotonic(b, settleBurn(b, receipt)))
-  ensures (inv(b) ==> canSettleBurn(b, receipt) ==> stepJournalRetained(b, settleBurn(b, receipt)))
-  ensures (inv(b) ==> canSettleBurn(b, receipt) ==> stepSignaturesNeedLiveBuyback(b, "settleBurn", settleBurn(b, receipt)))
-{
-  if inv(b) && canSettleBurn(b, receipt) {
-    var after := settleBurn(b, receipt);
-    settlement__money_lawEqualReflexive_ensures(b.income);
-    settlement__money_lawEqualReflexive_ensures(b.purchased);
-    settlement__money_lawEqualReflexive_ensures(b.localSlopIncome);
-    var h := settlement__half_half(acquired(b)).quotient;
-    var total := settlement__money_addAmounts(b.burned, b.burnQuantity);
-    settlement__money_lawAdditionValid_ensures(b.purchased, b.localSlopCommitted);
-    settlement__half_lawHalfValid_ensures(acquired(b));
-    Grows(b.burned, b.burnQuantity);
-    settlement__money_lawEqualOrder_ensures(b.burnCommitted, total, h);
-    settlement__money_lawEqualOrder_ensures(b.burnCommitted, total, b.burned);
-    settlement__money_lawNumericOrderTotal_ensures(total, b.burned);
-    settlement__money_lawNumericOrderTransitive_ensures(b.burned, b.burnCommitted, h);
-    if !receipt.succeeded {
-      settlement__money_lawEqualReflexive_ensures(b.burned);
-    }
-  }
-}
-
 lemma initialHolds_ensures()
   ensures inv(initialHolds())
 {
   var b := initialHolds();
   var z := settlement__money_zero;
-  assert b.income == z && b.committed == z && b.purchased == z && b.localSlopCommitted == z;
-  assert b.burned == z && b.burnCommitted == z && b.burnQuantity == z && b.localSlopIncome == z;
+  assert b.income == z && b.committed == z;
   assert settlement__money_validAmount(z);
-  var a := settlement__money_addAmounts(z, z);
-  assert acquired(b) == a;
-  settlement__money_lawAdditionValid_ensures(z, z);
   settlement__half_lawHalfValid_ensures(z);
-  settlement__half_lawHalfValid_ensures(a);
   settlement__money_lawZeroOrder_ensures(settlement__half_half(z).quotient);
-  settlement__money_lawZeroOrder_ensures(settlement__half_half(a).quotient);
-  assert !openSend(b.burn);
   assert alwaysShareBounded(b);
-  assert alwaysLocalShareBounded(b);
-  assert alwaysBurnBounded(b);
   assert alwaysWindowLimits(b);
 }
