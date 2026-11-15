@@ -34,10 +34,20 @@ type WorkerConfig = { source: int, converterMode: Mode, buybackMode: Mode, netwo
   keys: List[Network], nativeLimits: List[Network], wallet: int }
 type Runtime = { environment: Environment, variableEnabled: bool, published: bool, source: int,
   converterMode: Mode, buybackMode: Mode, networks: List[Network], keys: List[Network], nativeLimits: List[Network],
-  wallet: int, ready: List[Network], replacementActive: bool, publications: int }
+  wallet: int, ready: Readiness, replacementActive: bool, publications: int }
+type Readiness = { base: bool, ethereum: bool, robinhood: bool, solana: bool }
 pure val initial: Runtime = { environment: Production, variableEnabled: false, published: false, source: 0,
   converterMode: Off, buybackMode: Off, networks: List(), keys: List(), nativeLimits: List(),
-  wallet: 1, ready: List(), replacementActive: false, publications: 0 }
+  wallet: 1, ready: noReadiness, replacementActive: false, publications: 0 }
+pure val noReadiness: Readiness = { base: false, ethereum: false, robinhood: false, solana: false }
+pure def readyFor(ready: Readiness, network: Network): bool =
+  if (network == Base) ready.base else if (network == Ethereum) ready.ethereum else if (network == Robinhood) ready.robinhood else ready.solana
+pure def setReady(ready: Readiness, network: Network, value: bool): Readiness =
+  if (network == Base) { ...ready, base: value } else if (network == Ethereum) { ...ready, ethereum: value }
+  else if (network == Robinhood) { ...ready, robinhood: value } else { ...ready, solana: value }
+pure def keepEnabled(ready: Readiness, networks: List[Network]): Readiness =
+  { base: ready.base and listed(networks, Base), ethereum: ready.ethereum and listed(networks, Ethereum),
+    robinhood: ready.robinhood and listed(networks, Robinhood), solana: ready.solana and listed(networks, Solana) }
 pure def canChooseEnvironment(r: Runtime, environment: Environment): bool = r.publications == 0 and not(r.published)
 pure def chooseEnvironment(r: Runtime, environment: Environment): Runtime = { ...r, environment: environment }
 pure def canSetReleaseVariable(r: Runtime, variable: bool, by: Sender): bool = by == Owner and variable != r.variableEnabled
@@ -78,7 +88,7 @@ pure def canPublish(r: Runtime, config: WorkerConfig, by: Sender): bool =
 pure def publish(r: Runtime, config: WorkerConfig, by: Sender): Runtime =
   { ...r, published: true, source: config.source, converterMode: config.converterMode, buybackMode: config.buybackMode,
     networks: config.networks, keys: config.keys, nativeLimits: config.nativeLimits,
-    ready: if (config.wallet == r.wallet) r.ready.select(n => listed(config.networks, n)) else List(),
+    ready: if (config.wallet == r.wallet) keepEnabled(r.ready, config.networks) else noReadiness,
     wallet: config.wallet, publications: r.publications + 1 }
 pure def alwaysPublishedPassedPreflight(r: Runtime): bool = r.published implies preflightPasses(r.environment,
   { source: r.source, converterMode: r.converterMode, buybackMode: r.buybackMode, networks: r.networks,
@@ -107,28 +117,30 @@ source approval.
 
 ```quint
 pure def canVerifyReadiness(r: Runtime, network: Network, by: Sender): bool =
-  by == Owner and r.published and listed(r.networks, network) and not(listed(r.ready, network))
-pure def verifyReadiness(r: Runtime, network: Network, by: Sender): Runtime = { ...r, ready: r.ready.append(network) }
-pure def canWithdrawReadiness(r: Runtime, network: Network, by: Sender): bool = by == Owner and listed(r.ready, network)
-pure def withdrawReadiness(r: Runtime, network: Network, by: Sender): Runtime = { ...r, ready: r.ready.select(n => n != network) }
+  by == Owner and r.published and listed(r.networks, network) and not(readyFor(r.ready, network))
+pure def verifyReadiness(r: Runtime, network: Network, by: Sender): Runtime = { ...r, ready: setReady(r.ready, network, true) }
+pure def canWithdrawReadiness(r: Runtime, network: Network, by: Sender): bool = by == Owner and readyFor(r.ready, network)
+pure def withdrawReadiness(r: Runtime, network: Network, by: Sender): Runtime = { ...r, ready: setReady(r.ready, network, false) }
 pure def canSetReplacement(r: Runtime, active: bool, by: Sender): bool = by == Owner and active != r.replacementActive
 pure def setReplacement(r: Runtime, active: bool, by: Sender): Runtime = { ...r, replacementActive: active }
 pure def runs(r: Runtime): bool = r.published and r.converterMode != Off
 pure def networkSigns(r: Runtime, network: Network): bool =
   r.published and listed(r.networks, network) and listed(r.keys, network) and listed(r.nativeLimits, network)
-    and listed(r.ready, network)
+    and readyFor(r.ready, network)
 pure def conversionSigns(r: Runtime, network: Network): bool = r.converterMode == Live and converts(network) and networkSigns(r, network)
 pure def buybackSigns(r: Runtime, network: Network): bool = r.buybackMode == Live and r.converterMode == Live
   and r.environment == Production and networkSigns(r, network) and networkSigns(r, Robinhood)
 pure def replacementSigns(r: Runtime, network: Network): bool = r.replacementActive and network != Solana
   and r.converterMode == Live and networkSigns(r, network)
-pure def alwaysReadyOnlyForEnabledNetworks(r: Runtime): bool = r.ready.every(n => listed(r.networks, n))
+pure def alwaysReadyOnlyForEnabledNetworks(r: Runtime): bool =
+  (r.ready.base implies listed(r.networks, Base)) and (r.ready.ethereum implies listed(r.networks, Ethereum))
+    and (r.ready.robinhood implies listed(r.networks, Robinhood)) and (r.ready.solana implies listed(r.networks, Solana))
 pure def lawSigningNeedsLiveAndReadiness(r: Runtime, network: Network): bool =
   (conversionSigns(r, network) or buybackSigns(r, network) or replacementSigns(r, network)) implies
-    r.published and r.converterMode == Live and listed(r.keys, network) and listed(r.nativeLimits, network) and listed(r.ready, network)
+    r.published and r.converterMode == Live and listed(r.keys, network) and listed(r.nativeLimits, network) and readyFor(r.ready, network)
 pure def lawRobinhoodNeverConverts(r: Runtime): bool = not(conversionSigns(r, Robinhood))
 pure def sometimesSigningReady(r: Runtime): bool = conversionSigns(r, Base)
-pure def sometimesReadinessWithdrawn(r: Runtime): bool = r.published and r.converterMode == Live and r.ready.length() == 0 and r.publications > 1
+pure def sometimesReadinessWithdrawn(r: Runtime): bool = r.published and r.converterMode == Live and r.ready == noReadiness and r.publications > 1
 ```
 
 ### Simulation samples cover complete, incomplete and staging configurations
