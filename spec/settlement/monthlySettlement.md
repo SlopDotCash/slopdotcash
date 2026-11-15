@@ -128,7 +128,8 @@ gross is pending, including this month's key for an actor with another
 gross. The coordinator cannot refuse a chain call: it observes the finalized
 award. A matching award reserves the obligation; a different actor or gross
 makes it conflicted (`award_conflict`). A finalized payment of a reserved
-obligation's award marks it paid.
+obligation's award marks it paid. Anyone may pay a matured award of this
+month's key to the binding the contract selects.
 
 ```quint
 pure def canCommitManualAward(s: MonthlySettlement, source: E::SourceKey, actor: int, gross: M::Amount, ev: E::ChainEvent, by: str): bool =
@@ -152,10 +153,10 @@ pure def canObserveConflict(s: MonthlySettlement, actor: int): bool =
     and MO::canRecordConflict(s.month, observedFact(s, actor))
 pure def observeConflict(s: MonthlySettlement, actor: int): MonthlySettlement =
   { ...s, month: MO::recordConflict(s.month, observedFact(s, actor)) }
-pure def canPay(s: MonthlySettlement, source: E::SourceKey, binding: E::PayableBinding, ev: E::ChainEvent): bool =
-  E::canPay(s.escrow, source, binding, ev)
-pure def pay(s: MonthlySettlement, source: E::SourceKey, binding: E::PayableBinding, ev: E::ChainEvent): MonthlySettlement =
-  { ...s, escrow: E::pay(s.escrow, source, binding, ev) }
+pure def canPayAward(s: MonthlySettlement, actor: int, destination: str, version: int, ev: E::ChainEvent): bool =
+  E::canPay(s.escrow, sourceOf(s, actor), { actor: actor, destination: destination, version: version }, ev)
+pure def payAward(s: MonthlySettlement, actor: int, destination: str, version: int, ev: E::ChainEvent): MonthlySettlement =
+  { ...s, escrow: E::pay(s.escrow, sourceOf(s, actor), { actor: actor, destination: destination, version: version }, ev) }
 pure def canObservePaid(s: MonthlySettlement, actor: int): bool =
   chainMatches(s, actor) and chainPaid(s, actor) and MO::canRecordPaid(s.month, awardFact(s, actor, true))
 pure def observePaid(s: MonthlySettlement, actor: int): MonthlySettlement =
@@ -288,7 +289,8 @@ pure val proofValues = Set(leafBase).union(Set({ ...leafBase, index: 1, source: 
   .union(Set({ ...leafBase, root: "q", rootTotal: List(8), index: 0, source: monthKey(2), actor: 2, gross: List(6) }))
   .union(Set({ ...leafBase, root: "q", rootTotal: List(8), index: 1, source: monthKey(3), actor: 3, gross: List(2) }))
 pure val grossValues = Set(List(1), List(2))
-pure val bindingValues = Set({ actor: 1, destination: "w1", version: 1 }, { actor: 2, destination: "w2", version: 1 })
+pure val destinationValues = Set("w1")
+pure val versionValues = Set(1)
 pure val releaseValues = Set({ period: 202611, expectedRemaining: List(10), releasedGross: List(10), signer: "attester" },
   { period: 202611, expectedRemaining: List(8), releasedGross: List(8), signer: "attester" })
 pure val weight_materialize = 12
@@ -306,7 +308,7 @@ pure val weight_observeRevision = 6
 pure val weight_commitManualAward = 2
 pure val weight_observeConflict = 4
 pure val weight_observeExistingAward = 4
-pure val weight_pay = 4
+pure val weight_payAward = 4
 pure val weight_observePaid = 4
 pure val weight_adjust = 1
 pure val weight_finalize = 1
