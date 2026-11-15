@@ -13,7 +13,9 @@ import {
 } from "./value-merge-objects";
 import { collectMergeResolutions } from "./value-merge-resolution";
 
-function fixture() {
+function fixture(
+  obsoleteContents: string | Buffer = "unrelated historical contents\n",
+) {
   const root = mkdtempSync(join(tmpdir(), "slop-object-closure-"));
   const full = join(root, "full.git");
   const compact = join(root, "compact.git");
@@ -49,7 +51,13 @@ function fixture() {
       ["commit-tree", tree, ...parents.flatMap((sha) => ["-p", sha])],
       "Fixture\n",
     );
-  const obsoleteBlob = blob("unrelated historical contents\n");
+  const obsoleteBlob = git(
+    full,
+    ["hash-object", "-w", "--stdin"],
+    obsoleteContents,
+  )
+    .toString("utf8")
+    .trim();
   const ancestor = commit(tree([["obsolete.txt", obsoleteBlob]]), []);
   const attributes = blob("witness.txt text\n");
   const values = ["base\n", "left\n", "right\n", "resolved\n"].map(blob);
@@ -252,52 +260,55 @@ test("a malformed extra object is refused even when reconstruction does not need
   }
 });
 
-test("selected file recovery extends closure only for immutable requested snapshots", async () => {
-  const f = fixture();
-  try {
-    const request = {
-      repository: f.input.repository,
-      repositoryNodeId: f.input.repositoryNodeId,
-      ref: f.ancestor,
-      path: "obsolete.txt",
-    };
-    const output = join(f.root, "recovery.bundle");
-    await createValueMergeBundle([f.input], f.full, output, [request]);
-    f.git(f.compact, ["init", "--bare", "--template=", f.compact]);
-    f.git(f.compact, ["bundle", "unbundle", output]);
-    expect(
-      verifyMergeObjectStore([f.input], f.compact, [request]).blobs,
-    ).toContain(f.obsoleteBlob);
-    const { recoverValueFiles } = await import("./value-file-recovery");
-    const { verifiedValueFileClient } = await import(
-      "../workers/slopbot/value-file-recovery"
-    );
-    const proof = recoverValueFiles(f.compact, [request]);
-    const client = await verifiedValueFileClient<{
-      get<T>(path: string): Promise<T | null>;
-      verifiedFile?: import("../workers/slopbot/value-evidence-types").EvidenceClient["verifiedFile"];
-    }>({ get: async () => null }, [request], proof);
-    const bytes = await client.verifiedFile?.(
-      request.repository,
-      request.ref,
-      request.path,
-    );
-    expect(new TextDecoder().decode(bytes?.bytes)).toBe(
-      "unrelated historical contents\n",
-    );
-    expect(
-      await client.verifiedFile?.(
+for (const binary of [false, true]) {
+  test(`selected file recovery preserves immutable requested ${binary ? "binary" : "text"} snapshots`, async () => {
+    const expectedBytes = binary
+      ? Buffer.from([0x1f, 0x8b, 0, 0xff, 0x80])
+      : Buffer.from("unrelated historical contents\n");
+    const f = fixture(expectedBytes);
+    try {
+      const request = {
+        repository: f.input.repository,
+        repositoryNodeId: f.input.repositoryNodeId,
+        ref: f.ancestor,
+        path: "obsolete.txt",
+      };
+      const output = join(f.root, "recovery.bundle");
+      await createValueMergeBundle([f.input], f.full, output, [request]);
+      f.git(f.compact, ["init", "--bare", "--template=", f.compact]);
+      f.git(f.compact, ["bundle", "unbundle", output]);
+      expect(
+        verifyMergeObjectStore([f.input], f.compact, [request]).blobs,
+      ).toContain(f.obsoleteBlob);
+      const { recoverValueFiles } = await import("./value-file-recovery");
+      const { verifiedValueFileClient } = await import(
+        "../workers/slopbot/value-file-recovery"
+      );
+      const proof = recoverValueFiles(f.compact, [request]);
+      const client = await verifiedValueFileClient<{
+        get<T>(path: string): Promise<T | null>;
+        verifiedFile?: import("../workers/slopbot/value-evidence-types").EvidenceClient["verifiedFile"];
+      }>({ get: async () => null }, [request], proof);
+      const bytes = await client.verifiedFile?.(
         request.repository,
         request.ref,
-        "witness.txt",
-      ),
-    ).toBeNull();
-    expect(() =>
-      requiredMergeObjects([f.input], f.full, [
-        { ...request, repositoryNodeId: "R_wrong" },
-      ]),
-    ).toThrow();
-  } finally {
-    rmSync(f.root, { recursive: true, force: true });
-  }
-});
+        request.path,
+      );
+      expect(bytes?.bytes).toEqual(new Uint8Array(expectedBytes));
+      expect(
+        await client.verifiedFile?.(
+          request.repository,
+          request.ref,
+          "witness.txt",
+        ),
+      ).toBeNull();
+      expect(() =>
+        requiredMergeObjects([f.input], f.full, [
+          { ...request, repositoryNodeId: "R_wrong" },
+        ]),
+      ).toThrow();
+    } finally {
+      rmSync(f.root, { recursive: true, force: true });
+    }
+  });
+}

@@ -98,13 +98,7 @@ test("normal collection recovers a complete oversized added text from verified p
   expect(after.commitAttribution[0].changedPaths).toEqual(["fix.ts"]);
 });
 
-for (const invalid of [
-  "request",
-  "blob",
-  "size",
-  "utf8",
-  "duplicate",
-] as const) {
+for (const invalid of ["request", "blob", "size", "duplicate"] as const) {
   test(`private recovery rejects ${invalid} corruption`, async () => {
     const requests = [
       {
@@ -114,10 +108,7 @@ for (const invalid of [
         path: "a.txt",
       },
     ];
-    const bytes =
-      invalid === "utf8"
-        ? new Uint8Array([255])
-        : new TextEncoder().encode("kept\n");
+    const bytes = new TextEncoder().encode("kept\n");
     const proof = recovery(requests, bytes);
     if (invalid === "request") proof.entries[0].path = "other.txt";
     if (invalid === "blob") proof.blobs[0].sha256 = "0".repeat(64);
@@ -281,4 +272,76 @@ test("recovery keeps GitHub array order significant", async () => {
   await expect(capture.client.get(path)).rejects.toThrow(
     "Source metadata changed",
   );
+});
+
+test("verified recovery preserves binary bytes and leaves text validation to consumers", async () => {
+  const requests = [
+    {
+      repository: "example/repo",
+      repositoryNodeId: "R_example",
+      ref: "a".repeat(40),
+      path: "capture.gz",
+    },
+  ];
+  const bytes = new Uint8Array([0x1f, 0x8b, 0, 0xff, 0x80]);
+  const client = await verifiedValueFileClient(
+    { get: async () => null },
+    requests,
+    recovery(requests, bytes),
+  );
+  const file = await client.verifiedFile?.(
+    "example/repo",
+    "a".repeat(40),
+    "capture.gz",
+  );
+  expect(file?.bytes).toEqual(bytes);
+  if (!file) throw Error("Missing verified binary");
+  file.bytes[0] = 0;
+  expect(
+    (await client.verifiedFile?.("example/repo", "a".repeat(40), "capture.gz"))
+      ?.bytes,
+  ).toEqual(bytes);
+});
+
+test("normal collection accepts exact binary evidence from private recovery", async () => {
+  const source = fixture({ direct: true, binaryOnly: true });
+  const bytes = new Uint8Array([0x1a, 0x45, 0xdf, 0xa3, 0, 0xff, 9]);
+  const client = {
+    ...source.client,
+    async get<T>(path: string): Promise<T | null> {
+      if (path.includes("/contents/")) return null;
+      return source.client.get<T>(path);
+    },
+  };
+  const before = await collectValueEvidence(
+    client,
+    repository.id,
+    1,
+    repository,
+  );
+  expect(before.files[0].addedBinary).toBeUndefined();
+  const requests = [source.pull.head.sha, source.pull.merge_commit_sha].map(
+    (ref) => ({
+      repository: repository.id,
+      repositoryNodeId: repository.expectedNodeId ?? "",
+      ref,
+      path: "capture.webm",
+    }),
+  );
+  const verified = await verifiedValueFileClient(
+    client,
+    requests,
+    recovery(requests, bytes),
+  );
+  const after = await collectValueEvidence(
+    verified,
+    repository.id,
+    1,
+    repository,
+  );
+  expect(after.limitations).toEqual([]);
+  expect(after.files[0].addedBinary?.contentBase64).toBe(
+    Buffer.from(bytes).toString("base64"),
+  );
+  expect(after.files[0].addedBinary?.contentReview).toBe("unviewed");
 });
