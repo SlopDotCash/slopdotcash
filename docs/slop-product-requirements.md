@@ -63,7 +63,7 @@ Numeric growth, availability, latency, and response-time targets are not approve
 | Project inventory and published terms | D1 `projects`, `project_revisions`, and `project_applications`; each change appends an immutable revision. |
 | Sessions, preferences, wallet records, and private decisions | Authenticated account and case services. |
 | Points and corrections | Append-only journal with source identity, occurrence time, and recording time. |
-| Monthly proposals and final allocations | Private D1 allocation records. |
+| Monthly proposals and final allocations | D1 allocation records; owner cuts and their reasons are public. |
 | Deposits, reservations, and completed payments | Exact finalized chain evidence, reconciled with the applicable obligation. |
 
 Generated snapshots and pages derive from these records. They are not separate inventories. Never edit generated registry or public build outputs by hand. Retain history when a project pauses or retires; never delete registry rows.
@@ -277,6 +277,10 @@ Monthly contribution rewards use one project vault, network, asset, and deposit 
 
 Anyone may deposit into a vault. All deposits share one bucket. Only the owner's refund destination receives free-fund withdrawals. State this before deposit signature. Reserved awards and fees cannot be withdrawn. Funding is optional; a pledge is not available funds.
 
+Show a monthly amount to contributors only when the money is in the vault. A monthly pool whose recorded vaults on paying networks hold less than the current month's amount, or that has no vault, is shown as points only on project cards, project lists, project pages and the funding page; its registered amount is not shown there. Balances come from the cached finalized vault counters (section 9). Operator decision, 15 November 2026.
+
+From December 2026 a month is promised only if it was funded on the 1st: the vault's first finalized read of the UTC month, within an hour of 00:00 UTC, must hold that month's amount plus the previous month's amount, which pays out after its cutoff. The amount stays shown only while the vault still covers what is owed. Keep the first read of each month for each vault; it never changes. The contract lets the owner withdraw free funds at any time, so Slop's own pages refuse a withdrawal that would leave the vault below the promised amount, and when a month funded on the 1st no longer is covered after a withdrawal, the project page says that funds were withdrawn during that month. Enforcing this in the contract needs a separate reviewed upgrade. Operator decision, 15 November 2026.
+
 The owner may fund a new EVM token vault before it is registered. Once the creation transaction is in a successful canonical block and matches the reviewed request, show the owner the funding form for that vault and state that the creation is not final. Register the vault only from a finalized creation. Count a deposit only from a finalized block and the vault's own deposit event, and only for a registered vault. If the block is replaced, withdraw the form and say so. A deposit confirmed while the vault was not on chain moved nothing; report it as failed, never as received or funded. Native-coin vaults, bounty vaults, other depositors, withdrawals, and Solana vaults wait for registration. Proposed by the operator on 14 November 2026; approved by the owner's merge.
 
 Support approved stablecoins, standard ERC-20 tokens, classic SPL tokens, native ETH, and native SOL. Use native coins directly, not wrapped substitutes. Separate principal from network fees and preserve Solana rent reserves.
@@ -291,9 +295,9 @@ Owner decision, 11 November 2026: display project-token tickers with exactly one
 
 Automatic monthly payment is the default when funds are committed. The owner sets the monthly cap during setup and may change it or opt out. Vault creation enables monthly commitment unless the owner opts out.
 
-The period is the calendar UTC month, starting November 2026. The trusted monthly workflow freezes the complete closed-month ledger and writes each project's proposal once. A repeat run must not add or replace rows. Store allocations privately in D1, not new cycle files.
+The period is the calendar UTC month, starting November 2026. The trusted monthly workflow freezes the complete closed-month ledger and writes each project's proposal once. A repeat run must not add or replace rows. Store allocations in D1, not new cycle files.
 
-The owner may adjust amounts or finalize early. At 72 hours after month end, the automatic process freezes the current allocation once. Do not publish adjustment history or require public reasons. Retain records needed for disputes and reconciliation.
+The owner may adjust amounts or finalize early. At 72 hours after month end, the automatic process freezes the current allocation once. A change that sets a contributor below their proposed amount is a cut. A cut needs a written reason of 20 to 500 characters. Each current cut, with its proposed amount, new amount, reason and time, is public on the cycle page, and the contributor gets an Inbox notice. Increases and changes at or above the proposal need no reason and stay private. The contributor gets 24 hours of notice: with automatic finalization on, cuts close 24 hours before the cutoff, and the owner can finalize only 24 hours after the latest cut. Operator decision, 15 November 2026. Retain every change and cut record for disputes and reconciliation.
 
 Only accepted-work Points for that project and period set shares. Rollover never increases a later monthly cap. An underfunded month creates no obligations until the entire allocation is covered. Prevent manual and automatic duplicate payments.
 
@@ -645,6 +649,8 @@ Recheck roles and destinations before sending. Provider acceptance does not prov
 ### Dependencies and local operation
 
 Public pages use cached D1 data or published snapshots. Refresh failure retains the last good value with a stale label. Sensitive actions require fresh authority.
+
+An active project's page shows how promptly it merges outside work: when it last merged a pull request, how many outside pull requests (author not an owner, member or collaborator, not a bot, not a draft) have waited seven days or more without a review or comment from anyone who can merge, and the median time to merge of outside pull requests merged in the last 30 days, with the date checked. The Slopbot schedule reads each repository once a day into D1 and `GET /api/v1/merge-activity` serves the stored rows; a failed read keeps the last values. It is display only and changes no score, status or payment (operator decision, 15 November 2026; #1993).
 
 Production `slop.cash` may load Cloudflare Web Analytics through Cloudflare's automatic setup, only to count page views by path and referring site. Cloudflare does not inject into HTML the site's Pages Function serves, so that function adds the beacon tag itself on the production host only, set to report to the site's own origin as the automatic tag does. The beacon uses no cookies or local storage, logs no query strings and reports to the site's own origin, so private Inbox, case and admin parameters never reach it. Staging, local development and tests never load it. No page depends on it: a blocked or failed beacon changes nothing. Add no other analytics or third-party script without a separate owner decision. The operator proposed this on 11 November 2026; the owner's merge approves it.
 

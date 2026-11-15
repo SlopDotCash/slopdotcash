@@ -32,6 +32,7 @@ type Env = {
   /** Named App-backed observation refresher; no public or signing entrypoint. */
   REPORTING_READINESS?: {
     refreshReportingReadiness(): Promise<{ checked: number; failed: number }>;
+    refreshMergeActivity?(): Promise<{ read: number; failed: number }>;
   };
 };
 
@@ -486,7 +487,20 @@ export default {
       }
       await runScheduledMaintenance(env, new Date());
     };
-    const outcomes = await Promise.allSettled([maintenance(), reporting()]);
+    // Merge activity (#1993) is a display aid: a failure is logged and never
+    // fails the schedule or the reporting refresh.
+    const mergeActivity = async () => {
+      try {
+        await env.REPORTING_READINESS?.refreshMergeActivity?.();
+      } catch {
+        console.error("slop merge activity refresh failed");
+      }
+    };
+    const outcomes = await Promise.allSettled([
+      maintenance(),
+      reporting(),
+      mergeActivity(),
+    ]);
     if (outcomes.some((outcome) => outcome.status === "rejected")) {
       console.error("slop scheduled reporting or identity maintenance failed");
       throw new Error("slop scheduled maintenance failed");

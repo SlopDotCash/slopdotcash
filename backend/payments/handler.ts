@@ -45,6 +45,7 @@ import {
   type MonthlyCommitmentInput,
   type MonthlyOwnerService,
   MonthlyPaymentError,
+  monthlyCuts,
   monthlyPaymentSettingSequence,
 } from "./monthly";
 import { readMonthlyAuthorization } from "./monthly-publication";
@@ -311,6 +312,21 @@ export async function handlePaymentsApi(
             publishedAt: saved.published_at,
           })
         : json(404, { error: "monthly_authorization_unavailable" });
+    }
+    // Owner cuts are public (PRD section 6, operator decision of
+    // 15 November 2026): each current cut below a proposed amount, with the
+    // owner's reason. Other allocation changes stay private.
+    const cutsRoute =
+      /^\/projects\/([a-z0-9][a-z0-9-]*)\/monthly\/(\d{4}-(?:0[1-9]|1[0-2]))\/cuts$/.exec(
+        path,
+      );
+    if (cutsRoute && request.method === "GET") {
+      const [, projectId, period] = cutsRoute;
+      return json(200, {
+        projectId,
+        period,
+        cuts: await monthlyCuts(deps.db, projectId, period),
+      });
     }
     const totalsRoute = /^\/projects\/([a-z0-9][a-z0-9-]*)\/totals$/.exec(path);
     if (totalsRoute && request.method === "GET") {
@@ -746,7 +762,8 @@ export async function handlePaymentsApi(
             if (
               typeof body?.githubUserId !== "string" ||
               typeof body.grossBase !== "string" ||
-              !sequence(body.expectedSequence)
+              !sequence(body.expectedSequence) ||
+              (body.reason !== undefined && typeof body.reason !== "string")
             )
               return json(400, { error: "invalid_allocation" });
             return json(
@@ -755,6 +772,9 @@ export async function handlePaymentsApi(
                 githubUserId: body.githubUserId,
                 grossBase: body.grossBase,
                 expectedSequence: body.expectedSequence,
+                ...(typeof body.reason === "string"
+                  ? { reason: body.reason }
+                  : {}),
               }),
             );
           }
