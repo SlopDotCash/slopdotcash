@@ -1068,9 +1068,11 @@ function richSource(
 async function bindRetained(
   sources: readonly WorkUnitSource[],
   owners: ReadonlyMap<string, string>,
+  acceptedSubset = false,
 ): Promise<CorrectionSource[]> {
   const retained = await retainedCopyBindings(sources, {
     ordinaryCommitsOnly: true,
+    acceptedSubset,
   });
   requireThat(
     retained.limitations.length === 0,
@@ -1082,8 +1084,10 @@ async function bindRetained(
   for (const accepted of sources.filter(
     (source) => source.evidence.pull.merged_at,
   )) {
-    // The canonical helper also requires one complete binding for every path.
-    const canonical = await retainedCommitCreditSources(accepted, sources);
+    // Each credited commit still requires a complete accepted-path binding.
+    const canonical = await retainedCommitCreditSources(accepted, sources, {
+      acceptedSubset,
+    });
     for (const [sha, binding] of canonical) {
       const target = converted
         .find((s) => s.sourceId === accepted.evidence.pull.node_id)
@@ -3268,7 +3272,12 @@ async function collectWithEvidenceCache(
           decision.latestDigest !== null,
           "Grouped decision digest unavailable",
         );
-        let sources = await bindRetained(decision.evidence.sources, owners);
+        // The assessed record already bounds claims to its reviewed accepted subset.
+        let sources = await bindRetained(
+          decision.evidence.sources,
+          owners,
+          true,
+        );
         restoreCanonicalMergeCounts(sources, outcomesById);
         const selectedClaims = decision.evidence.claims.filter((claim) =>
           unit.claimIds.includes(claim.id),

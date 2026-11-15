@@ -165,6 +165,95 @@ test("joint preparation credits the exact retained subset of a complete original
   );
 });
 
+test("grouped retained attribution uses the canonical accepted subset and keeps ordinary holds", async () => {
+  const { original, copy } = withUnacceptedFinalPath();
+  const evidence = await prepareWorkUnitEvidence(
+    [original, copy],
+    [repository],
+  );
+  expect(evidence.limitations).toEqual([]);
+  const credited = await retainedCommitCreditSources(copy, evidence.sources, {
+    acceptedSubset: true,
+  });
+  expect([...credited.values()]).toEqual([
+    {
+      actorNodeId: original.evidence.pull.user.node_id,
+      originalPullRequestId: original.evidence.pull.node_id,
+      originalPullRequestUrl: original.evidence.pull.html_url,
+      originalCommitSha: original.evidence.commits[0].sha,
+    },
+  ]);
+  expect(
+    evidence.sources.find(
+      (source) =>
+        source.evidence.pull.node_id === original.evidence.pull.node_id,
+    )?.evidence.commits,
+  ).toHaveLength(2);
+  await expect(
+    retainedCommitCreditSources(copy, evidence.sources),
+  ).rejects.toThrow("Retained attribution is unresolved");
+});
+
+for (const fault of [
+  "missing-anchor",
+  "wrong-author",
+  "incomplete",
+  "ambiguous",
+] as const) {
+  test(`grouped retained attribution preserves ${fault} refusal`, async () => {
+    const { original, copy, comment } = withUnacceptedFinalPath();
+    const sources = [original, copy];
+    if (fault === "missing-anchor") {
+      const copiedFile = copy.evidence.commitAttribution[0].files?.[0];
+      if (!copiedFile) throw new Error("Expected copied fixture path");
+      copiedFile.patch += "\n+different";
+    }
+    if (fault === "wrong-author")
+      copy.evidence.commits[0].author = {
+        node_id: "U_other",
+        login: "other",
+        type: "User",
+      };
+    if (fault === "incomplete")
+      original.evidence.limitations.push("Missing source evidence");
+    if (fault === "ambiguous") {
+      const second = structuredClone(copy);
+      Object.assign(second.evidence.pull, {
+        node_id: "PR_other_copy",
+        number: 3,
+        html_url: `https://github.com/${repository.id}/pull/3`,
+      });
+      original.evidence.relatedPullRequests.push({
+        id: second.evidence.pull.node_id,
+        number: 3,
+        url: second.evidence.pull.html_url,
+        repository: repository.id,
+      });
+      comment.body = "Your commits are retained in #2 and #3.";
+      sources.push(second);
+    }
+    if (fault === "wrong-author") {
+      expect(
+        (
+          await retainedCommitCreditSources(copy, sources, {
+            acceptedSubset: true,
+          })
+        ).size,
+      ).toBe(0);
+      const evidence = await prepareWorkUnitEvidence(sources, [repository]);
+      expect(evidence.limitations).toContain(
+        "PR_original: retained primary author identity differs between commits",
+      );
+    } else {
+      await expect(
+        retainedCommitCreditSources(copy, sources, {
+          acceptedSubset: true,
+        }),
+      ).rejects.toThrow();
+    }
+  });
+}
+
 test("accepted subset still requires at least one exact retained anchor", async () => {
   const { original, copy } = withUnacceptedFinalPath();
   copy.evidence.commitAttribution[0].files![0].patch += "\n+different";

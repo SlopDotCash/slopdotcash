@@ -17,6 +17,8 @@ import {
   fixture as valueFixture,
   repository as valueRepository,
 } from "../tests/value-binary-fixture";
+import { makeOriginal } from "../tests/value-promotion-fixture";
+import { prepareWorkUnitEvidence } from "../workers/slopbot/value-work-unit";
 import {
   CollectionBudgetExhausted,
   CorrectionEvidenceCache,
@@ -34,6 +36,7 @@ import {
   type GraphqlExecutor,
   OutcomeCommitLineLoader,
 } from "./generate-leaderboard";
+import * as valueIngestion from "./value-ingestion";
 
 const dirs: string[] = [];
 afterEach(async () => {
@@ -3151,5 +3154,173 @@ test("conflicting author evidence holds a historical retained source", async () 
       reason:
         "Retained accepted commit author differs from the canonical census",
     });
+  }
+});
+
+test("the grouped collector binds the reviewed accepted subset without weakening ordinary attribution", async () => {
+  const original = makeOriginal();
+  const accepted = structuredClone(original);
+  const path = "elizaOS/asi";
+  for (const source of [original, accepted]) {
+    const evidence = source.evidence;
+    evidence.repository = path;
+    evidence.repositoryNodeId = "R_kgDOT23CXA";
+    evidence.repositoryPolicy = {
+      id: path,
+      projectId: "asi",
+      integrationBranch: "main",
+      expectedNodeId: "R_kgDOT23CXA",
+    };
+    evidence.pull.html_url = `https://github.com/${path}/pull/1`;
+    evidence.pull.base.ref = "main";
+    evidence.commits[0].author = null;
+    evidence.commitAttribution[0].actorNodeIds = [];
+    evidence.commits[0].sha = sha;
+    evidence.commitAttribution[0].sha = sha;
+    evidence.pull.head.sha = sha;
+  }
+  original.evidence.pull.node_id = "PR_original";
+  original.evidence.pull.number = 1;
+  original.evidence.pull.html_url = `https://github.com/${path}/pull/1`;
+  original.evidence.pull.merged_at = null;
+  original.evidence.pull.merge_commit_sha = null;
+  original.evidence.pull.merged_by = null;
+  original.evidence.pull.closed_at = "2026-01-14T00:00:00Z";
+  original.evidence.mergeCommitEvidence = null;
+  accepted.evidence.pull.node_id = "PR_source";
+  accepted.evidence.pull.number = 2;
+  accepted.evidence.pull.html_url = `https://github.com/${path}/pull/2`;
+  accepted.evidence.pull.user = {
+    node_id: actor.id,
+    login: actor.login,
+    type: "User",
+  };
+  accepted.evidence.pull.merged_by = accepted.evidence.pull.user;
+  accepted.evidence.pull.merged_at = "2026-01-15T00:00:00Z";
+  original.evidence.relatedPullRequests = [
+    {
+      id: "PR_source",
+      number: 2,
+      url: accepted.evidence.pull.html_url,
+      repository: path,
+    },
+  ];
+  original.evidence.comments = [
+    {
+      node_id: "IC_retained",
+      html_url: `${original.evidence.pull.html_url}#issuecomment-1`,
+      body: "Your commits are retained in #2.",
+      user: accepted.evidence.pull.user,
+      created_at: "2026-01-15T01:00:00Z",
+      updated_at: "2026-01-15T01:00:00Z",
+    },
+  ];
+  const extra = structuredClone(original.evidence.commits[0]);
+  extra.sha = "9".repeat(40);
+  extra.parents = [{ sha }];
+  original.evidence.commits.push(extra);
+  original.evidence.pull.head.sha = extra.sha;
+  original.evidence.pull.commits = 2;
+  const file = {
+    ...original.evidence.files[0],
+    filename: "unaccepted-test.ts",
+    patch: "@@ -0,0 +1 @@\n+unaccepted",
+  };
+  original.evidence.files.push(file);
+  original.evidence.commitAttribution.push({
+    sha: extra.sha,
+    actorNodeIds: [],
+    changedPaths: [file.filename],
+    files: [file],
+    limitations: [],
+  });
+  const evidence = await prepareWorkUnitEvidence(
+    [original, accepted],
+    [
+      {
+        ...valueRepository,
+        id: path,
+        projectId: "asi",
+        expectedNodeId: "R_kgDOT23CXA",
+      },
+    ],
+  );
+  expect(evidence.limitations).toEqual([]);
+  const digest = "d".repeat(64);
+  const workUnitId = `wu_${"b".repeat(64)}`;
+  const decision = {
+    status: "assessed",
+    latestDigest: digest,
+    evidence,
+    record: {
+      units: [
+        { workUnitId, claimIds: evidence.claims.map((claim) => claim.id) },
+      ],
+    },
+  } as unknown as Awaited<
+    ReturnType<typeof valueIngestion.loadValueInputs>
+  >["jointValueDecisions"] extends Map<string, infer T>
+    ? T
+    : never;
+  const loader = spyOn(valueIngestion, "loadValueInputs").mockResolvedValue({
+    jointValueDecisions: new Map([["PR_source", decision]]),
+    heldWorkUnits: [],
+  } as unknown as Awaited<ReturnType<typeof valueIngestion.loadValueInputs>>);
+  try {
+    const source = {
+      ...award(30, true),
+      sourceUrl: accepted.evidence.pull.html_url,
+    };
+    const journal = appendPointAwards(
+      emptyPointsJournal("2026-01-31T00:00:00.000Z"),
+      [source],
+      "f".repeat(64),
+      "slop-score-v2",
+      "2026-01-31T00:00:00.000Z",
+      new Map([
+        [
+          source.key,
+          {
+            sourceId: `value:${digest}`,
+            effectiveAt: when,
+            reason: "Retained assessed work unit",
+          },
+        ],
+      ]),
+    );
+    const result = await collectImplementationCorrections(
+      {
+        projects: ["asi"],
+        directory: await directory(),
+        month: "2026-01",
+        before: "2026-01-31T00:00:00.000Z",
+      },
+      {
+        journal,
+        registry: registry(),
+        token: "fixture-token",
+        transport: transport(sha, {
+          ...fixture(),
+          number: 2,
+          url: accepted.evidence.pull.html_url,
+        }).call,
+        now: new Date("2026-01-31T23:59:59Z"),
+      },
+    );
+    expect(
+      result.receipt.limitations.filter(
+        (item) => item.reason !== "outside-reviewed-candidate-scope",
+      ),
+    ).toEqual([]);
+    expect(result.receipt.completeProofs).toBe(1);
+    expect(result.manifest.candidates[0].proof).toMatchObject({
+      status: "complete",
+      expectedClaimIds: evidence.claims.map((claim) => claim.id),
+      sources: expect.arrayContaining([
+        expect.objectContaining({ sourceId: "PR_original", commitCount: 2 }),
+      ]),
+    });
+  } finally {
+    loader.mockRestore();
   }
 });
