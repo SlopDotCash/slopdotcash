@@ -250,7 +250,7 @@ pure def readReceipt(f: Forwarding, request: Request, advisoryRead: AdvisoryRead
   else if (advisoryRead.writeCommitted) { ...f, revision: f.revision + 1, phase: ReceiptVerified, receiptDigest: advisoryRead.facts.digest, contactsPending: false }
   else f
 pure def mayAbandon(f: Forwarding, idleMs: int, savedReport: bool): bool = not(savedReport) and idleMs > 86400000
-  and (f.phase == Draft or (f.phase == Failed and f.failure != Unverifiable and f.canonical.ghsa == 0))
+  and f.canonical.ghsa == 0 and (f.phase == Draft or (f.phase == Failed and f.failure != Unverifiable))
 pure def lawSavedReportNeverAbandoned(f: Forwarding, idleMs: int): bool = not(mayAbandon(f, idleMs, true))
 pure def lawCopyNeverAbandoned(f: Forwarding, idleMs: int, savedReport: bool): bool = f.canonical.ghsa > 0 implies not(mayAbandon(f, idleMs, savedReport))
 pure def canExpireVerification(f: Forwarding, nowMs: int): bool = f.phase == Submitted and not(f.contactsPending) and nowMs - f.activeClaim.atMs > 86400000

@@ -26,7 +26,8 @@ fields, and a moderator decides only appeals and related-party reviews.
 
 A Slop or GitHub-verified receipt is created by the intake and forwarding
 specifications with terms the [program](./program.md) issued at receipt. A
-legacy reporter claim stays a claim until a current technical approver
+legacy reporter claim (before which no finding, award, appeal or
+relatedness exists) stays a claim until a current technical approver
 verifies that the GitHub advisory names this reporter, freezing the terms in
 force at the maintainer-attested receipt time, or rejects the link. The
 receipt guard checks the full term validity (`T::validReceipt`); the terms
@@ -96,6 +97,10 @@ pure def alwaysUnpaidHasNoAward(c: PrivateCase): bool = c.terms.paidTerms == (c.
 pure def alwaysVerifiedReceiptValid(c: PrivateCase): bool = (c.submission == Verified implies c.terms.revision > 0
   and c.terms.receivedAt > 0 and c.source != NoSource and c.reportVersion > 0 and c.revision > 0)
   and (c.submission != Verified implies c.award == NotApplicable)
+pure def alwaysUnreceivedBlank(c: PrivateCase): bool = c.revision >= 0 and (c.submission != Verified implies
+  c.receipt == Received and c.appeal == NoAppeal and c.commitment == NoCommitment and c.payment == PaymentNotApplicable
+  and c.related == NotAssessed and c.relatedReview == ReviewNotApplicable and c.triage.state == NoTriage)
+  and (c.submission == NotReceived implies c.revision == 0)
 pure def stepReceiptFrozen(before: PrivateCase, after: PrivateCase): bool = after.reporter == before.reporter and
   (before.submission == Verified implies after.submission == Verified and after.terms == before.terms and after.source == before.source)
   and (before.submission == LinkRejected implies after.submission == LinkRejected) and after.revision >= before.revision
@@ -248,6 +253,8 @@ pure def alwaysStandardAwardRail(c: PrivateCase): bool = (c.terms.split == T::St
   (c.commitment == VaultReservation or c.commitment == DirectAward) and c.payment == PaymentNotApplicable
 pure def alwaysRelatedApproval(c: PrivateCase): bool = (c.related == RelatedParty and c.award == Approved) implies
   c.relatedReview == ReviewApproved
+pure def alwaysCommittedFindingStands(c: PrivateCase): bool = committed(c) implies
+  (c.receipt == Confirmed or receiptOpen(c)) and (c.award == Reserved implies c.related != RelatedParty)
 pure def alwaysProposalCommitsNothing(c: PrivateCase): bool = c.relatedReview == ReviewPending implies
   c.receipt == Confirmed and c.appeal != AppealOpen and c.award == Pending and c.commitment == NoCommitment and c.related == RelatedParty and T::amountAllowed(c.terms, c.grossChosen)
 pure def stepCommittedAwardPermanent(before: PrivateCase, after: PrivateCase): bool = committed(before) implies

@@ -55,7 +55,7 @@ pure def canAssignTriager(a: ReadAccess, by: int, checkedEpoch: int, actor: int)
 pure def assignTriager(a: ReadAccess, by: int, checkedEpoch: int, actor: int): ReadAccess = { ...a, report: C::assignTriager(a.report, by, checkedEpoch, actor) }
 pure def canRevokeTriager(a: ReadAccess, by: int, checkedEpoch: int, actor: int): bool = C::canRevokeTriager(a.report, by, checkedEpoch, actor)
 pure def revokeTriager(a: ReadAccess, by: int, checkedEpoch: int, actor: int): ReadAccess = { ...a, report: C::revokeTriager(a.report, by, checkedEpoch, actor) }
-pure def alwaysDeliveryWasAuthorized(a: ReadAccess): bool = (a.phase == Audited or a.phase == Streaming) implies a.audits > 0 and a.requester > 0
+pure def alwaysDeliveryWasAuthorized(a: ReadAccess): bool = a.audits >= 0 and ((a.phase == Audited or a.phase == Streaming) implies a.audits > 0 and a.requester > 0)
 pure def alwaysNoTraceRead(a: ReadAccess): bool = a.kind == ContributorTrace implies (a.phase == Idle or a.phase == Requested or a.phase == Aborted)
 pure def stepDeliveredOnlyWhileAuthorized(before: ReadAccess, after: ReadAccess): bool =
   (after.phase == Delivered and before.phase != Delivered) implies allowed(before) and before.phase == Streaming and before.audits > 0

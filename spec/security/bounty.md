@@ -30,7 +30,8 @@ type Bounty = { cases: int -> C::PrivateCase, holds: List[Hold], funds: FundsSna
   route: RouteObservation, clockMs: int }
 pure val caseIds: List[int] = List(1, 2)
 pure val noFunds: FundsSnapshot = { finalized: false, observedAt: 0, asset: "", free: M::zero }
-pure val initial: Bounty = { cases: Map().put(1, C::initial).put(2, C::initial), holds: List(), funds: noFunds, reserved: M::zero,
+pure val noCases: int -> C::PrivateCase = Map()
+pure val initial: Bounty = { cases: noCases.put(1, C::initial).put(2, C::initial), holds: List(), funds: noFunds, reserved: M::zero,
   route: { asset: "", qualified: false, observedAt: 0 }, clockMs: 3 }
 pure def caseOf(b: Bounty, id: int): C::PrivateCase = b.cases.getOr(id, C::initial)
 pure def known(id: int): bool = caseIds.includes(id)
