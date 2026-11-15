@@ -330,6 +330,21 @@ export function HowItWorksPage() {
             </div>
           </article>
           <article className="faq-answer">
+            <h3>Can the owner take this month&apos;s pool back?</h3>
+            <div>
+              <p>
+                When an owner locks a month in the project vault, that
+                month&apos;s pool is locked in the vault until it is paid out:
+                the vault contract refuses to withdraw it, and the month is paid
+                even if the owner turns automatic payment off. A locked month
+                that is never reserved for payout returns to the owner on the
+                4th of the second month after it. Without a lock, Slop&apos;s
+                pages refuse that withdrawal but the contract does not.
+                Slop&apos;s upgrade key can still change the vault contract.
+              </p>
+            </div>
+          </article>
+          <article className="faq-answer">
             <h3>Is there a referral program?</h3>
             <div>
               <p>
