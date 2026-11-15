@@ -41,11 +41,11 @@ type Notice = { kind: NoticeKind, recipient: int }
 type Dispute = { filed: bool, revision: str, recipient: int, statementLength: int, statementDigest: str,
   now: int, lastToken: int, claimToken: int, claimUntil: int, callsInFlight: bool, unknownCostCalls: int,
   draft: DraftChoice, draftConfidence: int, escalation: Escalation, resolution: Resolution,
-  resolver: int, reasonLength: int, notices: List[Notice], retries: int }
+  resolver: int, reasonLength: int, notices: List[Notice] }
 pure val initial: Dispute = { filed: false, revision: "", recipient: 0, statementLength: 0, statementDigest: "",
   now: 0, lastToken: 0, claimToken: 0, claimUntil: 0, callsInFlight: false, unknownCostCalls: 0,
   draft: NoDraft, draftConfidence: 0, escalation: NotEscalated, resolution: Unresolved,
-  resolver: 0, reasonLength: 0, notices: List(), retries: 0 }
+  resolver: 0, reasonLength: 0, notices: List() }
 pure val slopModerators: Set[int] = Set(18633264, 202660855)
 pure val leaseSeconds = 600
 pure val cappedConfidence = 89
@@ -74,8 +74,11 @@ pure def stepSourceImmutable(before: Dispute, after: Dispute): bool = before.fil
 ### Triage runs under an expiring lease and every outcome escalates to a moderator
 
 The intake request, an appellant retry and the five-minute cron each try to
-claim an unresolved dispute that lacks a draft or an escalation. Only the
-current lease holder may draft or escalate. An unregistered or restricted
+claim an unresolved dispute that lacks a draft or an escalation; a retry is
+only another `claim`. Every later write names the worker's own token and is
+admitted only while that token is the current claim and its lease has not
+expired (`mayWrite` with the worker's token after the model call), so a
+worker whose lease was taken over writes nothing. An unregistered or restricted
 project or an unavailable installation escalates without a model call.
 Provider calls are journaled before the draft; a failed, blocked or
 budget-deferred triage escalates as unavailable. A worker that loses its
@@ -90,7 +93,7 @@ pure def needsTriage(d: Dispute): bool = d.filed and d.resolution == Unresolved 
   (d.draft == NoDraft or d.escalation == NotEscalated)
 pure def tokenHolds(holder: int, until: int, observedAt: int, token: int): bool =
   token > 0 and token == holder and observedAt < until
-pure def holds(d: Dispute): bool = tokenHolds(d.claimToken, d.claimUntil, d.now, d.claimToken)
+pure def holds(d: Dispute, token: int): bool = tokenHolds(d.claimToken, d.claimUntil, d.now, token)
 pure def lawOtherTokenNeverWrites(holder: int, until: int, observedAt: int, token: int): bool =
   token != holder implies not(tokenHolds(holder, until, observedAt, token))
 pure def lawExpiredLeaseNeverWrites(holder: int, until: int, observedAt: int, token: int): bool =
@@ -105,28 +108,34 @@ pure def escalatedWith(reason: Escalation, d: Dispute): Dispute =
   if (d.escalation != NotEscalated) d
   else { ...d, escalation: reason, notices: d.notices.concat(List({ kind: EscalatedNotice, recipient: 18633264 },
     { kind: EscalatedNotice, recipient: 202660855 })) }
-pure def canEscalateUnavailable(d: Dispute, availability: Availability): bool =
-  holds(d) and needsTriage(d) and availability != Available and not(d.callsInFlight)
-pure def escalateUnavailable(d: Dispute, availability: Availability): Dispute =
+pure def canEscalateUnavailable(d: Dispute, token: int, availability: Availability): bool =
+  holds(d, token) and needsTriage(d) and availability != Available and not(d.callsInFlight)
+pure def escalateUnavailable(d: Dispute, token: int, availability: Availability): Dispute =
   escalatedWith(if (availability == Unregistered) ProjectUnregistered
     else if (availability == Restricted) ProjectRestricted else InstallationUnavailable, d)
-pure def canStartCall(d: Dispute): bool = holds(d) and d.draft == NoDraft and not(d.callsInFlight)
-pure def startCall(d: Dispute): Dispute = { ...d, callsInFlight: true }
-pure def canDraft(d: Dispute, uphold: bool, confidenceHundredths: int): bool =
-  holds(d) and d.callsInFlight and d.draft == NoDraft and confidenceHundredths >= 0 and confidenceHundredths <= 100
-pure def draft(d: Dispute, uphold: bool, confidenceHundredths: int): Dispute =
+pure def canStartCall(d: Dispute, token: int): bool = holds(d, token) and d.draft == NoDraft and not(d.callsInFlight)
+pure def startCall(d: Dispute, token: int): Dispute = { ...d, callsInFlight: true }
+pure def canDraft(d: Dispute, token: int, uphold: bool, confidenceHundredths: int): bool =
+  holds(d, token) and d.callsInFlight and d.draft == NoDraft and confidenceHundredths >= 0 and confidenceHundredths <= 100
+pure def draft(d: Dispute, token: int, uphold: bool, confidenceHundredths: int): Dispute =
   { ...d, callsInFlight: false, draft: if (uphold) DraftUphold else DraftDeny,
     draftConfidence: if (confidenceHundredths > cappedConfidence) cappedConfidence else confidenceHundredths }
-pure def canFailTriage(d: Dispute): bool = holds(d) and d.callsInFlight and d.draft == NoDraft
-pure def failTriage(d: Dispute): Dispute = escalatedWith(TriageUnavailable, { ...d, callsInFlight: false })
-pure def canEscalateDrafted(d: Dispute): bool = holds(d) and d.draft != NoDraft and d.escalation == NotEscalated
-pure def escalateDrafted(d: Dispute): Dispute = escalatedWith(ModeratorReviewRequired, d)
-pure def canRelease(d: Dispute): bool = d.claimToken > 0
-pure def release(d: Dispute): Dispute =
+pure def canFailTriage(d: Dispute, token: int): bool = holds(d, token) and d.callsInFlight and d.draft == NoDraft
+pure def failTriage(d: Dispute, token: int): Dispute = escalatedWith(TriageUnavailable, { ...d, callsInFlight: false })
+pure def canEscalateDrafted(d: Dispute, token: int): bool = holds(d, token) and d.draft != NoDraft and d.escalation == NotEscalated
+pure def escalateDrafted(d: Dispute, token: int): Dispute = escalatedWith(ModeratorReviewRequired, d)
+pure def canRelease(d: Dispute, token: int): bool = token > 0 and token == d.claimToken
+pure def release(d: Dispute, token: int): Dispute =
   { ...d, claimToken: 0, claimUntil: 0, callsInFlight: false,
     unknownCostCalls: if (d.callsInFlight) d.unknownCostCalls + 1 else d.unknownCostCalls }
-pure def canRequestRetry(d: Dispute, by: int): bool = d.filed and by == d.recipient and d.resolution == Unresolved
-pure def requestRetry(d: Dispute, by: int): Dispute = { ...d, retries: d.retries + 1 }
+pure def lawStaleWorkerNeverDrafts(d: Dispute, token: int, uphold: bool, confidenceHundredths: int): bool =
+  (token != d.claimToken or d.now >= d.claimUntil) implies not(canDraft(d, token, uphold, confidenceHundredths))
+pure def lawStaleWorkerNeverEscalates(d: Dispute, token: int): bool =
+  (token != d.claimToken or d.now >= d.claimUntil) implies
+    not(canEscalateDrafted(d, token)) and not(canFailTriage(d, token)) and not(canStartCall(d, token))
+pure def stepWritesOnlyByCurrentLease(before: Dispute, via: str, after: Dispute): bool =
+  (via == "startCall" or via == "draft" or via == "failTriage" or via == "escalateDrafted" or
+    via == "escalateUnavailable") implies (before.claimToken > 0 and before.now < before.claimUntil)
 pure def alwaysDraftBelowThreshold(d: Dispute): bool = d.draftConfidence >= 0 and d.draftConfidence < 90
 pure def alwaysClaimShape(d: Dispute): bool = d.claimToken >= 0 and d.claimToken <= d.lastToken and
   (d.claimToken == 0 implies d.claimUntil == 0 and not(d.callsInFlight)) and
@@ -142,6 +151,8 @@ pure def sometimesDraftedAndEscalated(d: Dispute): bool = d.draft != NoDraft and
 pure def sometimesUnavailableEscalated(d: Dispute): bool = d.escalation == ProjectRestricted
 pure def sometimesLostCostRetried(d: Dispute): bool = d.unknownCostCalls > 0 and d.claimToken > 0
 pure def sometimesLeaseTakenOver(d: Dispute): bool = d.lastToken >= 2 and d.claimToken == d.lastToken
+pure def sometimesTakenOverWhileOldCallInFlight(d: Dispute): bool =
+  d.lastToken >= 2 and d.claimToken == d.lastToken and d.unknownCostCalls > 0 and d.draft == NoDraft
 ```
 
 ### Only a moderator other than the recipient reads and decides an escalated dispute, once, with a reason
@@ -172,8 +183,7 @@ pure def sometimesUpheld(d: Dispute): bool = d.resolution == Upheld
 pure val fair_claim = "weak"
 pure val fair_escalateDrafted = "weak"
 pure def leadsToModerator(d: Dispute, later: Dispute): bool =
-  (d.filed and d.draft != NoDraft and d.escalation == NotEscalated and d.claimToken == 0) implies
-    (later.escalation != NotEscalated or later.claimToken != 0)
+  (d.filed and d.draft != NoDraft and d.escalation == NotEscalated) implies later.escalation != NotEscalated
 ```
 
 ### Simulation samples cover other members, superseded records and expired leases
@@ -187,7 +197,7 @@ pure val byValues = Set(5, 6, 18633264)
 pure val viewerValues = Set(5, 6, 18633264)
 pure val statementLengthValues = Set(0, 12, 4001)
 pure val statementDigestValues = Set("s1", "s2")
-pure val tokenValues = Set(0, 1, 2)
+pure val tokenValues = Set(0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11)
 pure val holderValues = Set(0, 1, 2)
 pure val untilValues = Set(0, 600)
 pure val observedAtValues = Set(0, 300, 600, 1200)
