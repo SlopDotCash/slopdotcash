@@ -1339,6 +1339,30 @@ test("the native collector partitions two original PRs by one contributor", asyn
     ["claim_first"],
     ["claim_second"],
   ]);
+  const repair = {
+    id: "claim_new_file",
+    sourceId: accepted.pull.node_id,
+    commitSha: sha("b"),
+    path: "new-test.ts",
+  };
+  accepted.commitAttribution[1].files?.push({
+    ...clone(accepted.commitAttribution[1].files[0]),
+    filename: repair.path,
+  });
+  accepted.commitAttribution[1].changedPaths?.push(repair.path);
+  const withNewFile = await octoberOriginalContributorPartsProof(
+    input.github,
+    [...input.sources, second],
+    input.owners,
+    [...claims, repair],
+    originals,
+    accepted.pull.node_id,
+  );
+  expect(
+    withNewFile.originalContributorParts?.flatMap(
+      (part) => part.claimIds ?? [],
+    ),
+  ).toContain(repair.id);
   second.evidence.pull.user = carrier;
   await expect(
     octoberOriginalContributorPartsProof(
