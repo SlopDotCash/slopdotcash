@@ -3493,7 +3493,7 @@
     },
     {
       "path": "scripts/collect-implementation-corrections.ts",
-      "sha256": "fa8092c0ecf05263211ff083b560de103a5210c77b4cff21518638939a00ad1e",
+      "sha256": "61444eeb1a8ecb65aa28b4004ecb12d328c4798ce2c7904ae0c6ff95b8a924be",
       "models": [
         "formal/models/points/historical_discussion_evidence.qnt",
         "formal/models/points/historical_implementation_allocation.qnt"
@@ -7581,7 +7581,7 @@
     },
     {
       "path": "workers/fee-converter/wrangler.toml",
-      "sha256": "eec63b89e0c6a97dedbea80f88a91256df5841b2880256be2c2fcb6352ca167e",
+      "sha256": "b369860dbab16dab769a582566c24235ca0c4a4a9a674b1c9c9e8718f94910f2",
       "models": ["formal/models/payments/payment_worker_run.qnt"],
       "candidateLines": [],
       "review": "mapped-abstraction"
@@ -8783,14 +8783,15 @@
     },
     {
       "path": "workers/slopbot/value-retained-copy.ts",
-      "sha256": "20b89c3b20b59823a9093118d69bfbfca97e449ea13b46b13e4994340f5bd18c",
+      "sha256": "4ce51e0d656be922c3db78a840d5a6bbe37753c5e4384419737f0f9653f4893b",
       "models": [
         "formal/models/slopbot/bot_retained_acceptance.qnt",
         "formal/models/slopbot/retained_copy_bindings.qnt",
         "formal/models/slopbot/retained_recipient_scope.qnt"
       ],
       "candidateLines": [
-        40, 67, 144, 338, 412, 418, 442, 476, 616, 680, 785, 812, 813, 814, 818
+        40, 67, 144, 338, 389, 429, 435, 468, 511, 545, 685, 749, 854, 881, 882,
+        883, 887
       ],
       "review": "mapped-abstraction"
     },

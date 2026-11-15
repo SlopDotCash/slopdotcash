@@ -386,8 +386,13 @@ async function retainedCopySources(
     // acknowledgement, both commits must independently name that contributor.
     const linkedOnly =
       !acknowledged &&
-      octoberReplacement &&
-      accepted.user.node_id === accepted.merged_by.node_id &&
+      evidence.pull.state === "closed" &&
+      evidence.pull.number < accepted.number &&
+      evidence.pull.user.type === "User" &&
+      evidence.pull.closed_at !== null &&
+      Date.parse(evidence.pull.closed_at) <= Date.parse(accepted.merged_at) &&
+      evidence.limitations.length === 0 &&
+      integration.limitations.length === 0 &&
       integration.relatedPullRequests.some(
         (reference) =>
           reference.id === evidence.pull.node_id &&
@@ -395,6 +400,18 @@ async function retainedCopySources(
           reference.url === evidence.pull.html_url &&
           reference.repository.toLowerCase() ===
             evidence.repository.toLowerCase(),
+      ) &&
+      evidence.commits.some(
+        (commit) =>
+          commit.parents.length === 1 &&
+          commit.author?.type === "User" &&
+          commit.author.node_id === evidence.pull.user.node_id &&
+          integration.commits.some(
+            (copy) =>
+              copy.parents.length === 1 &&
+              copy.author?.type === "User" &&
+              copy.author.node_id === commit.author?.node_id,
+          ),
       );
     if (acknowledged || linkedOnly) retained.push({ source, linkedOnly });
   }
@@ -420,6 +437,58 @@ function retainedEditIdentity(file: FileChange): string | null {
       ?.split("\n")
       .filter((line) => /^[+-]/u.test(line)),
   ]);
+}
+
+/** A later source carrying the identical native commit cannot replace its
+ * linked author's earlier source PR. Both sources remain in the evidence.
+ */
+function hasEarlierNativeOriginal(
+  source: WorkUnitSource,
+  commit: ValueEvidence["commits"][number],
+  file: FileChange,
+  sources: readonly WorkUnitSource[],
+): boolean {
+  const evidence = source.evidence;
+  if (
+    commit.author?.type !== "User" ||
+    commit.author.node_id === evidence.pull.user.node_id ||
+    commit.parents.length !== 1 ||
+    evidence.limitations.length ||
+    retainedEditIdentity(file) === null
+  )
+    return false;
+  return sources.some(({ evidence: original }) => {
+    const copies = original.commits.filter((item) => item.sha === commit.sha);
+    const attribution = original.commitAttribution.filter(
+      (item) => item.sha === commit.sha,
+    );
+    return (
+      original.repositoryNodeId === evidence.repositoryNodeId &&
+      original.pull.number < evidence.pull.number &&
+      original.pull.state === "closed" &&
+      original.pull.merged_at === null &&
+      original.pull.user.type === "User" &&
+      original.pull.user.node_id === commit.author?.node_id &&
+      original.limitations.length === 0 &&
+      copies.length === 1 &&
+      JSON.stringify(copies[0].author) === JSON.stringify(commit.author) &&
+      JSON.stringify(copies[0].parents) === JSON.stringify(commit.parents) &&
+      attribution.length === 1 &&
+      attribution[0].limitations.length === 0 &&
+      attribution[0].files?.some(
+        (candidate) =>
+          retainedEditIdentity(candidate) === retainedEditIdentity(file),
+      ) === true &&
+      evidence.relatedPullRequests.some(
+        (reference) =>
+          reference.id === original.pull.node_id &&
+          reference.number === original.pull.number &&
+          reference.url === original.pull.html_url &&
+          reference.repository.toLowerCase() ===
+            original.repository.toLowerCase(),
+      )
+    );
+  });
 }
 
 function changedHunks(file: FileChange): string[] | null {
@@ -1186,7 +1255,43 @@ export async function retainedCopyBindings(
           match.acceptedCommitSha,
           file.filename,
         ]);
-        if (bindings.has(key)) {
+        const previous = bindings.get(key);
+        if (previous) {
+          // Resolve only two independently verified bindings of the identical
+          // native original. An earlier source which failed its own binding
+          // must not suppress an otherwise valid later source.
+          if (
+            previous.originalCommitSha === match.originalCommitSha &&
+            JSON.stringify(previous.preexistingCommitShas) ===
+              JSON.stringify(match.preexistingCommitShas)
+          ) {
+            if (
+              hasEarlierNativeOriginal(original, commit, file, [
+                previous.original,
+              ])
+            )
+              continue;
+            const previousCommit = previous.original.evidence.commits.find(
+              (item) => item.sha === previous.originalCommitSha,
+            );
+            const previousFile = previous.original.evidence.commitAttribution
+              .find((item) => item.sha === previous.originalCommitSha)
+              ?.files?.find((item) => item.filename === previous.path);
+            if (
+              previousCommit &&
+              previousFile &&
+              hasEarlierNativeOriginal(
+                previous.original,
+                previousCommit,
+                previousFile,
+                [original],
+              )
+            ) {
+              bindings.set(key, match);
+              exactPaths++;
+              continue;
+            }
+          }
           limitations.add(
             `${evidence.pull.node_id}: retained copy has competing original sources`,
           );
