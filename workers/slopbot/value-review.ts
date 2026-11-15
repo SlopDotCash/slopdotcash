@@ -27,6 +27,10 @@ export async function assessValue(
 ) {
   if (evidence.indirectAcceptance)
     throw new Error("Indirect acceptance requires joint work-unit assessment");
+  if (evidence.nativeMergeAcceptance)
+    throw new Error(
+      "Native ancestor acceptance requires joint work-unit assessment",
+    );
   if (evidence.noChangePromotion)
     throw new Error("Unchanged promotions require joint work-unit assessment");
   if (
@@ -79,7 +83,12 @@ export function validateEvidenceAssessment(
   value: unknown,
   evidence: ValueEvidence,
 ) {
-  if (evidence.indirectAcceptance || evidence.noChangePromotion) return null;
+  if (
+    evidence.indirectAcceptance ||
+    evidence.noChangePromotion ||
+    evidence.nativeMergeAcceptance
+  )
+    return null;
   return validateValueAssessment(value, {
     evidenceUrls: new Set(evidence.evidenceUrls),
     relatedPullRequestUrls: new Set(

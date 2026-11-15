@@ -8,6 +8,7 @@ import { collectValueContext } from "./value-context";
 import { collectValueEvidence, namesRepository } from "./value-evidence";
 import type { ValueEvidence } from "./value-evidence-types";
 import { latestValueRecord } from "./value-journal";
+import { nativeMergeDeferralOnly } from "./value-native-merge";
 import { noChangePromotionDeferralOnly } from "./value-no-change-promotion";
 import { loadValuePolicy, type ValueClient } from "./value-publication";
 import { acceptedWorkUnitCommits } from "./value-work-unit";
@@ -166,9 +167,13 @@ export async function collectValueGroup(
       evidence.pull.state !== "closed"
     )
       return null;
-    // A proven no-change promotion's only limitation is its joint deferral;
-    // joint preparation drops it, so the source may enter the group.
-    if (evidence.limitations.length && !noChangePromotionDeferralOnly(evidence))
+    // Native ancestor and unchanged-promotion proofs need the complete joint
+    // source group before their sole collection limitation can be dropped.
+    if (
+      evidence.limitations.length &&
+      !noChangePromotionDeferralOnly(evidence) &&
+      !nativeMergeDeferralOnly(evidence)
+    )
       return null;
     const occurred = Date.parse(
       evidence.pull.merged_at ??
@@ -199,7 +204,11 @@ export async function collectValueGroup(
       [];
     if (context.length)
       evidence = await collectValueContext(github, evidence, context);
-    if (evidence.limitations.length && !noChangePromotionDeferralOnly(evidence))
+    if (
+      evidence.limitations.length &&
+      !noChangePromotionDeferralOnly(evidence) &&
+      !nativeMergeDeferralOnly(evidence)
+    )
       return null;
     const [owner, repo] = repository.id.split("/");
     const policy =

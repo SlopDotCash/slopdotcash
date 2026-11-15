@@ -58,6 +58,12 @@ interface AddedBinaryProof {
   sha256: string;
   contentBase64: string;
   contentReview: "unviewed";
+  retainedAtMerge?: {
+    mergeSha: string;
+    parentSha: string;
+    mergeTreeSha: string;
+    parentTreeSha: string;
+  };
 }
 
 export interface Actor {
@@ -160,6 +166,7 @@ export interface ValueEvidence {
   mergeCommitEvidence: CommitChangeEvidence | null;
   acceptedRange?: AcceptedValueRange;
   acceptedPatchReplay?: AcceptedPatchReplay;
+  nativeMergeAcceptance?: NativeMergeAcceptance;
   indirectAcceptance?: IndirectValueAcceptance;
   commits: Commit[];
   reviews: Review[];
@@ -174,6 +181,16 @@ export interface ValueEvidence {
   commitAttribution: CommitAttribution[];
   mergeResolutions?: ValueMergeResolution[];
   retainedMergeReferences?: RetainedMergeReference[];
+  repairBodyEdit?: {
+    id: string;
+    body: string;
+    headRefOid: string;
+    mergedAt: string;
+    updatedAt: string;
+    lastEditedAt: string | null;
+    editor: { id: string; type: string } | null;
+    author: { id: string; type: string };
+  };
   relatedPullRequests: RelatedPullRequest[];
   unavailablePublicReferences?: {
     repository: string;
@@ -213,7 +230,8 @@ export interface NoChangePromotionProof {
   treeSha: string;
 }
 
-export interface ValueMergeResolution {
+export interface AutomaticValueMergeResolution {
+  kind?: "automatic";
   commitSha: string;
   parents: [string, string];
   gitVersion: string;
@@ -233,6 +251,26 @@ export interface ValueMergeResolution {
     sourceCommitShas: string[];
   }[];
 }
+
+export interface CombinedParentValueMergeResolution {
+  kind: "combined-parent-delta";
+  commitSha: string;
+  parents: string[];
+  parentTrees: string[];
+  gitVersion: string;
+  resolvedTree: string;
+  patch: string;
+  patchSha256: string;
+  paths: string[];
+  files: {
+    path: string;
+    parents: { mode: string; blobSha: string }[];
+    result: { mode: string; blobSha: string };
+  }[];
+}
+export type ValueMergeResolution =
+  | AutomaticValueMergeResolution
+  | CombinedParentValueMergeResolution;
 
 export interface RetainedMergeReference {
   commentNodeId: string;
@@ -285,4 +323,27 @@ export interface IndirectRetainedFile {
   acceptedPath: string;
   historical: TextVersion | null;
   accepted: TextVersion | null;
+}
+
+/** Complete native ancestor acceptance, verified jointly with its carrier. */
+export interface NativeMergeAcceptance {
+  schemaVersion: 1;
+  headSha: string;
+  mergeSha: string;
+  parentSha: string;
+  integratedHeadSha: string;
+  /** Actual accepted carrier when GitHub reports an internal integration merge. */
+  carrier?: {
+    pullRequestId: string;
+    headSha: string;
+    mergeSha: string;
+    mergedAt: string;
+  };
+  ancestry: Commit[];
+  trees: {
+    commitSha: string;
+    treeSha: string;
+    entries: { path: string; mode: string; type: string; sha: string }[];
+  }[];
+  retainedFiles: IndirectRetainedFile[];
 }

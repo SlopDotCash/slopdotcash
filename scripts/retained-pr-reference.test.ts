@@ -7,6 +7,7 @@ import {
 } from "../tests/value-promotion-fixture";
 import { retainedCopyBindings } from "../workers/slopbot/value-retained-copy";
 import { collectRetainedMergeReferences } from "../workers/slopbot/value-retained-reference";
+import { prepareWorkUnitEvidence } from "../workers/slopbot/value-work-unit";
 import { retainedCommitCreditSources } from "./retained-commit-credit";
 
 function sources() {
@@ -53,6 +54,263 @@ function sources() {
   original.evidence.comments.push(comment);
   return { original, copy, comment };
 }
+
+function nativeSources() {
+  const { original, copy } = sources();
+  original.evidence.comments = [];
+  original.evidence.commits[0].author = original.evidence.pull.user;
+  original.evidence.commitAttribution[0].actorNodeIds = [
+    original.evidence.pull.user.node_id,
+  ];
+  copy.evidence.commits = structuredClone(original.evidence.commits);
+  copy.evidence.commitAttribution = structuredClone(
+    original.evidence.commitAttribution,
+  );
+  return { original, copy };
+}
+
+test("a complete native original needs no copied-edit acknowledgement", async () => {
+  const { original, copy } = nativeSources();
+  const evidence = await prepareWorkUnitEvidence(
+    [original, copy],
+    [repository],
+  );
+  expect(evidence.limitations).toEqual([]);
+  expect(evidence.claims).toHaveLength(1);
+  expect(evidence.claims[0].retainedCopy).toBeUndefined();
+});
+
+test("a native commit outside the accepted range cannot create a claim", async () => {
+  const { original, copy } = nativeSources();
+  copy.evidence.acceptedRange = {
+    headSha: copy.evidence.pull.head.sha,
+    mergeSha: copy.evidence.pull.merge_commit_sha!,
+    parentSha: copy.evidence.commits[0].sha,
+    files: [{ path: "fix.ts", blobSha: "a".repeat(40), alreadyPresent: true }],
+  };
+  const evidence = await prepareWorkUnitEvidence(
+    [original, copy],
+    [repository],
+  );
+  expect(evidence.claims).toEqual([]);
+  expect(evidence.limitations.length).toBeGreaterThan(0);
+});
+
+for (const invalid of [
+  "parent",
+  "author",
+  "paths",
+  "incomplete",
+  "later-source",
+]) {
+  test(`native original refuses mismatched ${invalid}`, async () => {
+    const { original, copy } = nativeSources();
+    if (invalid === "parent")
+      copy.evidence.commits[0].parents = [{ sha: "9".repeat(40) }];
+    if (invalid === "author") copy.evidence.commits[0].author = null;
+    if (invalid === "paths")
+      copy.evidence.commitAttribution[0].changedPaths = [];
+    if (invalid === "incomplete")
+      original.evidence.limitations = ["Missing source evidence"];
+    if (invalid === "later-source") original.evidence.pull.number = 3;
+    const evidence = await prepareWorkUnitEvidence(
+      [original, copy],
+      [repository],
+    );
+    expect(evidence.limitations.length).toBeGreaterThan(0);
+  });
+}
+
+function withUnacceptedFinalPath() {
+  const pair = sources();
+  const evidence = pair.original.evidence;
+  const commit = structuredClone(evidence.commits[0]);
+  commit.sha = "9".repeat(40);
+  commit.parents = [{ sha: evidence.commits[0].sha }];
+  evidence.commits.push(commit);
+  evidence.pull.head.sha = commit.sha;
+  evidence.pull.commits = evidence.commits.length;
+  const extra = {
+    ...structuredClone(evidence.commitAttribution[0].files![0]),
+    filename: "unaccepted-test.ts",
+    patch: "@@ -0,0 +1 @@\n+unaccepted",
+  };
+  evidence.files.push(extra);
+  evidence.commitAttribution.push({
+    sha: commit.sha,
+    actorNodeIds: [],
+    changedPaths: [extra.filename],
+    files: [extra],
+    limitations: [],
+  });
+  return pair;
+}
+
+test("joint preparation credits the exact retained subset of a complete original", async () => {
+  const { original, copy } = withUnacceptedFinalPath();
+  const evidence = await prepareWorkUnitEvidence(
+    [original, copy],
+    [repository],
+  );
+  expect(evidence.limitations).toEqual([]);
+  expect(evidence.claims.map((claim) => claim.path)).toEqual(["fix.ts"]);
+  expect(
+    evidence.sources.find(
+      (source) => source.evidence.pull.node_id === "PR_original",
+    )?.evidence.commits.length,
+  ).toBe(2);
+  const ordinary = await retainedCopyBindings([original, copy]);
+  expect(ordinary.limitations).toContain(
+    `PR_original: retained ${"9".repeat(40)}:unaccepted-test.ts has 0 exact copy bindings`,
+  );
+});
+
+test("grouped retained attribution uses the canonical accepted subset and keeps ordinary holds", async () => {
+  const { original, copy } = withUnacceptedFinalPath();
+  const evidence = await prepareWorkUnitEvidence(
+    [original, copy],
+    [repository],
+  );
+  expect(evidence.limitations).toEqual([]);
+  const credited = await retainedCommitCreditSources(copy, evidence.sources, {
+    acceptedSubset: true,
+  });
+  expect([...credited.values()]).toEqual([
+    {
+      actorNodeId: original.evidence.pull.user.node_id,
+      originalPullRequestId: original.evidence.pull.node_id,
+      originalPullRequestUrl: original.evidence.pull.html_url,
+      originalCommitSha: original.evidence.commits[0].sha,
+    },
+  ]);
+  expect(
+    evidence.sources.find(
+      (source) =>
+        source.evidence.pull.node_id === original.evidence.pull.node_id,
+    )?.evidence.commits,
+  ).toHaveLength(2);
+  await expect(
+    retainedCommitCreditSources(copy, evidence.sources),
+  ).rejects.toThrow("Retained attribution is unresolved");
+});
+
+for (const fault of [
+  "missing-anchor",
+  "wrong-author",
+  "incomplete",
+  "ambiguous",
+] as const) {
+  test(`grouped retained attribution preserves ${fault} refusal`, async () => {
+    const { original, copy, comment } = withUnacceptedFinalPath();
+    const sources = [original, copy];
+    if (fault === "missing-anchor") {
+      const copiedFile = copy.evidence.commitAttribution[0].files?.[0];
+      if (!copiedFile) throw new Error("Expected copied fixture path");
+      copiedFile.patch += "\n+different";
+    }
+    if (fault === "wrong-author")
+      copy.evidence.commits[0].author = {
+        node_id: "U_other",
+        login: "other",
+        type: "User",
+      };
+    if (fault === "incomplete")
+      original.evidence.limitations.push("Missing source evidence");
+    if (fault === "ambiguous") {
+      const second = structuredClone(copy);
+      Object.assign(second.evidence.pull, {
+        node_id: "PR_other_copy",
+        number: 3,
+        html_url: `https://github.com/${repository.id}/pull/3`,
+      });
+      original.evidence.relatedPullRequests.push({
+        id: second.evidence.pull.node_id,
+        number: 3,
+        url: second.evidence.pull.html_url,
+        repository: repository.id,
+      });
+      comment.body = "Your commits are retained in #2 and #3.";
+      sources.push(second);
+    }
+    if (fault === "wrong-author") {
+      expect(
+        (
+          await retainedCommitCreditSources(copy, sources, {
+            acceptedSubset: true,
+          })
+        ).size,
+      ).toBe(0);
+      const evidence = await prepareWorkUnitEvidence(sources, [repository]);
+      expect(evidence.limitations).toContain(
+        "PR_original: retained primary author identity differs between commits",
+      );
+    } else {
+      await expect(
+        retainedCommitCreditSources(copy, sources, {
+          acceptedSubset: true,
+        }),
+      ).rejects.toThrow();
+    }
+  });
+}
+
+test("accepted subset still requires at least one exact retained anchor", async () => {
+  const { original, copy } = withUnacceptedFinalPath();
+  copy.evidence.commitAttribution[0].files![0].patch += "\n+different";
+  const evidence = await prepareWorkUnitEvidence(
+    [original, copy],
+    [repository],
+  );
+  expect(
+    evidence.limitations.some((reason) =>
+      reason.includes("0 exact copy bindings"),
+    ),
+  ).toBe(true);
+});
+
+test("accepted subset retains incomplete-source and wrong-author holds", async () => {
+  const { original, copy } = withUnacceptedFinalPath();
+  copy.evidence.commits[0].author = {
+    node_id: "U_other",
+    login: "other",
+    type: "User",
+  };
+  let evidence = await prepareWorkUnitEvidence([original, copy], [repository]);
+  expect(evidence.limitations).toContain(
+    "PR_original: retained primary author identity differs between commits",
+  );
+  original.evidence.limitations.push("Missing source evidence");
+  evidence = await prepareWorkUnitEvidence([original, copy], [repository]);
+  expect(evidence.limitations).toContain(
+    "PR_original: Missing source evidence",
+  );
+});
+
+test("accepted subset refuses two matching accepted copies", async () => {
+  const { original, copy, comment } = withUnacceptedFinalPath();
+  const second = structuredClone(copy);
+  Object.assign(second.evidence.pull, {
+    node_id: "PR_other_copy",
+    number: 3,
+    html_url: `https://github.com/${repository.id}/pull/3`,
+  });
+  original.evidence.relatedPullRequests.push({
+    id: second.evidence.pull.node_id,
+    number: 3,
+    url: second.evidence.pull.html_url,
+    repository: repository.id,
+  });
+  comment.body = "Your commits are retained in #2 and #3.";
+  const evidence = await prepareWorkUnitEvidence(
+    [original, copy, second],
+    [repository],
+  );
+  expect(
+    evidence.limitations.some((reason) =>
+      reason.includes("2 exact copy bindings"),
+    ),
+  ).toBe(true);
+});
 
 for (const reference of [
   "#2",
@@ -129,7 +387,7 @@ for (const kind of [
     ).rejects.toThrow("authenticated retention acknowledgement");
   });
 
-test("October exact copies can bind through two linked commit authors without a merger comment", async () => {
+test("exact copies preserve the same linked primary author without a merger comment", async () => {
   const { original, copy } = sources();
   original.evidence.comments = [];
   copy.evidence.relatedPullRequests = [
@@ -142,21 +400,70 @@ test("October exact copies can bind through two linked commit authors without a 
   ];
   original.evidence.commits[0].author = original.evidence.pull.user;
   copy.evidence.commits[0].author = original.evidence.pull.user;
+  original.evidence.pull.closed_at = "2026-10-02T09:30:00Z";
+  copy.evidence.pull.merged_by = {
+    node_id: "U_other_merger",
+    login: "other-merger",
+    type: "User",
+  };
   const options = { ordinaryCommitsOnly: true, octoberOriginalCredit: true };
   const retained = await retainedCopyBindings([original, copy], options);
   expect(retained.bindings.size).toBe(1);
   expect(retained.limitations).toEqual([]);
-  expect((await retainedCopyBindings([original, copy])).bindings.size).toBe(0);
+  expect((await retainedCopyBindings([original, copy])).bindings.size).toBe(1);
   copy.evidence.pull.merged_at = "2026-11-02T10:00:00Z";
   expect(
     (await retainedCopyBindings([original, copy], options)).bindings.size,
-  ).toBe(0);
+  ).toBe(1);
   copy.evidence.pull.merged_at = "2026-10-02T10:00:00Z";
   copy.evidence.commits[0].author = null;
   expect(
     (await retainedCopyBindings([original, copy], options)).bindings.size,
   ).toBe(0);
 });
+
+for (const invalid of [
+  "different-primary",
+  "unlinked-primary",
+  "bot-primary",
+  "late-original",
+  "incomplete-original",
+  "incomplete-accepted",
+  "missing-reference",
+] as const)
+  test(`linked primary copy refuses ${invalid}`, async () => {
+    const { original, copy } = sources();
+    original.evidence.comments = [];
+    original.evidence.pull.closed_at = "2026-10-02T09:30:00Z";
+    original.evidence.commits[0].author = original.evidence.pull.user;
+    copy.evidence.commits[0].author = original.evidence.pull.user;
+    copy.evidence.relatedPullRequests = [
+      {
+        id: original.evidence.pull.node_id,
+        number: original.evidence.pull.number,
+        url: original.evidence.pull.html_url,
+        repository: repository.id,
+      },
+    ];
+    if (invalid === "different-primary")
+      copy.evidence.commits[0].author = copy.evidence.pull.user;
+    if (invalid === "unlinked-primary") copy.evidence.commits[0].author = null;
+    if (invalid === "bot-primary")
+      copy.evidence.commits[0].author = {
+        ...original.evidence.pull.user,
+        type: "Bot",
+      };
+    if (invalid === "late-original")
+      original.evidence.pull.closed_at = "2026-10-03T00:00:00Z";
+    if (invalid === "incomplete-original")
+      original.evidence.limitations = ["Missing original evidence"];
+    if (invalid === "incomplete-accepted")
+      copy.evidence.limitations = ["Missing accepted evidence"];
+    if (invalid === "missing-reference") copy.evidence.relatedPullRequests = [];
+    expect((await retainedCopyBindings([original, copy])).bindings.size).toBe(
+      0,
+    );
+  });
 
 test("October unlinked copies still require the eventual merger's exact rebase acknowledgement", async () => {
   const { original, copy, comment } = sources();
@@ -179,6 +486,108 @@ test("October unlinked copies still require the eventual merger's exact rebase a
   expect(
     (await retainedCopyBindings([original, copy], options)).bindings.size,
   ).toBe(0);
+});
+
+function intermediatePrimaryCopy() {
+  const { original, copy } = sources();
+  original.evidence.comments = [];
+  original.evidence.pull.closed_at = "2026-10-02T09:00:00Z";
+  original.evidence.commits[0].author = original.evidence.pull.user;
+  original.evidence.commitAttribution[0].actorNodeIds = [
+    original.evidence.pull.user.node_id,
+  ];
+  const intermediate = structuredClone(original);
+  Object.assign(intermediate.evidence.pull, {
+    node_id: "PR_intermediate",
+    number: 2,
+    html_url: `https://github.com/${repository.id}/pull/2`,
+    user: copy.evidence.pull.user,
+    closed_at: "2026-10-02T09:30:00Z",
+  });
+  Object.assign(copy.evidence.pull, {
+    number: 3,
+    html_url: `https://github.com/${repository.id}/pull/3`,
+    head: { sha: "4".repeat(40) },
+  });
+  copy.evidence.commits[0].sha = "4".repeat(40);
+  copy.evidence.commits[0].author = original.evidence.pull.user;
+  copy.evidence.commitAttribution[0].sha = "4".repeat(40);
+  copy.evidence.commitAttribution[0].actorNodeIds = [
+    original.evidence.pull.user.node_id,
+  ];
+  const reference = (source: typeof original) => ({
+    id: source.evidence.pull.node_id,
+    number: source.evidence.pull.number,
+    url: source.evidence.pull.html_url,
+    repository: repository.id,
+  });
+  original.evidence.relatedPullRequests = [reference(copy)];
+  intermediate.evidence.relatedPullRequests = [
+    reference(original),
+    reference(copy),
+  ];
+  copy.evidence.relatedPullRequests = [
+    reference(original),
+    reference(intermediate),
+  ];
+  return { original, intermediate, copy };
+}
+
+test("an identical native intermediate preserves the earlier linked author's original in either source order", async () => {
+  const { original, intermediate, copy } = intermediatePrimaryCopy();
+  for (const ordered of [
+    [original, intermediate, copy],
+    [copy, intermediate, original],
+  ]) {
+    const result = await retainedCopyBindings(ordered, {
+      acceptedSubset: true,
+    });
+    expect(result.limitations).toEqual([]);
+    expect(result.bindings.size).toBe(1);
+    expect([...result.bindings.values()][0].original).toBe(original);
+  }
+});
+
+for (const invalid of ["sha", "author", "repository", "reference"] as const)
+  test(`intermediate source cannot claim the earlier native original with wrong ${invalid}`, async () => {
+    const { original, intermediate, copy } = intermediatePrimaryCopy();
+    if (invalid === "sha") {
+      intermediate.evidence.commits[0].sha = "5".repeat(40);
+      intermediate.evidence.commitAttribution[0].sha = "5".repeat(40);
+    }
+    if (invalid === "author")
+      intermediate.evidence.commits[0].author = intermediate.evidence.pull.user;
+    if (invalid === "repository")
+      original.evidence.repositoryNodeId = "R_other_repository";
+    if (invalid === "reference") intermediate.evidence.relatedPullRequests = [];
+    const result = await retainedCopyBindings([original, intermediate, copy], {
+      acceptedSubset: true,
+    });
+    expect(result.bindings.size).toBe(1);
+    if (invalid === "repository")
+      expect([...result.bindings.values()][0].original).toBe(intermediate);
+    else expect(result.limitations.length).toBeGreaterThan(0);
+  });
+
+test("an earlier source without its own accepted binding cannot erase the intermediate proof", async () => {
+  const { original, intermediate, copy } = intermediatePrimaryCopy();
+  copy.evidence.relatedPullRequests = copy.evidence.relatedPullRequests.filter(
+    (reference) => reference.id !== original.evidence.pull.node_id,
+  );
+  for (const ordered of [
+    [original, intermediate, copy],
+    [copy, intermediate, original],
+  ]) {
+    const result = await retainedCopyBindings(ordered, {
+      acceptedSubset: true,
+    });
+    expect(
+      [...result.bindings.values()].every(
+        (binding) => binding.original === intermediate,
+      ),
+    ).toBe(true);
+    expect(result.limitations.length).toBeGreaterThan(0);
+  }
 });
 
 function fourCommitsWithSourceMerges() {
@@ -364,6 +773,8 @@ for (const invalid of [
     const resolutions = source.original.evidence.mergeResolutions;
     if (!resolutions) throw new Error("Missing fixture merge resolutions");
     const resolution = resolutions[0];
+    if (resolution.kind === "combined-parent-delta")
+      throw Error("Expected two-parent fixture");
     if (invalid === "missing") resolutions.shift();
     if (invalid === "duplicate") resolutions.push(structuredClone(resolution));
     if (invalid === "wrong-parent") resolution.parents[0] = "d".repeat(40);
@@ -524,4 +935,185 @@ for (const invalid of [
           (binding) => binding.acceptedCommitSha === "c".repeat(40),
         ),
       ).toBe(false);
+  });
+
+for (const body of [
+  "The account-preference fix is included in #2.",
+  "The payment-ordering fix and the later Solidity formatting correction are included in #2.",
+])
+  test(`included-fix acknowledgement binds exact accepted copies: ${body}`, async () => {
+    const { original, copy, comment } = sources();
+    comment.body = body;
+    const result = await retainedCommitCreditSources(copy, [original, copy]);
+    expect(result.size).toBe(1);
+    copy.evidence.commitAttribution[0].files![0].patch += "\n+unrelated";
+    await expect(
+      retainedCommitCreditSources(copy, [original, copy]),
+    ).rejects.toThrow("0 exact copy bindings");
+  });
+
+for (const body of [
+  "The fix is not included in #2.",
+  "The fix will be included in #2.",
+  "The fix would be included in #2.",
+  "If accepted, the fix is included in #2.",
+  "The fixes are included in #3. See #2.",
+  "The fixture is included in #2.",
+  "The fix is included in other/repository#2.",
+  "The fix is included in #3, but see #2.",
+])
+  test(`included-fix acknowledgement refuses unrelated or prospective text: ${body}`, async () => {
+    const { original, copy, comment } = sources();
+    comment.body = body;
+    await expect(
+      retainedCommitCreditSources(copy, [original, copy]),
+    ).rejects.toThrow("authenticated retention acknowledgement");
+  });
+
+for (const invalid of ["actor", "time", "source-id"])
+  test(`included-fix acknowledgement retains ${invalid} binding`, async () => {
+    const { original, copy, comment } = sources();
+    comment.body = "The fix is included in #2.";
+    if (invalid === "actor")
+      comment.user = { ...comment.user, node_id: "U_other" };
+    if (invalid === "time") comment.created_at = "2026-10-02T09:00:00Z";
+    if (invalid === "source-id")
+      original.evidence.relatedPullRequests[0].id = "PR_other";
+    if (invalid === "source-id") {
+      expect(
+        (await retainedCommitCreditSources(copy, [original, copy])).size,
+      ).toBe(0);
+    } else {
+      await expect(
+        retainedCommitCreditSources(copy, [original, copy]),
+      ).rejects.toThrow("authenticated retention acknowledgement");
+    }
+  });
+
+const incorporatedBody =
+  "Incorporated into merged #2 on the current visual foundation, including the applicable workflow fixes and validation. Closing this overlapping branch to avoid applying duplicate route, form or fixture changes. Original commits and discussion remain available. Final combined release validation continues separately.";
+
+test("a merger's contemporaneous incorporated notice binds exact copied work", async () => {
+  const { original, copy, comment } = sources();
+  comment.body = incorporatedBody;
+  comment.created_at = comment.updated_at = "2026-10-02T10:00:02Z";
+  const binding = await retainedCommitCreditSources(copy, [original, copy]);
+  expect(binding.size).toBe(1);
+  expect([...binding.values()][0].originalPullRequestId).toBe(
+    original.evidence.pull.node_id,
+  );
+  const file = copy.evidence.commitAttribution[0].files?.[0];
+  if (!file) throw new Error("Missing copied file");
+  file.patch += "\n+unrelated";
+  await expect(
+    retainedCommitCreditSources(copy, [original, copy]),
+  ).rejects.toThrow("0 exact copy bindings");
+});
+
+for (const body of [
+  "Not incorporated into merged #2.",
+  "If incorporated into merged #2, retain this branch.",
+  "Will be incorporated into merged #2.",
+  "Incorporated into merged #3. See #2.",
+  '"Incorporated into merged #2" is a suggested message.',
+  "Incorporated into merged #3, but see #2.",
+  "Incorporated into merged other/repository#2.",
+  "Incorporated into merged [#2](https://github.com/other/repository/pull/2).",
+])
+  test(`incorporated notices refuse unsupported text: ${body}`, async () => {
+    const { original, copy, comment } = sources();
+    comment.body = body;
+    await expect(
+      retainedCommitCreditSources(copy, [original, copy]),
+    ).rejects.toThrow("authenticated retention acknowledgement");
+  });
+
+for (const fault of ["merger", "source", "before-merge"] as const)
+  test(`incorporated notice preserves ${fault} binding`, async () => {
+    const { original, copy, comment } = sources();
+    comment.body = incorporatedBody;
+    if (fault === "merger")
+      comment.user = { ...comment.user, node_id: "U_other" };
+    if (fault === "source") original.evidence.relatedPullRequests = [];
+    if (fault === "before-merge")
+      comment.created_at = comment.updated_at = "2026-10-02T09:59:59Z";
+    if (fault === "source") {
+      expect(
+        (await retainedCommitCreditSources(copy, [original, copy])).size,
+      ).toBe(0);
+    } else {
+      await expect(
+        retainedCommitCreditSources(copy, [original, copy]),
+      ).rejects.toThrow("authenticated retention acknowledgement");
+    }
+  });
+
+function nativeAndRewrittenCopy() {
+  const { original, copy } = withUnacceptedFinalPath();
+  original.evidence.commits[0].author = original.evidence.pull.user;
+  original.evidence.commitAttribution[0].actorNodeIds = [
+    original.evidence.pull.user.node_id,
+  ];
+  const rewritten = structuredClone(original.evidence.commits[0]);
+  rewritten.sha = "e".repeat(40);
+  const attribution = structuredClone(original.evidence.commitAttribution[0]);
+  attribution.sha = rewritten.sha;
+  copy.evidence.commits = [
+    structuredClone(original.evidence.commits[0]),
+    rewritten,
+  ];
+  copy.evidence.commitAttribution = [
+    structuredClone(original.evidence.commitAttribution[0]),
+    attribution,
+  ];
+  copy.evidence.pull.commits = 2;
+  return { original, copy };
+}
+
+for (const reverse of [false, true])
+  test(`accepted subset preserves exact native identity beside a rewritten copy, reversed=${reverse}`, async () => {
+    const { original, copy } = nativeAndRewrittenCopy();
+    const result = await retainedCopyBindings(
+      reverse ? [copy, original] : [original, copy],
+      { ordinaryCommitsOnly: true, acceptedSubset: true },
+    );
+    expect(result.limitations).toEqual([]);
+    expect(result.bindings.size).toBe(1);
+    expect([...result.bindings.values()][0].acceptedCommitSha).toBe(
+      original.evidence.commits[0].sha,
+    );
+  });
+
+for (const fault of [
+  "author",
+  "parent",
+  "attribution",
+  "two-rewrites",
+  "full-scope",
+] as const)
+  test(`native identity preference refuses ${fault}`, async () => {
+    const { original, copy } = nativeAndRewrittenCopy();
+    if (fault === "author")
+      copy.evidence.commits[0].author = {
+        node_id: "U_other",
+        login: "other",
+        type: "User",
+      };
+    if (fault === "parent")
+      copy.evidence.commits[0].parents = [{ sha: "f".repeat(40) }];
+    if (fault === "attribution")
+      copy.evidence.commitAttribution[0].actorNodeIds = ["U_other"];
+    if (fault === "two-rewrites") {
+      copy.evidence.commits[0].sha = "f".repeat(40);
+      copy.evidence.commitAttribution[0].sha = "f".repeat(40);
+    }
+    const result = await retainedCopyBindings([original, copy], {
+      ordinaryCommitsOnly: true,
+      acceptedSubset: fault !== "full-scope",
+    });
+    expect(
+      result.limitations.some((value) =>
+        value.includes("2 exact copy bindings"),
+      ),
+    ).toBe(true);
   });

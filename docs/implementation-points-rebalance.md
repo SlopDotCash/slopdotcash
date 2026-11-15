@@ -30,6 +30,23 @@ use the authenticated original PR creator as the fallback. Every selected carrie
 follow-up must descend from that original head. Other work units retain their
 own attribution.
 
+A fresh authenticated GitHub review may bind an earlier original PR revision
+that its current commit list has replaced. The review must pin the exact head,
+and every retained commit must form its complete selected native chain with the
+same linked primary author and verified first acceptance. The complete current
+PR stays in the proof. Disconnected reviewed revisions use separate native
+bindings, with disjoint claims and one verified recipient for the unchanged unit.
+Missing revision evidence retains the hold.
+
+For native merges with three or more parents, the fixed Git collector retains
+an ordered combined-parent delta. It binds every parent and result tree, path,
+mode and blob identity. Only lines added or removed against every parent count
+as new merge work. Inherited lines remain with their earlier sources. Missing,
+truncated, binary, newly added or deleted path evidence stays held when this
+profile cannot represent all parent snapshots. The representation contains no
+synthetic automatic merge tree. It supplies evidence for valuation and ordinary
+attribution, while contributor and payout decisions keep their existing gates.
+
 Run the preview and reconcile value and duplicate work before recording.
 
 ## Collection and review
@@ -73,6 +90,15 @@ identity and reconciles every comment count with REST. Missing pages, count
 mismatches, and ambiguous references fall back to the original REST reads.
 The retained-copy proof checks the original and accepted patches before
 allocating Points. Resuming a campaign reuses its recorded discussion reads.
+
+An exact copied edit can retain a verified linked primary author without a
+merger acknowledgement. Both complete source records must name that same
+eligible primary author, and the earlier closed source must have an immutable
+resolved reference from the accepted PR. This does not transfer credit through
+an unlinked author or a PR creator fallback. When an intermediate PR carries
+the identical native original commit, two independently complete copy bindings
+retain the earlier source whose creator is that linked author. The intermediate
+source and its own follow-up commits remain in the evidence.
 
 ## Private eligibility and recording
 
