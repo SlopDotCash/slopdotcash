@@ -46,6 +46,10 @@ import {
 } from "./value-file-comparisons";
 import { collectIndirectValueAcceptance } from "./value-indirect";
 import {
+  collectNativeMergeAcceptance,
+  NATIVE_MERGE_CONTEXT,
+} from "./value-native-merge";
+import {
   collectNoChangePromotion,
   NO_CHANGE_PROMOTION_CONTEXT,
 } from "./value-no-change-promotion";
@@ -820,6 +824,9 @@ export async function collectValueEvidence(
     }
   }
   let mergeCommitEvidence: CommitChangeEvidence | null = null;
+  let nativeMergeAcceptance: Awaited<
+    ReturnType<typeof collectNativeMergeAcceptance>
+  > = null;
   let acceptedRange: AcceptedValueRange | null = null;
   let acceptedPatchReplay: AcceptedPatchReplay | null = null;
   if (pull.merged_at !== null) {
@@ -908,8 +915,19 @@ export async function collectValueEvidence(
           acceptedRange === null &&
           acceptedPatchReplay === null
         ) {
+          nativeMergeAcceptance = await collectNativeMergeAcceptance(
+            client,
+            repository,
+            {
+              pull,
+              files,
+              mergeCommitEvidence,
+            },
+          );
           limitations.push(
-            "Reported merge neither directly integrates this head nor matches its entire diff; reconcile the accepted range and related PRs",
+            nativeMergeAcceptance
+              ? NATIVE_MERGE_CONTEXT
+              : "Reported merge neither directly integrates this head nor matches its entire diff; reconcile the accepted range and related PRs",
           );
         }
       }
@@ -1157,6 +1175,7 @@ export async function collectValueEvidence(
     pull,
     files,
     mergeCommitEvidence,
+    ...(nativeMergeAcceptance === null ? {} : { nativeMergeAcceptance }),
     ...(acceptedRange === null ? {} : { acceptedRange }),
     ...(acceptedPatchReplay === null ? {} : { acceptedPatchReplay }),
     ...(indirect.acceptance === null
