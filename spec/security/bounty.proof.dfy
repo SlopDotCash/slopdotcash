@@ -68,10 +68,17 @@ lemma RecordedHoldMembers(id: int, after: security__cases_PrivateCase, amount: s
   ProofLib.FilterMember((h: Hold) => (h.caseId != id), b.holds, x);
 }
 
+// The generated filter of the other cases' holds is the library's filter view.
+lemma DroppedHolds(id: int, b: Bounty)
+  ensures Std.Collections.Seq.Filter((h: Hold) => (h.caseId != id), b.holds) == ProofLib.Filter((h: Hold) => (h.caseId != id), b.holds)
+{
+}
+
 // A refused proposal drops exactly the case's own hold.
 lemma DroppedHoldMembers(id: int, b: Bounty, x: Hold)
-  ensures x in ProofLib.Filter((h: Hold) => (h.caseId != id), b.holds) <==> x in b.holds && x.caseId != id
+  ensures x in Std.Collections.Seq.Filter((h: Hold) => (h.caseId != id), b.holds) <==> x in b.holds && x.caseId != id
 {
+  DroppedHolds(id, b);
   ProofLib.FilterMember((h: Hold) => (h.caseId != id), b.holds, x);
 }
 
@@ -162,7 +169,7 @@ lemma DroppedHoldKeepsRules(id: int, after: security__cases_PrivateCase, b: Boun
   ensures alwaysHoldsMatchCases(putCase(id, after, b).(holds := Std.Collections.Seq.Filter((h: Hold) => (h.caseId != id), b.holds)))
   ensures stepHoldsNeedClearance(b, putCase(id, after, b).(holds := Std.Collections.Seq.Filter((h: Hold) => (h.caseId != id), b.holds)))
 {
-  var nb := putCase(id, after, b).(holds := ProofLib.Filter((h: Hold) => (h.caseId != id), b.holds));
+  var nb := putCase(id, after, b).(holds := Std.Collections.Seq.Filter((h: Hold) => (h.caseId != id), b.holds));
   forall x
     ensures x in nb.holds <==> x in b.holds && x.caseId != id
   {
@@ -187,4 +194,19 @@ lemma DroppedHoldKeepsRules(id: int, after: security__cases_PrivateCase, b: Boun
       assert hasHold(nb, other) == hasHold(b, other);
     }
   }
+  forall h, g | h in nb.holds && g in nb.holds
+    ensures (g.rootCause == h.rootCause || g.caseId == h.caseId) ==> g == h
+  {
+    assert h in b.holds && g in b.holds;
+  }
+  forall h | h in nb.holds
+    ensures (h.kind.VaultHold? || h.kind.DirectHold?) ==> caseOf(nb, h.caseId).terms.split.StandardSplit?
+  {
+    assert h in b.holds && h.caseId != id && holdMatches(b, h);
+    assert caseOf(nb, h.caseId) == caseOf(b, h.caseId);
+  }
+  assert alwaysOneHoldPerRootCause(nb);
+  assert alwaysFullAwardBindsNoVault(nb);
+  assert alwaysHoldsMatchCases(nb);
+  assert stepHoldsNeedClearance(b, nb);
 }

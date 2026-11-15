@@ -197,6 +197,9 @@ pure val offerValues = Set({ ...P::standardOffer, status: P::Paused })
 pure val seenRevisionValues = Set(1, 2, 3, 4, 5, 6)
 pure val startedAtMsValues = Set(1000000)
 pure val weight_commitReceipt = 10
+pure val weight_begin = 6
+pure val weight_verifyObject = 8
+pure val weight_publish = 3
 pure val weight_finishScreening = 20
 pure val weight_claimSend = 10
 ```

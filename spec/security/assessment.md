@@ -88,4 +88,8 @@ pure val snapshotValues = Set(C::staff)
 pure val attemptValues = Set(1, 2, 3)
 pure val elapsedMsValues = Set(1000, 30000, 130000)
 pure val versionValues = Set(1, 2, 3)
+pure val weight_startOwnerRun = 6
+pure val weight_finish = 6
+pure val weight_observeQualified = 4
+pure val weight_observeAuthority = 4
 ```
