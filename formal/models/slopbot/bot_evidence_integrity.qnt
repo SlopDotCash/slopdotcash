@@ -1,11 +1,18 @@
 // @source workers/slopbot/value-evidence.ts
 // @source workers/slopbot/value-context.ts
 // @source workers/slopbot/value-blob.ts
+// @source workers/slopbot/value-file-recovery.ts
+// @source workers/slopbot/value-json-digest.ts
 // @source workers/slopbot/value-tree.ts
 // @source workers/slopbot/value-file-comparisons.ts
 // @source workers/slopbot/value-comparison-counts.ts
 // @source workers/slopbot/value-binary.ts
 // @source workers/slopbot/git-object.ts
+// Incremental canonical JSON hashing and shared exact text preserve byte identity.
+// Native differential tests validate this serialization implementation.
+// Private bundle recovery validates compressed bytes within the existing total
+// expansion bound before the ordinary collector and final publication recheck.
+// This mapping abstracts source admission, not compression or Git correctness.
 // Three paged source entrys and two bounded blobs. Hash verification is an
 // explicit transition; plausible SHA syntax and HTTP success do not suffice.
 // The comparison-count implementation retains unknown results when its compute
