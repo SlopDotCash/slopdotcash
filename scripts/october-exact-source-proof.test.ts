@@ -1495,7 +1495,7 @@ async function bodyRepairSnapshot() {
     headRefOid: sha("b"),
     mergedAt: input.accepted.pull.merged_at,
     updatedAt: input.accepted.pull.updated_at,
-    lastEditedAt: "2026-10-03T00:30:00Z",
+    lastEditedAt: "2026-10-02T12:00:00Z",
     editor: { id: carrier.node_id, __typename: "User" },
     author: { id: carrier.node_id, __typename: "User" },
   };
@@ -1508,7 +1508,7 @@ async function bodyRepairSnapshot() {
   return { ...input, github, body };
 }
 
-test("native unit collector binds a post-merge carrier body to its authenticated editor and source head", async () => {
+test("native unit collector binds a pre-merge carrier body to its authenticated editor and source head", async () => {
   const input = await bodyRepairSnapshot();
   const proof = await octoberOriginalContributorUnitProof(
     input.github,
@@ -1530,6 +1530,7 @@ for (const fault of [
   "changed-id",
   "changed-merge",
   "future-edit",
+  "post-merge-edit",
   "missing-metadata",
 ] as const) {
   test(`carrier body repair refuses ${fault}`, async () => {
@@ -1541,6 +1542,8 @@ for (const fault of [
     if (fault === "changed-merge") input.body.mergedAt = "2026-10-04T00:00:00Z";
     if (fault === "future-edit")
       input.body.lastEditedAt = "2026-10-04T00:00:00Z";
+    if (fault === "post-merge-edit")
+      input.body.lastEditedAt = "2026-10-03T00:30:00Z";
     const github = input.github;
     if (fault === "missing-metadata")
       delete (github as Partial<typeof github>).graphql;
