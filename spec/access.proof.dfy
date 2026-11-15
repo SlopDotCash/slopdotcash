@@ -59,3 +59,59 @@ lemma payAward_ensures(a: Access, by_: int, awardId: int)
     }
   }
 }
+
+lemma decideProjectBan_ensures(a: Access, by_: int, project: int, decision: int)
+  ensures (inv(a) ==> canDecideProjectBan(a, by_, project, decision) ==> alwaysProjectBansConfirmed(decideProjectBan(a, by_, project, decision)))
+  ensures (inv(a) ==> canDecideProjectBan(a, by_, project, decision) ==> alwaysBansDecidedOnConfirmedMalice(decideProjectBan(a, by_, project, decision)))
+  ensures (inv(a) ==> canDecideProjectBan(a, by_, project, decision) ==> alwaysReleasesIndependent(decideProjectBan(a, by_, project, decision)))
+  ensures (inv(a) ==> canDecideProjectBan(a, by_, project, decision) ==> alwaysAppealsDecidedByModerators(decideProjectBan(a, by_, project, decision)))
+  ensures (inv(a) ==> canDecideProjectBan(a, by_, project, decision) ==> alwaysAwardsIdentified(decideProjectBan(a, by_, project, decision)))
+  ensures (inv(a) ==> canDecideProjectBan(a, by_, project, decision) ==> stepBanRecordsPermanent(a, decideProjectBan(a, by_, project, decision)))
+  ensures (inv(a) ==> canDecideProjectBan(a, by_, project, decision) ==> stepFundedAwardsPreserved(a, decideProjectBan(a, by_, project, decision)))
+  ensures (inv(a) ==> canDecideProjectBan(a, by_, project, decision) ==> stepNewAwardOnlyWhenAllowed(a, decideProjectBan(a, by_, project, decision)))
+{
+  if inv(a) && canDecideProjectBan(a, by_, project, decision) {
+    var added := ProjectDecision(decision, project, by_);
+    var after := decideProjectBan(a, by_, project, decision);
+    forall b | b in a.bans
+      ensures projectDecision(after, b.enforcement) == projectDecision(a, b.enforcement)
+    {
+      ProofLib.FilterAppend((p: ProjectDecision) => (p.enforcement == b.enforcement), a.projectBans, added);
+    }
+  }
+}
+
+lemma ban_ensures(a: Access, by_: int, enforcement: int, target: int)
+  ensures (inv(a) ==> canBan(a, by_, enforcement, target) ==> alwaysProjectBansConfirmed(ban(a, by_, enforcement, target)))
+  ensures (inv(a) ==> canBan(a, by_, enforcement, target) ==> alwaysBansDecidedOnConfirmedMalice(ban(a, by_, enforcement, target)))
+  ensures (inv(a) ==> canBan(a, by_, enforcement, target) ==> alwaysReleasesIndependent(ban(a, by_, enforcement, target)))
+  ensures (inv(a) ==> canBan(a, by_, enforcement, target) ==> alwaysAppealsDecidedByModerators(ban(a, by_, enforcement, target)))
+  ensures (inv(a) ==> canBan(a, by_, enforcement, target) ==> alwaysAwardsIdentified(ban(a, by_, enforcement, target)))
+  ensures (inv(a) ==> canBan(a, by_, enforcement, target) ==> stepBanRecordsPermanent(a, ban(a, by_, enforcement, target)))
+  ensures (inv(a) ==> canBan(a, by_, enforcement, target) ==> stepFundedAwardsPreserved(a, ban(a, by_, enforcement, target)))
+  ensures (inv(a) ==> canBan(a, by_, enforcement, target) ==> stepNewAwardOnlyWhenAllowed(a, ban(a, by_, enforcement, target)))
+{
+  if inv(a) && canBan(a, by_, enforcement, target) {
+    var added := Ban(enforcement, projectDecision(a, enforcement).project, target, by_);
+    var after := ban(a, by_, enforcement, target);
+    assert after.bans == a.bans + [added];
+    forall b | b in a.bans + [added]
+      ensures |ProofLib.Filter((o: Ban) => ((o.enforcement == b.enforcement) && (o.target == b.target)), a.bans + [added])| == 1
+    {
+      ProofLib.FilterAppend((o: Ban) => ((o.enforcement == b.enforcement) && (o.target == b.target)), a.bans, added);
+      if added.enforcement == b.enforcement && added.target == b.target {
+        ProofLib.FilterNone((o: Ban) => ((o.enforcement == b.enforcement) && (o.target == b.target)), a.bans);
+      }
+    }
+    forall r | r in a.releases
+      ensures banFor(after, r.enforcement, r.target) == banFor(a, r.enforcement, r.target)
+    {
+      ProofLib.FilterAppend((b: Ban) => ((b.enforcement == r.enforcement) && (b.target == r.target)), a.bans, added);
+    }
+    forall p | p in a.appeals
+      ensures banFor(after, p.enforcement, p.target) == banFor(a, p.enforcement, p.target)
+    {
+      ProofLib.FilterAppend((b: Ban) => ((b.enforcement == p.enforcement) && (b.target == p.target)), a.bans, added);
+    }
+  }
+}

@@ -71,3 +71,23 @@ lemma bindAuthorize_ensures(b: Binding, by_: string, signature: EvmConsentSignat
   }
 }
 
+lemma lawStoredConsentUsableImmediately_ensures(b: Binding, by_: string, signature: EvmConsentSignature)
+  ensures (lawStoredConsentUsableImmediately(b, by_, signature) == true)
+{
+  if canBindAuthorize(b, by_, signature) {
+    var after := bindAuthorize(b, by_, signature);
+    assert signature.claim == authorizedClaim(b);
+    assert authorizedClaim(after) == authorizedClaim(b);
+    if exists c :: c in b.consents && sameKey(c, signature.claim, signature.network, signature.vault, signature.chainId, signature.version, signature.expiresAt) {
+      var c :| c in b.consents && sameKey(c, signature.claim, signature.network, signature.vault, signature.chainId, signature.version, signature.expiresAt);
+      assert c in after.consents;
+      assert usable(after, c, signature.network, signature.vault, signature.version);
+    } else {
+      var added := Consent(signature.claim, signature.network, signature.vault, signature.chainId, signature.version, signature.expiresAt, signature.signer, nowSeconds(b));
+      assert after.consents == b.consents + [added];
+      assert added in after.consents;
+      assert usable(after, added, signature.network, signature.vault, signature.version);
+    }
+  }
+}
+
