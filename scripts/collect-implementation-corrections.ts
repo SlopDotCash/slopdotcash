@@ -2248,7 +2248,7 @@ async function exactOctoberOriginalContributorProof(
 }
 
 async function reviewedOriginalCommit(
-  github: Pick<GitHubClient, "get">,
+  github: Pick<GitHubClient, "get"> & Partial<Pick<GitHubClient, "graphql">>,
   original: WorkUnitSource,
   currentSource: CorrectionSource,
   accepted: CorrectionSource,
@@ -2265,22 +2265,106 @@ async function reviewedOriginalCommit(
   const native = new Map(
     integration.evidence.commits.map((commit) => [commit.sha, commit]),
   );
-  for (const review of [...original.evidence.reviews].sort(
-    (left, right) =>
-      Date.parse(left.submitted_at ?? "") -
-        Date.parse(right.submitted_at ?? "") || left.id - right.id,
-  )) {
-    if (
-      review.user?.type !== "User" ||
-      review.submitted_at === null ||
-      accepted.occurredAt === null ||
-      !(Date.parse(review.submitted_at) < Date.parse(accepted.occurredAt)) ||
-      !selectedShas.has(review.commit_id ?? "")
+  const references: {
+    head: string;
+    review?: ValueEvidence["reviews"][number];
+    bodyReference?: NonNullable<
+      OriginalContributorBinding["reviewedOriginal"]
+    >["bodyReference"];
+  }[] = [...original.evidence.reviews]
+    .sort(
+      (left, right) =>
+        Date.parse(left.submitted_at ?? "") -
+          Date.parse(right.submitted_at ?? "") || left.id - right.id,
     )
-      continue;
+    .filter(
+      (review) =>
+        review.user?.type === "User" &&
+        review.submitted_at !== null &&
+        accepted.occurredAt !== null &&
+        Date.parse(review.submitted_at) < Date.parse(accepted.occurredAt) &&
+        selectedShas.has(review.commit_id ?? ""),
+    )
+    .map((review) => ({ head: review.commit_id as string, review }));
+  const metadata = original.evidence.repairBodyEdit;
+  if (
+    metadata &&
+    github.graphql &&
+    accepted.occurredAt !== null &&
+    Date.parse(metadata.lastEditedAt ?? "") < Date.parse(accepted.occurredAt)
+  ) {
+    const actor =
+      metadata.lastEditedAt === null ? metadata.author : metadata.editor;
+    if (
+      actor?.type === "User" &&
+      actor.id === original.evidence.pull.merged_by?.node_id
+    ) {
+      const [owner, name] = original.evidence.repository.split("/");
+      const data = await github.graphql<{
+        repository: {
+          id: string;
+          pullRequest: {
+            id: string;
+            body: string;
+            headRefOid: string;
+            mergedAt: string;
+            updatedAt: string;
+            lastEditedAt: string | null;
+            editor: { id: string; __typename: string } | null;
+            author: { id: string; __typename: string };
+          };
+        };
+      }>(
+        "query SlopOriginalBody($owner:String!,$name:String!,$number:Int!){repository(owner:$owner,name:$name){id pullRequest(number:$number){id body headRefOid mergedAt updatedAt lastEditedAt editor{__typename ... on User{id}} author{__typename ... on User{id}}}} rateLimit{cost limit remaining resetAt}}",
+        { owner, name, number: original.evidence.pull.number },
+      );
+      const current = data.repository?.pullRequest;
+      requireThat(
+        data.repository?.id === original.evidence.repositoryNodeId &&
+          current?.id === metadata.id &&
+          current.body === metadata.body &&
+          current.headRefOid === metadata.headRefOid &&
+          current.mergedAt === metadata.mergedAt &&
+          current.updatedAt === metadata.updatedAt &&
+          current.lastEditedAt === metadata.lastEditedAt &&
+          current.author.id === metadata.author.id &&
+          current.author.__typename === metadata.author.type &&
+          current.editor?.id === metadata.editor?.id &&
+          current.editor?.__typename === metadata.editor?.type,
+        "Historical original body changed during collection",
+      );
+      const currentPull = await github.get<Pull & { created_at: string }>(
+        `/repos/${original.evidence.repository}/pulls/${original.evidence.pull.number}`,
+      );
+      requireThat(
+        currentPull?.node_id === original.evidence.pull.node_id &&
+          Number.isFinite(Date.parse(currentPull.created_at)) &&
+          Date.parse(currentPull.created_at) <=
+            Date.parse(metadata.lastEditedAt ?? ""),
+        "Historical original body predates its PR",
+      );
+      for (const head of sameRepositoryCommitHints(
+        original.evidence.repository,
+        metadata.body,
+      ))
+        if (selectedShas.has(head))
+          references.push({
+            head,
+            bodyReference: {
+              kind: "pre-merge-body",
+              pull: original.evidence.pull,
+              metadata,
+              headSha: head,
+              headCommittedAt: "",
+              createdAt: currentPull.created_at,
+            },
+          });
+    }
+  }
+  for (const reference of references) {
     const commits: CorrectionCommit[] = [];
     const seen = new Set<string>();
-    let current = review.commit_id;
+    let current: string | null = reference.head;
     while (current && !seen.has(current)) {
       seen.add(current);
       const commit = accepted.commits.find((item) => item.sha === current);
@@ -2290,7 +2374,7 @@ async function reviewedOriginalCommit(
         !retained ||
         commit.parentCount !== 1 ||
         commit.author?.kind !== "User" ||
-        commit.author.id !== original.evidence.pull.user.node_id ||
+        commit.author.id !== currentSource.author?.id ||
         commit.firstAcceptedSourceId !== accepted.sourceId ||
         !commit.files?.length
       )
@@ -2308,18 +2392,21 @@ async function reviewedOriginalCommit(
       )
     )
       continue;
-    const currentReview = await github.get<ValueEvidence["reviews"][number]>(
-      `/repos/${accepted.repository}/pulls/${original.evidence.pull.number}/reviews/${review.id}`,
-    );
-    requireThat(
-      matchesRetainedProjection(currentReview, review),
-      "Historical original review changed during collection",
-    );
+    if (reference.review) {
+      const currentReview = await github.get<ValueEvidence["reviews"][number]>(
+        `/repos/${accepted.repository}/pulls/${original.evidence.pull.number}/reviews/${reference.review.id}`,
+      );
+      requireThat(
+        matchesRetainedProjection(currentReview, reference.review),
+        "Historical original review changed during collection",
+      );
+    }
     for (const commit of commits) {
       const currentCommit = await github.get<{
         sha: string;
         parents: { sha: string }[];
         author: { node_id: string; type: string } | null;
+        commit?: { committer?: { date?: string } };
       }>(`/repos/${accepted.repository}/commits/${commit.sha}`);
       requireThat(
         currentCommit !== null &&
@@ -2330,11 +2417,25 @@ async function reviewedOriginalCommit(
           currentCommit.author.node_id === commit.author?.id,
         "Historical original commit identity changed during collection",
       );
+      if (reference.bodyReference && commit.sha === reference.head)
+        reference.bodyReference.headCommittedAt =
+          currentCommit.commit?.committer?.date ?? "";
+      if (reference.bodyReference)
+        requireThat(
+          Number.isFinite(
+            Date.parse(currentCommit.commit?.committer?.date ?? ""),
+          ) &&
+            Date.parse(currentCommit.commit?.committer?.date ?? "") <=
+              Date.parse(reference.bodyReference.metadata.lastEditedAt ?? ""),
+          "Historical original commit postdates the authenticated body",
+        );
     }
     const retained = {
       sourceDigest: await valueSourceDigest(original.evidence, original.policy),
       currentSourceDigest: digest(encode(currentSource)),
-      review,
+      ...(reference.review
+        ? { review: reference.review }
+        : { bodyReference: reference.bodyReference }),
       commits,
     };
     return { ...retained, digest: digest(encode(retained)) };
@@ -2761,6 +2862,36 @@ export async function octoberOriginalContributorUnitProof(
       current = commit.parents[0].sha;
     }
     if (chain.length && !anchors.includes(chain[0])) anchors.push(chain[0]);
+  }
+  const bodyMetadata = original.evidence.repairBodyEdit;
+  if (
+    bodyMetadata &&
+    Date.parse(bodyMetadata.lastEditedAt ?? "") <
+      Date.parse(accepted.occurredAt ?? "")
+  ) {
+    for (const head of sameRepositoryCommitHints(
+      original.evidence.repository,
+      bodyMetadata.body,
+    )) {
+      if (
+        original.evidence.commits.some((commit) => commit.sha === head) ||
+        !claims.some((claim) => claim.commitSha === head)
+      )
+        continue;
+      let current: string | undefined = head;
+      const seen = new Set<string>();
+      const chain: string[] = [];
+      while (current && !seen.has(current)) {
+        seen.add(current);
+        const commit = commits.get(current);
+        if (commit?.parents.length !== 1 || commit.author?.type !== "User")
+          break;
+        if (claims.some((claim) => claim.commitSha === current))
+          chain.unshift(current);
+        current = commit.parents[0].sha;
+      }
+      if (chain.length && !anchors.includes(chain[0])) anchors.push(chain[0]);
+    }
   }
   const partitions: CorrectionClaim[][] = [];
   const assigned = new Set<string>();

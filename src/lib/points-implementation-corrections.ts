@@ -1,3 +1,4 @@
+import { sameRepositoryCommitHints } from "../../workers/slopbot/value-commit-hints";
 import type { ValueMergeResolution } from "../../workers/slopbot/value-evidence-types";
 import { mergeResolutionLineCounts } from "../../workers/slopbot/value-merge-resolution";
 import {
@@ -148,7 +149,15 @@ export interface OriginalContributorBinding {
   reviewedOriginal?: {
     sourceDigest: string;
     currentSourceDigest: string;
-    review: ValueEvidence["reviews"][number];
+    review?: ValueEvidence["reviews"][number];
+    bodyReference?: {
+      kind: "pre-merge-body";
+      pull: Pull;
+      metadata: NonNullable<ValueEvidence["repairBodyEdit"]>;
+      headSha: string;
+      headCommittedAt: string;
+      createdAt: string;
+    };
     commits: CorrectionCommit[];
     digest: string;
   };
@@ -189,8 +198,65 @@ function reviewedOriginalSource(
   const retained = binding.reviewedOriginal;
   if (!retained) return source;
   const { digest: retainedDigest, ...evidence } = retained;
-  const { review, commits } = retained;
+  const { review, bodyReference, commits } = retained;
   const head = commits.at(-1);
+  const metadata = bodyReference?.metadata;
+  const bodyActor =
+    metadata?.lastEditedAt === null ? metadata.author : metadata?.editor;
+  const referenceValid =
+    review !== undefined && bodyReference === undefined
+      ? review.node_id.length > 0 &&
+        Number.isSafeInteger(review.id) &&
+        review.html_url ===
+          `${source.sourceUrl}#pullrequestreview-${review.id}` &&
+        review.commit_id === head?.sha &&
+        review.user?.type === "User" &&
+        Number.isFinite(Date.parse(review.submitted_at ?? "")) &&
+        accepted.occurredAt !== null &&
+        Date.parse(review.submitted_at ?? "") < Date.parse(accepted.occurredAt)
+      : review === undefined &&
+        bodyReference?.kind === "pre-merge-body" &&
+        bodyReference.headSha === head?.sha &&
+        Number.isFinite(Date.parse(bodyReference.createdAt)) &&
+        Date.parse(bodyReference.createdAt) <=
+          Date.parse(metadata?.lastEditedAt ?? "") &&
+        Number.isFinite(Date.parse(bodyReference.headCommittedAt ?? "")) &&
+        Date.parse(bodyReference.headCommittedAt ?? "") <=
+          Date.parse(metadata?.lastEditedAt ?? "") &&
+        metadata !== undefined &&
+        metadata.id === source.sourceId &&
+        metadata.id === bodyReference.pull.node_id &&
+        bodyReference.pull.html_url === source.sourceUrl &&
+        bodyReference.pull.html_url ===
+          `https://github.com/${source.repository}/pull/${bodyReference.pull.number}` &&
+        Number.isSafeInteger(bodyReference.pull.number) &&
+        bodyReference.pull.number > 0 &&
+        bodyReference.pull.state === "closed" &&
+        bodyReference.pull.merged_by?.type === "User" &&
+        bodyReference.pull.merged_at !== null &&
+        source.occurredAt !== null &&
+        Date.parse(bodyReference.pull.merged_at) ===
+          Date.parse(source.occurredAt) &&
+        metadata.body === bodyReference.pull.body &&
+        metadata.headRefOid === source.headSha &&
+        metadata.headRefOid === bodyReference.pull.head.sha &&
+        metadata.updatedAt === bodyReference.pull.updated_at &&
+        metadata.author.id === bodyReference.pull.user.node_id &&
+        metadata.author.type === bodyReference.pull.user.type &&
+        Date.parse(metadata.lastEditedAt ?? "") <=
+          Date.parse(bodyReference.pull.updated_at) &&
+        Date.parse(metadata.lastEditedAt ?? "") <=
+          Date.parse(bodyReference.pull.merged_at) &&
+        metadata.mergedAt === bodyReference.pull.merged_at &&
+        bodyActor?.type === "User" &&
+        bodyActor.id === bodyReference.pull.merged_by?.node_id &&
+        Number.isFinite(Date.parse(metadata.lastEditedAt ?? "")) &&
+        accepted.occurredAt !== null &&
+        Date.parse(metadata.lastEditedAt ?? "") <
+          Date.parse(accepted.occurredAt) &&
+        sameRepositoryCommitHints(source.repository, metadata.body).includes(
+          bodyReference.headSha,
+        );
   check(
     binding.exactAcceptance === true &&
       binding.claimIds !== undefined &&
@@ -198,18 +264,10 @@ function reviewedOriginalSource(
       retained.currentSourceDigest === sha256Hex(JSON.stringify(source)) &&
       digest.test(retainedDigest) &&
       sha256Hex(JSON.stringify(evidence)) === retainedDigest &&
-      review.node_id.length > 0 &&
-      Number.isSafeInteger(review.id) &&
-      review.html_url ===
-        `${source.sourceUrl}#pullrequestreview-${review.id}` &&
+      referenceValid &&
       head !== undefined &&
-      review.commit_id === head.sha &&
       commits.some((commit) => commit.sha === binding.originalCommitSha) &&
       new Set(commits.map((commit) => commit.sha)).size === commits.length &&
-      review.user?.type === "User" &&
-      Number.isFinite(Date.parse(review.submitted_at ?? "")) &&
-      accepted.occurredAt !== null &&
-      Date.parse(review.submitted_at ?? "") < Date.parse(accepted.occurredAt) &&
       commits.every(
         (commit, index) =>
           !source.commits.some((current) => current.sha === commit.sha) &&

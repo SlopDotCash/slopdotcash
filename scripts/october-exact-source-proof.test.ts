@@ -2284,6 +2284,115 @@ for (const fault of [
   });
 }
 
+async function bodyOriginalSnapshot() {
+  const input = await reviewedRevisionSnapshot();
+  input.original.reviews = [];
+  input.original.pull.user = carrier;
+  input.original.pull.merged_by = carrier;
+  input.original.pull.merged_at = "2026-10-03T00:00:01Z";
+  const body = `The prior tested head was ${sha("a")}.`;
+  input.original.pull.body = body;
+  input.original.repairBodyEdit = {
+    id: input.original.pull.node_id,
+    body,
+    headRefOid: input.original.pull.head.sha,
+    mergedAt: input.original.pull.merged_at,
+    updatedAt: input.original.pull.updated_at,
+    lastEditedAt: "2026-10-02T00:00:00Z",
+    editor: { id: carrier.node_id, type: "User" },
+    author: { id: carrier.node_id, type: "User" },
+  };
+  input.responses.set(`${root}/pulls/1`, {
+    ...input.original.pull,
+    created_at: "2026-10-01T00:00:00Z",
+  });
+  const historical = input.responses.get(`${root}/commits/${sha("a")}`) as {
+    commit: { committer: { date: string } };
+  };
+  historical.commit.committer.date = "2026-10-01T09:00:00Z";
+  input.owners.set(
+    `${repository.toLowerCase()}\0${input.original.pull.head.sha}`,
+    input.original.pull.node_id,
+  );
+  const graph = {
+    repository: {
+      id: input.original.repositoryNodeId,
+      pullRequest: {
+        id: input.original.pull.node_id,
+        body,
+        headRefOid: input.original.pull.head.sha,
+        mergedAt: input.original.pull.merged_at,
+        updatedAt: input.original.pull.updated_at,
+        lastEditedAt: input.original.repairBodyEdit.lastEditedAt,
+        editor: { id: carrier.node_id, __typename: "User" },
+        author: { id: carrier.node_id, __typename: "User" },
+      },
+    },
+  };
+  const github = {
+    ...input.github,
+    async graphql<T>(): Promise<T> {
+      return structuredClone(graph) as T;
+    },
+  };
+  return { ...input, github, graph, historical };
+}
+test("collector binds a historical native head from an authenticated pre-merge body", async () => {
+  const input = await bodyOriginalSnapshot();
+  const proof = await octoberOriginalContributorUnitProof(
+    input.github,
+    input.plain,
+    input.sources[1],
+    input.sources[0],
+    input.owners,
+    input.claims,
+  );
+  expect(proof.originalContributor?.reviewedOriginal?.bodyReference?.kind).toBe(
+    "pre-merge-body",
+  );
+  expect(proof.originalContributor?.reviewedOriginal?.review).toBeUndefined();
+  expect(proof.sources.find((s) => s.sourceId === "PR_original")?.headSha).toBe(
+    sha("e"),
+  );
+});
+for (const fault of [
+  "editor",
+  "late",
+  "head",
+  "parent",
+  "time",
+  "repository",
+] as const) {
+  test(`collector historical body refuses ${fault}`, async () => {
+    const input = await bodyOriginalSnapshot();
+    if (fault === "editor")
+      input.graph.repository.pullRequest.editor.__typename = "Bot";
+    if (fault === "late") {
+      if (!input.original.repairBodyEdit)
+        throw Error("Missing fixture metadata");
+      input.original.repairBodyEdit.lastEditedAt = "2026-10-04T00:00:00Z";
+    }
+    if (fault === "head")
+      input.graph.repository.pullRequest.headRefOid = sha("9");
+    if (fault === "parent")
+      (input.historical as unknown as { parents: { sha: string }[] }).parents =
+        [{ sha: sha("9") }];
+    if (fault === "time")
+      input.historical.commit.committer.date = "2026-10-02T00:00:01Z";
+    if (fault === "repository") input.graph.repository.id = "R_other";
+    await expect(
+      octoberOriginalContributorUnitProof(
+        input.github,
+        input.plain,
+        input.sources[1],
+        input.sources[0],
+        input.owners,
+        input.claims,
+      ),
+    ).rejects.toThrow();
+  });
+}
+
 test("copied unit keeps a maintainer PR creator and credits the sole verified primary", async () => {
   const input = await copiedUnitSnapshot();
   input.original.pull.user = carrier;
