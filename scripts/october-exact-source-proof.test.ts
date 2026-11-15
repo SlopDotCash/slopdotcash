@@ -913,3 +913,210 @@ test("native reviewed unit accepts a carrier-authored sync head with the origina
     originalContributorClaimScope(proof.sources[1], proof.sources[0], claims),
   ).toBe(false);
 });
+
+test("native unit retains PR commits already accepted through the base", async () => {
+  const input = await snapshot();
+  const inherited = clone(input.accepted.commits[0]);
+  inherited.sha = sha("d");
+  inherited.parents = [{ sha: sha("0") }];
+  inherited.author = { node_id: "third", login: "third", type: "User" };
+  input.accepted.commits.unshift(inherited);
+  input.accepted.pull.commits++;
+  input.accepted.commitAttribution.unshift({
+    ...clone(input.accepted.commitAttribution[0]),
+    sha: inherited.sha,
+  });
+  input.plain.commits.unshift({
+    sha: inherited.sha,
+    parentCount: 1,
+    author: { id: "third", login: "third", kind: "User" },
+    additions: 1,
+    deletions: 0,
+    firstAcceptedSourceId: "PR_earlier",
+  });
+  input.plain.commitCount++;
+  input.owners.set(
+    `${repository.toLowerCase()}\0${inherited.sha}`,
+    "PR_earlier",
+  );
+  input.responses.set(`${root}/pulls/2`, {
+    ...input.accepted.pull,
+    created_at: "2026-10-02T00:00:00Z",
+  });
+  input.responses.set(`${root}/git/commits/${inherited.sha}`, clone(inherited));
+  const path = `${root}/compare/${inherited.sha}...${sha("f")}?per_page=100&page=1`;
+  input.responses.set(path, {
+    status: "ahead",
+    base_commit: { sha: inherited.sha },
+    merge_base_commit: { sha: inherited.sha },
+    ahead_by: 1,
+    behind_by: 0,
+    total_commits: 1,
+    commits: [],
+  });
+  const claims = [
+    {
+      id: "claim_origin",
+      sourceId: input.plain.sourceId,
+      commitSha: sha("a"),
+      path: "fix.ts",
+    },
+  ];
+  const proof = await octoberOriginalContributorUnitProof(
+    input.github,
+    input.plain,
+    input.sources[1],
+    input.sources[0],
+    input.owners,
+    claims,
+  );
+  expect(proof.sources[0].commits).toHaveLength(3);
+  expect(proof.sources[0].commits[0].firstAcceptedSourceId).toBe("PR_earlier");
+  expect(input.readPaths.filter((request) => request === path)).toHaveLength(1);
+  const baseRange = input.responses.get(path) as {
+    status: string;
+    behind_by: number;
+  };
+  baseRange.status = "diverged";
+  baseRange.behind_by = 1;
+  await expect(
+    octoberOriginalContributorUnitProof(
+      input.github,
+      input.plain,
+      input.sources[1],
+      input.sources[0],
+      input.owners,
+      claims,
+    ),
+  ).rejects.toThrow("not in the native accepted base");
+  baseRange.status = "ahead";
+  baseRange.behind_by = 0;
+  const retainedCommit = input.responses.get(
+    `${root}/git/commits/${inherited.sha}`,
+  ) as { parents: { sha: string }[] };
+  retainedCommit.parents = [{ sha: sha("9") }];
+  await expect(
+    octoberOriginalContributorUnitProof(
+      input.github,
+      input.plain,
+      input.sources[1],
+      input.sources[0],
+      input.owners,
+      claims,
+    ),
+  ).rejects.toThrow("parent evidence is unavailable or inconsistent");
+  retainedCommit.parents = [{ sha: sha("0") }];
+  input.plain.commits[0].firstAcceptedSourceId = input.plain.sourceId;
+  input.owners.set(
+    `${repository.toLowerCase()}\0${inherited.sha}`,
+    input.plain.sourceId,
+  );
+  await expect(
+    octoberOriginalContributorUnitProof(
+      input.github,
+      input.plain,
+      input.sources[1],
+      input.sources[0],
+      input.owners,
+      claims,
+    ),
+  ).rejects.toThrow("accepted range is incomplete");
+});
+
+test("native omitted ancestry covers several heads and rejects a disconnected cycle", async () => {
+  const input = await snapshot();
+  const chains = [
+    { id: "d", parent: "0" },
+    { id: "e", parent: "d" },
+    { id: "8", parent: "0" },
+  ];
+  for (const { id, parent } of chains) {
+    const commit = clone(input.accepted.commits[0]);
+    commit.sha = sha(id);
+    commit.parents = [{ sha: sha(parent) }];
+    input.accepted.commits.unshift(commit);
+    input.accepted.commitAttribution.unshift({
+      ...clone(input.accepted.commitAttribution[0]),
+      sha: commit.sha,
+    });
+    input.plain.commits.unshift({
+      sha: commit.sha,
+      parentCount: 1,
+      author: { id: origin.node_id, login: origin.login, kind: "User" },
+      additions: 1,
+      deletions: 0,
+      firstAcceptedSourceId: "PR_earlier",
+    });
+    input.owners.set(
+      `${repository.toLowerCase()}\0${commit.sha}`,
+      "PR_earlier",
+    );
+    input.responses.set(`${root}/git/commits/${commit.sha}`, clone(commit));
+    input.responses.set(
+      `${root}/compare/${commit.sha}...${sha("f")}?per_page=100&page=1`,
+      {
+        status: "ahead",
+        base_commit: { sha: commit.sha },
+        merge_base_commit: { sha: commit.sha },
+        ahead_by: 1,
+        behind_by: 0,
+        total_commits: 1,
+        commits: [],
+      },
+    );
+  }
+  input.accepted.pull.commits += chains.length;
+  input.plain.commitCount += chains.length;
+  input.responses.set(`${root}/pulls/2`, {
+    ...input.accepted.pull,
+    created_at: "2026-10-02T00:00:00Z",
+  });
+  const claims = [
+    {
+      id: "claim_origin",
+      sourceId: input.plain.sourceId,
+      commitSha: sha("a"),
+      path: "fix.ts",
+    },
+  ];
+  const proof = await octoberOriginalContributorUnitProof(
+    input.github,
+    input.plain,
+    input.sources[1],
+    input.sources[0],
+    input.owners,
+    claims,
+  );
+  expect(proof.sources[0].commits).toHaveLength(5);
+  expect(
+    input.readPaths.filter((path) =>
+      path.includes(`/compare/${sha("d")}...${sha("f")}`),
+    ),
+  ).toHaveLength(0);
+  expect(
+    input.readPaths.filter((path) =>
+      path.includes(`/compare/${sha("e")}...${sha("f")}`),
+    ),
+  ).toHaveLength(1);
+  expect(
+    input.readPaths.filter((path) =>
+      path.includes(`/compare/${sha("8")}...${sha("f")}`),
+    ),
+  ).toHaveLength(1);
+  const first = input.accepted.commits.find(
+    (commit) => commit.sha === sha("d"),
+  );
+  if (!first) throw Error("Missing fixture");
+  first.parents = [{ sha: sha("e") }];
+  input.responses.set(`${root}/git/commits/${first.sha}`, clone(first));
+  await expect(
+    octoberOriginalContributorUnitProof(
+      input.github,
+      input.plain,
+      input.sources[1],
+      input.sources[0],
+      input.owners,
+      claims,
+    ),
+  ).rejects.toThrow("omitted PR ancestry is incomplete");
+});
