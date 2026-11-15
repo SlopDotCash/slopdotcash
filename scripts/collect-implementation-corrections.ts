@@ -13,7 +13,10 @@ import {
   writeFile,
 } from "node:fs/promises";
 import { resolve } from "node:path";
-import { isCreditEligibleCommitAuthor } from "../src/lib/commit-credit";
+import {
+  implementationCreditActors,
+  isCreditEligibleCommitAuthor,
+} from "../src/lib/commit-credit";
 import {
   commitCreditOwners,
   type MergedPullRequestOutcome,
@@ -1083,13 +1086,12 @@ function soleOriginalPrimary(
   source: CorrectionSource,
 ): CorrectionActor | undefined {
   const ordinary = source.commits.filter((commit) => commit.parentCount <= 1);
-  const actor = ordinary[0]?.author;
-  return verifiedHuman(actor) &&
-    ordinary.every(
-      (commit) =>
-        commit.author?.id === actor.id && commit.author.kind === actor.kind,
-    )
-    ? actor
+  const actors = implementationCreditActors(
+    source.author,
+    ordinary.map((commit) => commit.author),
+  );
+  return ordinary.length > 0 && actors.length === 1 && verifiedHuman(actors[0])
+    ? actors[0]
     : undefined;
 }
 
@@ -1886,8 +1888,8 @@ async function exactOctoberOriginalContributorProof(
     return (
       nativeAcceptance &&
       commit.parentCount <= 1 &&
-      (commit.author === null ||
-        commit.author.id === originalSource.author?.id) &&
+      implementationCreditActors(originalSource.author, [commit.author])[0]
+        ?.id === originalSource.author?.id &&
       scopedClaims.some(
         (claim) =>
           claim.commitSha === commit.sha &&
@@ -1920,7 +1922,9 @@ async function exactOctoberOriginalContributorProof(
     (anchor.author?.id !== originalSource.author?.id &&
       !(
         scopedClaims &&
-        (anchor.author === null || anchor.author.id === accepted.author?.id)
+        (implementationCreditActors(originalSource.author, [anchor.author])[0]
+          ?.id === originalSource.author?.id ||
+          anchor.author?.id === accepted.author?.id)
       )) ||
     !accepted.commits.some(
       (commit) =>
@@ -1987,6 +1991,8 @@ async function exactOctoberOriginalContributorProof(
         current.merged_at === expected.merged_at &&
         current.updated_at === expected.updated_at &&
         current.user.node_id === expected.user.node_id &&
+        current.merged_by?.node_id === expected.merged_by?.node_id &&
+        current.merged_by?.type === expected.merged_by?.type &&
         Number.isFinite(Date.parse(current.created_at)),
       "October exact source changed during collection",
     );
@@ -2059,6 +2065,24 @@ async function exactOctoberOriginalContributorProof(
         scopedClaims,
       )
     : [];
+  const resolutionAcceptance = scopedClaims?.some((claim) => {
+    const commit = accepted.commits.find(
+      (item) => item.sha === claim.commitSha,
+    );
+    return (
+      commit?.author === null &&
+      commit.parentCount > 1 &&
+      correctionClaimCommit(commit)
+    );
+  })
+    ? {
+        pull: acceptedPull,
+        sourceDigest: await valueSourceDigest(
+          integration.evidence,
+          integration.policy,
+        ),
+      }
+    : undefined;
   requireThat(
     scopedClaims
       ? originalContributorClaimScope(
@@ -2068,6 +2092,9 @@ async function exactOctoberOriginalContributorProof(
           [],
           anchor.sha,
           repairs,
+          [],
+          anchor.sha,
+          resolutionAcceptance,
         )
       : originalContributorPrecedesFollowups(
           { ...accepted, author: originalSource.author },
@@ -2090,6 +2117,7 @@ async function exactOctoberOriginalContributorProof(
     sources: [accepted, originalSource],
     originalContributor: {
       exactAcceptance: true,
+      ...(resolutionAcceptance ? { resolutionAcceptance } : {}),
       ...(scopedClaims
         ? {
             claimIds: scopedClaims.map((claim) => claim.id),
@@ -2109,6 +2137,7 @@ async function exactOctoberOriginalContributorProof(
             integration.policy,
           ),
           ...(scopedClaims ? { claims: scopedClaims, repairs } : {}),
+          ...(resolutionAcceptance ? { resolutionAcceptance } : {}),
           ...(reviewedOriginal ? { reviewedOriginal } : {}),
           pulls,
           merge,
@@ -2509,6 +2538,9 @@ async function singleOriginalContributorUnitProof(
       })),
       proof.originalContributor.originalCommitSha,
       proof.originalContributor.repairs,
+      [],
+      proof.originalContributor.acceptedCommitSha,
+      proof.originalContributor.resolutionAcceptance,
     ),
     "Reviewed native unit has an unverified selected follow-up",
   );

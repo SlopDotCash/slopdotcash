@@ -2099,3 +2099,39 @@ for (const fault of [
     ).rejects.toThrow();
   });
 }
+
+test("native collector uses the existing creator fallback for an excluded agent primary", async () => {
+  const input = await snapshot();
+  const agent = { node_id: "U_kgDOC972lw", login: "cursoragent", type: "User" };
+  input.original.commits[0].author = agent;
+  input.accepted.commits[0].author = agent;
+  input.plain.commits[0].author = {
+    id: agent.node_id,
+    login: agent.login,
+    kind: "User",
+  };
+  input.original.commitAttribution[0].actorNodeIds = [agent.node_id];
+  input.accepted.commitAttribution[0].actorNodeIds = [agent.node_id];
+  input.responses.set(
+    `${root}/git/commits/${sha("a")}`,
+    clone(input.accepted.commits[0]),
+  );
+  const claims = [
+    {
+      id: "claim_agent",
+      sourceId: input.plain.sourceId,
+      commitSha: sha("a"),
+      path: "fix.ts",
+    },
+  ];
+  const proof = await octoberOriginalContributorUnitProof(
+    input.github,
+    input.plain,
+    input.sources[1],
+    input.sources[0],
+    input.owners,
+    claims,
+  );
+  expect(proof.sources[1].author?.id).toBe(origin.node_id);
+  expect(proof.sources[1].commits[0].author?.id).toBe(agent.node_id);
+});
