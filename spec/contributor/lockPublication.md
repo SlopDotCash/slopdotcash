@@ -161,6 +161,8 @@ pure def alwaysOperationFacts(p: LockPublication): bool =
   and ((p.op == Releasing and p.step != LockIdle) implies handleOf(p, p.actor).published)
   and ((p.step == Prepare or p.step == Inspect or p.step == Quarantine or p.step == PublishStep
     or p.step == StaleCleanup or p.step == Rollback) implies not(p.rolledBack) and p.op == Acquiring)
+  and ((p.step == Prepare or p.step == Inspect or p.step == Quarantine or p.step == PublishStep) implies not(p.committed))
+  and ((p.step == StaleCleanup or p.step == Rollback) implies p.committed and p.canonical == p.actor)
   and ((p.op == Acquiring and p.committed and not(p.rolledBack)) implies p.canonical == p.actor)
   and ((p.op == Releasing and (p.step == ReleaseCleanup or ((p.step == GuardCleanup or p.step == Finish) and p.primary == NoLockError)))
     implies handleOf(p, p.actor).released)
