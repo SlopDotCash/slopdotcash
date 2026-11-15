@@ -65,6 +65,7 @@ import type {
   Pull,
   ValueEvidence,
 } from "../workers/slopbot/value-evidence-types";
+import { mergeRecipe } from "../workers/slopbot/value-merge-profile";
 import { mergeResolutionLineCounts } from "../workers/slopbot/value-merge-resolution";
 import {
   NATIVE_MERGE_CONTEXT,
@@ -107,6 +108,7 @@ import { assertCorrectionRegistry } from "./points-correction-registry";
 import { retainedCommitCreditSources } from "./retained-commit-credit";
 import { fetchProjectRegistry } from "./sync-project-registry.mjs";
 import { loadValueInputs, ValueFeedUnavailableError } from "./value-ingestion";
+import { hydrateValueMergeSource } from "./value-merge-ingestion";
 
 const RULE = "historical-implementation-allocation-v1" as const;
 const digest = (value: string | Uint8Array) =>
@@ -3885,25 +3887,9 @@ async function ordinaryRetainedProof(
     if (pull.state === "closed" && pull.merged_at === null)
       originals.push(pull);
   }
-  const possibleOriginals = octoberOriginalCredit
-    ? originals.filter(
-        (pull) =>
-          pull.user.node_id !== plain.author?.id &&
-          (hasUnlinked || otherAuthors.has(pull.user.node_id)),
-      )
-    : [];
-  requireThat(
-    possibleOriginals.length <= 1,
-    "October replacement names competing original PRs",
-  );
-  const selected = possibleOriginals.length
-    ? possibleOriginals
-    : hasUnlinked
-      ? originals
-      : [];
-  if (!selected.length) return { sources: [plain] };
+  if (!originals.length) return { sources: [plain] };
   const sources: WorkUnitSource[] = [];
-  for (const expected of [references.pull, ...selected]) {
+  for (const expected of [references.pull, ...originals]) {
     const evidence = await collectValueEvidence(
       github,
       plain.repository,
@@ -3920,6 +3906,106 @@ async function ordinaryRetainedProof(
       policy: { sha: evidence.pull.base.sha, text: "" },
     });
   }
+  const acceptedEvidence = sources[0].evidence;
+  const pathInventory = (evidence: ValueEvidence) => [
+    ...evidence.files.flatMap((file) => [
+      file.filename,
+      ...(file.previous_filename ? [file.previous_filename] : []),
+    ]),
+    ...evidence.commitAttribution.flatMap((entry) =>
+      (entry.files ?? []).flatMap((file) => [
+        file.filename,
+        ...(file.previous_filename ? [file.previous_filename] : []),
+      ]),
+    ),
+    ...(evidence.mergeResolutions ?? []).flatMap(
+      (resolution) => resolution.paths,
+    ),
+  ];
+  const completePathInventory = (evidence: ValueEvidence) =>
+    evidence.commits.length === evidence.pull.commits &&
+    new Set(evidence.commits.map((commit) => commit.sha)).size ===
+      evidence.commits.length &&
+    evidence.files.length === evidence.pull.changed_files &&
+    new Set(evidence.files.map((file) => file.filename)).size ===
+      evidence.files.length &&
+    evidence.commits.every((commit) => {
+      if (commit.parents.length > 1) {
+        const resolutions = evidence.mergeResolutions?.filter(
+          (item) => item.commitSha === commit.sha,
+        );
+        return (
+          resolutions?.length === 1 &&
+          mergeResolutionLineCounts(resolutions[0], commit) !== null
+        );
+      }
+      const entries = evidence.commitAttribution.filter(
+        (entry) => entry.sha === commit.sha,
+      );
+      const entry = entries[0];
+      return (
+        entries.length === 1 &&
+        entry.changedPaths !== null &&
+        entry.files?.length === entry.changedPaths.length &&
+        new Set(entry.changedPaths).size === entry.files.length &&
+        entry.files.every((file) => entry.changedPaths?.includes(file.filename))
+      );
+    });
+  const acceptedPaths = new Set(pathInventory(acceptedEvidence));
+  const acceptedShas = new Set(
+    acceptedEvidence.commits.map((commit) => commit.sha),
+  );
+  const relevant: WorkUnitSource[] = [];
+  for (let source of sources.slice(1)) {
+    let evidence = source.evidence;
+    const overlaps = () =>
+      evidence.commits.some((commit) => acceptedShas.has(commit.sha)) ||
+      pathInventory(evidence).some((path) => acceptedPaths.has(path));
+    // A reference can describe a dependency. A branch-sync merge still needs
+    // its canonical resolution paths before disjointness is established.
+    if (
+      !overlaps() &&
+      evidence.commits.some((commit) => commit.parents.length > 1)
+    ) {
+      const repository = await github.get<{
+        id: number;
+        node_id: string;
+        private: boolean;
+        full_name: string;
+      }>(`/repos/${plain.repository}`);
+      requireThat(repository, "Retained repository identity unavailable");
+      source = await hydrateValueMergeSource(
+        source,
+        await mergeRecipe(evidence),
+        repository,
+      );
+      evidence = source.evidence;
+    }
+    if (
+      !completePathInventory(evidence) ||
+      !completePathInventory(acceptedEvidence) ||
+      overlaps()
+    )
+      relevant.push(source);
+  }
+  const possibleOriginals = octoberOriginalCredit
+    ? relevant.filter(
+        ({ evidence: { pull } }) =>
+          pull.user.node_id !== plain.author?.id &&
+          (hasUnlinked || otherAuthors.has(pull.user.node_id)),
+      )
+    : [];
+  requireThat(
+    possibleOriginals.length <= 1,
+    "October replacement names competing original PRs",
+  );
+  const selected = possibleOriginals.length
+    ? possibleOriginals
+    : hasUnlinked
+      ? relevant
+      : [];
+  if (!selected.length) return { sources: [plain] };
+  sources.splice(1, sources.length - 1, ...selected);
   if (possibleOriginals.length)
     return octoberOriginalContributorProof(github, plain, sources, owners);
   const converted = await bindRetained(sources, owners);
