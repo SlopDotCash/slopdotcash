@@ -416,6 +416,16 @@ async function grantExemption(
       "unsupported_repository",
       "An exemption covers one immutable repository.",
     );
+  const listed = findListedRepository(
+    project.manifest.repositories,
+    repositoryId,
+  )?.repository;
+  if (listed === undefined)
+    fail(
+      422,
+      "repository_not_listed",
+      "The project's current revision does not list this repository",
+    );
   const actor = {
     githubId: session.githubId,
     githubLogin: session.githubLogin,
@@ -444,7 +454,7 @@ async function grantExemption(
       repositoryId,
       maintainer,
     )) as AccessCheck;
-    const authority = setupAuthority(checked, maintainer, repositoryId);
+    const authority = setupAuthority(checked, maintainer, listed);
     if (authority.state === "retry") {
       unavailable = authority.message;
       continue;

@@ -15,7 +15,7 @@ export async function repositoryReportingAuthority(
   actor: GithubActor,
 ): Promise<boolean> {
   const checked = await readRepositoryAccess(reader, manifest, actor);
-  const authority = setupAuthority(checked, actor, manifest.repositories[0].id);
+  const authority = setupAuthority(checked, actor, manifest.repositories[0]);
   if (authority.state === "retry")
     fail(503, "github_unavailable", authority.message);
   if (

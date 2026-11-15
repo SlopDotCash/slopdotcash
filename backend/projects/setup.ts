@@ -239,9 +239,11 @@ function authorityAccess(access: AccessCheck): AuthorityAccess {
 function repositoryAuthority(
   access: AccessCheck,
   actor: GithubActor,
-  repository: string,
+  registered: ProjectDefinition["repositories"][number],
   flagger: boolean,
 ): SetupAuthority {
+  // GitHub's install picker lists the repository only under its current name.
+  const repository = currentRepositoryPath(registered);
   return decideSetupAuthority(
     authorityAccess(access),
     actor.githubLogin,
@@ -261,7 +263,7 @@ function repositoryAuthority(
 export function setupAuthority(
   access: AccessCheck,
   actor: GithubActor,
-  repository: string,
+  repository: ProjectDefinition["repositories"][number],
 ): SetupAuthority {
   return repositoryAuthority(access, actor, repository, false);
 }
@@ -270,7 +272,7 @@ export function setupAuthority(
 export function flaggerAuthority(
   access: AccessCheck,
   actor: GithubActor,
-  repository: string,
+  repository: ProjectDefinition["repositories"][number],
 ): SetupAuthority {
   return repositoryAuthority(access, actor, repository, true);
 }
@@ -394,6 +396,13 @@ export function projectSetupStatus(input: {
     { repositoryId: manifest.repositories[0].id, access },
     ...(input.repositoryAccess ?? []),
   ];
+  // GitHub's install picker lists a renamed repository only under its current name.
+  const named = (repositoryId: string) => {
+    const found = findListedRepository(manifest.repositories, repositoryId);
+    return found === null
+      ? repositoryId
+      : currentRepositoryPath(found.repository);
+  };
   // The first repository that is not installed decides; else every one is.
   const unmet =
     reads.find(
@@ -401,7 +410,7 @@ export function projectSetupStatus(input: {
         read.access.state === "retry" ||
         read.access.access.installation !== "installed",
     ) ?? null;
-  const repository = unmet?.repositoryId ?? manifest.repositories[0].id;
+  const repository = named(unmet?.repositoryId ?? manifest.repositories[0].id);
   const installation: ProjectSetupStatus["checks"]["installation"] =
     unmet === null
       ? {
@@ -411,8 +420,8 @@ export function projectSetupStatus(input: {
               ? repository
               : `${reads
                   .slice(0, -1)
-                  .map((read) => read.repositoryId)
-                  .join(", ")} and ${reads.at(-1)?.repositoryId}`
+                  .map((read) => named(read.repositoryId))
+                  .join(", ")} and ${named(reads.at(-1)?.repositoryId ?? "")}`
           }.`,
         }
       : unmet.access.state === "retry"
