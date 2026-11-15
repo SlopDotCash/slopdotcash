@@ -63,7 +63,7 @@ Numeric growth, availability, latency, and response-time targets are not approve
 | Project inventory and published terms | D1 `projects`, `project_revisions`, and `project_applications`; each change appends an immutable revision. |
 | Sessions, preferences, wallet records, and private decisions | Authenticated account and case services. |
 | Points and corrections | Append-only journal with source identity, occurrence time, and recording time. |
-| Monthly proposals and final allocations | Private D1 allocation records. |
+| Monthly proposals and final allocations | D1 allocation records; owner cuts and their reasons are public. |
 | Deposits, reservations, and completed payments | Exact finalized chain evidence, reconciled with the applicable obligation. |
 
 Generated snapshots and pages derive from these records. They are not separate inventories. Never edit generated registry or public build outputs by hand. Retain history when a project pauses or retires; never delete registry rows.
@@ -295,9 +295,9 @@ Owner decision, 11 November 2026: display project-token tickers with exactly one
 
 Automatic monthly payment is the default when funds are committed. The owner sets the monthly cap during setup and may change it or opt out. Vault creation enables monthly commitment unless the owner opts out.
 
-The period is the calendar UTC month, starting November 2026. The trusted monthly workflow freezes the complete closed-month ledger and writes each project's proposal once. A repeat run must not add or replace rows. Store allocations privately in D1, not new cycle files.
+The period is the calendar UTC month, starting November 2026. The trusted monthly workflow freezes the complete closed-month ledger and writes each project's proposal once. A repeat run must not add or replace rows. Store allocations in D1, not new cycle files.
 
-The owner may adjust amounts or finalize early. At 72 hours after month end, the automatic process freezes the current allocation once. Do not publish adjustment history or require public reasons. Retain records needed for disputes and reconciliation.
+The owner may adjust amounts or finalize early. At 72 hours after month end, the automatic process freezes the current allocation once. A change that sets a contributor below their proposed amount is a cut. A cut needs a written reason of 20 to 500 characters. Each current cut, with its proposed amount, new amount, reason and time, is public on the cycle page, and the contributor gets an Inbox notice. Increases and changes at or above the proposal need no reason and stay private. The contributor gets 24 hours of notice: with automatic finalization on, cuts close 24 hours before the cutoff, and the owner can finalize only 24 hours after the latest cut. Operator decision, 15 November 2026. Retain every change and cut record for disputes and reconciliation.
 
 Only accepted-work Points for that project and period set shares. Rollover never increases a later monthly cap. An underfunded month creates no obligations until the entire allocation is covered. Prevent manual and automatic duplicate payments.
 
