@@ -8936,9 +8936,9 @@
     },
     {
       "path": "workers/slopbot/value-work-unit-consumption.ts",
-      "sha256": "2c5068f61b785a0c429b4edb3a3e1e1365f15a4508c6163a28161db7646faa9d",
+      "sha256": "07ce9be2ed87e3ca924f4fff39fff1bfcbc2ff2573ffb91baf622e857656e1ff",
       "models": ["formal/models/slopbot/bot_value_history.qnt"],
-      "candidateLines": [208, 279, 282, 311, 328, 356, 357],
+      "candidateLines": [209, 280, 283, 329, 346, 374, 375],
       "review": "mapped-abstraction"
     },
     {

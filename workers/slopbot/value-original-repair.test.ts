@@ -1,5 +1,10 @@
 import { expect, test } from "bun:test";
+import { sha256Hex } from "../../src/lib/async-sha256.mjs";
 import { workUnitCreditActorIds } from "../../src/lib/implementation-lines";
+import {
+  VALUE_RUBRIC_VERSION,
+  type ValueAssessment,
+} from "../../src/lib/value-assessment";
 import {
   commit,
   makeOriginal,
@@ -9,6 +14,12 @@ import { collectValueEvidence } from "./value-evidence";
 import { retainedRepair } from "./value-original-repair";
 import { valueSourceDigest } from "./value-review";
 import { prepareWorkUnitEvidence } from "./value-work-unit";
+import { consumeWorkUnitHistory } from "./value-work-unit-consumption";
+import {
+  type WorkUnitRecord,
+  workUnitIdentity,
+  workUnitSourceBindings,
+} from "./value-work-unit-journal";
 
 function fixture() {
   const original = makeOriginal(),
@@ -299,3 +310,97 @@ for (const changed of [false, true])
       );
     } else expect(out.repairBodyEdit).toEqual(e.repairBodyEdit);
   });
+
+test("a mixed repair group replays with unrelated supplemental metadata and exact repair evidence", async () => {
+  const { original, accepted } = fixture();
+  const other = makeOriginal();
+  other.evidence.pull.node_id = "PR_unrelated";
+  other.evidence.pull.number = 3;
+  other.evidence.pull.html_url = `https://github.com/${repository.id}/pull/3`;
+  other.evidence.pull.head.sha = "8".repeat(40);
+  other.evidence.commits[0].sha = other.evidence.pull.head.sha;
+  other.evidence.commits[0].parents = [{ sha: "7".repeat(40) }];
+  other.evidence.commitAttribution[0].sha = other.evidence.pull.head.sha;
+  other.evidence.evidenceUrls = [other.evidence.pull.html_url];
+  const sources = [original, accepted, other];
+  const evidence = await prepareWorkUnitEvidence(sources, [repository]);
+  expect(evidence.limitations).toEqual([]);
+  expect(evidence.claims.some((claim) => claim.retainedCopy?.repair)).toBe(
+    true,
+  );
+  const assessment: ValueAssessment = {
+    status: "assessed",
+    tier: "micro",
+    rationale: "Synthetic source identity boundary.",
+    dimensions: {
+      alignment: "Synthetic boundary.",
+      impact: "Synthetic boundary.",
+      complexity: "Synthetic boundary.",
+      verification: "Synthetic boundary.",
+      maintenance: "Synthetic boundary.",
+      overlap: "Synthetic boundary.",
+    },
+    evidenceUrls: [original.evidence.pull.html_url],
+    relatedPullRequests: [],
+    limitations: [],
+    reviews: [],
+  };
+  const unit = {
+    claimIds: evidence.claims.map((claim) => claim.id),
+    assessment,
+  };
+  const record: WorkUnitRecord = {
+    schemaVersion: "slop-work-unit-record:v1",
+    projectId: repository.projectId,
+    sourceDigest: evidence.sourceDigest,
+    sources: workUnitSourceBindings(evidence, [repository]),
+    claims: evidence.claims,
+    units: [{ ...unit, workUnitId: await workUnitIdentity(unit) }],
+    rubricVersion: VALUE_RUBRIC_VERSION,
+    producerRevision: "a".repeat(40),
+    assessedAt: "2026-11-01T00:00:00Z",
+    supersedes: [],
+    legacyPredecessors: [],
+    revisionReason: null,
+    model: {
+      provider: "surplus",
+      requested: "gpt-6.1-sol",
+      reported: "gpt-6.1-sol",
+    },
+  };
+  const text = JSON.stringify(record);
+  const row = {
+    sequence: 1,
+    record_digest: await sha256Hex(text),
+    record_json: text,
+    recorded_at: record.assessedAt,
+  };
+  const history = {
+    history: [row],
+    throughSequence: 1,
+    current: { row, record },
+  };
+  other.evidence.repairBodyEdit = {
+    ...structuredClone(
+      accepted.evidence.repairBodyEdit as NonNullable<
+        typeof accepted.evidence.repairBodyEdit
+      >,
+    ),
+    id: other.evidence.pull.node_id,
+  };
+  const raw = JSON.stringify(sources);
+  const read = () =>
+    consumeWorkUnitHistory(
+      history,
+      sources,
+      new Map(sources.map((source) => [source.evidence.pull.node_id, null])),
+      [repository],
+    );
+  const replay = await read();
+  expect(replay.status).toBe("assessed");
+  expect(JSON.stringify(sources)).toBe(raw);
+  const metadata = accepted.evidence.repairBodyEdit;
+  if (!metadata) throw Error("Missing fixture metadata");
+  metadata.author.id = "U_forged";
+  expect((await read()).status).not.toBe("assessed");
+});
