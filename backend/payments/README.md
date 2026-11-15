@@ -297,8 +297,10 @@ accepts the new journal batch. A correction cannot change or add accepted-work
 Points in a frozen month, a month with an owner allocation decision, or a month
 with a retained direct payment. A legacy obligation without an exact monthly
 binding protects the whole project; its period is never inferred from indexing
-time. A refusal stops the release before Pages publication and retains the
-previous Points history. Replaying an identical batch remains valid.
+time. The reviewed Base qualification is outside earned rewards under PRD
+section 11. The guard exempts its exact finalized payment and reservation source.
+A refusal stops the release before Pages publication and retains the previous
+Points history. Replaying an identical batch remains valid.
 
 1. **Proposal.** The trusted `monthly-rewards.yml` workflow runs on the first
    three days of each month, on `main` for `slop-private` and on
@@ -317,15 +319,26 @@ previous Points history. Replaying an identical batch remains valid.
    gets no proposal; the other projects still get theirs. If the project is
    active again before the last run, the next run proposes the month. No cycle
    file, public decision or review PR is created.
-2. **Private changes.** The owner, the project steward or a current admin of
-   the immutable repository, changes amounts through
+2. **Owner changes and public cuts.** The owner, the project steward or a
+   current admin of the immutable repository, changes amounts through
    `GET /api/v1/payments/projects/:projectId/monthly/:YYYY-MM` and
    `POST .../monthly/:YYYY-MM/allocations` (`githubUserId`, `grossBase`,
-   `expectedSequence`). The month's total never exceeds its monthly amount, so
-   unallocated funds never raise a later month. Nobody changes their own
-   allocation. Each change is an append-only `monthly_allocation_changes` row
-   kept only for dispute handling and reconciliation; no route returns it and
-   no public reason exists. `POST .../monthly-settings` (`automatic`) turns
+   `expectedSequence`, and `reason` for a cut). The month's total never
+   exceeds its monthly amount, so unallocated funds never raise a later month.
+   Nobody changes their own allocation. Each change is an append-only
+   `monthly_allocation_changes` row. A change below the contributor's proposed
+   amount is a cut (operator decision, 15 November 2026): it needs a reason of
+   20 to 500 characters after trim, which is stored with the proposed and new
+   amounts in `monthly_allocation_cut_reasons` (migration 0126) in the same
+   batch as the change, and the contributor gets one Inbox notice per cut.
+   `GET .../monthly/:YYYY-MM/cuts` is public and lists each contributor whose
+   latest change is a cut, with login, proposed amount, new amount, reason and
+   time; the cycle page shows it. Other changes stay private and are kept for
+   dispute handling and reconciliation. With automatic finalization on, a cut
+   is refused in the last 24 hours before the cutoff (`cut_notice_window`),
+   and the owner's finalize is refused until 24 hours after the latest cut
+   (`cut_notice_pending`). The coordinator's freeze at the cutoff is
+   unchanged. `POST .../monthly-settings` (`automatic`) turns
    the automatic default off or on again. Write or maintain permission can
    read the month and prepare its commitment, but cannot change allocations,
    the automatic default, finalization or reserve release.
