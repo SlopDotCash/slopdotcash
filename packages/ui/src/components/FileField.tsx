@@ -1,6 +1,6 @@
 import type { ComponentProps, ReactNode } from "react";
 import { ImageUp, X } from "lucide-react";
-import { cn } from "../lib/cn.ts";
+import { cn, holdsControl } from "../lib/cn.ts";
 import { controlState } from "../lib/control.ts";
 import { Button, buttonVariants } from "./Button.tsx";
 import { StatusIcon } from "./Status.tsx";
@@ -33,10 +33,7 @@ export function FileField({ onFiles, file, preview, onRemove, chooseLabel = "Cho
     <div className={cn("flex flex-wrap items-center gap-4", className)}>
       {preview ? <div className="size-16 shrink-0 overflow-hidden rounded-md border border-border bg-muted *:size-full *:object-cover">{preview}</div> : null}
       <label
-        className={cn(
-          buttonVariants({ variant: "outline" }),
-          "cursor-pointer has-focus-visible:ring-2 has-focus-visible:ring-ring has-aria-disabled:pointer-events-none has-aria-disabled:opacity-50 has-aria-invalid:border-destructive has-disabled:pointer-events-none has-disabled:opacity-50",
-        )}
+        className={cn(buttonVariants({ variant: "outline" }), holdsControl, "cursor-pointer has-aria-invalid:border-destructive")}
       >
         <input
           type="file"

@@ -48,8 +48,9 @@ export function DataState({ status, children, onRetry, retryLabel = "Retry", ske
         <Status presentation={presentation} />
       </Alert>
     );
+  // No `aria-busy` around the live region: a screen reader may hold back what changes under it, and "Loading" with it.
   return (
-    <div aria-busy={status === "Loading" || undefined} className={cn("flex flex-col gap-4", className)} {...props}>
+    <div className={cn("flex flex-col gap-4", className)} {...props}>
       <div aria-live={politeness[readAnnouncement(status)]}>{notice}</div>
       {status === "Loading" && (skeleton ?? [0, 1, 2].map((line) => <Skeleton key={line} />))}
       {readShowsRows(status) && children}

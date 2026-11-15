@@ -1,5 +1,6 @@
 import type { ComponentProps, ReactNode } from "react";
-import { cn, focusRing } from "../lib/cn.ts";
+import { cn } from "../lib/cn.ts";
+import { exactValue } from "../lib/exact.ts";
 import { CopyButton, type CopyButtonProps } from "./CopyButton.tsx";
 
 export type CommandBlockProps = Omit<ComponentProps<"div">, "onCopy" | "children"> & {
@@ -19,7 +20,7 @@ export type CommandBlockProps = Omit<ComponentProps<"div">, "onCopy" | "children
 export function CommandBlock({ command, label = "Command", copyLabel = "Copy command", onCopy, links, className, ...props }: CommandBlockProps) {
   return (
     <div className={cn("flex min-w-0 flex-col gap-2 rounded-md border border-border bg-muted p-3", className)} {...props}>
-      <pre role="group" aria-label={label} tabIndex={0} className={cn(focusRing, "overflow-x-auto rounded-sm font-mono text-sm")}>
+      <pre role="group" aria-label={label} tabIndex={0} className={cn(exactValue, "text-sm whitespace-pre")}>
         <code>{command}</code>
       </pre>
       <div className="flex items-center justify-end gap-3 text-sm">

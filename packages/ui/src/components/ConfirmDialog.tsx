@@ -24,7 +24,7 @@ export type ConfirmDialogProps = {
   /** For a step that removes or gives up something. */
   destructive?: boolean;
   /** Why the work was refused, shown while the dialog is `Refused`. */
-  reason?: ReactNode;
+  reason: ReactNode;
   /** The element that opens the dialog, usually a `Button`. */
   trigger?: ReactElement;
 };
@@ -54,7 +54,7 @@ export function ConfirmDialog({ state, onSend, title, children, confirmLabel, ca
           <AlertDialog.Description asChild>
             <div className={description}>{children}</div>
           </AlertDialog.Description>
-          {state.phase === "Refused" && reason ? <Alert variant="destructive">{reason}</Alert> : null}
+          {state.phase === "Refused" ? <Alert variant="destructive">{reason}</Alert> : null}
           <DialogFooter>
             <AlertDialog.Cancel asChild>
               <Button variant="outline" disabled={!enabled(state, { type: "cancel" })}>

@@ -1,5 +1,4 @@
-import { type ComponentProps, useId } from "react";
-import { Feather } from "lucide-react";
+import type { ComponentProps } from "react";
 import { cva, type VariantProps } from "class-variance-authority";
 import { cn } from "../lib/cn.ts";
 
@@ -14,84 +13,65 @@ export type NetworkMarkProps = Omit<ComponentProps<"span">, "children"> &
     network: "Base" | "Ethereum" | "Robinhood Chain" | "Solana";
     /** Shows the network's name beside its mark; hidden, it stays the accessible name. */
     showName?: boolean;
-    /** A state of the network to read with its name, such as "not confirmed". */
-    status?: string;
   };
 
-// Each network's published colors: another party's identity, not a role of this palette (design.md).
+// The marks and colors the Slop app shipped: another party's identity, not a role of this palette (design.md).
+// Robinhood Chain is its official compact symbol (docs.robinhood.com/chain/brand-guidelines). Base is "The Square"
+// (github.com/base-org/brand-kit, logo/TheSquare/Digital/Base_square_blue.svg at commit eba9e730).
 const brand = {
-  // eslint-disable-next-line design-system/no-literal-colors -- Base brand blue
-  base: "#0052FF",
-  // eslint-disable-next-line design-system/no-literal-colors -- Ethereum brand blue
-  ethereum: "#627EEA",
-  // eslint-disable-next-line design-system/no-literal-colors -- white glyph of the Ethereum mark
-  glyph: "#FFFFFF",
-  // eslint-disable-next-line design-system/no-literal-colors -- Solana gradient start
-  solanaFrom: "#00FFA3",
-  // eslint-disable-next-line design-system/no-literal-colors -- Solana gradient end
-  solanaTo: "#DC1FFF",
-  // eslint-disable-next-line design-system/no-literal-colors -- Robinhood neon
-  robinhood: "#CCFF00",
-  // eslint-disable-next-line design-system/no-literal-colors -- black glyph of the Robinhood mark
-  ink: "#000000",
+  // eslint-disable-next-line design-system/no-literal-colors -- Base "The Square" blue
+  base: "#0000ff",
+  // eslint-disable-next-line design-system/no-literal-colors -- Ethereum mark, light face
+  ethereumLight: "#8c92b5",
+  // eslint-disable-next-line design-system/no-literal-colors -- Ethereum mark, dark face
+  ethereumDark: "#62688f",
+  // eslint-disable-next-line design-system/no-literal-colors -- Robinhood Chain neon
+  robinhood: "#ccff00",
+  // eslint-disable-next-line design-system/no-literal-colors -- Solana green bar
+  solanaGreen: "#14f195",
+  // eslint-disable-next-line design-system/no-literal-colors -- Solana middle bar
+  solanaMiddle: "#8e7af0",
+  // eslint-disable-next-line design-system/no-literal-colors -- Solana purple bar
+  solanaPurple: "#9945ff",
 };
 
 function Mark({ network, className }: { network: NetworkMarkProps["network"]; className: string }) {
-  const gradientId = useId();
   const svg = { "aria-hidden": true, focusable: false, className };
   if (network === "Base")
     return (
-      <svg viewBox="0 0 111 111" {...svg}>
-        <path d="M54.921 110.034c30.438 0 55.113-24.632 55.113-55.017S85.359 0 54.921 0C26.043 0 2.353 22.171 0 50.392h72.847v9.25H0c2.353 28.22 26.043 50.392 54.921 50.392Z" fill={brand.base} />
+      <svg viewBox="0 0 1280 1280" {...svg}>
+        <path fill={brand.base} d="M0,101.12c0-34.64,0-51.95,6.53-65.28,6.25-12.76,16.56-23.07,29.32-29.32C49.17,0,66.48,0,101.12,0h1077.76c34.63,0,51.96,0,65.28,6.53,12.75,6.25,23.06,16.56,29.32,29.32,6.52,13.32,6.52,30.64,6.52,65.28v1077.76c0,34.63,0,51.96-6.52,65.28-6.26,12.75-16.57,23.06-29.32,29.32-13.32,6.52-30.65,6.52-65.28,6.52H101.12c-34.64,0-51.95,0-65.28-6.52-12.76-6.26-23.07-16.57-29.32-29.32-6.53-13.32-6.53-30.65-6.53-65.28V101.12Z" />
       </svg>
     );
   if (network === "Ethereum")
     return (
       <svg viewBox="0 0 32 32" {...svg}>
-        <circle cx="16" cy="16" r="16" fill={brand.ethereum} />
-        <g fill={brand.glyph}>
-          <path fillOpacity=".602" d="M16.498 4v8.87l7.497 3.35z" />
-          <path d="M16.498 4 9 16.22l7.498-3.35z" />
-          <path fillOpacity=".602" d="M16.498 21.968v6.027L24 17.616z" />
-          <path d="M16.498 27.995v-6.028L9 17.616z" />
-          <path fillOpacity=".2" d="m16.498 20.573 7.497-4.353-7.497-3.348z" />
-          <path fillOpacity=".602" d="m9 16.22 7.498 4.353v-7.701z" />
-        </g>
+        <path d="M16 2 7 17l9 5.3L25 17z" fill={brand.ethereumLight} />
+        <path d="m16 24-9-5.3L16 31l9-12.3z" fill={brand.ethereumDark} />
+        <path d="M16 2v20.3L25 17z" fill={brand.ethereumDark} />
       </svg>
     );
   if (network === "Solana")
     return (
-      <svg viewBox="0 0 397.7 311.7" {...svg}>
-        <defs>
-          <linearGradient id={gradientId} gradientUnits="userSpaceOnUse" x1="360.879" y1="351.455" x2="141.213" y2="-69.294">
-            <stop offset="0" stopColor={brand.solanaFrom} />
-            <stop offset="1" stopColor={brand.solanaTo} />
-          </linearGradient>
-        </defs>
-        <g fill={`url(#${gradientId})`}>
-          <path d="M64.6 237.9c2.4-2.4 5.7-3.8 9.2-3.8h317.4c5.8 0 8.7 7 4.6 11.1l-62.7 62.7c-2.4 2.4-5.7 3.8-9.2 3.8H6.5c-5.8 0-8.7-7-4.6-11.1z" />
-          <path d="M64.6 3.8C67.1 1.4 70.4 0 73.8 0h317.4c5.8 0 8.7 7 4.6 11.1l-62.7 62.7c-2.4 2.4-5.7 3.8-9.2 3.8H6.5c-5.8 0-8.7-7-4.6-11.1z" />
-          <path d="M333.1 120.1c-2.4-2.4-5.7-3.8-9.2-3.8H6.5c-5.8 0-8.7 7-4.6 11.1l62.7 62.7c2.4 2.4 5.7 3.8 9.2 3.8h317.4c5.8 0 8.7-7 4.6-11.1z" />
-        </g>
+      <svg viewBox="0 0 24 24" {...svg}>
+        <path fill={brand.solanaGreen} d="M5 3h18l-4 4H1z" />
+        <path fill={brand.solanaMiddle} d="M1 10h18l4 4H5z" />
+        <path fill={brand.solanaPurple} d="M5 17h18l-4 4H1z" />
       </svg>
     );
   return (
-    <svg viewBox="0 0 24 24" {...svg}>
-      <circle cx="12" cy="12" r="12" fill={brand.robinhood} />
-      <Feather x="5" y="5" width="14" height="14" strokeWidth={2.4} color={brand.ink} />
+    <svg viewBox="0 0 32 42" {...svg}>
+      <path fill={brand.robinhood} d="M0.237711 42H1.14916C1.31483 42 1.48056 41.9157 1.53587 41.7753C8.41284 23.9672 15.8974 15.1474 20.5926 9.86673C20.786 9.64201 20.7031 9.47355 20.4269 9.47355H12.0309C11.727 9.47355 11.4702 9.59707 11.2576 9.86673L5.23667 17.4507C4.3529 18.5742 4.13199 19.6134 4.13199 21.1021V28.8546C2.17104 34.4442 0.92819 38.2362 0.0168015 41.663C-0.038442 41.882 0.0444232 42 0.237711 42ZM30.5353 1.13119C29.2372 -0.273195 23.3821 -0.329391 20.6754 0.738011C20.1121 0.959852 19.5707 1.33622 19.3221 1.5525C16.8364 3.71537 15.1794 5.4288 13.6051 7.11409C13.4117 7.31068 13.4947 7.50727 13.7709 7.50727H23.0783C23.9345 7.50727 24.4316 8.01291 24.4316 8.88359V19.5573C24.4316 19.8382 24.6525 19.9225 24.8183 19.6696L30.4248 12.2261C31.3362 11.0183 31.6124 10.6532 31.8609 8.96792C32.1924 6.49613 31.999 2.70423 30.5353 1.13119ZM18.5212 29.4445L22.3601 23.0121C22.4431 22.8437 22.4706 22.647 22.4706 22.5066V11.7767C22.4706 11.4958 22.2773 11.3836 22.0841 11.6082C16.3118 18.1529 11.8099 25.0346 7.6395 33.3207C7.53455 33.5285 7.66712 33.7139 7.91572 33.6297L16.5327 30.9332C17.5048 30.6298 18.0517 30.231 18.5212 29.4445Z" />
     </svg>
   );
 }
 
-/** A network's mark, named by its network and, when given, its status. */
-export function NetworkMark({ network, showName = true, status, size, className, ...props }: NetworkMarkProps) {
+/** A network's mark, named by its network. Show a network's state with a `Status` beside it. */
+export function NetworkMark({ network, showName = true, size, className, ...props }: NetworkMarkProps) {
   return (
     <span className={cn("inline-flex items-center gap-2", className)} {...props}>
       <Mark network={network} className={markVariants({ size })} />
-      <span className={showName ? undefined : "sr-only"}>
-        {network}
-        {status ? <span className="sr-only">, {status}</span> : null}
-      </span>
+      <span className={showName ? undefined : "sr-only"}>{network}</span>
     </span>
   );
 }

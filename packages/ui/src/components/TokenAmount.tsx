@@ -1,6 +1,6 @@
 import type { ComponentProps } from "react";
 import { cn } from "../lib/cn.ts";
-import { exactValue } from "../lib/exact.ts";
+import { exactValue, wrappedValue } from "../lib/exact.ts";
 
 export type TokenAmountProps = Omit<ComponentProps<"div">, "children"> & {
   /** The exact amount, already formatted by its owner; shown as given. */
@@ -32,7 +32,7 @@ export function TokenAmount({ value, symbol, token, gross, fee, label = "Exact a
           {parts.map(([name, amount]) => (
             <div key={name} className="flex gap-1">
               <dt>{name}</dt>
-              <dd className="font-mono break-all tabular-nums">{amount}</dd>
+              <dd className={wrappedValue}>{amount}</dd>
             </div>
           ))}
         </dl>

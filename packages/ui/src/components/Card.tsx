@@ -11,7 +11,7 @@ export type CardTitleProps = ComponentProps<"h3">;
 /** A surface that groups what belongs to one thing. */
 export function Card({ asChild = false, className, ...props }: CardProps) {
   const Comp = asChild ? Slot : "div";
-  return <Comp className={cn("flex flex-col gap-4 rounded-lg border border-border bg-card p-6 text-card-foreground shadow-sm", className)} {...props} />;
+  return <Comp className={cn("flex flex-col gap-4 rounded-lg border border-border bg-card p-6 text-card-foreground", className)} {...props} />;
 }
 
 /** The name of what a `Card` holds. */

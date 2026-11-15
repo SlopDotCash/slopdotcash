@@ -42,7 +42,12 @@ export const meta: ComponentMeta<DataStateProps> = {
     },
     // spec/ui/status.md, "Read states show loading, emptiness, staleness and failure differently"
     StatusDenied: ({ canvasElement }: Context) => expect(shown(canvasElement)).toEqual(["assertive", false, false]),
-    // spec/ui/status.md, "Read states show loading, emptiness, staleness and failure differently"
-    StatusLoading: ({ canvasElement }: Context) => expect([...shown(canvasElement), canvasElement.querySelector("[aria-busy]") !== null]).toEqual(["polite", false, false, true]),
+    // spec/ui/status.md, "Read states show loading, emptiness, staleness and failure differently": Loading is announced
+    // politely, from a live region no busy container holds back.
+    StatusLoading: async ({ canvasElement }: Context) => {
+      await expect(shown(canvasElement)).toEqual(["polite", false, false]);
+      const live = canvasElement.querySelector("[aria-live]")!;
+      await expect([live.textContent, live.closest("[aria-busy='true']")]).toEqual(["Loading", null]);
+    },
   },
 };

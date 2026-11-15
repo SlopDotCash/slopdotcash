@@ -2,6 +2,7 @@ import type { ComponentProps, ReactNode } from "react";
 import type { SetupStatus } from "../../gen/frontend__presentation.ts";
 import { setupPresentation } from "../../gen/ui__status.ts";
 import { cn } from "../lib/cn.ts";
+import { wrappedValue } from "../lib/exact.ts";
 import { Status } from "./Status.tsx";
 
 export interface ChecklistItem {
@@ -31,7 +32,7 @@ export function Checklist({ items, className, ...props }: ChecklistProps) {
       {items.map(({ id, label, status, value }) => (
         <li key={id} className="flex flex-wrap items-center gap-x-4 gap-y-1">
           <span className="text-sm font-medium text-foreground">{label}</span>
-          {value != null && <span className="min-w-0 flex-1 font-mono text-sm break-all text-muted-foreground tabular-nums">{value}</span>}
+          {value != null && <span className={cn(wrappedValue, "min-w-0 flex-1 text-sm text-muted-foreground")}>{value}</span>}
           <Status presentation={setupPresentation(status)} className="ml-auto" />
         </li>
       ))}

@@ -15,11 +15,21 @@ const press = async (canvasElement: HTMLElement) => {
 
 export const meta: ComponentMeta<PaginationProps> = {
   args: { state: { page: 2, pages: 5 }, onSend },
-  examples: { First: { state: { page: 1, pages: 5 } }, Last: { state: { page: 5, pages: 5 } } },
+  examples: { First: { state: { page: 1, pages: 5 } }, Last: { state: { page: 5, pages: 5 } }, NextToLast: { state: { page: 4, pages: 5 } } },
   // spec/ui/pagination.md, "The page stays within the pages that exist"
   play: {
     Default: async ({ canvasElement }: { canvasElement: HTMLElement }) => expect(await press(canvasElement)).toEqual([[{ type: "back" }], [{ type: "forward" }]]),
     First: async ({ canvasElement }: { canvasElement: HTMLElement }) => expect(await press(canvasElement)).toEqual([[{ type: "forward" }]]),
     Last: async ({ canvasElement }: { canvasElement: HTMLElement }) => expect(await press(canvasElement)).toEqual([[{ type: "back" }]]),
+    // spec/ui/pagination.md, "Move through pages without leaving the list": reaching the last page by key disables
+    // Next, so focus moves to Previous rather than leaving the list.
+    NextToLast: async ({ canvasElement }: { canvasElement: HTMLElement }) => {
+      onSend.mockClear();
+      const canvas = within(canvasElement);
+      canvas.getByRole("button", { name: "Next page" }).focus();
+      await userEvent.keyboard("{Enter}");
+      await expect(onSend.mock.calls).toEqual([[{ type: "forward" }]]);
+      await expect(document.activeElement).toBe(canvas.getByRole("button", { name: "Previous page" }));
+    },
   },
 };
