@@ -92,11 +92,12 @@ export async function collectValueContext(
     const encoded = path.split("/").map(encodeURIComponent).join("/");
     const file = await read(path, ref);
     if (!file) throw new Error(`Complete context file unavailable: ${path}`);
+    const text = new TextDecoder("utf-8", { fatal: true }).decode(file.bytes);
     contextFiles.push({
       path,
       ref,
       blobSha: file.sha,
-      text: new TextDecoder("utf-8", { fatal: true }).decode(file.bytes),
+      text: client.internText?.(text) ?? text,
       url: `https://github.com/${evidence.repository}/blob/${ref}/${encoded}`,
     });
   }

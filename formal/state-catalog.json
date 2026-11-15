@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "meaning": "Declared lifecycle candidates. This intentionally incomplete syntactic census cannot find every implicit state, establish reachability, or prove source/model correspondence. Review the open work listed in formal/README.md as well.",
-  "inventorySha256": "a7adaf9422aeae0000b90dc9bd93c57739ddcc7418ac1b65c2bb29f219fc160c",
+  "inventorySha256": "b60bc62a93cc1ea739d38b472276531e550efa8a7329424ae0af73bcc6ef9f74",
   "states": [
     {
       "path": "backend/fee-conversions/handler.ts",
@@ -2189,6 +2189,16 @@
       "review": "candidate-only"
     },
     {
+      "path": "scripts/value-file-recovery.ts",
+      "line": 118,
+      "name": "mode",
+      "kind": "string-union",
+      "values": ["100644", "100755"],
+      "models": ["formal/models/slopbot/merge_evidence_acquisition.qnt"],
+      "lexicallyUnmentionedValues": ["100644", "100755"],
+      "review": "candidate-only"
+    },
+    {
       "path": "scripts/value-ingestion.ts",
       "line": 437,
       "name": "AttributionOutcome",
@@ -3934,7 +3944,7 @@
     },
     {
       "path": "workers/slopbot/github.ts",
-      "line": 197,
+      "line": 199,
       "name": "Exemption",
       "kind": "string-union",
       "values": ["exempt", "not-exempt", "unknown"],
@@ -4111,6 +4121,16 @@
         "formal/models/slopbot/bot_value_budget.qnt"
       ],
       "lexicallyUnmentionedValues": [],
+      "review": "candidate-only"
+    },
+    {
+      "path": "workers/slopbot/value-file-recovery.ts",
+      "line": 24,
+      "name": "mode",
+      "kind": "string-union",
+      "values": ["100644", "100755"],
+      "models": ["formal/models/slopbot/bot_evidence_integrity.qnt"],
+      "lexicallyUnmentionedValues": ["100644", "100755"],
       "review": "candidate-only"
     },
     {

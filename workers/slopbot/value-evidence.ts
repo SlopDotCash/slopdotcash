@@ -56,16 +56,19 @@ import { collectAcceptedPatchReplay } from "./value-patch-replay";
 import { VALUE_REFERENCE_QUERY } from "./value-reference-query";
 import { collectRetainedMergeReferences } from "./value-retained-reference";
 
-function fileChange({
-  filename,
-  previous_filename,
-  status,
-  additions,
-  deletions,
-  patch,
-  blob_url,
-  sha,
-}: FileChange & { sha?: string }): FileChange {
+function fileChange(
+  {
+    filename,
+    previous_filename,
+    status,
+    additions,
+    deletions,
+    patch,
+    blob_url,
+    sha,
+  }: FileChange & { sha?: string },
+  client?: EvidenceClient,
+): FileChange {
   // GitHub omits patches for empty added files. This known Git object has
   // exactly zero bytes; zero line counts alone could also describe a binary.
   if (
@@ -82,7 +85,9 @@ function fileChange({
     status,
     additions,
     deletions,
-    ...(patch === undefined ? {} : { patch }),
+    ...(patch === undefined
+      ? {}
+      : { patch: client?.internText?.(patch) ?? patch }),
     blob_url,
   };
 }
@@ -165,7 +170,7 @@ async function collectCommitChanges(
         files: [],
       };
     }
-    commit.files.push(...batch.files.map(fileChange));
+    commit.files.push(...batch.files.map((file) => fileChange(file, client)));
     if (commit.files.length >= 3000) {
       limitations.push(`${label} file limit reached; Git evidence required`);
       break;
@@ -201,6 +206,11 @@ async function collectCommitChanges(
         commit.sha,
       );
     }
+    if (client.verifiedFile)
+      await addedValuePatchRecovery(client, root.slice("/repos/".length))(
+        commit.files,
+        commit.sha,
+      );
     for (const kind of ["additions", "deletions"] as const)
       if (
         commit.files.reduce(
@@ -664,7 +674,7 @@ export async function collectValueEvidence(
       pages<Comment>(client, `${root}/issues/${number}/comments`),
       pages<Comment>(client, `${path}/comments`),
     ]);
-  const files = rawFiles.map(fileChange);
+  const files = rawFiles.map((file) => fileChange(file, client));
   const commits = rawCommits.map(
     ({ sha, html_url, commit, author, committer, parents }) => ({
       sha,
