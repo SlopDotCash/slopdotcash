@@ -10,6 +10,7 @@ import { repositoryIdentity } from "../src/lib/project-repositories.mjs";
 import { assertProjectDefinition } from "../src/lib/project-schema.mjs";
 import { sha256Hex } from "../src/lib/sha256";
 import { GitHubClient } from "../workers/slopbot/github";
+import { mergedTimeRangeQualifier } from "../workers/slopbot/value-accepted-commit-census";
 import { loadPublishedPoints, pointsSql } from "./generate-points";
 import { resolveGitHubToken } from "./github-token";
 import {
@@ -60,7 +61,7 @@ export async function verifyHistoricalCensus(
       } = await github.graphql(
         "query HistoricalPointsCensus($query:String!,$after:String){search(query:$query,type:ISSUE,first:100,after:$after){issueCount pageInfo{hasNextPage endCursor} nodes{...on PullRequest{id number headRefOid mergedAt repository{id}}}}}",
         {
-          query: `repo:${packet.sourceAudit.repository} is:pr is:merged merged:>=${from} merged:<${through}`,
+          query: `repo:${packet.sourceAudit.repository} is:pr is:merged ${mergedTimeRangeQualifier(Date.parse(from), Date.parse(through) - 1000)}`,
           after: cursor,
         },
       );

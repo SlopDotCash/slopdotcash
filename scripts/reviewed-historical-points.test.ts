@@ -242,7 +242,14 @@ test("historical census requires the complete immutable source identity", async 
       ],
     },
   };
-  const github = { graphql: async <T>() => structuredClone(response) as T };
+  const github = {
+    graphql: async <T>(_query: string, variables?: Record<string, unknown>) => {
+      expect(variables?.query).toBe(
+        "repo:feedforagents/feed is:pr is:merged merged:2026-09-27T00:00:00Z..2026-10-31T23:59:59Z",
+      );
+      return structuredClone(response) as T;
+    },
+  };
   await verifyHistoricalCensus(f.packet, github);
   response.search.nodes[0].headRefOid = "c".repeat(40);
   await expect(verifyHistoricalCensus(f.packet, github)).rejects.toThrow();
@@ -335,9 +342,12 @@ test("historical census splits a result set beyond GitHub's page cap", async () 
     ): Promise<T> {
       calls++;
       const query = String(variables?.query);
+      const inclusiveEnd = (end: string) =>
+        new Date(Date.parse(end) - 1000).toISOString().replace(".000Z", "Z");
       const whole =
-        query.includes(`>=${from}`) && query.includes(`<${through}`);
-      const left = query.includes(`<${middle}`);
+        query.endsWith(`..${inclusiveEnd(through)}`) &&
+        query.includes(`merged:${from.replace(".000Z", "Z")}..`);
+      const left = query.endsWith(`..${inclusiveEnd(middle)}`);
       const selected = whole
         ? []
         : f.packet.sourceAudit.sources.slice(left ? 0 : 500, left ? 500 : 1000);
