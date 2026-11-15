@@ -16,7 +16,19 @@ or audience authority reader (security, Slopbot appeal and dispute
 authority), evaluated immediately before the step that uses it; it is a
 verified-evidence record, never a caller flag. `ProviderEvidence` comes only
 from the separate operator reconciliation path that reads independent
-provider records.
+provider records. `UnsubscribeToken` is a token whose keyed digest the
+transport verified; it names the recipient, destination version and category
+it was issued for. `NotifyConfig` is the recipient configuration of the
+reviewed notification Worker release (`SLOP_NOTIFY_RELEASE`): each
+operator-verified pilot destination of the restricted security pilot
+(PRD SEC-16), its effective time, the configured backup of each recipient,
+and whether registered account destinations (`SLOP_NOTIFY_GENERAL_EMAIL`)
+are in use. The shell supplies it only from that release.
+
+The destination version and the two consents here are this outbox's
+projection of the account [email enrollment](../backend/email.md); that
+machine owns verification mail, its expiry and cancellation, and closure.
+Binding the two is a composition obligation.
 
 ## Story: Save each notice once with its source change
 
@@ -40,11 +52,26 @@ type DeliveryState = NotQueued | Queued | Retrying | Sending | ProviderAccepted 
 type Notice = { id: int, key: int, kind: Kind, recipient: int, createdAt: int, readAt: int, acknowledgedAt: int,
   channel: Channel, template: Template, essential: bool, state: DeliveryState, attempts: int, nextAt: int,
   claimedAt: int, prepared: bool, boundVersion: int, digest: int, providerSuppressed: bool, escalationOf: int, escalated: bool }
-type Preference = { recipient: int, activity: bool, security: bool, version: int, revision: int }
-type Inbox = { clock: int, notices: List[Notice], prefs: List[Preference], evidence: List[int], nextVersion: int }
-pure val noPreference: Preference = { recipient: 0, activity: false, security: false, version: 0, revision: 0 }
+type Preference = { recipient: int, activity: bool, security: bool, saved: bool, version: int, effectiveAt: int, revision: int }
+type Route = { recipient: int, backup: int, pilotDigest: int, pilotEffectiveAt: int }
+type NotifyConfig = { routes: List[Route], generalEmail: bool }
+type Inbox = { clock: int, notices: List[Notice], prefs: List[Preference], evidence: List[int], nextVersion: int,
+  config: NotifyConfig, configs: int }
+pure val noPreference: Preference = { recipient: 0, activity: false, security: false, saved: false, version: 0, effectiveAt: 0, revision: 0 }
+pure val noRoute: Route = { recipient: 0, backup: 0, pilotDigest: 0, pilotEffectiveAt: 0 }
 pure val initial: Inbox = { clock: 1, notices: List(), evidence: List(), nextVersion: 1,
-  prefs: List({ ...noPreference, recipient: 1 }, { ...noPreference, recipient: 2 }, { ...noPreference, recipient: 3 }) }
+  prefs: List({ ...noPreference, recipient: 1 }, { ...noPreference, recipient: 2 }, { ...noPreference, recipient: 3 }),
+  config: { routes: List(), generalEmail: false }, configs: 0 }
+pure def routeOf(i: Inbox, recipient: int): Route =
+  i.config.routes.foldl(noRoute, (found, r) => if (found.recipient == 0 and r.recipient == recipient) r else found)
+pure def backupOf(i: Inbox, recipient: int): int =
+  val backup = routeOf(i, recipient).backup
+  if (backup > 0 and backup != recipient and routeOf(i, backup).recipient == backup) backup else 0
+pure def validConfig(config: NotifyConfig): bool = config.routes.every(r => r.recipient > 0 and r.backup >= 0
+  and r.backup != r.recipient and r.pilotDigest >= 0 and r.pilotEffectiveAt >= 0)
+pure def canPublishConfig(i: Inbox, config: NotifyConfig): bool = validConfig(config)
+pure def publishConfig(i: Inbox, config: NotifyConfig): Inbox = { ...i, config: config, configs: i.configs + 1 }
+pure def alwaysConfigValid(i: Inbox): bool = validConfig(i.config)
 pure val noNotice: Notice = { id: 0, key: 0, kind: ProjectRevision, recipient: 0, createdAt: 0, readAt: 0, acknowledgedAt: 0,
   channel: NoEmail, template: ActivityTemplate, essential: false, state: NotQueued, attempts: 0, nextAt: 0, claimedAt: 0,
   prepared: false, boundVersion: 0, digest: 0, providerSuppressed: false, escalationOf: 0, escalated: false }
@@ -87,34 +114,53 @@ pure def sometimesReplayKeptOne(i: Inbox): bool = i.notices.length() == 1 and i.
 
 ### Consent binds one verified destination version and opt-out suppresses waiting mail
 
-Verifying a new address issues a new destination version. Activity consent
-governs optional notices; security consent governs private case notices,
-report receipts and essential wallet notices. Enabling either requires a
-verified destination. Turning a channel off suppresses its queued and
-retrying rows without erasing the Inbox; a provider call already in flight
-cannot be recalled. Every preference save increments a revision.
+Verifying a new address issues a new destination version, takes effect at
+verification and needs fresh consent; waiting mail bound to the earlier
+version is suppressed. Activity consent governs optional notices; security
+consent governs private case notices, report receipts and essential wallet
+notices. Enabling either requires a verified destination. Turning a channel
+off, in settings or with a verified unsubscribe token for the current
+destination version, suppresses its queued and retrying rows without erasing
+the Inbox; a provider call already in flight cannot be recalled. Every
+preference save increments a revision.
 
 ```quint
 pure def updatePref(i: Inbox, recipient: int, p: Preference): List[Preference] =
   i.prefs.listMap(x => if (x.recipient == recipient) p else x)
 pure def canVerifyDestination(i: Inbox, by: int): bool = pref(i, by).recipient == by and by > 0
 pure def verifyDestination(i: Inbox, by: int): Inbox =
-  { ...i, nextVersion: i.nextVersion + 1, prefs: updatePref(i, by, { ...pref(i, by), version: i.nextVersion, revision: pref(i, by).revision + 1 }) }
+  { ...i, nextVersion: i.nextVersion + 1, prefs: updatePref(i, by, { ...pref(i, by), version: i.nextVersion, effectiveAt: i.clock,
+    activity: false, security: false, saved: true, revision: pref(i, by).revision + 1 }),
+    notices: i.notices.listMap(n => if (n.recipient == by and waiting(n) and n.boundVersion > 0) { ...n, state: Suppressed } else n) }
 pure def waiting(n: Notice): bool = n.state == Queued or n.state == Retrying
 pure def canSetConsent(i: Inbox, activity: bool, security: bool, by: int): bool =
   val p = pref(i, by)
   p.recipient == by and by > 0 and ((activity or security) implies p.version > 0)
 pure def setConsent(i: Inbox, activity: bool, security: bool, by: int): Inbox =
-  { ...i, prefs: updatePref(i, by, { ...pref(i, by), activity: activity, security: security, revision: pref(i, by).revision + 1 }),
+  { ...i, prefs: updatePref(i, by, { ...pref(i, by), activity: activity, security: security, saved: true, revision: pref(i, by).revision + 1 }),
     notices: i.notices.listMap(n => if (n.recipient == by and waiting(n) and (
       (not(activity) and n.channel == ActivityOutbox and not(n.essential))
       or (not(security) and (n.channel == SecurityOutbox or n.essential)))) { ...n, state: Suppressed } else n) }
+type Category = ActivityMail | SecurityMail
+type UnsubscribeToken = { recipient: int, version: int, category: Category }
+pure def canUnsubscribe(i: Inbox, token: UnsubscribeToken): bool =
+  val p = pref(i, token.recipient)
+  token.recipient > 0 and p.recipient == token.recipient and token.version > 0 and token.version == p.version
+pure def unsubscribe(i: Inbox, token: UnsubscribeToken): Inbox =
+  val p = pref(i, token.recipient)
+  val security = token.category == SecurityMail
+  { ...i, prefs: updatePref(i, token.recipient, { ...p, saved: true, revision: p.revision + 1,
+      activity: if (security) p.activity else false, security: if (security) false else p.security }),
+    notices: i.notices.listMap(n => if (n.recipient == token.recipient and waiting(n) and (
+      (not(security) and n.channel == ActivityOutbox and not(n.essential))
+      or (security and (n.channel == SecurityOutbox or n.essential)))) { ...n, state: Suppressed } else n) }
 pure def stepConsentNeverQueuesHistory(before: Inbox, via: str, after: Inbox): bool =
-  (via == "setConsent" or via == "verifyDestination") implies after.notices.length() == before.notices.length()
+  (via == "setConsent" or via == "verifyDestination" or via == "unsubscribe") implies after.notices.length() == before.notices.length()
     and before.notices.every(n => after.notices.some(a => a.id == n.id and (a.state == n.state or a.state == Suppressed)))
 pure def alwaysConsentNeedsDestination(i: Inbox): bool = i.nextVersion > 0
   and i.prefs.every(p => (p.activity or p.security) implies p.version > 0)
 pure def sometimesOptOutSuppressed(i: Inbox): bool = i.notices.some(n => n.state == Suppressed and n.attempts == 0)
+pure def sometimesUnsubscribed(i: Inbox): bool = i.prefs.some(p => p.saved and p.version > 0 and not(p.security) and not(p.activity) and p.revision > 1)
 ```
 
 ## Story: Deliver each attempt once and never resend an uncertain one
@@ -158,10 +204,15 @@ pure def sometimesStaleClaimAmbiguous(i: Inbox): bool = i.notices.some(n => n.st
 
 An unavailable authority check, a preparation failure or a destination not
 yet in effect sends nothing and retries within the five-attempt bound. A
-recipient without current access, or without consent for the bound
-destination version, is suppressed; that suppression sent nothing and never
-escalates. A provider acceptance proves acceptance only. A documented quota
-rejection retries; any other thrown send is ambiguous.
+recipient without current access is suppressed. While registered account
+destinations are in use, a recipient with a registered destination needs
+consent for the bound destination version. Otherwise a security notice may
+use the recipient's operator-verified pilot destination unless the
+recipient explicitly turned security mail off; a recipient with neither is
+suppressed. Activity mail always needs a registered destination and its
+consent. A suppression sent nothing and never escalates. A provider
+acceptance proves acceptance only. A documented quota rejection retries; any
+other thrown send is ambiguous.
 
 ```quint
 type AccessCheck = Allowed({ acknowledgeHours: int }) | Denied | Unavailable
@@ -172,12 +223,23 @@ pure def consentHolds(i: Inbox, n: Notice): bool =
     and (if (n.channel == SecurityOutbox or n.essential) p.security else p.activity)
 pure def allowed(access: AccessCheck): bool = match access { | Allowed(a) => a.acknowledgeHours >= 0 | _ => false }
 pure def unavailable(access: AccessCheck): bool = match access { | Unavailable => true | _ => false }
+pure def registered(i: Inbox, n: Notice): bool = i.config.generalEmail and pref(i, n.recipient).version > 0
+pure def pilotUsable(i: Inbox, n: Notice): bool =
+  val p = pref(i, n.recipient)
+  n.channel == SecurityOutbox and not(registered(i, n)) and routeOf(i, n.recipient).pilotDigest > 0
+    and not(p.saved and not(p.security))
+pure def destinationEffectiveAt(i: Inbox, n: Notice): int =
+  if (registered(i, n)) pref(i, n.recipient).effectiveAt else routeOf(i, n.recipient).pilotEffectiveAt
+pure def destinationDigest(i: Inbox, n: Notice): int =
+  if (registered(i, n)) n.boundVersion else 1000 + routeOf(i, n.recipient).pilotDigest
 pure def canPrepare(i: Inbox, id: int, attempt: int, access: AccessCheck): bool = val n = notice(i, id)
   id > 0 and n.id == id and owns(n, attempt) and not(n.prepared)
 pure def prepare(i: Inbox, id: int, attempt: int, access: AccessCheck): Inbox = val n = notice(i, id)
+  val usable = (registered(i, n) and consentHolds(i, n)) or pilotUsable(i, n)
   val updated = if (unavailable(access)) retried(i, n)
-    else if (not(allowed(access)) or not(consentHolds(i, n))) { ...n, state: Suppressed }
-    else { ...n, prepared: true, digest: n.boundVersion }
+    else if (not(allowed(access)) or not(usable)) { ...n, state: Suppressed }
+    else if (destinationEffectiveAt(i, n) > i.clock) retried(i, n)
+    else { ...n, prepared: true, digest: destinationDigest(i, n) }
   { ...i, notices: setNotice(i, id, updated) }
 pure def canFailPreparation(i: Inbox, id: int, attempt: int): bool = val n = notice(i, id)
   id > 0 and n.id == id and owns(n, attempt)
@@ -191,6 +253,9 @@ pure def send(i: Inbox, id: int, attempt: int, result: ProviderResult): Inbox = 
 pure def sometimesProviderAccepted(i: Inbox): bool = i.notices.some(n => n.state == ProviderAccepted)
 pure def sometimesRetrying(i: Inbox): bool = i.notices.some(n => n.state == Retrying)
 pure def sometimesSuppressedWithoutAccess(i: Inbox): bool = i.notices.some(n => n.state == Suppressed and n.attempts > 0 and not(n.providerSuppressed))
+pure def sometimesPilotAccepted(i: Inbox): bool = i.notices.some(n => n.state == ProviderAccepted and n.digest > 1000)
+pure def sometimesRetriedBeforeEffective(i: Inbox): bool = i.notices.some(n => n.state == Retrying and n.digest == 0)
+  and i.config.routes.some(r => r.pilotEffectiveAt > i.clock)
 ```
 
 ### Only independent provider evidence for the exact attempt and destination settles a send
@@ -257,11 +322,12 @@ asks for acknowledgment, when it is unacknowledged past the recipient's
 acknowledgment window even though it was accepted or delivered. A report
 receipt escalates only on failed delivery. Activity notices, acknowledged
 notices, withheld or access-suppressed mail and escalation copies never
-escalate. The backup is the configured backup of the recipient, needs current
-access to the case, and receives one generic private notice.
+escalate. The backup is the recipient's backup in the current released
+configuration, must itself be a configured recipient, needs current access to
+the case, and receives one generic private notice. A later configuration
+never changes an escalation already made.
 
 ```quint
-pure def backupOf(recipient: int): int = if (recipient == 1) 2 else if (recipient == 2) 3 else 0
 pure def failedDelivery(n: Notice): bool = n.state == Ambiguous or n.state == Exhausted or n.state == Bounced
   or (n.state == Suppressed and n.providerSuppressed)
 pure def overdue(i: Inbox, n: Notice, primaryAccess: AccessCheck): bool = match primaryAccess {
@@ -270,15 +336,16 @@ pure def overdue(i: Inbox, n: Notice, primaryAccess: AccessCheck): bool = match 
   | _ => false }
 pure def canEscalate(i: Inbox, id: int, primaryAccess: AccessCheck, backupAccess: AccessCheck): bool = val n = notice(i, id)
   id > 0 and n.id == id and n.channel == SecurityOutbox and n.escalationOf == 0 and not(n.escalated) and n.acknowledgedAt == 0
-    and backupOf(n.recipient) > 0 and allowed(primaryAccess) and allowed(backupAccess)
+    and backupOf(i, n.recipient) > 0 and allowed(primaryAccess) and allowed(backupAccess)
     and (failedDelivery(n) or overdue(i, n, primaryAccess))
 pure def escalate(i: Inbox, id: int, primaryAccess: AccessCheck, backupAccess: AccessCheck): Inbox = val n = notice(i, id)
   { ...i, notices: setNotice(i, id, { ...n, escalated: true })
-    .append(newNotice(i, 1000 + id, SecurityCase, backupOf(n.recipient), id)) }
+    .append(newNotice(i, 1000 + id, SecurityCase, backupOf(i, n.recipient), id)) }
 pure def alwaysEscalationOnce(i: Inbox): bool = i.notices.every(n =>
   (n.escalationOf > 0 implies n.kind == SecurityCase and n.key == 1000 + n.escalationOf and n.escalationOf < n.id
     and notice(i, n.escalationOf).escalated and notice(i, n.escalationOf).channel == SecurityOutbox
-    and notice(i, n.escalationOf).escalationOf == 0 and n.recipient == backupOf(notice(i, n.escalationOf).recipient) and not(n.escalated))
+    and notice(i, n.escalationOf).escalationOf == 0 and n.recipient > 0 and n.recipient != notice(i, n.escalationOf).recipient
+    and not(n.escalated))
   and (n.escalated iff i.notices.some(e => e.escalationOf == n.id)))
 pure def stepEscalationOnce(before: Inbox, after: Inbox): bool =
   val added = after.notices.nthOr(before.notices.length(), noNotice)
@@ -327,4 +394,12 @@ pure val weight_reconcile = 6
 pure val weight_escalate = 6
 pure val weight_setConsent = 4
 pure val weight_verifyDestination = 4
+pure val weight_publishConfig = 4
+pure val configValues = Set(
+  { routes: List({ recipient: 1, backup: 2, pilotDigest: 0, pilotEffectiveAt: 0 }, { recipient: 2, backup: 3, pilotDigest: 0, pilotEffectiveAt: 0 },
+    { recipient: 3, backup: 0, pilotDigest: 0, pilotEffectiveAt: 0 }), generalEmail: true },
+  { routes: List({ recipient: 1, backup: 2, pilotDigest: 7, pilotEffectiveAt: 0 }, { recipient: 2, backup: 1, pilotDigest: 8, pilotEffectiveAt: 5000000 }),
+    generalEmail: false })
+pure val tokenValues = Set({ recipient: 1, version: 1, category: SecurityMail }, { recipient: 1, version: 1, category: ActivityMail },
+  { recipient: 2, version: 2, category: SecurityMail })
 ```
