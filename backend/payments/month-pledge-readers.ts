@@ -23,9 +23,10 @@ type SolanaPledgeReader = (input: {
 }) => Promise<ChainMonthPledges | null>;
 
 /**
- * The readers come from the contract adapters. Until the contract changes
- * that add them are merged, they are absent and every vault reads as one
- * without pledge support, which is today's behaviour.
+ * The readers come from the contract adapters. Until the EVM contract change
+ * that adds its reader is merged, it is absent and every EVM vault reads as
+ * one without pledge support, which is today's behaviour. The Solana reader
+ * returns null for a Project not yet migrated.
  */
 export const chainPledgeReaders: {
   evm: EvmPledgeReader | undefined;
@@ -33,7 +34,5 @@ export const chainPledgeReaders: {
 } = {
   evm: (evmAdapter as unknown as { readEvmMonthPledges?: EvmPledgeReader })
     .readEvmMonthPledges,
-  solana: (
-    solanaAdapter as unknown as { readSolanaMonthPledges?: SolanaPledgeReader }
-  ).readSolanaMonthPledges,
+  solana: solanaAdapter.readSolanaMonthPledges,
 };

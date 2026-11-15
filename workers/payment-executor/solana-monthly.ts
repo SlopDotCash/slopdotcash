@@ -3,6 +3,8 @@ import { sha256 } from "@noble/hashes/sha2.js";
 import { bytesToHex, hexToBytes } from "@noble/hashes/utils.js";
 import type { MonthlyAuthorization } from "../../backend/payments/monthly-attestation-types";
 import {
+  MONTH_PLEDGE_DISCRIMINATOR,
+  MONTH_PLEDGE_SIZE,
   OBLIGATION_DISCRIMINATOR,
   OBLIGATION_SIZE,
   type SolanaEscrowConfig,
@@ -14,6 +16,7 @@ import {
   solanaBase58,
   solanaDigest,
   solanaMonthlyMessage,
+  solanaMonthPledgeAddress,
   solanaPubkey,
   solanaRpc,
   solanaUint,
@@ -44,19 +47,6 @@ import {
   verifiedSignerSignature,
 } from "./solana";
 
-/**
- * The program's `MonthPledge` account (operator decision, 15 November 2026):
- * discriminator, project, period, amount, open, bump. Seeds
- * `["pledge", project, period u32 LE]`.
- */
-export const MONTH_PLEDGE_SIZE = 8 + 32 + 4 + 8 + 1 + 1;
-export function monthPledgeAddress(
-  programId: string,
-  projectPda: string,
-  period: Uint8Array,
-) {
-  return pda(programId, [encoder.encode("pledge"), bytes(projectPda), period]);
-}
 const discriminator = (name: string) =>
   bytesToHex(sha256(encoder.encode(`account:${name}`)).slice(0, 8));
 function u32(value: number) {
@@ -377,16 +367,16 @@ export async function submitSolanaMonthly(
     // An owner's pledge for this month lets the program reserve it with the
     // monthly switch off. Before the program upgrade, or without a pledge,
     // the account is absent and the instruction is unchanged.
-    const pledgeAddress = monthPledgeAddress(
+    const pledgeAddress = solanaMonthPledgeAddress(
       config.programId,
       config.projectPda,
-      period,
+      Number(plan.request.period.replace("-", "")),
     );
     const pledge = await readSolanaAccount(
       config,
       pledgeAddress,
       MONTH_PLEDGE_SIZE,
-      discriminator("MonthPledge"),
+      MONTH_PLEDGE_DISCRIMINATOR,
     );
     return submit(env, config, `${journal}:root`, [
       {

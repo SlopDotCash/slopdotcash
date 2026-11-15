@@ -117,3 +117,25 @@ test("the Solana reader gets the project account; a vault before the upgrade rea
     },
   ]);
 });
+
+test("a lock still open from an earlier month is read again until it is released", async () => {
+  const calls: { periods: number[] }[] = [];
+  await readDeploymentMonthPledges(
+    { chain: "base", network: "base-mainnet", vault: "0xabc" },
+    "https://rpc.invalid",
+    totals,
+    {
+      evm: async (input) => {
+        calls.push(input);
+        return { openPledgedGross: 0n, pledges: [] };
+      },
+      solana: undefined,
+    },
+    ["2026-08", "2026-12"],
+  );
+  expect(calls[0].periods[0]).toBe(202608);
+  expect(calls[0].periods.filter((period) => period === 202612)).toHaveLength(
+    1,
+  );
+  expect(calls[0].periods).toHaveLength(14);
+});

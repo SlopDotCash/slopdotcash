@@ -10,6 +10,7 @@ import {
   BINDING_SIZE,
   OBLIGATION_DISCRIMINATOR,
   OBLIGATION_SIZE,
+  PRE_PLEDGE_PROJECT_SIZE,
   PROJECT_SIZE,
   SOLANA_NATIVE_ASSET,
   type SolanaEscrowConfig,
@@ -150,11 +151,11 @@ export async function preflightSolanaDeployment(
 }
 /**
  * Project account sizes the executor reads: before the month-pledge program
- * upgrade (332 bytes) and after `migrate_project` appends `pledged_open`
- * (340 bytes; operator decision, 15 November 2026). Every field the
- * executor reads sits before the appended one.
+ * upgrade and after `migrate_project` appends `pledged_open` (operator
+ * decision, 15 November 2026). Every field the executor reads sits before
+ * the appended one.
  */
-const PROJECT_SIZES = [...new Set([PROJECT_SIZE, 332, 340])];
+export const PROJECT_SIZES = [PRE_PLEDGE_PROJECT_SIZE, PROJECT_SIZE] as const;
 
 /** Reads the Project account at either size; null when it does not exist. */
 export async function readSolanaProject(

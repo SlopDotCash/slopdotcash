@@ -26,6 +26,7 @@ import { ed25519 } from "@noble/curves/ed25519.js";
 import { sha256 } from "@noble/hashes/sha2.js";
 import { decodeFunctionResult, encodeFunctionData, type Hex } from "viem";
 import {
+  PRE_PLEDGE_PROJECT_SIZE,
   PROJECT_DISCRIMINATOR,
   PROJECT_SIZE,
   SOLANA_NATIVE_ASSET,
@@ -896,26 +897,7 @@ export function createSolanaClient(options: SolanaClientOptions): ChainClient {
       { commitment: "confirmed", encoding: "base64" },
     ]);
     if (info.value === null) throw new Error("project account missing");
-    // Before the month-pledge program upgrade a Project is 332 bytes; after
-    // `migrate_project` it is 340, with `pledged_open` appended after every
-    // field read here (operator decision, 15 November 2026).
-    let mismatch: unknown;
-    for (const size of new Set([PROJECT_SIZE, 332, 340])) {
-      try {
-        return solanaUint(
-          solanaAccount(
-            info.value,
-            escrow.programId,
-            size,
-            PROJECT_DISCRIMINATOR,
-          ),
-          ACCRUED_FEES_OFFSET,
-        );
-      } catch (error) {
-        mismatch = error;
-      }
-    }
-    throw mismatch;
+    return projectAccruedFees(info.value, escrow.programId);
   }
 
   /** Token balance change of `owner`'s `mint` accounts in one transaction. */
@@ -1803,4 +1785,25 @@ interface TransactionReceipt {
     postTokenBalances: TokenBalance[];
     logMessages: string[] | null;
   };
+}
+
+/**
+ * Accrued fees from a Project account. Before the month-pledge program
+ * upgrade a Project is 332 bytes; after `migrate_project` it is 340, with
+ * `pledged_open` appended after every field read here (operator decision,
+ * 15 November 2026).
+ */
+export function projectAccruedFees(value: unknown, programId: string): bigint {
+  let mismatch: unknown;
+  for (const size of [PRE_PLEDGE_PROJECT_SIZE, PROJECT_SIZE]) {
+    try {
+      return solanaUint(
+        solanaAccount(value, programId, size, PROJECT_DISCRIMINATOR),
+        ACCRUED_FEES_OFFSET,
+      );
+    } catch (error) {
+      mismatch = error;
+    }
+  }
+  throw mismatch;
 }
