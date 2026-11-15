@@ -39,6 +39,7 @@ import {
   MetricGrid,
   MetricTile,
   NetworkName,
+  paymentsOn,
   StatusBadge,
 } from "./Presentation";
 
@@ -615,7 +616,7 @@ export default function OwnerAwards({
                   </p>
                 )}
               </section>
-              {project.reward.paymentMode !== "enabled" && (
+              {!paymentsOn(project) && (
                 <p role="status">Payments are disabled for this project.</p>
               )}
               {!view.proposal ? (
