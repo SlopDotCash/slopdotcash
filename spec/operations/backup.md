@@ -19,9 +19,12 @@ come from the private destination bucket.
 
 ### One cycle copies an ordered verified prefix and completes one manifest
 
-The scheduled start opens a cycle for its UTC day only when no cycle is open;
-a later cron resumes the open cycle instead of starting an overlapping
-snapshot. Pages are copied and verified in order. A duplicate delivery of a
+The scheduled start opens a cycle for each UTC day, in its own day prefix,
+only when no cycle is copying, queued as failed or cleaning up; a completed or
+cleaned cycle never blocks the next day's snapshot. A later cron resumes the
+open cycle instead of starting an overlapping snapshot. The machine follows
+the latest cycle; earlier cycles' copies expire under the bucket's 30-day
+lifecycle rule, an external storage obligation. Pages are copied and verified in order. A duplicate delivery of a
 copied page changes nothing. A page that fails five times moves to the
 private failure queue; neither a failure queue entry nor a missing completion
 receipt is a successful backup. Replaying the failed work resumes at the same
@@ -32,25 +35,30 @@ type BackupPhase = NotStarted | Copying | FailedQueue | BackupComplete | Cleanup
 type RestorePhase = NoRestore | CheckingChain | WritingDestination | RestoreUncertain | Restored | RestoreRefused
 type Prefix = RestoreCheckPrefix | LiveEvidencePrefix
 type Generation = LegacyNullGeneration | Generational
-type Copy = Backed | Changed | Missing
+type Copy = Unclassified | Backed | Changed | Missing
 type Retention = Kept | PermanentAdmission | Deleted | RetentionHeld | RetentionMissing
 type AuditEntry = { day: int, removed: bool }
-type EvidenceObject = { id: int, closedDay: int, admission: bool, generation: Generation, copy: Copy, retention: Retention }
+type EvidenceObject = { id: int, closedDay: int, admission: bool, generation: Generation, declared: int, stored: int,
+  marker: bool, copy: Copy, receiptDay: int, receiptDigest: int, retention: Retention }
 type Backup = { phase: BackupPhase, cycleDay: int, clockDay: int, expectedPages: int, pageDigests: List[int], verifiedPages: int,
   failures: int, manifestDigest: int, completeDigest: int, restore: RestorePhase, restoreSource: int, destinationDigest: int,
-  restorePrefix: Prefix, chainChecked: bool, restoredCycles: List[int], retentionEnabled: bool,
+  restorePrefix: Prefix, chainChecked: bool, restoredCycles: List[int], completedDays: List[int], retentionEnabled: bool,
   objects: List[EvidenceObject], accessLog: List[AuditEntry] }
 pure val initial: Backup = { phase: NotStarted, cycleDay: 0, clockDay: 0, expectedPages: 0, pageDigests: List(), verifiedPages: 0,
   failures: 0, manifestDigest: 0, completeDigest: 0, restore: NoRestore, restoreSource: 0, destinationDigest: 0,
-  restorePrefix: RestoreCheckPrefix, chainChecked: false, restoredCycles: List(), retentionEnabled: false,
-  objects: List({ id: 1, closedDay: 0, admission: false, generation: Generational, copy: Backed, retention: Kept },
-    { id: 2, closedDay: 0, admission: true, generation: Generational, copy: Backed, retention: Kept },
-    { id: 3, closedDay: 0, admission: false, generation: LegacyNullGeneration, copy: Backed, retention: Kept },
-    { id: 4, closedDay: 0, admission: false, generation: Generational, copy: Changed, retention: Kept }),
+  restorePrefix: RestoreCheckPrefix, chainChecked: false, restoredCycles: List(), completedDays: List(), retentionEnabled: false,
+  objects: List({ ...unclassified, id: 1, declared: 7, stored: 7 },
+    { ...unclassified, id: 2, admission: true, declared: 7, stored: 7 },
+    { ...unclassified, id: 3, generation: LegacyNullGeneration, declared: 7, stored: 7 },
+    { ...unclassified, id: 4, declared: 7, stored: 8 },
+    { ...unclassified, id: 5, declared: 7, stored: 0 }),
   accessLog: List({ day: 0, removed: false }, { day: 200, removed: false }) }
+pure val unclassified: EvidenceObject = { id: 0, closedDay: 0, admission: false, generation: Generational, declared: 0, stored: 0,
+  marker: false, copy: Unclassified, receiptDay: 0, receiptDigest: 0, retention: Kept }
 pure def cycleOpen(b: Backup): bool = b.phase == Copying or b.phase == FailedQueue or b.phase == CleanupPending
-pure def canStart(b: Backup, pages: int, digest: int): bool = not(cycleOpen(b)) and b.phase != BackupComplete
-  and pages >= 0 and digest > 0 and (b.phase == NotStarted or b.clockDay > b.cycleDay)
+pure def restoreInFlight(b: Backup): bool = b.restore == CheckingChain or b.restore == WritingDestination or b.restore == RestoreUncertain
+pure def canStart(b: Backup, pages: int, digest: int): bool = not(cycleOpen(b)) and not(restoreInFlight(b))
+  and pages >= 0 and digest > 0 and b.clockDay > b.cycleDay
 pure def start(b: Backup, pages: int, digest: int): Backup = { ...b, phase: Copying, cycleDay: b.clockDay, expectedPages: pages,
   manifestDigest: digest, pageDigests: List(), verifiedPages: 0, failures: 0, completeDigest: 0, restore: NoRestore,
   restoreSource: 0, destinationDigest: 0, chainChecked: false }
@@ -67,7 +75,8 @@ pure def canReplayFailed(b: Backup, by: str): bool = b.phase == FailedQueue and 
 pure def replayFailed(b: Backup, by: str): Backup = { ...b, phase: Copying, failures: 0 }
 pure def canFinish(b: Backup, digest: int): bool = b.phase == Copying and b.verifiedPages == b.expectedPages
   and b.pageDigests.length() == b.expectedPages and digest == b.manifestDigest
-pure def finish(b: Backup, digest: int): Backup = { ...b, phase: BackupComplete, completeDigest: digest }
+pure def finish(b: Backup, digest: int): Backup = { ...b, phase: BackupComplete, completeDigest: digest,
+  completedDays: b.completedDays.append(b.cycleDay) }
 pure def alwaysBackupPrefix(b: Backup): bool = b.verifiedPages >= 0 and b.verifiedPages <= b.pageDigests.length()
   and b.pageDigests.length() <= b.expectedPages and b.pageDigests.every(d => d > 0) and b.failures >= 0 and b.failures <= 5
   and (b.phase != FailedQueue implies b.failures < 5) and (b.phase != NotStarted implies b.manifestDigest > 0)
@@ -81,6 +90,9 @@ pure def stepReplayKeepsCursor(before: Backup, via: str, after: Backup): bool =
   via == "replayFailed" implies after.pageDigests == before.pageDigests and after.verifiedPages == before.verifiedPages
 pure def sometimesFailedQueue(b: Backup): bool = b.phase == FailedQueue
 pure def sometimesBackupComplete(b: Backup): bool = b.phase == BackupComplete
+pure def sometimesConsecutiveDailyCycles(b: Backup): bool = b.completedDays.length() >= 2 and not(b.retentionEnabled)
+pure def stepCycleDaysAdvance(before: Backup, after: Backup): bool = after.cycleDay >= before.cycleDay
+  and after.completedDays.length() >= before.completedDays.length()
 ```
 
 ## Story: Restore only from a complete chain into an isolated prefix
@@ -127,10 +139,18 @@ Raw deletion stays disabled until the retention release variable is enabled
 through the reviewed release, and enabling it requires a proven restoration
 of a completed cycle. After a complete snapshot, cleanup selects only objects
 whose case closed at least 90 days earlier. Successful admission-scan
-evidence is permanent. A backed generational object may be deleted with a
-receipt; changed or missing bytes record `retention-missing`; a legacy
-null-generation reference records `retention-held`. A cycle with cleanup
-pending blocks the next snapshot.
+evidence is permanent. Each cleanup classifies the selected generational
+object against the current cycle: bytes whose digest the Worker read equal
+the declared digest are `backed`, different bytes are `changed`, and an
+absent target is `missing` only after a verified create-only missing marker.
+The receipt is bound to the cycle day and its completion digest; a receipt of
+an earlier cycle never qualifies a deletion. An earlier admitted write
+either lands before the marker and is classified from its bytes, or loses
+to the marker. A backed object may be deleted with a receipt; changed or
+missing bytes record `retention-missing`; a legacy null-generation reference
+records `retention-held`. A cycle with cleanup pending blocks the next
+snapshot. That every writer follows the create-only protocol is an external
+obligation of the evidence writers.
 
 ```quint
 pure def canSetRetention(b: Backup, retention: bool, by: str): bool = by == "releaseWorkflow" and retention != b.retentionEnabled
@@ -143,23 +163,54 @@ pure def eligible(b: Backup, o: EvidenceObject): bool = o.closedDay > 0 and b.cl
 pure def retentionOutcome(o: EvidenceObject): Retention =
   if (o.admission) PermanentAdmission else if (o.generation == LegacyNullGeneration) RetentionHeld
   else if (o.copy == Backed) Deleted else RetentionMissing
+pure def needsReceipt(o: EvidenceObject): bool = not(o.admission) and o.generation == Generational
+pure def receiptCurrent(b: Backup, o: EvidenceObject): bool =
+  o.copy != Unclassified and o.receiptDay == b.cycleDay and o.receiptDigest == b.completeDigest
+pure def classification(o: EvidenceObject): Copy =
+  if (o.stored == 0) Missing else if (o.stored == o.declared) Backed else Changed
+pure def canLateWrite(b: Backup, id: int, digest: int): bool =
+  digest > 0 and b.objects.some(o => o.id == id and o.stored == 0 and not(o.marker) and o.retention == Kept)
+pure def lateWrite(b: Backup, id: int, digest: int): Backup =
+  { ...b, objects: b.objects.listMap(o => if (o.id == id and o.stored == 0 and not(o.marker)) { ...o, stored: digest } else o) }
+pure def canWriteMissingMarker(b: Backup, id: int): bool = b.phase == CleanupPending
+  and b.objects.some(o => o.id == id and eligible(b, o) and needsReceipt(o) and o.stored == 0 and not(o.marker))
+pure def writeMissingMarker(b: Backup, id: int): Backup =
+  { ...b, objects: b.objects.listMap(o => if (o.id == id and o.stored == 0) { ...o, marker: true } else o) }
+pure def canClassify(b: Backup, id: int): bool = b.phase == CleanupPending
+  and b.objects.some(o => o.id == id and eligible(b, o) and needsReceipt(o) and not(receiptCurrent(b, o))
+    and (o.stored > 0 or o.marker))
+pure def classify(b: Backup, id: int): Backup =
+  { ...b, objects: b.objects.listMap(o => if (o.id == id and eligible(b, o) and needsReceipt(o))
+      { ...o, copy: classification(o), receiptDay: b.cycleDay, receiptDigest: b.completeDigest } else o) }
 pure def canBeginCleanup(b: Backup): bool = b.phase == BackupComplete and b.retentionEnabled
 pure def beginCleanup(b: Backup): Backup = { ...b, phase: CleanupPending }
 pure def canRetain(b: Backup, id: int): bool = b.phase == CleanupPending and b.retentionEnabled
-  and b.objects.some(o => o.id == id and eligible(b, o))
+  and b.objects.some(o => o.id == id and eligible(b, o) and (needsReceipt(o) implies receiptCurrent(b, o)))
 pure def retain(b: Backup, id: int): Backup =
   { ...b, objects: b.objects.listMap(o => if (o.id == id and eligible(b, o)) { ...o, retention: retentionOutcome(o) } else o) }
 pure def canFinishCleanup(b: Backup): bool = b.phase == CleanupPending
 pure def finishCleanup(b: Backup): Backup = { ...b, phase: Cleaned }
 pure def alwaysAdmissionEvidencePermanent(b: Backup): bool = b.objects.every(o => o.admission implies o.retention != Deleted)
 pure def alwaysDeletionOnlyBacked(b: Backup): bool = b.objects.every(o => o.retention == Deleted implies
-  o.copy == Backed and o.generation == Generational and o.closedDay > 0 and b.clockDay - o.closedDay >= 90)
+  o.copy == Backed and o.stored == o.declared and o.stored > 0 and o.receiptDay > 0 and o.receiptDigest > 0
+    and o.generation == Generational and o.closedDay > 0 and b.clockDay - o.closedDay >= 90)
+pure def alwaysReceiptsMatchBytes(b: Backup): bool = b.objects.every(o =>
+  (o.copy == Backed implies o.stored > 0 and o.stored == o.declared)
+    and (o.copy == Changed implies o.stored > 0 and o.stored != o.declared)
+    and (o.copy == Missing implies o.marker and o.stored == 0)
+    and (o.marker implies o.stored == 0)
+    and (o.copy != Unclassified implies o.receiptDay > 0 and o.receiptDigest > 0 and o.receiptDay <= b.cycleDay))
+pure def stepStoredBytesCreateOnly(before: Backup, after: Backup): bool =
+  before.objects.every(o => after.objects.some(a => a.id == o.id and a.declared == o.declared
+    and (o.stored > 0 implies a.stored == o.stored) and (o.marker implies a.marker)))
 pure def alwaysRetentionNeedsRestoration(b: Backup): bool = b.retentionEnabled implies b.restoredCycles.length() > 0
 pure def stepRetentionFinal(before: Backup, after: Backup): bool =
   before.objects.every(o => o.retention != Kept implies after.objects.includes(o))
 pure def sometimesDeleted(b: Backup): bool = b.objects.some(o => o.retention == Deleted)
 pure def sometimesHeld(b: Backup): bool = b.objects.some(o => o.retention == RetentionHeld)
 pure def sometimesMissingRecorded(b: Backup): bool = b.objects.some(o => o.retention == RetentionMissing)
+pure def sometimesMissingAfterMarker(b: Backup): bool = b.objects.some(o => o.copy == Missing and o.retention == RetentionMissing)
+pure def sometimesLateWriteBacked(b: Backup): bool = b.objects.some(o => o.id == 5 and o.copy == Backed)
 pure def sometimesAdmissionKept(b: Backup): bool = b.objects.some(o => o.retention == PermanentAdmission)
 ```
 
@@ -194,7 +245,7 @@ These sets bound simulation only.
 
 ```quint
 pure val pagesValues = Set(0, 1, 2)
-pure val digestValues = Set(0, 5, 6)
+pure val digestValues = Set(0, 5, 6, 7)
 pure val observedDigestValues = Set(5, 6)
 pure val sourceDigestValues = Set(5, 6)
 pure val completeDigestValues = Set(5, 6)
@@ -202,7 +253,7 @@ pure val observedPagesValues = Set(List(), List(5), List(5, 6), List(6))
 pure val existingDigestValues = Set(0, 5, 6)
 pure val prefixValues = Set(RestoreCheckPrefix, LiveEvidencePrefix)
 pure val dayValues = Set(1, 31, 95, 400)
-pure val idValues = Set(1, 2, 3, 4)
+pure val idValues = Set(1, 2, 3, 4, 5)
 pure val retentionValues = Set(true, false)
 pure val byValues = Set("releaseWorkflow", "operator", "other")
 pure val weight_copyPage = 6
@@ -216,4 +267,7 @@ pure val weight_retain = 5
 pure val weight_failPage = 12
 pure val weight_replayFailed = 6
 pure val weight_start = 6
+pure val weight_classify = 6
+pure val weight_writeMissingMarker = 4
+pure val weight_beginCleanup = 4
 ```
