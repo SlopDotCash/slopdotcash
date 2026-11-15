@@ -130,10 +130,11 @@ pure def canRequestAssessment(e: Enforcement, by: int, repository: int, requestO
    else if (requestOrigin == AdminInvestigation) e.administrators.contains(by)
    else by == vettingService and e.restriction == FlagQuarantine and
      (not(freshClean(e, repository)) or not(coversActiveFlags(e, repository))))
+pure def pendingAssessment(id: int, requestSeq: int, requestEpoch: int, snapshot: List[int]): Assessment =
+  { id: id, state: APending, requestSeq: requestSeq, requestEpoch: requestEpoch, reused: false, verified: false, snapshot: snapshot }
 pure def requestAssessment(e: Enforcement, by: int, repository: int, requestOrigin: RequestOrigin, assessmentId: int): Enforcement =
   { ...e, seq: e.seq + 1, assessmentIds: e.assessmentIds.union(Set(assessmentId)),
-    latest: e.latest.put(repository, { id: assessmentId, state: APending, requestSeq: e.seq + 1, requestEpoch: e.epoch,
-      reused: false, verified: false, snapshot: activeReceipts(e) }) }
+    latest: e.latest.put(repository, pendingAssessment(assessmentId, e.seq + 1, e.epoch, activeReceipts(e))) }
 pure def alwaysLatestIdsRequested(e: Enforcement): bool =
   e.repositories.every(r => latestOf(e, r).state == NotAssessed or e.assessmentIds.contains(latestOf(e, r).id))
 pure def alwaysSequencedRequests(e: Enforcement): bool =
@@ -493,8 +494,9 @@ pure def alwaysFlagPauseHasNoRevision(e: Enforcement): bool = e.restriction == F
 pure def alwaysUnbannedReviewedFindings(e: Enforcement): bool =
   (e.restriction != ServiceBan and e.restriction != ModeratorBan) implies e.findings.subseteq(e.reviewedFindings)
 pure def alwaysReviewedAreFindings(e: Enforcement): bool = e.reviewedFindings.subseteq(e.findings)
+pure def noticeTo(entry: int, to: Recipient): Notice = { entry: entry, to: to }
 pure def alwaysNoticesPerEntry(e: Enforcement): bool =
-  e.journal.every(j => e.notices.includes({ entry: j.seq, to: ListingAccount }) and e.notices.includes({ entry: j.seq, to: StewardAccount }))
+  e.journal.every(j => e.notices.includes(noticeTo(j.seq, ListingAccount)) and e.notices.includes(noticeTo(j.seq, StewardAccount)))
 pure def alwaysJournalNumbered(e: Enforcement): bool =
   e.journal.every(j => j.seq > 0 and j.seq <= e.journal.length() and e.journal.every(k => k.seq == j.seq implies k == j))
 pure def alwaysFlagReceiptsUnique(e: Enforcement): bool =
