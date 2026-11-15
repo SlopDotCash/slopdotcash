@@ -634,6 +634,7 @@ async function runRegistryPhase() {
 /** Runs the preview and Pages phases inside the fixture workspace. */
 async function runFixturePhases() {
   let workspace;
+  let pagesPersistTo;
   let status;
   let failure;
   try {
@@ -648,6 +649,25 @@ async function runFixturePhases() {
       ["scripts/dist-manifest.mjs", "verify-local", "dist"],
       workspace,
     );
+    // Pages runs the real public API handlers. Give their background reads
+    // the complete local schema without introducing registry sessions.
+    if (selectedFixturePhases().some(({ server }) => server === "pages")) {
+      pagesPersistTo = mkdtempSync(join(tmpdir(), "slop-e2e-pages-d1-"));
+      await runCommand(
+        "node",
+        [
+          wrangler,
+          "d1",
+          "migrations",
+          "apply",
+          "slop-private",
+          "--local",
+          "--persist-to",
+          pagesPersistTo,
+        ],
+        workspace,
+      );
+    }
     // Launch Playwright here, not through a nested run-e2e process. Each phase
     // is detached by the shared helper and must be owned by this abort scope.
     const statuses = await Promise.all(
@@ -658,7 +678,12 @@ async function runFixturePhases() {
             server,
             port,
             args,
-            { SLOP_E2E_WORKSPACE: "fixture" },
+            {
+              SLOP_E2E_WORKSPACE: "fixture",
+              ...(server === "pages"
+                ? { SLOP_E2E_PAGES_PERSIST_TO: pagesPersistTo }
+                : {}),
+            },
             workspace,
           ),
         ),
@@ -670,6 +695,20 @@ async function runFixturePhases() {
     cancellation.abort(1);
     failure = error;
   } finally {
+    if (pagesPersistTo) {
+      try {
+        await rm(pagesPersistTo, {
+          recursive: true,
+          force: true,
+          maxRetries: 10,
+          retryDelay: 200,
+        });
+      } catch (error) {
+        cancellation.record(1);
+        if (failure) console.error(error);
+        else failure = error;
+      }
+    }
     if (workspace) {
       try {
         // Preserve diagnostics before deleting this run's workspace.
