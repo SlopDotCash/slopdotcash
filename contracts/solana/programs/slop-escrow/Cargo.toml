@@ -18,6 +18,8 @@ anchor-debug = []
 # Lowers the on-chain binding delay floor to one second for the local end-to-end suite.
 short-delay-for-tests = []
 [dependencies]
-anchor-lang = { version = "=0.32.1", features = ["init-if-needed"] }
+# allow-missing-optionals: a trailing optional account (commit_monthly's month_pledge) may be
+# left off entirely, so callers that predate it keep working.
+anchor-lang = { version = "=0.32.1", features = ["init-if-needed", "allow-missing-optionals"] }
 anchor-spl = { version = "=0.32.1", features = ["token", "associated_token"] }
 solana-sha256-hasher = "=2.3.0"

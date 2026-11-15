@@ -67,9 +67,18 @@ export type SolanaProgramConfig = Omit<
 >;
 /** Project account size: 257 bytes of core state, the pending identity authority, its
  * effective time and confirmation, the i64 rotation delay, then the u8 purpose, the u64
- * monthly cap, the monthly on/off switch, the u64 accrued fees and the u64 outstanding
- * monthly gross. */
-export const PROJECT_SIZE = 332;
+ * monthly cap, the monthly on/off switch, the u64 accrued fees, the u64 outstanding
+ * monthly gross and the u64 sum of open month pledges. */
+export const PROJECT_SIZE = 340;
+/** A Project from the build before month pledges: identical up to byte 332, without
+ * `pledged_open`. The current program reads it only after `migrate_project`; every Project
+ * reader here accepts both sizes, since fields only ever append. */
+export const PRE_PLEDGE_PROJECT_SIZE = 332;
+const PROJECT_SIZES = [PRE_PLEDGE_PROJECT_SIZE, PROJECT_SIZE];
+/** Offset of the u64 `pledged_open` in a migrated Project. */
+const PLEDGED_OPEN = 332;
+/** MonthPledge: discriminator, project, u32 period, u64 amount, u8 open, u8 bump. */
+export const MONTH_PLEDGE_SIZE = 54;
 /** Wallet binding size: 160 bytes of latest-binding state plus the u64 paid version and u8 veto count. */
 export const BINDING_SIZE = 169;
 /** Obligation size: 137 bytes of v2 state plus the i64 commit time. */
@@ -102,6 +111,9 @@ const COMMIT = anchorDiscriminator("commit"),
   PAY_NATIVE = anchorDiscriminator("pay_native");
 export const CONFIG_DISCRIMINATOR = hex(
   sha256(encoder.encode("account:Config")).slice(0, 8),
+);
+export const MONTH_PLEDGE_DISCRIMINATOR = hex(
+  sha256(encoder.encode("account:MonthPledge")).slice(0, 8),
 );
 const uint = (bytes: Uint8Array, offset: number) =>
   new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength).getBigUint64(
@@ -219,7 +231,12 @@ function account(
   const data = list(info.data);
   if (data[1] !== "base64") throw new Error("Wrong account encoding");
   const bytes = decodeBase64(string(data[0]));
-  if (bytes.length !== size || hex(bytes.slice(0, 8)) !== discriminator)
+  // A Project may be of either appended layout; every other account has one size.
+  const sizes =
+    discriminator === PROJECT_DISCRIMINATOR && PROJECT_SIZES.includes(size)
+      ? PROJECT_SIZES
+      : [size];
+  if (!sizes.includes(bytes.length) || hex(bytes.slice(0, 8)) !== discriminator)
     throw new Error("Account layout mismatch");
   return bytes;
 }
@@ -433,7 +450,7 @@ interface SolanaAuthorityRotation {
 export function solanaAuthorityRotation(
   project: Uint8Array,
 ): SolanaAuthorityRotation {
-  if (project.length !== PROJECT_SIZE)
+  if (!PROJECT_SIZES.includes(project.length))
     throw new Error("Account layout mismatch");
   const view = new DataView(project.buffer, project.byteOffset);
   const pending = pubkey(project, 257);
@@ -1052,6 +1069,200 @@ export async function readVaultTotals(config: {
     accruedFees: accruedFees.toString(),
     reserved: reserved.toString(),
   };
+}
+
+/** A UTC period written YYYYMM, year 2000 to 9999, as the program accepts it. */
+function period(value: number): number {
+  const year = Math.floor(value / 100),
+    month = value % 100;
+  if (
+    !Number.isSafeInteger(value) ||
+    year < 2000 ||
+    year > 9999 ||
+    month < 1 ||
+    month > 12
+  )
+    throw new Error("Period must be YYYYMM");
+  return value;
+}
+const u32 = (value: number) => {
+  const bytes = new Uint8Array(4);
+  new DataView(bytes.buffer).setUint32(0, value, true);
+  return bytes;
+};
+const u64 = (value: bigint) => {
+  if (value < 0n || value > U64) throw new Error("Amount outside u64");
+  const bytes = new Uint8Array(8);
+  new DataView(bytes.buffer).setBigUint64(0, value, true);
+  return bytes;
+};
+const instruction = (name: string, ...args: Uint8Array[]) => {
+  const head = sha256(encoder.encode(`global:${name}`)).slice(0, 8);
+  const data = new Uint8Array(args.reduce((n, a) => n + a.length, 8));
+  data.set(head);
+  let offset = 8;
+  for (const a of args) {
+    data.set(a, offset);
+    offset += a.length;
+  }
+  return data;
+};
+/** The project's pledge PDA for one period (seeds `["pledge", project, period u32 LE]`). */
+export function solanaMonthPledgeAddress(
+  programId: string,
+  projectPda: string,
+  pledgePeriod: number,
+): string {
+  return programAddress(programId, [
+    encoder.encode("pledge"),
+    publicKeyBytes(projectPda),
+    u32(period(pledgePeriod)),
+  ]);
+}
+/** The program's month PDA for one period (seeds `["month", project, period u32 LE]`). */
+function monthAddress(programId: string, projectPda: string, value: number) {
+  return programAddress(programId, [
+    encoder.encode("month"),
+    publicKeyBytes(projectPda),
+    u32(period(value)),
+  ]);
+}
+/** One unsigned instruction: program ID, accounts in the program's order, data. */
+export interface SolanaPledgeInstruction {
+  program: string;
+  accounts: { key: string; write: boolean }[];
+  data: Uint8Array;
+}
+/** Distinct periods, at most the 12 the program accepts from the current one. */
+function pledgePeriods(periods: readonly number[]): number[] {
+  if (!Array.isArray(periods) || periods.length < 1 || periods.length > 12)
+    throw new Error("Pledge 1 to 12 periods");
+  const checked = periods.map(period);
+  if (new Set(checked).size !== checked.length)
+    throw new Error("Each period may be pledged once per transaction");
+  return checked;
+}
+/**
+ * The owner's `pledge_month` instructions, one per period, in the program's account order:
+ * the owner (signer and rent payer), the project, the period's pledge PDA, the system program.
+ * The program refuses a past period, one more than 11 months ahead, a lower amount than an
+ * open pledge, a bounty project and a pledge free funds cannot cover.
+ */
+export function solanaPledgeMonthsInstructions(
+  config: { programId: string; projectPda: string; owner: string },
+  plan: { wallet: string; periods: readonly number[]; amountMinor: bigint },
+): SolanaPledgeInstruction[] {
+  publicKeyBytes(plan.wallet);
+  if (plan.wallet !== config.owner)
+    throw new Error("Only the vault owner can pledge months");
+  if (typeof plan.amountMinor !== "bigint" || plan.amountMinor <= 0n)
+    throw new Error("A pledge must be positive");
+  const amount = u64(plan.amountMinor);
+  return pledgePeriods(plan.periods).map((value) => ({
+    program: config.programId,
+    accounts: [
+      { key: plan.wallet, write: true },
+      { key: config.projectPda, write: true },
+      {
+        key: solanaMonthPledgeAddress(
+          config.programId,
+          config.projectPda,
+          value,
+        ),
+        write: true,
+      },
+      { key: SOLANA_NATIVE_ASSET, write: false },
+    ],
+    data: instruction("pledge_month", u32(value), amount),
+  }));
+}
+/** Anyone's `expire_pledge`: the project, the pledge PDA and the period's month PDA. */
+export function solanaExpirePledgeInstruction(
+  config: { programId: string; projectPda: string },
+  pledgePeriod: number,
+): SolanaPledgeInstruction {
+  return {
+    program: config.programId,
+    accounts: [
+      { key: config.projectPda, write: true },
+      {
+        key: solanaMonthPledgeAddress(
+          config.programId,
+          config.projectPda,
+          pledgePeriod,
+        ),
+        write: true,
+      },
+      {
+        key: monthAddress(config.programId, config.projectPda, pledgePeriod),
+        write: false,
+      },
+    ],
+    data: instruction("expire_pledge", u32(period(pledgePeriod))),
+  };
+}
+/** One pledge as stored on chain; a period with no pledge reads amount 0 and closed. */
+export interface SolanaMonthPledge {
+  period: number;
+  amount: bigint;
+  open: boolean;
+}
+/**
+ * The project's open pledged total and each requested period's pledge, from one finalized
+ * slot. Null while the Project is of the pre-pledge layout (program not upgraded or project
+ * not migrated). Same shape as the EVM `readEvmMonthPledges`.
+ */
+export async function readSolanaMonthPledges(input: {
+  rpcUrl: string;
+  programId: string;
+  projectPda: string;
+  periods: readonly number[];
+  /** Accepted for symmetry with the snapshot callers; the PDAs do not depend on it. */
+  network?: string;
+}): Promise<{
+  openPledgedGross: bigint;
+  pledges: SolanaMonthPledge[];
+} | null> {
+  const periods = input.periods.map(period);
+  const addresses = periods.map((value) =>
+    solanaMonthPledgeAddress(input.programId, input.projectPda, value),
+  );
+  const response = object(
+    await rpc(input, "getMultipleAccounts", [
+      [input.projectPda, ...addresses],
+      { commitment: "finalized", encoding: "base64" },
+    ]),
+  );
+  const values = list(response.value);
+  if (values.length !== addresses.length + 1)
+    throw new Error("Invalid RPC account list");
+  if (values[0] == null) throw new Error("Project account missing");
+  const project = account(
+    values[0],
+    input.programId,
+    PROJECT_SIZE,
+    PROJECT_DISCRIMINATOR,
+  );
+  if (project.length === PRE_PLEDGE_PROJECT_SIZE) return null;
+  const pledges = periods.map((value, index) => {
+    const info = values[index + 1];
+    if (info == null) return { period: value, amount: 0n, open: false };
+    const data = account(
+      info,
+      input.programId,
+      MONTH_PLEDGE_SIZE,
+      MONTH_PLEDGE_DISCRIMINATOR,
+    );
+    const view = new DataView(data.buffer, data.byteOffset, data.byteLength);
+    if (
+      pubkey(data, 8) !== input.projectPda ||
+      view.getUint32(40, true) !== value ||
+      data[52] > 1
+    )
+      throw new Error("Month pledge identity mismatch");
+    return { period: value, amount: uint(data, 44), open: data[52] === 1 };
+  });
+  return { openPledgedGross: uint(project, PLEDGED_OPEN), pledges };
 }
 
 export {
