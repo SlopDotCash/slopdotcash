@@ -11,11 +11,12 @@ protection is rechecked in the same database operation as the append. The view
 contains no private award amount. Database atomicity and evidence authenticity
 require adapter conformance. The machine is instantiated per accepted source.
 
-Each applied history row is written to the canonical [Points
-journal](./journal.md) as one correction per recipient key with basis
-`Reallocation`, in the same database transaction. The row's shares sum to the
-unchanged pool, so the corrections together preserve the source's complete
-prior total. `applied` tracks the digests of those canonical corrections.
+Each applied history row is to be written to the canonical [Points
+journal](./journal.md) as one `reallocateUnit` revision of the source's work
+unit (basis `Reallocation`), in the same database transaction. Both this
+machine and the journal require the new shares to sum to the unchanged pool.
+That the two writes happen together is composition obligation C11; nothing
+here composes them. `applied` tracks the digests of those canonical corrections.
 Publication consumes the resulting journal snapshot through the [publication
 model](./publication.md). A revocation is a maintainer decision recorded in
 the correction workflow and bound to the source and an applied manifest.
@@ -26,15 +27,16 @@ the correction workflow and bound to the source and an applied manifest.
 
 ```quint
 import allocation as A from "./allocation"
+import periods as P from "./periods"
 type CorrectionPhase = Open | Prepared | EvidenceHeld | Protected | Stale | Applied | Replayed
 type JournalEntry = { source: int, occurredAt: int, shares: List[A::PointShare], revoked: bool }
 type Manifest = { digest: str, source: int, predecessor: int, connectedProof: bool, recipients: List[A::Recipient] }
-type Correction = { phase: CorrectionPhase, source: int, occurredAt: int, pool: int,
+type Correction = { phase: CorrectionPhase, project: str, source: int, occurredAt: int, pool: int,
   history: List[JournalEntry], staged: Manifest, applied: List[str], frozen: bool, revoked: bool }
 pure val original: JournalEntry = { source: 1, occurredAt: 1,
   shares: List({ actor: 3, points: 30 }), revoked: false }
 pure val emptyManifest: Manifest = { digest: "", source: 0, predecessor: 0, connectedProof: false, recipients: List() }
-pure val initial: Correction = { phase: Open, source: 1, occurredAt: 1, pool: 30,
+pure val initial: Correction = { phase: Open, project: "p", source: 1, occurredAt: 1, pool: 30,
   history: List(original), staged: emptyManifest, applied: List(), frozen: false, revoked: false }
 pure def predecessorMatches(c: Correction, manifest: Manifest): bool =
   manifest.source == c.source and manifest.digest != "" and manifest.predecessor == c.history.length()
@@ -46,7 +48,9 @@ pure def completeCorrection(c: Correction, manifest: Manifest): bool =
 
 The source journal must contain the entire prior pool, including the former
 carrier's share. A complete eligible proof is needed before the new shares can
-reach the atomic import. A frozen source refuses. A previously applied digest
+reach the atomic import. A frozen source refuses. A source is frozen only
+when monthly settlement freezes its project and occurrence month, through
+[periods](./periods.md). A previously applied digest
 is a replay, including after later revocation, and never appends again.
 
 ```quint
@@ -58,8 +62,9 @@ pure def prepare(c: Correction, manifest: Manifest): Correction =
   else if (c.frozen) { ...c, phase: Protected }
   else if (not(completeCorrection(c, manifest))) { ...c, phase: EvidenceHeld }
   else { ...c, phase: Prepared, staged: manifest }
-pure def canProtect(c: Correction): bool = not(c.frozen)
-pure def protect(c: Correction): Correction = { ...c, frozen: true }
+pure def canProtect(c: Correction, f: P::FreezeEvidence): bool =
+  not(c.frozen) and P::freezes(f) and f.project == c.project and f.period == P::periodOf(c.occurredAt)
+pure def protect(c: Correction, f: P::FreezeEvidence): Correction = { ...c, frozen: true }
 ```
 
 ### The atomic import rechecks current protection and the captured predecessor
@@ -106,9 +111,11 @@ pure val manifestValues = Set(readyManifest,
   { ...readyManifest, digest: "incomplete", connectedProof: false },
   { ...readyManifest, digest: "second", predecessor: 2 },
   { ...readyManifest, digest: "stale", predecessor: 0 })
+pure val settledFreeze: P::FreezeEvidence = { project: "p", period: 0, phase: P::Frozen, obligationExists: false }
+pure val fValues = Set(settledFreeze, { ...settledFreeze, phase: P::Proposed }, { ...settledFreeze, period: 1 })
 pure def lawProtectionRace(manifest: Manifest): bool = manifest == readyManifest implies
-  commit(protect(prepare(initial, manifest))).phase == Protected
-    and commit(protect(prepare(initial, manifest))).history == initial.history
+  commit(protect(prepare(initial, manifest), settledFreeze)).phase == Protected
+    and commit(protect(prepare(initial, manifest), settledFreeze)).history == initial.history
 pure val readyRevocation: Revocation = { source: 1, manifestDigest: "manifest", decision: "maintainer" }
 pure val revocationValues = Set(readyRevocation, { ...readyRevocation, manifestDigest: "other" }, { ...readyRevocation, source: 2 })
 pure def lawStalePredecessor(manifest: Manifest): bool = manifest == readyManifest implies

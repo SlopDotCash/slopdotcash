@@ -4,8 +4,9 @@ PRD sections 7 and 9: public pages serve cached snapshots that background
 jobs refresh, and a failed refresh never becomes an empty or partial
 leaderboard. This machine represents one GitHub read in the ingestion
 transport of `scripts/github-ingestion-read.ts` and the legacy
-`github_ingestion_read`, `github_budget_window` and `ingestion_retry`
-models. The [census](./census.md) consumes the result; the [quota
+`github_ingestion_read` and `ingestion_retry` models. The legacy
+`github_budget_window` model has no counterpart: the current transport keeps
+no request budget or window, so none is modeled here. The [census](./census.md) consumes the result; the [quota
 recovery](./quotaRecovery.md) collector owns the historical campaign.
 
 Only a GET to the GitHub API is retried. A rate-limited response (403 with a
@@ -74,8 +75,10 @@ The manifest names each part by its digest and size and the whole by its
 digest. The reader checks the entire manifest before any part read. Every
 part must match its digest and size, and the assembled bytes must match the
 whole digest. A mismatch is an error, never a fallback to another copy or an
-older generation; a deployment between part reads cannot mix generations
-because each part path is its own digest.
+older generation. The two laws below are consequences of that acceptance
+check, not further evidence: that a deployment between part reads cannot
+mix generations rests on each part path being its own digest, which is a
+shell obligation of the deployed reader.
 
 ```quint
 type Part = { digest: int, bytes: int }

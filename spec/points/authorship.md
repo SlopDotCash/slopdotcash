@@ -10,13 +10,19 @@ evidence. Maintainers are not excluded from implementation credit; bots and
 vendor agents are. The owner decision of 13 November 2026 weights recipients
 by additions plus deletions in their accepted commits.
 
-This machine represents one immutable accepted commit, following
+This machine represents one immutable accepted commit of one accepted
+source, following
 `scripts/generate-leaderboard.ts` (commit line cache, late author links) and
 the legacy `commit_line_cache`, `implementation_credit` and
 `implementation_credit_gate` models. Each observation is a record from the
 GitHub ingestion adapter, bound to the commit ID it names. An observation is
 recorded once per kind: an absent observation changes nothing, an identical
-repeat is a no-op, and a conflicting one holds the commit for review.
+repeat is a no-op, and a conflicting one holds the commit until a fresh
+complete re-read from GitHub replaces the observations. Whether the commit
+was already credited in an earlier accepted source is derived from the
+[work units](./workUnits.md) the [Points journal](./journal.md) owns, not
+asserted by the caller; passing the journal's current units is composition
+obligation C8.
 
 ## Story: Credit the implementation author without rewarding a carrier PR
 
@@ -24,18 +30,19 @@ repeat is a no-op, and a conflicting one holds the commit for review.
 
 ```quint
 import allocation as A from "./allocation"
+import workUnits as W from "./workUnits"
 type ActorKind = User | Bot | VendorAgent
 type AttributionPhase = Gathering | Attributed | Credited | ConflictHeld | Repaired
 type Observed = Unknown | Seen({ actor: int, kind: ActorKind, linked: bool })
 type Lines = NoLines | CompleteLines({ additions: int, deletions: int })
 type Acceptance = NotObserved | AcceptedCommit({ merge: bool, earlierSource: bool }) | Unaccepted
 type CopyBinding = NoCopy | VerifiedCopy({ actor: int, kind: ActorKind }) | DescriptionOnly
-type CommitAttribution = { phase: AttributionPhase, commitId: str, primary: Observed, source: Observed,
+type CommitAttribution = { phase: AttributionPhase, commitId: int, sourceId: int, primary: Observed, source: Observed,
   copy: CopyBinding, acceptance: Acceptance, lines: Lines, recipient: int, repairedFrom: int }
-pure val initial: CommitAttribution = { phase: Gathering, commitId: "accepted-commit", primary: Unknown,
+pure val initial: CommitAttribution = { phase: Gathering, commitId: 11, sourceId: 2, primary: Unknown,
   source: Unknown, copy: NoCopy, acceptance: NotObserved, lines: NoLines, recipient: 0, repairedFrom: 0 }
 pure def eligibleKind(kind: ActorKind): bool = kind == User
-pure def alwaysCommitIdentity(a: CommitAttribution): bool = a.commitId == "accepted-commit"
+pure def alwaysCommitIdentity(a: CommitAttribution): bool = a.commitId == 11 and a.sourceId == 2
 pure def linesValid(lines: Lines): bool = match lines { | CompleteLines(x) => x.additions >= 0 and x.deletions >= 0 | NoLines => true }
 pure def alwaysLineEvidence(a: CommitAttribution): bool = linesValid(a.lines)
 ```
@@ -94,15 +101,18 @@ pure def lawBotsAndAgentsExcluded(actor: int, kind: ActorKind): bool =
 ### Only accepted unique non-merge commits contribute line weight
 
 A synchronization merge and a commit already credited in an earlier accepted
-source contribute nothing. For a retained copy the line counts are the
+source contribute nothing. The commit is already credited when an accepted
+work unit that does not contain this source contains the commit. For a retained copy the line counts are the
 accepted copy's. Complete zero-line evidence stays explicit; missing line
 evidence holds a multiple-recipient allocation.
 
 ```quint
-pure def canObserveAcceptance(a: CommitAttribution, merge: bool, earlierSource: bool): bool =
+pure def creditedElsewhere(a: CommitAttribution, units: W::Units): bool =
+  units.units.some(u => u.accepted and u.commits.contains(a.commitId) and not(u.sources.contains(a.sourceId)))
+pure def canObserveAcceptance(a: CommitAttribution, merge: bool, units: W::Units): bool =
   a.phase == Gathering and notObserved(a.acceptance)
-pure def observeAcceptance(a: CommitAttribution, merge: bool, earlierSource: bool): CommitAttribution =
-  { ...a, acceptance: AcceptedCommit({ merge: merge, earlierSource: earlierSource }) }
+pure def observeAcceptance(a: CommitAttribution, merge: bool, units: W::Units): CommitAttribution =
+  { ...a, acceptance: AcceptedCommit({ merge: merge, earlierSource: creditedElsewhere(a, units) }) }
 pure def canRecordLines(a: CommitAttribution, additions: int, deletions: int): bool =
   a.phase == Gathering and additions >= 0 and deletions >= 0 and not(hasLines(a.lines))
 pure def recordLines(a: CommitAttribution, additions: int, deletions: int): CommitAttribution =
@@ -133,30 +143,52 @@ pure def alwaysCreditedHasLines(a: CommitAttribution): bool = (a.phase == Credit
 pure def alwaysRepairKeepsPredecessor(a: CommitAttribution): bool = a.phase == Repaired implies (a.repairedFrom > 0 and a.repairedFrom != a.recipient)
 pure def stepCreditedNeverRewritten(before: CommitAttribution, after: CommitAttribution): bool =
   (before.phase == Credited or before.phase == Repaired) implies (after.lines == before.lines and after.acceptance == before.acceptance)
-pure def stepConflictHolds(before: CommitAttribution, after: CommitAttribution): bool =
-  before.phase == ConflictHeld implies after == before
+pure def stepConflictHolds(before: CommitAttribution, via: str, after: CommitAttribution): bool =
+  (before.phase == ConflictHeld and via != "reread") implies after == before
 pure def sometimesPrimary(a: CommitAttribution): bool = a.phase == Credited and primaryRecipient(a.primary) == a.recipient
 pure def sometimesCopyFallback(a: CommitAttribution): bool = a.phase == Credited and primaryRecipient(a.primary) == 0 and copyRecipient(a.copy) == a.recipient
 pure def sometimesSourceFallback(a: CommitAttribution): bool = a.phase == Credited and primaryRecipient(a.primary) == 0 and copyRecipient(a.copy) == 0 and a.recipient > 0
 pure def sometimesConflictHeld(a: CommitAttribution): bool = a.phase == ConflictHeld
 pure def sometimesRepaired(a: CommitAttribution): bool = a.phase == Repaired
 pure def sometimesMergeHeld(a: CommitAttribution): bool = acceptedAs(a.acceptance, true, false)
+pure def sometimesCreditedElsewhere(a: CommitAttribution): bool = acceptedAs(a.acceptance, false, true)
+pure def sometimesConflictResolved(a: CommitAttribution): bool = a.phase == Credited and a.repairedFrom == 0 and sameSeen(a.primary, 2, User, true)
+```
+
+### A fresh complete re-read resolves a held conflict
+
+A held commit returns to gathering only with a fresh, complete re-read of its
+primary author from GitHub. The earlier conflicting source and copy
+observations are discarded and must be observed again; acceptance and line
+evidence, which are immutable commit facts, are kept.
+
+```quint
+pure def canReread(a: CommitAttribution, actor: int, kind: ActorKind, linked: bool): bool =
+  a.phase == ConflictHeld and actor > 0
+pure def reread(a: CommitAttribution, actor: int, kind: ActorKind, linked: bool): CommitAttribution =
+  { ...a, phase: Gathering, primary: Seen({ actor: actor, kind: kind, linked: linked }), source: Unknown, copy: NoCopy, recipient: 0 }
 ```
 
 ### Recipient line weights sum additions plus deletions over contributing commits
 
-The allocation receives one recipient per actor. Merge commits, commits
-credited in an earlier source, unattributed commits and commits without
-complete line evidence contribute no lines; any such missing evidence keeps
-the allocation's complete-lines input false.
+The allocation receives one recipient per attributed actor of a
+contributing commit, derived from the commits themselves, so no attributed
+actor can be omitted. Each row is a credited attribution record above.
+Merge commits, commits credited in an earlier source, unattributed commits
+and commits without complete line evidence contribute no lines; any such
+missing evidence keeps the allocation's complete-lines input false.
 
 ```quint
 type CommitLines = { recipient: int, additions: int, deletions: int, merge: bool, earlierSource: bool, complete: bool }
 pure def commitWeight(c: CommitLines): int = if (c.merge or c.earlierSource or not(c.complete)) 0 else c.additions + c.deletions
 pure def linesFor(commits: List[CommitLines], actor: int): int =
   commits.foldl(0, (acc, c) => if (c.recipient == actor) acc + commitWeight(c) else acc)
-pure def recipientLines(commits: List[CommitLines], actors: List[int]): List[A::Recipient] =
-  actors.listMap(actor => { actor: actor, lines: linesFor(commits, actor) })
+pure def contributingCommit(c: CommitLines): bool = not(c.merge) and not(c.earlierSource) and c.recipient > 0
+pure def addActor(xs: List[int], c: CommitLines): List[int] =
+  if (contributingCommit(c) and not(xs.includes(c.recipient))) xs.append(c.recipient) else xs
+pure def actorsOf(commits: List[CommitLines]): List[int] = commits.foldl(List(), (acc, c) => addActor(acc, c))
+pure def recipientLines(commits: List[CommitLines]): List[A::Recipient] =
+  actorsOf(commits).listMap(actor => { actor: actor, lines: linesFor(commits, actor) })
 pure def completeLines(commits: List[CommitLines]): bool =
   commits.every(c => c.merge or c.earlierSource or (c.complete and c.recipient > 0))
 pure def lawLinesAreAdditionsPlusDeletions(additions: int, deletions: int): bool =
@@ -178,4 +210,10 @@ pure val linkedValues = Set(true, false)
 pure val additionsValues = Set(0, 1, 2)
 pure val deletionsValues = Set(0, 1, 2)
 pure val copyValues = Set(VerifiedCopy({ actor: 2, kind: User }), VerifiedCopy({ actor: 1, kind: User }), DescriptionOnly)
+pure val mergeValues = Set(true, false)
+pure val unitsValues = Set(W::initial,
+  { ...W::initial, nextId: 2, units: List({ id: 1, project: "p", sources: Set(1), commits: Set(11), band: 0, value: 10,
+    accepted: true, acceptedPeriod: 24320, superseded: false, frozen: false, supersededBy: 0 }) },
+  { ...W::initial, nextId: 2, units: List({ id: 1, project: "p", sources: Set(2), commits: Set(11), band: 0, value: 10,
+    accepted: true, acceptedPeriod: 24320, superseded: false, frozen: false, supersededBy: 0 }) })
 ```

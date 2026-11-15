@@ -5,7 +5,7 @@ lemma lawProtectionRace_ensures(manifest: Manifest)
   if manifest == readyManifest {
     ReadyManifestAllocates();
     assert prepare(initial, manifest).phase.Prepared?;
-    var protected := protect(prepare(initial, manifest));
+    var protected := protect(prepare(initial, manifest), settledFreeze);
     assert protected.frozen && protected.history == initial.history;
     assert commit(protected).phase.Protected?;
     assert commit(protected).history == initial.history;

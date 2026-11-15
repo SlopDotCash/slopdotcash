@@ -10,7 +10,7 @@ lemma observe_ensures(w: Window, e: LedgerEvent)
   if inv(w) && canObserve(w, e) {
     IdsMeaning(w);
     if !(exists r :: r in w.records && (r.id == e.id)) {
-      AppendUniqueRecord(w.records, Recorded(e.id, e.actor, outcomeOf(w, e)));
+      AppendUniqueRecord(w.records, Recorded(e.id, e.source, e.actor, outcomeOf(w, e)));
     }
     IdsMeaning(observe(w, e));
   }

@@ -16,8 +16,10 @@ journal](./journal.md) appends the recognition once per key.
 ### Only a paid recipient of a paid, settled monthly-pool cycle is recognized
 
 Every other cycle kind, an unpaid recipient, a cycle without a settlement
-record and a zero payment earn nothing. The number of transfers and the paid
-amount never change the 25 Points.
+record and a zero payment earn nothing (`src/lib/payout-points.ts` keys on a
+paid monthly-pool cycle with a settlement record and a positive `paidMinor`).
+The number of transfers, including none recorded, and the paid amount never
+change the 25 Points.
 
 ```quint
 type CycleKind = MonthlyPool | LegacyCycle
@@ -29,10 +31,10 @@ pure val recognitionPoints = 25
 pure def eligible(p: PaidRecipient): bool =
   p.project != "" and p.cycle > 0 and p.actor > 0 and p.kind == MonthlyPool and p.state == CyclePaid and
   p.settledAt > 0 and p.settlementDigest != "" and p.recipientState == RecipientPaid and
-  p.paidMinor > 0 and p.transfers > 0
+  p.paidMinor > 0
 pure def recognitionAmount(p: PaidRecipient): int = if (eligible(p)) recognitionPoints else 0
 pure def lawFixedPerCycle(paid: PaidRecipient, paidMinor: int, transfers: int): bool =
-  (eligible(paid) and paidMinor > 0 and transfers > 0) implies
+  (eligible(paid) and paidMinor > 0 and transfers >= 0) implies
     recognitionAmount({ ...paid, paidMinor: paidMinor, transfers: transfers }) == recognitionPoints
 pure def lawOnlyPaidRecognized(paid: PaidRecipient): bool =
   (paid.state != CyclePaid or paid.recipientState != RecipientPaid or paid.kind != MonthlyPool) implies recognitionAmount(paid) == 0

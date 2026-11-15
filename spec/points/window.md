@@ -9,8 +9,12 @@ an empty leaderboard. This machine follows `src/lib/leaderboard.ts`
 `leaderboard_transport` and `ingestion_retry` models.
 
 The GitHub read adapter supplies each event with its immutable ID, actor
-kind and times; the [census](./census.md) supplies the completeness of the
-source inventory. Accepted-work values come from [work units](./workUnits.md)
+kind, times and the census item it belongs to. The [census](./census.md)
+supplies the source inventory: publication needs a census record in phase
+`Ready` or `Published` whose terminal page was read and whose item count
+equals GitHub's `totalCount`, and every recorded event must belong to an
+item of that inventory. Passing the census state of the same refresh is
+composition obligation C10. Accepted-work values come from [work units](./workUnits.md)
 and the [Points journal](./journal.md).
 
 ## Story: Publish one complete window with exact counts
@@ -18,20 +22,21 @@ and the [Points journal](./journal.md).
 ### A window spans exactly 35 days and never moves back
 
 ```quint
+import census as C from "./census"
 type WindowPhase = Building | Published | Failed
 type ActorKind = Human | Bot | Slopbot
 type EventKind = MergeEvent | ReviewEvent | CommentEvent | IssueEvent
 type Outcome = Counted | ExcludedBot | ExcludedSelfReview | ExcludedPostMerge | ExcludedRepeat | OutsideWindow
-type LedgerEvent = { id: int, kind: EventKind, actor: int, actorKind: ActorKind, prAuthor: int, at: int, mergedAt: int, repeatLowValue: bool }
-type Recorded = { id: int, actor: int, outcome: Outcome }
+type LedgerEvent = { id: int, source: int, kind: EventKind, actor: int, actorKind: ActorKind, prAuthor: int, at: int, mergedAt: int, repeatLowValue: bool }
+type Recorded = { id: int, source: int, actor: int, outcome: Outcome }
 type Window = { phase: WindowPhase, from: int, to: int, records: List[Recorded],
-  publishedFrom: int, publishedTo: int, publishedCount: int, censusComplete: bool }
+  publishedFrom: int, publishedTo: int, publishedCount: int, inventory: List[C::Item], censusTotal: int }
 pure val windowDays = 35
 pure val initial: Window = { phase: Published, from: 0, to: 35, records: List(), publishedFrom: 0, publishedTo: 35,
-  publishedCount: 0, censusComplete: false }
+  publishedCount: 0, inventory: List(), censusTotal: -1 }
 pure def canStart(w: Window, upper: int): bool = w.phase != Building and upper >= w.publishedTo and upper >= windowDays
 pure def start(w: Window, upper: int): Window =
-  { ...w, phase: Building, from: upper - windowDays, to: upper, records: List(), censusComplete: false }
+  { ...w, phase: Building, from: upper - windowDays, to: upper, records: List(), inventory: List(), censusTotal: -1 }
 pure def alwaysExactWindow(w: Window): bool = w.to - w.from == windowDays and w.publishedTo - w.publishedFrom == windowDays
 pure def alwaysBuildingAhead(w: Window): bool = w.phase == Building implies w.to >= w.publishedTo
 ```
@@ -49,20 +54,32 @@ pure def outcomeOf(w: Window, e: LedgerEvent): Outcome =
   else if (e.kind == ReviewEvent and e.mergedAt > 0 and e.at >= e.mergedAt) ExcludedPostMerge
   else if (e.kind == CommentEvent and e.repeatLowValue) ExcludedRepeat
   else Counted
-pure def canObserve(w: Window, e: LedgerEvent): bool = w.phase == Building and e.id > 0 and e.actor > 0
+pure def inInventory(w: Window, source: int): bool = w.inventory.some(i => i.id == source)
+pure def canObserve(w: Window, e: LedgerEvent): bool =
+  w.phase == Building and e.id > 0 and e.actor > 0 and e.source > 0 and (w.censusTotal >= 0 implies inInventory(w, e.source))
 pure def observe(w: Window, e: LedgerEvent): Window =
   if (w.records.some(r => r.id == e.id)) w
-  else { ...w, records: w.records.append({ id: e.id, actor: e.actor, outcome: outcomeOf(w, e) }) }
+  else { ...w, records: w.records.append({ id: e.id, source: e.source, actor: e.actor, outcome: outcomeOf(w, e) }) }
 pure def countedRecords(w: Window): int = w.records.select(r => r.outcome == Counted).length()
 pure def alwaysIdsDistinct(w: Window): bool = w.records.every(r => r.id > 0 and w.records.select(o => o.id == r.id).length() == 1)
 ```
 
-### Publication needs a complete census; a failure keeps the previous window
+### Publication needs a verified complete census; a failure keeps the previous window
+
+The census must be complete by its own rules, cover the window's first day
+and contain the source of every event already recorded. Without it the
+window never publishes, even an empty one; an empty window publishes only
+when a complete census proves the inventory empty.
 
 ```quint
-pure def canCompleteCensus(w: Window): bool = w.phase == Building and not(w.censusComplete)
-pure def completeCensus(w: Window): Window = { ...w, censusComplete: true }
-pure def canPublish(w: Window): bool = w.phase == Building and w.censusComplete
+pure def censusVerified(c: C::Census): bool =
+  (c.phase == C::Ready or c.phase == C::Published) and C::alwaysCompleteWhenReady(c) and C::alwaysItemsDistinct(c) and
+  c.totalCount >= 0
+pure def canCompleteCensus(w: Window, c: C::Census): bool =
+  w.phase == Building and w.censusTotal < 0 and censusVerified(c) and c.lowerDay <= w.from and
+  w.records.every(r => c.items.some(i => i.id == r.source))
+pure def completeCensus(w: Window, c: C::Census): Window = { ...w, inventory: c.items, censusTotal: c.totalCount }
+pure def canPublish(w: Window): bool = w.phase == Building and w.censusTotal >= 0 and w.records.every(r => inInventory(w, r.source))
 pure def publish(w: Window): Window =
   { ...w, phase: Published, publishedFrom: w.from, publishedTo: w.to, publishedCount: countedRecords(w) }
 pure def canFailRefresh(w: Window): bool = w.phase == Building
@@ -73,18 +90,28 @@ pure def stepFailureKeepsPublished(before: Window, after: Window): bool =
   after.phase != Published implies
     (after.publishedFrom == before.publishedFrom and after.publishedTo == before.publishedTo and after.publishedCount == before.publishedCount)
 pure def stepWindowNeverRegresses(before: Window, after: Window): bool = after.publishedTo >= before.publishedTo
+pure def alwaysRecordsInInventory(w: Window): bool = w.censusTotal >= 0 implies
+  (w.records.every(r => inInventory(w, r.source)) and w.inventory.length() == w.censusTotal)
+pure def alwaysBuildingCensusReset(w: Window): bool = w.censusTotal < 0 implies w.inventory.length() == 0
 pure def lawBotsNeverCount(e: LedgerEvent): bool = e.actorKind != Human implies outcomeOf({ ...initial, from: 0, to: 100 }, e) != Counted
 pure def lawSelfReviewNeverCounts(e: LedgerEvent): bool = (e.kind == ReviewEvent and e.actor == e.prAuthor) implies outcomeOf({ ...initial, from: 0, to: 100 }, e) != Counted
 pure def sometimesPublishedWithExclusions(w: Window): bool =
   w.phase == Published and w.publishedCount > 0 and w.records.some(r => r.outcome != Counted)
 pure def sometimesFailedKeepsPrior(w: Window): bool = w.phase == Failed and w.publishedTo > 35
+pure def sometimesUnverifiedNeverPublishes(w: Window): bool = w.phase == Building and w.censusTotal < 0 and w.records.length() > 0
 ```
 
 ### Simulation samples include duplicates and every exclusion
 
 ```quint
-pure val base: LedgerEvent = { id: 1, kind: ReviewEvent, actor: 1, actorKind: Human, prAuthor: 2, at: 40, mergedAt: 50, repeatLowValue: false }
+pure val base: LedgerEvent = { id: 1, source: 1, kind: ReviewEvent, actor: 1, actorKind: Human, prAuthor: 2, at: 40, mergedAt: 50, repeatLowValue: false }
 pure val eValues = Set(base, { ...base, id: 2, actorKind: Slopbot }, { ...base, id: 3, actor: 2 },
-  { ...base, id: 4, at: 55 }, { ...base, id: 5, kind: CommentEvent, repeatLowValue: true }, { ...base, id: 6, at: 10 })
+  { ...base, id: 4, at: 55 }, { ...base, id: 5, kind: CommentEvent, repeatLowValue: true }, { ...base, id: 6, at: 10 },
+  { ...base, id: 7, source: 9 })
 pure val upperValues = Set(35, 70, 71)
+pure val censusItem: C::Item = { ...C::human, id: 1 }
+pure val readyCensus: C::Census = { ...C::initial, phase: C::Ready, lowerDay: 0, cursorsSeen: List(0), expectedCursor: 0,
+  totalCount: 1, terminalSeen: true, items: List(censusItem) }
+pure val cValues = Set(readyCensus, { ...readyCensus, phase: C::Collecting }, { ...readyCensus, totalCount: 2 },
+  { ...readyCensus, items: List(), totalCount: 0 })
 ```

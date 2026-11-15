@@ -27,7 +27,7 @@ type AuthorKind = HumanAuthor | BotAuthor | SlopbotAuthor | UnknownAuthor
 type ItemKind = IssueItem | PullRequestItem
 type Item = { id: int, kind: ItemKind, open: bool, author: AuthorKind, diffAvailable: bool, hasAssignee: bool,
   claimed: bool, draft: bool, reviewRequested: bool, approved: bool, changesRequested: bool,
-  securityLabel: bool, humanGated: bool, epic: bool }
+  securityLabel: bool, humanGated: bool, epic: bool, contributorReady: bool, blockedLabel: bool }
 type Page = { cursor: int, next: int, totalCount: int, items: List[Item] }
 type Census = { phase: CensusPhase, lowerDay: int, publishedLower: int, expectedCursor: int, cursorsSeen: List[int],
   totalCount: int, terminalSeen: bool, countChanges: int, items: List[Item],
@@ -71,37 +71,58 @@ pure def canFinish(c: Census): bool =
 pure def finish(c: Census): Census = { ...c, phase: Ready }
 ```
 
-### Every retained item has a deterministic, fail-closed selection decision
+### Every retained item has a deterministic, fail-closed selection decision with all its reasons
 
 Unknown authors, unavailable diffs, existing assignees, maintainer claims,
-drafts, active review requests, approvals, changes requested, security
-labels, human-gated work and epics are not offered. Closed items and bot
-authors are not offered either. Every retained item keeps its decision.
+drafts, blocked labels, active review requests, approvals, changes
+requested, security labels, human-gated work and epics are not offered. An
+issue without a contributor-ready label is untriaged and not offered.
+Closed items and bot authors are not offered either. Every retained item
+keeps its decision, which lists every applicable reason
+(`src/lib/leaderboard.ts`, `candidateExclusionReasons`): an item is a
+candidate exactly when it has none.
 
 ```quint
-type Decision = Offered | Closed | AuthorUnknown | BotAuthored | DiffUnavailable | Assigned | Claimed | DraftItem |
-  ReviewRequested | Approved | ChangesRequested | SecurityLabel | HumanGated | Epic
-pure def decide(i: Item): Decision =
-  if (not(i.open)) Closed
-  else if (i.author == UnknownAuthor) AuthorUnknown
-  else if (i.author != HumanAuthor) BotAuthored
-  else if (i.kind == PullRequestItem and not(i.diffAvailable)) DiffUnavailable
-  else if (i.securityLabel) SecurityLabel
-  else if (i.humanGated) HumanGated
-  else if (i.epic) Epic
-  else if (i.hasAssignee) Assigned
-  else if (i.claimed) Claimed
-  else if (i.draft) DraftItem
-  else if (i.reviewRequested) ReviewRequested
-  else if (i.approved) Approved
-  else if (i.changesRequested) ChangesRequested
-  else Offered
-pure def offered(c: Census): List[Item] = c.items.select(i => decide(i) == Offered)
-pure def lawUnknownAuthorFailsClosed(i: Item): bool = i.author == UnknownAuthor implies decide(i) != Offered
-pure def lawUnavailableDiffFailsClosed(i: Item): bool = (i.kind == PullRequestItem and not(i.diffAvailable)) implies decide(i) != Offered
-pure def lawOfferedIsUnblocked(i: Item): bool = decide(i) == Offered implies
-  (i.open and i.author == HumanAuthor and not(i.hasAssignee or i.claimed or i.draft or i.reviewRequested or
+type Reason = Closed | AuthorUnknown | BotAuthored | DiffUnavailable | Untriaged | Blocked | Assigned | Claimed |
+  DraftItem | ReviewRequested | Approved | ChangesRequested | SecurityLabel | HumanGated | Epic
+type Status = Candidate | Excluded
+type Selection = { status: Status, reasons: Set[Reason] }
+pure def reasonIf(c: bool, r: Reason): Set[Reason] = if (c) Set(r) else Set()
+pure def blocked(i: Item): bool =
+  not(i.open) or i.author != HumanAuthor or (i.kind == PullRequestItem and not(i.diffAvailable)) or
+  (i.kind == IssueItem and not(i.contributorReady)) or i.blockedLabel or i.securityLabel or i.humanGated or i.epic or
+  i.hasAssignee or i.claimed or i.draft or i.reviewRequested or i.approved or i.changesRequested
+pure def authorReasons(i: Item): Set[Reason] =
+  reasonIf(not(i.open), Closed).union(reasonIf(i.author == UnknownAuthor, AuthorUnknown))
+    .union(reasonIf(i.author == BotAuthor or i.author == SlopbotAuthor, BotAuthored))
+pure def readinessReasons(i: Item): Set[Reason] =
+  reasonIf(i.kind == PullRequestItem and not(i.diffAvailable), DiffUnavailable)
+    .union(reasonIf(i.kind == IssueItem and not(i.contributorReady), Untriaged)).union(reasonIf(i.blockedLabel, Blocked))
+pure def scopeReasons(i: Item): Set[Reason] =
+  reasonIf(i.securityLabel, SecurityLabel).union(reasonIf(i.humanGated, HumanGated)).union(reasonIf(i.epic, Epic))
+pure def claimReasons(i: Item): Set[Reason] =
+  reasonIf(i.hasAssignee, Assigned).union(reasonIf(i.claimed, Claimed)).union(reasonIf(i.draft, DraftItem))
+pure def reviewReasons(i: Item): Set[Reason] =
+  reasonIf(i.reviewRequested, ReviewRequested).union(reasonIf(i.approved, Approved)).union(reasonIf(i.changesRequested, ChangesRequested))
+pure def reasons(i: Item): Set[Reason] =
+  val first = authorReasons(i).union(readinessReasons(i))
+  val second = scopeReasons(i).union(claimReasons(i))
+  first.union(second).union(reviewReasons(i))
+pure def decide(i: Item): Selection = { status: if (blocked(i)) Excluded else Candidate, reasons: reasons(i) }
+pure def offered(c: Census): List[Item] = c.items.select(i => not(blocked(i)))
+pure def lawUnknownAuthorFailsClosed(i: Item): bool = i.author == UnknownAuthor implies (blocked(i) and reasons(i).contains(AuthorUnknown))
+pure def lawUnavailableDiffFailsClosed(i: Item): bool =
+  (i.kind == PullRequestItem and not(i.diffAvailable)) implies (blocked(i) and reasons(i).contains(DiffUnavailable))
+pure def lawUntriagedIssueFailsClosed(i: Item): bool =
+  (i.kind == IssueItem and not(i.contributorReady)) implies (blocked(i) and reasons(i).contains(Untriaged))
+pure def lawOfferedIsUnblocked(i: Item): bool = not(blocked(i)) implies
+  (i.open and i.author == HumanAuthor and not(i.hasAssignee or i.claimed or i.draft or i.reviewRequested or i.blockedLabel or
     i.approved or i.changesRequested or i.securityLabel or i.humanGated or i.epic))
+pure def lawCandidateIffNoReason(i: Item): bool =
+  (blocked(i) implies reasons(i).exists(r => true)) and (not(blocked(i)) implies reasons(i).forall(r => false))
+pure def lawEveryReasonListed(i: Item): bool =
+  (i.hasAssignee implies reasons(i).contains(Assigned)) and (i.claimed implies reasons(i).contains(Claimed)) and
+  (i.approved implies reasons(i).contains(Approved)) and (i.changesRequested implies reasons(i).contains(ChangesRequested))
 ```
 
 ### Publication requires a complete census and keeps the previous snapshot on failure
@@ -121,7 +142,7 @@ pure def stepPublishedWindowNeverRegresses(before: Census, after: Census): bool 
 pure def sometimesPublished(c: Census): bool = c.phase == Published and c.items.length() > 0
 pure def sometimesIncomplete(c: Census): bool = c.phase == Incomplete and c.countChanges == 2
 pure def sometimesRetriedComplete(c: Census): bool = c.phase == Ready and c.countChanges == 1
-pure def sometimesRetainedButNotOffered(c: Census): bool = c.phase == Ready and c.items.some(i => decide(i) != Offered) and c.items.some(i => decide(i) == Offered)
+pure def sometimesRetainedButNotOffered(c: Census): bool = c.phase == Ready and c.items.some(i => blocked(i)) and c.items.some(i => not(blocked(i)))
 ```
 
 ### Simulation samples include repeated cursors, count changes and blocked items
@@ -129,7 +150,7 @@ pure def sometimesRetainedButNotOffered(c: Census): bool = c.phase == Ready and 
 ```quint
 pure val human: Item = { id: 1, kind: PullRequestItem, open: true, author: HumanAuthor, diffAvailable: true, hasAssignee: false,
   claimed: false, draft: false, reviewRequested: false, approved: false, changesRequested: false,
-  securityLabel: false, humanGated: false, epic: false }
+  securityLabel: false, humanGated: false, epic: false, contributorReady: true, blockedLabel: false }
 pure val pageValues = Set(
   { cursor: 0, next: 5, totalCount: 2, items: List(human) },
   { cursor: 5, next: 0, totalCount: 2, items: List({ ...human, id: 2, author: UnknownAuthor }) },
@@ -141,5 +162,7 @@ pure val projectValues = Set({ registered: true, paused: false, retired: false, 
   { registered: true, paused: false, retired: false, legacy: true, quarantined: false })
 pure val lowerDayValues = Set(0, 1, 2)
 pure val snapshotValues = Set(1, 2, 3)
-pure val iValues = Set(human, { ...human, author: UnknownAuthor }, { ...human, diffAvailable: false }, { ...human, epic: true }, { ...human, open: false })
+pure val iValues = Set(human, { ...human, author: UnknownAuthor }, { ...human, diffAvailable: false }, { ...human, epic: true },
+  { ...human, open: false }, { ...human, kind: IssueItem, contributorReady: false }, { ...human, kind: IssueItem },
+  { ...human, blockedLabel: true, hasAssignee: true })
 ```

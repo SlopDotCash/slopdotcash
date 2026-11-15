@@ -19,20 +19,28 @@ policy](./scoringPolicy.md) applies the released bands.
 
 ### Each import has its own hold and published rules stay prior until a release
 
+An import names the exact accepted sources it covers. The [scoring
+policy](./scoringPolicy.md) applies a released band only to a source in a
+released import's list.
+
 ```quint
 type ImportPhase = Collecting | Assessed | Reconciled | Released | Refused
-type Import = { phase: ImportPhase, sources: int, assessed: int, held: int,
+type Import = { phase: ImportPhase, sources: int, sourceIds: List[int], assessed: int, held: int,
   coverageComplete: bool, duplicateChecked: bool, fundedChecked: bool, changesDigest: str, journalDigest: str }
 type Imports = { ids: List[int], imports: int -> Import, released: List[int] }
-pure val noImport: Import = { phase: Refused, sources: 0, assessed: 0, held: 0, coverageComplete: false,
+pure val noImport: Import = { phase: Refused, sources: 0, sourceIds: List(), assessed: 0, held: 0, coverageComplete: false,
   duplicateChecked: false, fundedChecked: false, changesDigest: "", journalDigest: "" }
 pure val initial: Imports = { ids: List(), imports: Map(), released: List() }
 pure def find(s: Imports, id: int): Import = if (s.imports.keys().contains(id)) s.imports.get(id) else noImport
 pure def known(s: Imports, id: int): bool = s.imports.keys().contains(id)
 pure def store(id: int, f: Import, s: Imports): Imports = { ...s, imports: s.imports.put(id, f) }
-pure def canBegin(s: Imports, id: int, sources: int): bool = id > 0 and sources > 0 and not(known(s, id)) and not(s.ids.includes(id))
-pure def begin(s: Imports, id: int, sources: int): Imports =
-  { ...s, ids: s.ids.append(id), imports: s.imports.put(id, { ...noImport, phase: Collecting, sources: sources }) }
+pure def distinctSources(sourceIds: List[int]): bool =
+  sourceIds.every(x => x > 0 and sourceIds.select(o => o == x).length() == 1)
+pure def canBegin(s: Imports, id: int, sourceIds: List[int]): bool =
+  id > 0 and sourceIds.length() > 0 and distinctSources(sourceIds) and not(known(s, id)) and not(s.ids.includes(id))
+pure def begin(s: Imports, id: int, sourceIds: List[int]): Imports =
+  { ...s, ids: s.ids.append(id), imports: s.imports.put(id, { ...noImport, phase: Collecting, sources: sourceIds.length(), sourceIds: sourceIds }) }
+pure def includesSource(i: Import, source: int): bool = i.phase == Released and i.sourceIds.includes(source)
 pure def held(s: Imports, id: int): bool = known(s, id) and not(s.released.includes(id))
 ```
 
@@ -75,6 +83,7 @@ pure def canInvalidate(s: Imports, id: int, currentJournal: str): bool =
 pure def invalidate(s: Imports, id: int, currentJournal: str): Imports =
   store(id, { ...find(s, id), phase: Assessed, changesDigest: "", journalDigest: "", duplicateChecked: false, fundedChecked: false }, s)
 pure def releasedReconciled(i: Import): bool =
+  i.sources == i.sourceIds.length() and
   ((i.phase == Assessed or i.phase == Reconciled or i.phase == Released) implies
     (i.coverageComplete and i.assessed >= 0 and i.held >= 0 and i.assessed + i.held == i.sources)) and
   ((i.phase == Reconciled or i.phase == Released) implies
@@ -95,7 +104,7 @@ pure def sometimesRefused(s: Imports): bool = s.ids.some(id => find(s, id).phase
 
 ```quint
 pure val idValues = Set(1, 2)
-pure val sourcesValues = Set(2)
+pure val sourceIdsValues = Set(List(1, 2), List(3, 4))
 pure val cValues = Set({ assessed: 1, held: 1, coverageComplete: true }, { assessed: 2, held: 0, coverageComplete: true },
   { assessed: 1, held: 0, coverageComplete: true }, { assessed: 2, held: 0, coverageComplete: false })
 pure val rValues = Set({ changesDigest: "c", journalDigest: "j1", duplicateChecked: true, fundedChecked: true },

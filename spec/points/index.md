@@ -6,6 +6,7 @@ month determine reward weights. Participation, payout recognition, usage and
 trace evidence remain separate and never change a payment share.
 
 - [Points journal](./journal.md)
+- [Periods and settlement freezes](./periods.md)
 - [Participation Points](./participation.md)
 - [Payout recognition](./payoutRecognition.md)
 - [Reward weights](./rewardWeights.md)

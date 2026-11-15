@@ -22,7 +22,9 @@ check; the manifest names the reviewer, the decision and the reason.
 
 The manifest's award is 1 to 8 legacy points, 30 Slop Points each. Its
 review cannot precede the contribution. External evidence is captured
-between the contribution and its review.
+between the contribution and its review. A later reviewed maintainer
+decision on an admitted award names its reviewer, decision and reason and
+sets 0 to 8 legacy points.
 
 ```quint
 type SourceKind = PullRequestSource | IssueSource | ReviewSource | CommentSource | ExternalSource
@@ -39,6 +41,9 @@ pure def wellFormed(m: Manifest): bool =
   (m.kind != ExternalSource implies (m.contentDigest == 0 and m.capturedAt == 0)) and
   (m.kind == ReviewSource implies m.pullRequest > 0)
 pure def lawAwardBounds(m: Manifest): bool = wellFormed(m) implies (slopPoints(m) >= 30 and slopPoints(m) <= 240)
+type LaterDecision = { source: int, points: int, reviewer: int, decision: str, reason: str }
+pure def validLaterDecision(d: LaterDecision): bool =
+  d.source > 0 and d.points >= 0 and d.points <= 8 and d.reviewer > 0 and d.decision != "" and d.reason != ""
 ```
 
 ### Identity, source, work, content and reviewer-per-PR are each awarded once
@@ -50,6 +55,7 @@ pure def duplicates(s: Evaluations, m: Manifest): bool = s.admitted.some(o =>
   (m.contentDigest > 0 and o.project == m.project and o.contentDigest == m.contentDigest) or
   (m.kind == ReviewSource and o.kind == ReviewSource and o.project == m.project and o.actor == m.actor and o.pullRequest == m.pullRequest))
 pure def admissible(s: Evaluations, m: Manifest): bool = wellFormed(m) and not(duplicates(s, m))
+pure def admissibleIn(admitted: List[Manifest], m: Manifest): bool = admissible({ admitted: admitted }, m)
 pure def admittedUnique(s: Evaluations): bool = s.admitted.every(m => wellFormed(m) and
   s.admitted.select(o => o.id == m.id or o.source == m.source or o.workKey == m.workKey).length() == 1)
 ```
@@ -57,11 +63,16 @@ pure def admittedUnique(s: Evaluations): bool = s.admitted.every(m => wellFormed
 ### Awards retained before retirement survive the erroneous zeroing batch
 
 The 19 October 2026 retirement of the evaluator manifests did not revoke
-their awards. One exact later batch zeroed some of them in error. Recovery
-restores the amount retained before retirement, once. Any other later
-revision of the award, including an explicit zero or an unchanged
-maintainer decision, ends the protection, and an unrelated zero never
-recovers.
+their awards. Only an award recorded before the retirement instant is
+retained. One exact later batch zeroed some of them in error: the batch
+recorded on 20 October 2026 with digest `782097…aa37`, rule
+`slop-score-v2` and the retained award at amount 0 (`scripts/generate-points.ts`,
+`RETIREMENT_ZEROED_AT`, `RETIREMENT_ZERO_DIGEST`). Recovery restores the
+amount retained before retirement, once. Any other later revision of the
+award, including another zero, an explicit zero or an unchanged maintainer
+decision, ends the protection, so an unrelated zero never recovers. The
+[Points journal](./journal.md) checks the same batch identity against its
+own revisions before it appends a recovery.
 
 ```quint
 type Protection = Retained | IncidentZeroed | Recovered | Ended
@@ -76,11 +87,19 @@ pure def admitManifest(s: RetiredAwards, m: Manifest): RetiredAwards =
 pure def tracked(s: RetiredAwards, key: int): bool = s.awards.keys().contains(key)
 pure def award(s: RetiredAwards, key: int): Retirement = if (s.awards.keys().contains(key)) s.awards.get(key) else untracked
 pure def inPhase(s: RetiredAwards, key: int, phase: Protection): bool = tracked(s, key) and award(s, key).phase == phase
-pure def canRetain(s: RetiredAwards, key: int, amount: int): bool = key > 0 and amount > 0 and not(tracked(s, key)) and not(s.keys.includes(key))
-pure def retain(s: RetiredAwards, key: int, amount: int): RetiredAwards =
+type ZeroBatch = { recordedAt: int, digest: str, rule: str, amount: int }
+pure val retiredAt = 2432118
+pure val retirementZeroedAt = 2432119
+pure val retirementZeroDigest = "782097740ab32fa43352c9b7d43b34cc4586f8611068c40a9cddcc58edc9aa37"
+pure val retirementZeroRule = "slop-score-v2"
+pure def isIncidentBatch(b: ZeroBatch): bool =
+  b.recordedAt == retirementZeroedAt and b.digest == retirementZeroDigest and b.rule == retirementZeroRule and b.amount == 0
+pure def canRetain(s: RetiredAwards, key: int, amount: int, recordedAt: int): bool =
+  key > 0 and amount > 0 and recordedAt >= 0 and recordedAt < retiredAt and not(tracked(s, key)) and not(s.keys.includes(key))
+pure def retain(s: RetiredAwards, key: int, amount: int, recordedAt: int): RetiredAwards =
   { ...s, keys: s.keys.append(key), awards: s.awards.put(key, { ...untracked, amount: amount, phase: retainedPhase, endedAfter: retainedPhase }) }
-pure def canIncidentZero(s: RetiredAwards, key: int): bool = inPhase(s, key, Retained)
-pure def incidentZero(s: RetiredAwards, key: int): RetiredAwards =
+pure def canIncidentZero(s: RetiredAwards, key: int, b: ZeroBatch): bool = inPhase(s, key, Retained) and isIncidentBatch(b)
+pure def incidentZero(s: RetiredAwards, key: int, b: ZeroBatch): RetiredAwards =
   { ...s, awards: s.awards.put(key, { ...award(s, key), phase: IncidentZeroed }) }
 pure def canRecover(s: RetiredAwards, key: int): bool = inPhase(s, key, IncidentZeroed)
 pure def recover(s: RetiredAwards, key: int): RetiredAwards =
@@ -101,6 +120,8 @@ pure def sometimesRecovered(s: RetiredAwards): bool = s.keys.some(k => award(s, 
 pure def sometimesExplicitDecisionEndsRecovery(s: RetiredAwards): bool = s.keys.some(k => award(s, k).phase == Ended and award(s, k).endedAfter == IncidentZeroed)
 pure def sometimesUnrelatedDecisionNeverRecovers(s: RetiredAwards): bool = s.keys.some(k => award(s, k).phase == Ended and award(s, k).endedAfter == Retained)
 pure def sometimesAdmitted(s: RetiredAwards): bool = s.evaluations.admitted.length() > 1
+pure def lawOtherZeroIsNotTheIncident(b: ZeroBatch): bool =
+  (b.digest != retirementZeroDigest or b.recordedAt != retirementZeroedAt or b.rule != retirementZeroRule) implies not(isIncidentBatch(b))
 ```
 
 ### Simulation samples include duplicates, unreviewed and early-review manifests
@@ -118,4 +139,7 @@ pure val mValues = Set(manifestSample,
   { ...manifestSample, id: 7, source: 16, workKey: 106, points: 9 })
 pure val keyValues = Set(1, 2)
 pure val amountValues = Set(0, 30)
+pure val recordedAtValues = Set(2432110, 2432118)
+pure val bValues = Set({ recordedAt: retirementZeroedAt, digest: retirementZeroDigest, rule: retirementZeroRule, amount: 0 },
+  { recordedAt: 2432125, digest: "other", rule: retirementZeroRule, amount: 0 })
 ```
