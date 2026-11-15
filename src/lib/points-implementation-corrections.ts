@@ -282,11 +282,13 @@ export function isOriginalContributorFollowup(
   accepted: CorrectionSource,
   binding: OriginalContributorFollowup | undefined,
   claims?: readonly CorrectionClaim[],
+  scoped?: { anchorSha: string; origin: CorrectionActor },
 ): boolean {
   if (
     !binding ||
     binding.sourceId !== source.sourceId ||
-    binding.ancestorSha !== accepted.headSha ||
+    (binding.ancestorSha !== accepted.headSha &&
+      binding.ancestorSha !== scoped?.anchorSha) ||
     !sha.test(binding.ancestorSha) ||
     source.sourceId === accepted.sourceId ||
     source.occurredAt === null ||
@@ -295,12 +297,13 @@ export function isOriginalContributorFollowup(
     source.repositoryNodeId !== accepted.repositoryNodeId ||
     !eligibleActor(source.author) ||
     !eligibleActor(accepted.author) ||
-    source.author.id !== accepted.author.id
+    (source.author.id !== accepted.author.id &&
+      (!scoped || source.author.id !== scoped.origin.id))
   )
     return false;
   if (
     claims &&
-    (!claims.length ||
+    ((!claims.length && !scoped) ||
       claims.some((claim) => claim.sourceId !== source.sourceId))
   )
     return false;
@@ -418,8 +421,11 @@ export function isOriginalContributorFollowup(
             commit.files?.some((file) => file.path === claim.path) &&
             commit.firstAcceptedSourceId === source.sourceId &&
             !commit.retainedCopy &&
-            commit.author?.id === accepted.author?.id &&
-            commit.author?.kind === accepted.author?.kind &&
+            (commit.author?.id === accepted.author?.id ||
+              (scoped &&
+                (commit.author === null ||
+                  commit.author.id === scoped.origin.id))) &&
+            (commit.author === null || commit.author.kind === "User") &&
             descends.has(commit.sha) &&
             validParentShas(commit) &&
             JSON.stringify(commit.parentShas) ===
@@ -450,6 +456,7 @@ export function originalContributorClaimScope(
     source: CorrectionSource;
     binding: OriginalContributorFollowup;
   }[] = [],
+  anchorSha = original.headSha,
 ): boolean {
   const origin = original.author;
   const carrier = accepted.author;
@@ -469,47 +476,93 @@ export function originalContributorClaimScope(
   const originals = new Map(
     original.commits.map((commit) => [commit.sha, commit]),
   );
-  const graph = new Map(accepted.commits.map((commit) => [commit.sha, commit]));
+  const anchor = originals.get(anchorSha);
+  const acceptedAnchor = accepted.commits.find(
+    (commit) => commit.sha === anchorSha,
+  );
   if (
     originals.size !== original.commits.length ||
-    graph.size !== accepted.commits.length ||
     !originals.has(original.headSha) ||
-    !graph.has(accepted.headSha) ||
-    accepted.commits.some((commit) => !validParentShas(commit)) ||
-    original.commits.some((commit) => {
-      const copy = graph.get(commit.sha);
-      return (
-        commit.parentCount > 2 ||
-        (commit.parentCount > 1 && !eligibleActor(commit.author)) ||
-        (commit.author !== null &&
-          (!eligibleActor(commit.author) ||
-            (commit.author.id !== origin.id &&
-              commit.author.id !== carrier.id))) ||
-        !copy ||
-        copy.firstAcceptedSourceId !== accepted.sourceId ||
-        copy.author?.id !== commit.author?.id ||
-        copy.author?.kind !== commit.author?.kind
-      );
-    })
+    !anchor ||
+    !acceptedAnchor ||
+    acceptedAnchor.firstAcceptedSourceId !== accepted.sourceId ||
+    anchor.parentCount > 2 ||
+    (anchor.parentCount > 1 && !eligibleActor(anchor.author)) ||
+    (anchor.author !== null &&
+      anchor.author.id !== origin.id &&
+      anchor.author.id !== carrier.id) ||
+    acceptedAnchor.author?.id !== anchor.author?.id ||
+    acceptedAnchor.author?.kind !== anchor.author?.kind
   )
     return false;
+  const graph = new Map<string, CorrectionCommit & { parentShas: string[] }>();
+  for (const source of [accepted, ...followups.map((item) => item.source)]) {
+    for (const commit of source.commits) {
+      const previous = graph.get(commit.sha);
+      const parentShas = commit.parentShas ?? previous?.parentShas;
+      if (!parentShas || !validParentShas({ ...commit, parentShas }))
+        return false;
+      if (
+        previous &&
+        (JSON.stringify(previous.parentShas) !== JSON.stringify(parentShas) ||
+          previous.author?.id !== commit.author?.id ||
+          previous.author?.kind !== commit.author?.kind)
+      )
+        return false;
+      graph.set(commit.sha, { ...commit, parentShas });
+    }
+  }
+  for (const { binding } of followups) {
+    for (const commit of binding.commits) {
+      const existing = graph.get(commit.sha);
+      if (
+        existing &&
+        JSON.stringify(existing.parentShas) !==
+          JSON.stringify(commit.parentShas)
+      )
+        return false;
+      if (!existing)
+        graph.set(commit.sha, {
+          ...commit,
+          parentCount: commit.parentShas.length,
+          author: null,
+          additions: null,
+          deletions: null,
+          firstAcceptedSourceId: null,
+        });
+    }
+  }
+  for (const commit of original.commits) {
+    const existing = graph.get(commit.sha);
+    const parentShas = commit.parentShas ?? existing?.parentShas;
+    if (!parentShas || !validParentShas({ ...commit, parentShas }))
+      return false;
+    if (
+      existing &&
+      (JSON.stringify(existing.parentShas) !== JSON.stringify(parentShas) ||
+        (existing.firstAcceptedSourceId !== null &&
+          (existing.author?.id !== commit.author?.id ||
+            existing.author?.kind !== commit.author?.kind)))
+    )
+      return false;
+    graph.set(commit.sha, { ...commit, parentShas });
+  }
   const remaining = new Map(
     [...graph].map(([id, commit]) => [
       id,
-      (commit.parentShas ?? []).filter((parent) => graph.has(parent)).length,
+      commit.parentShas.filter((parent) => graph.has(parent)).length,
     ]),
   );
   const ready = [...remaining]
     .filter(([, count]) => count === 0)
     .map(([id]) => id);
-  for (const id of ready) {
+  for (const id of ready)
     for (const [child, commit] of graph) {
-      if (!(commit.parentShas ?? []).includes(id)) continue;
+      if (!commit.parentShas.includes(id)) continue;
       const count = (remaining.get(child) ?? 0) - 1;
       remaining.set(child, count);
       if (count === 0) ready.push(child);
     }
-  }
   if (ready.length !== graph.size) return false;
   const descends = (child: string, ancestor: string) => {
     const pending = [child];
@@ -526,30 +579,7 @@ export function originalContributorClaimScope(
     !original.commits.every((commit) => descends(original.headSha, commit.sha))
   )
     return false;
-  const ordinaryOrigins = original.commits.filter(
-    (commit) =>
-      commit.parentCount <= 1 &&
-      (commit.author === null || commit.author.id === origin.id),
-  );
-  if (
-    !ordinaryOrigins.length ||
-    original.commits.some(
-      (commit) =>
-        commit.parentCount > 1 &&
-        !ordinaryOrigins.some((ancestor) => descends(commit.sha, ancestor.sha)),
-    )
-  )
-    return false;
-  const resolvedOriginal = {
-    ...original,
-    commits: original.commits.map((commit) => ({
-      ...commit,
-      author: commit.author ?? origin,
-      parentShas: graph.get(commit.sha)?.parentShas,
-    })),
-  };
-  if (!originalContributorPrecedesFollowups(resolvedOriginal, carrier))
-    return false;
+  const scoped = { anchorSha, origin };
   const followupIds = new Set(followups.map(({ source }) => source.sourceId));
   if (
     followupIds.size !== followups.length ||
@@ -561,40 +591,44 @@ export function originalContributorClaimScope(
           accepted,
           binding,
           claims.filter((claim) => claim.sourceId === source.sourceId),
+          scoped,
         ),
-    ) ||
-    claims.some(
-      (claim) =>
-        claim.sourceId !== accepted.sourceId &&
-        !followupIds.has(claim.sourceId),
     )
   )
     return false;
   let hasOriginal = false;
-  for (const claim of claims.filter(
-    (claim) => claim.sourceId === accepted.sourceId,
-  )) {
-    const commit = graph.get(claim.commitSha);
+  for (const claim of claims) {
+    const source =
+      claim.sourceId === accepted.sourceId
+        ? accepted
+        : followups.find((item) => item.source.sourceId === claim.sourceId)
+            ?.source;
+    const commit = source?.commits.find((item) => item.sha === claim.commitSha);
     if (
-      claim.sourceId !== accepted.sourceId ||
       !commit ||
       !correctionClaimCommit(commit) ||
-      commit.firstAcceptedSourceId !== accepted.sourceId ||
+      commit.firstAcceptedSourceId !== source?.sourceId ||
       !commit.files?.some((file) => file.path === claim.path)
     )
       return false;
     if (originals.has(commit.sha)) {
       if (
+        commit.author !== null &&
+        commit.author.id !== origin.id &&
+        commit.author.id !== carrier.id
+      )
+        return false;
+      if (commit.author?.id === carrier.id && !descends(commit.sha, anchorSha))
+        return false;
+      if (
         commit.parentCount <= 1 &&
         (commit.author === null || commit.author.id === origin.id)
       )
         hasOriginal = true;
-      continue;
-    }
-    if (
+    } else if (
       !eligibleActor(commit.author) ||
       (commit.author.id !== origin.id && commit.author.id !== carrier.id) ||
-      !descends(commit.sha, original.headSha)
+      !descends(commit.sha, anchorSha)
     )
       return false;
   }
@@ -1041,8 +1075,7 @@ function deriveProof(
           binding.exactAcceptance === true &&
           original &&
           acceptedCommit &&
-          binding.originalCommitSha === original.headSha &&
-          binding.acceptedCommitSha === original.headSha &&
+          binding.originalCommitSha === binding.acceptedCommitSha &&
           sameSet(
             binding.boundPaths,
             acceptedCommit.parentCount === 2
@@ -1068,6 +1101,7 @@ function deriveProof(
               check(source, "original-contributor follow-up source is missing");
               return { source, binding: followup };
             }),
+            binding.originalCommitSha,
           ),
         "original-contributor unit scope does not bind the reviewed native claims",
       );

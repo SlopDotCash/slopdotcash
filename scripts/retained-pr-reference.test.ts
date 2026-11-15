@@ -6,8 +6,8 @@ import {
   repository,
 } from "../tests/value-promotion-fixture";
 import { retainedCopyBindings } from "../workers/slopbot/value-retained-copy";
-import { prepareWorkUnitEvidence } from "../workers/slopbot/value-work-unit";
 import { collectRetainedMergeReferences } from "../workers/slopbot/value-retained-reference";
+import { prepareWorkUnitEvidence } from "../workers/slopbot/value-work-unit";
 import { retainedCommitCreditSources } from "./retained-commit-credit";
 
 function sources() {

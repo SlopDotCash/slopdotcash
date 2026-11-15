@@ -1,12 +1,12 @@
 import { expect, test } from "bun:test";
 import {
-  makeOriginal,
-  integrated,
-  repository,
   file,
+  integrated,
+  makeOriginal,
+  repository,
 } from "../../tests/value-promotion-fixture";
-import { prepareWorkUnitEvidence } from "./value-work-unit";
 import { retainedCopyBindings } from "./value-retained-copy";
+import { prepareWorkUnitEvidence } from "./value-work-unit";
 
 function sources() {
   const original = makeOriginal();
