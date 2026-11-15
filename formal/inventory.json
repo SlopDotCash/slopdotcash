@@ -1738,16 +1738,16 @@
     },
     {
       "path": "contracts/solana/adapter.ts",
-      "sha256": "ddcdf520792de627eaf9a278b596e1c71bc0802932560c9a1b56729d122269e0",
+      "sha256": "75dbdb565ba72e3b20cfb170275a5dafb88dda13106b6bc880a2fed9398638a4",
       "models": [
         "formal/models/payments/chain_evidence.qnt",
         "formal/models/payments/solana_scan_checkpoint.qnt",
         "formal/models/payments/vault_initial_snapshot.qnt"
       ],
       "candidateLines": [
-        47, 68, 73, 75, 184, 200, 227, 235, 254, 275, 288, 298, 316, 359, 378,
-        387, 432, 439, 440, 443, 697, 703, 706, 708, 713, 737, 878, 879, 907,
-        936, 949, 957, 964, 993, 1008
+        47, 68, 82, 84, 196, 212, 244, 252, 271, 292, 305, 315, 333, 376, 395,
+        404, 449, 456, 457, 460, 714, 720, 723, 725, 730, 754, 895, 896, 924,
+        953, 966, 974, 981, 1010, 1025, 1211, 1233
       ],
       "review": "mapped-abstraction"
     },
@@ -1797,9 +1797,16 @@
     },
     {
       "path": "contracts/solana/integration/monthly-preload.mjs",
-      "sha256": "245fdca1871ff6295ac7f9664275a8e262d01bf71f168b73561847bef565fb36",
+      "sha256": "4e58ffe19866c37709d0b58865f62a3fb27e4f4d8facf671e25d1042dbc07313",
       "models": ["formal/models/contracts/solana_preload_cases.qnt"],
       "candidateLines": [86],
+      "review": "mapped-abstraction"
+    },
+    {
+      "path": "contracts/solana/integration/pledge-preload.mjs",
+      "sha256": "4a1d43fc5c91f0cb7eb1f61514c49c31f5bf12f7bd5b3df6003d49d89b8cf78f",
+      "models": ["formal/models/contracts/solana_month_pledge.qnt"],
+      "candidateLines": [20],
       "review": "mapped-abstraction"
     },
     {
@@ -1814,6 +1821,13 @@
       "sha256": "8c005463d7374668bfd74b97fe66a6d4e7edf32d6c026d6abe5b63dc39e08b04",
       "models": ["formal/models/contracts/solana_preload_cases.qnt"],
       "candidateLines": [1],
+      "review": "mapped-abstraction"
+    },
+    {
+      "path": "contracts/solana/month-pledge.ts",
+      "sha256": "3f105bc29f7cf796a0953c6cf74772a3addfe9d4de4448dc6edf9ee1c8e25837",
+      "models": ["formal/models/contracts/solana_month_pledge.qnt"],
+      "candidateLines": [42],
       "review": "mapped-abstraction"
     },
     {
@@ -1874,22 +1888,23 @@
     },
     {
       "path": "contracts/solana/programs/slop-escrow/Cargo.toml",
-      "sha256": "589ddaf7bac047f4b914c454ac88226a3a0291c09b0f7d7c873180e80a325251",
+      "sha256": "320f4ce7e7b28db529fba96166f8ad9ef49957f7a2c8285443353e72e7b52e67",
       "models": ["formal/models/contracts/contract_build_profile.qnt"],
       "candidateLines": [],
       "review": "mapped-abstraction"
     },
     {
       "path": "contracts/solana/programs/slop-escrow/src/lib.rs",
-      "sha256": "18e1e42304c5bcb631dfb4dafe2a36a064322736c8fedb54d3aaf5e8d74aff1a",
+      "sha256": "c52b3e5a5edd1bc6a57a602f410b5b51ab7c33db0964f69253bb721be704bf2f",
       "models": [
         "formal/models/contracts/binding_veto_policy.qnt",
+        "formal/models/contracts/solana_month_pledge.qnt",
         "formal/models/contracts/solana_monthly_allocation.qnt",
         "formal/models/payments/authority_rotation.qnt",
         "formal/models/payments/solana_binding_completion.qnt",
         "formal/models/rewards/escrow_balances.qnt"
       ],
-      "candidateLines": [33, 1052],
+      "candidateLines": [33, 1182],
       "review": "mapped-abstraction"
     },
     {
@@ -1919,16 +1934,16 @@
     },
     {
       "path": "contracts/solana/scripts/acceptance.ts",
-      "sha256": "834335d65bda1193a8f26441db20fbd860b3a031cf535f9692d8788432b53960",
+      "sha256": "2db90193d74894de937e1b1a8af5b8f1f23a2a309b869fcdc9a7357a4aa40f4d",
       "models": [
         "formal/models/contracts/acceptance_run.qnt",
         "formal/models/contracts/local_solana_acceptance.qnt"
       ],
       "candidateLines": [
-        79, 281, 504, 515, 560, 561, 566, 567, 572, 578, 596, 602, 603, 604,
-        606, 607, 609, 611, 615, 629, 634, 637, 704, 710, 811, 823, 827, 831,
-        885, 1041, 1066, 1243, 1249, 1265, 1268, 1274, 1439, 1504, 1541, 1548,
-        1605, 1614, 1641, 1674, 1698, 1722, 1727, 1732, 1733, 1738, 1752
+        79, 281, 507, 518, 563, 564, 569, 570, 575, 581, 599, 605, 606, 607,
+        609, 610, 612, 614, 618, 632, 637, 640, 707, 713, 814, 826, 830, 834,
+        888, 1044, 1069, 1246, 1252, 1268, 1271, 1277, 1442, 1507, 1544, 1551,
+        1608, 1617, 1644, 1677, 1701, 1725, 1730, 1735, 1736, 1741, 1755
       ],
       "review": "mapped-abstraction"
     },
@@ -1958,9 +1973,9 @@
     },
     {
       "path": "contracts/solana/scripts/config-plan.mjs",
-      "sha256": "dea5ae895b37a609e36742f94082320e654f7ce53ebf9a2e11ac0ad409e69d0b",
+      "sha256": "0b7ae7948196f7fc70a16fe8bd1a78f1b7b231724249ba2f4d8ff77f583a11de",
       "models": ["formal/models/contracts/unsigned_owner_plan.qnt"],
-      "candidateLines": [44, 82, 127, 130, 183],
+      "candidateLines": [47, 85, 130, 133, 186],
       "review": "mapped-abstraction"
     },
     {
@@ -2005,7 +2020,7 @@
     },
     {
       "path": "contracts/solana/scripts/test-e2e.sh",
-      "sha256": "35c01981fa352a272a3495a22e34c9bcb732be6f1676ae0207f5660691ac2374",
+      "sha256": "34dc544a42f1f8fe80f08f966f27243ed50d4a97b394a3e9815b6d57a251cf6e",
       "models": [
         "formal/models/contracts/deployment_artifact.qnt",
         "formal/models/contracts/solana_validator_callers.qnt"
@@ -11752,6 +11767,29 @@
       ]
     },
     {
+      "path": "formal/models/contracts/solana_month_pledge.qnt",
+      "sha256": "ff8cb44722d43138f1e6aafdec6696f40a14971e6a255e0a724cb6e470ad3536",
+      "sources": [
+        "contracts/solana/integration/pledge-preload.mjs",
+        "contracts/solana/month-pledge.ts",
+        "contracts/solana/programs/slop-escrow/src/lib.rs"
+      ],
+      "scenarios": [
+        "capAbovePledgeRefusedTest",
+        "lapseAfterWindowTest",
+        "lapsedPledgeClosesOnceTest",
+        "noLapseInsideWindowTest",
+        "otherPledgeProtectedTest",
+        "pastPeriodRefusedTest",
+        "pledgeBlocksSpendTest",
+        "pledgeMustFitTest",
+        "raiseOnlyTest",
+        "switchOffStillCommitsTest",
+        "switchOffWithoutPledgeRefusedTest",
+        "unnamedCommitClosesByExpireTest"
+      ]
+    },
+    {
       "path": "formal/models/contracts/solana_monthly_allocation.qnt",
       "sha256": "3cb1464eeaa993c1f68e3bd91fe062591f838f9a41bcd21bafc364d7965fd172",
       "sources": [
@@ -11800,7 +11838,7 @@
     },
     {
       "path": "formal/models/contracts/solana_preload_cases.qnt",
-      "sha256": "d8a04f380afbc636be53457c3d1e01f492df976907f295869c951f07db540ea3",
+      "sha256": "ad7b650222fc214b0d74eb72c90fd4d66368593454ad796dbc5df0d7e53c770d",
       "sources": [
         "contracts/solana/integration/legacy-project.mjs",
         "contracts/solana/integration/monthly-preload.mjs",
