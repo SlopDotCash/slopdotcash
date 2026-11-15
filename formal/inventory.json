@@ -5583,11 +5583,11 @@
     },
     {
       "path": "src/PublicPages.tsx",
-      "sha256": "30c6c2f897e00a99a9c6c01e45660082110b81596e6d3de5278ff6b6c98a0c33",
+      "sha256": "f8fbd3c7d4dafe0434854781234dff3d235ab54b455c27b57350ef197404c1e7",
       "models": ["formal/models/ui/ui_record_display.qnt"],
       "candidateLines": [
-        218, 303, 314, 352, 381, 382, 384, 385, 418, 420, 431, 580, 581, 583,
-        584, 591, 631, 721
+        219, 304, 315, 353, 382, 383, 385, 386, 419, 421, 432, 581, 582, 584,
+        585, 592, 639, 641, 740
       ],
       "review": "mapped-abstraction",
       "statelessReason": "Public explanatory/sponsor rendering derives from supplied registry/snapshot props; no local state/effect or mutation. Child state remains separately modeled."

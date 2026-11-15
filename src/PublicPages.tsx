@@ -16,6 +16,7 @@ import { Link } from "./Link";
 import { ContributionPointTiers, PenaltyPointTable } from "./PointsRules";
 import "./public-records.css";
 import { browserDeployment } from "./lib/browser-deployment";
+import { loadMergeActivity, mergeActivityCardLine } from "./lib/merge-activity";
 import { summarizeModelOutcomes } from "./lib/model-outcomes";
 import { POINTS_NOTICE } from "./lib/points";
 import {
@@ -595,6 +596,13 @@ export function SponsorsPage({
   const hasExternalPrize = PROJECTS.some(
     (project) => project.reward.kind === "external-prize-share",
   );
+  // One shared read of the daily merge activity (#1993) for every card.
+  const [merge] = usePublicResource(
+    true,
+    loadMergeActivity,
+    "Merge activity unavailable",
+  );
+  const now = new Date();
   return (
     <main className="shell evidence-page route-sponsors">
       <RoutePageHeader
@@ -630,6 +638,17 @@ export function SponsorsPage({
                   project={project}
                   className="route-sponsor-status"
                 />
+                {project.status === "active" && merge.status === "ready"
+                  ? (() => {
+                      const line = mergeActivityCardLine(
+                        merge.index.get(project.id),
+                        now,
+                      );
+                      return line ? (
+                        <small className="project-merge-activity">{line}</small>
+                      ) : null;
+                    })()
+                  : null}
                 {hasReviewBudget ? (
                   project.reward.reviewBudget ? (
                     <small>

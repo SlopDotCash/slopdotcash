@@ -17,9 +17,9 @@
   ],
   "counts": {
     "files": 769,
-    "functions": 11394,
+    "functions": 11395,
     "selectedContractTargets": 188,
-    "unprovedFunctions": 11206,
+    "unprovedFunctions": 11207,
     "nonTypeScriptFiles": 57
   },
   "limits": [
@@ -7409,21 +7409,22 @@
 {"name":"<ArrowFunction@60>","kind":"ArrowFunction","line":60,"sha256":"bf3da5b546e7325910ab982e49aab31f1c06d075d3bd18e3c28b1349e21bd4db","status":"unproved","candidate":"requires-effect-or-language-boundary","syntaxFeatures":["jsx"]},
 {"name":"<ArrowFunction@85>","kind":"ArrowFunction","line":85,"sha256":"485ffd7704772d1c16b5a7b83a8d65ee42354fb5d026da0721260815d705a5e3","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]}
 ]},
-{"path":"src/PublicPages.tsx","sha256":"30c6c2f897e00a99a9c6c01e45660082110b81596e6d3de5278ff6b6c98a0c33","language":"tsx","disposition":"callables-inventoried","functions":[
-{"name":"HowItWorksPage","kind":"FunctionDeclaration","line":47,"sha256":"bcf0c4f7c541c825a78700aca85c6ef08f0d6a18d2c60870b21b2a18002cb760","status":"unproved","candidate":"requires-effect-or-language-boundary","syntaxFeatures":["jsx"]},
-{"name":"sponsorPoolLabel","kind":"FunctionDeclaration","line":367,"sha256":"a8bd8f0fe02c05df5c7634e44e5ffbf65d1b97811dae9d145823f518d97ac48a","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
-{"name":"WhoBuildsOnSlop","kind":"FunctionDeclaration","line":380,"sha256":"75408f44be062af37c4528a5d9e3417c895482ac59f47fc69cbf40175ef519af","status":"unproved","candidate":"requires-effect-or-language-boundary","syntaxFeatures":["jsx"]},
-{"name":"percentOfRatio","kind":"ArrowFunction","line":392,"sha256":"92f8a6964ea7381e228c13bd8a732a2b1e59c2b02369916882f4eb30828987dd","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
-{"name":"percent","kind":"ArrowFunction","line":397,"sha256":"382e3c7d795778e4e83ea3aa0c2a711ff2e1c11d527079c52e89d70aab2aa6e0","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
-{"name":"<ArrowFunction@403>","kind":"ArrowFunction","line":403,"sha256":"02ccc91a5ad0ef87125665a58c2230cf91e6f746161fee4cac2d2ebc4e4a9821","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
-{"name":"pinnedFile","kind":"ArrowFunction","line":407,"sha256":"7ae7292b077b950f17e5376d9da23888b566f6e6a4099d262bf3a53a091328ff","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
-{"name":"repositoryUrl","kind":"ArrowFunction","line":409,"sha256":"0c346c23028c74cdb50c09f1a2412791792e48256ea6cf31d7de66c8820534d2","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
-{"name":"<ArrowFunction@487>","kind":"ArrowFunction","line":487,"sha256":"2da5228b34e75a1e00f999ea770a54c1ce88cb67e0997fe8ed2a890357a5247e","status":"unproved","candidate":"requires-effect-or-language-boundary","syntaxFeatures":["jsx"]},
-{"name":"<ArrowFunction@531>","kind":"ArrowFunction","line":531,"sha256":"efce402535e8dbb3f181dea32da72379ec8379855a850f76914eb1afb3d846a1","status":"unproved","candidate":"requires-effect-or-language-boundary","syntaxFeatures":["jsx"]},
-{"name":"SponsorsPage","kind":"FunctionDeclaration","line":579,"sha256":"c2f57502ff831f7d7e25073cad8eae5d2205910e539667f13709eb29ef90da09","status":"unproved","candidate":"requires-effect-or-language-boundary","syntaxFeatures":["jsx"]},
-{"name":"<ArrowFunction@593>","kind":"ArrowFunction","line":593,"sha256":"d37cf851e1b391581e14effb2954ca77b7ee44cf820acd97bd14c7081e92fcbc","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
-{"name":"<ArrowFunction@596>","kind":"ArrowFunction","line":596,"sha256":"aba37623932899bd4c04860c57c381873a0b607df73c6d350d20569d33807709","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
-{"name":"<ArrowFunction@613>","kind":"ArrowFunction","line":613,"sha256":"23eefb565fcb29bbdcd7d0426797e0826f3b9f8219a0b7f704b02b3ad7db07e6","status":"unproved","candidate":"requires-effect-or-language-boundary","syntaxFeatures":["jsx"]}
+{"path":"src/PublicPages.tsx","sha256":"f8fbd3c7d4dafe0434854781234dff3d235ab54b455c27b57350ef197404c1e7","language":"tsx","disposition":"callables-inventoried","functions":[
+{"name":"HowItWorksPage","kind":"FunctionDeclaration","line":48,"sha256":"bcf0c4f7c541c825a78700aca85c6ef08f0d6a18d2c60870b21b2a18002cb760","status":"unproved","candidate":"requires-effect-or-language-boundary","syntaxFeatures":["jsx"]},
+{"name":"sponsorPoolLabel","kind":"FunctionDeclaration","line":368,"sha256":"a8bd8f0fe02c05df5c7634e44e5ffbf65d1b97811dae9d145823f518d97ac48a","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
+{"name":"WhoBuildsOnSlop","kind":"FunctionDeclaration","line":381,"sha256":"75408f44be062af37c4528a5d9e3417c895482ac59f47fc69cbf40175ef519af","status":"unproved","candidate":"requires-effect-or-language-boundary","syntaxFeatures":["jsx"]},
+{"name":"percentOfRatio","kind":"ArrowFunction","line":393,"sha256":"92f8a6964ea7381e228c13bd8a732a2b1e59c2b02369916882f4eb30828987dd","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
+{"name":"percent","kind":"ArrowFunction","line":398,"sha256":"382e3c7d795778e4e83ea3aa0c2a711ff2e1c11d527079c52e89d70aab2aa6e0","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
+{"name":"<ArrowFunction@404>","kind":"ArrowFunction","line":404,"sha256":"02ccc91a5ad0ef87125665a58c2230cf91e6f746161fee4cac2d2ebc4e4a9821","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
+{"name":"pinnedFile","kind":"ArrowFunction","line":408,"sha256":"7ae7292b077b950f17e5376d9da23888b566f6e6a4099d262bf3a53a091328ff","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
+{"name":"repositoryUrl","kind":"ArrowFunction","line":410,"sha256":"0c346c23028c74cdb50c09f1a2412791792e48256ea6cf31d7de66c8820534d2","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
+{"name":"<ArrowFunction@488>","kind":"ArrowFunction","line":488,"sha256":"2da5228b34e75a1e00f999ea770a54c1ce88cb67e0997fe8ed2a890357a5247e","status":"unproved","candidate":"requires-effect-or-language-boundary","syntaxFeatures":["jsx"]},
+{"name":"<ArrowFunction@532>","kind":"ArrowFunction","line":532,"sha256":"efce402535e8dbb3f181dea32da72379ec8379855a850f76914eb1afb3d846a1","status":"unproved","candidate":"requires-effect-or-language-boundary","syntaxFeatures":["jsx"]},
+{"name":"SponsorsPage","kind":"FunctionDeclaration","line":580,"sha256":"16a1c32e015e55806ffd25276c0c7a00602838840dd49947cfb0bac955e8757c","status":"unproved","candidate":"requires-effect-or-language-boundary","syntaxFeatures":["jsx"]},
+{"name":"<ArrowFunction@594>","kind":"ArrowFunction","line":594,"sha256":"d37cf851e1b391581e14effb2954ca77b7ee44cf820acd97bd14c7081e92fcbc","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
+{"name":"<ArrowFunction@597>","kind":"ArrowFunction","line":597,"sha256":"aba37623932899bd4c04860c57c381873a0b607df73c6d350d20569d33807709","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
+{"name":"<ArrowFunction@621>","kind":"ArrowFunction","line":621,"sha256":"e8ff19937f088af387176cae804a384b79f8a20cfdd635e16651783673af0f6a","status":"unproved","candidate":"requires-effect-or-language-boundary","syntaxFeatures":["jsx"]},
+{"name":"<ArrowFunction@642>","kind":"ArrowFunction","line":642,"sha256":"eab5551335709532a574d3efee8d783c885285df54934c6ed3d77653edb442b7","status":"unproved","candidate":"requires-effect-or-language-boundary","syntaxFeatures":["jsx"]}
 ]},
 {"path":"src/ReferralClaims.tsx","sha256":"df150b0ebc54dfb92b06d54f5f77e36b5da8bdf5f14921d3cf3de35aebd8fd43","language":"tsx","disposition":"callables-inventoried","functions":[
 {"name":"pendingKey","kind":"FunctionDeclaration","line":28,"sha256":"e8a49156e88ef9152ae89323dd4de154c146f047dc2d8eff8afd39b4a77750e8","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
