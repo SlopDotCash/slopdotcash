@@ -562,30 +562,28 @@ export async function loadValueInputs(
     contextPaths: readonly ValueContextSelection[] = [],
     recipe?: ValueMergeRecipe,
   ) {
+    const { repository, identity } = await repositoryIdentity(repositoryId);
     const hydrate = async (raw: WorkUnitSource) => {
       const collected = {
         ...raw,
         evidence: await collectValueContext(github, raw.evidence, contextPaths),
       };
       return recipe
-        ? hydrateValueMergeSource(
-            collected,
-            recipe,
-            (await repositoryIdentity(repositoryId)).identity,
-          )
+        ? hydrateValueMergeSource(collected, recipe, identity)
         : collected;
     };
     const cached = sourceCache.get(id);
     if (cached) {
       if (
         cached.evidence.repository.toLowerCase() !==
-          repositoryId.toLowerCase() ||
+          repository.id.toLowerCase() ||
+        cached.evidence.repositoryNodeId !== identity.node_id ||
+        cached.evidence.repositoryDatabaseId !== identity.id ||
         cached.evidence.pull.number !== number
       )
         throw new Error("Joint source identity changed between records");
       return hydrate(cached);
     }
-    const { repository, identity } = await repositoryIdentity(repositoryId);
     const evidence = await collectValueEvidence(github, repository.id, number);
     const outcome = census.get(id);
     if (

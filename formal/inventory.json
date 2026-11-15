@@ -4822,7 +4822,7 @@
     },
     {
       "path": "scripts/value-ingestion.ts",
-      "sha256": "ae5193c9905211b71957315479e127cb507d69aa0ae56cf69d317005ce7e5034",
+      "sha256": "e08a7fd1873352d2cff19961460a24ecf1b68c007807acb4b87c560016cad06e",
       "models": [
         "formal/models/points/implementation_credit.qnt",
         "formal/models/points/implementation_credit_gate.qnt",
@@ -4830,8 +4830,8 @@
         "formal/models/slopbot/value_ingestion.qnt"
       ],
       "candidateLines": [
-        66, 77, 124, 125, 126, 127, 129, 130, 197, 198, 199, 201, 202, 737, 757,
-        879, 915, 954, 978
+        66, 77, 124, 125, 126, 127, 129, 130, 197, 198, 199, 201, 202, 735, 755,
+        877, 913, 952, 976
       ],
       "review": "mapped-abstraction"
     },
@@ -8916,15 +8916,15 @@
     },
     {
       "path": "workers/slopbot/value-retained-copy.ts",
-      "sha256": "cf3803ca552119196538a5cf591b80ea84a778accefffd3996c649392baf0b4b",
+      "sha256": "0df58283e903afb4a6677a2f6bfb3231ceff49f0c1f4a148ce4a7a54f655f219",
       "models": [
         "formal/models/slopbot/bot_retained_acceptance.qnt",
         "formal/models/slopbot/retained_copy_bindings.qnt",
         "formal/models/slopbot/retained_recipient_scope.qnt"
       ],
       "candidateLines": [
-        40, 67, 144, 338, 389, 451, 457, 490, 533, 567, 707, 771, 876, 903, 904,
-        905, 909
+        40, 67, 144, 346, 397, 459, 465, 498, 541, 575, 715, 779, 884, 911, 912,
+        913, 917
       ],
       "review": "mapped-abstraction"
     },
