@@ -19,7 +19,7 @@ testnet. Those are distinct implementation checks.
 ### Qualification requires launch, exact network and vault evidence, a reviewed plan, and current owner authorization
 
 USDC applies on Base and Solana. USDG applies on Robinhood. Monetary quantities
-in the plan are stablecoin micro-units. Gas is wei for EVM networks and
+in the plan are stablecoin micro-units. Gas is integer gwei for EVM networks, with any fractional gwei rounded up by the adapter, and
 lamports for Solana. The Base ceiling covers the reviewed upgrade and the
 whole sequence across wallets. The evidence reader checks Slop's Base vault
 or the first qualifying Solana or Robinhood vault. Testnet, deployment bytes,
@@ -35,15 +35,15 @@ type FreshChecks = { currentAuthority: bool, exactPlanAuthorized: bool, eligible
 type Operation = { key: str, transaction: str, kind: StepKind, gasLimit: int, gross: int, net: int, fee: int, actor: int }
 type Result = { network: Network, vault: str, transaction: str, finalized: bool, exactOperation: bool, succeeded: bool, actualGas: int }
 type RecordedOutcome = { plan: Plan, operation: Operation, result: Result }
-type Qualification = { completed: int, activated: int, ethereumActive: bool, phase: QualificationPhase, plan: Plan, qualifiedPlans: List[Plan], spent: int, deposited: bool, paid: bool, pending: Operation, records: Set[str], transactions: List[str], history: List[RecordedOutcome] }
+type Qualification = { completed: int, activated: int, ethereumActive: bool, phase: QualificationPhase, plan: Plan, qualifiedPlans: List[Plan], spent: int, deposited: bool, paid: bool, pending: Operation, records: Set[str], transactions: List[str], history: List[RecordedOutcome], retransmissions: int, historicalSolana: List[ExistingSolanaStep] }
 pure val emptyPlan: Plan = { network: Base, vault: "", asset: "", review: "", monthlyCap: 0, automatic: false }
 pure val emptyOperation: Operation = { key: "", transaction: "", kind: SupportingWrite, gasLimit: 0, gross: 0, net: 0, fee: 0, actor: 0 }
-pure val initial: Qualification = { completed: 0, activated: 0, ethereumActive: false, phase: AwaitingPlan, plan: emptyPlan, qualifiedPlans: List(), spent: 0, deposited: false, paid: false, pending: emptyOperation, records: Set(), transactions: List(), history: List() }
+pure val initial: Qualification = { completed: 0, activated: 0, ethereumActive: false, phase: AwaitingPlan, plan: emptyPlan, qualifiedPlans: List(), spent: 0, deposited: false, paid: false, pending: emptyOperation, records: Set(), transactions: List(), history: List(), retransmissions: 0, historicalSolana: List() }
 pure def networkFor(position: int): Network =
   if (position == 0) Base else if (position == 1) Solana else if (position == 2) Robinhood else Ethereum
 pure def stablecoin(network: Network): str = if (network == Robinhood) "USDG" else "USDC"
 pure def gasCeiling(network: Network): int =
-  if (network == Solana) 10000000 else if (network == Base or network == Robinhood) 1000000000000000 else 0
+  if (network == Solana) 10000000 else if (network == Base or network == Robinhood) 1000000 else 0
 pure def validPlan(plan: Plan, position: int): bool = position >= 0 and position < 3 and plan.network == networkFor(position)
   and plan.vault != "" and plan.asset == stablecoin(plan.network) and plan.review != ""
   and plan.monthlyCap == 1000000000 and not(plan.automatic)
@@ -87,7 +87,11 @@ pure def canRetainAttempt(q: Qualification, operation: Operation, checks: FreshC
 pure def retainAttempt(q: Qualification, operation: Operation, checks: FreshChecks): Qualification =
   { ...q, phase: AwaitingReceipt, pending: operation, transactions: q.transactions.append(operation.transaction) }
 pure def liveAttempt(q: Qualification): bool = q.phase == AwaitingReceipt or q.phase == Uncertain
-pure def mayRetransmit(q: Qualification, transaction: str): bool = liveAttempt(q) and transaction == q.pending.transaction
+pure def canRetransmit(q: Qualification, transaction: str): bool = liveAttempt(q) and transaction == q.pending.transaction
+pure def retransmit(q: Qualification, transaction: str): Qualification = { ...q, retransmissions: q.retransmissions + 1 }
+pure def stepRetransmissionReservesNothing(before: Qualification, via: str, after: Qualification): bool =
+  via == "retransmit" implies after.spent == before.spent and after.transactions == before.transactions and after.pending == before.pending
+pure def sometimesRetransmitted(q: Qualification): bool = q.retransmissions > 0 and liveAttempt(q)
 pure def alwaysPendingBound(q: Qualification): bool =
   if (liveAttempt(q)) allowedOperation(q, q.pending) and q.transactions.includes(q.pending.transaction) else q.pending == emptyOperation
 pure def alwaysNativeCeiling(q: Qualification): bool = q.spent >= 0 and q.spent <= gasCeiling(q.plan.network)
@@ -147,13 +151,16 @@ A lane advances only after completed payment and independent reconciliation of
 its retained evidence. Finalized attempts and their receipts remain in the
 journal when the next lane starts. The separate production activation consumes
 qualified lanes in order and requires current evidence for the network. Qualification transactions are excluded from earned
-cycles, evaluations and payout recognition. Ethereum's first-vault waiver
-requires successful Base and Robinhood shared EVM coverage. Ethereum still
+cycles, evaluations and payout recognition: `excludedTransactions` is the
+list the points and settlement ledgers must refuse (a composition
+obligation). Ethereum's first-vault waiver is derived from the retained
+ledger: both Base and Robinhood lanes qualified and all three lanes
+activated. Ethereum still
 requires current authority, exact deployment and asset checks, finalized
 evidence, and its own explicit activation. It uses no qualification vault.
 
 ```quint
-type ActivationEvidence = { network: Network, vault: str, review: str, sharedEvmQualified: bool, currentAuthority: bool, exactDeployment: bool, exactAsset: bool, finalized: bool, ownerAuthorized: bool }
+type ActivationEvidence = { network: Network, vault: str, review: str, currentAuthority: bool, exactDeployment: bool, exactAsset: bool, finalized: bool, ownerAuthorized: bool }
 pure def canCompleteLane(q: Qualification, reconciled: bool): bool = q.phase == Ready and q.paid and reconciled
 pure def completeLane(q: Qualification, reconciled: bool): Qualification = { ...q, completed: q.completed + 1, phase: AwaitingPlan, plan: emptyPlan, qualifiedPlans: q.qualifiedPlans.append(q.plan), spent: 0, deposited: false, paid: false, records: Set() }
 pure def validActivation(activation: ActivationEvidence): bool = activation.currentAuthority and activation.exactDeployment
@@ -167,14 +174,17 @@ pure def activateLane(q: Qualification, activation: ActivationEvidence): Qualifi
 pure def alwaysActivationWithinQualification(q: Qualification): bool = q.activated >= 0 and q.activated <= q.completed
 pure def stepActivationIsSingleNetwork(before: Qualification, after: Qualification): bool =
   after.activated >= before.activated and after.activated <= before.activated + 1
+pure def sharedEvmQualified(q: Qualification): bool = q.qualifiedPlans.some(p => p.network == Base)
+  and q.qualifiedPlans.some(p => p.network == Robinhood) and q.activated == 3
 pure def canActivateEthereum(q: Qualification, activation: ActivationEvidence): bool =
-  q.completed == 3 and q.phase == AwaitingPlan and not(q.ethereumActive) and activation.sharedEvmQualified
+  q.completed == 3 and q.phase == AwaitingPlan and not(q.ethereumActive) and sharedEvmQualified(q)
     and activation.network == Ethereum and activation.vault == "" and validActivation(activation)
 pure def activateEthereum(q: Qualification, activation: ActivationEvidence): Qualification = { ...q, ethereumActive: true }
 pure def alwaysEthereumAfterSequence(q: Qualification): bool = q.ethereumActive implies q.completed == 3 and q.phase == AwaitingPlan
+  and sharedEvmQualified(q)
 pure def stepEthereumActivePersists(before: Qualification, after: Qualification): bool = before.ethereumActive implies after.ethereumActive
-pure def qualificationCountsForRewards(kind: StepKind): bool = false
-pure def lawQualificationTransfersAreExcluded(kind: StepKind): bool = not(qualificationCountsForRewards(kind))
+pure def excludedTransactions(q: Qualification): List[str] = q.transactions
+pure def alwaysEveryOutcomeExcluded(q: Qualification): bool = q.history.every(h => excludedTransactions(q).includes(h.result.transaction))
 pure def sometimesPaid(q: Qualification): bool = q.paid
 pure def sometimesThreeLanesQualified(q: Qualification): bool = q.completed == 3
 pure def sometimesThreeLanesActivated(q: Qualification): bool = q.activated == 3
@@ -198,10 +208,10 @@ pure def assetFlowQualified(scope: AssetScope, flow: AssetChecks): bool =
     and (scope != Token2022 or flow.conversionInspected)
 pure def assetActionAuthorized(scope: AssetScope, flow: AssetChecks, reviewedAction: bool, ownerAuthorizedAction: bool): bool =
   assetFlowQualified(scope, flow) and reviewedAction and ownerAuthorizedAction
-pure def lawToken2022RequiresConversion(flow: AssetChecks, reviewedAction: bool, ownerAuthorizedAction: bool): bool =
-  assetActionAuthorized(Token2022, flow, reviewedAction, ownerAuthorizedAction) implies flow.conversionInspected
-pure def lawScopeNeedsActionAuthority(scope: AssetScope, flow: AssetChecks, reviewedAction: bool, ownerAuthorizedAction: bool): bool =
-  assetActionAuthorized(scope, flow, reviewedAction, ownerAuthorizedAction) implies reviewedAction and ownerAuthorizedAction
+pure def lawToken2022StricterThanNative(flow: AssetChecks): bool =
+  (assetFlowQualified(NativeAsset, flow) and not(flow.conversionInspected)) implies not(assetFlowQualified(Token2022, flow))
+pure def lawImplementationApprovalIsNotAction(scope: AssetScope, flow: AssetChecks): bool =
+  not(assetActionAuthorized(scope, flow, false, true)) and not(assetActionAuthorized(scope, flow, true, false))
 ```
 
 ### Solana upgrade evidence still includes deterministic build, exact on-chain bytes, public testnet and owner authorization
@@ -216,12 +226,19 @@ type SolanaUpgradeEvidence = { deterministicPinnedBuild: bool, exactOnChainBytes
 type ExistingSolanaStep = ControlsRelease | ProgramUpgrade | GasTopUp
 pure def solanaUpgradeQualified(upgrade: SolanaUpgradeEvidence): bool =
   upgrade.deterministicPinnedBuild and upgrade.exactOnChainBytes and upgrade.publicTestnet and upgrade.ownerAuthorized
-pure def lawSolanaBytesAndTestnetRequired(upgrade: SolanaUpgradeEvidence): bool =
-  solanaUpgradeQualified(upgrade) implies upgrade.deterministicPinnedBuild and upgrade.exactOnChainBytes and upgrade.publicTestnet
-pure def historicalSolanaStepComplete(prior: ExistingSolanaStep): bool =
-  prior == ControlsRelease or prior == ProgramUpgrade or prior == GasTopUp
-pure def mayRepeatHistoricalSolanaStep(prior: ExistingSolanaStep): bool = not(historicalSolanaStepComplete(prior))
-pure def lawHistoricalSolanaStepsDoNotRepeat(prior: ExistingSolanaStep): bool = not(mayRepeatHistoricalSolanaStep(prior))
+pure def lawSecondOperatorWaiverKeepsBytesAndTestnet(upgrade: SolanaUpgradeEvidence): bool =
+  (not(upgrade.exactOnChainBytes) or not(upgrade.publicTestnet)) implies not(solanaUpgradeQualified(upgrade))
+pure def canRecordHistoricalSolana(q: Qualification, prior: ExistingSolanaStep, upgrade: SolanaUpgradeEvidence): bool =
+  not(q.historicalSolana.includes(prior)) and (prior != ProgramUpgrade or solanaUpgradeQualified(upgrade))
+pure def recordHistoricalSolana(q: Qualification, prior: ExistingSolanaStep, upgrade: SolanaUpgradeEvidence): Qualification =
+  { ...q, historicalSolana: q.historicalSolana.append(prior) }
+pure def stepHistoricalEvidenceSignsNothing(before: Qualification, via: str, after: Qualification): bool =
+  via == "recordHistoricalSolana" implies after.transactions == before.transactions and after.spent == before.spent
+    and after.phase == before.phase and after.pending == before.pending
+pure def stepHistoricalStepsOnce(before: Qualification, after: Qualification): bool = after.historicalSolana == before.historicalSolana
+  or (after.historicalSolana.length() == before.historicalSolana.length() + 1
+    and not(before.historicalSolana.includes(after.historicalSolana.nthOr(before.historicalSolana.length(), GasTopUp))))
+pure def sometimesHistoricalRecorded(q: Qualification): bool = q.historicalSolana.length() == 3
 ```
 
 ### Sample plans, receipts and checks cover the allowed progression and conflicting evidence
@@ -249,8 +266,8 @@ pure val resultValues = sampleNetworks.fold(Set(), (results, network) =>
     byTransaction.union(Set(true, false).map(succeeded => { network: network, vault: "vault", transaction: sampleTransaction(network, kind),
       finalized: true, exactOperation: true, succeeded: succeeded, actualGas: 1 })))))
 pure val activationValues = Set(Base, Solana, Robinhood, Ethereum).fold(Set(), (records, network) =>
-  records.union(Set(true, false).map(shared => { network: network, vault: if (network == Ethereum) "" else "vault", review: "plan", sharedEvmQualified: shared, currentAuthority: true,
-    exactDeployment: true, exactAsset: true, finalized: true, ownerAuthorized: true })))
+  records.union(Set(true, false).map(owner => { network: network, vault: if (network == Ethereum) "" else "vault", review: "plan", currentAuthority: true,
+    exactDeployment: true, exactAsset: true, finalized: true, ownerAuthorized: owner })))
 pure val flowValues = Set(
   { created: true, deposited: true, refunded: true, reserved: true, paid: true, claimed: true, accounted: true, conversionInspected: true },
   { created: true, deposited: true, refunded: true, reserved: true, paid: true, claimed: true, accounted: true, conversionInspected: false })
@@ -267,4 +284,6 @@ pure val weight_reconcileAttempt = 70
 pure val weight_missReceipt = 12
 pure val weight_activateLane = 60
 pure val weight_activateEthereum = 36
+pure val priorValues = Set(ControlsRelease, ProgramUpgrade, GasTopUp)
+pure val transactionValues = Set("base-deposit", "solana-payout", "other")
 ```
