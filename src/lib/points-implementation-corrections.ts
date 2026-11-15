@@ -281,6 +281,7 @@ export function isOriginalContributorFollowup(
   source: CorrectionSource,
   accepted: CorrectionSource,
   binding: OriginalContributorFollowup | undefined,
+  claims?: readonly CorrectionClaim[],
 ): boolean {
   if (
     !binding ||
@@ -297,7 +298,14 @@ export function isOriginalContributorFollowup(
     source.author.id !== accepted.author.id
   )
     return false;
+  if (
+    claims &&
+    (!claims.length ||
+      claims.some((claim) => claim.sourceId !== source.sourceId))
+  )
+    return false;
   if (binding.reference) {
+    if (claims) return false;
     const { digest: referenceDigest, ...reference } = binding.reference;
     const pull = reference.pull,
       target = reference.target;
@@ -399,18 +407,37 @@ export function isOriginalContributorFollowup(
   if (completed.size !== graph.size) return false;
   return (
     descends.has(source.headSha) &&
-    source.commits.every(
-      (commit) =>
-        commit.parentCount > 1 ||
-        (commit.firstAcceptedSourceId === source.sourceId &&
-          !commit.retainedCopy &&
-          commit.author?.id === accepted.author?.id &&
-          commit.author?.kind === accepted.author?.kind &&
-          descends.has(commit.sha) &&
-          validParentShas(commit) &&
-          JSON.stringify(commit.parentShas) ===
-            JSON.stringify(graph.get(commit.sha)?.parentShas)),
-    )
+    (claims
+      ? claims.every((claim) => {
+          const commit = source.commits.find(
+            (item) => item.sha === claim.commitSha,
+          );
+          return (
+            commit &&
+            correctionClaimCommit(commit) &&
+            commit.files?.some((file) => file.path === claim.path) &&
+            commit.firstAcceptedSourceId === source.sourceId &&
+            !commit.retainedCopy &&
+            commit.author?.id === accepted.author?.id &&
+            commit.author?.kind === accepted.author?.kind &&
+            descends.has(commit.sha) &&
+            validParentShas(commit) &&
+            JSON.stringify(commit.parentShas) ===
+              JSON.stringify(graph.get(commit.sha)?.parentShas)
+          );
+        })
+      : source.commits.every(
+          (commit) =>
+            commit.parentCount > 1 ||
+            (commit.firstAcceptedSourceId === source.sourceId &&
+              !commit.retainedCopy &&
+              commit.author?.id === accepted.author?.id &&
+              commit.author?.kind === accepted.author?.kind &&
+              descends.has(commit.sha) &&
+              validParentShas(commit) &&
+              JSON.stringify(commit.parentShas) ===
+                JSON.stringify(graph.get(commit.sha)?.parentShas)),
+        ))
   );
 }
 
@@ -419,6 +446,10 @@ export function originalContributorClaimScope(
   original: CorrectionSource,
   accepted: CorrectionSource,
   claims: readonly CorrectionClaim[],
+  followups: readonly {
+    source: CorrectionSource;
+    binding: OriginalContributorFollowup;
+  }[] = [],
 ): boolean {
   const origin = original.author;
   const carrier = accepted.author;
@@ -519,8 +550,30 @@ export function originalContributorClaimScope(
   };
   if (!originalContributorPrecedesFollowups(resolvedOriginal, carrier))
     return false;
+  const followupIds = new Set(followups.map(({ source }) => source.sourceId));
+  if (
+    followupIds.size !== followups.length ||
+    followupIds.has(accepted.sourceId) ||
+    followups.some(
+      ({ source, binding }) =>
+        !isOriginalContributorFollowup(
+          source,
+          accepted,
+          binding,
+          claims.filter((claim) => claim.sourceId === source.sourceId),
+        ),
+    ) ||
+    claims.some(
+      (claim) =>
+        claim.sourceId !== accepted.sourceId &&
+        !followupIds.has(claim.sourceId),
+    )
+  )
+    return false;
   let hasOriginal = false;
-  for (const claim of claims) {
+  for (const claim of claims.filter(
+    (claim) => claim.sourceId === accepted.sourceId,
+  )) {
     const commit = graph.get(claim.commitSha);
     if (
       claim.sourceId !== accepted.sourceId ||
@@ -993,7 +1046,13 @@ function deriveProof(
           sameSet(
             binding.boundPaths,
             acceptedCommit.parentCount === 2
-              ? [...new Set(candidate.proof.claims.map((claim) => claim.path))]
+              ? [
+                  ...new Set(
+                    candidate.proof.claims
+                      .filter((claim) => claim.sourceId === accepted.sourceId)
+                      .map((claim) => claim.path),
+                  ),
+                ]
               : (acceptedCommit.files ?? []).map((file) => file.path),
           ) &&
           sameSet(
@@ -1004,6 +1063,11 @@ function deriveProof(
             original,
             accepted,
             candidate.proof.claims,
+            (binding.followups ?? []).map((followup) => {
+              const source = sources.get(followup.sourceId);
+              check(source, "original-contributor follow-up source is missing");
+              return { source, binding: followup };
+            }),
           ),
         "original-contributor unit scope does not bind the reviewed native claims",
       );

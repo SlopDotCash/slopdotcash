@@ -1120,3 +1120,125 @@ test("native omitted ancestry covers several heads and rejects a disconnected cy
     ),
   ).rejects.toThrow("omitted PR ancestry is incomplete");
 });
+
+test("native unit selects later follow-up claims while retaining unrelated work", async () => {
+  const input = await snapshot();
+  const followup = clone(input.sources[0]);
+  const later = clone(input.accepted.commits[1]);
+  later.sha = sha("d");
+  later.parents = [{ sha: sha("b") }];
+  const unrelated = clone(input.accepted.commits[0]);
+  unrelated.sha = sha("e");
+  unrelated.parents = [{ sha: sha("0") }];
+  unrelated.author = { node_id: "third", login: "third", type: "User" };
+  followup.evidence.pull = {
+    ...followup.evidence.pull,
+    node_id: "PR_followup",
+    number: 3,
+    html_url: `https://github.com/${repository}/pull/3`,
+    head: { sha: later.sha },
+    merged_at: "2026-10-04T00:00:00Z",
+    commits: 2,
+  };
+  followup.evidence.commits = [unrelated, later];
+  followup.evidence.commitAttribution = [unrelated, later].map((commit) => ({
+    ...clone(input.accepted.commitAttribution[0]),
+    sha: commit.sha,
+  }));
+  input.owners.set(`${repository.toLowerCase()}\0${later.sha}`, "PR_followup");
+  input.owners.set(
+    `${repository.toLowerCase()}\0${unrelated.sha}`,
+    "PR_followup",
+  );
+  followup.evidence.pull.merge_commit_sha = sha("9");
+  const priorMerge = input.accepted.mergeCommitEvidence;
+  if (!priorMerge) throw Error("Missing fixture merge");
+  followup.evidence.mergeCommitEvidence = {
+    ...clone(priorMerge),
+    sha: sha("9"),
+    parents: [{ sha: sha("f") }, { sha: later.sha }],
+  };
+  input.responses.set(`${root}/pulls/3`, clone(followup.evidence.pull));
+  input.responses.set(
+    `${root}/git/commits/${sha("9")}`,
+    clone(followup.evidence.mergeCommitEvidence),
+  );
+  input.responses.set(
+    `${root}/compare/${sha("f")}...${sha("9")}?per_page=100&page=1`,
+    {
+      status: "ahead",
+      base_commit: { sha: sha("f") },
+      merge_base_commit: { sha: sha("f") },
+      ahead_by: 3,
+      behind_by: 0,
+      total_commits: 3,
+      commits: [
+        ...clone(followup.evidence.commits),
+        clone(followup.evidence.mergeCommitEvidence),
+      ],
+    },
+  );
+  for (const commit of followup.evidence.commits)
+    input.responses.set(`${root}/git/commits/${commit.sha}`, clone(commit));
+  const path = `${root}/compare/${sha("b")}...${later.sha}?per_page=100&page=1`;
+  input.responses.set(path, {
+    status: "ahead",
+    merge_base_commit: { sha: sha("b") },
+    ahead_by: 1,
+    behind_by: 0,
+    total_commits: 1,
+    commits: [clone(later)],
+  });
+  const claims = [
+    {
+      id: "claim_origin",
+      sourceId: input.plain.sourceId,
+      commitSha: sha("a"),
+      path: "fix.ts",
+    },
+    {
+      id: "claim_later",
+      sourceId: "PR_followup",
+      commitSha: later.sha,
+      path: "fix.ts",
+    },
+  ];
+  const prove = () =>
+    octoberOriginalContributorUnitProof(
+      input.github,
+      input.plain,
+      input.sources[1],
+      input.sources[0],
+      input.owners,
+      claims,
+      [followup],
+    );
+  const proof = await prove();
+  expect(proof.originalContributor?.claimIds).toEqual(
+    claims.map((claim) => claim.id),
+  );
+  expect(proof.sources[2].commits).toHaveLength(2);
+  expect(proof.sources[2].commits[0].author?.id).toBe("third");
+  const binding = proof.originalContributor?.followups?.[0];
+  if (!binding) throw Error("Missing follow-up proof");
+  const { originalContributorClaimScope } = await import(
+    "../src/lib/points-implementation-corrections"
+  );
+  expect(
+    originalContributorClaimScope(proof.sources[1], proof.sources[0], claims, [
+      { source: proof.sources[2], binding },
+    ]),
+  ).toBe(true);
+  claims[1].commitSha = unrelated.sha;
+  await expect(prove()).rejects.toThrow("Invalid accepted follow-up source");
+  claims[1].commitSha = later.sha;
+  const current = input.responses.get(`${root}/pulls/3`) as { body: string };
+  current.body = "changed after source capture";
+  await expect(prove()).rejects.toThrow("changed during collection");
+  input.responses.set(`${root}/pulls/3`, clone(followup.evidence.pull));
+  const range = input.responses.get(path) as {
+    merge_base_commit: { sha: string };
+  };
+  range.merge_base_commit.sha = sha("0");
+  await expect(prove()).rejects.toThrow("does not descend");
+});
