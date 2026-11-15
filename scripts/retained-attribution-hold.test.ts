@@ -7,12 +7,18 @@ function candidate(
   failure: "proof" | "transport" | "identity",
   baseRefName = "main",
   related = true,
+  useRepositoryAlias = false,
 ) {
   const f = fixture({ textOnly: true, direct: true });
   const target = findRegisteredRepositoryById("SlopDotCash/asi");
   if (!target?.expectedNodeId) throw new Error("Missing registered fixture");
   const originalId = "PR_original";
-  const acceptedId = "PR_accepted";
+  const route = useRepositoryAlias
+    ? `${target.owner}/${target.name}`
+    : target.id;
+  const pullId = (number: number) =>
+    number === 1 ? originalId : `PR_accepted_${number}`;
+  const carrierNumbers = useRepositoryAlias ? [2, 3] : [2];
   const reads: string[] = [];
   const remap = <T>(value: T): T =>
     JSON.parse(
@@ -29,19 +35,19 @@ function candidate(
       const rawPath = path
         .replaceAll(`${target.owner}/${target.name}`, repository.id)
         .replaceAll(target.id, repository.id)
-        .replace(/\/(pulls|issues)\/2(?=\/|$)/gu, "/$1/1");
+        .replace(/\/(pulls|issues)\/[23](?=\/|$)/gu, "/$1/1");
       const result = await f.client.get<unknown>(rawPath);
       if (
         failure === "identity" &&
         path === `/repos/${target.owner}/${target.name}`
       )
         (result as { node_id: string }).node_id = "R_wrong";
-      const pullNumber = /\/pulls\/([12])$/u.exec(path)?.[1];
+      const pullNumber = /\/pulls\/([123])$/u.exec(path)?.[1];
       if (pullNumber) {
         const pull = result as typeof f.pull;
         pull.number = Number(pullNumber);
-        pull.node_id = pullNumber === "1" ? originalId : acceptedId;
-        pull.html_url = `${repository.githubUrl}/pull/${pullNumber}`;
+        pull.node_id = pullId(pull.number);
+        pull.html_url = `https://github.com/${route}/pull/${pullNumber}`;
         if (pullNumber === "1") {
           Object.assign(pull, {
             merged_at: null,
@@ -50,7 +56,7 @@ function candidate(
           });
         }
       }
-      if (/\/pulls\/[12]\/commits\?/u.test(path))
+      if (/\/pulls\/[123]\/commits\?/u.test(path))
         for (const commit of result as { author: unknown }[])
           commit.author = null;
       return remap(result) as T | null;
@@ -63,19 +69,19 @@ function candidate(
       return {
         repository: {
           pullRequest: {
-            id: number === 1 ? originalId : acceptedId,
+            id: pullId(number),
             timelineItems: {
               nodes:
-                number === 2 && related
+                number !== 1 && related
                   ? [
                       {
                         source: {
                           __typename: "PullRequest",
                           id: originalId,
                           number: 1,
-                          url: `https://github.com/${target.id}/pull/1`,
+                          url: `https://github.com/${route}/pull/1`,
                           repository: {
-                            nameWithOwner: target.id,
+                            nameWithOwner: route,
                             isPrivate: false,
                           },
                         },
@@ -101,21 +107,25 @@ function candidate(
       [],
       transport,
       undefined,
-      [
-        {
-          id: acceptedId,
-          number: 2,
-          baseRefName,
-          url: `https://github.com/${target.id}/pull/2`,
-          headRefOid: f.pull.head.sha,
-          mergedAt: f.pull.merged_at,
-          updatedAt: f.pull.updated_at,
-          commits: [{ oid: f.pull.head.sha, author: null, parentCount: 1 }],
-        },
-      ],
+      carrierNumbers.map((number) => ({
+        id: pullId(number),
+        number,
+        baseRefName,
+        url: `https://github.com/${route}/pull/${number}`,
+        headRefOid: f.pull.head.sha,
+        mergedAt: f.pull.merged_at,
+        updatedAt: f.pull.updated_at,
+        commits: [
+          {
+            oid: number === 2 ? f.pull.head.sha : "d".repeat(40),
+            author: null,
+            parentCount: 1,
+          },
+        ],
+      })),
       onProgress,
     );
-  return { run, acceptedId, reads };
+  return { run, acceptedId: pullId(2), reads, route, canonical: target.id };
 }
 
 test("unproven retained work becomes a source-specific attribution hold", async () => {
@@ -129,6 +139,29 @@ test("unproven retained work becomes a source-specific attribution hold", async 
   ).toBeGreaterThan(0);
   expect(result.retainedCommitAuthors.size).toBe(0);
   expect(result.valueDecisions.size).toBe(0);
+});
+
+test("two merged PRs can resolve the same retained original through a registered alias", async () => {
+  const { run, route, canonical, reads } = candidate(
+    "proof",
+    "main",
+    true,
+    true,
+  );
+  expect(route.toLowerCase()).not.toBe(canonical.toLowerCase());
+  const progress: ValueInputProgress[] = [];
+  const result = await run((entry) => progress.push(entry));
+  expect(progress).toContainEqual({
+    phase: "commit-attributions",
+    completed: 2,
+    total: 2,
+  });
+  expect(
+    reads.filter((path) =>
+      path.startsWith(`/repos/${canonical}/pulls/1/commits?`),
+    ),
+  ).toHaveLength(1);
+  expect(result.retainedCommitAuthors.size).toBe(0);
 });
 
 test("transport failures do not become successful attribution holds", async () => {
