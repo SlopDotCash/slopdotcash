@@ -61,7 +61,7 @@ const luminance = (color: string) => {
   return 0.2126 * r + 0.7152 * g + 0.0722 * b
 }
 /** WCAG 2 contrast ratio of two oklch colors. */
-const contrast = (one: string, other: string) => {
+export const contrast = (one: string, other: string) => {
   const [dark, light] = [luminance(one), luminance(other)].sort((x, y) => x - y) as [number, number]
   return (light + 0.05) / (dark + 0.05)
 }
