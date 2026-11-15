@@ -61,6 +61,7 @@ type PrivateCase = { reporter: int, submission: Submission, source: ReceiptSourc
   appeal: AppealState, appealFrom: Receipt, appealHistory: List[AppealRecord], triage: Triage }
 pure val noAuthority: Authority = { epoch: 0, technical: List(), financial: List(), moderators: List(), banned: List(),
   relatedParties: List(), programRestricted: false }
+pure val noAppealRecord: AppealRecord = { from: Received, resolution: NoAppeal, by: 0 }
 pure val noTriage: Triage = { state: NoTriage, appealRevision: 0, attempt: 0, startedAt: 0, escalated: false, belowFloor: false, returnDraft: false }
 pure val initial: PrivateCase = { reporter: 1, submission: NotReceived, source: NoSource, terms: T::unpaidTerms(0, 0), revision: 0,
   reportVersion: 0, authority: noAuthority, triagers: List(), revokedTriagers: List(), memberEvents: 0,
@@ -329,7 +330,7 @@ pure def alwaysAppealState(c: PrivateCase): bool = (c.appeal == AppealOpen) == (
 pure def alwaysAppealSource(c: PrivateCase): bool = c.appeal == AppealOpen implies (c.appealFrom == Duplicate
   or c.appealFrom == OutOfScope or c.appealFrom == Rejected or c.appealFrom == Confirmed) and not(committed(c))
 pure def stepAppealHistoryAppendOnly(before: PrivateCase, after: PrivateCase): bool =
-  after.appealHistory == before.appealHistory or after.appealHistory == before.appealHistory.append(after.appealHistory.nthOr(before.appealHistory.length(), { from: Received, resolution: NoAppeal, by: 0 }))
+  after.appealHistory == before.appealHistory or after.appealHistory == before.appealHistory.append(after.appealHistory.nthOr(before.appealHistory.length(), noAppealRecord))
 pure def sometimesReturnedAndRedecided(c: PrivateCase): bool = c.appeal == Returned and c.receipt != Triaging
 pure def sometimesSecondAppeal(c: PrivateCase): bool = c.appeal == AppealOpen and c.appealHistory.length() > 0
 ```

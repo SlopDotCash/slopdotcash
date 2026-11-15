@@ -329,9 +329,8 @@ pure val caseVersionValues = Set(1, 2)
 pure val directCase: C::PrivateCase = { ...C::initial, submission: C::Verified, terms: T::standardTerms, revision: 1, award: C::Approved,
   commitment: C::DirectAward, grossChosen: List(100), rootCause: 1 }
 pure val cValues = Set(C::initial, directCase, { ...directCase, terms: T::fullTerms, commitment: C::FullAwardHeld })
-pure val approvalValues = Set({ caseId: 1, caseRevision: 1, direct: true, split: T::StandardSplit, gross: List(100), asset: "asset", rootCause: 1 },
-  { caseId: 1, caseRevision: 1, direct: true, split: T::FullAward, gross: List(100), asset: "asset", rootCause: 1 },
-  { caseId: 1, caseRevision: 2, direct: false, split: T::StandardSplit, gross: List(100), asset: "asset", rootCause: 1 })
+pure val directApproval: CaseApproval = { caseId: 1, caseRevision: 1, direct: true, split: T::StandardSplit, gross: List(100), asset: "asset", rootCause: 1 }
+pure val approvalValues = Set(directApproval, { ...directApproval, caseRevision: 2 }, { ...directApproval, split: T::FullAward })
 pure val routeValues = Set({ network: Base, asset: "asset", feeWallet: "fees" }, { network: Solana, asset: "asset", feeWallet: "fees" })
 pure val observedRevisionValues = Set(1, 2, 3, 4, 5, 6, 7)
 pure val generationValues = Set(0, 1)

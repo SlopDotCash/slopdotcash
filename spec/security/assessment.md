@@ -34,12 +34,14 @@ pure def retryable(a: Assessment, nowMs: int): bool = a.count == 0 or latest(a).
   or (latest(a).state == AttemptRunning and nowMs >= latest(a).startedAt and nowMs - latest(a).startedAt > 900000)
 pure def automaticRan(a: Assessment): bool = a.count > 0 and latest(a).version == a.reportVersion
 pure def canStartAutomatic(a: Assessment, nowMs: int): bool = a.qualifiedVersion == a.reportVersion and nowMs > 0 and not(automaticRan(a))
+pure def runningAttempt(version: int, mode: Mode, startedAt: int, budgetMs: int): Attempt =
+  { version: version, mode: mode, state: AttemptRunning, startedAt: startedAt, budgetMs: budgetMs }
 pure def startAutomatic(a: Assessment, nowMs: int): Assessment =
-  { ...a, count: a.count + 1, attempts: a.attempts.put(a.count + 1, { version: a.reportVersion, mode: Automatic, state: AttemptRunning, startedAt: nowMs, budgetMs: 25000 }) }
+  { ...a, count: a.count + 1, attempts: a.attempts.put(a.count + 1, runningAttempt(a.reportVersion, Automatic, nowMs, 25000)) }
 pure def canStartOwnerRun(a: Assessment, by: int, checkedEpoch: int, nowMs: int): bool = a.qualifiedVersion == a.reportVersion and nowMs > 0
   and checkedEpoch == a.authority.epoch and checkedEpoch > 0 and a.authority.technical.includes(by) and by != 1 and retryable(a, nowMs)
 pure def startOwnerRun(a: Assessment, by: int, checkedEpoch: int, nowMs: int): Assessment =
-  { ...a, count: a.count + 1, attempts: a.attempts.put(a.count + 1, { version: a.reportVersion, mode: OwnerRun, state: AttemptRunning, startedAt: nowMs, budgetMs: 120000 }) }
+  { ...a, count: a.count + 1, attempts: a.attempts.put(a.count + 1, runningAttempt(a.reportVersion, OwnerRun, nowMs, 120000)) }
 pure def canFinish(a: Assessment, attempt: int, complete: bool, elapsedMs: int): bool = attempt > 0 and attempt <= a.count
   and a.attempts.getOr(attempt, noAttempt).state == AttemptRunning and elapsedMs >= 0
 pure def finish(a: Assessment, attempt: int, complete: bool, elapsedMs: int): Assessment =
