@@ -78,7 +78,7 @@ drafts, blocked labels, active review requests, approvals, changes
 requested, security labels, human-gated work and epics are not offered. An
 issue without a contributor-ready label is untriaged and not offered.
 Closed items and bot authors are not offered either. Every retained item
-keeps its decision, which lists every applicable reason
+keeps its decision, which lists every applicable reason once, in a fixed order
 (`src/lib/leaderboard.ts`, `candidateExclusionReasons`): an item is a
 candidate exactly when it has none.
 
@@ -86,43 +86,43 @@ candidate exactly when it has none.
 type Reason = Closed | AuthorUnknown | BotAuthored | DiffUnavailable | Untriaged | Blocked | Assigned | Claimed |
   DraftItem | ReviewRequested | Approved | ChangesRequested | SecurityLabel | HumanGated | Epic
 type Status = Candidate | Excluded
-type Selection = { status: Status, reasons: Set[Reason] }
-pure def reasonIf(c: bool, r: Reason): Set[Reason] = if (c) Set(r) else Set()
+type Selection = { status: Status, reasons: List[Reason] }
+pure def reasonIf(c: bool, r: Reason): List[Reason] = if (c) List(r) else List()
 pure def blocked(i: Item): bool =
   not(i.open) or i.author != HumanAuthor or (i.kind == PullRequestItem and not(i.diffAvailable)) or
   (i.kind == IssueItem and not(i.contributorReady)) or i.blockedLabel or i.securityLabel or i.humanGated or i.epic or
   i.hasAssignee or i.claimed or i.draft or i.reviewRequested or i.approved or i.changesRequested
-pure def authorReasons(i: Item): Set[Reason] =
-  reasonIf(not(i.open), Closed).union(reasonIf(i.author == UnknownAuthor, AuthorUnknown))
-    .union(reasonIf(i.author == BotAuthor or i.author == SlopbotAuthor, BotAuthored))
-pure def readinessReasons(i: Item): Set[Reason] =
+pure def authorReasons(i: Item): List[Reason] =
+  reasonIf(not(i.open), Closed).concat(reasonIf(i.author == UnknownAuthor, AuthorUnknown))
+    .concat(reasonIf(i.author == BotAuthor or i.author == SlopbotAuthor, BotAuthored))
+pure def readinessReasons(i: Item): List[Reason] =
   reasonIf(i.kind == PullRequestItem and not(i.diffAvailable), DiffUnavailable)
-    .union(reasonIf(i.kind == IssueItem and not(i.contributorReady), Untriaged)).union(reasonIf(i.blockedLabel, Blocked))
-pure def scopeReasons(i: Item): Set[Reason] =
-  reasonIf(i.securityLabel, SecurityLabel).union(reasonIf(i.humanGated, HumanGated)).union(reasonIf(i.epic, Epic))
-pure def claimReasons(i: Item): Set[Reason] =
-  reasonIf(i.hasAssignee, Assigned).union(reasonIf(i.claimed, Claimed)).union(reasonIf(i.draft, DraftItem))
-pure def reviewReasons(i: Item): Set[Reason] =
-  reasonIf(i.reviewRequested, ReviewRequested).union(reasonIf(i.approved, Approved)).union(reasonIf(i.changesRequested, ChangesRequested))
-pure def reasons(i: Item): Set[Reason] =
-  val first = authorReasons(i).union(readinessReasons(i))
-  val second = scopeReasons(i).union(claimReasons(i))
-  first.union(second).union(reviewReasons(i))
+    .concat(reasonIf(i.kind == IssueItem and not(i.contributorReady), Untriaged)).concat(reasonIf(i.blockedLabel, Blocked))
+pure def scopeReasons(i: Item): List[Reason] =
+  reasonIf(i.securityLabel, SecurityLabel).concat(reasonIf(i.humanGated, HumanGated)).concat(reasonIf(i.epic, Epic))
+pure def claimReasons(i: Item): List[Reason] =
+  reasonIf(i.hasAssignee, Assigned).concat(reasonIf(i.claimed, Claimed)).concat(reasonIf(i.draft, DraftItem))
+pure def reviewReasons(i: Item): List[Reason] =
+  reasonIf(i.reviewRequested, ReviewRequested).concat(reasonIf(i.approved, Approved)).concat(reasonIf(i.changesRequested, ChangesRequested))
+pure def reasons(i: Item): List[Reason] =
+  val first = authorReasons(i).concat(readinessReasons(i))
+  val second = scopeReasons(i).concat(claimReasons(i))
+  first.concat(second).concat(reviewReasons(i))
 pure def decide(i: Item): Selection = { status: if (blocked(i)) Excluded else Candidate, reasons: reasons(i) }
 pure def offered(c: Census): List[Item] = c.items.select(i => not(blocked(i)))
-pure def lawUnknownAuthorFailsClosed(i: Item): bool = i.author == UnknownAuthor implies (blocked(i) and reasons(i).contains(AuthorUnknown))
+pure def lawUnknownAuthorFailsClosed(i: Item): bool = i.author == UnknownAuthor implies (blocked(i) and reasons(i).some(x => x == AuthorUnknown))
 pure def lawUnavailableDiffFailsClosed(i: Item): bool =
-  (i.kind == PullRequestItem and not(i.diffAvailable)) implies (blocked(i) and reasons(i).contains(DiffUnavailable))
+  (i.kind == PullRequestItem and not(i.diffAvailable)) implies (blocked(i) and reasons(i).some(x => x == DiffUnavailable))
 pure def lawUntriagedIssueFailsClosed(i: Item): bool =
-  (i.kind == IssueItem and not(i.contributorReady)) implies (blocked(i) and reasons(i).contains(Untriaged))
+  (i.kind == IssueItem and not(i.contributorReady)) implies (blocked(i) and reasons(i).some(x => x == Untriaged))
 pure def lawOfferedIsUnblocked(i: Item): bool = not(blocked(i)) implies
   (i.open and i.author == HumanAuthor and not(i.hasAssignee or i.claimed or i.draft or i.reviewRequested or i.blockedLabel or
     i.approved or i.changesRequested or i.securityLabel or i.humanGated or i.epic))
 pure def lawCandidateIffNoReason(i: Item): bool =
-  (blocked(i) implies reasons(i).exists(r => true)) and (not(blocked(i)) implies reasons(i).forall(r => false))
+  blocked(i) iff reasons(i).length() > 0
 pure def lawEveryReasonListed(i: Item): bool =
-  (i.hasAssignee implies reasons(i).contains(Assigned)) and (i.claimed implies reasons(i).contains(Claimed)) and
-  (i.approved implies reasons(i).contains(Approved)) and (i.changesRequested implies reasons(i).contains(ChangesRequested))
+  (i.hasAssignee implies reasons(i).some(x => x == Assigned)) and (i.claimed implies reasons(i).some(x => x == Claimed)) and
+  (i.approved implies reasons(i).some(x => x == Approved)) and (i.changesRequested implies reasons(i).some(x => x == ChangesRequested))
 ```
 
 ### Publication requires a complete census and keeps the previous snapshot on failure

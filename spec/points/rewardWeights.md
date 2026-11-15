@@ -37,6 +37,8 @@ later credit in the month is debited by an earlier request.
 import journal as J from "./journal"
 import periods as P from "./periods"
 import allocation as A from "./allocation"
+import workUnits as W from "./workUnits"
+import evaluations as E from "./evaluations"
 type Consumption = { remaining: int, applied: List[int] }
 pure def takeFrom(remaining: int, request: int): int =
   if (request <= 0) 0 else if (request > remaining) remaining else request

@@ -3,8 +3,8 @@ lemma admitManifest_ensures(s: RetiredAwards, m: Manifest)
   ensures (inv(s) ==> canAdmitManifest(s, m) ==> alwaysAdmittedWellFormed(admitManifest(s, m)))
   ensures (inv(s) ==> canAdmitManifest(s, m) ==> alwaysRetainedPositive(admitManifest(s, m)))
   ensures (inv(s) ==> canAdmitManifest(s, m) ==> stepAdmittedPermanent(s, admitManifest(s, m)))
-  ensures (inv(s) ==> canAdmitManifest(s, m) ==> stepProtectionEndsForever(s, admitManifest(s, m)))
   ensures (inv(s) ==> canAdmitManifest(s, m) ==> stepAmountsRetained(s, admitManifest(s, m)))
+  ensures (inv(s) ==> canAdmitManifest(s, m) ==> stepProtectionEndsForever(s, admitManifest(s, m)))
 {
   if inv(s) && canAdmitManifest(s, m) {
     var xs := s.evaluations.admitted;

@@ -130,3 +130,71 @@ lemma AppendUniqueAward(xs: seq<XAward>, n: XAward)
     }
   }
 }
+
+lemma close_ensures(s: Participation, actor: int)
+  ensures (inv(s) ==> canClose(s, actor) ==> alwaysMembersWellFormed(close(s, actor)))
+  ensures (inv(s) ==> canClose(s, actor) ==> alwaysClosedAreMembers(close(s, actor)))
+  ensures (inv(s) ==> canClose(s, actor) ==> alwaysClaimsUnique(close(s, actor)))
+  ensures (inv(s) ==> canClose(s, actor) ==> alwaysLinksClaimed(close(s, actor)))
+  ensures (inv(s) ==> canClose(s, actor) ==> alwaysAwardsWellFormed(close(s, actor)))
+  ensures (inv(s) ==> canClose(s, actor) ==> stepAwardsPermanent(s, close(s, actor)))
+  ensures (inv(s) ==> canClose(s, actor) ==> stepNoAwardFromCutoff(s, "close", close(s, actor)))
+{
+  if inv(s) && canClose(s, actor) {
+    var after := close(s, actor);
+    forall a | a in after.closed
+      ensures isMember(after, a)
+    {
+      var added := ProofLib.Filter((set_x: int) => !((set_x in s.closed)), [actor]);
+      if a !in s.closed {
+        assert a in added;
+        ProofLib.FilterMember((set_x: int) => !((set_x in s.closed)), [actor], a);
+      }
+    }
+    LinksKept(s, actor);
+  }
+}
+
+lemma disconnectX_ensures(s: Participation, actor: int)
+  ensures (inv(s) ==> canDisconnectX(s, actor) ==> alwaysMembersWellFormed(disconnectX(s, actor)))
+  ensures (inv(s) ==> canDisconnectX(s, actor) ==> alwaysClosedAreMembers(disconnectX(s, actor)))
+  ensures (inv(s) ==> canDisconnectX(s, actor) ==> alwaysClaimsUnique(disconnectX(s, actor)))
+  ensures (inv(s) ==> canDisconnectX(s, actor) ==> alwaysLinksClaimed(disconnectX(s, actor)))
+  ensures (inv(s) ==> canDisconnectX(s, actor) ==> alwaysAwardsWellFormed(disconnectX(s, actor)))
+  ensures (inv(s) ==> canDisconnectX(s, actor) ==> stepAwardsPermanent(s, disconnectX(s, actor)))
+  ensures (inv(s) ==> canDisconnectX(s, actor) ==> stepNoAwardFromCutoff(s, "disconnectX", disconnectX(s, actor)))
+{
+  if inv(s) && canDisconnectX(s, actor) {
+    LinksKept(s, actor);
+  }
+}
+
+lemma reopen_ensures(s: Participation, actor: int)
+  ensures (inv(s) ==> canReopen(s, actor) ==> alwaysMembersWellFormed(reopen(s, actor)))
+  ensures (inv(s) ==> canReopen(s, actor) ==> alwaysClosedAreMembers(reopen(s, actor)))
+  ensures (inv(s) ==> canReopen(s, actor) ==> alwaysClaimsUnique(reopen(s, actor)))
+  ensures (inv(s) ==> canReopen(s, actor) ==> alwaysLinksClaimed(reopen(s, actor)))
+  ensures (inv(s) ==> canReopen(s, actor) ==> alwaysAwardsWellFormed(reopen(s, actor)))
+  ensures (inv(s) ==> canReopen(s, actor) ==> stepAwardsPermanent(s, reopen(s, actor)))
+  ensures (inv(s) ==> canReopen(s, actor) ==> stepNoAwardFromCutoff(s, "reopen", reopen(s, actor)))
+{
+  if inv(s) && canReopen(s, actor) {
+    var after := reopen(s, actor);
+    forall a | a in after.closed
+      ensures isMember(after, a)
+    {
+      ProofLib.FilterMember((set_x: int) => !((set_x in [actor])), s.closed, a);
+    }
+  }
+}
+
+lemma LinksKept(s: Participation, actor: int)
+  requires alwaysLinksClaimed(s)
+  ensures forall k :: k in ProofLib.Filter((k: XLink) => (k.actor != actor), s.links) ==> claimedBy(s, k.xId, k.actor)
+{
+  forall k | k in ProofLib.Filter((k: XLink) => (k.actor != actor), s.links)
+    ensures claimedBy(s, k.xId, k.actor)
+  {
+    ProofLib.FilterMember((k: XLink) => (k.actor != actor), s.links, k);
+  }
+}

@@ -73,3 +73,62 @@ lemma AppendUniqueInteger(xs: seq<int>, nextValue: int)
     }
   }
 }
+
+// Each blocker puts its reason into one group, and a group's reasons are in the concatenated list.
+lemma InReasons(i: Item, r: Reason)
+  requires r in authorReasons(i) || r in readinessReasons(i) || r in scopeReasons(i) || r in claimReasons(i) || r in reviewReasons(i)
+  ensures r in reasons(i)
+{
+  var first := authorReasons(i) + readinessReasons(i);
+  var second := scopeReasons(i) + claimReasons(i);
+  assert reasons(i) == (first + second) + reviewReasons(i);
+}
+
+lemma lawUnknownAuthorFailsClosed_ensures(i: Item)
+  ensures (lawUnknownAuthorFailsClosed(i) == true)
+{
+  if i.author.UnknownAuthor? {
+    assert Reason.AuthorUnknown in reasonIf(i.author.UnknownAuthor?, Reason.AuthorUnknown);
+    assert Reason.AuthorUnknown in authorReasons(i);
+    InReasons(i, Reason.AuthorUnknown);
+  }
+}
+
+lemma lawUnavailableDiffFailsClosed_ensures(i: Item)
+  ensures (lawUnavailableDiffFailsClosed(i) == true)
+{
+  if i.kind.PullRequestItem? && !i.diffAvailable {
+    assert Reason.DiffUnavailable in readinessReasons(i);
+    InReasons(i, Reason.DiffUnavailable);
+  }
+}
+
+lemma lawUntriagedIssueFailsClosed_ensures(i: Item)
+  ensures (lawUntriagedIssueFailsClosed(i) == true)
+{
+  if i.kind.IssueItem? && !i.contributorReady {
+    assert Reason.Untriaged in readinessReasons(i);
+    InReasons(i, Reason.Untriaged);
+  }
+}
+
+lemma lawEveryReasonListed_ensures(i: Item)
+  ensures (lawEveryReasonListed(i) == true)
+{
+  if i.hasAssignee {
+    assert Reason.Assigned in claimReasons(i);
+    InReasons(i, Reason.Assigned);
+  }
+  if i.claimed {
+    assert Reason.Claimed in claimReasons(i);
+    InReasons(i, Reason.Claimed);
+  }
+  if i.approved {
+    assert Reason.Approved in reviewReasons(i);
+    InReasons(i, Reason.Approved);
+  }
+  if i.changesRequested {
+    assert Reason.ChangesRequested in reviewReasons(i);
+    InReasons(i, Reason.ChangesRequested);
+  }
+}

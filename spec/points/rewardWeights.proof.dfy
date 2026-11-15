@@ -100,11 +100,12 @@ lemma LiveWeightsPositive(s: MonthlyWeights)
 }
 
 lemma appendExclusion_ensures(s: MonthlyWeights, x: Exclusion)
-  ensures (inv(s) ==> canAppendExclusion(s, x) ==> alwaysWeightsPositive(appendExclusion(s, x)))
   ensures (inv(s) ==> canAppendExclusion(s, x) ==> alwaysNovemberListsEmpty(appendExclusion(s, x)))
+  ensures (inv(s) ==> canAppendExclusion(s, x) ==> alwaysWeightsPositive(appendExclusion(s, x)))
   ensures (inv(s) ==> canAppendExclusion(s, x) ==> stepFixedWeightsStable(s, appendExclusion(s, x)))
   ensures (inv(s) ==> canAppendExclusion(s, x) ==> stepIdentityStable(s, appendExclusion(s, x)))
   ensures (inv(s) ==> canAppendExclusion(s, x) ==> stepExclusionsProspective(s, appendExclusion(s, x)))
+  ensures (inv(s) ==> canAppendExclusion(s, x) ==> stepBanNeverRedistributes(s, "appendExclusion", appendExclusion(s, x)))
 {
   if inv(s) && canAppendExclusion(s, x) {
     LiveWeightsPositive(appendExclusion(s, x));
@@ -112,11 +113,12 @@ lemma appendExclusion_ensures(s: MonthlyWeights, x: Exclusion)
 }
 
 lemma endExclusion_ensures(s: MonthlyWeights, x: Exclusion, untilPeriod: int)
-  ensures (inv(s) ==> canEndExclusion(s, x, untilPeriod) ==> alwaysWeightsPositive(endExclusion(s, x, untilPeriod)))
   ensures (inv(s) ==> canEndExclusion(s, x, untilPeriod) ==> alwaysNovemberListsEmpty(endExclusion(s, x, untilPeriod)))
+  ensures (inv(s) ==> canEndExclusion(s, x, untilPeriod) ==> alwaysWeightsPositive(endExclusion(s, x, untilPeriod)))
   ensures (inv(s) ==> canEndExclusion(s, x, untilPeriod) ==> stepFixedWeightsStable(s, endExclusion(s, x, untilPeriod)))
   ensures (inv(s) ==> canEndExclusion(s, x, untilPeriod) ==> stepIdentityStable(s, endExclusion(s, x, untilPeriod)))
   ensures (inv(s) ==> canEndExclusion(s, x, untilPeriod) ==> stepExclusionsProspective(s, endExclusion(s, x, untilPeriod)))
+  ensures (inv(s) ==> canEndExclusion(s, x, untilPeriod) ==> stepBanNeverRedistributes(s, "endExclusion", endExclusion(s, x, untilPeriod)))
 {
   if inv(s) && canEndExclusion(s, x, untilPeriod) {
     var after := endExclusion(s, x, untilPeriod);
@@ -162,10 +164,12 @@ lemma EndKeepsCoverage(s: MonthlyWeights, x: Exclusion, untilPeriod: int, actor:
 }
 
 lemma observeBan_ensures(s: MonthlyWeights, actor: int)
+  ensures (inv(s) ==> canObserveBan(s, actor) ==> alwaysNovemberListsEmpty(observeBan(s, actor)))
   ensures (inv(s) ==> canObserveBan(s, actor) ==> alwaysWeightsPositive(observeBan(s, actor)))
   ensures (inv(s) ==> canObserveBan(s, actor) ==> stepFixedWeightsStable(s, observeBan(s, actor)))
   ensures (inv(s) ==> canObserveBan(s, actor) ==> stepIdentityStable(s, observeBan(s, actor)))
   ensures (inv(s) ==> canObserveBan(s, actor) ==> stepExclusionsProspective(s, observeBan(s, actor)))
+  ensures (inv(s) ==> canObserveBan(s, actor) ==> stepBanNeverRedistributes(s, "observeBan", observeBan(s, actor)))
 {
   if inv(s) && canObserveBan(s, actor) {
     LiveWeightsPositive(observeBan(s, actor));
@@ -173,9 +177,12 @@ lemma observeBan_ensures(s: MonthlyWeights, actor: int)
 }
 
 lemma observe_ensures(s: MonthlyWeights, l: points__journal_Ledger)
+  ensures (inv(s) ==> canObserve(s, l) ==> alwaysNovemberListsEmpty(observe(s, l)))
   ensures (inv(s) ==> canObserve(s, l) ==> alwaysWeightsPositive(observe(s, l)))
   ensures (inv(s) ==> canObserve(s, l) ==> stepFixedWeightsStable(s, observe(s, l)))
   ensures (inv(s) ==> canObserve(s, l) ==> stepIdentityStable(s, observe(s, l)))
+  ensures (inv(s) ==> canObserve(s, l) ==> stepExclusionsProspective(s, observe(s, l)))
+  ensures (inv(s) ==> canObserve(s, l) ==> stepBanNeverRedistributes(s, "observe", observe(s, l)))
 {
   if inv(s) && canObserve(s, l) {
     LiveWeightsPositive(observe(s, l));
