@@ -160,24 +160,33 @@ pure val operationValues = Set(Bind, CancelOwnBinding, MonthlyRoot, ReserveRelea
 A test stack signs for registry test networks only. A production stack signs
 for registry mainnets only, only while that network's mainnet execution flag
 is on, and only as the identity attester: it refuses the relayer (pay) role.
-The flag is on only for Base mainnet (owner activation of 24 October 2026);
-only a reviewed change records another network's activation.
+The flags are reviewed configuration (`mainnet-execution.mjs`, changed only
+through a reviewed pull request), not a product rule: the laws below hold for
+every configuration. The reviewed configuration today activates only Base
+mainnet (owner activation of 24 October 2026); a later reviewed activation
+changes `reviewedActivation`, not these rules. A configuration naming a test
+network activates nothing.
 
 ```quint
 type Stack = TestStack | ProductionStack
 type ServiceNetwork = BaseMainnet | EthereumMainnet | RobinhoodMainnet | SolanaMainnet | BaseSepolia | RobinhoodTestnet | EthereumSepolia | SolanaDevnet | SolanaTestnet
 pure def mainnet(network: ServiceNetwork): bool =
   network == BaseMainnet or network == EthereumMainnet or network == RobinhoodMainnet or network == SolanaMainnet
-pure def mainnetExecution(network: ServiceNetwork): bool = network == BaseMainnet
-pure def stackMaySign(stack: Stack, network: ServiceNetwork, operation: Operation): bool =
+pure val reviewedActivation: List[ServiceNetwork] = List(BaseMainnet)
+pure def mainnetExecution(activation: List[ServiceNetwork], network: ServiceNetwork): bool = mainnet(network) and activation.includes(network)
+pure def stackMaySign(activation: List[ServiceNetwork], stack: Stack, network: ServiceNetwork, operation: Operation): bool =
   if (stack == TestStack) not(mainnet(network)) and (permittedOperation(IdentityAttester, operation) or operation == Pay)
-  else mainnet(network) and mainnetExecution(network) and permittedOperation(IdentityAttester, operation)
-pure def lawProductionNeverPays(network: ServiceNetwork): bool = not(stackMaySign(ProductionStack, network, Pay))
-pure def lawTestKeyNeverSignsMainnet(network: ServiceNetwork, operation: Operation): bool =
-  mainnet(network) implies not(stackMaySign(TestStack, network, operation))
-pure def lawDisabledMainnetSignsNothing(network: ServiceNetwork, operation: Operation): bool =
-  (mainnet(network) and not(mainnetExecution(network))) implies not(stackMaySign(ProductionStack, network, operation))
+  else mainnet(network) and mainnetExecution(activation, network) and permittedOperation(IdentityAttester, operation)
+pure def lawProductionNeverPays(activation: List[ServiceNetwork], network: ServiceNetwork): bool =
+  not(stackMaySign(activation, ProductionStack, network, Pay))
+pure def lawTestKeyNeverSignsMainnet(activation: List[ServiceNetwork], network: ServiceNetwork, operation: Operation): bool =
+  mainnet(network) implies not(stackMaySign(activation, TestStack, network, operation))
+pure def lawDisabledMainnetSignsNothing(activation: List[ServiceNetwork], network: ServiceNetwork, operation: Operation): bool =
+  (mainnet(network) and not(mainnetExecution(activation, network))) implies not(stackMaySign(activation, ProductionStack, network, operation))
+pure def lawProductionNeverSignsTestNetworks(activation: List[ServiceNetwork], network: ServiceNetwork, operation: Operation): bool =
+  not(mainnet(network)) implies not(stackMaySign(activation, ProductionStack, network, operation))
 pure val stackValues = Set(TestStack, ProductionStack)
+pure val activationValues = Set(reviewedActivation, List(), List(BaseMainnet, SolanaMainnet), List(BaseSepolia))
 pure val networkValues = Set(BaseMainnet, EthereumMainnet, RobinhoodMainnet, SolanaMainnet, BaseSepolia, RobinhoodTestnet, EthereumSepolia, SolanaDevnet, SolanaTestnet)
 ```
 

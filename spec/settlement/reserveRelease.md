@@ -11,7 +11,8 @@ import money as M from "./money"
 type ReleasePhase = Absent | Reserved | Checked | Approved | OwnerSigned | Released
 type RetainedAllocation = { root: str, allocationRoot: str, allocationTotal: M::Amount, reserve: M::Amount, free: M::Amount,
   settled: M::Amount, released: M::Amount, leafCount: int, retainedLeaves: int, height: int }
-type UpgradeQualification = { implementation: str, reviewedImplementation: str, height: int }
+type UpgradeQualification = { implementation: str, height: int }
+type DeploymentPin = { revision: int, implementation: str }
 type ReleaseReceipt = { attempt: int, root: str, height: int, releasedAmount: M::Amount,
   settledAmount: M::Amount, finalized: bool, succeeded: bool }
 type FailedReleaseReceipt = { attempt: int, root: str, height: int, canonicalFailure: bool }
@@ -19,18 +20,19 @@ type RetiredReleaseAttempt = { attempt: int, requestRevision: int, evidenceHeigh
 type ReserveRelease = { phase: ReleasePhase, root: str, allocationRoot: str, originalReserve: M::Amount, originalFree: M::Amount, hasSettled: bool, reserved: M::Amount,
   allocationTotal: M::Amount, settledAmount: M::Amount, free: M::Amount, evidenceHeight: int, observedHeight: int,
   ownerRevision: int, requestRevision: int, signedAttempt: int, retiredAttempts: List[RetiredReleaseAttempt],
-  finalizedHeight: int, observedAfterSignature: bool, upgradeQualified: bool }
+  finalizedHeight: int, observedAfterSignature: bool, upgradeQualified: bool, pinRevision: int, reviewedImplementation: str }
 pure val initial: ReserveRelease = { phase: Absent, root: "", allocationRoot: "",
   originalReserve: M::zero, originalFree: M::zero, hasSettled: false,
   reserved: M::zero, allocationTotal: M::zero, settledAmount: M::zero, free: M::zero, evidenceHeight: 0, observedHeight: 0,
-  ownerRevision: 1, requestRevision: 0, signedAttempt: 0, retiredAttempts: List(), finalizedHeight: 0, observedAfterSignature: false, upgradeQualified: false }
+  ownerRevision: 1, requestRevision: 0, signedAttempt: 0, retiredAttempts: List(), finalizedHeight: 0, observedAfterSignature: false, upgradeQualified: false,
+  pinRevision: 0, reviewedImplementation: "" }
 pure val byValues = Set("owner", "attester", "wrong")
 pure val retainedSample: RetainedAllocation = { root: "root", allocationRoot: "root", allocationTotal: List(5), reserve: List(6),
   free: M::zero, settled: M::zero, released: M::zero, leafCount: 2, retainedLeaves: 2, height: 1 }
 pure val evidenceValues = Set(retainedSample, { ...retainedSample, allocationTotal: List(6) }, { ...retainedSample, settled: List(1) },
   { ...retainedSample, retainedLeaves: 1 }, { ...retainedSample, height: 2 }, { ...retainedSample, released: List(6) })
-pure val qualificationValues = Set({ implementation: "v2", reviewedImplementation: "v2", height: 1 },
-  { implementation: "v1", reviewedImplementation: "v2", height: 1 })
+pure val qualificationValues = Set({ implementation: "v2", height: 1 }, { implementation: "v1", height: 1 })
+pure val pinValues = Set({ revision: 1, implementation: "v2" }, { revision: 0, implementation: "v2" })
 pure val rootValues = Set("root", "wrong")
 pure val totalValues = Set(List(5), List(6), List(7))
 pure val amountValues = Set(List(1), List(6))
@@ -65,7 +67,13 @@ pure def alwaysAbsentEmpty(r: ReserveRelease): bool = r.phase == Absent implies
 A healthy total, partial settlement, mismatching root or stale owner request refuses release. The
 release capability exists only after a finalized read shows the vault running
 the reviewed release-capable implementation recorded in the project's
-deployment pin; neither the owner nor the attester can assert it. Evidence freshness means equality with the latest finalized height observed for this operation, whose freshness policy remains the chain adapter's explicit contract. A newer
+deployment pin; neither the owner nor the attester can assert it. The pin is
+state: it is recorded once from the approved D1 project revision's
+deployment binding (supplied by the project registry) and never changes, and
+the qualification carries only the implementation the finalized read
+returned. Binding the retained allocation to the escrow's own admitted month
+(root, admitted gross and remainder) is a composition obligation with
+[escrow accounting](./escrow.md). Evidence freshness means equality with the latest finalized height observed for this operation, whose freshness policy remains the chain adapter's explicit contract. A newer
 height invalidates a pre-signature review. After the owner signs, a newer
 height preserves the signed attempt and its bound evidence.
 
@@ -75,9 +83,13 @@ pure def observe(r: ReserveRelease, height: int): ReserveRelease =
   if (r.signedAttempt > 0) { ...r, observedHeight: height, observedAfterSignature: true }
   else if (r.phase == Absent) { ...r, observedHeight: height }
   else { ...r, phase: Reserved, observedHeight: height, evidenceHeight: 0, requestRevision: 0 }
+pure def canPinImplementation(r: ReserveRelease, pin: DeploymentPin): bool =
+  r.pinRevision == 0 and pin.revision > 0 and pin.implementation != ""
+pure def pinImplementation(r: ReserveRelease, pin: DeploymentPin): ReserveRelease =
+  { ...r, pinRevision: pin.revision, reviewedImplementation: pin.implementation }
 pure def canQualifyUpgrade(r: ReserveRelease, qualification: UpgradeQualification): bool =
   not(r.upgradeQualified) and r.phase != Released and qualification.implementation != ""
-    and qualification.implementation == qualification.reviewedImplementation
+    and r.reviewedImplementation != "" and qualification.implementation == r.reviewedImplementation
     and qualification.height > 0 and qualification.height <= r.observedHeight
 pure def qualifyUpgrade(r: ReserveRelease, qualification: UpgradeQualification): ReserveRelease = { ...r, upgradeQualified: true }
 pure def canCheck(r: ReserveRelease, root: str, total: M::Amount, height: int, requestRevision: int, by: str): bool =
@@ -196,6 +208,9 @@ pure def alwaysSettlementHistory(r: ReserveRelease): bool =
   (r.hasSettled implies r.phase == Reserved) and
   (not(r.hasSettled) implies r.settledAmount == M::zero)
 pure def alwaysOwnerRevision(r: ReserveRelease): bool = r.ownerRevision > 0
+pure def alwaysQualifiedAgainstPin(r: ReserveRelease): bool = r.upgradeQualified implies r.reviewedImplementation != "" and r.pinRevision > 0
+pure def stepPinFixed(before: ReserveRelease, after: ReserveRelease): bool =
+  before.pinRevision > 0 implies after.pinRevision == before.pinRevision and after.reviewedImplementation == before.reviewedImplementation
 pure def alwaysValidAmounts(r: ReserveRelease): bool = M::validAmount(r.originalReserve)
   and M::validAmount(r.originalFree) and M::validAmount(r.reserved)
   and M::validAmount(r.allocationTotal) and M::validAmount(r.settledAmount) and M::validAmount(r.free)
@@ -233,6 +248,7 @@ pure val failureValues = Set(
   { attempt: 1, root: "root", height: 2, canonicalFailure: false })
 pure val weight_observe = 10
 pure val weight_qualifyUpgrade = 20
+pure val weight_pinImplementation = 20
 pure val weight_admitRetained = 25
 pure val weight_check = 25
 pure val weight_approve = 25

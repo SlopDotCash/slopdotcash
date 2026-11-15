@@ -63,7 +63,7 @@ pure def bind(p: Payment, recipient: str, consent: int, by: str): Payment =
 
 ### The released direct full-award rail journals before submission and retain every uncertain attempt
 
-An attempt identifier is a durable journal identity bound to signed bytes outside this machine. Reusing an existing attempt is a retransmission of those same bytes. Replacement authorization is covered by the signer machine. No transition releases an uncertain obligation.
+An attempt identifier is a durable journal identity bound to signed bytes outside this machine. Reusing an existing attempt is a retransmission of those same bytes. Replacement authorization is covered by the signer machine. No transition releases an uncertain obligation. Only the chain adapter's finalized receipt showing that the exact retained attempt reverted (`FailedAttemptEvidence` with status `FinalizedReverted`) makes the obligation ready again; a missing, pending or successful receipt never does, so a lost receipt cannot cause a second payment.
 
 ```quint
 pure def canJournal(p: Payment, attempt: int): bool = p.phase == Ready and directRail(p.rail) and attempt > 0
@@ -82,11 +82,14 @@ pure def canResume(p: Payment, by: str): bool = p.phase == Held and directRail(p
 pure def resume(p: Payment, by: str): Payment =
   { ...p, phase: if (p.recipient == "") AwaitingWallet else
     if (p.attempt == 0 or p.failedAttempts.includes(p.attempt)) Ready else Uncertain }
-pure def canRecordFailure(p: Payment, attempt: int, height: int, finalized: bool, succeeded: bool): bool =
-  (p.phase == Submitted or p.phase == Uncertain or p.phase == Held) and attempt > 0 and attempt == p.attempt
-    and p.attempts.includes(attempt) and not(p.failedAttempts.includes(attempt)) and height > 0 and finalized and not(succeeded)
-pure def recordFailure(p: Payment, attempt: int, height: int, finalized: bool, succeeded: bool): Payment =
-  { ...p, phase: Ready, failedAttempts: p.failedAttempts.append(attempt) }
+type ReceiptStatus = FinalizedReverted | FinalizedSucceeded | NotFinal | ReceiptMissing
+type FailedAttemptEvidence = { attempt: int, height: int, status: ReceiptStatus }
+pure def canRecordFailure(p: Payment, failure: FailedAttemptEvidence): bool =
+  (p.phase == Submitted or p.phase == Uncertain or p.phase == Held) and failure.attempt > 0 and failure.attempt == p.attempt
+    and p.attempts.includes(failure.attempt) and not(p.failedAttempts.includes(failure.attempt)) and failure.height > 0
+    and failure.status == FinalizedReverted
+pure def recordFailure(p: Payment, failure: FailedAttemptEvidence): Payment =
+  { ...p, phase: Ready, failedAttempts: p.failedAttempts.append(failure.attempt) }
 
 ```
 
@@ -198,6 +201,8 @@ pure val vaultEvidenceValues = Set(vaultEvidenceSample, { ...vaultEvidenceSample
 pure val attemptValues = Set(0, 1, 2)
 pure val consentValues = Set(0, 1, 2)
 pure val heightValues = Set(0, 1, 2)
+pure val failureValues = Set({ attempt: 1, height: 2, status: FinalizedReverted }, { attempt: 1, height: 2, status: ReceiptMissing },
+  { attempt: 1, height: 2, status: NotFinal }, { attempt: 2, height: 2, status: FinalizedReverted }, { attempt: 1, height: 0, status: FinalizedReverted })
 pure val evidenceValues = Set(
   { attempt: 1, obligation: 1, source: "vault", asset: "asset", recipient: "wallet", feeRecipient: "fees", principal: List(98), fee: List(2), height: 1, finalized: true, succeeded: true },
   { attempt: 2, obligation: 1, source: "vault", asset: "asset", recipient: "wallet", feeRecipient: "fees", principal: List(98), fee: List(2), height: 2, finalized: true, succeeded: true },

@@ -12,7 +12,14 @@ routes 21–23, 95–96 and 105). One instance is one owner request.
 
 The review step rechecks the steward, repository authority, project
 revision, enforcement state, served network, execution snapshot and funded
-obligation, then returns an unsigned plan whose exact message the browser
+obligation. These arrive as one typed `ReviewFacts` record: stewardship and
+repository authority from the projects area's current GitHub authority check
+by permanent actor and repository IDs at the write boundary, restriction
+from security enforcement, the served network from the reviewed deployment
+configuration, and the snapshot and funding from the monthly coordinator.
+The requester supplies none of them. The check step's `CheckResult` comes
+from the chain adapter's finalized read of the submitted signature. The
+review step then returns an unsigned plan whose exact message the browser
 reconstructs before asking for a signature. The wallet may prepend only a
 compute-budget instruction, and a bounded assertion instruction may guard
 the expected balances. The browser saves the pending request before the
