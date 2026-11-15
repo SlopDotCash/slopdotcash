@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
+import { isOriginalContributorRepair } from "../src/lib/original-contributor-repair";
 import type { CorrectionSource } from "../src/lib/points-implementation-corrections";
 import { collect, fixture } from "../tests/value-binary-fixture";
 import type { GitHubClient } from "../workers/slopbot/github";
@@ -1606,6 +1607,161 @@ for (const fault of [
     ).rejects.toThrow();
   });
 }
+
+async function originalBodyRepairSnapshot(abbreviated = false) {
+  const input = await repairSnapshot();
+  input.original.comments = [];
+  const hint = abbreviated ? sha("b").slice(0, 8) : sha("b");
+  input.original.pull.body = `Preserves the original contributor at ${hint}.`;
+  const body = {
+    id: input.original.pull.node_id,
+    body: input.original.pull.body,
+    headRefOid: sha("b"),
+    mergedAt: input.original.pull.merged_at,
+    updatedAt: input.original.pull.updated_at,
+    lastEditedAt: "2026-10-02T12:00:00Z",
+    editor: { id: carrier.node_id, __typename: "User" },
+    author: { id: origin.node_id, __typename: "User" },
+  };
+  input.responses.set(`${root}/pulls/1`, {
+    ...input.original.pull,
+    created_at: "2026-10-01T00:00:00Z",
+  });
+  input.responses.set(`${root}/commits/${hint}`, { sha: sha("b") });
+  const github = {
+    ...input.github,
+    async graphql<T>(): Promise<T> {
+      return { repository: { pullRequest: clone(body) } } as T;
+    },
+  };
+  return { ...input, github, body, hint };
+}
+
+for (const abbreviated of [false, true]) {
+  test(`original-PR body binds a third-party repair through its accepting merger (${abbreviated ? "resolved prefix" : "full head"})`, async () => {
+    const input = await originalBodyRepairSnapshot(abbreviated);
+    const proof = await octoberOriginalContributorUnitProof(
+      input.github,
+      input.plain,
+      input.sources[1],
+      input.sources[0],
+      input.owners,
+      input.claims,
+    );
+    const repair = proof.originalContributor?.repairs?.[0];
+    expect(repair?.sourceId).toBe("PR_original");
+    expect(repair?.reference.bodyEdit?.editor?.id).toBe(carrier.node_id);
+    expect(proof.sources[0].commits[1].author?.id).toBe("MDQ6VXNlcjQ0");
+    if (abbreviated) {
+      expect(repair?.reference.resolvedHead).toEqual({
+        hint: input.hint,
+        commitSha: sha("b"),
+      });
+      expect(input.readPaths).toContain(`${root}/commits/${input.hint}`);
+    } else expect(repair?.reference.resolvedHead).toBeUndefined();
+  });
+}
+
+for (const fault of [
+  "editor",
+  "late",
+  "body",
+  "head",
+  "resolution",
+  "unresolved",
+  "foreign-repository",
+  "disconnected",
+] as const) {
+  test(`original-PR body repair refuses ${fault}`, async () => {
+    const input = await originalBodyRepairSnapshot(true);
+    if (fault === "editor") input.body.editor.id = "MDQ6VXNlcjQ0";
+    if (fault === "late") input.body.lastEditedAt = "2026-10-04T00:00:00Z";
+    if (fault === "body") input.body.body = "Replaced since collection";
+    if (fault === "head") input.body.headRefOid = sha("9");
+    if (fault === "resolution")
+      input.responses.set(`${root}/commits/${input.hint}`, { sha: sha("9") });
+    if (fault === "unresolved")
+      input.responses.delete(`${root}/commits/${input.hint}`);
+    if (fault === "foreign-repository") {
+      input.original.pull.body = `https://github.com/other/repo/commit/${input.hint}`;
+      input.body.body = input.original.pull.body;
+    }
+    if (fault === "disconnected") {
+      input.accepted.commits[1].parents = [{ sha: sha("9") }];
+      input.original.commits[1].parents = [{ sha: sha("9") }];
+      input.responses.set(
+        `${root}/git/commits/${sha("b")}`,
+        clone(input.accepted.commits[1]),
+      );
+    }
+    input.responses.set(`${root}/pulls/1`, {
+      ...input.original.pull,
+      created_at: "2026-10-01T00:00:00Z",
+    });
+    await expect(
+      octoberOriginalContributorUnitProof(
+        input.github,
+        input.plain,
+        input.sources[1],
+        input.sources[0],
+        input.owners,
+        input.claims,
+      ),
+    ).rejects.toThrow();
+  });
+}
+
+test("resolved original-body repair metadata stays bound in the consumer", async () => {
+  const input = await originalBodyRepairSnapshot(true);
+  const proof = await octoberOriginalContributorUnitProof(
+    input.github,
+    input.plain,
+    input.sources[1],
+    input.sources[0],
+    input.owners,
+    input.claims,
+  );
+  const repair = proof.originalContributor?.repairs?.[0];
+  const original = proof.sources.find(
+    (source) => source.sourceId === "PR_original",
+  );
+  const accepted = proof.sources.find(
+    (source) => source.sourceId === "PR_carrier",
+  );
+  const commit = accepted?.commits.find((item) => item.sha === sha("b"));
+  if (!repair || !original || !accepted || !commit)
+    throw Error("Incomplete fixture");
+  expect(isOriginalContributorRepair(repair, original, accepted, commit)).toBe(
+    true,
+  );
+  for (const fault of [
+    "hint",
+    "commit",
+    "foreign-scope",
+    "not-prefix",
+    "carrier",
+  ] as const) {
+    const changed = clone(repair);
+    if (!changed.reference.resolvedHead) throw Error("Missing resolved head");
+    if (fault === "hint") changed.reference.resolvedHead.hint = "b".repeat(6);
+    if (fault === "commit") changed.reference.resolvedHead.commitSha = sha("9");
+    if (fault === "foreign-scope") {
+      changed.reference.pull.body = `https://github.com/other/repo/commit/${input.hint}`;
+      if (!changed.reference.bodyEdit) throw Error("Missing body");
+      changed.reference.bodyEdit.body = changed.reference.pull.body;
+    }
+    if (fault === "not-prefix")
+      changed.reference.resolvedHead.hint = "9".repeat(8);
+    if (fault === "carrier") changed.sourceId = accepted.sourceId;
+    const { digest: _, ...payload } = changed.reference;
+    changed.reference.digest = createHash("sha256")
+      .update(JSON.stringify(payload))
+      .digest("hex");
+    expect(
+      isOriginalContributorRepair(changed, original, accepted, commit),
+    ).toBe(false);
+  }
+});
 
 async function reviewedRevisionSnapshot() {
   const input = await snapshot();

@@ -29,6 +29,7 @@ export interface OriginalContributorRepair {
       comment: Comment;
     };
     headSha: string;
+    resolvedHead?: { hint: string; commitSha: string };
     bodyEdit?: {
       id: string;
       body: string;
@@ -88,6 +89,18 @@ export function isOriginalContributorRepair(
   const historical = reference.historicalBodyEdit;
   const text = acknowledgement?.body ?? historical?.diff ?? pull.body ?? "";
   const bodyEdit = reference.bodyEdit;
+  const resolvedHead = reference.resolvedHead;
+  const headHints = sameRepositoryCommitHints(source.repository, text);
+  const resolvedOriginalBodyHead =
+    resolvedHead !== undefined &&
+    repair.sourceId === original.sourceId &&
+    acknowledgement === undefined &&
+    historical === undefined &&
+    bodyEdit !== undefined &&
+    /^[a-f0-9]{7,39}$/u.test(resolvedHead.hint) &&
+    headHints.includes(resolvedHead.hint) &&
+    resolvedHead.commitSha === reference.headSha &&
+    reference.headSha.startsWith(resolvedHead.hint);
   const bodyActor =
     bodyEdit?.lastEditedAt === null ? bodyEdit.author : bodyEdit?.editor;
   const actorId =
@@ -227,9 +240,8 @@ export function isOriginalContributorRepair(
         original.repository,
         Number(original.sourceUrl.split("/").at(-1)),
       )) &&
-    sameRepositoryCommitHints(source.repository, text).includes(
-      reference.headSha,
-    ) &&
+    (resolvedHead === undefined || resolvedOriginalBodyHead) &&
+    (headHints.includes(reference.headSha) || resolvedOriginalBodyHead) &&
     (reference.headSha === original.headSha ||
       reference.headSha === accepted.headSha)
   );
