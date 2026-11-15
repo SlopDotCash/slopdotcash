@@ -8635,7 +8635,7 @@
     },
     {
       "path": "workers/slopbot/value-evidence-types.ts",
-      "sha256": "890d36175a17a337c754fd71b29e7769b8a9cc55acd9c114d0d9f909b462f431",
+      "sha256": "f5a07aa79facfac7f8aeeba0f5a2f9c320f8aa89177dd59aef001cb6e7f7895d",
       "models": [],
       "candidateLines": [22, 77, 97],
       "review": "reviewed-no-independent-state",
@@ -8778,9 +8778,9 @@
     },
     {
       "path": "workers/slopbot/value-native-merge.ts",
-      "sha256": "937dc2600cdcd53865d75d25ccf5482cf427014c8121a6c0d92a576cdcdc798e",
+      "sha256": "5ac2314ef19cc92f59217e12ec9265ac4ea0ac9d4e75831d1d9d26c8d45f78df",
       "models": ["formal/models/slopbot/bot_retained_acceptance.qnt"],
-      "candidateLines": [44, 52, 266, 355, 356, 357, 361, 407, 460],
+      "candidateLines": [83, 91, 334, 451, 452, 453, 457, 503, 556],
       "review": "mapped-abstraction"
     },
     {

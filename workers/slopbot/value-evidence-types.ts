@@ -326,6 +326,13 @@ export interface NativeMergeAcceptance {
   mergeSha: string;
   parentSha: string;
   integratedHeadSha: string;
+  /** Actual accepted carrier when GitHub reports an internal integration merge. */
+  carrier?: {
+    pullRequestId: string;
+    headSha: string;
+    mergeSha: string;
+    mergedAt: string;
+  };
   ancestry: Commit[];
   trees: {
     commitSha: string;
