@@ -23,9 +23,9 @@ assessment or review appends a correction there instead.
 ```quint
 type Reviewer = { actor: int, band: int, firstAt: int, reviewId: int }
 type Reviews = { prAuthor: int, merged: bool, journaled: bool, assessed: int, reviewers: List[Reviewer],
-  mergedAt: int, lastAt: int, lastId: int }
+  mergedAt: int, lastAt: int, lastId: int, restarts: int, corrections: List[int] }
 pure val initial: Reviews = { prAuthor: 9, merged: false, journaled: false, assessed: 10, reviewers: List(),
-  mergedAt: 0, lastAt: 0, lastId: 0 }
+  mergedAt: 0, lastAt: 0, lastId: 0, restarts: 0, corrections: List() }
 pure def validBand(band: int): bool = band == 10 or band == 30 or band == 90 or band == 240
 pure def sizeBand(points: int): bool =
   points == 10 or points == 30 or points == 90 or points == 240 or points == 450 or points == 750
@@ -36,13 +36,15 @@ pure def alwaysUsefulBands(r: Reviews): bool = r.reviewers.every(v => validBand(
 pure def alwaysDistinctReviewers(r: Reviews): bool = r.reviewers.every(v =>
   r.reviewers.select(other => other.actor == v.actor).length() == 1)
 pure def alwaysCreditOnlyAfterMerge(r: Reviews): bool =
-  (not(r.merged) implies r.reviewers.length() == 0 and r.mergedAt == 0 and not(r.journaled)) and
+  (not(r.merged) implies r.reviewers.length() == 0 and r.mergedAt == 0 and not(r.journaled) and
+    r.corrections.length() == 0) and
   (r.merged implies r.mergedAt > 0)
 pure def canObserveMerge(r: Reviews, at: int): bool = not(r.merged) and at > 0
 pure def observeMerge(r: Reviews, at: int): Reviews = { ...r, merged: true, mergedAt: at }
 pure def stepMergeAndAuthorFixed(before: Reviews, after: Reviews): bool = after.prAuthor == before.prAuthor and
   (before.merged implies after.merged and after.mergedAt == before.mergedAt) and
-  (before.journaled implies after.journaled and after.assessed == before.assessed and after.reviewers == before.reviewers)
+  (before.journaled implies after.journaled and after.assessed == before.assessed and after.reviewers == before.reviewers) and
+  before.corrections.every(id => after.corrections.includes(id)) and after.corrections.length() >= before.corrections.length()
 ```
 
 ### Qualification excludes bots, self-review, repeated comments, empty reviews, and post-merge reviews
@@ -55,8 +57,13 @@ asserted by a caller. The adapter supplies reviews in ascending
 occurrence-time and node-ID order; the first five distinct qualifying
 reviewers are retained and later updates may raise a retained reviewer's
 band without changing their tie priority. Ordering by occurrence time is an
-adapter obligation: an earlier review ingested after a later one is refused
-here and needs a journal correction.
+adapter obligation, with two recovery paths when it fails. Before the shares
+are journaled, an earlier qualifying review ingested after a later one
+restarts the record: the retained reviewers are cleared and the adapter
+supplies the complete review list again in order. After journaling, it is
+recorded once as a correction request that the Points journal must resolve
+by an appended correction ([corrections](./corrections.md)); the journaled
+shares are never rewritten.
 
 ```quint
 type ActorKind = HumanUser | BotUser
@@ -80,6 +87,21 @@ pure def lawBotAndSelfNeverQualify(r: Reviews, evidence: ReviewEvidence): bool =
   (evidence.actorKind == BotUser or evidence.actor == r.prAuthor) implies not(qualifies(r, evidence))
 pure def lawPostMergeNeverQualifies(r: Reviews, evidence: ReviewEvidence): bool =
   evidence.at >= r.mergedAt implies not(qualifies(r, evidence))
+pure def outOfOrder(r: Reviews, e: ReviewEvidence): bool =
+  e.at < r.lastAt or (e.at == r.lastAt and e.reviewId < r.lastId)
+pure def canRestartOrder(r: Reviews, evidence: ReviewEvidence): bool =
+  qualifies(r, evidence) and not(r.journaled) and outOfOrder(r, evidence)
+pure def restartOrder(r: Reviews, evidence: ReviewEvidence): Reviews =
+  { ...r, reviewers: List(), lastAt: 0, lastId: 0, restarts: r.restarts + 1 }
+pure def canRequestCorrection(r: Reviews, evidence: ReviewEvidence): bool =
+  qualifies(r, evidence) and r.journaled and outOfOrder(r, evidence) and
+  not(r.reviewers.some(v => v.reviewId == evidence.reviewId)) and not(r.corrections.includes(evidence.reviewId))
+pure def requestCorrection(r: Reviews, evidence: ReviewEvidence): Reviews =
+  { ...r, corrections: r.corrections.append(evidence.reviewId) }
+pure def alwaysCorrectionsOnlyAfterJournal(r: Reviews): bool =
+  (r.corrections.length() > 0 implies r.journaled) and r.corrections.every(id => id > 0) and r.restarts >= 0
+pure def sometimesRestartedThenReviewed(r: Reviews): bool = r.restarts > 0 and r.reviewers.length() > 0
+pure def sometimesCorrectionRequested(r: Reviews): bool = r.corrections.length() > 0
 pure def canAssess(r: Reviews, points: int): bool = sizeBand(points) and r.merged and not(r.journaled)
 pure def assess(r: Reviews, points: int): Reviews = { ...r, assessed: points }
 pure def canJournal(r: Reviews): bool = r.merged and not(r.journaled)
