@@ -3989,7 +3989,7 @@
     },
     {
       "path": "scripts/lemmascript-source-directories.mjs",
-      "sha256": "39a82b1fb66e20095185079525375a6a963a825188f1aa6c48ecffeed72ec812",
+      "sha256": "f133cc52c52ce396ace4a028185c26bc9907dd56a6c41a1afb19cb9cdd860e43",
       "models": [],
       "candidateLines": [],
       "review": "reviewed-no-independent-state",
