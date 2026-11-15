@@ -2862,3 +2862,168 @@ for (const fault of [
     expect(() => apply(journal, input)).toThrow();
   });
 }
+
+test("native original keeps the existing creator fallback for an agent primary", () => {
+  const { journal, input, donor, accepted } = scopedUnlinkedOriginal();
+  const agent = { id: "U_kgDOC972lw", login: "cursoragent", kind: "User" };
+  donor.commits[0].author = agent;
+  accepted.commits[0].author = agent;
+  expect(amounts(apply(journal, input).journal)).toEqual({
+    [A.id]: 30,
+    [C.id]: 0,
+  });
+  expect(donor.commits[0].author).toEqual(agent);
+});
+
+function nullResolutionUnit() {
+  const sample = scopedUnlinkedOriginal();
+  const { grouped, accepted, donor } = sample;
+  if (grouped.proof.status !== "complete" || !grouped.proof.originalContributor)
+    throw Error("fixture");
+  const patch =
+    "diff --git a/merge.ts b/merge.ts\n--- a/merge.ts\n+++ b/merge.ts\n@@ -1 +1 @@\n-old\n+resolved\n";
+  const commit = {
+    sha: sha("8"),
+    parentCount: 2,
+    parentShas: [accepted.headSha, donor.headSha],
+    author: null,
+    additions: 1,
+    deletions: 1,
+    files: [{ path: "merge.ts", additions: 1, deletions: 1 }],
+    firstAcceptedSourceId: accepted.sourceId,
+    mergeResolution: {
+      commitSha: sha("8"),
+      parents: [accepted.headSha, donor.headSha] as [string, string],
+      gitVersion: "git version 2.56.0",
+      automaticTree: sha("1"),
+      resolvedTree: sha("2"),
+      hadConflicts: true,
+      patch,
+      patchSha256: resolutionDigest(patch),
+      paths: ["merge.ts"],
+    },
+  };
+  accepted.commits.push(commit);
+  accepted.commitCount++;
+  accepted.headSha = commit.sha;
+  const claim = {
+    id: "claim_null_resolution",
+    sourceId: accepted.sourceId,
+    commitSha: commit.sha,
+    path: "merge.ts",
+  };
+  grouped.proof.claims.push(claim);
+  grouped.proof.expectedClaimIds.push(claim.id);
+  const binding = grouped.proof.originalContributor;
+  binding.claimIds = [...grouped.proof.expectedClaimIds];
+  binding.resolutionAcceptance = {
+    sourceDigest: "1".repeat(64),
+    pull: {
+      node_id: accepted.sourceId,
+      html_url: accepted.sourceUrl,
+      head: { sha: accepted.headSha },
+      state: "closed",
+      merged_at: accepted.occurredAt,
+      user: { node_id: C.id, login: C.login, type: "User" },
+      merged_by: { node_id: C.id, login: C.login, type: "User" },
+    } as NonNullable<typeof binding.resolutionAcceptance>["pull"],
+  };
+  return { ...sample, commit, binding };
+}
+
+test("a verified native resolution retains its null primary and the original's whole pool", () => {
+  const { journal, input, commit } = nullResolutionUnit();
+  expect(amounts(apply(journal, input).journal)).toEqual({
+    [A.id]: 30,
+    [C.id]: 0,
+  });
+  expect(commit.author).toBeNull();
+});
+for (const fault of [
+  "foreign-author",
+  "missing-resolution",
+  "wrong-merger",
+  "wrong-head",
+  "wrong-source",
+  "wrong-hash",
+  "ordinary-null",
+] as const) {
+  test(`native resolution fallback refuses ${fault}`, () => {
+    const { journal, input, commit, binding } = nullResolutionUnit();
+    if (fault === "foreign-author")
+      (commit as { author: CorrectionActor | null }).author = B;
+    if (fault === "missing-resolution")
+      delete (commit as { mergeResolution?: unknown }).mergeResolution;
+    if (
+      fault === "wrong-merger" &&
+      binding.resolutionAcceptance?.pull.merged_by
+    )
+      binding.resolutionAcceptance.pull.merged_by.node_id = B.id;
+    if (fault === "wrong-head" && binding.resolutionAcceptance)
+      binding.resolutionAcceptance.pull.head.sha = sha("9");
+    if (fault === "wrong-source" && binding.resolutionAcceptance)
+      binding.resolutionAcceptance.pull.node_id = "PR_wrong";
+    if (fault === "wrong-hash")
+      commit.mergeResolution.patchSha256 = "0".repeat(64);
+    if (fault === "ordinary-null") commit.parentCount = 1;
+    expect(() => apply(journal, input)).toThrow();
+  });
+}
+
+test("a later null-author resolution cannot reuse the first carrier's merger proof", () => {
+  const { journal, input, grouped, accepted, followup } =
+    laterAcceptedFollowup();
+  if (grouped.proof.status !== "complete" || !grouped.proof.originalContributor)
+    throw Error("fixture");
+  const original = grouped.proof.sources[1];
+  original.headSha = accepted.commits[0].sha;
+  original.commits[0].sha = accepted.commits[0].sha;
+  accepted.commits[0].parentShas = [sha("0")];
+  accepted.commits[1].parentShas = [accepted.commits[0].sha];
+  const binding = grouped.proof.originalContributor;
+  binding.exactAcceptance = true;
+  binding.originalCommitSha = original.headSha;
+  binding.acceptedCommitSha = original.headSha;
+  binding.claimIds = [...grouped.proof.expectedClaimIds];
+  const commit = followup.commits[0];
+  commit.author = null;
+  commit.parentCount = 2;
+  commit.parentShas = [accepted.headSha, sha("7")];
+  const patch =
+    "diff --git a/later.ts b/later.ts\n--- a/later.ts\n+++ b/later.ts\n@@ -1 +1 @@\n-old\n+resolved\n";
+  commit.files = [{ path: "later.ts", additions: 1, deletions: 1 }];
+  commit.mergeResolution = {
+    commitSha: commit.sha,
+    parents: [...commit.parentShas] as [string, string],
+    gitVersion: "git version 2.56.0",
+    automaticTree: sha("1"),
+    resolvedTree: sha("2"),
+    hadConflicts: true,
+    patch,
+    patchSha256: resolutionDigest(patch),
+    paths: ["later.ts"],
+  };
+  const claim = grouped.proof.claims.find(
+    (item) => item.sourceId === followup.sourceId,
+  );
+  if (!claim) throw Error("fixture claim");
+  claim.path = "later.ts";
+  const native = binding.followups?.[0].commits.find(
+    (item) => item.sha === commit.sha,
+  );
+  if (!native) throw Error("fixture parent proof");
+  native.parentShas = [...commit.parentShas];
+  binding.resolutionAcceptance = {
+    sourceDigest: "1".repeat(64),
+    pull: {
+      node_id: accepted.sourceId,
+      html_url: accepted.sourceUrl,
+      head: { sha: accepted.headSha },
+      state: "closed",
+      merged_at: accepted.occurredAt,
+      user: { node_id: C.id, login: C.login, type: "User" },
+      merged_by: { node_id: C.id, login: C.login, type: "User" },
+    } as NonNullable<typeof binding.resolutionAcceptance>["pull"],
+  };
+  expect(() => apply(journal, input)).toThrow("unit scope");
+});

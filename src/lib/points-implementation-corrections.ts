@@ -21,7 +21,10 @@ import type {
   Pull,
   ValueEvidence,
 } from "../../workers/slopbot/value-evidence-types";
-import { isCreditEligibleCommitAuthor } from "./commit-credit";
+import {
+  implementationCreditActors,
+  isCreditEligibleCommitAuthor,
+} from "./commit-credit";
 import { shareImplementationPoints } from "./implementation-allocation";
 import {
   appendPointAwards,
@@ -134,6 +137,8 @@ export interface OriginalContributorBinding {
   }[];
   /** Sole verified primary author when a maintainer opened the original PR. */
   originatingActor?: CorrectionActor;
+  /** Authenticated merger authority for a selected null-author native resolution. */
+  resolutionAcceptance?: { pull: Pull; sourceDigest: string };
   /** First accepted carrier when the recorded unit completes on its donor. */
   acceptedSourceId?: string;
   followups?: OriginalContributorFollowup[];
@@ -167,8 +172,8 @@ export function originalContributorSource(
       ordinary.length > 0 &&
       ordinary.every(
         (commit) =>
-          commit.author?.id === originatingActor.id &&
-          commit.author.kind === originatingActor.kind,
+          implementationCreditActors(source.author, [commit.author])[0]?.id ===
+          originatingActor.id,
       ),
     "original primary author is not uniquely verified",
   );
@@ -551,6 +556,7 @@ export function originalContributorClaimScope(
   repairs: readonly OriginalContributorRepair[] = [],
   copiedClaims: NonNullable<OriginalContributorBinding["copiedClaims"]> = [],
   acceptedAnchorSha = anchorSha,
+  resolutionAcceptance?: OriginalContributorBinding["resolutionAcceptance"],
 ): boolean {
   const origin = original.author;
   const carrier = accepted.author;
@@ -587,9 +593,9 @@ export function originalContributorClaimScope(
     acceptedAnchor.firstAcceptedSourceId !== accepted.sourceId ||
     anchor.parentCount > 2 ||
     (anchor.parentCount > 1 && !eligibleActor(anchor.author)) ||
-    (anchor.author !== null &&
-      anchor.author.id !== origin.id &&
-      anchor.author.id !== carrier.id) ||
+    (implementationCreditActors(original.author, [anchor.author])[0]?.id !==
+      origin.id &&
+      anchor.author?.id !== carrier.id) ||
     acceptedAnchor.author?.id !== anchor.author?.id ||
     acceptedAnchor.author?.kind !== anchor.author?.kind
   )
@@ -769,6 +775,7 @@ export function originalContributorClaimScope(
         commit.author !== null &&
         commit.author.id !== origin.id &&
         commit.author.id !== carrier.id &&
+        isCreditEligibleCommitAuthor(commit.author) &&
         !acknowledgedRepair
       )
         return false;
@@ -776,17 +783,41 @@ export function originalContributorClaimScope(
         return false;
       if (
         commit.parentCount <= 1 &&
-        (commit.author === null || commit.author.id === origin.id)
+        implementationCreditActors(original.author, [commit.author])[0]?.id ===
+          origin.id
       )
         hasOriginal = true;
-    } else if (
-      !eligibleActor(commit.author) ||
-      (commit.author.id !== origin.id &&
-        commit.author.id !== carrier.id &&
-        !acknowledgedRepair) ||
-      !descends(commit.sha, acceptedAnchorSha)
-    )
-      return false;
+    } else {
+      const pull = resolutionAcceptance?.pull;
+      const nativeResolution =
+        source.sourceId === accepted.sourceId &&
+        commit.author === null &&
+        commit.parentCount > 1 &&
+        commit.mergeResolution !== undefined &&
+        correctionClaimCommit(commit) &&
+        resolutionAcceptance !== undefined &&
+        digest.test(resolutionAcceptance.sourceDigest) &&
+        pull?.node_id === accepted.sourceId &&
+        pull.html_url === accepted.sourceUrl &&
+        pull.head.sha === accepted.headSha &&
+        pull.state === "closed" &&
+        pull.merged_at !== null &&
+        accepted.occurredAt !== null &&
+        Date.parse(pull.merged_at) === Date.parse(accepted.occurredAt) &&
+        pull.user.node_id === carrier.id &&
+        pull.user.type === "User" &&
+        pull.merged_by?.node_id === carrier.id &&
+        pull.merged_by.type === "User";
+      if (
+        (!eligibleActor(commit.author) && !nativeResolution) ||
+        (commit.author !== null &&
+          commit.author.id !== origin.id &&
+          commit.author.id !== carrier.id &&
+          !acknowledgedRepair) ||
+        !descends(commit.sha, acceptedAnchorSha)
+      )
+        return false;
+    }
   }
   return hasOriginal;
 }
@@ -1406,6 +1437,7 @@ function deriveProof(
             binding.repairs,
             binding.copiedClaims,
             binding.acceptedCommitSha,
+            binding.resolutionAcceptance,
           ),
         "original-contributor unit scope does not bind the reviewed native claims",
       );
