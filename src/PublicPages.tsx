@@ -18,9 +18,16 @@ import "./public-records.css";
 import { browserDeployment } from "./lib/browser-deployment";
 import { summarizeModelOutcomes } from "./lib/model-outcomes";
 import { POINTS_NOTICE } from "./lib/points";
+import {
+  asShown,
+  loadPoolFunding,
+  type PoolFundingIndex,
+} from "./lib/pool-funding";
 import { PROJECTS, type ProjectDefinition } from "./lib/projects.mjs";
+import { formatRewardCapDisplay } from "./lib/reward-amount";
 import { NETWORK_NAMES } from "./lib/reward-asset.mjs";
 import { SOURCE_REPOSITORY } from "./lib/source-repository";
+import { usePublicResource } from "./lib/use-public-resource";
 import type { DataState } from "./lib/use-snapshot";
 import {
   summarizeWhoBuilds,
@@ -31,7 +38,6 @@ import {
 import {
   DataNotice,
   ExternalLinkAnchor,
-  monthlyPoolLabel,
   NetworkName,
   PaymentLifecycle,
   RoutePageHeader,
@@ -357,12 +363,18 @@ export function HowItWorksPage() {
   );
 }
 
-function sponsorPoolLabel(project: ProjectDefinition): string {
-  const { reward } = project;
+/** Only money in a vault is shown (operator decision, 15 November 2026). */
+function sponsorPoolLabel(
+  registered: ProjectDefinition,
+  index: PoolFundingIndex | null,
+): string {
+  const { reward } = registered;
   if (reward.kind === "external-prize-share" && reward.externalOpportunity) {
     return `external prize share · ${reward.externalOpportunity.name}`;
   }
-  return monthlyPoolLabel(reward, project.rewardAsset);
+  const project = asShown(registered, index, new Date());
+  if (project.reward.monthlyCapMinor === "0") return "points only";
+  return `${formatRewardCapDisplay(project.reward.monthlyCapDisplay, project.rewardAsset)} monthly · in the vault`;
 }
 
 function WhoBuildsOnSlop({
@@ -571,6 +583,12 @@ export function SponsorsPage({
   state: DataState;
   retry: () => void;
 }) {
+  const [funding] = usePublicResource(
+    true,
+    loadPoolFunding,
+    "Pool funding unavailable",
+  );
+  const fundingIndex = funding.status === "ready" ? funding.index : null;
   const hasReviewBudget = PROJECTS.some(
     (project) => project.reward.reviewBudget,
   );
@@ -602,7 +620,7 @@ export function SponsorsPage({
                   <strong>{project.name}</strong>
                   <ArrowRight aria-hidden="true" />
                 </Link>
-                <p>{sponsorPoolLabel(project)}</p>
+                <p>{sponsorPoolLabel(project, fundingIndex)}</p>
                 {project.reward.chain ? (
                   <NetworkName chain={project.reward.chain}>
                     {NETWORK_NAMES[project.reward.chain]}

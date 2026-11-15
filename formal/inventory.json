@@ -694,6 +694,13 @@
       "review": "mapped-abstraction"
     },
     {
+      "path": "backend/projects/pool-funding.ts",
+      "sha256": "a1f3b0f3d5b48d2ec9d3f4f8584e08f15c26162bc84ef5a934493c223f143a86",
+      "models": ["formal/models/ui/ui_pool_funding.qnt"],
+      "candidateLines": [8],
+      "review": "mapped-abstraction"
+    },
+    {
       "path": "backend/projects/repository-access.ts",
       "sha256": "d212d41868629c9a84b99876198c9c553903eb6f19665115171b428af6aa1ed0",
       "models": [
@@ -2056,7 +2063,7 @@
     },
     {
       "path": "functions/api/v1/[[path]].ts",
-      "sha256": "a692759af802e3216f9e6558fedaec25f362c319fefb6d789c25c8704cfcb96f",
+      "sha256": "10f92dadf24957f92fb651ef6671a21b4cf0d513331ae942f4d77ebfb7e322f7",
       "models": [
         "formal/models/api/api_request_composition.qnt",
         "formal/models/api/identity_consumer_exchange.qnt",
@@ -2064,7 +2071,7 @@
         "formal/models/payments/solana_binding_api.qnt",
         "formal/models/vetting/vetting_stream_authority.qnt"
       ],
-      "candidateLines": [531, 532, 568, 581],
+      "candidateLines": [534, 535, 571, 584],
       "review": "mapped-abstraction"
     },
     {
@@ -4949,7 +4956,7 @@
     },
     {
       "path": "src/App.tsx",
-      "sha256": "60cf59a6827d8519aaee65aa5c967366a6211bde7135106f5219467cda398152",
+      "sha256": "08e6177a7831c374f718d9942a2e8ec9998f120708f78b8d2041ebad4ed468fe",
       "models": [
         "formal/models/ui/ui_clipboard_requests.qnt",
         "formal/models/ui/ui_cycle_archive.qnt",
@@ -4967,13 +4974,14 @@
         "formal/models/ui/ui_vetting_inventory.qnt"
       ],
       "candidateLines": [
-        13, 15, 292, 302, 312, 323, 332, 333, 334, 335, 336, 338, 339, 400, 455,
-        456, 457, 460, 483, 549, 580, 617, 663, 667, 669, 677, 730, 791, 847,
-        871, 1075, 1090, 1104, 1114, 1144, 1147, 1209, 1212, 1214, 1218, 1219,
-        1227, 1246, 1250, 1258, 1259, 1266, 1270, 1305, 1349, 1352, 1369, 1370,
-        1413, 1415, 1435, 1437, 1461, 1462, 1467, 1468, 1473, 1510, 1511, 1514,
-        1515, 1518, 1519, 1537, 1538, 1544, 1549, 1551, 1555, 1556, 1614, 1624,
-        1655, 1657, 1682, 1683, 1700, 1701, 1712, 1714, 1727, 1730, 1741
+        13, 15, 293, 303, 313, 324, 333, 334, 335, 336, 337, 339, 340, 401, 456,
+        457, 458, 461, 484, 550, 581, 618, 664, 668, 670, 678, 731, 792, 848,
+        877, 881, 1085, 1100, 1114, 1124, 1154, 1157, 1219, 1222, 1224, 1228,
+        1229, 1237, 1256, 1260, 1268, 1269, 1276, 1280, 1315, 1359, 1362, 1379,
+        1380, 1432, 1437, 1439, 1459, 1461, 1485, 1486, 1491, 1492, 1497, 1534,
+        1535, 1538, 1539, 1542, 1543, 1561, 1562, 1568, 1573, 1575, 1579, 1580,
+        1638, 1648, 1679, 1681, 1706, 1707, 1724, 1725, 1736, 1738, 1751, 1754,
+        1765
       ],
       "review": "mapped-abstraction"
     },
@@ -5575,11 +5583,11 @@
     },
     {
       "path": "src/PublicPages.tsx",
-      "sha256": "18ca45e77bda65eaa958c8fceabba7332b0417f46131178eec4ef0b900f04f33",
+      "sha256": "30c6c2f897e00a99a9c6c01e45660082110b81596e6d3de5278ff6b6c98a0c33",
       "models": ["formal/models/ui/ui_record_display.qnt"],
       "candidateLines": [
-        212, 297, 308, 346, 369, 370, 372, 373, 406, 408, 419, 568, 569, 571,
-        572, 613, 703
+        218, 303, 314, 352, 381, 382, 384, 385, 418, 420, 431, 580, 581, 583,
+        584, 591, 631, 721
       ],
       "review": "mapped-abstraction",
       "statelessReason": "Public explanatory/sponsor rendering derives from supplied registry/snapshot props; no local state/effect or mutation. Child state remains separately modeled."
@@ -6397,6 +6405,13 @@
         "formal/models/ui/ui_review_pool.qnt"
       ],
       "candidateLines": [380, 844, 1079, 1086, 1095],
+      "review": "mapped-abstraction"
+    },
+    {
+      "path": "src/lib/pool-funding.ts",
+      "sha256": "169f60f2cd35ab663364bb21897fac09e66fd9e77dde10bf2ed8414a7c8d6096",
+      "models": ["formal/models/ui/ui_pool_funding.qnt"],
+      "candidateLines": [13],
       "review": "mapped-abstraction"
     },
     {
@@ -17569,6 +17584,20 @@
         "signoutClearsCachedPointsListTest",
         "triageRetryDoesNotInventMachineDraftTest",
         "unavailableSessionDoesNotRetainFormTest"
+      ]
+    },
+    {
+      "path": "formal/models/ui/ui_pool_funding.qnt",
+      "sha256": "1ef0f272fa5314bc1d2db480ebcf6be61d0b37a2979d92db197d064bca546ac9",
+      "sources": [
+        "backend/projects/pool-funding.ts",
+        "src/lib/pool-funding.ts"
+      ],
+      "scenarios": [
+        "failedReadShowsNoMoneyTest",
+        "fundedVaultShowsMoneyTest",
+        "loadingShowsNoMoneyTest",
+        "shortVaultShowsNoMoneyTest"
       ]
     },
     {

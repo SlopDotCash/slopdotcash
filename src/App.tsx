@@ -40,6 +40,7 @@ import {
   mergeActivityCardLine,
   mergeActivityLine,
 } from "./lib/merge-activity";
+import { asShown, loadPoolFunding } from "./lib/pool-funding";
 import {
   findHistoricalProject,
   findProject,
@@ -866,7 +867,16 @@ function HomePage() {
     loadMergeActivity,
     "Merge activity unavailable",
   );
+  // One shared read of vault balances: only money in a vault is shown.
+  const [funding] = usePublicResource(
+    true,
+    loadPoolFunding,
+    "Pool funding unavailable",
+  );
   const now = new Date();
+  const fundingIndex = funding.status === "ready" ? funding.index : null;
+  const shown = (project: ProjectDefinition) =>
+    asShown(project, fundingIndex, now);
   const mergeLine = (project: ProjectDefinition) =>
     project.status === "active" && merge.status === "ready"
       ? mergeActivityCardLine(merge.index.get(project.id), now)
@@ -900,7 +910,7 @@ function HomePage() {
                   {featuredProjects.map((project) => (
                     <ProjectCard
                       key={project.id}
-                      project={project}
+                      project={shown(project)}
                       merge={mergeLine(project)}
                     />
                   ))}
@@ -908,7 +918,7 @@ function HomePage() {
               </section>
             ) : null}
             <CommunityProjects
-              projects={listedCommunityProjects}
+              projects={listedCommunityProjects.map(shown)}
               mergeLine={mergeLine}
             />
           </>
@@ -1407,7 +1417,21 @@ function ProjectHeader({ project }: { project: ProjectDefinition }) {
 }
 
 /** Shared copy for every registry reward model; no project-specific descriptions. */
-function ProjectRewardSummary({ project }: { project: ProjectDefinition }) {
+function ProjectRewardSummary({
+  project: registered,
+}: {
+  project: ProjectDefinition;
+}) {
+  const [funding] = usePublicResource(
+    registered.reward.kind === "monthly-pool",
+    loadPoolFunding,
+    "Pool funding unavailable",
+  );
+  const project = asShown(
+    registered,
+    funding.status === "ready" ? funding.index : null,
+    new Date(),
+  );
   return (
     <div className="project-overview">
       <div className="project-state-summary">
