@@ -224,7 +224,8 @@ export interface NoChangePromotionProof {
   treeSha: string;
 }
 
-export interface ValueMergeResolution {
+export interface AutomaticValueMergeResolution {
+  kind?: "automatic";
   commitSha: string;
   parents: [string, string];
   gitVersion: string;
@@ -244,6 +245,26 @@ export interface ValueMergeResolution {
     sourceCommitShas: string[];
   }[];
 }
+
+export interface CombinedParentValueMergeResolution {
+  kind: "combined-parent-delta";
+  commitSha: string;
+  parents: string[];
+  parentTrees: string[];
+  gitVersion: string;
+  resolvedTree: string;
+  patch: string;
+  patchSha256: string;
+  paths: string[];
+  files: {
+    path: string;
+    parents: { mode: string; blobSha: string }[];
+    result: { mode: string; blobSha: string };
+  }[];
+}
+export type ValueMergeResolution =
+  | AutomaticValueMergeResolution
+  | CombinedParentValueMergeResolution;
 
 export interface RetainedMergeReference {
   commentNodeId: string;

@@ -38,6 +38,15 @@ PR stays in the proof. Disconnected reviewed revisions use separate native
 bindings, with disjoint claims and one verified recipient for the unchanged unit.
 Missing revision evidence retains the hold.
 
+For native merges with three or more parents, the fixed Git collector retains
+an ordered combined-parent delta. It binds every parent and result tree, path,
+mode and blob identity. Only lines added or removed against every parent count
+as new merge work. Inherited lines remain with their earlier sources. Missing,
+truncated, binary, newly added or deleted path evidence stays held when this
+profile cannot represent all parent snapshots. The representation contains no
+synthetic automatic merge tree. It supplies evidence for valuation and ordinary
+attribution, while contributor and payout decisions keep their existing gates.
+
 Run the preview and reconcile value and duplicate work before recording.
 
 ## Collection and review

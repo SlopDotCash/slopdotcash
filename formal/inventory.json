@@ -4813,9 +4813,9 @@
     },
     {
       "path": "scripts/value-merge-resolution.ts",
-      "sha256": "f8d88f04c1460db7820a3eadb688098c47424034de4a0c89393aa282e9b2c365",
+      "sha256": "3a3863d71803daa049594e13ccff29b01f0cc004d711dda58be7c5077aa1d822",
       "models": ["formal/models/slopbot/merge_evidence_acquisition.qnt"],
-      "candidateLines": [142, 178, 224, 230, 253, 274, 276],
+      "candidateLines": [145, 254, 270, 316, 322, 345, 366, 368],
       "review": "mapped-abstraction"
     },
     {
@@ -8635,7 +8635,7 @@
     },
     {
       "path": "workers/slopbot/value-evidence-types.ts",
-      "sha256": "84e21d86da130d50599c9520a31a27984027f462ac20f48e5733d39fe875b849",
+      "sha256": "890d36175a17a337c754fd71b29e7769b8a9cc55acd9c114d0d9f909b462f431",
       "models": [],
       "candidateLines": [22, 77, 97],
       "review": "reviewed-no-independent-state",
@@ -8764,7 +8764,7 @@
     },
     {
       "path": "workers/slopbot/value-merge-resolution.ts",
-      "sha256": "6f943fdc4909f9167c7717617bf99817ce736fe913f7a0c1099438793a73413d",
+      "sha256": "cfa2b606adc99c2388770b53f986b669ccee157e70a3d2d25169c163524f2feb",
       "models": ["formal/models/slopbot/bot_historical_import.qnt"],
       "candidateLines": [],
       "review": "mapped-abstraction"
@@ -8878,7 +8878,7 @@
     },
     {
       "path": "workers/slopbot/value-retained-copy.ts",
-      "sha256": "85fe6a17e0d0a70472bfeea2dee5f6d15d833ef1fded3a536dd55fccb6936d5b",
+      "sha256": "aae8c771d4aca3817550504aa290cabe82cd4fdc393b3365e6fef2924a2bd014",
       "models": [
         "formal/models/slopbot/bot_retained_acceptance.qnt",
         "formal/models/slopbot/retained_copy_bindings.qnt",
@@ -8985,7 +8985,7 @@
     },
     {
       "path": "workers/slopbot/value-work-unit.ts",
-      "sha256": "d578259caa9d96e3a36ba017594991d593022188ac7151bf6a69f4a62984e8ca",
+      "sha256": "f95ef51eb031d08e24e2dc24773327e725d0364267af866636fd2b86c129eef0",
       "models": [
         "formal/models/slopbot/bot_value_pipeline.qnt",
         "formal/models/slopbot/bot_work_partition.qnt",
