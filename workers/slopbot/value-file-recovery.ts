@@ -70,7 +70,26 @@ export function valueFileRecoveryCapture<T extends EvidenceClient>(client: T) {
         path,
       )
     ) {
-      const signature = await sha256Hex(JSON.stringify(result));
+      // Only the PR response embeds volatile repository and milestone data.
+      // Keep every field on file and commit responses in the signature.
+      const pullResponse = /^\/repos\/[^/]+\/[^/]+\/pulls\/\d+(?:\?|$)/u.test(
+        path,
+      );
+      const signature = await sha256Hex(
+        JSON.stringify(result, function (key, value) {
+          if (!pullResponse) return value;
+          if (this === result && key === "milestone") return undefined;
+          if (
+            key === "repo" &&
+            result &&
+            typeof result === "object" &&
+            (this === (result as { head?: unknown }).head ||
+              this === (result as { base?: unknown }).base)
+          )
+            return undefined;
+          return value;
+        }),
+      );
       if (metadata.has(path) && metadata.get(path) !== signature)
         throw new Error("Source metadata changed during collection");
       metadata.set(path, signature);

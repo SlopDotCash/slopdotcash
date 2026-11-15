@@ -2402,3 +2402,172 @@ for (const fault of [
     expect(() => apply(journal, input)).toThrow();
   });
 }
+
+function reviewedOriginalReplacement() {
+  const sample = mergedDonorGroupedReplacement();
+  const { donor, accepted, grouped } = sample;
+  if (grouped.proof.status !== "complete" || !grouped.proof.originalContributor)
+    throw Error("fixture");
+  const historical = structuredClone(accepted.commits[0]);
+  historical.author = A;
+  donor.commits = [
+    { ...structuredClone(historical), sha: sha("e"), parentShas: [sha("d")] },
+  ];
+  donor.headSha = sha("e");
+  donor.commitCount = 1;
+  const retained = {
+    sourceDigest: "8".repeat(64),
+    currentSourceDigest: sha256Hex(JSON.stringify(donor)),
+    review: {
+      id: 23,
+      node_id: "PRR_historical",
+      html_url: `${donor.sourceUrl}#pullrequestreview-23`,
+      user: { node_id: C.id, login: C.login, type: "User" },
+      body: "Reviewed",
+      state: "COMMENTED",
+      submitted_at: "2026-10-22T00:00:00Z",
+      commit_id: historical.sha,
+    },
+    commits: [historical],
+  };
+  const binding = grouped.proof.originalContributor;
+  binding.claimIds = grouped.proof.claims.map((claim) => claim.id);
+  binding.reviewedOriginal = {
+    ...retained,
+    digest: sha256Hex(JSON.stringify(retained)),
+  };
+  return { ...sample, binding };
+}
+
+test("reviewed original revision preserves the current source and applies the complete October pool once", () => {
+  const { journal, input, donor } = reviewedOriginalReplacement();
+  const before = structuredClone(donor);
+  const result = apply(journal, input);
+  expect(amounts(result.journal)).toEqual({ [A.id]: 30, [C.id]: 0 });
+  expect(donor).toEqual(before);
+  expect(total(result.journal)).toBe(total(journal));
+  expect(apply(result.journal, input, true, LATER).journal).toBe(
+    result.journal,
+  );
+});
+
+for (const fault of [
+  "digest",
+  "current-head",
+  "review-source",
+  "review-head",
+  "review-time",
+  "author",
+  "parent",
+  "outside-october",
+] as const) {
+  test(`reviewed original proof refuses ${fault}`, () => {
+    const { journal, input, donor, grouped, binding } =
+      reviewedOriginalReplacement();
+    const retained = binding.reviewedOriginal;
+    if (!retained) throw Error("fixture");
+    if (fault === "digest") retained.digest = "9".repeat(64);
+    if (fault === "current-head") donor.headSha = sha("f");
+    if (fault === "review-source")
+      retained.review.html_url =
+        "https://github.com/other/repo/pull/1#pullrequestreview-23";
+    if (fault === "review-head") retained.review.commit_id = sha("9");
+    if (fault === "review-time")
+      retained.review.submitted_at = "2026-10-24T00:00:00Z";
+    if (fault === "author") retained.commits[0].author = B;
+    if (fault === "parent") retained.commits[0].parentShas = [sha("9")];
+    if (fault === "outside-october")
+      grouped.occurredAt = "2026-11-01T00:00:00.000Z";
+    if (fault !== "digest") {
+      const { digest: _, ...payload } = retained;
+      retained.digest = sha256Hex(JSON.stringify(payload));
+    }
+    expect(() => apply(journal, input)).toThrow();
+  });
+}
+
+function reviewedBranchParts() {
+  const sample = multiOriginalPrUnit();
+  const { grouped, donor, accepted, second } = sample;
+  if (
+    grouped.proof.status !== "complete" ||
+    !grouped.proof.originalContributorParts
+  )
+    throw Error("fixture");
+  const parts = grouped.proof.originalContributorParts;
+  const originals = [
+    structuredClone(accepted.commits[0]),
+    structuredClone(second.commits[0]),
+  ];
+  for (const commit of originals) commit.author = A;
+  accepted.commits[0].author = A;
+  const acceptedSecond = accepted.commits.find(
+    (commit) => commit.sha === second.headSha,
+  );
+  if (!acceptedSecond) throw Error("fixture");
+  acceptedSecond.author = A;
+  second.commits[0].author = A;
+  donor.commits = [
+    { ...structuredClone(originals[0]), sha: sha("e"), parentShas: [sha("d")] },
+  ];
+  donor.headSha = sha("e");
+  for (const [index, part] of parts.entries()) {
+    part.originalSourceId = donor.sourceId;
+    const retained = {
+      sourceDigest: "8".repeat(64),
+      currentSourceDigest: sha256Hex(JSON.stringify(donor)),
+      review: {
+        id: 23 + index,
+        node_id: `PRR_historical_${index}`,
+        html_url: `${donor.sourceUrl}#pullrequestreview-${23 + index}`,
+        user: { node_id: C.id, login: C.login, type: "User" },
+        body: "Reviewed",
+        state: "COMMENTED",
+        submitted_at: "2026-10-22T00:00:00Z",
+        commit_id: originals[index].sha,
+      },
+      commits: [originals[index]],
+    };
+    part.reviewedOriginal = {
+      ...retained,
+      digest: sha256Hex(JSON.stringify(retained)),
+    };
+  }
+  return sample;
+}
+
+test("separate reviewed branches from one original PR preserve one complete unit", () => {
+  const { journal, input } = reviewedBranchParts();
+  const result = apply(journal, input);
+  expect(amounts(result.journal)).toEqual({ [A.id]: 30, [C.id]: 0 });
+  expect(total(result.journal)).toBe(total(journal));
+  expect(apply(result.journal, input, true, LATER).journal).toBe(
+    result.journal,
+  );
+});
+for (const fault of [
+  "overlap",
+  "different-author",
+  "duplicate-anchor",
+] as const) {
+  test(`reviewed branch parts reject ${fault}`, () => {
+    const { journal, input, grouped } = reviewedBranchParts();
+    if (
+      grouped.proof.status !== "complete" ||
+      !grouped.proof.originalContributorParts
+    )
+      throw Error("fixture");
+    const [first, second] = grouped.proof.originalContributorParts;
+    if (fault === "overlap") second.claimIds = first.claimIds;
+    if (fault === "duplicate-anchor")
+      second.originalCommitSha = first.originalCommitSha;
+    if (fault === "different-author") {
+      const retained = second.reviewedOriginal;
+      if (!retained) throw Error("fixture");
+      retained.commits[0].author = B;
+      const { digest: _, ...payload } = retained;
+      retained.digest = sha256Hex(JSON.stringify(payload));
+    }
+    expect(() => apply(journal, input)).toThrow();
+  });
+}

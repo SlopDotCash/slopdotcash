@@ -6,6 +6,7 @@ import { collectValueEvidence } from "./value-evidence";
 import {
   type ValueFileRecovery,
   type ValueFileRequest,
+  valueFileRecoveryCapture,
   verifiedValueFileClient,
 } from "./value-file-recovery";
 
@@ -150,3 +151,36 @@ for (const text of ["", "kept\n"]) {
     ).toBe(text);
   });
 }
+
+for (const path of [
+  "/repos/example/repo/pulls/1/files?per_page=100&page=1",
+  "/repos/example/repo/pulls/1/commits?per_page=100&page=1",
+  `/repos/example/repo/commits/${"a".repeat(40)}`,
+]) {
+  test(`recovery binds repo and milestone keys outside the direct PR response at ${path}`, async () => {
+    let value = { repo: { id: 1 }, milestone: { id: 2 } };
+    const capture = valueFileRecoveryCapture({
+      get: async <T>(_path: string) => structuredClone(value) as T,
+    });
+    await capture.client.get(path);
+    value = { repo: { id: 3 }, milestone: { id: 2 } };
+    await expect(capture.client.get(path)).rejects.toThrow(
+      "Source metadata changed",
+    );
+  });
+}
+test("recovery binds nested PR data outside embedded head and base repositories", async () => {
+  let value = {
+    head: { sha: "a" },
+    base: { sha: "b" },
+    custom: { repo: { id: 1 } },
+  };
+  const capture = valueFileRecoveryCapture({
+    get: async <T>(_path: string) => structuredClone(value) as T,
+  });
+  await capture.client.get("/repos/example/repo/pulls/1");
+  value = { ...value, custom: { repo: { id: 2 } } };
+  await expect(
+    capture.client.get("/repos/example/repo/pulls/1"),
+  ).rejects.toThrow("Source metadata changed");
+});
