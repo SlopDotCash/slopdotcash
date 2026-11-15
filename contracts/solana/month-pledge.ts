@@ -1,7 +1,11 @@
-/** The owner's month pledges (`pledge_month`) and their lapse (`expire_pledge`). Plans only. */
+/**
+ * The owner's month pledges (`pledge_month`), their lapse (`expire_pledge`) and the return
+ * of a closed pledge's rent (`close_month_pledge`). Plans only.
+ */
 import {
   readSolanaMonthPledges,
   type SolanaEscrowConfig,
+  solanaClosePledgeInstruction,
   solanaExpirePledgeInstruction,
   solanaPledgeMonthsInstructions,
   verifySolanaDeployment,
@@ -116,6 +120,43 @@ export async function prepareSolanaExpirePledge(
     wallet: input.wallet,
     period: input.period,
     amountMinor: current.pledges[0].amount.toString(),
+    transaction: await prepareSolanaWalletTransaction(input, input.wallet, [
+      instruction,
+    ]),
+  };
+}
+/**
+ * Plans the owner's `close_month_pledge` for a pledge that has already closed (its period
+ * committed or lapsed), returning the account's rent to the owner. It refuses an open pledge
+ * and a period with no pledge account.
+ */
+export async function prepareSolanaClosePledge(
+  input: SolanaEscrowConfig & { wallet: string; period: number },
+) {
+  let instruction: ReturnType<typeof solanaClosePledgeInstruction>;
+  try {
+    instruction = solanaClosePledgeInstruction(input, input);
+  } catch (error) {
+    throw new SolanaWalletActionError(
+      error instanceof Error ? error.message : "Invalid period",
+    );
+  }
+  await verifySolanaDeployment(input);
+  const current = await readSolanaMonthPledges({
+    ...input,
+    periods: [input.period],
+  });
+  const pledge = current?.pledges[0];
+  // An existing pledge always holds a positive amount; zero means no account.
+  if (!pledge || pledge.amount === 0n)
+    throw new SolanaWalletActionError("This month has no pledge account.");
+  if (pledge.open)
+    throw new SolanaWalletActionError(
+      "This month's pledge is still open; it closes when the month commits or lapses.",
+    );
+  return {
+    wallet: input.wallet,
+    period: input.period,
     transaction: await prepareSolanaWalletTransaction(input, input.wallet, [
       instruction,
     ]),

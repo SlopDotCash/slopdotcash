@@ -9,6 +9,7 @@ import {
   readSolanaMonthPledges,
   type SolanaEscrowConfig,
   solanaBase58,
+  solanaClosePledgeInstruction,
   solanaExpirePledgeInstruction,
   solanaMonthPledgeAddress,
   solanaPledgeMonthsInstructions,
@@ -142,6 +143,34 @@ describe("pledge_month instructions", () => {
       ...anchor("global:expire_pledge"),
       ...le32(202611),
     ]);
+  });
+
+  test("close_month_pledge names the owner, the project and the pledge, for the owner only", () => {
+    const ix = solanaClosePledgeInstruction(deployment, {
+      wallet: OWNER,
+      period: 202611,
+    });
+    expect(ix.accounts).toEqual([
+      { key: OWNER, write: true },
+      { key: PROJECT, write: false },
+      { key: pledgeAddress(202611), write: true },
+    ]);
+    expect([...ix.data]).toEqual([
+      ...anchor("global:close_month_pledge"),
+      ...le32(202611),
+    ]);
+    expect(() =>
+      solanaClosePledgeInstruction(deployment, {
+        wallet: OTHER,
+        period: 202611,
+      }),
+    ).toThrow("vault owner");
+    expect(() =>
+      solanaClosePledgeInstruction(deployment, {
+        wallet: OWNER,
+        period: 202613,
+      }),
+    ).toThrow("YYYYMM");
   });
 });
 

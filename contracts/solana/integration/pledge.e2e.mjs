@@ -119,6 +119,16 @@ const expire = (project, period) =>
       month: monthAt(project, period),
     })
     .rpc({ commitment: "confirmed" });
+const closePledge = (project, period, owner = payer) =>
+  program.methods
+    .closeMonthPledge(period)
+    .accountsStrict({
+      owner: owner.publicKey,
+      project,
+      monthPledge: pledgeAt(project, period),
+    })
+    .signers(owner === payer ? [] : [owner])
+    .rpc({ commitment: "confirmed" });
 const setMonthly = (project, cap, enabled) =>
   program.methods
     .setMonthlyCommitment(bn(cap), enabled)
@@ -342,6 +352,12 @@ test("a month pledge holds funds through every owner route until the month commi
     commitMonthly(project, open, 1_500_000, current),
     /ConstraintSeeds|seeds constraint/,
   );
+  // With the switch off the pledge alone is the limit, whatever the cap says.
+  await setMonthly(project, 5_000_000, false);
+  await assert.rejects(
+    commitMonthly(project, open, 2_000_001, open),
+    /MonthlyCapExceeded/,
+  );
   // With monthly on and a cap above the pledge, a month still never takes funds another
   // month's open pledge holds: 8 - 3.000001 < 8 - 2.
   await setMonthly(project, 5_000_000, true);
@@ -370,6 +386,40 @@ test("a month pledge holds funds through every owner route until the month commi
   // A closed pledge never closes again; the current month's has not lapsed.
   await assert.rejects(expire(project, open), /PledgeNotLapsed/);
   await assert.rejects(expire(project, current), /PledgeNotLapsed/);
+  assert.equal(money((await fetchProject(project)).pledgedOpen), 6_000_000n);
+
+  // A closed pledge's rent goes back to the owner, and only the owner closes it. An open
+  // pledge stays, and a closed period is past, so it can never be pledged again.
+  await assert.rejects(closePledge(project, current), /PledgeOpen/);
+  await assert.rejects(
+    closePledge(project, open, stranger),
+    /ConstraintHasOne|has one/,
+  );
+  const rent = await connection.getBalance(
+    pledgeAt(project, open),
+    "confirmed",
+  );
+  const before = await connection.getBalance(payer.publicKey, "confirmed");
+  const signature = await closePledge(project, open);
+  const { fee } = (
+    await connection.getTransaction(signature, {
+      commitment: "confirmed",
+      maxSupportedTransactionVersion: 0,
+    })
+  ).meta;
+  assert.ok(rent > 0);
+  assert.equal(
+    await connection.getBalance(payer.publicKey, "confirmed"),
+    before + rent - fee,
+  );
+  assert.equal(await fetchPledge(project, open), null);
+  await assert.rejects(pledge(project, open, 1), /PledgePeriodClosed/);
+  await assert.rejects(
+    closePledge(project, open),
+    /AccountNotInitialized|not initialized/,
+  );
+  await closePledge(project, LAPSED_PERIOD);
+  assert.equal(await fetchPledge(project, LAPSED_PERIOD), null);
   assert.equal(money((await fetchProject(project)).pledgedOpen), 6_000_000n);
 });
 
