@@ -129,6 +129,7 @@ function hasRetainedPullReference(
   original: ValueEvidence,
   body: string,
   accepted: ValueEvidence,
+  rebase = false,
 ): boolean {
   const pull = accepted.pull;
   if (
@@ -155,7 +156,11 @@ function hasRetainedPullReference(
   return text.split(/(?<=[.!?])(?:\s+|$)|[\r\n]+/u).some((sentence) => {
     if (
       !/\b(?:commits?|changes?|work)\b/iu.test(sentence) ||
-      !/\b(?:retained|cherry[ -]picked|carried[ -]over)\b/iu.test(sentence) ||
+      !(rebase
+        ? /\brebased\b/iu.test(sentence) && /\bauthorship\b/iu.test(sentence)
+        : /\b(?:retained|cherry[ -]picked|carried[ -]over)\b/iu.test(
+            sentence,
+          )) ||
       /\b(?:not|never|no|neither|without|cannot)\b|\b\p{L}+n['’]t\b/iu.test(
         sentence,
       )
@@ -199,11 +204,12 @@ function hasRetainedPullReference(
 async function retainedCopySources(
   original: WorkUnitSource,
   sources: readonly WorkUnitSource[],
-): Promise<WorkUnitSource[]> {
+  octoberOriginalCredit: boolean,
+) {
   const evidence = original.evidence;
+  const retained: { source: WorkUnitSource; linkedOnly: boolean }[] = [];
   if (evidence.pull.merged_at !== null || evidence.indirectAcceptance)
-    return [];
-  const retained: WorkUnitSource[] = [];
+    return retained;
   for (const source of sources) {
     const integration = source.evidence;
     const accepted = integration.pull;
@@ -221,6 +227,14 @@ async function retainedCopySources(
       )
     )
       continue;
+    const octoberReplacement =
+      octoberOriginalCredit &&
+      accepted.merged_at.startsWith("2026-10-") &&
+      evidence.pull.state === "closed" &&
+      evidence.pull.number < accepted.number &&
+      evidence.pull.user.type === "User" &&
+      accepted.merged_by.type === "User" &&
+      evidence.pull.user.node_id !== accepted.user.node_id;
     let acknowledged = sameAuthorReopen(evidence, integration);
     for (const comment of evidence.comments) {
       if (
@@ -244,7 +258,36 @@ async function retainedCopySources(
       )
         acknowledged = true;
     }
-    if (acknowledged) retained.push(source);
+    if (
+      !acknowledged &&
+      octoberReplacement &&
+      evidence.comments.some(
+        (comment) =>
+          comment.user?.node_id === accepted.merged_by?.node_id &&
+          comment.updated_at === comment.created_at &&
+          Date.parse(comment.created_at) <=
+            Date.parse(evidence.pull.closed_at ?? "") &&
+          Date.parse(comment.created_at) <
+            Date.parse(accepted.merged_at ?? "") &&
+          hasRetainedPullReference(evidence, comment.body, integration, true),
+      )
+    )
+      acknowledged = true;
+    // An outgoing reference only discovers the source. Without an authenticated
+    // acknowledgement, both commits must independently name that contributor.
+    const linkedOnly =
+      !acknowledged &&
+      octoberReplacement &&
+      accepted.user.node_id === accepted.merged_by.node_id &&
+      integration.relatedPullRequests.some(
+        (reference) =>
+          reference.id === evidence.pull.node_id &&
+          reference.number === evidence.pull.number &&
+          reference.url === evidence.pull.html_url &&
+          reference.repository.toLowerCase() ===
+            evidence.repository.toLowerCase(),
+      );
+    if (acknowledged || linkedOnly) retained.push({ source, linkedOnly });
   }
   return retained;
 }
@@ -454,7 +497,10 @@ function alreadyAcceptedPromotion(
 
 export async function retainedCopyBindings(
   sources: readonly WorkUnitSource[],
-  options: { ordinaryCommitsOnly?: boolean } = {},
+  options: {
+    ordinaryCommitsOnly?: boolean;
+    octoberOriginalCredit?: boolean;
+  } = {},
 ) {
   const bindings = new Map<
     string,
@@ -469,7 +515,11 @@ export async function retainedCopyBindings(
   >();
   const limitations = new Set<string>();
   for (const original of sources) {
-    const integrations = await retainedCopySources(original, sources);
+    const integrations = await retainedCopySources(
+      original,
+      sources,
+      options.octoberOriginalCredit === true,
+    );
     if (!integrations.length && alreadyAcceptedPromotion(original, sources))
       continue;
     const evidence = original.evidence;
@@ -499,7 +549,7 @@ export async function retainedCopyBindings(
       for (const candidate of sources) {
         const other = candidate.evidence;
         if (
-          integrations.includes(candidate) ||
+          integrations.some(({ source }) => source === candidate) ||
           !other.pull.merged_at ||
           other.repositoryNodeId !== evidence.repositoryNodeId ||
           !(
@@ -528,7 +578,7 @@ export async function retainedCopyBindings(
               // The same accepted commit can be carried by an intermediate
               // PR and the acknowledged final integration. It is one copy,
               // not another original requiring a separate acknowledgement.
-              return !integrations.some(({ evidence: accepted }) =>
+              return !integrations.some(({ source: { evidence: accepted } }) =>
                 accepted.commitAttribution.some(
                   (retained) =>
                     retained.sha === commit.sha &&
@@ -584,46 +634,55 @@ export async function retainedCopyBindings(
       }
       for (const file of attribution.files) {
         const identity = retainedEditIdentity(file);
-        const matches = integrations.flatMap((integration) =>
-          integration.evidence.commitAttribution.flatMap((accepted) => {
-            const known = integration.evidence.commits.find(
-              (c) => c.sha === accepted.sha,
-            );
-            if (
-              !known ||
-              known.parents.length > 1 ||
-              accepted.limitations.length
-            )
-              return [];
-            return (accepted.files ?? []).flatMap((candidate) => {
-              if (identity === null) return [];
-              const prior =
-                retainedEditIdentity(candidate) === identity ||
-                (retainedManifestIdentity(file, commit) !== null &&
-                  retainedManifestIdentity(file, commit) ===
-                    retainedManifestIdentity(candidate, known))
+        const matches = integrations.flatMap(
+          ({ source: integration, linkedOnly }) =>
+            integration.evidence.commitAttribution.flatMap((accepted) => {
+              const known = integration.evidence.commits.find(
+                (c) => c.sha === accepted.sha,
+              );
+              if (
+                !known ||
+                known.parents.length > 1 ||
+                accepted.limitations.length ||
+                (linkedOnly &&
+                  (commit.author?.type !== "User" ||
+                    known.author?.type !== "User" ||
+                    commit.author.node_id !== evidence.pull.user.node_id ||
+                    known.author.node_id !== evidence.pull.user.node_id))
+              )
+                return [];
+              return (accepted.files ?? []).flatMap((candidate) => {
+                if (identity === null) return [];
+                const prior =
+                  retainedEditIdentity(candidate) === identity ||
+                  (retainedManifestIdentity(file, commit) !== null &&
+                    retainedManifestIdentity(file, commit) ===
+                      retainedManifestIdentity(candidate, known))
+                    ? []
+                    : preexistingHunks(
+                        file,
+                        candidate,
+                        integration,
+                        accepted.sha,
+                      );
+                return prior === null
                   ? []
-                  : preexistingHunks(
-                      file,
-                      candidate,
-                      integration,
-                      accepted.sha,
-                    );
-              return prior === null
-                ? []
-                : [
-                    {
-                      original,
-                      originalCommitSha: commit.sha,
-                      integration,
-                      acceptedCommitSha: accepted.sha,
-                      path: file.filename,
-                      preexistingCommitShas: prior,
-                    },
-                  ];
-            });
-          }),
+                  : [
+                      {
+                        original,
+                        originalCommitSha: commit.sha,
+                        integration,
+                        acceptedCommitSha: accepted.sha,
+                        path: file.filename,
+                        preexistingCommitShas: prior,
+                      },
+                    ];
+              });
+            }),
         );
+        // October requires a full accepted anchor commit, while rebasing can
+        // legitimately alter other original paths. Ambiguity still fails closed.
+        if (!matches.length && options.octoberOriginalCredit) continue;
         if (matches.length !== 1) {
           limitations.add(
             `${evidence.pull.node_id}: retained ${commit.sha}:${file.filename} has ${matches.length} exact copy bindings`,

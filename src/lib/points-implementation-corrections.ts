@@ -15,6 +15,7 @@ import {
   appendPointAwards,
   assertPointsJournal,
   latestPoints,
+  OCTOBER_ORIGINAL_CONTRIBUTOR_DECISION,
   type PointAward,
   type PointDecision,
   type PointRevision,
@@ -84,6 +85,14 @@ interface CompleteCorrectionProof {
   /** Digest of the complete accepted-source ownership census. */
   censusDigest: string;
   sources: CorrectionSource[];
+  /** Verified retained implementation for the October 2026 replacement rule. */
+  originalContributor?: {
+    originalSourceId: string;
+    originalCommitSha: string;
+    acceptedCommitSha: string;
+    boundPaths: string[];
+    bindingDigest: string;
+  };
 }
 export type PointsImplementationCorrectionCandidate =
   | (CorrectionCandidateBase & {
@@ -272,8 +281,7 @@ function deriveProof(
       incomplete = true;
     if (source.complete && source.commitCount === source.commits.length)
       check(
-        source.commits.length > 0 &&
-          source.commits.at(-1)?.sha === source.headSha,
+        source.commits.some((commit) => commit.sha === source.headSha),
         "complete commit census does not reach the source head",
       );
     check(
@@ -434,6 +442,75 @@ function deriveProof(
   }
   const scopeKeys = scopes.map((scope) => `${scope.commit}\0${scope.path}`);
   check(sameSet(scopeKeys, scopeKeys), "duplicate implementation claim");
+  if (proof.originalContributor !== undefined) {
+    const binding = proof.originalContributor;
+    check(
+      candidate.kind === "pull-request" &&
+        candidate.occurredAt.startsWith("2026-10-") &&
+        binding &&
+        digest.test(binding.bindingDigest) &&
+        Array.isArray(binding.boundPaths) &&
+        binding.boundPaths.length > 0,
+      "original-contributor proof is invalid outside the October replacement rule",
+    );
+    const original = sources.get(binding.originalSourceId);
+    const originalCommit = original?.commits.find(
+      (commit) => commit.sha === binding.originalCommitSha,
+    );
+    const acceptedCommit = accepted.commits.find(
+      (commit) => commit.sha === binding.acceptedCommitSha,
+    );
+    check(
+      original &&
+        original.sourceId !== accepted.sourceId &&
+        original.occurredAt === null &&
+        original.repositoryNodeId === accepted.repositoryNodeId &&
+        eligibleActor(original.author) &&
+        eligibleActor(accepted.author) &&
+        original.author.id !== accepted.author.id &&
+        originalCommit &&
+        originalCommit.parentCount <= 1 &&
+        originalCommit.author?.id === original.author.id &&
+        originalCommit.author.kind === original.author.kind &&
+        acceptedCommit &&
+        acceptedCommit.parentCount <= 1 &&
+        acceptedCommit.firstAcceptedSourceId === accepted.sourceId &&
+        (acceptedCommit.author === null ||
+          (acceptedCommit.author.id === original.author.id &&
+            acceptedCommit.author.kind === original.author.kind)) &&
+        acceptedCommit.files &&
+        sameSet(
+          binding.boundPaths,
+          acceptedCommit.files.map((file) => file.path),
+        ),
+      "original-contributor proof does not bind verified accepted work",
+    );
+    const origin = original.author;
+    const carrier = accepted.author;
+    if (
+      incomplete ||
+      original.commits.some(
+        (commit) =>
+          commit.parentCount <= 1 &&
+          (!eligibleActor(commit.author) || commit.author.id !== origin.id),
+      ) ||
+      accepted.commits.some(
+        (commit) =>
+          commit !== acceptedCommit &&
+          commit.parentCount <= 1 &&
+          commit.firstAcceptedSourceId === accepted.sourceId &&
+          (!eligibleActor(commit.author) ||
+            (commit.author.id !== origin.id &&
+              commit.author.id !== carrier.id)),
+      )
+    )
+      return null;
+    return {
+      actors: new Map([[origin.id, origin]]),
+      weights: new Map([[origin.id, 1n]]),
+      scopes,
+    };
+  }
   if (actors.size === 1 && incomplete && scopes.length > 0) {
     // A sole verified recipient needs no line ratio. Missing recipient identity
     // is different: every accepted scope must still resolve to that recipient.
@@ -555,7 +632,17 @@ export function applyPointsImplementationCorrections(
         ),
       "pool predecessors or immutable identity differ",
     );
-    const proof = deriveProof(candidate);
+    const appliedOctoberDecision = previous.some(
+      (revision) =>
+        revision.decision?.reason === OCTOBER_ORIGINAL_CONTRIBUTOR_DECISION,
+    );
+    const usesOctoberDecision =
+      candidate.proof.status === "complete" &&
+      candidate.proof.originalContributor !== undefined;
+    const proof =
+      appliedOctoberDecision && !usesOctoberDecision
+        ? null
+        : deriveProof(candidate);
     if (candidate.kind === "work-unit" && candidate.proof.status === "complete")
       check(
         previous.every(
@@ -607,7 +694,11 @@ export function applyPointsImplementationCorrections(
     const changed = replacements.filter(
       (award) =>
         JSON.stringify(award) !==
-        JSON.stringify(baseline.get(award.key)?.award),
+          JSON.stringify(baseline.get(award.key)?.award) ||
+        (usesOctoberDecision &&
+          award.amount > 0 &&
+          baseline.get(award.key)?.decision?.reason !==
+            OCTOBER_ORIGINAL_CONTRIBUTOR_DECISION),
     );
     const participationHeld = replacements.some((award) => {
       const at = bannedAt.get(award.actor.id);
@@ -617,7 +708,15 @@ export function applyPointsImplementationCorrections(
         Date.parse(candidate.occurredAt) >= at
       );
     });
-    return { candidate, key, previous, proof, changed, participationHeld };
+    return {
+      candidate,
+      key,
+      previous,
+      proof,
+      changed,
+      participationHeld,
+      usesOctoberDecision,
+    };
   });
   check(
     sameSet(
@@ -841,8 +940,9 @@ export function applyPointsImplementationCorrections(
             valueSource ??
             plan.candidate.sourceId,
           effectiveAt: recordedAt,
-          reason:
-            "Verified primary-commit changed lines reallocate this unchanged historical implementation Points pool; its value and occurrence date are preserved.",
+          reason: plan.usesOctoberDecision
+            ? OCTOBER_ORIGINAL_CONTRIBUTOR_DECISION
+            : "Verified primary-commit changed lines reallocate this unchanged historical implementation Points pool; its value and occurrence date are preserved.",
         });
     }
     return appendPointAwards(

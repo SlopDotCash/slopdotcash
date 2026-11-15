@@ -71,12 +71,12 @@
     },
     {
       "path": ".github/workflows/points-implementation-corrections.yml",
-      "sha256": "6077695066c3fa201a0ad3fc473b7e03f3c536b240ce46f5e9631b9b53df9979",
+      "sha256": "0a356db3786c3e3633e88250dea626747d1bd9303f5bbd5dd3e6a7e1740240d8",
       "models": [
         "formal/models/points/historical_discussion_evidence.qnt",
         "formal/models/points/historical_implementation_allocation.qnt"
       ],
-      "candidateLines": [74, 102, 178],
+      "candidateLines": [78, 106, 184],
       "review": "mapped-abstraction"
     },
     {
@@ -3486,15 +3486,15 @@
     },
     {
       "path": "scripts/collect-implementation-corrections.ts",
-      "sha256": "799c56e9face33410b45fe00c90a16b2d998832e180bddfa25f2b417ca4b9dd7",
+      "sha256": "7d8b7c3e98378ceef157d608913927046dd210f28aae9d313e603cdeec2fdf57",
       "models": [
         "formal/models/points/historical_discussion_evidence.qnt",
         "formal/models/points/historical_implementation_allocation.qnt"
       ],
       "candidateLines": [
         4, 11, 13, 85, 165, 242, 248, 251, 256, 266, 282, 288, 304, 305, 315,
-        318, 415, 461, 482, 507, 553, 560, 676, 687, 852, 1219, 1779, 1838,
-        1874, 1899, 1928, 1930
+        318, 415, 461, 482, 507, 553, 560, 676, 687, 852, 1193, 1444, 2034,
+        2093, 2129, 2154, 2183, 2185
       ],
       "review": "mapped-abstraction"
     },
@@ -4082,11 +4082,11 @@
     },
     {
       "path": "scripts/points-protection-sql.ts",
-      "sha256": "c99faa1aa420adfd67d891bd821900f60589f15ed60008f840ec4a786cc0a65b",
+      "sha256": "fbbc01cce4c4f9c6c8a14c0e990d3d6b48c9cf97361f46728c64a5ad88ec9fec",
       "models": [
         "formal/models/points/historical_implementation_allocation.qnt"
       ],
-      "candidateLines": [22],
+      "candidateLines": [3, 11, 44],
       "review": "mapped-abstraction"
     },
     {
@@ -4134,13 +4134,13 @@
     },
     {
       "path": "scripts/prepare-implementation-corrections.ts",
-      "sha256": "f7e376620e1c8b8d227b4066ddb99998e852ebb2ef86dac7d1c7b3064a042547",
+      "sha256": "2b19797704349a416c6e6fad3fec76e1d53657d57bd12bcd5e0cf9457c3fac72",
       "models": [
         "formal/models/points/historical_implementation_allocation.qnt"
       ],
       "candidateLines": [
-        4, 30, 42, 250, 313, 347, 359, 360, 361, 370, 375, 379, 381, 393, 394,
-        410, 416, 426
+        4, 30, 42, 250, 327, 362, 374, 375, 376, 386, 391, 395, 397, 410, 411,
+        427, 433
       ],
       "review": "mapped-abstraction"
     },
@@ -6314,13 +6314,13 @@
     },
     {
       "path": "src/lib/points-implementation-corrections.ts",
-      "sha256": "5fb22145fe1ef43ca8d7c941a0beaa5a923a51e767db8d8864edb7e44f8c962f",
+      "sha256": "a3902bab1a0b27a66c2807a7143c79e322dd771d17b30328bc0d20b15bd8f1d1",
       "models": [
         "formal/models/points/historical_implementation_allocation.qnt"
       ],
       "candidateLines": [
-        83, 91, 102, 116, 123, 243, 400, 559, 564, 659, 731, 766, 794, 895, 896,
-        897
+        84, 100, 111, 125, 132, 252, 408, 640, 646, 651, 758, 830, 865, 893,
+        995, 996, 997
       ],
       "review": "mapped-abstraction"
     },
@@ -6334,7 +6334,7 @@
     },
     {
       "path": "src/lib/points.ts",
-      "sha256": "0f7bb496f9744cf73eabdec0c7b0b2e1eea140d349e3bd45f10568cd27048a6c",
+      "sha256": "c163d395dae0f4e175cd7ce691fb68be25312f514c96728b01cb5ca23105d3c8",
       "models": [
         "formal/models/points/implementation_allocation.qnt",
         "formal/models/points/journal_publication.qnt",
@@ -6345,7 +6345,7 @@
         "formal/models/rewards/bucket_aggregation.qnt",
         "formal/models/ui/ui_review_pool.qnt"
       ],
-      "candidateLines": [378, 833, 1068, 1075, 1084],
+      "candidateLines": [380, 844, 1079, 1086, 1095],
       "review": "mapped-abstraction"
     },
     {
@@ -8731,13 +8731,13 @@
     },
     {
       "path": "workers/slopbot/value-retained-copy.ts",
-      "sha256": "84ba4b03b81023044cfb2e735b0f3bc3e23fcb1efc40cf56a87d97a2fd7d9a15",
+      "sha256": "124569180113fa21c55075d6b5cce11d4973fb3e19edd7f5f9d240f893c6341c",
       "models": [
         "formal/models/slopbot/bot_retained_acceptance.qnt",
         "formal/models/slopbot/retained_copy_bindings.qnt",
         "formal/models/slopbot/retained_recipient_scope.qnt"
       ],
-      "candidateLines": [33, 60, 260, 266, 290, 324],
+      "candidateLines": [33, 60, 233, 303, 309, 333, 367],
       "review": "mapped-abstraction"
     },
     {

@@ -129,7 +129,7 @@ function fixture(merge = sha) {
     },
   };
 }
-function transport(merge = sha) {
+function transport(merge = sha, node = fixture(merge)) {
   let requests = 0;
   const searchPageSizes: number[] = [];
   const call = Object.assign(
@@ -154,23 +154,21 @@ function transport(merge = sha) {
           search: {
             issueCount: 1,
             pageInfo: { hasNextPage: false, endCursor: null },
-            nodes: [fixture(merge)],
+            nodes: [node],
           },
         };
-      else if (query.includes("CorrectionMetadata"))
-        data = { nodes: [fixture(merge)] };
+      else if (query.includes("CorrectionMetadata")) data = { nodes: [node] };
       else if (query.includes("LeaderboardOutcomeCommitLines"))
         data = {
-          nodes: [
-            {
-              __typename: "Commit",
-              id: "C_source",
-              oid: sha,
-              additions: 2,
-              deletions: 1,
-              repository: { id: "R_kgDOT23CXA" },
-            },
-          ],
+          nodes: (body.variables.ids as string[]).map((id) => ({
+            __typename: "Commit",
+            id,
+            oid: node.commits.nodes.find(({ commit }) => commit.id === id)
+              ?.commit.oid,
+            additions: 2,
+            deletions: 1,
+            repository: { id: "R_kgDOT23CXA" },
+          })),
         };
       else throw new Error(`Unexpected fixture query: ${query.slice(0, 70)}`);
       return new Response(
@@ -436,6 +434,168 @@ test("a complete census supplies source proofs without another metadata or stati
   const repeated = await collectImplementationCorrections(options, deps);
   expect(operations).toHaveLength(count);
   expect(repeated.receipt.manifestDigest).toBe(result.receipt.manifestDigest);
+});
+
+test("a complete census binds the head without assuming chronological commit order", async () => {
+  const ancestor = "c".repeat(40);
+  for (const list of [
+    "head-first",
+    "head-missing",
+    "head-duplicated",
+  ] as const) {
+    const node = fixture();
+    node.url = "https://github.com/elizaOS/asi/pull/1";
+    const head = node.commits.nodes[0];
+    const earlier = {
+      commit: { ...head.commit, id: "C_ancestor", oid: ancestor },
+    };
+    node.commits.nodes =
+      list === "head-first"
+        ? [head, earlier]
+        : list === "head-missing"
+          ? [earlier]
+          : [head, head];
+    node.commits.totalCount = node.commits.nodes.length;
+    const options = {
+      projects: ["asi"],
+      directory: await directory(),
+      month: "2026-01",
+      before: "2026-01-31T00:00:00.000Z",
+    };
+    const network = transport(sha, node);
+    const journal = baseline([{ ...award(), sourceUrl: node.url }]);
+    const collection = collectImplementationCorrections(options, {
+      journal,
+      registry: registry(),
+      token: "private-test-token",
+      transport: network.call,
+      now: new Date("2026-01-31T23:59:59Z"),
+    });
+    if (list === "head-missing") {
+      await expect(collection).rejects.toThrow(
+        "Complete census source identity or commit evidence is invalid",
+      );
+    } else if (list === "head-duplicated") {
+      await expect(collection).rejects.toThrow(
+        "commit totals do not match complete unique evidence",
+      );
+    } else {
+      const result = await collection;
+      expect(result.receipt.ownershipComplete).toBe(true);
+      expect(result.receipt.completeProofs).toBe(1);
+      const candidate = result.manifest.candidates[0];
+      expect(candidate.proof).toMatchObject({
+        status: "complete",
+        sources: [{ headSha: sha, commits: [{ sha }, { sha: ancestor }] }],
+      });
+      const corrected = applyPointsImplementationCorrections(
+        journal,
+        result.manifest,
+        [{ candidateId: candidate.id, eligible: true }],
+        result.manifest.generatedAt,
+        new Map(),
+      );
+      expect(corrected.dispositions[0].status).toBe("unchanged");
+    }
+  }
+});
+
+test("October opt-in holds both sides of a merged donor's shared commit", async () => {
+  const donor = fixture();
+  Object.assign(donor, {
+    url: "https://github.com/elizaOS/asi/pull/1",
+    mergedAt: "2026-10-15T00:00:02Z",
+    updatedAt: "2026-10-15T00:00:02Z",
+  });
+  const carrier = {
+    ...donor,
+    id: "PR_carrier",
+    number: 2,
+    url: "https://github.com/elizaOS/asi/pull/2",
+    mergedAt: "2026-10-15T00:00:00Z",
+    updatedAt: "2026-10-15T00:00:00Z",
+    author: {
+      ...donor.author,
+      id: "MDQ6VXNlcjQz",
+      login: "carrier",
+      url: "https://github.com/carrier",
+      avatarUrl: "https://avatars.githubusercontent.com/u/43",
+    },
+  };
+  const base = transport();
+  const network = Object.assign(
+    async (input: RequestInfo | URL, init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body));
+      if (body.query.includes("LeaderboardSearchReferences"))
+        return Response.json({
+          data: {
+            search: {
+              issueCount: 2,
+              nodes: [carrier, donor],
+              pageInfo: { hasNextPage: false, endCursor: null },
+            },
+            rateLimit: {
+              cost: 1,
+              remaining: 4900,
+              limit: 5000,
+              resetAt: "2026-11-01T01:00:00Z",
+            },
+          },
+        });
+      const response = await base.call(input, init);
+      if (!body.query.includes("CorrectionRepository")) return response;
+      const repository = await response.json();
+      repository.data.repository.createdAt = "2026-10-01T00:00:00Z";
+      return Response.json(repository);
+    },
+    { preconnect: fetch.preconnect },
+  );
+  const before = "2026-11-01T00:00:00.000Z";
+  const journal = appendPointAwards(
+    emptyPointsJournal(before),
+    [donor, carrier].map((pull) => ({
+      ...award(),
+      key: pointKey("asi", actor.id, "merged-pull-request", pull.id),
+      sourceId: pull.id,
+      sourceUrl: pull.url,
+      workUnitId: `history_${pull.id}`,
+      occurredAt: new Date(pull.mergedAt).toISOString(),
+    })),
+    "f".repeat(64),
+    "github-merged-history-v1",
+    before,
+  );
+  const options = {
+    projects: ["asi"],
+    directory: await directory(),
+    before,
+    octoberOriginalCredit: true,
+  };
+  const dependencies = {
+    journal,
+    registry: registry(),
+    token: "fixture-token",
+    transport: network,
+    now: new Date(before),
+  };
+  const completed = await collectImplementationCorrections(
+    options,
+    dependencies,
+  );
+  expect(completed.receipt.ownershipComplete).toBe(true);
+  expect(completed.receipt.heldProofs).toBe(2);
+  expect(completed.receipt.limitations.map((entry) => entry.reason)).toEqual([
+    "October replacement shares accepted commits with a merged donor PR",
+    "October replacement shares accepted commits with a merged donor PR",
+  ]);
+  await expect(
+    collectImplementationCorrections(
+      { ...options, octoberOriginalCredit: false },
+      dependencies,
+    ),
+  ).rejects.toThrow(
+    "October original credit policy differs from the frozen campaign",
+  );
 });
 
 test("complete census reuse holds absent or mismatched recorded sources", async () => {

@@ -40,15 +40,16 @@ function sources() {
       repository: repository.id,
     },
   ];
-  original.evidence.comments.push({
+  const comment = {
     node_id: "IC_retained",
     html_url: `https://github.com/${repository.id}/pull/1#issuecomment-1`,
     body: "Your commits are carried over unchanged, with authorship, in #2.",
     user: maintainer,
     created_at: "2026-10-02T11:00:00Z",
     updated_at: "2026-10-02T11:00:00Z",
-  });
-  return { original, copy, comment: original.evidence.comments.at(-1)! };
+  };
+  original.evidence.comments.push(comment);
+  return { original, copy, comment };
 }
 
 for (const reference of [
@@ -125,6 +126,58 @@ for (const kind of [
       retainedCommitCreditSources(copy, [original, copy]),
     ).rejects.toThrow("authenticated retention acknowledgement");
   });
+
+test("October exact copies can bind through two linked commit authors without a merger comment", async () => {
+  const { original, copy } = sources();
+  original.evidence.comments = [];
+  copy.evidence.relatedPullRequests = [
+    {
+      id: original.evidence.pull.node_id,
+      number: original.evidence.pull.number,
+      url: original.evidence.pull.html_url,
+      repository: repository.id,
+    },
+  ];
+  original.evidence.commits[0].author = original.evidence.pull.user;
+  copy.evidence.commits[0].author = original.evidence.pull.user;
+  const options = { ordinaryCommitsOnly: true, octoberOriginalCredit: true };
+  const retained = await retainedCopyBindings([original, copy], options);
+  expect(retained.bindings.size).toBe(1);
+  expect(retained.limitations).toEqual([]);
+  expect((await retainedCopyBindings([original, copy])).bindings.size).toBe(0);
+  copy.evidence.pull.merged_at = "2026-11-02T10:00:00Z";
+  expect(
+    (await retainedCopyBindings([original, copy], options)).bindings.size,
+  ).toBe(0);
+  copy.evidence.pull.merged_at = "2026-10-02T10:00:00Z";
+  copy.evidence.commits[0].author = null;
+  expect(
+    (await retainedCopyBindings([original, copy], options)).bindings.size,
+  ).toBe(0);
+});
+
+test("October unlinked copies still require the eventual merger's exact rebase acknowledgement", async () => {
+  const { original, copy, comment } = sources();
+  original.evidence.commits[0].author = original.evidence.pull.user;
+  original.evidence.pull.closed_at = "2026-10-02T09:30:00Z";
+  comment.body = "We rebased your commits with your authorship in #2.";
+  comment.created_at = "2026-10-02T09:29:59Z";
+  comment.updated_at = comment.created_at;
+  const options = { ordinaryCommitsOnly: true, octoberOriginalCredit: true };
+  expect(
+    (await retainedCopyBindings([original, copy], options)).bindings.size,
+  ).toBe(1);
+  expect((await retainedCopyBindings([original, copy])).bindings.size).toBe(0);
+  comment.updated_at = "2026-10-02T11:00:00Z";
+  expect(
+    (await retainedCopyBindings([original, copy], options)).bindings.size,
+  ).toBe(0);
+  comment.updated_at = comment.created_at;
+  comment.user = original.evidence.pull.user;
+  expect(
+    (await retainedCopyBindings([original, copy], options)).bindings.size,
+  ).toBe(0);
+});
 
 function fourCommitsWithSourceMerges() {
   const source = sources();

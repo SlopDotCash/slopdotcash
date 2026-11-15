@@ -226,6 +226,99 @@ function complete(input: PointsImplementationCorrectionManifest) {
   return proof;
 }
 
+function octoberReplacement(
+  occurredAt = "2026-10-23T00:00:00.000Z",
+  awards = [award(A, 10), award(C, 20)],
+) {
+  const journal = initial(awards.map((row) => ({ ...row, occurredAt })));
+  const input = manifest(journal);
+  const row = input.candidates[0];
+  const proof = complete(input);
+  const accepted = proof.sources[0];
+  row.occurredAt = occurredAt;
+  accepted.occurredAt = occurredAt;
+  accepted.commits[1].author = C;
+  const originalId = "PR_original";
+  proof.sources.push({
+    ...accepted,
+    sourceId: originalId,
+    sourceUrl: "https://github.com/SlopDotCash/asi/pull/10",
+    headSha: sha("c"),
+    occurredAt: null,
+    author: A,
+    commitCount: 1,
+    commits: [
+      {
+        ...accepted.commits[0],
+        sha: sha("c"),
+        firstAcceptedSourceId: null,
+      },
+    ],
+  });
+  row.sourceIds.push(originalId);
+  proof.originalContributor = {
+    originalSourceId: originalId,
+    originalCommitSha: sha("c"),
+    acceptedCommitSha: sha("a"),
+    boundPaths: ["one.ts"],
+    bindingDigest: "f".repeat(64),
+  };
+  return { journal, input, proof };
+}
+
+test("verified October replacements preserve the full pool for the original contributor", () => {
+  const { journal, input } = octoberReplacement();
+  const result = apply(journal, input);
+  expect(amounts(result.journal)).toEqual({ [A.id]: 30, [C.id]: 0 });
+  expect(total(result.journal)).toBe(total(journal));
+  expect(result.journal.revisions.slice(0, journal.revisions.length)).toEqual(
+    journal.revisions,
+  );
+  const legacy = octoberReplacement();
+  const legacyInput = manifest(result.journal);
+  legacyInput.candidates[0].occurredAt = input.candidates[0].occurredAt;
+  complete(legacyInput).sources = legacy.proof.sources.slice(0, 1);
+  expect(apply(result.journal, legacyInput, true, LATER).journal).toBe(
+    result.journal,
+  );
+  expect(apply(journal, input, false).journal).toBe(journal);
+  expect(
+    apply(
+      journal,
+      input,
+      true,
+      RECORDED,
+      new Map([[A.id, "2026-10-01T00:00:00.000Z"]]),
+    ).journal,
+  ).toBe(journal);
+});
+
+test("an already correct October replacement records the verified allocation decision once", () => {
+  const { journal, input } = octoberReplacement(undefined, [award(A, 30)]);
+  const result = apply(journal, input);
+  expect(amounts(result.journal)).toEqual({ [A.id]: 30 });
+  expect(result.journal.revisions.at(-1)?.decision?.delta).toBe(0);
+  expect(result.journal.revisions.length).toBe(journal.revisions.length + 1);
+  const replay = apply(result.journal, input, true, LATER);
+  expect(replay.journal).toBe(result.journal);
+});
+
+test("October replacement proof holds competing contributors and rejects false anchors", () => {
+  const { journal, input, proof } = octoberReplacement();
+  proof.sources[0].commits[1].author = B;
+  expect(apply(journal, input).journal).toBe(journal);
+  proof.sources[0].commits[1].author = C;
+  if (!proof.originalContributor) throw new Error("missing original proof");
+  proof.originalContributor.boundPaths = ["unrelated.ts"];
+  expect(() => apply(journal, input)).toThrow(
+    "does not bind verified accepted work",
+  );
+  const september = octoberReplacement("2026-09-23T00:00:00.000Z");
+  expect(() => apply(september.journal, september.input)).toThrow(
+    "outside the October replacement rule",
+  );
+});
+
 test("old v1 pool is shared in whole Points without revaluing or rewriting its history", () => {
   const journal = initial();
   const result = apply(journal);
@@ -552,6 +645,20 @@ test("a no-write component preserves newer recipients and siblings without block
     )?.award.amount,
   ).toBe(9);
   expect(total(result.journal)).toBe(total(current));
+});
+
+test("the domain allocates the same Points when the verified head is listed first", () => {
+  const journal = initial();
+  const headLast = apply(journal);
+  const input = manifest(journal);
+  complete(input).sources[0].commits.reverse();
+  const headFirst = apply(journal, input);
+  expect(headFirst.dispositions).toEqual(headLast.dispositions);
+  expect(
+    [...latestPoints(headFirst.journal).values()].map(({ award }) => award),
+  ).toEqual(
+    [...latestPoints(headLast.journal).values()].map(({ award }) => award),
+  );
 });
 
 test("source-head and chronology mismatches cannot support a complete proof", () => {

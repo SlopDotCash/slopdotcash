@@ -1089,6 +1089,223 @@ async function bindRetained(
   return converted;
 }
 
+interface HistoricalOrdinaryProof {
+  sources: CorrectionSource[];
+  originalContributor?: {
+    originalSourceId: string;
+    originalCommitSha: string;
+    acceptedCommitSha: string;
+    boundPaths: string[];
+    bindingDigest: string;
+  };
+}
+
+function firstAcceptedOrdinary(source: CorrectionSource) {
+  return source.commits.filter(
+    (commit) =>
+      commit.parentCount <= 1 &&
+      commit.firstAcceptedSourceId === source.sourceId,
+  );
+}
+
+function mirroredOctoberSources(
+  outcomes: readonly MergedPullRequestOutcome[],
+  owners: ReadonlyMap<string, string>,
+) {
+  const byId = new Map(outcomes.map((outcome) => [outcome.id, outcome]));
+  const held = new Set<string>();
+  for (const donor of outcomes) {
+    if (!donor.mergedAt?.startsWith("2026-10-") || !verifiedHuman(donor.author))
+      continue;
+    const repository = repositoryIdFromUrl(donor.url).toLowerCase();
+    for (const commit of donor.commits ?? []) {
+      if (commit.parentCount !== 1 || commit.author?.id !== donor.author.id)
+        continue;
+      const ownerId = owners.get(`${repository}\0${commit.oid}`);
+      const carrier = ownerId ? byId.get(ownerId) : undefined;
+      if (
+        carrier &&
+        carrier.number > donor.number &&
+        carrier.mergedAt !== null &&
+        carrier.mergedAt <= donor.mergedAt &&
+        carrier.author?.id !== donor.author.id
+      ) {
+        // GitHub can mark a submitted PR merged after a replacement accepts its
+        // exact commits. Reconcile the two pools together before credit changes.
+        held.add(donor.id);
+        held.add(carrier.id);
+      }
+    }
+  }
+  return held;
+}
+
+function verifiedHuman(
+  value: CorrectionActor | null,
+): value is CorrectionActor {
+  return value?.kind === "User" && isCreditEligibleCommitAuthor(value);
+}
+
+function matchRetainedAcceptedSource(
+  plain: CorrectionSource,
+  accepted: CorrectionSource | undefined,
+) {
+  requireThat(
+    accepted?.headSha === plain.headSha &&
+      accepted.occurredAt === plain.occurredAt &&
+      accepted.repositoryNodeId === plain.repositoryNodeId,
+    "Retained accepted source identity changed",
+  );
+  requireThat(
+    accepted.commits.length === plain.commits.length &&
+      accepted.commits.every((commit, index) => {
+        const expected = plain.commits[index];
+        return (
+          commit.sha === expected.sha &&
+          commit.parentCount === expected.parentCount &&
+          (commit.parentCount > 1 ||
+            (commit.additions === expected.additions &&
+              commit.deletions === expected.deletions))
+        );
+      }),
+    "Retained accepted commit lines differ from the canonical census",
+  );
+  return accepted;
+}
+
+async function octoberOriginalContributorProof(
+  plain: CorrectionSource,
+  sources: readonly WorkUnitSource[],
+  owners: ReadonlyMap<string, string>,
+): Promise<HistoricalOrdinaryProof> {
+  requireThat(
+    sources.length === 2,
+    "October replacement needs one original PR",
+  );
+  const [integration, original] = sources;
+  const originalSource = richSource(original.evidence, owners);
+  const originalActor = originalSource.author;
+  const carrier = plain.author;
+  const originalCommits = originalSource.commits.filter(
+    (c) => c.parentCount <= 1,
+  );
+  requireThat(
+    original.evidence.pull.state === "closed" &&
+      originalSource.occurredAt === null &&
+      originalSource.repositoryNodeId === plain.repositoryNodeId &&
+      originalSource.repository.toLowerCase() ===
+        plain.repository.toLowerCase() &&
+      verifiedHuman(originalActor) &&
+      verifiedHuman(carrier) &&
+      originalActor.id !== carrier.id &&
+      originalSource.commits.some(
+        (commit) => commit.sha === originalSource.headSha,
+      ) &&
+      new Set(originalSource.commits.map((commit) => commit.sha)).size ===
+        originalSource.commits.length &&
+      originalCommits.length > 0 &&
+      originalCommits.every(
+        (commit) =>
+          verifiedHuman(commit.author) && commit.author.id === originalActor.id,
+      ),
+    "October replacement does not have a sole verified original contributor",
+  );
+  const accepted = matchRetainedAcceptedSource(
+    plain,
+    richSource(integration.evidence, owners),
+  );
+  requireThat(
+    accepted.author?.id === carrier.id &&
+      accepted.author?.kind === carrier.kind &&
+      accepted.commits.every(
+        (commit, index) =>
+          !commit.author ||
+          (commit.author.id === plain.commits[index].author?.id &&
+            commit.author.kind === plain.commits[index].author?.kind),
+      ),
+    "Retained accepted commit author differs from the canonical census",
+  );
+  const retained = await retainedCopyBindings(sources, {
+    ordinaryCommitsOnly: true,
+    octoberOriginalCredit: true,
+  });
+  requireThat(
+    retained.limitations.length === 0,
+    "October retained-copy evidence is incomplete or ambiguous",
+  );
+  const ordinary = firstAcceptedOrdinary(plain);
+  const acceptedWithFiles = new Map(
+    accepted.commits.map((commit) => [commit.sha, commit]),
+  );
+  const candidates = ordinary.toSorted((a, b) => a.sha.localeCompare(b.sha));
+  for (const commit of candidates) {
+    if (
+      (commit.author !== null &&
+        (!verifiedHuman(commit.author) ||
+          commit.author.id !== originalActor.id)) ||
+      ordinary.some(
+        (other) =>
+          other !== commit &&
+          (!verifiedHuman(other.author) ||
+            (other.author.id !== originalActor.id &&
+              other.author.id !== carrier.id)),
+      )
+    )
+      continue;
+    const files = acceptedWithFiles.get(commit.sha)?.files;
+    const bindings = [...retained.bindings.values()].filter(
+      (binding) =>
+        binding.integration === integration &&
+        binding.original === original &&
+        binding.acceptedCommitSha === commit.sha,
+    );
+    const originalCommitSha = bindings[0]?.originalCommitSha;
+    const boundPaths = bindings.map((binding) => binding.path).sort();
+    if (
+      !originalCommitSha ||
+      !files?.length ||
+      bindings.some(
+        (binding) => binding.originalCommitSha !== originalCommitSha,
+      ) ||
+      bindings.length !== files.length ||
+      !files.every((file) => boundPaths.includes(file.path))
+    )
+      continue;
+    return {
+      sources: [
+        {
+          ...plain,
+          commits: plain.commits.map((other) =>
+            other === commit ? { ...commit, files } : other,
+          ),
+        },
+        originalSource,
+      ],
+      originalContributor: {
+        originalSourceId: originalSource.sourceId,
+        originalCommitSha,
+        acceptedCommitSha: commit.sha,
+        boundPaths,
+        bindingDigest: digest(
+          encode(
+            bindings.map((binding) => ({
+              original: binding.original.evidence,
+              originalCommitSha: binding.originalCommitSha,
+              accepted: binding.integration.evidence,
+              acceptedCommitSha: binding.acceptedCommitSha,
+              path: binding.path,
+              preexistingCommitShas: binding.preexistingCommitShas,
+            })),
+          ),
+        ),
+      },
+    };
+  }
+  throw new Error(
+    "October replacement lacks an exact first-accepted original commit binding",
+  );
+}
+
 async function ordinaryRetainedProof(
   github: GitHubClient,
   read: SourceRead,
@@ -1098,15 +1315,23 @@ async function ordinaryRetainedProof(
     executor: GraphqlExecutor;
     allowNew: boolean;
   },
-): Promise<CorrectionSource[]> {
+  octoberOriginalCredit: boolean,
+): Promise<HistoricalOrdinaryProof> {
   const plain = ordinarySource(read, owners);
-  const needsDiscovery = plain.commits.some(
-    (c) =>
-      c.parentCount <= 1 &&
-      c.firstAcceptedSourceId === plain.sourceId &&
-      !isCreditEligibleCommitAuthor(c.author),
+  const ordinary = firstAcceptedOrdinary(plain);
+  const hasUnlinked = ordinary.some(
+    (commit) => !isCreditEligibleCommitAuthor(commit.author),
   );
-  if (!needsDiscovery) return [plain];
+  const otherAuthors = new Set(
+    ordinary.flatMap(({ author }) =>
+      octoberOriginalCredit &&
+      verifiedHuman(author) &&
+      author.id !== plain.author?.id
+        ? [author.id]
+        : [],
+    ),
+  );
+  if (!hasUnlinked && !otherAuthors.size) return { sources: [plain] };
   let readDiscussion: Parameters<typeof collectValueReferenceEvidence>[3];
   {
     const { cache, executor, allowNew } = discussion;
@@ -1219,43 +1444,47 @@ async function ordinaryRetainedProof(
     if (pull.state === "closed" && pull.merged_at === null)
       originals.push(pull);
   }
-  if (!originals.length) return [plain];
+  const possibleOriginals = octoberOriginalCredit
+    ? originals.filter(
+        (pull) =>
+          pull.user.node_id !== plain.author?.id &&
+          (hasUnlinked || otherAuthors.has(pull.user.node_id)),
+      )
+    : [];
+  requireThat(
+    possibleOriginals.length <= 1,
+    "October replacement names competing original PRs",
+  );
+  const selected = possibleOriginals.length
+    ? possibleOriginals
+    : hasUnlinked
+      ? originals
+      : [];
+  if (!selected.length) return { sources: [plain] };
   const sources: WorkUnitSource[] = [];
-  for (const number of [
-    read.outcome.number,
-    ...originals.map((p) => p.number),
-  ]) {
+  for (const expected of [references.pull, ...selected]) {
     const evidence = await collectValueEvidence(
       github,
       plain.repository,
-      number,
+      expected.number,
+    );
+    requireThat(
+      evidence.pull.node_id === expected.node_id &&
+        evidence.pull.head.sha === expected.head.sha &&
+        evidence.pull.updated_at === expected.updated_at,
+      "Retained source changed during evidence collection",
     );
     sources.push({
       evidence,
       policy: { sha: evidence.pull.base.sha, text: "" },
     });
   }
+  if (possibleOriginals.length)
+    return octoberOriginalContributorProof(plain, sources, owners);
   const converted = await bindRetained(sources, owners);
-  const accepted = converted.find((s) => s.sourceId === plain.sourceId);
-  requireThat(
-    accepted?.headSha === plain.headSha &&
-      accepted.occurredAt === plain.occurredAt &&
-      accepted.repositoryNodeId === plain.repositoryNodeId,
-    "Retained accepted source identity changed",
-  );
-  requireThat(
-    accepted.commits.length === plain.commits.length &&
-      accepted.commits.every((commit, index) => {
-        const expected = plain.commits[index];
-        return (
-          commit.sha === expected.sha &&
-          commit.parentCount === expected.parentCount &&
-          (commit.parentCount > 1 ||
-            (commit.additions === expected.additions &&
-              commit.deletions === expected.deletions))
-        );
-      }),
-    "Retained accepted commit lines differ from the canonical census",
+  const accepted = matchRetainedAcceptedSource(
+    plain,
+    converted.find((source) => source.sourceId === plain.sourceId),
   );
   // References are inputs to ambiguity checks. Only actual retained bindings
   // extend the correction proof beyond the canonical accepted commit census.
@@ -1275,21 +1504,19 @@ async function ordinaryRetainedProof(
       commit.retainedCopy ? [commit.retainedCopy.originalSourceId] : [],
     ),
   );
-  if (!originalIds.size) return [plain];
+  if (!originalIds.size) return { sources: [plain] };
 
   const boundSources = converted.filter((source) =>
     originalIds.has(source.sourceId),
   );
   requireThat(
     boundSources.length === originalIds.size &&
-      boundSources.every(
-        (source) =>
-          source.commits.length > 0 &&
-          source.commits.at(-1)?.sha === source.headSha,
+      boundSources.every((source) =>
+        source.commits.some((commit) => commit.sha === source.headSha),
       ),
     "Retained original commit census does not reach the source head",
   );
-  return [{ ...plain, commits }, ...boundSources];
+  return { sources: [{ ...plain, commits }, ...boundSources] };
 }
 
 export interface CollectionOptions {
@@ -1298,6 +1525,7 @@ export interface CollectionOptions {
   month?: string;
   sampleSourceIds?: string[];
   candidateMonth?: string;
+  octoberOriginalCredit?: boolean;
   before?: string;
   requestBudget?: number;
   resumeForSeconds?: number;
@@ -1323,6 +1551,7 @@ interface Campaign {
   through: string;
   before: string;
   initialSearchPageSize?: number;
+  octoberOriginalCredit?: boolean;
   projects: string[];
   registryDigest: string;
   repositories: RepositoryPlan[];
@@ -1462,7 +1691,12 @@ async function collectWithEvidenceCache(
         (campaign.schemaVersion === "1" && campaign.through === through)),
     "Campaign schema or collection time is invalid",
   );
+  const octoberOriginalCredit = options.octoberOriginalCredit === true;
   if (campaign) {
+    requireThat(
+      (campaign.octoberOriginalCredit ?? false) === octoberOriginalCredit,
+      "October original credit policy differs from the frozen campaign",
+    );
     requireThat(
       typeof campaign.before === "string" &&
         canonicalTime(campaign.before) === campaign.before,
@@ -1529,6 +1763,7 @@ async function collectWithEvidenceCache(
       baseline,
       through,
       initialSearchPageSize: 50,
+      ...(octoberOriginalCredit ? { octoberOriginalCredit } : {}),
       before:
         options.before ??
         new Date(Date.parse(through) - 35 * 24 * 60 * 60 * 1000).toISOString(),
@@ -1643,6 +1878,10 @@ async function collectWithEvidenceCache(
   const owners = ownershipComplete
     ? commitCreditOwners(allOutcomes)
     : new Map<string, string>();
+  const mirroredOctober =
+    octoberOriginalCredit && ownershipComplete
+      ? mirroredOctoberSources(allOutcomes, owners)
+      : new Set<string>();
   const censusDigest = digest(
     encode({
       repositories: campaign.repositories.map((r) => ({
@@ -1653,7 +1892,10 @@ async function collectWithEvidenceCache(
       partDigests,
     }),
   );
-  const selectedMonth = options.candidateMonth ?? options.month;
+  const selectedMonth =
+    options.candidateMonth ??
+    options.month ??
+    (octoberOriginalCredit ? "2026-10" : undefined);
   const selected = pools.filter(
     ({ candidate }) =>
       candidate.occurredAt < campaign.before &&
@@ -1716,8 +1958,9 @@ async function collectWithEvidenceCache(
           );
           continue;
         }
+        // GitHub's complete PR commit listing can put the head before ancestors.
         requireThat(
-          outcome.commits.at(-1)?.oid === outcome.headRefOid &&
+          outcome.commits.some((commit) => commit.oid === outcome.headRefOid) &&
             new Set(outcome.commits.map((commit) => commit.oid)).size ===
               outcome.commits.length &&
             outcome.commits.every(
@@ -1769,14 +2012,26 @@ async function collectWithEvidenceCache(
       continue;
     }
     if (candidate.kind === "work-unit") continue;
+    if (
+      candidate.occurredAt.startsWith("2026-10-") &&
+      mirroredOctober.has(candidate.sourceId)
+    ) {
+      limitations.set(
+        candidate.id,
+        "October replacement shares accepted commits with a merged donor PR",
+      );
+      continue;
+    }
     try {
-      const sources = await ordinaryRetainedProof(github, read, owners, {
-        cache,
-        executor,
-        allowNew: options.graphqlDiscussions === true,
-      });
-      candidate.sourceIds = sources.map((s) => s.sourceId).sort();
-      candidate.proof = { status: "complete", censusDigest, sources };
+      const proof = await ordinaryRetainedProof(
+        github,
+        read,
+        owners,
+        { cache, executor, allowNew: options.graphqlDiscussions === true },
+        octoberOriginalCredit && candidate.occurredAt.startsWith("2026-10-"),
+      );
+      candidate.sourceIds = proof.sources.map((s) => s.sourceId).sort();
+      candidate.proof = { status: "complete", censusDigest, ...proof };
     } catch (error) {
       cache.assertUninterrupted();
       limitations.set(
@@ -2011,7 +2266,13 @@ export function parseCollectionArguments(
     else if (argument === "--output") result.directory = value;
     else if (argument === "--month") result.month = value;
     else if (argument === "--candidate-month") result.candidateMonth = value;
-    else if (argument === "--before") {
+    else if (argument === "--october-original-credit") {
+      requireThat(
+        value === "true" || value === "false",
+        "Invalid October original credit flag",
+      );
+      result.octoberOriginalCredit = value === "true";
+    } else if (argument === "--before") {
       requireThat(
         canonicalTime(value) === value,
         "Use a canonical UTC --before instant",

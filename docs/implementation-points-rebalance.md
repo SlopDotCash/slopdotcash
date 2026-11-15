@@ -11,6 +11,16 @@ awards. `points-implementation-corrections.yml` is the manual, trusted-main path
 for those historical allocations. It does not reevaluate old work, replace the
 legacy scoring rules, move money, or alter historical settlements.
 
+For the October 2026 owner decision, set `october_original_credit=true` when
+collecting a reviewed payout project. This selects October pools for correction
+and still checks ownership across the repository census. A verified replacement
+receives the ordinary pool's full implementation credit for its original
+contributor. The proof binds an accepted commit to the original and checks
+immutable identities across the original and carried work. Distinct contributors
+or ambiguous accepted copies require review. A legacy collection or rolling
+snapshot retains an already recorded October original-contributor allocation.
+Run the preview and reconcile value and duplicate work before recording.
+
 ## Collection and review
 
 Select the project by its current D1 registry ID. The collector inventories

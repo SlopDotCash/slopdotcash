@@ -27,6 +27,8 @@ import { sha256Hex } from "./sha256";
 import { consumeBuckets, sumBuckets } from "./verified-aggregation";
 
 export const POINTS_RULE = "slop-points-v1";
+export const OCTOBER_ORIGINAL_CONTRIBUTOR_DECISION =
+  "The verified original contributor receives the full October 2026 replacement PR implementation Points. The pool value and occurrence date are preserved.";
 export const POINTS_NOTICE =
   "Points have no cash value and cannot be transferred or redeemed.";
 export interface PointAward {
@@ -812,7 +814,16 @@ export function applyPointsSnapshot(
     rows.push(prior);
     priorMergesBySource.set(key, rows);
   }
-  const heldUnassessedSources = new Set<string>();
+  const heldUnassessedSources = new Set(
+    [...previousPoints.values()]
+      .filter(
+        ({ award, decision }) =>
+          award.category === "merged-pull-request" &&
+          award.occurredAt.startsWith("2026-10-") &&
+          decision?.reason === OCTOBER_ORIGINAL_CONTRIBUTOR_DECISION,
+      )
+      .map(({ award }) => `${award.projectId}\0${award.sourceId}`),
+  );
   const allocationAwards: PointAward[] = [];
   const allocationDecisions = new Map<string, PointDecision>();
   const snapshotAwards = snapshot.ledger
@@ -837,6 +848,7 @@ export function applyPointsSnapshot(
     const projectId = findHistoricalRepository(row.repository)?.projectId;
     if (!projectId) continue;
     const sourceKey = `${projectId}\0${row.pullRequestId}`;
+    if (heldUnassessedSources.has(sourceKey)) continue;
     const prior = priorMergesBySource.get(sourceKey);
     if (!prior?.length) continue;
     // A missing value assessment cannot replace a recorded PR pool with the
@@ -847,8 +859,7 @@ export function applyPointsSnapshot(
     const actorIds =
       allocation?.weights.map((weight) => weight.actorNodeId) ?? [];
     if (
-      !allocation ||
-      allocation.rule !== "changed-lines-v1" ||
+      allocation?.rule !== "changed-lines-v1" ||
       heldSources.has(row.pullRequestId) ||
       !current.length ||
       new Set(actorIds).size !== actorIds.length ||
