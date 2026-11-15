@@ -160,6 +160,7 @@ export interface ValueEvidence {
   mergeCommitEvidence: CommitChangeEvidence | null;
   acceptedRange?: AcceptedValueRange;
   acceptedPatchReplay?: AcceptedPatchReplay;
+  nativeMergeAcceptance?: NativeMergeAcceptance;
   indirectAcceptance?: IndirectValueAcceptance;
   commits: Commit[];
   reviews: Review[];
@@ -285,4 +286,20 @@ export interface IndirectRetainedFile {
   acceptedPath: string;
   historical: TextVersion | null;
   accepted: TextVersion | null;
+}
+
+/** Complete native ancestor acceptance, verified jointly with its carrier. */
+export interface NativeMergeAcceptance {
+  schemaVersion: 1;
+  headSha: string;
+  mergeSha: string;
+  parentSha: string;
+  integratedHeadSha: string;
+  ancestry: Commit[];
+  trees: {
+    commitSha: string;
+    treeSha: string;
+    entries: { path: string; mode: string; type: string; sha: string }[];
+  }[];
+  retainedFiles: IndirectRetainedFile[];
 }
