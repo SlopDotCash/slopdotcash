@@ -1,7 +1,7 @@
 export const colorNames = [
   "background", "foreground", "card", "card-foreground", "popover", "popover-foreground",
   "primary", "primary-foreground", "secondary", "secondary-foreground", "muted", "muted-foreground",
-  "accent", "accent-foreground", "destructive", "destructive-foreground", "border", "input", "ring", "ok", "warn",
+  "accent", "accent-foreground", "destructive", "destructive-foreground", "border", "input", "ring", "ok", "warn", "info",
 ] as const
 type ColorName = (typeof colorNames)[number]
 type Named = Record<string, string>
@@ -70,16 +70,18 @@ const contrast = (one: string, other: string) => {
 const contrastPairs: [ColorName, ColorName][] = [
   ["foreground", "background"], ["foreground", "muted"], ["muted-foreground", "popover"],
   ...colorNames.filter((name) => name.endsWith("-foreground")).map((name): [ColorName, ColorName] => [name, name.slice(0, -11) as ColorName]),
-  ...(["muted-foreground", "primary", "destructive", "ok", "warn"] as const).flatMap((name): [ColorName, ColorName][] => [[name, "background"], [name, "card"]]),
+  ...(["muted-foreground", "primary", "destructive", "ok", "warn", "info"] as const).flatMap((name): [ColorName, ColorName][] => [[name, "background"], [name, "card"]]),
 ]
+/** What must be seen without being read (WCAG 1.4.11): a field's outline and the focus ring, on the page and on a card. */
+const boundaryPairs = (["input", "ring"] as const).flatMap((name): [ColorName, ColorName][] => [[name, "background"], [name, "card"]])
 
-/** Every pair below WCAG AA (4.5:1), in both themes. */
+/** Every pair below WCAG AA, in both themes: 4.5:1 for text, 3:1 for a boundary. */
 export const contrastIssues = (tokens: Tokens) =>
   (["light", "dark"] as const).flatMap((theme) =>
-    contrastPairs.flatMap(([text, surface]) => {
+    ([[contrastPairs, 4.5], [boundaryPairs, 3]] as const).flatMap(([pairs, least]) => pairs.flatMap(([text, surface]) => {
       const ratio = contrast(tokens.color[theme][text], tokens.color[theme][surface])
-      return ratio < 4.5 ? [`color.${theme}.${text} on ${surface}: contrast ${ratio.toFixed(2)} is below 4.5`] : []
-    }))
+      return ratio < least ? [`color.${theme}.${text} on ${surface}: contrast ${ratio.toFixed(2)} is below ${least}`] : []
+    })))
 
 /** Validates changes (shape, existing path, value, AA contrast); returns the new tokens and a before/after diff, or throws. */
 export function applyChanges(tokens: Tokens, input: unknown): { tokens: Tokens; diff: string } {

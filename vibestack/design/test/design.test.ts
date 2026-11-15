@@ -40,6 +40,8 @@ test("apply accepts a valid change and rejects an unknown path, an invalid color
   expect(() => applyChanges(tokens, [{ ...primary, path: "constructor.name" }])).toThrow("unknown token path")
   expect(() => applyChanges(tokens, [{ ...primary, value: "#4f46e5" }])).toThrow(/expected oklch/)
   expect(() => applyChanges(tokens, [{ ...primary, value: "oklch(0.9 0.05 277)" }])).toThrow(/color\.light\.primary-foreground on primary: contrast .* is below 4\.5/)
+  // A field's outline is seen, not read: 3:1 against the page (WCAG 1.4.11).
+  expect(() => applyChanges(tokens, [{ path: "color.dark.input", value: tokens.color.dark.background, reason: "invisible field" }])).toThrow(/color\.dark\.input on background: contrast 1\.00 is below 3/)
   expect(() => applyChanges(tokens, [{ path: primary.path, value: primary.value }])).toThrow(/reason/)
   const { radius: _, ...rest } = tokens
   expect(() => parseTokens({ ...rest, spacing: "1rem" })).toThrow("unknown token path: spacing\nradius: missing")
