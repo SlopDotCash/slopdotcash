@@ -159,7 +159,7 @@ pure def alwaysReleasesIndependent(a: Access): bool = a.releases.every(r =>
     and a.releases.every(o => o.decision == r.decision implies o.decidedBy == r.decidedBy)
     and a.releases.select(o => o.enforcement == r.enforcement and o.target == r.target).length() == 1)
 pure def lawReinstatementKeepsOtherProjectBans(a: Access, by: int, decision: int, project: int, targets: List[int], actor: int): bool =
-  (canReinstateAccounts(a, by, decision, project, targets)
+  (alwaysBansDecidedOnConfirmedMalice(a) and canReinstateAccounts(a, by, decision, project, targets)
     and a.bans.some(b => b.target == actor and b.project != project and not(released(a, b))))
     implies banned(reinstateAccounts(a, by, decision, project, targets), actor)
 pure def lawUnselectedAccountStaysBanned(a: Access, by: int, decision: int, project: int, targets: List[int], actor: int): bool =

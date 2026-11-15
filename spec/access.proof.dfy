@@ -195,6 +195,8 @@ lemma payAward_ensures(a: Access, by_: int, awardId: int)
   ensures (inv(a) ==> canPayAward(a, by_, awardId) ==> stepNewAwardOnlyWhenAllowed(a, payAward(a, by_, awardId)))
 {
   if inv(a) && canPayAward(a, by_, awardId) {
+    assert payAward(a, by_, awardId).bans == a.bans && payAward(a, by_, awardId).enforcements == a.enforcements;
+    forall e | true ensures projectDecision(payAward(a, by_, awardId), e) == projectDecision(a, e) { }
     var xs := a.awards;
     var ys := payAward(a, by_, awardId).awards;
     assert |ys| == |xs|;
@@ -218,5 +220,26 @@ lemma payAward_ensures(a: Access, by_: int, awardId: int)
       var i :| 0 <= i < |ys| && ys[i] == w;
       assert xs[i] in xs;
     }
+  }
+}
+
+// An appeal appends one open appeal on an unreleased ban; bans are unchanged.
+lemma appeal_ensures(a: Access, by_: int, enforcement: int)
+  ensures (inv(a) ==> canAppeal(a, by_, enforcement) ==> alwaysProjectBansConfirmed(appeal(a, by_, enforcement)))
+  ensures (inv(a) ==> canAppeal(a, by_, enforcement) ==> alwaysEnforcementSequenced(appeal(a, by_, enforcement)))
+  ensures (inv(a) ==> canAppeal(a, by_, enforcement) ==> alwaysBansDecidedOnConfirmedMalice(appeal(a, by_, enforcement)))
+  ensures (inv(a) ==> canAppeal(a, by_, enforcement) ==> alwaysReleasesIndependent(appeal(a, by_, enforcement)))
+  ensures (inv(a) ==> canAppeal(a, by_, enforcement) ==> alwaysAppealsDecidedByModerators(appeal(a, by_, enforcement)))
+  ensures (inv(a) ==> canAppeal(a, by_, enforcement) ==> alwaysAwardsIdentified(appeal(a, by_, enforcement)))
+  ensures (inv(a) ==> canAppeal(a, by_, enforcement) ==> stepBanRecordsPermanent(a, appeal(a, by_, enforcement)))
+  ensures (inv(a) ==> canAppeal(a, by_, enforcement) ==> stepProjectReinstatementKeepsAccountBans(a, "appeal", appeal(a, by_, enforcement)))
+  ensures (inv(a) ==> canAppeal(a, by_, enforcement) ==> stepFundedAwardsPreserved(a, appeal(a, by_, enforcement)))
+  ensures (inv(a) ==> canAppeal(a, by_, enforcement) ==> stepNewAwardOnlyWhenAllowed(a, appeal(a, by_, enforcement)))
+{
+  if inv(a) && canAppeal(a, by_, enforcement) {
+    var added := Appeal((a.lastAppeal + 1), enforcement, by_, AppealStatus.AppealOpen, 0);
+    assert appeal(a, by_, enforcement).appeals == a.appeals + [added];
+    assert appeal(a, by_, enforcement).bans == a.bans && appeal(a, by_, enforcement).releases == a.releases;
+    assert banFor(appeal(a, by_, enforcement), enforcement, by_) == banFor(a, enforcement, by_);
   }
 }
