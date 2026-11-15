@@ -58,6 +58,12 @@ interface AddedBinaryProof {
   sha256: string;
   contentBase64: string;
   contentReview: "unviewed";
+  retainedAtMerge?: {
+    mergeSha: string;
+    parentSha: string;
+    mergeTreeSha: string;
+    parentTreeSha: string;
+  };
 }
 
 export interface Actor {

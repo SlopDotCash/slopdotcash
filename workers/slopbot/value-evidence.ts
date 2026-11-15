@@ -8,6 +8,7 @@ import {
   addedBinaryRecovery,
   binarySourceLimitations,
   needsAddedBinaryProof,
+  recoverRetainedBinaryAtMerge,
 } from "./value-binary";
 import {
   collectBranchPolicy,
@@ -1247,6 +1248,7 @@ export async function collectValueEvidence(
       };
     else limitations.push("Retained repair body changed during collection");
   }
+  await recoverRetainedBinaryAtMerge(client, evidence);
   limitations.push(...(await binarySourceLimitations(evidence)));
   return evidence;
 }
