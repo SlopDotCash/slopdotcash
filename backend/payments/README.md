@@ -492,3 +492,33 @@ Pages return at most 100 records. Continue with the returned `next` as `after`
 and the same `through` boundary; `total` applies to that boundary. The public
 client checks page continuity, duplicates and completeness before display, and
 keeps currencies separate. This read path creates no award or payment.
+
+### Reviewed October 2026 exception
+
+The manual `october-rewards.yml` workflow prepares only the five pools in the
+owner-approved October terms. It runs on current `main` in `slop-production`
+and shares the normal production publication lock. Its default is preview.
+The owner-reviewed packet is the private `OCTOBER_REWARDS_REVIEWED_PACKET`
+repository secret. The dispatch supplies its SHA-256 and an explicit `apply`
+boolean. Do not put the packet, recipient amounts or generated SQL in a public
+artifact or workflow input.
+
+The runner compares every reviewed identity and accepted-work weight with the
+complete published Points journal, clipped to October and the project's
+reward start. Payout-recognition awards are excluded. Existing deduplication
+and signed penalties are preserved. This cross-check validates the reviewed
+packet and creates no new valuation. Fresh private reads bind the packet to
+exact current registry bytes, enforcement generation, the Points batch,
+account eligibility and protected financial state.
+
+Applying uses `prepare-october-rewards.ts` and the existing single-transaction
+D1 file importer. It records proposals only. Exact header and recipient-row
+readback is required after the import, including after a lost import response.
+A fully matching existing proposal is an idempotent replay even when Points
+have subsequently advanced. A different stored proposal refuses. Owner
+finalization and ordinary vault settlement remain separate operations.
+
+Only aggregate counts and the reviewed packet digest leave the trusted runner.
+The private packet, registry capture and SQL remain in its temporary directory.
+Set the private secret and run preview only after the final packet is reviewed.
+Import only that verified packet by dispatching the same digest with `apply`.

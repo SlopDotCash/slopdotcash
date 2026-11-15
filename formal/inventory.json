@@ -77,6 +77,16 @@
       "review": "mapped-abstraction"
     },
     {
+      "path": ".github/workflows/october-rewards.yml",
+      "sha256": "406613e6398dd4f8d71fb9b40fe4e8e19c8a358619f92645c6ffd161af252492",
+      "models": [
+        "formal/models/release/workflow_authority.qnt",
+        "formal/models/rewards/october_proposal_import.qnt"
+      ],
+      "candidateLines": [],
+      "review": "mapped-abstraction"
+    },
+    {
       "path": ".github/workflows/points-implementation-corrections.yml",
       "sha256": "0a356db3786c3e3633e88250dea626747d1bd9303f5bbd5dd3e6a7e1740240d8",
       "models": [
@@ -4610,6 +4620,13 @@
         "formal/models/tooling/integration_pipeline.qnt"
       ],
       "candidateLines": [108, 117, 118, 120, 140],
+      "review": "mapped-abstraction"
+    },
+    {
+      "path": "scripts/run-october-rewards.ts",
+      "sha256": "d6f570a0613480e40125d3665e29855efa815980cfc1a4a99a0efb31a7b65fc0",
+      "models": ["formal/models/rewards/october_proposal_import.qnt"],
+      "candidateLines": [3, 155, 295, 299, 307, 440, 444, 448],
       "review": "mapped-abstraction"
     },
     {
@@ -14456,11 +14473,12 @@
     },
     {
       "path": "formal/models/release/workflow_authority.qnt",
-      "sha256": "fcdc9e60224b6cab3d2a7aace830daca9a21c7655b5184ac72caae60f7480388",
+      "sha256": "f0261ccf3a037d98627b30d137060e7e937d4a5f8a19eb0ba5a198711b0ff012",
       "sources": [
         ".github/workflows/cancel-closed-pr-runs.yml",
         ".github/workflows/fee-worker-bindings.yml",
         ".github/workflows/monthly-rewards.yml",
+        ".github/workflows/october-rewards.yml",
         ".github/workflows/private-intake-watch.yml",
         ".github/workflows/production-watch.yml",
         ".github/workflows/referral-root-watch.yml",
@@ -14798,13 +14816,15 @@
     },
     {
       "path": "formal/models/rewards/october_proposal_import.qnt",
-      "sha256": "d60c591ff074716079493206d3344f761832654944d8d6447c136e90ca370fd4",
+      "sha256": "f07b27c6de7419500f1783ff946ab6a9504ba4311886fa028edb3f1082d57dc1",
       "sources": [
+        ".github/workflows/october-rewards.yml",
         "migrations/0081_monthly_asset_amount_range.sql",
         "scripts/october-reward-review.ts",
         "scripts/points-protection-sql.ts",
         "scripts/prepare-monthly-rewards.ts",
-        "scripts/prepare-october-rewards.ts"
+        "scripts/prepare-october-rewards.ts",
+        "scripts/run-october-rewards.ts"
       ],
       "scenarios": [
         "exactReplayTest",
