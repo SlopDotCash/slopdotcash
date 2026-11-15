@@ -1216,6 +1216,7 @@ async function exactOctoberOriginalContributorProof(
   originalSource: CorrectionSource,
   integration: WorkUnitSource,
   original: WorkUnitSource,
+  allowMergedOriginal = false,
 ): Promise<HistoricalOrdinaryProof | null> {
   const anchor = originalSource.commits.find(
     (commit) => commit.sha === originalSource.headSha,
@@ -1242,6 +1243,20 @@ async function exactOctoberOriginalContributorProof(
     );
   requireThat(
     accepted.occurredAt?.startsWith("2026-10-") &&
+      (originalSource.occurredAt === null ||
+        (allowMergedOriginal &&
+          originalSource.occurredAt >= accepted.occurredAt &&
+          originalSource.commits.every(
+            (commit) =>
+              commit.parentCount <= 1 &&
+              commit.firstAcceptedSourceId === accepted.sourceId &&
+              accepted.commits.some(
+                (copy) =>
+                  copy.sha === commit.sha &&
+                  copy.author?.id === commit.author?.id &&
+                  copy.author?.kind === commit.author?.kind,
+              ),
+          ))) &&
       original.evidence.repositoryDatabaseId ===
         integration.evidence.repositoryDatabaseId &&
       (references(integration.evidence, originalPull) ||
@@ -1422,6 +1437,7 @@ export async function octoberOriginalContributorProof(
   plain: CorrectionSource,
   sources: readonly WorkUnitSource[],
   owners: ReadonlyMap<string, string>,
+  allowMergedOriginal = false,
 ): Promise<HistoricalOrdinaryProof> {
   requireThat(
     sources.length === 2,
@@ -1436,7 +1452,10 @@ export async function octoberOriginalContributorProof(
   );
   requireThat(
     original.evidence.pull.state === "closed" &&
-      originalSource.occurredAt === null &&
+      (originalSource.occurredAt === null ||
+        (allowMergedOriginal &&
+          plain.occurredAt !== null &&
+          originalSource.occurredAt >= plain.occurredAt)) &&
       originalSource.repositoryNodeId === plain.repositoryNodeId &&
       originalSource.repository.toLowerCase() ===
         plain.repository.toLowerCase() &&
@@ -1481,8 +1500,13 @@ export async function octoberOriginalContributorProof(
     originalSource,
     integration,
     original,
+    allowMergedOriginal,
   );
   if (exact) return exact;
+  requireThat(
+    originalSource.occurredAt === null,
+    "Merged original requires exact first acceptance proof",
+  );
   // The rich original proof captures merge parents but does not fetch merger
   // line totals. A shared SHA can carry its already verified census totals.
   const canonicalCommits = new Map(
@@ -1578,6 +1602,35 @@ export async function octoberOriginalContributorProof(
   }
   throw new Error(
     "October replacement lacks an exact first-accepted original commit binding",
+  );
+}
+
+/** A later merge marker must not hide the carrier's first acceptance. */
+export function isMergedOriginalContributor(
+  accepted: CorrectionSource | undefined,
+  donor: CorrectionSource | undefined,
+): boolean {
+  return !!(
+    accepted &&
+    donor &&
+    verifiedHuman(accepted.author) &&
+    verifiedHuman(donor.author) &&
+    accepted.author.id !== donor.author.id &&
+    accepted.occurredAt !== null &&
+    donor.occurredAt !== null &&
+    donor.occurredAt >= accepted.occurredAt &&
+    donor.commits.length > 0 &&
+    donor.commits.every(
+      (commit) =>
+        commit.parentCount <= 1 &&
+        commit.firstAcceptedSourceId === accepted.sourceId &&
+        accepted.commits.some(
+          (copy) =>
+            copy.sha === commit.sha &&
+            copy.author?.id === commit.author?.id &&
+            copy.author?.kind === commit.author?.kind,
+        ),
+    )
   );
 }
 
@@ -2474,10 +2527,16 @@ async function collectWithEvidenceCache(
           "Grouped claim scope is incomplete",
         );
         let originalContributor: HistoricalOrdinaryProof["originalContributor"];
+        const accepted = sources.find((s) => s.sourceId === candidate.sourceId);
+        const donor = sources.find((s) => s.sourceId !== candidate.sourceId);
+        const mergedDonor =
+          sources.length === 2 && isMergedOriginalContributor(accepted, donor)
+            ? donor
+            : undefined;
         if (
           octoberOriginalCredit &&
           candidate.occurredAt.startsWith("2026-10-") &&
-          sources.length === 1 &&
+          (sources.length === 1 || mergedDonor) &&
           selectedClaims.every(
             (claim) =>
               (claim.retainedCopy?.acceptancePullRequestId ??
@@ -2486,18 +2545,34 @@ async function collectWithEvidenceCache(
         ) {
           const read = reads.get(candidate.sourceId);
           requireThat(read, "Grouped completion source disappeared");
-          const original = await ordinaryRetainedProof(
-            github,
-            read,
-            owners,
-            { cache, executor, allowNew: options.graphqlDiscussions === true },
-            true,
-          );
+          requireThat(accepted, "Grouped accepted source disappeared");
+          const original = mergedDonor
+            ? await octoberOriginalContributorProof(
+                github,
+                accepted,
+                [
+                  ...decision.evidence.sources.filter(
+                    (s) => s.evidence.pull.node_id === candidate.sourceId,
+                  ),
+                  ...decision.evidence.sources.filter(
+                    (s) => s.evidence.pull.node_id === mergedDonor.sourceId,
+                  ),
+                ],
+                owners,
+                true,
+              )
+            : await ordinaryRetainedProof(
+                github,
+                read,
+                owners,
+                {
+                  cache,
+                  executor,
+                  allowNew: options.graphqlDiscussions === true,
+                },
+                true,
+              );
           if (original.originalContributor) {
-            const accepted = sources.find(
-              (s) => s.sourceId === candidate.sourceId,
-            );
-            requireThat(accepted, "Grouped accepted source disappeared");
             const groupedOriginal = groupedOriginalContributorProof(
               accepted,
               original,

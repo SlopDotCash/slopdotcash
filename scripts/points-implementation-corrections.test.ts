@@ -1307,3 +1307,65 @@ for (const fault of [
       expect(apply(journal, input).journal).toBe(journal);
     else expect(() => apply(journal, input)).toThrow();
   });
+
+function mergedDonorGroupedReplacement() {
+  const sample = octoberGroupedReplacement();
+  if (sample.grouped.proof.status !== "complete") throw Error("fixture");
+  const proof = sample.grouped.proof;
+  const accepted = proof.sources[0];
+  const donor = proof.sources[1];
+  donor.occurredAt = "2026-10-23T00:00:03.000Z";
+  donor.headSha = accepted.commits[0].sha;
+  donor.commits[0].sha = donor.headSha;
+  donor.commits[0].firstAcceptedSourceId = accepted.sourceId;
+  accepted.commits[0].parentShas = [sha("0")];
+  accepted.commits[1].parentShas = [accepted.commits[0].sha];
+  if (!proof.originalContributor) throw Error("fixture");
+  proof.originalContributor.exactAcceptance = true;
+  proof.originalContributor.originalCommitSha = donor.headSha;
+  return { ...sample, accepted, donor };
+}
+
+test("joint valuation can retain a later-marked-merged donor as the sole October original", () => {
+  const { journal, input } = mergedDonorGroupedReplacement();
+  const result = apply(journal, input);
+  expect(amounts(result.journal)).toEqual({ [A.id]: 30, [C.id]: 0 });
+  expect(total(result.journal)).toBe(total(journal));
+  expect(apply(result.journal, input, true, LATER).journal).toBe(
+    result.journal,
+  );
+  expect(apply(journal, input, false).journal).toBe(journal);
+});
+
+for (const fault of [
+  "earlier-owner",
+  "other-sha",
+  "unclaimed-donor",
+  "unverified-copy",
+  "ordinary-pool",
+  "partial-claims",
+] as const)
+  test(`merged donor original proof refuses ${fault}`, () => {
+    const { journal, input, grouped, donor } = mergedDonorGroupedReplacement();
+    if (grouped.proof.status !== "complete" || grouped.kind !== "work-unit")
+      throw Error("fixture");
+    if (fault === "earlier-owner")
+      donor.commits[0].firstAcceptedSourceId = donor.sourceId;
+    if (fault === "other-sha") {
+      donor.headSha = sha("e");
+      donor.commits[0].sha = sha("e");
+    }
+    if (fault === "unclaimed-donor") {
+      donor.commits.push({ ...donor.commits[0], sha: sha("d") });
+      donor.commitCount++;
+    }
+    if (fault === "unverified-copy")
+      delete grouped.proof.originalContributor?.exactAcceptance;
+    if (fault === "ordinary-pool")
+      Object.assign(grouped, { kind: "pull-request" });
+    if (fault === "partial-claims") {
+      grouped.proof.claims.pop();
+      grouped.proof.expectedClaimIds = grouped.proof.claims.map((c) => c.id);
+    }
+    expect(() => apply(journal, input)).toThrow();
+  });

@@ -5,6 +5,7 @@ import type { GitHubClient } from "../workers/slopbot/github";
 import type { WorkUnitSource } from "../workers/slopbot/value-work-unit-types";
 import {
   groupedOriginalContributorProof,
+  isMergedOriginalContributor,
   octoberOriginalContributorProof,
 } from "./collect-implementation-corrections";
 
@@ -441,4 +442,75 @@ describe("October exact Git proof refuses incomplete or competing acceptance", (
         ),
       ).rejects.toThrow();
     });
+});
+
+test("merged original collection requires exact first acceptance and explicit grouped scope", async () => {
+  const input = await snapshot();
+  input.original.pull.merged_at = "2026-10-03T00:00:03Z";
+  input.original.pull.closed_at = input.original.pull.merged_at;
+  input.original.pull.merge_commit_sha = sha("d");
+  input.responses.set(`${root}/pulls/1`, {
+    ...input.original.pull,
+    created_at: "2026-10-01T00:00:00Z",
+  });
+  const result = await octoberOriginalContributorProof(
+    input.github,
+    input.plain,
+    input.sources,
+    input.owners,
+    true,
+  );
+  expect(result.originalContributor?.exactAcceptance).toBe(true);
+  expect(result.sources[1].occurredAt).toBe("2026-10-03T00:00:03.000Z");
+  await expect(
+    octoberOriginalContributorProof(
+      input.github,
+      input.plain,
+      input.sources,
+      input.owners,
+    ),
+  ).rejects.toThrow("sole verified original");
+  const wrong = new Map(input.owners);
+  wrong.set(`${repository.toLowerCase()}\0${sha("a")}`, "PR_original");
+  await expect(
+    octoberOriginalContributorProof(
+      input.github,
+      input.plain,
+      input.sources,
+      wrong,
+      true,
+    ),
+  ).rejects.toThrow();
+});
+
+test("merged donor candidate gate preserves unrelated and same-author group behavior", async () => {
+  const input = await snapshot();
+  const ordinary = await octoberOriginalContributorProof(
+    input.github,
+    input.plain,
+    input.sources,
+    input.owners,
+  );
+  const accepted = ordinary.sources[0],
+    donor = ordinary.sources[1];
+  donor.occurredAt = "2026-10-03T00:00:03.000Z";
+  donor.commits[0].firstAcceptedSourceId = accepted.sourceId;
+  expect(isMergedOriginalContributor(accepted, donor)).toBe(true);
+  expect(
+    isMergedOriginalContributor(accepted, {
+      ...donor,
+      author: accepted.author,
+    }),
+  ).toBe(false);
+  expect(
+    isMergedOriginalContributor(accepted, {
+      ...donor,
+      occurredAt: "2026-10-02T00:00:00.000Z",
+    }),
+  ).toBe(false);
+  const other = structuredClone(donor);
+  other.commits[0].sha = sha("e");
+  expect(isMergedOriginalContributor(accepted, other)).toBe(false);
+  donor.commits[0].firstAcceptedSourceId = donor.sourceId;
+  expect(isMergedOriginalContributor(accepted, donor)).toBe(false);
 });

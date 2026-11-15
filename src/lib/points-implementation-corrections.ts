@@ -351,6 +351,13 @@ function deriveProof(
   );
   let incomplete = false;
   for (const source of sources.values()) {
+    const mergedOriginal =
+      candidate.kind === "work-unit" &&
+      proof.originalContributor?.exactAcceptance === true &&
+      proof.originalContributor.originalSourceId === source.sourceId &&
+      source.sourceId !== candidate.sourceId &&
+      source.occurredAt !== null &&
+      source.occurredAt >= candidate.occurredAt;
     check(
       node.test(source.sourceId) &&
         node.test(source.repositoryNodeId) &&
@@ -359,7 +366,8 @@ function deriveProof(
         typeof source.complete === "boolean" &&
         (source.occurredAt === null || instant(source.occurredAt)) &&
         (source.occurredAt === null ||
-          source.occurredAt <= candidate.occurredAt) &&
+          source.occurredAt <= candidate.occurredAt ||
+          mergedOriginal) &&
         sourceRepository(source.sourceUrl, candidate.projectId) ===
           source.repository.toLowerCase(),
       "invalid source identity",
@@ -553,7 +561,22 @@ function deriveProof(
     check(
       original &&
         original.sourceId !== accepted.sourceId &&
-        original.occurredAt === null &&
+        (original.occurredAt === null ||
+          (candidate.kind === "work-unit" &&
+            binding.exactAcceptance === true &&
+            original.occurredAt >= candidate.occurredAt &&
+            original.commits.every(
+              (commit) =>
+                commit.parentCount <= 1 &&
+                commit.firstAcceptedSourceId === accepted.sourceId &&
+                accepted.commits.some(
+                  (copy) =>
+                    copy.sha === commit.sha &&
+                    copy.parentCount === commit.parentCount &&
+                    copy.author?.id === commit.author?.id &&
+                    copy.author?.kind === commit.author?.kind,
+                ),
+            ))) &&
         original.repositoryNodeId === accepted.repositoryNodeId &&
         eligibleActor(original.author) &&
         eligibleActor(accepted.author) &&
