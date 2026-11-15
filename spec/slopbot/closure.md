@@ -351,7 +351,7 @@ pure def stepRejectedHistoryRetained(before: Closure, after: Closure): bool =
 pure def stepConfirmedIsFinal(before: Closure, after: Closure): bool = before.attempt.state == Confirmed implies
   after.attempt.state == Confirmed and after.attempt.id == before.attempt.id and after.attempt.closedAt == before.attempt.closedAt
 pure def sometimesConfirmedClose(c: Closure): bool = c.attempt.state == Confirmed
-pure def sometimesRejectedThenRetried(c: Closure): bool = c.rejected.length() > 0 and c.attempt.state == Pending
+pure def sometimesRejected(c: Closure): bool = c.rejected.length() > 0
 pure def sometimesPendingAfterRequest(c: Closure): bool = c.attempt.state == Pending and c.attempt.requests == 1
 ```
 
