@@ -188,20 +188,20 @@ test("the release continues for a complete live buyback with every key", () => {
   expect(result.stdout).toContain("fee-converter upload reached");
 });
 
-// The reviewed production file exactly as checked in: a live converter on
-// Base, Ethereum and Robinhood Chain with a live buyback (operator decision
-// of 12 November 2026).
+// The reviewed production file exactly as checked in, including the
+// separately qualified Solana network and the existing live buyback.
 const PRODUCTION_KEYS = [
   "FEE_WALLET_KEY_BASE",
   "FEE_WALLET_KEY_ETHEREUM",
   "FEE_WALLET_KEY_ROBINHOOD",
+  "FEE_WALLET_KEY_SOLANA",
 ];
 
-test("the reviewed production configuration releases with its three keys", () => {
+test("the reviewed production configuration releases with its four keys", () => {
   const result = preflightOf(reviewed, PRODUCTION_KEYS);
   expect(result.status, result.stderr).toBe(0);
   expect(result.stdout).toContain(
-    "fee-converter mode live; networks base,ethereum,robinhood",
+    "fee-converter mode live; networks base,ethereum,robinhood,solana",
   );
   expect(result.stdout).toContain("fee-converter upload reached");
 });
@@ -210,6 +210,15 @@ test("the reviewed production configuration stops without the Robinhood key", ()
   const result = preflightOf(
     reviewed,
     PRODUCTION_KEYS.filter((name) => name !== "FEE_WALLET_KEY_ROBINHOOD"),
+  );
+  expect(result.status).not.toBe(0);
+  expect(result.stdout).not.toContain("fee-converter upload reached");
+});
+
+test("the reviewed production configuration stops without the Solana key", () => {
+  const result = preflightOf(
+    reviewed,
+    PRODUCTION_KEYS.filter((name) => name !== "FEE_WALLET_KEY_SOLANA"),
   );
   expect(result.status).not.toBe(0);
   expect(result.stdout).not.toContain("fee-converter upload reached");

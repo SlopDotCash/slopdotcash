@@ -1,12 +1,25 @@
 /** Reconstruct a journal's server-verified merge recipe from public Git objects.
  * No checkout, model call, source execution or publication occurs here.
  */
+
 import { execFile } from "node:child_process";
+import { createHash } from "node:crypto";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
+import { canonicalJson } from "../src/lib/canonical-json";
 import { validRepositoryPath } from "../src/lib/project-contracts";
+import {
+  findRegisteredRepositoryById,
+  type TargetRepository,
+} from "../src/lib/repositories.mjs";
+import { collectValueEvidence } from "../workers/slopbot/value-evidence";
+import type { EvidenceClient } from "../workers/slopbot/value-evidence-types";
+import {
+  VALUE_FILE_EXPANSION_LIMIT,
+  validValueFileRequest,
+} from "../workers/slopbot/value-file-recovery";
 import {
   MERGE_GIT_VERSION,
   mergeInput,
@@ -126,13 +139,12 @@ export async function withPublicGitObjects<T>(
 
 export async function hydrateValueMergeSource(
   source: WorkUnitSource,
-  recipe: ValueMergeRecipe,
+  recipe: ValueMergeRecipe | undefined,
   repository: PublicMergeRepository,
+  client?: EvidenceClient,
+  repositoryPolicy?: TargetRepository,
 ): Promise<WorkUnitSource> {
-  if (
-    !validMergeRecipe(recipe) ||
-    (await mergeRecipe(source.evidence)).inputSha256 !== recipe.inputSha256
-  )
+  if (recipe !== undefined && !validMergeRecipe(recipe))
     throw new Error("Merge reconstruction inputs differ from the journal");
   if (
     repository.node_id !== source.evidence.repositoryNodeId ||
@@ -141,24 +153,178 @@ export async function hydrateValueMergeSource(
     throw new Error(
       "Merge reconstruction requires the verified public repository",
     );
+  const needsFiles = Boolean(
+    client &&
+      source.evidence.limitations.some(
+        (problem) =>
+          problem.startsWith("Full diff required:") ||
+          problem.startsWith(
+            "Added binary implementation identity is unavailable:",
+          ) ||
+          problem.startsWith("Added binary accepted identity is unavailable:"),
+      ),
+  );
+  if (!recipe && !needsFiles) return source;
+  if (
+    recipe &&
+    !needsFiles &&
+    (await mergeRecipe(source.evidence)).inputSha256 !== recipe.inputSha256
+  )
+    throw new Error("Merge reconstruction inputs differ from the journal");
   const input = mergeInput(source.evidence);
   const objects = [
     input.pull.head.sha,
+    source.evidence.pull.base.sha,
+    ...(source.evidence.mergeCommitEvidence
+      ? [
+          source.evidence.mergeCommitEvidence.sha,
+          ...source.evidence.mergeCommitEvidence.parents.map(
+            (parent) => parent.sha,
+          ),
+        ]
+      : []),
     ...input.commits.flatMap(({ sha, parents }) => [
       sha,
       ...parents.map((parent) => parent.sha),
     ]),
   ];
   return withPublicGitObjects(repository, objects, async (directory) => {
+    let complete = source;
+    if (client && needsFiles) {
+      complete = await recoverValueSourceFiles(
+        source,
+        client,
+        repository,
+        directory,
+        repositoryPolicy,
+      );
+    }
+    if (!recipe) return complete;
+    if (
+      (await mergeRecipe(complete.evidence)).inputSha256 !== recipe.inputSha256
+    )
+      throw new Error("Merge reconstruction inputs differ from the journal");
     const mergeResolutions = await collectVerifiedMergeResolutions(
-      input,
+      mergeInput(complete.evidence),
       directory,
       recipe.profile,
     );
     return {
-      ...source,
-      evidence: { ...source.evidence, mergeResolutions },
+      ...complete,
+      evidence: { ...complete.evidence, mergeResolutions },
       mergeRecipe: recipe,
     };
   });
+}
+
+/** Recollect through a verified public object store while retaining live source identity. */
+export async function recoverValueSourceFiles(
+  source: WorkUnitSource,
+  client: EvidenceClient,
+  repository: PublicMergeRepository,
+  directory: string,
+  repositoryPolicy: TargetRepository | null = findRegisteredRepositoryById(
+    source.evidence.repository,
+  ),
+): Promise<WorkUnitSource> {
+  if (
+    repository.private !== false ||
+    repository.id !== source.evidence.repositoryDatabaseId ||
+    repository.node_id !== source.evidence.repositoryNodeId ||
+    repository.full_name?.toLowerCase() !==
+      source.evidence.repository.toLowerCase()
+  )
+    throw new Error("Immutable file recovery repository differs");
+  const verified = Object.create(client) as EvidenceClient;
+  let expanded = 0;
+  const blobs = new Map<string, { sha: string; bytes: Uint8Array }>();
+  verified.verifiedFile = async (name, ref, path) => {
+    if (
+      name.toLowerCase() !== source.evidence.repository.toLowerCase() ||
+      !validValueFileRequest({
+        repository: name,
+        repositoryNodeId: repository.node_id,
+        ref,
+        path,
+      })
+    )
+      throw new Error("Invalid immutable file recovery selection");
+    const command = publicGitProcess(directory, [
+      "ls-tree",
+      "-z",
+      ref,
+      "--",
+      `:(literal)${path}`,
+    ]);
+    const entry = (
+      await run(command.file, command.args, {
+        ...command.options,
+        maxBuffer: 8192,
+      })
+    ).stdout;
+    if (!entry) return null;
+    const match = /^([0-7]{6}) blob ([a-f0-9]{40})\t([^\0]+)\0$/u.exec(entry);
+    if (!match || match[3] !== path || !["100644", "100755"].includes(match[1]))
+      return null;
+    const prior = blobs.get(match[2]);
+    if (prior) return prior;
+    const blobCommand = publicGitProcess(directory, [
+      "cat-file",
+      "blob",
+      match[2],
+    ]);
+    const result = await run(blobCommand.file, blobCommand.args, {
+      ...blobCommand.options,
+      encoding: "buffer",
+      maxBuffer: VALUE_FILE_EXPANSION_LIMIT,
+    });
+    const bytes = result.stdout;
+    expanded += bytes.length;
+    if (
+      expanded > VALUE_FILE_EXPANSION_LIMIT ||
+      createHash("sha1")
+        .update(`blob ${bytes.length}\0`)
+        .update(bytes)
+        .digest("hex") !== match[2]
+    )
+      throw new Error("Immutable file recovery exceeds its bound or differs");
+    const value = { sha: match[2], bytes };
+    blobs.set(match[2], value);
+    return value;
+  };
+  const evidence = await collectValueEvidence(
+    verified,
+    source.evidence.repository,
+    source.evidence.pull.number,
+    repositoryPolicy,
+  );
+  for (const field of [
+    "pull",
+    "commits",
+    "reviews",
+    "comments",
+    "reviewComments",
+  ] as const)
+    if (
+      canonicalJson(evidence[field]) !== canonicalJson(source.evidence[field])
+    )
+      throw new Error("Source changed during immutable file recovery");
+  // Context bytes were independently collected for the caller's requested scope.
+  return {
+    ...source,
+    evidence: {
+      ...evidence,
+      ...(source.evidence.contextFiles
+        ? { contextFiles: source.evidence.contextFiles }
+        : {}),
+      evidenceUrls: source.evidence.contextFiles
+        ? [
+            ...new Set([
+              ...evidence.evidenceUrls,
+              ...source.evidence.contextFiles.map((file) => file.url),
+            ]),
+          ]
+        : evidence.evidenceUrls,
+    },
+  };
 }

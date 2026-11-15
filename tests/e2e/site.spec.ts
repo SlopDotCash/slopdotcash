@@ -520,7 +520,11 @@ test("discovers projects and one points-ranked homepage leaderboard", async ({
     ).toHaveCount(0);
   }
   const elizaCard = page.locator('a.project-card[href="/projects/eliza"]');
-  await expect(elizaCard.getByText("$1k", { exact: true })).toBeVisible();
+  // The frozen project has a pledge and no verified vault funding.
+  await expect(
+    elizaCard.getByText("Points only", { exact: true }),
+  ).toBeVisible();
+  await expect(elizaCard.getByText("$1k", { exact: true })).toHaveCount(0);
   // The external prize is a community listing that also earns points.
   await expect(
     community.locator('a.project-row[href="/projects/delta-star"]'),
@@ -638,6 +642,19 @@ test("never presents Delta Star's external prize as platform money", async ({
     .first()
     .click();
   await expect(page).toHaveURL(/\/cycles\/delta-star\/\d{4}-\d{2}$/u);
+});
+
+test("public project summaries read the migrated Pages database", {
+  tag: ["@pages", "@pages-only"],
+}, async ({ request }) => {
+  for (const [path, schema] of [
+    ["merge-activity", "slop-merge-activity-v1"],
+    ["pool-funding", "slop-pool-funding-v1"],
+  ]) {
+    const response = await request.get(`/api/v1/${path}`);
+    expect(response.status()).toBe(200);
+    expect(await response.json()).toMatchObject({ schema, projects: [] });
+  }
 });
 
 test("renders contributor and cycle records from validated public data", {

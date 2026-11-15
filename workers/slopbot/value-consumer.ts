@@ -5,6 +5,7 @@ import type { ReviewEnv } from "./review";
 import { readValueDecision } from "./value-consumption";
 import { collectValueEvidence, findRepository } from "./value-evidence";
 import { collectValueGroup } from "./value-group-collection";
+import { nativeMergeDeferralOnly } from "./value-native-merge";
 import { noChangePromotionDeferralOnly } from "./value-no-change-promotion";
 import {
   claimValueRequest,
@@ -150,9 +151,13 @@ export async function consumeValueRequest(
       job.number,
       repository,
     );
-    // A proven no-change promotion carries only its joint deferral as a
-    // limitation; joint preparation drops it, so do not refuse it here.
-    if (evidence.limitations.length && !noChangePromotionDeferralOnly(evidence))
+    // Native ancestor and unchanged-promotion proofs defer to complete joint
+    // source verification before their sole collection limitation is dropped.
+    if (
+      evidence.limitations.length &&
+      !noChangePromotionDeferralOnly(evidence) &&
+      !nativeMergeDeferralOnly(evidence)
+    )
       return await finish("source-incomplete");
     const policy = await loadValuePolicy(
       github,
@@ -227,7 +232,8 @@ export async function consumeValueRequest(
       sources.length > 1 ||
       previousGroups.some(Boolean) ||
       sources.some((source) => source.evidence.indirectAcceptance) ||
-      sources.some((source) => source.evidence.noChangePromotion)
+      sources.some((source) => source.evidence.noChangePromotion) ||
+      sources.some((source) => source.evidence.nativeMergeAcceptance)
     ) {
       const joint = await prepareWorkUnitEvidence(sources, repositories);
       if (joint.limitations.length) return await finish("source-incomplete");

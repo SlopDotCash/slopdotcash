@@ -6,6 +6,7 @@ import { collectValueEvidence } from "./value-evidence";
 import {
   type ValueFileRecovery,
   type ValueFileRequest,
+  valueFileRecoveryCapture,
   verifiedValueFileClient,
 } from "./value-file-recovery";
 
@@ -150,3 +151,134 @@ for (const text of ["", "kept\n"]) {
     ).toBe(text);
   });
 }
+
+for (const path of [
+  "/repos/example/repo/pulls/1/files?per_page=100&page=1",
+  "/repos/example/repo/pulls/1/commits?per_page=100&page=1",
+  `/repos/example/repo/commits/${"a".repeat(40)}`,
+]) {
+  test(`recovery binds repo and milestone keys outside the direct PR response at ${path}`, async () => {
+    let value = { repo: { id: 1 }, milestone: { id: 2 } };
+    const capture = valueFileRecoveryCapture({
+      get: async <T>(_path: string) => structuredClone(value) as T,
+    });
+    await capture.client.get(path);
+    value = { repo: { id: 3 }, milestone: { id: 2 } };
+    await expect(capture.client.get(path)).rejects.toThrow(
+      "Source metadata changed",
+    );
+  });
+}
+test("recovery binds nested PR data outside embedded head and base repositories", async () => {
+  let value = {
+    head: { sha: "a" },
+    base: { sha: "b" },
+    custom: { repo: { id: 1 } },
+  };
+  const capture = valueFileRecoveryCapture({
+    get: async <T>(_path: string) => structuredClone(value) as T,
+  });
+  await capture.client.get("/repos/example/repo/pulls/1");
+  value = { ...value, custom: { repo: { id: 2 } } };
+  await expect(
+    capture.client.get("/repos/example/repo/pulls/1"),
+  ).rejects.toThrow("Source metadata changed");
+});
+
+for (const changed of [false, true]) {
+  test(`ordinary commit added patches use immutable contents recovery, changed=${changed}`, async () => {
+    const source = fixture({ direct: true, textOnly: true });
+    const bytes = new TextEncoder().encode("export const retained = true;\n");
+    const head = source.pull.head.sha;
+    const merged = source.pull.merge_commit_sha;
+    if (!merged) throw Error("fixture merge");
+    source.bind(head, new Map([["fix.ts", bytes]]), [source.pull.base.sha]);
+    source.bind(merged, new Map([["fix.ts", bytes]]), [
+      source.pull.base.sha,
+      head,
+    ]);
+    source.files[0].additions = 1;
+    source.files[0].deletions = 0;
+    source.files[0].patch = "@@ -0,0 +1 @@\n+export const retained = true;";
+    const client = {
+      ...source.client,
+      async get<T>(path: string): Promise<T | null> {
+        const result = await source.client.get<T>(path);
+        if (result && path.includes("/commits/") && !path.includes("/git/")) {
+          const commit = result as unknown as {
+            stats: unknown;
+            files: { patch?: string }[];
+          };
+          commit.stats = { additions: 1, deletions: 0, total: 1 };
+          commit.files = commit.files.map((file) => {
+            const copy = { ...file };
+            delete copy.patch;
+            return copy;
+          });
+        }
+        if (
+          changed &&
+          result &&
+          path.includes("/contents/") &&
+          path.includes(head)
+        ) {
+          const contents = result as unknown as { content: string };
+          contents.content = Buffer.from("changed bytes\n").toString("base64");
+        }
+        return result;
+      },
+    };
+    const evidence = await collectValueEvidence(
+      client,
+      repository.id,
+      1,
+      repository,
+    );
+    const file = evidence.commitAttribution[0].files?.[0];
+    if (changed) expect(file?.patch).toBeUndefined();
+    else expect(file?.patch).toBe(source.files[0].patch);
+  });
+}
+
+test("recovery accepts reordered GitHub object keys while binding array and nested values", async () => {
+  const initial = {
+    number: 3214,
+    head: { sha: "a".repeat(40), ref: "fix", repo: { updated_at: "before" } },
+    base: { sha: "b".repeat(40), ref: "main", repo: { updated_at: "before" } },
+    labels: [{ id: 1, name: "accepted", color: "ffffff" }],
+    _links: { self: { href: "/pulls/3214" }, comments: { href: "/comments" } },
+    milestone: { title: "before" },
+  };
+  let value: unknown = initial;
+  const capture = valueFileRecoveryCapture({
+    get: async <T>(_path: string) => structuredClone(value) as T,
+  });
+  const path = "/repos/example/repo/pulls/3214";
+  await capture.client.get(path);
+  value = {
+    _links: { comments: { href: "/comments" }, self: { href: "/pulls/3214" } },
+    labels: [{ color: "ffffff", name: "accepted", id: 1 }],
+    base: { repo: { updated_at: "after" }, ref: "main", sha: "b".repeat(40) },
+    head: { repo: { updated_at: "after" }, ref: "fix", sha: "a".repeat(40) },
+    milestone: { title: "after" },
+    number: 3214,
+  };
+  await expect(capture.client.get(path)).resolves.toEqual(value);
+  value = { ...initial, labels: [{ ...initial.labels[0], name: "changed" }] };
+  await expect(capture.client.get(path)).rejects.toThrow(
+    "Source metadata changed",
+  );
+});
+
+test("recovery keeps GitHub array order significant", async () => {
+  let value = { labels: [{ id: 1 }, { id: 2 }] };
+  const capture = valueFileRecoveryCapture({
+    get: async <T>(_path: string) => structuredClone(value) as T,
+  });
+  const path = "/repos/example/repo/pulls/3214";
+  await capture.client.get(path);
+  value = { labels: [...value.labels].reverse() };
+  await expect(capture.client.get(path)).rejects.toThrow(
+    "Source metadata changed",
+  );
+});

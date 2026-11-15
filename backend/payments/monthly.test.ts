@@ -23,7 +23,10 @@ import { requestOwnerCommitment } from "../../src/lib/owner-commitment-actions";
 import type { PaymentsAccount } from "../../src/lib/payments/contracts";
 import { escrowAwardOrigin } from "../../src/lib/payments/escrow-cycle";
 import { parseMonthlySchedule } from "../../src/lib/payments/monthly-allocation";
-import type { ProjectRecord } from "../../src/lib/project-contracts";
+import type {
+  ProjectRecord,
+  RepositoryAccess,
+} from "../../src/lib/project-contracts";
 import { assertProjectDefinition } from "../../src/lib/project-schema.mjs";
 import { fixtureProject } from "../../tests/fixture-overlay.mjs";
 import { createMonthlyAllocationFixture } from "../../tests/monthly-allocation-fixture";
@@ -649,6 +652,8 @@ test("write collaborators on an organization project may read monthly awards but
   const facts = {
     id: Number(orgManifest.authority.repositoryId),
     node_id: orgManifest.authority.repositoryNodeId,
+    full_name: new URL(orgManifest.repositories[0].githubUrl).pathname.slice(1),
+    private: false,
     owner: {
       id: Number(steward.actorId),
       node_id: steward.nodeId,
@@ -656,74 +661,89 @@ test("write collaborators on an organization project may read monthly awards but
       login: steward.login,
     },
   };
-  let permission = "write";
-  let userId = OWNER;
-  const nativeFetch = globalThis.fetch;
-  globalThis.fetch = (async (input: RequestInfo | URL) =>
-    String(input).endsWith("/permission")
-      ? Response.json({ permission, user: { id: Number(userId) } })
-      : Response.json(facts)) as typeof fetch;
-  try {
-    const service = owner((_current, who, level) =>
-      verifyProjectAuthority(orgManifest, who, undefined, level),
+  let permission: "admin" | "write" | "read" = "write";
+  let roleName = "write";
+  const repositoryAccess = async (): Promise<RepositoryAccess> => ({
+    installation: "installed",
+    installationId: 123,
+    permission,
+    roleName,
+    repository: facts,
+  });
+  const service = owner((_current, who, level) =>
+    verifyProjectAuthority(orgManifest, who, repositoryAccess, level),
+  );
+  const refused = async (action: Promise<unknown>) => {
+    const error = await action.then(
+      () => null,
+      (caught: unknown) => caught,
     );
-    const refused = async (action: Promise<unknown>) => {
-      const error = await action.then(
-        () => null,
-        (caught: unknown) => caught,
-      );
-      expect(error).toBeInstanceOf(MonthlyPaymentError);
-      expect((error as MonthlyPaymentError).code).toBe("owner_required");
-    };
-    const read = await service.view(project.id, "2026-11", actor);
-    expect(read.automatic).toBe(true);
-    // The awards UI hides owner controls the API would refuse.
-    expect(read.canManage).toBe(false);
-    permission = "maintain";
-    expect((await service.view(project.id, "2026-11", actor)).canManage).toBe(
-      false,
-    );
-    await refused(service.setAutomatic(project.id, actor, false));
-    permission = "write";
-    await refused(service.setAutomatic(project.id, actor, false));
-    await refused(
-      service.changeAllocation(project.id, "2026-11", actor, {
-        githubUserId: B,
-        grossBase: "300",
-        expectedSequence: 0,
-      }),
-    );
-    await refused(service.finalize(project.id, "2026-11", actor, 0));
-    await refused(
-      service.releaseReserve(project.id, "2026-11", actor, {
-        network: "base-sepolia",
-        manifestSha256: project.manifestSha256,
-      }),
-    );
-    expect(
-      sqlite.query("SELECT COUNT(*) AS n FROM monthly_payment_settings").get(),
-    ).toEqual({ n: 0 });
-    // A repository admin is the owner of an organization project.
-    permission = "admin";
-    expect((await service.view(project.id, "2026-11", actor)).canManage).toBe(
-      true,
-    );
-    expect(await service.setAutomatic(project.id, actor, false)).toEqual({
-      automatic: false,
-    });
-    // The steward with write access is also the owner.
-    permission = "write";
-    userId = steward.actorId;
-    const stewardActor = { githubId: steward.actorId, githubLogin: "steward" };
-    expect(
-      (await service.view(project.id, "2026-11", stewardActor)).canManage,
-    ).toBe(true);
-    // Without any maintainer permission the read itself is refused.
-    permission = "read";
-    await refused(service.view(project.id, "2026-11", stewardActor));
-  } finally {
-    globalThis.fetch = nativeFetch;
-  }
+    expect(error).toBeInstanceOf(MonthlyPaymentError);
+    expect((error as MonthlyPaymentError).code).toBe("owner_required");
+  };
+  const read = await service.view(project.id, "2026-11", actor);
+  expect(read.automatic).toBe(true);
+  // The awards UI hides owner controls the API would refuse.
+  expect(read.canManage).toBe(false);
+  roleName = "maintain";
+  expect((await service.view(project.id, "2026-11", actor)).canManage).toBe(
+    false,
+  );
+  await refused(service.setAutomatic(project.id, actor, false));
+  permission = "write";
+  await refused(service.setAutomatic(project.id, actor, false));
+  await refused(
+    service.changeAllocation(project.id, "2026-11", actor, {
+      githubUserId: B,
+      grossBase: "300",
+      expectedSequence: 0,
+    }),
+  );
+  await refused(service.finalize(project.id, "2026-11", actor, 0));
+  await refused(
+    service.releaseReserve(project.id, "2026-11", actor, {
+      network: "base-sepolia",
+      manifestSha256: project.manifestSha256,
+    }),
+  );
+  expect(
+    sqlite.query("SELECT COUNT(*) AS n FROM monthly_payment_settings").get(),
+  ).toEqual({ n: 0 });
+  // A repository admin is the owner of an organization project.
+  permission = "admin";
+  expect((await service.view(project.id, "2026-11", actor)).canManage).toBe(
+    true,
+  );
+  expect(await service.setAutomatic(project.id, actor, false)).toEqual({
+    automatic: false,
+  });
+  // The steward with write access is also the owner.
+  permission = "write";
+  const stewardActor = { githubId: steward.actorId, githubLogin: "steward" };
+  expect(
+    (await service.view(project.id, "2026-11", stewardActor)).canManage,
+  ).toBe(true);
+  // Without any maintainer permission the read itself is refused.
+  permission = "read";
+  await refused(service.view(project.id, "2026-11", stewardActor));
+});
+
+test("a personal project refuses another actor before reading installation authority", async () => {
+  const personal = {
+    ...project.manifest,
+    steward: {
+      ...project.manifest.steward,
+      github: { ...project.manifest.steward.github, type: "User" as const },
+    },
+  };
+  let reads = 0;
+  await expect(
+    verifyProjectAuthority(personal, actor, async () => {
+      reads++;
+      throw new Error("An unrelated actor must not request project authority");
+    }),
+  ).rejects.toMatchObject({ status: 403, code: "owner_required" });
+  expect(reads).toBe(0);
 });
 
 test("an unchanged paused project still permits owner opt-out and allocation edits", async () => {
