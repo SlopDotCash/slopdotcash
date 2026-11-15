@@ -3533,17 +3533,17 @@
     },
     {
       "path": "scripts/collect-implementation-corrections.ts",
-      "sha256": "3e696fa29cbe149b942bfed474145d630d0f05cb930bfb0a43e66e71ce6a25b7",
+      "sha256": "7d07c047ebecb97771aad57fd4c172821ee3bcee0751c83a121ebddd3ee100a6",
       "models": [
         "formal/models/points/historical_discussion_evidence.qnt",
         "formal/models/points/historical_implementation_allocation.qnt"
       ],
       "candidateLines": [
-        4, 11, 13, 108, 188, 265, 271, 274, 279, 289, 305, 311, 327, 328, 338,
-        341, 438, 484, 505, 530, 576, 583, 699, 710, 875, 1228, 1251, 1260,
-        1417, 1473, 1532, 1538, 1539, 1542, 1582, 1584, 1588, 1834, 1878, 1883,
-        2234, 2236, 2243, 2254, 2432, 2434, 2438, 2573, 2977, 2988, 3278, 3869,
-        3928, 4119, 4233, 4253, 4282, 4284
+        4, 11, 13, 109, 189, 266, 272, 275, 280, 290, 306, 312, 328, 329, 339,
+        342, 439, 485, 506, 531, 577, 584, 700, 711, 876, 1229, 1252, 1261,
+        1418, 1474, 1533, 1539, 1540, 1543, 1583, 1585, 1589, 1835, 1879, 1884,
+        2235, 2237, 2244, 2255, 2433, 2435, 2439, 2574, 2978, 2989, 3279, 3870,
+        3940, 4131, 4245, 4265, 4294, 4296
       ],
       "review": "mapped-abstraction"
     },
@@ -6139,7 +6139,7 @@
     },
     {
       "path": "src/lib/implementation-lines.ts",
-      "sha256": "d2d2e54a69bd1457b2c99cef83f765dd3b53afea3c1a54b66f115a5f4c0e3bd9",
+      "sha256": "3fa879045b2d0a873e8138750cc05a34b45f2c74a0ce87601013fac911af8e2a",
       "models": [
         "formal/models/points/implementation_allocation.qnt",
         "formal/models/points/implementation_credit.qnt"
@@ -6308,6 +6308,15 @@
       "statelessReason": "Pure response/cursor validation and labels. Read, acknowledgement and delivery transitions are owned by Inbox/backend; no independent retained state."
     },
     {
+      "path": "src/lib/original-contributor-repair.ts",
+      "sha256": "21e85a5d2375ba808ff08ff93c7b9d18784f6311f0432e50e26a7bdcf4146e3a",
+      "models": [
+        "formal/models/points/historical_implementation_allocation.qnt"
+      ],
+      "candidateLines": [103],
+      "review": "mapped-abstraction"
+    },
+    {
       "path": "src/lib/owner-commitment-actions.ts",
       "sha256": "450676c1b24327310283d8204f529fd1de0007a414bfc00b596e0d4b9e3285df",
       "models": ["formal/models/rewards/allocation_funding.qnt"],
@@ -6409,14 +6418,14 @@
     },
     {
       "path": "src/lib/points-implementation-corrections.ts",
-      "sha256": "d233a1a1fee44b1cd1b6bf20514ed7ee603ad339f9ccaaae0d66eb4d922b79bb",
+      "sha256": "863c55164aa19a2df3c667ddd5fe03bd454545666417b1fdda56dcc077c96caa",
       "models": [
         "formal/models/points/historical_implementation_allocation.qnt"
       ],
       "candidateLines": [
-        222, 234, 245, 259, 266, 417, 505, 562, 563, 564, 568, 751, 753, 757,
-        873, 879, 906, 907, 994, 999, 1151, 1344, 1406, 1492, 1508, 1707, 1714,
-        1719, 1827, 1908, 1943, 1971, 2073, 2074, 2075
+        204, 216, 227, 241, 248, 383, 440, 441, 442, 446, 629, 631, 635, 751,
+        757, 784, 785, 872, 877, 1029, 1222, 1284, 1370, 1386, 1585, 1592, 1597,
+        1705, 1786, 1821, 1849, 1951, 1952, 1953
       ],
       "review": "mapped-abstraction"
     },
@@ -8626,7 +8635,7 @@
     },
     {
       "path": "workers/slopbot/value-evidence-types.ts",
-      "sha256": "b4a922bfc24713cb68581e7148df97163145581759617abef81772eb722ec6f5",
+      "sha256": "84e21d86da130d50599c9520a31a27984027f462ac20f48e5733d39fe875b849",
       "models": [],
       "candidateLines": [22, 77, 97],
       "review": "reviewed-no-independent-state",
@@ -8634,14 +8643,14 @@
     },
     {
       "path": "workers/slopbot/value-evidence.ts",
-      "sha256": "738d892a0245729a6102c376eab5afca73710905261cd624a94c5e94635c5a6a",
+      "sha256": "e8150f8cba37cecbaf9bdd32f77b6d2cef8e7f55cbfd49e60ae0326876a35272",
       "models": [
         "formal/models/points/historical_discussion_evidence.qnt",
         "formal/models/slopbot/bot_evidence_integrity.qnt",
         "formal/models/slopbot/bot_value_dispute_actor.qnt"
       ],
       "candidateLines": [
-        71, 84, 93, 109, 498, 499, 690, 710, 753, 762, 781, 1137, 1156
+        72, 85, 94, 110, 499, 500, 691, 711, 754, 763, 782, 1138, 1157
       ],
       "review": "mapped-abstraction"
     },
@@ -8782,6 +8791,13 @@
       "review": "mapped-abstraction"
     },
     {
+      "path": "workers/slopbot/value-original-repair.ts",
+      "sha256": "9d25461422760ab86d3d59e5beb585aa49847e1d51a929873f1fb732c5344850",
+      "models": ["formal/models/slopbot/retained_copy_bindings.qnt"],
+      "candidateLines": [99, 105, 107, 111],
+      "review": "mapped-abstraction"
+    },
+    {
       "path": "workers/slopbot/value-patch-replay.ts",
       "sha256": "4a51914d827decf4efc11c96a4a28ee291df6c81f541cf3f0dae9d2c03bf445d",
       "models": [
@@ -8862,7 +8878,7 @@
     },
     {
       "path": "workers/slopbot/value-retained-copy.ts",
-      "sha256": "4ce51e0d656be922c3db78a840d5a6bbe37753c5e4384419737f0f9653f4893b",
+      "sha256": "85fe6a17e0d0a70472bfeea2dee5f6d15d833ef1fded3a536dd55fccb6936d5b",
       "models": [
         "formal/models/slopbot/bot_retained_acceptance.qnt",
         "formal/models/slopbot/retained_copy_bindings.qnt",
@@ -8961,7 +8977,7 @@
     },
     {
       "path": "workers/slopbot/value-work-unit-types.ts",
-      "sha256": "f809d39f26e992316248336aee8b36c6df4573d5e3fa79e85cc1346a705c4273",
+      "sha256": "5c1db75a11e543d72ccf57bf6f79df3452c2c58b62ee0608ce3e704ee922cce2",
       "models": [],
       "candidateLines": [],
       "review": "reviewed-no-independent-state",
@@ -8969,13 +8985,13 @@
     },
     {
       "path": "workers/slopbot/value-work-unit.ts",
-      "sha256": "5a2e1448b9a9b9b34792d76b40319adfdb43692e9681a104e0006f640e30890f",
+      "sha256": "d578259caa9d96e3a36ba017594991d593022188ac7151bf6a69f4a62984e8ca",
       "models": [
         "formal/models/slopbot/bot_value_pipeline.qnt",
         "formal/models/slopbot/bot_work_partition.qnt",
         "formal/models/slopbot/retained_copy_bindings.qnt"
       ],
-      "candidateLines": [104],
+      "candidateLines": [105],
       "review": "mapped-abstraction"
     },
     {
@@ -13754,7 +13770,7 @@
     },
     {
       "path": "formal/models/points/historical_implementation_allocation.qnt",
-      "sha256": "c07b44a520ca2813f4fcce5957fec806fcf0913ce9f0bbed6d2f510b34301592",
+      "sha256": "702f7a83ef15d75cf2ddf9fbcbb8bfaad3682627aae8b40747ab7bce27c39eac",
       "sources": [
         ".github/workflows/points-implementation-corrections.yml",
         "scripts/collect-implementation-corrections.ts",
@@ -13762,6 +13778,7 @@
         "scripts/points-correction-registry.ts",
         "scripts/points-protection-sql.ts",
         "scripts/prepare-implementation-corrections.ts",
+        "src/lib/original-contributor-repair.ts",
         "src/lib/points-implementation-corrections.ts"
       ],
       "scenarios": [
@@ -15747,9 +15764,10 @@
     },
     {
       "path": "formal/models/slopbot/retained_copy_bindings.qnt",
-      "sha256": "a352d388661d4d493529066991885089d26bbeb950c67f0b447f295d0ae0ae70",
+      "sha256": "6cac598a37a97625061977e3467887849c70cbb7a744f2c7d687c3402050b980",
       "sources": [
         "workers/slopbot/value-manifest-identity.ts",
+        "workers/slopbot/value-original-repair.ts",
         "workers/slopbot/value-retained-copy.ts",
         "workers/slopbot/value-retained-reference.ts",
         "workers/slopbot/value-work-unit.ts",

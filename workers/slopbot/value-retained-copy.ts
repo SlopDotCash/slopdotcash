@@ -422,7 +422,7 @@ async function retainedCopySources(
  * hunk offsets may change when other accepted fixes precede a copied commit.
  * This identifies exact retained edits for review, not their semantic value.
  */
-function retainedEditIdentity(file: FileChange): string | null {
+export function retainedEditIdentity(file: FileChange): string | null {
   if (
     !hasCompleteValuePatch(file) ||
     file.previous_filename !== undefined ||
