@@ -448,7 +448,8 @@ export function originalContributorClaimScope(
     original.commits.some((commit) => {
       const copy = graph.get(commit.sha);
       return (
-        commit.parentCount > 1 ||
+        commit.parentCount > 2 ||
+        (commit.parentCount > 1 && !eligibleActor(commit.author)) ||
         (commit.author !== null &&
           (!eligibleActor(commit.author) ||
             (commit.author.id !== origin.id &&
@@ -461,6 +462,24 @@ export function originalContributorClaimScope(
     })
   )
     return false;
+  const remaining = new Map(
+    [...graph].map(([id, commit]) => [
+      id,
+      (commit.parentShas ?? []).filter((parent) => graph.has(parent)).length,
+    ]),
+  );
+  const ready = [...remaining]
+    .filter(([, count]) => count === 0)
+    .map(([id]) => id);
+  for (const id of ready) {
+    for (const [child, commit] of graph) {
+      if (!(commit.parentShas ?? []).includes(id)) continue;
+      const count = (remaining.get(child) ?? 0) - 1;
+      remaining.set(child, count);
+      if (count === 0) ready.push(child);
+    }
+  }
+  if (ready.length !== graph.size) return false;
   const descends = (child: string, ancestor: string) => {
     const pending = [child];
     const visited = new Set<string>();
@@ -474,6 +493,20 @@ export function originalContributorClaimScope(
   };
   if (
     !original.commits.every((commit) => descends(original.headSha, commit.sha))
+  )
+    return false;
+  const ordinaryOrigins = original.commits.filter(
+    (commit) =>
+      commit.parentCount <= 1 &&
+      (commit.author === null || commit.author.id === origin.id),
+  );
+  if (
+    !ordinaryOrigins.length ||
+    original.commits.some(
+      (commit) =>
+        commit.parentCount > 1 &&
+        !ordinaryOrigins.some((ancestor) => descends(commit.sha, ancestor.sha)),
+    )
   )
     return false;
   const resolvedOriginal = {
@@ -498,7 +531,11 @@ export function originalContributorClaimScope(
     )
       return false;
     if (originals.has(commit.sha)) {
-      hasOriginal = true;
+      if (
+        commit.parentCount <= 1 &&
+        (commit.author === null || commit.author.id === origin.id)
+      )
+        hasOriginal = true;
       continue;
     }
     if (
@@ -683,7 +720,7 @@ function deriveProof(
       nativeCarrier &&
       source.commits.every(
         (commit) =>
-          commit.parentCount <= 1 &&
+          commit.parentCount <= 2 &&
           commit.firstAcceptedSourceId === nativeCarrier.sourceId &&
           nativeCarrier.commits.some(
             (copy) =>
@@ -953,10 +990,11 @@ function deriveProof(
           acceptedCommit &&
           binding.originalCommitSha === original.headSha &&
           binding.acceptedCommitSha === original.headSha &&
-          acceptedCommit.files &&
           sameSet(
             binding.boundPaths,
-            acceptedCommit.files.map((file) => file.path),
+            acceptedCommit.parentCount === 2
+              ? [...new Set(candidate.proof.claims.map((claim) => claim.path))]
+              : (acceptedCommit.files ?? []).map((file) => file.path),
           ) &&
           sameSet(
             binding.claimIds,

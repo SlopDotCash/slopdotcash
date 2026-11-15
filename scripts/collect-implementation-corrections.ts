@@ -1250,15 +1250,21 @@ async function exactOctoberOriginalContributorProof(
     (commit) => commit.sha === originalSource.headSha,
   );
   if (
-    anchor?.parentCount !== 1 ||
+    !anchor ||
+    (anchor.parentCount !== 1 && !(scopedClaims && anchor.parentCount === 2)) ||
+    (anchor.parentCount === 2 && !verifiedHuman(anchor.author)) ||
     (anchor.author?.id !== originalSource.author?.id &&
       !(
         scopedClaims &&
         (anchor.author === null || anchor.author.id === accepted.author?.id)
       )) ||
-    !firstAcceptedOrdinary(accepted).some(
+    !accepted.commits.some(
       (commit) =>
-        commit.sha === anchor.sha && commit.author?.id === anchor.author?.id,
+        (commit.parentCount <= 1 ||
+          (scopedClaims && commit.parentCount === 2)) &&
+        commit.firstAcceptedSourceId === accepted.sourceId &&
+        commit.sha === anchor.sha &&
+        commit.author?.id === anchor.author?.id,
     )
   )
     return null;
@@ -1280,7 +1286,8 @@ async function exactOctoberOriginalContributorProof(
           originalSource.occurredAt >= accepted.occurredAt &&
           originalSource.commits.every(
             (commit) =>
-              commit.parentCount <= 1 &&
+              (commit.parentCount <= 1 ||
+                (scopedClaims && commit.parentCount === 2)) &&
               commit.firstAcceptedSourceId === accepted.sourceId &&
               accepted.commits.some(
                 (copy) =>
@@ -1437,8 +1444,12 @@ async function exactOctoberOriginalContributorProof(
   const files = accepted.commits.find(
     (commit) => commit.sha === anchor.sha,
   )?.files;
+  const boundPaths =
+    scopedClaims && anchor.parentCount === 2
+      ? [...new Set(scopedClaims.map((claim) => claim.path))].sort()
+      : files?.map((file) => file.path).sort();
   requireThat(
-    files?.length,
+    boundPaths?.length,
     "October exact original lacks complete file evidence",
   );
   return {
@@ -1451,7 +1462,7 @@ async function exactOctoberOriginalContributorProof(
       originalSourceId: originalSource.sourceId,
       originalCommitSha: anchor.sha,
       acceptedCommitSha: anchor.sha,
-      boundPaths: files.map((file) => file.path).sort(),
+      boundPaths,
       bindingDigest: digest(
         encode({
           original: await valueSourceDigest(original.evidence, original.policy),
@@ -3022,26 +3033,34 @@ async function collectWithEvidenceCache(
               original && integration,
               "Original unit evidence disappeared",
             );
-            const proof = await octoberOriginalContributorUnitProof(
-              github,
-              accepted,
-              original,
-              integration,
-              owners,
-              claims,
-            );
-            const authenticated = new Map(
-              proof.sources.map((source) => [source.sourceId, source]),
-            );
-            sources = sources.map(
-              (source) => authenticated.get(source.sourceId) ?? source,
-            );
-            originalContributor = proof.originalContributor;
-            if (originalContributor && accepted.sourceId !== candidate.sourceId)
-              originalContributor = {
-                ...originalContributor,
-                acceptedSourceId: accepted.sourceId,
-              };
+            if (
+              original.evidence.pull.user.type === "User" &&
+              original.evidence.pull.user.node_id !== accepted.author?.id
+            ) {
+              const proof = await octoberOriginalContributorUnitProof(
+                github,
+                accepted,
+                original,
+                integration,
+                owners,
+                claims,
+              );
+              const authenticated = new Map(
+                proof.sources.map((source) => [source.sourceId, source]),
+              );
+              sources = sources.map(
+                (source) => authenticated.get(source.sourceId) ?? source,
+              );
+              originalContributor = proof.originalContributor;
+              if (
+                originalContributor &&
+                accepted.sourceId !== candidate.sourceId
+              )
+                originalContributor = {
+                  ...originalContributor,
+                  acceptedSourceId: accepted.sourceId,
+                };
+            }
           }
         }
         candidate.sourceIds = sources.map((s) => s.sourceId).sort();
