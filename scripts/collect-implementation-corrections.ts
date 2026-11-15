@@ -1990,17 +1990,17 @@ export async function octoberOriginalContributorPartsProof(
             (source.evidence.pull.user.node_id === originId ||
               source.evidence.pull.user.node_id === accepted.author?.id) &&
             source.evidence.pull.merged_at !== null &&
-            (source.evidence.pull.node_id === original.evidence.pull.node_id ||
-              originatingClaims
-                .get(original.evidence.pull.node_id)
-                ?.some((claimId) => {
-                  const claim = claims.find((item) => item.id === claimId);
-                  return (
-                    claim &&
-                    reaches(source.evidence.pull.head.sha, claim.commitSha)
-                  );
-                })) &&
-            source.evidence.pull.merged_at >= (accepted.occurredAt ?? ""))),
+            originatingClaims
+              .get(original.evidence.pull.node_id)
+              ?.some((claimId) => {
+                const claim = claims.find((item) => item.id === claimId);
+                return (
+                  claim &&
+                  reaches(source.evidence.pull.head.sha, claim.commitSha)
+                );
+              }) &&
+            Date.parse(source.evidence.pull.merged_at) >=
+              Date.parse(accepted.occurredAt ?? ""))),
     );
     const proof = await octoberOriginalContributorUnitProof(
       github,
