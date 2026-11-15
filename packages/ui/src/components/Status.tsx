@@ -4,6 +4,7 @@ import type { Icon, Presentation } from "../../gen/ui__status.ts";
 import { cn } from "../lib/cn.ts";
 import { tones } from "../lib/tone.ts";
 
+// spec/ui/status.md, "A presentation is a tone, an icon and a word"
 const icons: Record<Icon, LucideIcon> = {
   Check,
   Clock,
@@ -20,12 +21,12 @@ const icons: Record<Icon, LucideIcon> = {
   Refresh: RefreshCw,
 };
 
-export type StatusIconProps = Omit<ComponentProps<LucideIcon>, "ref"> & { icon: Icon };
+export type StatusIconProps = Omit<ComponentProps<"svg">, "children"> & { icon: Icon };
 
-/** The icon of a presentation alone, decorative: what it means is said by the word beside it. */
+/** The one glyph of each icon of a presentation. Decorative unless named by `aria-label`: the word beside it says what it means. */
 export function StatusIcon({ icon, className, ...props }: StatusIconProps) {
   const Glyph = icons[icon];
-  return <Glyph aria-hidden className={cn("size-4 shrink-0", icon === "Spinner" && "motion-safe:animate-spin", className)} {...props} />;
+  return <Glyph aria-hidden={props["aria-label"] ? undefined : true} className={cn("size-4 shrink-0", icon === "Spinner" && "motion-safe:animate-spin", className)} {...props} />;
 }
 
 export type StatusProps = Omit<ComponentProps<"span">, "children"> & {

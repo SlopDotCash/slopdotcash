@@ -23,7 +23,7 @@ export type CompareChangeProps = Omit<ComponentProps<"dl">, "children"> & {
 
 /** What a change replaces: each value now beside the value proposed. */
 export function CompareChange({ changes, currentLabel = "Current", proposedLabel = "Proposed", className, ...props }: CompareChangeProps) {
-  const value = (exact: boolean | undefined) => (exact ? { tabIndex: 0, className: cn(exactValue, "rounded-sm") } : { className: "min-w-0" });
+  const value = (exact: boolean | undefined) => (exact ? { tabIndex: 0, className: exactValue } : { className: "min-w-0" });
   return (
     <dl className={cn("grid grid-cols-[auto_minmax(0,1fr)_minmax(0,1fr)] items-baseline gap-x-4 gap-y-2 text-sm", className)} {...props}>
       {changes.map(({ label, current, proposed, exact }) => (

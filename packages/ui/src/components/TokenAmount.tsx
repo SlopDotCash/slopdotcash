@@ -24,7 +24,7 @@ export function TokenAmount({ value, symbol, token, gross, fee, label = "Exact a
   const parts = [[partLabels.gross, gross], [partLabels.fee, fee]].filter((part): part is [string, string] => part[1] !== undefined);
   return (
     <div className={cn("flex min-w-0 flex-col gap-1", className)} {...props}>
-      <div role="group" aria-label={label} tabIndex={0} className={cn(exactValue, "rounded-sm")}>
+      <div role="group" aria-label={label} tabIndex={0} className={exactValue}>
         {value} <span className="text-muted-foreground">{symbol ?? token}</span>
       </div>
       {parts.length ? (

@@ -1,13 +1,13 @@
 import type { ComponentProps } from "react";
 import { Slot, Slottable } from "@radix-ui/react-slot";
 import { cva, type VariantProps } from "class-variance-authority";
-import { cn, focusRing } from "../lib/cn.ts";
+import { cn, focusRing, inactive } from "../lib/cn.ts";
 import { controlState } from "../lib/control.ts";
-import { Spinner } from "./Spinner.tsx";
+import { StatusIcon } from "./Status.tsx";
 
 /** The look of a button by variant and size, for an element that acts as one without being a `Button`. */
 export const buttonVariants = cva(
-  [focusRing, "inline-flex items-center justify-center gap-2 rounded-md text-sm font-medium whitespace-nowrap transition-colors duration-fast disabled:pointer-events-none disabled:opacity-50 aria-disabled:pointer-events-none aria-disabled:opacity-50 motion-reduce:transition-none"],
+  [focusRing, inactive, "inline-flex items-center justify-center gap-2 rounded-md text-sm font-medium whitespace-nowrap transition-colors duration-fast motion-reduce:transition-none"],
   {
     variants: {
       variant: {
@@ -44,7 +44,7 @@ export function Button({ variant, size, loading = false, asChild = false, type =
   const element = asChild ? (off ? { tabIndex: -1 } : {}) : { type, disabled: off };
   return (
     <Comp className={cn(buttonVariants({ variant, size }), className)} {...props} {...state} {...element}>
-      {loading && <Spinner size="sm" aria-hidden />}
+      {loading && <StatusIcon icon="Spinner" />}
       <Slottable>{children}</Slottable>
     </Comp>
   );

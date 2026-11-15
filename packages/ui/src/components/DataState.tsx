@@ -1,15 +1,14 @@
 import type { ComponentProps, ReactNode } from "react";
 import type { ReadStatus } from "../../gen/frontend__requests.ts";
-import { type Announcement, readAnnouncement, readOffersRetry, readPresentation, readShowsRows } from "../../gen/ui__status.ts";
+import { readAnnouncement, readOffersRetry, readPresentation, readShowsRows } from "../../gen/ui__status.ts";
 import { cn } from "../lib/cn.ts";
+import { politeness } from "../lib/live.ts";
 import { tones } from "../lib/tone.ts";
 import { Alert } from "./Alert.tsx";
 import { Button } from "./Button.tsx";
 import { EmptyState } from "./EmptyState.tsx";
 import { Skeleton } from "./Skeleton.tsx";
 import { Status, StatusIcon } from "./Status.tsx";
-
-const live = { Assertive: "assertive", Polite: "polite", Silent: "off" } as const satisfies Record<Announcement, string>;
 
 export type DataStateProps = ComponentProps<"div"> & {
   /** Where the read is, as its request machine decided it. */
@@ -51,7 +50,7 @@ export function DataState({ status, children, onRetry, retryLabel = "Retry", ske
     );
   return (
     <div aria-busy={status === "Loading" || undefined} className={cn("flex flex-col gap-4", className)} {...props}>
-      <div aria-live={live[readAnnouncement(status)]}>{notice}</div>
+      <div aria-live={politeness[readAnnouncement(status)]}>{notice}</div>
       {status === "Loading" && (skeleton ?? [0, 1, 2].map((line) => <Skeleton key={line} />))}
       {readShowsRows(status) && children}
     </div>

@@ -4,6 +4,9 @@ import { type AccountMenuProps, AccountMenuItem } from "./AccountMenu.tsx";
 
 const onSignOut = fn();
 
+/** Waits until the menu has closed. */
+const closed = () => waitFor(() => expect(screen.queryByRole("menu")).toBeNull());
+
 /** Opens the menu from its trigger with the keyboard and returns the trigger. */
 const open = async () => {
   const trigger = screen.getByRole("button", { name: /octocat/ });
@@ -15,7 +18,7 @@ const open = async () => {
 
 export const meta: ComponentMeta<AccountMenuProps> = {
   args: {
-    name: "octocat",
+    login: "octocat",
     onSignOut,
     points: "1,240 points",
     children: ["Settings", "Payouts", "Inbox"].map((page) => (
@@ -35,6 +38,7 @@ export const meta: ComponentMeta<AccountMenuProps> = {
       await waitFor(() => expect([screen.queryByRole("menu"), document.activeElement]).toEqual([null, trigger]));
       await open();
       await userEvent.click(screen.getByRole("menuitem", { name: "Sign out" }));
+      await closed();
       await expect(onSignOut).toHaveBeenCalledOnce();
     },
     // spec/ui/controls.md, "A disabled or busy control refuses activation and stays named"
@@ -46,6 +50,7 @@ export const meta: ComponentMeta<AccountMenuProps> = {
       await expect([item.getAttribute("aria-busy"), screen.queryByRole("menu") !== null]).toEqual(["true", true]);
       await expect(onSignOut).not.toHaveBeenCalled();
       await userEvent.keyboard("{Escape}");
+      await closed();
     },
   },
 };

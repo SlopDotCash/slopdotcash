@@ -1,6 +1,6 @@
 import type { ComponentProps, ReactNode } from "react";
 import * as RadioGroupPrimitive from "@radix-ui/react-radio-group";
-import { cn, focusRing } from "../lib/cn.ts";
+import { cn, focusRing, inactive } from "../lib/cn.ts";
 import { controlState } from "../lib/control.ts";
 import { useDescription } from "./Field.tsx";
 import { Label } from "./Label.tsx";
@@ -42,7 +42,8 @@ export function RadioGroup({ legend, options, error, hint, disabled = false, cla
               disabled={option.disabled}
               className={cn(
                 focusRing,
-                "peer inline-flex size-5 shrink-0 items-center justify-center rounded-full border border-input bg-background group-aria-invalid:border-destructive disabled:cursor-not-allowed disabled:opacity-50 data-[state=checked]:border-primary",
+                inactive,
+                "peer inline-flex size-5 shrink-0 items-center justify-center rounded-full border border-input bg-background group-aria-invalid:border-destructive data-[state=checked]:border-primary",
               )}
             >
               <RadioGroupPrimitive.Indicator className="size-2.5 rounded-full bg-primary" />

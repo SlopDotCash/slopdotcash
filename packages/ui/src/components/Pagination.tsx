@@ -36,7 +36,7 @@ export function Pagination({ state, onSend, label = "Pagination", backLabel = "P
       <Button variant="ghost" size="icon" aria-label={backLabel} disabled={!enabled(state, { type: "back" })} onClick={() => move({ type: "back" })}>
         <ChevronLeft aria-hidden className="size-4" />
       </Button>
-      <span aria-live="polite" className="font-mono text-sm tabular-nums">
+      <span role="status" className="font-mono text-sm tabular-nums">
         <span className="sr-only">Page </span>
         {state.page}
         <span aria-hidden> / </span>

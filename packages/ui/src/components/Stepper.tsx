@@ -1,6 +1,6 @@
 import type { ComponentProps } from "react";
-import { Check } from "lucide-react";
 import { cn } from "../lib/cn.ts";
+import { StatusIcon } from "./Status.tsx";
 
 export type StepperProps = Omit<ComponentProps<"ol">, "children"> & {
   /** The steps' names, in order. */
@@ -21,7 +21,7 @@ export function Stepper({ steps, current, doneLabel = "Done", className, ...prop
         return (
           <li key={name} aria-current={now ? "step" : undefined} className={cn("flex items-center gap-2", now ? "font-medium text-foreground" : "text-muted-foreground")}>
             <span className={cn("flex size-6 shrink-0 items-center justify-center rounded-full border font-mono text-xs tabular-nums", now ? "border-primary bg-primary text-primary-foreground" : "border-input")}>
-              {done ? <Check role="img" aria-label={doneLabel} className="size-3.5" /> : index + 1}
+              {done ? <StatusIcon icon="Check" role="img" aria-label={doneLabel} className="size-3.5" /> : index + 1}
             </span>
             {name}
           </li>

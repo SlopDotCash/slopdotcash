@@ -43,7 +43,7 @@ export function Leaderboard({ rows, headings = { rank: "Rank", actor: "Contribut
           <TableRow key={row.actor.login}>
             <TableCell className="text-right font-mono text-muted-foreground tabular-nums">{row.rank}</TableCell>
             <TableCell>
-              <Identity login={row.actor.login} href={row.actor.href} avatarUrl={row.actor.avatarUrl} meta={row.detail} size="sm" />
+              <Identity login={row.actor.login} href={row.actor.href} avatarUrl={row.actor.avatarUrl} detail={row.detail} size="sm" />
             </TableCell>
             <TableCell className="text-right font-mono font-medium tabular-nums">{row.points}</TableCell>
             {shares && <TableCell className="text-right font-mono tabular-nums">{row.share}</TableCell>}

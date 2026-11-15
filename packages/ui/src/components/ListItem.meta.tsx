@@ -5,7 +5,7 @@ import { NetworkMark } from "./NetworkMark.tsx";
 import { TokenAmount } from "./TokenAmount.tsx";
 
 export const meta: ComponentMeta<ListItemProps> = {
-  args: { title: "slop-cli, October", meta: "Approved 3 Nov" },
+  args: { title: "slop-cli, October", detail: "Approved 3 Nov" },
   examples: {
     Payout: {
       leading: <NetworkMark network="Base" showName={false} />,

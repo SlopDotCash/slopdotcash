@@ -3,7 +3,7 @@ import { ImageUp, X } from "lucide-react";
 import { cn } from "../lib/cn.ts";
 import { controlState } from "../lib/control.ts";
 import { Button, buttonVariants } from "./Button.tsx";
-import { Spinner } from "./Spinner.tsx";
+import { StatusIcon } from "./Status.tsx";
 
 export type FileFieldProps = Omit<ComponentProps<"input">, "type" | "children" | "value" | "defaultValue" | "onChange"> & {
   /** Called with the files a person chose. */
@@ -50,10 +50,10 @@ export function FileField({ onFiles, file, preview, onRemove, chooseLabel = "Cho
           {...props}
           {...controlState(disabled, loading)}
         />
-        {loading ? <Spinner size="sm" aria-hidden /> : <ImageUp aria-hidden className="size-4" />}
+        {loading ? <StatusIcon icon="Spinner" /> : <ImageUp aria-hidden className="size-4" />}
         {chooseLabel}
       </label>
-      <span aria-live="polite" className="min-w-0 text-sm break-all text-foreground">
+      <span role="status" className="min-w-0 text-sm break-all text-foreground">
         {file}
       </span>
       {file && onRemove ? (

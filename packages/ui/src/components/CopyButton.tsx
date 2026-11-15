@@ -1,9 +1,9 @@
 import { useEffect, useReducer } from "react";
-import { Check, Copy, TriangleAlert } from "lucide-react";
+import { Copy } from "lucide-react";
 import { canRest, copyAnnouncement, enabled, initial, step } from "../../gen/ui__copy.ts";
-import { cn } from "../lib/cn.ts";
 import { controlState } from "../lib/control.ts";
 import { Button, type ButtonProps } from "./Button.tsx";
+import { StatusIcon } from "./Status.tsx";
 
 export type CopyButtonProps = Omit<ButtonProps, "children" | "onClick" | "onCopy" | "loading" | "asChild" | "variant" | "size"> & {
   /** The exact text to copy. */
@@ -18,8 +18,6 @@ export type CopyButtonProps = Omit<ButtonProps, "children" | "onClick" | "onCopy
   restAfter?: number;
 };
 
-const icons = { Ready: Copy, Copying: Copy, Copied: Check, CopyFailed: TriangleAlert };
-
 /**
  * Copies a value and says whether the browser accepted it, without moving focus.
  * @model spec/ui/copy.md
@@ -28,7 +26,6 @@ export function CopyButton({ text, onCopy = (value) => navigator.clipboard.write
   // The spec owns this state: the generated pure step is the reducer, so an event applies exactly when `enabled` allows it.
   const [state, send] = useReducer(step, initial);
   const failed = state.status === "CopyFailed";
-  const Icon = icons[state.status];
 
   // spec/ui/copy.md, "Success settles back to ready; failure stays until the next attempt"
   useEffect(() => {
@@ -56,7 +53,7 @@ export function CopyButton({ text, onCopy = (value) => navigator.clipboard.write
         {...props}
         {...controlState(disabled, state.status === "Copying")}
       >
-        <Icon aria-hidden className={cn("size-4", failed && "text-destructive")} />
+        {failed ? <StatusIcon icon="Alert" className="text-destructive" /> : state.status === "Copied" ? <StatusIcon icon="Check" /> : <Copy aria-hidden className="size-4" />}
         {variant === "labeled" && label}
       </Button>
       <span role="status" className={failed ? "text-xs text-destructive" : "sr-only"}>

@@ -20,7 +20,7 @@ export type AddressProps = Omit<ComponentProps<"div">, "onCopy" | "children"> & 
 /** A wallet, contract or token address in full, with a `CopyButton` for it. */
 export function Address({ value, preview, label = "Address", copyLabel = "Copy address", onCopy, className, ...props }: AddressProps) {
   const whole = (
-    <div role="group" aria-label={label} tabIndex={0} className={cn(exactValue, "rounded-sm text-sm text-foreground")}>
+    <div role="group" aria-label={label} tabIndex={0} className={cn(exactValue, "text-sm text-foreground")}>
       {value}
     </div>
   );

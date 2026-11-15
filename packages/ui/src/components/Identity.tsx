@@ -9,14 +9,14 @@ export type IdentityProps = Omit<ComponentProps<"div">, "children"> & {
   href?: string;
   /** The person's picture; their initial stands in without one. */
   avatarUrl?: string;
-  /** A short fact after the login, such as a role or a project. */
-  meta?: ReactNode;
+  /** One fact under the login, such as a role or a project. */
+  detail?: ReactNode;
   /** `lg` is the heading of a profile page. */
   size?: "sm" | "md" | "lg";
 };
 
 /** A person as the product shows them: picture, login and, optionally, one fact. */
-export function Identity({ login, href, avatarUrl, meta, size = "md", className, ...props }: IdentityProps) {
+export function Identity({ login, href, avatarUrl, detail, size = "md", className, ...props }: IdentityProps) {
   const Name = size === "lg" ? "h1" : "span";
   return (
     <div className={cn("flex min-w-0 items-center", size === "lg" ? "gap-4" : "gap-2", className)} {...props}>
@@ -31,7 +31,7 @@ export function Identity({ login, href, avatarUrl, meta, size = "md", className,
             login
           )}
         </Name>
-        {meta ? <span className="truncate text-xs text-muted-foreground">{meta}</span> : null}
+        {detail ? <span className="truncate text-xs text-muted-foreground">{detail}</span> : null}
       </div>
     </div>
   );

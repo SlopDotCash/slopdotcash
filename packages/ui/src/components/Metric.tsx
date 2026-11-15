@@ -19,7 +19,7 @@ export type MetricGridProps = ComponentProps<"dl">;
 
 /**
  * A number that matters, large, with what it counts. Place it in a `MetricGrid`.
- * @design design.md
+ * @design design.md#design-system
  */
 export function Metric({ label, value, tone = "Neutral", icon, detail, className, ...props }: MetricProps) {
   return (

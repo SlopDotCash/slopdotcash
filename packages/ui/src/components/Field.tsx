@@ -1,9 +1,9 @@
 import { type ComponentProps, type ReactElement, type ReactNode, useId } from "react";
 import { Slot } from "@radix-ui/react-slot";
-import { CircleAlert } from "lucide-react";
 import { describedBy } from "../../gen/ui__controls.ts";
 import { cn } from "../lib/cn.ts";
 import { Label } from "./Label.tsx";
+import { StatusIcon } from "./Status.tsx";
 
 /**
  * What ties a control to its error and hint: the control's attributes, and the messages in the order they describe it.
@@ -21,7 +21,7 @@ export function useDescription(error?: ReactNode, hint?: ReactNode) {
     messages: parts.map((part) =>
       part === "ErrorText" ? (
         <p key={part} id={`${id}-${part}`} className="flex items-center gap-2 text-sm text-destructive">
-          <CircleAlert aria-hidden className="size-4 shrink-0" />
+          <StatusIcon icon="Alert" />
           {error}
         </p>
       ) : (
