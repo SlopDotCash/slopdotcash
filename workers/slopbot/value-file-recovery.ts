@@ -70,7 +70,14 @@ export function valueFileRecoveryCapture<T extends EvidenceClient>(client: T) {
         path,
       )
     ) {
-      const signature = await sha256Hex(JSON.stringify(result));
+      // A pull body embeds its base and head repositories and its milestone.
+      // Their timestamps and counters move with unrelated pushes, issues and
+      // stars, and the collector reads none of them.
+      const signature = await sha256Hex(
+        JSON.stringify(result, (key, value) =>
+          key === "repo" || key === "milestone" ? undefined : value,
+        ),
+      );
       if (metadata.has(path) && metadata.get(path) !== signature)
         throw new Error("Source metadata changed during collection");
       metadata.set(path, signature);
