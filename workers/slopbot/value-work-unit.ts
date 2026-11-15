@@ -262,9 +262,27 @@ export async function prepareWorkUnitEvidence(
         );
         continue;
       }
+      // A fast-forward accepted range can end at this PR's own earlier
+      // commit. A complete linear submitted chain from its base proves that
+      // this parent belongs to the same work. Earlier accepted PR origins
+      // still take precedence and retain their existing duplicate handling.
+      const ownSubmittedParent =
+        evidence.acceptedRange?.parentSha === commit.sha &&
+        evidence.pull.merge_commit_sha === evidence.pull.head.sha &&
+        evidence.commits.length === evidence.pull.commits &&
+        evidence.commits.at(-1)?.sha === evidence.pull.head.sha &&
+        evidence.commits.every(
+          (entry, index) =>
+            entry.parents.length === 1 &&
+            entry.parents[0].sha ===
+              (index === 0
+                ? evidence.pull.base.sha
+                : evidence.commits[index - 1].sha),
+        );
       if (
         origins.length > 0 ||
-        evidence.acceptedRange?.parentSha === commit.sha
+        (evidence.acceptedRange?.parentSha === commit.sha &&
+          !ownSubmittedParent)
       ) {
         for (const path of paths.filter(
           (path) => retainedPaths(commit.sha, path).length,
@@ -377,12 +395,15 @@ export async function prepareWorkUnitEvidence(
       // the original historical branch has since been renamed. Preserve a
       // linked primary author only when both immutable commits agree. An
       // unlinked or ineligible original author cannot hide a different one.
+      // A verified resolution copy has a shared implementation antecedent and
+      // resolved blob. Its accepting merger need not be the original resolver.
       const acceptedAuthor = copied.integration.evidence.commits.find(
         (commit) => commit.sha === copied.acceptedCommitSha,
       )?.author;
       if (
+        !copied.mergeResolution &&
         (acceptedAuthor?.node_id ?? null) !==
-        (originCommit.author?.node_id ?? null)
+          (originCommit.author?.node_id ?? null)
       )
         limitations.add(
           `${origin.pull.node_id}: retained primary author identity differs between commits`,

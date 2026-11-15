@@ -1,10 +1,12 @@
 import { expect, test } from "bun:test";
+import { createHash } from "node:crypto";
 import {
   integrated,
   makeOriginal,
   repository,
 } from "../tests/value-promotion-fixture";
 import { retainedCopyBindings } from "../workers/slopbot/value-retained-copy";
+import { collectRetainedMergeReferences } from "../workers/slopbot/value-retained-reference";
 import { retainedCommitCreditSources } from "./retained-commit-credit";
 
 function sources() {
@@ -40,15 +42,16 @@ function sources() {
       repository: repository.id,
     },
   ];
-  original.evidence.comments.push({
+  const comment = {
     node_id: "IC_retained",
     html_url: `https://github.com/${repository.id}/pull/1#issuecomment-1`,
     body: "Your commits are carried over unchanged, with authorship, in #2.",
     user: maintainer,
     created_at: "2026-10-02T11:00:00Z",
     updated_at: "2026-10-02T11:00:00Z",
-  });
-  return { original, copy, comment: original.evidence.comments.at(-1)! };
+  };
+  original.evidence.comments.push(comment);
+  return { original, copy, comment };
 }
 
 for (const reference of [
@@ -125,6 +128,58 @@ for (const kind of [
       retainedCommitCreditSources(copy, [original, copy]),
     ).rejects.toThrow("authenticated retention acknowledgement");
   });
+
+test("October exact copies can bind through two linked commit authors without a merger comment", async () => {
+  const { original, copy } = sources();
+  original.evidence.comments = [];
+  copy.evidence.relatedPullRequests = [
+    {
+      id: original.evidence.pull.node_id,
+      number: original.evidence.pull.number,
+      url: original.evidence.pull.html_url,
+      repository: repository.id,
+    },
+  ];
+  original.evidence.commits[0].author = original.evidence.pull.user;
+  copy.evidence.commits[0].author = original.evidence.pull.user;
+  const options = { ordinaryCommitsOnly: true, octoberOriginalCredit: true };
+  const retained = await retainedCopyBindings([original, copy], options);
+  expect(retained.bindings.size).toBe(1);
+  expect(retained.limitations).toEqual([]);
+  expect((await retainedCopyBindings([original, copy])).bindings.size).toBe(0);
+  copy.evidence.pull.merged_at = "2026-11-02T10:00:00Z";
+  expect(
+    (await retainedCopyBindings([original, copy], options)).bindings.size,
+  ).toBe(0);
+  copy.evidence.pull.merged_at = "2026-10-02T10:00:00Z";
+  copy.evidence.commits[0].author = null;
+  expect(
+    (await retainedCopyBindings([original, copy], options)).bindings.size,
+  ).toBe(0);
+});
+
+test("October unlinked copies still require the eventual merger's exact rebase acknowledgement", async () => {
+  const { original, copy, comment } = sources();
+  original.evidence.commits[0].author = original.evidence.pull.user;
+  original.evidence.pull.closed_at = "2026-10-02T09:30:00Z";
+  comment.body = "We rebased your commits with your authorship in #2.";
+  comment.created_at = "2026-10-02T09:29:59Z";
+  comment.updated_at = comment.created_at;
+  const options = { ordinaryCommitsOnly: true, octoberOriginalCredit: true };
+  expect(
+    (await retainedCopyBindings([original, copy], options)).bindings.size,
+  ).toBe(1);
+  expect((await retainedCopyBindings([original, copy])).bindings.size).toBe(0);
+  comment.updated_at = "2026-10-02T11:00:00Z";
+  expect(
+    (await retainedCopyBindings([original, copy], options)).bindings.size,
+  ).toBe(0);
+  comment.updated_at = comment.created_at;
+  comment.user = original.evidence.pull.user;
+  expect(
+    (await retainedCopyBindings([original, copy], options)).bindings.size,
+  ).toBe(0);
+});
 
 function fourCommitsWithSourceMerges() {
   const source = sources();
@@ -204,3 +259,269 @@ test("a copied merge commit receives no ordinary implementation attribution", as
     retainedCommitCreditSources(copy, [original, copy]),
   ).rejects.toThrow("has 0 exact copy bindings");
 });
+
+function asFormalReview(source: ReturnType<typeof sources>) {
+  const { original, comment } = source;
+  original.evidence.comments = [];
+  const review = {
+    node_id: "PRR_retained",
+    id: 991,
+    html_url: `${original.evidence.pull.html_url}#pullrequestreview-991`,
+    body: comment.body,
+    user: comment.user,
+    submitted_at: comment.created_at,
+    state: "COMMENTED",
+    commit_id: original.evidence.pull.head.sha,
+  };
+  original.evidence.reviews = [review];
+  return review;
+}
+
+test("formal merger review acknowledges retained work and replays deterministically", async () => {
+  const source = sources();
+  asFormalReview(source);
+  const first = await retainedCopyBindings([source.original, source.copy]);
+  const replay = await retainedCopyBindings([source.original, source.copy]);
+  expect(first.limitations).toEqual([]);
+  expect([...first.bindings]).toEqual([...replay.bindings]);
+  expect(first.bindings.size).toBe(1);
+});
+
+for (const invalid of [
+  "other-actor",
+  "before-merge",
+  "missing-time",
+  "wrong-reference",
+  "bot",
+] as const)
+  test(`formal review refuses ${invalid} acknowledgement`, async () => {
+    const source = sources();
+    const review = asFormalReview(source);
+    if (invalid === "other-actor")
+      review.user = source.original.evidence.pull.user;
+    if (invalid === "before-merge")
+      review.submitted_at = "2026-10-02T09:00:00Z";
+    if (invalid === "missing-time")
+      review.submitted_at = null as unknown as string;
+    if (invalid === "wrong-reference")
+      review.body = "Your work is retained in #3.";
+    if (invalid === "bot") review.user = { ...review.user, type: "Bot" };
+    const result = await retainedCopyBindings([source.original, source.copy]);
+    expect(result.bindings.size).toBe(0);
+    expect(result.limitations).toContain(
+      `${source.original.evidence.pull.node_id}: matching copied edits require authenticated retention acknowledgement`,
+    );
+  });
+
+function emptySourceResolutions(
+  source: ReturnType<typeof fourCommitsWithSourceMerges>,
+) {
+  source.original.evidence.mergeResolutions = source.original.evidence.commits
+    .filter((commit) => commit.parents.length === 2)
+    .map((commit) => ({
+      commitSha: commit.sha,
+      parents: commit.parents.map((parent) => parent.sha) as [string, string],
+      gitVersion: "git version 2.56.0",
+      automaticTree: "c".repeat(40),
+      resolvedTree: "c".repeat(40),
+      hadConflicts: false,
+      patch: "",
+      patchSha256: createHash("sha256").update("").digest("hex"),
+      paths: [],
+    }));
+}
+
+test("complete canonical empty source resolutions retain only ordinary mappings", async () => {
+  const source = fourCommitsWithSourceMerges();
+  emptySourceResolutions(source);
+  const result = await retainedCopyBindings([source.original, source.copy]);
+  expect(result.limitations).toEqual([]);
+  expect(result.bindings.size).toBe(4);
+  expect(
+    [...result.bindings.values()].every((binding) =>
+      source.original.evidence.commitAttribution.some(
+        (entry) => entry.sha === binding.originalCommitSha,
+      ),
+    ),
+  ).toBe(true);
+  expect([...result.bindings]).toEqual([
+    ...(await retainedCopyBindings([source.original, source.copy])).bindings,
+  ]);
+});
+
+for (const invalid of [
+  "missing",
+  "duplicate",
+  "wrong-parent",
+  "wrong-hash",
+  "wrong-version",
+  "resolution-edit",
+  "unresolved-conflict",
+] as const)
+  test(`full retained scope holds a ${invalid} source resolution`, async () => {
+    const source = fourCommitsWithSourceMerges();
+    emptySourceResolutions(source);
+    const resolutions = source.original.evidence.mergeResolutions;
+    if (!resolutions) throw new Error("Missing fixture merge resolutions");
+    const resolution = resolutions[0];
+    if (invalid === "missing") resolutions.shift();
+    if (invalid === "duplicate") resolutions.push(structuredClone(resolution));
+    if (invalid === "wrong-parent") resolution.parents[0] = "d".repeat(40);
+    if (invalid === "wrong-hash") resolution.patchSha256 = "d".repeat(64);
+    if (invalid === "wrong-version")
+      resolution.gitVersion = "git version 2.50.1";
+    if (invalid === "unresolved-conflict") resolution.hadConflicts = true;
+    if (invalid === "resolution-edit") {
+      resolution.patch = "diff --git a/fix.ts b/fix.ts\n+changed\n";
+      resolution.patchSha256 = createHash("sha256")
+        .update(resolution.patch)
+        .digest("hex");
+      resolution.paths = ["fix.ts"];
+      resolution.resolvedTree = "d".repeat(40);
+    }
+    const result = await retainedCopyBindings([source.original, source.copy]);
+    expect(result.limitations).toHaveLength(1);
+    expect(result.bindings.size).toBe(4);
+  });
+
+test("short merge references authenticate the original formal review bytes", async () => {
+  const source = sources();
+  const review = asFormalReview(source);
+  review.body = `The fix was delivered in #2, merged as ${integrated.slice(0, 8)}.`;
+  source.copy.evidence.mergeCommitEvidence = {
+    sha: integrated,
+    html_url: `https://github.com/${repository.id}/commit/${integrated}`,
+    parents: [{ sha: "0".repeat(40) }],
+    stats: { additions: 1, deletions: 0, total: 1 },
+    files: source.copy.evidence.files,
+  };
+  const client = {
+    async get<T>(path: string): Promise<T | null> {
+      if (path.endsWith(`/commits/${integrated.slice(0, 8)}`))
+        return {
+          sha: integrated,
+          html_url: `https://github.com/${repository.id}/commit/${integrated}`,
+        } as T;
+      if (path.endsWith(`/commits/${integrated}/pulls?per_page=100`))
+        return [source.copy.evidence.pull] as T;
+      if (path.endsWith("/pulls/2")) return source.copy.evidence.pull as T;
+      throw new Error(`Unexpected source request ${path}`);
+    },
+  };
+  source.original.evidence.retainedMergeReferences = (
+    await collectRetainedMergeReferences(client, source.original.evidence)
+  ).references;
+  const first = await retainedCopyBindings([source.original, source.copy]);
+  expect(first.limitations).toEqual([]);
+  expect(first.bindings.size).toBe(1);
+  review.commit_id = "e".repeat(40);
+  const changed = await retainedCopyBindings([source.original, source.copy]);
+  expect(changed.bindings.size).toBe(0);
+  expect(changed.limitations).toHaveLength(1);
+});
+
+function copiedResolution() {
+  const source = sources();
+  const origin = source.original.evidence.commits[0];
+  const originalMerge = {
+    ...origin,
+    sha: "a".repeat(40),
+    parents: [{ sha: origin.sha }, { sha: "b".repeat(40) }],
+  };
+  const acceptedMerge = {
+    ...structuredClone(originalMerge),
+    sha: "c".repeat(40),
+    parents: [{ sha: origin.sha }, { sha: "d".repeat(40) }],
+  };
+  source.original.evidence.commits.push(originalMerge);
+  source.copy.evidence.commits.push(acceptedMerge);
+  const resolution = (commit: typeof originalMerge) => {
+    const patch = `diff --git a/fix.ts b/fix.ts\nindex ${"e".repeat(40)}..${"f".repeat(40)} 100644\n--- a/fix.ts\n+++ b/fix.ts\n@@ -1 +1 @@\n-conflict\n+resolved\n`;
+    return {
+      commitSha: commit.sha,
+      parents: commit.parents.map((parent) => parent.sha) as [string, string],
+      gitVersion: "git version 2.56.0",
+      automaticTree: "1".repeat(40),
+      resolvedTree: "2".repeat(40),
+      hadConflicts: true,
+      patch,
+      patchSha256: createHash("sha256").update(patch).digest("hex"),
+      paths: ["fix.ts"],
+    };
+  };
+  source.original.evidence.mergeResolutions = [resolution(originalMerge)];
+  source.copy.evidence.mergeResolutions = [resolution(acceptedMerge)];
+  return source;
+}
+
+test("canonical conflict copies retain one original resolution by path and resolved blob", async () => {
+  const { original, copy } = copiedResolution();
+  const result = await retainedCopyBindings([original, copy]);
+  expect(result.limitations).toEqual([]);
+  expect(result.bindings.size).toBe(2);
+  const resolution = [...result.bindings.values()].find(
+    (binding) => binding.acceptedCommitSha === "c".repeat(40),
+  );
+  expect(resolution?.originalCommitSha).toBe("a".repeat(40));
+  expect(resolution?.mergeResolution).toBe(true);
+  expect([...result.bindings]).toEqual([
+    ...(await retainedCopyBindings([original, copy])).bindings,
+  ]);
+});
+
+for (const invalid of [
+  "parent",
+  "blob",
+  "path",
+  "hash",
+  "identity",
+  "ambiguous",
+  "short-index",
+  "reference",
+  "competing-original",
+  "missing-antecedent",
+  "early-copy",
+] as const)
+  test(`canonical conflict copy refuses ${invalid} mismatch`, async () => {
+    const { original, copy, comment } = copiedResolution();
+    const candidate = copy.evidence.mergeResolutions?.[0];
+    if (!candidate) throw new Error("Missing copied resolution");
+    if (invalid === "missing-antecedent") copy.evidence.commits.shift();
+    if (invalid === "early-copy")
+      copy.evidence.commits[1].commit.author.date = "2026-09-01T00:00:00Z";
+    if (invalid === "parent") {
+      copy.evidence.commits[1].parents[0].sha = "3".repeat(40);
+      candidate.parents[0] = "3".repeat(40);
+    }
+    if (invalid === "blob")
+      candidate.patch = candidate.patch.replace("f".repeat(40), "4".repeat(40));
+    if (invalid === "path") {
+      candidate.patch = candidate.patch.replaceAll("fix.ts", "other.ts");
+      candidate.paths = ["other.ts"];
+    }
+    if (invalid === "identity") candidate.commitSha = "5".repeat(40);
+    if (invalid === "ambiguous")
+      copy.evidence.mergeResolutions?.push(structuredClone(candidate));
+    if (invalid === "short-index")
+      candidate.patch = candidate.patch.replace("f".repeat(40), "f".repeat(7));
+    if (invalid !== "hash")
+      candidate.patchSha256 = createHash("sha256")
+        .update(candidate.patch)
+        .digest("hex");
+    else candidate.patchSha256 = "6".repeat(64);
+    if (invalid === "reference") comment.user = original.evidence.pull.user;
+    const sources = [original, copy];
+    if (invalid === "competing-original") {
+      const competitor = structuredClone(original);
+      competitor.evidence.pull.node_id = "PR_competing";
+      sources.push(competitor);
+    }
+    const result = await retainedCopyBindings(sources);
+    expect(result.limitations.length).toBeGreaterThan(0);
+    if (invalid !== "competing-original")
+      expect(
+        [...result.bindings.values()].some(
+          (binding) => binding.acceptedCommitSha === "c".repeat(40),
+        ),
+      ).toBe(false);
+  });

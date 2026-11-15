@@ -262,7 +262,17 @@ async function queryPrivateD1(sql: string): Promise<unknown> {
   return result;
 }
 
-async function main() {
+type CorrectionPhase =
+  | "trusted invocation"
+  | "collection and registry verification"
+  | "public Points read"
+  | "private financial protection read"
+  | "participation restrictions read"
+  | "allocation validation"
+  | "preview or receipt generation"
+  | "protected import and readback";
+
+async function main(setPhase: (phase: CorrectionPhase) => void) {
   const [manifestPath, outputDirectory, mode] = process.argv.slice(2);
   if (
     !manifestPath ||
@@ -293,6 +303,7 @@ async function main() {
       );
   };
   await verifyMain();
+  setPhase("collection and registry verification");
   const manifest: PointsImplementationCorrectionManifest = JSON.parse(
     await readFile(manifestPath, "utf8"),
   );
@@ -304,10 +315,13 @@ async function main() {
     fetchProjectRegistry(),
   ]);
   verifyCorrectionCollection(manifest, collection, registry, mode === "apply");
+  setPhase("public Points read");
   const journal = await loadPublishedPoints();
   if (!journal)
     throw new Error("Historical correction requires an existing journal");
+  setPhase("private financial protection read");
   const eligibility = await readCorrectionEligibility(manifest, queryPrivateD1);
+  setPhase("participation restrictions read");
   const retainedActors = new Set<string>();
   for (const candidate of manifest.candidates) {
     if (candidate.proof.status !== "complete") continue;
@@ -336,6 +350,7 @@ async function main() {
     )
       throw new Error("Account restrictions changed after correction planning");
   };
+  setPhase("allocation validation");
   const result = applyPointsImplementationCorrections(
     journal,
     manifest,
@@ -366,6 +381,7 @@ async function main() {
     noChanges: result.journal === journal,
     recorded: false,
   };
+  setPhase("preview or receipt generation");
   await mkdir(outputDirectory, { recursive: true });
   await writeFile(
     join(outputDirectory, "before-journal.json"),
@@ -383,6 +399,7 @@ async function main() {
     `${JSON.stringify(report, null, 2)}\n`,
   );
   if (mode === "apply" && result.journal !== journal) {
+    setPhase("protected import and readback");
     const temporaryRoot = process.env.RUNNER_TEMP;
     if (!temporaryRoot)
       throw new Error("Missing private runner temporary directory");
@@ -421,12 +438,12 @@ async function main() {
 }
 
 if (import.meta.main) {
-  main().catch(() => {
-    // Errors can include URLs or input data. A trusted runner keeps private
-    // details private; the exit status is enough to refuse publication.
-    console.error(
-      "Historical Points correction refused or could not be verified.",
-    );
+  let phase: CorrectionPhase = "trusted invocation";
+  main((next) => {
+    phase = next;
+  }).catch(() => {
+    // Report a fixed phase without printing errors, queries or private results.
+    console.error(`Historical Points correction stopped during ${phase}.`);
     process.exitCode = 1;
   });
 }

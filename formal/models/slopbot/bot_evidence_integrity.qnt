@@ -3,10 +3,13 @@
 // @source workers/slopbot/value-blob.ts
 // @source workers/slopbot/value-tree.ts
 // @source workers/slopbot/value-file-comparisons.ts
+// @source workers/slopbot/value-comparison-counts.ts
 // @source workers/slopbot/value-binary.ts
 // @source workers/slopbot/git-object.ts
 // Three paged source entrys and two bounded blobs. Hash verification is an
 // explicit transition; plausible SHA syntax and HTTP success do not suffice.
+// The comparison-count implementation retains unknown results when its compute
+// budget is exhausted. This mapping abstracts admission, not its diff algorithm.
 module bot_evidence_integrity {
   var s: { expected: int, seen: Set[int], complete: bool, budget: int,
     pending: bool, hashMatches: bool, verified: int, failed: bool, usable: bool }

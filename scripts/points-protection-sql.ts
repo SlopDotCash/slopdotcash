@@ -1,6 +1,28 @@
 /** Shared private settlement predicate for planning and atomic Points import. */
+// PRD section 11 keeps the reviewed Base qualification outside earned rewards.
+// Match its finalized payment and reservation source together, so an unknown
+// or unresolved unscoped obligation still protects every month.
+// https://github.com/SlopDotCash/slopdotcash/issues/904#issuecomment-6438995569
+// The import serializes one SQL statement per line.
+const baseQualificationPaid = `(
+  p.id='0xe63ed9a7de8b38d1e847c4d850c7cb08d15ca429615c933eaefd9683b6367c4c'
+  AND p.network='base-mainnet'
+  AND p.vault='0x6c1297c3b96a00347cb501f572cb5811c2a8ed36'
+  AND p.state='paid'
+  AND p.source_digest='991cdcc980c86dee602eccb30c79290a51a67f4569b2292efad7211d62086ee3'
+  AND p.paid_transaction IS '0x4b9290966d9bacbe77d0e936ccb749cc8c0b9622331bf8f4a42b965c1fa704d8'
+  AND EXISTS (
+    SELECT 1 FROM payment_events e
+    WHERE e.network=p.network AND e.transaction_id=p.paid_transaction
+      AND e.event_index=982 AND e.kind='paid' AND e.obligation_id=p.id
+      AND CASE WHEN json_valid(e.evidence_json)
+        THEN json_extract(e.evidence_json,'$.projectId')=p.project_id
+        ELSE 0 END
+  )
+)`.replace(/\s+/gu, " ");
+
 function protectedScope(project: string, period: string): string {
-  return `(EXISTS (SELECT 1 FROM monthly_payment_runs m WHERE m.project_id=${project} AND m.period=${period}) OR EXISTS (SELECT 1 FROM monthly_allocation_changes m WHERE m.project_id=${project} AND m.period=${period}) OR EXISTS (SELECT 1 FROM payment_direct_transfers p WHERE p.project_id=${project} AND p.contribution_month=${period}) OR EXISTS (SELECT 1 FROM payment_obligations p WHERE p.project_id=${project} AND NOT EXISTS (SELECT 1 FROM monthly_payment_obligations m WHERE m.project_id=p.project_id AND m.network=p.network AND m.vault=p.vault AND m.source_digest=p.source_digest)))`;
+  return `(EXISTS (SELECT 1 FROM monthly_payment_runs m WHERE m.project_id=${project} AND m.period=${period}) OR EXISTS (SELECT 1 FROM monthly_allocation_changes m WHERE m.project_id=${project} AND m.period=${period}) OR EXISTS (SELECT 1 FROM payment_direct_transfers p WHERE p.project_id=${project} AND p.contribution_month=${period}) OR EXISTS (SELECT 1 FROM payment_obligations p WHERE p.project_id=${project} AND NOT ${baseQualificationPaid} AND NOT EXISTS (SELECT 1 FROM monthly_payment_obligations m WHERE m.project_id=p.project_id AND m.network=p.network AND m.vault=p.vault AND m.source_digest=p.source_digest)))`;
 }
 
 export function protectedPointAwardSql(payload: string): string {
