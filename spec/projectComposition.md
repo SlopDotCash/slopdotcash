@@ -24,6 +24,10 @@ outcome is the recorded state of the [assessment machine](./security/admission.m
 
 ### The composed state keeps the two machines' shared facts equal
 
+Every composed action calls each child transition only under that child's own
+guard, so the children's rules hold of the composed state. The child facts the
+composed rules rely on are restated here so the composition proves them too.
+
 ```quint
 import closureConsent as C from "./backend/closureConsent"
 import projects as P from "./backend/projects"
@@ -37,6 +41,10 @@ pure def sync(p: P::Project, e: E::Enforcement): E::Enforcement =
 pure def alwaysRepositoriesAgree(c: Registry): bool = c.project.repositories == c.security.repositories
 pure def alwaysRevisionMirrored(c: Registry): bool =
   c.security.revision == c.project.revision and c.security.steward == c.project.steward and c.security.creator == c.project.creator
+pure def alwaysChildFactsHold(c: Registry): bool =
+  P::alwaysCreatedFacts(c.project) and P::alwaysRetirementConsistent(c.project) and
+  E::alwaysClearHoldsNoRestrictionState(c.security) and E::alwaysFlagPauseHasNoRevision(c.security) and
+  E::alwaysRegisteredIdentities(c.security)
 pure def alwaysAdministratorsAgree(c: Registry): bool =
   c.project.administrators.every(a => c.security.administrators.contains(a)) and
   c.security.administrators.forall(a => c.project.administrators.includes(a))
