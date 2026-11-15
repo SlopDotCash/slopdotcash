@@ -16,10 +16,7 @@ import {
   type StoredMonthPledges,
   storedMonthPledges,
 } from "../../backend/payments/month-pledges";
-import {
-  automaticMonthlyPayment,
-  coordinateMonthlyPayments,
-} from "../../backend/payments/monthly";
+import { coordinateMonthlyPayments } from "../../backend/payments/monthly";
 import type { MonthlyAuthorization } from "../../backend/payments/monthly-attestation-types";
 import {
   refreshVaultSnapshots,
