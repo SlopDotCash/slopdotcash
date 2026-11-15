@@ -153,7 +153,10 @@ export function mergeActivityCardLine(
       waiting === 1 && !capped ? "PR" : "PRs"
     } waiting 7+ days`,
   ];
-  if (busiest.medianHoursToMerge !== null && busiest.mergedOutsideLast30Days > 0)
+  if (
+    busiest.medianHoursToMerge !== null &&
+    busiest.mergedOutsideLast30Days > 0
+  )
     parts.push(`median merge ${duration(busiest.medianHoursToMerge)}`);
   return parts.join(" · ");
 }

@@ -6203,7 +6203,7 @@
     },
     {
       "path": "src/lib/merge-activity.ts",
-      "sha256": "4be9b4d3ca81af184c37878924ed3b7d48815071b8ca58372f32a980b08f304b",
+      "sha256": "d0c1bf1ce8577206cbf961bcbd726f5030aba0d1ffb447b912c386926d6bba0c",
       "models": ["formal/models/api/api_merge_activity.qnt"],
       "candidateLines": [],
       "review": "mapped-abstraction"

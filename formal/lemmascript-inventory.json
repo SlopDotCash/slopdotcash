@@ -8725,7 +8725,7 @@
 {"path":"src/lib/login-return.ts","sha256":"8cee546e7ce221e1a82d28ce4e2339276e778291a73d452e7aa75efc648f3284","language":"typescript","disposition":"callables-inventoried","functions":[
 {"name":"loginReturnPath","kind":"FunctionDeclaration","line":9,"sha256":"81de0f07ca4038205040d5bdbd978b04a9d236e44cf6accdb3f5733b09f1b8d9","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]}
 ]},
-{"path":"src/lib/merge-activity.ts","sha256":"4be9b4d3ca81af184c37878924ed3b7d48815071b8ca58372f32a980b08f304b","language":"typescript","disposition":"callables-inventoried","functions":[
+{"path":"src/lib/merge-activity.ts","sha256":"d0c1bf1ce8577206cbf961bcbd726f5030aba0d1ffb447b912c386926d6bba0c","language":"typescript","disposition":"callables-inventoried","functions":[
 {"name":"isRow","kind":"FunctionDeclaration","line":17,"sha256":"c9c9ba4eaf7125d7417e0b7a3400878e75baea14f7d56d62447fb0634cfeec78","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
 {"name":"count","kind":"ArrowFunction","line":19,"sha256":"882b0b5298f6f0008b7bfd7db37178085f6367d26aba1fbe5c1ee2b3ed388b8d","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
 {"name":"loadMergeActivity","kind":"FunctionDeclaration","line":36,"sha256":"7dbd0d3f46b19f2ca040c889398224df245f727550c4d8602280d394a07eba03","status":"unproved","candidate":"requires-effect-or-language-boundary","syntaxFeatures":["await","runtime-effect","throw-unreachable-model"]},
@@ -8733,7 +8733,7 @@
 {"name":"duration","kind":"FunctionDeclaration","line":77,"sha256":"c77e3adedc7304dd7c38ee3ba2589093dc5e1fdc8538f6ecd18925d0ce9b4cd2","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
 {"name":"shortDate","kind":"FunctionDeclaration","line":87,"sha256":"9545768b054820d8b44896a3ebe8ccca7940bc27db3f02bac2214ea29ab0b020","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
 {"name":"mergeActivityLine","kind":"FunctionDeclaration","line":96,"sha256":"24d2e7e57d1a51b2a23a1b7ed872e454a1377becc76b5481b4aae1a7f22645a3","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
-{"name":"mergeActivityCardLine","kind":"FunctionDeclaration","line":133,"sha256":"c621af56e7a8f81f6a865d8c6c9a73d37b37c693589d85fd77ca28744ad7ac95","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]}
+{"name":"mergeActivityCardLine","kind":"FunctionDeclaration","line":133,"sha256":"4ea9872b11a40f9832fa8c1cb9c5f4136e259bd37a3da09b9305969738c2c992","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]}
 ]},
 {"path":"src/lib/model-identity.ts","sha256":"4b91360681d971d807f1d059bb2987ba9cd54f419179aa19c0abbdd8801b38aa","language":"typescript","disposition":"callables-inventoried","functions":[
 {"name":"normalizedPlaceholder","kind":"FunctionDeclaration","line":38,"sha256":"5a061bf61f63d99036b0dd087a75acebbe09e9808ddb0d974f2986823abdb270","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":["library-semantics-review"]},
