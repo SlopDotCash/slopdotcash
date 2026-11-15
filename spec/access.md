@@ -60,7 +60,7 @@ pure def isModerator(by: int): bool = moderators.includes(by)
 pure def freshDecision(a: Access, decision: int): bool = decision > 0 and not(a.decisions.includes(decision))
 pure def projectRecords(a: Access, project: int): List[Enforcement] = a.enforcements.select(e => e.project == project)
 pure def latestRecord(a: Access, project: int): Enforcement =
-  projectRecords(a, project).nthOr(projectRecords(a, project).length() - 1, absentEnforcement)
+  a.enforcements.select(e => e.project == project and e.sequence == projectRecords(a, project).length()).nthOr(0, absentEnforcement)
 pure def recordFor(a: Access, by: int, project: int, decision: int, kind: EnforcementAction, role: EnforcementRole,
   stateAfter: ProjectState): Enforcement =
   { id: decision, project: project, sequence: projectRecords(a, project).length() + 1, kind: kind, role: role,

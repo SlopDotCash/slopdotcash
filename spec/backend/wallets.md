@@ -375,7 +375,7 @@ pure def attestPossession(b: WalletRegistration, by: str, claim: int, challengeI
 pure def publicPossession(b: WalletRegistration, claim: int): Attestation = attestationFor(b, claim)
 pure def alwaysPossessionRecordsValid(b: WalletRegistration): bool =
   b.possessionChallenges.every(c => c.id > 0 and c.id <= b.lastPossessionChallenge and c.claim > 0 and c.claim <= b.claims.length()
-    and c.expiresAt == c.issuedAt + possessionLifetime
+    and c.expiresAt == c.issuedAt + possessionLifetime and c.issuedAt <= b.clock
     and (c.consumed implies (c.consumedAt >= c.issuedAt and c.consumedAt < c.expiresAt))
     and b.possessionChallenges.select(o => o.id == c.id).length() == 1)
   and b.attestations.every(a => a.claim > 0 and a.claim <= b.claims.length() and a.wallet == claimAt(b, a.claim).wallet
