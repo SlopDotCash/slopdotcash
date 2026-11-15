@@ -26,44 +26,44 @@ only and is not an input here.
 The canonical GitHub API resolves the full commit. Artifact, registry and
 raw-file requests carry no GitHub API token. Cross-origin redirects are
 rejected before the new request is built, including authenticated redirects.
-Injected `file://` fixtures exist only in the generator's test build, which
-is fixed when the machine is built and never changed by an event; a
-production read can never be admitted from a fixture. Canonical lookup
+This machine is the production authority: a request to an injected `file://`
+fixture or any other origin is refused before it is sent, and the read ends
+refused, so no event can admit fixture bytes. Deterministic `file://`
+fixtures exist only behind the generator's test option, a separate test
+configuration whose isolation from production builds is a shell conformance
+obligation (CLAUDE.md "Installer and attribution"). Canonical lookup
 refuses mutable redirects, incomplete trees, unsafe entries, oversized
 bodies, unverified blob identities and file or digest mismatch. Credential
 handling and hashing need shell conformance.
 
 ```quint
 type Authority = CanonicalApi | Registry | RawFiles | Archive | InjectedFixture | OtherOrigin
-type Build = ProductionBuild | GeneratorTestBuild
 type Role = StaticSkill | ContributorSkill | ReviewerSkill
 type Transport = NewObject | Reading | Retry | Downloaded | Refused | Admitted
 type Issue = Timeout | ConnectionReset | AbruptTlsEnd | ServerError | InvalidAuthority | InvalidBytes | SizeExceeded | RateLimited
 type Provenance = Committed | WorkingTree | MissingProvenance
 type Selection = { role: Role, project: int, commit: str, registryRevision: int, registryDigest: str }
 type ByteCheck = { commit: str, provenance: Provenance, completeFiles: bool, matchingBlobs: bool, renderedDigest: str }
-type SkillRead = { build: Build, selection: Selection, transport: Transport, attempts: int, source: Authority,
-  checked: ByteCheck, projectOpen: bool, projectFresh: bool }
+type SkillRead = { selection: Selection, transport: Transport, attempts: int, source: Authority,
+  checked: ByteCheck, projectOpen: bool, projectFresh: bool, refusal: Issue }
 pure val unchecked: ByteCheck = { commit: "", provenance: MissingProvenance, completeFiles: false, matchingBlobs: false, renderedDigest: "" }
 pure val noSelection: Selection = { role: ContributorSkill, project: 0, commit: "", registryRevision: 0, registryDigest: "" }
-pure val initial: SkillRead = { build: ProductionBuild, selection: noSelection, transport: NewObject,
-  attempts: 0, source: OtherOrigin, checked: unchecked, projectOpen: false, projectFresh: false }
+pure val initial: SkillRead = { selection: noSelection, transport: NewObject,
+  attempts: 0, source: OtherOrigin, checked: unchecked, projectOpen: false, projectFresh: false,
+  refusal: InvalidAuthority }
 pure def productionAuthority(authority: Authority): bool =
   authority == CanonicalApi or authority == Registry or authority == RawFiles or authority == Archive
-pure def transportAllowed(build: Build, authority: Authority, sameAuthority: bool): bool = sameAuthority and
-  (productionAuthority(authority) or (authority == InjectedFixture and build == GeneratorTestBuild))
+pure def transportAllowed(authority: Authority, sameAuthority: bool): bool = sameAuthority and productionAuthority(authority)
 pure def sendCredential(authority: Authority, sameAuthority: bool, credentialPresent: bool): bool =
   authority == CanonicalApi and sameAuthority and credentialPresent
 pure def lawCredentialStaysOnApi(authority: Authority, sameAuthority: bool, credentialPresent: bool): bool =
   sendCredential(authority, sameAuthority, credentialPresent) implies authority == CanonicalApi and sameAuthority
-pure def lawProductionRefusesFixture(authority: Authority, sameAuthority: bool): bool =
-  transportAllowed(ProductionBuild, authority, sameAuthority) implies productionAuthority(authority)
+pure def lawFixtureNeverAllowed(sameAuthority: bool): bool = not(transportAllowed(InjectedFixture, sameAuthority))
 pure def validSelection(selection: Selection): bool = selection.commit != "" and
   (if (selection.role == StaticSkill) selection.registryDigest == "" and selection.registryRevision == 0 and selection.project == 0
    else selection.registryDigest != "" and selection.registryRevision > 0 and selection.project > 0)
 pure def canSelectRole(s: SkillRead, selection: Selection): bool = s.transport == NewObject and s.attempts == 0 and validSelection(selection)
 pure def selectRole(s: SkillRead, selection: Selection): SkillRead = { ...s, selection: selection }
-pure def stepBuildFixed(before: SkillRead, after: SkillRead): bool = after.build == before.build
 ```
 
 ### Retry transient transport failures up to three attempts
@@ -82,12 +82,13 @@ pure def transient(issue: Issue): bool = issue == Timeout or issue == Connection
 pure def nextDelay(attempts: int): int = if (attempts == 1) 2 else if (attempts == 2) 4 else 0
 pure def canFetch(s: SkillRead, authority: Authority, sameAuthority: bool): bool =
   (s.transport == NewObject or s.transport == Retry) and s.attempts < 3 and validSelection(s.selection)
-    and transportAllowed(s.build, authority, sameAuthority)
 pure def fetch(s: SkillRead, authority: Authority, sameAuthority: bool): SkillRead =
-  { ...s, transport: Reading, attempts: s.attempts + 1, source: authority }
+  if (transportAllowed(authority, sameAuthority)) { ...s, transport: Reading, attempts: s.attempts + 1, source: authority }
+  else { ...s, transport: Refused, source: authority, refusal: InvalidAuthority }
 pure def canRejectRead(s: SkillRead): bool = s.transport == Reading
 pure def rejectRead(s: SkillRead, issue: Issue): SkillRead =
-  { ...s, transport: if (transient(issue) and s.attempts < 3) Retry else Refused }
+  if (transient(issue) and s.attempts < 3) { ...s, transport: Retry }
+  else { ...s, transport: Refused, refusal: issue }
 pure def canDownloadComplete(s: SkillRead): bool = s.transport == Reading
 pure def downloadComplete(s: SkillRead): SkillRead = { ...s, transport: Downloaded, projectFresh: false }
 ```
@@ -117,25 +118,28 @@ pure def observeProject(s: SkillRead, view: F::ProjectView, project: int): Skill
   { ...s, projectOpen: F::installable(view) and project == s.selection.project and project > 0, projectFresh: true }
 pure def bytesAdmitted(s: SkillRead): bool = validSelection(s.selection) and s.checked.commit == s.selection.commit
   and s.checked.provenance == Committed and s.checked.completeFiles and s.checked.matchingBlobs
-  and (s.build == GeneratorTestBuild or productionAuthority(s.source))
+  and productionAuthority(s.source)
   and (s.selection.role == StaticSkill or s.checked.renderedDigest == s.selection.registryDigest)
   and (s.selection.role != ContributorSkill or (s.projectOpen and s.projectFresh))
 pure def canAdmit(s: SkillRead): bool = s.transport == Downloaded and bytesAdmitted(s)
 pure def admit(s: SkillRead): SkillRead = { ...s, transport: Admitted }
 pure def canRefuseBytes(s: SkillRead): bool = s.transport == Downloaded and not(bytesAdmitted(s))
-pure def refuseBytes(s: SkillRead): SkillRead = { ...s, transport: Refused }
+pure def refuseBytes(s: SkillRead): SkillRead = { ...s, transport: Refused, refusal: InvalidBytes }
 pure def alwaysAttemptLimit(s: SkillRead): bool = 0 <= s.attempts and s.attempts <= 3
   and (s.transport == Retry implies 0 < s.attempts and s.attempts < 3)
   and ((s.transport == Reading or s.transport == Downloaded or s.transport == Admitted) implies s.attempts > 0)
 pure def alwaysAdmittedBytes(s: SkillRead): bool = s.transport == Admitted implies bytesAdmitted(s)
 pure def alwaysProductionAuthority(s: SkillRead): bool =
-  (s.transport == Admitted and s.build == ProductionBuild) implies productionAuthority(s.source)
+  (s.transport == Reading or s.transport == Downloaded or s.transport == Admitted) implies productionAuthority(s.source)
+pure def consistentRead(s: SkillRead): bool = alwaysAttemptLimit(s) and alwaysAdmittedBytes(s) and alwaysProductionAuthority(s)
 pure def stepTerminal(before: SkillRead, after: SkillRead): bool = (before.transport == Admitted or before.transport == Refused) implies after == before
 pure def sometimesRetry(s: SkillRead): bool = s.transport == Retry
 pure def sometimesExhausted(s: SkillRead): bool = s.transport == Refused and s.attempts == 3
 pure def sometimesAdmitted(s: SkillRead): bool = s.transport == Admitted and s.selection.role == ContributorSkill
 pure def sometimesReviewerClosed(s: SkillRead): bool = s.transport == Admitted and s.selection.role == ReviewerSkill and not(s.projectOpen)
 pure def sometimesWorkingTreeRefused(s: SkillRead): bool = s.transport == Refused and s.checked.provenance == WorkingTree
+pure def sometimesFixtureRefused(s: SkillRead): bool = s.transport == Refused and s.source == InjectedFixture
+  and s.refusal == InvalidAuthority
 pure def sometimesUninstallableRefused(s: SkillRead): bool = s.transport == Refused and s.selection.role == ContributorSkill
   and s.projectFresh and not(s.projectOpen)
 ```

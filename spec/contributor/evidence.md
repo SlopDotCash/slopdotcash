@@ -24,6 +24,7 @@ Submitting the pull request is independent of every evidence state.
 ### Evidence state is separate from ordinary submission
 
 ```quint
+import localReceipt as LR from "./localReceipt"
 type EvidencePhase = Undecided | Declined | HumanOnly | Selected | Stored | UploadFailed
 type MediaType = PlainText | NdjsonText
 type ServerStage = NoServerRun | AwaitingTrace | TraceUploaded | TraceFinalized
@@ -35,6 +36,7 @@ type SignedReceipt = { signed: bool, runDigest: str, traceDigest: str, deviceKey
 type Evidence = { phase: EvidencePhase, digest: str, size: int, storedDigest: str,
   prSubmitted: bool, receipt: SignedReceipt }
 pure val maxTraceBytes = 8388608
+pure val signatureVerifier = -1
 pure val noSnapshot: Snapshot = { digest: "", size: 0, media: PlainText, disclosed: false, consent: false }
 pure val noReceipt: SignedReceipt = { signed: false, runDigest: "", traceDigest: "", deviceKey: "",
   provider: "", model: "", client: "" }
@@ -107,20 +109,30 @@ pure def stepStoredDigestImmutable(before: Evidence, after: Evidence): bool =
 
 ### A signed receipt binds the exact disclosure and either no trace or the stored trace
 
-The signature verifier checks the receipt schema, the device key and byte
+Only the signature verifier (sender `signatureVerifier`) records a signed
+receipt, after it checks the receipt schema, the device key and byte
 continuity; a device signature proves continuity, not provider billing truth.
-A receipt names the exact provider, model and client, the local run digest,
-and the stored trace digest or none. It is signed once and never rebound.
-Missing evidence earns no trace bonus: only a finalized server run whose
-attached digest equals the receipt's trace digest can support one
-(composition obligation on the points area).
+The receipt must name the completed [local receipt](./localReceipt.md) of
+this run: its published completion digest and its exactly declared provider,
+model and client, on a local record that satisfies every local receipt rule.
+It names the stored trace digest or none. It is signed once and never
+rebound. That the shell supplies the actual stored local receipt is a
+composition obligation. Missing evidence earns no trace bonus: only a
+finalized server run whose attached digest equals the receipt's trace digest
+can support one (composition obligation on the points area).
 
 ```quint
 pure def receiptComplete(receipt: SignedReceipt): bool = receipt.signed and receipt.runDigest != ""
   and receipt.deviceKey != "" and receipt.provider != "" and receipt.model != "" and receipt.client != ""
-pure def canSignReceipt(e: Evidence, receipt: SignedReceipt): bool = not(e.receipt.signed) and e.phase != HumanOnly
-  and receiptComplete(receipt) and (receipt.traceDigest == "" or (e.phase == Stored and receipt.traceDigest == e.storedDigest))
-pure def signReceipt(e: Evidence, receipt: SignedReceipt): Evidence = { ...e, receipt: receipt }
+pure def receiptMatchesRun(receipt: SignedReceipt, local: LR::LocalReceipt): bool = LR::consistentReceipt(local)
+  and local.completed.valid and receipt.runDigest == local.completed.digest
+  and receipt.provider == local.declared.provider and receipt.model == local.declared.model
+  and receipt.client == local.declared.client
+pure def canSignReceipt(e: Evidence, by: int, receipt: SignedReceipt, local: LR::LocalReceipt): bool =
+  by == signatureVerifier and not(e.receipt.signed) and e.phase != HumanOnly
+  and receiptComplete(receipt) and receiptMatchesRun(receipt, local)
+  and (receipt.traceDigest == "" or (e.phase == Stored and receipt.traceDigest == e.storedDigest))
+pure def signReceipt(e: Evidence, by: int, receipt: SignedReceipt, local: LR::LocalReceipt): Evidence = { ...e, receipt: receipt }
 pure def alwaysReceiptBindsEvidence(e: Evidence): bool = e.receipt.signed implies receiptComplete(e.receipt)
   and (e.receipt.traceDigest == "" or e.receipt.traceDigest == e.storedDigest)
 pure def stepReceiptImmutable(before: Evidence, after: Evidence): bool =
@@ -148,6 +160,12 @@ pure val uploadReplyValues = Set({ serverRun: "r1", digest: "d1", stage: TraceUp
 pure val receiptA: SignedReceipt = { signed: true, runDigest: "run", traceDigest: "", deviceKey: "key",
   provider: "p", model: "m", client: "c" }
 pure val receiptValues = Set(receiptA, { ...receiptA, traceDigest: "d1" }, { ...receiptA, provider: "" })
+pure val byValues = Set(1, signatureVerifier)
+pure val completedLocal: LR::LocalReceipt = { ...LR::initial, started: true, active: false, startedAt: 1,
+  declared: { provider: "p", model: "m", client: "c", lane: LR::ContributionLane }, result: LR::Succeeded,
+  installed: { template: "0123456789abcdef0123456789abcdef01234567", revision: 1, digest: "m1" },
+  completed: { digest: "run", completionAt: 2, valid: true }, candidate: { digest: "run", completionAt: 2, valid: true } }
+pure val localValues = Set(completedLocal, { ...completedLocal, completed: { digest: "other", completionAt: 2, valid: true } }, LR::initial)
 pure val weight_selectTrace = 6
 pure val weight_register = 6
 pure val weight_store = 6

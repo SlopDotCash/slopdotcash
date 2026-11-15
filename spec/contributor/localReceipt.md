@@ -18,8 +18,12 @@ Actual filesystem and cryptography remain shell conformance.
 Start establishes local run identity, start time and the exact declared
 provider, model, client and lane. It requires the recorded local
 authorization of the active verified installation
-([installation](./installation.md) `authorizeLocal`): a local checkout or a
-version other than the active verified one is refused. Consent and an
+([installation](./installation.md) `authorizeLocal`) made for exactly the
+active version, outside any open installation attempt, on an installation
+record that satisfies every installation rule: a local checkout, a stale
+authorization of an earlier version, or a version other than the active
+verified one is refused. That the shell supplies the installation's actual
+stored state is a composition obligation. Consent and an
 available adapter permit usage capture. An absent capture never prevents
 finishing. A backward clock and invalid candidate refuse before the hard-link
 publication. A failed validation preserves the active run for diagnosis and
@@ -41,8 +45,8 @@ pure val initial: LocalReceipt = { started: false, active: false, startedAt: 0, 
   declared: noDeclared, installed: I::noVersion, finish: Idle, candidate: noCandidate, temporary: false, completed: noCandidate, result: NoExit }
 pure def declaredExactly(d: Declared): bool = d.provider != "" and d.model != "" and d.client != ""
 pure def canStart(s: LocalReceipt, startedAt: int, declared: Declared, install: I::Installation): bool =
-  not(s.started) and startedAt > 0 and declaredExactly(declared) and install.local == I::LocalAuthorized
-    and I::validVersion(install.active)
+  not(s.started) and startedAt > 0 and declaredExactly(declared) and I::consistentInstallation(install)
+    and I::authorizedForStart(install)
 pure def start(s: LocalReceipt, startedAt: int, consent: bool, available: bool, declared: Declared, install: I::Installation): LocalReceipt =
   { ...s, started: true, active: true, startedAt: startedAt, consent: consent, declared: declared, installed: install.active,
     capture: if (consent and available) Capturing else Unavailable }
@@ -112,6 +116,10 @@ pure def alwaysOptional(s: LocalReceipt): bool = not(s.consent) implies s.captur
 pure def alwaysSuccess(s: LocalReceipt): bool = s.result == Succeeded implies s.completed.valid and not(s.active)
 pure def stepFirstWriter(before: LocalReceipt, after: LocalReceipt): bool = before.completed.digest != ""
   implies before.completed == after.completed
+pure def stepRunIdentityFixed(before: LocalReceipt, after: LocalReceipt): bool = before.started implies
+  after.declared == before.declared and after.installed == before.installed and after.startedAt == before.startedAt
+pure def consistentReceipt(s: LocalReceipt): bool = alwaysState(s) and alwaysCandidate(s) and alwaysCompleted(s)
+  and alwaysOptional(s) and alwaysSuccess(s)
 pure def sometimesFinishedWithoutCapture(s: LocalReceipt): bool = s.result == Succeeded and s.capture == Unavailable
 pure def sometimesTemporaryCleanupFailed(s: LocalReceipt): bool = s.completed.valid and s.active and s.result == Failed and s.temporary
 pure def sometimesInvalidHistory(s: LocalReceipt): bool = s.completed.digest != "" and not(s.completed.valid) and s.result == Failed
@@ -124,8 +132,12 @@ pure def sometimesRace(s: LocalReceipt): bool = s.result == Succeeded and s.cand
 pure val declaredValues = Set({ provider: "p", model: "m", client: "c", lane: ContributionLane },
   { provider: "", model: "m", client: "c", lane: ReviewLane })
 pure val installedVersion: I::Version = { template: "0123456789abcdef0123456789abcdef01234567", revision: 1, digest: "m1" }
-pure val installValues = Set({ ...I::initial, active: installedVersion, versions: List(installedVersion), local: I::LocalAuthorized },
-  { ...I::initial, active: installedVersion, versions: List(installedVersion), local: I::LocalRefused })
+pure val authorizedInstall: I::Installation = { ...I::initial, active: installedVersion, versions: List(installedVersion),
+  local: I::LocalAuthorized, localVersion: installedVersion }
+pure val installValues = Set(authorizedInstall, { ...authorizedInstall, local: I::LocalRefused, localVersion: I::noVersion },
+  { ...authorizedInstall, localVersion: { ...installedVersion, revision: 2 } },
+  { ...authorizedInstall, phase: I::Downloading, locked: true, attempt: 1, target: { ...installedVersion, revision: 2, digest: "m2" },
+    old: installedVersion })
 pure val startedAtValues = Set(1, 2)
 pure val digestValues = Set("run-a", "run-b")
 pure val validFinish: ReceiptFile = { digest: "run-a", completionAt: 2, valid: true }

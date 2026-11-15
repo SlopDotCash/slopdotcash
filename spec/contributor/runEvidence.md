@@ -18,8 +18,9 @@ pull-request-opened record is the [`opened` command](./openedRun.md).
 ### The same local run resumes its own server record and bounded exact upload
 
 A trace attempt starts from the active local measured run (the
-[local receipt](./localReceipt.md) state) and a disclosed, consented
-snapshot. The bounded server preflight must report enabled private intake no
+[local receipt](./localReceipt.md) state, a record satisfying every local
+receipt rule; that the shell supplies the actual stored record is a
+composition obligation) and a disclosed, consented snapshot. The bounded server preflight must report enabled private intake no
 older than 24 hours; the server rechecks it at upload. The exact returned
 server run ID belongs to that request. Retrying the stable create-run
 identity can find server state awaiting upload, already uploaded or
@@ -42,7 +43,7 @@ pure def stageRank(stage: E::ServerStage): int =
 pure def intakeFresh(intake: IntakePreflight): bool = intake.enabled and 0 <= intake.ageSeconds and intake.ageSeconds <= 86400
 pure def canSelectTrace(s: TraceRun, snapshot: E::Snapshot, intake: IntakePreflight, local: LR::LocalReceipt): bool =
   (s.phase == LocalIdle or s.phase == Confirmed) and E::validSnapshot(snapshot) and intakeFresh(intake)
-    and local.started and local.active
+    and LR::consistentReceipt(local) and local.started and local.active
 pure def selectTrace(s: TraceRun, snapshot: E::Snapshot, intake: IntakePreflight, local: LR::LocalReceipt): TraceRun =
   { ...s, phase: LocalSelected, selected: snapshot, failure: false }
 pure def canRegister(s: TraceRun, runReply: E::RunReply): bool = s.phase == LocalSelected and E::consistentRun(runReply)
@@ -63,8 +64,9 @@ pure def store(s: TraceRun, uploadReply: E::UploadReply): TraceRun =
 When a run is already uploaded the client does not upload again. It can obtain
 the exact previously persisted receipt through finalization. The server can
 finalize the retained object even if the newly selected file has a different
-digest. The client then refuses the mismatching receipt and never attaches it
-to those bytes. A lost response, a server refusal (stale intake, ban, used or
+digest. The client then refuses the mismatching selection and never attaches
+it to those bytes; the refusal records no server stage it has not been told,
+so the server stage stays the last one a reply reported. A lost response, a server refusal (stale intake, ban, used or
 expired capability, conflict) or a transport failure stops the attempt
 without removing the retained server identity or object.
 
@@ -78,7 +80,7 @@ pure def canFinalize(s: TraceRun, finalizeReply: FinalizeReply): bool = s.phase 
 pure def finalize(s: TraceRun, finalizeReply: FinalizeReply): TraceRun = { ...s, phase: Confirmed, serverStage: E::TraceFinalized }
 pure def canRefuseDifferentSelection(s: TraceRun): bool = s.phase == Registered and
   (s.serverStage == E::TraceUploaded or s.serverStage == E::TraceFinalized) and s.storedDigest != s.selected.digest
-pure def refuseDifferentSelection(s: TraceRun): TraceRun = { ...s, phase: LocalIdle, serverStage: E::TraceFinalized, failure: true }
+pure def refuseDifferentSelection(s: TraceRun): TraceRun = { ...s, phase: LocalIdle, failure: true }
 pure def canStopAttempt(s: TraceRun, reason: StopReason): bool = s.phase != LocalIdle
 pure def stopAttempt(s: TraceRun, reason: StopReason): TraceRun = { ...s, phase: LocalIdle, failure: reason != LostResponse }
 pure def alwaysRunIdentity(s: TraceRun): bool = (s.serverStage == E::NoServerRun) iff (s.serverRun == "")
@@ -105,7 +107,8 @@ pure def abstractPhase(s: TraceRun): E::EvidencePhase =
 pure def refinesE(s: TraceRun): E::Evidence =
   { ...E::initial, phase: abstractPhase(s), digest: s.selected.digest, size: s.selected.size, storedDigest: s.storedDigest }
 pure def sometimesConfirmed(s: TraceRun): bool = s.phase == Confirmed
-pure def sometimesChangedRefused(s: TraceRun): bool = s.failure and s.serverStage == E::TraceFinalized and s.storedDigest != s.selected.digest
+pure def sometimesChangedRefused(s: TraceRun): bool = s.failure and s.phase == LocalIdle and s.storedDigest != ""
+  and s.storedDigest != s.selected.digest
 ```
 
 ### Simulation uses bounded representative digests and distinct identities
@@ -114,8 +117,10 @@ pure def sometimesChangedRefused(s: TraceRun): bool = s.failure and s.serverStag
 pure val snapA: E::Snapshot = { digest: "d1", size: 2, media: E::NdjsonText, disclosed: true, consent: true }
 pure val snapshotValues = Set(snapA, { ...snapA, digest: "d2" }, { ...snapA, consent: false })
 pure val intakeValues = Set({ enabled: true, ageSeconds: 10 }, { enabled: true, ageSeconds: 90000 }, { enabled: false, ageSeconds: 10 })
-pure val localActive: LR::LocalReceipt = { ...LR::initial, started: true, active: true, startedAt: 1 }
-pure val localValues = Set(localActive, LR::initial)
+pure val localActive: LR::LocalReceipt = { ...LR::initial, started: true, active: true, startedAt: 1,
+  declared: { provider: "p", model: "m", client: "c", lane: LR::ContributionLane },
+  installed: { template: "0123456789abcdef0123456789abcdef01234567", revision: 1, digest: "m1" } }
+pure val localValues = Set(localActive, LR::initial, { ...localActive, declared: LR::noDeclared })
 pure val runReplyValues = Set({ serverRun: "r1", stage: E::AwaitingTrace, storedDigest: "" },
   { serverRun: "r1", stage: E::TraceUploaded, storedDigest: "d1" }, { serverRun: "r2", stage: E::AwaitingTrace, storedDigest: "" })
 pure val uploadReplyValues = Set({ serverRun: "r1", digest: "d1", stage: E::TraceUploaded },

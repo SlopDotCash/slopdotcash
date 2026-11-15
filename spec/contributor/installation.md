@@ -40,20 +40,21 @@ type InstallOutput = NoOutput | Unchanged | Activated
 type InstallError = NoError | BeforeCommitError | ReadbackError | CleanupError | LockReleaseError | Interrupted
 type LocalAuthorization = NotChecked | LocalAuthorized | LocalRefused
 type LocalCheck = { version: Version, provenance: SA::Provenance, completeTree: bool, schemaValid: bool }
-type Installation = { phase: InstallPhase, locked: bool, processAlive: bool, wrapperAlive: bool, attempt: int,
+type ProjectObservation = { project: int, view: F::ProjectView }
+type Installation = { project: int, phase: InstallPhase, locked: bool, processAlive: bool, wrapperAlive: bool, attempt: int,
   target: Version, active: Version, old: Version, versions: List[Version], explicitRollback: bool, explicitTemplate: bool,
   admitted: bool, cleared: bool, readback: bool, committed: bool, sameBytes: bool,
   workRoots: List[int], stagedCandidates: List[int], temporaryLinks: List[int],
-  primary: InstallError, cleanupFailed: bool, local: LocalAuthorization, output: InstallOutput, delivered: bool }
+  primary: InstallError, cleanupFailed: bool, local: LocalAuthorization, localVersion: Version, output: InstallOutput, delivered: bool }
 pure val noVersion: Version = { template: "", revision: 0, digest: "" }
-pure val initial: Installation = { phase: Idle, locked: false, processAlive: true, wrapperAlive: true, attempt: 0,
+pure val initial: Installation = { project: 1, phase: Idle, locked: false, processAlive: true, wrapperAlive: true, attempt: 0,
   target: noVersion, active: noVersion, old: noVersion, versions: List(), explicitRollback: false, explicitTemplate: false,
   admitted: false, cleared: false, readback: false, committed: false, sameBytes: false,
   workRoots: List(), stagedCandidates: List(), temporaryLinks: List(), primary: NoError,
-  cleanupFailed: false, local: NotChecked, output: NoOutput, delivered: false }
+  cleanupFailed: false, local: NotChecked, localVersion: noVersion, output: NoOutput, delivered: false }
 pure def validVersion(v: Version): bool = v.template != "" and v.revision > 0 and v.digest != ""
 pure def openAttempt(i: Installation): bool = i.phase != Idle and i.phase != Complete and i.phase != Failed
-pure def alwaysIdentities(i: Installation): bool = i.attempt >= 0 and i.active.revision >= 0
+pure def alwaysIdentities(i: Installation): bool = i.project > 0 and i.attempt >= 0 and i.active.revision >= 0
   and i.versions.every(v => validVersion(v))
   and (i.active.revision > 0 implies validVersion(i.active))
   and (openAttempt(i) implies validVersion(i.target) and i.attempt > 0 and i.locked)
@@ -67,20 +68,28 @@ rollback selects a retained version and rechecks both sources and current
 clearance. Template selection permits older, divergent or previously revoked
 committed content; there is no freshness, ancestry, release-label or
 revocation gate. Only bytes from an admitted authority read of exactly the
-requested commit, D1 revision and registry digest are staged. Unverified
-archive bytes do not create a work root.
+requested commit, D1 revision and registry digest are staged: the read must
+satisfy every admission rule of the [source authority](./skillAuthority.md)
+and select this installation's project. Each clearance observation names the
+project it was read for, and only an observation of this installation's
+project counts. That the shell supplies the actual admitted read and the
+current projection is a composition obligation. Unverified archive bytes do
+not create a work root.
 
 ```quint
 pure def retainedVersion(i: Installation, v: Version): bool = i.versions.includes(v)
-pure def canBegin(i: Installation, version: Version, rollback: bool, explicitTemplate: bool, view: F::ProjectView): bool =
+pure def installableHere(i: Installation, observation: ProjectObservation): bool =
+  observation.project == i.project and F::installable(observation.view)
+pure def canBegin(i: Installation, version: Version, rollback: bool, explicitTemplate: bool, observation: ProjectObservation): bool =
   not(i.locked) and i.processAlive and not(openAttempt(i)) and i.attempt < 9007199254740991
-    and validVersion(version) and F::installable(view) and
+    and validVersion(version) and installableHere(i, observation) and
     (if (rollback) i.active.revision > 0 and retainedVersion(i, version) else version.revision >= i.active.revision)
-pure def begin(i: Installation, version: Version, rollback: bool, explicitTemplate: bool, view: F::ProjectView): Installation =
+pure def begin(i: Installation, version: Version, rollback: bool, explicitTemplate: bool, observation: ProjectObservation): Installation =
   { ...i, phase: Downloading, locked: true, wrapperAlive: true, attempt: i.attempt + 1, target: version,
     explicitRollback: rollback, explicitTemplate: explicitTemplate, old: i.active, admitted: false, cleared: true,
     readback: false, committed: false, sameBytes: false, primary: NoError, cleanupFailed: false, output: NoOutput, delivered: false }
 pure def readMatches(i: Installation, read: SA::SkillRead): bool = read.transport == SA::Admitted
+  and SA::bytesAdmitted(read) and SA::consistentRead(read) and read.selection.project == i.project
   and read.selection.role != SA::StaticSkill and read.selection.commit == i.target.template
   and read.selection.registryRevision == i.target.revision and read.selection.registryDigest == i.target.digest
 pure def canDownload(i: Installation, read: SA::SkillRead): bool =
@@ -104,14 +113,14 @@ version store only if the verified pair is absent. Reusing an existing
 version leaves the staged copy for cleanup.
 
 ```quint
-pure def canVerify(i: Installation, view: F::ProjectView, sameBytes: bool): bool =
-  i.phase == Verifying and i.locked and i.processAlive and i.admitted and F::installable(view)
+pure def canVerify(i: Installation, observation: ProjectObservation, sameBytes: bool): bool =
+  i.phase == Verifying and i.locked and i.processAlive and i.admitted and installableHere(i, observation)
     and (not(sameBytes) or (i.active.revision > 0 and i.target.revision == i.active.revision))
-pure def verify(i: Installation, view: F::ProjectView, sameBytes: bool): Installation =
+pure def verify(i: Installation, observation: ProjectObservation, sameBytes: bool): Installation =
   { ...i, phase: VerifiedBytes, cleared: true, sameBytes: sameBytes }
-pure def canRefuseClearance(i: Installation, view: F::ProjectView): bool =
-  i.phase == Verifying and i.processAlive and not(F::installable(view))
-pure def refuseClearance(i: Installation, view: F::ProjectView): Installation =
+pure def canRefuseClearance(i: Installation, observation: ProjectObservation): bool =
+  i.phase == Verifying and i.processAlive and observation.project == i.project and not(F::installable(observation.view))
+pure def refuseClearance(i: Installation, observation: ProjectObservation): Installation =
   { ...i, phase: if (i.workRoots.includes(i.attempt)) Cleaning else Closing, cleared: false, primary: BeforeCommitError }
 pure def unchanged(i: Installation): bool = i.target == i.active
   or (not(i.explicitRollback) and not(i.explicitTemplate) and i.sameBytes)
@@ -143,6 +152,8 @@ pure def canCommit(i: Installation, relativeLink: bool, atomicRename: bool): boo
   i.phase == LinkReady and i.locked and i.processAlive and i.admitted and i.cleared and relativeLink and atomicRename
 pure def commit(i: Installation, relativeLink: bool, atomicRename: bool): Installation =
   { ...i, phase: Committed, committed: true, active: i.target,
+    local: if (i.target == i.active) i.local else NotChecked,
+    localVersion: if (i.target == i.active) i.localVersion else noVersion,
     temporaryLinks: i.temporaryLinks.select(id => id != i.attempt) }
 pure def canConfirm(i: Installation, exactReadback: bool): bool = i.phase == Committed and i.processAlive and i.locked and exactReadback
 pure def confirm(i: Installation, exactReadback: bool): Installation = { ...i, phase: ReadBack, readback: true }
@@ -190,13 +201,22 @@ Installed `authorize` and `start` validate local provenance, complete hashes
 and receipt schema without a live GitHub or registry authorization call. A
 local checkout is not an installation: working-tree or missing provenance is
 refused, and so is any version other than the active verified one. The
-result is recorded, including refusal.
+result is recorded with the version it checked, including refusal. Activating
+a different version discards the earlier authorization, so `start` of the
+[local receipt](./localReceipt.md) always runs on a version that was itself
+checked, and never during an open installation attempt.
 
 ```quint
 pure def canAuthorizeLocal(i: Installation, check: LocalCheck): bool = not(openAttempt(i))
 pure def authorizeLocal(i: Installation, check: LocalCheck): Installation =
-  { ...i, local: if (i.active.revision > 0 and check.version == i.active and check.provenance == SA::Committed
-      and check.completeTree and check.schemaValid) LocalAuthorized else LocalRefused }
+  if (i.active.revision > 0 and check.version == i.active and check.provenance == SA::Committed
+      and check.completeTree and check.schemaValid) { ...i, local: LocalAuthorized, localVersion: check.version }
+  else { ...i, local: LocalRefused, localVersion: noVersion }
+pure def authorizedForStart(i: Installation): bool = not(openAttempt(i)) and i.local == LocalAuthorized
+  and i.localVersion == i.active and validVersion(i.active)
+pure def alwaysLocalMatchesActive(i: Installation): bool =
+  (i.local == LocalAuthorized implies i.localVersion == i.active and validVersion(i.active))
+  and (i.local != LocalAuthorized implies i.localVersion == noVersion)
 pure def alwaysSuccessHasReadback(i: Installation): bool = i.phase == Complete implies i.readback and i.primary == NoError
 pure def alwaysActiveRetained(i: Installation): bool = i.active.revision > 0 implies retainedVersion(i, i.active)
 pure def alwaysCandidateVerified(i: Installation): bool =
@@ -218,6 +238,11 @@ pure def stepOtherAttemptsUntouched(before: Installation, after: Installation): 
   and before.temporaryLinks.every(id => id != after.attempt implies after.temporaryLinks.includes(id))
 pure def stepWrapperDeathKeepsLock(before: Installation, via: str, after: Installation): bool =
   via == "wrapperDies" implies after.locked == before.locked and after.processAlive == before.processAlive
+pure def stepProjectFixed(before: Installation, after: Installation): bool = after.project == before.project
+pure def consistentInstallation(i: Installation): bool = alwaysIdentities(i) and alwaysSuccessHasReadback(i)
+  and alwaysActiveRetained(i) and alwaysCandidateVerified(i) and alwaysCandidateRetained(i)
+  and alwaysUncommittedRetainsActive(i) and alwaysCleanupFacts(i) and alwaysActivationOutput(i)
+  and alwaysPublishedStage(i) and alwaysLocalMatchesActive(i)
 pure def sometimesInstalled(i: Installation): bool = i.phase == Complete and i.output == Activated and i.active.revision > 0
 pure def sometimesLocalAuthorized(i: Installation): bool = i.local == LocalAuthorized
 pure def sometimesLocalCheckoutRefused(i: Installation): bool = i.local == LocalRefused and i.active.revision > 0
@@ -226,6 +251,25 @@ pure def sometimesUnchanged(i: Installation): bool = i.phase == Complete and i.o
 pure def sometimesCommittedAndUnverified(i: Installation): bool = i.phase == Failed and i.committed and not(i.readback)
 pure def sometimesWrapperDeathKeepsLock(i: Installation): bool = not(i.wrapperAlive) and i.locked and i.processAlive
 pure def sometimesClearanceLostRefused(i: Installation): bool = i.phase == Failed and not(i.cleared) and i.primary == BeforeCommitError
+pure def sometimesUpgradeNeedsNewAuthorization(i: Installation): bool = i.phase == Complete and i.output == Activated
+  and i.local == NotChecked and i.versions.length() >= 2
+```
+
+### Every installation attempt eventually releases its lock
+
+The installer process takes its own next step while it lives (a failure is
+always one available step before publication), and the kernel releases the
+lock of a dead process at the next invocation. Under that fairness every open
+attempt ends with the lock released.
+
+```quint
+pure def leadsToLockReleased(i: Installation, later: Installation): bool =
+  openAttempt(i) implies (not(openAttempt(later)) and not(later.locked))
+pure val fair_recordFailure = "weak"
+pure val fair_emitActivation = "weak"
+pure val fair_cleanup = "weak"
+pure val fair_finish = "weak"
+pure val fair_recoverProcess = "weak"
 ```
 
 ### Simulation samples exercise missing, matching and conflicting evidence
@@ -236,14 +280,20 @@ value allowed by their declared types and product rules.
 ```quint
 pure val v1: Version = { template: "0123456789abcdef0123456789abcdef01234567", revision: 1, digest: "m1" }
 pure val versionValues = Set(v1, { ...v1, revision: 2, digest: "m2" }, { ...v1, template: "fedcba9876543210fedcba9876543210fedcba98" })
-pure val admittedRead: SA::SkillRead = { ...SA::initial, transport: SA::Admitted, source: SA::CanonicalApi,
-  selection: { role: SA::ContributorSkill, project: 1, commit: v1.template, registryRevision: 1, registryDigest: "m1" } }
+pure val admittedRead: SA::SkillRead = { ...SA::initial, transport: SA::Admitted, source: SA::CanonicalApi, attempts: 1,
+  selection: { role: SA::ContributorSkill, project: 1, commit: v1.template, registryRevision: 1, registryDigest: "m1" },
+  checked: { commit: v1.template, provenance: SA::Committed, completeFiles: true, matchingBlobs: true, renderedDigest: "m1" },
+  projectOpen: true, projectFresh: true }
 pure val readValues = Set(admittedRead,
-  { ...admittedRead, selection: { role: SA::ContributorSkill, project: 1, commit: v1.template, registryRevision: 2, registryDigest: "m2" } },
-  { ...admittedRead, transport: SA::Downloaded })
+  { ...admittedRead, selection: { role: SA::ContributorSkill, project: 1, commit: v1.template, registryRevision: 2, registryDigest: "m2" },
+    checked: { commit: v1.template, provenance: SA::Committed, completeFiles: true, matchingBlobs: true, renderedDigest: "m2" } },
+  { ...admittedRead, transport: SA::Downloaded },
+  { ...admittedRead, checked: SA::unchecked },
+  { ...admittedRead, selection: { role: SA::ContributorSkill, project: 2, commit: v1.template, registryRevision: 1, registryDigest: "m1" } })
 pure val openView: F::ProjectView = { registered: true, retired: false, legacy: false, paused: false, flagged: false,
   quarantined: false, cleared: true, skillFields: true }
-pure val viewValues = Set(openView, { ...openView, flagged: true })
+pure val observationValues = Set({ project: 1, view: openView }, { project: 1, view: { ...openView, flagged: true } },
+  { project: 2, view: openView })
 pure val checkValues = Set({ version: v1, provenance: SA::Committed, completeTree: true, schemaValid: true },
   { version: v1, provenance: SA::WorkingTree, completeTree: true, schemaValid: true })
 pure val viaValues = Set("", "commit", "wrapperDies")

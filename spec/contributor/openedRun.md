@@ -8,7 +8,9 @@ the contributor's `opened` command in
 (`recordPullRequestOpened`). The server record it writes is the
 [server trace run](./traceServer.md) `appendEvent`, and closure reads it
 through `traceServer.md` `recordedSkillRun`. The session is the
-[session exchange](./sessionExchange.md). The command runs after the pull
+[session exchange](./sessionExchange.md): only a finished invocation that
+satisfies every session exchange rule is accepted, and that the shell
+supplies the invocation's actual state is a composition obligation. The command runs after the pull
 request exists, so it never blocks submission; it uploads no trace, usage,
 prompt or source bytes; and it has no GitHub write, so a failure leaves the
 pull request open. It uses a separate server run, keyed by the client run
@@ -47,6 +49,7 @@ pure def begin(o: OpenedInvocation, attempt: int, prRepository: str, prNode: str
   if (prRepository == o.repository and prNode != "" and declared(declaration)) { ...fresh, phase: AwaitingSession }
   else failWith(InvalidInput, fresh)
 pure def canReceiveSession(o: OpenedInvocation, session: X::Exchange): bool = o.phase == AwaitingSession and session.phase == X::Done
+  and X::consistentExchange(session)
 pure def receiveSession(o: OpenedInvocation, session: X::Exchange): OpenedInvocation =
   if (session.result != X::Ready or session.snapshot.serverId == "") failWith(SessionFailed, o)
   else if (session.snapshot.status == X::Finalized) failWith(RunFinalizedRefused, o)
@@ -81,11 +84,12 @@ pure val prRepositoryValues = Set("o/r", "x/y")
 pure val prNodeValues = Set("", "PR_a")
 pure val declarationValues = Set({ provider: "p", model: "m", client: "c", clientVersion: "1" },
   { provider: "", model: "m", client: "c", clientVersion: "1" })
-pure val readyExchange: X::Exchange = { ...X::initial, phase: X::Done, result: X::Ready, minted: true,
-  role: X::ContributorRole, created: X::RowExisting, key: "k", attempt: 1,
+pure val readyExchange: X::Exchange = { ...X::initial, phase: X::Done, result: X::Ready, now: 10, attempt: 1, key: "k",
+  actor: 1, flow: X::AssertionIssued, flowExpires: 300, assertionIssuedAt: 5, assertionExpires: 95, assertionConsumed: true,
+  minted: true, role: X::ContributorRole, bearerIssuedAt: 6, bearerExpires: 606, created: X::RowExisting,
   snapshot: { serverId: "s1", status: X::AwaitingTrace } }
 pure val sessionValues = Set(readyExchange, { ...readyExchange, snapshot: { serverId: "s1", status: X::Finalized } },
-  { ...X::initial, phase: X::Done, result: X::BannedRefused })
+  { ...X::initial, phase: X::Done, result: X::BannedRefused }, { ...readyExchange, minted: false })
 pure val eventReplyValues = Set({ serverRun: "s1", kind: TS::PullRequestOpened, eventId: "e1" },
   { serverRun: "s2", kind: TS::PullRequestOpened, eventId: "e1" }, { serverRun: "s1", kind: TS::Checkpoint, eventId: "e1" })
 ```
