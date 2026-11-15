@@ -1139,12 +1139,151 @@ function firstAcceptedOrdinary(source: CorrectionSource) {
   );
 }
 
-function mirroredOctoberSources(
+/** A broad later integration must not make an earlier accepted native PR look
+ * like copied work just because the integration PR was opened first. Keep the
+ * larger pool held. Release only the smaller source after exact native ancestry
+ * and its original author followed by carrier-authored commits are verified. */
+export async function nativeOriginalBeforePromotion(
+  github: Pick<GitHubClient, "get">,
+  larger: MergedPullRequestOutcome,
+  original: MergedPullRequestOutcome,
+  owners: ReadonlyMap<string, string>,
+): Promise<boolean> {
+  const repository = repositoryIdFromUrl(larger.url);
+  const originalUrl = new URL(original.url);
+  if (
+    originalUrl.hostname !== "github.com" ||
+    originalUrl.pathname.split("/").slice(1, 3).join("/").toLowerCase() !==
+      repository.toLowerCase()
+  )
+    return false;
+  const commits = original.commits;
+  const largerShas = new Set(larger.commits?.map((commit) => commit.oid));
+  if (
+    !verifiedHuman(larger.author) ||
+    !verifiedHuman(original.author) ||
+    larger.author.id === original.author.id ||
+    Date.parse(original.mergedAt) > Date.parse(larger.mergedAt) ||
+    !Number.isFinite(Date.parse(original.mergedAt)) ||
+    !Number.isFinite(Date.parse(larger.mergedAt)) ||
+    larger.baseRefName === original.baseRefName ||
+    !commits?.length ||
+    !larger.commits ||
+    commits.length >= larger.commits.length ||
+    !original.headRefOid ||
+    !larger.headRefOid ||
+    commits.some(
+      (commit) =>
+        commit.parentCount !== 1 ||
+        !largerShas.has(commit.oid) ||
+        owners.get(`${repository.toLowerCase()}\0${commit.oid}`) !==
+          original.id,
+    )
+  )
+    return false;
+  const [large, small] = await Promise.all(
+    [larger, original].map((outcome) =>
+      github.get<Pull & { created_at: string }>(
+        `/repos/${repository}/pulls/${outcome.number}`,
+      ),
+    ),
+  );
+  for (const [index, outcome] of [larger, original].entries()) {
+    const pull = [large, small][index];
+    if (
+      !pull ||
+      pull.node_id !== outcome.id ||
+      pull.html_url !== outcome.url ||
+      pull.number !== outcome.number ||
+      pull.state !== "closed" ||
+      pull.merged_at !== outcome.mergedAt ||
+      pull.head.sha !== outcome.headRefOid ||
+      pull.base.ref !== outcome.baseRefName ||
+      pull.user.node_id !== outcome.author?.id ||
+      pull.updated_at !== outcome.updatedAt ||
+      pull.commits !== outcome.commits?.length ||
+      !pull.merge_commit_sha
+    )
+      return false;
+  }
+  if (!large || !small?.merge_commit_sha) return false;
+  const merge = await github.get<{ sha: string; parents: { sha: string }[] }>(
+    `/repos/${repository}/git/commits/${small.merge_commit_sha}`,
+  );
+  if (
+    merge?.sha !== small.merge_commit_sha ||
+    merge.parents.length !== 2 ||
+    merge.parents[1].sha !== original.headRefOid ||
+    merge.parents[0].sha === merge.parents[1].sha
+  )
+    return false;
+  const ancestry = await github.get<{
+    status: string;
+    behind_by: number;
+    base_commit: { sha: string };
+    merge_base_commit: { sha: string };
+  }>(
+    `/repos/${repository}/compare/${small.merge_commit_sha}...${larger.headRefOid}?per_page=100&page=1`,
+  );
+  if (
+    !ancestry ||
+    !["ahead", "identical"].includes(ancestry.status) ||
+    ancestry.behind_by !== 0 ||
+    ancestry.base_commit?.sha !== small.merge_commit_sha ||
+    ancestry.merge_base_commit?.sha !== small.merge_commit_sha
+  )
+    return false;
+  const native = new Map<
+    string,
+    {
+      sha: string;
+      parents: { sha: string }[];
+      author: { node_id: string } | null;
+    }
+  >();
+  for (const commit of commits) {
+    const value = await github.get<{
+      sha: string;
+      parents: { sha: string }[];
+      author: { node_id: string } | null;
+    }>(`/repos/${repository}/commits/${commit.oid}?per_page=100&page=1`);
+    if (
+      !value ||
+      value.sha !== commit.oid ||
+      value.parents.length !== 1 ||
+      value.author?.node_id !== commit.author?.id ||
+      ![original.author.id, larger.author.id].includes(
+        value.author?.node_id ?? "",
+      )
+    )
+      return false;
+    native.set(value.sha, value);
+  }
+  let current = original.headRefOid;
+  const visited = new Set<string>();
+  let originalSeen = false;
+  while (native.has(current)) {
+    if (visited.has(current)) return false;
+    visited.add(current);
+    const commit = native.get(current);
+    if (!commit) return false;
+    if (commit.author?.node_id === original.author.id) originalSeen = true;
+    // Walking backward, every carrier follow-up must descend an original
+    // anchor. An earlier carrier commit would precede the initiator instead.
+    else if (originalSeen) return false;
+    current = commit.parents[0].sha;
+  }
+  return originalSeen && visited.size === native.size;
+}
+
+export async function mirroredOctoberSources(
+  github: Pick<GitHubClient, "get">,
   outcomes: readonly MergedPullRequestOutcome[],
   owners: ReadonlyMap<string, string>,
 ) {
   const byId = new Map(outcomes.map((outcome) => [outcome.id, outcome]));
   const held = new Set<string>();
+  const nativePairs = new Map<string, Promise<boolean>>();
   for (const donor of outcomes) {
     if (!donor.mergedAt?.startsWith("2026-10-") || !verifiedHuman(donor.author))
       continue;
@@ -1164,7 +1303,18 @@ function mirroredOctoberSources(
         // GitHub can mark a submitted PR merged after a replacement accepts its
         // exact commits. Reconcile the two pools together before credit changes.
         held.add(donor.id);
-        held.add(carrier.id);
+        const pair = `${donor.id}\0${carrier.id}`;
+        let nativeOriginal = nativePairs.get(pair);
+        if (!nativeOriginal) {
+          nativeOriginal = nativeOriginalBeforePromotion(
+            github,
+            donor,
+            carrier,
+            owners,
+          ).catch(() => false);
+          nativePairs.set(pair, nativeOriginal);
+        }
+        if (!(await nativeOriginal)) held.add(carrier.id);
       }
     }
   }
@@ -2626,8 +2776,9 @@ async function collectWithEvidenceCache(
     : new Map<string, string>();
   const mirroredOctober =
     octoberOriginalCredit && ownershipComplete
-      ? mirroredOctoberSources(allOutcomes, owners)
+      ? await mirroredOctoberSources(github, allOutcomes, owners)
       : new Set<string>();
+  cache.assertUninterrupted();
   const censusDigest = digest(
     encode({
       repositories: campaign.repositories.map((r) => ({
