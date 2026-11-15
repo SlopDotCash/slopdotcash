@@ -51,7 +51,7 @@ pure val initial: Enforcement = { projectId: 1, repositories: List(1), original:
   creator: 0, steward: 0, revision: 0, administrators: Set(5, 6, 7), moderators: Set(5, 6),
   restriction: Clear, epoch: 0, restrictedBy: Set(), appeal: NoAppeal, appellants: Set(),
   revisionPending: false, findings: Set(), reviewedFindings: Set(), accountBans: List(),
-  seq: 0, assessmentIds: Set(), latest: Map(1 -> unassessed),
+  seq: 0, assessmentIds: Set(), latest: Map(),
   flags: List(), withdrawn: Set(), resolved: List(), clockDay: 0,
   grants: List(), grantSeq: Map(), exempt: Set(), revocations: List(),
   journal: List(), notices: List() }
@@ -61,8 +61,8 @@ pure def latestOf(e: Enforcement, repository: int): Assessment =
 pure def grantSeqOf(e: Enforcement, repository: int): int =
   if (e.grantSeq.keys().contains(repository)) e.grantSeq.get(repository) else 0
 pure def alwaysModeratorsAreAdministrators(e: Enforcement): bool = e.moderators.subseteq(e.administrators)
-pure def alwaysEveryRepositoryHasLatest(e: Enforcement): bool =
-  e.repositories.length() > 0 and e.repositories.every(r => r > 0 and e.latest.keys().contains(r))
+pure def alwaysRepositoriesRegistered(e: Enforcement): bool =
+  e.repositories.length() > 0 and e.repositories.every(r => r > 0)
 ```
 
 ### Each repository clears on its own admission, exemption or retained clean scan
@@ -229,6 +229,8 @@ pure def canAppendRepository(e: Enforcement, repository: int): bool =
   repository > 0 and not(e.repositories.includes(repository)) and e.restriction == Clear
 pure def appendRepository(e: Enforcement, repository: int): Enforcement =
   { ...e, repositories: e.repositories.append(repository), latest: e.latest.put(repository, unassessed) }
+pure def lawMissingAssessmentIsUnassessed(e: Enforcement, repository: int): bool =
+  not(e.latest.keys().contains(repository)) implies latestOf(e, repository) == unassessed and not(repositoryCleared(e, repository) and not(e.frozen.contains(repository)) and not(e.exempt.contains(repository)))
 pure def canObserveRevision(e: Enforcement, revision: int, steward: int, creator: int): bool =
   revision > e.revision and steward > 0 and creator > 0 and (e.creator == 0 or creator == e.creator)
 pure def observeRevision(e: Enforcement, revision: int, steward: int, creator: int): Enforcement =

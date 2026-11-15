@@ -42,8 +42,8 @@ type Scan = { assignment: Assignment, phase: Phase, attempts: int,
   primary: Review, escalated: bool, specialist: Review, synthesis: bool,
   refusal: Refusal, disposition: Disposition, confirmation: Confirmation,
   reused: bool, reuseOrigin: int, retained: bool, recorded: Disposition }
-pure val assigned: Assignment = { assessment: 1, repository: 1, revision: 1, manifestDigest: 1, commit: 1, template: 1, policy: 1 }
-pure val initial: Scan = { assignment: assigned, phase: Queued, attempts: 0,
+pure val queuedAssignment: Assignment = { assessment: 1, repository: 1, revision: 1, manifestDigest: 1, commit: 1, template: 1, policy: 1 }
+pure val initial: Scan = { assignment: queuedAssignment, phase: Queued, attempts: 0,
   inventory: 0, inventoryDigest: 0, reviewed: 0, deterministic: false, uncoveredExecutable: 0, blocked: 0,
   primary: NotRun, escalated: false, specialist: NotRun, synthesis: false,
   refusal: NoRefusal, disposition: NoDisposition, confirmation: NoConfirmation,

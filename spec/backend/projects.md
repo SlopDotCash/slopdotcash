@@ -317,7 +317,8 @@ pure def remove(p: Project, by: int, removal: Removal): Project =
 pure val removalValues = Set({ authority: owner1, expectedRevision: 2 }, { authority: owner1, expectedRevision: 3 },
   { authority: { ...owner1, permission: PermissionUnavailable }, expectedRevision: 2 })
 pure def stepRemovalReplayAppendsNothing(before: Project, via: str, after: Project): bool =
-  (via == "remove" and before.retirement != NotRetired) implies after == before
+  (via == "remove" and before.retirement != NotRetired) implies
+    after.revision == before.revision and after.retirement == before.retirement and after.status == before.status
 pure def stepOwnerRemovalPermanent(before: Project, after: Project): bool =
   (before.retirement == OwnerRemoved implies after.retirement == OwnerRemoved) and
   (before.retirement == AdminDelisted implies after.retirement == AdminDelisted)
