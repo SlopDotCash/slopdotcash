@@ -3,6 +3,7 @@ import { getSandbox } from "@cloudflare/sandbox";
 import { sha256 } from "@noble/hashes/sha2.js";
 import { bytesToHex } from "@noble/hashes/utils.js";
 import { readBoundedJson } from "../../src/lib/browser-json";
+import type { ValueFileRequest } from "../slopbot/value-file-recovery";
 import {
   MERGE_PROFILE,
   type ValueMergeInput,
@@ -18,9 +19,29 @@ export class MergeVerifier
     inputs: ValueMergeInput[],
     bundle: ReadableStream<Uint8Array>,
   ) {
+    return this.run(inputs, bundle) as Promise<
+      Awaited<ReturnType<ValueMergeVerifier["reconstruct"]>>
+    >;
+  }
+
+  async recover(
+    inputs: ValueMergeInput[],
+    fileRequests: ValueFileRequest[],
+    bundle: ReadableStream<Uint8Array>,
+  ) {
+    return this.run(inputs, bundle, fileRequests) as Promise<
+      Awaited<ReturnType<NonNullable<ValueMergeVerifier["recover"]>>>
+    >;
+  }
+
+  private async run(
+    inputs: ValueMergeInput[],
+    bundle: ReadableStream<Uint8Array>,
+    fileRequests?: ValueFileRequest[],
+  ) {
     if (!Array.isArray(inputs) || !inputs.length)
       throw new Error("Merge reconstruction unavailable");
-    const serialized = JSON.stringify(inputs);
+    const serialized = JSON.stringify({ inputs, fileRequests });
     if (new TextEncoder().encode(serialized).length > 8 * 1024 * 1024)
       throw new Error("Merge reconstruction unavailable");
     const sandbox = getSandbox(this.env.RUNNER, crypto.randomUUID(), {
@@ -49,6 +70,7 @@ export class MergeVerifier
         JSON.stringify({
           profile: MERGE_PROFILE,
           inputs,
+          ...(fileRequests ? { fileRequests } : {}),
           bundleBytes: bytes,
           bundleSha256: bytesToHex(hash.digest()),
         }),
@@ -97,9 +119,13 @@ export class MergeVerifier
         "fixed merge result",
       );
       stage = "output-shape";
-      if (!Array.isArray(result) || result.length !== inputs.length)
+      if (fileRequests) {
+        if (!result || typeof result !== "object" || !("entries" in result))
+          throw new Error("File recovery result unavailable");
+      } else if (!Array.isArray(result) || result.length !== inputs.length) {
         throw new Error("Merge result unavailable");
-      return result as Awaited<ReturnType<ValueMergeVerifier["reconstruct"]>>;
+      }
+      return result;
     } catch {
       // Fixed stages/scalars only. Never include SDK errors, child output,
       // source bytes or input identities. The public intake still returns409.

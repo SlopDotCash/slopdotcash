@@ -8,6 +8,8 @@ import { isConfirmedMissingPublicReference } from "./value-reference-query";
 
 const API = "https://api.github.com";
 const encoder = new TextEncoder();
+const defaultTransport = ((input: RequestInfo | URL, init?: RequestInit) =>
+  fetch(input, init)) as typeof fetch;
 
 export async function verifyWebhookSignature(
   secret: string,
@@ -51,11 +53,11 @@ export class GitHubError extends Error {
 export class GitHubClient {
   private constructor(
     private readonly token: string,
-    private readonly transport: typeof fetch = fetch,
+    private readonly transport: typeof fetch = defaultTransport,
   ) {}
 
   /** Existing GitHub token for read-only source ingestion outside the Worker. */
-  static forToken(token: string, transport: typeof fetch = fetch) {
+  static forToken(token: string, transport: typeof fetch = defaultTransport) {
     if (!token.trim()) throw new Error("GitHub source token is required");
     return new GitHubClient(token, transport);
   }

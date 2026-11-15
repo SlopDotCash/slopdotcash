@@ -5,6 +5,14 @@ import type { TargetRepository } from "../../src/lib/repositories.mjs";
 // moving evidence prevents assessment; pagination limits never imply coverage.
 export interface EvidenceClient {
   get<T>(path: string): Promise<T | null>;
+  /** Invocation-local sharing of byte-identical immutable evidence text. */
+  internText?(text: string): string;
+  /** Private verifier-provided immutable text bytes, never uploaded source. */
+  verifiedFile?(
+    repository: string,
+    ref: string,
+    path: string,
+  ): Promise<{ sha: string; bytes: Uint8Array } | null>;
   graphql?<T>(query: string, variables: Record<string, unknown>): Promise<T>;
 }
 
