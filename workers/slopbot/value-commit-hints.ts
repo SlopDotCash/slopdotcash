@@ -3,18 +3,38 @@
  * tag or bracket, so one comment is read in linear time.
  */
 export function githubLinkDestinations(text: string): string {
-  return text
-    .replace(
-      /<a\b([^<>]*)>(?:(?!<\/?a\b)[\s\S])*<\/a>/giu,
-      (anchor, attributes: string) =>
-        /\bhref=(["'])(https:\/\/(?:redirect\.)?github\.com\/[^"']+)\1/iu.exec(
-          attributes,
-        )?.[2] ?? anchor,
-    )
-    .replace(
-      /\[[^[\]\n]*\]\((https:\/\/(?:redirect\.)?github\.com\/[^\s)[\]]+)\)/gu,
-      "$1",
-    );
+  return (
+    text
+      // Relative documentation links name local files and headings. Neither the
+      // label nor a numeric heading fragment is an outgoing GitHub reference.
+      .replace(
+        /\[[^[\]\n]*\]\(\s*(<[^<>\n]*>|(?:\\.|[^\s()])+)(?:\s+(?:"[^"\n]*"|'[^'\n]*'|\([^()\n]*\)))?\s*\)/gu,
+        (link, rawDestination: string, offset: number) => {
+          let escapes = 0;
+          for (let index = offset - 1; text[index] === "\\"; index--) escapes++;
+          if (escapes % 2 === 1) return link;
+          const destination = rawDestination.startsWith("<")
+            ? rawDestination.slice(1, -1)
+            : rawDestination;
+          const local =
+            !destination.startsWith("//") &&
+            !/^[A-Za-z][A-Za-z0-9+.-]*:/u.test(destination);
+          const path = destination.split(/[?#]/u, 1)[0];
+          return local && /\.md$/iu.test(path) ? " " : link;
+        },
+      )
+      .replace(
+        /<a\b([^<>]*)>(?:(?!<\/?a\b)[\s\S])*<\/a>/giu,
+        (anchor, attributes: string) =>
+          /\bhref=(["'])(https:\/\/(?:redirect\.)?github\.com\/[^"']+)\1/iu.exec(
+            attributes,
+          )?.[2] ?? anchor,
+      )
+      .replace(
+        /\[[^[\]\n]*\]\((https:\/\/(?:redirect\.)?github\.com\/[^\s)[\]]+)\)/gu,
+        "$1",
+      )
+  );
 }
 
 const label = (text: string) => text.trim().replace(/\s+/gu, " ").toLowerCase();
