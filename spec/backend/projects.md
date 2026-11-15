@@ -422,6 +422,7 @@ pure def sometimesNextMonthTerms(p: Project): bool = p.economic.length() > 0
 pure def sometimesLaterSteward(p: Project): bool = p.steward != p.creator and p.revision > 0
 pure def sometimesClosureEnabled(p: Project): bool = p.consent == C::Enabled
 pure val byValues = Set(0, 1, 2, 5)
+pure val pValues = Set(initial, { ...initial, application: ApplicationDecidedLegacy })
 pure val repositoryValues = Set(1, 2)
 pure val tierValues = Set(Community, Featured)
 pure val weight_create = 6

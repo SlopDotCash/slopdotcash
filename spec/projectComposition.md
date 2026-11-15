@@ -55,10 +55,12 @@ type AccountStanding = { actor: int, ban: BanRead }
 type RegistryRead = { repository: int, listedBy: int, restricted: bool }
 pure def unbanned(by: int, account: AccountStanding): bool = account.actor == by and account.ban == NotBanned
 pure def repositoryFree(repository: int, read: RegistryRead): bool = read.repository == repository and read.listedBy == 0 and not(read.restricted)
-pure val accountValues = Set({ actor: 1, ban: NotBanned }, { actor: 1, ban: AccountBanned }, { actor: 1, ban: BanUnavailable },
-  { actor: 2, ban: NotBanned })
-pure val registryValues = Set({ repository: 1, listedBy: 0, restricted: false }, { repository: 1, listedBy: 9, restricted: false },
-  { repository: 1, listedBy: 0, restricted: true }, { repository: 2, listedBy: 0, restricted: false })
+pure def lawConflictsRefuseCreation(repository: int, read: RegistryRead): bool =
+  (read.listedBy != 0 or read.restricted) implies not(repositoryFree(repository, read))
+pure def lawBanOrUnavailableRefusesOwnerWrite(by: int, account: AccountStanding): bool =
+  account.ban != NotBanned implies not(unbanned(by, account))
+pure val readValues = Set({ repository: 1, listedBy: 0, restricted: false }, { repository: 1, listedBy: 9, restricted: false },
+  { repository: 1, listedBy: 0, restricted: true })
 pure def canCreate(c: Registry, by: int, creation: P::Creation, account: AccountStanding, registry: RegistryRead): bool =
   P::canCreate(c.project, by, creation) and unbanned(by, account) and repositoryFree(P::primary(c.project), registry) and
   c.security.restriction == E::Clear
@@ -348,22 +350,30 @@ pure def sometimesAppendedAwaitingScan(c: Registry): bool =
   c.project.repositories.length() == 2 and c.project.status == P::Paused and not(E::cleared(c.security))
 pure val byValues = Set(0, 1, 2, 3, 5, 6)
 pure val goodStanding: E::FlagStanding = { actor: 2, revision: 1, accountAgeDays: 30, acceptedContributions: 1, maintainer: E::ReadNo, banned: E::ReadNo }
-pure val standingValues = Set(goodStanding, { ...goodStanding, actor: 3 }, { ...goodStanding, revision: 2 },
-  { ...goodStanding, actor: 3, revision: 2 }, { ...goodStanding, actor: 3, maintainer: E::ReadUnavailable })
+pure val standingValues = Set(goodStanding, { ...goodStanding, actor: 3 }, { ...goodStanding, revision: 2 }, { ...goodStanding, actor: 3, revision: 2 })
 pure val repositoryValues = Set(1, 2)
 pure val assessmentIdValues = Set(1, 2, 3)
 pure val creationValues = Set(P::creation1)
-pure val authorityValues = Set(P::owner1, { ...P::owner1, permission: P::PermissionUnavailable })
+pure val accountValues = Set({ actor: 1, ban: NotBanned }, { actor: 2, ban: NotBanned }, { actor: 1, ban: AccountBanned })
+pure val registryValues = Set({ repository: 1, listedBy: 0, restricted: false }, { repository: 2, listedBy: 0, restricted: false })
+pure val authorityValues = Set(P::owner1)
 pure val checkValues = Set({ authority: P::owner1, installations: List({ repository: 1, installation: P::Installed }, { repository: 2, installation: P::Installed }) },
   { authority: { ...P::owner1, installation: P::InstallationUnavailable }, installations: List() })
-pure val pinsValues = Set(List({ repository: 1, pin: E::PinMatches }, { repository: 2, pin: E::PinMatches }),
-  List({ repository: 1, pin: E::PinUnavailable }))
+pure val changeValues = Set(P::change1, { ...P::change1, expectedRevision: 3, executable: true, clearance: P::ClearanceRetained },
+  { ...P::change1, authority: { ...P::owner1, actor: 2 }, expectedRevision: 1 },
+  { ...P::change1, authority: { ...P::owner1, actor: 2 }, expectedRevision: 1, clearance: P::ClearanceMissing })
+pure val weight_publishUpdate = 4
+pure val appendEvidenceValues = Set({ ...P::append1, expectedRevision: 1 }, P::append1)
+pure val editValues = Set({ authority: P::owner1, expectedRevision: 2, checked: true })
+pure val removalValues = Set({ authority: P::owner1, expectedRevision: 2 })
+pure val requestValues = Set(E::goodGrant)
+pure val rowValues = Set({ projectId: 1, repository: 1 })
+pure val pinsValues = Set(List({ repository: 1, pin: E::PinMatches }, { repository: 2, pin: E::PinMatches }))
 pure val scanOutcomeValues = Set(
   { assessment: 1, repository: 1, revision: 1, disposition: A::DClean, reused: false, retained: true },
   { assessment: 1, repository: 1, revision: 1, disposition: A::DMalicious, reused: false, retained: true },
   { assessment: 2, repository: 1, revision: 1, disposition: A::DClean, reused: false, retained: true },
-  { assessment: 3, repository: 2, revision: 2, disposition: A::DClean, reused: false, retained: true },
-  { assessment: 1, repository: 1, revision: 1, disposition: A::DIncomplete, reused: false, retained: false })
+  { assessment: 3, repository: 2, revision: 2, disposition: A::DClean, reused: false, retained: true })
 pure val evidenceValues = Set(
   { captured: { revision: 2, manifestDigest: 1, enforcementGeneration: 1, clearanceGeneration: 1 },
     currentRegistry: { revision: 2, manifestDigest: 1, enforcementGeneration: 1, clearanceGeneration: 1 }, complete: true },
@@ -371,12 +381,19 @@ pure val evidenceValues = Set(
     currentRegistry: { revision: 2, manifestDigest: 1, enforcementGeneration: 2, clearanceGeneration: 1 }, complete: true })
 pure val periodValues = Set(202611, 202612)
 pure val stewardValues = Set(0, 4)
-pure val evidenceReadValues = Set({ assessment: 1, present: true }, { assessment: 1, present: false })
+pure val evidenceReadValues = Set({ assessment: 1, present: false })
 pure val templateValues = Set({ checkedDigest: 1, renderedDigest: 1 }, { checkedDigest: 1, renderedDigest: 2 })
 pure val cValues = Set(initial)
-pure val weight_create = 5
-pure val weight_requestAssessment = 5
-pure val weight_recordResult = 5
-pure val weight_activate = 5
-pure val weight_flag = 3
+pure val weight_create = 4
+pure val weight_publishApplication = 10
+pure val weight_requestAssessment = 10
+pure val weight_recordResult = 10
+pure val weight_activate = 8
+pure val weight_flag = 8
+pure val weight_requestAppeal = 5
+pure val weight_reinstate = 6
+pure val weight_reinstateFlagPause = 6
+pure val weight_quarantine = 4
+pure val weight_ban = 3
+pure val weight_appendRepository = 4
 ```
