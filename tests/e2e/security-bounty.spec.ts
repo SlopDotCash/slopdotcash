@@ -3629,6 +3629,21 @@ test("Slop receives a private report before GitHub and keeps it in Inbox @regist
     const report = page.locator(
       `[aria-labelledby="submission-${submissionId}"]`,
     );
+    await expect
+      .poll(
+        () =>
+          privateReads.some((url) => {
+            const receipt = new URL(url);
+            return (
+              receipt.pathname ===
+                `/api/v1/security-submissions/${submissionId}` &&
+              receipt.searchParams.get("view") === "receipt"
+            );
+          }),
+        { timeout: 30_000 },
+      )
+      .toBe(true);
+    await expect(report).toBeVisible();
     await expect(page.locator(".security-report-text")).toHaveCount(0);
     await expect(page.getByText(description, { exact: true })).toHaveCount(0);
     await expect(
@@ -3645,7 +3660,6 @@ test("Slop receives a private report before GitHub and keeps it in Inbox @regist
       path: test.info().outputPath("slop-report-inbox-compact.png"),
       fullPage: true,
     });
-    expect(privateReads.length).toBeGreaterThan(0);
     expect(
       privateReads.every(
         (url) => new URL(url).searchParams.get("view") === "receipt",
