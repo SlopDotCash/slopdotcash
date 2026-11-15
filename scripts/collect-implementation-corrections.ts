@@ -2453,7 +2453,11 @@ async function copiedOriginalContributorUnitProof(
   claims: readonly CorrectionClaim[],
 ): Promise<HistoricalOrdinaryProof | null> {
   if (original.evidence.pull.merged_at !== null) return null;
-  const source = richSource(original.evidence, owners);
+  const rawSource = richSource(original.evidence, owners);
+  const primary = soleOriginalPrimary(rawSource);
+  const originatingActor =
+    primary?.id !== rawSource.author?.id ? primary : undefined;
+  const source = originalContributorSource(rawSource, originatingActor);
   if (
     claims.some(
       (claim) =>
@@ -2561,8 +2565,9 @@ async function copiedOriginalContributorUnitProof(
     "Copied unit source changed during verification",
   );
   return {
-    sources: [accepted, source],
+    sources: [accepted, rawSource],
     originalContributor: {
+      ...(originatingActor ? { originatingActor } : {}),
       originalSourceId: source.sourceId,
       originalCommitSha: anchor.originalCommitSha,
       acceptedCommitSha: anchor.acceptedCommitSha,
@@ -2674,11 +2679,12 @@ async function singleOriginalContributorUnitProof(
       claims.filter((claim) => claim.sourceId === accepted.sourceId),
     ));
   requireThat(proof, "Reviewed unit lacks verified original acceptance");
-  if (originatingActor) rawSource.commits = currentSource.commits;
   if (originatingActor && proof.originalContributor) {
     proof.originalContributor.originatingActor = originatingActor;
     proof.sources = proof.sources.map((item) =>
-      item.sourceId === rawSource.sourceId ? rawSource : item,
+      item.sourceId === rawSource.sourceId
+        ? { ...item, author: rawSource.author }
+        : item,
     );
   }
   if (reviewedOriginal)

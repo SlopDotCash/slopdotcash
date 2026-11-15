@@ -1434,9 +1434,12 @@ function deriveProof(
     check(
       binding.originatingActor === undefined ||
         (candidate.kind === "work-unit" &&
-          binding.exactAcceptance === true &&
-          binding.claimIds !== undefined),
-      "sole primary origin requires reviewed native claim scope",
+          binding.claimIds !== undefined &&
+          (binding.exactAcceptance === true ||
+            (binding.exactAcceptance === undefined &&
+              binding.copiedClaims !== undefined &&
+              binding.copiedClaims.length > 0))),
+      "sole primary origin requires reviewed accepted claim scope",
     );
     const rawOriginal = sources.get(binding.originalSourceId);
     const currentOriginal = rawOriginal

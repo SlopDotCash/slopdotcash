@@ -3229,3 +3229,34 @@ for (const fault of [
     expect(() => apply(journal, input)).toThrow();
   });
 }
+
+test("copied claim scope binds the sole primary without rewriting a maintainer PR creator", () => {
+  const { journal, input, original, binding } = scopedCopiedOriginal();
+  original.author = C;
+  binding.originatingActor = A;
+  const result = apply(journal, input);
+  expect(amounts(result.journal)).toEqual({ [A.id]: 30, [C.id]: 0 });
+  expect(original.author).toEqual(C);
+  expect(total(result.journal)).toBe(total(journal));
+  expect(apply(result.journal, input, true, LATER).journal).toBe(
+    result.journal,
+  );
+});
+for (const fault of [
+  "different-primary",
+  "different-accepted",
+  "missing-copies",
+  "missing-claims",
+] as const) {
+  test(`copied primary binding refuses ${fault}`, () => {
+    const { journal, input, original, accepted, binding } =
+      scopedCopiedOriginal();
+    original.author = C;
+    binding.originatingActor = A;
+    if (fault === "different-primary") original.commits[0].author = B;
+    if (fault === "different-accepted") accepted.commits[0].author = B;
+    if (fault === "missing-copies") delete binding.copiedClaims;
+    if (fault === "missing-claims") delete binding.claimIds;
+    expect(() => apply(journal, input)).toThrow();
+  });
+}

@@ -1627,6 +1627,13 @@ test("a freshly verified review binds a historical original revision while retai
   ).toBe(sha("e"));
   expect(input.readPaths).toContain(`${root}/pulls/1/reviews/23`);
   expect(input.readPaths).toContain(`${root}/commits/${sha("a")}`);
+  expect(
+    proof.originalContributor?.reviewedOriginal?.commits[0].parentShas,
+  ).toEqual([sha("0")]);
+  expect(
+    proof.sources.find((source) => source.sourceId === "PR_original")
+      ?.commits[0].parentShas,
+  ).toEqual([sha("d")]);
 });
 
 for (const fault of [
@@ -1974,6 +1981,10 @@ test("native unit collector preserves a maintainer PR creator and binds the sole
       ?.id,
   ).toBe(carrier.node_id);
   expect(input.original.pull.user).toEqual(carrier);
+  expect(
+    proof.sources.find((source) => source.sourceId === "PR_original")
+      ?.commits[0].parentShas,
+  ).toEqual([sha("0")]);
   expect(proof.originalContributor?.claimIds).toEqual(
     claims.map((claim) => claim.id),
   );
@@ -2373,6 +2384,73 @@ for (const fault of [
       octoberOriginalContributorUnitProof(
         input.github,
         input.plain,
+        input.sources[1],
+        input.sources[0],
+        input.owners,
+        input.claims,
+      ),
+    ).rejects.toThrow();
+  });
+}
+
+test("copied unit keeps a maintainer PR creator and credits the sole verified primary", async () => {
+  const input = await copiedUnitSnapshot();
+  input.original.pull.user = carrier;
+  const current = input.responses.get(`${root}/pulls/1`) as {
+    user: typeof carrier;
+  };
+  current.user = carrier;
+  const proof = await octoberOriginalContributorUnitProof(
+    input.github,
+    input.acceptedSource,
+    input.sources[1],
+    input.sources[0],
+    input.owners,
+    input.claims,
+  );
+  expect(proof.originalContributor?.originatingActor?.id).toBe(origin.node_id);
+  expect(proof.originalContributor?.copiedClaims).toHaveLength(1);
+  expect(
+    proof.sources.find((s) => s.sourceId === input.original.pull.node_id)
+      ?.author?.id,
+  ).toBe(carrier.node_id);
+  expect(
+    proof.sources.find((s) => s.sourceId === input.original.pull.node_id)
+      ?.commits[0].parentShas,
+  ).toEqual([sha("0")]);
+});
+
+for (const fault of [
+  "different-primary",
+  "mixed-original",
+  "accepted-primary",
+] as const) {
+  test(`maintainer-created copied unit refuses ${fault}`, async () => {
+    const input = await copiedUnitSnapshot();
+    input.original.pull.user = carrier;
+    (input.responses.get(`${root}/pulls/1`) as { user: typeof carrier }).user =
+      carrier;
+    if (fault === "different-primary")
+      input.original.commits[0].author = {
+        node_id: "U_other",
+        login: "other",
+        type: "User",
+      };
+    if (fault === "mixed-original") {
+      const extra = clone(input.original.commits[0]);
+      extra.sha = sha("9");
+      extra.author = carrier;
+      extra.parents = [{ sha: input.original.pull.head.sha }];
+      input.original.commits.push(extra);
+      input.original.pull.commits++;
+      input.original.pull.head.sha = extra.sha;
+    }
+    if (fault === "accepted-primary")
+      input.accepted.commits[0].author = carrier;
+    await expect(
+      octoberOriginalContributorUnitProof(
+        input.github,
+        input.acceptedSource,
         input.sources[1],
         input.sources[0],
         input.owners,
