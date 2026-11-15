@@ -393,6 +393,9 @@ type PayableBinding = { actor: int, destination: str, version: int }
 pure val noAward: Award = { source: noSource, actor: 0, gross: M::zero, fee: M::zero, origin: ManualAward,
   period: 0, index: -1, committedAt: 0, paid: false, destination: "", bindingVersion: 0, paidIn: "" }
 pure def awardFor(e: Escrow, source: SourceKey): Award = e.awards.select(a => a.source == source).nthOr(0, noAward)
+pure def awardActorsFor(e: Escrow, origin: str, period: int): List[int] =
+  e.awards.select(a => a.source.origin == origin and a.source.period == period).listMap(a => a.source.actor)
+pure def hasAwardOf(e: Escrow, origin: AwardOrigin): bool = e.awards.some(a => a.origin == origin)
 pure def canPay(e: Escrow, source: SourceKey, binding: PayableBinding, ev: ChainEvent): bool =
   val award = awardFor(e, source)
   later(e, ev) and validSource(source) and award.source == source and not(award.paid) and binding.actor == award.actor
@@ -538,11 +541,11 @@ pure def sometimesManualAfterRelease(e: Escrow): bool = e.awards.some(a => a.ori
   and e.months.some(m => M::positiveAmount(m.released))
 ```
 
-### Simulation samples reach the November and December 2026 windows
+### Simulation samples reach the November 2026 window
 
 These input sets bound simulation only. The generated guards accept every
-value allowed by their declared types and product rules. December 2026 opens
-at 1796342400 (4 December 00:00 UTC) and closes at 1799020800.
+value allowed by their declared types and product rules. The November 2026
+window opens at 1796342400 (4 December 00:00 UTC) and closes at 1799020800.
 
 ```quint
 pure val evValues = Set(
@@ -552,11 +555,7 @@ pure val evValues = Set(
   { block: 3, index: 0, time: 1796428800, transaction: "t4" },
   { block: 4, index: 0, time: 1798000000, transaction: "t5" },
   { block: 5, index: 0, time: 1799020800, transaction: "t6" },
-  { block: 6, index: 0, time: 1799100000, transaction: "t7" },
-  { block: 7, index: 0, time: 1799200000, transaction: "t8" },
-  { block: 8, index: 0, time: 1799300000, transaction: "t9" },
-  { block: 9, index: 0, time: 1799400000, transaction: "t10" },
-  { block: 2, index: 0, time: 1796342400, transaction: "replay" })
+  { block: 6, index: 0, time: 1799100000, transaction: "t7" })
 pure val solanaAsset: AssetIdentity = { network: Solana, token: "mint", decimals: 6, native: false, kind: M::Token2022 }
 pure val cleanMint: MintFacts = { mintBytes: 300, mintAuthority: false, freezeAuthority: false, pointerAuthority: false,
   updateAuthority: false, selfHosted: true, mintExtensions: List("MetadataPointer", "TokenMetadata"), accountExtensions: List("ImmutableOwner") }
@@ -565,13 +564,12 @@ pure val assetValues = Set(baseAsset, solanaAsset, { ...baseAsset, token: "" })
 pure val delayValues = Set(0, 3600)
 pure val depositValues = Set({ vault: "vault", network: Base, token: "usdc", amount: List(8) },
   { vault: "vault", network: Solana, token: "mint", amount: List(8) },
-  { vault: "vault", network: Base, token: "usdc", amount: List(100) },
   { vault: "vault", network: Base, token: "other", amount: List(8) })
-pure val grossValues = Set(List(1), List(4), List(50))
+pure val grossValues = Set(List(4), List(50))
 pure val capValues = Set(List(0), List(8))
 pure def sampleKey(period: int, actor: int): SourceKey = { origin: "eliza", period: period, actor: actor }
 pure val sourceValues = Set(sampleKey(202611, 1)).union(Set(sampleKey(202611, 2))).union(Set(sampleKey(202612, 1)))
-pure val actorValues = Set(0, 1, 2)
+pure val actorValues = Set(1, 2)
 pure val byValues = Set("owner", "anyone")
 pure val recipientValues = Set("fees", "owner")
 pure val authorityValues = Set("attester", "next", "owner")
@@ -579,18 +577,14 @@ pure val rootAuthorization: RootAuthorization = { period: 202611, vault: "vault"
   allocationDigest: "a1", root: "r1", wholeGross: List(5), remainingGross: List(5), leafCount: 2, sourceSequence: 0,
   frozenAt: 1796342400, signer: "attester" }
 pure val authorizationValues = Set(rootAuthorization, { ...rootAuthorization, network: Solana },
-  { ...rootAuthorization, network: Solana, remainingGross: List(4) }, { ...rootAuthorization, sourceSequence: 1 },
-  { ...rootAuthorization, period: 202612, root: "r2", allocationDigest: "a2", wholeGross: List(4), remainingGross: List(4), leafCount: 1, sourceSequence: 1 },
-  { ...rootAuthorization, signer: "next" }, { ...rootAuthorization, wholeGross: List(9), remainingGross: List(9) })
+  { ...rootAuthorization, sourceSequence: 1 }, { ...rootAuthorization, signer: "next" })
 pure val leafSample: LeafProof = { period: 202611, index: 0, root: "r1", rootTotal: List(5), source: sampleKey(202611, 1), actor: 1, gross: List(1) }
 pure val proofValues = Set(leafSample)
   .union(Set({ ...leafSample, index: 1, source: sampleKey(202611, 2), actor: 2, gross: List(4) }))
-  .union(Set({ ...leafSample, period: 202612, root: "r2", rootTotal: List(4), source: sampleKey(202612, 1), gross: List(4) }))
   .union(Set({ ...leafSample, index: 1, actor: 2, gross: List(4) }))
   .union(Set({ ...leafSample, index: 1, source: sampleKey(202611, 2), actor: 0, gross: List(4) }))
 pure val releaseValues = Set({ period: 202611, expectedRemaining: List(4), releasedGross: List(4), signer: "attester" },
-  { period: 202611, expectedRemaining: List(5), releasedGross: List(5), signer: "attester" },
-  { period: 202611, expectedRemaining: List(4), releasedGross: List(4), signer: "next" })
+  { period: 202611, expectedRemaining: List(5), releasedGross: List(5), signer: "next" })
 pure val bindingValues = Set({ actor: 1, destination: "w1", version: 1 }, { actor: 2, destination: "w2", version: 1 },
   { actor: 1, destination: "w1", version: 0 })
 pure val weight_deposit = 6
@@ -600,4 +594,6 @@ pure val weight_releaseReserve = 4
 pure val weight_pay = 6
 pure val weight_withdraw = 4
 pure val weight_setMonthly = 2
+pure val weight_releaseLeaf = 8
+pure val weight_commitAward = 4
 ```

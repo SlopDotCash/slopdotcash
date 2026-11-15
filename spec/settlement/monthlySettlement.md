@@ -6,8 +6,7 @@ duplicate. This machine composes one project's [monthly allocation](./monthly.md
 with its [escrow accounting](./escrow.md). Obligations are created against
 the vault's own finalized free balance. A funded obligation becomes reserved
 only through a finalized award for its source key, by the owner's manual
-award or by a proven leaf of the attester-signed root, and paid only through
-the vault's payment of that award. Source anchors are development
+award or by a proven leaf of the attester-signed root. Source anchors are development
 `backend/payments/README.md` steps 4 and 5, `backend/payments/monthly.ts`
 (coordinator) and `contracts/evm/src/ProjectEscrow.sol`.
 
@@ -84,11 +83,10 @@ pure def obligationOf(s: MonthlySettlement, actor: int): MO::Obligation = MO::ob
 pure def awardFact(s: MonthlySettlement, actor: int, paid: bool): MO::AwardFact =
   { source: MO::keyFor(s.month, actor), actor: actor, gross: obligationOf(s, actor).amount, paid: paid }
 pure def canCommitObligation(s: MonthlySettlement, actor: int, ev: E::ChainEvent, by: str): bool =
-  val o = obligationOf(s, actor)
-  o.actor > 0 and E::canCommitAward(s.escrow, sourceOf(s, actor), actor, o.amount, ev, by)
+  obligationOf(s, actor).actor > 0 and E::canCommitAward(s.escrow, sourceOf(s, actor), actor, obligationOf(s, actor).amount, ev, by)
     and MO::canRecordReserved(s.month, awardFact(s, actor, false))
 pure def commitObligation(s: MonthlySettlement, actor: int, ev: E::ChainEvent, by: str): MonthlySettlement =
-  { escrow: E::commitAward(s.escrow, sourceOf(s, actor), actor, obligationOf(s, actor).amount, ev, by),
+  { ...s, escrow: E::commitAward(s.escrow, sourceOf(s, actor), actor, obligationOf(s, actor).amount, ev, by),
     month: MO::recordReserved(s.month, awardFact(s, actor, false)) }
 ```
 
@@ -99,12 +97,10 @@ remainder is the gross of obligations not yet reserved. A proven leaf
 reserves exactly one obligation of this month.
 
 ```quint
-pure def createdTotal(s: MonthlySettlement): M::Amount =
-  s.month.obligations.foldl(M::zero, (sum, o) => M::addAmounts(sum, if (o.progress == MO::Created) o.amount else M::zero))
 pure def canAdmitRoot(s: MonthlySettlement, authorization: E::RootAuthorization, ev: E::ChainEvent): bool =
   s.month.phase == MO::Funded and authorization.period == s.month.period
-    and M::equalAmounts(authorization.remainingGross, createdTotal(s))
-    and authorization.leafCount == s.month.obligations.select(o => o.progress == MO::Created).length()
+    and M::equalAmounts(authorization.remainingGross, MO::createdTotal(s.month))
+    and authorization.leafCount == MO::createdCount(s.month)
     and E::canAdmitRoot(s.escrow, authorization, ev)
 pure def admitRoot(s: MonthlySettlement, authorization: E::RootAuthorization, ev: E::ChainEvent): MonthlySettlement =
   { ...s, escrow: E::admitRoot(s.escrow, authorization, ev) }
@@ -113,16 +109,18 @@ pure def canMaterialize(s: MonthlySettlement, proof: E::LeafProof, ev: E::ChainE
     and M::equalAmounts(proof.gross, obligationOf(s, proof.actor).amount)
     and E::canMaterialize(s.escrow, proof, ev) and MO::canRecordReserved(s.month, awardFact(s, proof.actor, false))
 pure def materialize(s: MonthlySettlement, proof: E::LeafProof, ev: E::ChainEvent): MonthlySettlement =
-  { escrow: E::materialize(s.escrow, proof, ev), month: MO::recordReserved(s.month, awardFact(s, proof.actor, false)) }
+  { ...s, escrow: E::materialize(s.escrow, proof, ev), month: MO::recordReserved(s.month, awardFact(s, proof.actor, false)) }
 ```
 
-### Paying the award pays the obligation, and the vault keeps every other operation
+### The vault keeps its other operations while the month is reserved
+
+Withdrawals of free funds and reserve releases remain available. Payment of
+a reserved award, and the matching `recordPaid` of its obligation, is
+composed with the payment ledger and binding authority in a later
+composition step (see the composition obligations of the settlement fix
+report); this machine keeps the month's obligations at most Reserved.
 
 ```quint
-pure def canPayObligation(s: MonthlySettlement, actor: int, binding: E::PayableBinding, ev: E::ChainEvent): bool =
-  E::canPay(s.escrow, sourceOf(s, actor), binding, ev) and MO::canRecordPaid(s.month, awardFact(s, actor, true))
-pure def payObligation(s: MonthlySettlement, actor: int, binding: E::PayableBinding, ev: E::ChainEvent): MonthlySettlement =
-  { escrow: E::pay(s.escrow, sourceOf(s, actor), binding, ev), month: MO::recordPaid(s.month, awardFact(s, actor, true)) }
 pure def canWithdraw(s: MonthlySettlement, gross: M::Amount, ev: E::ChainEvent, by: str): bool = E::canWithdraw(s.escrow, gross, ev, by)
 pure def withdraw(s: MonthlySettlement, gross: M::Amount, ev: E::ChainEvent, by: str): MonthlySettlement =
   { ...s, escrow: E::withdraw(s.escrow, gross, ev, by) }
@@ -142,22 +140,24 @@ this month's source keys exists without an obligation, so there is no manual
 and automatic duplicate.
 
 ```quint
-pure def alwaysObligationsMatchVault(s: MonthlySettlement): bool = s.month.obligations.every(o =>
-  val award = E::awardFor(s.escrow, sourceOf(s, o.actor))
-  (o.progress == MO::Created) == E::sourceFree(s.escrow, sourceOf(s, o.actor))
-    and (o.progress != MO::Created implies award.actor == o.actor and M::equalAmounts(award.gross, o.amount))
-    and ((o.progress == MO::Paid) == (award.paid and not(E::sourceFree(s.escrow, sourceOf(s, o.actor))))))
-pure def alwaysNoAwardWithoutObligation(s: MonthlySettlement): bool = s.escrow.awards.every(a =>
-  (a.source.origin == s.month.project and a.source.period == s.month.period and s.month.phase != MO::Unopened)
-    implies s.month.obligations.some(o => o.actor == a.source.actor))
+pure def obligationMatches(s: MonthlySettlement, actor: int): bool =
+  (MO::obligationFor(s.month, actor).progress == MO::Created) == E::sourceFree(s.escrow, sourceOf(s, actor))
+    and (MO::obligationFor(s.month, actor).progress != MO::Created implies E::awardFor(s.escrow, sourceOf(s, actor)).actor == actor
+      and M::equalAmounts(E::awardFor(s.escrow, sourceOf(s, actor)).gross, MO::obligationFor(s.month, actor).amount))
+    and ((MO::obligationFor(s.month, actor).progress == MO::Paid)
+      == (E::awardFor(s.escrow, sourceOf(s, actor)).paid and not(E::sourceFree(s.escrow, sourceOf(s, actor)))))
+pure def alwaysObligationsMatchVault(s: MonthlySettlement): bool = MO::obligationActors(s.month).every(actor => obligationMatches(s, actor))
+pure def alwaysNoAwardWithoutObligation(s: MonthlySettlement): bool = s.month.phase != MO::Unopened implies
+  E::awardActorsFor(s.escrow, s.month.project, s.month.period).every(actor => MO::obligationActors(s.month).includes(actor))
 pure def alwaysChildRules(s: MonthlySettlement): bool =
   MO::alwaysAllocationConserved(s.month) and MO::alwaysObligationsMatchShares(s.month) and MO::alwaysCompletedPaid(s.month)
     and E::alwaysGrossConserved(s.escrow) and E::alwaysAwards(s.escrow)
 pure def sometimesManualThenLeaf(s: MonthlySettlement): bool =
-  s.escrow.awards.some(a => a.origin == E::ManualAward) and s.escrow.awards.some(a => a.origin == E::MonthlyLeaf)
-pure def sometimesMonthPaid(s: MonthlySettlement): bool = s.month.phase == MO::Completed and s.month.obligations.length() >= 2
+  E::hasAwardOf(s.escrow, E::ManualAward) and E::hasAwardOf(s.escrow, E::MonthlyLeaf)
+pure def sometimesMonthReserved(s: MonthlySettlement): bool = s.month.obligations.length() >= 2
+  and MO::allReserved(s.month)
 pure def sometimesPoolBlocksManual(s: MonthlySettlement): bool =
-  M::positiveAmount(s.escrow.pending) and s.month.obligations.some(o => o.progress == MO::Created)
+  M::positiveAmount(s.escrow.pending) and MO::createdCount(s.month) > 0
 pure def sometimesUnderfundedThenDeposit(s: MonthlySettlement): bool = s.month.underfundedNotice and s.month.phase == MO::Funded
 ```
 
@@ -176,10 +176,8 @@ pure val periodValues = Set(202611)
 pure val nowValues = Set(1796083300, 1796342400, 1796342500)
 pure val eligibilityValues = Set(MO::eligible)
 pure val snapshotValues = Set(MO::snapshotSample)
-pure val exclusionsValues = Set(List())
 pure val revisionValues = Set(MO::revisionSample)
 pure val earlierUnreservedValues = Set(List(0))
-pure val bansValues = Set(List())
 pure val depositValues = Set({ vault: "vault", network: E::Base, token: "usdc", amount: List(4) },
   { vault: "vault", network: E::Base, token: "usdc", amount: List(8) })
 pure val evValues = Set(
@@ -198,11 +196,9 @@ pure val proofValues = Set(leafBase).union(Set({ ...leafBase, index: 1, source: 
   .union(Set({ ...leafBase, index: 2, source: monthKey(3), actor: 3, gross: List(2) }))
   .union(Set({ ...leafBase, root: "q", rootTotal: List(8), index: 0, source: monthKey(2), actor: 2, gross: List(6) }))
   .union(Set({ ...leafBase, root: "q", rootTotal: List(8), index: 1, source: monthKey(3), actor: 3, gross: List(2) }))
-pure val bindingValues = Set({ actor: 1, destination: "w1", version: 1 }, { actor: 2, destination: "w2", version: 1 }, { actor: 3, destination: "w3", version: 1 })
 pure val grossValues = Set(List(1))
 pure val releaseValues = Set({ period: 202611, expectedRemaining: List(10), releasedGross: List(10), signer: "attester" },
   { period: 202611, expectedRemaining: List(8), releasedGross: List(8), signer: "attester" })
 pure val weight_materialize = 8
-pure val weight_payObligation = 8
 pure val weight_deposit = 4
 ```

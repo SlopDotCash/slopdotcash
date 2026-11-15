@@ -239,6 +239,11 @@ pure def recordReserved(m: Monthly, award: AwardFact): Monthly =
 pure def canRecordPaid(m: Monthly, award: AwardFact): bool =
   val o = obligationFor(m, award.actor)
   m.phase == Funded and o.actor > 0 and o.progress == Reserved and award.source == o.source and M::equalAmounts(award.gross, o.amount) and award.paid
+pure def obligationActors(m: Monthly): List[int] = m.obligations.listMap(o => o.actor)
+pure def createdTotal(m: Monthly): M::Amount =
+  m.obligations.foldl(M::zero, (sum, o) => M::addAmounts(sum, if (o.progress == Created) o.amount else M::zero))
+pure def createdCount(m: Monthly): int = m.obligations.select(o => o.progress == Created).length()
+pure def allReserved(m: Monthly): bool = m.obligations.every(o => o.progress == Reserved)
 pure def recordPaid(m: Monthly, award: AwardFact): Monthly =
   val obligations = m.obligations.listMap(o => if (o.actor == award.actor) { ...o, progress: Paid } else o)
   { ...m, obligations: obligations, phase: if (obligations.every(o => o.progress == Paid)) Completed else Funded }
@@ -330,10 +335,10 @@ pure val eligibilityValues = Set(eligible, { ...eligible, paused: true }, { ...e
 pure val revisionSample: RevisionFact = { number: 1, effectivePeriod: 202609, monthlyAmount: List(10), maximum: M::maxU128 }
 pure val revisionValues = Set(revisionSample, { ...revisionSample, monthlyAmount: List(0) }, { ...revisionSample, effectivePeriod: 202612 })
 pure val snapshotSample: X::WorkSnapshot = { project: "eliza", period: 202611, digest: "d", coverage: X::CompleteCoverage,
-  rows: List({ actor: 1, acceptedWork: 10, participation: 30, recognition: 0 }, { actor: 2, acceptedWork: 30, participation: 0, recognition: 5 },
-    { actor: 3, acceptedWork: 10, participation: 0, recognition: 0 }) }
+  rows: List({ actor: 1, acceptedWork: List(10), participation: 30, recognition: 0 }, { actor: 2, acceptedWork: List(30), participation: 0, recognition: 5 },
+    { actor: 3, acceptedWork: List(10), participation: 0, recognition: 0 }) }
 pure val snapshotValues = Set(snapshotSample, { ...snapshotSample, rows: List() }, { ...snapshotSample, coverage: X::MissingSources },
-  { ...snapshotSample, period: 202610 }, { ...snapshotSample, period: 202610, rows: List({ actor: 1, acceptedWork: 10, participation: 0, recognition: 0 }) })
+  { ...snapshotSample, period: 202610 }, { ...snapshotSample, period: 202610, rows: List({ actor: 1, acceptedWork: List(10), participation: 0, recognition: 0 }) })
 pure val exclusionsValues = Set(List(), List({ actor: 3, relationship: X::RelatedParty, fromPeriod: 202610, untilPeriod: 0 }))
 pure val actorValues = Set(1, 2, 3)
 pure val amountValues = Set(List(0), List(2), List(5))

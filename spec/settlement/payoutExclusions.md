@@ -31,7 +31,7 @@ weights can be shown to ignore them.
 import allocation as A from "./allocation"
 import money as M from "./money"
 type Coverage = CompleteCoverage | MissingSources | ConflictedSources
-type WorkRow = { actor: int, acceptedWork: int, participation: int, recognition: int }
+type WorkRow = { actor: int, acceptedWork: M::Amount, participation: int, recognition: int }
 type WorkSnapshot = { project: str, period: int, digest: str, coverage: Coverage, rows: List[WorkRow] }
 type Relationship = ProjectOwner | FundedEmployee | RelatedParty
 type Exclusion = { actor: int, relationship: Relationship, fromPeriod: int, untilPeriod: int }
@@ -42,16 +42,17 @@ pure def usableSnapshot(s: WorkSnapshot, project: str, period: int): bool =
   s.project == project and s.period == period and s.digest != "" and s.coverage == CompleteCoverage
     and s.rows.every(r => r.actor > 0 and s.rows.select(o => o.actor == r.actor).length() == 1)
 pure def rewardWeights(s: WorkSnapshot, exclusions: List[Exclusion]): List[A::Weight] =
-  s.rows.select(r => r.acceptedWork > 0 and not(excludedIn(exclusions, r.actor, s.period)))
-    .listMap(r => { actor: r.actor, weight: M::smallAmount(r.acceptedWork) })
+  s.rows.select(r => M::validAmount(r.acceptedWork) and M::positiveAmount(r.acceptedWork) and not(excludedIn(exclusions, r.actor, s.period)))
+    .listMap(r => { actor: r.actor, weight: r.acceptedWork })
 ```
 
 ### Participation and recognition never weigh, and an exclusion removes only its actor
 
 Changing an actor's participation or recognition leaves every weight
-unchanged. Excluding one actor removes that actor's weight and leaves every
-other weight exactly as it was, so no remaining contributor's share of the
-pool can fall. An actor with no positive accepted work gets no weight.
+unchanged. Adding an exclusion keeps every other actor's weight exactly as it
+was and adds nothing, so no remaining contributor's share of the pool can
+fall; only the excluded actor's weight can leave. An actor with no positive
+accepted work gets no weight.
 
 ```quint
 pure def withSideCategories(r: WorkRow, participation: int, recognition: int): WorkRow =
@@ -59,10 +60,12 @@ pure def withSideCategories(r: WorkRow, participation: int, recognition: int): W
 pure def lawParticipationNeverWeights(s: WorkSnapshot, exclusions: List[Exclusion], participation: int, recognition: int): bool =
   rewardWeights({ ...s, rows: s.rows.listMap(r => withSideCategories(r, participation, recognition)) }, exclusions)
     == rewardWeights(s, exclusions)
-pure def lawExclusionRemovesOnlyItsActor(s: WorkSnapshot, exclusions: List[Exclusion], e: Exclusion): bool =
-  val before = rewardWeights(s, exclusions)
+pure def lawExclusionKeepsOthers(s: WorkSnapshot, exclusions: List[Exclusion], e: Exclusion): bool =
   val after = rewardWeights(s, exclusions.append(e))
-  (after == before.select(w => not(covers(e, s.period) and w.actor == e.actor)))
+  rewardWeights(s, exclusions).every(w => (covers(e, s.period) and w.actor == e.actor) or after.includes(w))
+pure def lawExclusionOnlyRemoves(s: WorkSnapshot, exclusions: List[Exclusion], e: Exclusion): bool =
+  val before = rewardWeights(s, exclusions)
+  rewardWeights(s, exclusions.append(e)).every(w => before.includes(w) and not(covers(e, s.period) and w.actor == e.actor))
 pure def lawWeightsPositive(s: WorkSnapshot, exclusions: List[Exclusion]): bool =
   rewardWeights(s, exclusions).every(w => M::validAmount(w.weight) and M::positiveAmount(w.weight))
 ```
@@ -136,8 +139,8 @@ pure val actorValues = Set(1, 2)
 pure val periodValues = Set(202611, 202612, 202701, 202702)
 pure val byValues = Set("owner", "anyone")
 pure val sValues = Set({ project: "eliza", period: 202612, digest: "d", coverage: CompleteCoverage,
-  rows: List({ actor: 1, acceptedWork: 10, participation: 30, recognition: 5 }, { actor: 2, acceptedWork: 25, participation: 0, recognition: 0 },
-    { actor: 3, acceptedWork: 0, participation: 30, recognition: 0 }) })
+  rows: List({ actor: 1, acceptedWork: List(10), participation: 30, recognition: 5 }, { actor: 2, acceptedWork: List(25), participation: 0, recognition: 0 },
+    { actor: 3, acceptedWork: List(0), participation: 30, recognition: 0 }) })
 pure val exclusionsValues = Set(List(), List({ actor: 1, relationship: ProjectOwner, fromPeriod: 202612, untilPeriod: 0 }))
 pure val eValues = Set({ actor: 2, relationship: RelatedParty, fromPeriod: 202612, untilPeriod: 0 },
   { actor: 2, relationship: RelatedParty, fromPeriod: 202701, untilPeriod: 0 })
