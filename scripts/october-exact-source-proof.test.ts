@@ -1366,6 +1366,50 @@ test("the native collector partitions two original PRs by one contributor", asyn
       (part) => part.claimIds ?? [],
     ),
   ).toContain(repair.id);
+  second.evidence.commits[0].parents = [{ sha: sha("a") }];
+  const acceptedSecond = accepted.commits.find(
+    (commit) => commit.sha === sha("d"),
+  );
+  if (!acceptedSecond) throw Error("fixture");
+  acceptedSecond.parents = [{ sha: sha("a") }];
+  accepted.commits[1].parents = [{ sha: sha("d") }];
+  for (const commit of accepted.commits)
+    input.responses.set(`${root}/git/commits/${commit.sha}`, clone(commit));
+  range.commits.splice(
+    0,
+    range.commits.length,
+    ...clone(accepted.commits),
+    clone(accepted.mergeCommitEvidence),
+  );
+  const sharedAncestor = await octoberOriginalContributorPartsProof(
+    input.github,
+    [...input.sources, second],
+    input.owners,
+    [...claims, repair],
+    originals,
+    accepted.pull.node_id,
+  );
+  expect(
+    sharedAncestor.originalContributorParts?.flatMap(
+      (part) => part.claimIds ?? [],
+    ),
+  ).toContain(repair.id);
+  const otherOrigin = {
+    ...origin,
+    node_id: "MDQ6VXNlcjQ0",
+    login: "other-origin",
+  };
+  second.evidence.pull.user = otherOrigin;
+  await expect(
+    octoberOriginalContributorPartsProof(
+      input.github,
+      [...input.sources, second],
+      input.owners,
+      [...claims, repair],
+      originals,
+      accepted.pull.node_id,
+    ),
+  ).rejects.toThrow("multiple originating contributors");
   second.evidence.pull.user = carrier;
   await expect(
     octoberOriginalContributorPartsProof(
@@ -1376,7 +1420,7 @@ test("the native collector partitions two original PRs by one contributor", asyn
       originals,
       accepted.pull.node_id,
     ),
-  ).rejects.toThrow("different originating contributors");
+  ).rejects.toThrow("accepted carrier");
 });
 
 async function repairSnapshot() {
@@ -2459,3 +2503,101 @@ for (const fault of [
     ).rejects.toThrow();
   });
 }
+
+test("native unit keeps complete base context separate from selected followups", async () => {
+  const input = await nativeUnitContextSnapshot();
+  input.accepted.pull.base.sha = sha("f");
+  input.responses.set(`${root}/pulls/2`, {
+    ...input.accepted.pull,
+    created_at: "2026-10-02T00:00:00Z",
+  });
+  const earlier = clone(input.original.commits[0]);
+  earlier.sha = sha("0");
+  earlier.parents = [];
+  input.responses.set(`${root}/git/commits/${earlier.sha}`, clone(earlier));
+  input.original.commits.unshift(earlier);
+  input.original.pull.commits++;
+  input.original.commitAttribution.unshift({
+    ...clone(input.original.commitAttribution[0]),
+    sha: earlier.sha,
+  });
+  const bridge = clone(input.sources[0]);
+  bridge.evidence.pull.node_id = "PR_base_context";
+  bridge.evidence.pull.number = 3;
+  bridge.evidence.pull.html_url = `${root.replace("/repos/", "https://github.com/")}/pull/3`;
+  bridge.evidence.pull.head.sha = sha("7");
+  bridge.evidence.pull.merge_commit_sha = sha("f");
+  bridge.evidence.pull.merged_at = "2026-10-02T00:00:00Z";
+  bridge.evidence.commits = [
+    earlier,
+    {
+      ...clone(earlier),
+      sha: sha("7"),
+      parents: [{ sha: earlier.sha }],
+    },
+  ];
+  bridge.evidence.pull.commits = bridge.evidence.commits.length;
+  for (const commit of bridge.evidence.commits)
+    input.owners.set(
+      `${repository.toLowerCase()}\0${commit.sha}`,
+      bridge.evidence.pull.node_id,
+    );
+  bridge.evidence.commitAttribution = bridge.evidence.commits.map((commit) => ({
+    ...clone(input.original.commitAttribution[0]),
+    sha: commit.sha,
+  }));
+  const acceptedMerge = input.accepted.mergeCommitEvidence;
+  if (!acceptedMerge) throw Error("Missing accepted merge fixture");
+  bridge.evidence.mergeCommitEvidence = {
+    ...clone(acceptedMerge),
+    sha: sha("f"),
+    parents: [{ sha: earlier.sha }, { sha: sha("7") }],
+  };
+  input.responses.set(`${root}/pulls/1`, {
+    ...input.original.pull,
+    created_at: "2026-10-01T00:00:00Z",
+  });
+  await expect(
+    octoberOriginalContributorUnitProof(
+      input.github,
+      input.acceptedSource,
+      input.sources[1],
+      input.sources[0],
+      input.owners,
+      input.claims,
+    ),
+  ).rejects.toThrow("Full retained source evidence unavailable");
+  const proof = await octoberOriginalContributorUnitProof(
+    input.github,
+    input.acceptedSource,
+    input.sources[1],
+    input.sources[0],
+    input.owners,
+    input.claims,
+    [],
+    [bridge],
+  );
+  expect(proof.originalContributor?.claimIds).toEqual(
+    input.claims.map((claim) => claim.id),
+  );
+  expect(proof.originalContributor?.followups).toBeUndefined();
+  expect(
+    proof.sources.some(
+      (source) => source.sourceId === bridge.evidence.pull.node_id,
+    ),
+  ).toBe(false);
+  expect(input.original.limitations).toEqual([NATIVE_MERGE_CONTEXT]);
+  bridge.evidence.mergeCommitEvidence.parents[1].sha = sha("6");
+  await expect(
+    octoberOriginalContributorUnitProof(
+      input.github,
+      input.acceptedSource,
+      input.sources[1],
+      input.sources[0],
+      input.owners,
+      input.claims,
+      [],
+      [bridge],
+    ),
+  ).rejects.toThrow("Full retained source evidence unavailable");
+});

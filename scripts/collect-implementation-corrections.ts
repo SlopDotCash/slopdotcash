@@ -1179,6 +1179,7 @@ interface HistoricalOrdinaryProof {
   sources: CorrectionSource[];
   originalContributor?: OriginalContributorBinding;
   originalContributorParts?: OriginalContributorBinding[];
+  independentClaimIds?: string[];
 }
 
 function firstAcceptedOrdinary(source: CorrectionSource) {
@@ -2728,16 +2729,16 @@ async function singleOriginalContributorUnitProof(
   owners: ReadonlyMap<string, string>,
   claims: readonly CorrectionClaim[],
   followups: readonly WorkUnitSource[] = [],
+  contextSources: readonly WorkUnitSource[] = [],
 ): Promise<HistoricalOrdinaryProof> {
   // Resolve a native carrier deferral only against this complete supplied group.
   // Keep the raw sources for their digest and fresh GitHub identity checks below.
   const verified = await bindRetained(
     [
       ...new Map(
-        [original, integration, ...followups].map((source) => [
-          source.evidence.pull.node_id,
-          source,
-        ]),
+        [original, integration, ...followups, ...contextSources].map(
+          (source) => [source.evidence.pull.node_id, source],
+        ),
       ).values(),
     ],
     owners,
@@ -2902,6 +2903,7 @@ export async function octoberOriginalContributorUnitProof(
   owners: ReadonlyMap<string, string>,
   claims: readonly CorrectionClaim[],
   followups: readonly WorkUnitSource[] = [],
+  contextSources: readonly WorkUnitSource[] = [],
 ): Promise<HistoricalOrdinaryProof> {
   const evidence = [integration, ...followups];
   if (
@@ -3038,6 +3040,7 @@ export async function octoberOriginalContributorUnitProof(
       owners,
       claims,
       followups,
+      contextSources,
     );
   const sources = new Map<string, CorrectionSource>();
   const parts: OriginalContributorBinding[] = [];
@@ -3085,6 +3088,7 @@ export async function octoberOriginalContributorUnitProof(
       owners,
       selected,
       later,
+      contextSources,
     );
     requireThat(
       proof.originalContributor,
@@ -3099,7 +3103,7 @@ export async function octoberOriginalContributorUnitProof(
   return { sources: [...sources.values()], originalContributorParts: parts };
 }
 
-/** Preserve one person's unit across independently verified originating PRs. */
+/** Preserve one unit across independently verified originating PRs. */
 export async function octoberOriginalContributorPartsProof(
   github: Pick<GitHubClient, "get"> & Partial<Pick<GitHubClient, "graphql">>,
   sourceEvidence: readonly WorkUnitSource[],
@@ -3122,27 +3126,20 @@ export async function octoberOriginalContributorPartsProof(
     );
     return source;
   });
-  const originId = originals[0].evidence.pull.user.node_id;
-  requireThat(
-    originals.every((source) => source.evidence.pull.user.node_id === originId),
-    "Native unit has different originating contributors",
-  );
-  const sources = sourceEvidence.map((source) => {
-    const converted = richSource(source.evidence, owners);
-    return {
-      ...converted,
-      commits: converted.commits.map((commit) => {
-        const original = source.evidence.commits.find(
-          (item) => item.sha === commit.sha,
-        );
-        requireThat(original, "Native original commit disappeared");
-        return {
-          ...commit,
-          parentShas: original.parents.map((parent) => parent.sha),
-        };
-      }),
-    };
-  });
+  const sources = await bindRetained(sourceEvidence, owners, true);
+  for (const source of sources) {
+    const evidence = sourceEvidence.find(
+      (item) => item.evidence.pull.node_id === source.sourceId,
+    );
+    requireThat(evidence, "Native original source disappeared");
+    for (const commit of source.commits) {
+      const original = evidence.evidence.commits.find(
+        (item) => item.sha === commit.sha,
+      );
+      requireThat(original, "Native original commit disappeared");
+      commit.parentShas = original.parents.map((parent) => parent.sha);
+    }
+  }
   const graph = new Map<string, string[]>();
   for (const source of sources)
     for (const commit of source.commits) {
@@ -3179,6 +3176,7 @@ export async function octoberOriginalContributorPartsProof(
     for (const claim of ownClaims) assigned.add(claim.id);
     partition.set(id, ownClaims);
   }
+  const independentClaimIds: string[] = [];
   for (const claim of claims) {
     if (assigned.has(claim.id)) continue;
     const matching = [...partition]
@@ -3194,17 +3192,30 @@ export async function octoberOriginalContributorPartsProof(
               leftClaims.some((original) => original.path === claim.path),
             ) || leftId.localeCompare(rightId),
       );
-    requireThat(
-      matching.length > 0,
-      "Native follow-up lacks an originating ancestor",
+    if (!matching.length) {
+      independentClaimIds.push(claim.id);
+      continue;
+    }
+    const strongest = matching.filter(([, originalClaims]) =>
+      originalClaims.some((original) => original.path === claim.path),
     );
-    // Every partition has the same authenticated recipient. The selected
-    // ancestry proof changes neither the unit's value nor its beneficiary.
-    matching[0][1].push(claim);
+    const candidates = strongest.length ? strongest : matching;
+    const recipients = new Set(
+      candidates.map(([id]) => {
+        const source = sources.find((source) => source.sourceId === id);
+        return source?.author?.id;
+      }),
+    );
+    requireThat(
+      recipients.size === 1,
+      "Native follow-up has multiple originating contributors",
+    );
+    candidates[0][1].push(claim);
   }
   const authenticated = new Map<string, CorrectionSource>();
   const parts: OriginalContributorBinding[] = [];
   for (const original of originals) {
+    const originId = original.evidence.pull.user.node_id;
     const selected = partition.get(original.evidence.pull.node_id);
     requireThat(selected?.length, "Native original partition disappeared");
     const accepted = sources
@@ -3254,6 +3265,7 @@ export async function octoberOriginalContributorPartsProof(
       owners,
       selected,
       followups,
+      sourceEvidence,
     );
     if (proof.originalContributorParts) {
       parts.push(...proof.originalContributorParts);
@@ -3275,6 +3287,7 @@ export async function octoberOriginalContributorPartsProof(
       (source) => authenticated.get(source.sourceId) ?? source,
     ),
     originalContributorParts: parts,
+    ...(independentClaimIds.length ? { independentClaimIds } : {}),
   };
 }
 
@@ -4801,6 +4814,7 @@ async function collectWithEvidenceCache(
         );
         let originalContributor: HistoricalOrdinaryProof["originalContributor"];
         let originalContributorParts: OriginalContributorBinding[] | undefined;
+        let independentClaimIds: string[] | undefined;
         const claimedSources = sources
           .filter((source) =>
             claims.some((claim) => claim.sourceId === source.sourceId),
@@ -4976,6 +4990,7 @@ async function collectWithEvidenceCache(
                       followup.sourceId === source.evidence.pull.node_id,
                   ),
                 ),
+                decision.evidence.sources,
               );
               const authenticated = new Map(
                 proof.sources.map((source) => [source.sourceId, source]),
@@ -5056,6 +5071,7 @@ async function collectWithEvidenceCache(
             sources = proof.sources;
             restoreCanonicalMergeCounts(sources, outcomesById);
             originalContributorParts = proof.originalContributorParts;
+            independentClaimIds = proof.independentClaimIds;
           }
         }
         candidate.sourceIds = sources.map((s) => s.sourceId).sort();
@@ -5068,6 +5084,7 @@ async function collectWithEvidenceCache(
           claims,
           ...(originalContributor ? { originalContributor } : {}),
           ...(originalContributorParts ? { originalContributorParts } : {}),
+          ...(independentClaimIds?.length ? { independentClaimIds } : {}),
         };
       } catch (error) {
         cache.assertUninterrupted();

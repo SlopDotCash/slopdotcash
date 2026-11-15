@@ -302,8 +302,10 @@ interface CompleteCorrectionProof {
   sources: CorrectionSource[];
   /** Verified retained implementation for the October 2026 replacement rule. */
   originalContributor?: OriginalContributorBinding;
-  /** Independent native subproofs for one unit by the same verified person. */
+  /** Disjoint native subproofs for the verified origins of one accepted unit. */
   originalContributorParts?: OriginalContributorBinding[];
+  /** Independent accepted work outside the verified replacement parts. */
+  independentClaimIds?: string[];
 }
 export type PointsImplementationCorrectionCandidate =
   | (CorrectionCandidateBase & {
@@ -1053,6 +1055,7 @@ function deriveProof(
     );
     const parts = proof.originalContributorParts;
     const claims = candidate.proof.claims;
+    const independentClaimIds = proof.independentClaimIds ?? [];
     check(
       sameSet(
         candidate.proof.expectedClaimIds,
@@ -1065,7 +1068,10 @@ function deriveProof(
             part.claimIds.length > 0,
         ) &&
         sameSet(
-          parts.flatMap((part) => part.claimIds ?? []),
+          [
+            ...parts.flatMap((part) => part.claimIds ?? []),
+            ...independentClaimIds,
+          ],
           claims.map((claim) => claim.id),
         ) &&
         parts.some(
@@ -1088,7 +1094,12 @@ function deriveProof(
         completion.occurredAt === candidate.occurredAt,
       "completion source does not match the recorded pool",
     );
-    let result: DerivedProof | null = null;
+    const result: DerivedProof = {
+      actors: new Map(),
+      weights: new Map(),
+      scopes: [],
+    };
+    let incompleteLines = false;
     for (const part of parts) {
       const acceptedId = part.acceptedSourceId ?? candidate.sourceId;
       const accepted = proof.sources.find(
@@ -1139,6 +1150,7 @@ function deriveProof(
         proof: {
           ...candidate.proof,
           originalContributorParts: undefined,
+          independentClaimIds: undefined,
           originalContributor: binding,
           expectedClaimIds: selected.map((claim) => claim.id),
           claims: selected,
@@ -1146,16 +1158,59 @@ function deriveProof(
       });
       if (derived === null) return null;
       check(
-        derived.actors.size === 1 &&
-          (!result ||
-            [...derived.actors.keys()][0] === [...result.actors.keys()][0]),
-        "native subproofs identify different originating contributors",
+        derived.actors.size === 1,
+        "native subproof lacks one originating contributor",
       );
-      if (result) result.scopes.push(...derived.scopes);
-      else result = derived;
+      const origin = [...derived.actors.values()][0];
+      result.actors.set(origin.id, origin);
+      let weight = 0n;
+      for (const claim of selected) {
+        const source = proof.sources.find(
+          (source) => source.sourceId === claim.sourceId,
+        );
+        const commit = source?.commits.find(
+          (commit) => commit.sha === claim.commitSha,
+        );
+        const file = commit?.files?.find((file) => file.path === claim.path);
+        if (!file || !count(file.additions) || !count(file.deletions)) {
+          incompleteLines = true;
+          continue;
+        }
+        weight += BigInt(file.additions) + BigInt(file.deletions);
+      }
+      result.weights.set(
+        origin.id,
+        (result.weights.get(origin.id) ?? 0n) + weight,
+      );
+      result.scopes.push(...derived.scopes);
     }
+    if (independentClaimIds.length) {
+      const independent = claims.filter((claim) =>
+        independentClaimIds.includes(claim.id),
+      );
+      const ordinary = deriveProof({
+        ...candidate,
+        proof: {
+          ...candidate.proof,
+          originalContributorParts: undefined,
+          independentClaimIds: undefined,
+          claims: independent,
+          expectedClaimIds: independentClaimIds,
+        },
+      });
+      if (!ordinary) return null;
+      for (const [id, actor] of ordinary.actors) result.actors.set(id, actor);
+      for (const [id, weight] of ordinary.weights)
+        result.weights.set(id, (result.weights.get(id) ?? 0n) + weight);
+      result.scopes.push(...ordinary.scopes);
+    }
+    if (incompleteLines && result.actors.size > 1) return null;
     return result;
   }
+  check(
+    proof.independentClaimIds === undefined,
+    "independent claims require a complete original partition",
+  );
   check(
     sameSet(
       candidate.sourceIds,
