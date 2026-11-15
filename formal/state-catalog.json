@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "meaning": "Declared lifecycle candidates. This intentionally incomplete syntactic census cannot find every implicit state, establish reachability, or prove source/model correspondence. Review the open work listed in formal/README.md as well.",
-  "inventorySha256": "2ee7a32ceb47e6728827e26e3393038b2e6bc95e3770df355ca4fa276a7ea1c2",
+  "inventorySha256": "279d78ccee52a7e2dbefd0668dbdb7e9004b6c974adfd6df6a180328dde08d69",
   "states": [
     {
       "path": "backend/fee-conversions/handler.ts",
@@ -67,7 +67,7 @@
     },
     {
       "path": "backend/payments/monthly.ts",
-      "line": 1551,
+      "line": 1577,
       "name": "chain_state",
       "kind": "string-union",
       "values": ["paid", "reserved"],
@@ -2284,7 +2284,7 @@
     },
     {
       "path": "src/App.tsx",
-      "line": 457,
+      "line": 463,
       "name": "useState",
       "kind": "string-union",
       "values": ["deleting", "holding", "typing"],
@@ -2309,7 +2309,7 @@
     },
     {
       "path": "src/App.tsx",
-      "line": 1145,
+      "line": 1160,
       "name": "useState",
       "kind": "string-union",
       "values": ["blocked", "error", "loading", "ready"],
@@ -2909,7 +2909,7 @@
     },
     {
       "path": "src/VaultActions.tsx",
-      "line": 406,
+      "line": 423,
       "name": "result",
       "kind": "string-union",
       "values": [

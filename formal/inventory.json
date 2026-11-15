@@ -427,7 +427,7 @@
     },
     {
       "path": "backend/payments/monthly.ts",
-      "sha256": "6fe28107c89a76e63f2e6f89cfa989e81bcc4715ffce0fd2114678e5510ebfaf",
+      "sha256": "bbb1544b2c0ab87f581d2e20adcb00c273af31de43e59baa960d8df461c830bb",
       "models": [
         "formal/models/rewards/monthly_coordinator.qnt",
         "formal/models/rewards/monthly_cutoff_queue.qnt",
@@ -439,8 +439,8 @@
       "candidateLines": [
         80, 123, 131, 330, 420, 531, 560, 562, 576, 586, 595, 601, 619, 727,
         731, 754, 759, 782, 829, 856, 865, 885, 965, 1084, 1139, 1187, 1282,
-        1284, 1315, 1317, 1320, 1413, 1435, 1444, 1457, 1463, 1507, 1533, 1539,
-        1543, 1598, 1615
+        1284, 1315, 1317, 1320, 1439, 1461, 1470, 1483, 1489, 1533, 1559, 1565,
+        1569, 1624, 1641
       ],
       "review": "mapped-abstraction"
     },
@@ -474,13 +474,13 @@
     },
     {
       "path": "backend/payments/vault-snapshots.ts",
-      "sha256": "1e8f8bbc7a3834b589e3457bc8d3da36e8b2b769ac5e0ac8039c0145a8c371cf",
+      "sha256": "83ad0679a5882f1e37876258ea7bfb51998dbf2db3dc5376d453fb5cb872ede0",
       "models": [
         "formal/models/payments/chain_evidence.qnt",
         "formal/models/payments/vault_initial_snapshot.qnt",
         "formal/models/rewards/monthly_coordinator.qnt"
       ],
-      "candidateLines": [12, 62, 124, 136, 142],
+      "candidateLines": [12, 62, 124, 136, 142, 196],
       "review": "mapped-abstraction"
     },
     {
@@ -695,6 +695,13 @@
       "sha256": "a7ea9dade75ccc28aa82a05bd8471bb226d6d401fa030e1373f67bb06daede5f",
       "models": ["formal/models/api/api_merge_activity.qnt"],
       "candidateLines": [30, 167, 274, 354, 359, 389, 392],
+      "review": "mapped-abstraction"
+    },
+    {
+      "path": "backend/projects/pool-funding.ts",
+      "sha256": "bcc15b08284f517a02d24105670d9aeb3f5a1f5bba30e085fb2d82662aa6dc15",
+      "models": ["formal/models/ui/ui_pool_funding.qnt"],
+      "candidateLines": [8, 13],
       "review": "mapped-abstraction"
     },
     {
@@ -2060,7 +2067,7 @@
     },
     {
       "path": "functions/api/v1/[[path]].ts",
-      "sha256": "a692759af802e3216f9e6558fedaec25f362c319fefb6d789c25c8704cfcb96f",
+      "sha256": "10f92dadf24957f92fb651ef6671a21b4cf0d513331ae942f4d77ebfb7e322f7",
       "models": [
         "formal/models/api/api_request_composition.qnt",
         "formal/models/api/identity_consumer_exchange.qnt",
@@ -2068,7 +2075,7 @@
         "formal/models/payments/solana_binding_api.qnt",
         "formal/models/vetting/vetting_stream_authority.qnt"
       ],
-      "candidateLines": [531, 532, 568, 581],
+      "candidateLines": [534, 535, 571, 584],
       "review": "mapped-abstraction"
     },
     {
@@ -3359,6 +3366,13 @@
       "sha256": "00a4eb97b1b88939fdefc0611937edbb5bdfa6f7977821a985f406b0f1ebdf02",
       "models": ["formal/models/rewards/monthly_owner_cuts.qnt"],
       "candidateLines": [27, 29],
+      "review": "mapped-abstraction"
+    },
+    {
+      "path": "migrations/0127_vault_month_starts.sql",
+      "sha256": "6e096dcea29e238dae62b352a787eecfa3a822828fe86d712428509b7ebace84",
+      "models": ["formal/models/ui/ui_pool_funding.qnt"],
+      "candidateLines": [3, 4, 23, 25],
       "review": "mapped-abstraction"
     },
     {
@@ -4960,7 +4974,7 @@
     },
     {
       "path": "src/App.tsx",
-      "sha256": "60cf59a6827d8519aaee65aa5c967366a6211bde7135106f5219467cda398152",
+      "sha256": "ee9d105f5005976597381408290c82e141997be549de54eeefcece57af8fc324",
       "models": [
         "formal/models/ui/ui_clipboard_requests.qnt",
         "formal/models/ui/ui_cycle_archive.qnt",
@@ -4978,13 +4992,14 @@
         "formal/models/ui/ui_vetting_inventory.qnt"
       ],
       "candidateLines": [
-        13, 15, 292, 302, 312, 323, 332, 333, 334, 335, 336, 338, 339, 400, 455,
-        456, 457, 460, 483, 549, 580, 617, 663, 667, 669, 677, 730, 791, 847,
-        871, 1075, 1090, 1104, 1114, 1144, 1147, 1209, 1212, 1214, 1218, 1219,
-        1227, 1246, 1250, 1258, 1259, 1266, 1270, 1305, 1349, 1352, 1369, 1370,
-        1413, 1415, 1435, 1437, 1461, 1462, 1467, 1468, 1473, 1510, 1511, 1514,
-        1515, 1518, 1519, 1537, 1538, 1544, 1549, 1551, 1555, 1556, 1614, 1624,
-        1655, 1657, 1682, 1683, 1700, 1701, 1712, 1714, 1727, 1730, 1741
+        13, 15, 298, 308, 318, 329, 338, 339, 340, 341, 342, 344, 345, 406, 461,
+        462, 463, 466, 489, 555, 586, 623, 669, 673, 675, 683, 736, 797, 853,
+        882, 886, 1090, 1105, 1119, 1129, 1159, 1162, 1224, 1227, 1229, 1233,
+        1234, 1242, 1261, 1265, 1273, 1274, 1281, 1285, 1320, 1364, 1367, 1384,
+        1385, 1435, 1438, 1441, 1442, 1443, 1444, 1448, 1468, 1470, 1494, 1495,
+        1500, 1501, 1506, 1543, 1544, 1547, 1548, 1551, 1552, 1570, 1571, 1577,
+        1582, 1584, 1588, 1589, 1647, 1657, 1688, 1690, 1715, 1716, 1733, 1734,
+        1745, 1747, 1760, 1763, 1774
       ],
       "review": "mapped-abstraction"
     },
@@ -5097,16 +5112,17 @@
     },
     {
       "path": "src/EscrowFunding.tsx",
-      "sha256": "a4483c985009bcf2dd0f432060cbc1a6d6fda4881e95b7a11664ed356fa2577c",
+      "sha256": "6b4544d46fd62f51826ff83c5817ff34110d98daa6b9487dcd6342dff598c867",
       "models": [
         "formal/models/ui/ui_project_authority.qnt",
         "formal/models/ui/ui_resources.qnt"
       ],
       "candidateLines": [
-        2, 132, 133, 134, 136, 142, 146, 157, 183, 188, 192, 193, 194, 195, 196,
-        199, 200, 204, 216, 218, 227, 236, 237, 239, 240, 241, 243, 244, 247,
-        252, 254, 255, 256, 258, 261, 263, 264, 273, 275, 280, 283, 288, 291,
-        295, 296, 333, 335, 336, 339, 350, 361, 371
+        2, 138, 139, 140, 142, 148, 152, 163, 189, 194, 198, 199, 200, 201, 202,
+        205, 206, 210, 222, 224, 233, 242, 243, 245, 246, 247, 249, 250, 253,
+        258, 260, 261, 262, 264, 267, 269, 270, 279, 281, 286, 289, 294, 297,
+        301, 302, 339, 341, 342, 351, 353, 357, 359, 361, 364, 368, 379, 390,
+        400
       ],
       "review": "mapped-abstraction"
     },
@@ -5586,11 +5602,11 @@
     },
     {
       "path": "src/PublicPages.tsx",
-      "sha256": "7419513f3dcdcac764bfad9a945df4dde8c57909bc45d13d963737df662362ea",
+      "sha256": "9fb0f661a8b3ad25f1cf6e510ce49f6a63f6f8fbf30be690fb21790d99623548",
       "models": ["formal/models/ui/ui_record_display.qnt"],
       "candidateLines": [
-        216, 301, 312, 350, 373, 374, 376, 377, 410, 412, 423, 572, 573, 575,
-        576, 624, 626, 725
+        221, 306, 317, 355, 384, 385, 387, 388, 421, 423, 434, 583, 584, 586,
+        587, 594, 641, 643, 742
       ],
       "review": "mapped-abstraction",
       "statelessReason": "Public explanatory/sponsor rendering derives from supplied registry/snapshot props; no local state/effect or mutation. Child state remains separately modeled."
@@ -5732,7 +5748,7 @@
     },
     {
       "path": "src/VaultActions.tsx",
-      "sha256": "4c10ee5434d67ad9edc96b3f4f736126b150af0701691a8ce96d2d58d1a79942",
+      "sha256": "8f7560da00ce0a4c62e64dd39ee393d3463cad193fd01af9d5834b371e471d53",
       "models": [
         "formal/models/ui/ui_owner_bounty_funds.qnt",
         "formal/models/ui/ui_owner_recovery_lifetime.qnt",
@@ -5744,12 +5760,12 @@
         "formal/models/ui/ui_vault_recovery.qnt"
       ],
       "candidateLines": [
-        2, 32, 41, 48, 75, 77, 132, 141, 150, 156, 166, 169, 170, 172, 173, 174,
-        175, 197, 200, 208, 210, 220, 258, 280, 342, 389, 390, 393, 402, 404,
-        406, 412, 413, 414, 419, 420, 425, 429, 430, 440, 446, 457, 458, 459,
-        466, 467, 469, 474, 478, 480, 481, 482, 491, 498, 499, 532, 540, 550,
-        555, 563, 577, 583, 584, 585, 586, 590, 592, 630, 644, 671, 687, 692,
-        695, 702, 705, 712, 713, 719, 863
+        2, 32, 41, 48, 75, 77, 139, 148, 157, 163, 173, 176, 177, 179, 180, 181,
+        182, 204, 207, 215, 217, 227, 275, 297, 359, 406, 407, 410, 419, 421,
+        423, 429, 430, 431, 436, 437, 442, 446, 447, 457, 463, 474, 475, 476,
+        483, 484, 486, 491, 495, 497, 498, 499, 508, 515, 516, 549, 557, 567,
+        572, 580, 594, 600, 601, 602, 603, 607, 609, 647, 661, 688, 704, 709,
+        712, 719, 722, 729, 730, 736, 880
       ],
       "review": "mapped-abstraction"
     },
@@ -6408,6 +6424,13 @@
         "formal/models/ui/ui_review_pool.qnt"
       ],
       "candidateLines": [380, 844, 1079, 1086, 1095],
+      "review": "mapped-abstraction"
+    },
+    {
+      "path": "src/lib/pool-funding.ts",
+      "sha256": "d1aa6899f1813799c0c5c6aa3929971b0772311d4bbeef3186cb71349db2a71e",
+      "models": ["formal/models/ui/ui_pool_funding.qnt"],
+      "candidateLines": [13, 18, 156, 158, 160, 172, 201, 220, 221, 230],
       "review": "mapped-abstraction"
     },
     {
@@ -17607,6 +17630,23 @@
         "signoutClearsCachedPointsListTest",
         "triageRetryDoesNotInventMachineDraftTest",
         "unavailableSessionDoesNotRetainFormTest"
+      ]
+    },
+    {
+      "path": "formal/models/ui/ui_pool_funding.qnt",
+      "sha256": "ba1cb95ffe2ea6f948c9be7431d167b69f3ed66a00b8b0d0edb9d14bebe26b9d",
+      "sources": [
+        "backend/projects/pool-funding.ts",
+        "migrations/0127_vault_month_starts.sql",
+        "src/lib/pool-funding.ts"
+      ],
+      "scenarios": [
+        "decemberFundedOnTheFirstTest",
+        "decemberNeedsTheFirstTest",
+        "loadingShowsNoMoneyTest",
+        "novemberLiveRuleTest",
+        "shortVaultShowsNoMoneyTest",
+        "withdrawalIsShownTest"
       ]
     },
     {

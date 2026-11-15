@@ -120,7 +120,14 @@ export function VaultActions({
   onFinalized,
   onWallet,
   onBusy,
+  promised,
 }: {
+  /**
+   * What this month promises contributors and the vault must keep, with the
+   * month's name. Our page refuses a withdrawal below it (operator decision,
+   * 15 November 2026); the contract itself does not.
+   */
+  promised?: { minor: string; display: string; month: string };
   projectId: string;
   deployment: EscrowDeployment;
   connectedWallet?: VaultConnection;
@@ -251,6 +258,16 @@ export function VaultActions({
             payoutPolicy,
             evidence,
           );
+      if (
+        operation === "withdraw" &&
+        promised &&
+        result.freeBalance !== null &&
+        BigInt(result.freeBalance) - BigInt(result.gross) <
+          BigInt(promised.minor)
+      )
+        throw new Error(
+          `This would leave the vault below the ${promised.display} contributors were shown for ${promised.month}. Withdraw only funds above that amount.`,
+        );
       if (mounted.current) setReview(result);
     });
   const send = (step: Step) =>
