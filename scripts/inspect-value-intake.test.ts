@@ -2,8 +2,8 @@ import { expect, test } from "bun:test";
 import {
   inspectValueIntake,
   intakeError,
-  sanitizeIntakeTail,
   readIntakeTail,
+  sanitizeIntakeTail,
 } from "./inspect-value-intake";
 
 const secret = "secret-token https://private.invalid/body";
