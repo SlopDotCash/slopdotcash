@@ -2711,7 +2711,7 @@ test("owner registers a separate bounty vault through the API and funds it priva
     await page.getByRole("button", { name: "Review bounty terms" }).click();
     await page.getByRole("button", { name: "Publish bounty terms" }).click();
     await expect(
-      page.getByRole("status").filter({ hasText: "Published revision" }),
+      page.getByRole("status").filter({ hasText: /Rev \d+/u }),
     ).toBeVisible();
     const final = await (await page.request.get(`${origin}/__fixture`)).json();
     expect(final.project.manifest.securityBounty.status).toBe("open");

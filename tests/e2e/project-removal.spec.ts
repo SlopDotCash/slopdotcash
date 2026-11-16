@@ -170,7 +170,7 @@ test("an applicant cancels a stale review application and retries an unavailable
     exact: true,
   });
   await expect(
-    pending.getByRole("button", { name: "Publish this change", exact: true }),
+    pending.getByRole("button", { name: "Publish", exact: true }),
   ).toHaveCount(0);
   const cancel = pending.getByRole("button", {
     name: "Cancel application",

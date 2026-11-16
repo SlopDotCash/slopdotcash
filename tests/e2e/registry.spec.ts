@@ -2602,7 +2602,7 @@ test("a maintainer removes a project in review and cancels its stale application
     const entry = page.getByTestId(`pending-application-${applicationId}`);
     await expect(entry).toContainText(project.name);
     await expect(
-      entry.getByRole("button", { name: "Publish this change", exact: true }),
+      entry.getByRole("button", { name: "Publish", exact: true }),
     ).toHaveCount(0);
     page.once("dialog", (dialog) => dialog.accept());
     await entry

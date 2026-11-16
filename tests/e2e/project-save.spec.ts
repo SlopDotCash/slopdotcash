@@ -797,10 +797,10 @@ test("project pages show website and X, and owners publish and clear them", asyn
   await site.fill("elizaos.example");
   await x.fill("https://twitter.com/elizaOS_ai");
   await publish.click();
-  await expect(page.getByText("Published revision 2.")).toBeVisible();
+  await expect(page.getByText("Rev 2", { exact: true })).toBeVisible();
   await x.fill("");
   await publish.click();
-  await expect(page.getByText("Published revision 3.")).toBeVisible();
+  await expect(page.getByText("Rev 3", { exact: true })).toBeVisible();
   const kept = {
     repository: registered.links.repository,
     issues: registered.links.issues,
