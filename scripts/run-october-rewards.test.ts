@@ -114,6 +114,46 @@ test("private runner rejects missing or failed D1 JSON", () => {
   expect(octoberQueryRows('[{"success":true,"results":[]}]')).toEqual([]);
 });
 
+test("private validation reports fixed stages without upstream query details", async () => {
+  const f = fixture();
+  const stages: string[] = [];
+  try {
+    await expect(
+      preparePrivateOctoberPlan({
+        ...f.options(),
+        onStage: (stage) => stages.push(stage),
+        query: async () => {
+          throw new Error("private upstream query details");
+        },
+      }),
+    ).rejects.toThrow("private upstream query details");
+    expect(stages).toEqual(["enforcement generation"]);
+
+    stages.length = 0;
+    await preparePrivateOctoberPlan({
+      ...f.options(),
+      onStage: (stage) => stages.push(stage),
+    });
+    expect(stages).toEqual([
+      "enforcement generation",
+      "enforcement records",
+      "reviewed packet",
+      "current project registry",
+      "enforcement consistency",
+      "proposal compilation",
+      "existing proposal readback",
+      "published Points validation",
+      "private Points checkpoint",
+      "financial protection",
+      "current recipient eligibility",
+      "current recipient eligibility",
+    ]);
+    expect(stages.join(" ")).not.toContain("private upstream query details");
+  } finally {
+    f.sqlite.close();
+  }
+});
+
 test("private runner conserves gross, applies once and verifies exact replay", async () => {
   const f = fixture();
   try {
