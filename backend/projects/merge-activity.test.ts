@@ -1,6 +1,7 @@
 import { Database } from "bun:sqlite";
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
+import { assertProjectPolicyTransition } from "../../src/lib/project-policy.mjs";
 import { assertProjectDefinition } from "../../src/lib/project-schema.mjs";
 import { findProject } from "../../src/lib/projects.mjs";
 import {
@@ -46,6 +47,44 @@ function project(status: "active" | "paused") {
   const original = findProject("asi");
   if (!original) throw new Error("Missing registry fixture");
   return assertProjectDefinition({ ...original, status });
+}
+
+/** The same project after a reviewed transfer of its repository to `path`. */
+function transferred(
+  before: ReturnType<typeof project>,
+  path: string,
+): ReturnType<typeof project> {
+  const [repository, ...rest] = before.repositories;
+  return assertProjectDefinition({
+    ...before,
+    repositories: [
+      {
+        ...repository,
+        aliases: [...(repository.aliases ?? []), path],
+        displayName: path,
+        githubUrl: `https://github.com/${path}`,
+      },
+      ...rest,
+    ],
+  });
+}
+
+async function served(db: never) {
+  const response = await handleMergeActivityApi(
+    new Request("https://slop.cash/api/v1/merge-activity"),
+    { db },
+  );
+  const body = (await response?.json()) as {
+    projects: Array<{
+      projectId: string;
+      repositories: Array<{
+        repository: string;
+        observedAt: string;
+        waitingOutside: number;
+      }>;
+    }>;
+  };
+  return body.projects.find((p) => p.projectId === "asi")?.repositories ?? [];
 }
 
 /** A fake GitHub GraphQL endpoint answering the two queries. */
@@ -289,6 +328,62 @@ describe("merge activity", () => {
       observedAt: NOW.toISOString(),
       lastAttemptFailed: true,
     });
+  });
+
+  test("a transferred repository is shown at its new path only", async () => {
+    const { db } = d1();
+    const before = project("active");
+    await refreshMergeActivity(db, [before], async () => "t", github(), NOW);
+    expect((await served(db)).map((row) => row.repository)).toEqual([
+      "SlopDotCash/asi",
+    ]);
+    // The registry accepts this revision: the repository keeps its identity
+    // and publishes the transfer as an appended alias.
+    const after = transferred(before, "asi-research/asi");
+    assertProjectPolicyTransition(before, after);
+    const nextDay = new Date(NOW.getTime() + 21 * 3_600_000);
+    expect(
+      await refreshMergeActivity(
+        db,
+        [after],
+        async () => "t",
+        github(),
+        nextDay,
+      ),
+    ).toEqual({ read: 1, failed: 0 });
+    // The project pages sum these rows and date the line from the oldest
+    // read, so the old path's frozen row must not remain.
+    expect(await served(db)).toMatchObject([
+      {
+        repository: "asi-research/asi",
+        observedAt: nextDay.toISOString(),
+        waitingOutside: 1,
+      },
+    ]);
+  });
+
+  test("a paused project keeps the last values of the repositories it lists", async () => {
+    const { db } = d1();
+    await refreshMergeActivity(
+      db,
+      [project("active")],
+      async () => "t",
+      github(),
+      NOW,
+    );
+    const nextDay = new Date(NOW.getTime() + 21 * 3_600_000);
+    expect(
+      await refreshMergeActivity(
+        db,
+        [project("paused")],
+        async () => "t",
+        github(),
+        nextDay,
+      ),
+    ).toEqual({ read: 0, failed: 0 });
+    expect(await served(db)).toMatchObject([
+      { repository: "SlopDotCash/asi", observedAt: NOW.toISOString() },
+    ]);
   });
 
   test("a repository that was never read successfully is not listed", async () => {
