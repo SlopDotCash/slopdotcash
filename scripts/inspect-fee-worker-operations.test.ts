@@ -446,6 +446,12 @@ test("diagnostic parser failures and public addresses remain narrowly classified
             token: address,
             error: "sensitive arbitrary text",
           },
+          {
+            event: "fee_buyback_error",
+            network: "robinhood",
+            leg: "buyback 0x1234567890123456789012345678901234567890",
+            error: "sensitive arbitrary text",
+          },
         ],
       },
     ],
@@ -466,6 +472,12 @@ test("diagnostic parser failures and public addresses remain narrowly classified
   });
   expect(safe?.records[3]).toEqual({
     event: "fee_buyback_error",
+    errorCategory: "other",
+  });
+  expect(safe?.records[4]).toEqual({
+    event: "fee_buyback_error",
+    network: "robinhood",
+    leg: "buyback",
     errorCategory: "other",
   });
 });

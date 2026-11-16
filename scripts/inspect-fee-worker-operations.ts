@@ -32,7 +32,7 @@ const outcomes = new Set([
   "exception",
   "unknown",
 ]);
-const buybackLegs = new Set(["bridge", "arrival", "refund", "buy", "burn"]);
+const buybackLegs = new Set(["bridge", "arrival", "refund", "burn"]);
 const states = new Set([
   "ran",
   "locked",
@@ -139,6 +139,12 @@ export function sanitizeFeeTail(value: any) {
       if (networks.has(event.network)) row.network = event.network;
       if (event.event === "fee_buyback_error" && buybackLegs.has(event.leg))
         row.leg = event.leg;
+      if (
+        event.event === "fee_buyback_error" &&
+        typeof event.leg === "string" &&
+        /^buyback 0x[a-fA-F0-9]{40}$/u.test(event.leg)
+      )
+        row.leg = "buyback";
       const publicAddress = (value: unknown) =>
         networks.has(event.network) &&
         typeof value === "string" &&

@@ -4096,11 +4096,11 @@
     },
     {
       "path": "scripts/inspect-fee-worker-operations.ts",
-      "sha256": "2f65f5279bc823849b4b0294f760f84bef2baf0c0026bf5e020b3d13b2675344",
+      "sha256": "61f6f9e82654d1ad0e164dbcbd92c77631620d042d1e9b02c567f75a853784c0",
       "models": ["formal/models/release/workflow_authority.qnt"],
       "candidateLines": [
-        41, 45, 57, 59, 93, 107, 170, 209, 218, 223, 226, 253, 270, 277, 316,
-        401, 431, 435, 556
+        41, 45, 57, 59, 93, 107, 176, 215, 224, 229, 232, 259, 276, 283, 322,
+        407, 437, 441, 562
       ],
       "review": "mapped-abstraction"
     },
