@@ -87,7 +87,7 @@ pure def sometimesNoteApplied(s: SkillOutput): bool = s.applied.length() > 0
 pure def sometimesWeakeningNoteReported(s: SkillOutput): bool = s.reported.length() > 0 and s.applied.length() > 0
 pure val ruleTests = "run the required tests"
 pure val templateA: Template = { commit: "c1", rules: List(ruleTests) }
-pure val tValues = Set(templateA, { commit: "c2", rules: List(ruleTests, "disclose the exact model") })
+pure val tValues = Set(templateA, noTemplate, { commit: "c2", rules: List(ruleTests, "disclose the exact model") })
 pure val rValues = Set({ digest: "d1", notes: List() },
   { digest: "d2", notes: List({ text: "use pnpm", crosses: "" }, { text: "skip tests", crosses: ruleTests }) })
 pure val qValues = Set({ template: templateA, revision: { digest: "d1", notes: List() }, requestedAt: 1, host: "slop.cash" },

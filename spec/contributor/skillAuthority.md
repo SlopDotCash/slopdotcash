@@ -158,16 +158,16 @@ pure val sha = "0123456789abcdef0123456789abcdef01234567"
 pure val contributorSelection: Selection = { role: ContributorSkill, project: 1, commit: sha, registryRevision: 1, registryDigest: "m1" }
 pure val selectionValues = Set(contributorSelection, { ...contributorSelection, role: ReviewerSkill },
   { role: StaticSkill, project: 0, commit: sha, registryRevision: 0, registryDigest: "" }, { ...contributorSelection, commit: "" })
+pure def templateAt(commit: str): SR::Template = { commit: commit, rules: List("run the required tests") }
+pure def revisionWith(digest: str): SR::Revision = { digest: digest, notes: SR::noRevision.notes }
 pure def exactCheck(commit: str, digest: str): ByteCheck =
-  val template = { commit: commit, rules: List("run the required tests") }
-  val revision = { digest: digest, notes: List() }
-  { commit: commit, provenance: Committed, completeFiles: true, matchingBlobs: true, template: template, revision: revision,
-    downloaded: SR::render(template, revision) }
-pure val templateA: SR::Template = { commit: sha, rules: List("run the required tests") }
+  { commit: commit, provenance: Committed, completeFiles: true, matchingBlobs: true, template: templateAt(commit),
+    revision: revisionWith(digest), downloaded: SR::render(templateAt(commit), revisionWith(digest)) }
+pure val templateA: SR::Template = templateAt(sha)
 pure val exactBytes: ByteCheck = exactCheck(sha, "m1")
 pure val factsValues = Set(exactBytes, { ...exactBytes, completeFiles: false }, { ...exactBytes, provenance: WorkingTree },
-  { ...exactBytes, downloaded: SR::render(templateA, { digest: "m1", notes: List({ text: "edited", crosses: "" }) }) },
-  { ...exactBytes, revision: { digest: "m2", notes: List() }, downloaded: SR::render(templateA, { digest: "m2", notes: List() }) })
+  { ...exactBytes, downloaded: SR::render(templateA, { ...revisionWith("m1"), notes: List({ text: "edited", crosses: "" }) }) },
+  { ...exactBytes, revision: revisionWith("m2"), downloaded: SR::render(templateA, revisionWith("m2")) })
 pure val openView: F::ProjectView = { registered: true, retired: false, legacy: false, paused: false, flagged: false,
   quarantined: false, cleared: true, skillFields: true }
 pure val viewValues = Set(openView, { ...openView, flagged: true }, { ...openView, paused: true })
