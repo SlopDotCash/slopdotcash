@@ -204,3 +204,109 @@ test("staging creates only the fixed private bucket and refuses different stored
     store.stage(f.text, 0, f.chunks[0].toString("base64")),
   ).rejects.toThrow();
 });
+
+test("storage diagnostics expose only fixed operation and numeric provider codes", async () => {
+  const { privatePacketFailure } = await import("./private-payout-packet");
+  const f = fixture();
+  const sensitive = "https://private.example/secret-token private-packet-body";
+  const request = Object.assign(
+    async () =>
+      Response.json(
+        {
+          success: false,
+          errors: [{ code: 10000, message: sensitive, extra: sensitive }],
+          result: { privateBody: sensitive },
+        },
+        { status: 403 },
+      ),
+    { preconnect: fetch.preconnect },
+  );
+  const store = privatePayoutStorage("a".repeat(32), sensitive, request);
+  let caught: unknown;
+  try {
+    await store.stage(f.text, 0, f.chunks[0].toString("base64"));
+  } catch (error) {
+    caught = error;
+  }
+  const diagnostic = privatePacketFailure("chunk-stage", caught);
+  expect(diagnostic).toEqual({
+    error: "private_packet_staging_refused",
+    phase: "chunk-stage",
+    storage: {
+      operation: "bucket-read",
+      httpStatus: 403,
+      cloudflareCode: 10000,
+    },
+  });
+  expect(JSON.stringify(diagnostic)).not.toContain(sensitive);
+});
+
+test("transport and preflight diagnostics discard arbitrary exception contents", async () => {
+  const { privatePacketFailure } = await import("./private-payout-packet");
+  const sensitive = "https://private.example/token complete-secret-packet";
+  expect(privatePacketFailure("source-check", new Error(sensitive))).toEqual({
+    error: "private_packet_staging_refused",
+    phase: "source-check",
+  });
+  const f = fixture();
+  const request = Object.assign(
+    async () => {
+      throw new Error(sensitive);
+    },
+    { preconnect: fetch.preconnect },
+  );
+  const store = privatePayoutStorage("a".repeat(32), sensitive, request);
+  let caught: unknown;
+  try {
+    await store.stage(f.text, 0, f.chunks[0].toString("base64"));
+  } catch (error) {
+    caught = error;
+  }
+  expect(privatePacketFailure("chunk-stage", caught)).toEqual({
+    error: "private_packet_staging_refused",
+    phase: "chunk-stage",
+    storage: {
+      operation: "bucket-read",
+      httpStatus: null,
+      cloudflareCode: null,
+    },
+  });
+});
+
+test("provider diagnostic ignores nonnumeric codes and reports control failures", async () => {
+  const { privatePacketFailure } = await import("./private-payout-packet");
+  const f = fixture();
+  for (const status of [200, 403]) {
+    const request = Object.assign(
+      async () =>
+        Response.json(
+          {
+            success: false,
+            errors: [{ code: "secret-code", message: "private" }],
+          },
+          { status },
+        ),
+      { preconnect: fetch.preconnect },
+    );
+    const store = privatePayoutStorage(
+      "a".repeat(32),
+      "fixture-token",
+      request,
+    );
+    let caught: unknown;
+    try {
+      await store.stage(f.text, 0, f.chunks[0].toString("base64"));
+    } catch (error) {
+      caught = error;
+    }
+    expect(privatePacketFailure("chunk-stage", caught)).toEqual({
+      error: "private_packet_staging_refused",
+      phase: "chunk-stage",
+      storage: {
+        operation: "bucket-read",
+        httpStatus: status,
+        cloudflareCode: null,
+      },
+    });
+  }
+});
