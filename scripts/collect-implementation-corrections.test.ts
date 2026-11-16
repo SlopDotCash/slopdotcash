@@ -613,8 +613,300 @@ test("October opt-in holds both sides of a merged donor's shared commit", async 
   );
 });
 
-test("complete census reuse holds absent or mismatched recorded sources", async () => {
-  for (const mismatch of ["absent", "url", "occurredAt"] as const) {
+test.each([
+  "submitted-head",
+  "distinct-squash",
+  "mismatched-squash",
+  "unavailable-squash",
+  "null-merge",
+] as const)(
+  "Search omissions preserve earlier commit ownership for %s",
+  async (acceptance) => {
+    const unavailableAccepted = acceptance === "unavailable-squash";
+    const missingMergeIdentity = acceptance === "null-merge";
+    const earlierHeld = unavailableAccepted || missingMergeIdentity;
+    const overlapSha = acceptance === "submitted-head" ? sha : "d".repeat(40);
+    const earlier = fixture(missingMergeIdentity ? "" : overlapSha);
+    earlier.url = "https://github.com/elizaOS/asi/pull/1";
+    earlier.mergedAt = "2026-01-14T00:00:00Z";
+    earlier.updatedAt = earlier.mergedAt;
+    const laterSha = "c".repeat(40);
+    const later = fixture(laterSha);
+    later.id = "PR_later";
+    later.number = 2;
+    later.url = "https://github.com/elizaOS/asi/pull/2";
+    later.headRefOid = laterSha;
+    const originalCommit = earlier.commits.nodes[0].commit;
+    const overlapCommit =
+      acceptance === "submitted-head"
+        ? originalCommit
+        : { ...originalCommit, id: "C_squash", oid: overlapSha };
+    const independentAuthor = {
+      ...earlier.author,
+      id: "MDQ6VXNlcjQz",
+      login: "contributor",
+      avatarUrl: "https://avatars.githubusercontent.com/u/43",
+      url: "https://github.com/contributor",
+    };
+    const independentCommit = {
+      ...originalCommit,
+      id: "C_later",
+      oid: laterSha,
+      author: { user: independentAuthor },
+    };
+    later.commits.totalCount = 2;
+    later.commits.nodes = [
+      { commit: overlapCommit },
+      { commit: independentCommit },
+    ];
+    const earlierAward = {
+      ...award(),
+      occurredAt: new Date(earlier.mergedAt).toISOString(),
+      sourceUrl: earlier.url,
+    };
+    const laterAward = {
+      ...award(),
+      key: pointKey("asi", actor.id, "merged-pull-request", later.id),
+      sourceId: later.id,
+      sourceUrl: later.url,
+      workUnitId: "history_PR_later",
+    };
+    const unrelatedSha = "f".repeat(40);
+    const unrelatedCommit = {
+      ...independentCommit,
+      id: "C_unrelated",
+      oid: unrelatedSha,
+    };
+    const other = fixture(unrelatedSha);
+    other.id = "PR_other";
+    other.number = 3;
+    other.url = "https://github.com/elizaOS/asi/pull/3";
+    other.headRefOid = unrelatedSha;
+    other.commits.nodes = [{ commit: unrelatedCommit }];
+    const otherAward = {
+      ...award(),
+      key: pointKey("asi", actor.id, "merged-pull-request", other.id),
+      sourceId: other.id,
+      sourceUrl: other.url,
+      workUnitId: "history_PR_other",
+    };
+    const journal = baseline([earlierAward, laterAward, otherAward]);
+    const commitShas = new Map(
+      [originalCommit, overlapCommit, independentCommit, unrelatedCommit].map(
+        ({ id, oid }) => [id, oid],
+      ),
+    );
+    const searchedNodes = earlierHeld ? [later, other] : [later];
+    const base = transport();
+    const metadataBatches: string[][] = [];
+    const acceptedObjectReads: string[] = [];
+    const network = Object.assign(
+      async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = new URL(String(input));
+        if (url.pathname !== "/graphql") {
+          expect(url.pathname).toBe(
+            `/repos/SlopDotCash/asi/git/commits/${overlapSha}`,
+          );
+          acceptedObjectReads.push(url.pathname);
+          if (unavailableAccepted)
+            return Response.json({ message: "Not Found" }, { status: 404 });
+          return Response.json({
+            sha:
+              acceptance === "mismatched-squash" ? "f".repeat(40) : overlapSha,
+            tree: { sha: "e".repeat(40) },
+            parents: [{ sha: earlier.baseRefOid }],
+          });
+        }
+        const { query, variables } = JSON.parse(String(init?.body));
+        let data: Record<string, unknown>;
+        let missingIndex = -1;
+        if (query.includes("LeaderboardSearchReferences")) {
+          data = {
+            search: {
+              issueCount: searchedNodes.length,
+              nodes: searchedNodes,
+              pageInfo: { hasNextPage: false, endCursor: null },
+            },
+          };
+        } else if (query.includes("CorrectionMetadata")) {
+          const ids: string[] = variables.ids;
+          metadataBatches.push([...ids]);
+          missingIndex = ids.indexOf(otherAward.sourceId);
+          data = {
+            nodes: ids.map((id) => {
+              if (id === earlier.id) return earlier;
+              expect(id).toBe(otherAward.sourceId);
+              return null;
+            }),
+          };
+        } else if (query.includes("LeaderboardOutcomeCommitLines")) {
+          data = {
+            nodes: (variables.ids as string[]).map((id) => ({
+              __typename: "Commit",
+              id,
+              oid: commitShas.get(id),
+              additions: 2,
+              deletions: 1,
+              repository: { id: earlier.repository.id },
+            })),
+          };
+        } else {
+          return await base.call(input, init);
+        }
+        return Response.json({
+          ...(acceptance === "submitted-head" && missingIndex >= 0
+            ? {
+                errors: [
+                  {
+                    type: "NOT_FOUND",
+                    path: ["nodes", missingIndex],
+                    message: `Could not resolve to a node with the global id of '${otherAward.sourceId}'.`,
+                  },
+                ],
+              }
+            : {}),
+          data: {
+            ...data,
+            rateLimit: {
+              cost: 1,
+              limit: 5000,
+              remaining: 4900,
+              resetAt: "2026-02-01T01:00:00Z",
+            },
+          },
+        });
+      },
+      { preconnect: fetch.preconnect },
+    );
+    const options = {
+      projects: ["asi"],
+      directory: await directory(),
+      month: "2026-01",
+      before: "2026-01-31T00:00:00.000Z",
+    };
+    const dependencies = {
+      journal,
+      registry: registry(),
+      token: "fixture-token",
+      transport: network,
+      now: new Date("2026-01-31T23:59:59Z"),
+    };
+    const collection = collectImplementationCorrections(options, dependencies);
+    if (acceptance === "mismatched-squash") {
+      await expect(collection).rejects.toThrow(
+        "Baseline census accepted object differs from the linked merge commit",
+      );
+      await expect(
+        readFile(join(options.directory, "manifest.json")),
+      ).rejects.toThrow();
+      return;
+    }
+    const result = await collection;
+    const candidates = new Map(
+      result.manifest.candidates.map((candidate) => [
+        candidate.sourceId,
+        candidate,
+      ]),
+    );
+    expect(result.receipt.ownershipComplete).toBe(true);
+    if (earlierHeld) {
+      expect(candidates.get(earlier.id)?.proof).toEqual({ status: "held" });
+      expect(candidates.get(other.id)?.proof).toMatchObject({
+        status: "complete",
+        sources: [
+          {
+            commits: [{ sha: unrelatedSha, firstAcceptedSourceId: other.id }],
+          },
+        ],
+      });
+    } else {
+      expect(candidates.get(earlier.id)?.proof).toMatchObject({
+        status: "complete",
+        sources: [{ commits: [{ sha, firstAcceptedSourceId: earlier.id }] }],
+      });
+      expect(candidates.get(other.id)?.proof).toEqual({ status: "held" });
+    }
+    if (unavailableAccepted) {
+      expect(candidates.get(later.id)?.proof).toEqual({ status: "held" });
+    } else {
+      expect(candidates.get(later.id)?.proof).toMatchObject({
+        status: "complete",
+        sources: [
+          {
+            commits: [
+              {
+                sha: overlapSha,
+                firstAcceptedSourceId: missingMergeIdentity
+                  ? later.id
+                  : earlier.id,
+              },
+              { sha: laterSha, firstAcceptedSourceId: later.id },
+            ],
+          },
+        ],
+      });
+    }
+    expect(metadataBatches.map((ids) => ids.sort())).toEqual([
+      earlierHeld ? [earlier.id] : [earlier.id, other.id].sort(),
+    ]);
+    expect(acceptedObjectReads).toHaveLength(
+      acceptance === "submitted-head" || missingMergeIdentity ? 0 : 1,
+    );
+    if (missingMergeIdentity) {
+      expect(result.receipt.limitations).toContainEqual({
+        id: earlier.id,
+        reason: "accepted-merge-identity-unavailable",
+      });
+    }
+    const applied = applyPointsImplementationCorrections(
+      journal,
+      result.manifest,
+      result.manifest.candidates.map(({ id }) => ({
+        candidateId: id,
+        eligible: true,
+      })),
+      result.manifest.generatedAt,
+      new Map(),
+    );
+    const current = latestPoints(applied.journal);
+    const before = latestPoints(journal);
+    const reallocatedAward = earlierHeld ? otherAward : laterAward;
+    expect(current.get(earlierAward.key)).toEqual(before.get(earlierAward.key));
+    if (!missingMergeIdentity) {
+      const heldAward = unavailableAccepted ? laterAward : otherAward;
+      expect(current.get(heldAward.key)).toEqual(before.get(heldAward.key));
+    }
+    expect(current.get(reallocatedAward.key)?.award.amount).toBe(0);
+    expect(
+      current.get(
+        pointKey(
+          "asi",
+          independentAuthor.id,
+          "merged-pull-request",
+          reallocatedAward.sourceId,
+        ),
+      )?.award,
+    ).toMatchObject({
+      amount: reallocatedAward.amount,
+      occurredAt: reallocatedAward.occurredAt,
+    });
+    const replay = await collectImplementationCorrections(options, {
+      ...dependencies,
+      transport: Object.assign(
+        async () => {
+          throw new Error("Offline replay attempted a GitHub read");
+        },
+        { preconnect: fetch.preconnect },
+      ),
+    });
+    expect(replay.receipt.requests).toBe(0);
+    expect(replay.receipt.censusDigest).toBe(result.receipt.censusDigest);
+    expect(replay.receipt.manifestDigest).toBe(result.receipt.manifestDigest);
+  },
+);
+
+test("complete census reuse holds mismatched recorded sources", async () => {
+  for (const mismatch of ["url", "occurredAt"] as const) {
     const dir = await directory();
     const base = transport();
     const network = Object.assign(
@@ -625,7 +917,6 @@ test("complete census reuse holds absent or mismatched recorded sources", async 
         if (!body.query.includes("LeaderboardSearchReferences"))
           return base.call(input, init);
         const node = fixture();
-        if (mismatch === "absent") node.id = "PR_other";
         if (mismatch === "url")
           node.url = "https://github.com/SlopDotCash/asi/pull/2";
         if (mismatch === "occurredAt") node.mergedAt = "2026-01-16T00:00:00Z";

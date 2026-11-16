@@ -3577,17 +3577,18 @@
     },
     {
       "path": "scripts/collect-implementation-corrections.ts",
-      "sha256": "2e5bc186d7cd7585ad21491a5f154d0ce717bd6e0f3a15d45a80db67595ef536",
+      "sha256": "02da55248b7ee0bd3c8e6160de73b93a788559d609af2f48c145f7e3a7d2c6e6",
       "models": [
         "formal/models/points/historical_discussion_evidence.qnt",
         "formal/models/points/historical_implementation_allocation.qnt"
       ],
       "candidateLines": [
-        4, 11, 13, 115, 195, 272, 278, 281, 286, 296, 312, 318, 334, 335, 345,
-        348, 445, 491, 512, 537, 583, 590, 706, 717, 882, 1288, 1289, 1292,
-        1363, 1386, 1395, 1559, 1615, 1674, 1680, 1681, 1684, 1845, 1847, 1851,
-        1884, 2223, 2269, 2274, 2691, 2948, 2950, 2957, 2968, 3171, 3173, 3177,
-        3336, 3740, 3751, 4041, 4716, 4786, 4978, 5119, 5140, 5169, 5171
+        4, 11, 13, 116, 196, 273, 279, 282, 287, 297, 313, 319, 335, 336, 346,
+        349, 447, 493, 514, 539, 572, 595, 602, 726, 785, 952, 1360, 1361, 1364,
+        1435, 1458, 1467, 1631, 1687, 1746, 1752, 1753, 1756, 1917, 1919, 1923,
+        1956, 2295, 2341, 2346, 2763, 3020, 3022, 3029, 3040, 3243, 3245, 3249,
+        3408, 3812, 3823, 4113, 4335, 4340, 4343, 4358, 4371, 4373, 4418, 4452,
+        4839, 4840, 5069, 5139, 5348, 5489, 5510, 5540, 5542
       ],
       "review": "mapped-abstraction"
     },
@@ -13883,7 +13884,7 @@
     },
     {
       "path": "formal/models/points/historical_implementation_allocation.qnt",
-      "sha256": "19dab37383086667e3da24133419d8ded2b428701b9c403d38550cc8137ae954",
+      "sha256": "f21ab7c9bd61f66e2a749a445747bd28184683f2c3da5c329caf03a0455d4214",
       "sources": [
         ".github/workflows/points-implementation-corrections.yml",
         "scripts/collect-implementation-corrections.ts",
@@ -13896,14 +13897,18 @@
       ],
       "scenarios": [
         "changedPredecessorRefusesImportTest",
+        "earlierAcceptanceRemovesLaterOwnershipTest",
         "incompleteConnectedProofHeldTest",
+        "invalidSupplementCannotPrepareTest",
         "privateProtectedPoolHeldTest",
         "protectionBypassNegativeControlTest",
         "protectionRaceBeforeAtomicImportTest",
         "replayAfterRevocationNeverRestoresTest",
         "replayResurrectionNegativeControlTest",
         "revaluationNegativeControlTest",
-        "unchangedPoolAndAppendOnlyTest"
+        "unavailableSupplementAllowsUnrelatedProofTest",
+        "unchangedPoolAndAppendOnlyTest",
+        "unresolvedEarlierAcceptanceHoldsAffectedPoolTest"
       ]
     },
     {
