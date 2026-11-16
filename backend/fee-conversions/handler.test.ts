@@ -90,6 +90,161 @@ describe("admin fee-conversions route", () => {
       ),
     ).toEqual({ network: "base", targetToken: USDC, status: "usdc" });
     expect(body.buyback).toEqual({ recent: [], totals: [] });
+    expect(body.claims).toEqual({ recent: [], totals: [], last24Hours: [] });
+  });
+
+  test("claims retain exact receipt amounts and pending states without signed bytes", async () => {
+    const { db, sqlite } = sqliteD1();
+    const at = new Date().toISOString();
+    const quote = JSON.stringify({
+      projectId: "feed",
+      vault: WALLET,
+      privateExtra: "never-return-quote",
+    });
+    const insert = sqlite.prepare(`INSERT INTO fee_conversions
+      (id,kind,run_id,network,mode,fee_wallet,token,target_token,amount_in,
+       amount_out,quote,tx_id,landed_tx_id,raw_tx,state,reason,created_at,
+       updated_at,submitted_at,finalized_at)
+      VALUES (?, 'claim', 'run-claim', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+       'never-return-signed-claim', ?, ?, ?, ?, ?, ?)`);
+    const claim = (
+      id: string,
+      network: string,
+      mode: string,
+      state: string,
+      amountOut: string | null,
+      token = TOKEN,
+    ) =>
+      insert.run(
+        id,
+        network,
+        mode,
+        WALLET,
+        token,
+        token,
+        "1",
+        amountOut,
+        quote,
+        state === "quoted" ? null : id,
+        state === "finalized" ? `0x${id.padEnd(64, "0")}` : null,
+        state,
+        state === "failed" ? "reverted" : null,
+        at,
+        at,
+        state === "quoted" ? null : at,
+        state === "finalized" ? at : null,
+      );
+    claim(
+      "claim-large-1",
+      "base",
+      "live",
+      "finalized",
+      "9000000000000000000000",
+    );
+    claim(
+      "claim-large-2",
+      "base",
+      "live",
+      "finalized",
+      "9000000000000000000001",
+    );
+    claim("claim-unknown", "base", "live", "unknown", null, USDC);
+    claim("claim-failed", "ethereum", "live", "failed", null);
+    claim("claim-dry-run", "solana", "dry_run", "quoted", null);
+    const response = await handleFeeConversionsApi(request(), {
+      db,
+      adminGithubIds: new Set(["1"]),
+      sessionActor: async () => ({ githubId: "1" }),
+    });
+    expect(response?.status).toBe(200);
+    const text = await (response as Response).text();
+    expect(text).not.toContain("never-return-signed-claim");
+    expect(text).not.toContain("never-return-quote");
+    const body = JSON.parse(text);
+    expect(body.recent).toEqual([]);
+    expect(body.totals).toEqual([]);
+    expect(body.buyback).toEqual({ recent: [], totals: [] });
+    expect(body.claims.recent.map((row: { id: string }) => row.id)).toEqual([
+      "claim-dry-run",
+      "claim-failed",
+      "claim-unknown",
+      "claim-large-2",
+      "claim-large-1",
+    ]);
+    expect(
+      body.claims.recent.find(
+        (row: { id: string }) => row.id === "claim-large-1",
+      ),
+    ).toMatchObject({
+      projectId: "feed",
+      vault: WALLET,
+      feeWallet: WALLET,
+      estimatedAmount: "1",
+      amountClaimed: "9000000000000000000000",
+      txId: "claim-large-1",
+      landedTxId: `0x${"claim-large-1".padEnd(64, "0")}`,
+    });
+    expect(body.claims.totals).toEqual([
+      {
+        network: "base",
+        feeWallet: WALLET,
+        token: TOKEN,
+        claims: 2,
+        amountClaimed: "18000000000000000000001",
+      },
+    ]);
+    expect(body.claims.last24Hours).toEqual([
+      { network: "base", mode: "live", state: "finalized", count: 2 },
+      { network: "base", mode: "live", state: "unknown", count: 1 },
+      { network: "ethereum", mode: "live", state: "failed", count: 1 },
+      { network: "solana", mode: "dry_run", state: "quoted", count: 1 },
+    ]);
+    const before = sqlite
+      .query("SELECT COUNT(*) AS n FROM fee_conversions")
+      .get();
+    expect(
+      await handleFeeConversionsApi(request("POST"), {
+        db,
+        adminGithubIds: new Set(["1"]),
+        sessionActor: async () => ({ githubId: "1" }),
+      }).then((result) => result?.status),
+    ).toBe(405);
+    expect(
+      sqlite.query("SELECT COUNT(*) AS n FROM fee_conversions").get(),
+    ).toEqual(before);
+  });
+
+  test("claim history is bounded while totals cover all finalized live claims", async () => {
+    const { db, sqlite } = sqliteD1();
+    const insert = sqlite.prepare(`INSERT INTO fee_conversions
+      (id,kind,run_id,network,mode,fee_wallet,token,target_token,amount_in,
+       amount_out,tx_id,raw_tx,state,created_at,updated_at,submitted_at,finalized_at)
+      VALUES (?, 'claim', 'run-many', 'base', 'live', ?, ?, ?, '1', '2', ?,
+       'never-return-signed-claim', 'finalized', ?, ?, ?, ?)`);
+    for (let index = 0; index < 101; index += 1) {
+      const id = `claim-${index.toString().padStart(4, "0")}`;
+      const at = "2026-10-01T00:00:00.000Z";
+      insert.run(id, WALLET, TOKEN, TOKEN, id, at, at, at, at);
+    }
+    const response = await handleFeeConversionsApi(request(), {
+      db,
+      adminGithubIds: new Set(["1"]),
+      sessionActor: async () => ({ githubId: "1" }),
+    });
+    const body = await (response as Response).json();
+    expect(body.claims.recent).toHaveLength(100);
+    expect(body.claims.recent[0].id).toBe("claim-0100");
+    expect(body.claims.recent.at(-1).id).toBe("claim-0001");
+    expect(body.claims.totals).toEqual([
+      {
+        network: "base",
+        feeWallet: WALLET,
+        token: TOKEN,
+        claims: 101,
+        amountClaimed: "202",
+      },
+    ]);
+    expect(body.claims.last24Hours).toEqual([]);
   });
 
   test("the buyback ledger shows each deposit's outcome and exact totals, without signed bytes", async () => {
