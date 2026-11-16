@@ -43,8 +43,10 @@ import {
 } from "./lib/merge-activity";
 import {
   asShown,
+  listedThisMonth,
   loadPoolFunding,
   monthName,
+  NOT_LISTED_NOTICE,
   poolFundingStatus,
 } from "./lib/pool-funding";
 import { projectChains, websiteLabel, xHandle } from "./lib/project-links";
@@ -866,15 +868,16 @@ function SecurityBounties() {
 }
 
 function HomePage() {
-  const featuredProjects = homeProjects();
-  const listedCommunityProjects = communityProjects();
   // One shared read of the daily merge activity (#1993) for every card.
   const [merge] = usePublicResource(
     true,
     loadMergeActivity,
     "Merge activity unavailable",
   );
-  // One shared read of vault balances: only money in a vault is shown.
+  // One shared read of vault balances: only money in a vault is shown, and
+  // an unfunded monthly pool is not listed this month. The list never waits
+  // for the read: until it loads, or when it fails, every project is listed
+  // as before.
   const [funding] = usePublicResource(
     true,
     loadPoolFunding,
@@ -882,6 +885,10 @@ function HomePage() {
   );
   const now = new Date();
   const fundingIndex = funding.status === "ready" ? funding.index : null;
+  const listed = (project: ProjectDefinition) =>
+    listedThisMonth(project, fundingIndex, now);
+  const featuredProjects = homeProjects().filter(listed);
+  const listedCommunityProjects = communityProjects().filter(listed);
   const shown = (project: ProjectDefinition) =>
     asShown(project, fundingIndex, now);
   const mergeLine = (project: ProjectDefinition) =>
@@ -1158,6 +1165,16 @@ function InstallPanel() {
  */
 function ProjectInstallPanel({ project }: { project: ProjectDefinition }) {
   const projectId = project.id;
+  // Discovery leaves out an unfunded monthly pool this month; that is not a
+  // clearance problem, so the owner setup link does not apply.
+  const [funding] = usePublicResource(
+    project.reward.kind === "monthly-pool",
+    loadPoolFunding,
+    "Pool funding unavailable",
+  );
+  const unlisted =
+    funding.status === "ready" &&
+    !listedThisMonth(project, funding.index, new Date());
   const [eligibility, setEligibility] = useState<
     "loading" | "ready" | "blocked" | "error"
   >("loading");
@@ -1201,9 +1218,11 @@ function ProjectInstallPanel({ project }: { project: ProjectDefinition }) {
           {eligibility === "loading"
             ? "Checking project clearance…"
             : eligibility === "blocked"
-              ? "This project is not cleared for agents. The prompt below picks only cleared projects."
+              ? unlisted
+                ? "This project is not listed this month. The prompt below picks only listed projects."
+                : "This project is not cleared for agents. The prompt below picks only cleared projects."
               : "Project clearance could not be checked. The prompt below picks only cleared projects."}
-          {eligibility === "blocked" ? (
+          {eligibility === "blocked" && !unlisted ? (
             <>
               {" "}
               <Link href={`/projects/${project.slug}/manage`}>
@@ -1445,6 +1464,9 @@ function ProjectRewardSummary({
           <p className="project-reward-status">
             {`Funds were withdrawn from the vault during ${monthName(status.period)}; it no longer covers this month's amount.`}
           </p>
+        ) : null}
+        {index !== null && !listedThisMonth(registered, index, now) ? (
+          <p className="project-reward-status">{NOT_LISTED_NOTICE}</p>
         ) : null}
         {projectRewardSummaries(project).map((summary) => (
           <p className="project-reward-status" key={summary.kind}>
