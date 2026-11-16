@@ -1172,12 +1172,14 @@
     },
     {
       "path": "backend/slopbot/value-import.ts",
-      "sha256": "73ed9315caee7c3f22a4da44d1714fc3c9d50ebdd7f09877b39870e62543f102",
+      "sha256": "56e23e7700c4a530ac6b01996539fe5974d1acfff18ae8598b1ec33b885e53c4",
       "models": [
         "formal/models/api/api_request_composition.qnt",
         "formal/models/slopbot/historical_subscription_intake.qnt"
       ],
-      "candidateLines": [23, 25],
+      "candidateLines": [
+        24, 26, 97, 101, 110, 115, 118, 121, 122, 123, 124, 140
+      ],
       "review": "mapped-abstraction"
     },
     {
@@ -2093,7 +2095,7 @@
     },
     {
       "path": "functions/api/v1/[[path]].ts",
-      "sha256": "ed8af23b205a7723a97586a8e3da2404fd73ab17fe0fa25d96f204c9ebfba834",
+      "sha256": "7e59776ff2e71e4a6116f6e73cf7fdb7bd3c7447e246e1150942fca6be01141d",
       "models": [
         "formal/models/api/api_request_composition.qnt",
         "formal/models/api/identity_consumer_exchange.qnt",
