@@ -51,12 +51,11 @@ pure def startPlain(p: TermsPreflight): TermsPreflight = { ...p, phase: Started,
 pure def canStartVerified(p: TermsPreflight): bool = startable(p) and p.refusals < 9007199254740000
 pure def startVerified(p: TermsPreflight): TermsPreflight = { ...p, phase: ReadingTerms, pending: 0, revision: 0,
   fromCache: 0, fromNetwork: 0, cacheRejected: false, cacheCloseFailed: false, cachePublishFailed: false }
-pure def refused(p: TermsPreflight): TermsPreflight = { ...p, phase: Refused, pending: 0, refusals: p.refusals + 1 }
 pure def canReadTerms(p: TermsPreflight, terms: Terms): bool = p.phase == ReadingTerms
 pure def readTerms(p: TermsPreflight, terms: Terms): TermsPreflight =
   if (termsBound(terms)) { ...p, phase: VerifyingDocuments, pending: terms.documents, revision: terms.termsRevision,
     documentsRequired: terms.documents > 0 }
-  else refused(p)
+  else { ...p, phase: Refused, pending: 0, refusals: p.refusals + 1 }
 pure def lawProofBindsCurrentTerms(terms: Terms): bool = (termsBound(terms) and terms.authorityVerified) implies
   terms.proofRevision == terms.termsRevision and terms.activatedAt == terms.proofVerifiedAt
 pure def lawPlainStartNeedsNoPreflight(p: TermsPreflight): bool = startable(p) implies canStartPlain(p)
@@ -86,7 +85,7 @@ pure def lawCacheOnlyForImmutableUrls(d: Document): bool = usesCache(d) implies 
 pure def lawOtherHostNeverVerified(d: Document): bool = d.host == OtherHost implies not(documentVerified(d))
 pure def canVerifyDocument(p: TermsPreflight, d: Document): bool = p.phase == VerifyingDocuments and p.pending > 0
 pure def verifyDocument(p: TermsPreflight, d: Document): TermsPreflight =
-  if (not(documentVerified(d))) refused(p)
+  if (not(documentVerified(d))) { ...p, phase: Refused, pending: 0, refusals: p.refusals + 1 }
   else if (usesCache(d)) { ...p, pending: p.pending - 1, fromCache: p.fromCache + 1,
     cacheCloseFailed: p.cacheCloseFailed or d.closeFails }
   else { ...p, pending: p.pending - 1, fromNetwork: p.fromNetwork + 1,
