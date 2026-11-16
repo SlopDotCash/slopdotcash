@@ -214,6 +214,7 @@ pure def flowSaved(flow: Flow): bool =
   (flow.phase == Awaiting implies flow.slot.identity == flow.awaiting and flow.awaiting != "")
   and ((flow.phase == Sent or flow.phase == Unclear) implies flow.slot != WA::noAttempt)
   and (flow.slot != WA::noAttempt implies flow.slotOwner > 0)
+  and ((flow.awaiting != "") iff (flow.phase == Awaiting))
 pure def alwaysAttemptsSaved(v: OwnerMonthly): bool = flowSaved(v.commitment) and flowSaved(v.setting) and flowSaved(v.release)
 pure def ownFlow(flow: Flow, account: int): bool =
   (flow.phase == Awaiting or flow.phase == Sent or flow.phase == Unclear) implies flow.slotOwner == account

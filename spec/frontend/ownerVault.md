@@ -207,6 +207,7 @@ pure def alwaysTransfersNeedRegistration(v: OwnerVault): bool =
 pure def flowOwned(flow: Flow, v: OwnerVault): bool = (flow.slot != WA::noAttempt implies flow.slotOwner > 0)
   and ((flow.phase == Awaiting or flow.phase == Sent or flow.phase == Unclear) implies flow.slotOwner == v.owner and v.owner > 0)
   and (flow.phase == Awaiting implies flow.sentLifetime == v.lifetime)
+  and ((flow.awaiting != "") iff (flow.phase == Awaiting))
   and flow.sentLifetime >= 0 and flow.sentLifetime <= v.lifetime
 pure def alwaysAttemptsBelongToTheirAccount(v: OwnerVault): bool = flowOwned(v.creation, v) and flowOwned(v.transfer, v)
 pure def alwaysSignedOutIsIdle(v: OwnerVault): bool = v.owner == 0 implies
