@@ -1,19 +1,21 @@
 import { expect, test } from "bun:test";
-import { gzipSync } from "node:zlib";
+import { brotliCompressSync, gzipSync } from "node:zlib";
 import { sha256Hex } from "../src/lib/sha256";
 import {
   parsePrivatePacketManifest,
   privatePayoutStorage,
 } from "./private-payout-packet";
 
-function fixture() {
+function fixture(compression?: "br") {
   const raw = Buffer.from(
     JSON.stringify({ source: "complete private reviewed packet" }),
   );
-  const compressed = gzipSync(raw);
+  const compressed =
+    compression === "br" ? brotliCompressSync(raw) : gzipSync(raw);
   const chunks = [compressed.subarray(0, 15), compressed.subarray(15)];
   const text = JSON.stringify({
     schemaVersion: "1",
+    ...(compression === "br" ? { compression } : {}),
     rawSha256: sha256Hex(raw),
     rawBytes: raw.length,
     compressedSha256: sha256Hex(compressed),
@@ -63,20 +65,22 @@ function fixture() {
     mutationCount: () => mutations,
   };
 }
-test("private packet chunks replay exactly and decode complete ordered bytes", async () => {
-  const f = fixture();
-  const store = privatePayoutStorage(
-    "a".repeat(32),
-    "private-test-token",
-    f.request,
-  );
-  for (const [index, chunk] of f.chunks.entries())
-    await store.stage(f.text, index, chunk.toString("base64"));
-  const mutations = f.mutationCount();
-  await store.stage(f.text, 0, f.chunks[0].toString("base64"));
-  expect(f.mutationCount()).toBe(mutations);
-  expect(Buffer.from(await store.read(f.text))).toEqual(f.raw);
-});
+for (const compression of [undefined, "br"] as const) {
+  test(`private ${compression ?? "gzip"} packet chunks replay exactly and decode complete ordered bytes`, async () => {
+    const f = fixture(compression);
+    const store = privatePayoutStorage(
+      "a".repeat(32),
+      "private-test-token",
+      f.request,
+    );
+    for (const [index, chunk] of f.chunks.entries())
+      await store.stage(f.text, index, chunk.toString("base64"));
+    const mutations = f.mutationCount();
+    await store.stage(f.text, 0, f.chunks[0].toString("base64"));
+    expect(f.mutationCount()).toBe(mutations);
+    expect(Buffer.from(await store.read(f.text))).toEqual(f.raw);
+  });
+}
 test("private packet refuses missing, altered and public storage", async () => {
   const f = fixture();
   const store = privatePayoutStorage(
@@ -94,20 +98,22 @@ test("private packet refuses missing, altered and public storage", async () => {
     store.stage(f.text, 1, f.chunks[1].toString("base64")),
   ).rejects.toThrow();
 });
-test("private packet rejects a mismatched declared raw size", async () => {
-  const f = fixture();
-  const manifest = JSON.parse(f.text);
-  manifest.rawBytes--;
-  const text = JSON.stringify(manifest);
-  const store = privatePayoutStorage(
-    "a".repeat(32),
-    "private-test-token",
-    f.request,
-  );
-  for (const [index, chunk] of f.chunks.entries())
-    await store.stage(text, index, chunk.toString("base64"));
-  await expect(store.read(text)).rejects.toThrow();
-});
+for (const compression of [undefined, "br"] as const) {
+  test(`private ${compression ?? "gzip"} packet rejects a mismatched declared raw size`, async () => {
+    const f = fixture(compression);
+    const manifest = JSON.parse(f.text);
+    manifest.rawBytes--;
+    const text = JSON.stringify(manifest);
+    const store = privatePayoutStorage(
+      "a".repeat(32),
+      "private-test-token",
+      f.request,
+    );
+    for (const [index, chunk] of f.chunks.entries())
+      await store.stage(text, index, chunk.toString("base64"));
+    await expect(store.read(text)).rejects.toThrow();
+  });
+}
 test("private manifest forbids arbitrary paths and inconsistent ordered lengths", () => {
   const f = fixture();
   expect(parsePrivatePacketManifest(f.text).chunks).toHaveLength(2);
@@ -121,6 +127,48 @@ test("private manifest forbids arbitrary paths and inconsistent ordered lengths"
       JSON.stringify({ ...JSON.parse(f.text), compressedBytes: 1 }),
     ),
   ).toThrow();
+  expect(() =>
+    parsePrivatePacketManifest(
+      JSON.stringify({ ...JSON.parse(f.text), compression: "gzip" }),
+    ),
+  ).toThrow();
+});
+
+test("Brotli refuses corrupt streams even when compressed hashes match", async () => {
+  const f = fixture("br");
+  const chunks = [Buffer.from("not a Brotli stream")];
+  const text = JSON.stringify({
+    ...JSON.parse(f.text),
+    compressedSha256: sha256Hex(chunks[0]),
+    compressedBytes: chunks[0].length,
+    chunks: chunks.map((chunk) => ({
+      sha256: sha256Hex(chunk),
+      bytes: chunk.length,
+    })),
+  });
+  const store = privatePayoutStorage(
+    "a".repeat(32),
+    "private-test-token",
+    f.request,
+  );
+  await store.stage(text, 0, chunks[0].toString("base64"));
+  await expect(store.read(text)).rejects.toThrow();
+});
+
+test("Brotli refuses a changed raw digest", async () => {
+  const f = fixture("br");
+  const text = JSON.stringify({
+    ...JSON.parse(f.text),
+    rawSha256: "0".repeat(64),
+  });
+  const store = privatePayoutStorage(
+    "a".repeat(32),
+    "private-test-token",
+    f.request,
+  );
+  for (const [index, chunk] of f.chunks.entries())
+    await store.stage(text, index, chunk.toString("base64"));
+  await expect(store.read(text)).rejects.toThrow();
 });
 
 test("staging creates only the fixed private bucket and refuses different stored bytes", async () => {
