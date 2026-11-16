@@ -16,10 +16,10 @@
     "build outputs"
   ],
   "counts": {
-    "files": 790,
-    "functions": 12271,
+    "files": 791,
+    "functions": 12279,
     "selectedContractTargets": 188,
-    "unprovedFunctions": 12083,
+    "unprovedFunctions": 12091,
     "nonTypeScriptFiles": 59
   },
   "limits": [
@@ -2767,9 +2767,19 @@
 {"name":"checkLog","kind":"ArrowFunction","line":464,"sha256":"e0f9a65fbefb4d9455cf8c6d8db81254e3ff3ccfa9dc981e30945998aa13517c","status":"unproved","candidate":"requires-effect-or-language-boundary","syntaxFeatures":["await","library-semantics-review"]},
 {"name":"<ArrowFunction@480>","kind":"ArrowFunction","line":480,"sha256":"08ef07cd45a0fc0c8ca52b4a7b10a5cf845d1f9b237757b08e816c2bf4635a3c","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":["library-semantics-review"]}
 ]},
-{"path":"scripts/check-staging-order.mjs","sha256":"d0c77a68c0451c7a73e33413d631b4a15da3006352d6912adac8b8b40be3fbe1","language":"javascript","disposition":"callables-inventoried","functions":[
-{"name":"createdByNonReleaseWorkflow","kind":"FunctionDeclaration","line":44,"sha256":"fec7980d1379a1874c3b362ce6a147c1fafbc296adf0b96dafc156d141a9b04a","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
-{"name":"<ArrowFunction@60>","kind":"ArrowFunction","line":60,"sha256":"6e363ed36911474cde87877bda84864482cabb3b429b70c59890007171a62864","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]}
+{"path":"scripts/check-retained-release-data.ts","sha256":"7530ec4fc152e572f4a8404a44b9e346259e98cad0d5420c5b57d35a1a612575","language":"typescript","disposition":"callables-inventoried","functions":[
+{"name":"assertRetainedReleaseTimes","kind":"FunctionDeclaration","line":13,"sha256":"07daecc319f043d75d6fffd118c9df08f7f673ae5f7a0f7b184c1c941731d355","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":["throw-unreachable-model"]},
+{"name":"checkRetainedReleaseData","kind":"FunctionDeclaration","line":27,"sha256":"9a248ff33eacecdcd1814e964ccea47be079c8ff86c251cfd02dbf9e48076e2a","status":"unproved","candidate":"requires-effect-or-language-boundary","syntaxFeatures":["await","runtime-effect","throw-unreachable-model"]},
+{"name":"<ArrowFunction@36>","kind":"ArrowFunction","line":36,"sha256":"fd9ceed8be5f5857736500673bec32afa62be4dcd44e2a069a03b37432953bfc","status":"unproved","candidate":"requires-effect-or-language-boundary","syntaxFeatures":["await"]}
+]},
+{"path":"scripts/check-staging-order.mjs","sha256":"8a3bae9b39d1be4c4773802628245c3df7ca7899a9293628951d8d0247059ddd","language":"javascript","disposition":"callables-inventoried","functions":[
+{"name":"<Constructor@27>","kind":"Constructor","line":27,"sha256":"bacb7941aced7e593cd3e92d83154235ffa81dc74ff9a5cc4ad4108b8d190092","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
+{"name":"callOptions","kind":"FunctionDeclaration","line":33,"sha256":"5a9cbbe2384e11b6153c16e3beef7c2936d101a0650ddb846edd33eb5a1e1ac6","status":"unproved","candidate":"requires-effect-or-language-boundary","syntaxFeatures":["runtime-effect","throw-unreachable-model"]},
+{"name":"rateLimitRetryAt","kind":"FunctionDeclaration","line":40,"sha256":"5d43d0a4d3f0ea72815e6177072949eff21ed4c092c252e2328b8ff9c95d269e","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":["library-semantics-review"]},
+{"name":"readGitHub","kind":"FunctionDeclaration","line":66,"sha256":"4f0b2c21ebecf96d811aea346df77e641c647a6aad13b482b224997aa1b0ed19","status":"unproved","candidate":"requires-effect-or-language-boundary","syntaxFeatures":["runtime-effect","throw-unreachable-model"]},
+{"name":"createdByNonReleaseWorkflow","kind":"FunctionDeclaration","line":103,"sha256":"e99556f7f8361437d06f273edf76dec2752bc7257ada0a6cf7605c9ccee07bc1","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":["throw-unreachable-model"]},
+{"name":"<ArrowFunction@113>","kind":"ArrowFunction","line":113,"sha256":"6e363ed36911474cde87877bda84864482cabb3b429b70c59890007171a62864","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
+{"name":"verifyOrder","kind":"FunctionDeclaration","line":135,"sha256":"9c314df3218cf327aeb32c5714027e5dbe295b695ec6f58504a22fc5dbe9c948","status":"unproved","candidate":"requires-effect-or-language-boundary","syntaxFeatures":["runtime-effect","throw-unreachable-model"]}
 ]},
 {"path":"scripts/check-unsafe-destination-transitions.ts","sha256":"a57eae41f563030ace115d74a193ca9f872349e9cef901f2a68c4358913db590","language":"typescript","disposition":"callables-inventoried","functions":[
 {"name":"git","kind":"FunctionDeclaration","line":22,"sha256":"06f4a3ddfe006d2b742c81dc9894d65da6f4e083fd099898e660076fe555d692","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
