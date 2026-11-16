@@ -10,6 +10,20 @@ const workflow = await readFile(
   new URL("../.github/workflows/deploy.yml", import.meta.url),
   "utf8",
 );
+test("retained and fresh preparation have separate lanes with one production lock", () => {
+  const prepare = workflow
+    .split("  prepare:\n")[1]
+    .split("    # The public elizaOS")[0];
+  const group =
+    // biome-ignore lint/suspicious/noTemplateCurlyInString: GitHub Actions expression bytes.
+    "group: slop-quality-${{ github.event.pull_request.number || github.ref }}-${{ github.event_name }}-${{ inputs.use_published_data == true && 'retained' || 'fresh' }}";
+  const cancellation =
+    // biome-ignore lint/suspicious/noTemplateCurlyInString: GitHub Actions expression bytes.
+    "cancel-in-progress: ${{ github.event_name == 'pull_request' }}";
+  expect(prepare).toContain(group);
+  expect(prepare).toContain(cancellation);
+  expect(workflow.match(/^ {6}group: slop-production$/gm)).toHaveLength(1);
+});
 const step = (name: string) =>
   workflow.split(`      - name: ${name}\n`)[1].split("\n      - name:")[0];
 const publishedDataGuard = step(

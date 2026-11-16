@@ -117,7 +117,8 @@ jobs:
     concurrency:
       # Let trusted branch preparation finish. Newer runs replace only the
       # pending revision; only superseded pull requests cancel a running check.
-      group: slop-quality-${{ github.event.pull_request.number || github.ref }}-${{ github.event_name }}
+      # Retained-data releases can prepare while a full live collection runs.
+      group: slop-quality-${{ github.event.pull_request.number || github.ref }}-${{ github.event_name }}-${{ inputs.use_published_data == true && 'retained' || 'fresh' }}
       cancel-in-progress: ${{ github.event_name == 'pull_request' }}
     # The public elizaOS ledger can contain several thousand accepted outcomes.
     # Complete commit attribution and value-history reads can span quota resets.
