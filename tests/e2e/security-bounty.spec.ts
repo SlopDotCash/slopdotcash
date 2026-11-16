@@ -3868,7 +3868,7 @@ test("Slop receives a private report before GitHub and keeps it in Inbox @regist
         ).toBeVisible();
         await expect(retry).toBeVisible();
       }
-      await report.getByText("Read private report", { exact: true }).click();
+      await reportBody(report).click();
       await expect(report.locator(".security-report-text")).toHaveText(
         description,
       );
@@ -3904,9 +3904,7 @@ test("Slop receives a private report before GitHub and keeps it in Inbox @regist
       });
       if (state === "queued") {
         releaseList();
-        const authority = page.getByText(
-          "Some maintainer access could not be checked. Your own reports are shown.",
-        );
+        const authority = page.getByText("Partial list", { exact: true });
         await expect(authority).toBeVisible();
         await page.unroute("**/api/v1/security-submissions", heldList);
 
