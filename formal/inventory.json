@@ -4050,7 +4050,7 @@
     },
     {
       "path": "scripts/generate-points.ts",
-      "sha256": "17caa9c66e88d0729cb547830eff2ca67926d2d95c71c55a824e227622e5ba87",
+      "sha256": "17d3847022390ee1cbf40a60a06ec9a816fcd601be946b874350c6a2081de86c",
       "models": [
         "formal/models/points/historical_implementation_allocation.qnt",
         "formal/models/points/journal_publication.qnt",
@@ -4059,8 +4059,8 @@
         "formal/models/points/points_retained_provenance.qnt"
       ],
       "candidateLines": [
-        2, 36, 63, 100, 122, 125, 138, 145, 154, 162, 170, 246, 278, 284, 287,
-        291, 292, 293, 294, 384, 659, 666, 667, 669, 674, 678, 682
+        2, 37, 64, 101, 123, 126, 139, 146, 155, 163, 171, 247, 279, 285, 288,
+        292, 293, 294, 295, 385, 671, 678, 679, 681, 686, 690, 694
       ],
       "review": "mapped-abstraction"
     },
@@ -5018,6 +5018,13 @@
       "sha256": "77a29ff69411bb91b6742016aedcdeca7180ae7470d8df499e83bfc0611c8746",
       "models": ["formal/models/slopbot/merge_evidence_acquisition.qnt"],
       "candidateLines": [262, 263, 273, 415, 431, 483, 489, 512, 533, 535],
+      "review": "mapped-abstraction"
+    },
+    {
+      "path": "scripts/vault-payout-points.ts",
+      "sha256": "763097a2a09b3608b7bac1f044955e84a60ed091b4d6214bd7688b9edb643b15",
+      "models": ["formal/models/points/points_journal.qnt"],
+      "candidateLines": [1],
       "review": "mapped-abstraction"
     },
     {
@@ -6567,13 +6574,13 @@
     },
     {
       "path": "src/lib/payments/contracts.ts",
-      "sha256": "cf2242a114b4e351d422e916363a87cfd60ed9d9908b62972a67326a91c6bcf5",
+      "sha256": "fb6e3ea7cc734492f18a0351ce5d373959b1cc2a504aebe3155a930a01dbd13a",
       "models": [
         "formal/models/fees/ordinary_fee.qnt",
         "formal/models/rewards/escrow_balances.qnt",
         "formal/models/ui/ui_payment_page_assembly.qnt"
       ],
-      "candidateLines": [33, 53, 54, 55, 77, 94, 129, 137, 225],
+      "candidateLines": [35, 55, 56, 57, 79, 96, 131, 139, 251],
       "review": "mapped-abstraction"
     },
     {
@@ -6624,9 +6631,9 @@
     },
     {
       "path": "src/lib/payout-points.ts",
-      "sha256": "28545f0a617b2f14dfcf5e63ca97b79214fc3fe72eaec1f7352b0967dd99a184",
+      "sha256": "264d19cedc65b7458766f9881d5c2317d76a29ba809ac739069f8624f1e45c38",
       "models": ["formal/models/points/points_journal.qnt"],
-      "candidateLines": [13, 21, 24, 26],
+      "candidateLines": [28, 36, 39, 41, 90],
       "review": "mapped-abstraction"
     },
     {
@@ -7299,13 +7306,13 @@
     },
     {
       "path": "src/lib/use-vault-payments.ts",
-      "sha256": "8860d4f0bb40bc2779aa3d1e60d332aa404d708af585127b04f235aaa2567b5b",
+      "sha256": "85159c37ee1045a69aacb231914b2616dbc13e9b0ce01ba03fdf57401d45cff0",
       "models": [
         "formal/models/payments/payment_history.qnt",
         "formal/models/ui/ui_payment_page_assembly.qnt",
         "formal/models/ui/ui_resources.qnt"
       ],
-      "candidateLines": [94, 101, 102, 103, 104],
+      "candidateLines": [70, 77, 78, 79, 80],
       "review": "mapped-abstraction"
     },
     {
@@ -14282,9 +14289,10 @@
     },
     {
       "path": "formal/models/points/points_journal.qnt",
-      "sha256": "a842f62be069a7e83f67916cb439753f89d0a5973349cebf8575e2e099a0a054",
+      "sha256": "84f2351b052cd7b46e66cfad2a1d3d5c46078c28803632fee94d8b67aef93730",
       "sources": [
         "scripts/generate-points.ts",
+        "scripts/vault-payout-points.ts",
         "src/lib/payout-points.ts",
         "src/lib/points.ts",
         "src/lib/score-penalties.ts",
@@ -14293,9 +14301,16 @@
         "src/lib/verified-global-joins.ts"
       ],
       "scenarios": [
+        "bountyPaymentTest",
+        "closedAccountTest",
         "penaltyKeepsFundedTest",
         "recognitionNotRewardTest",
-        "reverseDebitTest"
+        "repeatedTransferTest",
+        "reservedPaymentTest",
+        "retainedAfterClosureTest",
+        "reverseDebitTest",
+        "testnetPaymentTest",
+        "unprovenPaymentTest"
       ]
     },
     {
