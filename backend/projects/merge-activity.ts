@@ -269,10 +269,8 @@ export async function readMergeActivity(
   return summarizeMergeActivity(open, openCapped, merged, latestMergedAt, now);
 }
 
-/** Repository paths of an active, listed project, in registry order. */
-export function measuredRepositories(project: ProjectDefinition): string[] {
-  if (project.status !== "active" || project.listingTier === "retired")
-    return [];
+/** Repository paths a project lists now, in registry order. */
+function listedRepositories(project: ProjectDefinition): string[] {
   return project.repositories
     .map((repository) =>
       repository.githubUrl
@@ -280,6 +278,13 @@ export function measuredRepositories(project: ProjectDefinition): string[] {
         : repository.id,
     )
     .filter(validRepositoryPath);
+}
+
+/** Repository paths of an active, listed project, in registry order. */
+export function measuredRepositories(project: ProjectDefinition): string[] {
+  if (project.status !== "active" || project.listingTier === "retired")
+    return [];
+  return listedRepositories(project);
 }
 
 type StoredRow = {
@@ -306,7 +311,8 @@ export function due(row: StoredRow | undefined, now: Date): boolean {
 /**
  * Reads up to `REPOSITORIES_PER_RUN` due repositories and stores the results.
  * Never throws for a GitHub failure: that repository records the failure and
- * keeps its last values.
+ * keeps its last values. Drops the row of a path its project no longer lists,
+ * such as the old path of a transferred repository.
  */
 export async function refreshMergeActivity(
   db: Database,
@@ -323,6 +329,19 @@ export async function refreshMergeActivity(
   const stored = new Map(
     (results ?? []).map((row) => [`${row.project_id}\n${row.repository}`, row]),
   );
+  // A transfer moves a repository to a new path; the old path is never read
+  // again, and its row would keep adding stale values to the project.
+  const listed = new Map(
+    projects.map((project) => [project.id, listedRepositories(project)]),
+  );
+  for (const row of results ?? [])
+    if (listed.get(row.project_id)?.includes(row.repository) === false)
+      await db
+        .prepare(
+          "DELETE FROM repository_merge_activity WHERE project_id = ? AND repository = ?",
+        )
+        .bind(row.project_id, row.repository)
+        .run();
   const queue: Array<{ projectId: string; repository: string; since: number }> =
     [];
   for (const project of projects)
