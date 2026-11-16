@@ -15,6 +15,43 @@ const options = { account: "a".repeat(32), token: secret };
 const messageHash = (message: string) =>
   createHash("sha256").update(message, "utf8").digest("hex");
 
+test("structured historical stages survive both projections without raw payloads", () => {
+  const safe = {
+    event: "historical-intake-failure",
+    stage: "source-registry",
+    sourceCount: 23,
+    sourceIndex: 2,
+    errorName: "Error",
+    httpStatus: 403,
+    messageSha256: messageHash(secret),
+  };
+  const result = sanitizeIntakeTail({
+    logs: [
+      {
+        message: [
+          JSON.stringify(safe),
+          { ...safe, body: secret },
+          { ...safe, sourceIndex: 23 },
+        ],
+      },
+    ],
+  });
+  expect(result?.historicalIntakeFailures).toEqual([safe]);
+  expect(result?.categories).toBeUndefined();
+  expect(sanitizeIntakeTail(result)?.historicalIntakeFailures).toEqual([safe]);
+  expect(JSON.stringify(result)).not.toContain(secret);
+  expect(
+    sanitizeIntakeTail({
+      historicalIntakeFailures: [{ ...safe, url: secret }],
+    }),
+  ).toBeNull();
+  expect(
+    sanitizeIntakeTail({
+      historicalIntakeFailures: Array.from({ length: 30 }, () => safe),
+    })?.historicalIntakeFailures,
+  ).toHaveLength(20);
+});
+
 test("tail sanitizer emits fixed labels and numeric HTTP state only", () => {
   const result = sanitizeIntakeTail({
     scriptName: secret,

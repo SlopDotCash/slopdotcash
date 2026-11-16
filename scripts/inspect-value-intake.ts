@@ -2,6 +2,10 @@
 import { createHash } from "node:crypto";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
+import {
+  type HistoricalIntakeFailure,
+  projectHistoricalIntakeFailure,
+} from "../workers/slopbot/value-import-diagnostics";
 
 const workers = ["slop-slopbot", "slop-vetting-sandbox"] as const;
 const uuid = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/u;
@@ -129,6 +133,16 @@ export function sanitizeIntakeTail(value: any) {
   if (Number.isInteger(status) && status >= 100 && status <= 599)
     row.httpStatus = status;
   const labels: string[] = [];
+  const intakeFailures: HistoricalIntakeFailure[] = (
+    Array.isArray(value.historicalIntakeFailures)
+      ? value.historicalIntakeFailures.slice(0, 20)
+      : []
+  )
+    .map(projectHistoricalIntakeFailure)
+    .filter(
+      (v: HistoricalIntakeFailure | null): v is HistoricalIntakeFailure =>
+        v !== null,
+    );
   const fingerprints: ExceptionFingerprint[] = (
     Array.isArray(value.exceptionFingerprints)
       ? value.exceptionFingerprints.slice(0, 20)
@@ -157,11 +171,25 @@ export function sanitizeIntakeTail(value: any) {
     for (const message of Array.isArray(entry?.message)
       ? entry.message.slice(0, 10)
       : []) {
+      let structured: unknown = message;
+      if (typeof message === "string" && message.length <= 8192) {
+        try {
+          structured = JSON.parse(message);
+        } catch {
+          /* Raw text never retained. */
+        }
+      }
+      const failure = projectHistoricalIntakeFailure(structured);
+      if (failure) {
+        if (intakeFailures.length < 20) intakeFailures.push(failure);
+        continue;
+      }
       if (typeof message === "string") labels.push(intakeError(message));
     }
   }
   if (labels.length) row.categories = [...new Set(labels)];
   if (fingerprints.length) row.exceptionFingerprints = fingerprints;
+  if (intakeFailures.length) row.historicalIntakeFailures = intakeFailures;
   return Object.keys(row).length ? row : null;
 }
 
