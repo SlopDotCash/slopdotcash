@@ -291,25 +291,26 @@ pure val privateRead: Observation = { ...ordinaryRead, purpose: PrivateBounty }
 pure val solanaRead: Observation = { ...ordinaryRead, identity: solana }
 pure val observationValues = Set(ordinaryRead, privateRead, solanaRead,
   { ...ordinaryRead, block: List(2), observedAt: 1 }, { ...ordinaryRead, observedAt: 2 },
-  { ...ordinaryRead, block: List(2), counters: zeroCounters })
+  { ...ordinaryRead, block: List(2), counters: zeroCounters },
+  { ...solanaRead, block: List(2), observedAt: 1 }, { ...solanaRead, observedAt: 2 })
 pure val baseCreation: Creation = { identity: evm, transaction: "creation-one", reviewed: 1, purpose: Ordinary, status: FinalizedCreation }
 pure val creationValues = Set(baseCreation, { ...baseCreation, identity: solana }, { ...baseCreation, purpose: PrivateBounty },
   { ...baseCreation, status: IncludedCreation }, { ...baseCreation, status: PendingCreation },
   { ...baseCreation, status: UnverifiedCreation }, { ...baseCreation, transaction: "creation-two", reviewed: 2 })
 pure val networkValues = Set("Base", "Solana")
-pure val txValues = Set("creation-one", "creation-two")
-pure val requestIdValues = Set(1, 2, 3, 4)
-pure val expectedValues = Set(1, 2, 3)
+pure val txValues = Set("creation-one")
+pure val requestIdValues = Set(1, 2, 3, 4, 5, 6)
+pure val expectedValues = Set(1, 2)
 pure val ordinaryPolicyValues = Set(1, 3)
 pure val privatePolicyValues = Set(2, 4)
 pure val pinnedRootValues = Set("", "genesis")
-pure val seenRootValues = Set("", "genesis", "wrong")
-pure val weight_beginRegistration = 10
+pure val seenRootValues = Set("genesis", "wrong")
+pure val weight_beginRegistration = 2
 pure val weight_checkCreation = 12
 pure val weight_commitRegistration = 10
-pure val weight_beginRecovery = 10
-pure val weight_pinGenesis = 5
-pure val weight_checkGenesis = 5
+pure val weight_beginRecovery = 12
+pure val weight_pinGenesis = 12
+pure val weight_checkGenesis = 12
 pure val weight_readTotals = 12
 pure val weight_readPrior = 12
 pure val weight_write = 12
