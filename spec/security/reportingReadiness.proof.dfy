@@ -11,6 +11,7 @@ lemma refresh_ensures(r: Readiness, target: Target, read: Read, attemptedAt: int
         ensures after.observations[i].revision == r.observations[i].revision && after.observations[i].repository == r.observations[i].repository
         ensures after.observations[i].attemptedAt >= r.observations[i].attemptedAt
         ensures r.observations[i].repositoryId > 0 ==> after.observations[i].repositoryId == r.observations[i].repositoryId
+          && after.observations[i].repositoryNodeId == r.observations[i].repositoryNodeId
       {
         var o := r.observations[i];
         assert o in r.observations;
@@ -20,7 +21,8 @@ lemma refresh_ensures(r: Readiness, target: Target, read: Read, attemptedAt: int
       }
       forall b | b in r.observations
         ensures exists a :: (a in after.observations && a.revision == b.revision && a.repository == b.repository
-          && a.attemptedAt >= b.attemptedAt && (b.repositoryId > 0 ==> a.repositoryId == b.repositoryId))
+          && a.attemptedAt >= b.attemptedAt
+          && (b.repositoryId > 0 ==> a.repositoryId == b.repositoryId && a.repositoryNodeId == b.repositoryNodeId))
       {
         var i :| 0 <= i < |r.observations| && r.observations[i] == b;
         assert after.observations[i] in after.observations;
@@ -33,7 +35,8 @@ lemma refresh_ensures(r: Readiness, target: Target, read: Read, attemptedAt: int
       }
       forall b | b in r.observations
         ensures exists a :: (a in after.observations && a.revision == b.revision && a.repository == b.repository
-          && a.attemptedAt >= b.attemptedAt && (b.repositoryId > 0 ==> a.repositoryId == b.repositoryId))
+          && a.attemptedAt >= b.attemptedAt
+          && (b.repositoryId > 0 ==> a.repositoryId == b.repositoryId && a.repositoryNodeId == b.repositoryNodeId))
       {
         assert b in after.observations;
       }
