@@ -19,6 +19,10 @@ boundaries, current authority, exact financial states, immutable history and
 external evidence requirements throughout the migration. Do not infer product
 completion from passing model checks or the template greeting example.
 
+`lucide-react` is the single icon library, as on `development`. "No code
+comments" below also covers narratives: an explanation a reviewer needs goes in
+the pull request, which describes its own diff and evidence. Never copy a
+narrative from another change or leave one that the diff does not match.
 
 Each application starts at `spec/index.md`: its stories, rules and Quint
 model, with links to child specs wherever an area needs its own directory.
