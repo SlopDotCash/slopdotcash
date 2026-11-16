@@ -4,7 +4,10 @@ import { GitHubClient } from "../workers/slopbot/github";
 import { GitHubGraphqlClient } from "./generate-leaderboard";
 import { githubIngestionReadTransport } from "./github-ingestion-read";
 
-function fixture(responses: (() => Response)[]) {
+function fixture(
+  responses: (() => Response)[],
+  options: { quotaDeadlineMs?: number; wait?: () => Promise<void> } = {},
+) {
   let calls = 0;
   const waits: number[] = [];
   const transport = Object.assign(
@@ -13,17 +16,18 @@ function fixture(responses: (() => Response)[]) {
       preconnect: fetch.preconnect,
     },
   );
-  const client = GitHubClient.forToken(
-    "test-token",
-    githubIngestionReadTransport(
-      transport,
-      () => 1_000_000,
-      async (milliseconds) => {
-        waits.push(milliseconds);
-      },
-    ),
+  const read = githubIngestionReadTransport(
+    transport,
+    () => 1_000_000,
+    async (milliseconds) => {
+      waits.push(milliseconds);
+      await options.wait?.();
+    },
+    undefined,
+    { quotaDeadlineMs: options.quotaDeadlineMs },
   );
-  return { client, waits, calls: () => calls };
+  const client = GitHubClient.forToken("test-token", read);
+  return { client, read, waits, calls: () => calls };
 }
 
 test("source reads wait for the reported exhausted REST window and retain the complete answer", async () => {
@@ -93,6 +97,88 @@ test("read retries honor Retry-After and remain bounded", async () => {
   });
   expect(f.calls()).toBe(5);
   expect(f.waits).toEqual([2_000, 2_000, 2_000, 2_000]);
+});
+
+const pullFilesPath = "/repos/owner/repo/pulls/7/files?per_page=100&page=1";
+const fileReadError = () => new Response("internal error", { status: 500 });
+
+for (const path of [
+  pullFilesPath,
+  "/repositories/42/pulls/7/files?per_page=100&page=2",
+]) {
+  test(`PR file reads recover from two HTTP 500 responses at ${path}`, async () => {
+    const files = [
+      { filename: "source.ts", additions: 9, deletions: 2 },
+      { filename: "tests.ts", additions: 5, deletions: 0 },
+    ];
+    const f = fixture([
+      fileReadError,
+      fileReadError,
+      () => Response.json(files),
+    ]);
+    expect(await f.client.get<typeof files>(path)).toEqual(files);
+    expect(f.calls()).toBe(3);
+    expect(f.waits).toEqual([1_000, 2_000]);
+  });
+}
+
+test("persistent PR file failures return the complete third HTTP 500 response", async () => {
+  const finalBody = { message: "still unavailable", documentation_url: "help" };
+  const f = fixture([
+    fileReadError,
+    fileReadError,
+    () => Response.json(finalBody, { status: 500 }),
+  ]);
+  const response = await f.read(`https://api.github.com${pullFilesPath}`);
+  expect(response.status).toBe(500);
+  expect(await response.json()).toEqual(finalBody);
+  expect(f.calls()).toBe(3);
+  expect(f.waits).toEqual([1_000, 2_000]);
+});
+
+test("PR file backoff checkpoints when its first wait would reach the collection deadline", async () => {
+  const f = fixture([fileReadError], { quotaDeadlineMs: 1_001_000 });
+  await expect(f.client.get(pullFilesPath)).rejects.toMatchObject({
+    name: "GitHubIngestionCheckpointError",
+  });
+  expect(f.calls()).toBe(1);
+  expect(f.waits).toEqual([]);
+});
+
+test("caller cancellation during PR file backoff prevents another read", async () => {
+  const controller = new AbortController();
+  const reason = new Error("caller stopped file collection");
+  const f = fixture([fileReadError], {
+    wait: () => {
+      queueMicrotask(() => controller.abort(reason));
+      return new Promise(() => {});
+    },
+  });
+  await expect(
+    f.read(`https://api.github.com${pullFilesPath}`, {
+      signal: controller.signal,
+    }),
+  ).rejects.toBe(reason);
+  expect(f.calls()).toBe(1);
+  expect(f.waits).toEqual([1_000]);
+});
+
+test("a missing PR file listing returns null without backoff", async () => {
+  const f = fixture([() => new Response("missing", { status: 404 })]);
+  expect(await f.client.get(pullFilesPath)).toBeNull();
+  expect(f.calls()).toBe(1);
+  expect(f.waits).toEqual([]);
+});
+
+test("GitHub GraphQL POST failures bypass the REST file retry", async () => {
+  const f = fixture([fileReadError]);
+  await expect(
+    f.client.graphql("query { viewer { id } }", {}),
+  ).rejects.toMatchObject({
+    status: 500,
+  });
+  expect(f.calls()).toBe(1);
+  expect(f.waits).toEqual([]);
 });
 
 const forbiddenHeaders: Record<string, string>[] = [

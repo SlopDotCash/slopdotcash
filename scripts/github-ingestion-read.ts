@@ -199,6 +199,10 @@ export function githubIngestionReadTransport(
       const retryable =
         url.origin === "https://api.github.com" && method === "GET";
       if (!retryable) return transport(input, init);
+      const pullFiles =
+        /^\/(?:repos\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+|repositories\/[1-9]\d*)\/pulls\/[1-9]\d*\/files$/u.test(
+          url.pathname,
+        );
       const callerSignal =
         init && "signal" in init ? init.signal : request?.signal;
       callerSignal?.throwIfAborted();
@@ -236,6 +240,7 @@ export function githubIngestionReadTransport(
         cache.set(key, cached);
         return replay(cached);
       }
+      let serverErrorRetries = 0;
       for (let attempt = 1; ; ) {
         callerSignal?.throwIfAborted();
         checkDeadline();
@@ -269,6 +274,18 @@ export function githubIngestionReadTransport(
           // A missing or different validator does not vouch for these bytes.
           // Retry once without a validator and let the caller check the reply.
           retainedDiscussion = null;
+          continue;
+        }
+        // GitHub can fail to serve a PR file page temporarily. Retry that
+        // exact page without resetting the quota budget or changing pagination.
+        if (pullFiles && response.status === 500 && serverErrorRetries < 2) {
+          serverErrorRetries += 1;
+          const delay = serverErrorRetries * 1_000;
+          await response.body?.cancel();
+          checkDeadline(delay);
+          await (callerSignal
+            ? abortable(wait(delay), callerSignal)
+            : wait(delay));
           continue;
         }
         if (

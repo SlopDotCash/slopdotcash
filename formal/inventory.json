@@ -4007,11 +4007,11 @@
     },
     {
       "path": "scripts/github-ingestion-read.ts",
-      "sha256": "c9718082a07abcf123dac2a34433c0d87fe9217fb56c62cee855aebe8f4dcb6c",
+      "sha256": "e076a5dc60441617696094013e07d286e5bf4a33915e4c7f18f5bde903f50f45",
       "models": ["formal/models/points/github_ingestion_read.qnt"],
       "candidateLines": [
-        35, 53, 86, 107, 109, 127, 165, 235, 255, 265, 270, 276, 285, 307, 317,
-        326, 334
+        35, 53, 86, 107, 109, 127, 165, 239, 260, 270, 275, 279, 281, 293, 302,
+        324, 334, 343, 351
       ],
       "review": "mapped-abstraction"
     },
@@ -13858,7 +13858,7 @@
     },
     {
       "path": "formal/models/points/github_ingestion_read.qnt",
-      "sha256": "fdc3629501e65b3ed04384f98031b25241095a142281a52fdef4b22059bff295",
+      "sha256": "a3d445c17e010e0d8e5e38facc773f9b7bcba2cb886b03184483d623ec9f0603",
       "sources": [
         "scripts/github-discussion-cache.ts",
         "scripts/github-ingestion-read.ts",
@@ -13870,11 +13870,15 @@
         "confirmedCheckpointReadTest",
         "mismatchedValidatorCannotReplayTest",
         "mismatchedValidatorReadsLiveTest",
+        "prFileServerErrorRecoversTest",
+        "prFileServerErrorsStayBoundedTest",
         "readResumesAfterLimitTest",
         "repeatedLimitFailsTest",
         "repeatedSecondaryLimitFailsTest",
         "secondaryLimitMessageResumesTest",
+        "serverRetryRespectsCheckpointTest",
         "timedOutCheckpointCannotPublishTest",
+        "unrelatedServerErrorNeverRetriesTest",
         "writeDoesNotRetryTest"
       ]
     },
