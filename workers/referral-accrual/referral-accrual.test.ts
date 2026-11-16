@@ -7,6 +7,7 @@ import { join } from "node:path";
 import {
   handleReferralsApi,
   REFERRAL_ACCRUALS_PATH,
+  REFERRED_PROJECTS_PATH,
 } from "../../backend/referrals/handler";
 import { seedParticipationBan } from "../../tests/participation-ban.fixture";
 import { sqliteD1 } from "../../tests/sqlite-d1";
@@ -866,5 +867,78 @@ describe("public accrual route", () => {
         )
       )?.status,
     ).toBe(405);
+  });
+});
+
+describe("public referred projects route", () => {
+  test("lists only projects that carry a referrer, oldest first", async () => {
+    const { db, sqlite } = sqliteD1();
+    addProject(sqlite, "plain", null);
+    addProject(sqlite, "referred-a", REFERRER);
+    // A later, paused registration: the list is ordered by registration time.
+    const manifest = JSON.stringify({ id: "referred-b", status: "paused" });
+    sqlite
+      .query(
+        "INSERT INTO project_revisions (project_id,revision,manifest,manifest_sha256,reason,created_at) VALUES ('referred-b',1,?,?,'test','2026-11-14T09:00:00.000Z')",
+      )
+      .run(manifest, sha(manifest));
+    sqlite
+      .query(
+        "INSERT INTO projects (id,status,revision,manifest,manifest_sha256,created_at,updated_at,referrer_github_id,referrer_github_login) VALUES ('referred-b','paused',1,?,?,'2026-11-14T09:00:00.000Z','2026-11-14T09:00:00.000Z',?,?)",
+      )
+      .run(manifest, sha(manifest), SECOND.githubId, SECOND.githubLogin);
+    const response = await handleReferralsApi(
+      new Request(`https://slop.cash${REFERRED_PROJECTS_PATH}`),
+      { db },
+    );
+    expect(response?.status).toBe(200);
+    expect(response?.headers.get("cache-control")).toBe("public, max-age=300");
+    expect(await response?.json()).toEqual({
+      schema: "slop-referred-projects-v1",
+      projects: [
+        {
+          projectId: "referred-a",
+          status: "active",
+          listedAt: "2026-10-01T00:00:00.000Z",
+          referrer: REFERRER,
+        },
+        {
+          projectId: "referred-b",
+          status: "paused",
+          listedAt: "2026-11-14T09:00:00.000Z",
+          referrer: SECOND,
+        },
+      ],
+    });
+  });
+
+  test("an empty registry answers an empty list and writes are refused", async () => {
+    const { db } = sqliteD1();
+    const empty = await handleReferralsApi(
+      new Request(`https://slop.cash${REFERRED_PROJECTS_PATH}`),
+      { db },
+    );
+    expect(await empty?.json()).toEqual({
+      schema: "slop-referred-projects-v1",
+      projects: [],
+    });
+    expect(
+      (
+        await handleReferralsApi(
+          new Request(`https://slop.cash${REFERRED_PROJECTS_PATH}`, {
+            method: "POST",
+          }),
+          { db },
+        )
+      )?.status,
+    ).toBe(405);
+    expect(
+      (
+        await handleReferralsApi(
+          new Request(`https://slop.cash${REFERRED_PROJECTS_PATH}/referred-a`),
+          { db },
+        )
+      )?.status,
+    ).toBe(404);
   });
 });

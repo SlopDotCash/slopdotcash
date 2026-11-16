@@ -1,4 +1,5 @@
 import type { ProjectDefinition } from "./projects.mjs";
+import type { ScanClearanceView } from "./scan-clearance";
 import type { VettingClearance } from "./vetting-contracts";
 
 export type GithubActor = { githubId: string; githubLogin: string };
@@ -27,7 +28,11 @@ export type ProjectRevision = {
   createdAt: string;
 };
 
-export type ApplicationStatus = "pending" | "approved" | "rejected";
+export type ApplicationStatus =
+  | "pending"
+  | "approved"
+  | "rejected"
+  | "cancelled";
 export type AdminNotification = "pending" | "sent" | "failed";
 
 export type ProjectApplication = {
@@ -57,6 +62,11 @@ export type ProjectRevisionInput = {
   projectId: string;
   /** Revision the caller read; the write fails if another write landed. */
   expectedRevision: number;
+  /**
+   * Admission-clearance generation read before the caller checked clearance.
+   * When given, the write fails if an assessment or exemption changed since.
+   */
+  expectedClearanceGeneration?: string;
   manifest: ProjectDefinition;
   manifestText: string;
   manifestSha256: string;
@@ -113,6 +123,8 @@ export type ProjectEnforcement = {
         kind: "vetting-service";
         keySha256: string;
         assessmentId: string;
+        /** Clean evidence selected for each repository in a reinstatement. */
+        assessmentIds?: string[];
         policyVersion: string;
         rule: string;
       }
@@ -149,7 +161,7 @@ export type ProjectEnforcement = {
 export type PublicProjectApplication = Omit<
   ProjectApplication,
   "repositoryKey"
-> & { repository: string | null };
+> & { repository: string | null; publishable?: boolean };
 
 export type AdminProject = ProjectRecord & {
   enforcement: ProjectEnforcementState;
@@ -206,6 +218,14 @@ export const SLOPBOT_INSTALL_URL =
   "https://github.com/apps/slopdotcash/installations/new";
 
 /**
+ * GitHub's install screen preselects "All repositories". Slopbot needs only
+ * the listed repository, so every install prompt says how to scope it.
+ */
+export function slopbotInstallScopeNote(repository: string): string {
+  return `On GitHub's install screen choose "Only select repositories" and pick ${repository}. Slopbot gets no access to your other private repositories.`;
+}
+
+/**
  * What the Slopbot installation reports for one repository and one GitHub
  * account. `permission` is GitHub's base access level, which maps maintain to
  * write; `roleName` is the role GitHub names, for display only.
@@ -221,22 +241,6 @@ export type RepositoryAccess =
       /** Requested by newer Pages clients; never a caller-supplied authority claim. */
       repository?: RepositoryIdentity;
     };
-
-/** The Slopbot internal route for one repository's public GitHub reads. */
-export const REPOSITORY_READ_URL =
-  "https://slopbot.internal/v1/repository-read";
-/** Marks a response that is GitHub's own answer through the installation. */
-export const REPOSITORY_READ_HEADER = "x-slopbot-repository-read";
-
-/**
- * The public reads that project setup and security vetting make for one
- * repository: its facts, paginated branches, one branch, and its LICENSE at
- * one commit.
- */
-// A branch of 255 UTF-16 units can occupy 2295 URI characters (three-byte
-// UTF-8 characters, each byte percent-encoded). Keep the same text bound.
-export const REPOSITORY_READ_PATH =
-  /^\/repos\/([A-Za-z0-9_.-]{1,100})\/([A-Za-z0-9_.-]{1,100})(?:\/branches(?:\/[A-Za-z0-9._%-]{1,2295}|\?per_page=100&page=[1-9][0-9]{0,2})|\/license\?ref=[0-9a-f]{40})?$/u;
 
 /** Public identity fields returned by the authenticated GitHub repository read. */
 export type RepositoryIdentity = {
@@ -307,6 +311,8 @@ export type SetupNextAction =
   | "wait_for_scan"
   | "retry_scan"
   | "request_scan"
+  | "complete_skill_fields"
+  | "activate_project"
   | "restricted"
   | "none";
 
@@ -332,6 +338,11 @@ export type ProjectSetupStatus = {
     scan: {
       state: VettingClearance["state"] | "unavailable";
       message: string;
+      /**
+       * Why an incomplete scan did not clear, as badges from the recorded
+       * result (PRD section 8, issue #1991); no finding text.
+       */
+      clearance?: ScanClearanceView;
       /** Recorded exemption (PRD section 8); never a passed scan. */
       exempt?: true;
       exemptionKind?: "existing-project" | "owner-approved-admission";
@@ -387,6 +398,12 @@ export interface RepositoryLookup {
   branches: string[];
   /** Immutable heads returned by GitHub; older lookup responses may omit them. */
   branchCommits?: Record<string, string>;
+  /**
+   * GitHub's fork and archive flags. Absent from older lookup responses; an
+   * absent or unreported flag counts as true, so it never admits a repository.
+   */
+  fork?: boolean;
+  archived?: boolean;
   owner: {
     login: string;
     actorId: string;

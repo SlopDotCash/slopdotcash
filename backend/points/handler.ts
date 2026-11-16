@@ -1,8 +1,5 @@
 import { sha256Hex } from "../../src/lib/async-sha256.mjs";
-import {
-  type DeploymentTier,
-  deploymentOrigins,
-} from "../../src/lib/deployment";
+import { deploymentOrigins } from "../../src/lib/deployment";
 import { POINTS_RULE } from "../../src/lib/points";
 import type { GithubActor } from "../../src/lib/project-contracts";
 import { randomToken } from "../../workers/identity/crypto";
@@ -16,27 +13,10 @@ import {
   readJsonObject,
 } from "../http";
 import { consumeIdentityAssertion } from "../identity-assertion";
-import {
-  handlePointsDisputes,
-  type PointsDisputeDependencies,
-} from "./disputes";
-import { handleX, type XConfiguration } from "./x";
+import type { PointsDependencies } from "./dependencies";
+import { handlePointsDisputes } from "./disputes";
+import { handleX } from "./x";
 
-export interface PointsDependencies {
-  tier?: DeploymentTier;
-  db: D1Database;
-  rateLimitSecret: string;
-  identity: { fetch(request: Request): Promise<Response> };
-  now?: () => Date;
-  /** Trusted deployment origins; never request-supplied. */
-  allowedOrigins?: readonly string[];
-  x?: XConfiguration;
-  xFetch?: (input: string, init: RequestInit) => Promise<Response>;
-  disputes?: Pick<
-    PointsDisputeDependencies,
-    "moderators" | "process" | "waitUntil"
-  >;
-}
 const SESSION_COOKIE = "__Host-slop_points";
 function json(status: number, body: unknown, cookie?: string) {
   return jsonResponse(status, body, {
@@ -76,6 +56,7 @@ type Member = {
   public: number;
   welcome: number;
   social_points?: number;
+  referral_code?: string | null;
 };
 /**
  * Welcome and X-connection points ended on 24 October 2026 (PRD section 11).
@@ -87,6 +68,9 @@ type Member = {
 const PARTICIPATION_POINTS_END = "2026-10-24T00:00:00.000Z";
 const WELCOME_SQL = `CASE WHEN m.joined_at < '${PARTICIPATION_POINTS_END}' THEN m.welcome ELSE 0 END`;
 const X_AWARD_SQL = `a.actor_id=m.actor_id AND a.awarded_at < '${PARTICIPATION_POINTS_END}'`;
+/** The member's referral link name in use (PRD section 11, "Referral program"). */
+const REFERRAL_CODE_SQL =
+  "(SELECT code FROM referral_codes c WHERE c.github_id=m.github_id AND c.retired_at IS NULL) referral_code";
 function publicMember(m: Member) {
   return {
     actor: { id: m.actor_id, login: m.login },
@@ -94,6 +78,7 @@ function publicMember(m: Member) {
     public: m.public === 1,
     welcome: m.joined_at < PARTICIPATION_POINTS_END ? m.welcome : 0,
     socialPoints: m.social_points ?? 0,
+    referralCode: m.referral_code ?? null,
   };
 }
 /** Dedicated points routes never construct the trace persistence adapter. */
@@ -204,19 +189,25 @@ export async function handlePointsApi(
       )
         return json(401, { error: "invalid_identity" });
       const { githubId: id, githubLogin: login } = identity;
+      // Membership is keyed by the numeric GitHub id. The asserted node id is
+      // only the actor key for a first join. A later spelling of the same
+      // person's node must reuse the stored actor_id: actor_id and github_id
+      // are immutable, and ON CONFLICT(actor_id) cannot recover a UNIQUE
+      // github_id clash (PRD section 3, accounts and wallets).
+      const existing = await deps.db
+        .prepare(
+          "SELECT actor_id, closed_at FROM points_members WHERE github_id=?",
+        )
+        .bind(id)
+        .first<{ actor_id: string; closed_at: string | null }>();
       // A closed account opens again only when this sign-in asks to reopen
       // it, so closing is never undone by an ordinary sign-in.
-      const closed = await deps.db
-        .prepare(
-          "SELECT closed_at FROM points_members WHERE actor_id=? AND github_id=? AND closed_at IS NOT NULL",
-        )
-        .bind(node, id)
-        .first<{ closed_at: string }>();
-      if (closed && value.reopen !== true)
+      if (existing?.closed_at && value.reopen !== true)
         return json(409, {
           error: "account_closed",
-          closedAt: closed.closed_at,
+          closedAt: existing.closed_at,
         });
+      const actor = existing?.actor_id ?? node;
       const token = randomToken(32);
       const hash = await sha256Hex(token);
       const expires = new Date(Date.parse(now) + 60 * 60 * 1000).toISOString();
@@ -228,17 +219,17 @@ export async function handlePointsApi(
           .prepare(
             "INSERT INTO points_members(actor_id,github_id,login,joined_at,public) VALUES(?,?,?,?,1) ON CONFLICT(actor_id) DO UPDATE SET login=excluded.login, public=1, closed_at=NULL WHERE points_members.github_id=excluded.github_id AND (points_members.closed_at IS NULL OR ?)",
           )
-          .bind(node, id, login, now, value.reopen ? 1 : 0),
+          .bind(actor, id, login, now, value.reopen ? 1 : 0),
         deps.db
           .prepare(
             "UPDATE points_x_links SET public=1 WHERE actor_id=? AND EXISTS(SELECT 1 FROM points_members WHERE actor_id=? AND github_id=? AND closed_at IS NULL)",
           )
-          .bind(node, node, id),
+          .bind(actor, actor, id),
         deps.db
           .prepare(
             "INSERT INTO points_sessions(token_hash,actor_id,expires_at) SELECT ?,actor_id,? FROM points_members WHERE actor_id=? AND github_id=? AND closed_at IS NULL",
           )
-          .bind(hash, expires, node, id),
+          .bind(hash, expires, actor, id),
         deps.db
           .prepare("DELETE FROM points_sessions WHERE expires_at <= ?")
           .bind(now),
@@ -246,9 +237,9 @@ export async function handlePointsApi(
       if (results[2].meta?.changes !== 1) {
         const closed = await deps.db
           .prepare(
-            "SELECT closed_at FROM points_members WHERE actor_id=? AND github_id=? AND closed_at IS NOT NULL",
+            "SELECT closed_at FROM points_members WHERE github_id=? AND closed_at IS NOT NULL",
           )
-          .bind(node, id)
+          .bind(id)
           .first<{ closed_at: string }>();
         if (closed)
           return json(409, {
@@ -261,9 +252,9 @@ export async function handlePointsApi(
         throw new Error("Points transaction failed");
       const member = await deps.db
         .prepare(
-          `SELECT m.*,COALESCE((SELECT points FROM points_x_awards a WHERE ${X_AWARD_SQL}),0) social_points FROM points_members m WHERE actor_id=?`,
+          `SELECT m.*,COALESCE((SELECT points FROM points_x_awards a WHERE ${X_AWARD_SQL}),0) social_points,${REFERRAL_CODE_SQL} FROM points_members m WHERE actor_id=?`,
         )
-        .bind(node)
+        .bind(actor)
         .first<Member>();
       if (!member) throw new Error("Missing joined member");
       return json(200, publicMember(member), sessionCookie(token, 3600));
@@ -284,7 +275,7 @@ export async function handlePointsApi(
       const hash = await sha256Hex(token);
       const member = await deps.db
         .prepare(
-          `SELECT m.*,COALESCE((SELECT points FROM points_x_awards a WHERE ${X_AWARD_SQL}),0) social_points FROM points_members m JOIN points_sessions s ON s.actor_id=m.actor_id WHERE s.token_hash=? AND s.expires_at>?`,
+          `SELECT m.*,COALESCE((SELECT points FROM points_x_awards a WHERE ${X_AWARD_SQL}),0) social_points,${REFERRAL_CODE_SQL} FROM points_members m JOIN points_sessions s ON s.actor_id=m.actor_id WHERE s.token_hash=? AND s.expires_at>?`,
         )
         .bind(hash, now)
         .first<Member>();

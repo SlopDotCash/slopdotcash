@@ -1,12 +1,15 @@
 /** Nonfinancial points. This module never supplies reward or settlement inputs. */
 
 import { githubUserIdFromNodeId } from "./github-actor";
+import { shareImplementationPoints } from "./implementation-allocation";
 import type {
   GitHubActor,
   LeaderboardSnapshot,
   ScoreEvent,
 } from "./leaderboard";
 import type { PenaltyHistoryRecord } from "./leaderboard-types";
+import { repositoryCountsFrom } from "./project-repositories.mjs";
+import { projectActivityCollected } from "./project-view";
 import {
   findHistoricalProject,
   findHistoricalRepository,
@@ -18,10 +21,16 @@ import {
   REGISTERED_REPOSITORIES,
 } from "./repositories.mjs";
 import { assertPenaltyHistory } from "./score-penalties";
+import { scoreThirdsToPoints } from "./score-units";
 import { VALUE_SCORING_APPROVED_HISTORY_FROM } from "./scoring-policy";
 import { sha256Hex } from "./sha256";
+import { consumeBuckets, sumBuckets } from "./verified-aggregation";
 
 export const POINTS_RULE = "slop-points-v1";
+export const OCTOBER_ORIGINAL_CONTRIBUTOR_DECISION =
+  "The verified original contributor receives the full October 2026 replacement PR implementation Points. The pool value and occurrence date are preserved.";
+export const OCTOBER_DUPLICATE_RETIREMENT_DECISION =
+  "Owner-reviewed duplicate accepted work already rewarded by earlier sources.";
 export const POINTS_NOTICE =
   "Points have no cash value and cannot be transferred or redeemed.";
 export interface PointAward {
@@ -91,9 +100,33 @@ function iso(value: unknown): value is string {
   );
 }
 function exact(value: object, keys: string[]) {
-  if (Object.keys(value).sort().join() !== keys.sort().join())
+  // Membership compare instead of sorting both key lists on every call:
+  // Object.keys are unique and the lengths are equal, so every actual key
+  // being expected is the same check the sorted joins performed.
+  const actual = Object.keys(value);
+  if (actual.length !== keys.length)
     throw new Error("Unexpected points fields");
+  const expected = new Set(keys);
+  for (const key of actual)
+    if (!expected.has(key)) throw new Error("Unexpected points fields");
 }
+/**
+ * An appended repository's work before its own start month counts for no Points.
+ * Repositories without a start month count exactly as before.
+ */
+export function repositoryWorkCounts(
+  event: { repository: string; occurredAt: string },
+  listed?: Parameters<typeof repositoryCountsFrom>[0] | null,
+): boolean {
+  const repository = findHistoricalRepository(event.repository);
+  const project =
+    listed ?? (repository && findHistoricalProject(repository.projectId));
+  const countsFrom = project
+    ? repositoryCountsFrom(project, event.repository)
+    : null;
+  return countsFrom === null || Date.parse(event.occurredAt) >= countsFrom;
+}
+
 export function pointRevisionId(revision: Omit<PointRevision, "id">): string {
   return sha256Hex(JSON.stringify(revision));
 }
@@ -319,6 +352,29 @@ export function assertPointsJournal(
   assertRevisionChain(p, 0, new Map(), new Set());
   assertJournalCoverage(p);
 }
+/** Refuse a publication that omits any previously public revision or coverage. */
+export function assertPointsJournalExtension(
+  previous: PointsJournal,
+  candidate: PointsJournal,
+): void {
+  assertPointsJournal(previous);
+  assertPointsJournal(candidate);
+  if (
+    candidate.revisions.length < previous.revisions.length ||
+    previous.revisions.some(
+      (revision, index) =>
+        JSON.stringify(revision) !== JSON.stringify(candidate.revisions[index]),
+    )
+  )
+    throw new Error(
+      "Points publication does not contain the complete journal prefix",
+    );
+  const coverage = new Set(
+    candidate.coverage.map((entry) => JSON.stringify(entry)),
+  );
+  if (previous.coverage.some((entry) => !coverage.has(JSON.stringify(entry))))
+    throw new Error("Points publication lost source coverage");
+}
 /**
  * Validate a journal whose first `prefix` revisions were already asserted
  * in this call chain and carried over unmodified: the append paths assert
@@ -366,10 +422,7 @@ function pointsForScore(
   event: Pick<ScoreEvent, "scoreThirds" | "points"> &
     Partial<Pick<ScoreEvent, "category" | "scoreDecisionSourceId">>,
 ): number {
-  const amount =
-    event.scoreThirds === undefined
-      ? event.points * (3 * POINTS_PER_THIRD)
-      : event.scoreThirds * POINTS_PER_THIRD;
+  const amount = scoreThirdsToPoints(event.scoreThirds ?? event.points * 3);
   const assessedZero =
     amount === 0 &&
     event.category === "merged-pull-request" &&
@@ -493,7 +546,8 @@ function appendPointAward(
  * Keys of positive retained-history awards (substantive reviews and
  * evaluator awards) whose latest revision was appended by the retained
  * batch: the batch rule with a digest that no snapshot recorded in the
- * coverage. The retained files are the only source for these awards.
+ * coverage and no authoritative value decision. Reviewed historical value
+ * awards can be recorded without adding snapshot coverage.
  */
 export function retainedBatchOwnedKeys(journal: PointsJournal): Set<string> {
   const coverage = new Set(journal.coverage.map((c) => c.digest));
@@ -505,6 +559,7 @@ export function retainedBatchOwnedKeys(journal: PointsJournal): Set<string> {
       (award.category === "substantive-review" ||
         award.category === "evaluated-contribution") &&
       revision.sourceRule === "slop-score-v2" &&
+      !revision.decision?.sourceId.startsWith("value:") &&
       !coverage.has(revision.sourceDigest)
     )
       keys.add(award.key);
@@ -529,6 +584,9 @@ export function reconcilePointPenalties(
     const project = findHistoricalRepository(penalty.repository);
     if (!project || penalty.actor.kind !== "User")
       throw new Error("Invalid penalty identity");
+    // Work on an appended repository before its start month counts for no Points,
+    // so a penalty on it debits none either.
+    if (!repositoryWorkCounts(penalty)) continue;
     const award: PointAward = {
       key: pointKey(
         project.projectId,
@@ -614,29 +672,48 @@ export function reconcilePointPenalties(
   }
   const bucket = (award: PointAward) =>
     `${award.actor.id}\0${award.projectId}\0${award.occurredAt.slice(0, 7)}`;
-  const available = new Map<string, number>();
+  const buckets = new Map<string, number>();
+  const bucketIndex = (key: string): number => {
+    const existing = buckets.get(key);
+    if (existing !== undefined) return existing;
+    const index = buckets.size;
+    buckets.set(key, index);
+    return index;
+  };
+  const credits: { bucket: number; amount: bigint }[] = [];
   for (const member of pointMembers(journal)) {
     for (const award of member.awards) {
       if (award.amount <= 0 || award.category === "payout-received") continue;
-      const key = bucket(award);
-      available.set(key, (available.get(key) ?? 0) + award.amount);
+      credits.push({
+        bucket: bucketIndex(bucket(award)),
+        amount: BigInt(award.amount),
+      });
     }
   }
   let result = journal;
   const latest = latestPoints(journal);
-  for (const candidate of [...candidates.values()].sort(
+  const ordered = [...candidates.values()].sort(
     (a, b) =>
       a.award.occurredAt.localeCompare(b.award.occurredAt) ||
       a.award.workUnitId.localeCompare(b.award.workUnitId),
-  )) {
+  );
+  const requests = ordered.map((candidate) => ({
+    bucket: bucketIndex(bucket(candidate.award)),
+    amount:
+      candidate.penalty?.reversedAt === null
+        ? BigInt(candidate.penalty.debit)
+        : 0n,
+  }));
+  const applied = consumeBuckets(
+    sumBuckets(buckets.size, credits),
+    requests,
+  ).applied;
+  for (let index = 0; index < ordered.length; index += 1) {
+    const candidate = ordered[index];
     const evidence = candidate.penalty;
     if (!evidence) continue;
-    const key = bucket(candidate.award);
-    const debit =
-      evidence.reversedAt === null
-        ? Math.min(evidence.debit, available.get(key) ?? 0)
-        : 0;
-    available.set(key, (available.get(key) ?? 0) - debit);
+    const debit = Number(applied[index]);
+    if (!Number.isSafeInteger(debit)) throw new Error("Points total overflow");
     const award = { ...candidate.award, amount: -debit || 0 };
     const prior = latest.get(award.key);
     if (
@@ -732,10 +809,159 @@ export function applyPointsSnapshot(
       )
       .flatMap((unit) => unit.sourceNodeIds),
   );
-  const awards = snapshot.ledger
-    .filter((e) => e.actor.kind === "User")
-    .map(awardForScore)
+  const priorMergesBySource = new Map<string, PointRevision[]>();
+  for (const prior of previousPoints.values()) {
+    const a = prior.award;
+    if (a.category !== "merged-pull-request") continue;
+    const key = `${a.projectId}\0${a.sourceId}`;
+    const rows = priorMergesBySource.get(key) ?? [];
+    rows.push(prior);
+    priorMergesBySource.set(key, rows);
+  }
+  const heldUnassessedSources = new Set(
+    [...previousPoints.values()]
+      .filter(
+        ({ award, decision }) =>
+          award.category === "merged-pull-request" &&
+          award.occurredAt.startsWith("2026-10-") &&
+          (decision?.reason === OCTOBER_ORIGINAL_CONTRIBUTOR_DECISION ||
+            decision?.reason === OCTOBER_DUPLICATE_RETIREMENT_DECISION),
+      )
+      .map(({ award }) => `${award.projectId}\0${award.sourceId}`),
+  );
+  const allocationAwards: PointAward[] = [];
+  const allocationDecisions = new Map<string, PointDecision>();
+  const snapshotAwards = snapshot.ledger
+    .filter(
+      (event) => event.actor.kind === "User" && repositoryWorkCounts(event),
+    )
+    .map(awardForScore);
+  const currentMergesBySource = new Map<string, PointAward[]>();
+  for (const award of snapshotAwards) {
+    if (award.category !== "merged-pull-request") continue;
+    const key = `${award.projectId}\0${award.sourceId}`;
+    const rows = currentMergesBySource.get(key) ?? [];
+    rows.push(award);
+    currentMergesBySource.set(key, rows);
+  }
+  for (const row of snapshot.valueAssessmentCoverage ?? []) {
+    if (
+      !["missing", "legacy-policy"].includes(row.status) ||
+      row.recordDigest !== null
+    )
+      continue;
+    const projectId = findHistoricalRepository(row.repository)?.projectId;
+    if (!projectId) continue;
+    const sourceKey = `${projectId}\0${row.pullRequestId}`;
+    if (heldUnassessedSources.has(sourceKey)) continue;
+    const prior = priorMergesBySource.get(sourceKey);
+    if (!prior?.length) continue;
+    // A missing value assessment cannot replace a recorded PR pool with the
+    // fallback minimum, or add a second pool under a different recipient.
+    heldUnassessedSources.add(sourceKey);
+    const allocation = row.implementationAllocation;
+    const current = currentMergesBySource.get(sourceKey) ?? [];
+    const actorIds =
+      allocation?.weights.map((weight) => weight.actorNodeId) ?? [];
+    if (
+      allocation?.rule !== "changed-lines-v1" ||
+      heldSources.has(row.pullRequestId) ||
+      !current.length ||
+      new Set(actorIds).size !== actorIds.length ||
+      current.some((award) => !actorIds.includes(award.actor.id)) ||
+      [...prior.map(({ award }) => award), ...current].some(
+        (a) =>
+          a.key !== pointKey(a.projectId, a.actor.id, a.category, a.sourceId),
+      ) ||
+      prior.some(
+        (revision) =>
+          revision.recordedAt > snapshot.generatedAt ||
+          revision.award.occurredAt !== current[0].occurredAt ||
+          revision.award.occurredAt < snapshot.window.from ||
+          revision.award.occurredAt >= snapshot.window.to,
+      )
+    )
+      continue;
+    const weights = new Map<string, bigint>();
+    for (const weight of allocation.weights) {
+      if (
+        !actorIds.includes(weight.actorNodeId) ||
+        weights.has(weight.actorNodeId) ||
+        !/^(0|[1-9][0-9]*)$/u.test(weight.changedLines)
+      )
+        break;
+      weights.set(weight.actorNodeId, BigInt(weight.changedLines));
+    }
+    if (weights.size !== actorIds.length) continue;
+    // Preserve the complete current source total, including a carrier's old
+    // fraction. Only its recipient changes; no old assessment is re-rated.
+    const total = prior.reduce(
+      (sum, revision) => sum + BigInt(revision.award.amount),
+      0n,
+    );
+    if (total > BigInt(Number.MAX_SAFE_INTEGER)) continue;
+    const shares = shareImplementationPoints(Number(total), actorIds, weights);
+    const priorByKey = new Map(
+      prior.map((revision) => [revision.award.key, revision]),
+    );
+    const currentByActor = new Map(current.map((a) => [a.actor.id, a]));
+    const replacements: PointAward[] = [];
+    for (const [index, actorId] of actorIds.entries()) {
+      const key = pointKey(
+        projectId,
+        actorId,
+        "merged-pull-request",
+        row.pullRequestId,
+      );
+      const previous = priorByKey.get(key)?.award;
+      const amount = shares[index];
+      // Zero allocations for new actors need no journal row. Existing rows do
+      // need an explicit zero revision when their share moves elsewhere.
+      if (amount === 0 && !previous) continue;
+      const currentAward = currentByActor.get(actorId) ?? {
+        ...current[0],
+        key,
+        actor: {
+          id: actorId,
+          login: allocation.weights[index].actorLogin,
+        },
+      };
+      replacements.push({
+        ...(previous ?? currentAward),
+        actor: currentAward.actor,
+        amount,
+      });
+    }
+    const replacementKeys = new Set(replacements.map((a) => a.key));
+    replacements.push(
+      ...prior
+        .filter((revision) => !replacementKeys.has(revision.award.key))
+        .map(({ award }) => ({ ...award, amount: 0 })),
+    );
+    allocationAwards.push(...replacements);
+    // Retain the value source when the pool had one: Points uses it to keep
+    // assessed work units scoped to their original month. The new snapshot
+    // digest and reason identify this revision as an allocation correction.
+    const valueSourceId = prior
+      .filter((revision) => revision.decision?.sourceId.startsWith("value:"))
+      .sort((left, right) => right.recordedAt.localeCompare(left.recordedAt))[0]
+      ?.decision?.sourceId;
+    for (const award of replacements) {
+      if (award.amount === priorByKey.get(award.key)?.award.amount) continue;
+      allocationDecisions.set(award.key, {
+        sourceId: valueSourceId ?? row.pullRequestId,
+        effectiveAt: snapshot.generatedAt,
+        reason: `Complete primary-commit changed-line evidence reallocates the unchanged ${total} Points PR pool; this allocation-only correction does not reassess its value.`,
+      });
+    }
+  }
+  const awards = snapshotAwards
     .filter((a) => !batchOwned.has(a.key))
+    .filter(
+      (a) =>
+        a.category !== "merged-pull-request" ||
+        !heldUnassessedSources.has(`${a.projectId}\0${a.sourceId}`),
+    )
     // Unavailable source is not evidence against a recorded award. A newly
     // verified merge can earn its minimum, but cannot add another award on
     // top of a retained joint decision or prior per-source award, including
@@ -750,11 +976,14 @@ export function applyPointsSnapshot(
           !previousOwnRecordSources.has(a.sourceId) &&
           !previouslyAwardedJointSources.has(a.sourceId)),
     );
-  const decisions = new Map<string, PointDecision>();
+  awards.push(...allocationAwards);
+  const decisions = new Map<string, PointDecision>(allocationDecisions);
   const parentDecisions = new Map<string, PointDecision>();
+  const jointDecisionsByRecord = new Map<string, PointDecision>();
   for (const event of snapshot.ledger) {
     if (
       event.actor.kind !== "User" ||
+      !repositoryWorkCounts(event) ||
       !event.scoreDecisionSourceId ||
       !event.scoreDecisionAt
     )
@@ -766,6 +995,16 @@ export function applyPointsSnapshot(
     };
     decisions.set(awardForScore(event).key, decision);
     parentDecisions.set(event.source.url.split("#")[0], decision);
+    if (
+      event.category === "merged-pull-request" &&
+      event.workUnitId &&
+      event.scoreDecisionSourceId.startsWith("value:") &&
+      (event.scoreThirds ?? event.points) > 0
+    )
+      jointDecisionsByRecord.set(
+        `${event.repository}\0${event.scoreDecisionSourceId}`,
+        decision,
+      );
   }
   const keys = new Set(awards.map((a) => a.key));
   // Merges the snapshot scores by their own record, such as the minimum for a
@@ -779,7 +1018,6 @@ export function applyPointsSnapshot(
       )
       .map((a) => `${a.projectId}\0${a.sourceId}`),
   );
-  const repositoryIds = new Set(snapshot.repositories.map((r) => r.id));
   const coverageByPullRequest = new Map<
     string,
     NonNullable<LeaderboardSnapshot["valueAssessmentCoverage"]>[number]
@@ -804,6 +1042,13 @@ export function applyPointsSnapshot(
   // deletion from missing pages or a shortened rolling window.
   for (const previous of previousPoints.values()) {
     const a = previous.award;
+    // Held PR pools have either explicit allocation replacements above or no
+    // replacement at all. Absence from the new ledger never deletes the latter.
+    if (
+      a.category === "merged-pull-request" &&
+      heldUnassessedSources.has(`${a.projectId}\0${a.sourceId}`)
+    )
+      continue;
     const omission =
       a.category === "substantive-review"
         ? omittedReviews.get(`${a.projectId}\0${a.sourceId}`)
@@ -834,6 +1079,7 @@ export function applyPointsSnapshot(
         ? sourceUrl.pathname.match(/^\/([^/]+)\/([^/]+)\/pull\/([1-9][0-9]*)$/u)
         : null;
     let invalidatedJointDecision: PointDecision | undefined;
+    let absorbedJointDecision: PointDecision | undefined;
     if (snapshot.valueAssessmentCoverage && match) {
       const repository = findRegisteredRepositoryById(
         `${match[1]}/${match[2]}`,
@@ -841,6 +1087,18 @@ export function applyPointsSnapshot(
       const coverage = coverageByPullRequest.get(
         `${repository?.id}\0${Number(match[3])}`,
       );
+      // A joint unit can finish in another PR. Its assessed source coverage
+      // still binds removal of this source's superseded ordinary award.
+      if (
+        a.category === "merged-pull-request" &&
+        a.key === pointKey(a.projectId, a.actor.id, a.category, a.sourceId) &&
+        coverage?.pullRequestId === a.sourceId &&
+        coverage.status === "assessed" &&
+        coverage.recordDigest
+      )
+        absorbedJointDecision = jointDecisionsByRecord.get(
+          `${repository?.id}\0value:${coverage.recordDigest}`,
+        );
       // The exact completion source can invalidate its prior joint decision
       // even when it no longer has an eligible actor for a replacement award.
       if (
@@ -883,11 +1141,14 @@ export function applyPointsSnapshot(
         a.occurredAt < snapshot.window.to) ||
         (a.category === "substantive-review" &&
           excludedReviews.has(`${a.projectId}\0${a.sourceId}`))) &&
-      project?.repositories.every((r) => repositoryIds.has(r.id))
+      (project === null ||
+        project === undefined ||
+        projectActivityCollected(snapshot, project, a.occurredAt.slice(0, 7)))
     ) {
       awards.push({ ...a, amount: 0 });
       const decision =
         invalidatedJointDecision ??
+        absorbedJointDecision ??
         parentDecisions.get(a.sourceUrl.split("#")[0]);
       if (decision)
         decisions.set(a.key, {
@@ -1070,6 +1331,8 @@ export function pointMembers(
       groups.set(key, a);
   }
   const members = new Map<string, PointsMember>();
+  const memberIndexes = new Map<string, number>();
+  const earnedAmounts: { bucket: number; amount: bigint }[] = [];
   for (const a of groups.values()) {
     const m = members.get(a.actor.id) ?? {
       actor: a.actor,
@@ -1080,12 +1343,24 @@ export function pointMembers(
       badges: [],
       awards: [],
     };
-    m.total += a.amount;
-    if (a.occurredAt.startsWith(month)) m.monthly += a.amount;
-    if (!Number.isSafeInteger(m.total))
-      throw new Error("Points total overflow");
+    if (!memberIndexes.has(a.actor.id))
+      memberIndexes.set(a.actor.id, memberIndexes.size);
+    const index = memberIndexes.get(a.actor.id) as number;
+    earnedAmounts.push({ bucket: index * 2, amount: BigInt(a.amount) });
+    if (a.occurredAt.startsWith(month))
+      earnedAmounts.push({ bucket: index * 2 + 1, amount: BigInt(a.amount) });
     m.awards.push(a);
     members.set(a.actor.id, m);
+  }
+  // Preserve the existing refusal before applying negative adjustments: a
+  // later debit does not make an overflowing positive earned total valid.
+  const earnedTotals = sumBuckets(memberIndexes.size * 2, earnedAmounts);
+  for (const [actor, index] of memberIndexes) {
+    const member = members.get(actor) as PointsMember;
+    member.total = Number(earnedTotals[index * 2]);
+    member.monthly = Number(earnedTotals[index * 2 + 1]);
+    if (!Number.isSafeInteger(member.total))
+      throw new Error("Points total overflow");
   }
   // An assessed zero corrects an amount; it does not erase the contributor.
   // Keep these identities discoverable without counting zero awards as badges.
@@ -1115,12 +1390,22 @@ export function pointMembers(
     }
   }
   for (const m of members.values()) {
-    for (const adjustment of adjustments.get(m.actor.id) ?? []) {
-      m.total += adjustment.amount;
+    const memberAdjustments = adjustments.get(m.actor.id) ?? [];
+    const signedAmounts = [
+      { bucket: 0, amount: BigInt(m.total) },
+      { bucket: 1, amount: BigInt(m.monthly) },
+    ];
+    for (const adjustment of memberAdjustments) {
+      signedAmounts.push({ bucket: 0, amount: BigInt(adjustment.amount) });
       if (adjustment.occurredAt.startsWith(month))
-        m.monthly += adjustment.amount;
+        signedAmounts.push({ bucket: 1, amount: BigInt(adjustment.amount) });
       m.awards.push(adjustment);
     }
+    const totals = sumBuckets(2, signedAmounts);
+    m.total = Number(totals[0]);
+    m.monthly = Number(totals[1]);
+    if (!Number.isSafeInteger(m.total) || !Number.isSafeInteger(m.monthly))
+      throw new Error("Points total overflow");
     m.actor = actors.get(m.actor.id)?.award.actor ?? m.actor;
     m.awards.sort(
       (a, b) =>

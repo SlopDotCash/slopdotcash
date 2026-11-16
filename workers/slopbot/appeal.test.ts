@@ -429,6 +429,60 @@ test("jobFor matches /slopbot appeal and /slopbot dispute on any line and with a
         assert.equal(job.command, command);
         assert.equal(job.appealKey, "value-appeal:fixture");
       }
+
+      const withTrailingRationale = jobFor(
+        "issue_comment",
+        `moderator-rationale-${command}-${separator.length}`,
+        {
+          ...basePayload,
+          comment: {
+            id: 17,
+            body: `/slopbot ${command}${separator}value-appeal:fixture\n\nThe triage missed the second commit.`,
+          },
+        },
+        "99",
+      );
+      assert.equal(withTrailingRationale?.kind, "appeal_command");
+      if (withTrailingRationale?.kind === "appeal_command") {
+        assert.equal(withTrailingRationale.command, command);
+        assert.equal(withTrailingRationale.appealKey, "value-appeal:fixture");
+      }
+
+      const withInlineRationale = jobFor(
+        "issue_comment",
+        `moderator-inline-${command}-${separator.length}`,
+        {
+          ...basePayload,
+          comment: {
+            id: 18,
+            body: `/slopbot ${command}${separator}appeal:fixture confirmed locally`,
+          },
+        },
+        "99",
+      );
+      assert.equal(withInlineRationale?.kind, "appeal_command");
+      if (withInlineRationale?.kind === "appeal_command") {
+        assert.equal(withInlineRationale.command, command);
+        assert.equal(withInlineRationale.appealKey, "appeal:fixture");
+      }
     }
+  }
+
+  for (const invalid of [
+    "/slopbot reject value-appeal:bad/key because of trailing note",
+    "/slopbot reject value-appeal: trailing note without key",
+  ]) {
+    assert.equal(
+      jobFor(
+        "issue_comment",
+        "del-invalid-key",
+        {
+          ...basePayload,
+          comment: { id: 19, body: invalid },
+        },
+        "99",
+      ),
+      null,
+    );
   }
 });

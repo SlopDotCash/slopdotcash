@@ -1,8 +1,8 @@
 import { expect, test } from "bun:test";
 import { readdirSync } from "node:fs";
 import { handlePointsApi } from "../backend/points/handler";
+import { sha256Hex } from "../src/lib/async-sha256.mjs";
 import { sqliteD1 } from "../tests/sqlite-d1";
-import { sha256Hex } from "../workers/identity/crypto";
 
 test("account sessions revoke only the authenticated actor and invalidate the revoked cookie", async () => {
   const { db, sqlite } = sqliteD1(

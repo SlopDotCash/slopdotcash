@@ -203,13 +203,20 @@ export async function readIncompleteAssessments(
         ])
       : null;
   // An authority read must not expose a superseded project binding.
-  for (const [id, manifest] of manifests) {
+  if (manifests.size > 0) {
     const current = await deps.db
-      .prepare("SELECT manifest FROM projects WHERE id=?")
-      .bind(id)
-      .first<{ manifest: string }>();
-    if (current?.manifest !== manifest)
-      fail(503, "project_changed", "Project access changed. Retry.");
+      .prepare(
+        "SELECT id,manifest FROM projects WHERE id IN (SELECT value FROM json_each(?))",
+      )
+      .bind(JSON.stringify([...manifests.keys()]))
+      .all<{ id: string; manifest: string }>();
+    const currentById = new Map(
+      current.results.map((row) => [row.id, row.manifest]),
+    );
+    for (const [id, manifest] of manifests) {
+      if (currentById.get(id) !== manifest)
+        fail(503, "project_changed", "Project access changed. Retry.");
+    }
   }
   return {
     recipientGithubId: actor.githubId,

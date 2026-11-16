@@ -1,18 +1,11 @@
 import { valueFileReader } from "./value-blob";
-import type { EvidenceClient, FileChange } from "./value-evidence";
+import type {
+  EvidenceClient,
+  FileChange,
+  IndirectRetainedFile,
+  TextVersion,
+} from "./value-evidence-types";
 import { readValueTree } from "./value-tree";
-
-interface TextVersion {
-  blobSha: string;
-  mode: string;
-  text: string;
-}
-export interface IndirectRetainedFile {
-  sourcePath: string;
-  acceptedPath: string;
-  historical: TextVersion | null;
-  accepted: TextVersion | null;
-}
 
 /** Compare complete immutable texts at the submitted historical head and the
  * observed integration tip. A verified tree proves absence; HTTP 404 does not.
@@ -38,16 +31,16 @@ export async function collectIndirectValueRetention(
   }>(
     `/repos/${repository}/compare/${historicalHeadSha}...${acceptedTipSha}?per_page=1`,
   );
-  // GitHub caps comparison file lists at 300. A saturated result cannot prove
-  // that an absent rename is a deletion, even when commit pagination continues.
+  // GitHub caps comparison file lists at 300. The full tree proof below keeps
+  // same-path retention available without inferring an absent rename/deletion.
   if (
     !comparison ||
     !["ahead", "identical"].includes(comparison.status) ||
     comparison.merge_base_commit?.sha !== historicalHeadSha ||
-    !Array.isArray(comparison.files) ||
-    comparison.files.length >= 300
+    !Array.isArray(comparison.files)
   )
     return null;
+  const saturated = comparison.files.length >= 300;
   const renames = new Map<string, string>();
   for (const file of comparison.files) {
     if (file.status !== "renamed") continue;
@@ -92,6 +85,15 @@ export async function collectIndirectValueRetention(
   )) {
     const sourcePath = file.filename,
       acceptedPath = renames.get(sourcePath) ?? sourcePath;
+    // A capped global list cannot identify every rename or deletion. A full,
+    // hash-verified tree can still prove a stable regular path on both sides.
+    if (
+      saturated &&
+      (acceptedPath !== sourcePath ||
+        !historical.has(sourcePath) ||
+        !accepted.has(sourcePath))
+    )
+      return null;
     const before = await version(historical, sourcePath, historicalHeadSha);
     const after = await version(accepted, acceptedPath, acceptedTipSha);
     if (

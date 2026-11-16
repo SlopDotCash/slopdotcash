@@ -1,6 +1,6 @@
 /**
- * Validates and publishes evidence as one same-filesystem transaction so a
- * failed capture cannot mix partial output with a previously complete bundle.
+ * Validates complete evidence and retains the prior bundle across publication.
+ * Two directory renames are not crash-atomic; failed recovery retains its inputs.
  */
 
 import { randomUUID } from "node:crypto";
@@ -217,6 +217,8 @@ export function beginEvidenceTransaction(finalRoot) {
   return {
     stagingRoot,
     abort() {
+      // A committed bundle is not staging. Failed restoration also keeps both
+      // candidates for explicit recovery instead of discarding evidence.
       if (state !== "open") return;
       rmSync(stagingRoot, { force: true, recursive: true });
       state = "aborted";
@@ -242,14 +244,75 @@ export function beginEvidenceTransaction(finalRoot) {
           rmSync(backupRoot, { force: true, recursive: true });
         }
       } catch (error) {
-        // error-policy:J2 publication restores the last complete evidence bundle before failing.
-        if (previousMoved && !existsSync(finalRoot) && existsSync(backupRoot)) {
-          renameSync(backupRoot, finalRoot);
+        if (state === "published") {
+          throw new Error(
+            `evidence bundle was published at ${finalRoot}, but previous-bundle cleanup failed at ${backupRoot}: ${failureMessage(error)}`,
+            { cause: error },
+          );
         }
-        throw new Error("evidence bundle publication failed", {
-          cause: error,
-        });
+        // error-policy:J2 A precommit failure restores the prior bundle, or
+        // retains both recovery candidates and every failure if it cannot.
+        if (previousMoved) {
+          try {
+            if (existsSync(finalRoot)) {
+              throw new Error(
+                `another directory occupies ${finalRoot}; the prior bundle remains at ${backupRoot}`,
+              );
+            }
+            renameSync(backupRoot, finalRoot);
+          } catch (recoveryError) {
+            state = "recovery-required";
+            throw new AggregateError(
+              [error, recoveryError],
+              `evidence publication failed: ${failureMessage(error)}; restoration failed: ${failureMessage(recoveryError)}. Preserve ${stagingRoot} and ${backupRoot} for recovery`,
+              { cause: error },
+            );
+          }
+        }
+        throw new Error(
+          `evidence bundle publication failed before commit: ${failureMessage(error)}`,
+          { cause: error },
+        );
       }
     },
   };
+}
+
+function failureMessage(error) {
+  return error instanceof Error ? error.message : String(error);
+}
+
+/** Attempt every owned finalizer; retain the operation failure as the cause. */
+export async function withEvidenceCleanup(operation, cleanups) {
+  let result;
+  let failed = false;
+  let primary;
+  try {
+    result = await operation();
+  } catch (error) {
+    failed = true;
+    primary = error;
+  }
+  const failures = [];
+  for (const cleanup of cleanups) {
+    try {
+      await cleanup.run();
+    } catch (error) {
+      failures.push({ label: cleanup.label, error });
+    }
+  }
+  if (failures.length > 0) {
+    const detail = failures
+      .map(({ label, error }) => `${label}: ${failureMessage(error)}`)
+      .join("; ");
+    throw new AggregateError(
+      [...(failed ? [primary] : []), ...failures.map(({ error }) => error)],
+      failed
+        ? `evidence operation failed: ${failureMessage(primary)}; cleanup also failed: ${detail}`
+        : `evidence operation completed, but cleanup failed: ${detail}`,
+      failed ? { cause: primary } : undefined,
+    );
+  }
+  if (failed) throw primary;
+  return result;
 }

@@ -1,5 +1,8 @@
 import { sha256 } from "@noble/hashes/sha2.js";
-import type { Network } from "./config";
+import { bytesToHex } from "../../src/lib/byte-encoding";
+import type { EscrowChain as Network } from "../../src/lib/escrow-policy.mjs";
+import { positiveBudgetFits } from "../verified-budget";
+import type { FeeD1Database } from "./d1";
 import type { SolanaAccountProof } from "./solana-accounts";
 import {
   type ExpiryCoverage,
@@ -7,14 +10,17 @@ import {
   type ExpiryProof,
   matchingCompletedCoverage,
 } from "./solana-expiry";
-import type { FeeD1Database } from "./store";
+import {
+  type NativeLiabilityEntry,
+  nativeDailyLiability,
+} from "./verified-native-liability";
 
 export interface NativeGasLimits {
   perTransaction: string;
   perDay: string;
   additionalFeeReserve: string;
 }
-export function nativeInteger(value: string): bigint {
+function nativeInteger(value: string): bigint {
   if (typeof value !== "string" || !/^(0|[1-9][0-9]{0,77})$/u.test(value))
     throw new Error("Native fee must be an exact non-negative integer");
   return BigInt(value);
@@ -23,12 +29,18 @@ export function validateNativeLimits(limits: NativeGasLimits) {
   const transaction = nativeInteger(limits.perTransaction);
   const day = nativeInteger(limits.perDay);
   const additional = nativeInteger(limits.additionalFeeReserve);
-  if (transaction === 0n || day < transaction || additional >= transaction)
+  if (!positiveBudgetFits(transaction, day) || additional >= transaction)
     throw new Error(
       "Native daily budget must cover one positive transaction limit and its additional fees",
     );
 }
-export interface NativeAttempt {
+/**
+ * `fees`: claims, approvals, conversions and their replacements. `bridge`: a
+ * Solana buyback bridge order, whose fixed protocol fee and order-account
+ * rent have their own approved limits. Each purpose has its own daily total.
+ */
+export type NativeGasPurpose = "fees" | "bridge";
+interface NativeAttempt {
   id: string;
   network: Network;
   fee_wallet: string;
@@ -41,6 +53,8 @@ export interface NativeAttempt {
   actual_wei: string | null;
   solana_blockhash_slot: number | null;
   solana_account_proof: string | null;
+  /** The budget this reservation counts against (migration 0121). */
+  purpose: NativeGasPurpose;
   settled_day: string | null;
   receipt_block_hash: string | null;
 }
@@ -51,7 +65,7 @@ export interface RecordedNativeSend {
   feeWallet: string;
   nonce: number | null;
 }
-export interface NativeReceiptCost {
+interface NativeReceiptCost {
   txId: string;
   actualWei: string;
   blockHash: string;
@@ -68,6 +82,7 @@ export class NativeGasJournal {
     readonly runId: string,
     readonly limits: NativeGasLimits,
     private readonly now: () => Date,
+    readonly purpose: NativeGasPurpose = "fees",
   ) {
     validateNativeLimits(limits);
   }
@@ -82,6 +97,42 @@ export class NativeGasJournal {
         .bind(this.network)
         .all<NativeAttempt>()
     ).results;
+  }
+
+  /**
+   * Bound the native cost of preparing the next DLN deposit, including its
+   * approvals and failed attempts since the last successful deposit. All
+   * same-nonce attempts have at most one winner; retain their largest bound
+   * until a finalized cost is known. Include the proposed send before signing.
+   */
+  async bridgePreparationNative(
+    token: string,
+    proposed: { nonce: number | null; maximum: bigint },
+  ): Promise<bigint> {
+    const { results } = await this.db
+      .prepare(
+        `SELECT g.nonce, g.maximum_wei, g.actual_wei FROM fee_native_gas g
+         JOIN fee_conversions c ON c.id = g.conversion_id
+         WHERE c.network = ? AND ${this.network === "solana" ? "c.fee_wallet = ? AND c.token = ?" : "lower(c.fee_wallet) = lower(?) AND lower(c.token) = lower(?)"}
+           AND c.mode = 'live' AND c.route = 'debridge'
+           AND c.kind IN ('approval', 'bridge') AND g.state = 'signed'
+           AND c.rowid > COALESCE((
+             SELECT MAX(prior.rowid) FROM fee_conversions prior
+             WHERE prior.network = c.network AND ${this.network === "solana" ? "prior.fee_wallet = c.fee_wallet AND prior.token = c.token" : "lower(prior.fee_wallet) = lower(c.fee_wallet) AND lower(prior.token) = lower(c.token)"}
+               AND prior.kind = 'bridge'
+               AND prior.mode = 'live' AND prior.state = 'finalized'
+           ), 0)`,
+      )
+      .bind(this.network, this.feeWallet, token)
+      .all<{ nonce: number; maximum_wei: string; actual_wei: string | null }>();
+    const byNonce = new Map<number | null, bigint>();
+    for (const row of results) {
+      const cost = nativeInteger(row.actual_wei ?? row.maximum_wei);
+      if (cost > (byNonce.get(row.nonce) ?? 0n)) byNonce.set(row.nonce, cost);
+    }
+    if (proposed.maximum > (byNonce.get(proposed.nonce) ?? 0n))
+      byNonce.set(proposed.nonce, proposed.maximum);
+    return [...byNonce.values()].reduce((sum, cost) => sum + cost, 0n);
   }
 
   /** True when every attempt belongs to a send row that closed as failed. */
@@ -189,26 +240,57 @@ export class NativeGasJournal {
     )
       throw new Error("Native gas nonce is already reserved");
     const day = this.now().toISOString().slice(0, 10);
-    let spent = 0n;
-    const pending = new Map<string, bigint>();
+    const entries: NativeLiabilityEntry[] = [];
+    const buckets = new Map<string, number>();
+    const bucketFor = (feeWallet: string, nonce: number) => {
+      const key = `${feeWallet}:${nonce}`;
+      let bucket = buckets.get(key);
+      if (bucket === undefined) {
+        bucket = buckets.size;
+        buckets.set(key, bucket);
+      }
+      return bucket;
+    };
     for (const row of rows) {
-      if (row.state === "abandoned") continue;
+      if (row.state === "abandoned") {
+        entries.push({ kind: "abandoned" });
+        continue;
+      }
+      // An overrun in any purpose holds all signing on the network.
+      if (
+        row.actual_wei !== null &&
+        nativeInteger(row.actual_wei) > nativeInteger(row.maximum_wei)
+      )
+        throw new Error(
+          "A finalized native fee exceeded its reserved maximum; signing is held",
+        );
+      // Each purpose is bounded by its own daily limit.
+      if (row.purpose !== this.purpose) continue;
       if (row.actual_wei !== null) {
         const actual = nativeInteger(row.actual_wei);
-        if (actual > nativeInteger(row.maximum_wei))
-          throw new Error(
-            "A finalized native fee exceeded its reserved maximum; signing is held",
-          );
-        if (row.settled_day === day) spent += actual;
+        entries.push({
+          kind: "actual",
+          settlement:
+            row.settled_day === null
+              ? { kind: "undated" }
+              : { kind: "dated", day: row.settled_day },
+          amount: actual,
+        });
       } else {
-        const key = `${row.fee_wallet}:${row.nonce}`;
         const value = nativeInteger(row.maximum_wei);
-        if ((pending.get(key) ?? 0n) < value) pending.set(key, value);
+        entries.push({
+          kind: "unsettled",
+          bucket: bucketFor(row.fee_wallet, row.nonce),
+          maximum: value,
+        });
       }
     }
-    const key = `${this.feeWallet}:${input.nonce}`;
-    if ((pending.get(key) ?? 0n) < maximum) pending.set(key, maximum);
-    for (const value of pending.values()) spent += value;
+    entries.push({
+      kind: "unsettled",
+      bucket: bucketFor(this.feeWallet, input.nonce),
+      maximum,
+    });
+    const spent = nativeDailyLiability(buckets.size, entries, day);
     if (spent > nativeInteger(this.limits.perDay))
       throw new Error(
         "Native daily budget reached; unknown sends stay reserved",
@@ -216,8 +298,8 @@ export class NativeGasJournal {
     const id = crypto.randomUUID();
     const result = await this.db
       .prepare(`INSERT INTO fee_native_gas
-      (id,network,fee_wallet,nonce,intent_hash,run_id,maximum_wei,per_transaction_wei,per_day_wei,state,created_at,solana_blockhash_slot,solana_account_proof)
-      SELECT ?,?,?,?,?,?,?,?,?,'reserved',?,?,? WHERE ${LEASE}
+      (id,network,fee_wallet,nonce,intent_hash,run_id,maximum_wei,per_transaction_wei,per_day_wei,state,created_at,solana_blockhash_slot,solana_account_proof,purpose)
+      SELECT ?,?,?,?,?,?,?,?,?,'reserved',?,?,?,? WHERE ${LEASE}
       AND (SELECT gas_revision FROM fee_converter_locks WHERE network=?)=?`)
       .bind(
         id,
@@ -234,6 +316,7 @@ export class NativeGasJournal {
         input.solanaAccountProof
           ? JSON.stringify(input.solanaAccountProof)
           : null,
+        this.purpose,
         ...this.lease(),
         this.network,
         revision.gas_revision,
@@ -381,9 +464,7 @@ export class NativeGasJournal {
     )
       throw new Error("Solana completed provider histories disagree");
     const json = JSON.stringify(proof);
-    const digest = Array.from(sha256(new TextEncoder().encode(json)), (b) =>
-      b.toString(16).padStart(2, "0"),
-    ).join("");
+    const digest = bytesToHex(sha256(new TextEncoder().encode(json)));
     await this.db
       .prepare(
         "INSERT INTO fee_solana_expiry_proofs(tx_id,fee_wallet,run_id,proof_json,proof_sha256,observed_at) VALUES(?,?,?,?,?,?)",

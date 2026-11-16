@@ -4,9 +4,17 @@ import {
 } from "../../src/lib/repositories.mjs";
 import type { Job } from "./contracts";
 import { GitHubClient } from "./github";
-import { registeredProject, requireRegisteredRepository } from "./registry";
+import { requireRegisteredRepository } from "./registry";
 import type { ReviewEnv } from "./review";
+import type { publicationCommitPages } from "./value-commit-pages";
+import {
+  type ValueFileRecovery,
+  type ValueFileRequest,
+  verifiedValueFileClient,
+} from "./value-file-recovery";
 import { latestValueRecord } from "./value-journal";
+import type { ValueClaim } from "./value-processing";
+import { isSubscriptionProvenance } from "./value-producer";
 import {
   assertValueInstallation,
   assertValueInstallationRepositories,
@@ -14,16 +22,17 @@ import {
   verifyCurrentValueSource,
 } from "./value-publication";
 import {
-  prepareWorkUnitEvidence,
-  type WorkUnitEvidence,
-  type WorkUnitSource,
-} from "./value-work-unit";
+  fenceValueClaim,
+  registeredValuePublication,
+} from "./value-publication-fence";
+import { prepareWorkUnitEvidence } from "./value-work-unit";
 import {
   appendWorkUnitRecord,
   currentWorkUnitRecord,
   prepareWorkUnitRecord,
 } from "./value-work-unit-journal";
 import type { WorkUnitAssessmentResult } from "./value-work-unit-review";
+import type { WorkUnitEvidence } from "./value-work-unit-types";
 
 type Result = WorkUnitAssessmentResult;
 
@@ -46,23 +55,23 @@ export async function verifyCurrentWorkUnitSource(
     original.sourceDigest !== result.sourceDigest
   )
     throw new Error("Joint assessment does not bind the supplied source group");
-  const sources: WorkUnitSource[] = [];
   for (const [i, source] of original.sources.entries()) {
-    sources.push(
-      await verifyCurrentValueSource(
-        github,
-        source.evidence,
-        {
-          policySha: source.policy.sha,
-          sourceDigest: original.sourceDigests[i].digest,
-        },
-        repositories,
-        source.mergeRecipe,
-        "joint",
-      ),
+    await verifyCurrentValueSource(
+      github,
+      source.evidence,
+      {
+        policySha: source.policy.sha,
+        sourceDigest: original.sourceDigests[i].digest,
+      },
+      repositories,
+      source.mergeRecipe,
+      "joint",
+      original.sources,
     );
   }
-  const current = await prepareWorkUnitEvidence(sources, repositories);
+  // Every source digest was recomputed from fresh GitHub bytes above. Reuse
+  // exact original text objects after equality to keep publication bounded.
+  const current = await prepareWorkUnitEvidence(original.sources, repositories);
   if (
     current.limitations.length ||
     current.sourceDigest !== result.sourceDigest
@@ -88,7 +97,19 @@ export async function publishWorkUnitAssessment(
   supersedes: readonly string[],
   legacyPredecessors: readonly string[],
   revisionReason: string | null,
+  claim?: ValueClaim,
+  verifiedFiles?: {
+    requests: ValueFileRequest[];
+    recovery: ValueFileRecovery;
+    internText?: (text: string) => string;
+  },
+  commitPages?: ReturnType<typeof publicationCommitPages>,
 ) {
+  if (
+    !claim &&
+    !isSubscriptionProvenance("provenance" in result ? result.provenance : null)
+  )
+    throw new Error("API joint publication requires its processing claim");
   if (
     job.itemKind !== "pull_request" ||
     !evidence.sources.some(
@@ -100,9 +121,14 @@ export async function publishWorkUnitAssessment(
     )
   )
     throw new Error("Joint publication job does not match a source member");
-  const project = await registeredProject(env.SLOPBOT_DB, job);
-  if (!project)
+  const registration = await registeredValuePublication(
+    env.SLOPBOT_DB,
+    job,
+    evidence.sources.map(({ evidence: source }) => source.repository),
+  );
+  if (!registration)
     throw new Error("Repository is not active in the Slop project registry");
+  const { project, fence } = registration;
   const repositories = collectTargetRepositories([project]);
   for (const { evidence: source } of evidence.sources) {
     const [owner, repo] = source.repository.split("/");
@@ -122,8 +148,16 @@ export async function publishWorkUnitAssessment(
     github,
     evidence.sources.map((source) => source.evidence),
   );
+  const sourceClient = commitPages ? commitPages(github) : github;
   const current = await verifyCurrentWorkUnitSource(
-    github,
+    verifiedFiles
+      ? await verifiedValueFileClient(
+          sourceClient,
+          verifiedFiles.requests,
+          verifiedFiles.recovery,
+          verifiedFiles.internText,
+        )
+      : sourceClient,
     evidence,
     result,
     repositories,
@@ -184,5 +218,17 @@ export async function publishWorkUnitAssessment(
     });
   }
   await assertValueInstallation(env.SLOPBOT_DB, job.installationId);
-  return appendWorkUnitRecord(env.SLOPBOT_DB, prepared, job.installationId);
+  return appendWorkUnitRecord(
+    env.SLOPBOT_DB,
+    prepared,
+    job.installationId,
+    fenceValueClaim(
+      fence,
+      claim,
+      evidence.sources.map(({ evidence: source }) => ({
+        repositoryDatabaseId: source.repositoryDatabaseId,
+        pullRequestNumber: source.pull.number,
+      })),
+    ),
+  );
 }

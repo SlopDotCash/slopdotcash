@@ -16,7 +16,7 @@
  * accepts the short delays configured by this local workflow.
  */
 import { spawn } from "node:child_process";
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -25,6 +25,7 @@ import { generatePrivateKey, privateKeyToAccount } from "viem/accounts";
 import { deployUpgradeableFactory } from "../../contracts/evm/integration/upgrade";
 import { solanaBase58 } from "../../contracts/solana/adapter";
 import { ESCROW_NETWORKS } from "../../src/lib/escrow-policy.mjs";
+import { startLocalSolanaValidator } from "../local-solana-validator.mjs";
 import {
   type Evidence,
   jsonRpc,
@@ -324,31 +325,33 @@ async function solanaLocalnet() {
   const feeRecipient = pubkey(seed());
   const ledger = mkdtempSync(join(tmpdir(), "slop-acceptance-ledger-"));
   const rpcUrl = `http://127.0.0.1:${SOLANA_PORT}`;
-  const validator = spawn(
-    "solana-test-validator",
-    [
-      "--reset",
-      "--quiet",
-      "--ledger",
-      ledger,
-      "--rpc-port",
-      String(SOLANA_PORT),
-      "--faucet-port",
-      String(SOLANA_PORT + 41),
-      "--dynamic-port-range",
-      `${SOLANA_PORT + 2}-${SOLANA_PORT + 31}`,
-      "--upgradeable-program",
-      programId,
-      so,
-      pubkey(upgradeAuthority),
-    ],
-    { stdio: "ignore" },
-  );
+  let validator:
+    | Awaited<ReturnType<typeof startLocalSolanaValidator>>
+    | undefined;
+  let outcome: PromiseSettledResult<Evidence>;
   try {
-    await waitFor(
-      () => jsonRpc(rpcUrl, "getGenesisHash", []),
-      "Solana validator",
-    );
+    validator = await startLocalSolanaValidator({
+      rpcPort: SOLANA_PORT,
+      args: [
+        "--reset",
+        "--quiet",
+        "--ledger",
+        ledger,
+        "--rpc-port",
+        String(SOLANA_PORT),
+        "--faucet-port",
+        String(SOLANA_PORT + 41),
+        "--dynamic-port-range",
+        `${SOLANA_PORT + 2}-${SOLANA_PORT + 31}`,
+        "--upgradeable-program",
+        programId,
+        so,
+        pubkey(upgradeAuthority),
+      ],
+      readonlyMounts: [so],
+      receiptPath: join(out, `solana-validator-${randomUUID()}.json`),
+      stdio: "ignore",
+    });
     const local = (await import(
       join(root, "contracts", "solana", "scripts", "acceptance.ts")
     )) as {
@@ -375,7 +378,7 @@ async function solanaLocalnet() {
     });
     const directory = join(out, suite, "solana-localnet");
     rmSync(directory, { recursive: true, force: true });
-    return await runUntilDone(
+    const result = await runUntilDone(
       "solana-localnet",
       directory,
       {
@@ -404,10 +407,24 @@ async function solanaLocalnet() {
       },
       async () => {},
     );
-  } finally {
-    validator.kill("SIGTERM");
-    rmSync(ledger, { recursive: true, force: true });
+    outcome = { status: "fulfilled", value: result };
+  } catch (reason) {
+    outcome = { status: "rejected", reason };
   }
+  if (validator) {
+    try {
+      await validator.close();
+      rmSync(ledger, { recursive: true, force: true });
+    } catch (error) {
+      // Keep the original acceptance failure if cleanup also fails. An
+      // unconfirmed stop retains the ledger and its ownership receipt.
+      if (outcome.status === "rejected")
+        console.error("Solana acceptance cleanup failed", error);
+      else throw error;
+    }
+  }
+  if (outcome.status === "rejected") throw outcome.reason;
+  return outcome.value;
 }
 
 const summary: Record<string, unknown> = {};

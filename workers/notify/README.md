@@ -430,8 +430,8 @@ unknown ledger text becomes `provider call failed` before it leaves Slopbot.
 It uses the same configured admin recipients. It accepts no provider body,
 prompt, response, key or request identifier.
 
-Migration `0085` queues new failed Surplus cost records. Slopbot claims each
-notice before calling this route and retains accepted or ambiguous results.
+Migrations `0085` and `0122` queue new failed Surplus and Orbio cost records.
+Slopbot claims each notice before calling this route and retains accepted or ambiguous results.
 An unknown delivery is not sent again automatically. Earlier cost records do
 not become a fresh notification backlog. These notices neither change provider
 budgets nor configure Surplus's own low-balance notification threshold.

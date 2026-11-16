@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Link } from "./Link";
 import { fetchWithDeadline, readBoundedJson } from "./lib/browser-json";
 import type { PointAward, PointRevision } from "./lib/points";
@@ -32,9 +32,11 @@ const stateLabel = (value: Dispute) =>
 export default function PointsDisputes({
   actorId,
   onChange,
+  onIdentityChange,
 }: {
   actorId: string;
   onChange: () => void;
+  onIdentityChange: (actorId: string | null) => void;
 }) {
   const initial = new URLSearchParams(window.location.search).get(
     "pointsDispute",
@@ -53,44 +55,101 @@ export default function PointsDisputes({
   const [retry, setRetry] = useState(0);
   const [cursor, setCursor] = useState<string | null>(null);
   const mounted = useRef(true);
-  useEffect(() => {
+  const readController = useRef<AbortController | null>(null);
+  useLayoutEffect(() => {
     mounted.current = true;
     return () => {
       mounted.current = false;
+      readController.current?.abort();
     };
   }, []);
+  // A new page/target owns its commit before the passive fetch effect starts.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: context changes retire pending work during layout cleanup.
+  useLayoutEffect(
+    () => () => readController.current?.abort(),
+    [actorId, selected, cursor, retry],
+  );
+  const clearPrivateView = () => {
+    setPage(null);
+    setDetail(null);
+    setAward(null);
+    setReason("");
+    setDecision("");
+  };
   const request = async (
     path: string,
     signal?: AbortSignal,
     body?: unknown,
   ) => {
-    const response = await fetchWithDeadline(`/api/v1/points/disputes${path}`, {
-      credentials: "same-origin",
-      cache: "no-store",
-      redirect: "error",
-      signal,
-      headers: {
-        "x-slop-expected-github-id": actorId,
-        ...(body === undefined ? {} : { "content-type": "application/json" }),
-      },
-      ...(body === undefined
-        ? {}
-        : { method: "POST", body: JSON.stringify(body) }),
-    });
-    const value = await readBoundedJson(response, 512 * 1024, "Points review");
-    if (!response.ok)
-      throw new Error(
-        (value as { message?: string }).message ??
-          "Points review unavailable. Retry.",
+    const active = () => mounted.current && !signal?.aborted;
+    let value: unknown;
+    let failure: unknown;
+    let failed = false;
+    let accessRefused = false;
+    try {
+      const response = await fetchWithDeadline(
+        `/api/v1/points/disputes${path}`,
+        {
+          credentials: "same-origin",
+          cache: "no-store",
+          redirect: "error",
+          signal,
+          headers: {
+            "x-slop-expected-github-id": actorId,
+            ...(body === undefined
+              ? {}
+              : { "content-type": "application/json" }),
+          },
+          ...(body === undefined
+            ? {}
+            : { method: "POST", body: JSON.stringify(body) }),
+        },
       );
-    if ((await currentProjectSession())?.githubId !== actorId)
-      throw new Error("The account changed. Reload Inbox.");
+      accessRefused =
+        response.status === 401 ||
+        response.status === 403 ||
+        response.status === 404 ||
+        response.status === 410;
+      if (active() && accessRefused) clearPrivateView();
+      value = await readBoundedJson(response, 512 * 1024, "Points review");
+      accessRefused ||=
+        response.status === 409 &&
+        (value as { error?: string } | null)?.error === "account_changed";
+      if (active() && accessRefused) clearPrivateView();
+      if (!response.ok)
+        throw new Error(
+          (value as { message?: string } | null)?.message ??
+            "Points review unavailable. Retry.",
+        );
+    } catch (error) {
+      failed = true;
+      failure = error;
+    }
+    if (active()) {
+      // Revalidate even after a failed request before retaining cached private
+      // content. A departed read must not change its replacement parent's actor.
+      const current = await currentProjectSession().catch(() => {
+        if (active()) {
+          clearPrivateView();
+          onChange();
+        }
+        throw new Error("The private session could not load. Reload Inbox.");
+      });
+      if (active() && current?.githubId !== actorId) {
+        clearPrivateView();
+        onIdentityChange(current?.githubId ?? null);
+        throw new Error("The account changed. Reload Inbox.");
+      }
+      if (active() && accessRefused) onChange();
+    }
+    if (failed) throw failure;
     return value;
   };
   // The parent remounts this private view whenever its authenticated actor changes.
   // biome-ignore lint/correctness/useExhaustiveDependencies: request is bound to this actor; retry reloads the current page.
   useEffect(() => {
     const controller = new AbortController();
+    readController.current = controller;
     setError("");
     setBusy(true);
     setDetail(null);

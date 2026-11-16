@@ -13,11 +13,13 @@
     "forceConsistentCasingInFileNames": true,
     "module": "ESNext",
     "moduleResolution": "Bundler",
+    "allowImportingTsExtensions": true,
     "resolveJsonModule": true,
     "isolatedModules": true,
     "noEmit": true,
     "jsx": "react-jsx",
     "types": ["node"]
   },
-  "include": ["src", "tests"]
+  "include": ["src", "tests"],
+  "exclude": ["tests/vault-setup-harness.ts"]
 }

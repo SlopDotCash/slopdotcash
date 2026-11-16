@@ -22,13 +22,26 @@
  * - Monitoring: the attester's cron run fails loudly in the Cloudflare
  *   Worker logs, and `bun run payments:readiness` reports the stack. No
  *   alerting service exists.
- * Every other mainnet stays off.
+ * robinhood-mainnet and solana-mainnet activation (operator decision, Drew
+ * Pierson, 14 November 2026: "Turn on Robinhood Chain and Solana payouts"):
+ * - Signer custody: the attester services
+ *   slop-payments-robinhood-mainnet-attester (PAYMENT_RPC_URLS,
+ *   SIGNER_PRIVATE_KEY) and slop-payments-solana-mainnet-attester
+ *   (PAYMENT_RPC_URLS, SOLANA_SIGNER_SEED) already hold their secrets; the
+ *   release checks the names, never the values. Slop holds no relayer key.
+ * - Verified deployment: the Robinhood Chain factory and the Solana escrow
+ *   program recorded in contracts/DEPLOY-MAINNET.md. Each attester signs only
+ *   for vaults pinned from the reviewed registry snapshot.
+ * - Monitoring: as for Base, the attester's cron run fails loudly in the
+ *   Cloudflare Worker logs, and `bun run payments:readiness` reports the
+ *   stack. No alerting service exists.
+ * Ethereum stays off.
  */
 export const MAINNET_EXECUTION = Object.freeze({
   "base-mainnet": true,
   ethereum: false,
-  "robinhood-mainnet": false,
-  "solana-mainnet": false,
+  "robinhood-mainnet": true,
+  "solana-mainnet": true,
 });
 
 export function mainnetExecutionEnabled(network) {

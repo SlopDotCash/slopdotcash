@@ -1,5 +1,5 @@
 import { ImagePlus, X } from "lucide-react";
-import { useState } from "react";
+import { useLayoutEffect, useRef, useState } from "react";
 import {
   assertProjectImage,
   MAX_PROJECT_IMAGE_LENGTH,
@@ -20,6 +20,17 @@ export function ProjectImageField({
 }) {
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  const active = useRef(true);
+  const change = useRef(onChange);
+  useLayoutEffect(() => {
+    change.current = onChange;
+  }, [onChange]);
+  useLayoutEffect(() => {
+    active.current = true;
+    return () => {
+      active.current = false;
+    };
+  }, []);
   async function choose(file: File) {
     setError("");
     setBusy(true);
@@ -28,6 +39,7 @@ export function ProjectImageField({
         throw new Error("Choose a PNG, JPEG or WebP image.");
       const bitmap = await createImageBitmap(file);
       try {
+        if (!active.current) return;
         const canvas = document.createElement("canvas");
         canvas.width = 128;
         canvas.height = 128;
@@ -54,18 +66,20 @@ export function ProjectImageField({
         if (format === "image/jpeg") image = canvas.toDataURL(format, 0.8);
         if (image.length > MAX_PROJECT_IMAGE_LENGTH)
           image = canvas.toDataURL(format, 0.5);
-        onChange(assertProjectImage(image));
+        // Decoding may span a parent save. Use its latest committed draft base.
+        change.current(assertProjectImage(image));
       } finally {
         bitmap.close();
       }
     } catch (reason) {
+      if (!active.current) return;
       setError(
         reason instanceof Error
           ? reason.message
           : "The image could not be read.",
       );
     } finally {
-      setBusy(false);
+      if (active.current) setBusy(false);
     }
   }
   const input = (

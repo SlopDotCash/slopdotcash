@@ -1,12 +1,12 @@
 /** Actual SOL/SPL transfers through private award, consent, refresh and receipt APIs. */
 import assert from "node:assert/strict";
-import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import { closeSync, mkdtempSync, openSync } from "node:fs";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { solanaBase58 } from "../../contracts/solana/adapter";
+import { startLocalSolanaValidator } from "../../scripts/local-solana-validator.mjs";
 import { SOLANA_NATIVE_ASSET } from "../../src/lib/escrow-policy.mjs";
 import { rewardFields } from "../../src/lib/project-proposal";
 import { privateBountyTerms } from "../../src/lib/security-bounty-proposal";
@@ -26,6 +26,7 @@ const {
   Transaction,
 } = require("@solana/web3.js");
 const spl = require("@solana/spl-token");
+const { ReceiptConnection } = require("./integration/confirmation.mjs");
 const directory = mkdtempSync(join(tmpdir(), "slop-direct-solana-api-"));
 const port = Number(process.env.SLOP_DIRECT_SOLANA_API_TEST_PORT ?? "30899");
 const rpcUrl = `http://127.0.0.1:${port}`;
@@ -40,26 +41,35 @@ const historyProxy = Bun.serve({
     }),
 });
 const log = openSync(join(directory, "validator.log"), "w");
-const validator = spawn(
-  "solana-test-validator",
-  [
-    "--reset",
-    "--quiet",
-    "--ticks-per-slot",
-    "8",
-    "--ledger",
-    join(directory, "ledger"),
-    "--rpc-port",
-    String(port),
-    "--faucet-port",
-    String(port + 41),
-    "--dynamic-port-range",
-    `${port + 2}-${port + 31}`,
-    "--bind-address",
-    "127.0.0.1",
-  ],
-  { stdio: ["ignore", log, log] },
-);
+let launched: Awaited<ReturnType<typeof startLocalSolanaValidator>>;
+try {
+  launched = await startLocalSolanaValidator({
+    rpcPort: port,
+    receiptPath: join(directory, "container-receipt.json"),
+    args: [
+      "--reset",
+      "--quiet",
+      "--ticks-per-slot",
+      "8",
+      "--ledger",
+      join(directory, "ledger"),
+      "--rpc-port",
+      String(port),
+      "--faucet-port",
+      String(port + 41),
+      "--dynamic-port-range",
+      `${port + 2}-${port + 31}`,
+      "--bind-address",
+      "127.0.0.1",
+    ],
+    stdio: ["ignore", log, log],
+  });
+} catch (error) {
+  await historyProxy.stop(true);
+  closeSync(log);
+  throw error;
+}
+const validator = launched.process;
 const connection = new Connection(rpcUrl, {
   commitment: "confirmed",
   confirmTransactionInitialTimeout: 180_000,
@@ -570,8 +580,15 @@ try {
         failedOriginal.serialize(),
         { skipPreflight: true },
       );
-      const result = await connection.confirmTransaction(
-        failedOriginalSignature,
+      // web3's status-poll path throws failed execution before finality while
+      // its subscription path returns it. Reuse the exact receipt waiter so
+      // this deliberately failed send must be finalized before recovery.
+      const result = await new ReceiptConnection(rpcUrl).confirmTransaction(
+        {
+          signature: failedOriginalSignature,
+          blockhash: oldPayment.solana.blockhash,
+          lastValidBlockHeight: oldPayment.solana.lastValidBlockHeight,
+        },
         "finalized",
       );
       assert.notEqual(
@@ -814,15 +831,9 @@ try {
 } finally {
   await historyProxy.stop(true);
   connection._rpcWebSocket.close();
-  validator.kill("SIGTERM");
-  await Promise.race([
-    new Promise((resolve) =>
-      validator.exitCode !== null
-        ? resolve(null)
-        : validator.once("exit", resolve),
-    ),
-    sleep(5_000),
-  ]);
-  if (validator.exitCode === null) validator.kill("SIGKILL");
-  closeSync(log);
+  try {
+    await launched.close();
+  } finally {
+    closeSync(log);
+  }
 }

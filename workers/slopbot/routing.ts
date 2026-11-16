@@ -5,7 +5,7 @@ import type { RepositoryConfig } from "./contracts";
 import type { Exemption } from "./github";
 import type { ReviewScope } from "./registry";
 
-export type RoutingInput = {
+type RoutingInput = {
   config: RepositoryConfig;
   itemKind: "issue" | "pull_request";
   itemOpen: boolean;
@@ -24,7 +24,7 @@ export type RoutingInput = {
   authorCapReached: boolean;
 };
 
-export type Routing =
+type Routing =
   | { review: false; reason: string }
   | {
       review: true;

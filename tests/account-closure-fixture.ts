@@ -1,7 +1,7 @@
 /** Synthetic account records shared by API and browser acceptance checks. */
 import { readdirSync } from "node:fs";
+import { sha256Hex } from "../src/lib/async-sha256.mjs";
 import { assertProjectDefinition } from "../src/lib/project-schema.mjs";
-import { sha256Hex } from "../workers/identity/crypto";
 import { applicationManifest } from "./project-application-manifest";
 import { sqliteD1 } from "./sqlite-d1";
 export const ME = {

@@ -71,27 +71,33 @@ describe("notification events", () => {
       }) as unknown as ProjectDefinition;
     const alpha = manifestOf("alpha");
     expect(
-      await persistence.createProject({
-        manifest: alpha,
-        manifestText: JSON.stringify(alpha),
-        manifestSha256: "a".repeat(64),
-        reason: "Created through self-service setup",
-        actor: creator,
-        at: T,
-        referrer: null,
-      }),
+      await persistence.createProject(
+        {
+          manifest: alpha,
+          manifestText: JSON.stringify(alpha),
+          manifestSha256: "a".repeat(64),
+          reason: "Created through self-service setup",
+          actor: creator,
+          at: T,
+          referrer: null,
+        },
+        await persistence.enforcementGeneration(),
+      ),
     ).toBe("created");
     // The same id or repository cannot be listed twice.
     expect(
-      await persistence.createProject({
-        manifest: alpha,
-        manifestText: JSON.stringify(alpha),
-        manifestSha256: "a".repeat(64),
-        reason: "Created again",
-        actor: creator,
-        at: T,
-        referrer: null,
-      }),
+      await persistence.createProject(
+        {
+          manifest: alpha,
+          manifestText: JSON.stringify(alpha),
+          manifestSha256: "a".repeat(64),
+          reason: "Created again",
+          actor: creator,
+          at: T,
+          referrer: null,
+        },
+        await persistence.enforcementGeneration(),
+      ),
     ).toBe("conflict");
     // An application stored before self-service setup is published by its
     // applicant, once, with no approval notice.
@@ -106,8 +112,18 @@ describe("notification events", () => {
       reason: "Published by its applicant",
       at: T,
     };
-    expect(await persistence.publishApplication(publish)).toBe("published");
-    expect(await persistence.publishApplication(publish)).toBe("conflict");
+    expect(
+      await persistence.publishApplication(
+        publish,
+        await persistence.enforcementGeneration(),
+      ),
+    ).toBe("published");
+    expect(
+      await persistence.publishApplication(
+        publish,
+        await persistence.enforcementGeneration(),
+      ),
+    ).toBe("conflict");
     expect(await persistence.projectCreator("alpha")).toEqual(creator);
     expect(await persistence.projectCreator("beta")).toEqual(creator);
     expect(
@@ -946,5 +962,35 @@ describe("slopbot scam review notices", () => {
       "/api/v1/notifications/scam-reviews/example/alpha/pull/7/extra",
     ])
       expect((await call(MODERATOR, [MODERATOR], forged)).status).toBe(404);
+  });
+
+  test("a reversed penalty retires the notice from list, unread count and open route", async () => {
+    const { sqlite, notify, call, rows } = scam();
+    await notify(MODERATOR);
+    const path = "/api/v1/notifications/scam-reviews/example/alpha/pull/7";
+    const list = async () =>
+      parseNotificationsResponse(
+        await (
+          await call(MODERATOR, [MODERATOR], "/api/v1/notifications")
+        ).json(),
+      );
+    expect((await list()).notifications.map((n) => n.kind)).toEqual([
+      "slopbot_scam_review",
+    ]);
+    expect((await list()).unread).toBe(1);
+    expect((await call(MODERATOR, [MODERATOR], path)).status).toBe(302);
+    // The author's appeal is upheld and the penalty is reversed
+    // (workers/slopbot reversePenalty): the closure no longer stands, so
+    // the account-review task is moot, as the mail worker already holds.
+    sqlite
+      .prepare(
+        "UPDATE slopbot_penalties SET reversed_at=?, reversal='appeal_upheld' WHERE item_node_id='PR_alpha'",
+      )
+      .run(R);
+    expect((await list()).notifications).toEqual([]);
+    expect((await list()).unread).toBe(0);
+    expect((await call(MODERATOR, [MODERATOR], path)).status).toBe(404);
+    // The stored row is append-only history; only the live views retire it.
+    expect(rows(MODERATOR)).toHaveLength(1);
   });
 });

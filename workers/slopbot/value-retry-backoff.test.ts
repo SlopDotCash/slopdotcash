@@ -36,6 +36,15 @@ interface ProcessingRow {
 
 const database = () => sqliteD1(MIGRATIONS);
 
+// Retry scheduling uses a synthetic clock, but a live lease must also clear
+// SQLite's execution clock. Keep historical intake dates independent of it.
+const operationTime = (queue: Queue) => {
+  const clock = queue.sqlite
+    .query("SELECT strftime('%Y-%m-%dT%H:%M:%fZ','now') AS at")
+    .get() as { at: string };
+  return new Date(Date.parse(clock.at) + HOUR);
+};
+
 const row = (queue: Queue, deliveryId: string) =>
   queue.db
     .prepare(
@@ -68,7 +77,7 @@ async function seed(queue: Queue, jobs = [job]) {
 test("a blocked outcome backs off per attempt and records the count", async () => {
   const queue = database();
   await seed(queue);
-  let at = new Date("2026-10-28T00:00:00.000Z");
+  let at = operationTime(queue);
   const expected = [
     HOUR,
     2 * HOUR,
@@ -101,7 +110,7 @@ test("a blocked outcome backs off per attempt and records the count", async () =
 test("a transient failure keeps the one-hour cadence", async () => {
   const queue = database();
   await seed(queue);
-  let at = new Date("2026-10-28T00:00:00.000Z");
+  let at = operationTime(queue);
   // Two blocked attempts first, so a backed-off delivery would wait 4 hours.
   for (const _ of [0, 1]) {
     const claim = await claimValueRequest(queue.db, job.deliveryId, at);
@@ -144,7 +153,7 @@ test("a transient failure keeps the one-hour cadence", async () => {
 test("a large blocked count still resolves to the day cap", async () => {
   const queue = database();
   await seed(queue);
-  const at = new Date("2026-10-28T00:00:00.000Z");
+  const at = operationTime(queue);
   const claim = await claimValueRequest(queue.db, job.deliveryId, at);
   if (!claim) throw new Error("claim was refused");
   // 64 blocked attempts: the doubling runs far past a day and only the cap keeps
@@ -175,7 +184,7 @@ test("a large blocked count still resolves to the day cap", async () => {
 test("a re-claim before the retry time is refused, and allowed at it", async () => {
   const queue = database();
   await seed(queue);
-  const at = new Date("2026-10-28T00:00:00.000Z");
+  const at = operationTime(queue);
   const claim = await claimValueRequest(queue.db, job.deliveryId, at);
   if (!claim) throw new Error("claim was refused");
   const retryAt = await nextValueRetryAt(
@@ -200,7 +209,7 @@ test("a re-claim before the retry time is refused, and allowed at it", async () 
 test("a terminal finish keeps the count it reached and clears the retry time", async () => {
   const queue = database();
   await seed(queue);
-  let at = new Date("2026-10-28T00:00:00.000Z");
+  let at = operationTime(queue);
   for (const _ of [0, 1]) {
     const claim = await claimValueRequest(queue.db, job.deliveryId, at);
     if (!claim) throw new Error("claim was refused");
@@ -234,7 +243,7 @@ test("a terminal finish keeps the count it reached and clears the retry time", a
 test("a settled sibling delivery is not credited with the claimed delivery's attempts", async () => {
   const queue = database();
   await seed(queue, [job, sibling]);
-  const at = new Date("2026-10-28T00:00:00.000Z");
+  const at = operationTime(queue);
   const claim = await claimValueRequest(queue.db, job.deliveryId, at);
   if (!claim) throw new Error("claim was refused");
   const retryAt = await nextValueRetryAt(
@@ -251,12 +260,103 @@ test("a settled sibling delivery is not credited with the claimed delivery's att
   expect(settled?.attempts).toBe(0);
 });
 
+test("a queued finish refuses an expired lease even when its captured timestamp was live", async () => {
+  // Exercise both terminal publication and an attempt-counting retry. The
+  // adapter holds the genuine migrated-SQLite statement at first(), after its
+  // caller timestamp was bound; it does not replace the statement's result.
+  for (const outcome of ["published", "source-incomplete"] as const) {
+    const queue = database();
+    try {
+      await seed(queue, [job, sibling]);
+      const clock = queue.sqlite
+        .query("SELECT strftime('%Y-%m-%dT%H:%M:%fZ','now') AS at")
+        .get() as { at: string };
+      const capturedAt = new Date(Date.parse(clock.at) - 2_000);
+      const expiredAt = new Date(Date.parse(clock.at) - 1_000).toISOString();
+      const claim = await claimValueRequest(
+        queue.db,
+        job.deliveryId,
+        capturedAt,
+      );
+      if (!claim) throw new Error("Expected live owner before queued finish");
+      expect(
+        queue.sqlite
+          .query(
+            "SELECT lease_until>strftime('%Y-%m-%dT%H:%M:%fZ','now') AS live FROM slopbot_value_processing WHERE delivery_id=?",
+          )
+          .get(job.deliveryId),
+      ).toEqual({ live: 1 });
+      queue.sqlite.run(
+        "UPDATE slopbot_value_processing SET attempts=2,incomplete_since=? WHERE delivery_id=?",
+        [received, job.deliveryId],
+      );
+      const state = () =>
+        queue.sqlite
+          .query("SELECT * FROM slopbot_value_processing ORDER BY delivery_id")
+          .all();
+      let held = false;
+      let before: ReturnType<typeof state> | undefined;
+      const db = {
+        ...queue.db,
+        prepare(sql: string) {
+          if (!sql.includes("INSERT INTO slopbot_value_processing"))
+            return queue.db.prepare(sql);
+          const delayed = (
+            statement: ReturnType<typeof queue.db.prepare>,
+          ): ReturnType<typeof queue.db.prepare> => ({
+            ...statement,
+            bind: (...values: unknown[]) => delayed(statement.bind(...values)),
+            first: async <T>() => {
+              held = true;
+              queue.sqlite.run(
+                "UPDATE slopbot_value_processing SET lease_until=? WHERE delivery_id=?",
+                [expiredAt, job.deliveryId],
+              );
+              // The caller timestamp alone would authorize the write. Only
+              // SQLite's actual execution clock establishes lease expiry.
+              expect(
+                queue.sqlite
+                  .query(
+                    "SELECT lease_until>? AS captured_live,lease_until>strftime('%Y-%m-%dT%H:%M:%fZ','now') AS execution_live FROM slopbot_value_processing WHERE delivery_id=?",
+                  )
+                  .get(capturedAt.toISOString(), job.deliveryId),
+              ).toEqual({ captured_live: 1, execution_live: 0 });
+              before = state();
+              return statement.first<T>();
+            },
+          });
+          return delayed(queue.db.prepare(sql));
+        },
+      };
+      await expect(
+        finishValueRequest(
+          db,
+          claim,
+          outcome,
+          outcome === "published"
+            ? null
+            : new Date(capturedAt.getTime() + HOUR),
+          capturedAt,
+        ),
+      ).rejects.toThrow("Value request lease is no longer owned");
+      expect(held).toBe(true);
+      expect(before).toHaveLength(1);
+      expect<unknown[] | undefined>(state()).toEqual(before);
+      // No settled sibling is inserted, and the owner's attempts and existing
+      // source-gap evidence survive the refused operation byte for byte.
+      expect(await row(queue, sibling.deliveryId)).toBeNull();
+    } finally {
+      queue.sqlite.close();
+    }
+  }
+});
+
 // A paused or retired project parks its requests: no retry time and no hourly
 // claim, until the live registry shows the repository active again.
 test("a parked request is never claimed until its project is active again", async () => {
   const queue = database();
   await seed(queue, [job, sibling]);
-  const at = new Date("2026-10-28T00:00:00.000Z");
+  const at = operationTime(queue);
   const claim = await claimValueRequest(queue.db, job.deliveryId, at);
   if (!claim) throw new Error("claim was refused");
   await expect(
@@ -312,7 +412,7 @@ test("a parked request is never claimed until its project is active again", asyn
 test("a missing pull request is a terminal, recorded outcome", async () => {
   const queue = database();
   await seed(queue);
-  const at = new Date("2026-10-28T00:00:00.000Z");
+  const at = operationTime(queue);
   const claim = await claimValueRequest(queue.db, job.deliveryId, at);
   if (!claim) throw new Error("claim was refused");
   await finishValueRequest(queue.db, claim, "missing", null, at);
@@ -340,7 +440,7 @@ test("the parked sweep rotates so every parked repository is rechecked", async (
     repo: `queue-${i}`,
   }));
   await seed(queue, jobs);
-  const at = new Date("2026-10-28T00:00:00.000Z");
+  const at = operationTime(queue);
   for (const entry of jobs) {
     const claim = await claimValueRequest(queue.db, entry.deliveryId, at);
     if (!claim) throw new Error("claim was refused");

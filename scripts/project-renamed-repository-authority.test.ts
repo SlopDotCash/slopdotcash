@@ -17,11 +17,34 @@ import { repositoryControl } from "../backend/projects/setup";
 import { sha256Hex } from "../src/lib/sha256";
 import { applicationManifest } from "../tests/project-application-manifest";
 import { sqliteD1 } from "../tests/sqlite-d1";
-import { routeRepositoryAccess } from "../workers/slopbot/repository-access";
+import {
+  REPOSITORY_ACCESS_URL,
+  routeRepositoryAccess,
+} from "../workers/slopbot/repository-access";
 
 const NOW = "2026-10-27T00:00:00.000Z";
 const OWNER = { githubId: "900000002", githubLogin: "owner" };
 const API = "https://api.github.com";
+
+test("the retired public repository relay cannot mint an installation token", () => {
+  let providerCalls = 0;
+  const github = (async () => {
+    providerCalls++;
+    throw new Error("A retired route cannot call GitHub");
+  }) as unknown as typeof fetch;
+  const url = new URL("https://slopbot.internal/v1/repository-read");
+  url.searchParams.set(
+    "path",
+    `/repos/example/open-registry/license?ref=${"a".repeat(40)}`,
+  );
+  const route = routeRepositoryAccess(
+    new Request(url),
+    { SLOPBOT_APP_ID: "1", SLOPBOT_APP_PRIVATE_KEY: "unused" },
+    github,
+  );
+  expect(route).toBeNull();
+  expect(providerCalls).toBe(0);
+});
 
 /** GitHub's answer for repository 123456789 under its current name. */
 function repositoryFacts(fullName: string) {
@@ -234,7 +257,7 @@ function slopbotAccess(
         },
       );
     return Response.json({ message: "Not Found" }, { status: 404 });
-  }) as typeof fetch;
+  }) as unknown as typeof fetch;
   const slopbot = {
     fetch: async (request: Request) =>
       (await routeRepositoryAccess(request, env, github)) ??
@@ -254,6 +277,120 @@ test("Slopbot reads a repository with a recorded rename under its current name",
   const result = await reviseHeadline(deps);
   expect(result.status).toBe(200);
   expect(result.revision).toBe(2);
+});
+
+for (const reusedDuringRead of [false, true]) {
+  test(`repository authority token ${reusedDuringRead ? "refuses a reused path" : "retains the matching repository"}`, async () => {
+    const env = {
+      SLOPBOT_APP_ID: "1",
+      SLOPBOT_APP_PRIVATE_KEY: generateKeyPairSync("rsa", {
+        modulusLength: 2048,
+      })
+        .privateKey.export({ format: "pem", type: "pkcs8" })
+        .toString(),
+    };
+    const expectedId = 123456789;
+    const replacementId = 123456790;
+    const repository = "/repos/example/renamed-registry";
+    let currentId = expectedId;
+    let allowed = new Set([expectedId, replacementId]);
+    let issuedBody: unknown;
+    let tokenContentType: string | null = null;
+    const permissionTargets: number[] = [];
+    const github = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const path = new URL(String(input)).pathname;
+      if (path === `${repository}/installation`)
+        return Response.json({ id: 42, suspended_at: null });
+      if (path === "/app/installations/42/access_tokens") {
+        issuedBody =
+          typeof init?.body === "string" ? JSON.parse(init.body) : null;
+        const scope = issuedBody as { repository_ids?: number[] } | null;
+        allowed = new Set(scope?.repository_ids ?? [expectedId, replacementId]);
+        tokenContentType = new Headers(init?.headers).get("content-type");
+        return Response.json(
+          { token: "scoped-installation-token-fixture" },
+          { status: 201 },
+        );
+      }
+      expect(new Headers(init?.headers).get("authorization")).toBe(
+        "Bearer scoped-installation-token-fixture",
+      );
+      if (path === repository) {
+        if (!allowed.has(currentId)) return new Response(null, { status: 404 });
+        const facts = {
+          ...repositoryFacts("example/renamed-registry"),
+          id: currentId,
+        };
+        // The old repository moves; a different repository in the SAME App
+        // installation immediately reuses its path before permission lookup.
+        if (reusedDuringRead) currentId = replacementId;
+        return Response.json(facts);
+      }
+      if (
+        path === `${repository}/collaborators/${OWNER.githubLogin}/permission`
+      ) {
+        permissionTargets.push(currentId);
+        if (!allowed.has(currentId)) return new Response(null, { status: 404 });
+        return Response.json({
+          permission: "admin",
+          role_name: "admin",
+          user: { id: Number(OWNER.githubId) },
+        });
+      }
+      throw new Error(`Unexpected fixture path: ${path}`);
+    }) as unknown as typeof fetch;
+    const url = new URL(REPOSITORY_ACCESS_URL);
+    url.search = new URLSearchParams({
+      repository: "example/renamed-registry",
+      repositoryId: String(expectedId),
+      login: OWNER.githubLogin,
+      githubId: OWNER.githubId,
+      includeRepository: "1",
+    }).toString();
+    const response = await routeRepositoryAccess(new Request(url), env, github);
+    if (response === null)
+      throw new Error("The internal authority route did not match");
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({
+      installation: "installed",
+      installationId: 42,
+      permission: reusedDuringRead ? "none" : "admin",
+      repository: { id: expectedId },
+    });
+    expect(issuedBody).toEqual({
+      repository_ids: [expectedId],
+      permissions: { metadata: "read" },
+    });
+    expect<string | null>(tokenContentType).toBe("application/json");
+    expect(permissionTargets).toEqual([
+      reusedDuringRead ? replacementId : expectedId,
+    ]);
+  });
+}
+
+test("an unsafe repository ID never requests an installation token", async () => {
+  const env = {
+    SLOPBOT_APP_ID: "1",
+    SLOPBOT_APP_PRIVATE_KEY: "unused for invalid ID",
+  };
+  let requests = 0;
+  const github = (async () => {
+    requests += 1;
+    throw new Error("Invalid repository IDs must be refused before GitHub");
+  }) as unknown as typeof fetch;
+  const url = new URL(REPOSITORY_ACCESS_URL);
+  url.search = new URLSearchParams({
+    repository: "example/renamed-registry",
+    repositoryId: "9007199254740992",
+    login: OWNER.githubLogin,
+    githubId: OWNER.githubId,
+  }).toString();
+  const response = await routeRepositoryAccess(new Request(url), env, github);
+  if (response === null)
+    throw new Error("The internal authority route did not match");
+  expect(response.status).toBe(503);
+  expect(await response.json()).toEqual({ error: "unavailable" });
+  expect(requests).toBe(0);
 });
 
 test("a later rename that the manifest does not record is still refused", async () => {

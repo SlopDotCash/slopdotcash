@@ -11,7 +11,10 @@ import { encodeFunctionData, parseAbi } from "viem";
 import { mnemonicToAccount } from "viem/accounts";
 import { handlePaymentsApi } from "../../backend/payments/handler";
 import { coordinateMonthlyPayments } from "../../backend/payments/monthly";
-import type { MonthlyAttestationPlan } from "../../backend/payments/monthly-attestation";
+import type {
+  MonthlyAttestationPlan,
+  MonthlyAuthorization,
+} from "../../backend/payments/monthly-attestation-types";
 import { publishMonthlyAuthorizations } from "../../backend/payments/monthly-publication";
 import { storeVaultSnapshot } from "../../backend/payments/vault-snapshots";
 import { CloudflareProjectPersistence } from "../../backend/projects/cloudflare-persistence";
@@ -23,15 +26,12 @@ import { escrowAwardOrigin } from "../../src/lib/payments/escrow-cycle";
 import { assertProjectDefinition } from "../../src/lib/project-schema.mjs";
 import { sha256Hex } from "../../src/lib/sha256";
 import { createMonthlyAllocationFixture } from "../../tests/monthly-allocation-fixture";
-import {
-  type ExecutorEnvironment,
-  type JournalStore,
-  submitEvmMonthly,
-} from "../../workers/payment-executor/core";
-import {
-  type MonthlyAuthorization,
-  signMonthlyAllocation,
-} from "../../workers/payment-executor/monthly";
+import type {
+  ExecutorEnvironment,
+  JournalStore,
+} from "../../workers/payment-executor/binding-shared";
+import { submitEvmMonthly } from "../../workers/payment-executor/core";
+import { signMonthlyAllocation } from "../../workers/payment-executor/monthly";
 import {
   checkMonthlyReserveRelease,
   prepareMonthlyReserveRelease,
@@ -40,26 +40,19 @@ import {
   buildBindCalldata,
   buildCommitAwardCalldata,
   buildCommitMonthlyCalldata,
-  buildCommitMonthlyLeafCalldata,
   buildCreateVaultCalldata,
   buildDepositCalldata,
   buildPayCalldata,
-  buildReserveMonthlyCalldata,
   buildSetMonthlyCommitmentCalldata,
   buildWithdrawCalldata,
   EVM_ESCROW_EVENT_TOPICS,
   type EvmEscrowConfig,
-  EvmMonthlyAlreadyAdmitted,
   evmAllocationRoot,
   evmAwardId,
   evmBindingDigest,
   evmMonthlyDigest,
-  evmMonthlyReserveDigest,
-  evmMonthlySumTree,
   evmVaultKey,
   type MonthlyAllocationEntry,
-  prepareEvmMonthlyReservation,
-  readEvmMonthlyReserve,
   readVaultTotals,
   verifyEvmDeployment,
   verifyPayment,
@@ -69,8 +62,15 @@ import {
   deployUpgradeableFactory,
 } from "./integration/upgrade";
 import {
+  buildCommitMonthlyLeafCalldata,
+  buildReserveMonthlyCalldata,
+  EvmMonthlyAlreadyAdmitted,
+  evmMonthlyReserveDigest,
+  evmMonthlySumTree,
   inspectEvmMonthlyWrongSum,
+  prepareEvmMonthlyReservation,
   prepareEvmMonthlyWrongSumRelease,
+  readEvmMonthlyReserve,
 } from "./monthly-reserve";
 
 const root = fileURLToPath(new URL(".", import.meta.url));

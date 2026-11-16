@@ -1,7 +1,9 @@
 import {
   ArrowRight,
+  Ban,
   BookOpen,
   CalendarCheck,
+  CircleSlash,
   GitPullRequest,
   HandCoins,
   ListChecks,
@@ -11,13 +13,23 @@ import {
 } from "lucide-react";
 import { FundingStatus } from "./FundingStatus";
 import { Link } from "./Link";
-import { ContributionPointTiers } from "./PointsRules";
+import { ContributionPointTiers, PenaltyPointTable } from "./PointsRules";
 import "./public-records.css";
 import { browserDeployment } from "./lib/browser-deployment";
+import { loadMergeActivity, mergeActivityCardLine } from "./lib/merge-activity";
 import { summarizeModelOutcomes } from "./lib/model-outcomes";
+import { POINTS_NOTICE } from "./lib/points";
+import {
+  asShown,
+  listedThisMonth,
+  loadPoolFunding,
+  type PoolFundingIndex,
+} from "./lib/pool-funding";
 import { PROJECTS, type ProjectDefinition } from "./lib/projects.mjs";
+import { formatRewardCapDisplay } from "./lib/reward-amount";
 import { NETWORK_NAMES } from "./lib/reward-asset.mjs";
 import { SOURCE_REPOSITORY } from "./lib/source-repository";
+import { usePublicResource } from "./lib/use-public-resource";
 import type { DataState } from "./lib/use-snapshot";
 import {
   summarizeWhoBuilds,
@@ -28,7 +40,6 @@ import {
 import {
   DataNotice,
   ExternalLinkAnchor,
-  monthlyPoolLabel,
   NetworkName,
   PaymentLifecycle,
   RoutePageHeader,
@@ -130,6 +141,19 @@ export function HowItWorksPage() {
         </div>
         <ContributionPointTiers />
       </section>
+      <section className="worked-example score-contract" id="penalties">
+        <div>
+          <h2>Penalties</h2>
+          <p>
+            Slopbot applies this one published penalty table. A debit reduces
+            only that UTC month's accepted-work points and never takes it below
+            zero. A debit never changes an approved, scheduled, or paid award.
+            Maintainers and authors outside the closure scope receive no
+            penalty.
+          </p>
+        </div>
+        <PenaltyPointTable />
+      </section>
       <section className="worked-example">
         <div>
           <h2>Example allocation</h2>
@@ -155,10 +179,12 @@ export function HowItWorksPage() {
       <section className="custody-proof money-states">
         <h2 id="payments">Payment stages</h2>
         <p>
-          After each UTC month ends, the owner has 72 hours to adjust awards.
-          When payments are enabled, the vault then pays funded awards
-          automatically unless the owner turned this off. Awards without a
-          wallet remain reserved.
+          After each UTC month ends, the owner has 72 hours to adjust awards. A
+          cut below the proposed amount needs a public reason, and the
+          contributor gets 24 hours of notice before the month locks. When
+          payments are enabled, the vault then pays funded awards automatically
+          unless the owner turned this off. Awards without a wallet remain
+          reserved.
         </p>
         <PaymentLifecycle />
       </section>
@@ -199,6 +225,90 @@ export function HowItWorksPage() {
             </div>
           </article>
           <article className="faq-answer">
+            <h3>How do points work?</h3>
+            <div>
+              <p className="points-formula">
+                <b>Your points</b>
+                <span>÷</span>
+                <b>Project points</b>
+                <span>×</span>
+                <b>Funded pool</b>
+                <span>=</span>
+                <b className="points-formula-result">Your share</b>
+              </p>
+              <ul className="faq-facts">
+                <li>
+                  <CalendarCheck aria-hidden="true" />
+                  Counts in its own UTC month
+                </li>
+                <li>
+                  <Ban aria-hidden="true" />
+                  No carryover into a later pool
+                </li>
+                <li>
+                  <HandCoins aria-hidden="true" />
+                  <span>
+                    Owner decides funding ·{" "}
+                    <Link href="/earnings">Payouts</Link>
+                  </span>
+                </li>
+                <li>
+                  <CircleSlash aria-hidden="true" />
+                  {POINTS_NOTICE}
+                </li>
+              </ul>
+            </div>
+          </article>
+          <article className="faq-answer">
+            <h3>When are payouts sent?</h3>
+            <div>
+              <ol
+                className="payment-stages faq-timeline"
+                aria-label="Monthly payout timeline"
+              >
+                <li>
+                  <strong>Month ends</strong>
+                  <span>UTC</span>
+                </li>
+                <li>
+                  <strong>72h review</strong>
+                  <span>Owner adjusts</span>
+                </li>
+                <li>
+                  <strong>Locks</strong>
+                  <span>Automatically</span>
+                </li>
+                <li>
+                  <strong>Paid</strong>
+                  <span>On chain · 2% fee</span>
+                </li>
+              </ol>
+            </div>
+          </article>
+          <article className="faq-answer">
+            <h3>GitHub flagged my account. What happens to my work?</h3>
+            <div>
+              <p>
+                A flag is GitHub&apos;s restriction, not Slop&apos;s. Slop does
+                not report accounts and cannot lift a flag. Appeal to GitHub
+                through its{" "}
+                <ExternalLinkAnchor href="https://support.github.com/contact/flagged">
+                  flagged account form
+                </ExternalLinkAnchor>{" "}
+                from the account&apos;s primary email.
+              </p>
+              <p>
+                Keep the same account. Sign-in and wallet registration are tied
+                to it, and a new account inherits nothing. If GitHub prevents
+                Slop from verifying your account, Slop sign-in will fail. Your
+                wallet registrations are unchanged. If GitHub hides your pull
+                requests, merged work may be missing from the site. Once GitHub
+                restores access, eligible work can appear again after a
+                successful Slop collection and site update.
+              </p>
+            </div>
+          </article>
+          <article className="faq-answer">
             <h3>How do I receive an award?</h3>
             <div>
               <p>
@@ -220,18 +330,74 @@ export function HowItWorksPage() {
               </p>
             </div>
           </article>
+          <article className="faq-answer">
+            <h3>Can the owner take this month&apos;s pool back?</h3>
+            <div>
+              <p>
+                When an owner locks a month in the project vault, that
+                month&apos;s pool is locked in the vault until it is paid out:
+                the vault contract refuses to withdraw it, and it can be paid
+                even if the owner turns automatic payment off. The owner can
+                still lower an individual contributor&apos;s amount before the
+                cutoff, with a public reason. A locked month that is never
+                reserved for payout can be released back to the owner&apos;s
+                free funds from the 4th of the second month after it, by a
+                transaction anyone can send; the project&apos;s manage page
+                offers it. Without a lock, Slop&apos;s pages refuse that
+                withdrawal but the contract does not. Slop&apos;s upgrade key
+                can still change the vault contract.
+              </p>
+            </div>
+          </article>
+          <article className="faq-answer">
+            <h3>Is there a referral program?</h3>
+            <div>
+              <p>
+                Yes. You can refer a project today: sign in on slop.cash once,
+                then send its maintainer <code>slop.cash/r/</code> followed by
+                your GitHub login. The referral is recorded when the project
+                lists. A referrer receives SLOP only after a project they
+                brought in has paid its contributors.{" "}
+                <ExternalLinkAnchor href="https://record.slop.cash/referrals">
+                  Referral terms
+                </ExternalLinkAnchor>
+              </p>
+            </div>
+          </article>
+          <article className="faq-answer">
+            <h3>Does Slop buy back SLOP?</h3>
+            <div>
+              <p>
+                The buyback is configured live since 12 November 2026. Half of
+                eligible fee income funds SLOP purchases on Robinhood Chain once
+                minimum order sizes are met. Half of the SLOP acquired is
+                allocated to burning. The first verified bridge fill, purchase
+                and burn are still pending. Funding comes from fees, not the
+                treasury, and nothing is guaranteed.{" "}
+                <ExternalLinkAnchor href="https://record.slop.cash/buyback">
+                  How the buyback works
+                </ExternalLinkAnchor>
+              </p>
+            </div>
+          </article>
         </div>
       </section>
     </main>
   );
 }
 
-function sponsorPoolLabel(project: ProjectDefinition): string {
-  const { reward } = project;
+/** Only money in a vault is shown (operator decision, 15 November 2026). */
+function sponsorPoolLabel(
+  registered: ProjectDefinition,
+  index: PoolFundingIndex | null,
+): string {
+  const { reward } = registered;
   if (reward.kind === "external-prize-share" && reward.externalOpportunity) {
     return `external prize share · ${reward.externalOpportunity.name}`;
   }
-  return monthlyPoolLabel(reward, project.rewardAsset);
+  const project = asShown(registered, index, new Date());
+  if (project.reward.monthlyCapMinor === "0") return "points only";
+  return `${formatRewardCapDisplay(project.reward.monthlyCapDisplay, project.rewardAsset)} monthly · in the vault`;
 }
 
 function WhoBuildsOnSlop({
@@ -440,12 +606,25 @@ export function SponsorsPage({
   state: DataState;
   retry: () => void;
 }) {
+  const [funding] = usePublicResource(
+    true,
+    loadPoolFunding,
+    "Pool funding unavailable",
+  );
+  const fundingIndex = funding.status === "ready" ? funding.index : null;
   const hasReviewBudget = PROJECTS.some(
     (project) => project.reward.reviewBudget,
   );
   const hasExternalPrize = PROJECTS.some(
     (project) => project.reward.kind === "external-prize-share",
   );
+  // One shared read of the daily merge activity (#1993) for every card.
+  const [merge] = usePublicResource(
+    true,
+    loadMergeActivity,
+    "Merge activity unavailable",
+  );
+  const now = new Date();
   return (
     <main className="shell evidence-page route-sponsors">
       <RoutePageHeader
@@ -461,7 +640,9 @@ export function SponsorsPage({
           </Link>
         </div>
         <ul className="route-sponsor-grid" aria-label="Project funding pools">
-          {PROJECTS.map((project) => {
+          {PROJECTS.filter((project) =>
+            listedThisMonth(project, fundingIndex, now),
+          ).map((project) => {
             return (
               <li className="route-sponsor-card" key={project.id}>
                 <Link
@@ -471,7 +652,7 @@ export function SponsorsPage({
                   <strong>{project.name}</strong>
                   <ArrowRight aria-hidden="true" />
                 </Link>
-                <p>{sponsorPoolLabel(project)}</p>
+                <p>{sponsorPoolLabel(project, fundingIndex)}</p>
                 {project.reward.chain ? (
                   <NetworkName chain={project.reward.chain}>
                     {NETWORK_NAMES[project.reward.chain]}
@@ -481,6 +662,17 @@ export function SponsorsPage({
                   project={project}
                   className="route-sponsor-status"
                 />
+                {project.status === "active" && merge.status === "ready"
+                  ? (() => {
+                      const line = mergeActivityCardLine(
+                        merge.index.get(project.id),
+                        now,
+                      );
+                      return line ? (
+                        <small className="project-merge-activity">{line}</small>
+                      ) : null;
+                    })()
+                  : null}
                 {hasReviewBudget ? (
                   project.reward.reviewBudget ? (
                     <small>

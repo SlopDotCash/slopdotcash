@@ -30,7 +30,7 @@ const GITHUB_GIT_ORIGIN = "https://github.com";
  * of a multi-gigabyte public repository completes well inside it; a stalled
  * transfer fails as an outage and is retried, never refused.
  */
-export const ACQUISITION_TIMEOUT_MS = 45 * 60 * 1000;
+const ACQUISITION_TIMEOUT_MS = 45 * 60 * 1000;
 const LFS_POINTER = "version https://git-lfs.github.com/spec/v1";
 const hash = (bytes: Uint8Array, algorithm = "sha256") =>
   createHash(algorithm).update(bytes).digest("hex");
@@ -38,12 +38,14 @@ const hash = (bytes: Uint8Array, algorithm = "sha256") =>
 /** The pinned input is outside the acquisition policy, so a retry of the
  * same pin cannot pass. Outages and changed bytes are not refusals. Size is
  * never a refusal reason for repository source. */
-export type AcquisitionRefusalReason =
+type AcquisitionRefusalReason =
   | "An exact repository and commit SHA are required"
   | "Invalid source tree path or digest"
   | "Unsupported source tree entry"
   | "Unsupported repository inventory"
   | "Immutable repository identity mismatch"
+  | "Repository not found on GitHub"
+  | "Repository moved on GitHub"
   | "Template acquisition size limit"
   | "Input response size limit exceeded";
 
@@ -169,6 +171,7 @@ function gitRunner(
       );
       const chunks: Buffer[] = [];
       let consumer: Promise<void> = Promise.resolve();
+      let consumerFailure: { error: unknown } | undefined;
       if (onStdout)
         consumer = onStdout(child.stdout).then(
           // Drain to end of stream, or "close" never fires.
@@ -176,9 +179,11 @@ function gitRunner(
             child.stdout.resume();
           },
           (error) => {
+            // Retain the failure until the child and its pipes close, without
+            // leaving a rejected promise unhandled while exit is pending.
+            consumerFailure = { error };
             child.kill("SIGKILL");
-            child.stdout.resume();
-            throw error;
+            child.stdout.destroy();
           },
         );
       else child.stdout.on("data", (chunk: Buffer) => chunks.push(chunk));
@@ -188,9 +193,11 @@ function gitRunner(
       child.on("close", (code) => {
         consumer.then(
           () =>
-            code === 0
-              ? done(Buffer.concat(chunks))
-              : fail(new Error(`Git ${args[0]} failed`)),
+            consumerFailure
+              ? fail(consumerFailure.error)
+              : code === 0
+                ? done(Buffer.concat(chunks))
+                : fail(new Error(`Git ${args[0]} failed`)),
           fail,
         );
       });
@@ -246,6 +253,10 @@ class StreamReader {
       remaining -= take;
       await sink(chunk);
     }
+  }
+  async end(): Promise<void> {
+    if (this.buffer.length > 0 || (await this.more()))
+      throw new Error("Unexpected Git object data");
   }
 }
 
@@ -539,6 +550,9 @@ export async function acquireRepository(input: {
           if (head.toString("latin1").startsWith(LFS_POINTER)) lfs.add(gitSha);
           stored.set(gitSha, { sha256: digest, bytes: size });
         }
+        // Finish through the same iterator. Switching to resume() before
+        // EOF can leave stdout open after the child exits under Bun.
+        await reader.end();
       },
     );
     const records = [];

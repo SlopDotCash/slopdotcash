@@ -2,13 +2,15 @@
 // The validator clones the public programs, lookup tables and accounts of
 // one current Jupiter route. Only a throwaway funder receives seeded tokens;
 // a real local token transfer funds the fee wallet. No mainnet token moves.
-// SLOP_FEE_TEST_TOKEN=pmup selects the owner-approved Token-2022 mint.
 // SLOP_FEE_TEST_TOKEN=sol creates a native escrow, claims its earned SOL fees,
 // and proves the exact atomic wrap and USDC swap without spending gas topups.
+// Requires a local Docker/Podman context with the reviewed image from
+// scripts/local-solana-validator.mjs already installed. No image is pulled here.
+// The selected TMPDIR must be shared with that local container runtime.
 //   bun workers/fee-converter/solana-local.integration.ts
 
 import { createHash } from "node:crypto";
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { closeSync, mkdtempSync, openSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { ed25519 } from "@noble/curves/ed25519.js";
@@ -25,23 +27,23 @@ import {
   le,
   message,
 } from "../../contracts/solana/transactions";
+import { startLocalSolanaValidator } from "../../scripts/local-solana-validator.mjs";
 import { decodeBase58Bytes } from "../../src/lib/base58";
+import { encodeBase64 } from "../../src/lib/byte-encoding";
 import { SOLANA_NATIVE_ASSET } from "../../src/lib/escrow-policy.mjs";
 import { sqliteD1 } from "../../tests/sqlite-d1";
 import { runOnce } from "./index";
-import { parseTransaction } from "./solana";
 import { resolveSolanaAccounts } from "./solana-accounts";
 import { WRAPPED_SOL } from "./solana-native-route";
+import { parseTransaction } from "./solana-transaction";
 
 const selected = process.env.SLOP_FEE_TEST_TOKEN ?? "jup";
-if (selected !== "jup" && selected !== "pmup" && selected !== "sol")
-  throw new Error("Select jup, pmup or sol");
+if (selected !== "jup" && selected !== "sol")
+  throw new Error("Select jup or sol");
 const nativeInput = selected === "sol";
 const INPUT_MINT = nativeInput
   ? WRAPPED_SOL
-  : selected === "pmup"
-    ? "35fWL6pdJqpconRZPrawUAQegw1QF3p2tgN7mzhTpump"
-    : "JUPyiwrYJFskUPiHa7hkeR8VUtAeFoSYbKedZNsDvCN";
+  : "JUPyiwrYJFskUPiHa7hkeR8VUtAeFoSYbKedZNsDvCN";
 const USDC = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v";
 const JUPITER = "JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4";
 const BUILTIN = new Set([
@@ -59,11 +61,7 @@ const PORT = Number(process.env.SLOP_FEE_TEST_PORT ?? "28899");
 if (!Number.isInteger(PORT) || PORT < 1024 || PORT > 65000)
   throw new Error("Invalid local validator port");
 const RPC = `http://127.0.0.1:${PORT}`;
-const AMOUNT = nativeInput
-  ? 100_000_000n
-  : selected === "pmup"
-    ? 30_000_000_000n
-    : 30_000_000n;
+const AMOUNT = nativeInput ? 100_000_000n : 30_000_000n;
 // A native claim costs 5,000 lamports and the next send reserves 5,000,000.
 // The actual claim receipt must prove that exact remainder before we quote it.
 const NATIVE_FEES = AMOUNT + 5_005_000n;
@@ -82,14 +80,8 @@ const pinnedRoute: typeof fetch = (async (
   if (url.href.startsWith(`${JUPITER_API}/quote?`)) {
     url.searchParams.set("asLegacyTransaction", "false");
     url.searchParams.set("instructionVersion", "V2");
-    if (selected === "jup" || nativeInput) {
-      url.searchParams.set("dexes", "Whirlpool");
-      url.searchParams.set("onlyDirectRoutes", "true");
-    } else {
-      // Stable on-chain AMMs survive local snapshot startup; expiring RFQ
-      // oracle prices do not. This restriction belongs only to this harness.
-      url.searchParams.set("dexes", "Pump.fun Amm,Whirlpool");
-    }
+    url.searchParams.set("dexes", "Whirlpool");
+    url.searchParams.set("onlyDirectRoutes", "true");
     url.searchParams.sort();
     const cached = quoteCache.get(url.href);
     if (cached) return Response.json(cached);
@@ -113,8 +105,7 @@ const pinnedRoute: typeof fetch = (async (
       if (
         JSON.stringify(body.quoteResponse) !== JSON.stringify(capturedQuote) ||
         body.userPublicKey !== capturedWallet ||
-        body.asLegacyTransaction !== false ||
-        (selected === "pmup" && body.useSharedAccounts !== true)
+        body.asLegacyTransaction !== false
       )
         throw new Error("Swap differs from the captured local route");
       return Response.json(capturedSwap);
@@ -178,7 +169,7 @@ function tokenAccount(mint: string, owner: string, amount: bigint): string {
   data.set(decodeBase58Bytes(owner), 32);
   new DataView(data.buffer).setBigUint64(64, amount, true);
   data[108] = 1; // initialized
-  return btoa(String.fromCharCode(...data));
+  return encodeBase64(data);
 }
 
 const seed = crypto.getRandomValues(new Uint8Array(32));
@@ -216,7 +207,6 @@ const built = (await (
       userPublicKey: wallet,
       wrapAndUnwrapSol: false,
       asLegacyTransaction: false,
-      ...(selected === "pmup" ? { useSharedAccounts: true } : {}),
     }),
   })
 ).json()) as { swapTransaction: string };
@@ -337,42 +327,48 @@ try {
 } catch (error) {
   if (String(error).includes("already serving")) throw error;
 }
-const validator = Bun.spawn(
-  [
-    "solana-test-validator",
-    "--reset",
-    "--quiet",
-    "--ticks-per-slot",
-    "8",
-    "--ledger",
-    join(dir, "ledger"),
-    "--rpc-port",
-    String(PORT),
-    "--faucet-port",
-    String(PORT + 41),
-    "--gossip-port",
-    String(PORT + 32),
-    "--dynamic-port-range",
-    `${PORT + 2}-${PORT + 31}`,
-    "--url",
-    "https://api.mainnet-beta.solana.com",
-    ...programs.flatMap((key) => ["--clone-upgradeable-program", key]),
-    ...clones.flatMap((key) => ["--maybe-clone", key]),
-    ...tableFiles,
-    ...(nativeInput
-      ? nativeGenesis
-      : ["--account", fundingAccount, accountFile]),
-  ],
-  {
-    stdout: Bun.file(join(dir, "validator.stdout.log")),
-    stderr: Bun.file(join(dir, "validator.stderr.log")),
-  },
-);
+const stdout = openSync(join(dir, "validator.stdout.log"), "w", 0o600);
+const stderr = openSync(join(dir, "validator.stderr.log"), "w", 0o600);
+let validator:
+  | Awaited<ReturnType<typeof startLocalSolanaValidator>>
+  | undefined;
+let primaryFailure: { error: unknown } | undefined;
+const cleanupFailures: unknown[] = [];
 try {
+  validator = await startLocalSolanaValidator({
+    args: [
+      "--reset",
+      "--quiet",
+      "--ticks-per-slot",
+      "8",
+      "--ledger",
+      join(dir, "ledger"),
+      "--rpc-port",
+      String(PORT),
+      "--faucet-port",
+      String(PORT + 41),
+      "--gossip-port",
+      String(PORT + 32),
+      "--dynamic-port-range",
+      `${PORT + 2}-${PORT + 31}`,
+      "--url",
+      "https://api.mainnet-beta.solana.com",
+      ...programs.flatMap((key) => ["--clone-upgradeable-program", key]),
+      ...clones.flatMap((key) => ["--maybe-clone", key]),
+      ...tableFiles,
+      ...(nativeInput
+        ? nativeGenesis
+        : ["--account", fundingAccount, accountFile]),
+    ],
+    rpcPort: PORT,
+    readonlyMounts: [dir],
+    stdio: ["ignore", stdout, stderr],
+    receiptPath: join(dir, "validator-receipt.json"),
+  });
   for (let i = 0; ; i++) {
-    if (validator.exitCode !== null)
+    if (validator.process.exitCode !== null)
       throw new Error(
-        `Local validator exited ${validator.exitCode}; see ${dir}/validator.stderr.log and validator.stdout.log`,
+        `Local validator exited ${validator.process.exitCode}; see ${dir}/validator.stderr.log and validator.stdout.log`,
       );
     try {
       if ((await rpc<string>("getHealth", [])) === "ok") break;
@@ -679,6 +675,29 @@ try {
   console.log(
     `PASS: ${selected} Solana local live cycle (${parsed.legacy ? "legacy" : "v0"}, ${proof.tables.length} lookup tables)`,
   );
+} catch (error) {
+  primaryFailure = { error };
 } finally {
-  validator.kill();
+  try {
+    await validator?.close();
+  } catch (error) {
+    cleanupFailures.push(error);
+  }
+  for (const descriptor of [stdout, stderr]) {
+    try {
+      closeSync(descriptor);
+    } catch (error) {
+      cleanupFailures.push(error);
+    }
+  }
 }
+if (cleanupFailures.length > 0)
+  throw new AggregateError(
+    primaryFailure
+      ? [primaryFailure.error, ...cleanupFailures]
+      : cleanupFailures,
+    primaryFailure
+      ? "Fee conversion and validator cleanup failed"
+      : "Validator cleanup failed",
+  );
+if (primaryFailure) throw primaryFailure.error;

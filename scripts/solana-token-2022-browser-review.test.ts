@@ -4,15 +4,9 @@
 // the browser must rebuild and verify the exact same message before signing.
 import { afterAll, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
-import { readdirSync, readFileSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { ed25519 } from "@noble/curves/ed25519.js";
 import { handlePaymentsApi } from "../backend/payments/handler";
-import { CloudflareProjectPersistence } from "../backend/projects/cloudflare-persistence";
-import {
-  handleProjectApi,
-  type ProjectApiDependencies,
-} from "../backend/projects/handler";
-import { ownerVaultSetupService } from "../backend/projects/vault-setup";
 import {
   CONFIG_DISCRIMINATOR,
   CONFIG_SIZE,
@@ -32,7 +26,6 @@ import {
 import { ata, bytes } from "../contracts/solana/transactions";
 import { ESCROW_NETWORKS } from "../src/lib/escrow-policy.mjs";
 import type { ProjectDefinition } from "../src/lib/projects.mjs";
-import { sha256Hex } from "../src/lib/sha256";
 import {
   reviewSolanaVaultAction,
   sendSolanaVaultAction,
@@ -43,16 +36,16 @@ import {
   type VaultSetupReview,
 } from "../src/lib/vault-setup";
 import { applicationManifest } from "../tests/project-application-manifest";
-import { sqliteD1 } from "../tests/sqlite-d1";
+import { vaultSetupHarness } from "../tests/vault-setup-harness";
 
 const NOW = "2026-10-27T00:00:00.000Z";
 const OWNER = { githubId: "900000002", githubLogin: "owner" };
 const CLAIM = "verified-owner-wallet";
-const PMUP_MINT = "35fWL6pdJqpconRZPrawUAQegw1QF3p2tgN7mzhTpump";
-const pmupMintBytes = new Uint8Array(
+const TEST_MINT = "3qbR1eZRqXUWroWKKYhbDmR3FfqTHfqSU8zZSxtANzYh";
+const testMintBytes = new Uint8Array(
   readFileSync(
     new URL(
-      "../contracts/solana/integration/fixtures/pmup-mint.bin",
+      "../contracts/solana/integration/fixtures/token-2022-mint.bin",
       import.meta.url,
     ),
   ),
@@ -85,11 +78,11 @@ configBytes.set(new Uint8Array(32).fill(3), 8);
 configBytes.set(new Uint8Array(32).fill(4), 40);
 configBytes.set(new Uint8Array(32).fill(6), 72);
 
-const projectDigest = registryProjectDigest("pmup-vault");
+const projectDigest = registryProjectDigest("metadata-vault");
 const creationPlan = buildInitializeVaultInstructions({
   programId: program.programId,
   owner: OWNER_WALLET,
-  mint: PMUP_MINT,
+  mint: TEST_MINT,
   tokenProgram: TOKEN_2022_PROGRAM,
   projectDigest,
   networkDomain: program.networkDomain,
@@ -103,11 +96,11 @@ const creationPlan = buildInitializeVaultInstructions({
 });
 const projectPda = creationPlan.projectPda;
 const vaultAddress = solanaVaultAddress(program.programId, projectPda);
-const ownerAta = ata(PMUP_MINT, OWNER_WALLET, TOKEN_2022_PROGRAM);
+const ownerAta = ata(TEST_MINT, OWNER_WALLET, TOKEN_2022_PROGRAM);
 
 function token2022Account(owner: string, amount: bigint): Uint8Array {
   const raw = new Uint8Array(170);
-  raw.set(bytes(PMUP_MINT), 0);
+  raw.set(bytes(TEST_MINT), 0);
   raw.set(bytes(owner), 32);
   new DataView(raw.buffer).setBigUint64(64, amount, true);
   raw[108] = 1;
@@ -122,7 +115,7 @@ projectBytes.set(Buffer.from(projectDigest, "hex"), 40);
 projectBytes.set(Buffer.from(program.networkDomain, "hex"), 72);
 projectBytes.set(bytes(program.identityAuthority), 104);
 projectBytes.set(bytes(program.feeRecipient), 136);
-projectBytes.set(bytes(PMUP_MINT), 168);
+projectBytes.set(bytes(TEST_MINT), 168);
 new DataView(projectBytes.buffer).setBigUint64(208, 500_000_000n, true);
 
 let projectInitialized = false;
@@ -137,10 +130,10 @@ const accounts = (): Record<string, unknown> => ({
     executable: false,
     data: [base64(configBytes), "base64"],
   },
-  [PMUP_MINT]: {
+  [TEST_MINT]: {
     owner: TOKEN_2022_PROGRAM,
     executable: false,
-    data: [base64(pmupMintBytes), "base64"],
+    data: [base64(testMintBytes), "base64"],
   },
   [ownerAta]: {
     owner: TOKEN_2022_PROGRAM,
@@ -204,105 +197,47 @@ const rpc = Bun.serve({
 afterAll(() => rpc.stop(true));
 const rpcUrl = `http://127.0.0.1:${rpc.port}`;
 
-const { db, sqlite } = sqliteD1(
-  readdirSync(new URL("../migrations/", import.meta.url))
-    .filter((name) => name.endsWith(".sql"))
-    .sort(),
-);
-const manifest = applicationManifest("pmup-vault", "example/pmup-vault", {
-  rewardAsset: {
-    network: "solana",
-    kind: "token",
-    address: PMUP_MINT,
-    symbol: "PMUP",
-    decimals: 6,
-    tokenSource: "pumpfun",
-  },
-  reward: {
-    ...(applicationManifest("pmup-vault", "example/pmup-vault")
-      .reward as Record<string, unknown>),
-    chain: "solana",
-    monthlyCapMinor: "250000000",
-    monthlyCapDisplay: "250 PMUP",
-  },
-  escrow: {
-    schemaVersion: "1",
-    effectiveCycle: "2026-11",
-    chain: "solana",
-    feeBasisPoints: 200,
-    withdrawalFeeBasisPoints: 200,
-    feeMode: "deduct-from-gross",
-    deployments: [],
-  },
-});
-const manifestText = JSON.stringify(manifest);
-sqlite
-  .prepare(
-    "INSERT INTO project_revisions(project_id,revision,manifest,manifest_sha256,reason,created_at) VALUES('pmup-vault',1,?,?,'Fixture',?)",
-  )
-  .run(manifestText, sha256Hex(manifestText), NOW);
-sqlite
-  .prepare(
-    "INSERT INTO projects(id,status,revision,manifest,manifest_sha256,created_at,updated_at) VALUES('pmup-vault','paused',1,?,?,?,?)",
-  )
-  .run(manifestText, sha256Hex(manifestText), NOW, NOW);
-sqlite
-  .prepare(
-    "INSERT INTO wallet_claims(id,github_user_id,github_login,wallet_address,source,source_body_sha256,observed_at,record_sha256,created_at,chain) VALUES(?,?,?,?,'d1_registry',?,?,?,?,'solana')",
-  )
-  .run(
-    CLAIM,
-    OWNER.githubId,
-    OWNER.githubLogin,
-    OWNER_WALLET,
-    "a".repeat(64),
-    NOW,
-    "b".repeat(64),
-    NOW,
-  );
-sqlite
-  .prepare(
-    "INSERT INTO payment_wallet_challenges(id,claim_id,github_user_id,message,expires_at,consumed_at) VALUES('challenge-1',?,?,'fixture',?,?)",
-  )
-  .run(CLAIM, OWNER.githubId, NOW, NOW);
-sqlite
-  .prepare(
-    "INSERT INTO payment_wallet_authorizations(claim_id,github_user_id,authorized_at,challenge_id,signature) VALUES(?,?,?,'challenge-1','0x00')",
-  )
-  .run(CLAIM, OWNER.githubId, NOW);
-
-const persistence = new CloudflareProjectPersistence(db);
-const projectDeps: ProjectApiDependencies = {
-  persistence,
-  adminGithubIds: new Set(),
-  moderatorGithubIds: new Set(),
-  now: () => new Date(NOW),
-  randomId: () => crypto.randomUUID(),
-  sessionActor: async () => OWNER,
-  readTokenMetadata: async () => {
-    throw new Error("No asset edit in this workflow");
-  },
-  github: {
-    fetch: async () => {
-      throw new Error("Unexpected public lookup");
+const manifest = applicationManifest(
+  "metadata-vault",
+  "example/metadata-vault",
+  {
+    rewardAsset: {
+      network: "solana",
+      kind: "token",
+      address: TEST_MINT,
+      symbol: "TEST",
+      decimals: 6,
+    },
+    reward: {
+      ...(applicationManifest("metadata-vault", "example/metadata-vault")
+        .reward as Record<string, unknown>),
+      chain: "solana",
+      monthlyCapMinor: "250000000",
+      monthlyCapDisplay: "250 TEST",
+    },
+    escrow: {
+      schemaVersion: "1",
+      effectiveCycle: "2026-11",
+      chain: "solana",
+      feeBasisPoints: 200,
+      withdrawalFeeBasisPoints: 200,
+      feeMode: "deduct-from-gross",
+      deployments: [],
     },
   },
-  vettingClearance: async () => ({ state: "unscanned" }),
-  repositoryControl: async () => ({ state: "matched" }),
-  repositoryAccess: async () => ({
-    installation: "installed",
-    installationId: 42,
-    permission: "admin",
-    roleName: "admin",
-  }),
-  vaultSetup: ownerVaultSetupService({
-    db,
-    projects: () => persistence.listProjects(),
-    networks: () => ["solana-mainnet"],
-    rpcUrl: () => rpcUrl,
-    programs: [program],
-  }),
-};
+);
+const { db, vaultSetup } = vaultSetupHarness({
+  projectId: "metadata-vault",
+  manifest,
+  chain: "solana",
+  claim: CLAIM,
+  owner: OWNER,
+  ownerWallet: OWNER_WALLET,
+  now: NOW,
+  network: "solana-mainnet",
+  rpcUrl: () => rpcUrl,
+  reviewed: { programs: [program] },
+});
 
 test("browser vault setup and funding reviews preserve the verified Token-2022 program", async () => {
   const input = {
@@ -311,31 +246,18 @@ test("browser vault setup and funding reviews preserve the verified Token-2022 p
     automatic: true,
     payoutPolicy: "ordinary" as const,
   };
-  const setupResponse = await handleProjectApi(
-    new Request("https://slop.cash/api/v1/project-vaults/pmup-vault", {
-      method: "POST",
-      headers: {
-        origin: "https://slop.cash",
-        "content-type": "application/json",
-      },
-      body: JSON.stringify({
-        ...input,
-        step: "review",
-        expectedRevision: 1,
-      }),
-    }),
-    projectDeps,
-  );
-  if (!setupResponse) throw new Error("The project API did not answer");
+  const setupResponse = await vaultSetup({
+    ...input,
+    step: "review",
+    expectedRevision: 1,
+  });
   expect(setupResponse.status).toBe(200);
-  const { review } = (await setupResponse.json()) as {
-    review: VaultSetupReview;
-  };
+  const { review } = setupResponse.body as { review: VaultSetupReview };
   if (review.family !== "solana") throw new Error("Expected Solana review");
   expect(review.creation.tokenProgram).toBe(TOKEN_2022_PROGRAM);
 
   const projectDef = {
-    id: "pmup-vault",
+    id: "metadata-vault",
     ...(manifest as unknown as Omit<ProjectDefinition, "id">),
   };
   const checked = checkedVaultSetupReview(
@@ -370,7 +292,7 @@ test("browser vault setup and funding reviews preserve the verified Token-2022 p
     projectPda,
     vault: vaultAddress,
     owner: OWNER_WALLET,
-    asset: PMUP_MINT,
+    asset: TEST_MINT,
     deploymentTransaction: solanaBase58(new Uint8Array(64).fill(7)),
   };
   const escrowConfig: SolanaEscrowConfig = {
@@ -381,7 +303,7 @@ test("browser vault setup and funding reviews preserve the verified Token-2022 p
     projectPda,
     vault: vaultAddress,
     owner: OWNER_WALLET,
-    mint: PMUP_MINT,
+    mint: TEST_MINT,
   };
   const originalFetch = globalThis.fetch;
   globalThis.fetch = (async (url, init) => {
@@ -422,7 +344,7 @@ test("browser vault setup and funding reviews preserve the verified Token-2022 p
     };
     for (const operation of ["deposit", "withdraw"] as const) {
       const reviewed = await reviewSolanaVaultAction(
-        "pmup-vault",
+        "metadata-vault",
         deployment,
         wallet,
         operation,

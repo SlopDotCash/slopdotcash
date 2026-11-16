@@ -36,6 +36,12 @@ import {
   type WalletProof,
 } from "./rewards";
 import { eventThirds } from "./score-penalties";
+import {
+  addScoreThirds,
+  isScoreThirds,
+  scoreThirdsToPoints,
+} from "./score-units";
+import { allocateWeightedRows } from "./weighted-allocation";
 
 type RewardCycleProposal =
   | ExternalContributionShareManifest
@@ -80,6 +86,24 @@ function resolvedWallet(
     : null;
 }
 
+/**
+ * The historical committed review budget available to a cycle: the smaller of
+ * the committed amount and the monthly cap, once the budget is committed,
+ * enabled and effective by the cycle start; otherwise zero.
+ */
+export function activeReviewBudgetCap(
+  policy: ProjectDefinition["reward"]["reviewBudget"],
+  cycleFrom: string,
+): bigint {
+  return policy?.fundingState === "committed" &&
+    policy.paymentMode === "enabled" &&
+    Date.parse(policy.effectiveAt) <= Date.parse(cycleFrom)
+    ? BigInt(policy.committedMinor) < BigInt(policy.monthlyCapMinor)
+      ? BigInt(policy.committedMinor)
+      : BigInt(policy.monthlyCapMinor)
+    : 0n;
+}
+
 export function allocateReviewBudgetMinor(
   totalMinor: bigint,
   contributors: readonly { actorId: string; scoreThirds: number }[],
@@ -88,9 +112,7 @@ export function allocateReviewBudgetMinor(
   if (
     contributors.some(
       ({ actorId, scoreThirds }) =>
-        actorId.length === 0 ||
-        !Number.isSafeInteger(scoreThirds) ||
-        scoreThirds < 0,
+        actorId.length === 0 || !isScoreThirds(scoreThirds),
     ) ||
     new Set(contributors.map(({ actorId }) => actorId)).size !==
       contributors.length
@@ -98,36 +120,17 @@ export function allocateReviewBudgetMinor(
     throw new TypeError("review weights must be unique non-negative integers");
   }
   const eligible = contributors
-    .filter(
-      ({ scoreThirds }) => Number.isSafeInteger(scoreThirds) && scoreThirds > 0,
-    )
+    .filter(({ scoreThirds }) => scoreThirds > 0)
     .sort((left, right) => left.actorId.localeCompare(right.actorId));
   if (eligible.length === 0 || totalMinor === 0n) return new Map();
-  const totalWeight = eligible.reduce(
-    (total, contributor) => total + BigInt(contributor.scoreThirds),
-    0n,
-  );
-  const allocations = new Map<string, bigint>();
-  const remainders = eligible.map((contributor) => {
-    const numerator = totalMinor * BigInt(contributor.scoreThirds);
-    const amount = numerator / totalWeight;
-    allocations.set(contributor.actorId, amount);
-    return { actorId: contributor.actorId, remainder: numerator % totalWeight };
-  });
-  let unallocated =
-    totalMinor -
-    [...allocations.values()].reduce((total, amount) => total + amount, 0n);
-  remainders.sort((left, right) =>
-    left.remainder === right.remainder
-      ? left.actorId.localeCompare(right.actorId)
-      : left.remainder > right.remainder
-        ? -1
-        : 1,
-  );
-  for (let index = 0; unallocated > 0n; index += 1) {
-    const actorId = remainders[index % remainders.length].actorId;
-    allocations.set(actorId, (allocations.get(actorId) ?? 0n) + 1n);
-    unallocated -= 1n;
+  const allocations = new Map(eligible.map(({ actorId }) => [actorId, 0n]));
+  for (const { row, amount } of allocateWeightedRows(
+    totalMinor,
+    eligible,
+    (contributor) => BigInt(scoreThirdsToPoints(contributor.scoreThirds)),
+    (left, right) => left.actorId.localeCompare(right.actorId),
+  )) {
+    allocations.set(row.actorId, amount);
   }
   return allocations;
 }
@@ -144,7 +147,7 @@ export function additiveReviewBudgetWeights(
     if (event.category !== "substantive-review") continue;
     weights.set(
       event.actor.id,
-      (weights.get(event.actor.id) ?? 0) + eventThirds(event),
+      addScoreThirds(weights.get(event.actor.id) ?? 0, eventThirds(event)),
     );
   }
   return [...weights].map(([actorId, scoreThirds]) => ({
@@ -305,15 +308,10 @@ export function createRewardCycleProposal(
     ) + carriedOnlyMinor
   ).toString();
   const reviewPolicy = view.project.reward.reviewBudget;
-  const reviewBudgetTotal =
-    reviewPolicy?.fundingState === "committed" &&
-    reviewPolicy.paymentMode === "enabled" &&
-    Date.parse(reviewPolicy.effectiveAt) <= Date.parse(view.cycle.from)
-      ? BigInt(reviewPolicy.committedMinor) <
-        BigInt(reviewPolicy.monthlyCapMinor)
-        ? BigInt(reviewPolicy.committedMinor)
-        : BigInt(reviewPolicy.monthlyCapMinor)
-      : 0n;
+  const reviewBudgetTotal = activeReviewBudgetCap(
+    reviewPolicy,
+    view.cycle.from,
+  );
   const excluded = new Set(
     view.leaders
       .filter((leader) => leader.payoutExclusion !== null)

@@ -518,9 +518,8 @@ export async function qualifyAccess(env: BackupEnvironment) {
     );
     const body = await download(cookie);
     check(
-      body.status === 200 &&
-        body.headers.get("set-cookie")?.includes("Max-Age=0"),
-      "Download did not consume cookie",
+      body.status === 200 && body.headers.get("set-cookie") === null,
+      "Download changed a possibly newer grant cookie",
     );
     check(body.body, "Download body missing");
     const stream = body.body.getReader();

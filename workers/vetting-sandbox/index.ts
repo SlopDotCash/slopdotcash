@@ -2,6 +2,7 @@
 import { getSandbox, Sandbox } from "@cloudflare/sandbox";
 import { isRecord, readLimitedBody } from "../../backend/trace/validation";
 import { sha256Hex } from "../../src/lib/async-sha256.mjs";
+import { decodeBase64 } from "../../src/lib/byte-encoding";
 
 export { MergeVerifier } from "./merge";
 
@@ -50,9 +51,7 @@ export default {
         !INTERPRETERS.has(body.interpreter)
       )
         throw new Error("Invalid artifact request");
-      bytes = Uint8Array.from(atob(body.artifactBase64), (character) =>
-        character.charCodeAt(0),
-      );
+      bytes = decodeBase64(body.artifactBase64);
       if (
         bytes.length === 0 ||
         bytes.length > MAX_ARTIFACT_BYTES ||

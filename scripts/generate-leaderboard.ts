@@ -6,7 +6,9 @@ import {
   penaltyFeedProjects,
   VALUE_FEED_UNAVAILABLE_EXIT_CODE,
   ValueFeedUnavailableError,
+  type ValueInputProgress,
 } from "./value-ingestion";
+
 /**
  * Collects the rolling contribution ledger and current work queues from the
  * authenticated GitHub GraphQL API. Time slicing, cursor pagination, runtime
@@ -14,6 +16,10 @@ import {
  * becoming a plausible-looking empty snapshot.
  */
 
+import {
+  githubIngestionReadTransport,
+  githubPrimaryRateLimitDelay,
+} from "./github-ingestion-read";
 import type { ConnectionPage, PageInfo } from "./github-pagination";
 import { resolveGitHubToken } from "./github-token";
 
@@ -78,7 +84,10 @@ import {
 import { verifyRunReceiptSignature } from "./run-receipt-crypto";
 
 export const SEARCH_SAFE_RESULT_LIMIT = 950;
-export const MINIMUM_SEARCH_SLICE_MS = 60_000;
+// Search ranges are second-precise (`searchRange`, `midpoint`), so a burst is
+// split down to one second; only a single second over the cap still refuses.
+// A one-minute floor refused a 1,072-merge bulk merge in 45 s (6 Nov 2026).
+export const MINIMUM_SEARCH_SLICE_MS = 1_000;
 export const GRAPHQL_PAGE_SIZE = 100;
 export const MINIMUM_GRAPHQL_PAGE_SIZE = 1;
 export const DETAIL_BATCH_SIZE = 25;
@@ -203,12 +212,25 @@ interface ParsedIssue {
   };
 }
 
-interface NodeReference {
+type OutcomeCommit = NonNullable<MergedPullRequestOutcome["commits"]>[number];
+
+export interface OutcomeCommitIdentity {
+  id: string;
+  oid: string;
+  parentCount: number;
+  author: GitHubActor | null;
+}
+
+export interface NodeReference {
   id: string;
   kind: "Issue" | "PullRequest";
   outcome: MergedPullRequestOutcome | null;
   openVersion: string | null;
-  commitPage?: NestedPageState & { baseRefOid: string; headRefOid: string };
+  commitPage?: NestedPageState & {
+    baseRefOid: string;
+    headRefOid: string;
+    commits: OutcomeCommitIdentity[];
+  };
 }
 
 type ExpectedRecordState = "closed" | "merged" | "open";
@@ -259,6 +281,168 @@ export async function retryOpenReferenceListing<T>(
 
 class GraphqlResponseBoundaryError extends Error {}
 
+/** GitHub gateway answers that the bounded retry treats as transient. */
+const GATEWAY_FAILURE_STATUSES: readonly number[] = [502, 503, 504];
+
+/**
+ * GitHub's gateway failed a request on every bounded attempt: a 502, 503 or
+ * 504 with a non-JSON body, or an HTTP 200 whose JSON body arrived empty or
+ * cut off. For a `nodes(ids:)` batch the usual cause is the batch itself:
+ * twenty-five open pull requests that each carry over a thousand changed files
+ * exceed what one GraphQL request can assemble, so batch callers split the ids
+ * instead of failing the run (`executeNodeBatch`).
+ */
+export class GraphqlUpstreamError extends Error {
+  readonly status: number;
+
+  constructor(message: string, status: number, options?: ErrorOptions) {
+    super(message, options);
+    this.name = "GraphqlUpstreamError";
+    this.status = status;
+  }
+}
+
+/** The commit exists, but GitHub could not compute one aggregate counter. */
+export class CommitStatisticsUnavailableError extends Error {
+  override readonly name = "CommitStatisticsUnavailableError";
+  constructor(
+    readonly ids: readonly string[],
+    readonly indices: readonly number[],
+    readonly data: JsonRecord,
+  ) {
+    super("GitHub commit statistics are temporarily unavailable");
+  }
+}
+
+/** Only the exact aggregate-counter query may use the historical REST path. */
+export function commitStatisticsFailure(
+  document: string,
+  value: unknown,
+  variables: GraphqlVariables,
+): CommitStatisticsUnavailableError | null {
+  if (
+    document !== OUTCOME_COMMIT_LINES_QUERY ||
+    !value ||
+    typeof value !== "object" ||
+    Array.isArray(value)
+  )
+    return null;
+  const envelope = value as JsonRecord;
+  const ids = variables.ids;
+  const data = envelope.data;
+  if (
+    !Array.isArray(ids) ||
+    ids.length === 0 ||
+    !ids.every((id) => typeof id === "string") ||
+    new Set(ids).size !== ids.length ||
+    !data ||
+    typeof data !== "object" ||
+    Array.isArray(data)
+  )
+    return null;
+  const nodes = (data as JsonRecord).nodes;
+  try {
+    parseRateLimit((data as JsonRecord).rateLimit);
+  } catch {
+    return null;
+  }
+  if (
+    !Array.isArray(nodes) ||
+    nodes.length !== ids.length ||
+    !Array.isArray(envelope.errors) ||
+    envelope.errors.length === 0
+  )
+    return null;
+  const indices = new Set<number>();
+  for (const value of envelope.errors) {
+    if (!value || typeof value !== "object" || Array.isArray(value))
+      return null;
+    const error = value as JsonRecord;
+    const path = error.path;
+    if (
+      error.type !== "SERVICE_UNAVAILABLE" ||
+      !Array.isArray(path) ||
+      path.length !== 3 ||
+      path[0] !== "nodes" ||
+      !Number.isInteger(path[1]) ||
+      path[1] < 0 ||
+      path[1] >= ids.length ||
+      !["additions", "deletions"].includes(path[2]) ||
+      nodes[path[1]] !== null
+    )
+      return null;
+    indices.add(path[1]);
+  }
+  if (
+    nodes.some((node, index) =>
+      node === null
+        ? !indices.has(index)
+        : !node ||
+          typeof node !== "object" ||
+          Array.isArray(node) ||
+          node.id !== ids[index],
+    )
+  )
+    return null;
+  return new CommitStatisticsUnavailableError(
+    ids as string[],
+    [...indices],
+    data as JsonRecord,
+  );
+}
+
+/**
+ * Runs one `nodes(ids:)` query. When the gateway fails the whole batch, the
+ * two halves are requested separately and reassembled in request order, down
+ * to single ids, which still fail closed. An enumerated node GitHub can no
+ * longer resolve is reported per half: the other half is still probed, and the
+ * error that leaves here covers every id this call was asked for, because
+ * callers record its `sources` as the batch's unavailable set.
+ */
+export async function executeNodeBatch(
+  client: Pick<GraphqlExecutor, "execute">,
+  document: string,
+  ids: readonly string[],
+  variables: GraphqlVariables = {},
+): Promise<JsonRecord> {
+  try {
+    return await client.execute(document, { ...variables, ids });
+  } catch (error) {
+    if (!(error instanceof GraphqlUpstreamError) || ids.length < 2) throw error;
+    const middle = Math.ceil(ids.length / 2);
+    const halves: JsonRecord[] = [];
+    const missing = new Map<string, UnavailableSource>();
+    let unavailable: SourceNodeUnavailableError | null = null;
+    for (const half of [ids.slice(0, middle), ids.slice(middle)]) {
+      try {
+        halves.push(await executeNodeBatch(client, document, half, variables));
+      } catch (halfError) {
+        // A half whose nodes are gone must not hide the sibling half's own
+        // unavailability, and must not leave ids this batch was asked for
+        // unprobed: the callers hold exactly the identities they are told
+        // about. Any other failure still fails closed on the spot.
+        if (!(halfError instanceof SourceNodeUnavailableError)) throw halfError;
+        for (const source of halfError.sources)
+          missing.set(source.nodeId, source);
+        unavailable = unavailable ?? halfError;
+      }
+    }
+    if (unavailable)
+      throw new SourceNodeUnavailableError([...missing.values()], {
+        cause: unavailable,
+      });
+    const head = halves[0];
+    const tail = halves[1];
+    return {
+      ...tail,
+      nodes: [
+        ...asArray(head.nodes, "data.nodes"),
+        ...asArray(tail.nodes, "data.nodes"),
+      ],
+    };
+  }
+}
+
 export interface RateLimitSnapshot {
   cost: number;
   consumedDuringRun: number;
@@ -290,7 +474,11 @@ export interface GenerationProgress {
     | "merged-pull-requests"
     | "resolved-issues"
     | "open-issues"
-    | "open-pull-requests";
+    | "open-pull-requests"
+    | "evidence-verification"
+    | "review-census"
+    | "participation-history"
+    | ValueInputProgress["phase"];
   completed: number;
   total: number;
 }
@@ -316,6 +504,8 @@ export interface GenerateOptions {
   retainedReviewAttributions?: ModelAttribution[];
   /** The site this build publishes; staging reads its registry from staging. */
   deploymentTier?: DeploymentTier;
+  /** Trusted production collection can retain public GitHub discussion reads. */
+  discussionCheckpoint?: { directory: string; deadlineMs: number };
   /** Shared only across the one complete-census retry in runGenerator. */
   sourceRecovery?: {
     unavailableSources: UnavailableSource[];
@@ -542,6 +732,7 @@ const SEARCH_REFERENCES_QUERY = `
     $searchQuery: String!
     $after: String
     $pageSize: Int!
+    $withMergeCommits: Boolean!
   ) {
     search(
       type: ISSUE
@@ -570,10 +761,10 @@ const SEARCH_REFERENCES_QUERY = `
           baseRefName
           baseRefOid
           headRefOid
-          commits(first: 100) {
+          commits(first: 100) @include(if: $withMergeCommits) {
             totalCount
             pageInfo { hasNextPage endCursor }
-            nodes { commit { oid author { user { ...LeaderboardActor } } } }
+            nodes { commit { id oid parents { totalCount } author { user { ...LeaderboardActor } } } }
           }
         }
       }
@@ -591,10 +782,12 @@ const MORE_OUTCOME_COMMITS_QUERY = `
         state
         mergedAt
         baseRefName
+        baseRefOid
+        headRefOid
         commits(first: 100, after: $after) {
           totalCount
           pageInfo { hasNextPage endCursor }
-          nodes { commit { oid author { user { ...LeaderboardActor } } } }
+          nodes { commit { id oid parents { totalCount } author { user { ...LeaderboardActor } } } }
         }
       }
     }
@@ -614,6 +807,222 @@ const PULL_REQUEST_DETAILS_QUERY = `
   ${ACTOR_FRAGMENT}
   ${PULL_REQUEST_FRAGMENT}
 `;
+
+// Keep expensive commit statistics out of nested PR search connections.
+const OUTCOME_COMMIT_LINES_QUERY = `
+  query LeaderboardOutcomeCommitLines($ids: [ID!]!) {
+    nodes(ids: $ids) {
+      __typename
+      ... on Commit { id oid additions deletions repository { id } }
+    }
+    rateLimit { cost limit remaining resetAt }
+  }
+`;
+
+interface CachedCommitLines {
+  repositoryNodeId: string;
+  outcome: OutcomeCommit;
+}
+
+function sameCommitIdentity(
+  left: Pick<OutcomeCommit, "oid" | "parentCount">,
+  right: OutcomeCommitIdentity,
+): boolean {
+  return left.oid === right.oid && left.parentCount === right.parentCount;
+}
+
+// A null GitHub account link is missing evidence, not a different author.
+// REST comparison and GraphQL can disagree about whether the link exists.
+// Keep a verified link, but never choose between two distinct linked actors.
+function mergeCommitAuthor(
+  earlier: GitHubActor | null,
+  current: GitHubActor | null,
+): GitHubActor | null {
+  if (
+    earlier &&
+    current &&
+    (earlier.id !== current.id || earlier.kind !== current.kind)
+  )
+    throw new Error("Commit statistics changed linked commit author");
+  return current ?? earlier;
+}
+
+/** One collection run owns this cache; only a wholly validated load warms it. */
+export class OutcomeCommitLineLoader {
+  private readonly byId = new Map<string, CachedCommitLines>();
+  private readonly idBySha = new Map<string, string>();
+
+  constructor(
+    private readonly client: Pick<GraphqlExecutor, "execute">,
+    private readonly recoverStatistics?: (
+      repositoryNodeId: string,
+      commit: OutcomeCommitIdentity,
+    ) => Promise<{
+      additions: number;
+      deletions: number;
+      author: GitHubActor | null;
+    }>,
+  ) {}
+
+  async hydrate(
+    repositoryNodeId: string,
+    commits: readonly OutcomeCommitIdentity[],
+  ): Promise<OutcomeCommit[]> {
+    asString(repositoryNodeId, "commit statistics repository ID");
+    const pending = new Map<string, OutcomeCommitIdentity>();
+    const pendingBySha = new Map<string, string>();
+    const authorUpdates = new Map<string, GitHubActor | null>();
+    for (const commit of commits) {
+      asString(commit.id, "commit statistics node ID");
+      asFullCommitSha(commit.oid, "commit statistics SHA");
+      if (!Number.isSafeInteger(commit.parentCount) || commit.parentCount < 0)
+        throw new Error("Commit parent count must be a non-negative integer");
+      const shaKey = `${repositoryNodeId}\0${commit.oid}`;
+      const knownId = this.idBySha.get(shaKey) ?? pendingBySha.get(shaKey);
+      if (knownId !== undefined && knownId !== commit.id)
+        throw new Error(
+          "Commit statistics identity changed for an immutable SHA",
+        );
+      const cached = this.byId.get(commit.id);
+      if (cached) {
+        if (
+          cached.repositoryNodeId !== repositoryNodeId ||
+          !sameCommitIdentity(cached.outcome, commit)
+        )
+          throw new Error(
+            "Commit statistics changed immutable commit metadata",
+          );
+        authorUpdates.set(
+          commit.id,
+          mergeCommitAuthor(
+            authorUpdates.has(commit.id)
+              ? authorUpdates.get(commit.id)!
+              : cached.outcome.author,
+            commit.author,
+          ),
+        );
+      } else {
+        const earlier = pending.get(commit.id);
+        if (
+          earlier &&
+          (earlier.oid !== commit.oid ||
+            earlier.parentCount !== commit.parentCount)
+        )
+          throw new Error(
+            "Commit statistics changed immutable commit metadata",
+          );
+        pending.set(commit.id, {
+          ...commit,
+          author: mergeCommitAuthor(earlier?.author ?? null, commit.author),
+        });
+        pendingBySha.set(shaKey, commit.id);
+      }
+    }
+    const staged = new Map<string, CachedCommitLines>();
+    const recoveredAuthors = new Map<string, GitHubActor | null>();
+    for (const batch of chunks([...pending.values()], GRAPHQL_PAGE_SIZE)) {
+      const statisticsClient = {
+        execute: async (document: string, variables: GraphqlVariables = {}) => {
+          try {
+            return await this.client.execute(document, variables);
+          } catch (error) {
+            if (
+              !(error instanceof CommitStatisticsUnavailableError) ||
+              !this.recoverStatistics
+            )
+              throw error;
+            if (JSON.stringify(error.ids) !== JSON.stringify(variables.ids))
+              throw new Error(
+                "Unavailable commit statistics changed request identity",
+              );
+            const nodes = [
+              ...asArray(error.data.nodes, "commit statistics.nodes"),
+            ];
+            for (const index of error.indices) {
+              const expected = pending.get(error.ids[index]);
+              if (!expected)
+                throw new Error(
+                  "Unavailable commit statistics are outside the requested batch",
+                );
+              const recovered = await this.recoverStatistics(
+                repositoryNodeId,
+                expected,
+              );
+              recoveredAuthors.set(
+                expected.id,
+                mergeCommitAuthor(expected.author, recovered.author),
+              );
+              nodes[index] = {
+                __typename: "Commit",
+                id: expected.id,
+                oid: expected.oid,
+                repository: { id: repositoryNodeId },
+                additions: recovered.additions,
+                deletions: recovered.deletions,
+              };
+            }
+            return { ...error.data, nodes };
+          }
+        },
+      };
+      let data: JsonRecord;
+      try {
+        data = await executeNodeBatch(
+          statisticsClient,
+          OUTCOME_COMMIT_LINES_QUERY,
+          batch.map((commit) => commit.id),
+        );
+      } catch (error) {
+        if (!(error instanceof SourceNodeUnavailableError)) throw error;
+        // Missing commit statistics are not an unavailable PR census member.
+        throw new Error("Commit statistics are unavailable", { cause: error });
+      }
+      const nodes = asArray(data.nodes, "data.nodes");
+      if (nodes.length !== batch.length)
+        throw new Error("Commit statistics are incomplete");
+      for (const [index, expected] of batch.entries()) {
+        const path = `data.nodes[${index}]`;
+        const node = asRecord(nodes[index], path);
+        if (
+          node.__typename !== "Commit" ||
+          node.id !== expected.id ||
+          node.oid !== expected.oid ||
+          child(node, "repository", path).id !== repositoryNodeId
+        )
+          throw new Error("Commit statistics identity changed");
+        const additions = asNumber(node.additions, `${path}.additions`);
+        const deletions = asNumber(node.deletions, `${path}.deletions`);
+        if (
+          !Number.isSafeInteger(additions) ||
+          additions < 0 ||
+          !Number.isSafeInteger(deletions) ||
+          deletions < 0
+        )
+          throw new Error("Commit line counts must be non-negative integers");
+        staged.set(expected.id, {
+          repositoryNodeId,
+          outcome: {
+            oid: expected.oid,
+            parentCount: expected.parentCount,
+            author: recoveredAuthors.get(expected.id) ?? expected.author,
+            additions,
+            deletions,
+          },
+        });
+      }
+    }
+    // Publish author evidence only after the entire load validates. Returned
+    // occurrences share this record, so a later verified link also repairs an
+    // earlier null occurrence before the complete census reaches scoring.
+    for (const [id, author] of authorUpdates)
+      this.byId.get(id)!.outcome.author = author;
+    for (const [id, value] of staged) {
+      this.byId.set(id, value);
+      this.idBySha.set(`${repositoryNodeId}\0${value.outcome.oid}`, id);
+    }
+    return commits.map((commit) => this.byId.get(commit.id)!.outcome);
+  }
+}
 
 const MERGED_FILE_SOURCE_QUERY = `
   query LeaderboardMergedFileSource($id: ID!) {
@@ -928,6 +1337,24 @@ function parsePageInfo(value: unknown, path: string): PageInfo {
   };
 }
 
+function parseConnection<T>(
+  value: unknown,
+  path: string,
+  parseNode: (node: JsonRecord, nodePath: string) => T,
+): ConnectionPage<T> {
+  const connection = asRecord(value, path);
+  return {
+    totalCount: asNumber(connection.totalCount, `${path}.totalCount`),
+    pageInfo: parsePageInfo(connection.pageInfo, `${path}.pageInfo`),
+    nodes: asArray(connection.nodes, `${path}.nodes`).map(
+      (nodeValue, index) => {
+        const nodePath = `${path}.nodes[${index}]`;
+        return parseNode(asRecord(nodeValue, nodePath), nodePath);
+      },
+    ),
+  };
+}
+
 function actorKind(value: string): GitHubActorKind {
   if (
     value === "Bot" ||
@@ -940,19 +1367,27 @@ function actorKind(value: string): GitHubActorKind {
   return "Unknown";
 }
 
-function parseActor(value: unknown, path: string): GitHubActor | null {
+// GitHub serves some app accounts in two shapes under one immutable node ID:
+// the Copilot coding agent authors pull requests as the Bot
+// "copilot-swe-agent" but appears as the User "Copilot" in assignees and
+// commit authors. A BOT_ node ID is always an app account, so it is a Bot
+// wherever it appears and never receives person credit or claims work.
+export function parseActor(value: unknown, path: string): GitHubActor | null {
   if (value === null) {
     return null;
   }
   const actor = asRecord(value, path);
+  const id = asString(actor.id, `${path}.id`);
   return {
-    id: asString(actor.id, `${path}.id`),
+    id,
     login: asString(actor.login, `${path}.login`),
     avatarUrl: canonicalActorAvatarUrl(
       asString(actor.avatarUrl, `${path}.avatarUrl`),
     ),
     url: asString(actor.url, `${path}.url`),
-    kind: actorKind(asString(actor.__typename, `${path}.__typename`)),
+    kind: id.startsWith("BOT_")
+      ? "Bot"
+      : actorKind(asString(actor.__typename, `${path}.__typename`)),
   };
 }
 
@@ -1002,133 +1437,77 @@ function parseComments(
   path: string,
   artifactId: string,
 ): ConnectionPage<GitHubTextSource> {
-  const connection = asRecord(value, path);
-  return {
-    totalCount: asNumber(connection.totalCount, `${path}.totalCount`),
-    pageInfo: parsePageInfo(connection.pageInfo, `${path}.pageInfo`),
-    nodes: asArray(connection.nodes, `${path}.nodes`).map(
-      (nodeValue, index) => {
-        const nodePath = `${path}.nodes[${index}]`;
-        const node = asRecord(nodeValue, nodePath);
-        return {
-          id: asString(node.id, `${nodePath}.id`),
-          artifactId,
-          kind: "comment",
-          body: asString(node.body, `${nodePath}.body`),
-          url: asString(node.url, `${nodePath}.url`),
-          createdAt: asString(node.createdAt, `${nodePath}.createdAt`),
-          updatedAt: asString(node.updatedAt, `${nodePath}.updatedAt`),
-          author: parseActor(node.author, `${nodePath}.author`),
-          authorAssociation: asString(
-            node.authorAssociation,
-            `${nodePath}.authorAssociation`,
-          ),
-        };
-      },
+  return parseConnection(value, path, (node, nodePath) => ({
+    id: asString(node.id, `${nodePath}.id`),
+    artifactId,
+    kind: "comment",
+    body: asString(node.body, `${nodePath}.body`),
+    url: asString(node.url, `${nodePath}.url`),
+    createdAt: asString(node.createdAt, `${nodePath}.createdAt`),
+    updatedAt: asString(node.updatedAt, `${nodePath}.updatedAt`),
+    author: parseActor(node.author, `${nodePath}.author`),
+    authorAssociation: asString(
+      node.authorAssociation,
+      `${nodePath}.authorAssociation`,
     ),
-  };
+  }));
 }
 
 function parseReviews(
   value: unknown,
   path: string,
 ): ConnectionPage<PendingPullRequestReview> {
-  const connection = asRecord(value, path);
-  return {
-    totalCount: asNumber(connection.totalCount, `${path}.totalCount`),
-    pageInfo: parsePageInfo(connection.pageInfo, `${path}.pageInfo`),
-    nodes: asArray(connection.nodes, `${path}.nodes`).map(
-      (nodeValue, index) => {
-        const nodePath = `${path}.nodes[${index}]`;
-        const node = asRecord(nodeValue, nodePath);
-        return {
-          id: asString(node.id, `${nodePath}.id`),
-          body: asString(node.body, `${nodePath}.body`),
-          state: asString(node.state, `${nodePath}.state`),
-          submittedAt: asNullableString(
-            node.submittedAt,
-            `${nodePath}.submittedAt`,
+  return parseConnection(value, path, (node, nodePath) => ({
+    id: asString(node.id, `${nodePath}.id`),
+    body: asString(node.body, `${nodePath}.body`),
+    state: asString(node.state, `${nodePath}.state`),
+    submittedAt: asNullableString(node.submittedAt, `${nodePath}.submittedAt`),
+    url: asString(node.url, `${nodePath}.url`),
+    commitId:
+      node.commit === null
+        ? null
+        : asFullCommitSha(
+            child(node, "commit", nodePath).oid,
+            `${nodePath}.commit.oid`,
           ),
-          url: asString(node.url, `${nodePath}.url`),
-          commitId:
-            node.commit === null
-              ? null
-              : asFullCommitSha(
-                  child(node, "commit", nodePath).oid,
-                  `${nodePath}.commit.oid`,
-                ),
-          author: parseActor(node.author, `${nodePath}.author`),
-        };
-      },
-    ),
-  };
+    author: parseActor(node.author, `${nodePath}.author`),
+  }));
 }
 
 function parseFiles(
   value: unknown,
   path: string,
 ): ConnectionPage<PullRequestFile> {
-  const connection = asRecord(value, path);
-  return {
-    totalCount: asNumber(connection.totalCount, `${path}.totalCount`),
-    pageInfo: parsePageInfo(connection.pageInfo, `${path}.pageInfo`),
-    nodes: asArray(connection.nodes, `${path}.nodes`).map(
-      (nodeValue, index) => {
-        const nodePath = `${path}.nodes[${index}]`;
-        const node = asRecord(nodeValue, nodePath);
-        return {
-          path: asString(node.path, `${nodePath}.path`),
-          additions: asNumber(node.additions, `${nodePath}.additions`),
-          deletions: asNumber(node.deletions, `${nodePath}.deletions`),
-        };
-      },
-    ),
-  };
+  return parseConnection(value, path, (node, nodePath) => ({
+    path: asString(node.path, `${nodePath}.path`),
+    additions: asNumber(node.additions, `${nodePath}.additions`),
+    deletions: asNumber(node.deletions, `${nodePath}.deletions`),
+  }));
 }
 
 function parseClosingIssueIds(
   value: unknown,
   path: string,
 ): ConnectionPage<{ id: string }> {
-  const connection = asRecord(value, path);
-  return {
-    totalCount: asNumber(connection.totalCount, `${path}.totalCount`),
-    pageInfo: parsePageInfo(connection.pageInfo, `${path}.pageInfo`),
-    nodes: asArray(connection.nodes, `${path}.nodes`).map(
-      (nodeValue, index) => {
-        const nodePath = `${path}.nodes[${index}]`;
-        const node = asRecord(nodeValue, nodePath);
-        return { id: asString(node.id, `${nodePath}.id`) };
-      },
-    ),
-  };
+  return parseConnection(value, path, (node, nodePath) => ({
+    id: asString(node.id, `${nodePath}.id`),
+  }));
 }
 
 function parseClosingPullRequests(
   value: unknown,
   path: string,
 ): ConnectionPage<IssueRecord["closedByPullRequests"][number]> {
-  const connection = asRecord(value, path);
-  return {
-    totalCount: asNumber(connection.totalCount, `${path}.totalCount`),
-    pageInfo: parsePageInfo(connection.pageInfo, `${path}.pageInfo`),
-    nodes: asArray(connection.nodes, `${path}.nodes`).map(
-      (nodeValue, index) => {
-        const nodePath = `${path}.nodes[${index}]`;
-        const node = asRecord(nodeValue, nodePath);
-        return {
-          id: asString(node.id, `${nodePath}.id`),
-          number: asNumber(node.number, `${nodePath}.number`),
-          url: asString(node.url, `${nodePath}.url`),
-          mergedAt: asNullableString(node.mergedAt, `${nodePath}.mergedAt`),
-          body: asString(node.body, `${nodePath}.body`),
-          createdAt: asString(node.createdAt, `${nodePath}.createdAt`),
-          updatedAt: asString(node.updatedAt, `${nodePath}.updatedAt`),
-          author: parseActor(node.author, `${nodePath}.author`),
-        };
-      },
-    ),
-  };
+  return parseConnection(value, path, (node, nodePath) => ({
+    id: asString(node.id, `${nodePath}.id`),
+    number: asNumber(node.number, `${nodePath}.number`),
+    url: asString(node.url, `${nodePath}.url`),
+    mergedAt: asNullableString(node.mergedAt, `${nodePath}.mergedAt`),
+    body: asString(node.body, `${nodePath}.body`),
+    createdAt: asString(node.createdAt, `${nodePath}.createdAt`),
+    updatedAt: asString(node.updatedAt, `${nodePath}.updatedAt`),
+    author: parseActor(node.author, `${nodePath}.author`),
+  }));
 }
 
 function pageState<T>(page: ConnectionPage<T>): NestedPageState {
@@ -1140,10 +1519,10 @@ function parsePullRequest(value: unknown, path: string): ParsedPullRequest {
   const id = asString(node.id, `${path}.id`);
   const comments = parseComments(node.comments, `${path}.comments`, id);
   const reviews = parseReviews(node.reviews, `${path}.reviews`);
-  // GitHub can return null for an oversized draft diff, even with zero diff
-  // counters. Retain that draft, but never represent unavailable files as [].
+  // GitHub can return null for an oversized open diff, even with zero diff
+  // counters. Retain the source, but never represent unavailable files as [].
   const files =
-    node.files === null && node.state === "OPEN" && node.isDraft === true
+    node.files === null && node.state === "OPEN"
       ? null
       : parseFiles(node.files, `${path}.files`);
   const closingIssues = parseClosingIssueIds(
@@ -1237,26 +1616,19 @@ function parseIssueReferences(
   value: unknown,
   path: string,
 ): NonNullable<ParsedIssue["references"]> {
-  const connection = asRecord(value, path);
-  return {
-    totalCount: asNumber(connection.totalCount, `${path}.totalCount`),
-    pageInfo: parsePageInfo(connection.pageInfo, `${path}.pageInfo`),
-    nodes: asArray(connection.nodes, `${path}.nodes`).map((value, index) => {
-      const nodePath = `${path}.nodes[${index}]`;
-      const node = asRecord(value, nodePath);
-      const source = child(node, "source", nodePath);
-      const kind = asString(source.__typename, `${nodePath}.source.__typename`);
-      if (kind !== "Issue" && kind !== "PullRequest")
-        throw new Error(`${nodePath} has an unsupported reference source`);
-      return {
-        id: asString(node.id, `${nodePath}.id`),
-        pullRequestId:
-          kind === "PullRequest"
-            ? asString(source.id, `${nodePath}.source.id`)
-            : null,
-      };
-    }),
-  };
+  return parseConnection(value, path, (node, nodePath) => {
+    const source = child(node, "source", nodePath);
+    const kind = asString(source.__typename, `${nodePath}.source.__typename`);
+    if (kind !== "Issue" && kind !== "PullRequest")
+      throw new Error(`${nodePath} has an unsupported reference source`);
+    return {
+      id: asString(node.id, `${nodePath}.id`),
+      pullRequestId:
+        kind === "PullRequest"
+          ? asString(source.id, `${nodePath}.source.id`)
+          : null,
+    };
+  });
 }
 
 function parseIssue(value: unknown, path: string): ParsedIssue {
@@ -1552,7 +1924,7 @@ async function readGraphqlResponseBody(response: Response): Promise<string> {
 // opaque `after` cursor valid, because a smaller `first` returns fewer nodes
 // from the same position, so callers page more times over an unchanged result
 // set and every reported total stays comparable.
-function narrowedPageSize(
+export function narrowedPageSize(
   variables: GraphqlVariables,
 ): GraphqlVariables | null {
   const current = variables.pageSize;
@@ -1594,6 +1966,7 @@ export class GitHubGraphqlClient implements GraphqlExecutor {
   #consumedCost = 0;
   #windowConsumedCost = 0;
   #startingRemaining: number | null = null;
+  #waitedResetAt: number | null = null;
 
   #effectiveMaxGenerationCost(): number {
     if (!this.#rateLimit) {
@@ -1649,8 +2022,15 @@ export class GitHubGraphqlClient implements GraphqlExecutor {
         `Required GitHub GraphQL cost ${requiredCost} exceeds the safe per-window budget ${effectiveMaxGenerationCost}`,
       );
     }
+    // The window cap also counts points other consumers of the shared token
+    // spent since this run's first response in the window.
+    const windowDrain =
+      this.#startingRemaining === null
+        ? 0
+        : this.#startingRemaining - this.#rateLimit.remaining;
     const available = Math.min(
-      effectiveMaxGenerationCost - this.#windowConsumedCost,
+      effectiveMaxGenerationCost -
+        Math.max(this.#windowConsumedCost, windowDrain),
       this.#rateLimit.remaining - this.#minimumRateLimitReserve,
     );
     if (requiredCost <= available) return;
@@ -1659,7 +2039,17 @@ export class GitHubGraphqlClient implements GraphqlExecutor {
     if (!Number.isFinite(resetAt)) {
       throw new Error("GitHub GraphQL returned an invalid rate-limit resetAt");
     }
-    await retryDelay(Math.max(0, resetAt - Date.now() + 1_000));
+    // Another consumer of the shared token can drain the window. Wait for each
+    // reported reset; a window still exhausted after that same reset fails.
+    const budgetSummary = `${this.#windowConsumedCost}/${effectiveMaxGenerationCost} points consumed in the current window, ${this.#rateLimit.remaining} remaining; reserve ${this.#minimumRateLimitReserve}`;
+    if (this.#waitedResetAt === resetAt) {
+      throw new Error(
+        `GitHub GraphQL safety budget exceeded after waiting for the reset at ${this.#rateLimit.resetAt} (${budgetSummary})`,
+      );
+    }
+    const waitMs = Math.max(0, resetAt - Date.now() + 1_000);
+    this.#waitedResetAt = resetAt;
+    await retryDelay(waitMs);
     this.#windowConsumedCost = 0;
     this.#startingRemaining = null;
     this.#rateLimit = {
@@ -1800,8 +2190,18 @@ export class GitHubGraphqlClient implements GraphqlExecutor {
       } finally {
         clearTimeout(timeout);
       }
+      // Wait outside the request deadline. Passing a quota wait through the
+      // fetch transport would expire the 60-second request signal before the
+      // next hourly window, even though no request is still in flight.
+      const quotaDelay = restPath
+        ? githubPrimaryRateLimitDelay(response)
+        : null;
+      if (quotaDelay !== null && attempt < MAX_GRAPHQL_REQUEST_ATTEMPTS) {
+        await retryDelay(quotaDelay);
+        continue;
+      }
       const retryableStatus =
-        [502, 503, 504].includes(response.status) ||
+        GATEWAY_FAILURE_STATUSES.includes(response.status) ||
         (restPath !== undefined &&
           comparisonBuildTimedOut(response.status, responseBody));
       if (retryableStatus && attempt < MAX_GRAPHQL_REQUEST_ATTEMPTS) {
@@ -1838,13 +2238,21 @@ export class GitHubGraphqlClient implements GraphqlExecutor {
           continue;
         }
         // error-policy:J2 Retain the HTTP boundary context for malformed or
-        // non-JSON API failures; exhausted malformed-JSON retries fail closed.
-        throw new Error(
-          retryableMalformedJson
-            ? `${apiLabel} HTTP ${response.status} returned malformed JSON (${attempt}/${MAX_GRAPHQL_REQUEST_ATTEMPTS}; ${contentType ?? "unknown content type"})`
-            : `${apiLabel} HTTP ${response.status} returned a non-JSON response (${attempt}/${MAX_GRAPHQL_REQUEST_ATTEMPTS}; ${contentType ?? "unknown content type"}${describePageSize(activeVariables)})`,
-          { cause },
-        );
+        // non-JSON API failures; exhausted retries fail closed. An exhausted
+        // gateway failure, and an HTTP 200 JSON answer whose body stayed
+        // unparseable on every attempt (the gateway cut it to nothing), both
+        // keep their status so a node batch caller can split the batch
+        // instead of failing the run.
+        const message = retryableMalformedJson
+          ? `${apiLabel} HTTP ${response.status} returned malformed JSON (${attempt}/${MAX_GRAPHQL_REQUEST_ATTEMPTS}; ${contentType ?? "unknown content type"}; ${responseBody.length} body bytes)`
+          : `${apiLabel} HTTP ${response.status} returned a non-JSON response (${attempt}/${MAX_GRAPHQL_REQUEST_ATTEMPTS}; ${contentType ?? "unknown content type"}${describePageSize(activeVariables)})`;
+        if (
+          retryableMalformedJson ||
+          GATEWAY_FAILURE_STATUSES.includes(response.status)
+        ) {
+          throw new GraphqlUpstreamError(message, response.status, { cause });
+        }
+        throw new Error(message, { cause });
       }
     }
     if (!response || !parsedResponse) {
@@ -1860,10 +2268,14 @@ export class GitHubGraphqlClient implements GraphqlExecutor {
       ? []
       : unavailableRequestedSources(envelope, activeVariables);
     const unavailableNode = unavailableSources.length > 0;
+    const statisticsFailure = restPath
+      ? null
+      : commitStatisticsFailure(document, envelope, activeVariables);
     if (
       Array.isArray(envelope.errors) &&
       envelope.errors.length > 0 &&
-      !unavailableNode
+      !unavailableNode &&
+      !statisticsFailure
     ) {
       const errors = envelope.errors.map(sanitizeGraphqlError).join("; ");
       throw new Error(`${apiLabel} rejected the leaderboard query: ${errors}`);
@@ -1871,22 +2283,34 @@ export class GitHubGraphqlClient implements GraphqlExecutor {
     if (restPath) return envelope;
     const data = asRecord(envelope.data, "GitHub GraphQL response.data");
     const rateLimit = parseRateLimit(data.rateLimit);
+    const resetAt = Date.parse(rateLimit.resetAt);
+    const previousResetAt = this.#rateLimit
+      ? Date.parse(this.#rateLimit.resetAt)
+      : Number.NaN;
+    // A new reported reset begins a new GitHub window. Keep cumulative run
+    // cost, but forget the previous window's limit and wait state.
+    if (
+      Number.isFinite(resetAt) &&
+      Number.isFinite(previousResetAt) &&
+      resetAt !== previousResetAt
+    ) {
+      this.#windowConsumedCost = 0;
+      this.#startingRemaining = null;
+      this.#waitedResetAt = null;
+    }
     this.#startingRemaining =
       this.#startingRemaining ?? rateLimit.remaining + rateLimit.cost;
     this.#consumedCost += rateLimit.cost;
-    this.#windowConsumedCost = Math.max(
-      this.#windowConsumedCost + rateLimit.cost,
-      this.#startingRemaining - rateLimit.remaining,
-    );
+    this.#windowConsumedCost += rateLimit.cost;
     this.#rateLimit = {
       ...rateLimit,
       consumedDuringRun: this.#consumedCost,
     };
+    // Only this run's own reported window cost fails here. Points other
+    // consumers spent, and a remaining balance below the reserve, are answered
+    // by the next ensureBudget call, which waits for the reported reset.
     const effectiveMaxGenerationCost = this.#effectiveMaxGenerationCost();
-    if (
-      this.#windowConsumedCost > effectiveMaxGenerationCost ||
-      rateLimit.remaining < this.#minimumRateLimitReserve
-    ) {
+    if (this.#windowConsumedCost > effectiveMaxGenerationCost) {
       throw new Error(
         `${apiLabel} safety budget exceeded (${this.#windowConsumedCost}/${effectiveMaxGenerationCost} points consumed in the current window, ${rateLimit.remaining} remaining; reserve ${this.#minimumRateLimitReserve})`,
       );
@@ -1899,6 +2323,7 @@ export class GitHubGraphqlClient implements GraphqlExecutor {
           (envelope.errors as unknown[]).map(sanitizeGraphqlError).join("; "),
         ),
       });
+    if (statisticsFailure) throw statisticsFailure;
     return data;
   }
 
@@ -2000,7 +2425,7 @@ function midpoint(from: Date, to: Date): Date {
   return new Date(from.getTime() + Math.max(1, seconds) * 1000);
 }
 
-function parseSearchReference(
+export function parseSearchReference(
   value: unknown,
   path: string,
   expectedKind: NodeReference["kind"],
@@ -2032,6 +2457,7 @@ function parseSearchReference(
               child(node, "commits", path).pageInfo,
               `${path}.commits.pageInfo`,
             ),
+            commits: parseOutcomeCommits(node.commits, `${path}.commits`),
           },
         }
       : {}),
@@ -2101,9 +2527,11 @@ export async function collectPullRequestReviewCounts(
   }
   const reviewCounts = new Map<string, ReviewCensusEntry>();
   for (const batch of batches) {
-    const data = await client.execute(REVIEWED_PULL_REQUEST_REFERENCES_QUERY, {
-      ids: batch.map((reference) => reference.id),
-    });
+    const data = await executeNodeBatch(
+      client,
+      REVIEWED_PULL_REQUEST_REFERENCES_QUERY,
+      batch.map((reference) => reference.id),
+    );
     const nodes = asArray(data.nodes, "data.nodes");
     if (nodes.length !== batch.length) {
       throw new Error(
@@ -2189,13 +2617,25 @@ export async function collectSearchReferences(
     | "is:pr is:closed is:unmerged",
   expectedKind: NodeReference["kind"],
   stats: { searchSliceCount: number },
+  commitLines = new OutcomeCommitLineLoader(client),
+  repositoryNodeId = repository.expectedNodeId,
+  initialSearchPageSize = GRAPHQL_PAGE_SIZE,
 ): Promise<NodeReference[]> {
+  if (
+    !Number.isInteger(initialSearchPageSize) ||
+    initialSearchPageSize < 1 ||
+    initialSearchPageSize > GRAPHQL_PAGE_SIZE
+  )
+    throw new Error(
+      "Initial search page size must be an integer from 1 to 100",
+    );
   const searchQuery = `repo:${repository.owner}/${repository.name} ${kindQualifier} ${qualifier}:${searchRange(from, to)}`;
   stats.searchSliceCount += 1;
   const firstData = await client.execute(SEARCH_REFERENCES_QUERY, {
     searchQuery,
     after: null,
-    pageSize: GRAPHQL_PAGE_SIZE,
+    pageSize: initialSearchPageSize,
+    withMergeCommits: qualifier === "merged",
   });
   const firstPage = parseSearchPage(firstData, (value, path) =>
     parseSearchReference(value, path, expectedKind, qualifier === "merged"),
@@ -2216,6 +2656,9 @@ export async function collectSearchReferences(
       kindQualifier,
       expectedKind,
       stats,
+      commitLines,
+      repositoryNodeId,
+      initialSearchPageSize,
     );
     const right = await collectSearchReferences(
       client,
@@ -2226,6 +2669,9 @@ export async function collectSearchReferences(
       kindQualifier,
       expectedKind,
       stats,
+      commitLines,
+      repositoryNodeId,
+      initialSearchPageSize,
     );
     const combined = dedupeByNodeId([...left, ...right]);
     if (combined.length !== firstPage.totalCount) {
@@ -2242,14 +2688,20 @@ export async function collectSearchReferences(
   const references = [...firstPage.nodes];
   const expectedCount = firstPage.totalCount;
   let pageInfo = firstPage.pageInfo;
+  const visitedCursors = new Set<string>();
   while (pageInfo.hasNextPage) {
     if (!pageInfo.endCursor) {
       throw new Error("GitHub Search reported another page without a cursor");
     }
+    if (visitedCursors.has(pageInfo.endCursor)) {
+      throw new Error("GitHub Search cursor did not advance");
+    }
+    visitedCursors.add(pageInfo.endCursor);
     const data = await client.execute(SEARCH_REFERENCES_QUERY, {
       searchQuery,
       after: pageInfo.endCursor,
-      pageSize: GRAPHQL_PAGE_SIZE,
+      pageSize: initialSearchPageSize,
+      withMergeCommits: qualifier === "merged",
     });
     const page = parseSearchPage(data, (value, path) =>
       parseSearchReference(value, path, expectedKind, qualifier === "merged"),
@@ -2267,12 +2719,38 @@ export async function collectSearchReferences(
   if (deduped.length !== expectedCount) {
     // Discard the incomplete cursor result and query narrower ranges. Each
     // child and the deduplicated union must reconcile to the parent's count.
-    // The one-minute split floor and client's request/rate budgets still bound
+    // The one-second split floor and client's request/rate budgets still bound
     // recovery. No missing record can become a successful partial snapshot.
     return collectSplitRange();
   }
+  const completed: {
+    reference: NodeReference;
+    outcome: MergedPullRequestOutcome;
+    commits: OutcomeCommitIdentity[];
+  }[] = [];
   for (const reference of deduped) {
-    await completeOutcomeCommits(client, reference, repository);
+    const commits = await completeOutcomeCommits(client, reference, repository);
+    if (commits !== null && reference.outcome)
+      completed.push({ reference, outcome: reference.outcome, commits });
+  }
+  if (completed.length > 0) {
+    if (!repositoryNodeId)
+      throw new Error(
+        "Commit statistics require a verified repository identity",
+      );
+    const hydrated = await commitLines.hydrate(
+      repositoryNodeId,
+      completed.flatMap((entry) => entry.commits),
+    );
+    let offset = 0;
+    for (const entry of completed) {
+      entry.outcome.commits = hydrated.slice(
+        offset,
+        offset + entry.commits.length,
+      );
+      offset += entry.commits.length;
+      delete entry.reference.commitPage;
+    }
   }
   return deduped;
 }
@@ -2281,22 +2759,21 @@ export async function collectSearchReferences(
 // endpoint can paginate the complete immutable base/head range beyond that.
 const GITHUB_PULL_REQUEST_COMMIT_LIST_LIMIT = 250;
 
-async function completeOutcomeCommits(
+export async function completeOutcomeCommits(
   client: GraphqlExecutor,
   reference: NodeReference,
   repository: TargetRepository,
-): Promise<void> {
+): Promise<OutcomeCommitIdentity[] | null> {
   const outcome = reference.outcome;
   const firstPage = reference.commitPage;
-  if (!outcome || !firstPage) return;
-  // Every base branch needs complete commit evidence to establish first credit.
-  // The scorer separately limits shared credit to the integration branch.
-  let commits = outcome.commits;
-  if (!commits) throw new Error(`PR #${outcome.number} has no commit evidence`);
+  if (!outcome || !firstPage) return null;
+  if (!Number.isSafeInteger(firstPage.totalCount) || firstPage.totalCount < 0)
+    throw new Error(`PR #${outcome.number} commit count is invalid`);
+  let commits = firstPage.commits;
   if (firstPage.totalCount > GITHUB_PULL_REQUEST_COMMIT_LIST_LIMIT) {
     if (!client.compareCommitPage)
       throw new Error("Complete commit comparison is unavailable");
-    const compared: NonNullable<MergedPullRequestOutcome["commits"]> = [];
+    const compared: OutcomeCommitIdentity[] = [];
     for (
       let page = 1;
       page <= Math.ceil(firstPage.totalCount / GRAPHQL_PAGE_SIZE);
@@ -2316,41 +2793,58 @@ async function completeOutcomeCommits(
           `PR #${outcome.number} comparison does not match its commit range`,
         );
       }
-      const nodes = asArray(data.commits, "comparison.commits").map(
-        (value, index) => {
-          const path = `comparison.commits[${index}]`;
-          const commit = asRecord(value, path);
-          const author =
-            commit.author === null
-              ? null
-              : asRecord(commit.author, `${path}.author`);
-          return {
-            commit: {
-              oid: commit.sha,
-              author: {
-                user:
-                  author === null
-                    ? null
-                    : {
-                        __typename: author.type,
-                        id: author.node_id,
-                        login: author.login,
-                        avatarUrl: author.avatar_url,
-                        url: author.html_url,
-                      },
-              },
-            },
-          };
-        },
+      const comparisonCommits = asArray(data.commits, "comparison.commits").map(
+        (value, index) => asRecord(value, `comparison.commits[${index}]`),
       );
+      const nodes = comparisonCommits.map((value, index) => {
+        const path = `comparison.commits[${index}]`;
+        const commit = value;
+        const author =
+          commit.author === null
+            ? null
+            : asRecord(commit.author, `${path}.author`);
+        return {
+          commit: {
+            id: asString(commit.node_id, `${path}.node_id`),
+            oid: commit.sha,
+            parents: {
+              totalCount: asArray(commit.parents, `${path}.parents`).length,
+            },
+            author: {
+              user:
+                author === null
+                  ? null
+                  : {
+                      __typename: author.type,
+                      id: author.node_id,
+                      login: author.login,
+                      avatarUrl: author.avatar_url,
+                      url: author.html_url,
+                    },
+            },
+          },
+        };
+      });
       compared.push(...parseOutcomeCommits({ nodes }, "comparison"));
     }
-    const known = new Set(compared.map((commit) => commit.oid));
+    const known = new Map(compared.map((commit) => [commit.oid, commit]));
     if (
       !known.has(firstPage.headRefOid) ||
       commits.some((commit) => !known.has(commit.oid))
     ) {
       throw new Error(`PR #${outcome.number} comparison omitted known commits`);
+    }
+    for (const commit of commits) {
+      const hydrated = known.get(commit.oid);
+      if (
+        !hydrated ||
+        hydrated.id !== commit.id ||
+        hydrated.parentCount !== commit.parentCount
+      )
+        throw new Error(
+          `PR #${outcome.number} comparison changed immutable commit metadata`,
+        );
+      hydrated.author = mergeCommitAuthor(commit.author, hydrated.author);
     }
     commits = compared;
   }
@@ -2378,6 +2872,8 @@ async function completeOutcomeCommits(
       node.state !== "MERGED" ||
       node.mergedAt !== outcome.mergedAt ||
       node.baseRefName !== outcome.baseRefName ||
+      node.baseRefOid !== firstPage.baseRefOid ||
+      node.headRefOid !== firstPage.headRefOid ||
       connection.totalCount !== firstPage.totalCount
     ) {
       throw new Error(`PR #${outcome.number} changed during commit collection`);
@@ -2387,14 +2883,15 @@ async function completeOutcomeCommits(
   }
   if (
     commits.length !== firstPage.totalCount ||
-    new Set(commits.map((commit) => commit.oid)).size !== firstPage.totalCount
+    new Set(commits.map((commit) => commit.oid)).size !==
+      firstPage.totalCount ||
+    new Set(commits.map((commit) => commit.id)).size !== firstPage.totalCount
   ) {
     throw new Error(
       `PR #${outcome.number} commit totals do not match complete unique evidence`,
     );
   }
-  outcome.commits = commits;
-  delete reference.commitPage;
+  return commits;
 }
 
 async function countSearchResults(
@@ -2416,9 +2913,10 @@ async function countSearchResults(
     searchQuery,
     after: null,
     pageSize: 1,
+    withMergeCommits: false,
   });
   return parseSearchPage(data, (value, path) =>
-    parseSearchReference(value, path, expectedKind, qualifier === "merged"),
+    parseSearchReference(value, path, expectedKind, false),
   ).totalCount;
 }
 
@@ -2433,6 +2931,7 @@ async function collectOpenReferences(
   let after: string | null = null;
   let expectedCount: number | null = null;
   let repositoryId: string | null = null;
+  const visitedCursors = new Set<string>();
   do {
     const data = await client.execute(document, {
       owner: targetRepository.owner,
@@ -2457,6 +2956,12 @@ async function collectOpenReferences(
     if (result.page.pageInfo.hasNextPage && !result.page.pageInfo.endCursor) {
       throw new Error(`${field} reported another page without a cursor`);
     }
+    if (result.page.pageInfo.hasNextPage && result.page.pageInfo.endCursor) {
+      if (visitedCursors.has(result.page.pageInfo.endCursor)) {
+        throw new Error(`Open ${field} cursor did not advance`);
+      }
+      visitedCursors.add(result.page.pageInfo.endCursor);
+    }
     after = result.page.pageInfo.hasNextPage
       ? result.page.pageInfo.endCursor
       : null;
@@ -2467,7 +2972,7 @@ async function collectOpenReferences(
   }
   const deduped = dedupeByNodeId(references);
   if (deduped.length !== expectedCount) {
-    throw new Error(
+    throw new OpenSetChangedError(
       `Open ${field} changed during listing: expected ${expectedCount}, received ${deduped.length} unique references`,
     );
   }
@@ -2530,14 +3035,14 @@ function parsePullRequestOutcome(
     additions: asNumber(node.additions, `${path}.additions`),
     deletions: asNumber(node.deletions, `${path}.deletions`),
     baseRefName: asString(node.baseRefName, `${path}.baseRefName`),
-    commits: parseOutcomeCommits(node.commits, `${path}.commits`),
+    commits: null,
   };
 }
 
 function parseOutcomeCommits(
   value: unknown,
   path: string,
-): NonNullable<MergedPullRequestOutcome["commits"]> {
+): OutcomeCommitIdentity[] {
   const connection = asRecord(value, path);
   const nodes = asArray(connection.nodes, `${path}.nodes`);
   return nodes.map((nodeValue, index) => {
@@ -2551,8 +3056,18 @@ function parseOutcomeCommits(
             child(commit, "author", commitPath).user,
             `${commitPath}.author.user`,
           );
+    const parentCount = asNumber(
+      child(commit, "parents", commitPath).totalCount,
+      `${commitPath}.parents.totalCount`,
+    );
+    if (!Number.isSafeInteger(parentCount) || parentCount < 0)
+      throw new Error(
+        `${commitPath}.parents.totalCount must be a non-negative integer`,
+      );
     return {
+      id: asString(commit.id, `${commitPath}.id`),
       oid: asFullCommitSha(commit.oid, `${commitPath}.oid`),
+      parentCount,
       // GitHub links app commits to a User whose reserved login ends in
       // "[bot]" (for example dependabot[bot]); no person can hold that login.
       author:
@@ -2688,9 +3203,7 @@ async function completePullRequestConnections(
     if (
       node.files === null &&
       parsed.state === "OPEN" &&
-      pullRequest.isDraft &&
       node.state === "OPEN" &&
-      node.isDraft === true &&
       node.headRefOid === pullRequest.headRefOid
     ) {
       // A later page can become unavailable too. Discard the partial diff.
@@ -2983,7 +3496,11 @@ async function finalizePullRequests(
   const commentCounts = new Map<string, number>();
   for (const batch of chunks(bindings, REVIEW_DETAIL_BATCH_SIZE)) {
     const ids = batch.map((binding) => binding.review.id);
-    const data = await client.execute(REVIEW_INLINE_COMMENTS_QUERY, { ids });
+    const data = await executeNodeBatch(
+      client,
+      REVIEW_INLINE_COMMENTS_QUERY,
+      ids,
+    );
     const nodes = asArray(data.nodes, "data.nodes");
     if (nodes.length !== batch.length) {
       throw new Error(
@@ -3065,7 +3582,11 @@ async function hydratePullRequests(
   for (const batch of chunks(references, DETAIL_BATCH_SIZE)) {
     const hydratedBatch = await retryOpenBatch(expectedState, async () => {
       const ids = batch.map((reference) => reference.id);
-      const data = await client.execute(PULL_REQUEST_DETAILS_QUERY, { ids });
+      const data = await executeNodeBatch(
+        client,
+        PULL_REQUEST_DETAILS_QUERY,
+        ids,
+      );
       if (expectedState === "merged") {
         const nodes = asArray(data.nodes, "data.nodes");
         for (const [index, value] of nodes.entries()) {
@@ -3130,10 +3651,12 @@ async function hydrateReviewedMergedPullRequests(
   const pending: PendingMergedPullRequestReviewRecord[] = [];
   for (const batch of chunks(references, DETAIL_BATCH_SIZE)) {
     const ids = batch.map((reference) => reference.id);
-    const data = await client.execute(MERGED_PULL_REQUEST_REVIEWS_QUERY, {
+    const data = await executeNodeBatch(
+      client,
+      MERGED_PULL_REQUEST_REVIEWS_QUERY,
       ids,
-      reviewStates: allReviews ? null : ["APPROVED", "CHANGES_REQUESTED"],
-    });
+      { reviewStates: allReviews ? null : ["APPROVED", "CHANGES_REQUESTED"] },
+    );
     const parsed = parseDetailBatch(
       data,
       ids,
@@ -3178,8 +3701,7 @@ async function hydrateIssues(
   for (const batch of chunks(references, DETAIL_BATCH_SIZE)) {
     const hydratedBatch = await retryOpenBatch(expectedState, async () => {
       const ids = batch.map((reference) => reference.id);
-      const data = await client.execute(ISSUE_DETAILS_QUERY, {
-        ids,
+      const data = await executeNodeBatch(client, ISSUE_DETAILS_QUERY, ids, {
         includeReferences: expectedState === "open",
       });
       const parsed = parseDetailBatch(data, ids, "Issue", parseIssue);
@@ -3709,9 +4231,9 @@ interface CandidateEvidenceVerdict {
 
 /**
  * A score-bearing artifact stayed unavailable after its transport retries.
- * Missing data is unavailable, never a fabricated zero (protocol/points-v1.md),
+ * Missing data is unavailable, never a fabricated zero (PRD section 7),
  * and incomplete evidence must fail snapshot collection
- * (protocol/scoring-v2.md), so no scored snapshot is returned or written.
+ * (PRD section 7), so no scored snapshot is returned or written.
  */
 export class EvidenceUnavailableError extends Error {
   readonly unavailable: readonly UnavailableEvidenceArtifact[];
@@ -3915,13 +4437,15 @@ export async function generateLeaderboardFromGitHub(
   );
   const onProgress = options.onProgress ?? (() => undefined);
   const stats = { searchSliceCount: 0 };
+  const commitLines = new OutcomeCommitLineLoader(client);
   const probeUnavailableSources = async (ids: readonly string[]) => {
     const unavailable: string[] = [];
     for (const batch of chunks([...ids], REVIEW_DETAIL_BATCH_SIZE)) {
       try {
-        const data = await client.execute(
+        const data = await executeNodeBatch(
+          client,
           "query LeaderboardSourceAvailability($ids:[ID!]!){nodes(ids:$ids){__typename id} rateLimit{cost limit remaining resetAt}}",
-          { ids: batch },
+          batch,
         );
         const nodes = asArray(data.nodes, "source availability.nodes");
         if (
@@ -4002,6 +4526,8 @@ export async function generateLeaderboardFromGitHub(
       "is:pr is:merged",
       "PullRequest",
       stats,
+      commitLines,
+      preflight.id,
     );
     if (closedCensusFrom.getTime() < now.getTime()) {
       const closedReferences = await collectSearchReferences(
@@ -4013,6 +4539,8 @@ export async function generateLeaderboardFromGitHub(
         "is:pr is:closed is:unmerged",
         "PullRequest",
         stats,
+        commitLines,
+        preflight.id,
       );
       await ensureEstimatedBudget(client, closedReferences.length, 0, 0);
       const closed = await hydratePullRequests(
@@ -4047,6 +4575,8 @@ export async function generateLeaderboardFromGitHub(
       "is:issue is:closed",
       "Issue",
       stats,
+      commitLines,
+      preflight.id,
     );
     const repositoryOutcomes = mergedPullRequestReferences.map((reference) => {
       if (!reference.outcome) {
@@ -4232,6 +4762,7 @@ export async function generateLeaderboardFromGitHub(
     (pullRequest) => hydrationPlan.detailEligibleIds.has(pullRequest.id),
   );
   const dedupedClosedIssues = dedupeByNodeId(closedIssues);
+  onProgress({ phase: "evidence-verification", completed: 0, total: 1 });
   const { evidenceVerification, openIssues, openPullRequests } =
     await retrySlopSnapshot(async (attempt) => {
       if (attempt > 1) {
@@ -4277,6 +4808,8 @@ export async function generateLeaderboardFromGitHub(
       };
     });
 
+  onProgress({ phase: "evidence-verification", completed: 1, total: 1 });
+  onProgress({ phase: "review-census", completed: 0, total: 1 });
   const finalReviewCounts = await collectPullRequestReviewCounts(
     client,
     hydrationCandidates.map(({ outcome }) => ({ id: outcome.id })),
@@ -4299,6 +4832,7 @@ export async function generateLeaderboardFromGitHub(
     assertReviewCensusStable(closedCounts, finalClosedCounts);
   }
 
+  onProgress({ phase: "review-census", completed: 1, total: 1 });
   const allRecords = [
     ...dedupedOutcomes,
     ...dedupedMergedPullRequests,
@@ -4317,7 +4851,23 @@ export async function generateLeaderboardFromGitHub(
             Date.parse(current) > Date.parse(latest) ? current : latest,
           );
   let valueRestRequests = 0;
-  const github = GitHubClient.forToken(options.evidenceToken ?? "");
+  const valueRead = githubIngestionReadTransport(
+    fetch,
+    undefined,
+    undefined,
+    undefined,
+    {
+      discussionCache: options.discussionCheckpoint && {
+        directory: options.discussionCheckpoint.directory,
+        repositories: collections.map(({ repository, preflight }) => ({
+          name: repository.id,
+          nodeId: preflight.id,
+        })),
+      },
+      quotaDeadlineMs: options.discussionCheckpoint?.deadlineMs,
+    },
+  );
+  const github = GitHubClient.forToken(options.evidenceToken ?? "", valueRead);
   const { heldWorkUnits, ...valueInputs } = await loadValueInputs(
     {
       get: <T>(path: string) => {
@@ -4338,7 +4888,12 @@ export async function generateLeaderboardFromGitHub(
     ),
     undefined,
     probeUnavailableSources,
+    dedupedOutcomes,
+    onProgress,
   );
+  // Some evidence lookups can record individual gaps. A collector deadline
+  // invalidates the entire attempt even if a helper caught its exception.
+  valueRead.assertNoCheckpoint();
   const censusIds = new Set(
     [...dedupedOutcomes, ...closedUnmergedPullRequests].map(
       (source) => source.id,
@@ -4375,12 +4930,14 @@ export async function generateLeaderboardFromGitHub(
       )),
     );
   }
+  onProgress({ phase: "participation-history", completed: 0, total: 1 });
   const participationBans = await loadParticipationBans({
     get: <T>(path: string) => {
       valueRestRequests += 1;
       return github.get<T>(path);
     },
   });
+  valueRead.assertNoCheckpoint();
   // History is a retained read, not GitHub collection. Keep reversals after
   // a PR leaves the rolling census or its project is paused/retired.
   const penalties: NonNullable<LeaderboardInput["penalties"]>[number][] = [];
@@ -4421,6 +4978,7 @@ export async function generateLeaderboardFromGitHub(
     penaltyHistory.push(...history);
     penalties.push(...history.filter((row) => row.reversedAt === null));
   }
+  onProgress({ phase: "participation-history", completed: 1, total: 1 });
   const fetchedAt = new Date().toISOString();
   const rateLimit = client.getRateLimit();
   const observedUnavailable = new Map<string, UnavailableSource>();
@@ -4584,17 +5142,49 @@ function progressLine(progress: GenerationProgress): string {
   return `[slop.cash] ${label}: ${progress.completed}/${progress.total}\n`;
 }
 
+function discussionCheckpointFromEnv() {
+  const directory = process.env.SLOP_DISCUSSION_CHECKPOINT;
+  const deadline = process.env.SLOP_DISCUSSION_DEADLINE_MS;
+  if (!directory && !deadline) return undefined;
+  const deadlineMs = Number(deadline);
+  if (
+    process.env.GITHUB_ACTIONS !== "true" ||
+    process.env.GITHUB_REF !== "refs/heads/main" ||
+    !["push", "workflow_dispatch"].includes(
+      process.env.GITHUB_EVENT_NAME ?? "",
+    ) ||
+    !directory ||
+    !Number.isSafeInteger(deadlineMs) ||
+    deadlineMs <= Date.now()
+  )
+    throw new Error(
+      "Invalid trusted production discussion checkpoint settings",
+    );
+  return { directory, deadlineMs };
+}
+
 if (import.meta.main) {
   const arguments_ = parseGenerationArguments(process.argv.slice(2));
   const acceptedReviewHistory = loadAcceptedReviewHistory();
   let lastProgressPhase: GenerationProgress["phase"] | null = null;
+  let latestProgress: GenerationProgress | null = null;
+  const heartbeat = setInterval(() => {
+    if (latestProgress) {
+      process.stderr.write(
+        `[slop.cash] waiting on ${latestProgress.phase.replaceAll("-", " ")}: ${latestProgress.completed}/${latestProgress.total}\n`,
+      );
+    }
+  }, 60_000);
+  heartbeat.unref();
   const snapshot = await runGenerator(DEFAULT_OUTPUT_PATH, undefined, {
     ...arguments_,
     deploymentTier: deploymentTier(process.env.VITE_SLOP_ENVIRONMENT),
+    discussionCheckpoint: discussionCheckpointFromEnv(),
     evaluatedContributions: loadEvaluatorAwardEvents(),
     retainedReviewEvents: acceptedReviewHistory.events,
     retainedReviewAttributions: acceptedReviewHistory.attributions,
     onProgress: (progress) => {
+      latestProgress = progress;
       const phaseChanged = progress.phase !== lastProgressPhase;
       lastProgressPhase = progress.phase;
       if (
@@ -4605,14 +5195,16 @@ if (import.meta.main) {
         process.stderr.write(progressLine(progress));
       }
     },
-  }).catch((error: unknown) => {
-    // error-policy:J2 a feed outage writes nothing; the caller keeps the last published snapshot.
-    if (!(error instanceof ValueFeedUnavailableError)) throw error;
-    process.stderr.write(
-      `[slop.cash] ${error.message} (${String(error.cause)}); no snapshot written\n`,
-    );
-    process.exit(VALUE_FEED_UNAVAILABLE_EXIT_CODE);
-  });
+  })
+    .finally(() => clearInterval(heartbeat))
+    .catch((error: unknown) => {
+      // error-policy:J2 a feed outage writes nothing; the caller keeps the last published snapshot.
+      if (!(error instanceof ValueFeedUnavailableError)) throw error;
+      process.stderr.write(
+        `[slop.cash] ${error.message} (${String(error.cause)}); no snapshot written\n`,
+      );
+      process.exit(VALUE_FEED_UNAVAILABLE_EXIT_CODE);
+    });
   process.stdout.write(
     `[slop.cash] wrote ${DEFAULT_OUTPUT_PATH} (${snapshot.leaders.length} leaders, ${snapshot.ledger.length} score events, ${snapshot.source.requestCount} GitHub requests, ${snapshot.source.rateLimit.remaining}/${snapshot.source.rateLimit.limit} GraphQL points remaining)\n`,
   );

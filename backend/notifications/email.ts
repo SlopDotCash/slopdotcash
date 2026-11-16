@@ -20,10 +20,10 @@ import {
 } from "./email-destinations";
 import type { NotificationsDependencies } from "./handler";
 
-export type EmailEligibility =
+type EmailEligibility =
   | { available: false }
   | { available: true; email: string; destinationVersion: string };
-export type EmailPreferencesDependencies = NotificationsDependencies & {
+type EmailPreferencesDependencies = NotificationsDependencies & {
   eligibility(githubId: string): Promise<EmailEligibility | null>;
   mailService?: MailService;
 };

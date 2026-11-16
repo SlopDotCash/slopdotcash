@@ -1,3 +1,4 @@
+import { githubHeaders } from "../../backend/github";
 import { readBoundedJson } from "../../src/lib/browser-json";
 import { deploymentTier } from "../../src/lib/deployment";
 import { identityPublicOrigin } from "./contracts";
@@ -31,6 +32,7 @@ type Env = {
   /** Named App-backed observation refresher; no public or signing entrypoint. */
   REPORTING_READINESS?: {
     refreshReportingReadiness(): Promise<{ checked: number; failed: number }>;
+    refreshMergeActivity?(): Promise<{ read: number; failed: number }>;
   };
 };
 
@@ -69,12 +71,7 @@ async function fetchPrivateIntakeStatus(
   fetchImpl: FetchLike,
   token?: string,
 ): Promise<Response | null> {
-  const headers: Record<string, string> = {
-    accept: "application/vnd.github+json",
-    "user-agent": "slop-identity",
-    "x-github-api-version": "2022-11-28",
-  };
-  if (token !== undefined) headers.authorization = `Bearer ${token}`;
+  const headers = githubHeaders(token, "slop-identity");
   try {
     return await fetchImpl(PRIVATE_INTAKE_STATUS_URL, {
       method: "GET",
@@ -215,18 +212,65 @@ export async function applyIdentityRateLimit(
   }
 }
 
-async function resolveGithubIdentity(
+type OAuthStage = "token" | "user";
+type OAuthFailure =
+  | "http-rejected"
+  | "invalid-response"
+  | "request-or-response-failed";
+
+const OAUTH_ERRORS = new Set([
+  "incorrect_client_credentials",
+  "redirect_uri_mismatch",
+  "bad_verification_code",
+  "unverified_user_email",
+  "access_denied",
+  "unsupported_grant_type",
+  "server_error",
+  "temporarily_unavailable",
+]);
+
+/** Fixed diagnostic fields only: OAuth bodies and request values stay private. */
+function githubIdentityFailure(
+  stage: OAuthStage,
+  reason: OAuthFailure,
+  httpStatus?: number,
+  oauthError?: unknown,
+): null {
+  console.error(
+    JSON.stringify({
+      event: "github_identity_failed",
+      stage,
+      reason,
+      ...(httpStatus === undefined ? {} : { httpStatus }),
+      ...(typeof oauthError === "string" && OAUTH_ERRORS.has(oauthError)
+        ? { oauthError }
+        : {}),
+    }),
+  );
+  return null;
+}
+
+export async function resolveGithubIdentity(
   code: string,
   pkceVerifier: string,
-  env: Env,
+  env: Pick<
+    Env,
+    | "GITHUB_APP_CLIENT_ID"
+    | "GITHUB_APP_CLIENT_SECRET"
+    | "IDENTITY_PUBLIC_ORIGIN"
+    | "SLOP_ENVIRONMENT"
+    | "IDENTITY_ALLOW_LOOPBACK"
+  >,
+  fetchImpl: FetchLike = fetch,
 ): Promise<{
   githubActorId: string;
   githubLogin: string;
   githubNodeId?: string;
 } | null> {
   let accessToken = "";
+  let stage: OAuthStage = "token";
   try {
-    const tokenResponse = await fetch(
+    const tokenResponse = await fetchImpl(
       "https://github.com/login/oauth/access_token",
       {
         method: "POST",
@@ -245,13 +289,23 @@ async function resolveGithubIdentity(
         signal: AbortSignal.timeout(10_000),
       },
     );
-    if (!tokenResponse.ok) return null;
+    if (!tokenResponse.ok)
+      return githubIdentityFailure(
+        stage,
+        "http-rejected",
+        tokenResponse.status,
+      );
     const tokenBody = await readBoundedJson(
       tokenResponse,
       MAX_GITHUB_RESPONSE_BYTES,
       "GitHub token response",
     );
-    if (typeof tokenBody !== "object" || tokenBody === null) return null;
+    if (typeof tokenBody !== "object" || tokenBody === null)
+      return githubIdentityFailure(
+        stage,
+        "invalid-response",
+        tokenResponse.status,
+      );
     const candidate = (tokenBody as { access_token?: unknown }).access_token;
     const tokenType = (tokenBody as { token_type?: unknown }).token_type;
     if (
@@ -260,26 +314,33 @@ async function resolveGithubIdentity(
       candidate.length > 512 ||
       (tokenType !== "bearer" && tokenType !== "Bearer")
     ) {
-      return null;
+      return githubIdentityFailure(
+        stage,
+        "invalid-response",
+        tokenResponse.status,
+        (tokenBody as { error?: unknown }).error,
+      );
     }
     accessToken = candidate;
-    const userResponse = await fetch("https://api.github.com/user", {
-      headers: {
-        accept: "application/vnd.github+json",
-        authorization: `Bearer ${accessToken}`,
-        "user-agent": "slop-identity",
-        "x-github-api-version": "2022-11-28",
-      },
+    stage = "user";
+    const userResponse = await fetchImpl("https://api.github.com/user", {
+      headers: githubHeaders(accessToken, "slop-identity"),
       signal: AbortSignal.timeout(10_000),
     });
     accessToken = "";
-    if (!userResponse.ok) return null;
+    if (!userResponse.ok)
+      return githubIdentityFailure(stage, "http-rejected", userResponse.status);
     const user = await readBoundedJson(
       userResponse,
       MAX_GITHUB_RESPONSE_BYTES,
       "GitHub user",
     );
-    if (typeof user !== "object" || user === null) return null;
+    if (typeof user !== "object" || user === null)
+      return githubIdentityFailure(
+        stage,
+        "invalid-response",
+        userResponse.status,
+      );
     const id = (user as { id?: unknown }).id;
     const login = (user as { login?: unknown }).login;
     if (
@@ -288,7 +349,11 @@ async function resolveGithubIdentity(
       typeof login !== "string" ||
       !/^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})$/u.test(login)
     ) {
-      return null;
+      return githubIdentityFailure(
+        stage,
+        "invalid-response",
+        userResponse.status,
+      );
     }
     const nodeId = (user as { node_id?: unknown }).node_id;
     const kind = (user as { type?: unknown }).type;
@@ -301,6 +366,9 @@ async function resolveGithubIdentity(
         ? { githubNodeId: nodeId }
         : {}),
     };
+  } catch (error) {
+    githubIdentityFailure(stage, "request-or-response-failed");
+    throw error;
   } finally {
     accessToken = "";
   }
@@ -495,7 +563,20 @@ export default {
       }
       await runScheduledMaintenance(env, new Date());
     };
-    const outcomes = await Promise.allSettled([maintenance(), reporting()]);
+    // Merge activity (#1993) is a display aid: a failure is logged and never
+    // fails the schedule or the reporting refresh.
+    const mergeActivity = async () => {
+      try {
+        await env.REPORTING_READINESS?.refreshMergeActivity?.();
+      } catch {
+        console.error("slop merge activity refresh failed");
+      }
+    };
+    const outcomes = await Promise.allSettled([
+      maintenance(),
+      reporting(),
+      mergeActivity(),
+    ]);
     if (outcomes.some((outcome) => outcome.status === "rejected")) {
       console.error("slop scheduled reporting or identity maintenance failed");
       throw new Error("slop scheduled maintenance failed");

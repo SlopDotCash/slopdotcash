@@ -2,6 +2,7 @@
 import { identityPublicOrigin } from "../../workers/identity/contracts";
 import { deploymentTier } from "./deployment";
 import { isRecord } from "./record-validation.mjs";
+import { identityPollDelay } from "./verified-frontend";
 
 const CLOCK_SKEW_MS = 2 * 60_000;
 interface IdentityAuthorization {
@@ -120,7 +121,7 @@ export async function requestIdentityAssertion(options: {
   if (!options.resume) options.authorize(authorization.href);
   let assertion = "";
   while (now() < expires) {
-    await delay(Math.min(interval * 1000, expires - now()), signal);
+    await delay(identityPollDelay(interval, expires - now()), signal);
     if (now() >= expires) break;
     const polled = await options.request(
       `${identityOrigin}/v1/oauth/poll`,

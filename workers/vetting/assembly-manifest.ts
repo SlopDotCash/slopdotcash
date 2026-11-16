@@ -1,5 +1,4 @@
 /** The existing assembler's private output contract; retention grants no authority. */
-import type { QueuedAssessment } from "./queue";
 
 type RecordValue = Record<string, unknown>;
 export function assemblyRecord(value: unknown): RecordValue {
@@ -106,3 +105,12 @@ export function parseAssemblyManifest(value: unknown) {
     visibilityGaps: m.visibilityGaps as string[],
   };
 }
+
+export type QueuedAssessment = {
+  assessmentId: string;
+  projectId: string;
+  revision: number;
+  manifestSha256: string;
+  commitSha: string;
+  templateSha256: string;
+};

@@ -100,7 +100,6 @@ test("a month's proposal is stored once; a later ledger never adds or replaces r
       },
       snapshotBytes,
       policyBytes,
-      project,
     );
     const result = {
       period: "2026-09",
@@ -146,6 +145,28 @@ test("a month's proposal is stored once; a later ledger never adds or replaces r
   } finally {
     sqlite.close();
   }
+});
+
+test("a monthly proposal refuses a credited actor without a numeric GitHub identity", () => {
+  const project = fundedProject();
+  // Keep the real frozen census coherent while replacing one credited actor's
+  // node ID everywhere. An opaque ID must not become a payment recipient.
+  const bytes = Buffer.from(
+    snapshotBytes
+      .toString("utf8")
+      .replaceAll("MDQ6VXNlcjMwMDUxMzU2", "opaque_fixture_actor"),
+  );
+  expect(() =>
+    buildMonthlyBase(
+      {
+        projectId: "eliza",
+        period: "2026-09",
+        generatedAt: SEPTEMBER_CLOSE,
+      },
+      bytes,
+      Buffer.from(JSON.stringify(project)),
+    ),
+  ).toThrow("No numeric GitHub identity for attentionhead");
 });
 
 test("a month closed before vault setup is proposed by the rerun after the vault exists, never as a vaultless pledge", async () => {

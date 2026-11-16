@@ -10,14 +10,7 @@ import {
 } from "../../src/lib/vetting-contracts";
 import { signedServiceHeaders, type VettingServiceSigner } from "./service";
 
-export {
-  JOURNAL_PATH,
-  JOURNAL_SCHEMA,
-  PUBLICATION_OUTCOMES,
-  type PublicationIntent,
-  type PublicationOutcome,
-  type PublicationReceipt,
-};
+export { JOURNAL_SCHEMA, type PublicationIntent, type PublicationReceipt };
 /** Reservation must be durable before the first publication request. */
 export interface PublicationJournal {
   has(assessmentId: string): Promise<boolean>;

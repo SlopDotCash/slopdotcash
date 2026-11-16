@@ -58,3 +58,67 @@ export function UnsentTransactionRecovery({
 export function PendingTransaction({ children }: { children: ReactNode }) {
   return <div className="owner-pending-transaction">{children}</div>;
 }
+
+/** A saved wallet request: its link, hash recovery and the check action. */
+export function PendingWalletCheck({
+  children,
+  link,
+  hashSource,
+  solana,
+  recoveryHash,
+  onRecoveryHash,
+  busy,
+  canCheck,
+  onCheck,
+  unsent,
+  onClear,
+}: {
+  children: ReactNode;
+  link: string | null | undefined;
+  hashSource: "wallet" | "recovery" | undefined;
+  solana: boolean;
+  recoveryHash: string;
+  onRecoveryHash: (value: string) => void;
+  busy: boolean;
+  canCheck: boolean;
+  onCheck: () => void;
+  unsent: boolean;
+  onClear: () => void;
+}) {
+  return (
+    <PendingTransaction>
+      {children}
+      {link ? (
+        <p>
+          <a href={link} target="_blank" rel="noreferrer">
+            {hashSource === "wallet"
+              ? "View submitted transaction"
+              : "View transaction to check"}
+          </a>
+        </p>
+      ) : null}
+      {hashSource !== "wallet" ? (
+        <label>
+          Transaction {solana ? "signature" : "hash"} from your wallet
+          <input
+            value={recoveryHash}
+            disabled={busy}
+            onChange={(event) => onRecoveryHash(event.target.value)}
+            spellCheck={false}
+          />
+        </label>
+      ) : null}
+      <button
+        type="button"
+        className="button primary-button"
+        disabled={busy || !canCheck}
+        onClick={onCheck}
+      >
+        Check transaction
+      </button>
+      {unsent ? (
+        <UnsentTransactionRecovery disabled={busy} onClear={onClear} />
+      ) : null}
+    </PendingTransaction>
+  );
+}

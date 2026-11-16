@@ -15,9 +15,9 @@ import {
 } from "./value-context";
 import {
   findRepository,
-  type ValueEvidence,
   valueEvidenceMatchesRepository,
 } from "./value-evidence";
+import type { ValueEvidence } from "./value-evidence-types";
 import {
   type StoredValueRecord,
   type ValueJournalRecord,
@@ -128,6 +128,17 @@ export async function readValueDecisionFromHistory(
     evidence = await hydrateContext(evidence, latest.contextPaths ?? []);
   if (evidence.limitations.length || !policy.text.trim())
     return { ...common, status: "incomplete" as const };
+  let sourceDigest = await valueSourceDigest(evidence, policy);
+  if (
+    latest.sourceDigest !== sourceDigest &&
+    evidence.repairBodyEdit !== undefined
+  ) {
+    const { repairBodyEdit: _repairBodyEdit, ...historical } = evidence;
+    // Match the complete pre-metadata source digest. Changed body, actor,
+    // head, discussion or accepted work still makes the record stale.
+    if ((await valueSourceDigest(historical, policy)) === latest.sourceDigest)
+      sourceDigest = latest.sourceDigest;
+  }
   if (
     !valueEvidenceMatchesRepository(evidence, repository) ||
     evidence.pull.state !== "closed" ||
@@ -137,7 +148,7 @@ export async function readValueDecisionFromHistory(
       (evidence.pull.merged_at ?? evidence.pull.closed_at) ||
     latest.policySha !== policy.sha ||
     policy.sha !== evidence.pull.base.sha ||
-    latest.sourceDigest !== (await valueSourceDigest(evidence, policy)) ||
+    latest.sourceDigest !== sourceDigest ||
     latest.rubricVersion !== VALUE_RUBRIC_VERSION
   )
     return { ...common, status: "stale" as const };

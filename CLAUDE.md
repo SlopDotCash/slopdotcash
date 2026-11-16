@@ -66,7 +66,25 @@ alias only.
     awards or payments. Per-run and daily caps bound it. Owners authorize USDC
     sweeps to separate owner-controlled software wallets, with sweep keys held
     in their local `.env`, not by the Worker (PRD sections 6 and 11,
-    24 October 2026). `workers/fee-converter/wrangler.toml` sets the mode of
+    24 October 2026). Owner decision of 10 November 2026 (PRD section 6,
+    "SLOP buyback and burn"): half of all fee income funds a programmatic
+    buyback of SLOP (`0xfeb4e36fa4a2a494ff25ae4a63491e4c584a67ae` on Robinhood
+    Chain). For that share only, the same keys may also sign: an exact
+    approval and one deBridge DLN order that sends USDC from Base, Ethereum
+    or Solana to the Robinhood Chain fee wallet as USDG; on Robinhood Chain,
+    fee claims on reviewed vaults, an exact approval and a checked swap of the
+    buyback share into SLOP with output to the same wallet; and a transfer of
+    half of the acquired SLOP to the burn address
+    `0x000000000000000000000000000000000000dEaD`. Every order names that fee
+    wallet as receiver, order authority and refund beneficiary, checked before
+    signing. The other half of each fee keeps its earlier handling; on
+    Robinhood Chain it stays unconverted. `BUYBACK_MODE` is live in the
+    production configuration from 12 November 2026 (operator decision; PRD
+    section 6) and off on staging. Changing the mode, the start instant or any
+    limit needs its own reviewed change and the readiness checks in
+    `workers/fee-converter/README.md`. The
+    Worker never cancels an order; cancelling an unfilled order is an owner
+    action. `workers/fee-converter/wrangler.toml` sets the mode of
     each network. The Worker deploys only when the
     `SLOP_FEE_CONVERTER_RELEASE` repository variable is `enabled`. Fee handling starts only after the fee wallets are
     funded and the limits and readiness are verified (PRD section 11, #1285).
@@ -216,7 +234,11 @@ future executable changes. Later projects require one successful admission scan 
 repository. Routine commits, dependencies, Markdown, skill and presentation
 changes keep that admission; do not claim the later content was scanned. Keep successful bounded admission-scan evidence permanently, including original evidence used by a reused result (owner decision, 27 October 2026). Other scanner cases keep their existing retention rules.
 Keep the original complete assessment and retained evidence. Another repository
-cannot inherit a nonexempt admission. Explicit security investigations control
+cannot inherit a nonexempt admission. An owner may append public repositories on the
+manage page; each needs the owner's current authority through Slopbot, counts from
+the next UTC month, is never removed or reordered, and needs its own admission scan
+or exemption, because the migration-0075 exemption covers only original repositories.
+Explicit security investigations control
 nonexempt admission (owner decision, 27 October 2026, PRD section 8).
 Admission scans have no repository size limit (owner decision, 28 October
 2026, PRD section 8): acquisition is one shallow Git fetch of the exact commit,
@@ -240,6 +262,17 @@ decision. Display "Owner-approved exemption", never a passed scan. Retain
 earlier assessments; later investigations, flags, pauses, account restrictions,
 confirmed malice and fresh reinstatement checks still apply. Retain revocations
 and restore the ordinary admission gate after revocation.
+Owner decision, 11 November 2026: an administrator may record community
+admission after a cursory review of the latest development source under PRD
+section 8. An old pin or unproven source-to-binary match is not a manual-review
+gate. Record the actual branch/head, scope and limitations, and display
+"Owner-approved exemption", never a complete passed scan. The approver needs
+platform administrator authority; the registered creator or individual steward
+must separately retain current GitHub write/maintain authority through Slopbot.
+Do not impersonate that maintainer. Keep immutable identity/revision binding,
+earlier assessments, restrictions and confirmed-malicious controls. Contributors
+still review before installation. Automated results retain their actual pins
+and complete-evidence requirements.
 Funding is optional and has a separate readiness state. Owners publish immutable
 revisions; admins handle restrictions and disputes, not routine approval.
 Two distinct contributor flags pause the project. A clean fresh scan reinstates
@@ -380,7 +413,7 @@ bodies remain unreadable. See PRD sections 8–10.
 ## Private traces
 
 Contributors may opt into the minimized contribution-specific trace defined by
-`protocol/private-trace-v1.md`. Declining or failing upload never blocks submission. The contributor inspects and
+`backend/trace/README.md#private-trace-privacy-contract`. Declining or failing upload never blocks submission. The contributor inspects and
 redacts the selected file; the uploader stores its exact bytes and performs no
 automatic redaction.
 
@@ -418,7 +451,7 @@ automatic monthly distribution.
 ## Participation points
 
 Slop Points are the single contribution and participation unit governed by
-`protocol/points-v1.md`. From 24 October 2026, grant no welcome or
+`docs/slop-product-requirements.md` section 7. From 24 October 2026, grant no welcome or
 X-connection points (PRD section 11, Participation points). Keep every award
 recorded before that date unchanged; never delete, rewrite, or reissue one.
 Earned-point standings and rewards already exclude them. The X connection
@@ -444,11 +477,16 @@ Generated points projections are build outputs; do not edit them by hand.
 
 ## Rewards, funding, and settlement
 
-Monthly allocations are private D1 records. The trusted `monthly-rewards.yml`
+Monthly allocations are D1 records. The trusted `monthly-rewards.yml`
 workflow freezes the complete ledger of the closed UTC month and writes each
 funded project's proposal to D1 once; a repeat run never adds or replaces
-rows. The owner changes amounts privately, and the owner or the automatic
-cutoff freezes the final allocation (`backend/payments/README.md`).
+rows. The owner changes amounts, and the owner or the automatic cutoff
+freezes the final allocation (`backend/payments/README.md`). A change below
+a contributor's proposed amount is a cut: it needs a 20 to 500 character
+reason, is public with its reason, and sends the contributor an Inbox notice.
+Cuts close 24 hours before the cutoff while automatic finalization is on, and
+the owner can finalize only 24 hours after the latest cut. Operator decision,
+15 November 2026.
 `cycles/` keeps only the format notes of historical cycles; do not add cycle
 files.
 
@@ -462,8 +500,9 @@ Review credit follows the canonical scoring policy.
 
 Automatic monthly payment is the PRD default for every project with funds
 committed in its vault. The owner sets the monthly amount during setup, can
-adjust allocations before execution, and can turn the default off; do not show
-adjustment history or require public reasons. Distribute the current
+adjust allocations before execution, and can turn the default off. Only cuts
+below the proposed amount are public, each with its required reason; other
+changes stay private. Distribute the current
 allocations at the monthly cutoff if the owner has not done so. The period is
 the calendar UTC month, starting with 2026-11, and the cutoff is 72 hours after
 the month ends (PRD sections 6 and 11). Keep internal reconciliation and prevent
@@ -506,6 +545,9 @@ the network fee wallet at payout. No contract converts it. A scheduled backend
 job converts fees already in the fee wallet to USDC (PRD section 6) inside
 that wallet (TOK-07, MVP-07c). Robinhood Chain retains the received asset and
 shows "not converted"; USDG stays USDG and project tokens stay unchanged.
+When the SLOP buyback is active (owner decision, 10 November 2026), its half
+of each fee is bridged or swapped into SLOP as PRD section 6 describes; the
+retained half is handled exactly as before.
 Other networks without a verified USDC route keep the fee token pending.
 Conversion never blocks or touches a contributor payment. The approved keeper and
 fee-converter EVM replacement changes only fee fields, with the same nonce and
@@ -536,7 +578,11 @@ Public pages never read chain or GitHub state live per page view (PRD
 section 9). They serve cached D1 data and snapshots that background jobs
 refresh. Vault totals come from finalized on-chain counters cached in D1 with
 their observed time. A failed refresh shows the last value as stale, never
-zero.
+zero. A monthly amount is shown to contributors only when the project's
+vault holds it; otherwise the pool reads as points only (PRD section 6,
+operator decision of 15 November 2026). From December 2026 a month is
+promised only if the vault covered it on the 1st, and Slop's pages refuse a
+withdrawal below the promised amount.
 
 ## Project authority and IP
 
@@ -576,14 +622,26 @@ shared publication lock.
 
 Every release snapshots the current D1 registry, passes the full quality gate,
 and publishes through its branch's normal release job. Normal releases ingest
-live GitHub data. An explicit manual `main` run may set `use_published_data`
-to retain the last published production leaderboard and profiles after
-validation, with their original timestamps and history. This option cannot run
-on staging or with staging bootstrap; missing or invalid published data stops
-the release. It never uses the pull-request data adapter or skips code, browser,
-sandbox, source-identity or deployment checks. To publish new data without a
-commit, run the release workflow by hand (`workflow_dispatch`) with the option
-off. Every production release requires current main equivalence. Every
+live GitHub data. An explicit manual `main` or `development` run may set
+`use_published_data` to retain the last leaderboard and profiles published by
+that run's own environment (production or staging) after validation, with their
+original timestamps and history (operator decision, 13 November 2026). This
+option cannot run with staging bootstrap; missing or invalid published data
+stops the release. It never uses the pull-request data adapter or skips code, browser,
+sandbox, source-identity or deployment checks. An explicit manual `main` or
+`development` run may also set `skip_proofs` (operator decision, 14 November
+2026; PRD section 12, STATE-05): it repeats neither the Quint state-model
+stages nor the LemmaScript proofs. Both inventory checks and every code,
+browser, sandbox, source-identity and deployment check still run. A push
+release cannot skip them, pull requests still run the affected models and
+proofs, and scheduled nightly runs check all of them on the default branch.
+The same kind of run may set `skip_browser_tests` (operator decision,
+14 November 2026; PRD section 9): it runs the browser smoke lane instead of
+the complete browser lanes, and every other check still runs. A push release
+cannot skip them. A release that skipped either set is not evidence that
+the skipped checks passed.
+To publish new data without a commit, run the release workflow by hand
+(`workflow_dispatch`) with the `use_published_data` option off. Every production release requires current main equivalence. Every
 deployment is bound to its actual tested source SHA.
 
 The separate hourly health workflow authenticates GitHub private-reporting
@@ -600,6 +658,19 @@ Pages, zones, nameservers, DNSSEC, custom domains, registrar state, or release
 credentials.
 
 ## Working rules
+
+Every explicit and implicit application state transition requires a reviewed
+Quint model under [PRD section 12](docs/slop-product-requirements.md#12-state-correctness-and-quint-verification).
+Maintain source mappings, assumptions, reachable scenarios and implementation
+conformance evidence in `formal/`. Cover UI/UX, APIs, workers, storage, queues,
+scheduled jobs, contributor tools, contracts and release workflows, including
+failure, retry, expiry, cancellation, concurrency, interruption and recovery.
+Review composed parent/child and cross-subsystem transitions, not only each
+component in isolation.
+Run `bun run formal:check` and `bun run formal:verify` with the existing required
+checks. Fix model/code discrepancies without weakening product policy. Report
+finite bounds and unresolved gaps; model simulation alone proves neither source
+refinement nor the absence of every application state error.
 
 - Preserve unrelated user changes and untracked files.
 - Use a scoped branch from current `origin/development`; rebase before final
@@ -624,9 +695,14 @@ credentials.
 - Do not leave TODOs, placeholders, dead controls, or silent fallback success.
 - Keep `AGENTS.md` and `CLAUDE.md` byte-identical.
 
-Run from the repository root:
+Install the lockfile and local prover before running the checks.
+`lemmascript:setup` downloads and checks the pinned Dafny 4.11.0 archive on
+macOS arm64 and Linux x86_64. On other platforms, install official Dafny 4.11.0
+and put `dafny` on `PATH`. Run from the repository root:
 
 ```bash
+bun install --frozen-lockfile
+bun run lemmascript:setup
 bun run projects:sync
 bun run leaderboard:generate
 bun run projects:check
@@ -649,8 +725,8 @@ and policy mirrors; explain why application acceptance does not apply to the
 prose itself. Keep required repository checks. Do not fabricate UI or
 deployment evidence.
 
-Rebase onto current `origin/development`, install the lockfile, sync the
-project registry with `bun run projects:sync`, and prepare the ledger with
+Rebase onto current `origin/development`, install the lockfile and local prover
+as above, sync the project registry with `bun run projects:sync`, and prepare the ledger with
 `bun run leaderboard:generate`. Do not commit the generated registry snapshot.
 Local pull-request checks may use the validated public-snapshot preparation in
 [Local review checks](README.md#local-review-checks) instead of live ingestion.

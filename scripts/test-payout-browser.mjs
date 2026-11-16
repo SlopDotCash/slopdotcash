@@ -15,8 +15,16 @@ const fixture = spawn(
   { stdio: ["ignore", fixtureLog, fixtureLog] },
 );
 const preview = spawn(
-  "bunx",
-  ["vite", "preview", "--host", "127.0.0.1", "--port", "18549", "--strictPort"],
+  process.execPath,
+  [
+    "node_modules/vite/bin/vite.js",
+    "preview",
+    "--host",
+    "127.0.0.1",
+    "--port",
+    "18549",
+    "--strictPort",
+  ],
   { stdio: ["ignore", previewLog, previewLog] },
 );
 async function ready(url) {
@@ -74,12 +82,25 @@ try {
   });
   // The site reads the project registry from D1 at startup. The payments
   // fixture serves no registry, so answer it with the empty registry the
-  // payout flow needs; registered last, this route takes precedence.
+  // payout flow needs; registered last, these routes take precedence.
   await page.route("**/api/v1/projects", (route) =>
     route.fulfill({
       status: 200,
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ schemaVersion: "1", projects: [] }),
+    }),
+  );
+  await page.route("**/api/v1/notifications/email", (route) =>
+    route.fulfill({
+      status: 200,
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        enabled: false,
+        securityEnabled: false,
+        enrollmentAvailable: false,
+        pending: null,
+        availability: "unverified",
+      }),
     }),
   );
   await page.exposeFunction("localWalletSign", (message) =>
@@ -98,7 +119,7 @@ try {
   await page.goto("http://127.0.0.1:18549/earnings");
   await page.getByRole("heading", { name: "Payouts", exact: true }).waitFor();
   await page.getByRole("link", { name: "Manage payout wallets" }).click();
-  await page.getByRole("heading", { name: "Account", exact: true }).waitFor();
+  await page.getByRole("heading", { name: "Settings", exact: true }).waitFor();
   await page.getByRole("button", { name: "Connect EVM wallet" }).waitFor();
   await page.getByRole("button", { name: "Connect Solana wallet" }).waitFor();
   await page.screenshot({
@@ -115,10 +136,7 @@ try {
   await page
     .getByText("EVM wallet confirmed.", { exact: false })
     .waitFor({ timeout: 60000 });
-  await page
-    .getByRole("navigation", { name: "Account navigation" })
-    .getByRole("link", { name: "Payouts", exact: true })
-    .click();
+  await page.goto("http://127.0.0.1:18549/earnings");
   // Settlement runs after wallet authorization. Wait for its finalized API
   // receipt before reloading the page, without timing repeated page refreshes.
   await expect
@@ -163,10 +181,7 @@ try {
     both.balances.some((b) => b.chain === "robinhood")
   )
     throw new Error("Robinhood Chain wallet registration changed Base state");
-  await page
-    .getByRole("navigation", { name: "Account navigation" })
-    .getByRole("link", { name: "Payouts", exact: true })
-    .click();
+  await page.goto("http://127.0.0.1:18549/earnings");
   await page.getByText("Paid", { exact: true }).waitFor();
   await page.screenshot({
     path: "evidence/payout-desktop-paid.png",

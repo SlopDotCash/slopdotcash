@@ -38,7 +38,6 @@ import {
   FaultRpc,
   openMonthlyPeriod,
   requireEnv,
-  runPaymentsCron,
   runScenarios,
   type ScenarioEvidence,
   scenarioActor,
@@ -1333,7 +1332,7 @@ export async function runSolanaExtended(
           })),
         proxy.url,
       );
-      const { projection, env, deps } = services;
+      const { projection, deps } = services;
       const setUp = async (
         entry: ScenarioEvidence,
         name: string,
@@ -1465,7 +1464,7 @@ export async function runSolanaExtended(
         });
       const cosigned = new Set<string>();
       const tick = async () => {
-        const errors = await runPaymentsCron(env);
+        const errors = await services.tick();
         if (interrupted.checks.lostResponse && !interrupted.checks.restarted) {
           services.restart();
           interrupted.checks.restarted = new Date().toISOString();

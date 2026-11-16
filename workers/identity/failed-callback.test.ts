@@ -17,8 +17,10 @@ async function signIn(
   resolveGithubIdentity: Resolve,
   callbackQuery = "code=fixturecode1",
   bindStateCookie = true,
+  alterPendingFlow?: (sqlite: ReturnType<typeof sqliteD1>["sqlite"]) => void,
 ) {
-  const persistence = new D1IdentityPersistence(sqliteD1().db as never);
+  const { db, sqlite } = sqliteD1();
+  const persistence = new D1IdentityPersistence(db as never);
   const deps = {
     persistence,
     stateEncryptionSecret: Buffer.alloc(32, 1).toString("base64url"),
@@ -47,6 +49,8 @@ async function signIn(
     authorizationUrl: string;
   };
   const state = new URL(flow.authorizationUrl).searchParams.get("state");
+  // The callback claim reads the stored verifier, so a test can replace it first.
+  alterPendingFlow?.(sqlite);
   const callback = await handleIdentityRequest(
     new Request(`${LOCAL}/v1/oauth/callback?state=${state}&${callbackQuery}`, {
       headers: bindStateCookie
@@ -119,6 +123,44 @@ for (const error of [
     expect(poll.status).toBe(410);
     expect(await poll.json()).toMatchObject({ error: "callback_failed" });
   });
+
+test("a PKCE verifier that cannot be decrypted ends the flow instead of polling as pending", async () => {
+  let exchanged = false;
+  const { callback, poll, persistence, flowId } = await signIn(
+    async () => {
+      exchanged = true;
+      return {
+        githubActorId: "1",
+        githubLogin: "octo",
+        githubNodeId: "MDQ6VXNlcjE=",
+      };
+    },
+    "code=fixturecode1",
+    true,
+    (sqlite) => {
+      // The callback claim copies this verifier, then deletes it. Decrypt
+      // throws, and the flow must become terminal instead of staying pending.
+      sqlite
+        .prepare(
+          "UPDATE identity_oauth_flows SET encrypted_pkce_verifier = ? WHERE status = 'pending'",
+        )
+        .run("****");
+    },
+  );
+  expect(exchanged).toBe(false);
+  expect(callback).toBe(500);
+  expect(poll.status).toBe(410);
+  expect(await poll.json()).toMatchObject({ error: "callback_failed" });
+  expect(
+    await persistence.completeCallback(
+      flowId,
+      "1",
+      "octo",
+      new Date().toISOString(),
+      "MDQ6VXNlcjE=",
+    ),
+  ).toBe(false);
+});
 
 test("an authorization error without the state cookie cannot end the flow", async () => {
   const { callback, poll } = await signIn(

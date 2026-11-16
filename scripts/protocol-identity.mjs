@@ -4,7 +4,6 @@
  * redirect or repository rename can never silently redefine old artifacts.
  */
 
-import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -35,6 +34,30 @@ const EXPECTED_IDENTIFIERS = {
     slop: "SlopDotCash/slopdotcash",
   },
   walletMarker: { legacy: "gitarmy-wallet:v1", slop: "slop-wallet:v1" },
+};
+
+// Immutable activation evidence stays with the validator that interprets it.
+// Public JSON is generated from this record, not a second maintained copy.
+export const IDENTITY_RECORD = {
+  schemaVersion: "1",
+  identityVersion: "slop-identity-v1",
+  activatedAt: "2026-08-14T05:28:19.000Z",
+  activationCode: {
+    commit: "d999dbd26b4ab743c8015f6be635e554eac66bcb",
+    tree: "dfdb014cd93b2497a84537c1e9dbc6d74d8cd7ba",
+  },
+  legacySnapshot: {
+    url: "https://slop.cash/data/leaderboard.json",
+    sha256: "d473a9c6942568224af439397ed1f66dbb1d20bbe7d159fcfe1d0bd2f7b50097",
+    deploymentCommit: "9040169c8355166375297ed18a8823bd8bf030c2",
+    ruleVersion: "gitarmy-v1",
+    generatedAt: "2026-08-13T23:05:05.385Z",
+    sourceUpdatedAt: "2026-08-13T23:04:28.000Z",
+    sourceCutoff: "2026-08-13T23:02:26.000Z",
+  },
+  finalAcceptedLegacyReleaseLabelEvent: null,
+  identifiers: structuredClone(EXPECTED_IDENTIFIERS),
+  paymentMode: "disabled",
 };
 
 function exactKeys(value, expected, field) {
@@ -133,19 +156,8 @@ export function validateIdentityRecord(value) {
   return value;
 }
 
-export function readIdentityRecord(path) {
-  let value;
-  try {
-    value = JSON.parse(readFileSync(path, "utf8"));
-  } catch (cause) {
-    throw new TypeError("identity record is not valid JSON", { cause });
-  }
-  return validateIdentityRecord(value);
-}
-
 const invokedPath = process.argv[1] ? resolve(process.argv[1]) : null;
 if (invokedPath === fileURLToPath(import.meta.url)) {
-  const root = resolve(fileURLToPath(new URL("..", import.meta.url)));
-  readIdentityRecord(resolve(root, "protocol", "identity-v1.json"));
+  validateIdentityRecord(IDENTITY_RECORD);
   process.stdout.write("[Slop] protocol identity record is valid\n");
 }

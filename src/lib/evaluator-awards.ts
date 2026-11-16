@@ -179,9 +179,7 @@ function review(value: unknown, field: string): EvaluatorAwardReview {
 }
 
 /** Strictly validates one checked-in award manifest. */
-export function assertEvaluatorAwardManifest(
-  value: unknown,
-): EvaluatorAwardManifest {
+function assertEvaluatorAwardManifest(value: unknown): EvaluatorAwardManifest {
   const manifest = readRecord(value, "evaluator award");
   exactKeys(
     manifest,
@@ -360,12 +358,13 @@ export function loadEvaluatorAwardEvents(
   root = resolve(process.cwd(), "evaluations"),
 ): EvaluatorAwardEvent[] {
   const rootStats = lstatSync(root, { throwIfNoEntry: false });
-  if (!rootStats) return [];
-  if (!rootStats.isDirectory() || rootStats.isSymbolicLink()) {
+  if (rootStats && (!rootStats.isDirectory() || rootStats.isSymbolicLink())) {
     throw new TypeError("evaluations root must be a real directory");
   }
-  const paths: string[] = [];
-  for (const projectEntry of readdirSync(root, { withFileTypes: true })) {
+  const inputs: { path: string; bytes: Buffer }[] = [];
+  for (const projectEntry of rootStats
+    ? readdirSync(root, { withFileTypes: true })
+    : []) {
     if (projectEntry.name === "README.md") continue;
     if (!projectEntry.isDirectory() || projectEntry.isSymbolicLink()) {
       throw new TypeError(
@@ -384,11 +383,78 @@ export function loadEvaluatorAwardEvents(
           `evaluations/${projectEntry.name}/${entry.name} is not a canonical award file`,
         );
       }
-      paths.push(join(root, projectEntry.name, entry.name));
+      const path = join(root, projectEntry.name, entry.name);
+      const stats = lstatSync(path);
+      if (stats.size <= 0 || stats.size > MAX_EVALUATOR_AWARD_FILE_BYTES) {
+        throw new RangeError(`${relative(root, path)} has invalid size`);
+      }
+      inputs.push({ path, bytes: readFileSync(path) });
     }
   }
-  paths.sort();
-  if (paths.length > MAX_EVALUATOR_AWARD_FILES) {
+  // Keep reviewed historical awards in one retained record. Their original
+  // paths and byte digests remain the public provenance after file cleanup.
+  const retainedPath = resolve(root, "../data/evaluated-contributions.json");
+  const retainedStats = lstatSync(retainedPath, { throwIfNoEntry: false });
+  if (retainedStats) {
+    if (
+      !retainedStats.isFile() ||
+      retainedStats.isSymbolicLink() ||
+      retainedStats.size <= 0 ||
+      retainedStats.size >
+        MAX_EVALUATOR_AWARD_FILES * MAX_EVALUATOR_AWARD_FILE_BYTES
+    ) {
+      throw new TypeError(
+        "retained evaluator awards must be a bounded regular file",
+      );
+    }
+    const retained = readRecord(
+      JSON.parse(readFileSync(retainedPath, "utf8")),
+      "retained evaluator awards",
+    );
+    exactKeys(
+      retained,
+      ["schemaVersion", "sourceRevision", "awards"],
+      "retained evaluator awards",
+    );
+    if (
+      retained.schemaVersion !== "1" ||
+      typeof retained.sourceRevision !== "string" ||
+      !/^[a-f0-9]{40}$/u.test(retained.sourceRevision) ||
+      !Array.isArray(retained.awards)
+    ) {
+      throw new TypeError("retained evaluator award header is invalid");
+    }
+    for (const value of retained.awards) {
+      const record = readRecord(value, "retained evaluator award");
+      exactKeys(
+        record,
+        ["path", "sha256", "manifest"],
+        "retained evaluator award",
+      );
+      if (
+        typeof record.path !== "string" ||
+        !/^evaluations\/[a-z0-9-]+\/award-[a-z0-9][a-z0-9-]*\.json$/u.test(
+          record.path,
+        )
+      ) {
+        throw new TypeError("retained evaluator award path is invalid");
+      }
+      const bytes = Buffer.from(
+        `${JSON.stringify(record.manifest, null, 2)}\n`,
+      );
+      if (
+        bytes.length > MAX_EVALUATOR_AWARD_FILE_BYTES ||
+        createHash("sha256").update(bytes).digest("hex") !== record.sha256
+      ) {
+        throw new TypeError(
+          "retained evaluator award digest does not match its manifest",
+        );
+      }
+      inputs.push({ path: resolve(root, "..", record.path), bytes });
+    }
+  }
+  inputs.sort((a, b) => a.path.localeCompare(b.path));
+  if (inputs.length > MAX_EVALUATOR_AWARD_FILES) {
     throw new RangeError("evaluator award file limit exceeded");
   }
   const ids = new Set<string>();
@@ -397,12 +463,7 @@ export function loadEvaluatorAwardEvents(
   const reviewPairs = new Set<string>();
   const externalWork = new Set<string>();
   const externalContent = new Set<string>();
-  return paths.map((path) => {
-    const stats = lstatSync(path);
-    if (stats.size <= 0 || stats.size > MAX_EVALUATOR_AWARD_FILE_BYTES) {
-      throw new RangeError(`${relative(root, path)} has invalid size`);
-    }
-    const bytes = readFileSync(path);
+  return inputs.map(({ path, bytes }) => {
     let parsed: unknown;
     try {
       parsed = JSON.parse(bytes.toString("utf8"));

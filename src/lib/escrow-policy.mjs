@@ -1,4 +1,5 @@
 import { isFundingAddress, isSolanaTransactionId } from "./funding-address.mjs";
+import { isCanonicalBaseUnits } from "./verified-base-units.ts";
 
 /** Asset identities for native vaults; never valid substitutes for a wallet. */
 export const EVM_NATIVE_ASSET = "0x0000000000000000000000000000000000000000";
@@ -13,11 +14,7 @@ export function isNativeAssetAddress(chain, address) {
 /** The largest base-unit amount supported by the vault accounting. */
 export const MAX_BASE_UNITS = (1n << 128n) - 1n;
 export function isBaseUnits(value) {
-  return (
-    typeof value === "string" &&
-    /^(0|[1-9][0-9]{0,38})$/.test(value) &&
-    BigInt(value) <= MAX_BASE_UNITS
-  );
+  return typeof value === "string" && isCanonicalBaseUnits(value);
 }
 
 /**
@@ -263,7 +260,7 @@ export const EVM_CHAINS = Object.freeze(
   ESCROW_CHAINS.filter((chain) => chainFamily(chain) === "evm"),
 );
 /** Solana token amounts are u64; EVM vault accounting supports MAX_BASE_UNITS. */
-export const SOLANA_MAX_BASE_UNITS = (1n << 64n) - 1n;
+const SOLANA_MAX_BASE_UNITS = (1n << 64n) - 1n;
 /** The largest base-unit amount one payment may carry on a chain. */
 export function maxBaseUnitsForChain(chain) {
   return chainFamily(chain) === "solana"
@@ -271,9 +268,9 @@ export function maxBaseUnitsForChain(chain) {
     : MAX_BASE_UNITS;
 }
 /** New production deployments may pay committed awards immediately. */
-export const MIN_PRODUCTION_BINDING_DELAY = 0;
+const MIN_PRODUCTION_BINDING_DELAY = 0;
 /** New production deployments may rotate an authorized identity key immediately. */
-export const MIN_PRODUCTION_ROTATION_DELAY = 0;
+const MIN_PRODUCTION_ROTATION_DELAY = 0;
 const MAX_U64 = (1n << 64n) - 1n;
 const EVM_IMPLEMENTATION_REVIEW_KEYS = [
   "authority",

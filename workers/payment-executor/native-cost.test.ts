@@ -7,7 +7,7 @@ import {
   isMaxNativeCostWei,
   paymentDeploymentRecord,
 } from "../../src/lib/escrow-policy.mjs";
-import { assertEvmNativeCost, preflightEvmDeployment } from "./core";
+import { assertEvmNativeCost, preflightEvmDeployment } from "./binding-shared";
 
 const address = (digit: string) => `0x${digit.repeat(40)}`;
 const deployment = () => ({
@@ -53,7 +53,9 @@ describe("optional EVM operation envelope", () => {
       ((1n << 256n) - 1n).toString(),
     ]) {
       expect(isMaxNativeCostWei(value)).toBe(true);
-      expect(assertEscrowPolicy(policy(value))).toBeDefined();
+      expect(
+        assertEscrowPolicy(policy(value)).deployments[0].maxNativeCostWei,
+      ).toBe(value);
     }
     for (const value of [
       null,

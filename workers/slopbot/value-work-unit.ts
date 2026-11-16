@@ -10,23 +10,28 @@ import { binarySourceLimitations } from "./value-binary";
 import { matchesHistoricalIntegrationBranch } from "./value-branch-policy";
 import {
   findRepository,
-  type ValueEvidence,
   valueEvidenceMatchesRepository,
 } from "./value-evidence";
-import type { ValueMergeRecipe } from "./value-merge-profile";
+import type { ValueEvidence } from "./value-evidence-types";
 import { mergeResolutionMatches } from "./value-merge-resolution";
+import {
+  NATIVE_MERGE_CONTEXT,
+  nativeMergeCarrierMatches,
+} from "./value-native-merge";
 import {
   NO_CHANGE_PROMOTION_CONTEXT,
   noChangePromotionMatches,
 } from "./value-no-change-promotion";
+import { retainedRepair } from "./value-original-repair";
 import { retainedCopyBindings } from "./value-retained-copy";
 import { valueSourceDigest } from "./value-review";
-
-export interface WorkUnitSource {
-  evidence: ValueEvidence;
-  policy: { sha: string; text: string };
-  mergeRecipe?: ValueMergeRecipe;
-}
+import type {
+  WorkUnitClaim,
+  WorkUnitEvidence,
+  WorkUnitSource,
+} from "./value-work-unit-types";
+import { selectAcceptedCommitIndices } from "./verified-source-ownership";
+import { completeClaimPartition } from "./verified-work-unit";
 
 /** Discovery and valuation must use the same accepted commit selection.
  * Merge-resolution scope is verified below before any claim is admitted.
@@ -35,38 +40,17 @@ export function acceptedWorkUnitCommits(
   evidence: ValueEvidence,
 ): ValueEvidence["commits"] {
   const indirect = evidence.indirectAcceptance;
-  return evidence.commits.filter(
-    (entry) =>
-      (entry.parents.length <= 1 ||
-        evidence.mergeResolutions?.some(
-          (resolution) => resolution.commitSha === entry.sha,
-        )) &&
-      (!indirect || indirect.acceptedCommitShas.includes(entry.sha)),
+  const selected = selectAcceptedCommitIndices(
+    evidence.commits.map((entry) => ({
+      sha: entry.sha,
+      parentCount: entry.parents.length,
+    })),
+    (evidence.mergeResolutions ?? []).map((resolution) => resolution.commitSha),
+    indirect
+      ? { kind: "indirect", shas: indirect.acceptedCommitShas }
+      : { kind: "direct" },
   );
-}
-
-export interface WorkUnitClaim {
-  id: string;
-  repositoryNodeId: string;
-  commitSha: string;
-  path: string;
-  carrierPullRequestIds: string[];
-  creditPullRequestId: string;
-  implementationActorNodeIds: string[];
-  retainedCopy?: {
-    acceptancePullRequestId: string;
-    acceptedCommitSha: string;
-    preexistingCommitShas: string[];
-  };
-}
-
-export interface WorkUnitEvidence {
-  projectId: string;
-  sources: WorkUnitSource[];
-  sourceDigests: { pullRequestNodeId: string; digest: string }[];
-  claims: WorkUnitClaim[];
-  limitations: string[];
-  sourceDigest: string;
+  return selected.map((index) => evidence.commits[index]);
 }
 
 const compare = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
@@ -89,7 +73,9 @@ export async function prepareWorkUnitEvidence(
   );
   const ids = new Set<string>();
   const projects = new Set<string>();
-  const retained = await retainedCopyBindings(sources);
+  const retained = await retainedCopyBindings(sources, {
+    acceptedSubset: true,
+  });
   const limitations = new Set<string>(retained.limitations);
   const sourceDigests: WorkUnitEvidence["sourceDigests"] = [];
   const commits = new Map<string, string>();
@@ -127,11 +113,17 @@ export async function prepareWorkUnitEvidence(
       );
     ids.add(pull.node_id);
     projects.add(repository.projectId);
+    const nativeMerge = await nativeMergeCarrierMatches(evidence, sources);
+    if (evidence.nativeMergeAcceptance && !nativeMerge)
+      limitations.add(`${pull.node_id}: invalid native ancestor acceptance`);
     const noChangePromotion = noChangePromotionMatches(evidence);
     if (evidence.noChangePromotion && !noChangePromotion)
       limitations.add(`${pull.node_id}: invalid unchanged promotion proof`);
     for (const limitation of evidence.limitations)
-      if (!(noChangePromotion && limitation === NO_CHANGE_PROMOTION_CONTEXT))
+      if (
+        !(noChangePromotion && limitation === NO_CHANGE_PROMOTION_CONTEXT) &&
+        !(nativeMerge && limitation === NATIVE_MERGE_CONTEXT)
+      )
         limitations.add(`${pull.node_id}: ${limitation}`);
     for (const limitation of await binarySourceLimitations(evidence))
       limitations.add(`${pull.node_id}: ${limitation}`);
@@ -175,7 +167,11 @@ export async function prepareWorkUnitEvidence(
     const covered = new Set<string>();
     const relocated = new Map<string, Set<string>>();
     for (const resolution of evidence.mergeResolutions ?? []) {
-      if (!resolution.automaticRelocations?.length) continue;
+      if (
+        resolution.kind === "combined-parent-delta" ||
+        !resolution.automaticRelocations?.length
+      )
+        continue;
       const merge = evidence.commits.find(
         (entry) => entry.sha === resolution.commitSha,
       );
@@ -283,9 +279,27 @@ export async function prepareWorkUnitEvidence(
         );
         continue;
       }
+      // A fast-forward accepted range can end at this PR's own earlier
+      // commit. A complete linear submitted chain from its base proves that
+      // this parent belongs to the same work. Earlier accepted PR origins
+      // still take precedence and retain their existing duplicate handling.
+      const ownSubmittedParent =
+        evidence.acceptedRange?.parentSha === commit.sha &&
+        evidence.pull.merge_commit_sha === evidence.pull.head.sha &&
+        evidence.commits.length === evidence.pull.commits &&
+        evidence.commits.at(-1)?.sha === evidence.pull.head.sha &&
+        evidence.commits.every(
+          (entry, index) =>
+            entry.parents.length === 1 &&
+            entry.parents[0].sha ===
+              (index === 0
+                ? evidence.pull.base.sha
+                : evidence.commits[index - 1].sha),
+        );
       if (
         origins.length > 0 ||
-        evidence.acceptedRange?.parentSha === commit.sha
+        (evidence.acceptedRange?.parentSha === commit.sha &&
+          !ownSubmittedParent)
       ) {
         for (const path of paths.filter(
           (path) => retainedPaths(commit.sha, path).length,
@@ -398,12 +412,30 @@ export async function prepareWorkUnitEvidence(
       // the original historical branch has since been renamed. Preserve a
       // linked primary author only when both immutable commits agree. An
       // unlinked or ineligible original author cannot hide a different one.
+      // A verified resolution copy has a shared implementation antecedent and
+      // resolved blob. Its accepting merger need not be the original resolver.
+      // An acknowledged copied repair keeps both primary identities. Ordinary
+      // allocation uses its accepted author; October's verified override is separate.
       const acceptedAuthor = copied.integration.evidence.commits.find(
         (commit) => commit.sha === copied.acceptedCommitSha,
       )?.author;
-      if (
+      const repair =
+        !copied.mergeResolution &&
         (acceptedAuthor?.node_id ?? null) !==
-        (originCommit.author?.node_id ?? null)
+          (originCommit.author?.node_id ?? null)
+          ? retainedRepair(
+              copied.original,
+              copied.integration,
+              copied.acceptedCommitSha,
+              copied.originalCommitSha,
+              claim.path,
+            )
+          : null;
+      if (
+        !copied.mergeResolution &&
+        !repair &&
+        (acceptedAuthor?.node_id ?? null) !==
+          (originCommit.author?.node_id ?? null)
       )
         limitations.add(
           `${origin.pull.node_id}: retained primary author identity differs between commits`,
@@ -437,6 +469,7 @@ export async function prepareWorkUnitEvidence(
           acceptancePullRequestId: copied.integration.evidence.pull.node_id,
           acceptedCommitSha: copied.acceptedCommitSha,
           preexistingCommitShas: copied.preexistingCommitShas,
+          ...(repair ? { repair } : {}),
         },
       });
       continue;
@@ -495,14 +528,11 @@ export function validateWorkUnitPartition(
   units: readonly { claimIds: readonly string[] }[],
 ): boolean {
   if (evidence.limitations.length > 0) return false;
-  const available = new Set(evidence.claims.map((claim) => claim.id));
-  const consumed = new Set<string>();
-  for (const unit of units) {
-    if (unit.claimIds.length === 0) return false;
-    for (const id of unit.claimIds) {
-      if (!available.has(id) || consumed.has(id)) return false;
-      consumed.add(id);
-    }
-  }
-  return consumed.size === available.size;
+  const available = new Map<string, number>();
+  for (const claim of evidence.claims)
+    if (!available.has(claim.id)) available.set(claim.id, available.size);
+  return completeClaimPartition(
+    available.size,
+    units.map((unit) => unit.claimIds.map((id) => available.get(id) ?? -1)),
+  );
 }

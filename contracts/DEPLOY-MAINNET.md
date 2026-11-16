@@ -93,7 +93,7 @@ project activation, wallet binding or a first payment; continue those under
 
 ### Token-2022 owner vault setup upgrade (28 October 2026)
 
-The owner approved this exact program upgrade to enable the selected PMUP vault.
+The owner approved this exact program upgrade.
 The previous deployment above remains historical evidence. The upgrade finalized
 at slot **462,466,131**, transaction
 [`4cScJHGH…WP2T1`](https://solscan.io/tx/4cScJHGHPKNp23A5NDJ5Ydte3LbzmufkaVo22y9fmG3fKgBjHikrX7TvQFCjtruArhbdTb6zGBpZwNkzUCMWP2T1).
@@ -693,9 +693,10 @@ Do this section for one network. Finish it, reconcile the first payout, and
 record the evidence before you start the next network. A human or an
 owner-authorized agent may run these steps within the approved financial scope.
 
-The code enables only Base mainnet (section 3.6). Every other value in
+The code enables Base mainnet (section 3.6), Robinhood Chain and Solana
+mainnet (section 3.7). The Ethereum value in
 `workers/payment-executor/mainnet-execution.mjs` is `false`, and the
-executor and the attester refuse those mainnets before they read a signer
+executor and the attester refuse that mainnet before they read a signer
 secret. `workers/payment-executor/configure.mjs --stack production`
 generates the production stack for one mainnet. It is the identity attester
 Worker only (PAY-05). Slop holds no relayer key and runs no dispatcher or
@@ -1127,6 +1128,21 @@ snapshot leaves an existing attester unchanged. Do not delete the signing
 secret as a stop procedure: enabling that network later requires it. Do
 not delete the Worker: that deletes its signing journal. Slop cannot stop a payment that the project
 or a permissionless executor submits for an approved and funded obligation.
+
+### 3.7 Robinhood Chain and Solana mainnet activation
+
+Operator decision of 14 November 2026: `robinhood-mainnet` and
+`solana-mainnet` are `true` in `mainnet-execution.mjs`. The release derives
+the Pages `PAYMENT_NETWORKS` and the attester bindings from that file, as for
+Base (section 3.6). Both attester Workers already existed with their vault
+pins and their secrets installed (`PAYMENT_RPC_URLS` and
+`SIGNER_PRIVATE_KEY` for Robinhood Chain, `PAYMENT_RPC_URLS` and
+`SOLANA_SIGNER_SEED` for Solana); the release checks the names and deploys
+each with its cron. The readiness report (section 3.3) and the first payout
+reconciliation (section 3.5) on each network were not run before the switch.
+The Robinhood Chain `PAYMENT_RPC_URLS` endpoint must serve the finalized
+tag; if it does not, the attester refuses to sign and its run fails in the
+Worker logs. Ethereum stays off.
 
 ## 4. EVM monthly reserve V2 upgrade
 

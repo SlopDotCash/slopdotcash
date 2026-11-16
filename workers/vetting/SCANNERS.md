@@ -18,17 +18,19 @@ make a project clearance or ban decision. The historical secure-VM contract
 still parses stored v1 results.
 
 The operator supplies both profiles: reviewer class, endpoint, model, API key,
-output-token limit and rate card. Owner decision D16 approves exactly two
-profiles (`PINNED_SCANNER_PROFILES`), both through Surplus Intelligence:
+output-token limit and rate card. Owner decision D16 approves the transports;
+the 11 November 2026 model decision selects these two profiles (`PINNED_SCANNER_PROFILES`), both through Surplus Intelligence:
 
 | Transport | Reviewer | Endpoint | Model |
 | --- | --- | --- | --- |
-| Anthropic Messages | `opus` | `https://api.surplusintelligence.ai/anthropic/v1/messages` | `claude-opus-5.5` |
-| OpenAI Responses | `astra` | `https://api.surplusintelligence.ai/v1/responses` | `gpt-6.1-sol` |
+| Anthropic Messages | `opus` | `https://api.surplusintelligence.ai/anthropic/v1/messages` | `claude-sonnet-5.5` |
+| OpenAI Responses | `astra` | `https://api.surplusintelligence.ai/v1/responses` | `gpt-6.1-terra` |
 
 Any other endpoint, including the providers' own APIs, any other model and any
 other reviewer class fails readiness with "Unapproved scanner profile" before
-a provider is contacted. Surplus takes the account key as a bearer token and
+a provider is contacted. The `opus` and `astra` reviewer keys are retained
+compatibility role names; the model field records Sonnet or Terra. Surplus
+takes the account key as a bearer token and
 records the provider as `surplus`. The marketplace model identity is not
 independently verified. Its returned identity must equal the pinned identity;
 matching a provider's echoed alias alone does not establish version
@@ -67,7 +69,9 @@ credential, prompt or response text is returned in an exception.
 Calls have a 120-second timeout plus 1 ms per estimated input token (at most
 10 minutes) and a 1 MiB response limit. Model refusal,
 truncation, unexpected tools, identity mismatch, invalid evidence references
-and provider errors fail the review. The API key stays in its request header;
+and provider errors fail the review. The scan service records a
+declined review as an incomplete scan instead of retrying it
+(`README.md`). The API key stays in its request header;
 it does not enter the review prompt or evidence record. Keep all returned
 records private. The worker has no signing key and no result-publication route.
 
@@ -81,7 +85,7 @@ The retained scan-service workflow uses real project and vetting handlers,
 SQLite migrations, local workerd R2 and a local HTTP server with synthetic provider responses.
 They check independent request bodies, input and model identity, disagreement,
 partial coverage, unavailable providers, source-linked findings, usage retention
-and readiness before outbound calls. They do not prove an actual Astra or Opus
+and readiness before outbound calls. They do not prove an actual model
 review. No real provider call or credential is part of these tests.
 
 The operational profile, actual provider access, reviewed model version,

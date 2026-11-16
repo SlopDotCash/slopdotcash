@@ -1,7 +1,7 @@
 /** The identity Worker's one-time assertion consume call (points and traces). */
 import { readBoundedJson } from "../src/lib/browser-json";
 
-export type ConsumedIdentity = {
+type ConsumedIdentity = {
   githubId: string;
   githubLogin: string;
   /** Absent on assertions issued before node ids were recorded. */

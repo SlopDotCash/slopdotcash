@@ -1,7 +1,14 @@
 /** A server-created collection recipe, not uploaded resolution evidence. */
+
 import { sha256Hex } from "../../src/lib/async-sha256.mjs";
-import type { ValueEvidence } from "./value-evidence";
-import type { ValueMergeResolution } from "./value-merge-resolution";
+import type {
+  ValueEvidence,
+  ValueMergeResolution,
+} from "./value-evidence-types";
+import type {
+  ValueFileRecovery,
+  ValueFileRequest,
+} from "./value-file-recovery";
 
 export const MERGE_GIT_VERSION = "git version 2.56.0" as const;
 export const LEGACY_MERGE_PROFILE = "git-2.56.0-v1" as const;
@@ -37,6 +44,11 @@ export function mergeInput(evidence: ValueEvidence) {
 }
 export type ValueMergeInput = ReturnType<typeof mergeInput>;
 export interface ValueMergeVerifier {
+  recover?(
+    inputs: ValueMergeInput[],
+    requests: ValueFileRequest[],
+    bundle: ReadableStream<Uint8Array>,
+  ): Promise<ValueFileRecovery>;
   reconstruct(
     inputs: ValueMergeInput[],
     bundle: ReadableStream<Uint8Array>,

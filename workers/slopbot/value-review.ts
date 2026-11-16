@@ -1,4 +1,3 @@
-import { sha256Hex } from "../../src/lib/async-sha256.mjs";
 import {
   VALUE_ASSESSMENT_SCHEMA,
   VALUE_RUBRIC_VERSION,
@@ -7,11 +6,12 @@ import {
 } from "../../src/lib/value-assessment";
 import type { ModelEnv } from "./models";
 import { binarySourceLimitations } from "./value-binary";
-import type { ValueEvidence } from "./value-evidence";
+import type { ValueEvidence } from "./value-evidence-types";
 import {
   runValueInference,
   type ValueInferenceBudget,
 } from "./value-inference";
+import { valueJsonDigest } from "./value-json-digest";
 import { valueModelSource } from "./value-model-source";
 import type { SubscriptionResult } from "./value-producer";
 
@@ -27,6 +27,10 @@ export async function assessValue(
 ) {
   if (evidence.indirectAcceptance)
     throw new Error("Indirect acceptance requires joint work-unit assessment");
+  if (evidence.nativeMergeAcceptance)
+    throw new Error(
+      "Native ancestor acceptance requires joint work-unit assessment",
+    );
   if (evidence.noChangePromotion)
     throw new Error("Unchanged promotions require joint work-unit assessment");
   if (
@@ -72,14 +76,19 @@ export function valueSourceDigest(
   policy: { sha: string; text: string },
 ) {
   const { collectedAt: _collectedAt, ...sourceEvidence } = evidence;
-  return sha256Hex(JSON.stringify({ policy, evidence: sourceEvidence }));
+  return Promise.resolve(valueJsonDigest({ policy, evidence: sourceEvidence }));
 }
 
 export function validateEvidenceAssessment(
   value: unknown,
   evidence: ValueEvidence,
 ) {
-  if (evidence.indirectAcceptance || evidence.noChangePromotion) return null;
+  if (
+    evidence.indirectAcceptance ||
+    evidence.noChangePromotion ||
+    evidence.nativeMergeAcceptance
+  )
+    return null;
   return validateValueAssessment(value, {
     evidenceUrls: new Set(evidence.evidenceUrls),
     relatedPullRequestUrls: new Set(

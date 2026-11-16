@@ -8,10 +8,16 @@ import {
   indexPaymentEvent,
   type PaymentChainAdapter,
 } from "../../backend/payments/ledger";
+import { chainPledgeReaders } from "../../backend/payments/month-pledge-readers";
 import {
-  automaticMonthlyPayment,
-  coordinateMonthlyPayments,
-} from "../../backend/payments/monthly";
+  chainPeriod,
+  pledgeReadPeriods,
+  runConsent,
+  type StoredMonthPledges,
+  storedMonthPledges,
+} from "../../backend/payments/month-pledges";
+import { coordinateMonthlyPayments } from "../../backend/payments/monthly";
+import type { MonthlyAuthorization } from "../../backend/payments/monthly-attestation-types";
 import {
   refreshVaultSnapshots,
   type VaultTotals,
@@ -30,20 +36,17 @@ import {
   verifyEvmDeployment,
 } from "../../contracts/evm/adapter";
 import {
+  assertSolanaGenesis,
   readVaultTotals as readSolanaVaultTotals,
   solanaPaymentAdapter,
 } from "../../contracts/solana/adapter";
-import {
-  chainFamily,
-  type PaymentDeploymentRecord,
-} from "../../src/lib/escrow-policy.mjs";
-import type { PayoutPolicy } from "../../src/lib/payments/contracts";
+import { chainFamily } from "../../src/lib/escrow-policy.mjs";
 import {
   monthlyCutoff,
   parseMonthlySchedule,
   periodEnd,
 } from "../../src/lib/payments/monthly-allocation";
-import type { MonthlyAuthorization } from "../payment-executor/monthly";
+import type { DeploymentView, PaymentDeployment } from "./deployment-types";
 import {
   loadRegistryPaymentDeployments,
   parsePaymentNetworks,
@@ -51,17 +54,6 @@ import {
 import { reconcileFailedAttempts } from "./reconcile";
 import { type ScanEvent, scanEvmPayments, scanSolanaPayments } from "./scanner";
 
-/** One reviewed registry deployment; the private bounty Worker adds its payout policy. */
-export type PaymentDeployment = PaymentDeploymentRecord & {
-  payoutPolicy?: PayoutPolicy;
-};
-/** The fields one chain step reads. Local integration chains (Anvil, fixtures)
- * use network names outside the registry. */
-export type DeploymentView<
-  Fields extends keyof PaymentDeployment,
-  OptionalFields extends keyof PaymentDeployment = never,
-> = Pick<PaymentDeployment, Exclude<Fields, "network">> &
-  Partial<Pick<PaymentDeployment, OptionalFields>> & { network: string };
 export interface PaymentsWorkerEnvironment {
   /** Private worker only. Its entrypoint binds the separate private ledger. */
   PAYMENT_SCOPE?: "security-bounty";
@@ -89,6 +81,15 @@ export interface PaymentsWorkerEnvironment {
    */
   MONTHLY_PAYMENT_SCHEDULE?: string;
 }
+
+function paymentSolanaGenesis(env: PaymentsWorkerEnvironment, network: string) {
+  const pins = JSON.parse(env.PAYMENT_SOLANA_GENESIS ?? "{}") as Partial<
+    Record<string, unknown>
+  >;
+  const pin = pins?.[network];
+  return typeof pin === "string" && pin.length > 0 ? pin : undefined;
+}
+
 /** The served networks' reviewed vaults, read from the D1 project registry. */
 export function registryDeployments(env: PaymentsWorkerEnvironment) {
   return loadRegistryPaymentDeployments(
@@ -180,8 +181,11 @@ export async function recoverUncertainAttempts(
             ).bind(attempt.idempotencyKey),
             // A dispatcher may be mid-submit under a live lease: keep it, so
             // its own completion batch still matches the token.
+            // Only the batch that actually retired this attempt may reopen
+            // the outbox. A delayed duplicate response can follow a newer
+            // submitted or held successor and must leave that state intact.
             env.PAYMENTS_DB.prepare(
-              "UPDATE payment_outbox SET state='ready',lease_token=NULL,lease_until=NULL,updated_at=? WHERE obligation_id=? AND state!='paid' AND NOT (state='processing' AND lease_until IS NOT NULL AND lease_until > ?)",
+              "UPDATE payment_outbox SET state='ready',lease_token=NULL,lease_until=NULL,updated_at=? WHERE obligation_id=? AND changes()=1 AND state!='paid' AND NOT (state='processing' AND lease_until IS NOT NULL AND lease_until > ?)",
             ).bind(
               new Date().toISOString(),
               attempt.obligationId,
@@ -416,10 +420,9 @@ export async function runMonthlyCommitments(
           now.toISOString(),
         )
         .run();
-      const automatic = await automaticMonthlyPayment(
-        env.PAYMENTS_DB,
-        plan.request.projectId,
-      );
+      // A month pledged on chain may be admitted with automatic payment off
+      // (operator decision, 15 November 2026).
+      const automatic = await runConsent(env.PAYMENTS_DB, plan.request);
       const cutoff = monthlyCutoff(schedule, plan.request.period);
       const closes = monthlyCutoff(
         schedule,
@@ -560,9 +563,7 @@ export async function ingestPaymentEvent(
     deployment.rotationDelaySeconds &&
     deployment.rotationAuthority
   ) {
-    const genesis = (
-      JSON.parse(env.PAYMENT_SOLANA_GENESIS ?? "{}") as Record<string, string>
-    )[deployment.network];
+    const genesis = paymentSolanaGenesis(env, deployment.network);
     if (!genesis) throw new Error("Solana genesis trust root unavailable");
     adapter = solanaPaymentAdapter({
       ...deployment,
@@ -645,6 +646,65 @@ export async function readDeploymentVaultTotals(
     projectPda: deployment.projectPda,
   });
 }
+/** Months whose stored pledge is still open, for one vault. */
+async function storedOpenPledgePeriods(
+  db: D1Database,
+  deployment: { projectId: string; network: string; vault: string },
+): Promise<string[]> {
+  const row = await db
+    .prepare(
+      "SELECT json_group_array(period) periods FROM (SELECT period FROM vault_month_pledges WHERE project_id=? AND network=? AND vault=? AND open=1 ORDER BY period)",
+    )
+    .bind(deployment.projectId, deployment.network, deployment.vault)
+    .first<{ periods: string }>();
+  return JSON.parse(row?.periods ?? "[]") as string[];
+}
+
+/**
+ * Reads the vault's month pledges at the totals' block (EVM) or at the
+ * finalized commitment (Solana), from the previous month to eleven months
+ * ahead. Null when the vault's contract has no pledge support, including
+ * every vault while the adapters have no pledge reader.
+ */
+export async function readDeploymentMonthPledges(
+  deployment: DeploymentView<"chain" | "vault", "programId" | "projectPda">,
+  rpcUrl: string,
+  totals: Pick<VaultTotals, "blockNumber" | "blockTime">,
+  readers = chainPledgeReaders,
+  /** Months stored open earlier: a lapsed lock stays read until released. */
+  storedOpen: readonly string[] = [],
+): Promise<StoredMonthPledges | null> {
+  const periods = [
+    ...new Set([
+      ...storedOpen,
+      ...pledgeReadPeriods(new Date(totals.blockTime)),
+    ]),
+  ]
+    .sort()
+    .map(chainPeriod);
+  if (chainFamily(deployment.chain) === "evm") {
+    if (!readers.evm) return null;
+    const read = await readers.evm({
+      rpcUrl,
+      vault: deployment.vault,
+      periods,
+      blockTag: `0x${BigInt(totals.blockNumber).toString(16)}`,
+    });
+    return read === null ? null : storedMonthPledges(read);
+  }
+  if (!readers.solana) return null;
+  if (!deployment.programId || !deployment.projectPda)
+    throw new Error("Solana project deployment missing");
+  const read = await readers.solana({
+    rpcUrl,
+    network: deployment.network,
+    programId: deployment.programId,
+    projectPda: deployment.projectPda,
+    periods,
+  });
+  return read === null ? null : storedMonthPledges(read);
+}
+
 /**
  * The cron's chain read: discover the served networks' vaults in the D1
  * registry, store each vault's finalized counters in vault_snapshots, then
@@ -663,7 +723,32 @@ export async function syncRegistryVaults(env: PaymentsWorkerEnvironment) {
       env.PAYMENTS_DB,
       deployments,
       rpcUrls,
-      readDeploymentVaultTotals,
+      async (deployment, rpcUrl) => {
+        if (chainFamily(deployment.chain) === "solana")
+          await assertSolanaGenesis({
+            rpcUrl,
+            genesisHash: paymentSolanaGenesis(env, deployment.network),
+          });
+        const totals = await readDeploymentVaultTotals(deployment, rpcUrl);
+        if (deployment.payoutPolicy === "security-bounty") return totals;
+        // A failed pledge read keeps the stored pledges and is reported; the
+        // counters still refresh.
+        try {
+          return {
+            ...totals,
+            monthPledges: await readDeploymentMonthPledges(
+              deployment,
+              rpcUrl,
+              totals,
+              chainPledgeReaders,
+              await storedOpenPledgePeriods(env.PAYMENTS_DB, deployment),
+            ),
+          };
+        } catch (error) {
+          failures.push(error);
+          return totals;
+        }
+      },
     );
   } catch (error) {
     failures.push(error);
@@ -682,7 +767,10 @@ export async function syncRegistryVaults(env: PaymentsWorkerEnvironment) {
       else
         await scanSolanaPayments(
           env.PAYMENTS_DB,
-          deployment,
+          {
+            ...deployment,
+            genesisHash: paymentSolanaGenesis(env, deployment.network),
+          },
           rpcUrls[deployment.network],
           index,
         );

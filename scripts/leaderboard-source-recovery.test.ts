@@ -29,10 +29,15 @@ import {
   penaltyScoreInput,
 } from "../tests/penalty-score-fixture";
 import {
+  collectSearchReferences,
   GitHubGraphqlClient,
   generateLeaderboardFromGitHub,
   MAX_GRAPHQL_REQUEST_ATTEMPTS,
+  MAX_TRANSIENT_ATTEMPTS,
+  type OutcomeCommitIdentity,
+  OutcomeCommitLineLoader,
   runGenerator,
+  SourceNodeUnavailableError,
   writeLeaderboardAtomically,
 } from "./generate-leaderboard";
 import {
@@ -48,10 +53,344 @@ afterEach(() => {
 });
 const sha256 = (value: string) =>
   createHash("sha256").update(value).digest("hex");
-const connection = (nodes: unknown[]) => ({
+const connection = <T>(nodes: T[]) => ({
   totalCount: nodes.length,
   nodes,
   pageInfo: { hasNextPage: false, endCursor: null as string | null },
+});
+
+const lineIdentity = (index: number): OutcomeCommitIdentity => ({
+  id: `C_${index.toString(16).padStart(40, "0")}`,
+  oid: index.toString(16).padStart(40, "0"),
+  parentCount: 1,
+  author: penaltyScoreInput([]).mergedPullRequestOutcomes[0].author,
+});
+
+function lineCacheFixture(identities: OutcomeCommitIdentity[]) {
+  const calls: string[][] = [];
+  let transform: (nodes: unknown[], call: number) => unknown[] = (nodes) =>
+    nodes;
+  const client = {
+    async execute(_document: string, variables: Record<string, unknown> = {}) {
+      const ids = variables.ids as string[];
+      calls.push([...ids]);
+      const nodes = ids.map((id) => {
+        const index = identities.findIndex((identity) => identity.id === id);
+        const identity = required(identities[index]);
+        return {
+          __typename: "Commit",
+          id,
+          oid: identity.oid,
+          repository: { id: "R_line_cache" },
+          additions: index + 1,
+          deletions: index % 3,
+        };
+      });
+      return { nodes: transform(nodes, calls.length) };
+    },
+  };
+  return {
+    calls,
+    client,
+    loader: new OutcomeCommitLineLoader(client),
+    transform(next: typeof transform) {
+      transform = next;
+    },
+  };
+}
+
+test("immutable line cache batches unique commits and reuses only this run's successful statistics", async () => {
+  const identities = Array.from({ length: 205 }, (_, index) =>
+    lineIdentity(index + 1),
+  );
+  const f = lineCacheFixture(identities);
+  await f.loader.hydrate("R_line_cache", identities.slice(0, 150));
+  const hydrated = await f.loader.hydrate("R_line_cache", identities);
+  await f.loader.hydrate("R_line_cache", identities.slice(10, 100));
+  expect(f.calls.map((ids) => ids.length)).toEqual([100, 50, 55]);
+  expect(new Set(f.calls.flat()).size).toBe(205);
+  expect(hydrated[204]).toMatchObject({
+    oid: identities[204].oid,
+    additions: 205,
+    deletions: 0,
+  });
+  expect(hydrated[0]).not.toHaveProperty("id");
+  await new OutcomeCommitLineLoader(f.client).hydrate(
+    "R_line_cache",
+    identities.slice(0, 1),
+  );
+  expect(f.calls.map((ids) => ids.length)).toEqual([100, 50, 55, 1]);
+});
+
+test("a failed later statistics batch cannot warm an earlier partial load", async () => {
+  const identities = Array.from({ length: 101 }, (_, index) =>
+    lineIdentity(index + 1),
+  );
+  const f = lineCacheFixture(identities);
+  f.transform((nodes, call) => (call === 2 ? [] : nodes));
+  await expect(f.loader.hydrate("R_line_cache", identities)).rejects.toThrow(
+    "statistics are incomplete",
+  );
+  f.transform((nodes) => nodes);
+  await f.loader.hydrate("R_line_cache", identities);
+  expect(f.calls.map((ids) => ids.length)).toEqual([100, 1, 100, 1]);
+});
+
+test("an unavailable commit cannot escape as a missing PR or warm the cache", async () => {
+  const identities = [lineIdentity(1)];
+  const f = lineCacheFixture(identities);
+  f.transform(() => {
+    throw new SourceNodeUnavailableError([
+      { nodeId: identities[0].id, reason: "NOT_FOUND" },
+    ]);
+  });
+  const failure = await f.loader
+    .hydrate("R_line_cache", identities)
+    .catch((error: unknown) => error);
+  expect(failure).toBeInstanceOf(Error);
+  expect(failure).not.toBeInstanceOf(SourceNodeUnavailableError);
+  expect((failure as Error).cause).toBeInstanceOf(SourceNodeUnavailableError);
+  f.transform((nodes) => nodes);
+  await f.loader.hydrate("R_line_cache", identities);
+  expect(f.calls).toHaveLength(2);
+});
+
+for (const invalid of [
+  "missing",
+  "null",
+  "reordered",
+  "duplicate",
+  "wrong-id",
+  "wrong-sha",
+  "wrong-kind",
+  "wrong-repository",
+  "missing-count",
+  "negative",
+  "fractional",
+  "overflow",
+] as const) {
+  test(`immutable line cache refuses ${invalid} statistics without caching them`, async () => {
+    const identities = [lineIdentity(1), lineIdentity(2)];
+    const f = lineCacheFixture(identities);
+    f.transform((nodes) => {
+      if (invalid === "missing") return nodes.slice(1);
+      if (invalid === "null") return [null, nodes[1]];
+      if (invalid === "reordered") return [...nodes].reverse();
+      if (invalid === "duplicate") return [nodes[0], nodes[0]];
+      const first = nodes[0] as Record<string, unknown>;
+      if (invalid === "wrong-id") first.id = "C_wrong";
+      if (invalid === "wrong-sha") first.oid = "f".repeat(40);
+      if (invalid === "wrong-kind") first.__typename = "PullRequest";
+      if (invalid === "wrong-repository") first.repository = { id: "R_wrong" };
+      if (invalid === "missing-count") delete first.deletions;
+      if (invalid === "negative") first.additions = -1;
+      if (invalid === "fractional") first.additions = 0.5;
+      if (invalid === "overflow") first.additions = Number.MAX_SAFE_INTEGER + 1;
+      return nodes;
+    });
+    await expect(
+      f.loader.hydrate("R_line_cache", identities),
+    ).rejects.toThrow();
+    f.transform((nodes) => nodes);
+    await f.loader.hydrate("R_line_cache", identities);
+    expect(f.calls).toEqual([
+      identities.map((row) => row.id),
+      identities.map((row) => row.id),
+    ]);
+  });
+}
+
+test("immutable line cache checks input identity and metadata before accepting a cache hit", async () => {
+  const identity = lineIdentity(1);
+  const f = lineCacheFixture([identity]);
+  for (const changed of [
+    { ...identity, oid: "f".repeat(40) },
+    { ...identity, parentCount: 2 },
+  ]) {
+    await expect(
+      f.loader.hydrate("R_line_cache", [identity, changed]),
+    ).rejects.toThrow("immutable commit metadata");
+  }
+  expect(f.calls).toEqual([]);
+  await f.loader.hydrate("R_line_cache", [identity]);
+  await expect(f.loader.hydrate("R_other", [identity])).rejects.toThrow(
+    "immutable commit metadata",
+  );
+  await expect(
+    f.loader.hydrate("R_line_cache", [{ ...identity, parentCount: 2 }]),
+  ).rejects.toThrow("immutable commit metadata");
+  await expect(
+    f.loader.hydrate("R_line_cache", [{ ...identity, id: "C_other" }]),
+  ).rejects.toThrow("immutable SHA");
+  const author = required(identity.author);
+  const renamed = {
+    ...identity,
+    author: { ...author, login: "renamed", url: "https://github.com/renamed" },
+  };
+  expect(
+    (await f.loader.hydrate("R_line_cache", [renamed]))[0].author?.login,
+  ).toBe("renamed");
+  expect(f.calls).toHaveLength(1);
+});
+
+test("missing author links retain verified identities across every occurrence", async () => {
+  const identity = lineIdentity(1);
+  const missing = { ...identity, author: null };
+  const f = lineCacheFixture([identity]);
+  const first = await f.loader.hydrate("R_line_cache", [missing]);
+  expect(first[0].author).toBeNull();
+  const later = await f.loader.hydrate("R_line_cache", [identity, missing]);
+  expect(later.map((row) => row.author?.id)).toEqual([
+    identity.author?.id,
+    identity.author?.id,
+  ]);
+  expect(first[0].author?.id).toBe(identity.author?.id);
+  expect(f.calls).toHaveLength(1);
+  const reverse = lineCacheFixture([identity]);
+  expect(
+    (await reverse.loader.hydrate("R_line_cache", [missing, identity])).map(
+      (row) => row.author?.id,
+    ),
+  ).toEqual([identity.author?.id, identity.author?.id]);
+});
+
+test("conflicting linked authors cannot select a recipient or alter prior evidence", async () => {
+  const identity = lineIdentity(1);
+  const other = {
+    ...identity,
+    author: { ...required(identity.author), id: "U_other" },
+  };
+  const f = lineCacheFixture([identity]);
+  await expect(
+    f.loader.hydrate("R_line_cache", [identity, other]),
+  ).rejects.toThrow("linked commit author");
+  expect(f.calls).toHaveLength(0);
+  const prior = await f.loader.hydrate("R_line_cache", [identity]);
+  await expect(f.loader.hydrate("R_line_cache", [other])).rejects.toThrow(
+    "linked commit author",
+  );
+  expect(prior[0].author?.id).toBe(identity.author?.id);
+});
+
+test("a failed statistics load cannot publish a staged author link", async () => {
+  const identities = [lineIdentity(1), lineIdentity(2)];
+  const f = lineCacheFixture(identities);
+  const prior = await f.loader.hydrate("R_line_cache", [
+    { ...identities[0], author: null },
+  ]);
+  f.transform(() => []);
+  await expect(f.loader.hydrate("R_line_cache", identities)).rejects.toThrow(
+    "incomplete",
+  );
+  expect(prior[0].author).toBeNull();
+  f.transform((nodes) => nodes);
+  await f.loader.hydrate("R_line_cache", identities);
+  expect(prior[0].author?.id).toBe(identities[0].author?.id);
+});
+
+test("ordinary commit pagination and PR search pages share one flat statistics cache", async () => {
+  const identities = Array.from({ length: 151 }, (_, index) =>
+    lineIdentity(index + 1),
+  );
+  const repositoryNodeId = required(repository.expectedNodeId);
+  const statsCalls: string[][] = [];
+  const commitNode = (row: OutcomeCommitIdentity) => ({
+    commit: {
+      id: row.id,
+      oid: row.oid,
+      parents: { totalCount: row.parentCount },
+      author: {
+        user: row.author
+          ? { ...row.author, __typename: row.author.kind }
+          : null,
+      },
+    },
+  });
+  const makePull = (number: number, rows: OutcomeCommitIdentity[]) => ({
+    ...nodeFor(retained),
+    id: `PR_line_${number}`,
+    number,
+    url: `${repository.githubUrl}/pull/${number}`,
+    headRefOid: rows.at(-1)?.oid,
+    commits: {
+      ...connection(rows.slice(0, 100).map(commitNode)),
+      totalCount: rows.length,
+      pageInfo: {
+        hasNextPage: rows.length > 100,
+        endCursor: rows.length > 100 ? "commits-100" : null,
+      },
+    },
+  });
+  const first = makePull(1, identities);
+  const second = makePull(2, [identities[150]]);
+  const client = {
+    async execute(document: string, variables: Record<string, unknown> = {}) {
+      if (document.includes("query LeaderboardSearchReferences")) {
+        expect(variables.withMergeCommits).toBe(true);
+        expect(document).not.toContain("oid additions deletions");
+        return {
+          search: {
+            issueCount: 2,
+            nodes: [variables.after ? second : first],
+            pageInfo: {
+              hasNextPage: !variables.after,
+              endCursor: variables.after ? null : "search-2",
+            },
+          },
+        };
+      }
+      if (document.includes("query LeaderboardOutcomeCommits")) {
+        expect(document).not.toContain("oid additions deletions");
+        return {
+          node: {
+            ...first,
+            commits: {
+              ...connection(identities.slice(100).map(commitNode)),
+              totalCount: identities.length,
+            },
+          },
+        };
+      }
+      const ids = variables.ids as string[];
+      statsCalls.push([...ids]);
+      return {
+        nodes: ids.map((id) => ({
+          __typename: "Commit",
+          id,
+          oid: required(identities.find((row) => row.id === id)).oid,
+          repository: { id: repositoryNodeId },
+          additions: 1,
+          deletions: 0,
+        })),
+      };
+    },
+  };
+  const loader = new OutcomeCommitLineLoader(client);
+  const collect = () =>
+    collectSearchReferences(
+      client as never,
+      repository,
+      new Date("2026-11-01T00:00:00Z"),
+      new Date("2026-11-20T00:00:00Z"),
+      "merged",
+      "is:pr is:merged",
+      "PullRequest",
+      { searchSliceCount: 0 },
+      loader,
+      repositoryNodeId,
+    );
+  const references = await collect();
+  expect(references.map((row) => row.outcome?.commits?.length)).toEqual([
+    151, 1,
+  ]);
+  expect(statsCalls.map((ids) => ids.length)).toEqual([100, 51]);
+  expect(new Set(statsCalls.flat()).size).toBe(151);
+  expect(references[1].outcome?.commits?.[0]).toMatchObject({
+    additions: 1,
+    deletions: 0,
+  });
+  await collect();
+  expect(statsCalls).toHaveLength(2);
 });
 function required<T>(value: T | null | undefined): T {
   if (value === undefined || value === null)
@@ -90,7 +429,11 @@ const nodeFor = (pull: (typeof pulls)[number]) => ({
   commits: connection([
     {
       commit: {
+        id: `C_${pull.headRefOid}`,
         oid: pull.headRefOid,
+        additions: pull.additions,
+        deletions: pull.deletions,
+        parents: { totalCount: 1 },
         author: { user: { ...pull.author, __typename: "User" } },
       },
     },
@@ -109,6 +452,7 @@ const openPull = (id: string, number: number) => ({
 });
 const stillOpenPull = openPull("PR_still_open", 81);
 const mergedAfterListing = openPull("PR_merged_after_listing", 82);
+const updatedWhileListing = openPull("PR_updated_while_listing", 83);
 const openIssueNode = (id: string, number: number, open: boolean) => ({
   __typename: "Issue",
   id,
@@ -169,7 +513,22 @@ type Comparison =
   | "wrong-base"
   | "changed-count"
   | "unavailable"
-  | "invalid-range";
+  | "invalid-range"
+  | "line-missing"
+  | "line-null"
+  | "line-unavailable"
+  | "line-wrong-id"
+  | "line-wrong-sha"
+  | "line-wrong-kind"
+  | "line-wrong-repository"
+  | "line-negative"
+  | "line-fractional"
+  | "line-overflow"
+  | "line-missing-count"
+  | "overlap-parents"
+  | "overlap-author"
+  | "overlap-kind"
+  | "overlap-login";
 
 type NativeFileFixture = {
   directory: string;
@@ -292,7 +651,19 @@ async function nativeFileFixture(): Promise<NativeFileFixture> {
 }
 
 async function fixture(
-  mode: "removed" | "persistent" | "joint" | "healthy" | "open-closure",
+  mode:
+    | "removed"
+    | "persistent"
+    | "joint"
+    | "healthy"
+    | "open-closure"
+    | "open-files-missing"
+    | "open-files-later-missing"
+    | "open-files-later-changed"
+    | "commit-lines-missing"
+    | "commit-lines-negative"
+    | "open-reorder"
+    | "open-skip",
   failure?: Failure,
   productionProjects?: readonly string[],
   comparison?: Comparison,
@@ -303,20 +674,40 @@ async function fixture(
   let attempts = 0;
   let repositoryReads = 0;
   let forbiddenSourceReads = 0;
+  let openPullRequestListings = 0;
   const comparisonPages: number[] = [];
+  const commitLineBatches: string[][] = [];
   const recoveredFiles: PullRequestGitFiles[] = [];
   const recoveryInputs: PullRequestGitFilesInput[] = [];
   const range = Array.from({ length: 251 }, (_, index) => ({
     commit: {
+      id: `C_${index === 250 ? retained.headRefOid : (index + 1).toString(16).padStart(40, "0")}`,
       oid:
         index === 250
           ? retained.headRefOid
           : (index + 1).toString(16).padStart(40, "0"),
+      additions: index + 1,
+      deletions: index % 3,
+      parents: { totalCount: 1 },
       author: { user: { ...retained.author, __typename: "User" } },
     },
   }));
   const sourceNodeFor = (pull: (typeof pulls)[number]) => {
     const node = nodeFor(pull);
+    const firstCommit = node.commits.nodes[0] as {
+      commit: { additions?: number; deletions: number };
+    };
+    if (pull.id === retained.id && mode === "commit-lines-missing")
+      delete firstCommit.commit.additions;
+    if (pull.id === retained.id && mode === "commit-lines-negative")
+      firstCommit.commit.deletions = -1;
+    if (
+      comparison === "overlap-login" &&
+      node.author.id === retained.author?.id
+    ) {
+      node.author.login = "renamed-contributor";
+      node.author.url = "https://github.com/renamed-contributor";
+    }
     if (comparison && pull.id === retained.id)
       node.commits = {
         totalCount: range.length,
@@ -340,7 +731,11 @@ async function fixture(
         commits: connection([
           {
             commit: {
+              id: `C_${nativeFiles.head}`,
               oid: nativeFiles.head,
+              additions: nativeFiles.expected.additions,
+              deletions: nativeFiles.expected.deletions,
+              parents: { totalCount: 1 },
               author: { user: { ...pull.author, __typename: "User" } },
             },
           },
@@ -370,12 +765,57 @@ async function fixture(
             searchQuery: string;
             ids: string[];
             id: string;
+            after: string | null;
           };
         };
         requests++;
         const data: Record<string, unknown> = {};
         let errors: unknown[] | undefined;
-        if (query.includes("query LeaderboardPreflight")) {
+        if (query.includes("query LeaderboardOutcomeCommitLines")) {
+          commitLineBatches.push(v.ids);
+          const lineSources = comparison
+            ? [
+                ...range,
+                ...pulls.flatMap((pull) => sourceNodeFor(pull).commits.nodes),
+              ]
+            : pulls.flatMap((pull) => sourceNodeFor(pull).commits.nodes);
+          const nodes: Array<Record<string, unknown> | null> = v.ids.map(
+            (id) => {
+              const commit = required(
+                lineSources.find((row) => row.commit.id === id),
+              ).commit;
+              return {
+                __typename: "Commit",
+                id,
+                oid: commit.oid,
+                repository: { id: nodeId(repository.owner, repository.name) },
+                additions: commit.additions,
+                deletions: commit.deletions,
+              };
+            },
+          );
+          if (comparison === "line-missing") nodes.pop();
+          if (comparison === "line-null") nodes[0] = null;
+          if (comparison === "line-unavailable") {
+            nodes[0] = null;
+            errors = [{ type: "NOT_FOUND", path: ["nodes", 0] }];
+          }
+          const first = nodes[0];
+          if (first) {
+            if (comparison === "line-wrong-id") first.id = "C_wrong";
+            if (comparison === "line-wrong-sha") first.oid = "0".repeat(40);
+            if (comparison === "line-wrong-kind")
+              first.__typename = "PullRequest";
+            if (comparison === "line-wrong-repository")
+              first.repository = { id: "R_other" };
+            if (comparison === "line-negative") first.additions = -1;
+            if (comparison === "line-fractional") first.deletions = 0.5;
+            if (comparison === "line-overflow")
+              first.additions = Number.MAX_SAFE_INTEGER + 1;
+            if (comparison === "line-missing-count") delete first.deletions;
+          }
+          data.nodes = nodes;
+        } else if (query.includes("query LeaderboardPreflight")) {
           if (
             v.owner === TARGET_REPOSITORIES[0].owner &&
             v.name === TARGET_REPOSITORIES[0].name
@@ -431,12 +871,49 @@ async function fixture(
             nodes,
             pageInfo: { hasNextPage: false, endCursor: null },
           };
+        } else if (
+          (mode === "open-reorder" || mode === "open-skip") &&
+          query.includes("query LeaderboardOpenPullRequest") &&
+          v.owner === repository.owner &&
+          v.name === repository.name
+        ) {
+          // GitHub lists open pull requests newest update first and pages them
+          // with a keyset cursor (one per page here). In the first listing,
+          // PR_updated_while_listing is on page two. It is updated after page
+          // one is served, so it now sorts before the cursor: page two comes
+          // back empty while totalCount stays 2. "open-skip" repeats that in
+          // every listing.
+          if (v.after === null) openPullRequestListings++;
+          const first = mode === "open-skip" || openPullRequestListings === 1;
+          const order = first
+            ? [stillOpenPull, updatedWhileListing]
+            : [updatedWhileListing, stillOpenPull];
+          const page =
+            v.after === null ? order.slice(0, 1) : first ? [] : order.slice(1);
+          data.repository = {
+            id: nodeId(v.owner, v.name),
+            pullRequests: {
+              totalCount: 2,
+              nodes: page.map((pull) => ({
+                id: pull.id,
+                updatedAt: pull.updatedAt,
+                headRefOid: pull.headRefOid,
+              })),
+              pageInfo:
+                v.after === null
+                  ? {
+                      hasNextPage: true,
+                      endCursor: `open-pulls-${openPullRequestListings}`,
+                    }
+                  : { hasNextPage: false, endCursor: null },
+            },
+          };
         } else if (query.includes("query LeaderboardOpen")) {
           const field = query.includes("query LeaderboardOpenIssue")
             ? "issues"
             : "pullRequests";
           const listed =
-            mode === "open-closure" &&
+            (mode === "open-closure" || mode.startsWith("open-files-")) &&
             v.owner === repository.owner &&
             v.name === repository.name;
           data.repository = {
@@ -460,6 +937,16 @@ async function fixture(
           data.nodes = v.ids.map((id: string, index: number) =>
             openIssueNode(id, 90 + index, id === "I_still_open"),
           );
+        } else if (query.includes("query LeaderboardMoreFiles")) {
+          data.node = {
+            state: "OPEN",
+            isDraft: false,
+            headRefOid:
+              mode === "open-files-later-changed"
+                ? "a".repeat(40)
+                : stillOpenPull.headRefOid,
+            files: null,
+          };
         } else if (
           query.includes("query LeaderboardReviewedPullRequestReferences")
         ) {
@@ -518,14 +1005,31 @@ async function fixture(
         ) {
           data.nodes = v.ids.map((id: string) =>
             id === stillOpenPull.id
-              ? { ...nodeFor(stillOpenPull), state: "OPEN" }
-              : id === mergedAfterListing.id
-                ? {
-                    ...nodeFor(mergedAfterListing),
-                    mergedAt: GENERATED_AT,
-                    closedAt: GENERATED_AT,
-                  }
-                : sourceNodeFor(required(pulls.find((p) => p.id === id))),
+              ? {
+                  ...nodeFor(stillOpenPull),
+                  state: "OPEN",
+                  files:
+                    mode === "open-files-missing"
+                      ? null
+                      : mode.startsWith("open-files-later-")
+                        ? {
+                            ...connection(stillOpenPull.files ?? []),
+                            pageInfo: {
+                              hasNextPage: true,
+                              endCursor: "first-file-page",
+                            },
+                          }
+                        : nodeFor(stillOpenPull).files,
+                }
+              : id === updatedWhileListing.id
+                ? { ...nodeFor(updatedWhileListing), state: "OPEN" }
+                : id === mergedAfterListing.id
+                  ? {
+                      ...nodeFor(mergedAfterListing),
+                      mergedAt: GENERATED_AT,
+                      closedAt: GENERATED_AT,
+                    }
+                  : sourceNodeFor(required(pulls.find((p) => p.id === id))),
           );
         } else
           throw new Error(
@@ -566,13 +1070,27 @@ async function fixture(
             sha: comparison === "wrong-base" ? "b".repeat(40) : "a".repeat(40),
           },
           commits: slice.map(({ commit }) => ({
+            node_id: `C_${commit.oid}`,
             sha: commit.oid,
+            parents:
+              comparison === "overlap-parents"
+                ? [{ sha: "a".repeat(40) }, { sha: "b".repeat(40) }]
+                : [{ sha: "a".repeat(40) }],
             author: {
-              node_id: commit.author.user.id,
-              type: "User",
-              login: commit.author.user.login,
+              node_id:
+                comparison === "overlap-author"
+                  ? unaffected.author!.id
+                  : commit.author.user.id,
+              type: comparison === "overlap-kind" ? "Bot" : "User",
+              login:
+                comparison === "overlap-login"
+                  ? "renamed-contributor"
+                  : commit.author.user.login,
               avatar_url: commit.author.user.avatarUrl,
-              html_url: commit.author.user.url,
+              html_url:
+                comparison === "overlap-login"
+                  ? "https://github.com/renamed-contributor"
+                  : commit.author.user.url,
             },
           })),
         });
@@ -692,7 +1210,9 @@ async function fixture(
       attempts,
       repositoryReads,
       forbiddenSourceReads,
+      openPullRequestListings,
       comparisonPages,
+      commitLineBatches,
       recoveredFiles,
       recoveryInputs,
     }),
@@ -1122,6 +1642,22 @@ test("a server-side comparison timeout retries without losing complete merged at
     expect(snapshot.ledger).toEqual(before.ledger);
     expect(snapshot.source.counts.mergedPullRequests).toBe(2);
     expect(f.stats().comparisonPages).toEqual([1, 1, 2, 3]);
+    expect(f.stats().commitLineBatches.map((ids) => ids.length)).toEqual([
+      100, 100, 52,
+    ]);
+    const requestedCommitIds = f.stats().commitLineBatches.flat();
+    expect(new Set(requestedCommitIds).size).toBe(requestedCommitIds.length);
+    expect(
+      snapshot.valueAssessmentCoverage?.find(
+        (row) => row.pullRequestId === retained.id,
+      )?.implementationAllocation?.weights,
+    ).toEqual([
+      {
+        actorNodeId: retained.author!.id,
+        actorLogin: retained.author!.login,
+        changedLines: "31876",
+      },
+    ]);
     assertLeaderboardSnapshot(JSON.parse(await readFile(f.output, "utf8")));
   } finally {
     await f.close();
@@ -1137,6 +1673,110 @@ for (const comparison of ["unavailable", "invalid-range"] as const) {
       expect(f.stats().comparisonPages).toHaveLength(
         comparison === "unavailable" ? MAX_GRAPHQL_REQUEST_ATTEMPTS : 1,
       );
+      expect(await readFile(f.output, "utf8")).toBe("last published bytes\n");
+    } finally {
+      await f.close();
+    }
+  });
+}
+
+for (const comparison of [
+  "line-missing",
+  "line-null",
+  "line-unavailable",
+  "line-wrong-id",
+  "line-wrong-sha",
+  "line-wrong-kind",
+  "line-wrong-repository",
+  "line-negative",
+  "line-fractional",
+  "line-overflow",
+  "line-missing-count",
+] as const) {
+  test(`comparison ${comparison} statistics preserve the last published snapshot`, async () => {
+    setSystemTime(new Date(GENERATED_AT));
+    const f = await fixture("healthy", undefined, undefined, comparison);
+    try {
+      const generation = f.generate();
+      if (comparison === "line-unavailable")
+        await expect(generation).rejects.not.toBeInstanceOf(
+          SourceNodeUnavailableError,
+        );
+      await expect(generation).rejects.toThrow(
+        comparison === "line-missing"
+          ? "Commit statistics are incomplete"
+          : comparison === "line-unavailable"
+            ? "Commit statistics are unavailable"
+            : comparison === "line-null"
+              ? "must be an object"
+              : [
+                    "line-wrong-id",
+                    "line-wrong-sha",
+                    "line-wrong-kind",
+                    "line-wrong-repository",
+                  ].includes(comparison)
+                ? "Commit statistics identity changed"
+                : comparison === "line-missing-count"
+                  ? "must be a finite number"
+                  : "line counts must be non-negative integers",
+      );
+      expect(f.stats().commitLineBatches).toHaveLength(1);
+      expect(f.stats().attempts).toBe(1);
+      expect(await readFile(f.output, "utf8")).toBe("last published bytes\n");
+    } finally {
+      await f.close();
+    }
+  });
+}
+
+for (const comparison of [
+  "overlap-parents",
+  "overlap-author",
+  "overlap-kind",
+] as const) {
+  test(`comparison ${comparison} cannot contradict an already collected immutable commit`, async () => {
+    setSystemTime(new Date(GENERATED_AT));
+    const f = await fixture("healthy", undefined, undefined, comparison);
+    try {
+      await expect(f.generate()).rejects.toThrow(
+        comparison === "overlap-parents"
+          ? "comparison changed immutable commit metadata"
+          : "linked commit author",
+      );
+      expect(f.stats().commitLineBatches).toEqual([]);
+      expect(await readFile(f.output, "utf8")).toBe("last published bytes\n");
+    } finally {
+      await f.close();
+    }
+  });
+}
+
+test("comparison commit authors can retain identity after a login rename", async () => {
+  setSystemTime(new Date(GENERATED_AT));
+  const f = await fixture("healthy", undefined, undefined, "overlap-login");
+  try {
+    const snapshot = await f.generate();
+    expect(
+      snapshot.valueAssessmentCoverage?.find(
+        (row) => row.pullRequestId === retained.id,
+      )?.implementationAllocation?.weights[0],
+    ).toMatchObject({
+      actorNodeId: retained.author!.id,
+      actorLogin: "renamed-contributor",
+      changedLines: "31876",
+    });
+  } finally {
+    await f.close();
+  }
+});
+
+for (const mode of ["commit-lines-missing", "commit-lines-negative"] as const) {
+  test(`ordinary PR ${mode} statistics fail before publication`, async () => {
+    setSystemTime(new Date(GENERATED_AT));
+    const f = await fixture(mode);
+    try {
+      await expect(f.generate()).rejects.toThrow();
+      expect(f.stats().comparisonPages).toEqual([]);
       expect(await readFile(f.output, "utf8")).toBe("last published bytes\n");
     } finally {
       await f.close();
@@ -1184,6 +1824,92 @@ test("open work that closes after the listing leaves the queue instead of stoppi
     });
     expect(f.stats().attempts).toBe(1);
     assertLeaderboardSnapshot(JSON.parse(await readFile(f.output, "utf8")));
+    const historical = structuredClone(snapshot);
+    delete historical.workQueue.pullRequests[0].filesAvailable;
+    assertLeaderboardSnapshot(historical);
+  } finally {
+    await f.close();
+  }
+});
+
+for (const mode of [
+  "open-files-missing",
+  "open-files-later-missing",
+] as const) {
+  test(`${mode}: retain the source and block review selection without inventing file evidence`, async () => {
+    setSystemTime(new Date(GENERATED_AT));
+    const f = await fixture(mode);
+    try {
+      const snapshot = await f.generate();
+      expect(snapshot.source.counts).toMatchObject({
+        openPullRequests: 1,
+        mergedPullRequests: 2,
+      });
+      expect(snapshot.workQueue.pullRequests).toHaveLength(1);
+      expect(snapshot.workQueue.pullRequests[0]).toMatchObject({
+        id: stillOpenPull.id,
+        isDraft: false,
+        filesAvailable: false,
+        actionability: "blocked",
+        selection: { status: "excluded", reasons: ["blocked"] },
+      });
+      assertLeaderboardSnapshot(JSON.parse(await readFile(f.output, "utf8")));
+      expect(
+        snapshot.opportunities.filter(
+          (opportunity) => opportunity.source.id === stillOpenPull.id,
+        ),
+      ).toEqual([]);
+      const forged = structuredClone(snapshot);
+      forged.workQueue.pullRequests[0].actionability = "actionable";
+      forged.workQueue.pullRequests[0].selection = {
+        status: "candidate",
+        reasons: [],
+      };
+      expect(() => assertLeaderboardSnapshot(forged)).toThrow("actionability");
+      expect(f.stats().recoveredFiles).toEqual([]);
+    } finally {
+      await f.close();
+    }
+  });
+}
+
+test("an unavailable later file page at a different head still stops publication", async () => {
+  setSystemTime(new Date(GENERATED_AT));
+  const f = await fixture("open-files-later-changed");
+  try {
+    await expect(f.generate()).rejects.toThrow("files must be an object");
+    expect(await readFile(f.output, "utf8")).toBe("last published bytes\n");
+  } finally {
+    await f.close();
+  }
+});
+
+test("open work updated while the listing pages is listed again instead of stopping the release", async () => {
+  setSystemTime(new Date(GENERATED_AT));
+  const f = await fixture("open-reorder");
+  try {
+    const snapshot = await f.generate();
+    expect(
+      snapshot.workQueue.pullRequests.map((item) => item.id).sort(),
+    ).toEqual([stillOpenPull.id, updatedWhileListing.id].sort());
+    expect(snapshot.source.counts).toMatchObject({ openPullRequests: 2 });
+    expect(f.stats().openPullRequestListings).toBe(2);
+    expect(f.stats().attempts).toBe(1);
+    assertLeaderboardSnapshot(JSON.parse(await readFile(f.output, "utf8")));
+  } finally {
+    await f.close();
+  }
+});
+
+test("an open listing that stays short still fails closed after the bounded retry", async () => {
+  setSystemTime(new Date(GENERATED_AT));
+  const f = await fixture("open-skip");
+  try {
+    await expect(f.generate()).rejects.toThrow(
+      `Open evidence changed during ${MAX_TRANSIENT_ATTEMPTS} consecutive verification attempts`,
+    );
+    expect(f.stats().openPullRequestListings).toBe(MAX_TRANSIENT_ATTEMPTS);
+    expect(await readFile(f.output, "utf8")).toBe("last published bytes\n");
   } finally {
     await f.close();
   }
@@ -1343,5 +2069,152 @@ test("canonical merged file recovery binds to the census repository when no alia
   } finally {
     await f.close();
     await rm(source.directory, { recursive: true, force: true });
+  }
+});
+
+// The joint-hold probe re-checks the identities that failed the discarded first
+// attempt. When more than one of them is still unresolvable, one half of a
+// split batch must not hide the other: every id is probed, every id is held,
+// and none of them reaches hydration.
+test("two unavailable ids in one joint-hold batch are both probed and held instead of failing hydration", async () => {
+  setSystemTime(new Date(GENERATED_AT));
+  const f = await fixture("healthy");
+  const fixtureFetch = globalThis.fetch;
+  const stillGone = new Set([retained.id, unaffected.id]);
+  const probed: string[][] = [];
+  const transport = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    let ids: string[] | undefined;
+    try {
+      const parsed = JSON.parse(String(init?.body ?? "")) as {
+        variables?: { ids?: string[] };
+      };
+      ids = parsed.variables?.ids;
+    } catch {
+      ids = undefined;
+    }
+    if (!Array.isArray(ids) || !ids.some((id) => stillGone.has(id)))
+      return fixtureFetch(input, init);
+    // GitHub still cannot resolve them, and the whole batch is refused first.
+    probed.push(ids);
+    if (ids.length > 1)
+      return new Response("<html>gateway unavailable</html>", {
+        status: 504,
+        headers: { "content-type": "text/html" },
+      });
+    return Response.json({
+      data: {
+        nodes: ids.map((id) =>
+          stillGone.has(id) ? null : { __typename: "PullRequest", id },
+        ),
+        rateLimit: {
+          cost: 1,
+          limit: 5000,
+          remaining: 4000,
+          resetAt: new Date(Date.now() + 3_600_000).toISOString(),
+        },
+      },
+      errors: ids.flatMap((id, index) =>
+        stillGone.has(id)
+          ? [
+              {
+                type: "NOT_FOUND",
+                path: ["nodes", index],
+                message: "Could not resolve requested node",
+              },
+            ]
+          : [],
+      ),
+    });
+  }) as typeof fetch;
+  const client = new GitHubGraphqlClient("fixture-token", transport, {
+    retryBaseDelayMs: 0,
+  });
+  try {
+    const snapshot = await generateLeaderboardFromGitHub(client, {
+      now: new Date(GENERATED_AT),
+      actualNow: new Date(GENERATED_AT),
+      evidenceToken: "fixture-token",
+      sourceRecovery: {
+        unavailableSources: [retained.id, unaffected.id].map((nodeId) => ({
+          nodeId,
+          reason: "NOT_FOUND" as const,
+        })),
+        allowJointHolds: true,
+      },
+    });
+    // The refused batch is retried, then both halves are probed on their own,
+    // in request order, and nothing asks for either id again: they are held.
+    const refused = probed.filter((ids) => ids.length > 1);
+    expect(refused.length).toBeGreaterThan(0);
+    expect(refused.every((ids) => ids.length === 2)).toBe(true);
+    expect(
+      probed.filter((ids) => ids.length === 1),
+      "every still-unavailable id must be re-probed on its own",
+    ).toEqual([[retained.id], [unaffected.id]]);
+    expect(
+      probed.at(-1),
+      "the tail probe must be the last request for either id",
+    ).toEqual([unaffected.id]);
+    const held = required(snapshot.source.unavailableSources);
+    expect(held.map((source) => source.nodeId).sort()).toEqual(
+      [retained.id, unaffected.id].sort(),
+    );
+    expect(
+      held.every((source) => source.unavailableInMergedCensus === true),
+    ).toBe(true);
+    expect(snapshot.source.counts.unavailableSources).toBe(2);
+    expect(snapshot.source.counts.unavailableMergedPullRequests).toBe(2);
+    expect(() => assertLeaderboardSnapshot(snapshot)).not.toThrow();
+  } finally {
+    await f.close();
+  }
+});
+
+// The joint-hold probe re-checks the identities that failed the discarded first
+// attempt, REVIEW_DETAIL_BATCH_SIZE at a time. A gateway that refuses that whole
+// batch (502/503/504 with a non-JSON body) must split it like the other
+// nodes(ids:) callers in the generator instead of failing the run.
+test("a gateway failure on the joint-hold availability batch splits instead of failing the run", async () => {
+  setSystemTime(new Date(GENERATED_AT));
+  const f = await fixture("healthy");
+  const fixtureFetch = globalThis.fetch;
+  const availabilityBatchSizes: number[] = [];
+  const transport = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    const body = typeof init?.body === "string" ? init.body : "";
+    if (body.includes("LeaderboardSourceAvailability")) {
+      const ids =
+        (JSON.parse(body) as { variables?: { ids?: string[] } }).variables
+          ?.ids ?? [];
+      availabilityBatchSizes.push(ids.length);
+      if (ids.length > 1)
+        return new Response("<html>gateway unavailable</html>", {
+          status: 504,
+          headers: { "content-type": "text/html" },
+        });
+    }
+    return fixtureFetch(input, init);
+  }) as typeof fetch;
+  const client = new GitHubGraphqlClient("fixture-token", transport, {
+    retryBaseDelayMs: 0,
+  });
+  try {
+    const snapshot = await generateLeaderboardFromGitHub(client, {
+      now: new Date(GENERATED_AT),
+      actualNow: new Date(GENERATED_AT),
+      evidenceToken: "fixture-token",
+      sourceRecovery: {
+        unavailableSources: [retained.id, unaffected.id].map((nodeId) => ({
+          nodeId,
+          reason: "NOT_FOUND" as const,
+        })),
+        allowJointHolds: true,
+      },
+    });
+    // The joint batch is refused, then re-requested one id at a time.
+    expect(availabilityBatchSizes[0]).toBe(2);
+    expect(availabilityBatchSizes.filter((size) => size === 1)).toHaveLength(2);
+    expect(() => assertLeaderboardSnapshot(snapshot)).not.toThrow();
+  } finally {
+    await f.close();
   }
 });

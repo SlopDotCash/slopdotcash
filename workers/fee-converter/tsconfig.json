@@ -1,0 +1,10 @@
+{
+  "compilerOptions": {
+    "strict": true,
+    "target": "ESNext",
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "noEmit": true
+  },
+  "files": ["verified-jupiter-wire.ts", "jupiter-wire.ts", "jupiter-values.ts"]
+}

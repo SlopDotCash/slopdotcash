@@ -7,7 +7,15 @@ import {
   fixtureRepository,
 } from "../github-api-fixture.mjs";
 import { applicationManifest } from "../project-application-manifest";
-import { expect, expectAccessible, projectSuffix, test } from "./fixtures";
+import { enlargeText } from "../text-size";
+import {
+  type Diagnostics,
+  expect,
+  expectAccessible,
+  expectAccessibleReflow,
+  projectSuffix,
+  test,
+} from "./fixtures";
 
 const tokens = JSON.parse(
   process.env.SLOP_E2E_SECURITY_TOKENS ?? "{}",
@@ -135,11 +143,22 @@ async function submit(page: Page, name: string) {
   expect((await response).status()).toBe(200);
 }
 
-test("native SOL bounty pays through the browser wallet and recovers an uncertain signature @registry @private-intake", async ({
-  browser,
-  request,
-  diagnostics,
-}) => {
+const scenarios = [
+  "uncertain",
+  "wallet-first",
+  "candidate-first",
+  "storage-retry",
+  "departed-preflight",
+] as const;
+
+async function exerciseNativeSolana(
+  {
+    browser,
+    request,
+    diagnostics,
+  }: { browser: Browser; request: APIRequestContext; diagnostics: Diagnostics },
+  scenario: (typeof scenarios)[number],
+) {
   test.skip(!bridge, "Disposable Solana validator required");
   test.setTimeout(360_000);
   diagnostics.allowCanceledBackgroundReads();
@@ -168,6 +187,24 @@ test("native SOL bounty pays through the browser wallet and recovers an uncertai
   const reporter = await signedIn(browser, "reporter-a");
   let submittedSignature = "";
   let sent = 0;
+  let releaseWallet = () => {};
+  const walletGate = new Promise<void>((resolve) => {
+    releaseWallet = resolve;
+  });
+  let releaseRead = () => {};
+  let removeReadHold = async () => {};
+  const readPending = () =>
+    owner.page.evaluate(() => {
+      const key = Object.keys(sessionStorage).find((value) =>
+        value.startsWith("slop:bounty-solana:v1:"),
+      );
+      return key
+        ? (JSON.parse(sessionStorage.getItem(key) ?? "null") as {
+            signature: string | null;
+            candidate?: string;
+          })
+        : null;
+    });
   await owner.page.exposeFunction("bountySolanaAccount", () => info);
   await owner.page.exposeFunction(
     "bountySolanaSend",
@@ -184,12 +221,16 @@ test("native SOL bounty pays through the browser wallet and recovers an uncertai
       const signature = Buffer.from(signed.signature, "base64");
       submittedSignature = encodeBase58Bytes(signature);
       sent += 1;
-      throw new Error("Fixture lost the finalized wallet response");
+      if (scenario === "uncertain")
+        throw new Error("Fixture lost the finalized wallet response");
+      if (scenario === "wallet-first" || scenario === "candidate-first")
+        await walletGate;
+      return [...signature];
     },
   );
   await owner.page.addInitScript(installWallet);
   try {
-    const suffix = projectSuffix();
+    const suffix = `${projectSuffix()}-${scenario}`;
     const id = `sol-bounty-${suffix}`;
     const repository = `e2e-security/${id}`;
     const installed = await fetch(
@@ -255,6 +296,9 @@ test("native SOL bounty pays through the browser wallet and recovers an uncertai
       { manifest, bountyAmount: "0.04" },
     );
     expect(created.status, JSON.stringify(created.body)).toBe(201);
+    // Focus before navigation so the session recheck cannot replace the first
+    // input or action target after Playwright has resolved it.
+    await reporter.page.bringToFront();
     await reporter.page.goto(`/projects/${id}/security`, {
       waitUntil: "networkidle",
     });
@@ -303,6 +347,7 @@ test("native SOL bounty pays through the browser wallet and recovers an uncertai
       "POST",
       `/api/v1/security-cases/${caseId}/actions`,
     );
+    await owner.page.bringToFront();
     await owner.page.goto(`/security?case=${caseId}`, {
       waitUntil: "networkidle",
     });
@@ -333,6 +378,7 @@ test("native SOL bounty pays through the browser wallet and recovers an uncertai
         "Approve the published native SOL award for this qualifying finding.",
       );
     await submit(owner.page, "award");
+    await reporter.page.bringToFront();
     await reporter.page.goto(`/security?case=${caseId}`, {
       waitUntil: "networkidle",
     });
@@ -341,6 +387,7 @@ test("native SOL bounty pays through the browser wallet and recovers an uncertai
       .getByLabel(/^I understand that chain transactions reveal my wallet/u)
       .check();
     await submit(reporter.page, "consent-payment");
+    await owner.page.bringToFront();
     await owner.page.reload({ waitUntil: "networkidle" });
     form = await action(owner.page, "prepare-payment");
     await form.getByLabel(/^I approve .* on this network/u).check();
@@ -352,11 +399,220 @@ test("native SOL bounty pays through the browser wallet and recovers an uncertai
       exact: true,
     });
     await pay
-      .getByRole("button", { name: "Connect Local Solana wallet", exact: true })
+      .getByRole("button", {
+        name: "Connect Local Solana wallet",
+        exact: true,
+      })
       .click();
+    await expect(
+      pay.getByRole("button", { name: "Pay approved award", exact: true }),
+    ).toBeEnabled();
+    const holdRead = async (ordinal: number) => {
+      let count = 0;
+      let reached = () => {};
+      let finished = () => {};
+      const atRead = new Promise<void>((resolve) => {
+        reached = resolve;
+      });
+      const done = new Promise<void>((resolve) => {
+        finished = resolve;
+      });
+      const gate = new Promise<void>((resolve) => {
+        releaseRead = resolve;
+      });
+      const path = `**/api/v1/security-cases/${caseId}`;
+      const handler = async (route: import("@playwright/test").Route) => {
+        if (route.request().method() !== "GET") {
+          await route.continue();
+          return;
+        }
+        const current = ++count;
+        const response = await route.fetch();
+        if (current === ordinal) {
+          reached();
+          await gate;
+        }
+        await route.fulfill({ response });
+        if (current === ordinal) finished();
+      };
+      await owner.page.route(path, handler);
+      removeReadHold = () => owner.page.unroute(path, handler);
+      return { atRead, done };
+    };
+    if (scenario === "departed-preflight") {
+      const held = await holdRead(1);
+      await pay
+        .getByRole("button", { name: "Pay approved award", exact: true })
+        .click();
+      await held.atRead;
+      await owner.page
+        .getByRole("button", { name: "Back to reports", exact: true })
+        .click();
+      releaseRead();
+      await held.done;
+      await removeReadHold();
+      await owner.page
+        .locator(`[aria-labelledby="submission-${submission}"]`)
+        .getByRole("button", { name: "Open case", exact: true })
+        .click();
+      await expect(
+        pay.getByRole("button", { name: "Pay approved award", exact: true }),
+      ).toBeVisible();
+      expect(sent).toBe(0);
+      expect(await readPending()).toBeNull();
+      expect(await balance(info.reporter)).toBe(beforeReporter);
+      expect(await balance(info.fee)).toBe(beforeFee);
+      await expectAccessibleReflow(owner.page, "solana-departed-preflight");
+      await owner.page.screenshot({
+        path: test.info().outputPath("solana-departed-preflight.png"),
+      });
+      return;
+    }
+    if (scenario === "storage-retry") {
+      await owner.page.evaluate(() => {
+        const original = Storage.prototype.setItem;
+        Storage.prototype.setItem = function (key, value) {
+          if (
+            key.startsWith("slop:bounty-solana:v1:") &&
+            JSON.parse(value).signature !== null
+          ) {
+            Storage.prototype.setItem = original;
+            throw new DOMException(
+              "Controlled returned-signature write refusal",
+              "QuotaExceededError",
+            );
+          }
+          return original.call(this, key, value);
+        };
+      });
+    }
     await pay
       .getByRole("button", { name: "Pay approved award", exact: true })
       .click();
+    if (scenario !== "uncertain") {
+      await expect.poll(() => sent).toBe(1);
+      if (scenario === "wallet-first" || scenario === "candidate-first") {
+        await owner.page
+          .getByRole("button", { name: "Back to reports", exact: true })
+          .click();
+        await owner.page
+          .locator(`[aria-labelledby="submission-${submission}"]`)
+          .getByRole("button", { name: "Open case", exact: true })
+          .click();
+        const field = pay.getByLabel("Transaction signature from your wallet", {
+          exact: true,
+        });
+        await expect(field).toBeVisible();
+        const candidate = "1".repeat(64);
+        await field.fill(candidate);
+        let verifyRequests = 0;
+        owner.page.on("request", (request) => {
+          if (
+            request.method() === "POST" &&
+            new URL(request.url()).pathname ===
+              `/api/v1/security-cases/${caseId}/actions` &&
+            request.postDataJSON().action === "verify-payment"
+          )
+            verifyRequests += 1;
+        });
+        const held = await holdRead(scenario === "wallet-first" ? 1 : 2);
+        await pay
+          .getByRole("button", {
+            name: "Verify submitted payment",
+            exact: true,
+          })
+          .click();
+        await held.atRead;
+        if (scenario === "candidate-first")
+          expect((await readPending())?.candidate).toBe(candidate);
+        releaseWallet();
+        await expect
+          .poll(async () => (await readPending())?.signature)
+          .toBe(submittedSignature);
+        if (scenario === "candidate-first")
+          expect((await readPending())?.candidate).toBe(candidate);
+        releaseRead();
+        await held.done;
+        if (scenario === "wallet-first") {
+          await expect(pay.getByRole("alert")).toContainText(
+            "The saved request changed",
+          );
+          expect(verifyRequests).toBe(0);
+        } else {
+          await expect.poll(() => verifyRequests).toBe(1);
+          await expect(
+            pay.getByRole("button", {
+              name: "Verify submitted payment",
+              exact: true,
+            }),
+          ).toBeEnabled();
+        }
+        await removeReadHold();
+        expect((await readPending())?.signature).toBe(submittedSignature);
+        await owner.page.reload({ waitUntil: "networkidle" });
+        await pay
+          .getByLabel("Transaction signature from your wallet", {
+            exact: true,
+          })
+          .fill(submittedSignature);
+      } else {
+        await expect(pay.getByRole("alert")).toContainText(
+          "browser storage could not save it",
+        );
+        expect((await readPending())?.signature).toBeNull();
+        await expect(
+          pay.getByLabel("Transaction signature from your wallet", {
+            exact: true,
+          }),
+        ).toHaveValue(submittedSignature);
+      }
+      await expectAccessible(owner.page, {
+        attachmentName: `solana-${scenario}-recovery-wcag-aa`,
+      });
+      const restoreText = await enlargeText(owner.page.locator("body"));
+      await expectAccessible(owner.page, {
+        attachmentName: `solana-${scenario}-recovery-200-percent-wcag-aa`,
+      });
+      expect(
+        await owner.page.evaluate(
+          () => document.documentElement.scrollWidth <= window.innerWidth,
+        ),
+      ).toBe(true);
+      await owner.page.screenshot({
+        path: test
+          .info()
+          .outputPath(`solana-${scenario}-recovery-200-percent.png`),
+      });
+      await restoreText();
+      await pay
+        .getByRole("button", { name: "Verify submitted payment", exact: true })
+        .focus();
+      await owner.page.keyboard.press("Enter");
+      await expect
+        .poll(
+          async () =>
+            (
+              await api(
+                request,
+                owner.page,
+                "security",
+                "GET",
+                `security-cases/${caseId}`,
+              )
+            ).body.case.paymentState,
+        )
+        .toBe("paid");
+      expect(sent).toBe(1);
+      expect((await balance(info.reporter)) - beforeReporter).toBe(30_000_000n);
+      expect((await balance(info.fee)) - beforeFee).toBe(10_000_000n);
+      await expectAccessible(owner.page, {
+        attachmentName: `solana-${scenario}-paid-wcag-aa`,
+      });
+      await owner.page.screenshot({
+        path: test.info().outputPath(`solana-${scenario}.png`),
+      });
+      return;
+    }
     await expect(pay.getByRole("alert")).toContainText("uncertain", {
       timeout: 180_000,
     });
@@ -417,20 +673,21 @@ test("native SOL bounty pays through the browser wallet and recovers an uncertai
     expect((await balance(info.reporter)) - beforeReporter).toBe(30_000_000n);
     expect((await balance(info.fee)) - beforeFee).toBe(10_000_000n);
     expect(await balance(info.recoveryAddress)).toBe(0n);
-    await expectAccessible(owner.page);
-    if ((owner.page.viewportSize()?.width ?? 0) >= 640) {
-      await owner.page.evaluate(() => {
-        document.documentElement.style.zoom = "2";
-      });
-      expect(
-        await owner.page.evaluate(
-          () => document.documentElement.scrollWidth <= window.innerWidth,
-        ),
-      ).toBe(true);
-      await owner.page.evaluate(() => {
-        document.documentElement.style.zoom = "1";
-      });
-    }
+    await expectAccessible(owner.page, {
+      attachmentName: "solana-uncertain-paid-wcag-aa",
+    });
+
+    const restoreEnlargedText1 = await enlargeText(owner.page.locator("body"));
+    await expectAccessible(owner.page, {
+      attachmentName: "solana-uncertain-paid-200-percent-wcag-aa",
+    });
+    expect(
+      await owner.page.evaluate(
+        () => document.documentElement.scrollWidth <= window.innerWidth,
+      ),
+    ).toBe(true);
+    await restoreEnlargedText1();
+
     await owner.page
       .locator(".security-payment-panel")
       .scrollIntoViewIfNeeded();
@@ -438,7 +695,24 @@ test("native SOL bounty pays through the browser wallet and recovers an uncertai
       path: test.info().outputPath("native-sol-paid.png"),
     });
   } finally {
+    releaseWallet();
+    releaseRead();
+    await removeReadHold();
     await owner.context.close();
     await reporter.context.close();
   }
-});
+}
+
+for (const scenario of scenarios) {
+  const description =
+    scenario === "uncertain"
+      ? "native SOL bounty pays through the browser wallet and recovers an uncertain signature"
+      : `native SOL bounty preserves payment evidence through ${scenario}`;
+  test(`${description} @registry @private-intake`, async ({
+    browser,
+    request,
+    diagnostics,
+  }) => {
+    await exerciseNativeSolana({ browser, request, diagnostics }, scenario);
+  });
+}

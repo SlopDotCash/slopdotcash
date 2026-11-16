@@ -5,7 +5,7 @@ import {
 } from "../../src/lib/byte-encoding";
 import type { ApiRole, AuthenticatedActor } from "./contracts";
 
-export type ApiTokenClaims = {
+type ApiTokenClaims = {
   iss: "slop.cash";
   aud: "private-trace-api";
   sub: `github:${string}`;

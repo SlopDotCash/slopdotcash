@@ -4,6 +4,7 @@
  * row now carries the project that owns its scoring and reward policy.
  */
 
+import { repositoryIdentity } from "./project-repositories.mjs";
 import {
   INGESTED_HISTORICAL_PROJECTS,
   INGESTED_PROJECTS,
@@ -26,6 +27,15 @@ import {
  * highest-capped project promotes the next active one to `primary` rather
  * than leaving the registry without a primary.
  */
+/** The node id a renamed repository must still resolve to. */
+function renamedNodeId(project, repositoryIndex, repositoryId) {
+  if (repositoryIndex === 0) return project.authority.repositoryNodeId;
+  const identity = repositoryIdentity(project, repositoryId);
+  if (identity === null)
+    throw new TypeError(`${repositoryId} has no recorded GraphQL node ID`);
+  return identity.nodeId;
+}
+
 function flattenRepositories(projects) {
   return projects.flatMap((project, projectIndex) =>
     project.repositories.map((metadata, repositoryIndex) => {
@@ -40,7 +50,7 @@ function flattenRepositories(projects) {
         expectedNodeId:
           currentIdentity.toLowerCase() === metadata.id.toLowerCase()
             ? null
-            : project.authority.repositoryNodeId,
+            : renamedNodeId(project, repositoryIndex, metadata.id),
         projectId: project.id,
         role:
           projectIndex === 0 && repositoryIndex === 0 ? "primary" : "member",
@@ -72,19 +82,25 @@ export const REGISTERED_REPOSITORIES = Object.freeze(
 /** Null while no project is active; the registry may legitimately be empty. */
 export const PRIMARY_REPOSITORY = TARGET_REPOSITORIES[0] ?? null;
 
+/**
+ * Lookup index over the frozen registry, built once at module load.
+ * The first registration wins for each key, matching the array scan's
+ * first-match order exactly.
+ */
+const REGISTERED_REPOSITORIES_BY_ID = new Map();
+for (const repository of REGISTERED_REPOSITORIES) {
+  for (const id of [repository.id, ...repository.aliases]) {
+    const key = id.toLowerCase();
+    if (!REGISTERED_REPOSITORIES_BY_ID.has(key)) {
+      REGISTERED_REPOSITORIES_BY_ID.set(key, repository);
+    }
+  }
+}
+
 /** Historical lookup never authorizes collection of a paused repository. */
 export function findRegisteredRepositoryById(id) {
   if (typeof id !== "string") return null;
-  const normalizedId = id.toLowerCase();
-  return (
-    REGISTERED_REPOSITORIES.find(
-      (repository) =>
-        repository.id.toLowerCase() === normalizedId ||
-        repository.aliases.some(
-          (alias) => alias.toLowerCase() === normalizedId,
-        ),
-    ) ?? null
-  );
+  return REGISTERED_REPOSITORIES_BY_ID.get(id.toLowerCase()) ?? null;
 }
 
 export function findRegisteredRepository(owner, name) {

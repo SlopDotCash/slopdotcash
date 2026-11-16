@@ -1,4 +1,4 @@
-import type { FileChange } from "./value-evidence";
+import type { FileChange } from "./value-evidence-types";
 
 /** Ignore flat package override order only; conditional exports remain ordered.
  * JSON.parse alone loses duplicate keys and rounds large numeric values. */

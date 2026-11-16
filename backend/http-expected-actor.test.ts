@@ -3,10 +3,8 @@ import { createHash } from "node:crypto";
 import { applicationManifest } from "../tests/project-application-manifest";
 import { sqliteD1 } from "../tests/sqlite-d1";
 import { requireActor } from "./http";
-import {
-  handleSecurityApi,
-  type SecurityApiDependencies,
-} from "./security/handler";
+import type { SecurityApiDependencies } from "./security/case-store";
+import { handleSecurityApi } from "./security/handler";
 import type { R2Bucket } from "./trace/cloudflare-persistence";
 
 const ORIGIN = "https://slop.test";

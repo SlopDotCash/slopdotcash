@@ -11,7 +11,7 @@ export type ReopenItem = {
   body?: string | null;
   head?: { sha: string };
 };
-export type ReopenSource = {
+type ReopenSource = {
   installationId: number;
   repositoryId: number;
   itemKind: "issue" | "pull_request";
@@ -116,4 +116,28 @@ export async function confirmedReopenFor(
     .bind(itemNodeId, revision)
     .first<{ n: number }>();
   return row !== null;
+}
+
+/**
+ * The latest event time of a confirmed reopen of this revision, or null.
+ * A late close reversal passes it to reversePenalty so it covers only this
+ * revision's debit or one recorded at or before the reopen.
+ */
+export async function confirmedReopenCoverage(
+  db: D1Database,
+  itemNodeId: string,
+  revision: string,
+): Promise<{ revision: string; occurredAt: string } | null> {
+  const row = await db
+    .prepare(
+      `SELECT MAX(json_extract(reopen_source, '$.occurredAt')) AS at FROM slopbot_deliveries
+       WHERE reopen_confirmed_at IS NOT NULL
+         AND json_extract(reopen_source, '$.itemNodeId') = ?
+         AND json_extract(reopen_source, '$.revision') = ?`,
+    )
+    .bind(itemNodeId, revision)
+    .first<{ at: string | null }>();
+  return row?.at
+    ? { revision, occurredAt: new Date(row.at).toISOString() }
+    : null;
 }

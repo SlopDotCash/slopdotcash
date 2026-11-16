@@ -80,7 +80,9 @@ async function cachedVerifiedBytes(cache, expected) {
   } catch {
     return null;
   } finally {
-    await handle?.close();
+    // A cache-handle error must not turn a cache miss or already verified
+    // bytes into a policy failure. It confers no authority on unverified bytes.
+    await handle?.close().catch(() => {});
   }
 }
 
@@ -340,7 +342,7 @@ if (direct) {
       process.stdout.write(`${JSON.stringify(acknowledgement)}\n`);
     } else {
       process.stdout.write(
-        `Project policy acknowledged: ${acknowledgement.policyRevision} · license ${acknowledgement.licenseSha256?.slice(0, 12) ?? "not declared"} · contributions open\n`,
+        `Project policy documents verified: ${acknowledgement.policyRevision} · license ${acknowledgement.licenseSha256?.slice(0, 12) ?? "not declared"}\n`,
       );
     }
   } catch (error) {

@@ -4,25 +4,37 @@ import {
   isAssetDecimals,
   isBaseUnits,
   type PaymentChain,
+  type PayoutPolicy,
   type VaultSnapshot,
 } from "../../src/lib/payments/contracts";
 import type { D1TransactionalDatabase as D1Database } from "../d1";
+import type { StoredMonthPledges } from "./month-pledges";
+import { firstDecreasedCounter, vaultCounterHeader } from "./verified-evidence";
 
 /** One finalized vault read, as both chain adapters' `readVaultTotals` return it. */
 export type { VaultTotals };
+/**
+ * A vault read with its month pledges (migration 0128): null when the vault's
+ * contract has no pledge support, undefined when they were not read, which
+ * leaves the stored pledges as they are.
+ */
+export type VaultRead = VaultTotals & {
+  monthPledges?: StoredMonthPledges | null;
+};
 export interface SnapshotDeployment {
   projectId: string;
   network: string;
   chain: PaymentChain;
   vault: string;
   asset: string;
+  payoutPolicy?: PayoutPolicy;
   /** Solana only: the adapter reads, and reports as `vault`, the project PDA. */
   projectPda?: string | null;
 }
-export type VaultTotalsReader<D extends SnapshotDeployment> = (
+type VaultTotalsReader<D extends SnapshotDeployment> = (
   deployment: D,
   rpcUrl: string,
-) => Promise<VaultTotals>;
+) => Promise<VaultRead>;
 
 const CUMULATIVE = [
   "totalDeposited",
@@ -65,7 +77,7 @@ function sameAddress(chain: PaymentChain, a: string, b: string) {
 export async function storeVaultSnapshot(
   db: D1Database,
   deployment: SnapshotDeployment,
-  totals: VaultTotals,
+  totals: VaultRead,
   observedAt: string,
 ): Promise<"stored" | "older"> {
   if (
@@ -93,16 +105,28 @@ export async function storeVaultSnapshot(
     .bind(deployment.projectId, deployment.network, deployment.vault)
     .first<Record<string, string | number | null>>();
   if (prior) {
-    if (BigInt(totals.blockNumber) < BigInt(prior.block_number as string))
-      return "older";
-    if (
-      prior.asset_address !== deployment.asset ||
-      prior.asset_decimals !== totals.decimals
-    )
-      throw new Error("Vault asset changed");
-    for (const key of CUMULATIVE)
-      if (BigInt(totals[key]) < BigInt(prior[COLUMNS[key]] as string))
-        throw new Error("Vault counter decreased");
+    const header = vaultCounterHeader(
+      {
+        block: BigInt(totals.blockNumber),
+        asset: deployment.asset,
+        decimals: totals.decimals,
+      },
+      {
+        block: BigInt(prior.block_number as string),
+        asset: prior.asset_address as string,
+        decimals: prior.asset_decimals as number,
+      },
+    );
+    if (header === "older") return "older";
+    if (header === "asset-changed") throw new Error("Vault asset changed");
+    const incomingCounters: bigint[] = [],
+      priorCounters: bigint[] = [];
+    for (const key of CUMULATIVE) {
+      incomingCounters.push(BigInt(totals[key]));
+      priorCounters.push(BigInt(prior[COLUMNS[key]] as string));
+    }
+    if (firstDecreasedCounter(incomingCounters, priorCounters) >= 0)
+      throw new Error("Vault counter decreased");
   }
   const blockTime = new Date(totals.blockTime).toISOString();
   const keys = [...CUMULATIVE, ...CURRENT];
@@ -159,7 +183,105 @@ export async function storeVaultSnapshot(
       return "older";
     throw new Error("Vault snapshot conflicts with stored counters or asset");
   }
+  if (deployment.payoutPolicy !== "security-bounty") {
+    await recordMonthStart(db, deployment, totals, blockTime, observedAt);
+    if (totals.monthPledges !== undefined)
+      await recordMonthPledges(
+        db,
+        deployment,
+        totals.monthPledges,
+        totals.blockNumber,
+        observedAt,
+      );
+  }
   return "stored";
+}
+
+/**
+ * Stores the pledges read with this snapshot. Each month's row keeps the read
+ * of the newest block. A failure fails the refresh, so the next one retries:
+ * the coordinator relies on these rows to freeze a pledged month.
+ */
+async function recordMonthPledges(
+  db: D1Database,
+  deployment: SnapshotDeployment,
+  read: StoredMonthPledges | null,
+  blockNumber: string,
+  observedAt: string,
+): Promise<void> {
+  const statements = [
+    db
+      .prepare(
+        "UPDATE vault_snapshots SET open_pledged_gross=? WHERE project_id=? AND network=? AND vault=? AND block_number=? AND observed_at=?",
+      )
+      .bind(
+        read?.openPledgedGross ?? null,
+        deployment.projectId,
+        deployment.network,
+        deployment.vault,
+        blockNumber,
+        observedAt,
+      ),
+    ...(read?.pledges ?? []).map((pledge) =>
+      db
+        .prepare(
+          "INSERT INTO vault_month_pledges(project_id,network,vault,period,amount,open,block_number,observed_at) VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(project_id,network,vault,period) DO UPDATE SET amount=excluded.amount,open=excluded.open,block_number=excluded.block_number,observed_at=excluded.observed_at WHERE CAST(excluded.block_number AS INTEGER)>=CAST(vault_month_pledges.block_number AS INTEGER)",
+        )
+        .bind(
+          deployment.projectId,
+          deployment.network,
+          deployment.vault,
+          pledge.period,
+          pledge.amount,
+          pledge.open ? 1 : 0,
+          blockNumber,
+          observedAt,
+        ),
+    ),
+  ];
+  const results = await db.batch(statements);
+  if (results.some((result) => !result.success))
+    throw new Error("Vault pledge write failed");
+}
+
+/**
+ * Keeps the first stored read of each UTC month (migration 0127), so pages
+ * can tell whether a month was funded on the 1st (operator decision,
+ * 15 November 2026). It never fails the refresh: a missed row only means
+ * that month is not shown as promised.
+ */
+async function recordMonthStart(
+  db: D1Database,
+  deployment: SnapshotDeployment,
+  totals: VaultTotals,
+  blockTime: string,
+  observedAt: string,
+): Promise<void> {
+  if (totals.freeBalance === null) return;
+  try {
+    await db
+      .prepare(
+        "INSERT INTO vault_month_starts(project_id,network,vault,period,free_balance,total_gross_withdrawn,block_number,block_time,observed_at) SELECT ?,?,?,?,?,?,?,?,? WHERE NOT EXISTS (SELECT 1 FROM vault_month_starts WHERE project_id=? AND network=? AND vault=? AND period=?)",
+      )
+      .bind(
+        deployment.projectId,
+        deployment.network,
+        deployment.vault,
+        blockTime.slice(0, 7),
+        totals.freeBalance,
+        totals.totalGrossWithdrawn,
+        totals.blockNumber,
+        blockTime,
+        observedAt,
+        deployment.projectId,
+        deployment.network,
+        deployment.vault,
+        blockTime.slice(0, 7),
+      )
+      .run();
+  } catch {
+    // The month start is display evidence only; the refresh stands.
+  }
 }
 
 /** One failing vault never stops the others; failures are reported together. */

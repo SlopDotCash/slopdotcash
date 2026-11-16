@@ -10,7 +10,10 @@ import {
 } from "../../contracts/solana/token-extensions";
 import { decodeBase58Bytes } from "../../src/lib/base58";
 import { readBoundedJson } from "../../src/lib/browser-json";
-import { isNativeAssetAddress } from "../../src/lib/escrow-policy.mjs";
+import {
+  ESCROW_NETWORKS,
+  isNativeAssetAddress,
+} from "../../src/lib/escrow-policy.mjs";
 import {
   REWARD_ASSET_NETWORKS,
   type RewardAssetNetwork,
@@ -169,6 +172,9 @@ async function solanaMetadata(
   url: string,
   address: string,
 ): Promise<TokenMetadata> {
+  const genesis = await rpc(fetcher, url, "getGenesisHash", []);
+  if (genesis !== ESCROW_NETWORKS["solana-mainnet"].genesisHash)
+    throw new TokenMetadataError("The network RPC reports a different chain");
   const result = (await rpc(fetcher, url, "getAccountInfo", [
     address,
     { encoding: "base64", commitment: "finalized" },
