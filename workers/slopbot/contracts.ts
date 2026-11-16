@@ -441,6 +441,17 @@ export type Job =
       number: number;
     }
   | {
+      /** Re-check the slopbot:ready label of a pull request (PRD section 5). */
+      kind: "ready_label";
+      deliveryId: string;
+      installationId: number;
+      repositoryId: number;
+      owner: string;
+      repo: string;
+      itemKind: "pull_request";
+      number: number;
+    }
+  | {
       kind: "maintainer_hold";
       reviewKey: string;
       deliveryId: string;

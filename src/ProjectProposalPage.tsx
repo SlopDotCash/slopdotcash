@@ -13,6 +13,12 @@ import {
   useProjectDraftSave,
   useProjectDraftStore,
 } from "./lib/project-draft-store";
+import {
+  protectedPathProblem,
+  READY_LABEL_DEFAULTS,
+  READY_LABEL_LIMITS,
+  type ReadyLabelSettings,
+} from "./lib/slopbot-ready.mjs";
 import { ChoiceField, SelectField, TextField } from "./ProjectFormFields";
 import { ProjectImageField } from "./ProjectImageField";
 import { RewardAssetFields } from "./RewardAssetFields";
@@ -676,6 +682,163 @@ function ClosureConsent({
           You can turn this off at any time.
         </p>
       )}
+    </div>
+  );
+}
+
+type ReadyDraft = {
+  readyLabel: string;
+  readyApprovals: string;
+  readyMaxLines: string;
+  readyMaxFiles: string;
+  readyProtectedPaths: string;
+};
+
+/** The owner's slopbot:ready settings as typed, with any problems. */
+function readyLabelDraft(value: ReadyDraft): {
+  settings: Omit<ReadyLabelSettings, "enabled"> | null;
+  errors: Record<string, string | undefined>;
+} {
+  const limits = READY_LABEL_LIMITS;
+  const whole = (text: string, min: number, max: number) => {
+    const n = /^\d{1,6}$/u.test(text.trim()) ? Number(text.trim()) : Number.NaN;
+    return Number.isSafeInteger(n) && n >= min && n <= max ? n : null;
+  };
+  const approvals = whole(
+    value.readyApprovals,
+    limits.minApprovals,
+    limits.maxApprovals,
+  );
+  const maxChangedLines = whole(
+    value.readyMaxLines,
+    limits.minChangedLines,
+    limits.maxChangedLines,
+  );
+  const maxChangedFiles = whole(
+    value.readyMaxFiles,
+    limits.minChangedFiles,
+    limits.maxChangedFiles,
+  );
+  const protectedPaths = [
+    ...new Set(
+      value.readyProtectedPaths
+        .split("\n")
+        .map((line) => line.trim())
+        .filter(Boolean),
+    ),
+  ];
+  const pathProblem =
+    protectedPaths.length > limits.maxProtectedPaths
+      ? `List at most ${limits.maxProtectedPaths} paths.`
+      : (protectedPaths
+          .map((path) => {
+            const problem = protectedPathProblem(path);
+            return problem === null ? null : `${path}: ${problem}`;
+          })
+          .find((problem) => problem !== null) ?? undefined);
+  const errors = {
+    readyApprovals:
+      approvals === null
+        ? `Enter a whole number from ${limits.minApprovals} to ${limits.maxApprovals}.`
+        : undefined,
+    readyMaxLines:
+      maxChangedLines === null
+        ? `Enter a whole number from ${limits.minChangedLines} to ${limits.maxChangedLines}.`
+        : undefined,
+    readyMaxFiles:
+      maxChangedFiles === null
+        ? `Enter a whole number from ${limits.minChangedFiles} to ${limits.maxChangedFiles}.`
+        : undefined,
+    readyProtectedPaths: pathProblem,
+  };
+  return {
+    settings:
+      approvals === null ||
+      maxChangedLines === null ||
+      maxChangedFiles === null ||
+      pathProblem !== undefined
+        ? null
+        : { approvals, maxChangedLines, maxChangedFiles, protectedPaths },
+    errors,
+  };
+}
+
+function readySummary(settings: ReadyLabelSettings | undefined): string {
+  if (settings?.enabled !== true) return "Off";
+  const extra = settings.protectedPaths.length;
+  return `On: ${settings.approvals} approval${settings.approvals === 1 ? "" : "s"}, at most ${settings.maxChangedLines} lines in ${settings.maxChangedFiles} files${extra ? `, ${extra} extra protected path${extra === 1 ? "" : "s"}` : ""}`;
+}
+
+/**
+ * The slopbot:ready label (PRD section 5): off unless the owner turns it on.
+ * Slopbot labels a pull request it could merge safely; a human merges.
+ */
+function ReadyLabelFields({
+  value,
+  set,
+  error,
+}: {
+  value: ReadyDraft;
+  set: (field: keyof ReadyDraft) => (next: string) => void;
+  error: (field: keyof ReadyDraft) => string | undefined;
+}) {
+  return (
+    <div>
+      <label className="checkbox-field">
+        <input
+          aria-describedby="ready-label-hint"
+          checked={value.readyLabel === "true"}
+          name="readyLabel"
+          onChange={(event) =>
+            set("readyLabel")(String(event.currentTarget.checked))
+          }
+          type="checkbox"
+        />{" "}
+        Label pull requests that are ready to merge
+      </label>
+      <p className="field-hint" id="ready-label-hint">
+        Slopbot adds <code>slopbot:ready</code> when checks pass, its review has
+        no finding, maintainers approved the latest commit, the change is small
+        and it touches no protected path such as CI, dependencies, contracts or
+        policy files. Slopbot never merges.
+      </p>
+      {value.readyLabel === "true" ? (
+        <>
+          <TextField
+            error={error("readyApprovals")}
+            inputMode="numeric"
+            label="Approvals required"
+            name="readyApprovals"
+            onChange={set("readyApprovals")}
+            value={value.readyApprovals}
+          />
+          <TextField
+            error={error("readyMaxLines")}
+            inputMode="numeric"
+            label="Most changed lines"
+            name="readyMaxLines"
+            onChange={set("readyMaxLines")}
+            value={value.readyMaxLines}
+          />
+          <TextField
+            error={error("readyMaxFiles")}
+            inputMode="numeric"
+            label="Most changed files"
+            name="readyMaxFiles"
+            onChange={set("readyMaxFiles")}
+            value={value.readyMaxFiles}
+          />
+          <TextField
+            error={error("readyProtectedPaths")}
+            hint="One per line, for example docs/legal/ or *.sql. These add to the built-in list."
+            label="Extra protected paths"
+            multiline
+            name="readyProtectedPaths"
+            onChange={set("readyProtectedPaths")}
+            value={value.readyProtectedPaths}
+          />
+        </>
+      ) : null}
     </div>
   );
 }
@@ -2003,7 +2166,7 @@ function ProjectProposalForm({
   );
 }
 
-type UpdateDraft = {
+type UpdateDraft = ReadyDraft & {
   image: string;
   automaticClosure: string;
   headline: string;
@@ -2025,6 +2188,11 @@ type UpdateDraft = {
 const DRAFT_FIELDS = [
   "image",
   "automaticClosure",
+  "readyLabel",
+  "readyApprovals",
+  "readyMaxLines",
+  "readyMaxFiles",
+  "readyProtectedPaths",
   "headline",
   "goal",
   "website",
@@ -2257,8 +2425,20 @@ function ProjectUpdateForm({
       reward.paymentMode === "enabled" ||
       BigInt(reward.committedMinor) > 0n ||
       (current.escrow?.deployments.length ?? 0) > 0);
+  const currentReady = current.slopbot?.readyLabel;
   const initial: UpdateDraft = {
     automaticClosure: String(current.slopbot?.automaticClosure === true),
+    readyLabel: String(currentReady?.enabled === true),
+    readyApprovals: String(
+      currentReady?.approvals ?? READY_LABEL_DEFAULTS.approvals,
+    ),
+    readyMaxLines: String(
+      currentReady?.maxChangedLines ?? READY_LABEL_DEFAULTS.maxChangedLines,
+    ),
+    readyMaxFiles: String(
+      currentReady?.maxChangedFiles ?? READY_LABEL_DEFAULTS.maxChangedFiles,
+    ),
+    readyProtectedPaths: (currentReady?.protectedPaths ?? []).join("\n"),
     headline: current.headline,
     image: current.image ?? "",
     goal: current.description,
@@ -2381,7 +2561,18 @@ function ProjectUpdateForm({
   const amountMinor = amount.valid ? amount.minor : null;
   const websiteInput = normalizeWebsiteInput(value.website);
   const xInput = normalizeXInput(value.x);
+  const ready = readyLabelDraft(value);
+  const readyOn = value.readyLabel === "true";
+  // Off keeps the owner's last numbers so turning it back on restores them.
+  const nextReady: ReadyLabelSettings | undefined = readyOn
+    ? ready.settings
+      ? { enabled: true, ...ready.settings }
+      : currentReady
+    : currentReady
+      ? { ...currentReady, enabled: false }
+      : undefined;
   const errors: Record<string, string | undefined> = {
+    ...(readyOn ? ready.errors : {}),
     headline: lengthError(value.headline, 8, 120),
     goal: lengthError(value.goal, 24, 600),
     website: websiteInput.ok ? undefined : websiteInput.error,
@@ -2486,8 +2677,15 @@ function ProjectUpdateForm({
             ],
           }
         : {}),
-      ...(source.slopbot !== undefined || value.automaticClosure === "true"
-        ? { slopbot: { automaticClosure: value.automaticClosure === "true" } }
+      ...(source.slopbot !== undefined ||
+      value.automaticClosure === "true" ||
+      nextReady !== undefined
+        ? {
+            slopbot: {
+              automaticClosure: value.automaticClosure === "true",
+              ...(nextReady ? { readyLabel: nextReady } : {}),
+            },
+          }
         : {}),
       image: value.image || undefined,
       headline: value.headline.trim(),
@@ -2533,6 +2731,12 @@ function ProjectUpdateForm({
         current.slopbot?.automaticClosure === true ? "Allowed" : "Not allowed",
       after:
         next.slopbot?.automaticClosure === true ? "Allowed" : "Not allowed",
+    },
+    {
+      field: "readyLabel",
+      label: "Slopbot ready label",
+      before: readySummary(current.slopbot?.readyLabel),
+      after: readySummary(next.slopbot?.readyLabel),
     },
     ...(current.image !== next.image
       ? [
@@ -2930,6 +3134,11 @@ function ProjectUpdateForm({
           <ClosureConsent
             onChange={set("automaticClosure")}
             value={value.automaticClosure}
+          />
+          <ReadyLabelFields
+            error={(field) => shown(field)}
+            set={set}
+            value={value}
           />
           <details className="proposal-skill-rules">
             <summary>Contributor instructions</summary>
