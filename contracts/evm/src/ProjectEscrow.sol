@@ -36,7 +36,9 @@ enum Purpose {
 /// identity authority that also controls the destination key. Factory authority rotation has no mandatory delay. Fees accrue separately, so a blocked fee recipient cannot stop payouts.
 /// Anyone may deposit; deposits join one free balance that only the owner commits or refunds to itself. An
 /// ordinary vault also accepts one monthly allocation per calendar month from anyone, when the owner has
-/// turned it on, the identity authority signed it, and its total is within the owner's monthly cap.
+/// turned it on or pledged that month, the identity authority signed it, and its total is within the owner's
+/// monthly cap or the month's pledge. An open month pledge holds its funds: withdrawals and owner commits use
+/// only unpledged free funds until the month is reserved or its commit window closes.
 /// The payout fee and the unused-fund withdrawal fee are both 2% (ceil(gross / 50)), so awarding
 /// free funds to oneself costs the same as withdrawing them (#907); each fee rounds up once per award or
 /// withdrawal, so splitting an amount never lowers the fee. Tokens must have exact transfers: a fee-on-transfer deposit or payout reverts. Decimals are stored for display only; amounts are
@@ -89,6 +91,12 @@ contract ProjectEscrow is Initializable, UUPSUpgradeable {
         bytes32 claimDigest;
         uint64 activatesAt;
         bool cancelled;
+    }
+
+    /// @notice The owner's irrevocable pledge of free funds to one period's monthly allocation.
+    struct MonthPledge {
+        uint128 amount;
+        bool open;
     }
 
     /// @notice Maximum unpaid-binding cancellations between payments. A pending factory authority
@@ -152,6 +160,12 @@ contract ProjectEscrow is Initializable, UUPSUpgradeable {
     mapping(uint32 => MonthlyReserve) public monthlyReserves;
     /// @notice Gross of a period's V2 reserve that the owner returned to free balance with a signed release.
     mapping(uint32 => uint128) public monthlyReleased;
+    /// @notice The owner's pledge per period (YYYYMM). An open pledge holds free funds for that period's
+    /// allocation: withdrawals and owner commits cannot use them, and the period reserves even with monthly
+    /// commitments off. It closes when the period is reserved, or lapses once the period's window closes.
+    mapping(uint32 => MonthPledge) public monthPledges;
+    /// @notice The sum of every open pledge. freeBalance never falls below it.
+    uint128 public openPledgedGross;
 
     error Unauthorized();
     error InvalidInput();
@@ -173,6 +187,10 @@ contract ProjectEscrow is Initializable, UUPSUpgradeable {
     error CancelLimit();
     error InvalidWalletSignature();
     error MonthlyReserveChanged();
+    error PledgeTooLow();
+    error PledgeNotLapsed();
+    error PledgedFunds();
+    error PledgedMonthOpen();
 
     event Deposited(address indexed depositor, uint128 amount);
     event AwardCommitted(bytes32 indexed id, uint64 indexed actorId, uint128 gross, uint128 fee, bytes32 sourceDigest);
@@ -205,6 +223,8 @@ contract ProjectEscrow is Initializable, UUPSUpgradeable {
     event MonthlyReserveReleased(
         uint32 indexed period, bytes32 allocationDigest, uint128 remainingGross, uint128 releasedGross
     );
+    event MonthPledged(uint32 indexed period, uint128 amount);
+    event PledgeClosed(uint32 indexed period, uint128 amount, bool reserved);
 
     modifier onlyOwner() {
         if (msg.sender != owner) revert Unauthorized();
@@ -490,9 +510,16 @@ contract ProjectEscrow is Initializable, UUPSUpgradeable {
     }
 
     /// @param sourceDigest Unique per award origin (project/cycle/actor/allocation), not a whole-cycle digest.
+    /// While the period whose commit window is open has an open pledge, the owner cannot commit by hand:
+    /// each new award moves ordinarySourceSequence, which would make the pledged reservation stale.
     function commitAward(bytes32 id, uint64 actorId, uint128 gross, bytes32 sourceDigest) external onlyOwner {
         if (purpose != Purpose.Ordinary) revert WrongPurpose();
         if (pendingMonthlyGross != 0) revert MonthlyLeavesPending();
+        // The open window belongs to the month before the one containing now - MONTHLY_CUTOFF_DELAY.
+        if (openPledgedGross != 0) {
+            uint32 open = periodAt(block.timestamp - MONTHLY_CUTOFF_DELAY);
+            if (monthPledges[open % 100 == 1 ? open - 89 : open - 1].open) revert PledgedMonthOpen();
+        }
         commit(id, actorId, gross, sourceDigest, payoutFee(gross));
     }
 
@@ -505,7 +532,8 @@ contract ProjectEscrow is Initializable, UUPSUpgradeable {
     }
 
     /// @notice The owner sets the monthly cap and turns monthly commitments on or off. While they are off,
-    /// nobody can commit a monthly allocation; awards already committed stay committed.
+    /// nobody can commit an unpledged month's allocation; awards already committed stay committed. Neither
+    /// setting changes a month with an open pledge.
     function setMonthlyCommitment(uint128 cap, bool enabled) external onlyOwner {
         _setMonthlyCommitment(cap, enabled);
     }
@@ -518,13 +546,97 @@ contract ProjectEscrow is Initializable, UUPSUpgradeable {
         emit MonthlyCommitmentSet(cap, enabled);
     }
 
+    /// @notice The owner pledges `amount` of free funds to each of `count` consecutive periods from
+    /// `fromPeriod`. Every period must be from currentPeriod() to eleven months after it and not yet reserved.
+    /// An open pledge below `amount` is raised to it, an equal one is unchanged, and a higher one reverts
+    /// PledgeTooLow: a pledge is never lowered or cancelled. Every open pledge must stay within freeBalance.
+    /// A pledged period reserves even while monthly commitments are off, up to max(monthlyCap, pledge).
+    function pledgeMonths(uint32 fromPeriod, uint8 count, uint128 amount) external onlyOwner {
+        if (purpose != Purpose.Ordinary) revert WrongPurpose();
+        uint32 current = currentPeriod();
+        // YYYYMM orders like time, and the same month next year is current + 100.
+        if (count == 0 || count > 12 || amount == 0 || fromPeriod < current || (fromPeriod - 1) % 100 >= 12) {
+            revert InvalidInput();
+        }
+        uint256 added;
+        uint32 period = fromPeriod;
+        for (uint256 i; i < count; ++i) {
+            if (period >= current + 100) revert InvalidInput();
+            if (monthlyRoots[period] != bytes32(0)) revert MonthlyAlreadyCommitted();
+            MonthPledge storage pledge = monthPledges[period];
+            uint128 previous = pledge.open ? pledge.amount : 0;
+            if (previous > amount) revert PledgeTooLow();
+            if (previous < amount) {
+                added += amount - previous;
+                pledge.amount = amount;
+                pledge.open = true;
+                emit MonthPledged(period, amount);
+            }
+            period = period % 100 == 12 ? period + 89 : period + 1;
+        }
+        // Every open pledge, this call's included, must fit in freeBalance (itself a uint128).
+        uint256 total = openPledgedGross + added;
+        if (total > freeBalance) revert InsufficientFreeBalance();
+        openPledgedGross = uint128(total);
+    }
+
+    /// @notice Anyone closes an open pledge whose period was never reserved, once the period's commit window
+    /// has closed. The pledged funds return to the owner's unpledged free funds.
+    function expirePledge(uint32 period) external {
+        if (purpose != Purpose.Ordinary) revert WrongPurpose();
+        if (!monthPledges[period].open) revert InvalidInput();
+        (, uint64 closesAt) = monthlyWindow(period);
+        if (block.timestamp < closesAt) revert PledgeNotLapsed();
+        closePledge(period, false);
+    }
+
+    /// @notice The UTC calendar month (YYYYMM) containing the current block.
+    function currentPeriod() public view returns (uint32) {
+        return periodAt(block.timestamp);
+    }
+
+    function periodAt(uint256 time) private pure returns (uint32) {
+        // The mean Gregorian year puts the estimate within one year; monthStart settles it exactly.
+        uint256 year = 1970 + time / 31_556_952;
+        if (monthStart(year, 1) > time) --year;
+        else if (monthStart(year + 1, 1) <= time) ++year;
+        uint256 month = 12;
+        while (monthStart(year, month) > time) --month;
+        return uint32(year * 100 + month);
+    }
+
+    /// @dev The cap a period's allocation may use: monthlyCap while commitments are on, raised to an open
+    /// pledge. A pledge is the owner's consent, so turning commitments off or lowering the cap after pledging
+    /// cannot stop a pledged period. While commitments are off, a pledged period's cap is the pledge alone.
+    function monthlyCapFor(uint32 period) private view returns (uint128) {
+        MonthPledge storage pledge = monthPledges[period];
+        bool enabled = monthlyEnabled;
+        uint128 cap = enabled ? monthlyCap : 0;
+        if (!pledge.open) {
+            if (!enabled) revert MonthlyDisabled();
+            return cap;
+        }
+        return pledge.amount > cap ? pledge.amount : cap;
+    }
+
+    /// @dev Closes an open pledge; a period without one is unchanged. The pledge amount stays as a record.
+    function closePledge(uint32 period, bool reserved) private {
+        MonthPledge storage pledge = monthPledges[period];
+        if (!pledge.open) return;
+        uint128 amount = pledge.amount;
+        pledge.open = false;
+        openPledgedGross -= amount;
+        emit PledgeClosed(period, amount, reserved);
+    }
+
     /// @notice Anyone may commit one period's allocation inside its window, once per period, while the owner
-    /// has monthly commitments on. The identity authority must have signed monthlyDigest(period, root) for
-    /// exactly these awards, and their gross total must be within monthlyCap. The free balance covers new
-    /// awards only; matching existing awards retain their payment state and are never reserved twice.
+    /// has monthly commitments on or has pledged the period. The identity authority must have signed
+    /// monthlyDigest(period, root) for exactly these awards, and their gross total must be within
+    /// max(monthlyCap, the period's open pledge). The free balance covers new awards only; matching existing
+    /// awards retain their payment state and are never reserved twice. Other periods' pledges stay untouched.
     function commitMonthly(uint32 period, MonthlyAward[] calldata entries, bytes calldata attestation) external {
         if (purpose != Purpose.Ordinary) revert WrongPurpose();
-        if (!monthlyEnabled) revert MonthlyDisabled();
+        uint128 cap = monthlyCapFor(period);
         (uint64 opensAt, uint64 closesAt) = monthlyWindow(period);
         if (block.timestamp < opensAt || block.timestamp >= closesAt) revert MonthlyWindowClosed();
         if (monthlyRoots[period] != bytes32(0)) revert MonthlyAlreadyCommitted();
@@ -538,8 +650,11 @@ contract ProjectEscrow is Initializable, UUPSUpgradeable {
             total += entries[i].gross;
             alreadyCommitted[i] = awards[awardId(entries[i].sourceDigest)].actorId != 0;
         }
-        if (total > monthlyCap) revert MonthlyCapExceeded();
+        if (total > cap) revert MonthlyCapExceeded();
         monthlyRoots[period] = root;
+        // Close the period's own pledge first: its funds pay this allocation, and commit() then keeps every
+        // other period's pledge out of reach.
+        closePledge(period, true);
         for (uint256 i; i < entries.length; ++i) {
             MonthlyAward calldata entry = entries[i];
             bytes32 id = awardId(entry.sourceDigest);
@@ -562,12 +677,14 @@ contract ProjectEscrow is Initializable, UUPSUpgradeable {
     }
 
     /// @notice Reserve the complete unfunded remainder in one bounded call. Leaf creation never needs
-    /// a wallet, fresh authority signature, an open admission window, or the owner's later opt-in.
+    /// a wallet, fresh authority signature, an open admission window, or the owner's later opt-in. Monthly
+    /// commitments must be on, or the period pledged; the cap is max(monthlyCap, the period's open pledge),
+    /// the period's pledge closes, and the reserve never uses another period's pledged funds.
     function reserveMonthly(uint32 period, MonthlyReservation calldata reservation, bytes calldata attestation)
         external
     {
         if (purpose != Purpose.Ordinary) revert WrongPurpose();
-        if (!monthlyEnabled) revert MonthlyDisabled();
+        uint128 cap = monthlyCapFor(period);
         (uint64 opensAt, uint64 closesAt) = monthlyWindow(period);
         if (block.timestamp < opensAt || block.timestamp >= closesAt) revert MonthlyWindowClosed();
         if (monthlyRoots[period] != bytes32(0)) revert MonthlyAlreadyCommitted();
@@ -577,12 +694,13 @@ contract ProjectEscrow is Initializable, UUPSUpgradeable {
                 || reservation.wholeGross == 0 || reservation.remainingGross > reservation.wholeGross
                 || (reservation.count == 0) != (reservation.remainingGross == 0)
         ) revert InvalidInput();
-        if (reservation.wholeGross > monthlyCap) revert MonthlyCapExceeded();
+        if (reservation.wholeGross > cap) revert MonthlyCapExceeded();
         if (!signedBy(monthlyReserveDigest(period, reservation), factory.identityAuthority(), attestation)) {
             revert InvalidAttestation();
         }
-        if (reservation.remainingGross > freeBalance) revert InsufficientFreeBalance();
-        freeBalance -= reservation.remainingGross;
+        // The period's own pledge pays this reserve; any pledge above the reserved gross returns to free funds.
+        closePledge(period, true);
+        takeFree(reservation.remainingGross);
         pendingMonthlyGross += reservation.remainingGross;
         monthlyRoots[period] = reservation.allocationRoot;
         monthlyReserves[period] = MonthlyReserve(
@@ -674,10 +792,18 @@ contract ProjectEscrow is Initializable, UUPSUpgradeable {
         );
     }
 
+    /// @dev Every commit from free funds leaves open pledges whole, so an owner pays by hand only from
+    /// unpledged funds.
     function commit(bytes32 id, uint64 actorId, uint128 gross, bytes32 sourceDigest, uint128 fee) private {
         recordAward(id, actorId, gross, sourceDigest, fee);
+        takeFree(gross);
+    }
+
+    /// @dev The one way gross leaves free funds: never below zero, never below the open pledges.
+    function takeFree(uint128 gross) private {
         if (gross > freeBalance) revert InsufficientFreeBalance();
         freeBalance -= gross;
+        if (freeBalance < openPledgedGross) revert PledgedFunds();
     }
 
     function recordAward(bytes32 id, uint64 actorId, uint128 gross, bytes32 sourceDigest, uint128 fee) private {
@@ -778,9 +904,8 @@ contract ProjectEscrow is Initializable, UUPSUpgradeable {
     /// withdrawal never lowers the fee.
     function withdrawUnused(uint128 gross) external onlyOwner nonReentrant {
         if (gross == 0) revert InvalidInput();
-        if (gross > freeBalance) revert InsufficientFreeBalance();
+        takeFree(gross);
         uint128 fee = withdrawalFee(gross);
-        freeBalance -= gross;
         totalGrossWithdrawn += gross;
         totalWithdrawalFees += fee;
         accruedFees += fee;

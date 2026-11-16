@@ -1476,7 +1476,7 @@
     },
     {
       "path": "contracts/evm/adapter.ts",
-      "sha256": "f6eee7031911c5b3b8bdb3371357a53f19369faf066ce5fc7618c49c11e5f4b6",
+      "sha256": "3d7e579469e681699913cc10aace3f12d7d7161e45ac47e8cb891910d608349e",
       "models": [
         "formal/models/contracts/vault_setup_resolution.qnt",
         "formal/models/payments/chain_evidence.qnt",
@@ -1484,11 +1484,11 @@
         "formal/models/ui/ui_vault_provisional_funding.qnt"
       ],
       "candidateLines": [
-        14, 71, 85, 201, 237, 256, 284, 299, 331, 497, 551, 639, 646, 647, 649,
-        650, 974, 977, 986, 992, 996, 1000, 1029, 1072, 1080, 1089, 1097, 1117,
-        1120, 1162, 1234, 1259, 1260, 1270, 1277, 1282, 1283, 1299, 1300, 1302,
-        1314, 1317, 1349, 1375, 1377, 1480, 1487, 1538, 1540, 1549, 1553, 1555,
-        1575, 1576
+        14, 71, 85, 201, 240, 259, 287, 302, 334, 500, 554, 642, 649, 650, 652,
+        653, 977, 980, 989, 995, 999, 1003, 1032, 1075, 1083, 1092, 1100, 1120,
+        1123, 1165, 1237, 1262, 1263, 1273, 1280, 1285, 1286, 1302, 1303, 1305,
+        1317, 1320, 1352, 1378, 1380, 1483, 1490, 1541, 1543, 1552, 1556, 1558,
+        1578, 1579, 1628, 1643, 1644
       ],
       "review": "mapped-abstraction"
     },
@@ -1637,7 +1637,7 @@
     },
     {
       "path": "contracts/evm/src/ProjectEscrow.sol",
-      "sha256": "79d7b63d7db428bb46658267a7719f22786a66aff8a91b86c6b64381cc551f08",
+      "sha256": "c408709cf0236ebe4e0afcefe6ad1dc46a4a884308973533a2a0e1f01d8e5d9d",
       "models": [
         "formal/models/contracts/binding_veto_policy.qnt",
         "formal/models/contracts/evm_factory_authority.qnt",
@@ -1647,7 +1647,7 @@
         "formal/models/payments/authority_rotation.qnt",
         "formal/models/rewards/escrow_balances.qnt"
       ],
-      "candidateLines": [94, 340, 524, 934, 1012, 1016, 1017, 1029, 1030],
+      "candidateLines": [102, 360, 636, 1059, 1137, 1141, 1142, 1154, 1155],
       "review": "mapped-abstraction"
     },
     {
