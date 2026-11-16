@@ -647,7 +647,8 @@
         "formal/models/api/api_registry_alias_transaction.qnt",
         "formal/models/referrals/referrer_attribution.qnt",
         "formal/models/vetting/vetting_admission_clearance.qnt",
-        "formal/models/vetting/vetting_exemption_maintainer_authority.qnt"
+        "formal/models/vetting/vetting_exemption_maintainer_authority.qnt",
+        "formal/models/vetting/vetting_reinstatement_terminal.qnt"
       ],
       "candidateLines": [
         26, 32, 33, 43, 66, 80, 82, 99, 129, 216, 250, 268, 410, 427, 443, 462,
@@ -681,14 +682,16 @@
     },
     {
       "path": "backend/projects/enforcement.ts",
-      "sha256": "bf0959ce30a9d17158460f172b4e59c58f105acfb6fb7501152bfb4f3311d23a",
+      "sha256": "af79786b4b5096cbdfd3fb999a92bd05295b23c061f8a6650d7256099b98ce49",
       "models": [
         "formal/models/api/api_project_enforcement.qnt",
-        "formal/models/vetting/vetting_flag_reinstatement.qnt"
+        "formal/models/vetting/vetting_flag_reinstatement.qnt",
+        "formal/models/vetting/vetting_reinstatement_repositories.qnt",
+        "formal/models/vetting/vetting_reinstatement_terminal.qnt"
       ],
       "candidateLines": [
         5, 51, 67, 125, 145, 199, 257, 347, 354, 374, 418, 458, 476, 482, 490,
-        496, 540, 568
+        496, 540, 569
       ],
       "review": "mapped-abstraction"
     },
@@ -1419,7 +1422,7 @@
     },
     {
       "path": "backend/vetting/persistence.ts",
-      "sha256": "9a6d563e0f607953d8b90893305d77bd9adde2cc698b12ac45d0cb91f6c73e6c",
+      "sha256": "60f2d6528bec57d98e793ef192e90d9989f75184fa5bb0d49a1050da88bdabf9",
       "models": [
         "formal/models/api/project_skill_publication.qnt",
         "formal/models/vetting/vetting_admission_clearance.qnt",
@@ -1427,14 +1430,17 @@
         "formal/models/vetting/vetting_fixed_exemption.qnt",
         "formal/models/vetting/vetting_flag_reinstatement.qnt",
         "formal/models/vetting/vetting_malicious_reinstatement.qnt",
+        "formal/models/vetting/vetting_reinstatement_repositories.qnt",
+        "formal/models/vetting/vetting_reinstatement_terminal.qnt",
         "formal/models/vetting/vetting_repository_clearance.qnt",
         "formal/models/vetting/vetting_result_atomic.qnt"
       ],
       "candidateLines": [
         80, 106, 124, 142, 171, 177, 240, 319, 365, 398, 403, 444, 470, 524,
-        554, 570, 571, 572, 575, 617, 618, 710, 711, 749, 760, 834, 884, 936,
-        939, 947, 1015, 1059, 1090, 1126, 1138, 1179, 1187, 1199, 1201, 1202,
-        1205, 1214, 1221, 1223, 1228, 1233, 1246, 1249, 1251, 1253, 1254
+        554, 570, 571, 572, 575, 617, 618, 710, 711, 749, 760, 830, 833, 848,
+        890, 942, 945, 953, 1021, 1065, 1096, 1132, 1144, 1185, 1193, 1205,
+        1207, 1208, 1211, 1220, 1227, 1229, 1234, 1239, 1252, 1255, 1257, 1259,
+        1260
       ],
       "review": "mapped-abstraction"
     },
@@ -3480,6 +3486,16 @@
       "sha256": "6c64c389b3c697d82b2f50651006bd3e5d3d1da39f9db6253ee9e6129a757734",
       "models": ["formal/models/slopbot/bot_ready_label.qnt"],
       "candidateLines": [5, 15],
+      "review": "mapped-abstraction"
+    },
+    {
+      "path": "migrations/0131_vetting_reinstatement_latest.sql",
+      "sha256": "e9e80b8cf0690457b84b9d4e1c7654743cdbf4f9862901ab84c7bc33e47b13d8",
+      "models": [
+        "formal/models/vetting/vetting_reinstatement_repositories.qnt",
+        "formal/models/vetting/vetting_reinstatement_terminal.qnt"
+      ],
+      "candidateLines": [3, 7, 8, 39, 40, 50],
       "review": "mapped-abstraction"
     },
     {
@@ -6757,14 +6773,16 @@
     },
     {
       "path": "src/lib/project-contracts.ts",
-      "sha256": "352b1c90618401103423ff98ffc915943757edd418b35ba714e089ce6efe73e3",
+      "sha256": "90ead1dc98c7fb3ea658c7d64ba9ddc39fb8b8ab5e1345ef92dd59450231e5ad",
       "models": [
         "formal/models/api/api_project_removal.qnt",
-        "formal/models/slopbot/bot_repository_authority_scope.qnt"
+        "formal/models/slopbot/bot_repository_authority_scope.qnt",
+        "formal/models/vetting/vetting_reinstatement_repositories.qnt",
+        "formal/models/vetting/vetting_reinstatement_terminal.qnt"
       ],
       "candidateLines": [
-        11, 32, 36, 49, 169, 195, 196, 207, 208, 300, 301, 302, 318, 327, 328,
-        333, 337, 357, 366, 412, 413
+        11, 32, 36, 49, 171, 197, 198, 209, 210, 302, 303, 304, 320, 329, 330,
+        335, 339, 359, 368, 414, 415
       ],
       "review": "mapped-abstraction",
       "statelessReason": "Domain type declarations, static route constants and pure GitHub identity/path parsing or display copy. No authority lookup, revision mutation or RPC; corresponding service models own those transitions."
@@ -20060,6 +20078,52 @@
         "crashAfterReservationTest",
         "lostAcceptedResponseTest",
         "rejectedIsNotRetriedTest"
+      ]
+    },
+    {
+      "path": "formal/models/vetting/vetting_reinstatement_repositories.qnt",
+      "sha256": "73247387a11f81e73c7d7cab0b6abbfc751b371c4ac2214bd5a42012acc39d8f",
+      "sources": [
+        "backend/projects/enforcement.ts",
+        "backend/vetting/persistence.ts",
+        "migrations/0131_vetting_reinstatement_latest.sql",
+        "src/lib/project-contracts.ts"
+      ],
+      "scenarios": [
+        "bothCleanRepositoriesReinstateTest",
+        "incompleteProvenanceRefusesTwoRepositoriesTest",
+        "laterCleanOfOtherRepositoryRecoversTest",
+        "legacyIssuerFallbackReinstatesOneRepositoryTest",
+        "missingProvenanceRefusesTwoRepositoriesTest",
+        "otherRepositoryAtDifferentPinDoesNotBlockTest",
+        "otherRepositoryCompletionRaceRefusedTest",
+        "otherRepositoryPendingRemainsExcludedTest",
+        "otherRepositorySequentialIncompleteRefusesPlanTest",
+        "requestTimePrecedesOtherRepositoryRowidTest"
+      ]
+    },
+    {
+      "path": "formal/models/vetting/vetting_reinstatement_terminal.qnt",
+      "sha256": "f6492a303b5673a91a6b1bc12f690c3dad5ef8c16869dfe19ea45ab09ce9a30c",
+      "sources": [
+        "backend/projects/cloudflare-persistence.ts",
+        "backend/projects/enforcement.ts",
+        "backend/vetting/persistence.ts",
+        "migrations/0131_vetting_reinstatement_latest.sql",
+        "src/lib/project-contracts.ts"
+      ],
+      "scenarios": [
+        "completedInvestigationBeforePlanRefusedTest",
+        "differentContentDoesNotBlockTest",
+        "differentPinDoesNotBlockTest",
+        "differentRepositoryDoesNotBlockTest",
+        "laterCleanSupersedesIncompleteTest",
+        "latestCleanReinstatesTest",
+        "legacyOwnRevisionSelectsOtherRepositoryTest",
+        "legacySameRepositoryBlocksTest",
+        "pendingCompletionRaceRefusedTest",
+        "pendingInvestigationExcludedTest",
+        "requestTimePrecedesRowidTest"
       ]
     },
     {
