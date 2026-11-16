@@ -285,6 +285,10 @@ pure def sometimesPaidEvm(b: DirectBounty): bool = paid(b) and b.terms.network !
 pure def sometimesPaidSolana(b: DirectBounty): bool = paid(b) and b.terms.network == Solana
 pure def sometimesHeld(b: DirectBounty): bool = heldResearcher(b)
 pure def sometimesRecovered(b: DirectBounty): bool = b.intent.generation > 0
+pure def sometimesOldWinnerAfterWalletChange(b: DirectBounty): bool = b.researcherReceipt.transaction != ""
+  and b.intent.generation == 0 and validWallet(b.reporterWallet) and b.reporterWallet != b.intent.reporter
+pure def sometimesSuccessorPaid(b: DirectBounty): bool = b.researcherReceipt.transaction != "" and b.intent.generation > 0
+  and b.priorIntents.some(prior => prior.retirement.lane == Researcher)
 ```
 
 ### Simulation covers both payment shapes and conflicting evidence
@@ -322,7 +326,9 @@ pure val reporterWalletValues = Set(reporterOne).union(Set(reporterTwo)).union(S
 pure val intentValues = Set(evmIntent).union(Set(solanaIntent)).union(Set(noIntent))
 pure val successorValues = Set(nextResearcherIntent).union(Set(nextFeeIntent)).union(Set(nextSolanaIntent))
 pure val retirementValues = Set(researcherRetirement).union(Set(feeRetirement)).union(Set(solanaRetirement))
+pure val successorTransfer: Transfer = { ...researcherTransfer, researcherAddress: "new-reporter", transaction: "successor-tx", nonce: 2, height: 3 }
 pure val transferValues = Set(researcherTransfer).union(Set(feeTransfer)).union(Set(bundledTransfer)).union(Set({ ...researcherTransfer, finalized: false }))
+  .union(Set(successorTransfer))
 pure val useValues = Set({ network: Base, transaction: "other-tx" }, { network: Base, transaction: "fee-tx" })
 pure val pairValues = Set({ researcher: researcherTransfer, fee: feeTransfer }, { researcher: researcherTransfer, fee: researcherTransfer })
 pure val caseVersionValues = Set(1, 2)

@@ -288,11 +288,12 @@ pure def stepOrderOutcomeOnce(before: Buyback, after: Buyback): bool =
 ### Cumulative accounting stays within its shares and every journal entry is past and positive
 
 Rolling exposure uses UTC milliseconds and an 86,400,000 millisecond window.
-A released entry no longer counts. Discovered by the proof: cumulative
-amounts keep valid limbs, every journal entry has a positive amount and a
-time no later than the observed clock, and an ordered or in-transit deposit
-stays inside the committed share, so a refund never exceeds the commitment.
-Retained order outcomes and decisions are append-only.
+A released entry no longer counts. Cumulative amounts keep valid limbs,
+every journal entry has a positive amount and a time no later than the
+observed clock, and an ordered or in-transit deposit stays inside the
+committed share, so a refund never exceeds the commitment. Retained order
+outcomes and decisions are append-only. A later order follows only after
+the earlier one closed, failed or was refunded.
 
 ```quint
 pure def openSend(s: Send): bool = s.phase == Submitted or s.phase == Unknown
@@ -315,13 +316,7 @@ pure def stepJournalRetained(before: Buyback, after: Buyback): bool = after.txs.
   and before.sources.every(k => after.sources.includes(k)) and before.incomeTimes.every(t => after.incomeTimes.includes(t))
   and after.outcomes.length() >= before.outcomes.length() and before.outcomes.every(o => after.outcomes.includes(o))
   and after.decisions.length() >= before.decisions.length() and before.decisions.every(d => after.decisions.includes(d))
-```
-
-### Simulation samples exercise matching, refused and failed evidence
-
-These sets bound simulation only.
-
-```quint
+pure def sometimesSecondCycle(b: Buyback): bool = b.orders.length() >= 2
 pure val nowValues = Set(buybackStart + 1, buybackStart + 3600001, buybackStart + 86400001)
 pure val chainTimeValues = Set(buybackStart - 1, buybackStart, buybackStart + 1)
 pure val keyValues = Set({ kind: ConversionOutput, network: R::Base, id: 1 }, { kind: UsdcClaim, network: R::Base, id: 1 },
@@ -329,7 +324,7 @@ pure val keyValues = Set({ kind: ConversionOutput, network: R::Base, id: 1 }, { 
   { kind: ConversionOutput, network: R::Solana, id: 4 })
 pure val incomeAmountValues = Set(List(0, 0, 0, 1), List(0, 0, 500), List(0, 0, 0, 2))
 pure val sourceNetworkValues = Set(R::Robinhood, R::Solana, R::Ethereum)
-pure val txValues = Set(21, 22, 23, 24, 25)
+pure val txValues = Set(21, 22, 23, 24, 25, 26, 27)
 pure val readyNetworkValues = Set(R::Base, R::Robinhood, R::Solana)
 pure val variableValues = Set(true)
 pure val byValues = Set(R::ReleaseWorkflow, R::Owner)
@@ -345,10 +340,15 @@ pure val requestValues = Set(
   { orderId: 2, tx: 23, amount: 500000000, takeAmount: 495000000, costBps: 151, receiver: "fees", authority: "fees", beneficiary: "fees",
     externalCall: false, affiliateFee: 0, reservedTaker: "", solana: false, nativeFee: 1000 },
   { orderId: 2, tx: 24, amount: 500000000, takeAmount: 495000000, costBps: 0, receiver: "wrong", authority: "fees", beneficiary: "fees",
-    externalCall: true, affiliateFee: 1, reservedTaker: "unknown", solana: false, nativeFee: 1000 })
+    externalCall: true, affiliateFee: 1, reservedTaker: "unknown", solana: false, nativeFee: 1000 },
+  { orderId: 3, tx: 26, amount: 500000000, takeAmount: 495000000, costBps: 100, receiver: "fees", authority: "fees", beneficiary: "fees",
+    externalCall: false, affiliateFee: 0, reservedTaker: "", solana: false, nativeFee: 1000 },
+  { orderId: 3, tx: 27, amount: 500000000, takeAmount: 495000000, costBps: 100, receiver: "fees", authority: "fees", beneficiary: "fees",
+    externalCall: false, affiliateFee: 0, reservedTaker: "", solana: false, nativeFee: 1000 })
 pure val receiptValues = Set({ tx: 21, succeeded: true, finalized: true }, { tx: 22, succeeded: true, finalized: true },
   { tx: 22, succeeded: false, finalized: true }, { tx: 23, succeeded: true, finalized: true }, { tx: 24, succeeded: false, finalized: true },
-  { tx: 25, succeeded: true, finalized: true }, { tx: 25, succeeded: false, finalized: true }, { tx: 21, succeeded: true, finalized: false })
+  { tx: 25, succeeded: true, finalized: true }, { tx: 25, succeeded: false, finalized: true }, { tx: 21, succeeded: true, finalized: false },
+  { tx: 26, succeeded: true, finalized: true }, { tx: 27, succeeded: true, finalized: true })
 pure val arrivalValues = Set({ order: 1, amount: 495000000, receiver: "fees", height: 2, finalized: true },
   { order: 2, amount: 495000000, receiver: "fees", height: 2, finalized: true },
   { order: 1, amount: 500000000, receiver: "fees", height: 2, finalized: true })

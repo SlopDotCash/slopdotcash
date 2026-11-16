@@ -11,16 +11,15 @@ At Slop development `d6c44489cd5a4ff687f1ef406991aaf9b28b7b64`,
 `backend/security/direct-payments.ts:799–884` records each finalized EVM leg
 before aggregate completion. For Solana the exact bundle is one receipt.
 `workers/fee-converter/store.ts:419–449,569–575` uses completed awards in fee
-balance and historical asset discovery. `workers/fee-converter/buyback-store.ts:59–91`
-also requires completion, then compares the initial `prepared_at` with the
-cutover. Preparation proves when the intent was written. The operational
-`verified_at` proves when evidence was recorded. To enforce the PRD exclusion
-of earlier income, this handoff requires independently verified canonical
-chain timestamps for the actual receipt or bundle. The two historical clock
-fields remain individually visible for conformance review. In particular, a
-pre-cutover intent with post-cutover receipts can pass the PRD rule while the
-pinned worker's preparation filter would omit it. No production policy or
-activation change follows from this specification.
+balance and historical asset discovery. To enforce the PRD exclusion of
+earlier income, this handoff requires independently verified canonical chain
+timestamps for the actual receipt or bundle, compared with the one
+[buyback activation instant](./buyback.md). Open conformance gap
+(`direct-income-prepared-at`): `workers/fee-converter/buyback-store.ts:68`
+filters on `prepared_at >= cutover` instead, so it omits a case prepared
+before activation whose receipts are after it; the code fix belongs to the
+business phase. No production policy or activation change follows from this
+specification.
 
 ## Story: Distinguish funds received from income booked for a completed direct award
 
@@ -40,6 +39,7 @@ unrelated transfer supplies no direct fee income.
 ```quint
 import money as M from "../settlement/money"
 import directBounty as D from "../settlement/directBounty"
+import buyback as B from "./buyback"
 type JournalRead = CurrentRead | UnavailableRead | UnauthenticatedRead
 type Reader = SettlementJournal | OtherReader
 type CashStatus = UnknownCash | NoFeeReceipt | FeeReceived
@@ -52,7 +52,6 @@ type Recognition = { sourceKey: D::TxUse, caseId: int, asset: str, wallet: str, 
   originalPreparedAt: int, aggregateVerifiedAt: int }
 type FeeJournal = { received: List[FeeFact], entries: List[Recognition] }
 pure val initial: FeeJournal = { received: List(), entries: List() }
-pure val buybackCutover: int = 1794441600000
 pure val noKey: D::TxUse = { network: D::Base, transaction: "" }
 pure val noFee: FeeFact = { status: NoFeeReceipt, sourceKey: noKey, caseId: 0, asset: "", wallet: "", amount: M::zero, height: 0 }
 pure def exactPositiveFee(bounty: D::DirectBounty): bool = bounty.admitted and bounty.intent.active
@@ -77,10 +76,10 @@ independent canonical receipts. Solana repeats the same bundle evidence for
 the two legs and counts it once. Chain evidence binds each observed time to
 its exact verified transaction and finalized height. Both the fee receipt and
 completion must belong to the activation interval. An older fee is excluded
-even if its case completes or is recorded after activation. An authenticated
-preparation time and aggregate verification time remain historical comparison
-fields. Neither can make an earlier transfer eligible or substitute for
-missing chain-time evidence. The model clock uses integer UTC epoch milliseconds.
+even if its case completes or is recorded after activation. The authenticated
+preparation and aggregate verification times are retained fields only.
+Neither can make an earlier transfer eligible or substitute for missing
+chain-time evidence. The model clock uses integer UTC epoch milliseconds.
 
 ```quint
 pure def exactAwardComplete(bounty: D::DirectBounty): bool = exactPositiveFee(bounty)
@@ -94,14 +93,12 @@ pure def completeTimeEvidence(bounty: D::DirectBounty, timing: AwardTimes): bool
   matchesTime(bounty.feeReceipt, timing.feeTime) and matchesTime(bounty.researcherReceipt, timing.researcherTime)
     and (bounty.terms.network != D::Solana or timing.feeTime == timing.researcherTime)
     and timing.originalPreparedAt > 0 and timing.aggregateVerifiedAt >= timing.originalPreparedAt
-pure def eligibleTime(timing: AwardTimes): bool = timing.feeTime.chainTime >= buybackCutover and completionTime(timing) >= buybackCutover
+pure def eligibleTime(timing: AwardTimes): bool = timing.feeTime.chainTime >= B::buybackStart and completionTime(timing) >= B::buybackStart
 pure def bookingStatus(bounty: D::DirectBounty, timing: AwardTimes, read: JournalRead): BookingStatus =
   if (read != CurrentRead) UnknownBooking
   else if (not(D::paid(bounty))) AwaitingCompletion
   else if (not(exactAwardComplete(bounty)) or not(completeTimeEvidence(bounty, timing))) UnknownBooking
   else if (eligibleTime(timing)) CompletedEligible else CompletedBeforeCutover
-pure def pinnedPreparedFilter(bounty: D::DirectBounty, timing: AwardTimes, read: JournalRead): bool =
-  read == CurrentRead and exactAwardComplete(bounty) and timing.originalPreparedAt >= buybackCutover
 ```
 
 ### One immutable receipt contributes its full amount to only its original asset and wallet
@@ -160,7 +157,7 @@ pure def incomeFor(j: FeeJournal, network: D::Network, asset: str, wallet: str):
     M::addAmounts(total, row.amount) else total)
 pure def validRecognition(row: Recognition): bool = row.caseId > 0 and row.asset != "" and row.wallet != ""
   and row.sourceKey.transaction != "" and row.researcherTx != "" and row.feeHeight > 0 and M::validAmount(row.amount) and M::positiveAmount(row.amount)
-  and row.feeChainTime >= buybackCutover and row.researcherChainTime > 0 and row.completeAt >= buybackCutover
+  and row.feeChainTime >= B::buybackStart and row.researcherChainTime > 0 and row.completeAt >= B::buybackStart
   and row.completeAt == (if (row.feeChainTime >= row.researcherChainTime) row.feeChainTime else row.researcherChainTime)
   and ((row.sourceKey.network == D::Solana) == (row.sourceKey.transaction == row.researcherTx))
   and row.originalPreparedAt > 0 and row.aggregateVerifiedAt >= row.originalPreparedAt
@@ -186,7 +183,7 @@ pure val noRecognition: Recognition = { sourceKey: noKey, caseId: 0, asset: "", 
 pure def sometimesReceivedOnly(j: FeeJournal): bool = j.received.length() > 0 and j.entries.length() == 0
 pure def sometimesSeparateReceiptsBooked(j: FeeJournal): bool = j.entries.some(row => row.sourceKey.network != D::Solana)
 pure def sometimesBundleBooked(j: FeeJournal): bool = j.entries.some(row => row.sourceKey.network == D::Solana)
-pure def sometimesCrossCutoverPreparation(j: FeeJournal): bool = j.entries.some(row => row.originalPreparedAt < buybackCutover)
+pure def sometimesCrossCutoverPreparation(j: FeeJournal): bool = j.entries.some(row => row.originalPreparedAt < B::buybackStart)
 ```
 
 ### Simulation covers both rails and both sides of the activation instant
@@ -203,16 +200,16 @@ pure val separatePaid: D::DirectBounty = { ...feeOnly, caseRevision: 5, research
 pure val bundledPaid: D::DirectBounty = { ...separatePaid, terms: { ...D::termsSolana, caseId: 2 }, intent: D::solanaIntent,
   researcherReceipt: D::bundledTransfer, feeReceipt: D::bundledTransfer }
 pure val feeClock: TimedReceipt = { network: D::Base, transaction: "fee-tx", height: 2,
-  chainTime: buybackCutover + 1, authenticated: true }
-pure val researcherClock: TimedReceipt = { ...feeClock, transaction: "researcher-tx", chainTime: buybackCutover + 2 }
+  chainTime: B::buybackStart + 1, authenticated: true }
+pure val researcherClock: TimedReceipt = { ...feeClock, transaction: "researcher-tx", chainTime: B::buybackStart + 2 }
 pure val bundleClock: TimedReceipt = { ...feeClock, network: D::Solana, transaction: "bundle-tx" }
-pure val separateTimes: AwardTimes = { originalPreparedAt: buybackCutover - 1, aggregateVerifiedAt: buybackCutover + 3,
+pure val separateTimes: AwardTimes = { originalPreparedAt: B::buybackStart - 1, aggregateVerifiedAt: B::buybackStart + 3,
   feeTime: feeClock, researcherTime: researcherClock }
-pure val bundleTimes: AwardTimes = { originalPreparedAt: buybackCutover - 1, aggregateVerifiedAt: buybackCutover + 3,
+pure val bundleTimes: AwardTimes = { originalPreparedAt: B::buybackStart - 1, aggregateVerifiedAt: B::buybackStart + 3,
   feeTime: bundleClock, researcherTime: bundleClock }
 pure val bountyValues = Set(D::initial).union(Set(feeOnly)).union(Set(separatePaid)).union(Set(bundledPaid))
 pure val timingValues = Set(separateTimes).union(Set(bundleTimes)).union(Set({ ...separateTimes, feeTime: { ...feeClock, authenticated: false } }))
-  .union(Set({ ...separateTimes, feeTime: { ...feeClock, chainTime: buybackCutover - 1 } }))
+  .union(Set({ ...separateTimes, feeTime: { ...feeClock, chainTime: B::buybackStart - 1 } }))
 pure val readValues = Set(CurrentRead, UnavailableRead)
 pure val byValues = Set(SettlementJournal, OtherReader)
 pure val weight_recordCash = 8

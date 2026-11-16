@@ -21,6 +21,7 @@ has no claim delay.
 
 ```quint
 import money as M from "./money"
+import referrals as RF from "./referrals"
 type SequenceCheck = { next: int, valid: bool }
 pure val emptySequenceCheck: SequenceCheck = { next: 0, valid: true }
 type Epoch = { index: int, root: str, total: M::Amount, postedAt: int, voided: bool }
@@ -45,7 +46,7 @@ pure def deploy(d: Distributor, token: str, tokenUnit: M::Amount, cap: M::Amount
   spacing: int, owner: str, poster: str, timestamp: int): Distributor =
   { ...d, configured: true, token: token, tokenUnit: tokenUnit, epochCap: cap, postSpacing: spacing,
     owner: owner, poster: poster, now: timestamp, deployedAt: timestamp, lastUnpausedAt: timestamp }
-pure def approvedGrowthCap(d: Distributor): bool = M::equalAmounts(d.epochCap, M::multiplyAmounts(d.tokenUnit, M::smallAmount(2000000)))
+pure def approvedGrowthCap(d: Distributor): bool = M::equalAmounts(d.epochCap, M::multiplyAmounts(d.tokenUnit, M::smallAmount(RF::referralPoolTokens)))
 pure def canTick(d: Distributor, timestamp: int): bool = d.configured and timestamp > d.now
 pure def tick(d: Distributor, timestamp: int): Distributor = { ...d, now: timestamp }
 ```

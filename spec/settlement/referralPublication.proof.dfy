@@ -228,13 +228,13 @@ lemma RootAmountsAndPinsRetained(before: Publication, after: Publication)
   ensures alwaysRootCap(after) && alwaysRootWalletPinned(after)
 {
   forall root | root in after.roots ensures
-    settlement__money_compareAmounts(root.total, settlement__money_multiplyAmounts(after.tokenUnit, settlement__money_smallAmount(2000000))) <= 0 &&
+    settlement__money_compareAmounts(root.total, settlement__money_multiplyAmounts(after.tokenUnit, settlement__money_smallAmount(settlement__referrals_referralPoolTokens))) <= 0 &&
     (forall entry :: entry in root.entries ==> settlement__referralAccrual_entryWalletPinned(after.pins, entry)) {
     var i :| 0 <= i < |after.roots| && after.roots[i] == root;
     var prior := before.roots[i];
     assert prior in before.roots;
     assert prior.total == root.total && prior.entries == root.entries;
-    assert settlement__money_compareAmounts(prior.total, settlement__money_multiplyAmounts(before.tokenUnit, settlement__money_smallAmount(2000000))) <= 0;
+    assert settlement__money_compareAmounts(prior.total, settlement__money_multiplyAmounts(before.tokenUnit, settlement__money_smallAmount(settlement__referrals_referralPoolTokens))) <= 0;
     forall entry | entry in prior.entries ensures settlement__referralAccrual_entryWalletPinned(after.pins, entry) {
       assert settlement__referralAccrual_entryWalletPinned(before.pins, entry);
     }
@@ -254,28 +254,28 @@ lemma FileFromLedger(p: Publication, a: settlement__referralAccrual_Accrual)
 }
 
 lemma prepare_ensures(p: Publication, control: settlement__referrals_Referral, a: settlement__referralAccrual_Accrual, rootId: int, chain: settlement__referralDistributor_Distributor, merkleRoot: string, rootVerified: bool, signer: string)
-  ensures (inv(p) ==> canPrepare(p, control, a, rootId, chain, merkleRoot, rootVerified, signer) ==> alwaysUniqueAttempts(prepare(p, control, a, rootId, chain, merkleRoot, rootVerified, signer)))
-  ensures (inv(p) ==> canPrepare(p, control, a, rootId, chain, merkleRoot, rootVerified, signer) ==> alwaysSettledGasValid(prepare(p, control, a, rootId, chain, merkleRoot, rootVerified, signer)))
-  ensures (inv(p) ==> canPrepare(p, control, a, rootId, chain, merkleRoot, rootVerified, signer) ==> alwaysHoldCeiling(prepare(p, control, a, rootId, chain, merkleRoot, rootVerified, signer)))
-  ensures (inv(p) ==> canPrepare(p, control, a, rootId, chain, merkleRoot, rootVerified, signer) ==> alwaysIdleUnreserved(prepare(p, control, a, rootId, chain, merkleRoot, rootVerified, signer)))
-  ensures (inv(p) ==> canPrepare(p, control, a, rootId, chain, merkleRoot, rootVerified, signer) ==> alwaysPreparedWalletsPinned(prepare(p, control, a, rootId, chain, merkleRoot, rootVerified, signer)))
-  ensures (inv(p) ==> canPrepare(p, control, a, rootId, chain, merkleRoot, rootVerified, signer) ==> alwaysTokenBound(prepare(p, control, a, rootId, chain, merkleRoot, rootVerified, signer)))
-  ensures (inv(p) ==> canPrepare(p, control, a, rootId, chain, merkleRoot, rootVerified, signer) ==> alwaysPreparedCap(prepare(p, control, a, rootId, chain, merkleRoot, rootVerified, signer)))
-  ensures (inv(p) ==> canPrepare(p, control, a, rootId, chain, merkleRoot, rootVerified, signer) ==> alwaysRootCap(prepare(p, control, a, rootId, chain, merkleRoot, rootVerified, signer)))
-  ensures (inv(p) ==> canPrepare(p, control, a, rootId, chain, merkleRoot, rootVerified, signer) ==> alwaysUniqueClaims(prepare(p, control, a, rootId, chain, merkleRoot, rootVerified, signer)))
-  ensures (inv(p) ==> canPrepare(p, control, a, rootId, chain, merkleRoot, rootVerified, signer) ==> alwaysPinsUnique(prepare(p, control, a, rootId, chain, merkleRoot, rootVerified, signer)))
-  ensures (inv(p) ==> canPrepare(p, control, a, rootId, chain, merkleRoot, rootVerified, signer) ==> alwaysRootWalletPinned(prepare(p, control, a, rootId, chain, merkleRoot, rootVerified, signer)))
-  ensures (inv(p) ==> canPrepare(p, control, a, rootId, chain, merkleRoot, rootVerified, signer) ==> alwaysNativeBounded(prepare(p, control, a, rootId, chain, merkleRoot, rootVerified, signer)))
-  ensures (inv(p) ==> canPrepare(p, control, a, rootId, chain, merkleRoot, rootVerified, signer) ==> alwaysAttemptGasAccounted(prepare(p, control, a, rootId, chain, merkleRoot, rootVerified, signer)))
-  ensures (inv(p) ==> canPrepare(p, control, a, rootId, chain, merkleRoot, rootVerified, signer) ==> alwaysPendingAttempt(prepare(p, control, a, rootId, chain, merkleRoot, rootVerified, signer)))
-  ensures (inv(p) ==> canPrepare(p, control, a, rootId, chain, merkleRoot, rootVerified, signer) ==> alwaysPendingHeld(prepare(p, control, a, rootId, chain, merkleRoot, rootVerified, signer)))
-  ensures (inv(p) ==> canPrepare(p, control, a, rootId, chain, merkleRoot, rootVerified, signer) ==> stepTokenFixed(p, prepare(p, control, a, rootId, chain, merkleRoot, rootVerified, signer)))
-  ensures (inv(p) ==> canPrepare(p, control, a, rootId, chain, merkleRoot, rootVerified, signer) ==> stepPinsRetained(p, prepare(p, control, a, rootId, chain, merkleRoot, rootVerified, signer)))
-  ensures (inv(p) ==> canPrepare(p, control, a, rootId, chain, merkleRoot, rootVerified, signer) ==> stepAttemptsRetained(p, prepare(p, control, a, rootId, chain, merkleRoot, rootVerified, signer)))
-  ensures (inv(p) ==> canPrepare(p, control, a, rootId, chain, merkleRoot, rootVerified, signer) ==> stepClaimedNeverFalls(p, prepare(p, control, a, rootId, chain, merkleRoot, rootVerified, signer)))
+  ensures (inv(p) ==> canPrepare(p, control, a, rootId, chain, merkleRoot, rootVerified, signer, network) ==> alwaysUniqueAttempts(prepare(p, control, a, rootId, chain, merkleRoot, rootVerified, signer, network)))
+  ensures (inv(p) ==> canPrepare(p, control, a, rootId, chain, merkleRoot, rootVerified, signer, network) ==> alwaysSettledGasValid(prepare(p, control, a, rootId, chain, merkleRoot, rootVerified, signer, network)))
+  ensures (inv(p) ==> canPrepare(p, control, a, rootId, chain, merkleRoot, rootVerified, signer, network) ==> alwaysHoldCeiling(prepare(p, control, a, rootId, chain, merkleRoot, rootVerified, signer, network)))
+  ensures (inv(p) ==> canPrepare(p, control, a, rootId, chain, merkleRoot, rootVerified, signer, network) ==> alwaysIdleUnreserved(prepare(p, control, a, rootId, chain, merkleRoot, rootVerified, signer, network)))
+  ensures (inv(p) ==> canPrepare(p, control, a, rootId, chain, merkleRoot, rootVerified, signer, network) ==> alwaysPreparedWalletsPinned(prepare(p, control, a, rootId, chain, merkleRoot, rootVerified, signer, network)))
+  ensures (inv(p) ==> canPrepare(p, control, a, rootId, chain, merkleRoot, rootVerified, signer, network) ==> alwaysTokenBound(prepare(p, control, a, rootId, chain, merkleRoot, rootVerified, signer, network)))
+  ensures (inv(p) ==> canPrepare(p, control, a, rootId, chain, merkleRoot, rootVerified, signer, network) ==> alwaysPreparedCap(prepare(p, control, a, rootId, chain, merkleRoot, rootVerified, signer, network)))
+  ensures (inv(p) ==> canPrepare(p, control, a, rootId, chain, merkleRoot, rootVerified, signer, network) ==> alwaysRootCap(prepare(p, control, a, rootId, chain, merkleRoot, rootVerified, signer, network)))
+  ensures (inv(p) ==> canPrepare(p, control, a, rootId, chain, merkleRoot, rootVerified, signer, network) ==> alwaysUniqueClaims(prepare(p, control, a, rootId, chain, merkleRoot, rootVerified, signer, network)))
+  ensures (inv(p) ==> canPrepare(p, control, a, rootId, chain, merkleRoot, rootVerified, signer, network) ==> alwaysPinsUnique(prepare(p, control, a, rootId, chain, merkleRoot, rootVerified, signer, network)))
+  ensures (inv(p) ==> canPrepare(p, control, a, rootId, chain, merkleRoot, rootVerified, signer, network) ==> alwaysRootWalletPinned(prepare(p, control, a, rootId, chain, merkleRoot, rootVerified, signer, network)))
+  ensures (inv(p) ==> canPrepare(p, control, a, rootId, chain, merkleRoot, rootVerified, signer, network) ==> alwaysNativeBounded(prepare(p, control, a, rootId, chain, merkleRoot, rootVerified, signer, network)))
+  ensures (inv(p) ==> canPrepare(p, control, a, rootId, chain, merkleRoot, rootVerified, signer, network) ==> alwaysAttemptGasAccounted(prepare(p, control, a, rootId, chain, merkleRoot, rootVerified, signer, network)))
+  ensures (inv(p) ==> canPrepare(p, control, a, rootId, chain, merkleRoot, rootVerified, signer, network) ==> alwaysPendingAttempt(prepare(p, control, a, rootId, chain, merkleRoot, rootVerified, signer, network)))
+  ensures (inv(p) ==> canPrepare(p, control, a, rootId, chain, merkleRoot, rootVerified, signer, network) ==> alwaysPendingHeld(prepare(p, control, a, rootId, chain, merkleRoot, rootVerified, signer, network)))
+  ensures (inv(p) ==> canPrepare(p, control, a, rootId, chain, merkleRoot, rootVerified, signer, network) ==> stepTokenFixed(p, prepare(p, control, a, rootId, chain, merkleRoot, rootVerified, signer, network)))
+  ensures (inv(p) ==> canPrepare(p, control, a, rootId, chain, merkleRoot, rootVerified, signer, network) ==> stepPinsRetained(p, prepare(p, control, a, rootId, chain, merkleRoot, rootVerified, signer, network)))
+  ensures (inv(p) ==> canPrepare(p, control, a, rootId, chain, merkleRoot, rootVerified, signer, network) ==> stepAttemptsRetained(p, prepare(p, control, a, rootId, chain, merkleRoot, rootVerified, signer, network)))
+  ensures (inv(p) ==> canPrepare(p, control, a, rootId, chain, merkleRoot, rootVerified, signer, network) ==> stepClaimedNeverFalls(p, prepare(p, control, a, rootId, chain, merkleRoot, rootVerified, signer, network)))
 {
-  if inv(p) && canPrepare(p, control, a, rootId, chain, merkleRoot, rootVerified, signer) {
-    var after := prepare(p, control, a, rootId, chain, merkleRoot, rootVerified, signer);
+  if inv(p) && canPrepare(p, control, a, rootId, chain, merkleRoot, rootVerified, signer, network) {
+    var after := prepare(p, control, a, rootId, chain, merkleRoot, rootVerified, signer, network);
     SameClaims(p, after);
     var file := nextFiling(p, a);
     FileFromLedger(p, a);
