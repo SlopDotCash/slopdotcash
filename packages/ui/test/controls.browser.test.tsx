@@ -1,6 +1,7 @@
 // What only a browser shows of spec/ui/index.md: the heights controls are laid out at, what moves under reduced
 // motion, and the ring keyboard focus draws, on the design tokens in Chromium.
-import "@repo/design-system/theme.css";
+// The theme and fonts, as every story has them.
+import "../.storybook/preview.ts";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterAll, afterEach, beforeAll, expect, it } from "vitest";
@@ -59,12 +60,12 @@ it("stands still under reduced motion, and moves otherwise", async () => {
     spin: getComputedStyle(host.querySelector("svg")!).animationName,
     pulse: getComputedStyle(host.querySelector("[aria-hidden].h-4")!).animationName,
     bar: getComputedStyle(host.querySelector("[role=progressbar] > div")!).animationName,
-    button: getComputedStyle(host.querySelector("button:not([role=switch])")!).transitionDuration,
-    toggle: getComputedStyle(host.querySelector("[role=switch]")!).transitionDuration,
+    button: getComputedStyle(host.querySelector("button:not([role=switch])")!).transitionProperty,
+    toggle: getComputedStyle(host.querySelector("[role=switch]")!).transitionProperty,
   });
-  expect(Object.values(moving()).every((value) => value !== "none" && value !== "0s")).toBe(true);
+  expect(Object.values(moving()).filter((value) => value === "none")).toEqual([]);
   await motion("reduce");
-  expect(moving()).toEqual({ spin: "none", pulse: "none", bar: "none", button: "0s", toggle: "0s" });
+  expect(moving()).toEqual({ spin: "none", pulse: "none", bar: "none", button: "none", toggle: "none" });
 });
 
 // spec/ui/index.md, "Keyboard focus always shows the ring"

@@ -1,9 +1,11 @@
-import type { ComponentProps } from "react";
+import type { ComponentProps, ReactNode } from "react";
 import { cn, focusRing } from "../lib/cn.ts";
 
-export type ExternalLinkProps = Omit<ComponentProps<"a">, "target" | "rel" | "href"> & {
+export type ExternalLinkProps = Omit<ComponentProps<"a">, "target" | "rel" | "href" | "children"> & {
   /** The address on another site. */
   href: string;
+  /** What the link shows: its name, unless `label` gives one. */
+  children: ReactNode;
   /** The accessible name, where what is shown is an icon or a short handle. */
   label?: string;
 };
