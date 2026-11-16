@@ -378,7 +378,7 @@
     },
     {
       "path": "backend/payments/handler.ts",
-      "sha256": "8e54af53a539d04a6890ff56f7c3745a390de86c8443fee6778fff04a9168d3e",
+      "sha256": "ae0f0a4ce7669e9ba08d284a9c42afb822130a4d413ee507d1ab7c78c08d2b6a",
       "models": [
         "formal/models/api/api_payment_wallet_protocol.qnt",
         "formal/models/payments/binding_consent_renewal.qnt",
@@ -398,7 +398,7 @@
       ],
       "candidateLines": [
         110, 215, 282, 341, 346, 393, 415, 421, 444, 466, 644, 665, 679, 803,
-        859, 897, 906, 921, 1060, 1123, 1140, 1230, 1231, 1285
+        859, 897, 906, 921, 1060, 1123, 1131, 1154, 1241, 1242, 1296
       ],
       "review": "mapped-abstraction"
     },
