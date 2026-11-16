@@ -1702,6 +1702,7 @@ test("parallel quota reads wait for the strictest reset and stop when no request
     const now = new Date("2026-01-31T23:59:59Z");
     let clock = now.getTime();
     let siblingReads = 0;
+    const waitingSiblings: Array<() => void> = [];
     const delays: number[] = [];
     const network = Object.assign(
       async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -1718,12 +1719,18 @@ test("parallel quota reads wait for the strictest reset and stop when no request
           });
         if (url.pathname !== "/graphql") {
           siblingReads++;
+          // Start every sibling before a quota response can interrupt cache reads.
+          await new Promise<void>((resolve) => {
+            waitingSiblings.push(resolve);
+            if (waitingSiblings.length === 3) {
+              for (const release of waitingSiblings.splice(0)) release();
+            }
+          });
           if (url.pathname.endsWith("/reviews"))
             return Response.json(
               { message: "Secondary rate limit" },
               { status: 403, headers: { "retry-after": "5" } },
             );
-          await Bun.sleep(30);
           return Response.json(
             { message: "API rate limit exceeded" },
             {
