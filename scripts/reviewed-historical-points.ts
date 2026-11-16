@@ -25,6 +25,7 @@ import {
 import { sha256Hex } from "../src/lib/sha256";
 import { VALUE_TIERS } from "../src/lib/value-assessment";
 import { allocateWeightedRows } from "../src/lib/weighted-allocation";
+import type { Pull } from "../workers/slopbot/value-evidence-types";
 import { mergeResolutionLineCounts } from "../workers/slopbot/value-merge-resolution";
 import { pointProtectionQuery } from "./points-protection-sql";
 
@@ -77,6 +78,22 @@ export interface HistoricalPointsPacket {
     sourceId: string;
     workUnitId: string;
     source: CorrectionSource;
+    /** Owner-reviewed promotion with no accepted tree change at either stage. */
+    unchangedPromotion?: {
+      sourceDigest: string;
+      pull: Pull;
+      merge: {
+        sha: string;
+        parents: { sha: string }[];
+        stats: { additions: number; deletions: number; total: number };
+        files: unknown[];
+      };
+      commits: {
+        sha: string;
+        tree: { sha: string };
+        parents: { sha: string }[];
+      }[];
+    };
     earlierSources: CorrectionSource[];
     coverage: {
       commitSha: string;
@@ -569,6 +586,102 @@ export function reconstructHistoricalPoints(
           "Duplicate coverage is not an earlier accepted source",
         );
     }
+    const unchanged = retirement.unchangedPromotion;
+    const treeCommits = new Map(
+      unchanged?.commits.map((commit) => [commit.sha, commit]),
+    );
+    if (unchanged) {
+      const pull = unchanged.pull,
+        merge = unchanged.merge;
+      const sha = (value: unknown) =>
+        typeof value === "string" && /^[a-f0-9]{40}$/u.test(value);
+      check(
+        Object.keys(unchanged).sort().join() ===
+          "commits,merge,pull,sourceDigest" &&
+          unchanged.sourceDigest ===
+            hash({
+              pull: unchanged.pull,
+              merge: unchanged.merge,
+              commits: unchanged.commits,
+            }) &&
+          pull.node_id === source.sourceId &&
+          pull.html_url === source.sourceUrl &&
+          pull.state === "closed" &&
+          pull.merged_at !== null &&
+          new Date(pull.merged_at).toISOString() === source.occurredAt &&
+          pull.head.sha === source.headSha &&
+          sha(pull.base.sha) &&
+          Object.keys(merge).sort().join() === "files,parents,sha,stats" &&
+          Object.keys(merge.stats).sort().join() ===
+            "additions,deletions,total" &&
+          merge.sha === pull.merge_commit_sha &&
+          sha(merge.sha) &&
+          merge.parents.length === 2 &&
+          merge.parents[1].sha === source.headSha &&
+          merge.parents.every(
+            (parent) => Object.keys(parent).join() === "sha" && sha(parent.sha),
+          ) &&
+          merge.parents[0].sha !== merge.parents[1].sha &&
+          merge.stats.additions === 0 &&
+          merge.stats.deletions === 0 &&
+          merge.stats.total === 0 &&
+          Array.isArray(merge.files) &&
+          merge.files.length === 0 &&
+          unchanged.commits.length === treeCommits.size &&
+          unchanged.commits.every(
+            (commit) =>
+              Object.keys(commit).sort().join() === "parents,sha,tree" &&
+              sha(commit.sha) &&
+              Object.keys(commit.tree).join() === "sha" &&
+              sha(commit.tree.sha) &&
+              commit.parents.every(
+                (parent) =>
+                  Object.keys(parent).join() === "sha" && sha(parent.sha),
+              ) &&
+              new Set(commit.parents.map((parent) => parent.sha)).size ===
+                commit.parents.length,
+          ),
+        "Unchanged promotion identity is invalid",
+      );
+      const head = treeCommits.get(source.headSha),
+        base = treeCommits.get(pull.base.sha);
+      const accepted = treeCommits.get(merge.sha),
+        parent = treeCommits.get(merge.parents[0].sha);
+      const required = new Set([
+        pull.base.sha,
+        source.headSha,
+        merge.sha,
+        merge.parents[0].sha,
+        ...source.commits.flatMap((commit) => [
+          commit.sha,
+          ...(commit.parentShas ?? []),
+        ]),
+      ]);
+      check(
+        required.size === treeCommits.size &&
+          [...required].every((sha) => treeCommits.has(sha)),
+        "Promotion tree proof has missing or extra commits",
+      );
+      check(
+        head &&
+          base &&
+          accepted &&
+          parent &&
+          head.tree.sha === base.tree.sha &&
+          accepted.tree.sha === parent.tree.sha &&
+          JSON.stringify(accepted.parents) === JSON.stringify(merge.parents),
+        "Unchanged promotion trees or accepted parents differ",
+      );
+      for (const commit of source.commits) {
+        const retained = treeCommits.get(commit.sha);
+        check(
+          retained &&
+            JSON.stringify(retained.parents.map((p) => p.sha)) ===
+              JSON.stringify(commit.parentShas),
+          "Promotion commit parent proof is incomplete",
+        );
+      }
+    }
     const expected: string[] = [];
     for (const commit of source.commits) {
       check(
@@ -591,6 +704,19 @@ export function reconstructHistoricalPoints(
             JSON.stringify(resolutionFiles) === JSON.stringify(commit.files),
           "Duplicate merge has unreviewed resolution work",
         );
+        if (unchanged && resolutionFiles.length > 0) {
+          const retained = treeCommits.get(commit.sha);
+          const parent = treeCommits.get(commit.parentShas[0]);
+          check(
+            retained && parent && retained.tree.sha === parent.tree.sha,
+            "Promotion merge changes its first-parent tree",
+          );
+          check(
+            commit.mergeResolution?.resolvedTree === retained.tree.sha,
+            "Promotion resolution tree is unbound",
+          );
+          continue;
+        }
         if (resolutionFiles.length === 0) continue;
       }
       check(
@@ -731,7 +857,9 @@ export function reconstructHistoricalPoints(
         evidence.workUnitId === retirement.workUnitId &&
         evidence.sourceSha256 === hash(source) &&
         evidence.coverageSha256 === hash(retirement.coverage) &&
-        evidence.earlierSourcesSha256 === hash(retirement.earlierSources),
+        evidence.earlierSourcesSha256 === hash(retirement.earlierSources) &&
+        (unchanged === undefined ||
+          evidence.unchangedPromotionSha256 === hash(unchanged)),
       "Duplicate retirement dossier changed",
     );
     const candidate = packet.corrections.candidates.find(

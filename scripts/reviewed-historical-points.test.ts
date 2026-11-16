@@ -246,6 +246,196 @@ function duplicateRetirementFixture() {
   return { ...f, baseline, expected, retirement };
 }
 
+function unchangedPromotionFixture() {
+  const f = duplicateRetirementFixture(),
+    retirement = f.retirement;
+  const source = retirement.source;
+  if (!source.occurredAt) throw Error("fixture merge date");
+  const ordinary = source.commits[0];
+  const ordinaryParents = ordinary.parentShas;
+  if (!ordinaryParents?.length) throw Error("fixture parents");
+  const base = "d".repeat(40),
+    merge = "e".repeat(40),
+    head = "f".repeat(40);
+  const resolvedTree = "1".repeat(40),
+    acceptedTree = "2".repeat(40);
+  const patch = `diff --git a/work.ts b/work.ts
+index ${"3".repeat(40)}..${"4".repeat(40)} 100644
+--- a/work.ts
++++ b/work.ts
+@@ -1,2 +1 @@
+ kept
+-obsolete
+`;
+  source.headSha = head;
+  source.commits.push({
+    sha: head,
+    parentCount: 2,
+    parentShas: [base, ordinary.sha],
+    author: ordinary.author,
+    additions: null,
+    deletions: null,
+    firstAcceptedSourceId: source.sourceId,
+    files: [{ path: "work.ts", additions: 0, deletions: 1 }],
+    mergeResolution: {
+      commitSha: head,
+      parents: [base, ordinary.sha],
+      gitVersion: "git version 2.56.0",
+      automaticTree: "5".repeat(40),
+      resolvedTree,
+      hadConflicts: true,
+      patch,
+      patchSha256: sha256Hex(patch),
+      paths: ["work.ts"],
+    },
+  });
+  source.commitCount++;
+  retirement.unchangedPromotion = {
+    sourceDigest: "6".repeat(64),
+    pull: {
+      node_id: source.sourceId,
+      number: 1,
+      html_url: source.sourceUrl,
+      title: "Unchanged promotion",
+      body: null,
+      user: { node_id: actor.id, login: actor.login, type: actor.kind },
+      merged_by: { node_id: actor.id, login: actor.login, type: actor.kind },
+      state: "closed",
+      merged_at: source.occurredAt,
+      closed_at: source.occurredAt,
+      merge_commit_sha: merge,
+      updated_at: source.occurredAt,
+      head: { sha: head },
+      base: { sha: base, ref: "main" },
+      changed_files: 0,
+      comments: 0,
+      review_comments: 0,
+      commits: 2,
+    },
+    merge: {
+      sha: merge,
+      parents: [{ sha: base }, { sha: head }],
+      stats: { additions: 0, deletions: 0, total: 0 },
+      files: [],
+    },
+    commits: [
+      { sha: base, tree: { sha: resolvedTree }, parents: [] },
+      {
+        sha: head,
+        tree: { sha: resolvedTree },
+        parents: [{ sha: base }, { sha: ordinary.sha }],
+      },
+      {
+        sha: merge,
+        tree: { sha: resolvedTree },
+        parents: [{ sha: base }, { sha: head }],
+      },
+      {
+        sha: ordinary.sha,
+        tree: { sha: acceptedTree },
+        parents: ordinaryParents.map((sha) => ({ sha })),
+      },
+      {
+        sha: ordinaryParents[0],
+        tree: { sha: acceptedTree },
+        parents: [],
+      },
+    ],
+  };
+  f.packet.sourceAudit.sources[0].headSha = head;
+  const bind = () => {
+    const proof = retirement.unchangedPromotion;
+    if (!proof) throw Error("fixture proof");
+    proof.sourceDigest = hash({
+      pull: proof.pull,
+      merge: proof.merge,
+      commits: proof.commits,
+    });
+    retirement.evidence = JSON.stringify({
+      sourceId: retirement.sourceId,
+      workUnitId: retirement.workUnitId,
+      sourceSha256: hash(source),
+      earlierSourcesSha256: hash(retirement.earlierSources),
+      coverageSha256: hash(retirement.coverage),
+      unchangedPromotionSha256: hash(retirement.unchangedPromotion),
+    });
+    retirement.evidenceSha256 = sha256Hex(retirement.evidence);
+    const original = [...latestPoints(f.baseline).values()].find(
+      (r) => r.award.sourceId === source.sourceId,
+    );
+    if (!original) throw Error("fixture award");
+    f.expected = appendPointAwards(
+      f.baseline,
+      [{ ...original.award, amount: 0 }],
+      hash(retirement),
+      "slop-score-v2",
+      time,
+      new Map([
+        [
+          original.award.key,
+          {
+            sourceId: `owner_duplicate_${retirement.evidenceSha256}`,
+            effectiveAt: time,
+            reason:
+              "Owner-reviewed duplicate accepted work already rewarded by earlier sources.",
+          },
+        ],
+      ]),
+    );
+    f.packet.candidateDigest = hash(f.expected);
+  };
+  bind();
+  return { ...f, bind };
+}
+
+test("manual duplicate retirement admits only an unchanged promotion with all ordinary paths covered", () => {
+  const f = unchangedPromotionFixture();
+  expect(
+    reconstructHistoricalPoints(f.packet, f.baseline, time, new Map()),
+  ).toEqual(f.expected);
+});
+for (const fault of [
+  "changed-tree",
+  "missing-parent",
+  "extra-ordinary",
+  "different-merge-parents",
+  "stale-prefix",
+  "changed-resolution",
+  "extra-proof",
+  "source-digest",
+] as const)
+  test(`unchanged promotion refuses ${fault}`, () => {
+    const f = unchangedPromotionFixture(),
+      proof = f.retirement.unchangedPromotion;
+    if (!proof) throw Error("fixture proof");
+    if (fault === "changed-tree") proof.commits[1].tree.sha = "9".repeat(40);
+    if (fault === "missing-parent") proof.commits.pop();
+    if (fault === "extra-ordinary")
+      f.retirement.source.commits[0].files?.push({
+        path: "other.ts",
+        additions: 1,
+        deletions: 0,
+      });
+    if (fault === "different-merge-parents") proof.merge.parents.reverse();
+    if (fault === "changed-resolution") {
+      const resolution = f.retirement.source.commits[1].mergeResolution;
+      if (!resolution) throw Error("fixture resolution");
+      resolution.resolvedTree = "9".repeat(40);
+    }
+    if (fault === "extra-proof")
+      proof.commits.push({
+        sha: "8".repeat(40),
+        tree: { sha: "8".repeat(40) },
+        parents: [],
+      });
+    f.bind();
+    if (fault === "stale-prefix") f.packet.baselineDigest = "0".repeat(64);
+    if (fault === "source-digest") proof.sourceDigest = "0".repeat(64);
+    expect(() =>
+      reconstructHistoricalPoints(f.packet, f.baseline, time, new Map()),
+    ).toThrow();
+  });
+
 test("reviewed duplicate retirement removes only a fully covered later pool", () => {
   const f = duplicateRetirementFixture();
   const result = reconstructHistoricalPoints(
