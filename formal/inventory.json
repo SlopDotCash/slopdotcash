@@ -4345,9 +4345,9 @@
     },
     {
       "path": "scripts/private-payout-packet.ts",
-      "sha256": "0598d81defc0f0753275580161b25e196351102d320e9c5b2ebf8c7868a6bec0",
+      "sha256": "904f5c2eeac392f21ba5a28ec14ae07b525a5baaa281f7bdf4161b4c2a208f1f",
       "models": ["formal/models/points/source_import.qnt"],
-      "candidateLines": [78],
+      "candidateLines": [82],
       "review": "mapped-abstraction"
     },
     {
