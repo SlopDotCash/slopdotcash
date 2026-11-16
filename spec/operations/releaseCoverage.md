@@ -46,7 +46,7 @@ pure def coverage(request: Requests): ReleaseChecks =
     browserSmoke: manual and request.skipBrowserTests,
     browserComplete: allowed and not(manual and request.skipBrowserTests), common: allowed }
 pure def lawPushRunsEverything(request: Requests): bool =
-  (request.kind == DeployingPush and releaseTarget(request)) implies
+  (request.kind == DeployingPush and releaseTarget(request) and not(request.resumeDiscussions or request.usePublishedData)) implies
     coverage(request).eligible and coverage(request).stateModels and coverage(request).staticProofs
       and coverage(request).browserComplete and not(coverage(request).browserSmoke) and coverage(request).common
 pure def lawOnlyManualCanOmit(request: Requests): bool = coverage(request).eligible implies
@@ -77,6 +77,8 @@ pure def publishable(request: Requests, collection: CollectionOutcome, receipts:
 pure def lawResumeOnlyManualMain(request: Requests): bool =
   (coverage(request).eligible and request.resumeDiscussions) implies
     explicitManual(request) and request.target == Main and not(request.usePublishedData)
+pure def lawPushNeverTakesDataOptions(request: Requests): bool =
+  (request.kind == DeployingPush and (request.resumeDiscussions or request.usePublishedData)) implies not(coverage(request).eligible)
 pure def lawPublishedDataOnlyManualMain(request: Requests): bool =
   (coverage(request).eligible and request.usePublishedData) implies explicitManual(request) and request.target == Main
 pure def lawResumeKeepsChecks(request: Requests): bool =
