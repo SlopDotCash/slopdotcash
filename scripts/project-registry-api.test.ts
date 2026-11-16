@@ -1156,6 +1156,53 @@ describe("project registry API", () => {
           ?.manifestText ?? "{}",
       ).securityBounty.split,
     ).toEqual(initialProgram.split);
+    // Owners add their own "does not qualify" lines as a new terms revision.
+    const exclusions = ["Price feed staleness within the documented heartbeat"];
+    const withExclusions = {
+      ...currentBounty.manifest,
+      securityBounty: {
+        ...currentBounty.manifest.securityBounty,
+        scope: {
+          ...currentBounty.manifest.securityBounty?.scope,
+          excludedFindings: exclusions,
+        },
+      },
+    };
+    const repeated = await call("PUT", "projects/bounty-first", "applicant", {
+      expectedRevision: currentBounty.revision,
+      manifest: {
+        ...withExclusions,
+        securityBounty: {
+          ...withExclusions.securityBounty,
+          scope: {
+            ...withExclusions.securityBounty.scope,
+            excludedFindings: [...exclusions, exclusions[0].toUpperCase()],
+          },
+        },
+      },
+    });
+    expect(repeated.status).toBe(422);
+    expect((await repeated.json()).error).toBe("invalid_manifest");
+    const excluded = await call("PUT", "projects/bounty-first", "applicant", {
+      expectedRevision: currentBounty.revision,
+      manifest: withExclusions,
+    });
+    expect(excluded.status).toBe(200);
+    const excludedBounty = await persistence.getProject("bounty-first");
+    expect(excludedBounty?.revision).toBe(currentBounty.revision + 1);
+    expect(
+      excludedBounty?.manifest.securityBounty?.scope.excludedFindings,
+    ).toEqual(exclusions);
+    expect(
+      JSON.parse(
+        (
+          await persistence.getRevisionText(
+            "bounty-first",
+            currentBounty.revision,
+          )
+        )?.manifestText ?? "{}",
+      ).securityBounty.scope.excludedFindings,
+    ).toBeUndefined();
     const solanaToken = "So11111111111111111111111111111111111111112";
     const metadataReader = deps.readTokenMetadata;
     deps.readTokenMetadata = async (network, address) => {
