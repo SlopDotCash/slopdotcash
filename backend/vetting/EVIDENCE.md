@@ -58,7 +58,13 @@ and [retention and recovery terms](https://github.com/SlopDotCash/slopdotcash/is
 
 These terms apply only to scanner evidence. They do not change permanent
 contributor-trace storage. Keep production and staging stores separate;
-preview deployments have no evidence-store binding.
+ordinary preview deployments have no evidence-store binding. The protected
+reviewed-payout packet workflow may create an authenticated ephemeral transport
+bound to this bucket under `reviewed-payouts/v1/`. It stores client-encrypted
+AES-256-GCM packet objects, retains no decryption key in the preview, and exposes
+only the exact manifest's ciphertext objects. It cannot access `vetting/`,
+create scanner receipts, or change evidence retention. See the
+[reviewed packet transport](../../docs/reviewed-historical-points.md).
 
 ## Write and inspect exact bytes
 

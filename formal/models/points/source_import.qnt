@@ -1,6 +1,9 @@
 // @source scripts/reviewed-historical-points.ts
 // @source scripts/run-reviewed-historical-points.ts
 // @source scripts/private-payout-packet.ts
+// @source scripts/private-packet-preview.ts
+// @evidence scripts/private-packet-preview.test.ts
+// Ciphertext transport authenticates each exact object before the existing complete-input gate.
 // @source .github/workflows/private-payout-packet.yml
 // @source .github/workflows/reviewed-historical-points.yml
 // @source scripts/prepare-points-import.ts
