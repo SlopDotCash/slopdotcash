@@ -528,9 +528,11 @@ test("duplicate coverage can bind a previously rewarded joint claim", async () =
   });
   expect(calls).toBe(1);
   const originalUnit = structuredClone(r.coverage[0].rewardedUnit);
-  for (const fault of ["head", "zero", "source"] as const) {
+  for (const fault of ["head", "zero", "source", "repository"] as const) {
     const altered = structuredClone(record);
     if (fault === "head") altered.sources[0].headSha = "f".repeat(40);
+    if (fault === "repository")
+      altered.sources[0].repositoryNodeId = "R_foreign";
     if (fault === "zero") altered.units[0].assessment.tier = "none";
     const binding = {
       ...originalUnit,
@@ -2084,7 +2086,8 @@ test("earlier native proof preserves separate canonical joint-claim coverage", (
         repositoryNodeId: "R_feed",
         commitSha: sha,
         path: "absorbed.ts",
-        creditPullRequestId: context.sourceId,
+        creditPullRequestId: "PR_original",
+        carrierPullRequestIds: [context.sourceId],
       },
       { id: "e".repeat(64), creditPullRequestId: prior.sourceId },
     ],
@@ -2146,9 +2149,155 @@ test("earlier native proof preserves separate canonical joint-claim coverage", (
   expect(
     reconstructHistoricalPoints(f.packet, f.baseline, time, new Map()),
   ).toEqual(f.expected);
+  const boundUnit = f.retirement.coverage[0].rewardedUnit;
+  if (!boundUnit) throw Error("fixture unit");
+  const wrongCarrier = JSON.parse(boundUnit.recordJson);
+  wrongCarrier.claims[0].carrierPullRequestIds = ["PR_foreign"];
+  boundUnit.recordJson = JSON.stringify(wrongCarrier);
+  boundUnit.recordDigest = hash(wrongCarrier);
+  bind();
+  expect(() =>
+    reconstructHistoricalPoints(f.packet, f.baseline, time, new Map()),
+  ).toThrow("Rewarded unit does not cover the duplicate claim");
   f.retirement.coverage = [];
   bind();
   expect(() =>
     reconstructHistoricalPoints(f.packet, f.baseline, time, new Map()),
   ).toThrow("Duplicate claim coverage is missing or repeated");
 });
+
+for (const fault of [
+  "none",
+  "parent",
+  "tree",
+  "version",
+  "missing-parent",
+] as const) {
+  test(`earlier squash automatic merge proof ${fault}`, () => {
+    const f = earlierAcceptanceFixture();
+    const proof = f.retirement.earlierAcceptanceProof;
+    if (!proof) throw Error("fixture proof");
+    const context = proof.contextSources[0];
+    const mergeRaw = `tree ${"a".repeat(40)}\nparent ${proof.sourceBaseSha}\nauthor Human <human@example.test> 2 +0000\ncommitter Human <human@example.test> 2 +0000\n\naccepted squash\n`;
+    const mergeSha = createHash("sha1")
+      .update(`commit ${Buffer.byteLength(mergeRaw)}\0`)
+      .update(mergeRaw)
+      .digest("hex");
+    context.mergeSha = mergeSha;
+    context.automaticMerge = {
+      baseParentSha: proof.sourceBaseSha,
+      gitVersion: "git version 2.56.0",
+      automaticTree: "a".repeat(40),
+    };
+    proof.objects.push({ sha: mergeSha, raw: mergeRaw });
+    if (fault === "parent")
+      context.automaticMerge.baseParentSha = "b".repeat(40);
+    if (fault === "tree") context.automaticMerge.automaticTree = "b".repeat(40);
+    if (fault === "version")
+      context.automaticMerge.gitVersion =
+        "git version 2.56.1" as "git version 2.56.0";
+    if (fault === "missing-parent")
+      proof.objects = proof.objects.filter(
+        (item) => item.sha !== proof.sourceBaseSha,
+      );
+    const dossier = JSON.parse(f.retirement.evidence);
+    dossier.earlierAcceptanceProofSha256 = hash(proof);
+    f.retirement.evidence = JSON.stringify(dossier);
+    f.retirement.evidenceSha256 = sha256Hex(f.retirement.evidence);
+    const award = f.baseline.revisions[0].award;
+    f.expected = appendPointAwards(
+      f.baseline,
+      [{ ...award, amount: 0 }],
+      hash(f.retirement),
+      "slop-score-v2",
+      time,
+      new Map([
+        [
+          award.key,
+          {
+            sourceId: `owner_duplicate_${f.retirement.evidenceSha256}`,
+            effectiveAt: time,
+            reason:
+              "Owner-reviewed duplicate accepted work already rewarded by earlier sources.",
+          },
+        ],
+      ]),
+    );
+    f.packet.candidateDigest = hash(f.expected);
+    if (fault === "none")
+      expect(
+        reconstructHistoricalPoints(f.packet, f.baseline, time, new Map()),
+      ).toEqual(f.expected);
+    else
+      expect(() =>
+        reconstructHistoricalPoints(f.packet, f.baseline, time, new Map()),
+      ).toThrow();
+  });
+}
+
+for (const fault of [
+  "none",
+  "same-period",
+  "missing-sha",
+  "extra-sha",
+  "human-source",
+  "missing-review",
+] as const) {
+  test(`reviewed pre-October bot follow-up ${fault}`, () => {
+    const f = historicalAcceptanceFixture();
+    const proof = f.retirement.earlierAcceptanceProof;
+    if (!proof) throw Error("fixture proof");
+    const context = proof.contextSources[0];
+    delete context.historicalAwardRevisionId;
+    context.reviewedBotFollowupShas = [f.retirement.source.commits[0].sha];
+    f.retirement.earlierSources[0].author = {
+      id: "Bot_dependabot",
+      login: "dependabot",
+      kind: "Bot",
+    };
+    if (fault === "same-period") {
+      f.retirement.earlierSources[0].occurredAt = "2026-10-01T00:00:00.000Z";
+      context.mergedAt = "2026-10-01T00:00:00.000Z";
+    }
+    if (fault === "missing-sha") context.reviewedBotFollowupShas = [];
+    if (fault === "extra-sha")
+      context.reviewedBotFollowupShas.push("f".repeat(40));
+    if (fault === "human-source") f.retirement.earlierSources[0].author = actor;
+    const dossier = JSON.parse(f.retirement.evidence);
+    if (fault === "missing-review")
+      delete dossier.historicalPriorAcceptanceReviewed;
+    dossier.earlierSourcesSha256 = hash(f.retirement.earlierSources);
+    dossier.earlierAcceptanceProofSha256 = hash(proof);
+    f.retirement.evidence = JSON.stringify(dossier);
+    f.retirement.evidenceSha256 = sha256Hex(f.retirement.evidence);
+    const award = f.baseline.revisions[0].award;
+    const at = f.packet.reviewedAt;
+    f.expected = appendPointAwards(
+      f.baseline,
+      [{ ...award, amount: 0 }],
+      hash(f.retirement),
+      "slop-score-v2",
+      at,
+      new Map([
+        [
+          award.key,
+          {
+            sourceId: `owner_duplicate_${f.retirement.evidenceSha256}`,
+            effectiveAt: at,
+            reason:
+              "Owner-reviewed duplicate accepted work already rewarded by earlier sources.",
+          },
+        ],
+      ]),
+    );
+    f.packet.candidateDigest = hash(f.expected);
+    if (fault === "none")
+      expect(
+        reconstructHistoricalPoints(f.packet, f.baseline, at, new Map()),
+      ).toEqual(f.expected);
+    else
+      expect(() =>
+        reconstructHistoricalPoints(f.packet, f.baseline, at, new Map()),
+      ).toThrow("Earlier bot follow-up review is invalid");
+  });
+}

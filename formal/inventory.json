@@ -4604,9 +4604,9 @@
     },
     {
       "path": "scripts/reviewed-historical-points.ts",
-      "sha256": "3cbb5a8a029dfebe88778e85d5c17e21f681a59b2273fe145c66935b37222994",
+      "sha256": "05f1bb092abcc9ab208bd14959197c44ab42eda48c7bead1a08b7ca42e4f1feb",
       "models": ["formal/models/points/source_import.qnt"],
-      "candidateLines": [55, 56, 487, 678, 893, 894, 895, 898, 1160],
+      "candidateLines": [55, 56, 493, 684, 899, 900, 901, 904, 1201],
       "review": "mapped-abstraction"
     },
     {
@@ -4667,9 +4667,9 @@
     },
     {
       "path": "scripts/run-reviewed-historical-points.ts",
-      "sha256": "689a9d5e2cbad7cdd4a4ce604bdd80ca10e6158f160ba2657b78981a055c7514",
+      "sha256": "c221e909cc911d9530e45ae31551ce7c43c861fe0ac6feb3de7defcd2ea5a815",
       "models": ["formal/models/points/source_import.qnt"],
-      "candidateLines": [3, 497, 517, 593, 683],
+      "candidateLines": [3, 545, 565, 641, 731],
       "review": "mapped-abstraction"
     },
     {

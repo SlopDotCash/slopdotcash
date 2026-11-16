@@ -31,6 +31,11 @@ import {
 import { currentOwnerVerifier, octoberQueryRows } from "./run-october-rewards";
 import { fetchProjectRegistry } from "./sync-project-registry.mjs";
 import { loadParticipationBans } from "./value-ingestion";
+import {
+  type PublicMergeRepository,
+  publicGitProcess,
+  withPublicGitObjects,
+} from "./value-merge-ingestion";
 
 const execute = promisify(execFile);
 const hash = (value: unknown) => sha256Hex(JSON.stringify(value));
@@ -144,9 +149,49 @@ export async function verifyHistoricalAcceptedSquashes(
     const proof = retirement.earlierAcceptanceProof;
     if (!proof) continue;
     const root = `/repos/${packet.sourceAudit.repository}`;
-    const repository = await github.get<{ node_id: string }>(root);
+    const repository = await github.get<PublicMergeRepository>(root);
     if (repository?.node_id !== retirement.source.repositoryNodeId)
       throw Error("Earlier acceptance repository changed");
+    const automatic = proof.contextSources.filter(
+      (source) => source.automaticMerge,
+    );
+    if (automatic.length)
+      await withPublicGitObjects(
+        repository,
+        automatic.flatMap((source) => [source.headSha, source.mergeSha]),
+        async (directory) => {
+          for (const source of automatic) {
+            const expected = source.automaticMerge;
+            if (!expected)
+              throw Error("Earlier automatic merge proof is missing");
+            const command = publicGitProcess(directory, [
+              "merge-tree",
+              "--write-tree",
+              "--no-messages",
+              expected.baseParentSha,
+              source.headSha,
+            ]);
+            const merged = await execute(
+              command.file,
+              command.args,
+              command.options,
+            );
+            if (merged.stdout.trim() !== expected.automaticTree)
+              throw Error("Earlier automatic merge tree changed");
+            const treeCommand = publicGitProcess(directory, [
+              "rev-parse",
+              `${source.mergeSha}^{tree}`,
+            ]);
+            const accepted = await execute(
+              treeCommand.file,
+              treeCommand.args,
+              treeCommand.options,
+            );
+            if (accepted.stdout.trim() !== expected.automaticTree)
+              throw Error("Earlier accepted merge tree changed");
+          }
+        },
+      );
     for (const source of retirement.earlierSources) {
       const audit = packet.sourceAudit.sources.find(
         (row) => row.id === source.sourceId,
@@ -299,7 +344,10 @@ export async function verifyHistoricalAcceptedSquashes(
       current.base.sha !== pull.base.sha ||
       current.commits !== pull.commits ||
       current.merge_commit_sha !== pull.merge_commit_sha ||
-      current.merged_at !== pull.merged_at
+      current.merged_at !== pull.merged_at ||
+      (retirement.earlierAcceptanceProof !== undefined &&
+        (current.user.node_id !== pull.user.node_id ||
+          current.user.type !== pull.user.type))
     )
       throw Error("Accepted promotion changed during collection");
   }

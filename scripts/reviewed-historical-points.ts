@@ -151,6 +151,12 @@ export interface HistoricalPointsPacket {
         mergeSha: string;
         /** Explicit owner review of prior acceptance, never an inferred expiry. */
         historicalAwardRevisionId?: string;
+        reviewedBotFollowupShas?: string[];
+        automaticMerge?: {
+          baseParentSha: string;
+          gitVersion: "git version 2.56.0";
+          automaticTree: string;
+        };
       }[];
     };
     acceptedSquashes?: HistoricalAcceptedSquash[];
@@ -927,9 +933,24 @@ export function reconstructHistoricalPoints(
         );
         requiredObjects.add(context.mergeSha);
         const merge = objects.get(context.mergeSha);
+        const automatic = context.automaticMerge;
+        if (automatic)
+          check(
+            merge &&
+              merge.parents.length === 1 &&
+              automatic.gitVersion === "git version 2.56.0" &&
+              /^[a-f0-9]{40}$/u.test(automatic.baseParentSha) &&
+              /^[a-f0-9]{40}$/u.test(automatic.automaticTree) &&
+              automatic.baseParentSha === merge.parents[0] &&
+              automatic.automaticTree === merge.tree &&
+              objects.has(automatic.baseParentSha),
+            "Earlier automatic merge proof is invalid",
+          );
+        if (automatic) requiredObjects.add(automatic.baseParentSha);
         check(
           merge &&
-            (context.mergeSha === item.headSha ||
+            (automatic !== undefined ||
+              context.mergeSha === item.headSha ||
               (merge.parents.length === 2 &&
                 merge.parents[1] === item.headSha) ||
               merge.tree === head.tree),
@@ -959,11 +980,30 @@ export function reconstructHistoricalPoints(
         );
         // Unmapped commits use the complete per-path coverage checks below,
         // including any canonical joint-unit reward that absorbed this source.
+        const botFollowups = context.reviewedBotFollowupShas;
+        const nonBotShas = item.commits
+          .filter((commit) => commit.author?.kind !== "Bot")
+          .map((commit) => commit.sha)
+          .sort();
+        if (botFollowups !== undefined)
+          check(
+            item.author?.kind === "Bot" &&
+              item.occurredAt !== null &&
+              item.occurredAt < "2026-10-01T00:00:00.000Z" &&
+              botFollowups.length > 0 &&
+              new Set(botFollowups).size === botFollowups.length &&
+              JSON.stringify([...botFollowups].sort()) ===
+                JSON.stringify(nonBotShas) &&
+              JSON.parse(retirement.evidence)
+                .historicalPriorAcceptanceReviewed === true,
+            "Earlier bot follow-up review is invalid",
+          );
         check(
           !acceptedProof.commits.some(
             (commit) => commit.sourceId === item.sourceId,
           ) ||
             rewardedSourceIds.has(item.sourceId) ||
+            botFollowups !== undefined ||
             (historical &&
               historical.award.projectId === packet.projectId &&
               historical.award.sourceId === item.sourceId &&
@@ -1155,7 +1195,8 @@ export function reconstructHistoricalPoints(
               claim?.repositoryNodeId === source.repositoryNodeId &&
               claim.commitSha === commit.sha &&
               claim.path === file.path &&
-              claim.creditPullRequestId === owner.sourceId &&
+              (claim.creditPullRequestId === owner.sourceId ||
+                claim.carrierPullRequestIds?.includes(owner.sourceId)) &&
               group?.claimIds.includes(unit.claimId) &&
               group.assessment?.status === "assessed" &&
               Object.hasOwn(VALUE_TIERS, group.assessment.tier) &&
