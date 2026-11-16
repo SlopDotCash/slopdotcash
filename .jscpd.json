@@ -1,7 +1,13 @@
 {
   "format": ["typescript", "tsx", "javascript", "css"],
   "formatsExts": { "typescript": ["ts", "mts", "vibe", "vibex"] },
-  "ignore": ["vibestack/examples/**", "**/test/fixtures/**"],
+  "ignore": [
+    "vibestack/examples/**", "**/test/fixtures/**",
+    "migrations/**", "skills/**", "scripts/render-install-guide.mjs", "scripts/local-solana-validator.mjs", "scripts/check-referral-roots.ts",
+    "scripts/escrow-acceptance/**", "src/lib/**", "data/**", "cycles/**", "packages/contracts/solana/integration/**",
+    "packages/contracts/solana/scripts/**", "packages/contracts/solana/package*.json", "packages/contracts/evm/integration/**",
+    "packages/contracts/evm/*.integration.ts", "apps/frontend/public/**"
+  ],
   "threshold": 0,
   "reporters": ["console"]
 }

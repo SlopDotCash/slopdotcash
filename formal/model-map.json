@@ -48,7 +48,7 @@
       "conformance": "pending-product-implementation",
       "candidateSuccessorSpecs": [
         "spec/backend/accounts.md",
-        "spec/access.md"
+        "spec/backend/access.md"
       ]
     },
     {
@@ -247,7 +247,7 @@
         "spec/settlement/recovery.md",
         "spec/settlement/referrals.md",
         "spec/settlement/money.md",
-        "spec/operations/local.md"
+        "spec/backend/local.md"
       ]
     },
     {
@@ -407,7 +407,7 @@
         "spec/backend/accounts.md",
         "spec/backend/wallets.md",
         "spec/settlement/signer.md",
-        "spec/operations/local.md"
+        "spec/backend/local.md"
       ]
     },
     {
@@ -1339,7 +1339,7 @@
       "conformance": "pending-product-implementation",
       "candidateSuccessorSpecs": [
         "spec/backend/projects.md",
-        "spec/projectComposition.md"
+        "spec/backend/projectComposition.md"
       ]
     },
     {
@@ -1407,8 +1407,8 @@
         "spec/security/admission.md",
         "spec/security/enforcement.md",
         "spec/security/privacy.md",
-        "spec/access.md",
-        "spec/projectComposition.md"
+        "spec/backend/access.md",
+        "spec/backend/projectComposition.md"
       ]
     },
     {
@@ -1547,7 +1547,7 @@
       "conformance": "pending-product-implementation",
       "candidateSuccessorSpecs": [
         "spec/backend/projects.md",
-        "spec/projectComposition.md",
+        "spec/backend/projectComposition.md",
         "spec/backend/listing.md"
       ]
     },
@@ -2009,7 +2009,7 @@
         "spec/frontend/requests.md",
         "spec/frontend/navigation.md",
         "spec/frontend/drafts.md",
-        "spec/composition.md"
+        "spec/frontend/composition.md"
       ]
     },
     {
@@ -5657,7 +5657,7 @@
         "spec/settlement/money.md",
         "spec/fees/buyback.md",
         "spec/fees/conversion.md",
-        "spec/operations/local.md"
+        "spec/backend/local.md"
       ]
     },
     {
@@ -6303,7 +6303,8 @@
       "candidateSuccessorSpecs": [
         "spec/security/admission.md",
         "spec/security/enforcement.md",
-        "spec/security/privacy.md"
+        "spec/security/privacy.md",
+        "spec/contracts/solanaEscrow.md"
       ]
     },
     {
@@ -7127,7 +7128,7 @@
       "candidateSuccessorSpecs": [
         "spec/contributor/installation.md",
         "spec/contributor/workflow.md",
-        "spec/operations/local.md"
+        "spec/backend/local.md"
       ]
     },
     {
@@ -8326,9 +8327,8 @@
       "equivalence": "transition-level-comparison-required",
       "conformance": "pending-product-implementation",
       "candidateSuccessorSpecs": [
-        "spec/security/admission.md",
-        "spec/security/enforcement.md",
-        "spec/security/privacy.md"
+        "spec/settlement/evmScan.md",
+        "spec/settlement/keeperScan.md"
       ]
     },
     {
@@ -15564,7 +15564,7 @@
         "spec/frontend/requests.md",
         "spec/frontend/navigation.md",
         "spec/frontend/drafts.md",
-        "spec/composition.md"
+        "spec/frontend/composition.md"
       ]
     },
     {
@@ -17198,7 +17198,7 @@
         "spec/operations/notifications.md",
         "spec/operations/release.md",
         "spec/governance.md",
-        "spec/operations/local.md"
+        "spec/backend/local.md"
       ]
     },
     {
@@ -17365,7 +17365,7 @@
       ],
       "targetAreas": [
         "spec/frontend/",
-        "spec/composition.md"
+        "spec/frontend/composition.md"
       ],
       "translationStatus": "retained-exact-source-with-domain-successor",
       "equivalence": "transition-level-comparison-required",
@@ -17453,7 +17453,7 @@
       ],
       "targetAreas": [
         "spec/frontend/",
-        "spec/composition.md"
+        "spec/frontend/composition.md"
       ],
       "translationStatus": "retained-exact-source-with-domain-successor",
       "equivalence": "transition-level-comparison-required",
@@ -17522,7 +17522,7 @@
       ],
       "targetAreas": [
         "spec/frontend/",
-        "spec/composition.md"
+        "spec/frontend/composition.md"
       ],
       "translationStatus": "retained-exact-source-with-domain-successor",
       "equivalence": "transition-level-comparison-required",
@@ -17532,7 +17532,7 @@
         "spec/frontend/navigation.md",
         "spec/frontend/requests.md",
         "spec/frontend/projections.md",
-        "spec/composition.md"
+        "spec/frontend/composition.md"
       ]
     },
     {
@@ -17613,7 +17613,7 @@
       ],
       "targetAreas": [
         "spec/frontend/",
-        "spec/composition.md"
+        "spec/frontend/composition.md"
       ],
       "translationStatus": "retained-exact-source-with-domain-successor",
       "equivalence": "transition-level-comparison-required",
@@ -17657,7 +17657,7 @@
       ],
       "targetAreas": [
         "spec/frontend/",
-        "spec/composition.md"
+        "spec/frontend/composition.md"
       ],
       "translationStatus": "retained-exact-source-with-domain-successor",
       "equivalence": "transition-level-comparison-required",
@@ -17666,7 +17666,7 @@
         "spec/frontend/requests.md",
         "spec/frontend/navigation.md",
         "spec/frontend/drafts.md",
-        "spec/composition.md"
+        "spec/frontend/composition.md"
       ]
     },
     {
@@ -17736,7 +17736,7 @@
       ],
       "targetAreas": [
         "spec/frontend/",
-        "spec/composition.md"
+        "spec/frontend/composition.md"
       ],
       "translationStatus": "retained-exact-source-with-domain-successor",
       "equivalence": "transition-level-comparison-required",
@@ -17811,7 +17811,7 @@
       ],
       "targetAreas": [
         "spec/frontend/",
-        "spec/composition.md"
+        "spec/frontend/composition.md"
       ],
       "translationStatus": "retained-exact-source-with-domain-successor",
       "equivalence": "transition-level-comparison-required",
@@ -17871,7 +17871,7 @@
       ],
       "targetAreas": [
         "spec/frontend/",
-        "spec/composition.md"
+        "spec/frontend/composition.md"
       ],
       "translationStatus": "retained-exact-source-with-domain-successor",
       "equivalence": "transition-level-comparison-required",
@@ -17913,7 +17913,7 @@
       ],
       "targetAreas": [
         "spec/frontend/",
-        "spec/composition.md"
+        "spec/frontend/composition.md"
       ],
       "translationStatus": "retained-exact-source-with-domain-successor",
       "equivalence": "transition-level-comparison-required",
@@ -17922,7 +17922,7 @@
         "spec/frontend/requests.md",
         "spec/frontend/navigation.md",
         "spec/frontend/drafts.md",
-        "spec/composition.md"
+        "spec/frontend/composition.md"
       ]
     },
     {
@@ -18016,7 +18016,7 @@
       ],
       "targetAreas": [
         "spec/frontend/",
-        "spec/composition.md"
+        "spec/frontend/composition.md"
       ],
       "translationStatus": "retained-exact-source-with-domain-successor",
       "equivalence": "transition-level-comparison-required",
@@ -18056,7 +18056,7 @@
       ],
       "targetAreas": [
         "spec/frontend/",
-        "spec/composition.md"
+        "spec/frontend/composition.md"
       ],
       "translationStatus": "retained-exact-source-with-domain-successor",
       "equivalence": "transition-level-comparison-required",
@@ -18065,7 +18065,7 @@
         "spec/frontend/requests.md",
         "spec/frontend/navigation.md",
         "spec/frontend/drafts.md",
-        "spec/composition.md"
+        "spec/frontend/composition.md"
       ]
     },
     {
@@ -18102,7 +18102,7 @@
       ],
       "targetAreas": [
         "spec/frontend/",
-        "spec/composition.md"
+        "spec/frontend/composition.md"
       ],
       "translationStatus": "retained-exact-source-with-domain-successor",
       "equivalence": "transition-level-comparison-required",
@@ -18111,7 +18111,7 @@
         "spec/frontend/requests.md",
         "spec/frontend/navigation.md",
         "spec/frontend/drafts.md",
-        "spec/composition.md"
+        "spec/frontend/composition.md"
       ]
     },
     {
@@ -18175,7 +18175,7 @@
       ],
       "targetAreas": [
         "spec/frontend/",
-        "spec/composition.md"
+        "spec/frontend/composition.md"
       ],
       "translationStatus": "retained-exact-source-with-domain-successor",
       "equivalence": "transition-level-comparison-required",
@@ -18222,7 +18222,7 @@
       ],
       "targetAreas": [
         "spec/frontend/",
-        "spec/composition.md"
+        "spec/frontend/composition.md"
       ],
       "translationStatus": "retained-exact-source-with-domain-successor",
       "equivalence": "transition-level-comparison-required",
@@ -18231,7 +18231,7 @@
         "spec/frontend/requests.md",
         "spec/frontend/navigation.md",
         "spec/frontend/drafts.md",
-        "spec/composition.md"
+        "spec/frontend/composition.md"
       ]
     },
     {
@@ -18283,7 +18283,7 @@
       ],
       "targetAreas": [
         "spec/frontend/",
-        "spec/composition.md"
+        "spec/frontend/composition.md"
       ],
       "translationStatus": "retained-exact-source-with-domain-successor",
       "equivalence": "transition-level-comparison-required",
@@ -18292,7 +18292,7 @@
         "spec/frontend/requests.md",
         "spec/frontend/navigation.md",
         "spec/frontend/drafts.md",
-        "spec/composition.md"
+        "spec/frontend/composition.md"
       ]
     },
     {
@@ -18365,7 +18365,7 @@
       ],
       "targetAreas": [
         "spec/frontend/",
-        "spec/composition.md"
+        "spec/frontend/composition.md"
       ],
       "translationStatus": "retained-exact-source-with-domain-successor",
       "equivalence": "transition-level-comparison-required",
@@ -18446,7 +18446,7 @@
       ],
       "targetAreas": [
         "spec/frontend/",
-        "spec/composition.md"
+        "spec/frontend/composition.md"
       ],
       "translationStatus": "retained-exact-source-with-domain-successor",
       "equivalence": "transition-level-comparison-required",
@@ -18455,7 +18455,7 @@
         "spec/frontend/requests.md",
         "spec/frontend/navigation.md",
         "spec/frontend/drafts.md",
-        "spec/composition.md"
+        "spec/frontend/composition.md"
       ]
     },
     {
@@ -18492,7 +18492,7 @@
       ],
       "targetAreas": [
         "spec/frontend/",
-        "spec/composition.md"
+        "spec/frontend/composition.md"
       ],
       "translationStatus": "retained-exact-source-with-domain-successor",
       "equivalence": "transition-level-comparison-required",
@@ -18501,7 +18501,7 @@
         "spec/frontend/requests.md",
         "spec/frontend/navigation.md",
         "spec/frontend/drafts.md",
-        "spec/composition.md"
+        "spec/frontend/composition.md"
       ]
     },
     {
@@ -18539,7 +18539,7 @@
       ],
       "targetAreas": [
         "spec/frontend/",
-        "spec/composition.md"
+        "spec/frontend/composition.md"
       ],
       "translationStatus": "retained-exact-source-with-domain-successor",
       "equivalence": "transition-level-comparison-required",
@@ -18548,7 +18548,7 @@
         "spec/frontend/requests.md",
         "spec/frontend/navigation.md",
         "spec/frontend/drafts.md",
-        "spec/composition.md"
+        "spec/frontend/composition.md"
       ]
     },
     {
@@ -18581,7 +18581,7 @@
       ],
       "targetAreas": [
         "spec/frontend/",
-        "spec/composition.md"
+        "spec/frontend/composition.md"
       ],
       "translationStatus": "retained-exact-source-with-domain-successor",
       "equivalence": "transition-level-comparison-required",
@@ -18590,7 +18590,7 @@
         "spec/frontend/requests.md",
         "spec/frontend/navigation.md",
         "spec/frontend/drafts.md",
-        "spec/composition.md"
+        "spec/frontend/composition.md"
       ]
     },
     {
@@ -18630,7 +18630,7 @@
       ],
       "targetAreas": [
         "spec/frontend/",
-        "spec/composition.md"
+        "spec/frontend/composition.md"
       ],
       "translationStatus": "retained-exact-source-with-domain-successor",
       "equivalence": "transition-level-comparison-required",
@@ -18639,7 +18639,7 @@
         "spec/frontend/requests.md",
         "spec/frontend/navigation.md",
         "spec/frontend/drafts.md",
-        "spec/composition.md"
+        "spec/frontend/composition.md"
       ]
     },
     {
@@ -18734,7 +18734,7 @@
       ],
       "targetAreas": [
         "spec/frontend/",
-        "spec/composition.md"
+        "spec/frontend/composition.md"
       ],
       "translationStatus": "retained-exact-source-with-domain-successor",
       "equivalence": "transition-level-comparison-required",
@@ -18802,7 +18802,7 @@
       ],
       "targetAreas": [
         "spec/frontend/",
-        "spec/composition.md"
+        "spec/frontend/composition.md"
       ],
       "translationStatus": "retained-exact-source-with-domain-successor",
       "equivalence": "transition-level-comparison-required",
@@ -18841,7 +18841,7 @@
       ],
       "targetAreas": [
         "spec/frontend/",
-        "spec/composition.md"
+        "spec/frontend/composition.md"
       ],
       "translationStatus": "retained-exact-source-with-domain-successor",
       "equivalence": "transition-level-comparison-required",
@@ -18938,7 +18938,7 @@
       ],
       "targetAreas": [
         "spec/frontend/",
-        "spec/composition.md"
+        "spec/frontend/composition.md"
       ],
       "translationStatus": "retained-exact-source-with-domain-successor",
       "equivalence": "transition-level-comparison-required",
@@ -18997,7 +18997,7 @@
       ],
       "targetAreas": [
         "spec/frontend/",
-        "spec/composition.md"
+        "spec/frontend/composition.md"
       ],
       "translationStatus": "retained-exact-source-with-domain-successor",
       "equivalence": "transition-level-comparison-required",
@@ -19080,7 +19080,7 @@
       ],
       "targetAreas": [
         "spec/frontend/",
-        "spec/composition.md"
+        "spec/frontend/composition.md"
       ],
       "translationStatus": "retained-exact-source-with-domain-successor",
       "equivalence": "transition-level-comparison-required",
@@ -19114,7 +19114,7 @@
       ],
       "targetAreas": [
         "spec/frontend/",
-        "spec/composition.md"
+        "spec/frontend/composition.md"
       ],
       "translationStatus": "retained-exact-source-with-domain-successor",
       "equivalence": "transition-level-comparison-required",
@@ -19183,7 +19183,7 @@
       ],
       "targetAreas": [
         "spec/frontend/",
-        "spec/composition.md"
+        "spec/frontend/composition.md"
       ],
       "translationStatus": "retained-exact-source-with-domain-successor",
       "equivalence": "transition-level-comparison-required",
@@ -19192,7 +19192,7 @@
         "spec/frontend/requests.md",
         "spec/frontend/navigation.md",
         "spec/frontend/drafts.md",
-        "spec/composition.md"
+        "spec/frontend/composition.md"
       ]
     },
     {
@@ -19227,7 +19227,7 @@
       ],
       "targetAreas": [
         "spec/frontend/",
-        "spec/composition.md"
+        "spec/frontend/composition.md"
       ],
       "translationStatus": "retained-exact-source-with-domain-successor",
       "equivalence": "transition-level-comparison-required",
@@ -19268,7 +19268,7 @@
       ],
       "targetAreas": [
         "spec/frontend/",
-        "spec/composition.md"
+        "spec/frontend/composition.md"
       ],
       "translationStatus": "retained-exact-source-with-domain-successor",
       "equivalence": "transition-level-comparison-required",
@@ -19277,7 +19277,7 @@
         "spec/frontend/requests.md",
         "spec/frontend/navigation.md",
         "spec/frontend/drafts.md",
-        "spec/composition.md",
+        "spec/frontend/composition.md",
         "spec/frontend/presentation.md"
       ]
     },
@@ -19311,7 +19311,7 @@
       ],
       "targetAreas": [
         "spec/frontend/",
-        "spec/composition.md"
+        "spec/frontend/composition.md"
       ],
       "translationStatus": "retained-exact-source-with-domain-successor",
       "equivalence": "transition-level-comparison-required",
@@ -19320,7 +19320,7 @@
         "spec/frontend/requests.md",
         "spec/frontend/navigation.md",
         "spec/frontend/drafts.md",
-        "spec/composition.md"
+        "spec/frontend/composition.md"
       ]
     },
     {
@@ -19355,7 +19355,7 @@
       ],
       "targetAreas": [
         "spec/frontend/",
-        "spec/composition.md"
+        "spec/frontend/composition.md"
       ],
       "translationStatus": "retained-exact-source-with-domain-successor",
       "equivalence": "transition-level-comparison-required",
@@ -19447,7 +19447,7 @@
       ],
       "targetAreas": [
         "spec/frontend/",
-        "spec/composition.md"
+        "spec/frontend/composition.md"
       ],
       "translationStatus": "retained-exact-source-with-domain-successor",
       "equivalence": "transition-level-comparison-required",
@@ -19509,7 +19509,7 @@
       ],
       "targetAreas": [
         "spec/frontend/",
-        "spec/composition.md"
+        "spec/frontend/composition.md"
       ],
       "translationStatus": "retained-exact-source-with-domain-successor",
       "equivalence": "transition-level-comparison-required",
@@ -19518,7 +19518,7 @@
         "spec/frontend/requests.md",
         "spec/frontend/navigation.md",
         "spec/frontend/drafts.md",
-        "spec/composition.md"
+        "spec/frontend/composition.md"
       ]
     },
     {
@@ -19566,7 +19566,7 @@
       ],
       "targetAreas": [
         "spec/frontend/",
-        "spec/composition.md"
+        "spec/frontend/composition.md"
       ],
       "translationStatus": "retained-exact-source-with-domain-successor",
       "equivalence": "transition-level-comparison-required",
@@ -19575,7 +19575,7 @@
         "spec/frontend/requests.md",
         "spec/frontend/navigation.md",
         "spec/frontend/drafts.md",
-        "spec/composition.md"
+        "spec/frontend/composition.md"
       ]
     },
     {
@@ -19633,7 +19633,7 @@
       ],
       "targetAreas": [
         "spec/frontend/",
-        "spec/composition.md"
+        "spec/frontend/composition.md"
       ],
       "translationStatus": "retained-exact-source-with-domain-successor",
       "equivalence": "transition-level-comparison-required",
@@ -19642,7 +19642,7 @@
         "spec/frontend/requests.md",
         "spec/frontend/navigation.md",
         "spec/frontend/drafts.md",
-        "spec/composition.md"
+        "spec/frontend/composition.md"
       ]
     },
     {
@@ -19702,7 +19702,7 @@
       ],
       "targetAreas": [
         "spec/frontend/",
-        "spec/composition.md"
+        "spec/frontend/composition.md"
       ],
       "translationStatus": "retained-exact-source-with-domain-successor",
       "equivalence": "transition-level-comparison-required",
@@ -19711,7 +19711,7 @@
         "spec/frontend/requests.md",
         "spec/frontend/navigation.md",
         "spec/frontend/drafts.md",
-        "spec/composition.md"
+        "spec/frontend/composition.md"
       ]
     },
     {
@@ -19763,7 +19763,7 @@
       ],
       "targetAreas": [
         "spec/frontend/",
-        "spec/composition.md"
+        "spec/frontend/composition.md"
       ],
       "translationStatus": "retained-exact-source-with-domain-successor",
       "equivalence": "transition-level-comparison-required",
@@ -19811,7 +19811,7 @@
       ],
       "targetAreas": [
         "spec/frontend/",
-        "spec/composition.md"
+        "spec/frontend/composition.md"
       ],
       "translationStatus": "retained-exact-source-with-domain-successor",
       "equivalence": "transition-level-comparison-required",
@@ -19820,7 +19820,7 @@
         "spec/frontend/requests.md",
         "spec/frontend/navigation.md",
         "spec/frontend/drafts.md",
-        "spec/composition.md"
+        "spec/frontend/composition.md"
       ]
     },
     {
@@ -19858,7 +19858,7 @@
       ],
       "targetAreas": [
         "spec/frontend/",
-        "spec/composition.md"
+        "spec/frontend/composition.md"
       ],
       "translationStatus": "retained-exact-source-with-domain-successor",
       "equivalence": "transition-level-comparison-required",
@@ -19867,7 +19867,7 @@
         "spec/frontend/requests.md",
         "spec/frontend/navigation.md",
         "spec/frontend/drafts.md",
-        "spec/composition.md"
+        "spec/frontend/composition.md"
       ]
     },
     {
@@ -19900,7 +19900,7 @@
       ],
       "targetAreas": [
         "spec/frontend/",
-        "spec/composition.md"
+        "spec/frontend/composition.md"
       ],
       "translationStatus": "retained-exact-source-with-domain-successor",
       "equivalence": "transition-level-comparison-required",
@@ -19909,7 +19909,7 @@
         "spec/frontend/requests.md",
         "spec/frontend/navigation.md",
         "spec/frontend/drafts.md",
-        "spec/composition.md"
+        "spec/frontend/composition.md"
       ]
     },
     {
@@ -19966,7 +19966,7 @@
       ],
       "targetAreas": [
         "spec/frontend/",
-        "spec/composition.md"
+        "spec/frontend/composition.md"
       ],
       "translationStatus": "retained-exact-source-with-domain-successor",
       "equivalence": "transition-level-comparison-required",
@@ -20012,7 +20012,7 @@
       ],
       "targetAreas": [
         "spec/frontend/",
-        "spec/composition.md"
+        "spec/frontend/composition.md"
       ],
       "translationStatus": "retained-exact-source-with-domain-successor",
       "equivalence": "transition-level-comparison-required",
@@ -20021,7 +20021,7 @@
         "spec/frontend/requests.md",
         "spec/frontend/navigation.md",
         "spec/frontend/drafts.md",
-        "spec/composition.md",
+        "spec/frontend/composition.md",
         "spec/frontend/presentation.md"
       ]
     },
@@ -20061,7 +20061,7 @@
       ],
       "targetAreas": [
         "spec/frontend/",
-        "spec/composition.md"
+        "spec/frontend/composition.md"
       ],
       "translationStatus": "retained-exact-source-with-domain-successor",
       "equivalence": "transition-level-comparison-required",
@@ -20070,7 +20070,7 @@
         "spec/frontend/requests.md",
         "spec/frontend/navigation.md",
         "spec/frontend/drafts.md",
-        "spec/composition.md"
+        "spec/frontend/composition.md"
       ]
     },
     {
@@ -20130,7 +20130,7 @@
       ],
       "targetAreas": [
         "spec/frontend/",
-        "spec/composition.md"
+        "spec/frontend/composition.md"
       ],
       "translationStatus": "retained-exact-source-with-domain-successor",
       "equivalence": "transition-level-comparison-required",
@@ -20208,7 +20208,7 @@
       ],
       "targetAreas": [
         "spec/frontend/",
-        "spec/composition.md"
+        "spec/frontend/composition.md"
       ],
       "translationStatus": "retained-exact-source-with-domain-successor",
       "equivalence": "transition-level-comparison-required",
@@ -20217,7 +20217,7 @@
         "spec/frontend/requests.md",
         "spec/frontend/navigation.md",
         "spec/frontend/drafts.md",
-        "spec/composition.md"
+        "spec/frontend/composition.md"
       ]
     },
     {
@@ -20283,7 +20283,7 @@
       ],
       "targetAreas": [
         "spec/frontend/",
-        "spec/composition.md"
+        "spec/frontend/composition.md"
       ],
       "translationStatus": "retained-exact-source-with-domain-successor",
       "equivalence": "transition-level-comparison-required",
@@ -20292,7 +20292,7 @@
         "spec/frontend/requests.md",
         "spec/frontend/navigation.md",
         "spec/frontend/drafts.md",
-        "spec/composition.md"
+        "spec/frontend/composition.md"
       ]
     },
     {
@@ -20353,7 +20353,7 @@
       ],
       "targetAreas": [
         "spec/frontend/",
-        "spec/composition.md"
+        "spec/frontend/composition.md"
       ],
       "translationStatus": "retained-exact-source-with-domain-successor",
       "equivalence": "transition-level-comparison-required",
@@ -20410,7 +20410,7 @@
       ],
       "targetAreas": [
         "spec/frontend/",
-        "spec/composition.md"
+        "spec/frontend/composition.md"
       ],
       "translationStatus": "retained-exact-source-with-domain-successor",
       "equivalence": "transition-level-comparison-required",
@@ -20482,7 +20482,7 @@
       ],
       "targetAreas": [
         "spec/frontend/",
-        "spec/composition.md"
+        "spec/frontend/composition.md"
       ],
       "translationStatus": "retained-exact-source-with-domain-successor",
       "equivalence": "transition-level-comparison-required",
@@ -20523,7 +20523,7 @@
       ],
       "targetAreas": [
         "spec/frontend/",
-        "spec/composition.md"
+        "spec/frontend/composition.md"
       ],
       "translationStatus": "retained-exact-source-with-domain-successor",
       "equivalence": "transition-level-comparison-required",
@@ -20532,7 +20532,7 @@
         "spec/frontend/requests.md",
         "spec/frontend/navigation.md",
         "spec/frontend/drafts.md",
-        "spec/composition.md"
+        "spec/frontend/composition.md"
       ]
     },
     {
@@ -20618,7 +20618,7 @@
       ],
       "targetAreas": [
         "spec/frontend/",
-        "spec/composition.md"
+        "spec/frontend/composition.md"
       ],
       "translationStatus": "retained-exact-source-with-domain-successor",
       "equivalence": "transition-level-comparison-required",
@@ -20627,7 +20627,7 @@
         "spec/frontend/requests.md",
         "spec/frontend/navigation.md",
         "spec/frontend/drafts.md",
-        "spec/composition.md"
+        "spec/frontend/composition.md"
       ]
     },
     {
@@ -20687,7 +20687,7 @@
       ],
       "targetAreas": [
         "spec/frontend/",
-        "spec/composition.md"
+        "spec/frontend/composition.md"
       ],
       "translationStatus": "retained-exact-source-with-domain-successor",
       "equivalence": "transition-level-comparison-required",
@@ -20778,7 +20778,7 @@
       ],
       "targetAreas": [
         "spec/frontend/",
-        "spec/composition.md"
+        "spec/frontend/composition.md"
       ],
       "translationStatus": "retained-exact-source-with-domain-successor",
       "equivalence": "transition-level-comparison-required",
@@ -20837,7 +20837,7 @@
       ],
       "targetAreas": [
         "spec/frontend/",
-        "spec/composition.md"
+        "spec/frontend/composition.md"
       ],
       "translationStatus": "retained-exact-source-with-domain-successor",
       "equivalence": "transition-level-comparison-required",
@@ -20911,7 +20911,7 @@
       ],
       "targetAreas": [
         "spec/frontend/",
-        "spec/composition.md"
+        "spec/frontend/composition.md"
       ],
       "translationStatus": "retained-exact-source-with-domain-successor",
       "equivalence": "transition-level-comparison-required",
@@ -20952,7 +20952,7 @@
       ],
       "targetAreas": [
         "spec/frontend/",
-        "spec/composition.md"
+        "spec/frontend/composition.md"
       ],
       "translationStatus": "retained-exact-source-with-domain-successor",
       "equivalence": "transition-level-comparison-required",
@@ -21008,7 +21008,7 @@
       ],
       "targetAreas": [
         "spec/frontend/",
-        "spec/composition.md"
+        "spec/frontend/composition.md"
       ],
       "translationStatus": "retained-exact-source-with-domain-successor",
       "equivalence": "transition-level-comparison-required",
@@ -21058,7 +21058,7 @@
       ],
       "targetAreas": [
         "spec/frontend/",
-        "spec/composition.md"
+        "spec/frontend/composition.md"
       ],
       "translationStatus": "retained-exact-source-with-domain-successor",
       "equivalence": "transition-level-comparison-required",
@@ -21108,7 +21108,7 @@
       ],
       "targetAreas": [
         "spec/frontend/",
-        "spec/composition.md"
+        "spec/frontend/composition.md"
       ],
       "translationStatus": "retained-exact-source-with-domain-successor",
       "equivalence": "transition-level-comparison-required",
@@ -21117,7 +21117,7 @@
         "spec/frontend/requests.md",
         "spec/frontend/navigation.md",
         "spec/frontend/drafts.md",
-        "spec/composition.md"
+        "spec/frontend/composition.md"
       ]
     },
     {
@@ -21169,7 +21169,7 @@
       ],
       "targetAreas": [
         "spec/frontend/",
-        "spec/composition.md"
+        "spec/frontend/composition.md"
       ],
       "translationStatus": "retained-exact-source-with-domain-successor",
       "equivalence": "transition-level-comparison-required",
@@ -21228,7 +21228,7 @@
       ],
       "targetAreas": [
         "spec/frontend/",
-        "spec/composition.md"
+        "spec/frontend/composition.md"
       ],
       "translationStatus": "retained-exact-source-with-domain-successor",
       "equivalence": "transition-level-comparison-required",
@@ -21267,7 +21267,7 @@
       ],
       "targetAreas": [
         "spec/frontend/",
-        "spec/composition.md"
+        "spec/frontend/composition.md"
       ],
       "translationStatus": "retained-exact-source-with-domain-successor",
       "equivalence": "transition-level-comparison-required",
@@ -21313,7 +21313,7 @@
       ],
       "targetAreas": [
         "spec/frontend/",
-        "spec/composition.md"
+        "spec/frontend/composition.md"
       ],
       "translationStatus": "retained-exact-source-with-domain-successor",
       "equivalence": "transition-level-comparison-required",
@@ -21351,7 +21351,7 @@
       ],
       "targetAreas": [
         "spec/frontend/",
-        "spec/composition.md"
+        "spec/frontend/composition.md"
       ],
       "translationStatus": "retained-exact-source-with-domain-successor",
       "equivalence": "transition-level-comparison-required",
@@ -21398,7 +21398,7 @@
       ],
       "targetAreas": [
         "spec/frontend/",
-        "spec/composition.md"
+        "spec/frontend/composition.md"
       ],
       "translationStatus": "retained-exact-source-with-domain-successor",
       "equivalence": "transition-level-comparison-required",
@@ -21479,7 +21479,7 @@
       ],
       "targetAreas": [
         "spec/frontend/",
-        "spec/composition.md"
+        "spec/frontend/composition.md"
       ],
       "translationStatus": "retained-exact-source-with-domain-successor",
       "equivalence": "transition-level-comparison-required",
@@ -21537,7 +21537,7 @@
       ],
       "targetAreas": [
         "spec/frontend/",
-        "spec/composition.md"
+        "spec/frontend/composition.md"
       ],
       "translationStatus": "retained-exact-source-with-domain-successor",
       "equivalence": "transition-level-comparison-required",
@@ -21585,7 +21585,7 @@
       ],
       "targetAreas": [
         "spec/frontend/",
-        "spec/composition.md"
+        "spec/frontend/composition.md"
       ],
       "translationStatus": "retained-exact-source-with-domain-successor",
       "equivalence": "transition-level-comparison-required",
@@ -21641,7 +21641,7 @@
       ],
       "targetAreas": [
         "spec/frontend/",
-        "spec/composition.md"
+        "spec/frontend/composition.md"
       ],
       "translationStatus": "retained-exact-source-with-domain-successor",
       "equivalence": "transition-level-comparison-required",
@@ -21708,7 +21708,7 @@
       ],
       "targetAreas": [
         "spec/frontend/",
-        "spec/composition.md"
+        "spec/frontend/composition.md"
       ],
       "translationStatus": "retained-exact-source-with-domain-successor",
       "equivalence": "transition-level-comparison-required",
@@ -21717,7 +21717,7 @@
         "spec/frontend/requests.md",
         "spec/frontend/navigation.md",
         "spec/frontend/drafts.md",
-        "spec/composition.md"
+        "spec/frontend/composition.md"
       ]
     },
     {
@@ -21748,7 +21748,7 @@
       ],
       "targetAreas": [
         "spec/frontend/",
-        "spec/composition.md"
+        "spec/frontend/composition.md"
       ],
       "translationStatus": "retained-exact-source-with-domain-successor",
       "equivalence": "transition-level-comparison-required",
@@ -21757,7 +21757,7 @@
         "spec/frontend/requests.md",
         "spec/frontend/navigation.md",
         "spec/frontend/drafts.md",
-        "spec/composition.md"
+        "spec/frontend/composition.md"
       ]
     },
     {
@@ -21802,7 +21802,7 @@
       ],
       "targetAreas": [
         "spec/frontend/",
-        "spec/composition.md"
+        "spec/frontend/composition.md"
       ],
       "translationStatus": "retained-exact-source-with-domain-successor",
       "equivalence": "transition-level-comparison-required",
@@ -21811,7 +21811,7 @@
         "spec/frontend/requests.md",
         "spec/frontend/navigation.md",
         "spec/frontend/drafts.md",
-        "spec/composition.md"
+        "spec/frontend/composition.md"
       ]
     },
     {
@@ -21887,7 +21887,7 @@
       ],
       "targetAreas": [
         "spec/frontend/",
-        "spec/composition.md"
+        "spec/frontend/composition.md"
       ],
       "translationStatus": "retained-exact-source-with-domain-successor",
       "equivalence": "transition-level-comparison-required",
@@ -21950,7 +21950,7 @@
       ],
       "targetAreas": [
         "spec/frontend/",
-        "spec/composition.md"
+        "spec/frontend/composition.md"
       ],
       "translationStatus": "retained-exact-source-with-domain-successor",
       "equivalence": "transition-level-comparison-required",
@@ -22028,7 +22028,7 @@
       ],
       "targetAreas": [
         "spec/frontend/",
-        "spec/composition.md"
+        "spec/frontend/composition.md"
       ],
       "translationStatus": "retained-exact-source-with-domain-successor",
       "equivalence": "transition-level-comparison-required",
@@ -22037,7 +22037,7 @@
         "spec/frontend/requests.md",
         "spec/frontend/navigation.md",
         "spec/frontend/drafts.md",
-        "spec/composition.md"
+        "spec/frontend/composition.md"
       ]
     },
     {
@@ -22080,7 +22080,7 @@
       ],
       "targetAreas": [
         "spec/frontend/",
-        "spec/composition.md"
+        "spec/frontend/composition.md"
       ],
       "translationStatus": "retained-exact-source-with-domain-successor",
       "equivalence": "transition-level-comparison-required",
@@ -22089,7 +22089,7 @@
         "spec/frontend/requests.md",
         "spec/frontend/navigation.md",
         "spec/frontend/drafts.md",
-        "spec/composition.md"
+        "spec/frontend/composition.md"
       ]
     },
     {
@@ -22134,7 +22134,7 @@
       ],
       "targetAreas": [
         "spec/frontend/",
-        "spec/composition.md"
+        "spec/frontend/composition.md"
       ],
       "translationStatus": "retained-exact-source-with-domain-successor",
       "equivalence": "transition-level-comparison-required",
@@ -22143,7 +22143,7 @@
         "spec/frontend/requests.md",
         "spec/frontend/navigation.md",
         "spec/frontend/drafts.md",
-        "spec/composition.md"
+        "spec/frontend/composition.md"
       ]
     },
     {
@@ -22178,7 +22178,7 @@
       ],
       "targetAreas": [
         "spec/frontend/",
-        "spec/composition.md"
+        "spec/frontend/composition.md"
       ],
       "translationStatus": "retained-exact-source-with-domain-successor",
       "equivalence": "transition-level-comparison-required",
@@ -22229,7 +22229,7 @@
       ],
       "targetAreas": [
         "spec/frontend/",
-        "spec/composition.md"
+        "spec/frontend/composition.md"
       ],
       "translationStatus": "retained-exact-source-with-domain-successor",
       "equivalence": "transition-level-comparison-required",
@@ -22270,7 +22270,7 @@
       ],
       "targetAreas": [
         "spec/frontend/",
-        "spec/composition.md"
+        "spec/frontend/composition.md"
       ],
       "translationStatus": "retained-exact-source-with-domain-successor",
       "equivalence": "transition-level-comparison-required",
@@ -22311,7 +22311,7 @@
       ],
       "targetAreas": [
         "spec/frontend/",
-        "spec/composition.md"
+        "spec/frontend/composition.md"
       ],
       "translationStatus": "retained-exact-source-with-domain-successor",
       "equivalence": "transition-level-comparison-required",
@@ -22369,7 +22369,7 @@
       ],
       "targetAreas": [
         "spec/frontend/",
-        "spec/composition.md"
+        "spec/frontend/composition.md"
       ],
       "translationStatus": "retained-exact-source-with-domain-successor",
       "equivalence": "transition-level-comparison-required",
@@ -22425,7 +22425,7 @@
       ],
       "targetAreas": [
         "spec/frontend/",
-        "spec/composition.md"
+        "spec/frontend/composition.md"
       ],
       "translationStatus": "retained-exact-source-with-domain-successor",
       "equivalence": "transition-level-comparison-required",
@@ -22434,7 +22434,7 @@
         "spec/frontend/requests.md",
         "spec/frontend/navigation.md",
         "spec/frontend/drafts.md",
-        "spec/composition.md"
+        "spec/frontend/composition.md"
       ]
     },
     {
@@ -22501,7 +22501,7 @@
       ],
       "targetAreas": [
         "spec/frontend/",
-        "spec/composition.md"
+        "spec/frontend/composition.md"
       ],
       "translationStatus": "retained-exact-source-with-domain-successor",
       "equivalence": "transition-level-comparison-required",
@@ -22510,7 +22510,7 @@
         "spec/frontend/requests.md",
         "spec/frontend/navigation.md",
         "spec/frontend/drafts.md",
-        "spec/composition.md",
+        "spec/frontend/composition.md",
         "spec/frontend/presentation.md"
       ]
     },
@@ -22552,7 +22552,7 @@
       ],
       "targetAreas": [
         "spec/frontend/",
-        "spec/composition.md"
+        "spec/frontend/composition.md"
       ],
       "translationStatus": "retained-exact-source-with-domain-successor",
       "equivalence": "transition-level-comparison-required",
@@ -22623,7 +22623,7 @@
       ],
       "targetAreas": [
         "spec/frontend/",
-        "spec/composition.md"
+        "spec/frontend/composition.md"
       ],
       "translationStatus": "retained-exact-source-with-domain-successor",
       "equivalence": "transition-level-comparison-required",
@@ -22665,7 +22665,7 @@
       ],
       "targetAreas": [
         "spec/frontend/",
-        "spec/composition.md"
+        "spec/frontend/composition.md"
       ],
       "translationStatus": "retained-exact-source-with-domain-successor",
       "equivalence": "transition-level-comparison-required",
@@ -22674,7 +22674,7 @@
         "spec/frontend/requests.md",
         "spec/frontend/navigation.md",
         "spec/frontend/drafts.md",
-        "spec/composition.md"
+        "spec/frontend/composition.md"
       ]
     },
     {
@@ -22716,7 +22716,7 @@
       ],
       "targetAreas": [
         "spec/frontend/",
-        "spec/composition.md"
+        "spec/frontend/composition.md"
       ],
       "translationStatus": "retained-exact-source-with-domain-successor",
       "equivalence": "transition-level-comparison-required",
@@ -22725,7 +22725,7 @@
         "spec/frontend/requests.md",
         "spec/frontend/navigation.md",
         "spec/frontend/drafts.md",
-        "spec/composition.md",
+        "spec/frontend/composition.md",
         "spec/frontend/rankedSnapshot.md"
       ]
     },
@@ -22844,7 +22844,7 @@
       ],
       "targetAreas": [
         "spec/frontend/",
-        "spec/composition.md"
+        "spec/frontend/composition.md"
       ],
       "translationStatus": "retained-exact-source-with-domain-successor",
       "equivalence": "transition-level-comparison-required",
@@ -22853,7 +22853,7 @@
         "spec/frontend/requests.md",
         "spec/frontend/navigation.md",
         "spec/frontend/drafts.md",
-        "spec/composition.md"
+        "spec/frontend/composition.md"
       ]
     },
     {
@@ -22925,7 +22925,7 @@
       ],
       "targetAreas": [
         "spec/frontend/",
-        "spec/composition.md"
+        "spec/frontend/composition.md"
       ],
       "translationStatus": "retained-exact-source-with-domain-successor",
       "equivalence": "transition-level-comparison-required",
@@ -22990,7 +22990,7 @@
       ],
       "targetAreas": [
         "spec/frontend/",
-        "spec/composition.md"
+        "spec/frontend/composition.md"
       ],
       "translationStatus": "retained-exact-source-with-domain-successor",
       "equivalence": "transition-level-comparison-required",
@@ -22999,7 +22999,7 @@
         "spec/frontend/requests.md",
         "spec/frontend/navigation.md",
         "spec/frontend/drafts.md",
-        "spec/composition.md"
+        "spec/frontend/composition.md"
       ]
     },
     {
@@ -23047,7 +23047,7 @@
       ],
       "targetAreas": [
         "spec/frontend/",
-        "spec/composition.md"
+        "spec/frontend/composition.md"
       ],
       "translationStatus": "retained-exact-source-with-domain-successor",
       "equivalence": "transition-level-comparison-required",
@@ -23056,7 +23056,7 @@
         "spec/frontend/requests.md",
         "spec/frontend/navigation.md",
         "spec/frontend/drafts.md",
-        "spec/composition.md"
+        "spec/frontend/composition.md"
       ]
     },
     {
@@ -23124,7 +23124,7 @@
       ],
       "targetAreas": [
         "spec/frontend/",
-        "spec/composition.md"
+        "spec/frontend/composition.md"
       ],
       "translationStatus": "retained-exact-source-with-domain-successor",
       "equivalence": "transition-level-comparison-required",
@@ -23210,7 +23210,7 @@
       ],
       "targetAreas": [
         "spec/frontend/",
-        "spec/composition.md"
+        "spec/frontend/composition.md"
       ],
       "translationStatus": "retained-exact-source-with-domain-successor",
       "equivalence": "transition-level-comparison-required",
@@ -23253,7 +23253,7 @@
       ],
       "targetAreas": [
         "spec/frontend/",
-        "spec/composition.md"
+        "spec/frontend/composition.md"
       ],
       "translationStatus": "retained-exact-source-with-domain-successor",
       "equivalence": "transition-level-comparison-required",
@@ -23262,7 +23262,7 @@
         "spec/frontend/requests.md",
         "spec/frontend/navigation.md",
         "spec/frontend/drafts.md",
-        "spec/composition.md"
+        "spec/frontend/composition.md"
       ]
     },
     {
@@ -23294,7 +23294,7 @@
       ],
       "targetAreas": [
         "spec/frontend/",
-        "spec/composition.md"
+        "spec/frontend/composition.md"
       ],
       "translationStatus": "retained-exact-source-with-domain-successor",
       "equivalence": "transition-level-comparison-required",
@@ -23303,7 +23303,7 @@
         "spec/frontend/requests.md",
         "spec/frontend/navigation.md",
         "spec/frontend/drafts.md",
-        "spec/composition.md"
+        "spec/frontend/composition.md"
       ]
     },
     {
@@ -23354,7 +23354,7 @@
       ],
       "targetAreas": [
         "spec/frontend/",
-        "spec/composition.md"
+        "spec/frontend/composition.md"
       ],
       "translationStatus": "retained-exact-source-with-domain-successor",
       "equivalence": "transition-level-comparison-required",
@@ -23363,7 +23363,7 @@
         "spec/frontend/requests.md",
         "spec/frontend/navigation.md",
         "spec/frontend/drafts.md",
-        "spec/composition.md"
+        "spec/frontend/composition.md"
       ]
     },
     {
@@ -23394,7 +23394,7 @@
       ],
       "targetAreas": [
         "spec/frontend/",
-        "spec/composition.md"
+        "spec/frontend/composition.md"
       ],
       "translationStatus": "retained-exact-source-with-domain-successor",
       "equivalence": "transition-level-comparison-required",
@@ -23403,7 +23403,7 @@
         "spec/frontend/requests.md",
         "spec/frontend/navigation.md",
         "spec/frontend/drafts.md",
-        "spec/composition.md"
+        "spec/frontend/composition.md"
       ]
     },
     {
@@ -23446,7 +23446,7 @@
       ],
       "targetAreas": [
         "spec/frontend/",
-        "spec/composition.md"
+        "spec/frontend/composition.md"
       ],
       "translationStatus": "retained-exact-source-with-domain-successor",
       "equivalence": "transition-level-comparison-required",
@@ -23493,7 +23493,7 @@
       ],
       "targetAreas": [
         "spec/frontend/",
-        "spec/composition.md"
+        "spec/frontend/composition.md"
       ],
       "translationStatus": "retained-exact-source-with-domain-successor",
       "equivalence": "transition-level-comparison-required",
@@ -23548,7 +23548,7 @@
       ],
       "targetAreas": [
         "spec/frontend/",
-        "spec/composition.md"
+        "spec/frontend/composition.md"
       ],
       "translationStatus": "retained-exact-source-with-domain-successor",
       "equivalence": "transition-level-comparison-required",
@@ -23616,7 +23616,7 @@
       ],
       "targetAreas": [
         "spec/frontend/",
-        "spec/composition.md"
+        "spec/frontend/composition.md"
       ],
       "translationStatus": "retained-exact-source-with-domain-successor",
       "equivalence": "transition-level-comparison-required",
@@ -23680,7 +23680,7 @@
       ],
       "targetAreas": [
         "spec/frontend/",
-        "spec/composition.md"
+        "spec/frontend/composition.md"
       ],
       "translationStatus": "retained-exact-source-with-domain-successor",
       "equivalence": "transition-level-comparison-required",
@@ -23738,7 +23738,7 @@
       ],
       "targetAreas": [
         "spec/frontend/",
-        "spec/composition.md"
+        "spec/frontend/composition.md"
       ],
       "translationStatus": "retained-exact-source-with-domain-successor",
       "equivalence": "transition-level-comparison-required",
@@ -23822,7 +23822,7 @@
       ],
       "targetAreas": [
         "spec/frontend/",
-        "spec/composition.md"
+        "spec/frontend/composition.md"
       ],
       "translationStatus": "retained-exact-source-with-domain-successor",
       "equivalence": "transition-level-comparison-required",
@@ -23860,7 +23860,7 @@
       ],
       "targetAreas": [
         "spec/frontend/",
-        "spec/composition.md"
+        "spec/frontend/composition.md"
       ],
       "translationStatus": "retained-exact-source-with-domain-successor",
       "equivalence": "transition-level-comparison-required",
@@ -25468,7 +25468,7 @@
         "spec/security/admission.md",
         "spec/security/enforcement.md",
         "spec/security/privacy.md",
-        "spec/operations/local.md"
+        "spec/backend/local.md"
       ]
     },
     {

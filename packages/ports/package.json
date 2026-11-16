@@ -1,0 +1,31 @@
+{
+  "name": "@repo/ports",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "sideEffects": false,
+  "exports": {
+    "./backend": "./src/backend.vibe",
+    "./operations": "./src/operations.vibe",
+    "./security": "./src/security.vibe",
+    "./contributor": "./src/contributor.vibe",
+    "./points": "./src/points.vibe",
+    "./settlement": "./src/settlement.vibe",
+    "./slopbot": "./src/slopbot.vibe"
+  },
+  "scripts": {
+    "typecheck": "vibelang --noEmit -p ."
+  },
+  "dependencies": {
+    "@repo/platform": "workspace:*",
+    "effect": "4.1.1",
+    "vibelang-runtime": "0.0.13"
+  },
+  "devDependencies": {
+    "@types/node": "catalog:",
+    "typescript": "catalog:",
+    "vibelang": "0.0.13",
+    "vibestack": "workspace:*",
+    "vitest": "catalog:"
+  }
+}

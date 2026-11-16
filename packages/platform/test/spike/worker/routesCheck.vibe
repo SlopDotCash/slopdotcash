@@ -1,0 +1,17 @@
+// spike: handle(route, f) keeps the Routes<S> check — a route needing a service the site does not provide is a compile error
+import type { Fetcher } from "../../../src/bindings.ts"
+import { webCrypto } from "../../../src/crypto.vibe"
+import { handle, pages, route } from "./site.vibe"
+
+service Unprovided { readonly value: number }
+
+schema Ask { name: string }
+schema Told { value: number }
+const ask = route({ method: "POST", path: "/api/ask", limitKib: 1, request: Ask, answer: Told })
+const needsUnprovided = handle(ask, () => effect { return { value: (try Unprovided).value } })
+
+interface CheckEnv { readonly ASSETS: Fetcher }
+
+export const provided = pages({ services: (_env: CheckEnv) => Layer.succeed(Unprovided, { value: 1 }), routes: needsUnprovided, assets: (env: CheckEnv) => env.ASSETS })
+// @ts-expect-error Unprovided is not among the services, so the site does not compile
+export const refused = pages({ services: (_env: CheckEnv) => webCrypto, routes: needsUnprovided, assets: (env: CheckEnv) => env.ASSETS })

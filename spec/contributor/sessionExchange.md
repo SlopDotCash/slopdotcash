@@ -138,7 +138,7 @@ can consume an assertion without issuing a usable token. The exchange issues
 only the contributor role; operator status is never issued by this endpoint.
 Current server authentication checks the bearer deadline and the actor's
 participation standing before accepting the create request. Only the
-standing service mirrors the [access area](../access.md) ban fact, for the
+standing service mirrors the [access area](../backend/access.md) ban fact, for the
 actor the callback authenticated and with a strictly increasing epoch;
 a new invocation starts with no standing fact for its not yet known actor
 (composition obligation: the mirror equals the access fact at the create

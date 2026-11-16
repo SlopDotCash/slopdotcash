@@ -36,10 +36,14 @@ Earlier snapshots remain in the original project history.
 | Settlement | `spec/settlement/` | Owner wallets, chain RPC, exact finalized evidence, scheduled reconciliation |
 | Received fees | `spec/fees/` | Narrow fee-wallet signer, quote inspection, journal, bridge and swap reconciliation |
 | Operations | `spec/operations/` | Inbox, delivery provider, backups, release and environment isolation |
-| Composition | `spec/composition.md` | Account changes across browser children |
+| Composition | `spec/frontend/composition.md` | Account changes across browser children |
 
 All product specs live in the single root tree. These areas are domain
-ownership boundaries, with no new application packages introduced yet. When
+ownership boundaries of the application packages `apps/backend`,
+`apps/operations`, `apps/security`, `apps/contributor`, `apps/points`,
+`apps/slopbot`, `apps/settlement`, `apps/fees` and `apps/frontend`, beside the
+shared packages `packages/platform`, `packages/ports`, `packages/contracts`,
+`packages/ui` and `packages/design-system`. When
 implementation starts, a matching `apps/<name>` or `packages/<name>` owns that
 area under Vibestack's normal generation rules. Cross-area rules use imports
 and composed machines, and the generated core owns product state.

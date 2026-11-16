@@ -1,0 +1,4 @@
+import { area } from "@repo/platform/worker"
+import { api } from "./client/index.vibe"
+
+export const security = area({ name: "security", api, routes: Layer.empty, provides: Layer.empty })

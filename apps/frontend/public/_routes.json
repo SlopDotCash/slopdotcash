@@ -1,0 +1,14 @@
+{
+  "version": 1,
+  "include": [
+    "/",
+    "/api/v1/*",
+    "/projects/*",
+    "/referral",
+    "/referral/*",
+    "/contributors/*",
+    "/cycles/*",
+    "/.well-known/slop/*"
+  ],
+  "exclude": []
+}

@@ -1,0 +1,4 @@
+import { area } from "@repo/platform/worker"
+import { api } from "./client/index.vibe"
+
+export const operations = area({ name: "operations", api, routes: Layer.empty, provides: Layer.empty })

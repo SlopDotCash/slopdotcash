@@ -12,7 +12,7 @@
       "unproved": [],
       "errors": [],
       "exhausted": [],
-      "source": "spec/operations/local.md",
+      "source": "spec/backend/local.md",
       "sourceCurrent": true,
       "dependencies": [],
       "proofSourceCurrent": true,
@@ -298,7 +298,7 @@
       "unproved": [],
       "errors": [],
       "exhausted": [],
-      "source": "spec/operations/local.md",
+      "source": "spec/backend/local.md",
       "sourceCurrent": true,
       "dependencies": [],
       "proofSourceCurrent": true,
@@ -1088,7 +1088,7 @@
       "sourceDifference": "The current model adds inductive invariants absent from this retained simulation snapshot. This historical run does not validate the current model."
     },
     {
-      "source": "spec/operations/local.md",
+      "source": "spec/backend/local.md",
       "sourceCurrent": true,
       "currentSourceSha256": "f862f36f494e8b0ff0046eb9a7dd30b2a578de8bdc1bb80298b180ed97fb9976",
       "modelSha256": "cb581ed7d62f6bdbbc3d4c89b39553404deabb6b61d5bab9df4dacf724d9ef75",
@@ -1392,7 +1392,7 @@
     {
       "unit": "operations__local.ts",
       "total": 8,
-      "source": "spec/operations/local.md",
+      "source": "spec/backend/local.md",
       "sourceSha256": "f862f36f494e8b0ff0046eb9a7dd30b2a578de8bdc1bb80298b180ed97fb9976",
       "modelSha256": "cb581ed7d62f6bdbbc3d4c89b39553404deabb6b61d5bab9df4dacf724d9ef75",
       "proofSourceSha256": null,

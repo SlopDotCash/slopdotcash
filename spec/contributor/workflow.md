@@ -190,7 +190,7 @@ when the contributor's standing is clear and the collector collected the
 project at that merge (`frontend/projections.md` `collected`): a paused,
 flagged or quarantined project's repositories are not collected, so nothing
 on them reaches the ledger. The standing mirrors the
-[access area](../access.md) ban fact for the contributor, ordered by an
+[access area](../backend/access.md) ban fact for the contributor, ordered by an
 increasing epoch (composition obligation). The PR-opened record is the
 author's own server run: a record that satisfies every rule of the
 [server trace run](./traceServer.md) and its `recordedSkillRun`, never a

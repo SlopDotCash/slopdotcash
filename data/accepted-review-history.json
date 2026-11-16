@@ -1,0 +1,545 @@
+{
+  "schemaVersion": "2",
+  "attributions": [
+    {
+      "id": "PRR_kwDOMT5cIs8AAAABKiiDoA:machine-marker:0",
+      "sourceId": "PRR_kwDOMT5cIs8AAAABKiiDoA",
+      "sourceUrl": "https://github.com/elizaOS/eliza/pull/25197#pullrequestreview-5002265504",
+      "artifactId": "PR_kwDOMT5cIs8AAAABAr93Yg",
+      "actor": {
+        "id": "U_kgDOCzScNQ",
+        "login": "mashingaan",
+        "avatarUrl": "https://avatars.githubusercontent.com/u/187997237?v=4",
+        "url": "https://github.com/mashingaan",
+        "kind": "User"
+      },
+      "provider": "openai",
+      "model": "gpt-5.6-sol",
+      "identifier": "openai/gpt-5.6-sol",
+      "client": "codex",
+      "skillRevision": "SlopDotCash/slopdotcash@92d692518c3d832ac9b203076ef691a54e61a9fa:skills/contribute-to-eliza",
+      "run": {
+        "schemaVersion": "2",
+        "runId": "run_01M0Q56B36JGGEP1AZNVNH3C9T",
+        "projectId": "eliza",
+        "repositoryId": "elizaOS/eliza",
+        "startedAt": "2026-08-23T11:13:17.926Z",
+        "completedAt": "2026-08-23T11:21:02.652Z",
+        "provider": "openai",
+        "model": "gpt-5.6-sol",
+        "client": "codex",
+        "skillRevision": "SlopDotCash/slopdotcash@92d692518c3d832ac9b203076ef691a54e61a9fa:skills/contribute-to-eliza",
+        "skillSha256": "97666aac5e8039955e335470436f46557ee59dcf48201fe39c429c078e373a0b",
+        "policyAcknowledgement": {
+          "policyRevision": "2026-08-18.1",
+          "licenseSha256": "d0590837a439c742e89c8226137dd4e902fa1e0df486347dbfc9b8ba68b5826d",
+          "inboundTermsSha256": "15fdc92698fd2fdffef86bfd629f65bc588f02983fb9535bba0a5172d4569469",
+          "prizeRulesSha256": null,
+          "acknowledgedAt": "2026-08-23T11:13:19.068Z"
+        },
+        "usage": {
+          "source": "ccusage-session-v20",
+          "confidence": "unavailable",
+          "inputTokens": 0,
+          "outputTokens": 0,
+          "cacheCreationTokens": 0,
+          "cacheReadTokens": 0,
+          "totalTokens": 0,
+          "costMicroUsd": "0",
+          "sessionCount": 0
+        },
+        "trajectorySha256": "d86f5dbf7ae1cfe6ce01e19fd11d30ec240ba4a378417901e3dca20c359a7c4c",
+        "traceUpload": {
+          "authority": "https://api.slop.cash",
+          "serverRunId": "18b86343-e8a6-44fc-b70c-8875aea9c126",
+          "objectId": "sha256:d86f5dbf7ae1cfe6ce01e19fd11d30ec240ba4a378417901e3dca20c359a7c4c",
+          "sha256": "d86f5dbf7ae1cfe6ce01e19fd11d30ec240ba4a378417901e3dca20c359a7c4c"
+        },
+        "signatureAlgorithm": "ed25519",
+        "devicePublicKey": "MCowBQYDK2VwAyEAM-QnG1GIrFCQc80xfVVCicm6NwnOconuAnNxqQ3dJw0",
+        "deviceKeyId": "89e303b0db92a7b63fb55d5e6fbf1be4dc2eff6f41e4520fb74ee0b238899486",
+        "deviceSignature": "jwrbyBDpaF94xHMx-Ek2VbEGs5orn-tic8TnLOSWY8WFN_eadC5_FJKye6zl1RImejmAw0MpRClsNHuhVEJiDA"
+      },
+      "format": "machine-marker",
+      "status": "self-reported"
+    },
+    {
+      "id": "PRR_kwDOMT5cIs8AAAABKhZmaQ:machine-marker:0",
+      "sourceId": "PRR_kwDOMT5cIs8AAAABKhZmaQ",
+      "sourceUrl": "https://github.com/elizaOS/eliza/pull/24021#pullrequestreview-5001078377",
+      "artifactId": "PR_kwDOMT5cIs8AAAABAmbjtA",
+      "actor": {
+        "id": "U_kgDOCzScNQ",
+        "login": "mashingaan",
+        "avatarUrl": "https://avatars.githubusercontent.com/u/187997237?v=4",
+        "url": "https://github.com/mashingaan",
+        "kind": "User"
+      },
+      "provider": "openai",
+      "model": "gpt-5.6-sol",
+      "identifier": "openai/gpt-5.6-sol",
+      "client": "codex",
+      "skillRevision": "SlopDotCash/slopdotcash@2744eb9bd27513b5c5081b61cf5d17494a583061:skills/contribute-to-eliza",
+      "run": {
+        "schemaVersion": "2",
+        "runId": "run_01M0NNJ276YQDSXKPK1Z7QP286",
+        "projectId": "eliza",
+        "repositoryId": "elizaOS/eliza",
+        "startedAt": "2026-08-22T21:20:50.407Z",
+        "completedAt": "2026-08-22T21:21:36.462Z",
+        "provider": "openai",
+        "model": "gpt-5.6-sol",
+        "client": "codex",
+        "skillRevision": "SlopDotCash/slopdotcash@2744eb9bd27513b5c5081b61cf5d17494a583061:skills/contribute-to-eliza",
+        "skillSha256": "2113430280ffe23a076bfd6a215e2547964a82f5f01779584fc6f1e4892e8809",
+        "policyAcknowledgement": {
+          "policyRevision": "2026-08-18.1",
+          "licenseSha256": "d0590837a439c742e89c8226137dd4e902fa1e0df486347dbfc9b8ba68b5826d",
+          "inboundTermsSha256": "15fdc92698fd2fdffef86bfd629f65bc588f02983fb9535bba0a5172d4569469",
+          "prizeRulesSha256": null,
+          "acknowledgedAt": "2026-08-22T21:20:51.963Z"
+        },
+        "usage": {
+          "source": "ccusage-session-v20",
+          "confidence": "unavailable",
+          "inputTokens": 0,
+          "outputTokens": 0,
+          "cacheCreationTokens": 0,
+          "cacheReadTokens": 0,
+          "totalTokens": 0,
+          "costMicroUsd": "0",
+          "sessionCount": 0
+        },
+        "trajectorySha256": "a5c3755abf105fa641571e873c552b6d69b97ea3f3913ae61c7b1c4a1d2c08c0",
+        "traceUpload": {
+          "authority": "https://api.slop.cash",
+          "serverRunId": "0faad8fc-bd48-4c64-85a7-dbe1096fbd1b",
+          "objectId": "sha256:a5c3755abf105fa641571e873c552b6d69b97ea3f3913ae61c7b1c4a1d2c08c0",
+          "sha256": "a5c3755abf105fa641571e873c552b6d69b97ea3f3913ae61c7b1c4a1d2c08c0"
+        },
+        "signatureAlgorithm": "ed25519",
+        "devicePublicKey": "MCowBQYDK2VwAyEAM-QnG1GIrFCQc80xfVVCicm6NwnOconuAnNxqQ3dJw0",
+        "deviceKeyId": "89e303b0db92a7b63fb55d5e6fbf1be4dc2eff6f41e4520fb74ee0b238899486",
+        "deviceSignature": "hVHLauiqaI2Wn7I_z8jfzb15miIs2zrYg1JiC6xyxxiHQWm_7vMQMoSxuV4Smg58yHMnlYi9ffi5KX-9uFg-Ag"
+      },
+      "format": "machine-marker",
+      "status": "self-reported"
+    },
+    {
+      "id": "PRR_kwDOMT5cIs8AAAABKivXtw:machine-marker:0",
+      "sourceId": "PRR_kwDOMT5cIs8AAAABKivXtw",
+      "sourceUrl": "https://github.com/elizaOS/eliza/pull/25848#pullrequestreview-5002483639",
+      "artifactId": "PR_kwDOMT5cIs8AAAABAs2pVA",
+      "actor": {
+        "id": "U_kgDOCzScNQ",
+        "login": "mashingaan",
+        "avatarUrl": "https://avatars.githubusercontent.com/u/187997237?v=4",
+        "url": "https://github.com/mashingaan",
+        "kind": "User"
+      },
+      "provider": "openai",
+      "model": "gpt-5.6-sol",
+      "identifier": "openai/gpt-5.6-sol",
+      "client": "codex",
+      "skillRevision": "SlopDotCash/slopdotcash@92d692518c3d832ac9b203076ef691a54e61a9fa:skills/contribute-to-eliza",
+      "run": {
+        "schemaVersion": "2",
+        "runId": "run_01M0QCFQDBTMFHJHWB3YZPNAWV",
+        "projectId": "eliza",
+        "repositoryId": "elizaOS/eliza",
+        "startedAt": "2026-08-23T13:20:45.484Z",
+        "completedAt": "2026-08-23T13:25:30.810Z",
+        "provider": "openai",
+        "model": "gpt-5.6-sol",
+        "client": "codex",
+        "skillRevision": "SlopDotCash/slopdotcash@92d692518c3d832ac9b203076ef691a54e61a9fa:skills/contribute-to-eliza",
+        "skillSha256": "97666aac5e8039955e335470436f46557ee59dcf48201fe39c429c078e373a0b",
+        "policyAcknowledgement": {
+          "policyRevision": "2026-08-18.1",
+          "licenseSha256": "d0590837a439c742e89c8226137dd4e902fa1e0df486347dbfc9b8ba68b5826d",
+          "inboundTermsSha256": "15fdc92698fd2fdffef86bfd629f65bc588f02983fb9535bba0a5172d4569469",
+          "prizeRulesSha256": null,
+          "acknowledgedAt": "2026-08-23T13:20:46.969Z"
+        },
+        "usage": {
+          "source": "ccusage-session-v20",
+          "confidence": "unavailable",
+          "inputTokens": 0,
+          "outputTokens": 0,
+          "cacheCreationTokens": 0,
+          "cacheReadTokens": 0,
+          "totalTokens": 0,
+          "costMicroUsd": "0",
+          "sessionCount": 0
+        },
+        "trajectorySha256": "535031eb54a1d577790f7b02f5ef618c8c68022b30c20607600a686075d65501",
+        "traceUpload": {
+          "authority": "https://api.slop.cash",
+          "serverRunId": "ae7f3a9d-611f-4cde-a4dd-37094a6faac2",
+          "objectId": "sha256:535031eb54a1d577790f7b02f5ef618c8c68022b30c20607600a686075d65501",
+          "sha256": "535031eb54a1d577790f7b02f5ef618c8c68022b30c20607600a686075d65501"
+        },
+        "signatureAlgorithm": "ed25519",
+        "devicePublicKey": "MCowBQYDK2VwAyEAM-QnG1GIrFCQc80xfVVCicm6NwnOconuAnNxqQ3dJw0",
+        "deviceKeyId": "89e303b0db92a7b63fb55d5e6fbf1be4dc2eff6f41e4520fb74ee0b238899486",
+        "deviceSignature": "S81VfdCRAHCdgWqf2Tb87m_HHXuRhykAdOJAEVH4xr8QXxzk9O3xV3P6MZe7UkeXJHI7tkxmrPC-ttxqXa7oCw"
+      },
+      "format": "machine-marker",
+      "status": "self-reported"
+    }
+  ],
+  "events": [
+    {
+      "id": "PR_kwDOMT5cIs8AAAABAr9NwA:reviewer:U_kgDOCzScNQ",
+      "actor": {
+        "id": "U_kgDOCzScNQ",
+        "login": "mashingaan",
+        "avatarUrl": "https://avatars.githubusercontent.com/u/187997237?v=4",
+        "url": "https://github.com/mashingaan",
+        "kind": "User"
+      },
+      "category": "substantive-review",
+      "points": 1,
+      "occurredAt": "2026-08-23T11:10:49Z",
+      "repository": "elizaOS/eliza",
+      "source": {
+        "id": "PRR_kwDOMT5cIs8AAAABKig2Kw",
+        "kind": "review",
+        "number": 25187,
+        "title": "test(app-core): cover electrobun window construction",
+        "url": "https://github.com/elizaOS/eliza/pull/25187#pullrequestreview-5002245675"
+      },
+      "reason": "First qualifying substantive, non-self review submitted before merge.",
+      "continuity": {
+        "sourceSnapshotSha256": "5a76b7754a1522e19270814163bee78c39805a35cd0edb947f1418a9d306ddc9",
+        "decisionUrl": "https://github.com/SlopDotCash/slopdotcash/issues/313"
+      },
+      "scoreThirds": 3,
+      "workUnitId": "wu_eliza_prr_kwdomt5cis8aaaabkig2kw"
+    },
+    {
+      "id": "PR_kwDOMT5cIs8AAAABAr93Yg:reviewer:U_kgDOCzScNQ",
+      "actor": {
+        "id": "U_kgDOCzScNQ",
+        "login": "mashingaan",
+        "avatarUrl": "https://avatars.githubusercontent.com/u/187997237?v=4",
+        "url": "https://github.com/mashingaan",
+        "kind": "User"
+      },
+      "category": "substantive-review",
+      "points": 1,
+      "occurredAt": "2026-08-23T11:22:35Z",
+      "repository": "elizaOS/eliza",
+      "source": {
+        "id": "PRR_kwDOMT5cIs8AAAABKiiDoA",
+        "kind": "review",
+        "number": 25197,
+        "title": "test(core): cover canonical model capability gating",
+        "url": "https://github.com/elizaOS/eliza/pull/25197#pullrequestreview-5002265504"
+      },
+      "reason": "First qualifying substantive, non-self review submitted before merge.",
+      "continuity": {
+        "sourceSnapshotSha256": "5a76b7754a1522e19270814163bee78c39805a35cd0edb947f1418a9d306ddc9",
+        "decisionUrl": "https://github.com/SlopDotCash/slopdotcash/issues/313"
+      },
+      "scoreThirds": 3,
+      "workUnitId": "wu_eliza_prr_kwdomt5cis8aaaabkiidoa"
+    },
+    {
+      "id": "PR_kwDOMT5cIs8AAAABAmbjtA:reviewer:U_kgDOCzScNQ",
+      "actor": {
+        "id": "U_kgDOCzScNQ",
+        "login": "mashingaan",
+        "avatarUrl": "https://avatars.githubusercontent.com/u/187997237?v=4",
+        "url": "https://github.com/mashingaan",
+        "kind": "User"
+      },
+      "category": "substantive-review",
+      "points": 1,
+      "occurredAt": "2026-08-22T21:22:26Z",
+      "repository": "elizaOS/eliza",
+      "source": {
+        "id": "PRR_kwDOMT5cIs8AAAABKhZmaQ",
+        "kind": "review",
+        "number": 24021,
+        "title": "fix(cloud): strictly parse SMTP_PORT and reject empty port at initialization boundary",
+        "url": "https://github.com/elizaOS/eliza/pull/24021#pullrequestreview-5001078377"
+      },
+      "reason": "First qualifying substantive, non-self review submitted before merge.",
+      "scoreThirds": 3,
+      "workUnitId": "wu_eliza_prr_kwdomt5cis8aaaabkhzmaq",
+      "continuity": {
+        "sourceSnapshotSha256": "46734cc0e83cb4b6ecc3533e448ca83e0981e406fa2d1273d0df9fd2b14e08a3",
+        "decisionUrl": "https://github.com/SlopDotCash/slopdotcash/issues/405"
+      }
+    },
+    {
+      "id": "PR_kwDOMT5cIs8AAAABAsGy7g:reviewer:U_kgDOCzScNQ",
+      "actor": {
+        "id": "U_kgDOCzScNQ",
+        "login": "mashingaan",
+        "avatarUrl": "https://avatars.githubusercontent.com/u/187997237?v=4",
+        "url": "https://github.com/mashingaan",
+        "kind": "User"
+      },
+      "category": "substantive-review",
+      "points": 1,
+      "occurredAt": "2026-08-23T07:59:55Z",
+      "repository": "elizaOS/eliza",
+      "source": {
+        "id": "PRR_kwDOMT5cIs8AAAABKiOa0w",
+        "kind": "review",
+        "number": 25310,
+        "title": "fix(agent-orchestrator): safe NaN handling in task agent framework scoring and session paging",
+        "url": "https://github.com/elizaOS/eliza/pull/25310#pullrequestreview-5001943763"
+      },
+      "reason": "First qualifying substantive, non-self review submitted before merge.",
+      "scoreThirds": 3,
+      "workUnitId": "wu_eliza_prr_kwdomt5cis8aaaabkioa0w",
+      "continuity": {
+        "sourceSnapshotSha256": "46734cc0e83cb4b6ecc3533e448ca83e0981e406fa2d1273d0df9fd2b14e08a3",
+        "decisionUrl": "https://github.com/SlopDotCash/slopdotcash/issues/405"
+      }
+    },
+    {
+      "id": "PR_kwDOMT5cIs8AAAABAsoqXw:reviewer:U_kgDOCzScNQ",
+      "actor": {
+        "id": "U_kgDOCzScNQ",
+        "login": "mashingaan",
+        "avatarUrl": "https://avatars.githubusercontent.com/u/187997237?v=4",
+        "url": "https://github.com/mashingaan",
+        "kind": "User"
+      },
+      "category": "substantive-review",
+      "points": 1,
+      "occurredAt": "2026-08-23T11:01:01Z",
+      "repository": "elizaOS/eliza",
+      "source": {
+        "id": "PRR_kwDOMT5cIs8AAAABKif24A",
+        "kind": "review",
+        "number": 25685,
+        "title": "fix(cloud): use surrogate-safe truncateWellFormed on Docker node manager log output",
+        "url": "https://github.com/elizaOS/eliza/pull/25685#pullrequestreview-5002229472"
+      },
+      "reason": "First qualifying substantive, non-self review submitted before merge.",
+      "scoreThirds": 3,
+      "workUnitId": "wu_eliza_prr_kwdomt5cis8aaaabkif24a",
+      "continuity": {
+        "sourceSnapshotSha256": "46734cc0e83cb4b6ecc3533e448ca83e0981e406fa2d1273d0df9fd2b14e08a3",
+        "decisionUrl": "https://github.com/SlopDotCash/slopdotcash/issues/405"
+      }
+    },
+    {
+      "id": "PR_kwDOMT5cIs8AAAABAsqi1w:reviewer:U_kgDOCzScNQ",
+      "actor": {
+        "id": "U_kgDOCzScNQ",
+        "login": "mashingaan",
+        "avatarUrl": "https://avatars.githubusercontent.com/u/187997237?v=4",
+        "url": "https://github.com/mashingaan",
+        "kind": "User"
+      },
+      "category": "substantive-review",
+      "points": 1,
+      "occurredAt": "2026-08-23T11:48:32Z",
+      "repository": "elizaOS/eliza",
+      "source": {
+        "id": "PRR_kwDOMT5cIs8AAAABKiksQQ",
+        "kind": "review",
+        "number": 25712,
+        "title": "fix(native-llama): safe NaN handling in token tree node tokenId sort comparators",
+        "url": "https://github.com/elizaOS/eliza/pull/25712#pullrequestreview-5002308673"
+      },
+      "reason": "First qualifying substantive, non-self review submitted before merge.",
+      "scoreThirds": 3,
+      "workUnitId": "wu_eliza_prr_kwdomt5cis8aaaabkiksqq",
+      "continuity": {
+        "sourceSnapshotSha256": "46734cc0e83cb4b6ecc3533e448ca83e0981e406fa2d1273d0df9fd2b14e08a3",
+        "decisionUrl": "https://github.com/SlopDotCash/slopdotcash/issues/405"
+      }
+    },
+    {
+      "id": "PR_kwDOMT5cIs8AAAABAs2pVA:reviewer:U_kgDOCzScNQ",
+      "actor": {
+        "id": "U_kgDOCzScNQ",
+        "login": "mashingaan",
+        "avatarUrl": "https://avatars.githubusercontent.com/u/187997237?v=4",
+        "url": "https://github.com/mashingaan",
+        "kind": "User"
+      },
+      "category": "substantive-review",
+      "points": 1,
+      "occurredAt": "2026-08-23T13:28:05Z",
+      "repository": "elizaOS/eliza",
+      "source": {
+        "id": "PRR_kwDOMT5cIs8AAAABKivXtw",
+        "kind": "review",
+        "number": 25848,
+        "title": "fix(ui): handle max<=0 and max==1 in truncateMessageForDisplay",
+        "url": "https://github.com/elizaOS/eliza/pull/25848#pullrequestreview-5002483639"
+      },
+      "reason": "First qualifying substantive, non-self review submitted before merge.",
+      "scoreThirds": 3,
+      "workUnitId": "wu_eliza_prr_kwdomt5cis8aaaabkivxtw",
+      "continuity": {
+        "sourceSnapshotSha256": "46734cc0e83cb4b6ecc3533e448ca83e0981e406fa2d1273d0df9fd2b14e08a3",
+        "decisionUrl": "https://github.com/SlopDotCash/slopdotcash/issues/405"
+      }
+    },
+    {
+      "id": "PR_kwDOMT5cIs8AAAABAvLwlQ:reviewer:U_kgDOCzOt4w",
+      "actor": {
+        "id": "U_kgDOCzOt4w",
+        "login": "GG100-eng",
+        "avatarUrl": "https://avatars.githubusercontent.com/u/187936227?v=4",
+        "url": "https://github.com/GG100-eng",
+        "kind": "User"
+      },
+      "category": "substantive-review",
+      "points": 1,
+      "occurredAt": "2026-08-24T04:56:26Z",
+      "repository": "elizaOS/eliza",
+      "source": {
+        "id": "PRR_kwDOMT5cIs8AAAABKkzU3Q",
+        "kind": "review",
+        "number": 26802,
+        "title": "test(ui): cover resolve cloud connection defaults",
+        "url": "https://github.com/elizaOS/eliza/pull/26802#pullrequestreview-5004645597"
+      },
+      "reason": "First qualifying substantive, non-self review submitted before merge.",
+      "scoreThirds": 3,
+      "workUnitId": "wu_eliza_prr_kwdomt5cis8aaaabkkzu3q",
+      "continuity": {
+        "sourceSnapshotSha256": "46734cc0e83cb4b6ecc3533e448ca83e0981e406fa2d1273d0df9fd2b14e08a3",
+        "decisionUrl": "https://github.com/SlopDotCash/slopdotcash/issues/405"
+      }
+    },
+    {
+      "id": "PR_kwDOMT5cIs8AAAABAwtsVQ:reviewer:U_kgDOCzOt4w",
+      "actor": {
+        "id": "U_kgDOCzOt4w",
+        "login": "GG100-eng",
+        "avatarUrl": "https://avatars.githubusercontent.com/u/187936227?v=4",
+        "url": "https://github.com/GG100-eng",
+        "kind": "User"
+      },
+      "category": "substantive-review",
+      "points": 1,
+      "occurredAt": "2026-08-24T08:07:45Z",
+      "repository": "elizaOS/eliza",
+      "source": {
+        "id": "PRR_kwDOMT5cIs8AAAABKl0syw",
+        "kind": "review",
+        "number": 27335,
+        "title": "fix(core): aggregate context routing signal scores per context to prevent duplicate secondary contexts",
+        "url": "https://github.com/elizaOS/eliza/pull/27335#pullrequestreview-5005716683"
+      },
+      "reason": "First qualifying substantive, non-self review submitted before merge.",
+      "scoreThirds": 3,
+      "workUnitId": "wu_eliza_prr_kwdomt5cis8aaaabkl0syw",
+      "continuity": {
+        "sourceSnapshotSha256": "46734cc0e83cb4b6ecc3533e448ca83e0981e406fa2d1273d0df9fd2b14e08a3",
+        "decisionUrl": "https://github.com/SlopDotCash/slopdotcash/issues/405"
+      }
+    },
+    {
+      "id": "PR_kwDOTqq9Pc8AAAABIV3JXQ:reviewer:MDQ6VXNlcjUzMzkxNzcx",
+      "actor": {
+        "id": "MDQ6VXNlcjUzMzkxNzcx",
+        "login": "powermsn",
+        "avatarUrl": "https://avatars.githubusercontent.com/u/53391771?v=4",
+        "url": "https://github.com/powermsn",
+        "kind": "User"
+      },
+      "category": "substantive-review",
+      "points": 0.3333333333333333,
+      "scoreThirds": 1,
+      "occurredAt": "2026-10-14T10:52:40Z",
+      "repository": "SlopDotCash/slopdotcash",
+      "source": {
+        "id": "PRR_kwDOTqq9Pc8AAAABSNN4Xw",
+        "kind": "review",
+        "number": 730,
+        "title": "fix(settlement): reject Solana settlement transactions that predate their plan",
+        "url": "https://github.com/SlopDotCash/slopdotcash/pull/730#pullrequestreview-5516785759"
+      },
+      "reason": "Latest pre-merge request for changes that the merged code answered; one review award per pull request.",
+      "workUnitId": "wu_slopdotcash_prr_kwdotqq9pc8aaaabsnn4xw",
+      "continuity": {
+        "sourceSnapshotSha256": "508eac423d897963d046e10a48203026c9e7ea8282cafd95d7d10072a58a4391",
+        "decisionUrl": "https://github.com/SlopDotCash/slopdotcash/issues/797"
+      }
+    },
+    {
+      "id": "PR_kwDOTqq9Pc8AAAABIV3MwA:reviewer:MDQ6VXNlcjUzMzkxNzcx",
+      "actor": {
+        "id": "MDQ6VXNlcjUzMzkxNzcx",
+        "login": "powermsn",
+        "avatarUrl": "https://avatars.githubusercontent.com/u/53391771?v=4",
+        "url": "https://github.com/powermsn",
+        "kind": "User"
+      },
+      "category": "substantive-review",
+      "points": 0.3333333333333333,
+      "scoreThirds": 1,
+      "occurredAt": "2026-10-14T11:59:03Z",
+      "repository": "SlopDotCash/slopdotcash",
+      "source": {
+        "id": "PRR_kwDOTqq9Pc8AAAABSN56Vw",
+        "kind": "review",
+        "number": 731,
+        "title": "fix(points): include discussion_r review URLs in the evaluated-review dedup set",
+        "url": "https://github.com/SlopDotCash/slopdotcash/pull/731#pullrequestreview-5517507159"
+      },
+      "reason": "Latest pre-merge request for changes that the merged code answered; one review award per pull request.",
+      "workUnitId": "wu_slopdotcash_prr_kwdotqq9pc8aaaabsn56vw",
+      "reviewHistory": [
+        {
+          "sourceId": "PRR_kwDOTqq9Pc8AAAABSN56Vw",
+          "state": "CHANGES_REQUESTED",
+          "commitId": "39ecd74be6abd1af5dc74b2f23a59fd420d278a6",
+          "submittedAt": "2026-10-14T11:59:03Z",
+          "url": "https://github.com/SlopDotCash/slopdotcash/pull/731#pullrequestreview-5517507159"
+        },
+        {
+          "sourceId": "PRR_kwDOTqq9Pc8AAAABSOEHQA",
+          "state": "APPROVED",
+          "commitId": "e7f1d3c6a436001efc43194bae747ba5dfed166e",
+          "submittedAt": "2026-10-14T12:13:28Z",
+          "url": "https://github.com/SlopDotCash/slopdotcash/pull/731#pullrequestreview-5517674304"
+        }
+      ],
+      "continuity": {
+        "sourceSnapshotSha256": "508eac423d897963d046e10a48203026c9e7ea8282cafd95d7d10072a58a4391",
+        "decisionUrl": "https://github.com/SlopDotCash/slopdotcash/issues/797"
+      }
+    },
+    {
+      "id": "PR_kwDOMT5cIs8AAAABIXJ_BQ:reviewer:U_kgDOCzScNQ",
+      "actor": {
+        "id": "U_kgDOCzScNQ",
+        "login": "mashingaan",
+        "avatarUrl": "https://avatars.githubusercontent.com/u/187997237?v=4",
+        "url": "https://github.com/mashingaan",
+        "kind": "User"
+      },
+      "category": "substantive-review",
+      "points": 0.3333333333333333,
+      "scoreThirds": 1,
+      "occurredAt": "2026-10-14T18:04:23Z",
+      "repository": "elizaOS/eliza",
+      "source": {
+        "id": "PRR_kwDOMT5cIs8AAAABSSj8JA",
+        "kind": "review",
+        "number": 36211,
+        "title": "fix(agent): honor ownership gate in reconcileDirectTextModelSettings",
+        "url": "https://github.com/elizaOS/eliza/pull/36211#pullrequestreview-5522390052"
+      },
+      "reason": "Latest pre-merge request for changes that the merged code answered; one review award per pull request.",
+      "workUnitId": "wu_eliza_prr_kwdomt5cis8aaaabssj8ja",
+      "continuity": {
+        "sourceSnapshotSha256": "508eac423d897963d046e10a48203026c9e7ea8282cafd95d7d10072a58a4391",
+        "decisionUrl": "https://github.com/SlopDotCash/slopdotcash/issues/797"
+      }
+    }
+  ]
+}

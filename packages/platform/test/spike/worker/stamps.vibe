@@ -1,0 +1,31 @@
+// spike: the services of the second Worker and the programs its entrypoint class and queue consumers run
+import type { D1Database, QueueMessage } from "../../../src/bindings.ts"
+import { sha256Hex, webCrypto } from "../../../src/crypto.vibe"
+import { D1, d1, sql } from "../../../src/d1.vibe"
+
+export interface ServiceEnv {
+  readonly DB: D1Database
+}
+
+export function serviceLayer(env: ServiceEnv) {
+  return Layer.mergeAll(d1(env.DB), webCrypto)
+}
+
+export effect function stamp(text: string) {
+  const digest = try sha256Hex(text)
+  try (try D1).run(sql`INSERT INTO stamps (digest, text) VALUES (${digest}, ${text})`)
+  return digest
+}
+
+schema Job { key: string; fail: boolean }
+
+export effect function job(message: QueueMessage) {
+  const body = try orDie(Schema.decodeUnknownEffect(Job)(message.body))
+  if (body.fail) return try die(new Error(`job ${body.key} refused`))
+  try orDie((try D1).run(sql`INSERT INTO jobs (key, queue, attempts) VALUES (${body.key}, ${"spike-jobs"}, ${message.attempts})`))
+}
+
+export effect function deadLetter(message: QueueMessage) {
+  const body = try orDie(Schema.decodeUnknownEffect(Job)(message.body))
+  try orDie((try D1).run(sql`INSERT INTO jobs (key, queue, attempts) VALUES (${body.key}, ${"spike-jobs-dlq"}, ${message.attempts})`))
+}

@@ -10,7 +10,7 @@ exemptions (migration `0075` and the audited owner-approved grants). The
 registry side of each restriction (the paused, retired revision and the
 Community revision after reinstatement) is in the
 [project registry](../backend/projects.md); the
-[composition](../projectComposition.md) performs both in one D1 batch.
+[composition](../backend/projectComposition.md) performs both in one D1 batch.
 
 Identities are permanent GitHub actor ids. The actor `0` is the signed
 vetting service (`VETTING_RESULT_PUBLIC_KEYS`); the shell supplies it only
@@ -443,7 +443,7 @@ written in between refuses it (`stale_revision`).
 Current stewardship and the original application never select accounts. A
 decision that closes an open project appeal needs a moderator who neither
 placed the restriction nor filed the appeal. Account bans are recorded for
-[participation restrictions](../access.md); project reinstatement never lifts
+[participation restrictions](../backend/access.md); project reinstatement never lifts
 them.
 
 ```quint
@@ -484,7 +484,7 @@ The steward, the listing account, an account this project's decision banned
 moderators who did not place the restriction. It neither lifts the
 restriction nor grants project access. An account appeal filed while the
 project is clear, and the account reinstatement decision, belong to
-[participation restrictions](../access.md).
+[participation restrictions](../backend/access.md).
 
 ```quint
 pure def canRequestAppeal(e: Enforcement, by: int): bool =

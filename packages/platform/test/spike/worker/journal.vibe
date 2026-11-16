@@ -1,0 +1,47 @@
+// spike: a Durable Object's SQLite storage as an Effect service, with an atomic transaction (PaymentSignerJournal shape)
+import type { SqlValue } from "../../../src/bindings.ts"
+import { sha256Hex } from "../../../src/crypto.vibe"
+import type { DurableObjectStorage } from "../bindings.ts"
+import { execute, transactionally } from "./objectSql.ts"
+
+export error ObjectSqlFailure { message: string }
+export error Refusal { reason: string }
+
+export service ObjectStorage { readonly storage: DurableObjectStorage }
+
+export function objectStorage(storage: DurableObjectStorage) {
+  return Layer.succeed(ObjectStorage, { storage })
+}
+
+export effect function query(text: string, params: ReadonlyArray<SqlValue> = []) {
+  const { storage } = try ObjectStorage
+  return try Effect.try({ try: () => execute(storage, text, params), catch: (cause) => new ObjectSqlFailure({ message: String(cause) }) })
+}
+
+// Only synchronous effects may run inside: SQL through `query`, no WebCrypto, no I/O (they would die as async).
+export effect function transaction<A, E, R>(program: A!E!R) {
+  const { storage } = try ObjectStorage
+  const services = try Effect.context<R>()
+  return try transactionally(storage, () => Effect.runSyncExitWith(services)(program))
+}
+
+schema Entry { seq: number; text: string; digest: string }
+
+export effect function migrateJournal() {
+  try query("CREATE TABLE IF NOT EXISTS entries (seq INTEGER PRIMARY KEY AUTOINCREMENT, key TEXT NOT NULL, text TEXT NOT NULL, digest TEXT NOT NULL)")
+}
+
+export effect function record(key: string, texts: ReadonlyArray<string>, refuseAfterWriting: boolean) {
+  const digests: string[] = []
+  for (const text of texts) digests.push(try sha256Hex(text))
+  return try transaction(effect {
+    for (const [index, text] of texts.entries()) try query("INSERT INTO entries (key, text, digest) VALUES (?, ?, ?)", [key, text, digests[index] ?? ""])
+    if (refuseAfterWriting) throw new Refusal({ reason: "refused after writing" })
+    return texts.length
+  })
+}
+
+export effect function entries(key: string) {
+  const found = try query("SELECT seq, text, digest FROM entries WHERE key = ? ORDER BY seq", [key])
+  return try orDie(Schema.decodeUnknownEffect(Schema.Array(Entry))(found))
+}

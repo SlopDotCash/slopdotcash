@@ -21,3 +21,12 @@ generated/
 storybook-static/
 .vibe/
 build/
+# Cloudflare local state and secrets: never committed.
+.wrangler/
+.dev.vars
+.dev.vars.*
+.env
+.env.*
+# Screenshots and traces Vitest keeps of a failed browser test.
+.vitest/
+test/__traces__/

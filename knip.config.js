@@ -9,13 +9,20 @@
 //   entry *.schema, *.contract              imported by the tests vibestack/testing/generate.ts writes under .cache/
 //   design-system eslint, eslint-plugin-better-tailwindcss, typescript-eslint  loaded by name in vibestack/design/test/design.test.ts
 //   contracts forge                         Foundry, installed beside Node, not from npm (packages/contracts/README.md)
+//   ignore frozen.json `ignore`             records copied byte for byte from development, never imported or rewritten
+//   apps/* anvil, solana-test-validator, docker, python3  local chains, the scan container and the install-guide authority,
+//                                           run as programs by journeys and programs, not from npm
+import { readFileSync } from "node:fs"
 import vibelang from "vibelang/knip"
+
+const frozen = JSON.parse(readFileSync(new URL("frozen.json", import.meta.url), "utf8")).ignore
 
 export default {
   compilers: { vibe: vibelang, vibex: vibelang },
   "ignore": [
     "vibestack/examples/**",
-    "**/test/fixtures/**"
+    "**/test/fixtures/**",
+    ...frozen
   ],
   "ignoreExportsUsedInFile": true,
   "ignoreIssues": {
@@ -81,16 +88,28 @@ export default {
     "packages/platform": {
       "entry": [
         "test/**/*.test.vibe",
-        "test/worker/main.vibe"
+        "test/worker/*.vibe",
+        "test/spike/**/*.vibe"
       ],
       "project": [
         "src/**/*.{ts,vibe}",
         "test/**/*.{ts,vibe}"
       ]
     },
+    "packages/ports": {
+      "project": [
+        "src/**/*.{ts,vibe}"
+      ]
+    },
     "apps/*": {
       "entry": [
         "src/worker.vibe",
+        "src/workers/*.vibe",
+        "src/workers/*.classes.ts",
+        "src/programs/*.vibe",
+        "src/worker/*.vibe",
+        "src/main.tsx",
+        "vite.worker.config.ts",
         "test/**/*.test.{ts,tsx,vibe}",
         "test/drivers/*.ts",
         "src/**/*.{schema,contract}.{ts,vibe}"
@@ -101,6 +120,12 @@ export default {
       ],
       "ignoreDependencies": [
         "tailwindcss"
+      ],
+      "ignoreBinaries": [
+        "anvil",
+        "solana-test-validator",
+        "docker",
+        "python3"
       ]
     }
   }

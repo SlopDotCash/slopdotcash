@@ -18,6 +18,7 @@ service. They introduce no new screens or visual design.
 - [Referral link settings](./referralSettings.md)
 - [Provisional EVM vault funding](./provisionalVault.md)
 - [Atomic wallet deposit requests](./batchedDeposit.md)
+- [Cross-machine account ownership](./composition.md)
 
 Source requirements are PRD sections 2–4 and 6–10. The retained UI models under
 `reference/slop-main/formal/models/ui/` provide the individual legacy races and

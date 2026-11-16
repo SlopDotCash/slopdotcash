@@ -1,0 +1,112 @@
+[
+  {
+    "id": "asi",
+    "name": "ASI",
+    "repositories": [
+      {
+        "id": "elizaOS/asi",
+        "aliases": ["SlopDotCash/asi"]
+      }
+    ]
+  },
+  {
+    "id": "canonry",
+    "name": "Canonry",
+    "repositories": [
+      {
+        "id": "Canonry/canonry",
+        "aliases": []
+      }
+    ]
+  },
+  {
+    "id": "darling-arm64",
+    "name": "Darling arm64",
+    "repositories": [
+      {
+        "id": "xchemtina/darling-arm64",
+        "aliases": []
+      }
+    ]
+  },
+  {
+    "id": "delta-star",
+    "name": "Delta Star",
+    "repositories": [
+      {
+        "id": "elizaOS/proximityprize",
+        "aliases": ["SlopDotCash/proximityprize"]
+      }
+    ]
+  },
+  {
+    "id": "eliza",
+    "name": "Eliza",
+    "repositories": [
+      {
+        "id": "elizaOS/eliza",
+        "aliases": []
+      }
+    ]
+  },
+  {
+    "id": "feed",
+    "name": "Feed",
+    "repositories": [
+      {
+        "id": "feedforagents/feed",
+        "aliases": []
+      }
+    ]
+  },
+  {
+    "id": "heir-elements-sdk",
+    "name": "Heir Elements SDK",
+    "repositories": [
+      {
+        "id": "heirlabs/element-sdk",
+        "aliases": []
+      }
+    ]
+  },
+  {
+    "id": "nurosos",
+    "name": "NurosOS",
+    "repositories": [
+      {
+        "id": "modarresi1913/NurosOS",
+        "aliases": []
+      }
+    ]
+  },
+  {
+    "id": "payzcode-ai",
+    "name": "Payzcode AI",
+    "repositories": [
+      {
+        "id": "lysande62/payzcode-enterprise",
+        "aliases": []
+      }
+    ]
+  },
+  {
+    "id": "slopdotcash",
+    "name": "Slop",
+    "repositories": [
+      {
+        "id": "SlopDotCash/slopdotcash",
+        "aliases": []
+      }
+    ]
+  },
+  {
+    "id": "thenetwork",
+    "name": "The Network",
+    "repositories": [
+      {
+        "id": "eliza-research/thenetwork",
+        "aliases": []
+      }
+    ]
+  }
+]

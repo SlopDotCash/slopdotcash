@@ -1,0 +1,79 @@
+// spike prototypes for K1/K2: pages() (Pages advanced-mode _worker.js with ASSETS fall-through and waitUntil),
+// route() descriptors and handle(route, f) over HttpRouter.add/answered/body
+import type { Fetcher } from "../../../src/bindings.ts"
+import { answered, body, json } from "../../../src/http.vibe"
+import type { Routes } from "../../../src/worker.vibe"
+import type { ExecutionContext } from "../bindings.ts"
+import { keepRunning } from "./subtle.ts"
+
+// The request's ExecutionContext, given per request as the web handler's context (not a Layer: it changes per request).
+export service Execution { readonly context: ExecutionContext }
+
+// Runs `program` after the response is sent, on the same services, through waitUntil.
+export effect function later<E, R>(program: void!E!R) {
+  const services = try Effect.context<R>()
+  const { context } = try Execution
+  keepRunning(context, services, program)
+}
+
+effect function forward(assets: Fetcher) {
+  const request = try HttpServerRequest.HttpServerRequest
+  const web = try orDie(HttpServerRequest.toWeb(request))
+  const response = try orDie(tryPromise(() => assets.fetch(web)))
+  return HttpServerResponse.fromWeb(response)
+}
+
+export interface Site<Env extends object, S, LE, A, RE> {
+  readonly services: (env: Env) => Layer.Layer<S, LE>
+  readonly routes: Layer.Layer<A, RE, Routes<S | Execution>>
+  readonly assets: (env: Env) => Fetcher
+}
+
+type Handler = (request: globalThis.Request, context: Context.Context<Execution>) => Promise<globalThis.Response>
+
+export function pages<Env extends object, S, LE, A, RE>(site: Site<Env, S, LE, A, RE>) {
+  const started = new WeakMap<Env, Handler>()
+  function start(env: Env) {
+    const services = site.services(env)
+    const runtime = ManagedRuntime.make(services)
+    const routes = Layer.mergeAll(site.routes, HttpRouter.add("*", "*", forward(site.assets(env))))
+    const web = HttpRouter.toWebHandler(Layer.provideMerge(routes as Layer.Layer<A, RE, HttpRouter.HttpRouter>, services), { memoMap: runtime.memoMap, disableLogger: true })
+    return web.handler as Handler
+  }
+  function running(env: Env) {
+    const found = started.get(env)
+    if (found !== undefined) return found
+    const made = start(env)
+    started.set(env, made)
+    return made
+  }
+  return {
+    fetch: (request: globalThis.Request, env: Env, context: ExecutionContext) => running(env)(request, Context.make(Execution, { context })),
+  }
+}
+
+export interface Route<Q extends Schema.Constraint, P extends Schema.Constraint> {
+  readonly method: "GET" | "POST" | "PUT" | "DELETE"
+  readonly path: `/${string}`
+  readonly limitKib: number
+  readonly request: Q
+  readonly answer: P
+}
+
+export function route<Q extends Schema.Constraint, P extends Schema.Constraint>(descriptor: Route<Q, P>) {
+  return descriptor
+}
+
+export interface Admitted<B> {
+  readonly body: B
+  readonly params: Readonly<Record<string, string | undefined>>
+}
+
+export function handle<Q extends Schema.Constraint, P extends Schema.Constraint, E, R>(descriptor: Route<Q, P>, f: (input: Admitted<Q["Type"]>) => P["Type"]!E!R) {
+  return HttpRouter.add(descriptor.method, descriptor.path, answered(effect {
+    const admitted = try body(descriptor.request, descriptor.limitKib)
+    const params = try HttpRouter.params
+    const answer = try f({ body: admitted, params })
+    return json(try orDie(Schema.encodeUnknownEffect(descriptor.answer)(answer)))
+  }))
+}

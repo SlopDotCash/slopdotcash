@@ -91,7 +91,7 @@ observation (`private_intake_status`): a verified enabled status no older than
 future (clock skew, `cloudflare-persistence.ts` `age < -300000`). Missing,
 disabled, stale or further-future status refuses only the byte upload.
 The participation standing is the composed fact of the
-[access area](../access.md): an account is banned while any
+[access area](../backend/access.md): an account is banned while any
 per-enforcement ban lacks its reinstatement. Only the server runtime mirrors
 that fact, for this run's owner and with a
 strictly increasing observation epoch, so a delayed or replayed observation

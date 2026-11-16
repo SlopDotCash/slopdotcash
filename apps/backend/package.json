@@ -3,6 +3,11 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
+  "exports": {
+    "./client": "./src/client/index.vibe",
+    "./live": "./src/live.vibe",
+    "./tables": "./src/tables.ts"
+  },
   "scripts": {
     "build": "vite build",
     "typecheck": "vibelang --noEmit -p .",
@@ -10,6 +15,7 @@
   },
   "dependencies": {
     "@repo/platform": "workspace:*",
+    "@repo/ports": "workspace:*",
     "effect": "4.1.1",
     "vibelang-runtime": "0.0.13"
   },

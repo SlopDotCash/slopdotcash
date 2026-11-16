@@ -13,7 +13,7 @@ The contributor write paths modeled here (server run, upload intent, capability
 upload, attachment, finalization, progress events, session run creation) and
 the start of work refuse while a mirrored ban holds. The mirror is set only by
 the standing service, with an increasing epoch; that it equals the
-participation standing the [access area](../access.md) owns is a composition
+participation standing the [access area](../backend/access.md) owns is a composition
 obligation.
 
 - [Contributor command completion](./commandCompletion.md)

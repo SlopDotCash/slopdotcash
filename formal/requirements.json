@@ -498,7 +498,7 @@
         "spec/points/journal.md",
         "spec/slopbot/closure.md",
         "spec/points/penalties.md",
-        "spec/access.md"
+        "spec/backend/access.md"
       ],
       "status": "source-preserved-domain-mapped",
       "implementationEvidence": "pending-implementation"
@@ -707,7 +707,7 @@
       "owners": [
         "spec/operations/release.md",
         "spec/frontend/requests.md",
-        "spec/operations/local.md",
+        "spec/backend/local.md",
         "spec/operations/localCommand.md",
         "spec/operations/localValidator.md",
         "spec/settlement/keeperRpc.md",
@@ -873,8 +873,8 @@
       "owners": [
         "spec/governance.md",
         "formal/README.md",
-        "spec/projectComposition.md",
-        "spec/composition.md",
+        "spec/backend/projectComposition.md",
+        "spec/frontend/composition.md",
         "spec/points/corrections.md",
         "spec/points/publication.md",
         "spec/operations/localCommand.md",

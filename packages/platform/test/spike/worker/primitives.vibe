@@ -1,0 +1,65 @@
+// spike: Experimental.Crypto hmac/sign/verify plus RS256 and AES-GCM through crypto.subtle (.ts), one program for workerd and Node
+import * as Hex from "effect/encoding/Hex"
+import { utf8 } from "../../../src/crypto.vibe"
+import type { KeySet } from "../keys.ts"
+import { githubAppJwt, hexBytes, open, seal, verifiedJwt } from "./subtle.ts"
+
+export error SubtleFailure { operation: string; message: string }
+
+export interface Signed {
+  readonly hmac: string
+  readonly ed25519: string
+  readonly ecdsa: string
+  readonly jwt: string
+  readonly sealed: string
+}
+
+export interface Checked {
+  readonly ed25519: boolean
+  readonly ed25519Tampered: boolean
+  readonly ecdsa: boolean
+  readonly ecdsaTampered: boolean
+  readonly jwtIssuer: unknown
+  readonly opened: string
+  readonly openedTampered: string
+}
+
+effect function subtle<A>(operation: string, run: () => Promise<A>) {
+  return try tryPromise({ try: run, catch: (cause) => new SubtleFailure({ operation, message: String(cause) }) })
+}
+
+// RFC 4231 test case 2: HMAC-SHA-256("Jefe", "what do ya want for nothing?")
+export const rfc4231 = "5bdcc146bf60754e6a042426089575c75a003f089d2739839dec58b964ec3843"
+
+export effect function signAll(keys: KeySet, message: string, nowSeconds: number) {
+  const crypto = try Experimental.Crypto.Crypto
+  const data = utf8(message)
+  const hmac = Hex.encode(try orDie(crypto.hmac("SHA-256", Redacted.make(utf8("Jefe")), utf8("what do ya want for nothing?"))))
+  const ed25519 = Hex.encode(try orDie(crypto.sign("Ed25519", Redacted.make(hexBytes(keys.ed25519Private)), data)))
+  const ecdsa = Hex.encode(try orDie(crypto.sign("ECDSA-P256-SHA256", Redacted.make(hexBytes(keys.p256Private)), data)))
+  const jwt = try subtle("rs256", () => githubAppJwt(keys.rsaPrivate, "424242", nowSeconds))
+  const sealed = try subtle("seal", () => seal(keys.aes, message))
+  return { hmac, ed25519, ecdsa, jwt, sealed } satisfies Signed
+}
+
+function tampered(hex: string) {
+  return `${hex.slice(0, -2)}${hex.endsWith("00") ? "01" : "00"}`
+}
+
+export effect function checkAll(keys: KeySet, message: string, signed: Signed) {
+  const crypto = try Experimental.Crypto.Crypto
+  const data = utf8(message)
+  const verify = (algorithm: "Ed25519" | "ECDSA-P256-SHA256", publicKey: string, signature: string) => orDie(crypto.verify(algorithm, hexBytes(publicKey), hexBytes(signature), data))
+  const claims = try subtle("verify rs256", () => verifiedJwt(keys.rsaPublic, signed.jwt))
+  const opened = try subtle("open", () => open(keys.aes, signed.sealed))
+  const openedTampered = subtle("open tampered", () => open(keys.aes, tampered(signed.sealed))) catch (error) => error._tag
+  return {
+    ed25519: try verify("Ed25519", keys.ed25519Public, signed.ed25519),
+    ed25519Tampered: try verify("Ed25519", keys.ed25519Public, tampered(signed.ed25519)),
+    ecdsa: try verify("ECDSA-P256-SHA256", keys.p256Public, signed.ecdsa),
+    ecdsaTampered: try verify("ECDSA-P256-SHA256", keys.p256Public, tampered(signed.ecdsa)),
+    jwtIssuer: (claims as { iss?: unknown } | undefined)?.iss,
+    opened,
+    openedTampered,
+  } satisfies Checked
+}

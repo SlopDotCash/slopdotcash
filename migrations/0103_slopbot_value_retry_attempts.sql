@@ -1,0 +1,15 @@
+-- Bounded retry cadence for the Slopbot value queue (#1411 B12).
+-- PRD section 5: keep immutable attempt records, duplicate refusal and queue
+-- limits.
+--
+-- A delivery whose outcome stays retryable ('source-incomplete', 'authority',
+-- 'budget', 'retry') is re-claimed whenever retry_at passes. Until now every
+-- one of those finishes scheduled the next attempt at a flat hour, so a
+-- delivery that can never complete was re-run every hour for as long as the
+-- condition lasted: 414 such rows were waiting in production on 27 October.
+--
+-- The count belongs to one delivery. Only the claimed row advances it, and a
+-- delivery settled for the first time starts at zero. Terminal outcomes
+-- ('published', 'current', 'open', 'historical') never advance it: they carry
+-- no retry time and keep the count they reached.
+ALTER TABLE slopbot_value_processing ADD COLUMN attempts INTEGER NOT NULL DEFAULT 0;

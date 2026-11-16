@@ -1,0 +1,182 @@
+// spike: the Pages advanced-mode _worker.js — HttpRouter routes, ASSETS fall-through, DO and entrypoint calls,
+// queue producer, Cache API, rate limit, send_email, waitUntil, D1 limits, unmapped errors and crypto primitives
+import type { D1Database, Fetcher } from "../../../src/bindings.ts"
+import { webCrypto } from "../../../src/crypto.vibe"
+import { D1, type Statement, d1, sql } from "../../../src/d1.vibe"
+import { Refused, answered, body, json } from "../../../src/http.vibe"
+import type { DurableObjectNamespace, Queue, RateLimit, SendEmail } from "../bindings.ts"
+import type { KeySet } from "../keys.ts"
+import { emailMessage } from "./mail.ts"
+import { checkAll, signAll } from "./primitives.vibe"
+import { Execution, handle, later, pages, route } from "./site.vibe"
+import { cacheKey, cacheable, edgeCache, keep } from "./subtle.ts"
+
+export interface JournalStub {
+  record(key: string, texts: ReadonlyArray<string>, refuseAfterWriting: boolean): Promise<{ readonly committed?: number; readonly refused?: string }>
+  entries(key: string): Promise<ReadonlyArray<{ readonly seq: number; readonly text: string; readonly digest: string }>>
+}
+
+export interface VerifierStub {
+  stamp(text: string): Promise<string>
+}
+
+export interface PagesEnv {
+  readonly DB: D1Database
+  readonly ASSETS: Fetcher
+  readonly JOURNAL: DurableObjectNamespace<JournalStub>
+  readonly VERIFIER: VerifierStub
+  readonly LIMITER: RateLimit
+  readonly EMAIL: SendEmail
+  readonly JOBS: Queue<unknown>
+}
+
+service Bindings { readonly env: PagesEnv }
+
+export error SpikeFailure { detail: string }
+error BindingFailure { operation: string; message: string }
+
+effect function call<A>(operation: string, run: () => Promise<A>) {
+  return try tryPromise({ try: run, catch: (cause) => new BindingFailure({ operation, message: cause instanceof Error ? cause.message : String(cause) }) })
+}
+
+effect function key() {
+  return (try HttpRouter.params).key ?? ""
+}
+
+schema Greeting { name: string }
+schema Greeted { text: string; length: number }
+const greet = route({ method: "POST", path: "/api/greet/:key", limitKib: 1, request: Greeting, answer: Greeted })
+
+schema JournalRequest { texts: ReadonlyArray<string>; refuse: boolean }
+
+effect function journal() {
+  return try answered(effect {
+    const { texts, refuse } = try body(JournalRequest, 4)
+    const stub = (try Bindings).env.JOURNAL
+    const name = try key()
+    const object = stub.get(stub.idFromName(name))
+    const outcome = try call("journal.record", () => object.record(name, texts, refuse))
+    const stored = try call("journal.entries", () => object.entries(name))
+    return json({ outcome, stored: stored.map((entry) => [entry.seq, entry.text, entry.digest.length]) })
+  })
+}
+
+effect function stamp() {
+  const text = try key()
+  const { env } = try Bindings
+  const digest = try call("verifier.stamp", () => env.VERIFIER.stamp(text))
+  const rows = try (try D1).all(sql`SELECT digest FROM stamps WHERE text = ${text}`)
+  return json({ digest, rows: rows.length })
+}
+
+effect function cached(remove: boolean) {
+  const request = try HttpServerRequest.HttpServerRequest
+  const origin = new URL(request.originalUrl).origin
+  const name = try key()
+  const cache = edgeCache()
+  if (remove) return json({ deleted: try call("cache.delete", () => cache.delete(cacheKey(origin, `/${name}`))) })
+  const hit = try call("cache.match", () => cache.match(cacheKey(origin, `/${name}`)))
+  if (hit !== undefined) return json({ state: "hit", body: try call("cache.text", () => hit.text()) })
+  const fresh = `fresh ${name} ${try Clock.currentTimeMillis}`
+  const { context } = try Execution
+  keep(context, () => cache.put(cacheKey(origin, `/${name}`), cacheable(fresh, 60)))
+  return json({ state: "miss", body: fresh })
+}
+
+effect function limited() {
+  const { env } = try Bindings
+  const name = try key()
+  const outcome = try call("limiter.limit", () => env.LIMITER.limit({ key: `spike:${name}` }))
+  return outcome.success ? json({ allowed: true }) : json({ error: "rate_limited" }, 429)
+}
+
+schema Mail { to: string; text: string }
+
+effect function mail() {
+  return try answered(effect {
+    const { to, text } = try body(Mail, 4)
+    const crypto = try Experimental.Crypto.Crypto
+    const message = emailMessage("notifications@slop.cash", to, "Spike notice", text, try orDie(crypto.randomUUIDv4()))
+    const { env } = try Bindings
+    call("email.send", () => env.EMAIL.send(message)) catch effect () => { throw new Refused({ status: 403, code: "email_refused" }) }
+    return json({ sent: true })
+  })
+}
+
+schema Job { key: string; fail: boolean }
+
+effect function enqueue() {
+  return try answered(effect {
+    const job = try body(Job, 1)
+    const { env } = try Bindings
+    try call("jobs.send", () => env.JOBS.send(job))
+    return json({ queued: job.key }, 202)
+  })
+}
+
+function statementWith(count: number): Statement {
+  const params = Array.from({ length: count }, (_, index) => index)
+  return { text: `SELECT count(*) AS n FROM (SELECT 1) WHERE 0 IN (${params.map(() => "?").join(", ")})`, params }
+}
+
+effect function boundParameters() {
+  const count = Number(try key())
+  const db = try D1
+  return json(Effect.map(db.all(statementWith(count)), (rows) => ({ count, rows })) catch (error) => ({ count, error: error._tag, message: error.message }))
+}
+
+effect function batchSize() {
+  const count = Number(try key())
+  const statements = Array.from({ length: count }, (_, index) => sql`SELECT ${index} AS v`)
+  const db = try D1
+  return json(Effect.map(db.batch(statements), (results) => ({ count, results: results.length })) catch (error) => ({ count, error: error._tag, message: error.message }))
+}
+
+effect function deferred() {
+  const name = try key()
+  try later(effect {
+    try Effect.sleep("300 millis")
+    try orDie((try D1).run(sql`INSERT INTO later (key) VALUES (${name})`))
+  })
+  return json({ scheduled: name }, 202)
+}
+
+schema CryptoRequest { keys: Schema.Unknown; message: string; now: number }
+schema CheckRequest { keys: Schema.Unknown; message: string; signed: Schema.Unknown }
+
+effect function cryptoSign() {
+  const input = body(CryptoRequest, 16) catch () => undefined
+  if (input === undefined) return json({ error: "invalid_body" }, 400)
+  return json(try orDie(signAll(input.keys as KeySet, input.message, input.now)))
+}
+
+effect function cryptoCheck() {
+  const input = body(CheckRequest, 16) catch () => undefined
+  if (input === undefined) return json({ error: "invalid_body" }, 400)
+  return json(try orDie(checkAll(input.keys as KeySet, input.message, input.signed as Parameters<typeof checkAll>[2])))
+}
+
+const routes = Layer.mergeAll(
+  HttpRouter.add("GET", "/api/hello", json({ hello: "pages" })),
+  handle(greet, (input) => effect { return { text: `hello ${input.body.name} at ${input.params.key ?? ""}`, length: input.body.name.length } }),
+  HttpRouter.add("GET", "/api/defect", die(new Error("an unmapped defect"))),
+  HttpRouter.add("GET", "/api/failure", answered(effect { throw new SpikeFailure({ detail: "an unmapped typed failure" }) })),
+  HttpRouter.add("POST", "/api/journal/:key", journal()),
+  HttpRouter.add("POST", "/api/stamp/:key", stamp()),
+  HttpRouter.add("GET", "/api/cached/:key", cached(false)),
+  HttpRouter.add("DELETE", "/api/cached/:key", cached(true)),
+  HttpRouter.add("POST", "/api/limit/:key", limited()),
+  HttpRouter.add("POST", "/api/email", mail()),
+  HttpRouter.add("POST", "/api/jobs", enqueue()),
+  HttpRouter.add("GET", "/api/params/:key", boundParameters()),
+  HttpRouter.add("GET", "/api/batch/:key", batchSize()),
+  HttpRouter.add("POST", "/api/later/:key", deferred()),
+  HttpRouter.add("POST", "/api/crypto/sign", cryptoSign()),
+  HttpRouter.add("POST", "/api/crypto/check", cryptoCheck()),
+)
+
+export default pages({
+  services: (env: PagesEnv) => Layer.mergeAll(d1(env.DB), webCrypto, Layer.succeed(Bindings, { env })),
+  routes,
+  assets: (env: PagesEnv) => env.ASSETS,
+})

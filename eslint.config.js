@@ -14,12 +14,28 @@ const stack = 'AGENTS.md, "The stack"'
 const monorepo = 'CONTRIBUTING.md, "The monorepo"'
 const banned = ["redux", "react-redux", "zustand", "mobx", "jotai", "recoil", "valtio", "xstate", "vue", "svelte", "jest"]
 const scopes = ["reduxjs", "angular", "xstate", "vue", "sveltejs", "jest"]
-// Each workspace package's `exports` beyond its root: "@repo/design-system/theme.css". A directory without a
-// package.json, such as packages/contracts, is no workspace package (pnpm-workspace.yaml).
-const exported = readdirSync("packages").filter((dir) => existsSync(`packages/${dir}/package.json`)).flatMap((dir) => {
-  const { name, exports = {} } = JSON.parse(readFileSync(`packages/${dir}/package.json`, "utf8"))
-  return Object.keys(exports).filter((key) => key !== ".").map((key) => RegExp.escape(`${name}/${key.slice(2)}`))
-})
+// Each workspace package's `exports` beyond its root: "@repo/design-system/theme.css", "@repo/backend/live". A directory
+// without a package.json is no workspace package (pnpm-workspace.yaml). A subpath pattern such as "./kernels/*" names
+// one file per match: its `*` stands for one path segment.
+const exported = ["apps", "packages"].flatMap((parent) => readdirSync(parent).filter((dir) => existsSync(`${parent}/${dir}/package.json`)).flatMap((dir) => {
+  const { name, exports = {} } = JSON.parse(readFileSync(`${parent}/${dir}/package.json`, "utf8"))
+  return Object.keys(exports).filter((key) => key !== ".").map((key) => `${name}/${key.slice(2)}`.split("*").map((part) => RegExp.escape(part)).join("[^/]+"))
+}))
+// Files copied byte for byte from development and pinned by SHA-256 in frozen.json: records, never linted or rewritten.
+const frozen = JSON.parse(readFileSync(new URL("frozen.json", import.meta.url), "utf8")).ignore
+// ARCHITECTURE D14: a signing key is reached only from its own src/signer/ and that key's Worker or program entry.
+const custody = "A signing key stays in its app's src/signer/ and its own entry (ARCHITECTURE D14)"
+const signing = {
+  patterns: [
+    { regex: "^viem/accounts(?:/|$)", message: custody },
+    { regex: "(?:^|/)signer(?:/|$)", message: custody },
+  ],
+}
+const curves = ["ed25519", "ed25519ph", "ed25519ctx", "secp256k1", "schnorr", "p256"]
+const signs = curves.flatMap((object) => ["sign", "keygen", "getPublicKey"].map((property) => ({ object, property, message: custody })))
+// The attester, keeper and fee-wallet keys, and the referral root poster, each with its own entry.
+const keys = ["apps/settlement/src/signer/**", "apps/fees/src/signer/**", "apps/settlement/src/workers/{attester,keeper}.*", "apps/fees/src/workers/feeConverter.*"]
+const poster = ["apps/settlement/src/signer/rootPoster*", "apps/settlement/src/programs/referralRoots.*"]
 const imports = {
   patterns: [
     // A package, its subpaths and its family: zustand/middleware, redux-saga, @angular/core.
@@ -39,7 +55,7 @@ const loose = Object.fromEntries(["no-explicit-any", "no-unsafe-argument", "no-u
 
 export default defineConfig(
   // Generated or disposable, and .claude/worktrees holds other checkouts of this repository.
-  globalIgnores(["**/gen/", "!vibestack/gen/", "**/.vibe/", "**/dist/", "**/.cache/", "**/.spec-cache/", "**/generated/", "**/storybook-static/", "**/test/fixtures/", "vibestack/examples/", "vibestack/fixtures/", ".claude/", ".lemmascript/", ".studio/", ".turbo/", "_apalache-out/"]),
+  globalIgnores(["**/gen/", "!vibestack/gen/", "**/.vibe/", "**/dist/", "**/.cache/", "**/.spec-cache/", "**/generated/", "**/storybook-static/", "**/test/fixtures/", "vibestack/examples/", "vibestack/fixtures/", ".claude/", ".lemmascript/", ".studio/", ".turbo/", "_apalache-out/", ...frozen]),
   { linterOptions: { reportUnusedDisableDirectives: "error", reportUnusedInlineConfigs: "error" } },
   js.configs.recommended,
   tseslint.configs.recommendedTypeChecked,
@@ -55,6 +71,9 @@ export default defineConfig(
     },
     rules: {
       "no-restricted-imports": ["error", imports],
+      // Signer custody is its own rule, so the stack rule's per-file variants above and below leave it in place.
+      "@typescript-eslint/no-restricted-imports": ["error", signing],
+      "no-restricted-properties": ["error", ...signs],
       // A relative path stays inside its package; the tool and Studio, which ships inside it, import each other.
       "boundaries/dependencies": ["error", {
         default: "disallow",
@@ -107,6 +126,10 @@ export default defineConfig(
     ignores: ["vibestack/studio/src/page/**"],
     rules: { "no-restricted-imports": ["error", noReact] },
   },
+  // A key's own files may sign, but never reach the root poster's module; the poster's files are its own; tests and the
+  // local-chain fakes sign as the wallets they play and never ship in a Worker bundle.
+  { files: keys, ignores: poster, rules: { "@typescript-eslint/no-restricted-imports": ["error", { patterns: [{ regex: "(?:^|/)rootPoster", message: custody }] }], "no-restricted-properties": "off" } },
+  { files: [...poster, "**/test/**", "packages/platform/src/testing/**"], rules: { "@typescript-eslint/no-restricted-imports": "off", "no-restricted-properties": "off" } },
   // eslint-plugin-react-hooks owns the rules both plugins ship; @eslint-react adds the rest.
   {
     files: ["**/*.tsx"],

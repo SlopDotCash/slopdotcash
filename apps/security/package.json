@@ -1,0 +1,34 @@
+{
+  "name": "@repo/security",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./client": "./src/client/index.vibe",
+    "./live": "./src/live.vibe"
+  },
+  "scripts": {
+    "build": "vite build",
+    "typecheck": "vibelang --noEmit -p .",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@cloudflare/sandbox": "catalog:",
+    "@repo/backend": "workspace:*",
+    "@repo/operations": "workspace:*",
+    "@repo/platform": "workspace:*",
+    "@repo/ports": "workspace:*",
+    "effect": "4.1.1",
+    "vibelang-runtime": "0.0.13"
+  },
+  "devDependencies": {
+    "@effect/vitest": "4.1.1",
+    "@types/node": "catalog:",
+    "miniflare": "5.20261113.0-beta",
+    "typescript": "catalog:",
+    "vibelang": "0.0.13",
+    "vibestack": "workspace:*",
+    "vite": "catalog:",
+    "vitest": "catalog:"
+  }
+}

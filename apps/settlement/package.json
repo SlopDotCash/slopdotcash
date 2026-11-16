@@ -1,0 +1,41 @@
+{
+  "name": "@repo/settlement",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./client": "./src/client/index.vibe",
+    "./live": "./src/live.vibe",
+    "./kernels/*": "./src/kernels/*.ts"
+  },
+  "scripts": {
+    "build": "vite build",
+    "typecheck": "vibelang --noEmit -p .",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@noble/curves": "catalog:",
+    "@noble/hashes": "catalog:",
+    "@repo/backend": "workspace:*",
+    "@repo/operations": "workspace:*",
+    "@repo/platform": "workspace:*",
+    "@repo/points": "workspace:*",
+    "@repo/ports": "workspace:*",
+    "@repo/security": "workspace:*",
+    "@scure/base": "catalog:",
+    "effect": "4.1.1",
+    "vibelang-runtime": "0.0.13",
+    "viem": "catalog:"
+  },
+  "devDependencies": {
+    "@effect/vitest": "4.1.1",
+    "@repo/contracts": "workspace:*",
+    "@types/node": "catalog:",
+    "miniflare": "5.20261113.0-beta",
+    "typescript": "catalog:",
+    "vibelang": "0.0.13",
+    "vibestack": "workspace:*",
+    "vite": "catalog:",
+    "vitest": "catalog:"
+  }
+}

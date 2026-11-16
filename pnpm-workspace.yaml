@@ -59,6 +59,17 @@ catalog:
   tailwind-merge: ^3.7.0
   "@fontsource-variable/bricolage-grotesque": 5.2.10
   "@fontsource/jetbrains-mono": 5.2.8
+  # Slop: chain encoding and verification, wallets, Cloudflare tooling, at the versions development pins.
+  "@cloudflare/sandbox": 0.12.14
+  "@noble/curves": 2.4.0
+  "@noble/hashes": 2.4.0
+  "@scure/base": 1.2.6
+  "@solana/wallet-standard-features": 1.5.0
+  "@wallet-standard/app": 1.1.1
+  "@wallet-standard/base": 1.1.1
+  "@wallet-standard/features": 1.1.1
+  viem: 2.57.3
+  wrangler: 4.129.1
 
 overrides:
   "@effect/platform-node-shared": 4.1.1

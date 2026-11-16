@@ -13,7 +13,7 @@ or rejected before self-service are kept as decided history
 applicant's own withdrawal is exposed as cancelled.
 Security restrictions and admission clearance are the
 [enforcement machine](../security/enforcement.md); the
-[composition](../projectComposition.md) joins them in one D1 batch and adds
+[composition](./projectComposition.md) joins them in one D1 batch and adds
 the registry-wide checks (repository uniqueness, restricted repositories,
 account bans) of the [registry](./projectRegistry.md).
 

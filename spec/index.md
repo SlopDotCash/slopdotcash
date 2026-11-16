@@ -12,7 +12,6 @@ that core through the Machine service. This branch contains the template and
 specification migration. Product implementation follows after review.
 
 - [Scope, authority and verification evidence](./governance.md)
-- [Participation restrictions and retained rights](./access.md)
 - [Frontend](./frontend/)
 - [Interface components](./ui/)
 - [Design system](./designSystem/)
@@ -25,8 +24,6 @@ specification migration. Product implementation follows after review.
 - [On-chain escrow contracts](./contracts/)
 - [Received fees and program allocations](./fees/)
 - [Operations and release](./operations/)
-- [Cross-machine account ownership](./composition.md)
-- [Registry and security composition](./projectComposition.md)
 
 The preserved PRD is `docs/slop-product-requirements.md`. Its exact
 `development` and matching `main` revisions are recorded in

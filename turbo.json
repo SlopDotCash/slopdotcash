@@ -195,7 +195,32 @@
         "@repo/app#test:browser",
         "@repo/backend#build",
         "@repo/backend#typecheck",
-        "@repo/backend#test"
+        "@repo/backend#test",
+        "@repo/operations#build",
+        "@repo/operations#typecheck",
+        "@repo/operations#test",
+        "@repo/security#build",
+        "@repo/security#typecheck",
+        "@repo/security#test",
+        "@repo/contributor#build",
+        "@repo/contributor#typecheck",
+        "@repo/contributor#test",
+        "@repo/points#build",
+        "@repo/points#typecheck",
+        "@repo/points#test",
+        "@repo/slopbot#build",
+        "@repo/slopbot#typecheck",
+        "@repo/slopbot#test",
+        "@repo/settlement#build",
+        "@repo/settlement#typecheck",
+        "@repo/settlement#test",
+        "@repo/fees#build",
+        "@repo/fees#typecheck",
+        "@repo/fees#test",
+        "@repo/frontend#build",
+        "@repo/frontend#typecheck",
+        "@repo/frontend#test",
+        "@repo/frontend#test:browser"
       ],
       "cache": false
     },
@@ -204,7 +229,16 @@
         "@repo/design-system#build",
         "@repo/app#typecheck",
         "@repo/platform#typecheck",
-        "@repo/backend#typecheck"
+        "@repo/backend#typecheck",
+        "@repo/ports#typecheck",
+        "@repo/operations#typecheck",
+        "@repo/security#typecheck",
+        "@repo/contributor#typecheck",
+        "@repo/points#typecheck",
+        "@repo/slopbot#typecheck",
+        "@repo/settlement#typecheck",
+        "@repo/fees#typecheck",
+        "@repo/frontend#typecheck"
       ],
       "inputs": [
         "apps/**",
@@ -305,6 +339,146 @@
         "^build"
       ],
       "outputs": []
+    },
+    "@repo/backend#test": {
+      "dependsOn": [
+        "gen",
+        "//#gen",
+        "^build"
+      ],
+      "inputs": [
+        "$TURBO_DEFAULT$",
+        "$TURBO_ROOT$/migrations/**",
+        "$TURBO_ROOT$/frozen.json"
+      ],
+      "outputs": [
+        ".cache/test-result-*.json"
+      ]
+    },
+    "@repo/operations#test": {
+      "dependsOn": [
+        "gen",
+        "//#gen",
+        "^build"
+      ],
+      "inputs": [
+        "$TURBO_DEFAULT$",
+        "$TURBO_ROOT$/migrations/**",
+        "$TURBO_ROOT$/frozen.json"
+      ],
+      "outputs": [
+        ".cache/test-result-*.json"
+      ]
+    },
+    "@repo/security#test": {
+      "dependsOn": [
+        "gen",
+        "//#gen",
+        "^build"
+      ],
+      "inputs": [
+        "$TURBO_DEFAULT$",
+        "$TURBO_ROOT$/migrations/**",
+        "$TURBO_ROOT$/frozen.json"
+      ],
+      "outputs": [
+        ".cache/test-result-*.json"
+      ]
+    },
+    "@repo/contributor#test": {
+      "dependsOn": [
+        "gen",
+        "//#gen",
+        "^build"
+      ],
+      "inputs": [
+        "$TURBO_DEFAULT$",
+        "$TURBO_ROOT$/migrations/**",
+        "$TURBO_ROOT$/frozen.json",
+        "$TURBO_ROOT$/skills/**",
+        "$TURBO_ROOT$/src/lib/**",
+        "$TURBO_ROOT$/scripts/render-install-guide.mjs"
+      ],
+      "outputs": [
+        ".cache/test-result-*.json"
+      ]
+    },
+    "@repo/points#test": {
+      "dependsOn": [
+        "gen",
+        "//#gen",
+        "^build"
+      ],
+      "inputs": [
+        "$TURBO_DEFAULT$",
+        "$TURBO_ROOT$/migrations/**",
+        "$TURBO_ROOT$/frozen.json"
+      ],
+      "outputs": [
+        ".cache/test-result-*.json"
+      ]
+    },
+    "@repo/slopbot#test": {
+      "dependsOn": [
+        "gen",
+        "//#gen",
+        "^build"
+      ],
+      "inputs": [
+        "$TURBO_DEFAULT$",
+        "$TURBO_ROOT$/migrations/**",
+        "$TURBO_ROOT$/frozen.json"
+      ],
+      "outputs": [
+        ".cache/test-result-*.json"
+      ]
+    },
+    "@repo/settlement#test": {
+      "dependsOn": [
+        "gen",
+        "//#gen",
+        "^build",
+        "@repo/contracts#build"
+      ],
+      "inputs": [
+        "$TURBO_DEFAULT$",
+        "$TURBO_ROOT$/migrations/**",
+        "$TURBO_ROOT$/frozen.json"
+      ],
+      "outputs": [
+        ".cache/test-result-*.json"
+      ]
+    },
+    "@repo/fees#test": {
+      "dependsOn": [
+        "gen",
+        "//#gen",
+        "^build",
+        "@repo/contracts#build"
+      ],
+      "inputs": [
+        "$TURBO_DEFAULT$",
+        "$TURBO_ROOT$/migrations/**",
+        "$TURBO_ROOT$/frozen.json"
+      ],
+      "outputs": [
+        ".cache/test-result-*.json"
+      ]
+    },
+    "@repo/frontend#test": {
+      "dependsOn": [
+        "gen",
+        "//#gen",
+        "^build"
+      ],
+      "inputs": [
+        "$TURBO_DEFAULT$",
+        "$TURBO_ROOT$/migrations/**",
+        "$TURBO_ROOT$/frozen.json"
+      ],
+      "outputs": [
+        ".cache/test-result-*.json"
+      ]
     }
   },
   "remoteCache": {

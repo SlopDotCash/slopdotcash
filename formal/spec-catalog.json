@@ -2,7 +2,7 @@
   "meaning": "Active specification source inventory. Validation results separately bind exact source and proof hashes.",
   "specs": [
     {
-      "path": "spec/access.md",
+      "path": "spec/backend/access.md",
       "sha256": "4a35f2d15a58c398e65d4f1a6632849f731236fcc8c320fe33be5d2ac8425a5f",
       "module": "access",
       "stories": [
@@ -1088,7 +1088,7 @@
       "references": []
     },
     {
-      "path": "spec/composition.md",
+      "path": "spec/frontend/composition.md",
       "sha256": "82c11e2a8b99c767d3ee721c80ebd06ac3e3a35a8b56a4d54e05476955d29018",
       "module": "composition",
       "stories": [
@@ -4240,7 +4240,7 @@
       ]
     },
     {
-      "path": "spec/operations/local.md",
+      "path": "spec/backend/local.md",
       "sha256": "f862f36f494e8b0ff0046eb9a7dd30b2a578de8bdc1bb80298b180ed97fb9976",
       "module": "operations__local",
       "stories": [
@@ -5796,7 +5796,7 @@
       "references": []
     },
     {
-      "path": "spec/projectComposition.md",
+      "path": "spec/backend/projectComposition.md",
       "sha256": "f4e26e8980e54c4aecca85575a15cf473c2b04dc014c7a8d7ae0cb0729d2a0ff",
       "module": "projectComposition",
       "stories": [

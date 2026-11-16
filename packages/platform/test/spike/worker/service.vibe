@@ -1,0 +1,16 @@
+// spike: a second Worker from the same package, with DO and entrypoint classes re-exported from .ts and two queue consumers
+import type { MessageBatch } from "../../../src/bindings.ts"
+import { json } from "../../../src/http.vibe"
+import { worker } from "../../../src/worker.vibe"
+import { type ServiceEnv, deadLetter, job, serviceLayer } from "./stamps.vibe"
+
+export { Journal, Verifier } from "./classes.ts"
+
+const routes = HttpRouter.add("GET", "/health", json({ worker: "service" }))
+const jobs = worker({ services: serviceLayer, routes, queue: job })
+const dead = worker({ services: serviceLayer, routes, queue: deadLetter })
+
+export default {
+  fetch: jobs.fetch,
+  queue: (batch: MessageBatch, env: ServiceEnv) => batch.queue === "spike-jobs-dlq" ? dead.queue(batch, env) : jobs.queue(batch, env),
+}

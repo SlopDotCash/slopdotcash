@@ -1,0 +1,3 @@
+cycles/**/source-snapshot.json text eol=lf
+# Keep checked-out text identical to the canonical files used by integrity checks.
+* text=auto eol=lf
