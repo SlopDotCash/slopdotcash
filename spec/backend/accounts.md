@@ -290,7 +290,7 @@ pure def alwaysClosedPrivate(s: Accounts): bool = s.members.every(m => if (m.mem
     else m.closedAt == 0)
 pure def stepClosureCancelsWaitingMail(before: Accounts, after: Accounts): bool = after.members.every(m =>
   (m.membership == Closed and memberByActor(before, m.actor).membership == Open) implies
-    after.inbox.notices.every(n => n.recipient == m.githubId implies not(N::waiting(n))))
+    N::noWaitingMail(after.inbox, m.githubId))
 pure def stepClosedAtStable(before: Accounts, after: Accounts): bool = before.members.every(m =>
   (m.membership == Closed and memberByActor(after, m.actor).membership == Closed) implies memberByActor(after, m.actor).closedAt == m.closedAt)
 pure def lawClosureInvalidatesEverySession(s: Accounts, by: int, confirmation: str, other: int): bool =
@@ -457,7 +457,7 @@ pure def saveNotice(s: Accounts, by: int, key: int, kind: N::Kind, githubId: int
 pure def alwaysOutboxSeesCurrentConsent(s: Accounts): bool =
   s.members.every(m => mailView(N::enrollmentOf(s.inbox, m.githubId)) == mailView(m.email))
 pure def sometimesClosureCancelledMail(s: Accounts): bool =
-  s.inbox.notices.some(n => n.state == N::Cancelled) and s.members.some(m => m.membership == Closed)
+  N::anyCancelled(s.inbox) and s.members.some(m => m.membership == Closed)
 pure def stepEmailHistoryRetained(before: Accounts, after: Accounts): bool = before.members.every(m =>
   E::historyRetained(m.email, memberByActor(after, m.actor).email)) and before.lastEmailId <= after.lastEmailId
     and before.lastVersion <= after.lastVersion and before.lastUnsubscribe <= after.lastUnsubscribe

@@ -37,10 +37,10 @@ them, so a retried close, a reopen or a replay never adds a second row.
 type Kind = ScamReview | AppealReview | EnforcementRecord | ReinstatementReview | MonthlyUnderfunded | MonthlyCut
 type Key = { kind: Kind, subject: str, project: int, period: int, sequence: int }
 type Item = { key: Key, recipient: int, readAt: int }
-type Penalty = { item: str, author: int, reversed: bool }
+type Penalty = { itemNode: str, author: int, reversed: bool }
 type Case = { key: str, appellant: int, escalated: bool, resolved: bool }
 type Outcome = RestrictionApplied | NoticeSent | RecoveryOpened
-type Decision = { caseKey: str, by: int, reasonLength: int, outcome: Outcome, confirmed: bool }
+type Decision = { caseKey: str, by: int, reasonLength: int, resulting: Outcome, confirmed: bool }
 type ReadResult = Shown | NotShown | StaleRefused | RetryLater
 type Read = { viewer: int, key: Key, result: ReadResult }
 type Moderation = { rosterVersion: int, moderators: List[int], clock: int, items: List[Item], penalties: List[Penalty],
@@ -56,28 +56,28 @@ pure def has(m: Moderation, key: Key, recipient: int): bool = m.items.some(i => 
 pure def addOnce(items: List[Item], key: Key, recipient: int): List[Item] =
   if (recipient <= 0 or items.some(i => i.key == key and i.recipient == recipient)) items
   else items.append({ key: key, recipient: recipient, readAt: 0 })
-pure def scamKey(item: str): Key = { ...noKey, kind: ScamReview, subject: item }
-pure def penaltyOf(m: Moderation, item: str): Penalty =
-  m.penalties.select(p => p.item == item).nthOr(0, { item: "", author: 0, reversed: true })
-pure def canRecordScamPenalty(m: Moderation, by: int, item: str, author: int): bool =
-  by == slopbotWorker and item != "" and author > 0 and not(m.penalties.some(p => p.item == item))
-pure def recordScamPenalty(m: Moderation, by: int, item: str, author: int): Moderation =
-  { ...m, penalties: m.penalties.append({ item: item, author: author, reversed: false }) }
-pure def canNotifyScamReview(m: Moderation, by: int, item: str, recipient: int): bool =
+pure def scamKey(itemNode: str): Key = { ...noKey, kind: ScamReview, subject: itemNode }
+pure def penaltyOf(m: Moderation, itemNode: str): Penalty =
+  m.penalties.select(p => p.itemNode == itemNode).nthOr(0, { itemNode: "", author: 0, reversed: true })
+pure def canRecordScamPenalty(m: Moderation, by: int, itemNode: str, author: int): bool =
+  by == slopbotWorker and itemNode != "" and author > 0 and not(m.penalties.some(p => p.itemNode == itemNode))
+pure def recordScamPenalty(m: Moderation, by: int, itemNode: str, author: int): Moderation =
+  { ...m, penalties: m.penalties.append({ itemNode: itemNode, author: author, reversed: false }) }
+pure def canNotifyScamReview(m: Moderation, by: int, itemNode: str, recipient: int): bool =
   by == slopbotWorker and m.moderators.includes(recipient) and
-  m.penalties.some(p => p.item == item and not(p.reversed) and p.author != recipient)
-pure def notifyScamReview(m: Moderation, by: int, item: str, recipient: int): Moderation =
-  { ...m, items: addOnce(m.items, scamKey(item), recipient) }
-pure def canReversePenalty(m: Moderation, by: int, item: str): bool =
-  by == slopbotWorker and m.penalties.some(p => p.item == item and not(p.reversed))
-pure def reversePenalty(m: Moderation, by: int, item: str): Moderation =
-  { ...m, penalties: m.penalties.listMap(p => if (p.item == item) { ...p, reversed: true } else p) }
+  m.penalties.some(p => p.itemNode == itemNode and not(p.reversed) and p.author != recipient)
+pure def notifyScamReview(m: Moderation, by: int, itemNode: str, recipient: int): Moderation =
+  { ...m, items: addOnce(m.items, scamKey(itemNode), recipient) }
+pure def canReversePenalty(m: Moderation, by: int, itemNode: str): bool =
+  by == slopbotWorker and m.penalties.some(p => p.itemNode == itemNode and not(p.reversed))
+pure def reversePenalty(m: Moderation, by: int, itemNode: str): Moderation =
+  { ...m, penalties: m.penalties.listMap(p => if (p.itemNode == itemNode) { ...p, reversed: true } else p) }
 pure def alwaysOneRowPerKeyAndRecipient(m: Moderation): bool =
   m.items.every(i => i.recipient > 0 and m.items.select(o => o.key == i.key and o.recipient == i.recipient).length() == 1)
 pure def alwaysScamRowsFromPenalty(m: Moderation): bool = m.items.every(i => i.key.kind == ScamReview implies
-  (m.penalties.some(p => p.item == i.key.subject and p.author != i.recipient)))
+  (m.penalties.some(p => p.itemNode == i.key.subject and p.author != i.recipient)))
 pure def alwaysOnePenaltyPerItem(m: Moderation): bool =
-  m.penalties.every(p => p.item != "" and p.author > 0 and m.penalties.select(o => o.item == p.item).length() == 1)
+  m.penalties.every(p => p.itemNode != "" and p.author > 0 and m.penalties.select(o => o.itemNode == p.itemNode).length() == 1)
 pure def sometimesScamReviewed(m: Moderation): bool =
   m.moderators.every(r => has(m, scamKey("pr"), r)) and not(penaltyOf(m, "pr").reversed)
 ```
@@ -195,8 +195,8 @@ pure def stepShownOnlyWhenVisible(before: Moderation, after: Moderation): bool =
   (after.reads.length() > before.reads.length() and r.result == Shown) implies visible(before, r.viewer, r.key)
 pure def lawStaleRosterRefused(m: Moderation, by: int, key: Key, authority: AuthorityCheck): bool =
   (authority.available and authority.rosterVersion != m.rosterVersion) implies readResult(m, by, key, authority) != Shown
-pure def lawReversedScamHidden(m: Moderation, viewer: int, item: str): bool =
-  penaltyOf(m, item).reversed implies not(visible(m, viewer, scamKey(item)))
+pure def lawReversedScamHidden(m: Moderation, viewer: int, itemNode: str): bool =
+  penaltyOf(m, itemNode).reversed implies not(visible(m, viewer, scamKey(itemNode)))
 pure def sometimesFormerModeratorRefused(m: Moderation): bool =
   m.reads.some(r => r.result == NotShown and r.key.kind == AppealReview)
 pure def sometimesStaleRefused(m: Moderation): bool = m.reads.some(r => r.result == StaleRefused)
@@ -214,13 +214,13 @@ record. Rows, cases, decisions and reads are never removed, and a decision
 never takes away the appellant's own view of the case.
 
 ```quint
-pure def canDecide(m: Moderation, by: int, caseKey: str, reasonLength: int, outcome: Outcome): bool =
+pure def canDecide(m: Moderation, by: int, caseKey: str, reasonLength: int, resulting: Outcome): bool =
   val c = caseOf(m, caseKey)
   m.moderators.includes(by) and c.key == caseKey and caseKey != "" and c.escalated and not(c.resolved) and
   c.appellant != by and reasonLength >= 1 and reasonLength <= 4000
-pure def decide(m: Moderation, by: int, caseKey: str, reasonLength: int, outcome: Outcome): Moderation =
+pure def decide(m: Moderation, by: int, caseKey: str, reasonLength: int, resulting: Outcome): Moderation =
   { ...m, cases: m.cases.listMap(c => if (c.key == caseKey) { ...c, resolved: true } else c),
-    decisions: m.decisions.append({ caseKey: caseKey, by: by, reasonLength: reasonLength, outcome: outcome, confirmed: false }) }
+    decisions: m.decisions.append({ caseKey: caseKey, by: by, reasonLength: reasonLength, resulting: resulting, confirmed: false }) }
 pure def canConfirmOutcome(m: Moderation, by: int, caseKey: str): bool =
   by == slopbotWorker and m.decisions.some(d => d.caseKey == caseKey and not(d.confirmed))
 pure def confirmOutcome(m: Moderation, by: int, caseKey: str): Moderation =
@@ -234,17 +234,17 @@ pure def stepHistoryRetained(before: Moderation, after: Moderation): bool =
     (i.readAt > 0 implies o.readAt == i.readAt))) and
   before.cases.every(c => after.cases.some(o => o.key == c.key and o.appellant == c.appellant and (c.resolved implies o.resolved))) and
   before.decisions.every(d => after.decisions.some(o => o.caseKey == d.caseKey and o.by == d.by and o.reasonLength == d.reasonLength and
-    o.outcome == d.outcome and (d.confirmed implies o.confirmed))) and
+    o.resulting == d.resulting and (d.confirmed implies o.confirmed))) and
   before.reads.every(r => after.reads.includes(r)) and
-  before.penalties.every(p => after.penalties.some(o => o.item == p.item and o.author == p.author and (p.reversed implies o.reversed)))
-pure def sometimesDecisionConfirmed(m: Moderation): bool = m.decisions.some(d => d.confirmed and d.outcome == RestrictionApplied)
+  before.penalties.every(p => after.penalties.some(o => o.itemNode == p.itemNode and o.author == p.author and (p.reversed implies o.reversed)))
+pure def sometimesDecisionConfirmed(m: Moderation): bool = m.decisions.some(d => d.confirmed and d.resulting == RestrictionApplied)
 ```
 
 ### Simulation samples cover authors, appellants, former moderators and stale checks
 
 ```quint
 pure val byValues = Set(18633264, 202660855, 5, slopbotWorker, projectService, monthlyJob, configRelease)
-pure val itemValues = Set("pr")
+pure val itemNodeValues = Set("pr")
 pure val authorValues = Set(5, 18633264)
 pure val recipientValues = Set(18633264, 202660855, 5)
 pure val caseKeyValues = Set("appeal:pr:head")
@@ -261,7 +261,7 @@ pure val authorityValues = Set({ actor: 18633264, rosterVersion: 1, available: t
   { actor: 18633264, rosterVersion: 1, available: false }, { actor: 8, rosterVersion: 1, available: true })
 pure val moderatorsValues = Set(List(202660855), List(18633264, 202660855))
 pure val reasonLengthValues = Set(0, 30)
-pure val outcomeValues = Set(RestrictionApplied, NoticeSent)
+pure val resultingValues = Set(RestrictionApplied, NoticeSent)
 pure val weight_recordScamPenalty = 5
 pure val weight_notifyScamReview = 8
 pure val weight_escalateCase = 5

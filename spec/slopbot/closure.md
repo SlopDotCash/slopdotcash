@@ -108,7 +108,7 @@ pure def effectiveMode(o: SourceObservation, category: F::Category): CategoryMod
   else if (F::neverCloses(category) and o.fileMode == ModeClose) ModeLabel
   else o.fileMode
 pure def effectiveClosure(o: SourceObservation): bool =
-  CC::checkedOnLoad(o.consent) and (o.file == FileAbsent or (o.file == FileValid and o.fileClosure))
+  CC::consents(o.consent) and (o.file == FileAbsent or (o.file == FileValid and o.fileClosure))
 pure def lawMissingConsentNeverCloses(sampleObservation: SourceObservation): bool =
   sampleObservation.consent != CC::Enabled implies not(effectiveClosure(sampleObservation))
 pure def lawInvalidFileIsLabelOnly(sampleObservation: SourceObservation, category: F::Category): bool =

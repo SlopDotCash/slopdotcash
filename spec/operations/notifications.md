@@ -174,14 +174,16 @@ pure def canCloseAccount(i: Inbox, by: int, enrollment: E::Enrollment): bool =
 pure def closeAccount(i: Inbox, by: int, enrollment: E::Enrollment): Inbox =
   { ...i, enrollments: withSnapshot(i, enrollment),
     notices: i.notices.listMap(n => if (n.recipient == enrollment.actor and waiting(n)) { ...n, state: Cancelled } else n) }
+pure def noWaitingMail(i: Inbox, recipient: int): bool = i.notices.every(n => n.recipient == recipient implies not(waiting(n)))
 pure def lawClosedAccountHasNoWaitingMail(i: Inbox, enrollment: E::Enrollment): bool =
-  closeAccount(i, accountService, enrollment).notices.every(n => n.recipient == enrollment.actor implies not(waiting(n)))
+  noWaitingMail(closeAccount(i, accountService, enrollment), enrollment.actor)
 pure def stepConsentNeverQueuesHistory(before: Inbox, via: str, after: Inbox): bool =
   (via == "observeEnrollment" or via == "closeAccount") implies after.notices.length() == before.notices.length()
     and before.notices.every(n => after.notices.some(a => a.id == n.id and
       (a.state == n.state or (waiting(n) and (a.state == Suppressed or a.state == Cancelled)))))
-pure def alwaysCancelledNeverSent(i: Inbox): bool = i.notices.every(n => n.state == Cancelled implies not(n.prepared) and n.digest == 0)
-pure def sometimesClosedCancelled(i: Inbox): bool = i.notices.some(n => n.state == Cancelled)
+pure def alwaysCancelledNeverPrepared(i: Inbox): bool = i.notices.every(n => n.state == Cancelled implies not(n.prepared))
+pure def anyCancelled(i: Inbox): bool = i.notices.some(n => n.state == Cancelled)
+pure def sometimesClosedCancelled(i: Inbox): bool = anyCancelled(i)
 ```
 
 ## Story: Deliver each attempt once and never resend an uncertain one
