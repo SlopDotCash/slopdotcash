@@ -478,8 +478,7 @@ pure def sometimesCutPublic(m: Monthly): bool = m.phase == Proposed and m.public
 pure def sometimesCutWithdrawn(m: Monthly): bool = m.cuts.length() > 0 and m.publicCuts.length() == 0
 pure def sometimesCutThenOwnerFinalized(m: Monthly): bool = m.trigger == OwnerTrigger and m.latestCutAt > 0
 pure def sometimesOptedOutFrozenByOwner(m: Monthly): bool = m.trigger == OwnerTrigger and not(m.automatic)
-pure def sometimesLateCutThenAutomaticFreeze(m: Monthly): bool = m.trigger == AutomaticTrigger
-  and m.latestCutAt + cutNoticeSeconds > cutoff(m)
+pure def sometimesLateCutHoldsDefaultOff(m: Monthly): bool = m.phase == Proposed and not(m.automatic) and cutNoticeOutlastsCutoff(m)
 pure val periodValues = Set(202611, 202610)
 pure val nowValues = Set(1793491300, 1796083300, 1796256100, 1796342400, 1796342600, 1796343000)
 pure val reasonLengthValues = Set(19, 20, 500)
@@ -516,10 +515,10 @@ pure val awardValues = Set(awardFact(1, List(2), false)).union(Set(awardFact(1, 
 pure val weight_observeClock = 6
 pure val weight_propose = 6
 pure val weight_observeRevision = 4
-pure val weight_adjust = 4
-pure val weight_cut = 3
+pure val weight_adjust = 8
+pure val weight_cut = 8
 pure val weight_observeSettings = 2
-pure val weight_finalize = 3
+pure val weight_finalize = 6
 pure val weight_autoFreeze = 3
 pure val weight_noteUnderfunded = 4
 pure val weight_createObligations = 6
