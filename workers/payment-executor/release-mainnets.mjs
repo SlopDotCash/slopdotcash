@@ -23,7 +23,20 @@ export const mainnetWranglerProvider = (args, env = process.env) =>
   });
 const run = async (provider, args) => {
   const result = await provider(args);
-  if (result.status !== 0) throw new Error(`Attester ${args[0]} failed`);
+  if (result.status !== 0) {
+    // Wrangler's own message is the only clue to a rejected deploy; it never
+    // contains secret values, which are set separately and never echoed.
+    const tail = (text) =>
+      String(text ?? "")
+        .trim()
+        .split("\n")
+        .slice(-40)
+        .join("\n");
+    console.error(
+      `Attester ${args[0]} exited ${result.status ?? result.signal ?? "without status"}.\n${tail(result.stderr)}\n${tail(result.stdout)}`,
+    );
+    throw new Error(`Attester ${args[0]} failed`);
+  }
   return result.stdout;
 };
 
