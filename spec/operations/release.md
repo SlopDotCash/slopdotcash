@@ -6,7 +6,9 @@ independent deployed-byte verification. Each machine owns one release run
 for one environment. Production publishes `main` through the main-only
 `slop-production` GitHub environment. Staging publishes `development` with
 independent identity, storage and secrets. The pinned source is
-`.github/workflows/deploy.yml` and the legacy `release/*` models.
+`.github/workflows/deploy.yml`, `scripts/check-staging-order.mjs`,
+`scripts/restore-leaderboard-discussions.py` and the legacy `release/*`
+models.
 
 The `by` sender is the authenticated run identity GitHub supplies to the
 checked-in workflow, or the repository owner changing a release variable. A
@@ -14,13 +16,14 @@ checked-in workflow, or the repository owner changing a release variable. A
 verified by the workflow before `recordGates`. Deployment listings and
 served-byte observations come from the provider read-back. The
 [fee-wallet Worker runtime](../fees/runtime.md) is a component of this
-machine. The environment's publication lock and its branch head with its
-fast-forward lineage are state of this machine: this run is run 1, and other
-runs of the same environment (2, 3, …) wait for, take and release the same
-lock through the rival transitions. The lock follows the
-[publication lock machine](./publicationLock.md); that it is literally that
-machine's state is a composition obligation (the current tools cannot hold
-that machine's run records inside this one).
+machine. The environment's publication lock, its branch head with its
+fast-forward lineage and its deployment records are state of this machine:
+this run is run 1, other release runs of the same environment (2, 3, …) wait
+for, take and release the same lock through the rival transitions, and the
+other workflows that share the lock take and release it through the workflow
+transitions. That the lock is literally the [publication lock
+machine](./publicationLock.md)'s state is a composition obligation (the
+current tools cannot hold that machine's run records inside this one).
 
 ## Story: Admit only a trusted run of the exact environment branch
 
@@ -39,30 +42,37 @@ type Actor = TrustedWorkflow | HealthJob | Contributor | Owner
 type RunRef = { kind: RefKind, branch: str, repository: str, githubEnvironment: str }
 type ReleasePhase = Candidate | Built | Checked | Publishing | PublicationUncertain | Published | Verified
   | Superseded | Refused | PartiallyPublished
-type DataKind = NoData | FreshCollection | RetainedSnapshot
+type DataKind = NoData | FreshCollection | ResumedCollection | RetainedSnapshot
 type QualityGate = Types | Models | Proofs | ModelInventory | ProofInventory | Unit | Browser | BrowserSmoke | Isolation | Identity
 type Service = FeeConverter | Notify | VettingBackup | VettingRetention | Slopbot | PaymentAttesters | IdentityWorker
   | VettingSandbox | Referral | RepositoryAccess
 type ServiceVariables = { notify: bool, vettingBackup: bool, vettingRetention: bool, slopbot: bool }
-type PublicationLock = { holder: int, waiting: List[int], nextRival: int, rivalsPublished: int, head: int, lineage: List[int], nextHead: int }
+type Workflow = NoWorkflow | ReleaseWorkflow | OctoberRewardsWorkflow | HistoricalPointsWorkflow | PayoutPacketWorkflow
+  | CorrectionsWorkflow | SandboxQualificationWorkflow
+type PublicationLock = { holder: Workflow, holderRun: int, waiting: List[int], nextRival: int, rivalsPublished: int,
+  otherHolds: int, head: int, lineage: List[int], roots: List[int], nextHead: int, attempted: List[int], ignored: List[int], deployed: int }
 type ServicePhase = ServiceSkipped | ServicePending | ServiceBound | ServiceFailed
 type ServiceRow = { service: Service, enabled: bool, phase: ServicePhase }
 type GateReceipt = { gate: QualityGate, source: int, artifact: int }
 type Release = { phase: ReleasePhase, configured: bool, environment: Environment, ref: RunRef, source: int,
   checkedSource: int, artifactDigest: int, servedDigest: int, passed: List[GateReceipt],
   dataKind: DataKind, registryDigest: int, githubDigest: int, snapshotDigest: int, dataEnvironment: Environment, dataRecordedAt: int,
+  checkpointRun: int, reusedPending: int, revalidated: int, deadlineReached: bool,
   manualRun: bool, skipProofs: bool, skipBrowserTests: bool, bootstrapData: bool, services: List[ServiceRow],
   deployment: int, attempt: int, lock: PublicationLock, fee: F::Runtime, variables: ServiceVariables }
 pure val noRef: RunRef = { kind: LocalTree, branch: "", repository: "", githubEnvironment: "" }
 pure val canonicalRepository = "SlopDotCash/slopdotcash"
+pure val freeLock: PublicationLock = { holder: NoWorkflow, holderRun: 0, waiting: List(), nextRival: 2, rivalsPublished: 0,
+  otherHolds: 0, head: 1, lineage: List(1), roots: List(1), nextHead: 2, attempted: List(), ignored: List(), deployed: 0 }
 pure val initial: Release = { phase: Candidate, configured: false, environment: Production, ref: noRef, source: 0,
   checkedSource: 0, artifactDigest: 0, servedDigest: 0, passed: List(), dataKind: NoData, registryDigest: 0,
-  githubDigest: 0, snapshotDigest: 0, dataEnvironment: Production, dataRecordedAt: 0, manualRun: false, skipProofs: false,
+  githubDigest: 0, snapshotDigest: 0, dataEnvironment: Production, dataRecordedAt: 0,
+  checkpointRun: 0, reusedPending: 0, revalidated: 0, deadlineReached: false, manualRun: false, skipProofs: false,
   skipBrowserTests: false, bootstrapData: false, services: List(), deployment: 0, attempt: 0,
-  lock: { holder: 0, waiting: List(), nextRival: 2, rivalsPublished: 0, head: 1, lineage: List(1), nextHead: 2 }, fee: F::initial, variables: { notify: false, vettingBackup: false, vettingRetention: false, slopbot: false } }
+  lock: freeLock, fee: F::initial, variables: { notify: false, vettingBackup: false, vettingRetention: false, slopbot: false } }
 pure val selfRun = 1
 pure def liveHead(r: Release): int = r.lock.head
-pure def lockHeld(r: Release): bool = r.configured and r.lock.holder == selfRun
+pure def lockHeld(r: Release): bool = r.configured and r.lock.holder == ReleaseWorkflow and r.lock.holderRun == selfRun
 pure def headAhead(r: Release): bool = not(r.configured) or r.lock.lineage.includes(r.source)
 pure def requiredBranch(environment: Environment): str = if (environment == Production) "main" else "development"
 pure def requiredGithubEnvironment(environment: Environment): str = if (environment == Production) "slop-production" else "slop-staging"
@@ -88,13 +98,7 @@ pure def alwaysAdmittedRef(r: Release): bool = (r.configured or r.phase != Candi
 pure def alwaysConfiguredBeforeProgress(r: Release): bool = (r.phase != Candidate implies r.configured)
   and ((r.phase != Candidate and r.phase != Refused) implies r.artifactDigest > 0)
   and (r.configured implies r.source > 0 and r.source <= r.lock.head)
-  and (not(r.configured) implies r.lock.holder == 0 and r.lock.waiting == List())
-pure def alwaysOneLockHolder(r: Release): bool = r.lock.holder >= 0 and r.lock.holder < r.lock.nextRival
-  and r.lock.waiting.every(w => w > selfRun and w < r.lock.nextRival and w != r.lock.holder)
-  and r.lock.lineage.length() > 0 and r.lock.lineage.nthOr(r.lock.lineage.length() - 1, 0) == r.lock.head
-  and r.lock.head < r.lock.nextHead and r.lock.lineage.every(h => h > 0 and h <= r.lock.head)
-  and (not(r.configured) implies not(r.skipProofs or r.skipBrowserTests) and not(r.manualRun))
-  and (r.phase == Candidate implies r.passed == List() and r.services == List())
+  and (not(r.configured) implies r.lock == freeLock)
 pure def lawPullRequestsNeverPublish(environment: Environment, ref: RunRef, by: Actor): bool =
   (ref.kind == PullRequestRef or ref.kind == ForkHead or ref.kind == TagRef or ref.kind == LocalTree or ref.kind == ScheduledRef)
     implies not(canConfigure(initial, environment, ref, by))
@@ -106,7 +110,8 @@ pure def selectManualCoverage(r: Release, skipProofs: bool, skipBrowserTests: bo
 pure def coverageRequest(r: Release): Coverage::Requests = {
   kind: if (r.manualRun) Coverage::ManualDispatch else Coverage::DeployingPush,
   target: if (r.environment == Production) Coverage::Main else Coverage::Development,
-  skipProofs: r.skipProofs, skipBrowserTests: r.skipBrowserTests }
+  skipProofs: r.skipProofs, skipBrowserTests: r.skipBrowserTests,
+  resumeDiscussions: r.checkpointRun > 0, usePublishedData: r.dataKind == RetainedSnapshot }
 pure def alwaysOptionsOnlyManual(r: Release): bool = (r.skipProofs or r.skipBrowserTests) implies r.manualRun
 ```
 
@@ -114,27 +119,80 @@ pure def alwaysOptionsOnlyManual(r: Release): bool = (r.skipProofs or r.skipBrow
 
 The storage adapter supplies digests only after validating complete
 collection, source counts, immutable identities and source-specific
-timestamps. An explicit manual release may instead retain its own verified
-published snapshot with original history, timestamps and record counts. A
-snapshot from another environment or bootstrap data never qualifies.
+timestamps. An explicit manual production release may instead retain its own
+verified published snapshot with original history, timestamps and record
+counts (`use_published_data`). A snapshot from another environment or
+bootstrap data never qualifies.
 
 ```quint
 pure def canCollectData(r: Release, environment: Environment, registryDigest: int, githubDigest: int, recordedAt: int): bool =
   r.phase == Candidate and r.configured and environment == r.environment and registryDigest > 0 and githubDigest > 0 and recordedAt > 0
+    and r.dataKind == NoData and r.reusedPending == 0 and not(r.deadlineReached)
 pure def collectData(r: Release, environment: Environment, registryDigest: int, githubDigest: int, recordedAt: int): Release =
-  { ...r, dataKind: FreshCollection, registryDigest: registryDigest, githubDigest: githubDigest, dataEnvironment: environment,
-    dataRecordedAt: recordedAt, snapshotDigest: 0, bootstrapData: false }
+  { ...r, dataKind: if (r.checkpointRun > 0) ResumedCollection else FreshCollection, registryDigest: registryDigest,
+    githubDigest: githubDigest, dataEnvironment: environment, dataRecordedAt: recordedAt, snapshotDigest: 0, bootstrapData: false }
 pure def canRetainSnapshot(r: Release, environment: Environment, digest: int, originalRecordedAt: int, bootstrap: bool): bool =
   r.phase == Candidate and r.configured and environment == r.environment and digest > 0 and originalRecordedAt > 0
-    and r.manualRun and not(bootstrap)
+    and r.manualRun and r.environment == Production and not(bootstrap)
+    and r.dataKind == NoData and r.checkpointRun == 0 and not(r.deadlineReached)
 pure def retainSnapshot(r: Release, environment: Environment, digest: int, originalRecordedAt: int, bootstrap: bool): Release =
   { ...r, dataKind: RetainedSnapshot, snapshotDigest: digest, dataEnvironment: environment, dataRecordedAt: originalRecordedAt,
     bootstrapData: bootstrap, registryDigest: 0, githubDigest: 0 }
-pure def validData(r: Release): bool = r.dataEnvironment == r.environment and r.dataRecordedAt > 0
-  and (if (r.dataKind == FreshCollection) r.registryDigest > 0 and r.githubDigest > 0
-    else r.dataKind == RetainedSnapshot and r.snapshotDigest > 0 and r.manualRun and not(r.bootstrapData))
+pure def validData(r: Release): bool = r.dataEnvironment == r.environment and r.dataRecordedAt > 0 and not(r.deadlineReached)
+  and (if (r.dataKind == FreshCollection) r.registryDigest > 0 and r.githubDigest > 0 and r.checkpointRun == 0
+    else if (r.dataKind == ResumedCollection) r.registryDigest > 0 and r.githubDigest > 0 and r.checkpointRun > 0
+      and r.reusedPending == 0 and r.manualRun and r.environment == Production
+    else r.dataKind == RetainedSnapshot and r.snapshotDigest > 0 and r.manualRun and r.environment == Production
+      and not(r.bootstrapData) and r.checkpointRun == 0)
 pure def stepPreservesDataTimestamps(before: Release, via: str, after: Release): bool =
   (via != "collectData" and via != "retainSnapshot") implies before.dataRecordedAt == after.dataRecordedAt
+pure def alwaysRetainedOnlyManualProduction(r: Release): bool =
+  r.dataKind == RetainedSnapshot implies r.manualRun and r.environment == Production and r.checkpointRun == 0
+```
+
+### A fresh manual main release may resume discussion reads only through live revalidation
+
+The `discussion_resume_run` option loads the public PR discussion checkpoint
+of one completed `deploy.yml` attempt on `main`, started by a push or manual
+dispatch, at most 48 hours old. Only a manual production run that does not
+retain a published snapshot may select it, and selecting it excludes
+`use_published_data`. Every reused response is revalidated against live
+GitHub before collection completes: a match keeps the response, a mismatch
+discards it for a fresh live read. The registry sync, census, scoring inputs
+and every release check still run. A collection that stops at its checkpoint
+deadline leaves no valid data, so it cannot publish.
+
+```quint
+type CheckpointAttempt = { run: int, branch: str, event: RefKind, workflow: str, completed: bool, ageHours: int, responses: int }
+pure val checkpointMaxAgeHours = 48
+pure def trustedCheckpoint(attempt: CheckpointAttempt): bool =
+  attempt.run > 0 and attempt.branch == "main" and (attempt.event == BranchPush or attempt.event == WorkflowDispatch)
+    and attempt.workflow == ".github/workflows/deploy.yml" and attempt.completed
+    and attempt.ageHours >= 0 and attempt.ageHours <= checkpointMaxAgeHours and attempt.responses >= 0
+pure def canResumeDiscussions(r: Release, attempt: CheckpointAttempt, by: Actor): bool =
+  r.phase == Candidate and r.configured and by == TrustedWorkflow and r.manualRun and r.environment == Production
+    and r.dataKind == NoData and r.checkpointRun == 0 and not(r.deadlineReached) and trustedCheckpoint(attempt)
+pure def resumeDiscussions(r: Release, attempt: CheckpointAttempt, by: Actor): Release =
+  { ...r, checkpointRun: attempt.run, reusedPending: attempt.responses }
+pure def canRevalidate(r: Release, matchesLive: bool, by: Actor): bool =
+  r.phase == Candidate and by == TrustedWorkflow and r.checkpointRun > 0 and r.reusedPending > 0 and not(r.deadlineReached)
+pure def revalidate(r: Release, matchesLive: bool, by: Actor): Release =
+  { ...r, reusedPending: r.reusedPending - 1, revalidated: if (matchesLive) r.revalidated + 1 else r.revalidated }
+pure def canReachDeadline(r: Release, by: Actor): bool =
+  r.phase == Candidate and r.configured and by == TrustedWorkflow and r.dataKind == NoData and not(r.deadlineReached)
+pure def reachDeadline(r: Release, by: Actor): Release = { ...r, deadlineReached: true }
+pure def alwaysResumeOnlyManualProduction(r: Release): bool =
+  r.checkpointRun > 0 implies r.manualRun and r.environment == Production and r.dataKind != RetainedSnapshot
+pure def alwaysUnrevalidatedNeverCollected(r: Release): bool =
+  (r.dataKind != NoData implies r.reusedPending == 0) and r.reusedPending >= 0 and r.revalidated >= 0
+    and (r.checkpointRun == 0 implies r.reusedPending == 0 and r.revalidated == 0)
+pure def alwaysDeadlineNeverPublishes(r: Release): bool =
+  r.deadlineReached implies r.dataKind == NoData and not(validData(r))
+    and (r.phase == Candidate or r.phase == Built or r.phase == Refused)
+pure def published(r: Release): bool = r.phase == PublicationUncertain or r.phase == Published or r.phase == Verified
+pure def sometimesResumedPublished(r: Release): bool = published(r) and r.dataKind == ResumedCollection
+pure def sometimesRevalidatedReuse(r: Release): bool = r.dataKind == ResumedCollection and r.revalidated > 0
+pure def sometimesDeadlineStopped(r: Release): bool = r.deadlineReached and r.phase == Built
 ```
 
 ### Every required check binds the same source and built artifact
@@ -165,50 +223,130 @@ pure def allGatesPassed(r: Release): bool =
 pure def canCheck(r: Release): bool = r.phase == Built and validData(r) and allGatesPassed(r)
 pure def check(r: Release): Release = { ...r, phase: Checked, checkedSource: r.source }
 pure def alwaysGatesBindArtifact(r: Release): bool = r.passed.every(p => p.source == r.source and p.artifact == r.artifactDigest)
+  and (r.phase == Candidate implies r.passed == List() and r.services == List())
 pure def alwaysCheckedComplete(r: Release): bool =
   (r.phase != Candidate and r.phase != Built and r.phase != Refused) implies
     r.checkedSource == r.source and r.artifactDigest > 0 and validData(r) and allGatesPassed(r) and admissibleRef(r.environment, r.ref)
 ```
 
-## Story: Publish under the environment lock only while the tested source is still current
+## Story: Publish under the shared environment lock only while the tested source may still be deployed
 
-### A newer fast-forward supersedes the run; a rewritten branch refuses it
+### One holder at a time: a release run or another workflow that writes the environment's data
 
-Other runs of the environment start, take, publish under and release the
-same lock; this run takes it only through the lock machine's own grant, so
-at most one run of the environment holds it. Under the lock, immediately
-before publication, the run compares the live branch head with its tested
-source through the branch's lineage. A newer fast-forward owns publication:
-this run stops without publishing and records itself as superseded. A head
-whose lineage no longer contains the tested source fails closed.
+GitHub's concurrency group is the lock. In production, `slop-production` is
+shared by every release run and by the October rewards import, the reviewed
+historical Points import, the private payout packet and the implementation
+corrections apply job, each of which writes production D1 data. In staging,
+`slop-staging` is shared by every release run and by the vetting sandbox
+qualification. A run takes the lock only while no workflow holds it, and
+every holder releases it in each terminal state, success or failure. The
+monthly allocation workflow uses its own `slop-monthly-allocations-<ref>`
+group and is outside this lock. The hourly health jobs never take it
+([intake health](./intakeHealth.md)).
 
 ```quint
+pure def lockWorkflow(environment: Environment, workflow: Workflow): bool =
+  if (environment == Production) workflow == OctoberRewardsWorkflow or workflow == HistoricalPointsWorkflow
+    or workflow == PayoutPacketWorkflow or workflow == CorrectionsWorkflow
+  else workflow == SandboxQualificationWorkflow
+pure def canWorkflowTakeLock(r: Release, workflow: Workflow, by: Actor): bool =
+  r.configured and by == TrustedWorkflow and r.lock.holder == NoWorkflow and lockWorkflow(r.environment, workflow)
+pure def workflowTakeLock(r: Release, workflow: Workflow, by: Actor): Release =
+  { ...r, lock: { ...r.lock, holder: workflow, holderRun: 0 } }
+pure def canWorkflowFinish(r: Release, workflow: Workflow, by: Actor): bool =
+  by == TrustedWorkflow and workflow != NoWorkflow and workflow != ReleaseWorkflow and r.lock.holder == workflow
+pure def workflowFinish(r: Release, workflow: Workflow, by: Actor): Release =
+  { ...r, lock: { ...r.lock, holder: NoWorkflow, otherHolds: r.lock.otherHolds + 1 } }
 pure def canRivalStart(r: Release): bool = r.configured
 pure def rivalStart(r: Release): Release =
   { ...r, lock: { ...r.lock, waiting: r.lock.waiting.append(r.lock.nextRival), nextRival: r.lock.nextRival + 1 } }
-pure def canRivalTakeLock(r: Release, rival: int): bool = r.lock.holder == 0 and r.lock.waiting.includes(rival)
+pure def canRivalTakeLock(r: Release, rival: int): bool = r.lock.holder == NoWorkflow and r.lock.waiting.includes(rival)
 pure def rivalTakeLock(r: Release, rival: int): Release =
-  { ...r, lock: { ...r.lock, holder: rival, waiting: r.lock.waiting.select(w => w != rival) } }
-pure def canRivalFinish(r: Release, rival: int): bool = rival > selfRun and r.lock.holder == rival
+  { ...r, lock: { ...r.lock, holder: ReleaseWorkflow, holderRun: rival, waiting: r.lock.waiting.select(w => w != rival) } }
+pure def alwaysOneLockHolder(r: Release): bool =
+  ((r.lock.holder == ReleaseWorkflow) iff (r.lock.holderRun > 0)) and r.lock.holderRun < r.lock.nextRival
+    and (r.lock.holder != NoWorkflow and r.lock.holder != ReleaseWorkflow implies lockWorkflow(r.environment, r.lock.holder))
+    and r.lock.waiting.every(w => w > selfRun and w < r.lock.nextRival and w != r.lock.holderRun)
+    and r.lock.otherHolds >= 0 and r.lock.rivalsPublished >= 0
+    and (not(r.configured) implies not(r.skipProofs or r.skipBrowserTests) and not(r.manualRun))
+pure def alwaysExclusiveWhilePublishing(r: Release): bool =
+  (r.phase == Publishing or r.phase == PublicationUncertain) implies lockHeld(r) and r.services.length() > 0
+pure def stepLockTakenOnlyWhenFree(before: Release, after: Release): bool =
+  (after.lock.holder != NoWorkflow and (after.lock.holder != before.lock.holder or after.lock.holderRun != before.lock.holderRun))
+    implies before.lock.holder == NoWorkflow
+pure def sometimesWaitedBehindWorkflow(r: Release): bool = lockHeld(r) and r.lock.otherHolds > 0
+pure def sometimesWaitedBehindRival(r: Release): bool = lockHeld(r) and r.lock.rivalsPublished > 0
+```
+
+### Production publishes only the current main head; staging publishes a checked ancestor and never rolls back
+
+Under the lock, immediately before publication, the run compares the live
+branch head with its tested source through the branch's lineage. Production
+keeps main equivalence: a newer fast-forward owns publication, and this run
+stops without publishing as superseded. Staging may publish a checked
+ancestor of a newer `development` tip, but refuses when any release attempt
+recorded in staging's deployment history is not an ancestor of, or equal to,
+its source: a newer attempted revision owns publication, and a failed
+attempt counts because it may already have changed a Worker or the database.
+Deployment records created by the vetting controller and the
+qualification workflows are not release attempts and are ignored. A head
+whose lineage no longer contains the tested source fails closed. So a
+staging deployment never moves to a revision that is not a descendant of the
+one deployed before it.
+
+```quint
+pure def ancestorOrEqual(r: Release, earlier: int, later: int): bool =
+  earlier > 0 and earlier <= later and not(r.lock.roots.some(x => earlier < x and x <= later))
+pure def noRollback(r: Release, revision: int): bool = r.lock.attempted.every(d => ancestorOrEqual(r, d, revision))
+pure def mayPublishSource(r: Release): bool =
+  if (r.environment == Production) liveHead(r) == r.checkedSource
+  else r.lock.lineage.includes(r.checkedSource) and noRollback(r, r.checkedSource)
+pure def recordedAttempts(r: Release, revision: int): List[int] =
+  if (r.environment == Staging) r.lock.attempted.append(revision) else r.lock.attempted
+pure def canRivalFinish(r: Release, rival: int): bool = rival > selfRun and r.lock.holder == ReleaseWorkflow and r.lock.holderRun == rival
 pure def rivalFinish(r: Release, rival: int): Release =
-  { ...r, lock: { ...r.lock, holder: 0, rivalsPublished: r.lock.rivalsPublished + 1 } }
+  if (r.environment == Production or noRollback(r, r.lock.head))
+    { ...r, lock: { ...r.lock, holder: NoWorkflow, holderRun: 0, rivalsPublished: r.lock.rivalsPublished + 1,
+      attempted: recordedAttempts(r, r.lock.head), deployed: r.lock.head } }
+  else { ...r, lock: { ...r.lock, holder: NoWorkflow, holderRun: 0 } }
+pure def canRecordNonReleaseDeployment(r: Release, by: Actor): bool = r.configured and r.environment == Staging and by == TrustedWorkflow
+pure def recordNonReleaseDeployment(r: Release, by: Actor): Release = { ...r, lock: { ...r.lock, ignored: r.lock.ignored.append(r.lock.head) } }
 pure def canAdvanceBranch(r: Release): bool = r.configured
 pure def advanceBranch(r: Release): Release =
   { ...r, lock: { ...r.lock, head: r.lock.nextHead, lineage: r.lock.lineage.append(r.lock.nextHead), nextHead: r.lock.nextHead + 1 } }
 pure def canRewriteBranch(r: Release): bool = r.configured
 pure def rewriteBranch(r: Release): Release =
-  { ...r, lock: { ...r.lock, head: r.lock.nextHead, lineage: List(r.lock.nextHead), nextHead: r.lock.nextHead + 1 } }
-pure def released(r: Release): PublicationLock = if (lockHeld(r)) { ...r.lock, holder: 0 } else r.lock
-pure def canAcquireLock(r: Release): bool = r.phase == Checked and r.configured and r.lock.holder == 0
-pure def acquireLock(r: Release): Release = { ...r, lock: { ...r.lock, holder: selfRun } }
-pure def canSupersede(r: Release): bool = r.phase == Checked and lockHeld(r) and liveHead(r) != r.checkedSource and headAhead(r)
+  { ...r, lock: { ...r.lock, head: r.lock.nextHead, lineage: List(r.lock.nextHead), roots: r.lock.roots.append(r.lock.nextHead),
+    nextHead: r.lock.nextHead + 1 } }
+pure def released(r: Release): PublicationLock = if (lockHeld(r)) { ...r.lock, holder: NoWorkflow, holderRun: 0 } else r.lock
+pure def canAcquireLock(r: Release): bool = r.phase == Checked and r.configured and r.lock.holder == NoWorkflow
+pure def acquireLock(r: Release): Release = { ...r, lock: { ...r.lock, holder: ReleaseWorkflow, holderRun: selfRun } }
+pure def canSupersede(r: Release): bool = (r.phase == Checked or r.phase == Publishing) and lockHeld(r)
+  and r.lock.lineage.includes(r.checkedSource) and not(mayPublishSource(r))
 pure def supersede(r: Release): Release = { ...r, phase: Superseded, lock: released(r) }
-pure def canRefuseRewrite(r: Release): bool = (r.phase == Checked or r.phase == Built or r.phase == Candidate)
-  and r.configured and not(headAhead(r))
+pure def canRefuseRewrite(r: Release): bool =
+  (r.phase == Checked or r.phase == Built or r.phase == Candidate or r.phase == Publishing) and r.configured and not(headAhead(r))
 pure def refuseRewrite(r: Release): Release = { ...r, phase: Refused, lock: released(r) }
+pure def alwaysLineage(r: Release): bool =
+  r.lock.lineage.length() > 0 and r.lock.lineage.nthOr(r.lock.lineage.length() - 1, 0) == r.lock.head
+    and r.lock.head < r.lock.nextHead and r.lock.lineage.every(h => h > 0 and h <= r.lock.head)
+    and r.lock.roots.every(x => x > 0 and x < r.lock.nextHead)
+    and r.lock.attempted.every(d => d > 0 and d < r.lock.nextHead) and r.lock.deployed >= 0 and r.lock.deployed < r.lock.nextHead
+    and (r.environment == Production implies r.lock.attempted == List())
+    and ((r.environment == Staging and r.lock.deployed > 0) implies r.lock.attempted.includes(r.lock.deployed))
+    and ((r.environment == Staging and (r.phase == Publishing or r.phase == PublicationUncertain)) implies
+      r.lock.attempted.includes(r.checkedSource) and noRollback(r, r.checkedSource))
+pure def stepStagingNeverRollsBack(before: Release, after: Release): bool =
+  (after.environment == Staging and after.lock.deployed != before.lock.deployed) implies
+    (before.lock.deployed == 0 or ancestorOrEqual(after, before.lock.deployed, after.lock.deployed))
 pure def sometimesSuperseded(r: Release): bool = r.phase == Superseded
 pure def sometimesRewriteRefused(r: Release): bool = r.phase == Refused
-pure def sometimesWaitedBehindRival(r: Release): bool = lockHeld(r) and r.lock.rivalsPublished > 0
+pure def sometimesStagingAncestorPublished(r: Release): bool =
+  r.environment == Staging and published(r) and liveHead(r) != r.checkedSource
+pure def sometimesStagingRollbackRefused(r: Release): bool =
+  r.environment == Staging and r.phase == Superseded and r.lock.deployed > r.checkedSource
+pure def sometimesNonReleaseRecordIgnored(r: Release): bool =
+  r.environment == Staging and r.lock.ignored.length() > 0 and r.phase == Publishing
 ```
 
 ### Workers publish before the static site, each only when its own release variable is enabled
@@ -230,9 +368,10 @@ reviewed configuration passes the preflight, carries the tested source, and
 advances the runtime's published source. A failed service publication
 leaves the release partially published: earlier services stay published,
 nothing is rolled back, the static site is not published, and the lock is
-released without a publication. That the referral service keeps its
-reviewed `Off` mode is the [referral publication](../settlement/referralPublication.md)
-machine's rule.
+released without a publication. Beginning publication creates the
+environment's deployment record of the tested source. That the referral
+service keeps its reviewed `Off` mode is the [referral
+publication](../settlement/referralPublication.md) machine's rule.
 
 ```quint
 pure def feeVariable(r: Release): bool = r.environment == Staging or r.fee.variableEnabled
@@ -254,9 +393,10 @@ pure def serviceAt(r: Release, service: Service): ServiceRow =
 pure def setService(r: Release, service: Service, phase: ServicePhase): List[ServiceRow] =
   r.services.listMap(s => if (s.service == service and s.phase == ServicePending) { ...s, phase: phase } else s)
 pure def canBeginPublication(r: Release): bool =
-  r.phase == Checked and lockHeld(r) and r.checkedSource == liveHead(r) and validData(r)
+  r.phase == Checked and lockHeld(r) and mayPublishSource(r) and validData(r)
 pure def beginPublication(r: Release): Release =
-  { ...r, phase: Publishing, services: serviceRows(r), attempt: r.attempt + 1 }
+  { ...r, phase: Publishing, services: serviceRows(r), attempt: r.attempt + 1,
+    lock: { ...r.lock, attempted: recordedAttempts(r, r.checkedSource) } }
 pure def canPublishService(r: Release, service: Service, feeConfig: F::WorkerConfig, taggedSource: int): bool =
   r.phase == Publishing and lockHeld(r) and serviceAt(r, service).phase == ServicePending and taggedSource == r.source
     and (service == FeeConverter implies F::canPublish(r.fee, feeConfig, F::ReleaseWorkflow) and feeConfig.source == r.source)
@@ -298,21 +438,20 @@ type DeploymentListing = { environment: Environment, sinceAttempt: int, entries:
 pure def deploymentOf(listing: DeploymentListing, digest: int): int =
   listing.entries.foldl(0, (found, e) => if (found == 0 and e.digest == digest) e.deployment else found)
 pure def listed(listing: DeploymentListing, digest: int): bool = listing.entries.some(e => e.digest == digest)
-pure def canPublishSite(r: Release): bool = r.phase == Publishing and lockHeld(r) and servicesDone(r) and liveHead(r) == r.checkedSource
+pure def canPublishSite(r: Release): bool = r.phase == Publishing and lockHeld(r) and servicesDone(r) and mayPublishSource(r)
 pure def publishSite(r: Release): Release = { ...r, phase: PublicationUncertain }
 pure def canReconcilePublication(r: Release, listing: DeploymentListing): bool =
   r.phase == PublicationUncertain and lockHeld(r) and listing.environment == r.environment and listing.sinceAttempt == r.attempt
     and deploymentOf(listing, r.artifactDigest) > 0
 pure def reconcilePublication(r: Release, listing: DeploymentListing): Release =
-  { ...r, phase: Published, deployment: deploymentOf(listing, r.artifactDigest), lock: released(r) }
+  { ...r, phase: Published, deployment: deploymentOf(listing, r.artifactDigest),
+    lock: { ...released(r), deployed: r.checkedSource } }
 pure def canProveUnpublished(r: Release, listing: DeploymentListing): bool = r.phase == PublicationUncertain and lockHeld(r)
   and listing.environment == r.environment and listing.sinceAttempt == r.attempt
   and not(listed(listing, r.artifactDigest))
 pure def proveUnpublished(r: Release, listing: DeploymentListing): Release =
   { ...r, phase: Checked, lock: released(r), services: List() }
-pure def alwaysPublishingHoldsLock(r: Release): bool =
-  ((r.phase == Publishing or r.phase == PublicationUncertain) implies lockHeld(r) and r.services.length() > 0)
-    and (r.phase == PublicationUncertain implies servicesDone(r))
+pure def alwaysUncertainAfterServices(r: Release): bool = r.phase == PublicationUncertain implies servicesDone(r)
 pure def alwaysTerminalReleasedLock(r: Release): bool =
   (r.phase == Published or r.phase == Verified or r.phase == Superseded or r.phase == Refused or r.phase == PartiallyPublished)
     implies not(lockHeld(r))
@@ -344,9 +483,8 @@ pure def sometimesVerifiedAfterAdvance(r: Release): bool = r.phase == Verified a
 
 Pinned publication tooling installs without lifecycle scripts or dependency
 cache. The pull request data adapter never substitutes for normal collection
-or validated environment-local snapshots. The hourly health jobs neither
-publish code nor hold the publication lock ([intake health](./intakeHealth.md)).
-The [mainnet escrow qualification ledger](./escrowQualification.md) governs
+or validated environment-local snapshots. The
+[mainnet escrow qualification ledger](./escrowQualification.md) governs
 Base, Solana and Robinhood qualification and the recorded Ethereum waiver.
 
 ### Simulation samples exercise admitted and refused runs and conflicting evidence
@@ -357,6 +495,7 @@ These sets bound simulation only.
 pure val goodRef: RunRef = { kind: BranchPush, branch: "main", repository: canonicalRepository, githubEnvironment: "slop-production" }
 pure val refValues = Set(goodRef, { ...goodRef, kind: WorkflowDispatch },
   { kind: BranchPush, branch: "development", repository: canonicalRepository, githubEnvironment: "slop-staging" },
+  { kind: WorkflowDispatch, branch: "development", repository: canonicalRepository, githubEnvironment: "slop-staging" },
   { ...goodRef, kind: PullRequestRef }, { ...goodRef, kind: TagRef }, { ...goodRef, branch: "develop" },
   { ...goodRef, repository: "fork/slopdotcash" })
 pure val environmentValues = Set(Production, Staging)
@@ -375,29 +514,38 @@ pure val recordedAtValues = Set(1)
 pure val sourceValues = Set(1, 2)
 pure val taggedSourceValues = Set(1, 2)
 pure val rivalValues = Set(1, 2, 3)
-pure val serviceValues = Set(FeeConverter, Notify, Slopbot, VettingBackup, Referral, IdentityWorker)
 pure val valueValues = Set(true, false)
+pure val matchesLiveValues = Set(true, false)
+pure val trustedAttempt: CheckpointAttempt = { run: 41, branch: "main", event: WorkflowDispatch,
+  workflow: ".github/workflows/deploy.yml", completed: true, ageHours: 47, responses: 1 }
+pure val attemptValues = Set(trustedAttempt, { ...trustedAttempt, responses: 0 }, { ...trustedAttempt, ageHours: 49 },
+  { ...trustedAttempt, branch: "development" }, { ...trustedAttempt, event: PullRequestRef }, { ...trustedAttempt, completed: false })
 pure val servedValues = Set({ deployment: 1, digest: 7, environment: Production, dnsTlsHeaders: true },
   { deployment: 1, digest: 7, environment: Staging, dnsTlsHeaders: true },
   { deployment: 1, digest: 8, environment: Production, dnsTlsHeaders: true })
 pure val feeConfigValues = Set({ ...F::liveAll, buybackMode: F::Off }, { ...F::liveAll, keys: List(F::Base), buybackMode: F::Off },
   { ...F::liveAll, converterMode: F::DryRun, buybackMode: F::Off, keys: List() })
-pure val weight_setVariable = 6
-pure val weight_rivalStart = 5
-pure val weight_rivalTakeLock = 6
-pure val weight_rivalFinish = 6
-pure val weight_configure = 6
-pure val weight_build = 6
 pure val gatesValues = Set(Set(Types, Unit, Isolation, Identity, ModelInventory, ProofInventory, Models, Proofs, Browser),
   Set(Types, Unit, Isolation, Identity, ModelInventory, ProofInventory, BrowserSmoke), Set(Types, Unit))
 pure val skipProofsValues = Set(true, false)
 pure val skipBrowserTestsValues = Set(true, false)
-pure val weight_recordGates = 10
-pure val weight_check = 10
-pure val weight_acquireLock = 10
-pure val weight_beginPublication = 10
-pure val weight_publishService = 20
-pure val weight_publishSite = 10
-pure val weight_reconcilePublication = 10
-pure val weight_verifyServed = 10
+pure val weight_setVariable = 3
+pure val weight_rivalStart = 3
+pure val weight_rivalTakeLock = 4
+pure val weight_rivalFinish = 4
+pure val weight_workflowTakeLock = 3
+pure val weight_workflowFinish = 4
+pure val weight_configure = 10
+pure val weight_build = 10
+pure val weight_collectData = 10
+pure val weight_resumeDiscussions = 4
+pure val weight_revalidate = 6
+pure val weight_recordGates = 12
+pure val weight_check = 15
+pure val weight_acquireLock = 15
+pure val weight_beginPublication = 15
+pure val weight_publishService = 30
+pure val weight_publishSite = 15
+pure val weight_reconcilePublication = 15
+pure val weight_verifyServed = 15
 ```
