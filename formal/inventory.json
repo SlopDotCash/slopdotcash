@@ -5206,9 +5206,9 @@
     },
     {
       "path": "src/GeneratedSkillPreview.tsx",
-      "sha256": "77dd8a3cb79468a6c87174a22e3ea7435cc70f1c035556dfb6c9b47ec2efe3f1",
+      "sha256": "2dcce1db496dbcd8b11f0e491f92cb3804029cd892c78c3ec4e7e5fbcdb0662b",
       "models": ["formal/models/ui/ui_artifacts.qnt"],
-      "candidateLines": [2, 35, 36, 38, 43, 73, 76, 172],
+      "candidateLines": [2, 35, 36, 37, 39, 44, 74, 77, 184],
       "review": "mapped-abstraction"
     },
     {
