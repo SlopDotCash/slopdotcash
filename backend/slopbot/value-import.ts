@@ -18,6 +18,7 @@ export async function handleHistoricalValueImport(
     adminGithubIds: ReadonlySet<string>;
     sessionActor: (request: Request) => Promise<{ githubId: string } | null>;
     publisher?: HistoricalValueBinding;
+    waitUntil?: (work: Promise<unknown>) => void;
   },
 ): Promise<Response> {
   const respond = (status: number, body: unknown) =>
@@ -86,16 +87,61 @@ export async function handleHistoricalValueImport(
   } catch {
     return respond(400, { error: "invalid_request" });
   }
-  try {
-    const receipt = await deps.publisher.publishSubscription(
-      input,
-      bundle?.stream(),
-    );
-    return respond(200, receipt);
-  } catch {
-    // Log a fixed label only: never source bodies, provider declarations or
-    // upstream errors. The publisher reports refusals and outages alike.
-    console.error("historical value import failure");
-    return respond(409, { error: "assessment_not_published" });
+  const publisher = deps.publisher;
+  const publish = async () => {
+    try {
+      const receipt = await publisher.publishSubscription(
+        input,
+        bundle?.stream(),
+      );
+      return { status: 200, body: receipt };
+    } catch {
+      // Never return source bodies, provider declarations or upstream errors.
+      console.error("historical value import failure");
+      return { status: 409, body: { error: "assessment_not_published" } };
+    }
+  };
+  const streaming = request.headers
+    .get("accept")
+    ?.split(",")
+    .some((type) => type.trim() === "application/x-ndjson");
+  if (!streaming) {
+    const result = await publish();
+    return respond(result.status, result.body);
   }
+
+  // Start only after authorization and the complete bounded request parse.
+  // Heartbeats keep a long-running RPC attached to its HTTP invocation. A
+  // disconnected reader cannot turn a pending publication into a success.
+  const encoder = new TextEncoder();
+  let canceled = false;
+  let heartbeat: ReturnType<typeof setInterval>;
+  const body = new ReadableStream<Uint8Array>({
+    start(controller) {
+      const pending = encoder.encode('{"status":"pending"}\n');
+      controller.enqueue(pending);
+      heartbeat = setInterval(() => {
+        if ((controller.desiredSize ?? 0) > 0) controller.enqueue(pending);
+      }, 15_000);
+      const work = publish().then((result) => {
+        clearInterval(heartbeat);
+        if (canceled) return;
+        controller.enqueue(encoder.encode(`${JSON.stringify(result)}\n`));
+        controller.close();
+      });
+      deps.waitUntil?.(work);
+    },
+    cancel() {
+      canceled = true;
+      clearInterval(heartbeat);
+    },
+  });
+  return new Response(body, {
+    status: 200,
+    headers: {
+      "content-type": "application/x-ndjson",
+      "cache-control": "private, no-store, no-transform",
+      "x-content-type-options": "nosniff",
+    },
+  });
 }
