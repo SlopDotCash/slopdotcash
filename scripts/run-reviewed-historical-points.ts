@@ -11,6 +11,8 @@ import { assertProjectDefinition } from "../src/lib/project-schema.mjs";
 import { sha256Hex } from "../src/lib/sha256";
 import { GitHubClient } from "../workers/slopbot/github";
 import { mergedTimeRangeQualifier } from "../workers/slopbot/value-accepted-commit-census";
+import { pullCommits } from "../workers/slopbot/value-evidence";
+import type { Pull } from "../workers/slopbot/value-evidence-types";
 import { loadPublishedPoints, pointsSql } from "./generate-points";
 import { resolveGitHubToken } from "./github-token";
 import {
@@ -136,7 +138,7 @@ export async function verifyHistoricalCensus(
 /** Recheck GitHub's exact accepted squash relation before using retained bytes. */
 export async function verifyHistoricalAcceptedSquashes(
   packet: HistoricalPointsPacket,
-  github: Pick<GitHubClient, "graphql">,
+  github: Pick<GitHubClient, "graphql" | "get">,
 ): Promise<void> {
   for (const retirement of packet.duplicateRetirements ?? []) {
     if (!retirement.acceptedSquashes?.length) continue;
@@ -163,6 +165,63 @@ export async function verifyHistoricalAcceptedSquashes(
       data.node.mergeCommit?.oid !== promotion.mergeSha
     )
       throw Error("Accepted promotion source changed");
+  }
+  for (const retirement of packet.duplicateRetirements ?? []) {
+    if (!retirement.acceptedSquashes?.length) continue;
+    const root = `/repos/${packet.sourceAudit.repository}`;
+    const audited = packet.sourceAudit.sources.find(
+      (source) => source.id === retirement.sourceId,
+    );
+    if (!audited) throw Error("Promotion source is outside the audit");
+    const path = `${root}/pulls/${audited.number}`;
+    const repository = await github.get<{ node_id: string }>(root);
+    const pull = await github.get<Pull>(path);
+    if (
+      repository?.node_id !== retirement.source.repositoryNodeId ||
+      !pull ||
+      pull.node_id !== retirement.sourceId ||
+      pull.head.sha !== retirement.source.headSha ||
+      pull.merge_commit_sha !== retirement.acceptedPromotion?.mergeSha ||
+      !pull.merged_at ||
+      new Date(pull.merged_at).toISOString() !== retirement.source.occurredAt ||
+      pull.commits !== retirement.source.commitCount
+    )
+      throw Error("Accepted promotion membership changed");
+    const observed = await pullCommits(github, root, path, pull, {
+      requireImmutableRange: true,
+    });
+    const commits = new Map(observed.map((commit) => [commit.sha, commit]));
+    const head = commits.get(retirement.source.headSha);
+    const headParents = /^tree [a-f0-9]{40}\n((?:parent [a-f0-9]{40}\n)*)/u
+      .exec(retirement.acceptedPromotion.headCommit)?.[1]
+      .trim()
+      .split("\n")
+      .filter(Boolean)
+      .map((line) => line.slice(7));
+    if (
+      commits.size !== retirement.source.commits.length ||
+      !head ||
+      JSON.stringify(head.parents.map((parent) => parent.sha)) !==
+        JSON.stringify(headParents) ||
+      retirement.source.commits.some(
+        (commit) =>
+          JSON.stringify(
+            commits.get(commit.sha)?.parents.map((parent) => parent.sha),
+          ) !== JSON.stringify(commit.parentShas),
+      )
+    )
+      throw Error("Accepted promotion source omits or substitutes a commit");
+    const current = await github.get<Pull>(path);
+    if (
+      !current ||
+      current.node_id !== pull.node_id ||
+      current.head.sha !== pull.head.sha ||
+      current.base.sha !== pull.base.sha ||
+      current.commits !== pull.commits ||
+      current.merge_commit_sha !== pull.merge_commit_sha ||
+      current.merged_at !== pull.merged_at
+    )
+      throw Error("Accepted promotion changed during collection");
   }
   const sources = new Map<string, HistoricalAcceptedSquash>();
   for (const retirement of packet.duplicateRetirements ?? []) {
