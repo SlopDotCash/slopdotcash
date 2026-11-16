@@ -728,6 +728,48 @@ describe("project registry API", () => {
     expect(JSON.parse(prior?.manifestText ?? "{}").image).toBe(image);
   });
 
+  test("owner website and X links publish as presentation, validate and clear", async () => {
+    access = ADMIN_ACCESS;
+    await listProject();
+    const current = await persistence.getProject("open-registry");
+    if (!current) throw new Error("Missing listed project");
+    const links = {
+      ...current.manifest.links,
+      website: "https://open-registry.example",
+      x: "https://x.com/openregistry",
+    };
+    const published = await call("PUT", "projects/open-registry", "applicant", {
+      manifest: { ...current.manifest, links },
+      expectedRevision: current.revision,
+    });
+    expect(published.status).toBe(200);
+    expect((await published.json()).changes).toEqual({
+      presentation: ["links"],
+      executable: [],
+      financial: [],
+    });
+    const stored = await persistence.getProject("open-registry");
+    expect(stored?.manifest.links).toEqual(links);
+    // The terms revision is untouched: links are not a material term.
+    expect(stored?.manifest.terms).toEqual(current.manifest.terms);
+    const invalid = await call("PUT", "projects/open-registry", "applicant", {
+      manifest: {
+        ...current.manifest,
+        links: { ...links, x: "https://x.com/openregistry/status/1" },
+      },
+      expectedRevision: 2,
+    });
+    expect(invalid.status).toBe(422);
+    const cleared = await call("PUT", "projects/open-registry", "applicant", {
+      manifest: current.manifest,
+      expectedRevision: 2,
+    });
+    expect(cleared.status).toBe(200);
+    const after = await persistence.getProject("open-registry");
+    expect(after?.manifest.links.website).toBeUndefined();
+    expect(after?.manifest.links.x).toBeUndefined();
+  });
+
   test("an owner revision publishes at once and appends only its expected revision", async () => {
     access = ADMIN_ACCESS;
     await listProject();

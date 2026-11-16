@@ -42,10 +42,11 @@ current behavior.
    yield free advisory results when closure is unavailable. A potentially
    closable result still goes through model triage and independent confirmation;
    model verdicts replace the hint.
-6. **Models.** `models.ts` starts with Orbio `anthropic/claude-sonnet-5.5`.
-   Any Orbio failure, including exhausted credits, goes directly to Surplus
-   `claude-sonnet-5.5`, then Surplus `gpt-6.1-terra`. Missing provider keys skip
-   that provider without recording a paid attempt. Every call is written to `slopbot_costs` with its
+6. **Models.** `models.ts` starts with Surplus `claude-sonnet-5.5`, then
+   Surplus `gpt-6.1-terra`, then Orbio `anthropic/claude-sonnet-5.5` as the
+   backstop (operator decision, 16 November 2026). A Surplus spending denial
+   skips the remaining Surplus model and goes directly to Orbio. Missing
+   provider keys skip that provider without recording a paid attempt. Every call is written to `slopbot_costs` with its
    internal provider cost and a zero billed amount.
 7. **Close gates.** A close needs all of the following (`review.ts`,
    `closure-eligibility.ts`, `penalties.ts`, `contracts.ts`):
@@ -135,11 +136,22 @@ present but invalid, review falls back to label-only with no closure.
 
 ## Free reviews, budget blocks, spend
 
+Free advisory reviews are capped at 2,000 pull requests or issues per
+repository per UTC month; value assessment is not capped (operator decision,
+16 November 2026). `review-cap.ts` admits a review before any model call and
+records one row per item in `slopbot_review_month_starts`. Any later review of
+an item already admitted this month (new pushes, a moved base, retries) runs
+and adds nothing. A new item over the cap makes no model call, writes nothing
+to GitHub and is recorded as skipped with the reason `monthly-review-cap`.
+
 Surplus budget blocks are durable in `budget-blocks.ts` and resume when its
-provider window opens. Orbio errors, including credit exhaustion, try Surplus
-immediately. A Surplus spending denial is not a paid value attempt:
-the request waits as `budget` and does not use one of the three attempts per
-inference key (`value-inference.ts`). Free reviews still record provider cost
+provider window opens. A Surplus spending denial skips the other Surplus model
+and asks Orbio in the same attempt. If Orbio serves a valid result, it is used
+normally. If Orbio has no key or does not serve, the request waits as `budget`
+until the Surplus reset. An attempt whose only call was the Surplus denial is
+not a paid value attempt and does not use one of the three attempts per
+inference key (`value-inference.ts`). An attempt that also called Orbio is a
+paid attempt, even when it then waits as `budget`. Free reviews still record provider cost
 rows with zero customer charge. Whole-micro Orbio `usage.cost` receipts are
 retained as actual cost; fractional-micro or missing receipts keep actual cost
 unknown. Release qualification uses a rounded-up fractional receipt only as a
@@ -243,8 +255,8 @@ Do these in order. Each step names who does it and how to verify it.
    - `SLOPBOT_APP_PRIVATE_KEY` (the PKCS#8 PEM)
    - `SURPLUS_API_KEY`
 
-   Orbio is primary; Surplus is backup. Each provider serves both models with
-   its own key. The default Anthropic-compatible bases are
+   Surplus is primary; Orbio is the backstop. Each provider uses its own
+   key. The default Anthropic-compatible bases are
    `https://api.orbio.so/api` and
    `https://api.surplusintelligence.ai/anthropic`. Optional `ORBIO_BASE_URL`
    and `SURPLUS_BASE_URL` overrides must name verified endpoints for that

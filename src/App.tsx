@@ -7,6 +7,7 @@ import {
   Plus,
 } from "lucide-react";
 import {
+  Fragment,
   lazy,
   type ReactNode,
   Suspense,
@@ -46,6 +47,7 @@ import {
   monthName,
   poolFundingStatus,
 } from "./lib/pool-funding";
+import { projectChains, websiteLabel, xHandle } from "./lib/project-links";
 import {
   findHistoricalProject,
   findProject,
@@ -1489,6 +1491,59 @@ function ProjectRewardSummary({
   );
 }
 
+/** #2295: the vault network, website and X account, each only when present. */
+function ProjectLinks({ project }: { project: ProjectDefinition }) {
+  const chains = projectChains(project);
+  const website = project.links.website;
+  const x = project.links.x;
+  const handle = xHandle(x);
+  const parts: { key: string; node: ReactNode }[] = [];
+  if (chains.length > 0)
+    parts.push({
+      key: "chain",
+      node: `Chain: ${chains
+        .map((chain) =>
+          chain.symbol ? `${chain.name} (${chain.symbol})` : chain.name,
+        )
+        .join(", ")}`,
+    });
+  if (website)
+    parts.push({
+      key: "website",
+      node: (
+        <>
+          Website:{" "}
+          <a href={website} target="_blank" rel="noopener noreferrer">
+            {websiteLabel(website)}
+          </a>
+        </>
+      ),
+    });
+  if (x && handle)
+    parts.push({
+      key: "x",
+      node: (
+        <>
+          X:{" "}
+          <a href={x} target="_blank" rel="noopener noreferrer">
+            @{handle}
+          </a>
+        </>
+      ),
+    });
+  if (parts.length === 0) return null;
+  return (
+    <p className="project-links-line">
+      {parts.map((part, index) => (
+        <Fragment key={part.key}>
+          {index > 0 ? " · " : null}
+          {part.node}
+        </Fragment>
+      ))}
+    </p>
+  );
+}
+
 /** #1993: how promptly the project merges outside work, from the daily D1 read. */
 function ProjectMergeActivity({ project }: { project: ProjectDefinition }) {
   const active = project.status === "active";
@@ -1521,6 +1576,7 @@ function ProjectBountyIntroduction({
       <div className="shell">
         <ProjectHeader project={project} />
         <ProjectRewardSummary project={project} />
+        <ProjectLinks project={project} />
         <Link
           className="button primary-button"
           href={`/projects/${project.slug}/security`}
@@ -1557,6 +1613,7 @@ function ProjectPage({
         <div className="shell">
           <ProjectHeader project={project} />
           <ProjectRewardSummary project={project} />
+          <ProjectLinks project={project} />
           <ProjectMergeActivity project={project} />
           {project.reward.reviewBudget ? (
             <p>{reviewBudgetLabel(project.reward.reviewBudget)}</p>
