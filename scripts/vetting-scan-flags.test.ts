@@ -2369,7 +2369,7 @@ test("setup activates a two-repository project only once Slopbot is on every rep
     checks: {
       scan: {
         state: "queued",
-        message: `${SECOND_REPOSITORY}: The security scan is queued. Nothing is needed from you.`,
+        message: `${SECOND_REPOSITORY}: Scan queued.`,
       },
     },
   });
@@ -2384,7 +2384,7 @@ test("setup activates a two-repository project only once Slopbot is on every rep
     checks: {
       installation: {
         state: "missing",
-        message: `Slopbot is not installed on ${SECOND_REPOSITORY}.`,
+        message: `Not installed on ${SECOND_REPOSITORY}.`,
       },
       scan: { state: "cleared" },
     },

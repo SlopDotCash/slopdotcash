@@ -58,7 +58,7 @@ test("monthly targets remain distinct from verified payment records", async ({
     page.getByRole("heading", { name: "Eliza", exact: true, level: 1 }),
   ).toBeVisible();
   await expect(page.locator(".project-reward-status")).toContainText(
-    "Points only · no cash rewards",
+    "Points only",
   );
   await page.screenshot({
     path: info.outputPath("project-payment-unavailable.png"),

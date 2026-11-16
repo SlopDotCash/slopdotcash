@@ -776,7 +776,7 @@ describe("setup of a project with more than one repository", () => {
     });
     expect(result.checks.installation).toEqual({
       state: "missing",
-      message: `Slopbot is not installed on ${second}.`,
+      message: `Not installed on ${second}.`,
     });
     expect(result.state).toBe("action_required");
     expect(result.nextAction.kind).toBe("install_slopbot");
@@ -795,7 +795,7 @@ describe("setup of a project with more than one repository", () => {
     const result = setup(cleared, installed);
     expect(result.checks.installation).toEqual({
       state: "installed",
-      message: `Slopbot is installed on ${multi.manifest.repositories[0].id} and ${second}.`,
+      message: `Installed on ${multi.manifest.repositories[0].id} and ${second}.`,
     });
     expect(result.state).toBe("ready");
   });

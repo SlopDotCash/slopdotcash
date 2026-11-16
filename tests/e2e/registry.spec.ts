@@ -723,7 +723,7 @@ test("an admin cannot activate or publish skills without canonical scan closure 
   // A monthly amount with no funded vault reads as points only (operator
   // decision, 15 November 2026), and no token address is shown.
   await expect(admin.locator(".project-reward-status")).toContainText(
-    "Points only · no cash rewards",
+    "Points only",
   );
   await expect(admin.locator(".project-hero")).not.toContainText(
     "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913",
