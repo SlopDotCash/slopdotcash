@@ -160,12 +160,13 @@ pure def creditCommit(a: CommitAttribution): CommitAttribution = { ...a, phase: 
 
 A GitHub author link observed after credit changes the recipient only
 through a journal correction with basis `Reallocation` that preserves the
-unit's complete total. The earlier recipient is retained as the repaired
+unit's complete total. A commit credited to its verified original contributor
+is not repaired by a later author link. The earlier recipient is retained as the repaired
 predecessor.
 
 ```quint
 pure def canRepair(a: CommitAttribution, actor: int, kind: ActorKind): bool =
-  a.phase == Credited and isUnknown(a.primary) and actor > 0 and eligibleKind(kind) and actor != a.recipient
+  a.phase == Credited and isUnknown(a.primary) and carriedRecipient(a) == 0 and actor > 0 and eligibleKind(kind) and actor != a.recipient
 pure def repair(a: CommitAttribution, actor: int, kind: ActorKind): CommitAttribution =
   { ...a, phase: Repaired, primary: Seen({ actor: actor, kind: kind, linked: true }), repairedFrom: a.recipient, recipient: actor }
 pure def alwaysAttributedEligibility(a: CommitAttribution): bool =

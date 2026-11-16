@@ -46,7 +46,7 @@ type Copy = Unclassified | Backed | Changed | Missing
 type Retention = Kept | PermanentAdmission | Deleted | RetentionHeld | RetentionMissing
 type AuditEntry = { day: int, removed: bool }
 type GenerationState = GenerationOpen | GenerationFrozen | GenerationRetired
-type StorageGeneration = { id: int, state: GenerationState, referencesEligible: bool }
+type StorageGeneration = { id: int, lifecycle: GenerationState, referencesEligible: bool }
 type Target = { key: int, generation: int, written: bool, published: bool, marker: bool, recorded: bool, copy: Copy }
 type EvidenceObject = { id: int, closedDay: int, admission: bool, generation: Generation, declared: int, stored: int,
   marker: bool, copy: Copy, receiptDay: int, receiptDigest: int, retention: Retention }
@@ -65,7 +65,7 @@ pure val initial: Backup = { phase: NotStarted, cycleDay: 0, clockDay: 0, expect
     { ...unclassified, id: 4, declared: 7, stored: 8 },
     { ...unclassified, id: 5, declared: 7, stored: 0 }),
   accessLog: List({ day: 0, removed: false }, { day: 200, removed: false }), startedDays: List(), waitingDays: List(),
-  generations: List({ id: 1, state: GenerationOpen, referencesEligible: false }, { id: 2, state: GenerationOpen, referencesEligible: false }),
+  generations: List({ id: 1, lifecycle: GenerationOpen, referencesEligible: false }, { id: 2, lifecycle: GenerationOpen, referencesEligible: false }),
   targets: List(), retirementReleased: false, deletionReceipts: List(), retentionMissingTargets: List() }
 pure val unclassified: EvidenceObject = { id: 0, closedDay: 0, admission: false, generation: Generational, declared: 0, stored: 0,
   marker: false, copy: Unclassified, receiptDay: 0, receiptDigest: 0, retention: Kept }
@@ -266,14 +266,14 @@ it precedes the target's marker.
 
 ```quint
 pure val noTarget: Target = { key: 0, generation: 0, written: false, published: false, marker: false, recorded: false, copy: Unclassified }
-pure val noGeneration: StorageGeneration = { id: 0, state: GenerationRetired, referencesEligible: false }
+pure val noGeneration: StorageGeneration = { id: 0, lifecycle: GenerationRetired, referencesEligible: false }
 pure def generationOf(b: Backup, generation: int): StorageGeneration = b.generations.nthOr(generation - 1, noGeneration)
 pure def targetOf(b: Backup, key: int): Target = b.targets.nthOr(key - 1, noTarget)
-pure def withGeneration(b: Backup, generation: int, state: GenerationState, eligibleRefs: bool): List[StorageGeneration] =
-  b.generations.listMap(g => if (g.id == generation) { ...g, state: state, referencesEligible: eligibleRefs } else g)
+pure def withGeneration(b: Backup, generation: int, lifecycle: GenerationState, eligibleRefs: bool): List[StorageGeneration] =
+  b.generations.listMap(g => if (g.id == generation) { ...g, lifecycle: lifecycle, referencesEligible: eligibleRefs } else g)
 pure def withTarget(b: Backup, key: int, t: Target): List[Target] = b.targets.listMap(x => if (x.key == key) t else x)
 pure def canReserveTarget(b: Backup, generation: int): bool = generationOf(b, generation).id == generation
-  and generationOf(b, generation).state == GenerationOpen
+  and generationOf(b, generation).lifecycle == GenerationOpen
 pure def reserveTarget(b: Backup, generation: int): Backup =
   { ...b, targets: b.targets.append({ ...noTarget, key: b.targets.length() + 1, generation: generation }),
     generations: withGeneration(b, generation, GenerationOpen, false) }
@@ -281,32 +281,32 @@ pure def canWriteTarget(b: Backup, key: int): bool = targetOf(b, key).key == key
   and not(targetOf(b, key).marker)
 pure def writeTarget(b: Backup, key: int): Backup = { ...b, targets: withTarget(b, key, { ...targetOf(b, key), written: true }) }
 pure def canPublishPointer(b: Backup, key: int): bool = targetOf(b, key).key == key and targetOf(b, key).written
-  and not(targetOf(b, key).published) and generationOf(b, targetOf(b, key).generation).state == GenerationOpen
+  and not(targetOf(b, key).published) and generationOf(b, targetOf(b, key).generation).lifecycle == GenerationOpen
 pure def publishPointer(b: Backup, key: int): Backup = { ...b, targets: withTarget(b, key, { ...targetOf(b, key), published: true }) }
 pure def canCloseReferences(b: Backup, generation: int): bool = generationOf(b, generation).id == generation
-  and generationOf(b, generation).state == GenerationOpen and not(generationOf(b, generation).referencesEligible)
+  and generationOf(b, generation).lifecycle == GenerationOpen and not(generationOf(b, generation).referencesEligible)
 pure def closeReferences(b: Backup, generation: int): Backup = { ...b, generations: withGeneration(b, generation, GenerationOpen, true) }
 pure def canSetRetirementRelease(b: Backup, released: bool, by: str): bool = by == "releaseWorkflow"
   and released != b.retirementReleased and (released implies b.restoredCycles.length() > 0)
 pure def setRetirementRelease(b: Backup, released: bool, by: str): Backup = { ...b, retirementReleased: released }
 pure def canFreezeGeneration(b: Backup, generation: int): bool = b.phase == CleanupPending and b.retentionEnabled
   and b.retirementReleased and earlierCyclesComplete(b) and generationOf(b, generation).id == generation
-  and generationOf(b, generation).state == GenerationOpen and generationOf(b, generation).referencesEligible
+  and generationOf(b, generation).lifecycle == GenerationOpen and generationOf(b, generation).referencesEligible
 pure def freezeGeneration(b: Backup, generation: int): Backup =
   { ...b, generations: withGeneration(b, generation, GenerationFrozen, true) }
 pure def alwaysTargetsReservedFresh(b: Backup): bool = b.targets.every(t => t.key > 0 and targetOf(b, t.key) == t
   and generationOf(b, t.generation).id == t.generation)
   and b.generations.every(g => g.id > 0 and generationOf(b, g.id) == g)
 pure def stepFrozenRefusesNewWork(before: Backup, after: Backup): bool =
-  after.targets.every(t => generationOf(before, t.generation).state != GenerationOpen implies
+  after.targets.every(t => generationOf(before, t.generation).lifecycle != GenerationOpen implies
     (targetOf(before, t.key).key == t.key and (t.published implies targetOf(before, t.key).published)))
-  and before.generations.every(g => g.state != GenerationOpen implies generationOf(after, g.id).state != GenerationOpen)
+  and before.generations.every(g => g.lifecycle != GenerationOpen implies generationOf(after, g.id).lifecycle != GenerationOpen)
 pure def stepTargetsNeverRemoved(before: Backup, after: Backup): bool = after.targets.length() >= before.targets.length()
   and before.targets.every(t => targetOf(after, t.key).key == t.key and targetOf(after, t.key).generation == t.generation
     and (t.written implies targetOf(after, t.key).written) and (t.marker implies targetOf(after, t.key).marker)
     and (t.published implies targetOf(after, t.key).published))
 pure def sometimesFrozenWithLateWrite(b: Backup): bool =
-  b.targets.some(t => t.written and not(t.published) and generationOf(b, t.generation).state == GenerationFrozen)
+  b.targets.some(t => t.written and not(t.published) and generationOf(b, t.generation).lifecycle == GenerationFrozen)
 ```
 
 ### A generation retires only with a verified marker and a D1 record for every reserved target
@@ -324,7 +324,7 @@ Markers, receipts and records are permanent.
 ```quint
 pure def canMarkTarget(b: Backup, key: int, exact: bool): bool = b.phase == CleanupPending and b.retirementReleased
   and earlierCyclesComplete(b) and targetOf(b, key).key == key and not(targetOf(b, key).marker)
-  and generationOf(b, targetOf(b, key).generation).state == GenerationFrozen
+  and generationOf(b, targetOf(b, key).generation).lifecycle == GenerationFrozen
 pure def markTarget(b: Backup, key: int, exact: bool): Backup = { ...b, targets: withTarget(b, key, { ...targetOf(b, key), marker: true,
   copy: if (not(targetOf(b, key).written)) Missing else if (exact) Backed else Changed }) }
 pure def canRecordRetirement(b: Backup, key: int): bool = targetOf(b, key).key == key and targetOf(b, key).marker
@@ -333,31 +333,31 @@ pure def recordRetirement(b: Backup, key: int): Backup = { ...b, targets: withTa
 pure def generationMarked(b: Backup, generation: int): bool = b.targets.every(t => t.generation == generation implies t.marker and t.recorded)
 pure def canRetireGeneration(b: Backup, generation: int): bool = b.phase == CleanupPending and b.retirementReleased
   and earlierCyclesComplete(b) and generationOf(b, generation).id == generation
-  and generationOf(b, generation).state == GenerationFrozen and generationMarked(b, generation)
+  and generationOf(b, generation).lifecycle == GenerationFrozen and generationMarked(b, generation)
 pure def retireGeneration(b: Backup, generation: int): Backup =
   { ...b, generations: withGeneration(b, generation, GenerationRetired, true) }
 pure def referenceSettled(b: Backup, key: int): bool = b.deletionReceipts.includes(key) or b.retentionMissingTargets.includes(key)
 pure def canSettleReference(b: Backup, key: int): bool = targetOf(b, key).key == key and not(referenceSettled(b, key))
-  and generationOf(b, targetOf(b, key).generation).state == GenerationRetired
+  and generationOf(b, targetOf(b, key).generation).lifecycle == GenerationRetired
 pure def settleReference(b: Backup, key: int): Backup =
   if (targetOf(b, key).copy == Backed) { ...b, deletionReceipts: b.deletionReceipts.append(key) }
   else { ...b, retentionMissingTargets: b.retentionMissingTargets.append(key) }
-pure def alwaysRetiredFullyMarked(b: Backup): bool = b.generations.every(g => g.state == GenerationRetired implies generationMarked(b, g.id))
+pure def alwaysRetiredFullyMarked(b: Backup): bool = b.generations.every(g => g.lifecycle == GenerationRetired implies generationMarked(b, g.id))
   and b.targets.every(t => (t.recorded implies t.marker) and (t.marker iff t.copy != Unclassified)
     and (t.copy == Missing implies not(t.written)) and (t.published implies t.written)
-    and (t.marker implies generationOf(b, t.generation).state != GenerationOpen))
+    and (t.marker implies generationOf(b, t.generation).lifecycle != GenerationOpen))
 pure def alwaysReceiptsNeedBackedRetiredTargets(b: Backup): bool =
   b.deletionReceipts.every(k => targetOf(b, k).key == k and targetOf(b, k).copy == Backed
-    and generationOf(b, targetOf(b, k).generation).state == GenerationRetired)
+    and generationOf(b, targetOf(b, k).generation).lifecycle == GenerationRetired)
   and b.retentionMissingTargets.every(k => targetOf(b, k).key == k and targetOf(b, k).copy != Backed
-    and generationOf(b, targetOf(b, k).generation).state == GenerationRetired)
+    and generationOf(b, targetOf(b, k).generation).lifecycle == GenerationRetired)
 pure def stepRetirementNeedsRelease(before: Backup, after: Backup): bool =
-  after.generations.every(g => (g.state != GenerationOpen and generationOf(before, g.id).state == GenerationOpen)
+  after.generations.every(g => (g.lifecycle != GenerationOpen and generationOf(before, g.id).lifecycle == GenerationOpen)
     implies before.retirementReleased)
 pure def stepSettlementsPermanent(before: Backup, after: Backup): bool =
   before.deletionReceipts.every(k => after.deletionReceipts.includes(k))
     and before.retentionMissingTargets.every(k => after.retentionMissingTargets.includes(k))
-pure def sometimesGenerationRetired(b: Backup): bool = b.generations.some(g => g.state == GenerationRetired)
+pure def sometimesGenerationRetired(b: Backup): bool = b.generations.some(g => g.lifecycle == GenerationRetired)
 pure def sometimesDeletionReceipt(b: Backup): bool = b.deletionReceipts.length() > 0
 pure def sometimesTargetMissingRecorded(b: Backup): bool = b.targets.some(t => t.copy == Missing and b.retentionMissingTargets.includes(t.key))
 ```
