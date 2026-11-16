@@ -1,14 +1,21 @@
 import { expect, test } from "bun:test";
 import { spawn, spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { appendFile, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { readDeploymentPinBinding } from "../workers/payment-executor/deployment-pin-bindings";
 import {
   assembleMainnetBindings,
   mainnetWranglerProvider,
   prepareMainnetRelease,
   publishMainnetRelease,
 } from "../workers/payment-executor/release-mainnets.mjs";
+import { mainnetReleasePlan } from "../workers/payment-executor/release-plan.mjs";
+import {
+  readMonthlySchedule,
+  readRegistryDatabase,
+} from "../workers/payments/registry-database.mjs";
 import { bashCommand } from "./bash-command";
 
 const sha = "a".repeat(40);
@@ -252,9 +259,13 @@ async function fixture(run) {
   }
 }
 
-async function pinnedProject(network = "base-mainnet") {
+async function pinnedProject(
+  network = "base-mainnet",
+  id = "eliza",
+  vaultDigit = "1",
+) {
   const { fixtureProject } = await import("../tests/fixture-overlay.mjs");
-  const project = fixtureProject("eliza");
+  const project = fixtureProject(id);
   const chain = network === "ethereum" ? "ethereum" : "base";
   project.status = "paused";
   project.reward.chain = chain;
@@ -269,7 +280,7 @@ async function pinnedProject(network = "base-mainnet") {
     deployments: [
       {
         network,
-        vault: `0x${"1".repeat(40)}`,
+        vault: `0x${vaultDigit.repeat(40)}`,
         asset: `0x${"2".repeat(40)}`,
         owner: `0x${"3".repeat(40)}`,
         identityAuthority: `0x${"4".repeat(40)}`,
@@ -291,6 +302,55 @@ async function pinnedProject(network = "base-mainnet") {
   };
   return project;
 }
+
+test("production config hashes all canonical pins through the per-binding size limit", async () => {
+  const registry = await Promise.all(
+    [
+      "eliza",
+      "feed",
+      "heir-elements-sdk",
+      "slopdotcash",
+      "asi",
+      "thenetwork",
+    ].map((id, index) => pinnedProject("base-mainnet", id, "189abc"[index])),
+  );
+  const plan = mainnetReleasePlan({
+    registry,
+    registryDatabase: await readRegistryDatabase(),
+    monthlySchedule: await readMonthlySchedule(),
+  });
+  const canonical = plan.find((entry) => entry.network === "base-mainnet");
+  expect(
+    Buffer.byteLength(canonical.config.vars.PAYMENT_DEPLOYMENTS),
+  ).toBeGreaterThan(5000);
+
+  await fixture(async ({ directory }) => {
+    const prepared = await prepareMainnetRelease({
+      directory,
+      account,
+      sha,
+      registry,
+      provider: async (args) =>
+        args[0] === "secret"
+          ? ok([{ name: "PAYMENT_RPC_URLS" }, { name: "SIGNER_PRIVATE_KEY" }])
+          : ok([]),
+    });
+    const written = await readFile(join(directory, `${name}.json`), "utf8");
+    const config = JSON.parse(written);
+    expect(
+      Object.values(config.vars).every(
+        (value) => Buffer.byteLength(value) <= 5000,
+      ),
+    ).toBe(true);
+    expect(readDeploymentPinBinding(config.vars, "PAYMENT_DEPLOYMENTS")).toBe(
+      canonical.config.vars.PAYMENT_DEPLOYMENTS,
+    );
+    expect(
+      prepared.services.find((entry) => entry.network === "base-mainnet")
+        .configSha256,
+    ).toBe(createHash("sha256").update(written).digest("hex"));
+  });
+});
 
 test("absent Base bootstrap gets exact version proof before Pages receives capabilities", async () => {
   await fixture(async ({ directory, path }) => {
