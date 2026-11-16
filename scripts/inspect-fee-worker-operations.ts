@@ -385,7 +385,10 @@ export async function inspectFeeOperations(input: {
           headers: { authorization: `Bearer ${input.token}` },
         },
       );
-      cleanupFailed = !response.ok;
+      const deleted = (await response.json().catch(() => null)) as {
+        success?: boolean;
+      } | null;
+      cleanupFailed = !response.ok || deleted?.success !== true;
     }
     if (cleanupFailed) throw Error("Fee tail cleanup failed");
     stage = "database-summary";
@@ -421,6 +424,7 @@ export class FeeDiagnosticFailure extends Error {
 
 if (import.meta.main) {
   let stage = "active-version-before";
+  let pinnedVersion: Record<string, unknown> = {};
   try {
     if (
       process.env.GITHUB_REF !== "refs/heads/main" ||
@@ -447,6 +451,13 @@ if (import.meta.main) {
       expected,
       head,
     );
+    pinnedVersion = {
+      deploymentId: before.deploymentId,
+      versionId: before.versionId,
+      sourceCommit: before.sourceCommit,
+      checkedSource: head,
+      sourceMatchesCheckout: before.sourceMatchesCheckout,
+    };
     const database = config.d1_databases.find(
       (entry) => entry.binding === "FEE_DB",
     )?.database_id;
@@ -486,6 +497,8 @@ if (import.meta.main) {
     console.log(JSON.stringify(output));
   } catch (error) {
     const failure = {
+      ...pinnedVersion,
+      activeVersionRechecked: false,
       ...(error instanceof FeeDiagnosticFailure ? error.completedReads : {}),
       status: "unavailable",
       stage: error instanceof FeeDiagnosticFailure ? error.stage : stage,
