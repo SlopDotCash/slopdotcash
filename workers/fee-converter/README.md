@@ -1069,3 +1069,16 @@ identifier. It contains no signed transaction or credential. Successful
 binding changes do not activate Solana processing. Activation remains a
 separate reviewed network-list change after key, gas, vault and runtime
 readiness checks.
+
+
+### Diagnose Solana RPC access from Cloudflare
+
+The manual fee-worker inspection accepts `probe_solana_rpc`. It reads the
+existing `SLOP_SOLANA_RPC_CANDIDATE` secret as an HTTPS Helius URL and compares
+bounded read access with the public Solana Vibe Station recovery endpoint.
+The helper uploads an ephemeral, unbound remote preview containing only fixed
+read calls. It sends the candidate URL in the authenticated preview request,
+without storing it in a Worker binding or artifact. No production Worker
+version, schedule or fee record is changed. The report contains booleans,
+slots, fixed method names and numeric transport codes. This bounded check does
+not establish complete recovery history or authorize RPC rotation.
