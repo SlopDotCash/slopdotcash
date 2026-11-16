@@ -206,6 +206,15 @@ networks are still attempted. After those attempts, the scheduled promise
 rejects so the cron failure remains visible; it does not publish a successful
 `fee_converter_run` event with missing networks.
 
+The main-only `fee-worker-bindings.yml` diagnostic also reads the active cron,
+three fixed fee-journal queries, and a 90-second tail of that exact fee Worker
+version. Its artifact retains allowlisted event names, error categories and
+aggregate native-gas amounts. Raw messages and RPC URLs are discarded in memory.
+The active version and source tag must remain unchanged throughout inspection.
+A checkout/source mismatch is reported explicitly. The diagnostic creates and
+removes only its temporary tail subscriber, and changes no Worker settings or
+fee-journal records. A quiet tail records no observed events.
+
 ## Routes per network
 
 | Network                | Target                    | Route                    | Why                                                                                                                                                                                                                                                              |
