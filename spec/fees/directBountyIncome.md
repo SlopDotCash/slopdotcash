@@ -29,13 +29,19 @@ activation change follows from this specification.
 The fee transfer or Solana bundle names the final transaction, exact network,
 asset, wallet and full-width amount. It can identify cash while the EVM
 researcher leg is outstanding. Unavailable or unauthenticated journal data
-leaves the cash evidence unknown. Historical amounts come from retained award
+leaves the cash evidence unknown. Only the settlement journal's own
+authenticated reader (`by == SettlementJournal`) may record or book; the
+direct-award record it supplies is the current retained row of the
+[direct award journal](../settlement/directBounty.md), and that binding is a
+composition obligation of the settlement area. Historical amounts come from retained award
 terms and receipts instead of the mutable public offer. A zero-valued or
 unrelated transfer supplies no direct fee income.
 
 ```quint
 import money as M from "../settlement/money"
 import directBounty as D from "../settlement/directBounty"
+type JournalRead = CurrentRead | UnavailableRead | UnauthenticatedRead
+type Reader = SettlementJournal | OtherReader
 type CashStatus = UnknownCash | NoFeeReceipt | FeeReceived
 type BookingStatus = UnknownBooking | AwaitingCompletion | CompletedBeforeCutover | CompletedEligible
 type TimedReceipt = { network: D::Network, transaction: str, height: int, chainTime: int, authenticated: bool }
@@ -54,8 +60,8 @@ pure def exactPositiveFee(bounty: D::DirectBounty): bool = bounty.admitted and b
   and bounty.feeReceipt.transaction != "" and D::alwaysFeeReceipt(bounty) and D::alwaysSolanaReceiptAtomic(bounty)
   and D::alwaysIndependentReceiptIds(bounty) and D::alwaysNoOtherTransactionReuse(bounty)
   and M::positiveAmount(bounty.feeReceipt.fee)
-pure def cashFact(bounty: D::DirectBounty, authenticatedJournal: bool): FeeFact =
-  if (not(authenticatedJournal)) { ...noFee, status: UnknownCash }
+pure def cashFact(bounty: D::DirectBounty, read: JournalRead): FeeFact =
+  if (read != CurrentRead) { ...noFee, status: UnknownCash }
   else if (exactPositiveFee(bounty))
     { status: FeeReceived, sourceKey: { network: bounty.terms.network, transaction: bounty.feeReceipt.transaction },
       caseId: bounty.terms.caseId, asset: bounty.terms.asset, wallet: bounty.terms.feeWallet, amount: bounty.feeReceipt.fee,
@@ -89,13 +95,13 @@ pure def completeTimeEvidence(bounty: D::DirectBounty, timing: AwardTimes): bool
     and (bounty.terms.network != D::Solana or timing.feeTime == timing.researcherTime)
     and timing.originalPreparedAt > 0 and timing.aggregateVerifiedAt >= timing.originalPreparedAt
 pure def eligibleTime(timing: AwardTimes): bool = timing.feeTime.chainTime >= buybackCutover and completionTime(timing) >= buybackCutover
-pure def bookingStatus(bounty: D::DirectBounty, timing: AwardTimes, authenticatedJournal: bool): BookingStatus =
-  if (not(authenticatedJournal)) UnknownBooking
+pure def bookingStatus(bounty: D::DirectBounty, timing: AwardTimes, read: JournalRead): BookingStatus =
+  if (read != CurrentRead) UnknownBooking
   else if (not(D::paid(bounty))) AwaitingCompletion
   else if (not(exactAwardComplete(bounty)) or not(completeTimeEvidence(bounty, timing))) UnknownBooking
   else if (eligibleTime(timing)) CompletedEligible else CompletedBeforeCutover
-pure def pinnedPreparedFilter(bounty: D::DirectBounty, timing: AwardTimes, authenticatedJournal: bool): bool =
-  authenticatedJournal and exactAwardComplete(bounty) and timing.originalPreparedAt >= buybackCutover
+pure def pinnedPreparedFilter(bounty: D::DirectBounty, timing: AwardTimes, read: JournalRead): bool =
+  read == CurrentRead and exactAwardComplete(bounty) and timing.originalPreparedAt >= buybackCutover
 ```
 
 ### One immutable receipt contributes its full amount to only its original asset and wallet
@@ -126,21 +132,21 @@ pure def sameCash(a: FeeFact, b: FeeFact): bool = a.status == FeeReceived and b.
   and M::equalAmounts(a.amount, b.amount) and a.height == b.height
 pure def cashFromRecognition(row: Recognition): FeeFact = { status: FeeReceived, sourceKey: row.sourceKey,
   caseId: row.caseId, asset: row.asset, wallet: row.wallet, amount: row.amount, height: row.feeHeight }
-pure def canRecordCash(j: FeeJournal, bounty: D::DirectBounty, authenticatedJournal: bool): bool =
-  val fact = cashFact(bounty, authenticatedJournal)
-  fact.status == FeeReceived and j.received.every(row => row.caseId != fact.caseId and row.sourceKey != fact.sourceKey)
-pure def recordCash(j: FeeJournal, bounty: D::DirectBounty, authenticatedJournal: bool): FeeJournal =
-  { ...j, received: j.received.append(cashFact(bounty, authenticatedJournal)) }
-pure def canBook(j: FeeJournal, bounty: D::DirectBounty, timing: AwardTimes, authenticatedJournal: bool): bool =
+pure def canRecordCash(j: FeeJournal, bounty: D::DirectBounty, read: JournalRead, by: Reader): bool =
+  val fact = cashFact(bounty, read)
+  by == SettlementJournal and fact.status == FeeReceived and j.received.every(row => row.caseId != fact.caseId and row.sourceKey != fact.sourceKey)
+pure def recordCash(j: FeeJournal, bounty: D::DirectBounty, read: JournalRead, by: Reader): FeeJournal =
+  { ...j, received: j.received.append(cashFact(bounty, read)) }
+pure def canBook(j: FeeJournal, bounty: D::DirectBounty, timing: AwardTimes, read: JournalRead, by: Reader): bool =
   val wanted = candidateRecognition(bounty, timing)
-  bookingStatus(bounty, timing, authenticatedJournal) == CompletedEligible
+  by == SettlementJournal and bookingStatus(bounty, timing, read) == CompletedEligible
     and j.received.some(row => sameCash(row, cashFromRecognition(wanted)))
     and j.entries.every(row => row.caseId != wanted.caseId and row.sourceKey != wanted.sourceKey)
-pure def book(j: FeeJournal, bounty: D::DirectBounty, timing: AwardTimes, authenticatedJournal: bool): FeeJournal =
+pure def book(j: FeeJournal, bounty: D::DirectBounty, timing: AwardTimes, read: JournalRead, by: Reader): FeeJournal =
   { ...j, entries: j.entries.append(candidateRecognition(bounty, timing)) }
-pure def readback(j: FeeJournal, bounty: D::DirectBounty, timing: AwardTimes, authenticatedJournal: bool): bool =
+pure def readback(j: FeeJournal, bounty: D::DirectBounty, timing: AwardTimes, read: JournalRead): bool =
   val wanted = candidateRecognition(bounty, timing)
-  bookingStatus(bounty, timing, authenticatedJournal) == CompletedEligible
+  bookingStatus(bounty, timing, read) == CompletedEligible
     and j.entries.some(row => row.sourceKey == wanted.sourceKey and row.caseId == wanted.caseId
       and row.asset == wanted.asset and row.wallet == wanted.wallet and M::equalAmounts(row.amount, wanted.amount)
       and row.researcherTx == wanted.researcherTx and row.feeHeight == wanted.feeHeight and row.feeChainTime == wanted.feeChainTime
@@ -207,6 +213,8 @@ pure val bundleTimes: AwardTimes = { originalPreparedAt: buybackCutover - 1, agg
 pure val bountyValues = Set(D::initial).union(Set(feeOnly)).union(Set(separatePaid)).union(Set(bundledPaid))
 pure val timingValues = Set(separateTimes).union(Set(bundleTimes)).union(Set({ ...separateTimes, feeTime: { ...feeClock, authenticated: false } }))
   .union(Set({ ...separateTimes, feeTime: { ...feeClock, chainTime: buybackCutover - 1 } }))
+pure val readValues = Set(CurrentRead, UnavailableRead)
+pure val byValues = Set(SettlementJournal, OtherReader)
 pure val weight_recordCash = 8
 pure val weight_book = 8
 ```
