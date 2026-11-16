@@ -6245,20 +6245,21 @@
     },
     {
       "path": "src/lib/evm-vault-actions.ts",
-      "sha256": "e07f005927f95289e682098b43d8e342f6ac1a746c2ae21d8abd646098e45249",
+      "sha256": "e693d8930b6ac2f280ae79c6694ce4a9aecb2322002297297fcf7ec5fe032ee3",
       "models": [
         "formal/models/contracts/evm_owner_action.qnt",
         "formal/models/ui/ui_monthly_setting_recovery.qnt",
         "formal/models/ui/ui_vault_auto_check.qnt",
         "formal/models/ui/ui_vault_batched_deposit.qnt",
+        "formal/models/ui/ui_vault_month_lock.qnt",
         "formal/models/ui/ui_vault_prompt_ownership.qnt",
         "formal/models/ui/ui_vault_provisional_funding.qnt"
       ],
       "candidateLines": [
-        22, 25, 69, 137, 145, 243, 309, 374, 375, 387, 388, 393, 405, 408, 411,
-        413, 415, 432, 437, 439, 440, 454, 461, 470, 510, 512, 513, 525, 529,
-        530, 552, 557, 558, 567, 578, 595, 603, 604, 605, 606, 607, 611, 626,
-        632, 637, 638, 640, 641, 642, 645, 656, 657, 661, 662, 663, 664, 665
+        22, 25, 69, 137, 145, 243, 309, 376, 377, 389, 390, 395, 407, 410, 413,
+        415, 417, 434, 439, 441, 442, 456, 463, 472, 512, 514, 515, 527, 531,
+        532, 554, 559, 560, 569, 580, 597, 605, 606, 607, 608, 609, 613, 628,
+        634, 639, 640, 642, 643, 644, 647, 658, 659, 663, 664, 665, 666, 667
       ],
       "review": "mapped-abstraction"
     },
@@ -19197,12 +19198,13 @@
     },
     {
       "path": "formal/models/ui/ui_vault_month_lock.qnt",
-      "sha256": "854236b90c6aba640aa702e5066f12ffa7fb17f3f973508112c9acf7c4509313",
+      "sha256": "b84945b461fe4e7841789f25a8870ea4946fe2d0e15ac19e095f1e91b88c0ae9",
       "sources": [
         "src/EscrowFunding.tsx",
         "src/VaultActions.tsx",
         "src/VaultMonthLock.tsx",
         "src/lib/evm-month-lock.ts",
+        "src/lib/evm-vault-actions.ts",
         "src/lib/month-lock.ts",
         "src/lib/solana-month-lock.ts"
       ],
@@ -19213,6 +19215,7 @@
         "depositWithoutBatchIsRefusedTest",
         "failedLockLocksNothingTest",
         "lapsedLockIsReleasedTest",
+        "nativeDepositAndLockTogetherTest",
         "ownerLocksTheMonthTest",
         "unsupportedVaultHasNoFormTest"
       ]
