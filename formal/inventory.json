@@ -8278,13 +8278,13 @@
     },
     {
       "path": "workers/payment-executor/monthly.ts",
-      "sha256": "cadf8fe152a30da4899219716ff59d3472387043bf250772bff3805df565c392",
+      "sha256": "2f74bb32c193b7fa4078bb53f80250862736fd19181d1647e67a4e65cfb74826",
       "models": [
         "formal/models/rewards/monthly_commit_cursor.qnt",
         "formal/models/rewards/monthly_execution_recovery.qnt",
         "formal/models/rewards/monthly_reserve.qnt"
       ],
-      "candidateLines": [43, 47, 50],
+      "candidateLines": [43, 47, 50, 150],
       "review": "mapped-abstraction"
     },
     {
