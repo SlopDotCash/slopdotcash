@@ -4,6 +4,7 @@ import {
   isAssetDecimals,
   isBaseUnits,
   type PaymentChain,
+  type PayoutPolicy,
   type VaultSnapshot,
 } from "../../src/lib/payments/contracts";
 import type { D1TransactionalDatabase as D1Database } from "../d1";
@@ -26,6 +27,7 @@ export interface SnapshotDeployment {
   chain: PaymentChain;
   vault: string;
   asset: string;
+  payoutPolicy?: PayoutPolicy;
   /** Solana only: the adapter reads, and reports as `vault`, the project PDA. */
   projectPda?: string | null;
 }
@@ -181,15 +183,17 @@ export async function storeVaultSnapshot(
       return "older";
     throw new Error("Vault snapshot conflicts with stored counters or asset");
   }
-  await recordMonthStart(db, deployment, totals, blockTime, observedAt);
-  if (totals.monthPledges !== undefined)
-    await recordMonthPledges(
-      db,
-      deployment,
-      totals.monthPledges,
-      totals.blockNumber,
-      observedAt,
-    );
+  if (deployment.payoutPolicy !== "security-bounty") {
+    await recordMonthStart(db, deployment, totals, blockTime, observedAt);
+    if (totals.monthPledges !== undefined)
+      await recordMonthPledges(
+        db,
+        deployment,
+        totals.monthPledges,
+        totals.blockNumber,
+        observedAt,
+      );
+  }
   return "stored";
 }
 
