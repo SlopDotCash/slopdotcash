@@ -27,18 +27,13 @@
     "lint:css": "stylelint \"**/*.css\" --allow-empty-input",
     "analyze": "knip && madge --circular vibestack packages apps && jscpd .",
     "quick": "node vibestack/spec.ts tasks typecheck test //#lint:js //#lint:css",
-    "verify": "node vibestack/spec.ts tasks build typecheck test test:browser check //#lint:js //#lint:css //#analyze //#selftest",
-    "all": "node vibestack/spec.ts tasks"
+    "verify": "node vibestack/spec.ts tasks build typecheck test test:browser check //#lint:js //#lint:css //#analyze //#selftest //#formal:check",
+    "all": "node vibestack/spec.ts tasks",
+    "formal:check": "node formal/check.ts"
   },
   "version": "0.1.0",
   "description": "Stories, rules and Quint in a Markdown spec tree; verified TypeScript out.",
   "license": "MIT",
-  "repository": {
-    "type": "git",
-    "url": "git+https://github.com/lalalune/vibestack.git"
-  },
-  "homepage": "https://github.com/lalalune/vibestack#readme",
-  "bugs": "https://github.com/lalalune/vibestack/issues",
   "keywords": [
     "formal-verification",
     "quint",
