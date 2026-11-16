@@ -6,6 +6,7 @@ import type { Job } from "./contracts";
 import { GitHubClient } from "./github";
 import { requireRegisteredRepository } from "./registry";
 import type { ReviewEnv } from "./review";
+import type { publicationCommitPages } from "./value-commit-pages";
 import { findRepository } from "./value-evidence";
 import {
   type ValueFileRecovery,
@@ -66,6 +67,7 @@ export async function verifyCurrentWorkUnitSource(
       repositories,
       source.mergeRecipe,
       "joint",
+      original.sources,
     );
   }
   // Every source digest was recomputed from fresh GitHub bytes above. Reuse
@@ -102,6 +104,7 @@ export async function publishWorkUnitAssessment(
     recovery: ValueFileRecovery;
     internText?: (text: string) => string;
   },
+  commitPages?: ReturnType<typeof publicationCommitPages>,
 ) {
   if (
     !claim &&
@@ -163,15 +166,16 @@ export async function publishWorkUnitAssessment(
     github,
     evidence.sources.map((source) => source.evidence),
   );
+  const sourceClient = commitPages ? commitPages(github) : github;
   const current = await verifyCurrentWorkUnitSource(
     verifiedFiles
       ? await verifiedValueFileClient(
-          github,
+          sourceClient,
           verifiedFiles.requests,
           verifiedFiles.recovery,
           verifiedFiles.internText,
         )
-      : github,
+      : sourceClient,
     evidence,
     result,
     repositories,

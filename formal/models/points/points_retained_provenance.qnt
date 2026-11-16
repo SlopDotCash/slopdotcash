@@ -1,7 +1,7 @@
 // @source scripts/generate-points.ts
 // @source src/lib/points.ts
 // @source src/lib/verified-aggregation.ts
-// One retained evaluator award: original amount 2, explicit partial amount 1.
+// One retained review or evaluator award: original amount 2, partial amount 1.
 // Historical retirement eligibility is fixed by validated timestamp/digest/rule
 // facts; incident represents their exact conjunction, otherZero a mismatch.
 // Project remains registered; removal/re-addition is outside this model.
@@ -22,6 +22,8 @@ module points_retained_provenance {
     s'=recordRevision(s,2,"historic",true)}
   action seedSnapshot = all {s.history.length()==0,
     s'=recordRevision(s,2,"snapshot",false)}
+  action seedValueReview = all {s.history.length()==0,
+    s'=recordRevision(s,2,"value-review",false)}
   action incident = all {s.origin=="historic",s.history.length()<6,
     s'=recordRevision(s,0,"incident",true)}
   action otherZero = all {s.origin=="historic",s.history.length()<6,
@@ -42,7 +44,7 @@ module points_retained_provenance {
   action step = {
     nondet supplied=Set(false,true).oneOf()
     nondet amount=Set(0,1,2).oneOf()
-    any {seedHistoric,seedSnapshot,incident,otherZero,
+    any {seedHistoric,seedSnapshot,seedValueReview,incident,otherZero,
       applyBatch(supplied,amount),s'=s}
   }
   val invariant = all {
@@ -55,6 +57,8 @@ module points_retained_provenance {
   }
   run historicalOmittedTest = init.then(seedHistoric).then(applyBatch(false,0))
     .expect(s.amount==2 and s.eligible and s.history.length()==1)
+  run reviewedValueOmissionTest = init.then(seedValueReview).then(applyBatch(false,0))
+    .expect(s.amount==2 and s.origin=="value-review" and s.history.length()==1)
   run recoverIncidentTest = init.then(seedHistoric).then(incident).then(applyBatch(false,0))
     .expect(s.amount==2 and s.eligible and s.history.length()==3)
   run recoveryReplayTest = init.then(seedHistoric).then(incident).then(applyBatch(false,0))

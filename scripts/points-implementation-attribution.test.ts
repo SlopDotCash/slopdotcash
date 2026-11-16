@@ -11,6 +11,7 @@ import {
   applyPointsSnapshot,
   awardForScore,
   latestPoints,
+  OCTOBER_DUPLICATE_RETIREMENT_DECISION,
   OCTOBER_ORIGINAL_CONTRIBUTOR_DECISION,
   type PointsJournal,
   pointKey,
@@ -417,6 +418,46 @@ test("rolling scores preserve a verified October replacement allocation", () => 
           sourceId: award.sourceId,
           effectiveAt: GENERATED_AT,
           reason: OCTOBER_ORIGINAL_CONTRIBUTOR_DECISION,
+        },
+      ]),
+    ),
+  );
+  const next = input(true, REFRESHED_AT);
+  next.mergedPullRequestOutcomes[0].mergedAt = occurredAt;
+  const current = createLeaderboardSnapshot(next);
+  expect(
+    current.valueAssessmentCoverage?.[0].implementationAllocation?.weights,
+  ).toHaveLength(2);
+  const refreshed = applyPointsSnapshot(
+    journal,
+    current,
+    hash(current),
+    REFRESHED_AT,
+  );
+  expect(refreshed.revisions).toEqual(journal.revisions);
+});
+
+test("rolling scores preserve an owner-retired duplicate October pool", () => {
+  const { empty, oldSnapshot } = setup();
+  const occurredAt = "2026-10-29T12:00:00.000Z";
+  const rows = legacyAwards(oldSnapshot).map((award) => ({
+    ...award,
+    occurredAt,
+    amount: 0,
+  }));
+  const journal = appendPointAwards(
+    empty,
+    rows,
+    hash(rows),
+    "slop-score-v2",
+    GENERATED_AT,
+    new Map(
+      rows.map((award) => [
+        award.key,
+        {
+          sourceId: award.sourceId,
+          effectiveAt: GENERATED_AT,
+          reason: OCTOBER_DUPLICATE_RETIREMENT_DECISION,
         },
       ]),
     ),

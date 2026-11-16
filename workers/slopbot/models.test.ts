@@ -13,6 +13,21 @@ type Packet = {
 const SURPLUS_ROUTE = TRIAGE_ROUTE.filter(
   (step) => step.provider === "surplus",
 );
+const ORBIO_ROUTE = TRIAGE_ROUTE.filter((step) => step.provider === "orbio");
+
+const DENIAL = {
+  type: "error",
+  error: {
+    type: "invalid_request_error",
+    detail: {
+      window: "month",
+      limit_micro: 100,
+      spent_micro: 100,
+      resets_at: "2026-12-01T00:00:00.000Z",
+    },
+  },
+  usage: { buyer_cost_micro: 0 },
+};
 
 const prompt = {
   system: "Local transport fixture",
@@ -278,7 +293,7 @@ test("SDK HTTP errors use canonical body receipts and do not hide retries", asyn
   expect(JSON.stringify(result)).not.toContain("untrusted-error-detail");
 });
 
-test("structured spending denial keeps its receipt and prevents fallback at HTTP 200 or 400", async () => {
+test("structured spending denial keeps its receipt and prevents another Surplus model at HTTP 200 or 400", async () => {
   for (const status of [200, 400]) {
     const { result, requests } = await run([
       {
@@ -382,12 +397,31 @@ test("fallback authority denial preserves the first attempt receipt", async () =
   expect(result.calls.map((call) => call.providerCostMicroUsd)).toEqual([51]);
 });
 
-test("Orbio handles the primary call with its credential and retains unknown billing", async () => {
+test("the full route asks Surplus first and does not call Orbio after a Surplus verdict", async () => {
+  const { result, requests } = await run(
+    [{ body: message({}, { buyer_cost_micro: 100 }) }],
+    async () => true,
+    TRIAGE_ROUTE,
+  );
+  expect(TRIAGE_ROUTE.map((step) => [step.provider, step.model])).toEqual([
+    ["surplus", "claude-sonnet-5.5"],
+    ["surplus", "gpt-6.1-terra"],
+    ["orbio", "anthropic/claude-sonnet-5.5"],
+  ]);
+  expect(requests.map((request) => request.model)).toEqual([
+    "claude-sonnet-5.5",
+  ]);
+  expect(result.verdict).toEqual({ accepted: true });
+  expect(result.servedBy?.provider).toBe("surplus");
+  expect(result.servedBy?.routeStep).toBe(1);
+});
+
+test("Orbio handles the backstop call with its credential and retains unknown billing", async () => {
   const { result, requests } = await run(
     [
       {
         body: message(
-          { model: TRIAGE_ROUTE[0].model },
+          { model: ORBIO_ROUTE[0].model },
           { buyer_cost_micro: 999 },
         ),
         headers: {
@@ -398,73 +432,151 @@ test("Orbio handles the primary call with its credential and retains unknown bil
     ],
     async () => true,
     TRIAGE_ROUTE,
+    { SURPLUS_API_KEY: undefined },
   );
   expect(requests.map((request) => request.model)).toEqual([
     "anthropic/claude-sonnet-5.5",
   ]);
   expect(result.verdict).toEqual({ accepted: true });
   expect(result.servedBy?.provider).toBe("orbio");
+  expect(result.servedBy?.routeStep).toBe(3);
   expect(result.servedBy?.providerCostMicroUsd).toBeNull();
 });
 
-test("Orbio exhausted credits try Surplus immediately and retain both attempt records", async () => {
+test("a Surplus spending denial skips Surplus Terra and returns the Orbio verdict", async () => {
+  for (const status of [200, 400]) {
+    const { result, requests } = await run(
+      [
+        { status, body: DENIAL },
+        {
+          body: message({ model: ORBIO_ROUTE[0].model }, { cost: 0.000564 }),
+        },
+      ],
+      async () => true,
+      TRIAGE_ROUTE,
+    );
+    expect(requests.map((request) => request.model)).toEqual([
+      "claude-sonnet-5.5",
+      "anthropic/claude-sonnet-5.5",
+    ]);
+    expect(result.verdict).toEqual({ accepted: true });
+    expect(result.blocked).toBe(false);
+    expect(result.budgetResetAt).toBeUndefined();
+    expect(result.calls.map((call) => call.routeStep)).toEqual([1, 3]);
+    expect(result.calls.map((call) => call.failure)).toEqual([
+      "provider budget exhausted",
+      null,
+    ]);
+    expect(result.calls.map((call) => call.providerCostMicroUsd)).toEqual([
+      0, 564,
+    ]);
+    expect(result.servedBy).toBe(result.calls[1]);
+  }
+});
+
+test("a Surplus spending denial followed by an Orbio failure returns the reset time", async () => {
+  for (const orbio of [
+    {
+      status: 402,
+      body: {
+        error: { type: "insufficient_quota", message: "private-detail" },
+      },
+    },
+    { body: message({ model: "wrong-model" }) },
+  ]) {
+    const { result, requests } = await run(
+      [{ status: 400, body: DENIAL }, orbio],
+      async () => true,
+      TRIAGE_ROUTE,
+    );
+    expect(requests.map((request) => request.model)).toEqual([
+      "claude-sonnet-5.5",
+      "anthropic/claude-sonnet-5.5",
+    ]);
+    expect(result.verdict).toBeNull();
+    expect(result.servedBy).toBeNull();
+    expect(result.blocked).toBe(false);
+    expect(result.budgetResetAt).toBe("2026-12-01T00:00:00.000Z");
+    expect(result.calls.map((call) => call.provider)).toEqual([
+      "surplus",
+      "orbio",
+    ]);
+    expect(result.calls[0].failure).toBe("provider budget exhausted");
+    expect(result.calls[1].failure).not.toBe("provider budget exhausted");
+    expect(JSON.stringify(result)).not.toContain("private-detail");
+  }
+});
+
+test("a Surplus spending denial with no Orbio credential stops with one free record", async () => {
+  const { result, requests } = await run(
+    [{ status: 400, body: DENIAL }],
+    async () => true,
+    TRIAGE_ROUTE,
+    { ORBIO_API_KEY: undefined },
+  );
+  expect(requests).toHaveLength(1);
+  expect(result.budgetResetAt).toBe("2026-12-01T00:00:00.000Z");
+  expect(result.calls.map((call) => call.failure)).toEqual([
+    "provider budget exhausted",
+  ]);
+});
+
+test("a Surplus Terra spending denial after a Sonnet failure still reaches Orbio", async () => {
   const { result, requests } = await run(
     [
-      {
-        status: 402,
-        body: {
-          error: { type: "insufficient_quota", message: "private-detail" },
-        },
-      },
-      {
-        body: message(
-          { model: TRIAGE_ROUTE[1].model },
-          { buyer_cost_micro: 100 },
-        ),
-      },
+      { status: 503, body: { error: { type: "api_error" } } },
+      { status: 400, body: DENIAL },
+      { body: message({ model: ORBIO_ROUTE[0].model }) },
     ],
     async () => true,
     TRIAGE_ROUTE,
   );
   expect(requests.map((request) => request.model)).toEqual([
-    "anthropic/claude-sonnet-5.5",
     "claude-sonnet-5.5",
-  ]);
-  expect(result.calls.map((call) => call.provider)).toEqual([
-    "orbio",
-    "surplus",
-  ]);
-  expect(result.calls.map((call) => call.routeStep)).toEqual([1, 2]);
-  expect(result.calls.map((call) => call.providerCostMicroUsd)).toEqual([
-    null,
-    100,
+    "gpt-6.1-terra",
+    "anthropic/claude-sonnet-5.5",
   ]);
   expect(result.verdict).toEqual({ accepted: true });
-  expect(result.servedBy).toBe(result.calls[1]);
-  expect(JSON.stringify(result)).not.toContain("private-detail");
+  expect(result.budgetResetAt).toBeUndefined();
+  expect(result.calls.map((call) => call.routeStep)).toEqual([1, 2, 3]);
 });
 
-test("missing Orbio credentials use Surplus without invented call records", async () => {
+test("authority loss before Orbio after a spending denial keeps the denial record", async () => {
   let checks = 0;
   const { result, requests } = await run(
-    [{ body: message({ model: TRIAGE_ROUTE[1].model }) }],
+    [{ status: 400, body: DENIAL }],
+    async () => ++checks < 2,
+    TRIAGE_ROUTE,
+  );
+  expect(requests).toHaveLength(1);
+  expect(result.blocked).toBe(true);
+  expect(result.verdict).toBeNull();
+  expect(result.calls.map((call) => call.failure)).toEqual([
+    "provider budget exhausted",
+  ]);
+});
+
+test("missing Surplus credentials use Orbio without invented call records", async () => {
+  let checks = 0;
+  const { result, requests } = await run(
+    [{ body: message({ model: ORBIO_ROUTE[0].model }) }],
     async () => {
       checks++;
       return true;
     },
     TRIAGE_ROUTE,
-    { ORBIO_API_KEY: undefined },
+    { SURPLUS_API_KEY: undefined },
   );
   expect(requests.map((request) => request.model)).toEqual([
-    "claude-sonnet-5.5",
+    "anthropic/claude-sonnet-5.5",
   ]);
   expect(checks).toBe(1);
   expect(result.calls).toHaveLength(1);
-  expect(result.servedBy?.provider).toBe("surplus");
-  expect(result.servedBy?.routeStep).toBe(2);
+  expect(result.servedBy?.provider).toBe("orbio");
+  expect(result.servedBy?.routeStep).toBe(3);
 });
 
-test("authority loss before Surplus preserves the failed Orbio attempt", async () => {
+test("authority loss before Surplus Terra preserves the failed Surplus attempt", async () => {
   let checks = 0;
   const { result, requests } = await run(
     [{ status: 503, body: { error: { type: "api_error" } } }],
@@ -474,7 +586,7 @@ test("authority loss before Surplus preserves the failed Orbio attempt", async (
   expect(requests).toHaveLength(1);
   expect(result.blocked).toBe(true);
   expect(result.verdict).toBeNull();
-  expect(result.calls.map((call) => call.provider)).toEqual(["orbio"]);
+  expect(result.calls.map((call) => call.provider)).toEqual(["surplus"]);
 });
 
 test("Orbio Terra supports an explicit route with its catalogue identity", async () => {
@@ -505,12 +617,13 @@ test("all three failed requests leave an unavailable result with complete attemp
     TRIAGE_ROUTE,
   );
   expect(requests.map((request) => request.model)).toEqual([
-    "anthropic/claude-sonnet-5.5",
     "claude-sonnet-5.5",
     "gpt-6.1-terra",
+    "anthropic/claude-sonnet-5.5",
   ]);
   expect(result.verdict).toBeNull();
   expect(result.servedBy).toBeNull();
+  expect(result.budgetResetAt).toBeUndefined();
   expect(result.calls.map((call) => call.routeStep)).toEqual([1, 2, 3]);
   expect(result.calls.every((call) => call.outcome === "failed")).toBe(true);
   expect(JSON.stringify(result)).not.toContain("private-detail");
@@ -527,7 +640,7 @@ test("Orbio receipts record exact charged micro-dollars and preserve uncertain a
       [
         {
           body: message(
-            { model: TRIAGE_ROUTE[0].model },
+            { model: ORBIO_ROUTE[0].model },
             { cost, cost_details: { upstream_inference_cost: 999 } },
           ),
           headers: {
@@ -537,7 +650,7 @@ test("Orbio receipts record exact charged micro-dollars and preserve uncertain a
         },
       ],
       async () => true,
-      TRIAGE_ROUTE,
+      ORBIO_ROUTE,
     );
     expect(result.verdict).toEqual({ accepted: true });
     expect(result.servedBy?.providerCostMicroUsd).toBe(expected);
@@ -545,28 +658,29 @@ test("Orbio receipts record exact charged micro-dollars and preserve uncertain a
   }
 });
 
-test("Orbio invalid output, model mismatch, and truncation each try Surplus next", async () => {
+test("Surplus Terra invalid output, model mismatch, and truncation each try Orbio next", async () => {
+  const terra = SURPLUS_ROUTE[1];
   for (const body of [
     message({ model: "wrong-model" }),
     message({
-      model: TRIAGE_ROUTE[0].model,
+      model: terra.model,
       content: [{ type: "text", text: "invalid JSON" }],
     }),
-    message({ model: TRIAGE_ROUTE[0].model, stop_reason: "max_tokens" }),
+    message({ model: terra.model, stop_reason: "max_tokens" }),
     { type: "error", error: { type: "api_error", message: "private-detail" } },
   ]) {
     const { result, requests } = await run(
-      [{ body }, { body: message({ model: TRIAGE_ROUTE[1].model }) }],
+      [{ body }, { body: message({ model: ORBIO_ROUTE[0].model }) }],
       async () => true,
-      TRIAGE_ROUTE,
+      [terra, ORBIO_ROUTE[0]],
     );
     expect(requests.map((request) => request.model)).toEqual([
+      "gpt-6.1-terra",
       "anthropic/claude-sonnet-5.5",
-      "claude-sonnet-5.5",
     ]);
     expect(result.calls.map((call) => call.provider)).toEqual([
-      "orbio",
       "surplus",
+      "orbio",
     ]);
     expect(result.calls[0].outcome).toBe("failed");
     expect(result.verdict).toEqual({ accepted: true });

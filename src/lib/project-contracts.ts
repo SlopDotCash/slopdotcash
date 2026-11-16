@@ -123,6 +123,8 @@ export type ProjectEnforcement = {
         kind: "vetting-service";
         keySha256: string;
         assessmentId: string;
+        /** Clean evidence selected for each repository in a reinstatement. */
+        assessmentIds?: string[];
         policyVersion: string;
         rule: string;
       }

@@ -87,6 +87,7 @@ if (
 )
   throw new Error("Invalid local Slopbot Worker name");
 const registryPersistTo = process.env.SLOP_E2E_PERSIST_TO;
+const pagesPersistTo = process.env.SLOP_E2E_PAGES_PERSIST_TO;
 const registryAdmins = process.env.SLOP_E2E_ADMIN_GITHUB_IDS;
 const registryModerators = process.env.SLOP_E2E_MODERATOR_GITHUB_IDS;
 for (const [name, value] of [
@@ -189,11 +190,15 @@ const registryArguments = registryPersistTo
     }${Object.keys(directRpcUrls).length ? ` --binding ${shellArgument(`PAYMENT_RPC_URLS=${JSON.stringify(directRpcUrls)}`)}` : ""}${solanaBountyRpc ? ` --binding SLOP_LOCAL_SOLANA_GENESIS=${solanaGenesis} --binding SOLANA_RECOVERY_RPC_URL=${solanaRecoveryRpc} --binding REWARD_RPC_SOLANA=${solanaBountyRpc}` : ""}${registryIntake}`
   : "";
 const outputName = process.env.SLOP_E2E_OUTPUT ?? localServer;
+const pagesArguments =
+  !registryPersistTo && pagesPersistTo
+    ? ` --persist-to ${JSON.stringify(pagesPersistTo)}`
+    : "";
 
 const localServerCommand =
   localServer === "preview"
     ? `node node_modules/vite/bin/vite.js preview --host 127.0.0.1 --port ${localPort} --strictPort`
-    : `node node_modules/wrangler/bin/wrangler.js pages dev dist --ip 127.0.0.1 --port ${localPort} --inspector-port 0 --log-level warn --show-interactive-dev-session=false${registryArguments}`;
+    : `node node_modules/wrangler/bin/wrangler.js pages dev dist --ip 127.0.0.1 --port ${localPort} --inspector-port 0 --log-level warn --show-interactive-dev-session=false${registryArguments}${pagesArguments}`;
 
 export default defineConfig({
   testDir: "./tests/e2e",

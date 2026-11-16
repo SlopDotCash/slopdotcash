@@ -6,6 +6,7 @@ import {
 import { GitHubClient } from "./github";
 import { registeredProject } from "./registry";
 import type { ReviewEnv } from "./review";
+import { publicationCommitPages } from "./value-commit-pages";
 import {
   collectValueContext,
   validValueContextSelections,
@@ -31,6 +32,7 @@ import {
 import type { ValueAssessmentResult } from "./value-review";
 import {
   historicalSubscriptionSource,
+  historicalSubscriptionWorkUnit,
   subscriptionCutoff,
   type ValueSettingsEnv,
 } from "./value-settings";
@@ -118,10 +120,13 @@ export async function importSubscriptionAssessment(
   )
     throw new Error("Historical source selection is repeated");
   await assertValueInstallation(env.SLOPBOT_DB, Number(input.installationId));
-  const github = await GitHubClient.forInstallation(
-    env.SLOPBOT_APP_ID,
-    env.SLOPBOT_APP_PRIVATE_KEY,
-    Number(input.installationId),
+  const commitPages = publicationCommitPages();
+  const github = commitPages(
+    await GitHubClient.forInstallation(
+      env.SLOPBOT_APP_ID,
+      env.SLOPBOT_APP_PRIVATE_KEY,
+      Number(input.installationId),
+    ),
   );
   const capture = valueFileRecoveryCapture(github);
   let verifiedFiles:
@@ -164,7 +169,14 @@ export async function importSubscriptionAssessment(
       selection.number,
       repository,
     );
-    if (!historicalSubscriptionSource(collected.pull, subscriptionCutoff(env)))
+    if (
+      !historicalSubscriptionSource(collected.pull, subscriptionCutoff(env)) &&
+      !(
+        joint &&
+        collected.pull.state === "closed" &&
+        collected.pull.merged_at === null
+      )
+    )
       throw new Error(
         "Subscription intake covers only work accepted before the API start",
       );
@@ -272,17 +284,23 @@ export async function importSubscriptionAssessment(
   if (joint) {
     if (!digests(input.supersedes) || !digests(input.legacyPredecessors))
       throw new Error("Invalid joint predecessors");
+    const prepared = await prepareWorkUnitEvidence(sources, repositories);
+    if (!historicalSubscriptionWorkUnit(prepared, subscriptionCutoff(env)))
+      throw new Error(
+        "Subscription intake covers only work accepted before the API start",
+      );
     stored = await publishWorkUnitAssessment(
       env,
       job,
       input.result as unknown as WorkUnitAssessmentResult,
-      await prepareWorkUnitEvidence(sources, repositories),
+      prepared,
       revision,
       input.supersedes,
       input.legacyPredecessors,
       input.revisionReason as string | null,
       undefined,
       verifiedFiles,
+      commitPages,
     );
   } else {
     if (input.supersedes !== null && !digest(input.supersedes))
@@ -295,6 +313,8 @@ export async function importSubscriptionAssessment(
       revision,
       input.supersedes,
       input.revisionReason as string | null,
+      undefined,
+      commitPages,
     );
   }
   return { recordDigest: stored.record_digest, sequence: stored.sequence };

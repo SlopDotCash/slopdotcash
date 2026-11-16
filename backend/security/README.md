@@ -42,6 +42,17 @@ report meets the published scope and criteria. Existing
 Eligibility is frozen at receipt, so later edits cannot change an existing
 report's award conditions.
 
+Every program page lists Slop's ten default "Does not qualify" lines
+(`SECURITY_DEFAULT_EXCLUSIONS` in `src/lib/security-bounty.mjs`, operator
+decision of 16 November 2026), then the owner's optional
+`scope.excludedFindings`: at most 20 trimmed single-line entries of 3 to 300
+characters, no case-insensitive duplicates. Terms without the field have no
+owner lines. Owner lines change through an ordinary terms revision, so they
+apply only to reports received after it. Screening, case analysis and appeal
+triage receive both lists, in that order, as `doesNotQualify` beside the
+scope fields they already read from the same terms revision (`analysisScope`
+in `analysis.ts`); a match is advice only, never a decision.
+
 A bounty does not require a payment vault. Existing registered bounty vaults
 remain available with their verified asset and purpose. Their balances stay
 private and never enter ordinary contribution payment totals.

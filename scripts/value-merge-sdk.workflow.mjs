@@ -316,9 +316,9 @@ try {
     .changedPaths.pop();
   await send("omitted-ordinary-path", paths, bundle, 409);
   await send(
-    "unchanged-25MiB-request-bound",
+    "33MiB-request-bound",
     inputs,
-    new Uint8Array(25 * 1024 * 1024),
+    new Uint8Array(33 * 1024 * 1024),
     400,
   );
 

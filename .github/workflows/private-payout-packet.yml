@@ -1,0 +1,52 @@
+name: Stage private reviewed payout packet
+on:
+  workflow_dispatch:
+    inputs:
+      chunk_index:
+        description: "Zero-based reviewed compressed packet chunk"
+        type: string
+        required: true
+permissions:
+  contents: read
+concurrency:
+  group: slop-production
+  cancel-in-progress: false
+jobs:
+  stage:
+    if: github.ref == 'refs/heads/main'
+    environment: slop-production
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
+        with:
+          bun-version: "1.3.14"
+      - run: bun install --frozen-lockfile --ignore-scripts
+      - run: bun --no-env-file scripts/private-payout-packet.ts
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          PRIVATE_PACKET_TRANSPORT: bound-preview
+          PRIVATE_PACKET_ENCRYPTION_KEY: ${{ secrets.PRIVATE_PACKET_ENCRYPTION_KEY }}
+          PRIVATE_PACKET_MANIFEST: ${{ secrets.HISTORICAL_POINTS_OBJECT_MANIFEST }}
+          PRIVATE_PACKET_CHUNK_INDEX: ${{ inputs.chunk_index }}
+          PRIVATE_PACKET_CHUNK_1: ${{ secrets.PRIVATE_PACKET_CHUNK_1 }}
+          PRIVATE_PACKET_CHUNK_2: ${{ secrets.PRIVATE_PACKET_CHUNK_2 }}
+          PRIVATE_PACKET_CHUNK_3: ${{ secrets.PRIVATE_PACKET_CHUNK_3 }}
+          PRIVATE_PACKET_CHUNK_4: ${{ secrets.PRIVATE_PACKET_CHUNK_4 }}
+          PRIVATE_PACKET_CHUNK_5: ${{ secrets.PRIVATE_PACKET_CHUNK_5 }}
+          PRIVATE_PACKET_CHUNK_6: ${{ secrets.PRIVATE_PACKET_CHUNK_6 }}
+          PRIVATE_PACKET_CHUNK_7: ${{ secrets.PRIVATE_PACKET_CHUNK_7 }}
+          PRIVATE_PACKET_CHUNK_8: ${{ secrets.PRIVATE_PACKET_CHUNK_8 }}
+          PRIVATE_PACKET_CHUNK_9: ${{ secrets.PRIVATE_PACKET_CHUNK_9 }}
+          PRIVATE_PACKET_CHUNK_10: ${{ secrets.PRIVATE_PACKET_CHUNK_10 }}
+          PRIVATE_PACKET_CHUNK_11: ${{ secrets.PRIVATE_PACKET_CHUNK_11 }}
+          PRIVATE_PACKET_CHUNK_12: ${{ secrets.PRIVATE_PACKET_CHUNK_12 }}
+          PRIVATE_PACKET_CHUNK_13: ${{ secrets.PRIVATE_PACKET_CHUNK_13 }}
+          PRIVATE_PACKET_CHUNK_14: ${{ secrets.PRIVATE_PACKET_CHUNK_14 }}
+          PRIVATE_PACKET_CHUNK_15: ${{ secrets.PRIVATE_PACKET_CHUNK_15 }}
+          PRIVATE_PACKET_CHUNK_16: ${{ secrets.PRIVATE_PACKET_CHUNK_16 }}

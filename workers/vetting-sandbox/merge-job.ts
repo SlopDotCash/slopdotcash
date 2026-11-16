@@ -6,7 +6,7 @@ import { readFile, stat, writeFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { recoverValueFiles } from "../../scripts/value-file-recovery";
 import { verifyMergeObjectStore } from "../../scripts/value-merge-objects";
-import { collectVerifiedMergeResolutions } from "../../scripts/value-merge-resolution";
+import { collectVerifiedMergeResolutionBatch } from "../../scripts/value-merge-resolution";
 import type { ValueFileRequest } from "../slopbot/value-file-recovery";
 import {
   MERGE_PROFILE,
@@ -35,7 +35,7 @@ export async function runMergeJob(root: string) {
     input.inputs.length === 0 ||
     !Number.isSafeInteger(input.bundleBytes) ||
     input.bundleBytes <= 0 ||
-    input.bundleBytes > 25 * 1024 * 1024 ||
+    input.bundleBytes > 32 * 1024 * 1024 ||
     !/^[a-f0-9]{64}$/u.test(input.bundleSha256) ||
     (await stat(BUNDLE)).size !== input.bundleBytes
   )
@@ -68,18 +68,15 @@ export async function runMergeJob(root: string) {
   // unbundle does not follow URLs, refs or config supplied by the uploader.
   git("-C", repository, "bundle", "unbundle", BUNDLE);
   verifyMergeObjectStore(input.inputs, repository, input.fileRequests);
-  const results = [];
-  if (!input.fileRequests)
-    for (const source of input.inputs)
-      results.push({
-        inputSha256: createHash("sha256")
-          .update(JSON.stringify(source))
-          .digest("hex"),
-        mergeResolutions: await collectVerifiedMergeResolutions(
-          source,
-          repository,
-        ),
-      });
+  const resolutions = input.fileRequests
+    ? []
+    : await collectVerifiedMergeResolutionBatch(input.inputs, repository);
+  const results = input.inputs.map((source, index) => ({
+    inputSha256: createHash("sha256")
+      .update(JSON.stringify(source))
+      .digest("hex"),
+    mergeResolutions: resolutions[index],
+  }));
   const bytes = JSON.stringify(
     input.fileRequests
       ? recoverValueFiles(repository, input.fileRequests)

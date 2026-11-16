@@ -1,6 +1,12 @@
 // @source .github/workflows/fee-worker-bindings.yml
+// @source .github/workflows/payment-event-reconciliation.yml
 // @source scripts/inspect-fee-worker-bindings.ts
+// @source scripts/inspect-fee-worker-operations.ts
+// @source scripts/probe-fee-solana-rpc.ts
+// @evidence scripts/probe-fee-solana-rpc.test.ts
+// @evidence scripts/inspect-fee-worker-operations.test.ts
 // @source .github/workflows/monthly-rewards.yml
+// @source .github/workflows/october-rewards.yml
 // @source .github/workflows/cancel-closed-pr-runs.yml
 // @source .github/workflows/private-intake-watch.yml
 // @source .github/workflows/production-watch.yml

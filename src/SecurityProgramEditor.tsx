@@ -40,6 +40,11 @@ const TEXT_FIELDS = [
     "Excluded dependencies",
     "One dependency per line. Leave empty if none.",
   ],
+  [
+    "excludedFindings",
+    "Also does not qualify",
+    "One finding per line, listed after Slop's default list. Leave empty if none.",
+  ],
   ["testingPermission", "Test rules", ""],
   ["severityRubric", "Severity guide", ""],
   [
@@ -188,6 +193,7 @@ export function SecurityProgramEditor({
   const [text, setText] = useState<Record<TextField, string>>({
     includedAssets: existing?.scope.includedAssets.join("\n") ?? "",
     excludedDependencies: existing?.scope.excludedDependencies.join("\n") ?? "",
+    excludedFindings: existing?.scope.excludedFindings?.join("\n") ?? "",
     testingPermission: existing?.scope.testingPermission ?? "",
     severityRubric: existing?.scope.severityRubric ?? "",
     lossDefinition: existing?.scope.lossDefinition ?? "",
@@ -266,6 +272,10 @@ export function SecurityProgramEditor({
         deployments: existing?.scope.deployments ?? [],
         includedAssets: lines(text.includedAssets),
         excludedDependencies: lines(text.excludedDependencies),
+        // Terms without owner lines keep the field absent, as before it existed.
+        ...(lines(text.excludedFindings).length > 0
+          ? { excludedFindings: lines(text.excludedFindings) }
+          : {}),
         testingPermission: text.testingPermission.trim(),
         severityRubric: text.severityRubric.trim(),
         lossDefinition: text.lossDefinition.trim(),
@@ -512,6 +522,7 @@ export function SecurityProgramEditor({
                   [
                     "includedAssets",
                     "excludedDependencies",
+                    "excludedFindings",
                     "testingPermission",
                   ],
                 ],
@@ -537,9 +548,13 @@ export function SecurityProgramEditor({
                             help ? `bounty-${key}-help` : undefined
                           }
                           rows={3}
-                          required={key !== "excludedDependencies"}
+                          required={
+                            key !== "excludedDependencies" &&
+                            key !== "excludedFindings"
+                          }
                           minLength={
-                            key === "excludedDependencies"
+                            key === "excludedDependencies" ||
+                            key === "excludedFindings"
                               ? undefined
                               : key === "includedAssets"
                                 ? 2
@@ -549,7 +564,8 @@ export function SecurityProgramEditor({
                             key === "safeHarbor"
                               ? 4000
                               : key === "includedAssets" ||
-                                  key === "excludedDependencies"
+                                  key === "excludedDependencies" ||
+                                  key === "excludedFindings"
                                 ? 10000
                                 : key === "exhaustionRule"
                                   ? 1000
