@@ -1,11 +1,11 @@
-lemma startPost_ensures(f: Forwarding, claim: Claim)
+lemma startPost_ensures(f: Forwarding, claim: SendClaim)
   ensures (inv(f) ==> canStartPost(f, claim) ==> alwaysClaimBound(startPost(f, claim)))
   ensures (inv(f) ==> canStartPost(f, claim) ==> alwaysOriginalCase(startPost(f, claim)))
   ensures (inv(f) ==> canStartPost(f, claim) ==> alwaysReceiptBinding(startPost(f, claim)))
   ensures (inv(f) ==> canStartPost(f, claim) ==> alwaysSubmittedBinding(startPost(f, claim)))
   ensures (inv(f) ==> canStartPost(f, claim) ==> alwaysDraftHasNoCopy(startPost(f, claim)))
-  ensures (inv(f) ==> canStartPost(f, claim) ==> stepEarlierClaimsRetained(f, startPost(f, claim)))
   ensures (inv(f) ==> canStartPost(f, claim) ==> stepPostNeedsOwnReadback(f, startPost(f, claim)))
+  ensures (inv(f) ==> canStartPost(f, claim) ==> stepEarlierClaimsRetained(f, startPost(f, claim)))
   ensures (inv(f) ==> canStartPost(f, claim) ==> stepCanonicalFixed(f, startPost(f, claim)))
 {
   if inv(f) && canStartPost(f, claim) {
@@ -23,14 +23,14 @@ lemma startPost_ensures(f: Forwarding, claim: Claim)
   }
 }
 
-lemma recordCreated_ensures(f: Forwarding, claim: Claim, accepted: Copy, listing: Listing)
+lemma recordCreated_ensures(f: Forwarding, claim: SendClaim, accepted: Copy, listing: Listing)
   ensures (inv(f) ==> canRecordCreated(f, claim, accepted, listing) ==> alwaysClaimBound(recordCreated(f, claim, accepted, listing)))
   ensures (inv(f) ==> canRecordCreated(f, claim, accepted, listing) ==> alwaysOriginalCase(recordCreated(f, claim, accepted, listing)))
   ensures (inv(f) ==> canRecordCreated(f, claim, accepted, listing) ==> alwaysReceiptBinding(recordCreated(f, claim, accepted, listing)))
   ensures (inv(f) ==> canRecordCreated(f, claim, accepted, listing) ==> alwaysSubmittedBinding(recordCreated(f, claim, accepted, listing)))
   ensures (inv(f) ==> canRecordCreated(f, claim, accepted, listing) ==> alwaysDraftHasNoCopy(recordCreated(f, claim, accepted, listing)))
-  ensures (inv(f) ==> canRecordCreated(f, claim, accepted, listing) ==> stepEarlierClaimsRetained(f, recordCreated(f, claim, accepted, listing)))
   ensures (inv(f) ==> canRecordCreated(f, claim, accepted, listing) ==> stepPostNeedsOwnReadback(f, recordCreated(f, claim, accepted, listing)))
+  ensures (inv(f) ==> canRecordCreated(f, claim, accepted, listing) ==> stepEarlierClaimsRetained(f, recordCreated(f, claim, accepted, listing)))
   ensures (inv(f) ==> canRecordCreated(f, claim, accepted, listing) ==> stepCanonicalFixed(f, recordCreated(f, claim, accepted, listing)))
 {
   if inv(f) && canRecordCreated(f, claim, accepted, listing) {

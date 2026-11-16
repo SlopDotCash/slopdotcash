@@ -15,24 +15,40 @@ Actual filesystem and cryptography remain shell conformance.
 
 ### Prepare and validate the candidate before moving any durable completion
 
-Start establishes local run identity and start time. Consent and an available
-adapter permit usage capture. An absent capture never prevents finishing. A
-backward clock and invalid candidate refuse before the hard-link publication.
-A failed validation preserves the active run for diagnosis and retry.
+Start establishes local run identity, start time and the exact declared
+provider, model, client and lane. It requires the recorded local
+authorization of the active verified installation
+([installation](./installation.md) `authorizeLocal`) made for exactly the
+active version, outside any open installation attempt, on an installation
+record that satisfies every installation rule: a local checkout, a stale
+authorization of an earlier version, or a version other than the active
+verified one is refused. That the shell supplies the installation's actual
+stored state is a composition obligation. Consent and an
+available adapter permit usage capture. An absent capture never prevents
+finishing. A backward clock and invalid candidate refuse before the hard-link
+publication. A failed validation preserves the active run for diagnosis and
+retry.
 
 ```quint
+import installation as I from "./installation"
+type Lane = ContributionLane | ReviewLane
+type Declared = { provider: str, model: str, client: str, lane: Lane }
 type Capture = Unavailable | Capturing
 type Finish = Idle | Preparing | Validated | Staged | Published
 type Exit = NoExit | Working | Succeeded | Failed
 type ReceiptFile = { digest: str, completionAt: int, valid: bool }
-type LocalReceipt = { started: bool, active: bool, startedAt: int, consent: bool, capture: Capture,
-  finish: Finish, candidate: ReceiptFile, temporary: bool, completed: ReceiptFile, result: Exit }
+type LocalReceipt = { started: bool, active: bool, startedAt: int, consent: bool, capture: Capture, declared: Declared,
+  installed: I::Version, finish: Finish, candidate: ReceiptFile, temporary: bool, completed: ReceiptFile, result: Exit }
 pure val noCandidate: ReceiptFile = { digest: "", completionAt: 0, valid: false }
+pure val noDeclared: Declared = { provider: "", model: "", client: "", lane: ContributionLane }
 pure val initial: LocalReceipt = { started: false, active: false, startedAt: 0, consent: false, capture: Unavailable,
-  finish: Idle, candidate: noCandidate, temporary: false, completed: noCandidate, result: NoExit }
-pure def canStart(s: LocalReceipt, startedAt: int): bool = not(s.started) and startedAt > 0
-pure def start(s: LocalReceipt, startedAt: int, consent: bool, available: bool): LocalReceipt =
-  { ...s, started: true, active: true, startedAt: startedAt, consent: consent,
+  declared: noDeclared, installed: I::noVersion, finish: Idle, candidate: noCandidate, temporary: false, completed: noCandidate, result: NoExit }
+pure def declaredExactly(d: Declared): bool = d.provider != "" and d.model != "" and d.client != ""
+pure def canStart(s: LocalReceipt, startedAt: int, declared: Declared, install: I::Installation): bool =
+  not(s.started) and startedAt > 0 and declaredExactly(declared) and I::consistentInstallation(install)
+    and I::authorizedForStart(install)
+pure def start(s: LocalReceipt, startedAt: int, consent: bool, available: bool, declared: Declared, install: I::Installation): LocalReceipt =
+  { ...s, started: true, active: true, startedAt: startedAt, consent: consent, declared: declared, installed: install.active,
     capture: if (consent and available) Capturing else Unavailable }
 pure def canPrepareFinish(s: LocalReceipt): bool = s.active and s.finish == Idle and s.completed.digest == ""
 pure def prepareFinish(s: LocalReceipt, candidate: ReceiptFile): LocalReceipt =
@@ -61,7 +77,7 @@ readback and required active-file cleanup.
 ```quint
 pure def canStage(s: LocalReceipt): bool = s.finish == Validated
 pure def stage(s: LocalReceipt): LocalReceipt = { ...s, finish: Staged, temporary: true }
-pure def canPublish(s: LocalReceipt): bool = s.finish == Staged and s.completed.digest == ""
+pure def canPublish(s: LocalReceipt): bool = s.finish == Staged and s.temporary and s.completed.digest == ""
 pure def publish(s: LocalReceipt): LocalReceipt = { ...s, finish: Published,
   completed: { digest: s.candidate.digest, completionAt: s.candidate.completionAt, valid: true } }
 pure def canCompetingWriter(s: LocalReceipt, contender: ReceiptFile): bool =
@@ -69,7 +85,7 @@ pure def canCompetingWriter(s: LocalReceipt, contender: ReceiptFile): bool =
     and contender.valid and contender.completionAt >= s.startedAt
 pure def competingWriter(s: LocalReceipt, contender: ReceiptFile): LocalReceipt = { ...s,
   completed: { digest: contender.digest, completionAt: contender.completionAt, valid: true } }
-pure def canCleanupTemporary(s: LocalReceipt): bool = s.temporary
+pure def canCleanupTemporary(s: LocalReceipt): bool = s.temporary and (s.finish == Published or s.result == Failed)
 pure def cleanupTemporary(s: LocalReceipt, succeeds: bool): LocalReceipt =
   if (succeeds) { ...s, temporary: false } else { ...s, finish: Idle, result: Failed }
 pure def canRemoveActive(s: LocalReceipt): bool = s.finish == Published and not(s.temporary)
@@ -90,6 +106,7 @@ pure def observeInvalidHistory(s: LocalReceipt, digest: str): LocalReceipt =
 pure def alwaysState(s: LocalReceipt): bool =
   (s.started implies s.startedAt > 0) and (s.active implies s.started) and
   (s.finish != Idle implies s.active) and (s.started and not(s.active) implies s.completed.valid)
+  and (s.started implies declaredExactly(s.declared) and I::validVersion(s.installed))
 pure def alwaysCandidate(s: LocalReceipt): bool =
   (s.finish == Validated or s.finish == Staged or s.finish == Published) implies validCandidate(s)
 pure def alwaysCompleted(s: LocalReceipt): bool =
@@ -99,6 +116,10 @@ pure def alwaysOptional(s: LocalReceipt): bool = not(s.consent) implies s.captur
 pure def alwaysSuccess(s: LocalReceipt): bool = s.result == Succeeded implies s.completed.valid and not(s.active)
 pure def stepFirstWriter(before: LocalReceipt, after: LocalReceipt): bool = before.completed.digest != ""
   implies before.completed == after.completed
+pure def stepRunIdentityFixed(before: LocalReceipt, after: LocalReceipt): bool = before.started implies
+  after.declared == before.declared and after.installed == before.installed and after.startedAt == before.startedAt
+pure def consistentReceipt(s: LocalReceipt): bool = alwaysState(s) and alwaysCandidate(s) and alwaysCompleted(s)
+  and alwaysOptional(s) and alwaysSuccess(s)
 pure def sometimesFinishedWithoutCapture(s: LocalReceipt): bool = s.result == Succeeded and s.capture == Unavailable
 pure def sometimesTemporaryCleanupFailed(s: LocalReceipt): bool = s.completed.valid and s.active and s.result == Failed and s.temporary
 pure def sometimesInvalidHistory(s: LocalReceipt): bool = s.completed.digest != "" and not(s.completed.valid) and s.result == Failed
@@ -108,6 +129,15 @@ pure def sometimesRace(s: LocalReceipt): bool = s.result == Succeeded and s.cand
 ### Samples exercise missing, matching and conflicting evidence
 
 ```quint
+pure val declaredValues = Set({ provider: "p", model: "m", client: "c", lane: ContributionLane },
+  { provider: "", model: "m", client: "c", lane: ReviewLane })
+pure val installedVersion: I::Version = { template: "0123456789abcdef0123456789abcdef01234567", revision: 1, digest: "m1" }
+pure val authorizedInstall: I::Installation = { ...I::initial, active: installedVersion, versions: List(installedVersion),
+  local: I::LocalAuthorized, localVersion: installedVersion }
+pure val installValues = Set(authorizedInstall, { ...authorizedInstall, local: I::LocalRefused, localVersion: I::noVersion },
+  { ...authorizedInstall, localVersion: { ...installedVersion, revision: 2 } },
+  { ...authorizedInstall, phase: I::Downloading, locked: true, attempt: 1, target: { ...installedVersion, revision: 2, digest: "m2" },
+    old: installedVersion })
 pure val startedAtValues = Set(1, 2)
 pure val digestValues = Set("run-a", "run-b")
 pure val validFinish: ReceiptFile = { digest: "run-a", completionAt: 2, valid: true }

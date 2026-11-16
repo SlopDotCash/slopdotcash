@@ -32,23 +32,23 @@ seconds. A confirmed closed submission clears the cookie in the response.
 
 ```quint
 import screening as S from "./screening"
-type Phase = Draft | Submitting | Uncertain | Submitted | ReceiptVerified | Failed
-type Failure = None | Retryable | Terminal | AlreadyRecorded | Unverifiable
+type ForwardingPhase = Draft | Submitting | Uncertain | Submitted | ReceiptVerified | Failed
+type Failure = None | Retryable | Terminal | AlreadyRecorded | Unverifiable | ReceiptMismatch
 type Operation = SendReport | ListCopies | ReadAdvisory
 type Credential = ReporterUser | Installation | OtherCredential
 type Grant = { version: int, credential: Credential, authenticated: bool, sealed: bool,
   submission: int, reporter: int, session: int, expiresAtSeconds: int }
 type Request = { id: int, revision: int, actor: int, session: int, checkedAtSeconds: int, grant: Grant }
-type Claim = { revision: int, requestId: int, attempt: int, atMs: int, reportVersion: int, digest: str }
-type ClaimRead = { requestId: int, changedOne: bool, rowPresent: bool, observedRevision: int, observedPhase: Phase }
+type SendClaim = { revision: int, requestId: int, attempt: int, atMs: int, reportVersion: int, digest: str }
+type ClaimRead = { requestId: int, changedOne: bool, rowPresent: bool, observedRevision: int, observedPhase: ForwardingPhase }
 type SendGate = { seenScreeningRevision: int, reportVersion: int, digest: str, screening: S::Screening,
   bytesVerified: bool, intakeCurrent: bool, reportingReady: bool, allowedToParticipate: bool, wonClaim: bool }
 type Copy = { ghsa: int, repository: int, author: int, marker: int, createdAtMs: int, digest: str }
-type Forwarding = { phase: Phase, failure: Failure, submission: int, reporter: int, repository: int, marker: int,
-  caseId: int, revision: int, attempt: int, firstAtMs: int, activeClaim: Claim, readyClaims: List[Claim],
+type Forwarding = { phase: ForwardingPhase, failure: Failure, submission: int, reporter: int, repository: int, marker: int,
+  caseId: int, revision: int, attempt: int, firstAtMs: int, activeClaim: SendClaim, readyClaims: List[SendClaim],
   postedRevisions: Set[int], canonical: Copy, duplicateGhsas: List[int], contactsPending: bool,
   receiptDigest: str, receiptReplyLost: bool, retryWithoutCopy: bool }
-pure val noClaim: Claim = { revision: 0, requestId: 0, attempt: 0, atMs: 0, reportVersion: 0, digest: "" }
+pure val noClaim: SendClaim = { revision: 0, requestId: 0, attempt: 0, atMs: 0, reportVersion: 0, digest: "" }
 pure val noCopy: Copy = { ghsa: 0, repository: 0, author: 0, marker: 0, createdAtMs: 0, digest: "" }
 pure val initial: Forwarding = { phase: Draft, failure: None, submission: 1, reporter: 1, repository: 1, marker: 1,
   caseId: 1, revision: 1, attempt: 0, firstAtMs: 0, activeClaim: noClaim, readyClaims: List(), postedRevisions: Set(),
@@ -62,7 +62,7 @@ pure def currentRequest(f: Forwarding, request: Request): bool = request.revisio
 pure def mayOperate(f: Forwarding, request: Request, operation: Operation): bool = currentRequest(f, request) and
   (if (operation == SendReport) f.canonical.ghsa == 0 and (f.phase == Draft or (f.phase == Failed and f.failure == Retryable))
     else if (operation == ListCopies) f.phase == Uncertain and f.canonical.ghsa == 0
-    else f.phase == Submitted and f.canonical.ghsa > 0)
+    else (f.phase == Submitted or (f.phase == Failed and f.failure == ReceiptMismatch)) and f.canonical.ghsa > 0)
 pure def lawNoInstallationUse(f: Forwarding, request: Request, operation: Operation): bool =
   request.grant.credential == Installation implies not(mayOperate(f, request, operation))
 ```
@@ -93,9 +93,9 @@ pure def canRecordClaimRead(f: Forwarding, readback: ClaimRead): bool = f.phase 
   and f.activeClaim.revision == readback.observedRevision and f.activeClaim.requestId == readback.requestId
   and not(f.readyClaims.includes(f.activeClaim))
 pure def recordClaimRead(f: Forwarding, readback: ClaimRead): Forwarding = { ...f, readyClaims: f.readyClaims.append(f.activeClaim) }
-pure def canStartPost(f: Forwarding, claim: Claim): bool = claim.revision > 0 and f.readyClaims.includes(claim) and not(f.postedRevisions.contains(claim.revision))
-pure def startPost(f: Forwarding, claim: Claim): Forwarding = { ...f, postedRevisions: f.postedRevisions.union(Set(claim.revision)) }
-pure def ownsPostedClaim(f: Forwarding, claim: Claim): bool = f.phase == Submitting and f.revision == claim.revision
+pure def canStartPost(f: Forwarding, claim: SendClaim): bool = claim.revision > 0 and f.readyClaims.includes(claim) and not(f.postedRevisions.contains(claim.revision))
+pure def startPost(f: Forwarding, claim: SendClaim): Forwarding = { ...f, postedRevisions: f.postedRevisions.union(Set(claim.revision)) }
+pure def ownsPostedClaim(f: Forwarding, claim: SendClaim): bool = f.phase == Submitting and f.revision == claim.revision
   and f.activeClaim == claim and f.postedRevisions.contains(claim.revision)
 pure def canMarkInterrupted(f: Forwarding, nowMs: int): bool = f.phase == Submitting and nowMs - f.activeClaim.atMs > 60000
 pure def markInterrupted(f: Forwarding, nowMs: int): Forwarding = { ...f, phase: Uncertain, revision: f.revision + 1 }
@@ -121,15 +121,15 @@ row to uncertain via a separate fresh exact read. It never starts a second POST.
 
 ```quint
 type PostResult = CopyUnknown | ThrottledNoCopy | DefiniteRetryable | DefiniteTerminal
-pure def canRecordPostResult(f: Forwarding, claim: Claim): bool = ownsPostedClaim(f, claim)
-pure def recordPostResult(f: Forwarding, claim: Claim, result: PostResult): Forwarding =
+pure def canRecordPostResult(f: Forwarding, claim: SendClaim): bool = ownsPostedClaim(f, claim)
+pure def recordPostResult(f: Forwarding, claim: SendClaim, result: PostResult): Forwarding =
   { ...f, revision: f.revision + 1, retryWithoutCopy: result == ThrottledNoCopy,
     phase: if (result == ThrottledNoCopy) Draft else if (result == CopyUnknown) Uncertain else Failed,
     failure: if (result == DefiniteTerminal) Terminal else if (result == DefiniteRetryable) Retryable else None }
-pure def canHoldLateCopy(f: Forwarding, claim: Claim, seenRevision: int, accepted: Copy): bool = f.phase == Submitting
+pure def canHoldLateCopy(f: Forwarding, claim: SendClaim, seenRevision: int, accepted: Copy): bool = f.phase == Submitting
   and seenRevision == f.revision and claim.revision != f.revision and f.readyClaims.includes(claim)
   and f.postedRevisions.contains(claim.revision) and validCreatedCopy(f, accepted)
-pure def holdLateCopy(f: Forwarding, claim: Claim, seenRevision: int, accepted: Copy): Forwarding = { ...f, phase: Uncertain, revision: f.revision + 1 }
+pure def holdLateCopy(f: Forwarding, claim: SendClaim, seenRevision: int, accepted: Copy): Forwarding = { ...f, phase: Uncertain, revision: f.revision + 1 }
 pure def sometimesRetryableDraft(f: Forwarding): bool = f.phase == Draft and f.retryWithoutCopy
 pure def sometimesUncertain(f: Forwarding): bool = f.phase == Uncertain
 ```
@@ -169,9 +169,9 @@ pure def earliestCopy(copies: List[Copy], accepted: Copy): Copy = copies.foldl(a
   (incumbent, candidate) => if (comesBefore(candidate, incumbent)) candidate else incumbent)
 pure def createdCandidates(f: Forwarding, accepted: Copy, listing: Listing): List[Copy] =
   if (f.attempt > 1 and exactListing(f, listing)) listing.copies.select(copy => copy.ghsa != accepted.ghsa) else List()
-pure def canRecordCreated(f: Forwarding, claim: Claim, accepted: Copy, listing: Listing): bool =
+pure def canRecordCreated(f: Forwarding, claim: SendClaim, accepted: Copy, listing: Listing): bool =
   ownsPostedClaim(f, claim) and validCreatedCopy(f, accepted)
-pure def recordCreated(f: Forwarding, claim: Claim, accepted: Copy, listing: Listing): Forwarding =
+pure def recordCreated(f: Forwarding, claim: SendClaim, accepted: Copy, listing: Listing): Forwarding =
   val copies = createdCandidates(f, accepted, listing)
   val chosen = earliestCopy(copies, accepted)
   { ...f, phase: Submitted, revision: f.revision + 1, canonical: chosen,
@@ -206,7 +206,13 @@ The direct-origin adapter requires a live private vulnerability report in
 triage, draft or published state and treats 404 as a failed verification.
 Editable reporter credits and pasted links cannot establish authorship.
 
-A matching advisory with no current technical contacts stays recoverable.
+A matching advisory with no current technical contacts stays recoverable,
+and a later verified linkage clears that pending contact state. A read whose
+repository, marker or creation time does not match keeps the canonical copy
+and permits another exact read with fresh consent; it never permits a resend.
+An author mismatch is terminal. Only a legacy GitHub-first draft or failure
+with no saved Slop report and no GitHub copy is abandoned (D1 `abandoned`)
+after 24 idle hours; a saved Slop report never is.
 Otherwise the compare-and-set links only the retained case, with an exact
 verified receipt digest. An unrelated case already holding the advisory
 refuses linkage without disclosing that case. A lost durable receipt response
@@ -238,11 +244,15 @@ pure def canReadReceipt(f: Forwarding, request: Request, advisoryRead: AdvisoryR
 pure def readReceipt(f: Forwarding, request: Request, advisoryRead: AdvisoryRead): Forwarding =
   if (advisoryRead.status != Found) { ...f, revision: f.revision + 1 }
   else if (not(receiptIdentityMatches(f, advisoryRead))) { ...f, revision: f.revision + 1, phase: Failed,
-    failure: if (advisoryRead.facts.author != f.reporter) Terminal else Retryable }
+    failure: if (advisoryRead.facts.author != f.reporter) Terminal else ReceiptMismatch }
   else if (not(advisoryRead.currentContacts)) { ...f, revision: f.revision + 1, contactsPending: true }
   else if (advisoryRead.competingCase) { ...f, revision: f.revision + 1, phase: Failed, failure: AlreadyRecorded }
-  else if (advisoryRead.writeCommitted) { ...f, revision: f.revision + 1, phase: ReceiptVerified, receiptDigest: advisoryRead.facts.digest }
+  else if (advisoryRead.writeCommitted) { ...f, revision: f.revision + 1, phase: ReceiptVerified, receiptDigest: advisoryRead.facts.digest, contactsPending: false }
   else f
+pure def mayAbandon(f: Forwarding, idleMs: int, savedReport: bool): bool = not(savedReport) and idleMs > 86400000
+  and f.canonical.ghsa == 0 and (f.phase == Draft or (f.phase == Failed and f.failure != Unverifiable))
+pure def lawSavedReportNeverAbandoned(f: Forwarding, idleMs: int): bool = not(mayAbandon(f, idleMs, true))
+pure def lawCopyNeverAbandoned(f: Forwarding, idleMs: int, savedReport: bool): bool = f.canonical.ghsa > 0 implies not(mayAbandon(f, idleMs, savedReport))
 pure def canExpireVerification(f: Forwarding, nowMs: int): bool = f.phase == Submitted and not(f.contactsPending) and nowMs - f.activeClaim.atMs > 86400000
 pure def expireVerification(f: Forwarding, nowMs: int): Forwarding = { ...f, revision: f.revision + 1, phase: Failed, failure: Unverifiable }
 pure def canLoseReceiptReply(f: Forwarding): bool = f.phase == ReceiptVerified and not(f.receiptReplyLost)

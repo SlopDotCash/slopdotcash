@@ -1,108 +1,168 @@
-# Source census and publication
+# Source census
 
-This model covers PRD section 7 and legacy `github_census`, `source_import`,
-`source_replay`, and `journal_publication`. A census retains every open issue
-and PR even when work-selection eligibility is false. Network pagination,
-immutable GitHub IDs, and source-tree hashes need integration qualification.
+PRD section 7 retains every open issue and PR in snapshots for source-count
+integrity, publishes a deterministic selection decision for each item and
+advertises only bounded, unblocked work. Paused projects are not collected,
+and legacy projects are never collected or scored. Missing data is never
+presented as an empty successful census.
 
-## Story: Publish complete rankings and deterministic work decisions
+This machine collects one repository's GitHub inventory for one snapshot. It
+follows `scripts/generate-leaderboard.ts`, `src/lib/github-census.ts` and the
+legacy `github_census`, `ingestion_retry` and `ui_score_selection` models.
+GitHub returns pages by cursor with a `totalCount` and a next cursor. The
+GitHub read adapter supplies each page as read, with immutable node IDs.
+The project view comes from the D1 registry ([projects](../backend/projects.md))
+at collection time. The rolling 35-day ledger window is owned by the
+[ledger window](./window.md); the historical publication hold is owned by
+the [historical import](./historicalImport.md).
 
-Missing data is never presented as an empty successful census. Only a complete
-35-day source window and reconciled history can replace the published snapshot.
+## Story: Collect a complete inventory and a decision for every item
 
-### Snapshot progress preserves exact bounds and distinct immutable source IDs
-
-Discovered by the proof review, a synthetic saved census could previously
-contain repeated or out-of-range page IDs while satisfying the expected page
-count. Every retained page now has a unique valid page index, and every source
-has a positive immutable ID before completion can be accepted. Ready states retain
-the completed census evidence, and collection through readiness retains the prior
-published snapshot; phase changes cannot invent completeness or publication.
+### Collection starts only for a collected project and never moves its window back
 
 ```quint
 type CensusPhase = Empty | Collecting | Incomplete | Ready | Published
-type Census = { phase: CensusPhase, lowerDay: int, upperDay: int,
-  pagesExpected: int, sourcesExpected: int, pagesSeen: List[int], sourceIds: List[int],
-  previousSnapshot: int, publishedSnapshot: int, historicalHold: bool,
-  duplicateChecked: bool, frozenChecked: bool, assessmentsComplete: bool }
-pure val initial: Census = { phase: Empty, lowerDay: 0, upperDay: 35,
-  pagesExpected: 0, sourcesExpected: 0, pagesSeen: List(), sourceIds: List(), previousSnapshot: 1,
-  publishedSnapshot: 1, historicalHold: true, duplicateChecked: false,
-  frozenChecked: false, assessmentsComplete: false }
-pure def alwaysWindow(c: Census): bool = c.upperDay - c.lowerDay == 35
-pure def alwaysExpectedCounts(c: Census): bool = c.pagesExpected >= 0 and c.sourcesExpected >= 0
-pure def alwaysPageRange(c: Census): bool = c.pagesSeen.every(page => page >= 1 and page <= c.pagesExpected)
-pure def alwaysDistinctPages(c: Census): bool = c.pagesSeen.every(page =>
-  c.pagesSeen.select(other => other == page).length() == 1)
-pure def alwaysSourceIds(c: Census): bool = c.sourceIds.every(id => id > 0)
-pure def alwaysDistinctSources(c: Census): bool = c.sourceIds.every(id =>
-  c.sourceIds.select(other => other == id).length() == 1)
+type ProjectView = { registered: bool, paused: bool, retired: bool, legacy: bool, quarantined: bool }
+type AuthorKind = HumanAuthor | BotAuthor | SlopbotAuthor | UnknownAuthor
+type ItemKind = IssueItem | PullRequestItem
+type Item = { id: int, kind: ItemKind, open: bool, author: AuthorKind, diffAvailable: bool, hasAssignee: bool,
+  claimed: bool, draft: bool, reviewRequested: bool, approved: bool, changesRequested: bool,
+  securityLabel: bool, humanGated: bool, epic: bool, contributorReady: bool, blockedLabel: bool }
+type Page = { cursor: int, next: int, totalCount: int, items: List[Item] }
+type Census = { phase: CensusPhase, lowerDay: int, publishedLower: int, expectedCursor: int, cursorsSeen: List[int],
+  totalCount: int, terminalSeen: bool, countChanges: int, items: List[Item],
+  previousSnapshot: int, publishedSnapshot: int }
+pure val initial: Census = { phase: Empty, lowerDay: 0, publishedLower: 0, expectedCursor: 0, cursorsSeen: List(),
+  totalCount: -1, terminalSeen: false, countChanges: 0, items: List(), previousSnapshot: 1, publishedSnapshot: 1 }
+pure def collected(p: ProjectView): bool = p.registered and not(p.paused) and not(p.retired) and not(p.legacy) and not(p.quarantined)
+pure def canBegin(c: Census, project: ProjectView, lowerDay: int): bool =
+  c.phase != Collecting and collected(project) and lowerDay >= c.publishedLower and lowerDay >= 0
+pure def begin(c: Census, project: ProjectView, lowerDay: int): Census =
+  { ...c, phase: Collecting, lowerDay: lowerDay, expectedCursor: 0, cursorsSeen: List(), totalCount: -1,
+    terminalSeen: false, countChanges: 0, items: List(), previousSnapshot: c.publishedSnapshot }
+pure def lawPausedNotCollected(project: ProjectView): bool = (project.paused or project.legacy or project.retired) implies not(collected(project))
 ```
 
-### Collection records all pages and deduplicates immutable sources
+### Pages follow the cursor chain and a changed count stops the pass
 
-Each source retains its selection decision and original occurrence time in
-production. A page failure holds the prior published snapshot.
+A repeated cursor, a cursor out of sequence and overlapping pages cannot
+invent a count. The first changed `totalCount` restarts collection once; a
+second change leaves the census incomplete. The terminal page is required
+even when the count already matches.
 
 ```quint
-pure def canBegin(c: Census, lowerDay: int, pages: int, sources: int): bool = lowerDay >= 0 and pages > 0 and sources >= 0 and c.phase != Collecting
-pure def begin(c: Census, lowerDay: int, pages: int, sources: int): Census =
-  { ...c, phase: Collecting, lowerDay: lowerDay, upperDay: lowerDay + 35,
-    pagesExpected: pages, sourcesExpected: sources, pagesSeen: List(), sourceIds: List(),
-    previousSnapshot: c.publishedSnapshot, duplicateChecked: false,
-    frozenChecked: false, assessmentsComplete: false }
-pure def canRecordPage(c: Census, page: int, sourceId: int): bool =
-  c.phase == Collecting and page >= 1 and page <= c.pagesExpected and sourceId > 0
-pure def recordPage(c: Census, page: int, sourceId: int): Census =
-  { ...c, pagesSeen: if (c.pagesSeen.includes(page)) c.pagesSeen else c.pagesSeen.append(page),
-    sourceIds: if (c.sourceIds.includes(sourceId)) c.sourceIds else c.sourceIds.append(sourceId) }
-pure def canRecordEmptyPage(c: Census, page: int): bool =
-  c.phase == Collecting and page >= 1 and page <= c.pagesExpected
-pure def recordEmptyPage(c: Census, page: int): Census =
-  { ...c, pagesSeen: if (c.pagesSeen.includes(page)) c.pagesSeen else c.pagesSeen.append(page) }
+pure def canRecordPage(c: Census, page: Page): bool =
+  c.phase == Collecting and not(c.terminalSeen) and page.cursor == c.expectedCursor and
+  not(c.cursorsSeen.includes(page.cursor)) and page.next != page.cursor and page.totalCount >= 0 and
+  (c.totalCount == -1 or page.totalCount == c.totalCount) and page.items.every(i => i.id > 0)
+pure def addItem(items: List[Item], i: Item): List[Item] = if (items.some(o => o.id == i.id)) items else items.append(i)
+pure def recordPage(c: Census, page: Page): Census =
+  { ...c, cursorsSeen: c.cursorsSeen.append(page.cursor), expectedCursor: page.next, totalCount: page.totalCount,
+    terminalSeen: page.next == 0, items: page.items.foldl(c.items, (acc, i) => addItem(acc, i)) }
+pure def canRecordCountChange(c: Census, page: Page): bool =
+  c.phase == Collecting and page.cursor == c.expectedCursor and c.totalCount >= 0 and page.totalCount != c.totalCount
+pure def recordCountChange(c: Census, page: Page): Census =
+  if (c.countChanges == 0) { ...c, countChanges: 1, expectedCursor: 0, cursorsSeen: List(), totalCount: -1, terminalSeen: false, items: List() }
+  else { ...c, phase: Incomplete, countChanges: 2 }
 pure def canRecordFailure(c: Census): bool = c.phase == Collecting
 pure def recordFailure(c: Census): Census = { ...c, phase: Incomplete }
-pure def canFinish(c: Census, duplicateChecked: bool, frozenChecked: bool, assessmentsComplete: bool): bool =
-  c.phase == Collecting and c.pagesSeen.length() == c.pagesExpected and c.sourceIds.length() == c.sourcesExpected and duplicateChecked and frozenChecked and assessmentsComplete
-pure def finish(c: Census, duplicateChecked: bool, frozenChecked: bool, assessmentsComplete: bool): Census =
-  { ...c, phase: Ready, duplicateChecked: true, frozenChecked: true, assessmentsComplete: true }
+pure def canFinish(c: Census): bool =
+  c.phase == Collecting and c.terminalSeen and c.items.length() == c.totalCount
+pure def finish(c: Census): Census = { ...c, phase: Ready }
 ```
 
-### Publication requires a complete reconciled journal and preserves the previous snapshot on failure
+### Every retained item has a deterministic, fail-closed selection decision with all its reasons
 
-The historical publication hold is released only after complete assessments,
-duplicate checks, and frozen-history checks. A no-change promotion is excluded
-only with complete hash-verified base, head, merge, and prior accepted-source
-coverage for every imported commit.
+Unknown authors, unavailable diffs, existing assignees, maintainer claims,
+drafts, blocked labels, active review requests, approvals, changes
+requested, security labels, human-gated work and epics are not offered. An
+issue without a contributor-ready label is untriaged and not offered.
+Closed items and bot authors are not offered either. Every retained item
+keeps its decision, which lists every applicable reason once, in a fixed order
+(`src/lib/leaderboard.ts`, `candidateExclusionReasons`): an item is a
+candidate exactly when it has none.
 
 ```quint
-pure def canReleaseHold(c: Census): bool = c.phase == Ready and c.duplicateChecked and c.frozenChecked and c.assessmentsComplete
-pure def releaseHold(c: Census): Census = { ...c, historicalHold: false }
-pure def canPublish(c: Census, snapshot: int): bool = c.phase == Ready and not(c.historicalHold) and snapshot > c.previousSnapshot
-pure def publish(c: Census, snapshot: int): Census = { ...c, phase: Published, publishedSnapshot: snapshot }
-pure def promotionExcluded(baseTree: str, headTree: str, mergeTree: str,
-  completeCoverage: bool, allPriorAccepted: bool): bool =
-  baseTree != "" and baseTree == headTree and headTree == mergeTree and completeCoverage and allPriorAccepted
-pure def alwaysPublishedComplete(c: Census): bool = (c.phase == Ready or c.phase == Published) implies
-  c.pagesSeen.length() == c.pagesExpected and c.sourceIds.length() == c.sourcesExpected and c.duplicateChecked and c.frozenChecked and c.assessmentsComplete and (c.phase == Published implies not(c.historicalHold))
-pure def alwaysFailedKeepsSnapshot(c: Census): bool = (c.phase == Collecting or c.phase == Ready or c.phase == Incomplete) implies c.publishedSnapshot == c.previousSnapshot
-pure def sometimesPublished(c: Census): bool = c.phase == Published
-pure def sometimesIncomplete(c: Census): bool = c.phase == Incomplete
+type Reason = Closed | AuthorUnknown | BotAuthored | DiffUnavailable | Untriaged | Blocked | Assigned | Claimed |
+  DraftItem | ReviewRequested | Approved | ChangesRequested | SecurityLabel | HumanGated | Epic
+type Status = Candidate | Excluded
+type Selection = { status: Status, reasons: List[Reason] }
+pure def reasonIf(c: bool, r: Reason): List[Reason] = if (c) List(r) else List()
+pure def blocked(i: Item): bool =
+  not(i.open) or i.author != HumanAuthor or (i.kind == PullRequestItem and not(i.diffAvailable)) or
+  (i.kind == IssueItem and not(i.contributorReady)) or i.blockedLabel or i.securityLabel or i.humanGated or i.epic or
+  i.hasAssignee or i.claimed or i.draft or i.reviewRequested or i.approved or i.changesRequested
+pure def authorReasons(i: Item): List[Reason] =
+  reasonIf(not(i.open), Closed).concat(reasonIf(i.author == UnknownAuthor, AuthorUnknown))
+    .concat(reasonIf(i.author == BotAuthor or i.author == SlopbotAuthor, BotAuthored))
+pure def readinessReasons(i: Item): List[Reason] =
+  reasonIf(i.kind == PullRequestItem and not(i.diffAvailable), DiffUnavailable)
+    .concat(reasonIf(i.kind == IssueItem and not(i.contributorReady), Untriaged)).concat(reasonIf(i.blockedLabel, Blocked))
+pure def scopeReasons(i: Item): List[Reason] =
+  reasonIf(i.securityLabel, SecurityLabel).concat(reasonIf(i.humanGated, HumanGated)).concat(reasonIf(i.epic, Epic))
+pure def claimReasons(i: Item): List[Reason] =
+  reasonIf(i.hasAssignee, Assigned).concat(reasonIf(i.claimed, Claimed)).concat(reasonIf(i.draft, DraftItem))
+pure def reviewReasons(i: Item): List[Reason] =
+  reasonIf(i.reviewRequested, ReviewRequested).concat(reasonIf(i.approved, Approved)).concat(reasonIf(i.changesRequested, ChangesRequested))
+pure def reasons(i: Item): List[Reason] =
+  val first = authorReasons(i).concat(readinessReasons(i))
+  val second = scopeReasons(i).concat(claimReasons(i))
+  first.concat(second).concat(reviewReasons(i))
+pure def decide(i: Item): Selection = { status: if (blocked(i)) Excluded else Candidate, reasons: reasons(i) }
+pure def offered(c: Census): List[Item] = c.items.select(i => not(blocked(i)))
+pure def lawUnknownAuthorFailsClosed(i: Item): bool = i.author == UnknownAuthor implies (blocked(i) and reasons(i).some(x => x == AuthorUnknown))
+pure def lawUnavailableDiffFailsClosed(i: Item): bool =
+  (i.kind == PullRequestItem and not(i.diffAvailable)) implies (blocked(i) and reasons(i).some(x => x == DiffUnavailable))
+pure def lawUntriagedIssueFailsClosed(i: Item): bool =
+  (i.kind == IssueItem and not(i.contributorReady)) implies (blocked(i) and reasons(i).some(x => x == Untriaged))
+pure def lawOfferedIsUnblocked(i: Item): bool = not(blocked(i)) implies
+  (i.open and i.author == HumanAuthor and not(i.hasAssignee or i.claimed or i.draft or i.reviewRequested or i.blockedLabel or
+    i.approved or i.changesRequested or i.securityLabel or i.humanGated or i.epic))
+pure def lawCandidateIffNoReason(i: Item): bool =
+  blocked(i) iff reasons(i).length() > 0
+pure def lawEveryReasonListed(i: Item): bool =
+  (i.hasAssignee implies reasons(i).some(x => x == Assigned)) and (i.claimed implies reasons(i).some(x => x == Claimed)) and
+  (i.approved implies reasons(i).some(x => x == Approved)) and (i.changesRequested implies reasons(i).some(x => x == ChangesRequested))
 ```
 
-### Simulation samples exercise missing, matching and conflicting evidence
-
-These input sets bound simulation only. The generated guards accept every
-value allowed by their declared types and product rules.
+### Publication requires a complete census and keeps the previous snapshot on failure
 
 ```quint
-pure val baseTreeValues = Set("", "a", "b")
-pure val headTreeValues = Set("", "a", "b")
+pure def canPublish(c: Census, snapshot: int): bool = c.phase == Ready and snapshot > c.previousSnapshot
+pure def publish(c: Census, snapshot: int): Census =
+  { ...c, phase: Published, publishedSnapshot: snapshot, publishedLower: c.lowerDay }
+pure def alwaysItemsDistinct(c: Census): bool = c.items.every(i => i.id > 0 and c.items.select(o => o.id == i.id).length() == 1)
+pure def alwaysCursorsDistinct(c: Census): bool = c.cursorsSeen.every(k => c.cursorsSeen.select(o => o == k).length() == 1)
+pure def alwaysCompleteWhenReady(c: Census): bool = (c.phase == Ready or c.phase == Published) implies
+  (c.terminalSeen and c.items.length() == c.totalCount)
+pure def alwaysFailedKeepsSnapshot(c: Census): bool =
+  (c.phase == Collecting or c.phase == Ready or c.phase == Incomplete) implies c.publishedSnapshot == c.previousSnapshot
+pure def alwaysWindowForward(c: Census): bool = (c.phase == Collecting or c.phase == Ready) implies c.lowerDay >= c.publishedLower
+pure def stepPublishedWindowNeverRegresses(before: Census, after: Census): bool = after.publishedLower >= before.publishedLower
+pure def sometimesPublished(c: Census): bool = c.phase == Published and c.items.length() > 0
+pure def sometimesIncomplete(c: Census): bool = c.phase == Incomplete and c.countChanges == 2
+pure def sometimesRetriedComplete(c: Census): bool = c.phase == Ready and c.countChanges == 1
+pure def sometimesRetainedButNotOffered(c: Census): bool = c.phase == Ready and c.items.some(i => blocked(i)) and c.items.some(i => not(blocked(i)))
+```
+
+### Simulation samples include repeated cursors, count changes and blocked items
+
+```quint
+pure val human: Item = { id: 1, kind: PullRequestItem, open: true, author: HumanAuthor, diffAvailable: true, hasAssignee: false,
+  claimed: false, draft: false, reviewRequested: false, approved: false, changesRequested: false,
+  securityLabel: false, humanGated: false, epic: false, contributorReady: true, blockedLabel: false }
+pure val pageValues = Set(
+  { cursor: 0, next: 5, totalCount: 2, items: List(human) },
+  { cursor: 5, next: 0, totalCount: 2, items: List({ ...human, id: 2, author: UnknownAuthor }) },
+  { cursor: 5, next: 0, totalCount: 3, items: List({ ...human, id: 3 }) },
+  { cursor: 0, next: 0, totalCount: 1, items: List({ ...human, id: 4, hasAssignee: true }) },
+  { cursor: 5, next: 5, totalCount: 2, items: List(human) })
+pure val projectValues = Set({ registered: true, paused: false, retired: false, legacy: false, quarantined: false },
+  { registered: true, paused: true, retired: false, legacy: false, quarantined: false },
+  { registered: true, paused: false, retired: false, legacy: true, quarantined: false })
 pure val lowerDayValues = Set(0, 1, 2)
-pure val mergeTreeValues = Set("", "a", "b")
-pure val pageValues = Set(0, 1, 2)
-pure val pagesValues = Set(0, 1, 2)
-pure val snapshotValues = Set(0, 1, 2)
-pure val sourceIdValues = Set(0, 1, 2)
-pure val sourcesValues = Set(0, 1, 2)
+pure val snapshotValues = Set(1, 2, 3)
+pure val iValues = Set(human, { ...human, author: UnknownAuthor }, { ...human, diffAvailable: false }, { ...human, epic: true },
+  { ...human, open: false }, { ...human, kind: IssueItem, contributorReady: false }, { ...human, kind: IssueItem },
+  { ...human, blockedLabel: true, hasAssignee: true })
 ```

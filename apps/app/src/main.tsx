@@ -1,3 +1,4 @@
+import "@repo/design-system/fonts";
 import { Layer, ManagedRuntime } from "effect";
 import * as KeyValueStore from "effect/persistence/KeyValueStore";
 import { StrictMode } from "react";
@@ -5,6 +6,9 @@ import { createRoot } from "react-dom/client";
 import { App } from "./App.tsx";
 import { greeter } from "./greeter.vibe";
 import "./main.css";
+
+// The product renders dark (packages/design-system/design.md), as Storybook does.
+document.documentElement.classList.add("dark");
 
 const runtime = ManagedRuntime.make(Layer.provide(greeter, KeyValueStore.layerStorage(() => localStorage)));
 

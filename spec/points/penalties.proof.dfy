@@ -1,107 +1,87 @@
-// Source and decision keys remain unique through append and appeal reversal.
-lemma addAccepted_ensures(m: MonthlyPoints, sourceId: int, points: int, period: int)
-  ensures (inv(m) ==> canAddAccepted(m, sourceId, points, period) ==> alwaysPositiveSources(addAccepted(m, sourceId, points, period)))
-  ensures (inv(m) ==> canAddAccepted(m, sourceId, points, period) ==> alwaysUniqueSources(addAccepted(m, sourceId, points, period)))
-  ensures (inv(m) ==> canAddAccepted(m, sourceId, points, period) ==> alwaysNonnegativeStanding(addAccepted(m, sourceId, points, period)))
-  ensures (inv(m) ==> canAddAccepted(m, sourceId, points, period) ==> alwaysDebitsBounded(addAccepted(m, sourceId, points, period)))
-  ensures (inv(m) ==> canAddAccepted(m, sourceId, points, period) ==> alwaysUniqueDecisions(addAccepted(m, sourceId, points, period)))
-  ensures (inv(m) ==> canAddAccepted(m, sourceId, points, period) ==> stepSourcesRetained(m, addAccepted(m, sourceId, points, period)))
-  ensures (inv(m) ==> canAddAccepted(m, sourceId, points, period) ==> stepFrozenRewardStable(m, addAccepted(m, sourceId, points, period)))
+// One row per item survives append and reversal; reversal changes only reversal fields.
+lemma recordPenalty_ensures(p: Penalties, close: ConfirmedClose)
+  ensures (inv(p) ==> canRecordPenalty(p, close) ==> alwaysCreditsValid(recordPenalty(p, close)))
+  ensures (inv(p) ==> canRecordPenalty(p, close) ==> alwaysOnePenaltyPerItem(recordPenalty(p, close)))
+  ensures (inv(p) ==> canRecordPenalty(p, close) ==> alwaysPublishedDebit(recordPenalty(p, close)))
+  ensures (inv(p) ==> canRecordPenalty(p, close) ==> alwaysFrozenWeightsNonNegative(recordPenalty(p, close)))
+  ensures (inv(p) ==> canRecordPenalty(p, close) ==> stepRowsRetained(p, recordPenalty(p, close)))
+  ensures (inv(p) ==> canRecordPenalty(p, close) ==> stepReopensAppendOnly(p, recordPenalty(p, close)))
+  ensures (inv(p) ==> canRecordPenalty(p, close) ==> stepFrozenRetained(p, recordPenalty(p, close)))
 {
-  if inv(m) && canAddAccepted(m, sourceId, points, period) {
-    UniqueSourcesMeaning(m);
-    AppendUniqueSources(m.sources, MonthSource(sourceId, points));
-    UniqueSourcesMeaning(addAccepted(m, sourceId, points, period));
-  }
-}
-
-lemma applyPenalty_ensures(m: MonthlyPoints, receipt: int, period: int, finding: Finding, authenticatedMember: bool, exactOwnRun: bool, nonMaintainer: bool, qualifiedDecision: bool)
-  ensures (inv(m) ==> canApplyPenalty(m, receipt, period, finding, authenticatedMember, exactOwnRun, nonMaintainer, qualifiedDecision) ==> alwaysPositiveSources(applyPenalty(m, receipt, period, finding, authenticatedMember, exactOwnRun, nonMaintainer, qualifiedDecision)))
-  ensures (inv(m) ==> canApplyPenalty(m, receipt, period, finding, authenticatedMember, exactOwnRun, nonMaintainer, qualifiedDecision) ==> alwaysUniqueSources(applyPenalty(m, receipt, period, finding, authenticatedMember, exactOwnRun, nonMaintainer, qualifiedDecision)))
-  ensures (inv(m) ==> canApplyPenalty(m, receipt, period, finding, authenticatedMember, exactOwnRun, nonMaintainer, qualifiedDecision) ==> alwaysNonnegativeStanding(applyPenalty(m, receipt, period, finding, authenticatedMember, exactOwnRun, nonMaintainer, qualifiedDecision)))
-  ensures (inv(m) ==> canApplyPenalty(m, receipt, period, finding, authenticatedMember, exactOwnRun, nonMaintainer, qualifiedDecision) ==> alwaysDebitsBounded(applyPenalty(m, receipt, period, finding, authenticatedMember, exactOwnRun, nonMaintainer, qualifiedDecision)))
-  ensures (inv(m) ==> canApplyPenalty(m, receipt, period, finding, authenticatedMember, exactOwnRun, nonMaintainer, qualifiedDecision) ==> alwaysUniqueDecisions(applyPenalty(m, receipt, period, finding, authenticatedMember, exactOwnRun, nonMaintainer, qualifiedDecision)))
-  ensures (inv(m) ==> canApplyPenalty(m, receipt, period, finding, authenticatedMember, exactOwnRun, nonMaintainer, qualifiedDecision) ==> stepSourcesRetained(m, applyPenalty(m, receipt, period, finding, authenticatedMember, exactOwnRun, nonMaintainer, qualifiedDecision)))
-  ensures (inv(m) ==> canApplyPenalty(m, receipt, period, finding, authenticatedMember, exactOwnRun, nonMaintainer, qualifiedDecision) ==> stepFrozenRewardStable(m, applyPenalty(m, receipt, period, finding, authenticatedMember, exactOwnRun, nonMaintainer, qualifiedDecision)))
-{
-  if inv(m) && canApplyPenalty(m, receipt, period, finding, authenticatedMember, exactOwnRun, nonMaintainer, qualifiedDecision) {
-    UniqueDecisionsMeaning(m);
-    var requested := requestedDebit(finding);
-    var applied := if requested > standingPoints(m) then standingPoints(m) else requested;
-    AppendUniqueDecisions(m.penalties, AppliedPenalty(receipt, requested, applied, false));
-    UniqueDecisionsMeaning(applyPenalty(m, receipt, period, finding, authenticatedMember, exactOwnRun, nonMaintainer, qualifiedDecision));
-  }
-}
-
-lemma reversePenalty_ensures(m: MonthlyPoints, receipt: int, moderatorUpheld: bool)
-  ensures (inv(m) ==> canReversePenalty(m, receipt, moderatorUpheld) ==> alwaysPositiveSources(reversePenalty(m, receipt, moderatorUpheld)))
-  ensures (inv(m) ==> canReversePenalty(m, receipt, moderatorUpheld) ==> alwaysUniqueSources(reversePenalty(m, receipt, moderatorUpheld)))
-  ensures (inv(m) ==> canReversePenalty(m, receipt, moderatorUpheld) ==> alwaysNonnegativeStanding(reversePenalty(m, receipt, moderatorUpheld)))
-  ensures (inv(m) ==> canReversePenalty(m, receipt, moderatorUpheld) ==> alwaysDebitsBounded(reversePenalty(m, receipt, moderatorUpheld)))
-  ensures (inv(m) ==> canReversePenalty(m, receipt, moderatorUpheld) ==> alwaysUniqueDecisions(reversePenalty(m, receipt, moderatorUpheld)))
-  ensures (inv(m) ==> canReversePenalty(m, receipt, moderatorUpheld) ==> stepSourcesRetained(m, reversePenalty(m, receipt, moderatorUpheld)))
-  ensures (inv(m) ==> canReversePenalty(m, receipt, moderatorUpheld) ==> stepFrozenRewardStable(m, reversePenalty(m, receipt, moderatorUpheld)))
-{
-  if inv(m) && canReversePenalty(m, receipt, moderatorUpheld) {
-    UniqueDecisionsMeaning(m);
-    var after := reversePenalty(m, receipt, moderatorUpheld);
-    assert |m.penalties| == |after.penalties|;
-    assert forall i :: 0 <= i < |m.penalties| ==> m.penalties[i].receipt == after.penalties[i].receipt;
-    PreserveDecisionKeys(m.penalties, after.penalties);
-    UniqueDecisionsMeaning(after);
-  }
-}
-
-lemma UniqueSourcesMeaning(m: MonthlyPoints)
-  ensures alwaysUniqueSources(m) == !(exists s :: s in m.sources && !(|ProofLib.Filter((other: MonthSource) => (other.source == s.source), m.sources)| == 1))
-{
-}
-
-lemma UniqueDecisionsMeaning(m: MonthlyPoints)
-  ensures alwaysUniqueDecisions(m) == !(exists p :: p in m.penalties && !(|ProofLib.Filter((other: AppliedPenalty) => (other.receipt == p.receipt), m.penalties)| == 1))
-{
-}
-
-lemma AppendUniqueSources(xs: seq<MonthSource>, added: MonthSource)
-  requires forall value :: value in xs ==> |ProofLib.Filter((other: MonthSource) => (other.source == value.source), xs)| == 1
-  requires forall value :: value in xs ==> value.source != added.source
-  ensures forall value :: value in xs + [added] ==> |ProofLib.Filter((other: MonthSource) => (other.source == value.source), xs + [added])| == 1
-{
-  forall value | value in xs + [added]
-    ensures |ProofLib.Filter((other: MonthSource) => (other.source == value.source), xs + [added])| == 1
-  {
-    ProofLib.FilterAppend((other: MonthSource) => (other.source == value.source), xs, added);
-    if value.source == added.source {
-      ProofLib.FilterNone((other: MonthSource) => (other.source == value.source), xs);
+  if inv(p) && canRecordPenalty(p, close) {
+    var after := recordPenalty(p, close);
+    var added := after.rows[|after.rows| - 1];
+    assert after.rows == p.rows + [added];
+    OneRowMeaning(p);
+    assert forall r :: r in p.rows ==> r.item != added.item;
+    AppendUniqueRows(p.rows, added);
+    OneRowMeaning(after);
+    forall r | r in p.rows
+      ensures exists x :: x in after.rows && (sameDebit(x, r) && (!(r.reversed) || (x == r)))
+    {
+      assert r in after.rows && sameDebit(r, r);
     }
   }
 }
 
-lemma AppendUniqueDecisions(xs: seq<AppliedPenalty>, added: AppliedPenalty)
-  requires forall value :: value in xs ==> |ProofLib.Filter((other: AppliedPenalty) => (other.receipt == value.receipt), xs)| == 1
-  requires forall value :: value in xs ==> value.receipt != added.receipt
-  ensures forall value :: value in xs + [added] ==> |ProofLib.Filter((other: AppliedPenalty) => (other.receipt == value.receipt), xs + [added])| == 1
+lemma reversePenalty_ensures(p: Penalties, authority: ReversalAuthority)
+  ensures (inv(p) ==> canReversePenalty(p, authority) ==> alwaysCreditsValid(reversePenalty(p, authority)))
+  ensures (inv(p) ==> canReversePenalty(p, authority) ==> alwaysOnePenaltyPerItem(reversePenalty(p, authority)))
+  ensures (inv(p) ==> canReversePenalty(p, authority) ==> alwaysPublishedDebit(reversePenalty(p, authority)))
+  ensures (inv(p) ==> canReversePenalty(p, authority) ==> alwaysFrozenWeightsNonNegative(reversePenalty(p, authority)))
+  ensures (inv(p) ==> canReversePenalty(p, authority) ==> stepRowsRetained(p, reversePenalty(p, authority)))
+  ensures (inv(p) ==> canReversePenalty(p, authority) ==> stepReopensAppendOnly(p, reversePenalty(p, authority)))
+  ensures (inv(p) ==> canReversePenalty(p, authority) ==> stepFrozenRetained(p, reversePenalty(p, authority)))
 {
-  forall value | value in xs + [added]
-    ensures |ProofLib.Filter((other: AppliedPenalty) => (other.receipt == value.receipt), xs + [added])| == 1
-  {
-    ProofLib.FilterAppend((other: AppliedPenalty) => (other.receipt == value.receipt), xs, added);
-    if value.receipt == added.receipt {
-      ProofLib.FilterNone((other: AppliedPenalty) => (other.receipt == value.receipt), xs);
+  if inv(p) && canReversePenalty(p, authority) {
+    var after := reversePenalty(p, authority);
+    assert |p.rows| == |after.rows|;
+    assert forall i :: 0 <= i < |p.rows| ==> p.rows[i].item == after.rows[i].item;
+    assert forall i :: 0 <= i < |p.rows| ==> sameDebit(after.rows[i], p.rows[i]);
+    assert forall i :: 0 <= i < |p.rows| ==> p.rows[i].reversed ==> after.rows[i] == p.rows[i];
+    OneRowMeaning(p);
+    PreserveRowItems(p.rows, after.rows);
+    OneRowMeaning(after);
+    forall r | r in p.rows
+      ensures exists x :: x in after.rows && (sameDebit(x, r) && (!(r.reversed) || (x == r)))
+    {
+      var i :| 0 <= i < |p.rows| && p.rows[i] == r;
+      assert after.rows[i] in after.rows;
     }
   }
 }
 
-lemma PreserveDecisionKeys(before: seq<AppliedPenalty>, after: seq<AppliedPenalty>)
+lemma OneRowMeaning(p: Penalties)
+  ensures alwaysOnePenaltyPerItem(p) == !(exists r :: r in p.rows && !(|ProofLib.Filter((o: PenaltyRow) => (o.item == r.item), p.rows)| == 1))
+{
+}
+
+lemma AppendUniqueRows(xs: seq<PenaltyRow>, added: PenaltyRow)
+  requires forall value :: value in xs ==> |ProofLib.Filter((o: PenaltyRow) => (o.item == value.item), xs)| == 1
+  requires forall value :: value in xs ==> value.item != added.item
+  ensures forall value :: value in xs + [added] ==> |ProofLib.Filter((o: PenaltyRow) => (o.item == value.item), xs + [added])| == 1
+{
+  forall value | value in xs + [added]
+    ensures |ProofLib.Filter((o: PenaltyRow) => (o.item == value.item), xs + [added])| == 1
+  {
+    ProofLib.FilterAppend((o: PenaltyRow) => (o.item == value.item), xs, added);
+    if value.item == added.item {
+      ProofLib.FilterNone((o: PenaltyRow) => (o.item == value.item), xs);
+    }
+  }
+}
+
+lemma PreserveRowItems(before: seq<PenaltyRow>, after: seq<PenaltyRow>)
   requires |before| == |after|
-  requires forall i :: 0 <= i < |before| ==> before[i].receipt == after[i].receipt
-  requires forall p :: p in before ==> |ProofLib.Filter((other: AppliedPenalty) => (other.receipt == p.receipt), before)| == 1
-  ensures forall p :: p in after ==> |ProofLib.Filter((other: AppliedPenalty) => (other.receipt == p.receipt), after)| == 1
+  requires forall i :: 0 <= i < |before| ==> before[i].item == after[i].item
+  requires forall r :: r in before ==> |ProofLib.Filter((o: PenaltyRow) => (o.item == r.item), before)| == 1
+  ensures forall r :: r in after ==> |ProofLib.Filter((o: PenaltyRow) => (o.item == r.item), after)| == 1
 {
-  forall p | p in after
-    ensures |ProofLib.Filter((other: AppliedPenalty) => (other.receipt == p.receipt), after)| == 1
+  forall r | r in after
+    ensures |ProofLib.Filter((o: PenaltyRow) => (o.item == r.item), after)| == 1
   {
-    var i :| 0 <= i < |after| && after[i] == p;
-    ProofLib.FilterLengthPointwise((other: AppliedPenalty) => (other.receipt == p.receipt), (other: AppliedPenalty) => (other.receipt == p.receipt), before, after);
+    var i :| 0 <= i < |after| && after[i] == r;
+    assert before[i] in before;
+    ProofLib.FilterLengthPointwise((o: PenaltyRow) => (o.item == r.item), (o: PenaltyRow) => (o.item == r.item), before, after);
   }
 }

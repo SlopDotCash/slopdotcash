@@ -17,3 +17,14 @@ lemma lawPublicRegistrationAppears_ensures(row: Registration)
     assert projection == [projectProjection(row)];
   }
 }
+
+lemma lawFilterPreservesOrder_ensures(first: Registration, second: Registration)
+  ensures (lawFilterPreservesOrder(first, second) == true)
+{
+  var p := (row: Registration) => visibleReferral(row);
+  assert [first, second][1..] == [second];
+  assert [second][1..] == [];
+  ProofLib.FilterCons(p, [first, second]);
+  ProofLib.FilterCons(p, [second]);
+  ProofLib.FilterNil(p, []);
+}

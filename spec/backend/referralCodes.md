@@ -30,6 +30,12 @@ a name outside GitHub login syntax can proceed. An unavailable lookup or a
 login belonging to a different account refuses. Administrator and moderator
 accounts cannot choose a name.
 
+`sameOrigin`, `team` and `github` are verified facts, not request fields:
+the shell derives `sameOrigin` from the request's origin and fetch metadata,
+`team` from the configured team, administrator and moderator GitHub IDs for
+the authenticated actor, and `github` from its own GitHub users API lookup.
+A team account is refused whatever the GitHub lookup says.
+
 ```quint
 type NameEvidence = { text: str, key: str, syntaxValid: bool, reserved: bool }
 type GitHubEvidence = LoginAbsent | LoginBelongsToActor | LoginElsewhere | LookupUnavailable | NotAGitHubLogin
@@ -158,8 +164,12 @@ pure def lawUnsafeReferralCannotRedirect(s: LinkRegistry, route: ReferralPath, k
     | RedirectResult(redirect) => isMethodDenied(redirect.result)
     | _ => false
   }
+pure def lawTeamNeverAccepted(s: LinkRegistry, name: NameEvidence, sameOrigin: bool, github: GitHubEvidence, actor: str): bool =
+  choice(s, name, sameOrigin, true, github, actor) != Accepted
 pure def isMethodDenied(result: Redirect): bool = match result { | MethodDenied => true | _ => false }
 pure val sValues = Set(initial)
+pure val actorValues = Set("", "alice-id", "bob-id")
+pure val sameOriginValues = Set(true, false)
 pure val keyValues = Set("", "alpha")
 pure val membershipValues = Set(MemberAbsent, ReadUnavailable, MemberFound({ actor: "alice-id", login: "alice" }))
 ```

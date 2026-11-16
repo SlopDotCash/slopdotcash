@@ -1,40 +1,136 @@
-// Every retained repository has exactly one immutable contribution-start record.
-lemma RepositoryStartsMeaning(p: Project)
+// Each retained repository has exactly one contribution-start record.
+lemma StartsMeaning(p: Project)
   ensures alwaysRepositoryStarts(p) ==
-    ((forall start :: start in p.repositoryStarts ==> start.month >= 0 && start.repositoryId in p.repositories) &&
-      (forall id :: id in p.repositories ==> |ProofLib.Filter((start: RepositoryStart) => start.repositoryId == id, p.repositoryStarts)| == 1))
+    ((forall start :: start in p.starts ==> start.month >= 0 && start.repositoryId in p.repositories) &&
+      (forall id :: id in p.repositories ==> |ProofLib.Filter((start: RepositoryStart) => (start.repositoryId == id), p.starts)| == 1))
 {
 }
 
-lemma appendRepository_ensures(p: Project, by_: int, appendEvidence: AppendEvidence)
-  ensures (inv(p) ==> canAppendRepository(p, by_, appendEvidence) ==> alwaysAuthorityActor(appendRepository(p, by_, appendEvidence)))
-  ensures (inv(p) ==> canAppendRepository(p, by_, appendEvidence) ==> alwaysHistoryLength(appendRepository(p, by_, appendEvidence)))
-  ensures (inv(p) ==> canAppendRepository(p, by_, appendEvidence) ==> alwaysPublishedRevision(appendRepository(p, by_, appendEvidence)))
-  ensures (inv(p) ==> canAppendRepository(p, by_, appendEvidence) ==> alwaysRetiredPaused(appendRepository(p, by_, appendEvidence)))
-  ensures (inv(p) ==> canAppendRepository(p, by_, appendEvidence) ==> alwaysRegisteredRepository(appendRepository(p, by_, appendEvidence)))
-  ensures (inv(p) ==> canAppendRepository(p, by_, appendEvidence) ==> alwaysClearanceBelongs(appendRepository(p, by_, appendEvidence)))
+// Revision 1 records one start, for the single primary repository of an unregistered project.
+lemma CreatedStarts(p: Project, after: Project)
+  requires |p.repositories| == 1 && p.month >= 0
+  requires after.repositories == p.repositories && after.starts == [RepositoryStart(primary(p), p.month)]
+  ensures alwaysRepositoryStarts(after)
+{
+  forall id | id in after.repositories
+    ensures |ProofLib.Filter((start: RepositoryStart) => (start.repositoryId == id), after.starts)| == 1
+  {
+    assert id == p.repositories[0];
+    ProofLib.FilterOne((start: RepositoryStart) => (start.repositoryId == id), after.starts, 0);
+  }
+  StartsMeaning(after);
+}
+
+lemma create_ensures(p: Project, by_: int, creation: Creation)
+  ensures (inv(p) ==> canCreate(p, by_, creation) ==> alwaysHistoryNumbered(create(p, by_, creation)))
+  ensures (inv(p) ==> canCreate(p, by_, creation) ==> alwaysCurrentRevisionIsState(create(p, by_, creation)))
+  ensures (inv(p) ==> canCreate(p, by_, creation) ==> alwaysCreatedFacts(create(p, by_, creation)))
+  ensures (inv(p) ==> canCreate(p, by_, creation) ==> alwaysPublishedApplicationCreated(create(p, by_, creation)))
+  ensures (inv(p) ==> canCreate(p, by_, creation) ==> alwaysActiveRequirements(create(p, by_, creation)))
+  ensures (inv(p) ==> canCreate(p, by_, creation) ==> alwaysEconomicTermsPrecedeNothing(create(p, by_, creation)))
+  ensures (inv(p) ==> canCreate(p, by_, creation) ==> alwaysClockStarted(create(p, by_, creation)))
+  ensures (inv(p) ==> canCreate(p, by_, creation) ==> alwaysRepositoryBound(create(p, by_, creation)))
+  ensures (inv(p) ==> canCreate(p, by_, creation) ==> alwaysRepositoryStarts(create(p, by_, creation)))
+  ensures (inv(p) ==> canCreate(p, by_, creation) ==> alwaysRestrictedParticipationPaused(create(p, by_, creation)))
+  ensures (inv(p) ==> canCreate(p, by_, creation) ==> alwaysRetirementConsistent(create(p, by_, creation)))
+  ensures (inv(p) ==> canCreate(p, by_, creation) ==> stepHistoryRetained(p, create(p, by_, creation)))
+  ensures (inv(p) ==> canCreate(p, by_, creation) ==> stepRevisionAdvancesByOne(p, create(p, by_, creation)))
+  ensures (inv(p) ==> canCreate(p, by_, creation) ==> stepCreatorFixed(p, create(p, by_, creation)))
+  ensures (inv(p) ==> canCreate(p, by_, creation) ==> stepCancellationFinal(p, create(p, by_, creation)))
+  ensures (inv(p) ==> canCreate(p, by_, creation) ==> stepCancellationAppendsNothing(p, "create", create(p, by_, creation)))
+  ensures (inv(p) ==> canCreate(p, by_, creation) ==> stepEconomicTermsRetained(p, create(p, by_, creation)))
+  ensures (inv(p) ==> canCreate(p, by_, creation) ==> stepFundedAssetFixed(p, create(p, by_, creation)))
+  ensures (inv(p) ==> canCreate(p, by_, creation) ==> stepRepositoryStartsRetained(p, create(p, by_, creation)))
+  ensures (inv(p) ==> canCreate(p, by_, creation) ==> stepRepositoriesRetained(p, create(p, by_, creation)))
+  ensures (inv(p) ==> canCreate(p, by_, creation) ==> stepRemovalReplayAppendsNothing(p, "create", create(p, by_, creation)))
+  ensures (inv(p) ==> canCreate(p, by_, creation) ==> stepOwnerRemovalPermanent(p, create(p, by_, creation)))
+  ensures (inv(p) ==> canCreate(p, by_, creation) ==> stepRestorationIsPausedCommunity(p, "create", create(p, by_, creation)))
+  ensures (inv(p) ==> canCreate(p, by_, creation) ==> stepOnlyReinstatementUnretires(p, "create", create(p, by_, creation)))
+  ensures (inv(p) ==> canCreate(p, by_, creation) ==> stepEveryManifestChangeAppendsRevision(p, create(p, by_, creation)))
+  ensures (inv(p) ==> canCreate(p, by_, creation) ==> stepClockMonotone(p, create(p, by_, creation)))
+{
+  if inv(p) && canCreate(p, by_, creation) {
+    CreatedStarts(p, create(p, by_, creation));
+  }
+}
+
+lemma publishApplication_ensures(p: Project, by_: int, creation: Creation)
+  ensures (inv(p) ==> canPublishApplication(p, by_, creation) ==> alwaysHistoryNumbered(publishApplication(p, by_, creation)))
+  ensures (inv(p) ==> canPublishApplication(p, by_, creation) ==> alwaysCurrentRevisionIsState(publishApplication(p, by_, creation)))
+  ensures (inv(p) ==> canPublishApplication(p, by_, creation) ==> alwaysCreatedFacts(publishApplication(p, by_, creation)))
+  ensures (inv(p) ==> canPublishApplication(p, by_, creation) ==> alwaysPublishedApplicationCreated(publishApplication(p, by_, creation)))
+  ensures (inv(p) ==> canPublishApplication(p, by_, creation) ==> alwaysActiveRequirements(publishApplication(p, by_, creation)))
+  ensures (inv(p) ==> canPublishApplication(p, by_, creation) ==> alwaysEconomicTermsPrecedeNothing(publishApplication(p, by_, creation)))
+  ensures (inv(p) ==> canPublishApplication(p, by_, creation) ==> alwaysClockStarted(publishApplication(p, by_, creation)))
+  ensures (inv(p) ==> canPublishApplication(p, by_, creation) ==> alwaysRepositoryBound(publishApplication(p, by_, creation)))
+  ensures (inv(p) ==> canPublishApplication(p, by_, creation) ==> alwaysRepositoryStarts(publishApplication(p, by_, creation)))
+  ensures (inv(p) ==> canPublishApplication(p, by_, creation) ==> alwaysRestrictedParticipationPaused(publishApplication(p, by_, creation)))
+  ensures (inv(p) ==> canPublishApplication(p, by_, creation) ==> alwaysRetirementConsistent(publishApplication(p, by_, creation)))
+  ensures (inv(p) ==> canPublishApplication(p, by_, creation) ==> stepHistoryRetained(p, publishApplication(p, by_, creation)))
+  ensures (inv(p) ==> canPublishApplication(p, by_, creation) ==> stepRevisionAdvancesByOne(p, publishApplication(p, by_, creation)))
+  ensures (inv(p) ==> canPublishApplication(p, by_, creation) ==> stepCreatorFixed(p, publishApplication(p, by_, creation)))
+  ensures (inv(p) ==> canPublishApplication(p, by_, creation) ==> stepCancellationFinal(p, publishApplication(p, by_, creation)))
+  ensures (inv(p) ==> canPublishApplication(p, by_, creation) ==> stepCancellationAppendsNothing(p, "publishApplication", publishApplication(p, by_, creation)))
+  ensures (inv(p) ==> canPublishApplication(p, by_, creation) ==> stepEconomicTermsRetained(p, publishApplication(p, by_, creation)))
+  ensures (inv(p) ==> canPublishApplication(p, by_, creation) ==> stepFundedAssetFixed(p, publishApplication(p, by_, creation)))
+  ensures (inv(p) ==> canPublishApplication(p, by_, creation) ==> stepRepositoryStartsRetained(p, publishApplication(p, by_, creation)))
+  ensures (inv(p) ==> canPublishApplication(p, by_, creation) ==> stepRepositoriesRetained(p, publishApplication(p, by_, creation)))
+  ensures (inv(p) ==> canPublishApplication(p, by_, creation) ==> stepRemovalReplayAppendsNothing(p, "publishApplication", publishApplication(p, by_, creation)))
+  ensures (inv(p) ==> canPublishApplication(p, by_, creation) ==> stepOwnerRemovalPermanent(p, publishApplication(p, by_, creation)))
+  ensures (inv(p) ==> canPublishApplication(p, by_, creation) ==> stepRestorationIsPausedCommunity(p, "publishApplication", publishApplication(p, by_, creation)))
+  ensures (inv(p) ==> canPublishApplication(p, by_, creation) ==> stepOnlyReinstatementUnretires(p, "publishApplication", publishApplication(p, by_, creation)))
+  ensures (inv(p) ==> canPublishApplication(p, by_, creation) ==> stepEveryManifestChangeAppendsRevision(p, publishApplication(p, by_, creation)))
+  ensures (inv(p) ==> canPublishApplication(p, by_, creation) ==> stepClockMonotone(p, publishApplication(p, by_, creation)))
+{
+  if inv(p) && canPublishApplication(p, by_, creation) {
+    CreatedStarts(p, publishApplication(p, by_, creation));
+  }
+}
+
+lemma appendRepository_ensures(p: Project, by_: int, appendEvidence: Append)
+  ensures (inv(p) ==> canAppendRepository(p, by_, appendEvidence) ==> alwaysHistoryNumbered(appendRepository(p, by_, appendEvidence)))
+  ensures (inv(p) ==> canAppendRepository(p, by_, appendEvidence) ==> alwaysCurrentRevisionIsState(appendRepository(p, by_, appendEvidence)))
+  ensures (inv(p) ==> canAppendRepository(p, by_, appendEvidence) ==> alwaysCreatedFacts(appendRepository(p, by_, appendEvidence)))
+  ensures (inv(p) ==> canAppendRepository(p, by_, appendEvidence) ==> alwaysPublishedApplicationCreated(appendRepository(p, by_, appendEvidence)))
+  ensures (inv(p) ==> canAppendRepository(p, by_, appendEvidence) ==> alwaysActiveRequirements(appendRepository(p, by_, appendEvidence)))
+  ensures (inv(p) ==> canAppendRepository(p, by_, appendEvidence) ==> alwaysEconomicTermsPrecedeNothing(appendRepository(p, by_, appendEvidence)))
+  ensures (inv(p) ==> canAppendRepository(p, by_, appendEvidence) ==> alwaysClockStarted(appendRepository(p, by_, appendEvidence)))
+  ensures (inv(p) ==> canAppendRepository(p, by_, appendEvidence) ==> alwaysRepositoryBound(appendRepository(p, by_, appendEvidence)))
   ensures (inv(p) ==> canAppendRepository(p, by_, appendEvidence) ==> alwaysRepositoryStarts(appendRepository(p, by_, appendEvidence)))
-  ensures (inv(p) ==> canAppendRepository(p, by_, appendEvidence) ==> alwaysActiveClearance(appendRepository(p, by_, appendEvidence)))
-  ensures (inv(p) ==> canAppendRepository(p, by_, appendEvidence) ==> stepApplicantRetained(p, appendRepository(p, by_, appendEvidence)))
-  ensures (inv(p) ==> canAppendRepository(p, by_, appendEvidence) ==> stepHistoryOnlyAppends(p, appendRepository(p, by_, appendEvidence)))
-  ensures (inv(p) ==> canAppendRepository(p, by_, appendEvidence) ==> stepRepositoriesRetained(p, appendRepository(p, by_, appendEvidence)))
+  ensures (inv(p) ==> canAppendRepository(p, by_, appendEvidence) ==> alwaysRestrictedParticipationPaused(appendRepository(p, by_, appendEvidence)))
+  ensures (inv(p) ==> canAppendRepository(p, by_, appendEvidence) ==> alwaysRetirementConsistent(appendRepository(p, by_, appendEvidence)))
+  ensures (inv(p) ==> canAppendRepository(p, by_, appendEvidence) ==> stepHistoryRetained(p, appendRepository(p, by_, appendEvidence)))
+  ensures (inv(p) ==> canAppendRepository(p, by_, appendEvidence) ==> stepRevisionAdvancesByOne(p, appendRepository(p, by_, appendEvidence)))
+  ensures (inv(p) ==> canAppendRepository(p, by_, appendEvidence) ==> stepCreatorFixed(p, appendRepository(p, by_, appendEvidence)))
+  ensures (inv(p) ==> canAppendRepository(p, by_, appendEvidence) ==> stepCancellationFinal(p, appendRepository(p, by_, appendEvidence)))
+  ensures (inv(p) ==> canAppendRepository(p, by_, appendEvidence) ==> stepCancellationAppendsNothing(p, "appendRepository", appendRepository(p, by_, appendEvidence)))
+  ensures (inv(p) ==> canAppendRepository(p, by_, appendEvidence) ==> stepEconomicTermsRetained(p, appendRepository(p, by_, appendEvidence)))
+  ensures (inv(p) ==> canAppendRepository(p, by_, appendEvidence) ==> stepFundedAssetFixed(p, appendRepository(p, by_, appendEvidence)))
   ensures (inv(p) ==> canAppendRepository(p, by_, appendEvidence) ==> stepRepositoryStartsRetained(p, appendRepository(p, by_, appendEvidence)))
-  ensures (inv(p) ==> canAppendRepository(p, by_, appendEvidence) ==> stepUpdateHistoryRetained(p, appendRepository(p, by_, appendEvidence)))
-  ensures (inv(p) ==> canAppendRepository(p, by_, appendEvidence) ==> stepCancelKeepsPublishedRevision(p, "appendRepository", appendRepository(p, by_, appendEvidence)))
+  ensures (inv(p) ==> canAppendRepository(p, by_, appendEvidence) ==> stepRepositoriesRetained(p, appendRepository(p, by_, appendEvidence)))
+  ensures (inv(p) ==> canAppendRepository(p, by_, appendEvidence) ==> stepRemovalReplayAppendsNothing(p, "appendRepository", appendRepository(p, by_, appendEvidence)))
+  ensures (inv(p) ==> canAppendRepository(p, by_, appendEvidence) ==> stepOwnerRemovalPermanent(p, appendRepository(p, by_, appendEvidence)))
+  ensures (inv(p) ==> canAppendRepository(p, by_, appendEvidence) ==> stepRestorationIsPausedCommunity(p, "appendRepository", appendRepository(p, by_, appendEvidence)))
+  ensures (inv(p) ==> canAppendRepository(p, by_, appendEvidence) ==> stepOnlyReinstatementUnretires(p, "appendRepository", appendRepository(p, by_, appendEvidence)))
+  ensures (inv(p) ==> canAppendRepository(p, by_, appendEvidence) ==> stepEveryManifestChangeAppendsRevision(p, appendRepository(p, by_, appendEvidence)))
+  ensures (inv(p) ==> canAppendRepository(p, by_, appendEvidence) ==> stepClockMonotone(p, appendRepository(p, by_, appendEvidence)))
 {
   if inv(p) && canAppendRepository(p, by_, appendEvidence) {
-    RepositoryStartsMeaning(p);
-    var added := RepositoryStart(appendEvidence.repositoryId, appendEvidence.currentMonth + 1);
+    StartsMeaning(p);
+    var added := RepositoryStart(appendEvidence.facts.repository, p.month + 1);
     var after := appendRepository(p, by_, appendEvidence);
+    assert after.starts == p.starts + [added];
+    assert after.repositories == p.repositories + [appendEvidence.facts.repository];
+    assert primary(after) == primary(p);
     forall id | id in after.repositories
-      ensures |ProofLib.Filter((start: RepositoryStart) => start.repositoryId == id, after.repositoryStarts)| == 1
+      ensures |ProofLib.Filter((start: RepositoryStart) => (start.repositoryId == id), after.starts)| == 1
     {
-      ProofLib.FilterAppend((start: RepositoryStart) => start.repositoryId == id, p.repositoryStarts, added);
-      if id == appendEvidence.repositoryId {
-        ProofLib.FilterNone((start: RepositoryStart) => start.repositoryId == id, p.repositoryStarts);
+      ProofLib.FilterAppend((start: RepositoryStart) => (start.repositoryId == id), p.starts, added);
+      if id == appendEvidence.facts.repository {
+        ProofLib.FilterNone((start: RepositoryStart) => (start.repositoryId == id), p.starts);
       }
     }
-    RepositoryStartsMeaning(after);
+    StartsMeaning(after);
   }
 }
 
@@ -42,6 +138,6 @@ lemma initialHolds_ensures()
   ensures inv(initialHolds())
 {
   var p := initialHolds();
-  ProofLib.FilterOne((start: RepositoryStart) => start.repositoryId == 1, p.repositoryStarts, 0);
-  RepositoryStartsMeaning(p);
+  ProofLib.FilterOne((start: RepositoryStart) => (start.repositoryId == 1), p.starts, 0);
+  StartsMeaning(p);
 }

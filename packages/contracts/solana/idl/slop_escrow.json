@@ -1,0 +1,2700 @@
+{
+  "address": "7E5ZRh5y6Xgg7k3kdS75CMiTE2efoq9PqNWR5fCVDavQ",
+  "metadata": {
+    "name": "slop_escrow",
+    "version": "0.1.0",
+    "spec": "0.1.0"
+  },
+  "instructions": [
+    {
+      "name": "bind_wallet",
+      "discriminator": [156, 226, 250, 174, 87, 6, 18, 131],
+      "accounts": [
+        {
+          "name": "payer",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "identity_authority",
+          "signer": true,
+          "relations": ["project"]
+        },
+        {
+          "name": "destination",
+          "docs": [
+            "The wallet being bound; its signature is the contributor's acceptance of this exact binding."
+          ],
+          "signer": true
+        },
+        {
+          "name": "project"
+        },
+        {
+          "name": "binding",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [119, 97, 108, 108, 101, 116]
+              },
+              {
+                "kind": "account",
+                "path": "project"
+              },
+              {
+                "kind": "arg",
+                "path": "actor_id"
+              }
+            ]
+          }
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "actor_id",
+          "type": "u64"
+        },
+        {
+          "name": "network",
+          "type": {
+            "array": ["u8", 32]
+          }
+        },
+        {
+          "name": "expected_version",
+          "type": "u64"
+        },
+        {
+          "name": "claim_digest",
+          "type": {
+            "array": ["u8", 32]
+          }
+        },
+        {
+          "name": "expires_at",
+          "type": "i64"
+        }
+      ]
+    },
+    {
+      "name": "cancel_authority_rotation",
+      "discriminator": [96, 136, 64, 98, 225, 94, 218, 47],
+      "accounts": [
+        {
+          "name": "owner",
+          "signer": true,
+          "relations": ["project"]
+        },
+        {
+          "name": "project",
+          "writable": true
+        }
+      ],
+      "args": []
+    },
+    {
+      "name": "claim_fees",
+      "discriminator": [82, 251, 233, 156, 12, 52, 184, 202],
+      "accounts": [
+        {
+          "name": "project",
+          "writable": true
+        },
+        {
+          "name": "mint",
+          "relations": ["project"]
+        },
+        {
+          "name": "vault",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [118, 97, 117, 108, 116]
+              },
+              {
+                "kind": "account",
+                "path": "project"
+              }
+            ]
+          }
+        },
+        {
+          "name": "fee_account",
+          "docs": [
+            "Any token account of the mint that the fee recipient owns."
+          ],
+          "writable": true
+        },
+        {
+          "name": "token_program"
+        }
+      ],
+      "args": []
+    },
+    {
+      "name": "claim_fees_native",
+      "discriminator": [191, 89, 211, 129, 186, 98, 126, 166],
+      "accounts": [
+        {
+          "name": "project",
+          "writable": true
+        },
+        {
+          "name": "vault",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [118, 97, 117, 108, 116]
+              },
+              {
+                "kind": "account",
+                "path": "project"
+              }
+            ]
+          }
+        },
+        {
+          "name": "fee_account",
+          "writable": true
+        }
+      ],
+      "args": []
+    },
+    {
+      "name": "commit",
+      "discriminator": [223, 140, 142, 165, 229, 208, 156, 74],
+      "accounts": [
+        {
+          "name": "owner",
+          "writable": true,
+          "signer": true,
+          "relations": ["project"]
+        },
+        {
+          "name": "project",
+          "writable": true
+        },
+        {
+          "name": "vault",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [118, 97, 117, 108, 116]
+              },
+              {
+                "kind": "account",
+                "path": "project"
+              }
+            ]
+          }
+        },
+        {
+          "name": "origin",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [111, 114, 105, 103, 105, 110]
+              },
+              {
+                "kind": "account",
+                "path": "project"
+              },
+              {
+                "kind": "arg",
+                "path": "source_digest"
+              }
+            ]
+          }
+        },
+        {
+          "name": "obligation",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [97, 119, 97, 114, 100]
+              },
+              {
+                "kind": "account",
+                "path": "project"
+              },
+              {
+                "kind": "arg",
+                "path": "award_id"
+              }
+            ]
+          }
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "award_id",
+          "type": {
+            "array": ["u8", 32]
+          }
+        },
+        {
+          "name": "source_digest",
+          "type": {
+            "array": ["u8", 32]
+          }
+        },
+        {
+          "name": "actor_id",
+          "type": "u64"
+        },
+        {
+          "name": "gross",
+          "type": "u64"
+        }
+      ]
+    },
+    {
+      "name": "commit_bounty",
+      "docs": [
+        "Bounties reuse ordinary reserves, destination authorization and recovery, in a",
+        "bounty-purpose project only."
+      ],
+      "discriminator": [154, 59, 142, 180, 230, 40, 184, 226],
+      "accounts": [
+        {
+          "name": "owner",
+          "writable": true,
+          "signer": true,
+          "relations": ["project"]
+        },
+        {
+          "name": "project",
+          "writable": true
+        },
+        {
+          "name": "vault",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [118, 97, 117, 108, 116]
+              },
+              {
+                "kind": "account",
+                "path": "project"
+              }
+            ]
+          }
+        },
+        {
+          "name": "origin",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [111, 114, 105, 103, 105, 110]
+              },
+              {
+                "kind": "account",
+                "path": "project"
+              },
+              {
+                "kind": "arg",
+                "path": "source_digest"
+              }
+            ]
+          }
+        },
+        {
+          "name": "obligation",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [97, 119, 97, 114, 100]
+              },
+              {
+                "kind": "account",
+                "path": "project"
+              },
+              {
+                "kind": "arg",
+                "path": "award_id"
+              }
+            ]
+          }
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "award_id",
+          "type": {
+            "array": ["u8", 32]
+          }
+        },
+        {
+          "name": "source_digest",
+          "type": {
+            "array": ["u8", 32]
+          }
+        },
+        {
+          "name": "actor_id",
+          "type": "u64"
+        },
+        {
+          "name": "gross",
+          "type": "u64"
+        }
+      ]
+    },
+    {
+      "name": "commit_monthly",
+      "discriminator": [217, 169, 208, 210, 29, 58, 88, 195],
+      "accounts": [
+        {
+          "name": "payer",
+          "docs": ["Anyone; pays the period account's rent."],
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "project",
+          "writable": true
+        },
+        {
+          "name": "vault",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [118, 97, 117, 108, 116]
+              },
+              {
+                "kind": "account",
+                "path": "project"
+              }
+            ]
+          }
+        },
+        {
+          "name": "month",
+          "docs": ["One per project and period, so a period commits once."],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [109, 111, 110, 116, 104]
+              },
+              {
+                "kind": "account",
+                "path": "project"
+              },
+              {
+                "kind": "arg",
+                "path": "period"
+              }
+            ]
+          }
+        },
+        {
+          "name": "instructions",
+          "address": "Sysvar1nstructions1111111111111111111111111"
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "period",
+          "type": "u32"
+        },
+        {
+          "name": "allocation_root",
+          "type": {
+            "array": ["u8", 32]
+          }
+        },
+        {
+          "name": "total",
+          "type": "u64"
+        },
+        {
+          "name": "frozen_at",
+          "type": "i64"
+        }
+      ]
+    },
+    {
+      "name": "commit_monthly_award",
+      "discriminator": [98, 176, 71, 100, 186, 51, 43, 100],
+      "accounts": [
+        {
+          "name": "payer",
+          "docs": ["Anyone; pays the award accounts' rent."],
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "project",
+          "writable": true,
+          "relations": ["month"]
+        },
+        {
+          "name": "vault",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [118, 97, 117, 108, 116]
+              },
+              {
+                "kind": "account",
+                "path": "project"
+              }
+            ]
+          }
+        },
+        {
+          "name": "month",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [109, 111, 110, 116, 104]
+              },
+              {
+                "kind": "account",
+                "path": "project"
+              },
+              {
+                "kind": "arg",
+                "path": "period"
+              }
+            ]
+          }
+        },
+        {
+          "name": "origin",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [111, 114, 105, 103, 105, 110]
+              },
+              {
+                "kind": "account",
+                "path": "project"
+              },
+              {
+                "kind": "arg",
+                "path": "source_digest"
+              }
+            ]
+          }
+        },
+        {
+          "name": "obligation",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [97, 119, 97, 114, 100]
+              },
+              {
+                "kind": "account",
+                "path": "project"
+              },
+              {
+                "kind": "arg",
+                "path": "award_id"
+              }
+            ]
+          }
+        },
+        {
+          "name": "settled",
+          "docs": [
+            "Exists once per source in a month, so a committed award cannot also be released."
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [115, 101, 116, 116, 108, 101, 100]
+              },
+              {
+                "kind": "account",
+                "path": "month"
+              },
+              {
+                "kind": "arg",
+                "path": "source_digest"
+              }
+            ]
+          }
+        },
+        {
+          "name": "monthly_source",
+          "docs": [
+            "Records that a monthly award consumed this source, so the same source in another",
+            "month can be released."
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  109, 111, 110, 116, 104, 108, 121, 45, 115, 111, 117, 114, 99,
+                  101
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "project"
+              },
+              {
+                "kind": "arg",
+                "path": "source_digest"
+              }
+            ]
+          }
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "period",
+          "type": "u32"
+        },
+        {
+          "name": "award_id",
+          "type": {
+            "array": ["u8", 32]
+          }
+        },
+        {
+          "name": "source_digest",
+          "type": {
+            "array": ["u8", 32]
+          }
+        },
+        {
+          "name": "actor_id",
+          "type": "u64"
+        },
+        {
+          "name": "gross",
+          "type": "u64"
+        },
+        {
+          "name": "index",
+          "type": "u32"
+        },
+        {
+          "name": "count",
+          "type": "u32"
+        },
+        {
+          "name": "proof",
+          "type": {
+            "vec": {
+              "defined": {
+                "name": "AllocationNode"
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "confirm_authority_rotation",
+      "discriminator": [3, 247, 66, 156, 194, 171, 127, 86],
+      "accounts": [
+        {
+          "name": "rotation_authority",
+          "signer": true,
+          "relations": ["config"]
+        },
+        {
+          "name": "config",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [99, 111, 110, 102, 105, 103]
+              }
+            ]
+          }
+        },
+        {
+          "name": "project",
+          "writable": true
+        }
+      ],
+      "args": []
+    },
+    {
+      "name": "deposit",
+      "discriminator": [242, 35, 198, 137, 82, 225, 242, 182],
+      "accounts": [
+        {
+          "name": "depositor",
+          "signer": true
+        },
+        {
+          "name": "project",
+          "writable": true
+        },
+        {
+          "name": "mint",
+          "relations": ["project"]
+        },
+        {
+          "name": "source",
+          "writable": true
+        },
+        {
+          "name": "vault",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [118, 97, 117, 108, 116]
+              },
+              {
+                "kind": "account",
+                "path": "project"
+              }
+            ]
+          }
+        },
+        {
+          "name": "token_program"
+        }
+      ],
+      "args": [
+        {
+          "name": "amount",
+          "type": "u64"
+        }
+      ]
+    },
+    {
+      "name": "deposit_native",
+      "discriminator": [13, 158, 13, 223, 95, 213, 28, 6],
+      "accounts": [
+        {
+          "name": "depositor",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "project",
+          "writable": true
+        },
+        {
+          "name": "vault",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [118, 97, 117, 108, 116]
+              },
+              {
+                "kind": "account",
+                "path": "project"
+              }
+            ]
+          }
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "amount",
+          "type": "u64"
+        }
+      ]
+    },
+    {
+      "name": "execute_authority_rotation",
+      "discriminator": [175, 179, 226, 16, 149, 224, 30, 172],
+      "accounts": [
+        {
+          "name": "project",
+          "writable": true
+        }
+      ],
+      "args": []
+    },
+    {
+      "name": "initialize",
+      "discriminator": [175, 175, 109, 31, 13, 152, 155, 237],
+      "accounts": [
+        {
+          "name": "owner",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "project",
+          "docs": [
+            "One project per owner, project ID and purpose, so ordinary awards and private bounties",
+            "never share a vault."
+          ],
+          "writable": true
+        },
+        {
+          "name": "mint",
+          "docs": [
+            "Classic SPL or the approved metadata-only Token-2022 subset."
+          ]
+        },
+        {
+          "name": "vault",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [118, 97, 117, 108, 116]
+              },
+              {
+                "kind": "account",
+                "path": "project"
+              }
+            ]
+          }
+        },
+        {
+          "name": "token_program"
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        },
+        {
+          "name": "config",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [99, 111, 110, 102, 105, 103]
+              }
+            ]
+          }
+        }
+      ],
+      "args": [
+        {
+          "name": "project_id",
+          "type": {
+            "array": ["u8", 32]
+          }
+        },
+        {
+          "name": "network",
+          "type": {
+            "array": ["u8", 32]
+          }
+        },
+        {
+          "name": "identity_authority",
+          "type": "pubkey"
+        },
+        {
+          "name": "fee_recipient",
+          "type": "pubkey"
+        },
+        {
+          "name": "binding_delay",
+          "type": "i64"
+        },
+        {
+          "name": "rotation_delay",
+          "type": "i64"
+        },
+        {
+          "name": "purpose",
+          "type": {
+            "defined": {
+              "name": "Purpose"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "initialize_config",
+      "discriminator": [208, 127, 21, 1, 194, 190, 196, 70],
+      "accounts": [
+        {
+          "name": "authority",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "config",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [99, 111, 110, 102, 105, 103]
+              }
+            ]
+          }
+        },
+        {
+          "name": "program",
+          "address": "7E5ZRh5y6Xgg7k3kdS75CMiTE2efoq9PqNWR5fCVDavQ"
+        },
+        {
+          "name": "program_data"
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "identity_authority",
+          "type": "pubkey"
+        },
+        {
+          "name": "fee_recipient",
+          "type": "pubkey"
+        },
+        {
+          "name": "rotation_authority",
+          "type": "pubkey"
+        }
+      ]
+    },
+    {
+      "name": "initialize_native",
+      "docs": [
+        "SOL stays in a program-owned vault, never a wrapped token account. The asset sentinel",
+        "occupies the existing immutable mint field, so existing Project layouts are unchanged."
+      ],
+      "discriminator": [58, 79, 79, 22, 127, 213, 117, 193],
+      "accounts": [
+        {
+          "name": "owner",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "project",
+          "writable": true
+        },
+        {
+          "name": "vault",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [118, 97, 117, 108, 116]
+              },
+              {
+                "kind": "account",
+                "path": "project"
+              }
+            ]
+          }
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        },
+        {
+          "name": "config",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [99, 111, 110, 102, 105, 103]
+              }
+            ]
+          }
+        }
+      ],
+      "args": [
+        {
+          "name": "project_id",
+          "type": {
+            "array": ["u8", 32]
+          }
+        },
+        {
+          "name": "network",
+          "type": {
+            "array": ["u8", 32]
+          }
+        },
+        {
+          "name": "identity_authority",
+          "type": "pubkey"
+        },
+        {
+          "name": "fee_recipient",
+          "type": "pubkey"
+        },
+        {
+          "name": "binding_delay",
+          "type": "i64"
+        },
+        {
+          "name": "rotation_delay",
+          "type": "i64"
+        },
+        {
+          "name": "purpose",
+          "type": {
+            "defined": {
+              "name": "Purpose"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "migrate_project",
+      "discriminator": [1, 96, 78, 101, 244, 33, 203, 108],
+      "accounts": [
+        {
+          "name": "payer",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "project",
+          "writable": true
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": []
+    },
+    {
+      "name": "pay",
+      "discriminator": [119, 18, 216, 65, 192, 117, 122, 220],
+      "accounts": [
+        {
+          "name": "project",
+          "writable": true,
+          "relations": ["obligation"]
+        },
+        {
+          "name": "obligation",
+          "writable": true
+        },
+        {
+          "name": "binding",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [119, 97, 108, 108, 101, 116]
+              },
+              {
+                "kind": "account",
+                "path": "project"
+              },
+              {
+                "kind": "account",
+                "path": "obligation.actor_id",
+                "account": "Obligation"
+              }
+            ]
+          }
+        },
+        {
+          "name": "mint",
+          "relations": ["project"]
+        },
+        {
+          "name": "vault",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [118, 97, 117, 108, 116]
+              },
+              {
+                "kind": "account",
+                "path": "project"
+              }
+            ]
+          }
+        },
+        {
+          "name": "destination",
+          "docs": [
+            "The handler requires this to be the associated token account of whichever binding pays."
+          ],
+          "writable": true
+        },
+        {
+          "name": "token_program"
+        },
+        {
+          "name": "veto",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [118, 101, 116, 111]
+              },
+              {
+                "kind": "account",
+                "path": "project"
+              },
+              {
+                "kind": "account",
+                "path": "obligation.actor_id",
+                "account": "Obligation"
+              },
+              {
+                "kind": "account",
+                "path": "binding.version",
+                "account": "WalletBinding"
+              }
+            ]
+          }
+        }
+      ],
+      "args": [
+        {
+          "name": "expected_version",
+          "type": "u64"
+        }
+      ]
+    },
+    {
+      "name": "pay_native",
+      "discriminator": [116, 31, 164, 230, 244, 244, 218, 204],
+      "accounts": [
+        {
+          "name": "project",
+          "writable": true,
+          "relations": ["obligation"]
+        },
+        {
+          "name": "obligation",
+          "writable": true
+        },
+        {
+          "name": "binding",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [119, 97, 108, 108, 101, 116]
+              },
+              {
+                "kind": "account",
+                "path": "project"
+              },
+              {
+                "kind": "account",
+                "path": "obligation.actor_id",
+                "account": "Obligation"
+              }
+            ]
+          }
+        },
+        {
+          "name": "vault",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [118, 97, 117, 108, 116]
+              },
+              {
+                "kind": "account",
+                "path": "project"
+              }
+            ]
+          }
+        },
+        {
+          "name": "destination",
+          "writable": true
+        },
+        {
+          "name": "veto",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [118, 101, 116, 111]
+              },
+              {
+                "kind": "account",
+                "path": "project"
+              },
+              {
+                "kind": "account",
+                "path": "obligation.actor_id",
+                "account": "Obligation"
+              },
+              {
+                "kind": "account",
+                "path": "binding.version",
+                "account": "WalletBinding"
+              }
+            ]
+          }
+        }
+      ],
+      "args": [
+        {
+          "name": "expected_version",
+          "type": "u64"
+        }
+      ]
+    },
+    {
+      "name": "propose_authority_rotation",
+      "discriminator": [185, 202, 177, 179, 135, 170, 62, 115],
+      "accounts": [
+        {
+          "name": "owner",
+          "signer": true,
+          "relations": ["project"]
+        },
+        {
+          "name": "project",
+          "writable": true
+        },
+        {
+          "name": "config",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [99, 111, 110, 102, 105, 103]
+              }
+            ]
+          }
+        }
+      ],
+      "args": [
+        {
+          "name": "next",
+          "type": "pubkey"
+        }
+      ]
+    },
+    {
+      "name": "release_monthly_award",
+      "discriminator": [251, 169, 31, 29, 244, 159, 21, 237],
+      "accounts": [
+        {
+          "name": "payer",
+          "docs": ["Anyone; pays the settlement marker's rent."],
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "project",
+          "writable": true,
+          "relations": ["month"]
+        },
+        {
+          "name": "month",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [109, 111, 110, 116, 104]
+              },
+              {
+                "kind": "account",
+                "path": "project"
+              },
+              {
+                "kind": "arg",
+                "path": "period"
+              }
+            ]
+          }
+        },
+        {
+          "name": "origin",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [111, 114, 105, 103, 105, 110]
+              },
+              {
+                "kind": "account",
+                "path": "project"
+              },
+              {
+                "kind": "arg",
+                "path": "source_digest"
+              }
+            ]
+          }
+        },
+        {
+          "name": "monthly_source",
+          "docs": [
+            "recorded obligation decides); it stays so the instruction's accounts are unchanged."
+          ],
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  109, 111, 110, 116, 104, 108, 121, 45, 115, 111, 117, 114, 99,
+                  101
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "project"
+              },
+              {
+                "kind": "arg",
+                "path": "source_digest"
+              }
+            ]
+          }
+        },
+        {
+          "name": "obligation",
+          "docs": [
+            "The obligation the origin records; required unless the actor is zero."
+          ],
+          "optional": true
+        },
+        {
+          "name": "settled",
+          "docs": [
+            "The same marker as commit_monthly_award, so a source settles once per month."
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [115, 101, 116, 116, 108, 101, 100]
+              },
+              {
+                "kind": "account",
+                "path": "month"
+              },
+              {
+                "kind": "arg",
+                "path": "source_digest"
+              }
+            ]
+          }
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "period",
+          "type": "u32"
+        },
+        {
+          "name": "source_digest",
+          "type": {
+            "array": ["u8", 32]
+          }
+        },
+        {
+          "name": "actor_id",
+          "type": "u64"
+        },
+        {
+          "name": "gross",
+          "type": "u64"
+        },
+        {
+          "name": "index",
+          "type": "u32"
+        },
+        {
+          "name": "count",
+          "type": "u32"
+        },
+        {
+          "name": "proof",
+          "type": {
+            "vec": {
+              "defined": {
+                "name": "AllocationNode"
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "release_monthly_reserve",
+      "discriminator": [47, 118, 32, 195, 130, 32, 140, 104],
+      "accounts": [
+        {
+          "name": "owner",
+          "signer": true,
+          "relations": ["project"]
+        },
+        {
+          "name": "project",
+          "writable": true,
+          "relations": ["month"]
+        },
+        {
+          "name": "month",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [109, 111, 110, 116, 104]
+              },
+              {
+                "kind": "account",
+                "path": "project"
+              },
+              {
+                "kind": "arg",
+                "path": "period"
+              }
+            ]
+          }
+        },
+        {
+          "name": "instructions",
+          "address": "Sysvar1nstructions1111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "period",
+          "type": "u32"
+        },
+        {
+          "name": "expected_unsettled",
+          "type": "u64"
+        },
+        {
+          "name": "released",
+          "type": "u64"
+        }
+      ]
+    },
+    {
+      "name": "set_monthly_commitment",
+      "discriminator": [204, 64, 188, 96, 90, 158, 14, 235],
+      "accounts": [
+        {
+          "name": "owner",
+          "signer": true,
+          "relations": ["project"]
+        },
+        {
+          "name": "project",
+          "writable": true
+        }
+      ],
+      "args": [
+        {
+          "name": "cap",
+          "type": "u64"
+        },
+        {
+          "name": "enabled",
+          "type": "bool"
+        }
+      ]
+    },
+    {
+      "name": "veto_binding",
+      "discriminator": [229, 13, 188, 173, 4, 57, 14, 0],
+      "accounts": [
+        {
+          "name": "owner",
+          "writable": true,
+          "signer": true,
+          "relations": ["project"]
+        },
+        {
+          "name": "project"
+        },
+        {
+          "name": "binding",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [119, 97, 108, 108, 101, 116]
+              },
+              {
+                "kind": "account",
+                "path": "project"
+              },
+              {
+                "kind": "arg",
+                "path": "actor_id"
+              }
+            ]
+          }
+        },
+        {
+          "name": "veto",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [118, 101, 116, 111]
+              },
+              {
+                "kind": "account",
+                "path": "project"
+              },
+              {
+                "kind": "arg",
+                "path": "actor_id"
+              },
+              {
+                "kind": "arg",
+                "path": "version"
+              }
+            ]
+          }
+        },
+        {
+          "name": "obligation",
+          "docs": [
+            "An unpaid award to this actor in this project whose commit delay has not passed;",
+            "it extends the veto window to that award's commit delay."
+          ],
+          "optional": true
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "actor_id",
+          "type": "u64"
+        },
+        {
+          "name": "version",
+          "type": "u64"
+        }
+      ]
+    },
+    {
+      "name": "withdraw",
+      "discriminator": [183, 18, 70, 156, 148, 109, 161, 34],
+      "accounts": [
+        {
+          "name": "owner",
+          "signer": true,
+          "relations": ["project"]
+        },
+        {
+          "name": "project",
+          "writable": true
+        },
+        {
+          "name": "mint",
+          "relations": ["project"]
+        },
+        {
+          "name": "vault",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [118, 97, 117, 108, 116]
+              },
+              {
+                "kind": "account",
+                "path": "project"
+              }
+            ]
+          }
+        },
+        {
+          "name": "destination",
+          "writable": true
+        },
+        {
+          "name": "token_program"
+        }
+      ],
+      "args": [
+        {
+          "name": "gross",
+          "type": "u64"
+        }
+      ]
+    },
+    {
+      "name": "withdraw_native",
+      "discriminator": [113, 227, 26, 32, 53, 66, 90, 250],
+      "accounts": [
+        {
+          "name": "owner",
+          "signer": true,
+          "relations": ["project"]
+        },
+        {
+          "name": "project",
+          "writable": true
+        },
+        {
+          "name": "vault",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [118, 97, 117, 108, 116]
+              },
+              {
+                "kind": "account",
+                "path": "project"
+              }
+            ]
+          }
+        },
+        {
+          "name": "destination",
+          "writable": true
+        }
+      ],
+      "args": [
+        {
+          "name": "gross",
+          "type": "u64"
+        }
+      ]
+    }
+  ],
+  "accounts": [
+    {
+      "name": "BindingVeto",
+      "discriminator": [32, 181, 30, 14, 10, 91, 29, 158]
+    },
+    {
+      "name": "Config",
+      "discriminator": [155, 12, 170, 224, 30, 250, 204, 130]
+    },
+    {
+      "name": "MonthlyAllocation",
+      "discriminator": [17, 112, 193, 144, 43, 214, 252, 107]
+    },
+    {
+      "name": "Obligation",
+      "discriminator": [168, 206, 141, 106, 88, 76, 172, 167]
+    },
+    {
+      "name": "Origin",
+      "discriminator": [87, 219, 181, 178, 82, 71, 48, 97]
+    },
+    {
+      "name": "Project",
+      "discriminator": [205, 168, 189, 202, 181, 247, 142, 19]
+    },
+    {
+      "name": "WalletBinding",
+      "discriminator": [51, 211, 204, 185, 168, 68, 52, 176]
+    }
+  ],
+  "events": [
+    {
+      "name": "AuthorityRotated",
+      "discriminator": [89, 124, 120, 223, 3, 19, 185, 230]
+    },
+    {
+      "name": "AuthorityRotationCancelled",
+      "discriminator": [130, 2, 252, 115, 135, 42, 1, 109]
+    },
+    {
+      "name": "AuthorityRotationConfirmed",
+      "discriminator": [235, 159, 184, 253, 136, 76, 245, 116]
+    },
+    {
+      "name": "AuthorityRotationProposed",
+      "discriminator": [76, 59, 57, 23, 22, 166, 253, 33]
+    },
+    {
+      "name": "AwardCommitted",
+      "discriminator": [20, 15, 203, 164, 118, 172, 208, 203]
+    },
+    {
+      "name": "AwardPaid",
+      "discriminator": [142, 122, 234, 181, 22, 175, 250, 145]
+    },
+    {
+      "name": "BindingVetoed",
+      "discriminator": [218, 122, 70, 149, 6, 123, 80, 103]
+    },
+    {
+      "name": "ConfigInitialized",
+      "discriminator": [181, 49, 200, 156, 19, 167, 178, 91]
+    },
+    {
+      "name": "Deposited",
+      "discriminator": [111, 141, 26, 45, 161, 35, 100, 57]
+    },
+    {
+      "name": "FeesClaimed",
+      "discriminator": [22, 104, 110, 222, 38, 157, 14, 62]
+    },
+    {
+      "name": "MonthlyAwardReleased",
+      "discriminator": [88, 216, 156, 225, 0, 33, 175, 167]
+    },
+    {
+      "name": "MonthlyCommitmentSet",
+      "discriminator": [112, 110, 71, 120, 110, 200, 48, 232]
+    },
+    {
+      "name": "MonthlyCommitted",
+      "discriminator": [21, 90, 254, 60, 119, 79, 65, 193]
+    },
+    {
+      "name": "MonthlyReserveReleased",
+      "discriminator": [12, 20, 98, 159, 120, 252, 137, 169]
+    },
+    {
+      "name": "ProjectMigrated",
+      "discriminator": [120, 121, 121, 187, 64, 18, 169, 152]
+    },
+    {
+      "name": "UnusedWithdrawn",
+      "discriminator": [158, 175, 215, 198, 157, 135, 114, 234]
+    },
+    {
+      "name": "WalletBound",
+      "discriminator": [90, 1, 160, 109, 127, 116, 183, 84]
+    }
+  ],
+  "errors": [
+    {
+      "code": 6000,
+      "name": "InvalidIdentity",
+      "msg": "Invalid actor or destination"
+    },
+    {
+      "code": 6001,
+      "name": "InvalidAmount",
+      "msg": "Amount must be positive"
+    },
+    {
+      "code": 6002,
+      "name": "Arithmetic",
+      "msg": "Arithmetic overflow"
+    },
+    {
+      "code": 6003,
+      "name": "InsufficientFreeBalance",
+      "msg": "Withdrawal or award would consume reserved funds"
+    },
+    {
+      "code": 6004,
+      "name": "AlreadyPaid",
+      "msg": "Obligation already paid"
+    },
+    {
+      "code": 6005,
+      "name": "StaleBinding",
+      "msg": "Wallet predecessor version is stale"
+    },
+    {
+      "code": 6006,
+      "name": "WrongNetwork",
+      "msg": "Network domain does not match project"
+    },
+    {
+      "code": 6007,
+      "name": "WrongMint",
+      "msg": "Mint or token program is not supported"
+    },
+    {
+      "code": 6008,
+      "name": "InvalidAward",
+      "msg": "Award ID is not bound to this project and source"
+    },
+    {
+      "code": 6009,
+      "name": "BindingPending",
+      "msg": "Wallet binding is still in its activation delay"
+    },
+    {
+      "code": 6010,
+      "name": "BindingVetoed",
+      "msg": "Project owner vetoed this wallet binding"
+    },
+    {
+      "code": 6011,
+      "name": "BindingActive",
+      "msg": "Wallet binding has paid or its veto window has closed"
+    },
+    {
+      "code": 6012,
+      "name": "WrongDestination",
+      "msg": "Destination must be the bound wallet's associated token account"
+    },
+    {
+      "code": 6013,
+      "name": "AwardPending",
+      "msg": "Award is still inside its commit delay"
+    },
+    {
+      "code": 6014,
+      "name": "VetoLimit",
+      "msg": "Owner veto limit reached since the actor's last payment"
+    },
+    {
+      "code": 6015,
+      "name": "InvalidDelay",
+      "msg": "Binding delay must be 0 to 30 days; rotation delay 0 to 90 days"
+    },
+    {
+      "code": 6016,
+      "name": "BindingExpired",
+      "msg": "Binding submission expired"
+    },
+    {
+      "code": 6017,
+      "name": "RotationPending",
+      "msg": "An identity authority rotation is already proposed"
+    },
+    {
+      "code": 6018,
+      "name": "NoRotationPending",
+      "msg": "No identity authority rotation is proposed"
+    },
+    {
+      "code": 6019,
+      "name": "RotationConfirmed",
+      "msg": "The rotation authority already confirmed this rotation"
+    },
+    {
+      "code": 6020,
+      "name": "RotationUnconfirmed",
+      "msg": "The rotation authority has not confirmed this rotation"
+    },
+    {
+      "code": 6021,
+      "name": "RotationNotReady",
+      "msg": "The rotation delay has not passed"
+    },
+    {
+      "code": 6022,
+      "name": "ConfigMismatch",
+      "msg": "Identity authority or fee recipient differs from the pinned Config"
+    },
+    {
+      "code": 6023,
+      "name": "NotUpgradeAuthority",
+      "msg": "Only the program upgrade authority can initialize the Config"
+    },
+    {
+      "code": 6024,
+      "name": "WrongPurpose",
+      "msg": "This instruction does not apply to the project's purpose"
+    },
+    {
+      "code": 6025,
+      "name": "MonthlyDisabled",
+      "msg": "The owner has turned monthly commitments off"
+    },
+    {
+      "code": 6026,
+      "name": "InvalidPeriod",
+      "msg": "Period must be YYYYMM with year 2000 to 9999"
+    },
+    {
+      "code": 6027,
+      "name": "MonthlyWindowClosed",
+      "msg": "The period's monthly window is not open"
+    },
+    {
+      "code": 6028,
+      "name": "InvalidAttestation",
+      "msg": "The identity authority did not sign this allocation"
+    },
+    {
+      "code": 6029,
+      "name": "InvalidAllocationProof",
+      "msg": "Award is not in the recorded allocation"
+    },
+    {
+      "code": 6030,
+      "name": "MonthlyCapExceeded",
+      "msg": "Monthly awards would exceed the owner's monthly cap"
+    },
+    {
+      "code": 6031,
+      "name": "MonthlyOutstanding",
+      "msg": "An admitted monthly allocation still has uncommitted awards"
+    },
+    {
+      "code": 6032,
+      "name": "AwardCommittable",
+      "msg": "This monthly award can still be committed"
+    },
+    {
+      "code": 6033,
+      "name": "NotLegacyProject",
+      "msg": "Account is not a Project of the 316-byte layout"
+    },
+    {
+      "code": 6034,
+      "name": "MonthExpired",
+      "msg": "The month has already expired"
+    },
+    {
+      "code": 6035,
+      "name": "InvalidFreeze",
+      "msg": "The allocation freeze time must be inside the window and not in the future"
+    },
+    {
+      "code": 6036,
+      "name": "MonthlyReserveChanged",
+      "msg": "The month's unsettled gross changed after the release was signed"
+    },
+    {
+      "code": 6037,
+      "name": "UnsupportedTokenExtension",
+      "msg": "Token extension or authority is outside the approved metadata-only policy"
+    }
+  ],
+  "types": [
+    {
+      "name": "AllocationNode",
+      "docs": [
+        "Each sibling authenticates both its digest and aggregate gross amount."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "hash",
+            "type": {
+              "array": ["u8", 32]
+            }
+          },
+          {
+            "name": "total",
+            "type": "u64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "AuthorityRotated",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "project",
+            "type": "pubkey"
+          },
+          {
+            "name": "previous",
+            "type": "pubkey"
+          },
+          {
+            "name": "current",
+            "type": "pubkey"
+          }
+        ]
+      }
+    },
+    {
+      "name": "AuthorityRotationCancelled",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "project",
+            "type": "pubkey"
+          },
+          {
+            "name": "proposed",
+            "type": "pubkey"
+          }
+        ]
+      }
+    },
+    {
+      "name": "AuthorityRotationConfirmed",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "project",
+            "type": "pubkey"
+          },
+          {
+            "name": "proposed",
+            "type": "pubkey"
+          }
+        ]
+      }
+    },
+    {
+      "name": "AuthorityRotationProposed",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "project",
+            "type": "pubkey"
+          },
+          {
+            "name": "current",
+            "type": "pubkey"
+          },
+          {
+            "name": "proposed",
+            "type": "pubkey"
+          },
+          {
+            "name": "effective_at",
+            "type": "i64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "AwardCommitted",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "gross",
+            "type": "u64"
+          },
+          {
+            "name": "source_digest",
+            "type": {
+              "array": ["u8", 32]
+            }
+          },
+          {
+            "name": "project",
+            "type": "pubkey"
+          },
+          {
+            "name": "award_id",
+            "type": {
+              "array": ["u8", 32]
+            }
+          },
+          {
+            "name": "actor_id",
+            "type": "u64"
+          },
+          {
+            "name": "principal",
+            "type": "u64"
+          },
+          {
+            "name": "fee",
+            "type": "u64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "AwardPaid",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "gross",
+            "type": "u64"
+          },
+          {
+            "name": "project",
+            "type": "pubkey"
+          },
+          {
+            "name": "award_id",
+            "type": {
+              "array": ["u8", 32]
+            }
+          },
+          {
+            "name": "principal",
+            "type": "u64"
+          },
+          {
+            "name": "fee",
+            "type": "u64"
+          },
+          {
+            "name": "destination",
+            "type": "pubkey"
+          },
+          {
+            "name": "wallet_version",
+            "type": "u64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "BindingVeto",
+      "type": {
+        "kind": "struct",
+        "fields": []
+      }
+    },
+    {
+      "name": "BindingVetoed",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "project",
+            "type": "pubkey"
+          },
+          {
+            "name": "actor_id",
+            "type": "u64"
+          },
+          {
+            "name": "version",
+            "type": "u64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "Config",
+      "docs": [
+        "The separate identity, fee and rotation authorities, written once by",
+        "`initialize_config` and never changed."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "identity_authority",
+            "type": "pubkey"
+          },
+          {
+            "name": "fee_recipient",
+            "type": "pubkey"
+          },
+          {
+            "name": "rotation_authority",
+            "type": "pubkey"
+          },
+          {
+            "name": "bump",
+            "type": "u8"
+          }
+        ]
+      }
+    },
+    {
+      "name": "ConfigInitialized",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "identity_authority",
+            "type": "pubkey"
+          },
+          {
+            "name": "fee_recipient",
+            "type": "pubkey"
+          },
+          {
+            "name": "rotation_authority",
+            "type": "pubkey"
+          }
+        ]
+      }
+    },
+    {
+      "name": "Deposited",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "project",
+            "type": "pubkey"
+          },
+          {
+            "name": "depositor",
+            "type": "pubkey"
+          },
+          {
+            "name": "amount",
+            "type": "u64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "FeesClaimed",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "project",
+            "type": "pubkey"
+          },
+          {
+            "name": "fee_account",
+            "type": "pubkey"
+          },
+          {
+            "name": "amount",
+            "type": "u64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "MonthlyAllocation",
+      "docs": [
+        "One period's recorded allocation root and the gross committed from it so far."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "project",
+            "type": "pubkey"
+          },
+          {
+            "name": "period",
+            "type": "u32"
+          },
+          {
+            "name": "allocation_root",
+            "type": {
+              "array": ["u8", 32]
+            }
+          },
+          {
+            "name": "committed",
+            "docs": [
+              "Gross settled so far: committed awards plus released awards."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "total",
+            "type": "u64"
+          },
+          {
+            "name": "released",
+            "docs": [
+              "The part of `committed` that release_monthly_award or release_monthly_reserve returned",
+              "to free balance. This",
+              "field also makes the account larger than the 92-byte month of the 316-byte build (no",
+              "settled markers or outstanding count), so such a month fails closed here."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "frozen_at",
+            "docs": [
+              "When the attester froze the allocation. Only a source consumed by hand before it can",
+              "be released."
+            ],
+            "type": "i64"
+          },
+          {
+            "name": "expired",
+            "docs": ["Legacy layout field. New funded months never expire."],
+            "type": "bool"
+          }
+        ]
+      }
+    },
+    {
+      "name": "MonthlyAwardReleased",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "project",
+            "type": "pubkey"
+          },
+          {
+            "name": "period",
+            "type": "u32"
+          },
+          {
+            "name": "source_digest",
+            "type": {
+              "array": ["u8", 32]
+            }
+          },
+          {
+            "name": "actor_id",
+            "type": "u64"
+          },
+          {
+            "name": "gross",
+            "type": "u64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "MonthlyCommitmentSet",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "project",
+            "type": "pubkey"
+          },
+          {
+            "name": "cap",
+            "type": "u64"
+          },
+          {
+            "name": "enabled",
+            "type": "bool"
+          }
+        ]
+      }
+    },
+    {
+      "name": "MonthlyCommitted",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "project",
+            "type": "pubkey"
+          },
+          {
+            "name": "period",
+            "type": "u32"
+          },
+          {
+            "name": "allocation_root",
+            "type": {
+              "array": ["u8", 32]
+            }
+          },
+          {
+            "name": "total",
+            "type": "u64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "MonthlyReserveReleased",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "project",
+            "type": "pubkey"
+          },
+          {
+            "name": "period",
+            "type": "u32"
+          },
+          {
+            "name": "unsettled",
+            "type": "u64"
+          },
+          {
+            "name": "released",
+            "type": "u64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "Obligation",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "gross",
+            "type": "u64"
+          },
+          {
+            "name": "source_digest",
+            "type": {
+              "array": ["u8", 32]
+            }
+          },
+          {
+            "name": "project",
+            "type": "pubkey"
+          },
+          {
+            "name": "award_id",
+            "type": {
+              "array": ["u8", 32]
+            }
+          },
+          {
+            "name": "actor_id",
+            "type": "u64"
+          },
+          {
+            "name": "principal",
+            "type": "u64"
+          },
+          {
+            "name": "fee",
+            "type": "u64"
+          },
+          {
+            "name": "paid",
+            "type": "bool"
+          },
+          {
+            "name": "committed_at",
+            "type": "i64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "Origin",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "obligation",
+            "type": "pubkey"
+          }
+        ]
+      }
+    },
+    {
+      "name": "Project",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "owner",
+            "type": "pubkey"
+          },
+          {
+            "name": "project_id",
+            "type": {
+              "array": ["u8", 32]
+            }
+          },
+          {
+            "name": "network",
+            "type": {
+              "array": ["u8", 32]
+            }
+          },
+          {
+            "name": "identity_authority",
+            "type": "pubkey"
+          },
+          {
+            "name": "fee_recipient",
+            "type": "pubkey"
+          },
+          {
+            "name": "mint",
+            "type": "pubkey"
+          },
+          {
+            "name": "reserved",
+            "type": "u64"
+          },
+          {
+            "name": "deposited",
+            "type": "u64"
+          },
+          {
+            "name": "paid",
+            "type": "u64"
+          },
+          {
+            "name": "payout_fees",
+            "type": "u64"
+          },
+          {
+            "name": "withdrawn_gross",
+            "type": "u64"
+          },
+          {
+            "name": "withdrawal_fees",
+            "type": "u64"
+          },
+          {
+            "name": "bump",
+            "type": "u8"
+          },
+          {
+            "name": "binding_delay",
+            "type": "i64"
+          },
+          {
+            "name": "pending_identity_authority",
+            "type": "pubkey"
+          },
+          {
+            "name": "rotation_effective_at",
+            "type": "i64"
+          },
+          {
+            "name": "rotation_confirmed",
+            "type": "bool"
+          },
+          {
+            "name": "rotation_delay",
+            "type": "i64"
+          },
+          {
+            "name": "purpose",
+            "type": {
+              "defined": {
+                "name": "Purpose"
+              }
+            }
+          },
+          {
+            "name": "monthly_cap",
+            "docs": [
+              "The most a period's monthly awards may commit in gross, and whether anyone may record",
+              "and commit them. Only the owner sets them."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "monthly_enabled",
+            "type": "bool"
+          },
+          {
+            "name": "accrued_fees",
+            "docs": [
+              "Payout and withdrawal fees held in the vault until claim_fees moves them."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "monthly_outstanding",
+            "docs": [
+              "Gross of admitted monthly allocations not yet committed or released. While it is",
+              "positive the owner cannot commit by hand."
+            ],
+            "type": "u64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "ProjectMigrated",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "project",
+            "type": "pubkey"
+          }
+        ]
+      }
+    },
+    {
+      "name": "Purpose",
+      "docs": [
+        "What a project holds funds for. It is part of the project PDA seeds."
+      ],
+      "type": {
+        "kind": "enum",
+        "variants": [
+          {
+            "name": "Ordinary"
+          },
+          {
+            "name": "Bounty"
+          }
+        ]
+      }
+    },
+    {
+      "name": "UnusedWithdrawn",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "project",
+            "type": "pubkey"
+          },
+          {
+            "name": "gross",
+            "type": "u64"
+          },
+          {
+            "name": "fee",
+            "type": "u64"
+          },
+          {
+            "name": "returned",
+            "type": "u64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "WalletBinding",
+      "docs": [
+        "One binding per project and actor, so each project's delay, vetoes and payments are",
+        "its own. The first seven fields are the latest binding, the only one that can pay."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "claim_digest",
+            "type": {
+              "array": ["u8", 32]
+            }
+          },
+          {
+            "name": "authority",
+            "type": "pubkey"
+          },
+          {
+            "name": "actor_id",
+            "type": "u64"
+          },
+          {
+            "name": "network",
+            "type": {
+              "array": ["u8", 32]
+            }
+          },
+          {
+            "name": "destination",
+            "type": "pubkey"
+          },
+          {
+            "name": "version",
+            "type": "u64"
+          },
+          {
+            "name": "bound_at",
+            "type": "i64"
+          },
+          {
+            "name": "paid_version",
+            "docs": [
+              "The version the last payment in this project used; 0 before the first payment."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "veto_count",
+            "docs": ["Vetoes recorded since the last payment in this project."],
+            "type": "u8"
+          }
+        ]
+      }
+    },
+    {
+      "name": "WalletBound",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "actor_id",
+            "type": "u64"
+          },
+          {
+            "name": "network",
+            "type": {
+              "array": ["u8", 32]
+            }
+          },
+          {
+            "name": "destination",
+            "type": "pubkey"
+          },
+          {
+            "name": "version",
+            "type": "u64"
+          },
+          {
+            "name": "bound_at",
+            "type": "i64"
+          }
+        ]
+      }
+    }
+  ]
+}

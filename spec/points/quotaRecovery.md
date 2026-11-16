@@ -123,11 +123,11 @@ type Attempt = { number: int, key: int }
 type Reply = { attempt: Attempt, digest: int, cost: int, recoverableStatistics: bool, acceptableSuccess: bool, hint: Hint }
 type Run = { phase: Phase, scope: Scope, now: int, deadline: int, budget: int, requests: int, cost: int,
   refusedPasses: int, passSaved: Set[int], outstanding: List[Attempt], retained: List[Reply], indexed: Set[int],
-  refusal: Refusal, wakeAt: int, manifest: int, receipt: int }
+  refusal: Refusal, wakeAt: int, manifest: int, receipt: int, reused: int }
 pure def newInvocation(started: int, budget: int, duration: int): Run =
   { phase: Unbound, scope: unboundScope, now: started, deadline: started + duration, budget: budget,
     requests: 0, cost: 0, refusedPasses: 0, passSaved: Set(), outstanding: List(), retained: List(),
-    indexed: Set(), refusal: noRefusal, wakeAt: 0, manifest: 0, receipt: 0 }
+    indexed: Set(), refusal: noRefusal, wakeAt: 0, manifest: 0, receipt: 0, reused: 0 }
 pure val productionBudget = 50000
 pure val productionDuration = 18000000
 pure val initial = newInvocation(1000, 4, 180000)
@@ -139,7 +139,8 @@ pure def canAdmit(r: Run, entry: Admission): bool = r.phase == Unbound and r.now
       and entry.original == entry.replay.saved
      else entry.original.pageSize == 50 and entry.retainedIndex.size() == 0)
 pure def admit(r: Run, entry: Admission): Run =
-  { ...r, phase: Collecting, scope: entry.original, indexed: entry.retainedIndex }
+  { ...r, phase: Collecting, scope: { ...entry.original, pageSize: frozenSearchPageSize(entry.original.pageSize) },
+    indexed: entry.retainedIndex }
 pure def canRequest(r: Run, read: Request): bool = r.phase == Collecting and r.requests < r.budget
   and r.now < r.deadline and read.key > 0 and read.kind == NewEvidence and read.canonicalRead
   and not(r.indexed.contains(read.key))
@@ -147,7 +148,9 @@ pure def request(r: Run, read: Request): Run =
   { ...r, requests: r.requests + 1, outstanding: r.outstanding.append({ number: r.requests + 1, key: read.key }) }
 pure def canReuse(r: Run, cachedKey: int, exactBytes: bool): bool =
   r.phase == Collecting and r.indexed.contains(cachedKey) and exactBytes
-pure def reuse(r: Run, cachedKey: int, exactBytes: bool): Run = r
+pure def reuse(r: Run, cachedKey: int, exactBytes: bool): Run = { ...r, reused: r.reused + 1 }
+pure def lawFrozenRequestsRefused(r: Run, read: Request): bool = read.kind != NewEvidence implies not(canRequest(r, read))
+pure def alwaysScopePageSizeFrozen(r: Run): bool = r.phase != Unbound implies Set(50, 100).contains(r.scope.pageSize)
 pure def canObserve(r: Run, reply: Reply): bool = (r.phase == Collecting or r.phase == Draining)
   and r.outstanding.includes(reply.attempt) and reply.digest > 0 and reply.cost >= 0
 pure def observe(r: Run, reply: Reply): Run =
@@ -247,6 +250,7 @@ pure def sometimesWaiting(r: Run): bool = r.phase == Waiting
 pure def sometimesResumed(r: Run): bool = r.phase == Collecting and r.refusedPasses > 0
 pure def sometimesCheckpoint(r: Run): bool = r.phase == Checkpoint
 pure def sometimesCollected(r: Run): bool = r.phase == Collected
+pure def sometimesLegacyPageSizeRestored(r: Run): bool = r.phase == Collecting and r.scope.pageSize == 100
 ```
 
 ### Simulation samples include successful reads, quota windows and budget refusal
@@ -257,16 +261,24 @@ pure val artifactValues = Set({ repository: 1, head: 1, main: true, manual: true
   ancestorVerified: true, exactBytesVerified: true })
 pure val scopeSample: Scope = { baseline: 1, projects: 1, registry: 1, through: 1000, before: 500, months: 1, pageSize: 50 }
 pure val replayValues = Set({ saved: scopeSample, reconstructed: scopeSample, verifiedBaseline: 1, journalPrefix: 1,
-  cutoffSupplied: true, requestedCutoff: 501 })
+  cutoffSupplied: true, requestedCutoff: 501 },
+  { saved: { ...scopeSample, pageSize: 0 }, reconstructed: { ...scopeSample, pageSize: 0 }, verifiedBaseline: 1, journalPrefix: 1,
+    cutoffSupplied: false, requestedCutoff: 0 })
 pure val entryValues = Set({ authority: { manual: true, onMain: true, repository: 1, head: 2 },
   original: scopeSample, restoring: false, artifact: { repository: 1, head: 1, main: true,
     manual: true, collectorWorkflow: true, ancestorVerified: true, exactBytesVerified: true },
   replay: { saved: scopeSample, reconstructed: scopeSample, verifiedBaseline: 1, journalPrefix: 1,
-    cutoffSupplied: false, requestedCutoff: 0 }, retainedIndex: Set(1).exclude(Set(1)) })
+    cutoffSupplied: false, requestedCutoff: 0 }, retainedIndex: Set(1).exclude(Set(1)) },
+  { authority: { manual: true, onMain: true, repository: 1, head: 2 },
+  original: { ...scopeSample, pageSize: 0 }, restoring: true, artifact: { repository: 1, head: 1, main: true,
+    manual: true, collectorWorkflow: true, ancestorVerified: true, exactBytesVerified: true },
+  replay: { saved: { ...scopeSample, pageSize: 0 }, reconstructed: { ...scopeSample, pageSize: 0 }, verifiedBaseline: 1, journalPrefix: 1,
+    cutoffSupplied: false, requestedCutoff: 0 }, retainedIndex: Set(1) })
 pure val savedValues = Set(0, 50, 100)
 pure val oldValues = Set(noRefusal, { kind: Quota, retryAt: 2500 })
 pure val seenValues = Set({ kind: Quota, retryAt: 0 }, { kind: Quota, retryAt: 5000 })
-pure val readValues = Set({ key: 1, kind: NewEvidence, canonicalRead: true }, { key: 2, kind: NewEvidence, canonicalRead: true })
+pure val readValues = Set({ key: 1, kind: NewEvidence, canonicalRead: true }, { key: 2, kind: NewEvidence, canonicalRead: true },
+  { key: 2, kind: FrozenScope, canonicalRead: true }, { key: 1, kind: FrozenCensus, canonicalRead: true })
 pure val cachedKeyValues = Set(1, 2)
 pure val exactBytesValues = Set(true, false)
 pure val noHint: Hint = { status: 200, graphql: false, graphqlLimited: false, remainingZero: false,
