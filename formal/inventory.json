@@ -7853,7 +7853,7 @@
     },
     {
       "path": "workers/identity/index.ts",
-      "sha256": "1221b4adf6c396188ace25761ac2a0e8b8906dfedd7e36e819626eff1199bd48",
+      "sha256": "601b8719ce23ce10d3c39a4f5bf3433b2bfa6c170ed43c4dd84e0dd763577717",
       "models": [
         "formal/models/api/api_identity_admission.qnt",
         "formal/models/api/github_identity_exchange.qnt",
@@ -7862,8 +7862,9 @@
         "formal/models/api/identity_scheduled_maintenance.qnt"
       ],
       "candidateLines": [
-        28, 54, 60, 90, 92, 94, 100, 120, 125, 139, 144, 303, 344, 348, 350,
-        359, 362, 370, 376, 380, 406, 418, 421, 427, 437, 438, 439, 504
+        28, 54, 60, 90, 92, 94, 100, 120, 125, 139, 144, 296, 307, 320, 332,
+        342, 355, 379, 420, 424, 426, 435, 438, 446, 452, 456, 482, 494, 497,
+        503, 513, 514, 515, 580
       ],
       "review": "mapped-abstraction"
     },
@@ -10566,7 +10567,7 @@
     },
     {
       "path": "formal/models/api/github_identity_exchange.qnt",
-      "sha256": "b52e1b5464c5f0997f9e53faecaa6d532b479defee910554064d3240978cddc2",
+      "sha256": "e76c5652480b32db7fe36b19d4de5743619a09d5b05dd3cd81ee27a81b0d0497",
       "sources": ["workers/identity/handler.ts", "workers/identity/index.ts"],
       "scenarios": [
         "absentOrNonStringTokenReturnsNullTest",
