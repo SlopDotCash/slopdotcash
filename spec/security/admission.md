@@ -98,7 +98,7 @@ pure def resetRun(target: Phase, s: Scan): Scan =
   { ...s, phase: target, inventory: 0, inventoryDigest: 0, reviewed: 0, deterministic: false, ambiguous: false,
     uncoveredExecutable: 0, blocked: 0, primary: NotRun, escalation: NoEscalation, specialist: NotRun, synthesis: false,
     refusal: NoRefusal, disposition: NoDisposition, confirmation: NoConfirmation, reused: false, reuseOrigin: 0,
-    originPermanent: false, retained: false }
+    originPermanent: false, retained: false, digest: 0 }
 pure def canStart(s: Scan): bool = s.phase == Queued and not(s.staleTemplate)
 pure def start(s: Scan): Scan = { ...resetRun(Acquiring, s), attempts: s.attempts + 1 }
 pure def canInterrupt(s: Scan, failure: ServiceFailure): bool =
@@ -216,6 +216,8 @@ pure def canCheckDeterministically(s: Scan, uncovered: int, ambiguous: bool): bo
 pure def checkDeterministically(s: Scan, uncovered: int, ambiguous: bool): Scan =
   { ...s, deterministic: true, uncoveredExecutable: uncovered, ambiguous: ambiguous }
 pure val uncoveredValues = Set(0, 1)
+pure def alwaysReviewsAfterChecks(s: Scan): bool =
+  not(s.deterministic) implies s.primary == NotRun and s.escalation == NoEscalation and s.specialist == NotRun
 pure def alwaysReviewingUndecided(s: Scan): bool =
   s.phase == Reviewing implies s.disposition == NoDisposition and s.refusal == NoRefusal and not(s.retained) and
     not(s.reused) and not(s.synthesis) and s.confirmation == NoConfirmation
