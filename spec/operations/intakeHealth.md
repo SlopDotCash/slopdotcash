@@ -64,12 +64,11 @@ pure def canRejectToken(h: Health, by: Renewer): bool = renewerAllowed(by) and h
 pure def rejectToken(h: Health, by: Renewer): Health = { ...h, read: AnonymousRead, tokenRejected: true }
 pure def canRenew(h: Health, answer: GitHubAnswer, readAt: int, by: Renewer): bool = renewerAllowed(by) and h.read != NoRead
   and readAt > 0 and readAt <= h.clock and not(h.read == TokenRead and answer == Unusable({ reason: Unauthorized }))
-pure def renew(h: Health, answer: GitHubAnswer, readAt: int, by: Renewer): Health =
-  val done = { ...h, read: NoRead }
-  match answer {
-  | ReportingEnabled => written(true, readAt, done)
-  | ReportingDisabled => written(false, readAt, done)
-  | Unusable(u) => { ...done, last: Skipped({ reason: u.reason }), skips: h.skips + 1, failedInvocations: h.failedInvocations + 1 } }
+pure def renew(h: Health, answer: GitHubAnswer, readAt: int, by: Renewer): Health = match answer {
+  | ReportingEnabled => written(true, readAt, { ...h, read: NoRead })
+  | ReportingDisabled => written(false, readAt, { ...h, read: NoRead })
+  | Unusable(u) => { ...h, read: NoRead, last: Skipped({ reason: u.reason }), skips: h.skips + 1,
+    failedInvocations: h.failedInvocations + 1 } }
 pure def canFailWrite(h: Health, by: Renewer): bool = renewerAllowed(by) and h.read != NoRead
 pure def failWrite(h: Health, by: Renewer): Health =
   { ...h, read: NoRead, last: WriteFailed, failures: h.failures + 1, failedInvocations: h.failedInvocations + 1 }

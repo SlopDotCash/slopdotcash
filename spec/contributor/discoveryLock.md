@@ -52,10 +52,10 @@ pure def canObserveClear(s: DiscoveryLock): bool = s.guard == AcquireGuard and n
 pure def observeClear(s: DiscoveryLock): DiscoveryLock = { ...s, observedClear: true }
 pure def canCommitAcquire(s: DiscoveryLock): bool = s.guard == AcquireGuard and s.observedClear and not(s.stalePending)
   and s.takeovers < 9007199254740000
-pure def commitAcquire(s: DiscoveryLock): DiscoveryLock =
-  val claimed = { ...s, owner: s.candidate, parentLive: true, generation: s.generation + 1, commandLease: false,
-    childPublished: false, requestPresent: false, primary: NoLockFailure, phase: if (s.helperLive) s.phase else HelperNone }
-  if (s.owner == 0) { ...claimed, guard: NoGuard } else { ...claimed, stalePending: true, takeovers: s.takeovers + 1 }
+pure def commitAcquire(s: DiscoveryLock): DiscoveryLock = { ...s, owner: s.candidate, parentLive: true,
+  generation: s.generation + 1, commandLease: false, childPublished: false, requestPresent: false, primary: NoLockFailure,
+  phase: if (s.helperLive) s.phase else HelperNone, guard: if (s.owner == 0) NoGuard else AcquireGuard,
+  stalePending: s.owner != 0, takeovers: if (s.owner == 0) s.takeovers else s.takeovers + 1 }
 pure def canRefuseAcquire(s: DiscoveryLock): bool = s.guard == AcquireGuard and not(s.observedClear)
 pure def refuseAcquire(s: DiscoveryLock): DiscoveryLock = { ...s, guard: NoGuard, contentions: s.contentions + 1 }
 pure def canContend(s: DiscoveryLock, owner: int): bool = owner > 0 and owner != s.owner and owner != s.candidate
@@ -85,11 +85,11 @@ process stopped clears it.
 pure def canFinishStaleCleanup(s: DiscoveryLock, cleanup: StaleCleanup): bool = s.guard == AcquireGuard and s.stalePending
   and s.staleRemnants < 9007199254740000
 pure def finishStaleCleanup(s: DiscoveryLock, cleanup: StaleCleanup): DiscoveryLock =
-  val done = { ...s, guard: NoGuard, stalePending: false }
-  if (cleanup == StaleRemoved) done
-  else if (cleanup == CleanupFails) { ...done, owner: 0, parentLive: false, staleRemnants: s.staleRemnants + 1,
-    primary: StaleCleanupFailure }
-  else { ...done, staleRemnants: s.staleRemnants + 1, aggregate: true, primary: AggregateCleanupFailure }
+  if (cleanup == StaleRemoved) { ...s, guard: NoGuard, stalePending: false }
+  else if (cleanup == CleanupFails) { ...s, guard: NoGuard, stalePending: false, owner: 0, parentLive: false,
+    staleRemnants: s.staleRemnants + 1, primary: StaleCleanupFailure }
+  else { ...s, guard: NoGuard, stalePending: false, staleRemnants: s.staleRemnants + 1, aggregate: true,
+    primary: AggregateCleanupFailure }
 pure def alwaysStaleCleanupGuarded(s: DiscoveryLock): bool = (s.stalePending implies s.guard == AcquireGuard and s.owner != 0
   and s.owner == s.candidate and not(commandActive(s)))
   and (s.aggregate implies s.owner != 0 and s.primary == AggregateCleanupFailure)
@@ -105,7 +105,8 @@ pure def sometimesContended(s: DiscoveryLock): bool = s.contentions > 0 and s.pa
 
 A released or stale handle cannot publish a request into a successor's lock.
 A helper may have read its request before a dead owner's lock was replaced;
-its startup check then refuses. Startup holds its own guard until the child's
+its startup check then refuses, and so does every startup while an
+aggregate cleanup failure holds the lock. Startup holds its own guard until the child's
 identity is published, or until a failed spawn is observed closed.
 
 ```quint
@@ -117,11 +118,11 @@ pure def request(s: DiscoveryLock, owner: int): DiscoveryLock = { ...s, requestO
 pure def canBeginStartup(s: DiscoveryLock): bool = s.guard == NoGuard and s.helperLive and s.phase == HelperWaiting
 pure def beginStartup(s: DiscoveryLock): DiscoveryLock = { ...s, guard: StartupGuard, phase: HelperChecking }
 pure def canAdmitStartup(s: DiscoveryLock): bool = s.guard == StartupGuard and s.phase == HelperChecking
-  and s.requestOwner == s.owner and s.owner != 0
+  and s.requestOwner == s.owner and s.owner != 0 and not(s.aggregate)
 pure def admitStartup(s: DiscoveryLock): DiscoveryLock = { ...s, commandLease: true, childPublished: false,
   closeObserved: false, phase: HelperAdmitted }
 pure def canRefuseStartup(s: DiscoveryLock): bool = s.guard == StartupGuard and s.phase == HelperChecking
-  and (s.requestOwner != s.owner or s.owner == 0)
+  and (s.requestOwner != s.owner or s.owner == 0 or s.aggregate)
 pure def refuseStartup(s: DiscoveryLock): DiscoveryLock = { ...s, guard: NoGuard, helperLive: false, phase: HelperRefused }
 pure def canSpawnChild(s: DiscoveryLock): bool = s.guard == StartupGuard and s.phase == HelperAdmitted and s.helperLive
 pure def spawnChild(s: DiscoveryLock): DiscoveryLock = { ...s, childLive: true, launchOwner: s.owner, phase: ChildUnpublished }
