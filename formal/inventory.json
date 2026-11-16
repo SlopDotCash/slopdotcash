@@ -190,14 +190,15 @@
     },
     {
       "path": "backend/fee-conversions/handler.ts",
-      "sha256": "2859209cc701cab415fa88b8ea151ee74aa8cc871c4299457a8e6bdd4d2e28cf",
+      "sha256": "928822aac2fb5bc0258370000a4cc79a0f18eb70d179611c95a2508f2fe14875",
       "models": [
         "formal/models/fees/buyback_market.qnt",
         "formal/models/fees/fee_conversion.qnt",
         "formal/models/ui/ui_admin_resource_identity.qnt"
       ],
       "candidateLines": [
-        46, 71, 116, 126, 143, 154, 203, 229, 253, 263, 269, 271, 277, 287, 312
+        46, 71, 116, 129, 142, 185, 202, 213, 262, 288, 295, 326, 336, 342, 344,
+        350, 360, 368, 373, 375, 378, 401, 422
       ],
       "review": "mapped-abstraction"
     },
