@@ -138,6 +138,11 @@ export interface HistoricalPointsPacket {
     };
     earlierSources: CorrectionSource[];
     acceptedSquashes?: HistoricalAcceptedSquash[];
+    acceptedPromotion?: {
+      headCommit: string;
+      mergeCommit: string;
+      mergeSha: string;
+    };
     coverage: {
       commitSha: string;
       path: string;
@@ -734,6 +739,23 @@ export function reconstructHistoricalPoints(
       squashes.size === (retirement.acceptedSquashes?.length ?? 0),
       "Repeated accepted squash source",
     );
+    if (squashes.size) {
+      const promotion = retirement.acceptedPromotion;
+      check(
+        promotion &&
+          source.commits.some((commit) => commit.sha === source.headSha),
+        "Accepted promotion proof is missing",
+      );
+      const head = retainedCommit(promotion.headCommit, source.headSha);
+      const merge = retainedCommit(promotion.mergeCommit, promotion.mergeSha);
+      check(
+        head.tree === merge.tree &&
+          merge.parents.length === 2 &&
+          merge.parents[1] === source.headSha &&
+          merge.parents[0] !== source.headSha,
+        "Accepted promotion changes submitted content",
+      );
+    }
     for (const squash of squashes.values()) {
       const audited = packet.sourceAudit.sources.find(
         (item) => item.id === squash.sourceId,
@@ -981,6 +1003,9 @@ export function reconstructHistoricalPoints(
         (retirement.acceptedSquashes === undefined ||
           evidence.acceptedSquashesSha256 ===
             hash(retirement.acceptedSquashes)) &&
+        (retirement.acceptedPromotion === undefined ||
+          evidence.acceptedPromotionSha256 ===
+            hash(retirement.acceptedPromotion)) &&
         (unchanged === undefined ||
           evidence.unchangedPromotionSha256 === hash(unchanged)),
       "Duplicate retirement dossier changed",

@@ -138,6 +138,32 @@ export async function verifyHistoricalAcceptedSquashes(
   packet: HistoricalPointsPacket,
   github: Pick<GitHubClient, "graphql">,
 ): Promise<void> {
+  for (const retirement of packet.duplicateRetirements ?? []) {
+    if (!retirement.acceptedSquashes?.length) continue;
+    const promotion = retirement.acceptedPromotion;
+    const data = await github.graphql<{
+      node: {
+        id: string;
+        headRefOid: string;
+        mergedAt: string;
+        repository: { id: string };
+        mergeCommit: { oid: string };
+      } | null;
+    }>(
+      "query HistoricalPromotionMerge($id:ID!){node(id:$id){...on PullRequest{id headRefOid mergedAt repository{id} mergeCommit{oid}}}}",
+      { id: retirement.sourceId },
+    );
+    if (
+      !promotion ||
+      data.node?.id !== retirement.sourceId ||
+      data.node.headRefOid !== retirement.source.headSha ||
+      data.node.repository.id !== retirement.source.repositoryNodeId ||
+      new Date(data.node.mergedAt).toISOString() !==
+        retirement.source.occurredAt ||
+      data.node.mergeCommit?.oid !== promotion.mergeSha
+    )
+      throw Error("Accepted promotion source changed");
+  }
   const sources = new Map<string, HistoricalAcceptedSquash>();
   for (const retirement of packet.duplicateRetirements ?? []) {
     for (const source of retirement.acceptedSquashes ?? []) {
