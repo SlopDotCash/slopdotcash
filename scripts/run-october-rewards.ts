@@ -38,6 +38,19 @@ const APPROVED_PROJECTS = new Set([
 ]);
 type Plan = ReturnType<typeof prepareGuardedOctoberImport>;
 type Query = (sql: string) => Promise<Record<string, unknown>[]>;
+type ValidationStage =
+  | "enforcement generation"
+  | "enforcement records"
+  | "reviewed packet"
+  | "current project registry"
+  | "current owner authority"
+  | "enforcement consistency"
+  | "proposal compilation"
+  | "existing proposal readback"
+  | "published Points validation"
+  | "private Points checkpoint"
+  | "financial protection"
+  | "current recipient eligibility";
 
 /** Strictly decode Wrangler's normal --json output, with no empty-result fallback. */
 export function octoberQueryRows(stdout: string): Record<string, unknown>[] {
@@ -268,6 +281,8 @@ export async function preparePrivateOctoberPlan(options: {
     project: ReturnType<typeof assertProjectDefinition>,
     reviewerGithubId: string,
   ) => Promise<void>;
+  /** Fixed labels only. Private query results and upstream errors stay private. */
+  onStage?: (stage: ValidationStage) => void;
 }): Promise<{
   plan: Plan;
   registryBytes: Uint8Array;
@@ -282,8 +297,11 @@ export async function preparePrivateOctoberPlan(options: {
     now,
   } = options;
   const persistence = new CloudflareProjectPersistence(readOnlyDatabase(query));
+  options.onStage?.("enforcement generation");
   const before = await persistence.enforcementGeneration();
+  options.onStage?.("enforcement records");
   const records = await persistence.listEnforcements();
+  options.onStage?.("reviewed packet");
   if (sha256Hex(packetBytes) !== reviewedPacketSha256)
     throw new Error("Reviewed packet digest differs");
   const packet = JSON.parse(
@@ -301,6 +319,7 @@ export async function preparePrivateOctoberPlan(options: {
   const projects = [];
   const verifiedOwnerProjectIds = new Set<string>();
   for (const { id } of packet.projects) {
+    options.onStage?.("current project registry");
     const rows = await query(
       `SELECT id,status,revision,manifest,manifest_sha256 FROM projects WHERE id=${quote(id)}`,
     );
@@ -310,6 +329,7 @@ export async function preparePrivateOctoberPlan(options: {
       throw new Error("October project is not active");
     const manifest = assertProjectDefinition(JSON.parse(String(row.manifest)));
     if (options.verifyOwner) {
+      options.onStage?.("current owner authority");
       await options.verifyOwner(manifest, packet.reviewerGithubId);
       verifiedOwnerProjectIds.add(id);
     }
@@ -321,6 +341,7 @@ export async function preparePrivateOctoberPlan(options: {
       restriction: publicRestrictionOf({ id, manifest }, records).state,
     });
   }
+  options.onStage?.("enforcement consistency");
   if ((await persistence.enforcementGeneration()) !== before)
     throw new Error("Enforcement changed during capture");
   const registry = {
@@ -338,7 +359,9 @@ export async function preparePrivateOctoberPlan(options: {
     now,
     verifiedOwnerProjectIds,
   };
+  options.onStage?.("proposal compilation");
   const plan = prepareGuardedOctoberImport(input);
+  options.onStage?.("existing proposal readback");
   const existingProjects = await query(
     `SELECT project_id FROM monthly_reward_bases WHERE period='2026-10' AND project_id IN (${plan.reviews.projects.map(({ id }) => quote(id)).join(",")})`,
   );
@@ -350,9 +373,11 @@ export async function preparePrivateOctoberPlan(options: {
       alreadyImported: true,
     };
   }
+  options.onStage?.("published Points validation");
   const currentJournal =
     typeof journal === "function" ? await journal() : journal;
   assertOctoberReviewedWeights(plan, currentJournal, packetBytes);
+  options.onStage?.("private Points checkpoint");
   const currentBatch = await query(
     "SELECT digest FROM points_batches ORDER BY revision_count DESC,generated_at DESC,digest DESC LIMIT 1",
   );
@@ -363,6 +388,7 @@ export async function preparePrivateOctoberPlan(options: {
     throw new Error("Current private Points batch differs");
   const weights = packetWeights(packetBytes);
   for (const project of plan.reviews.projects) {
+    options.onStage?.("financial protection");
     const protection = await query(
       pointProtectionQuery([{ projectId: project.id, period: PERIOD }]),
     );
@@ -375,6 +401,7 @@ export async function preparePrivateOctoberPlan(options: {
       throw new Error("October project has protected financial history");
     const policy = assertProjectDefinition(JSON.parse(project.manifest));
     for (const weight of weights.get(project.id) ?? []) {
+      options.onStage?.("current recipient eligibility");
       const banned = await query(
         PARTICIPATION_BAN_QUERY.replace("?", quote(weight.githubUserId)),
       );
@@ -515,6 +542,9 @@ export async function runOctoberRewards(): Promise<void> {
         query,
         now: new Date(),
         verifyOwner: currentOwnerVerifier(),
+        onStage: (stage) => {
+          phase = stage;
+        },
       });
     await writeFile(join(directory, "reviewed-packet.json"), packetBytes, {
       flag: "wx",

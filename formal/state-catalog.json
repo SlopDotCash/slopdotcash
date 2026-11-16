@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "meaning": "Declared lifecycle candidates. This intentionally incomplete syntactic census cannot find every implicit state, establish reachability, or prove source/model correspondence. Review the open work listed in formal/README.md as well.",
-  "inventorySha256": "384d079207ad27a1b1ab35ceef41d35c2cf2d93887d63d398f01b74c22c9f0e9",
+  "inventorySha256": "0feebcca6947182baff7c938f22fe0da7c0bc5496fac2f0d263e5d525a479f0a",
   "states": [
     {
       "path": "backend/fee-conversions/handler.ts",
@@ -2191,6 +2191,42 @@
       "values": ["CLOSED", "OPEN"],
       "models": ["formal/models/points/github_census.qnt"],
       "lexicallyUnmentionedValues": ["CLOSED", "OPEN"],
+      "review": "candidate-only"
+    },
+    {
+      "path": "scripts/run-october-rewards.ts",
+      "line": 42,
+      "name": "ValidationStage",
+      "kind": "string-union",
+      "values": [
+        "current owner authority",
+        "current project registry",
+        "current recipient eligibility",
+        "enforcement consistency",
+        "enforcement generation",
+        "enforcement records",
+        "existing proposal readback",
+        "financial protection",
+        "private Points checkpoint",
+        "proposal compilation",
+        "published Points validation",
+        "reviewed packet"
+      ],
+      "models": ["formal/models/rewards/october_proposal_import.qnt"],
+      "lexicallyUnmentionedValues": [
+        "current owner authority",
+        "current project registry",
+        "current recipient eligibility",
+        "enforcement consistency",
+        "enforcement generation",
+        "enforcement records",
+        "existing proposal readback",
+        "financial protection",
+        "private Points checkpoint",
+        "proposal compilation",
+        "published Points validation",
+        "reviewed packet"
+      ],
       "review": "candidate-only"
     },
     {
