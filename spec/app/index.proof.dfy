@@ -1,34 +1,34 @@
 // The legacy rewrite keeps every segment of an address that can be opened, so each identifier a route carries is
 // one of them, and never empty.
-lemma CanonicalKeepsSegments(segments: seq<string>)
+lemma CanonicalKeepsSegments(segments: seq<string>, securitySettings: bool)
   requires forall i :: 0 <= i < |segments| ==> segments[i] != ""
-  ensures forall i :: 0 <= i < |canonical(segments)| ==> canonical(segments)[i] != ""
+  ensures forall i :: 0 <= i < |canonical(segments, securitySettings)| ==> canonical(segments, securitySettings)[i] != ""
 {
 }
 
-lemma open_ensures(s: Shell, segments: seq<string>, withX: bool)
-  ensures (inv(s) ==> canOpen(s, segments) ==> alwaysRouteCarriesItsIdentifiers(open(s, segments, withX)))
-  ensures (inv(s) ==> canOpen(s, segments) ==> alwaysOpenedIsNonnegative(open(s, segments, withX)))
-  ensures (inv(s) ==> canOpen(s, segments) ==> stepOpensOnePage(s, open(s, segments, withX)))
+lemma open_ensures(s: Shell, segments: seq<string>, withX: bool, securitySettings: bool)
+  ensures (inv(s) ==> canOpen(s, segments) ==> alwaysRouteCarriesItsIdentifiers(open(s, segments, withX, securitySettings)))
+  ensures (inv(s) ==> canOpen(s, segments) ==> alwaysOpenedIsNonnegative(open(s, segments, withX, securitySettings)))
+  ensures (inv(s) ==> canOpen(s, segments) ==> stepOpensOnePage(s, open(s, segments, withX, securitySettings)))
 {
   if inv(s) && canOpen(s, segments) {
     forall i | 0 <= i < |segments| ensures segments[i] != "" {
       assert segments[i] in segments;
     }
-    CanonicalKeepsSegments(segments);
+    CanonicalKeepsSegments(segments, securitySettings);
   }
 }
 
 // The parser and the patterns agree: a known kind the parser returns is the one whose pattern matches, and a pattern
 // that matches is the kind the parser returns.
-lemma ParsedKindMatches(segments: seq<string>, withX: bool)
-  ensures !parse(segments, withX).kind.Unknown? ==> matchesKnown(parse(segments, withX).kind, segments, withX)
+lemma ParsedKindMatches(segments: seq<string>, withX: bool, securitySettings: bool)
+  ensures !parse(segments, withX, securitySettings).kind.Unknown? ==> matchesKnown(parse(segments, withX, securitySettings).kind, segments, withX, securitySettings)
 {
 }
 
-lemma MatchedKindIsParsed(kind: RouteKind, segments: seq<string>, withX: bool)
-  requires !kind.Unknown? && matchesKnown(kind, segments, withX)
-  ensures parse(segments, withX).kind == kind
+lemma MatchedKindIsParsed(kind: RouteKind, segments: seq<string>, withX: bool, securitySettings: bool)
+  requires !kind.Unknown? && matchesKnown(kind, segments, withX, securitySettings)
+  ensures parse(segments, withX, securitySettings).kind == kind
 {
 }
 
@@ -58,17 +58,17 @@ lemma KnownKindsHoldEveryKind(kind: RouteKind)
   }
 }
 
-lemma lawEachAddressNamesOneKind_ensures(kind: RouteKind, segments: seq<string>, withX: bool)
-  ensures (lawEachAddressNamesOneKind(kind, segments, withX) == true)
+lemma lawEachAddressNamesOneKind_ensures(kind: RouteKind, segments: seq<string>, withX: bool, securitySettings: bool)
+  ensures (lawEachAddressNamesOneKind(kind, segments, withX, securitySettings) == true)
 {
-  var parsed := parse(segments, withX).kind;
-  ParsedKindMatches(segments, withX);
+  var parsed := parse(segments, withX, securitySettings).kind;
+  ParsedKindMatches(segments, withX, securitySettings);
   KnownKindsHoldEveryKind(parsed);
   if kind.Unknown? {
-    forall known | known in knownKinds && matchesKnown(known, segments, withX) ensures parsed == known {
-      MatchedKindIsParsed(known, segments, withX);
+    forall known | known in knownKinds && matchesKnown(known, segments, withX, securitySettings) ensures parsed == known {
+      MatchedKindIsParsed(known, segments, withX, securitySettings);
     }
-  } else if matchesKnown(kind, segments, withX) {
-    MatchedKindIsParsed(kind, segments, withX);
+  } else if matchesKnown(kind, segments, withX, securitySettings) {
+    MatchedKindIsParsed(kind, segments, withX, securitySettings);
   }
 }
