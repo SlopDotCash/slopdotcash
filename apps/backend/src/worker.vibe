@@ -1,20 +1,25 @@
-// spec/backend/accounts.md, "Email enrollment and consent use the existing email rules under live session checks"; spec/backend/accounts.md, "Sign-out revokes only the caller's session and expiry uses the trusted clock"
-import type { D1Database, Fetcher, R2Bucket } from "@repo/platform/bindings"
+// spec/backend/referralCodes.md, "Write admission binds an authenticated member and the reviewed name bytes"; spec/backend/accounts.md, "Sign-out ends only the caller's session and revocation never reaches another account"
+import type { D1Database, R2Bucket } from "@repo/platform/bindings"
 import { webCrypto } from "@repo/platform/crypto"
 import { d1 } from "@repo/platform/d1"
+import { outbound } from "@repo/platform/http"
 import { worker } from "@repo/platform/worker"
-import { EmailRoutes } from "./email/routes.vibe"
 import { purgeExpired } from "./identity/maintenance.vibe"
-import { notifyVia } from "./notify.vibe"
+import { ReferralRoutes, TeamAccounts } from "./referrals/routes.vibe"
 
 export interface Env {
   readonly SLOP_DB: D1Database
   readonly PRIVATE_TRACES: R2Bucket
-  readonly SLOP_NOTIFY: Fetcher
+  readonly ADMIN_GITHUB_IDS: string
+  readonly PROJECT_MODERATOR_GITHUB_IDS: string
+}
+
+function ids(...lists: ReadonlyArray<string>) {
+  return new Set(lists.flatMap((list) => list.split(",")).map((id) => id.trim()).filter((id) => id !== ""))
 }
 
 export default worker({
-  services: (env: Env) => Layer.mergeAll(d1(env.SLOP_DB), webCrypto, notifyVia(env.SLOP_NOTIFY)),
-  routes: EmailRoutes,
+  services: (env: Env) => Layer.mergeAll(d1(env.SLOP_DB), webCrypto, outbound, Layer.succeed(TeamAccounts, { ids: ids(env.ADMIN_GITHUB_IDS, env.PROJECT_MODERATOR_GITHUB_IDS) })),
+  routes: ReferralRoutes,
   scheduled: () => purgeExpired(),
 })

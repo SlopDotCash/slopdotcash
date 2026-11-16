@@ -1,4 +1,4 @@
-// spec/backend/accounts.md, "A session belongs to one immutable account and has its own expiry"; spec/backend/accounts.md, "Sign-out revokes only the caller's session and expiry uses the trusted clock"
+// spec/backend/accounts.md, "Members are keyed by an immutable actor and numeric GitHub ID, and sessions by server-issued IDs"; spec/backend/accounts.md, "Sign-out ends only the caller's session and revocation never reaches another account"
 import { sha256Hex } from "@repo/platform/crypto"
 import { first, sql } from "@repo/platform/d1"
 import { Refused } from "@repo/platform/http"

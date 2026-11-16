@@ -1,5 +1,5 @@
 //@ backend dafny
-// spec/backend/accounts.md, "A session belongs to one immutable account and has its own expiry"
+// spec/backend/accounts.md, "Members are keyed by an immutable actor and numeric GitHub ID, and sessions by server-issued IDs"
 
 export function tokenLengthAllowed(length: number): boolean {
   //@ ensures \result === (40 <= length && length <= 128)

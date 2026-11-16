@@ -6,47 +6,53 @@ import { Response } from "miniflare"
 import { migrations } from "./migrations.ts"
 
 const origin = "https://slop.test"
-const token = "t".repeat(48)
-const expiredToken = "e".repeat(48)
+const member = "t".repeat(48)
+const other = "o".repeat(48)
+const expired = "e".repeat(48)
 
 interface Answer { readonly status: number; readonly body: Record<string, unknown> }
 
 service Backend {
   readonly db: D1Database
   readonly applied: ReadonlyArray<Applied>
-  readonly mail: ReadonlyArray<Record<string, unknown>>
-  request(path: string, init?: { readonly method?: string; readonly body?: string; readonly type?: string; readonly cookie?: boolean }): Answer!!
+  readonly github: ReadonlyArray<string>
+  request(path: string, init?: { readonly body?: unknown; readonly token?: string; readonly origin?: string }): Answer!!
   scheduled(cron: string): ScheduledOutcome!!
 }
 
+const githubUsers: Record<string, number> = { "Fresh-name": 0, taken: 999 }
+
 const Started = Layer.effect(Backend, effect {
-  const mail: Record<string, unknown>[] = []
+  const github: string[] = []
   const script = try promise(() => bundle(new URL("..", import.meta.url).pathname))
   const mf = try acquireRelease(sync(() => startWorker({
     script,
     d1: { SLOP_DB: "slop-private" },
     r2: ["PRIVATE_TRACES"],
-    services: {
-      SLOP_NOTIFY: async (request) => {
-        mail.push({ url: request.url, ...(await request.json()) as Record<string, unknown> })
-        return new Response(null, { status: 202 })
-      },
+    vars: { ADMIN_GITHUB_IDS: "7", PROJECT_MODERATOR_GITHUB_IDS: "" },
+    outbound: (request) => {
+      const login = new URL(request.url).pathname.replace("/users/", "")
+      github.push(`${request.method} ${request.url}`)
+      if (login === "down") return new Response("unavailable", { status: 502 })
+      const id = githubUsers[login]
+      return id === undefined ? new Response("{}", { status: 404 }) : Response.json({ login, id: id === 0 ? 1 : id })
     },
   })), (started) => promise(() => started.dispose()))
-  const db = try promise(() => database(mf, "SLOP_DB"))
   const applied = try promise(() => migrate(mf, "SLOP_DB", migrations))
+  const db = try promise(() => database(mf, "SLOP_DB"))
   return {
     db,
     applied,
-    mail,
+    github,
     request: (path, init = {}) => promise(async () => {
       const response = await mf.dispatchFetch(`${origin}${path}`, {
-        method: init.method ?? (init.body === undefined ? "GET" : "POST"),
+        method: init.body === undefined ? "GET" : "POST",
         headers: {
-          ...init.body === undefined ? {} : { "content-type": init.type ?? "application/json" },
-          ...init.cookie === false ? {} : { cookie: `__Host-slop_points=${token}` },
+          origin: init.origin ?? origin,
+          cookie: `__Host-slop_points=${init.token ?? member}`,
+          ...init.body === undefined ? {} : { "content-type": "application/json" },
         },
-        body: init.body,
+        body: init.body === undefined ? undefined : JSON.stringify(init.body),
       })
       return { status: response.status, body: (await response.json()) as Record<string, unknown> }
     }),
@@ -56,7 +62,7 @@ const Started = Layer.effect(Backend, effect {
 
 effect function run(statement: string, ...params: ReadonlyArray<string | number>) {
   const { db } = try Backend
-  return try promise(() => db.prepare(statement).bind(...params).all())
+  return (try promise(() => db.prepare(statement).bind(...params).all())).results
 }
 
 effect function signIn(actor: string, githubId: string, sessionToken: string, expiresAt: string) {
@@ -64,57 +70,65 @@ effect function signIn(actor: string, githubId: string, sessionToken: string, ex
   try run("INSERT INTO points_sessions (token_hash, actor_id, expires_at) VALUES (?, ?, ?)", try sha256Hex(sessionToken), actor, expiresAt)
 }
 
-const post = (path: string, body: unknown) => effect { return try (try Backend).request(path, { body: JSON.stringify(body) }) }
+effect function choose(code: unknown, token = member) {
+  const answer = try (try Backend).request("/api/v1/referrals/code", { body: { code }, token })
+  return [answer.status, answer.body.code ?? answer.body.error]
+}
 
 layer(Layer.merge(Started, webCrypto), { excludeTestServices: true, timeout: "180 seconds" })((it) => {
-  it.effect('Verify a notification address and choose consent over HTTP (spec/backend/email.md, "Story: Verify a notification address and choose consent"; spec/backend/accounts.md, "Email enrollment and consent use the existing email rules under live session checks")', () => effect {
+  it.effect('Choose a name for a member\'s referral link over HTTP (spec/backend/referralCodes.md, "Story: Choose a name for a member\'s referral link"; spec/backend/referralCodes.md, "Write admission binds an authenticated member and the reviewed name bytes"; spec/backend/referralCodes.md, "The reservation and change of active name commit together")', () => effect {
     const backend = try Backend
-    try Effect.try(() => assert.deepStrictEqual(backend.applied.filter((migration) => migration.error !== undefined), []))
-    try Effect.try(() => assert.strictEqual(backend.applied.length, 136))
-    try signIn("actor-1", "1", token, "2099-01-01T00:00:00.000Z")
+    try Effect.try(() => assert.deepStrictEqual([backend.applied.length, backend.applied.filter((migration) => migration.error !== undefined)], [136, []]))
+    try signIn("actor-1", "1", member, "2099-01-01T00:00:00.000Z")
+    try signIn("actor-2", "2", other, "2099-01-01T00:00:00.000Z")
 
-    const anonymous = try backend.request("/api/v1/notifications/email", { cookie: false })
-    const empty = try backend.request("/api/v1/notifications/email")
-    const notJson = try backend.request("/api/v1/notifications/email/verification", { body: "{}", type: "text/plain" })
-    const tooLarge = try post("/api/v1/notifications/email/verification", { address: "x".repeat(5000) })
-    const extraKey = try post("/api/v1/notifications/email/verification", { address: "ada@example.com", digest: "mine" })
-    const badAddress = try post("/api/v1/notifications/email/verification", { address: "nobody" })
-    const enrolled = try post("/api/v1/notifications/email/verification", { address: "ada@example.com" })
-    const sentToken = String(backend.mail[0]?.token)
-    const wrong = try post("/api/v1/notifications/email/verify", { token: "not-the-token" })
-    const raced = try.all [post("/api/v1/notifications/email/verify", { token: sentToken }), post("/api/v1/notifications/email/verify", { token: sentToken })]
-    const consent = try post("/api/v1/notifications/email/consent", { security: true, activity: true })
-    const stored = try run("SELECT d.email, p.enabled, p.security_enabled, p.destination_version = d.destination_version AS bound FROM notification_email_destinations d JOIN notification_email_preferences p ON p.github_id = d.github_id WHERE d.github_id = ?", "1")
+    const crossSite = try backend.request("/api/v1/referrals/code", { body: { code: "valid-name" }, origin: "https://elsewhere.test" })
+    const anonymous = try backend.request("/api/v1/referrals/code", { body: { code: "valid-name" }, token: "x".repeat(48) })
+    const extraKey = try backend.request("/api/v1/referrals/code", { body: { code: "valid-name", ref: "x" } })
+    const steps = [
+      try choose("ab"),
+      try choose("Support-desk"),
+      try choose("taken"),
+      try choose("down"),
+      try choose("Fresh-name"),
+      try choose("my_name"),
+      try choose("fresh-name", other),
+      try choose("FRESH-NAME"),
+    ]
+    const raced = try.all [choose("alpha1"), choose("bravo1")]
+    const rows = try run("SELECT code, github_id, retired_at IS NULL AS active FROM referral_codes ORDER BY rowid")
 
     try Effect.try(() => assert.deepStrictEqual({
-      anonymous: [anonymous.status, anonymous.body.error],
-      empty: [empty.status, empty.body],
-      refused: [notJson.status, tooLarge.status, extraKey.status, badAddress.status],
-      enrolled: [enrolled.status, enrolled.body.pendingAddress, enrolled.body.mail],
-      mail: [backend.mail.length, backend.mail[0]?.url, backend.mail[0]?.email, sentToken.length],
-      wrong: [wrong.status, wrong.body.error],
-      raced: raced.map((answer) => answer.status).sort(),
-      consent: [consent.status, consent.body],
-      stored: stored.results,
+      refused: [crossSite.status, crossSite.body.error, anonymous.status, extraKey.status],
+      steps,
+      raced: raced.map(([status]) => status),
+      rows: rows.map((row) => `${row.code} ${row.github_id}`).sort(),
+      active: rows.filter((row) => row.active === 1).map((row) => row.github_id),
+      github: [...backend.github].sort(),
     }, {
-      anonymous: [401, "sign_in_required"],
-      empty: [200, { verifiedAddress: "", pendingAddress: "", securityConsent: false, activityConsent: false }],
-      refused: [415, 413, 400, 400],
-      enrolled: [202, "ada@example.com", "accepted"],
-      mail: [1, "https://notify.internal/v1/email-verifications", "ada@example.com", 64],
-      wrong: [409, "not_allowed_now"],
-      raced: [200, 409],
-      consent: [200, { verifiedAddress: "ada@example.com", pendingAddress: "", securityConsent: true, activityConsent: true }],
-      stored: [{ email: "ada@example.com", enabled: 1, security_enabled: 1, bound: 1 }],
+      refused: [403, "origin_forbidden", 401, 400],
+      steps: [
+        [422, "invalid_code"],
+        [422, "reserved_code"],
+        [409, "code_is_github_account"],
+        [503, "github_unavailable"],
+        [200, "Fresh-name"],
+        [200, "my_name"],
+        [409, "code_taken"],
+        [200, "FRESH-NAME"],
+      ],
+      raced: [200, 200],
+      rows: ["FRESH-NAME 1", "alpha1 1", "bravo1 1", "my_name 1"],
+      active: ["1"],
+      github: ["Fresh-name", "alpha1", "bravo1", "down", "taken"].map((login) => `GET https://api.github.com/users/${login}`),
     }))
   })
 
-  it.effect('Expired sessions end at the scheduled maintenance (spec/backend/accounts.md, "Sign-out revokes only the caller\'s session and expiry uses the trusted clock")', () => effect {
+  it.effect('Expired sessions end at the scheduled maintenance (spec/backend/accounts.md, "Sign-out ends only the caller\'s session and revocation never reaches another account")', () => effect {
     const backend = try Backend
-    try signIn("actor-2", "2", expiredToken, "2020-01-01T00:00:00.000Z")
-    try backend.scheduled("17 * * * *")
+    try signIn("actor-3", "3", expired, "2020-01-01T00:00:00.000Z")
+    const outcome = try backend.scheduled("17 * * * *")
     const sessions = try run("SELECT actor_id FROM points_sessions ORDER BY actor_id")
-    const live = try backend.request("/api/v1/notifications/email")
-    try Effect.try(() => assert.deepStrictEqual([sessions.results, live.status], [[{ actor_id: "actor-1" }], 200]))
+    try Effect.try(() => assert.deepStrictEqual([outcome.outcome, sessions], ["ok", [{ actor_id: "actor-1" }, { actor_id: "actor-2" }]]))
   })
 })

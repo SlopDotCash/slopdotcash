@@ -9,17 +9,20 @@ service Platform {
   readonly db: D1Database
   readonly objects: R2Bucket
   readonly outbound: ReadonlyArray<string>
+  readonly relayed: ReadonlyArray<unknown>
   request(path: string, init?: { readonly method?: string; readonly body?: Uint8Array }): Answer!!
   queue(bodies: ReadonlyArray<unknown>): QueueOutcome!!
 }
 
 const Started = Layer.effect(Platform, effect {
   const outbound: string[] = []
+  const relayed: unknown[] = []
   const script = try promise(() => bundle(new URL("..", import.meta.url).pathname))
   const mf = try acquireRelease(sync(() => startWorker({
     script,
     d1: { DB: "platform" },
     r2: ["OBJECTS"],
+    services: { NOTIFY: async (request) => { relayed.push([request.url, await request.json()]); return new Response(null, { status: 202 }) } },
     outbound: (request) => {
       outbound.push(`${request.method} ${request.url} ${request.headers.get("accept") ?? ""}`)
       return new Response("Keep it logically awesome.", { status: 200 })
@@ -31,6 +34,7 @@ const Started = Layer.effect(Platform, effect {
     db,
     objects: try promise(() => storage(mf, "OBJECTS")),
     outbound,
+    relayed,
     request: (path, init = {}) => promise(async () => {
       const response = await mf.dispatchFetch(`https://platform.test${path}`, { method: init.method ?? "GET", body: init.body })
       const type = response.headers.get("content-type") ?? ""
@@ -43,7 +47,7 @@ const Started = Layer.effect(Platform, effect {
 const evidence = new TextEncoder().encode("exact trace bytes")
 
 layer(Started, { excludeTestServices: true, timeout: "180 seconds" })((it) => {
-  it.effect('Exact bytes are stored once under their digest in R2 (spec/contributor/evidence.md, "Only contributor-inspected exact bytes can enter an authorized bounded upload")', () => effect {
+  it.effect('Exact bytes are stored once under their digest in R2 (spec/contributor/evidence.md, "The server\'s retained digest is learned once and never replaced")', () => effect {
     const platform = try Platform
     const stored = try platform.request("/objects/trace-1?once=1", { method: "PUT", body: evidence })
     const again = try platform.request("/objects/trace-1?once=1", { method: "PUT", body: evidence })
@@ -64,7 +68,7 @@ layer(Started, { excludeTestServices: true, timeout: "180 seconds" })((it) => {
     try Effect.try(() => assert.match((stored.body as { sha256: string }).sha256, /^[0-9a-f]{64}$/u))
   })
 
-  it.effect('A stale aggregate version never commits (spec/backend/listing.md, "Current administrators append placement changes against the current revision")', () => effect {
+  it.effect('A stale aggregate version never commits (spec/backend/projects.md, "Owner revisions publish at once against the expected revision")', () => effect {
     const platform = try Platform
     try promise(() => platform.db.prepare("INSERT INTO counters (id, value) VALUES ('c', 0)").all())
     const first = try platform.request("/counters/c", { method: "POST" })
@@ -84,16 +88,19 @@ layer(Started, { excludeTestServices: true, timeout: "180 seconds" })((it) => {
   it.effect('Outbound requests and queued jobs reach only their boundary (spec/slopbot/webhookDelivery.md, "Current registration determines valuation and queue scope")', () => effect {
     const platform = try Platform
     const zen = try platform.request("/zen")
+    const relay = try platform.request("/relay/hello", { method: "POST" })
     const settled = try platform.queue([{ key: "queued-1", text: "from the queue" }, { key: "queued-2", text: "fail" }])
     const queued = try promise(() => platform.objects.get("queued-1"))
     const text = queued === null ? undefined : new TextDecoder().decode(try promise(() => queued.arrayBuffer()))
     try Effect.try(() => assert.deepStrictEqual({
       zen: zen.body,
+      relay: [relay.body, platform.relayed],
       outbound: platform.outbound.map((line) => line.split(" ").slice(0, 2).join(" ")),
       queue: [settled.outcome, settled.explicitAcks, settled.retryMessages.map((message) => message.msgId)],
       text,
     }, {
       zen: { status: 200, text: "Keep it logically awesome." },
+      relay: [{ status: 202 }, [["https://notify.internal/v1/messages", { text: "hello" }]]],
       outbound: ["GET https://api.github.com/zen"],
       queue: ["ok", ["message-0"], ["message-1"]],
       text: "from the queue",

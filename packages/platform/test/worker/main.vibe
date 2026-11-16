@@ -1,8 +1,8 @@
-// spec/contributor/evidence.md, "Only contributor-inspected exact bytes can enter an authorized bounded upload"; spec/backend/listing.md, "Current administrators append placement changes against the current revision"; spec/slopbot/webhookDelivery.md, "Current registration determines valuation and queue scope"
-import type { D1Database, QueueMessage, R2Bucket } from "../../src/bindings.ts"
+// spec/contributor/evidence.md, "The server's retained digest is learned once and never replaced"; spec/backend/projects.md, "Owner revisions publish at once against the expected revision"; spec/slopbot/webhookDelivery.md, "Current registration determines valuation and queue scope"
+import type { D1Database, Fetcher, QueueMessage, R2Bucket } from "../../src/bindings.ts"
 import { sha256Hex, webCrypto } from "../../src/crypto.vibe"
 import { D1, d1, first, sql } from "../../src/d1.vibe"
-import { Refused, answered, json, outbound } from "../../src/http.vibe"
+import { Refused, answered, json, outbound, outboundVia } from "../../src/http.vibe"
 import { type Bucket, bucket } from "../../src/r2.vibe"
 import { update } from "../../src/stored.vibe"
 import { worker } from "../../src/worker.vibe"
@@ -10,6 +10,27 @@ import { worker } from "../../src/worker.vibe"
 interface Env {
   readonly DB: D1Database
   readonly OBJECTS: R2Bucket
+  readonly NOTIFY: Fetcher
+}
+
+service Notify {
+  deliver(text: string): number!!
+}
+
+function notifyVia(fetcher: Fetcher) {
+  return Layer.provide(Layer.effect(Notify, effect {
+    const client = try HttpClient.HttpClient
+    return {
+      deliver: (text) => effect {
+        const response = client.execute(HttpClientRequest.bodyJsonUnsafe(HttpClientRequest.post("https://notify.internal/v1/messages"), { text })) catch () => undefined
+        return response?.status ?? 0
+      },
+    }
+  }), outboundVia(fetcher))
+}
+
+effect function relay() {
+  return json({ status: try (try Notify).deliver(try key()) })
 }
 
 service Objects: Bucket {}
@@ -75,12 +96,13 @@ effect function job(message: QueueMessage) {
 }
 
 export default worker({
-  services: (env: Env) => Layer.mergeAll(d1(env.DB), webCrypto, outbound, Layer.succeed(Objects, bucket(env.OBJECTS))),
+  services: (env: Env) => Layer.mergeAll(d1(env.DB), webCrypto, outbound, Layer.succeed(Objects, bucket(env.OBJECTS)), notifyVia(env.NOTIFY)),
   routes: Layer.mergeAll(
     HttpRouter.add("PUT", "/objects/:key", put()),
     HttpRouter.add("GET", "/objects/:key", get()),
     HttpRouter.add("GET", "/heads/:key", head()),
     HttpRouter.add("GET", "/zen", zen()),
+    HttpRouter.add("POST", "/relay/:key", relay()),
     HttpRouter.add("POST", "/counters/:key", increment(false)),
     HttpRouter.add("POST", "/interfered/:key", increment(true)),
   ),

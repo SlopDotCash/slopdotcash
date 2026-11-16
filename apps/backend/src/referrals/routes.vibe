@@ -1,0 +1,57 @@
+// spec/backend/referralCodes.md, "Write admission binds an authenticated member and the reviewed name bytes"; spec/backend/referralCodes.md, "The reservation and change of active name commit together"
+import { first, sql } from "@repo/platform/d1"
+import { Refused, answered, body, json } from "@repo/platform/http"
+import { Conflict } from "@repo/platform/stored"
+import { type Choice, Rejected, choice } from "../../gen/backend__referralCodes.effect.vibe"
+import { sessionActor } from "../session.vibe"
+import { githubEvidence, nameEvidence } from "./name.vibe"
+import { send } from "./store.vibe"
+
+export service TeamAccounts {
+  readonly ids: ReadonlySet<string>
+}
+
+schema CodeRequest { code: string }
+schema Reservation { github_id: string }
+
+const refusals: Record<Exclude<Choice, "Accepted">, readonly [number, string]> = {
+  OriginForbidden: [403, "origin_forbidden"],
+  ActorRequired: [401, "sign_in_required"],
+  InvalidName: [422, "invalid_code"],
+  TeamAccount: [422, "team_account"],
+  ReservedName: [422, "reserved_code"],
+  NameTaken: [409, "code_taken"],
+  OtherGitHubLogin: [409, "code_is_github_account"],
+  GitHubUnavailable: [503, "github_unavailable"],
+  AtLifetimeLimit: [409, "code_limit"],
+}
+
+function refused(outcome: Choice) {
+  const [status, code] = outcome === "Accepted" ? [409, "changed_concurrently"] as const : refusals[outcome]
+  return new Refused({ status, code })
+}
+
+effect function sameOrigin() {
+  const request = try HttpServerRequest.HttpServerRequest
+  return request.headers.origin === new URL(request.originalUrl).origin
+}
+
+effect function chooseName() {
+  return try answered(effect {
+    if (!(try sameOrigin())) throw new Refused({ status: 403, code: "origin_forbidden" })
+    const actor = try sessionActor()
+    const { code } = try body(CodeRequest, 1)
+    const name = nameEvidence(code)
+    const team = (try TeamAccounts).ids.has(actor)
+    const decided = !name.syntaxValid || name.reserved || team || (try first(Reservation, sql`SELECT github_id FROM referral_codes WHERE code_key = ${name.key}`)) !== undefined
+    const github = try githubEvidence(code, actor, decided)
+    const next = send({ type: "choose", name, sameOrigin: true, team, github }, actor) catch effect (error) => match (error) {
+      when Rejected: throw refused(choice(error.state, name, true, team, github, actor));
+      when Conflict: throw new Refused({ status: 409, code: "changed_concurrently" });
+      default: throw error;
+    }
+    return json({ code: next.reservations[`$${name.key}`]?.text ?? code })
+  })
+}
+
+export const ReferralRoutes = HttpRouter.add("POST", "/api/v1/referrals/code", chooseName())
