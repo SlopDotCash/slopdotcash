@@ -47,6 +47,8 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          PRIVATE_PACKET_TRANSPORT: bound-preview
+          PRIVATE_PACKET_ENCRYPTION_KEY: ${{ secrets.PRIVATE_PACKET_ENCRYPTION_KEY }}
           SLOPBOT_APP_ID: ${{ secrets.SLOPBOT_APP_ID }}
           SLOPBOT_APP_PRIVATE_KEY: ${{ secrets.SLOPBOT_APP_PRIVATE_KEY }}
           HISTORICAL_POINTS_OBJECT_MANIFEST: ${{ secrets.HISTORICAL_POINTS_OBJECT_MANIFEST }}
