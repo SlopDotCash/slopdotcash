@@ -97,7 +97,7 @@ export async function stopVettingEvidence(
         const marker = JSON.parse(await readFile(completionPath, "utf8"));
         if (marker.pid !== pid || marker.completed !== true)
           throw new Error("Invalid local R2 shutdown acknowledgement");
-        if (!forced && (await processGroupStopped(pid))) {
+        if ((await processGroupStopped(pid)) && !forced) {
           resolve(0);
           return;
         }

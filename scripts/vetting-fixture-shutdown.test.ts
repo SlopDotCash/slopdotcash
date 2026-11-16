@@ -194,3 +194,41 @@ test.skipIf(process.platform === "win32")(
   },
   5000,
 );
+
+test("an acknowledgement inspected across forced termination cannot report a clean shutdown", async () => {
+  // Module mocks live in a separate process so real R2 fixtures retain their
+  // filesystem and signal implementations throughout the rest of the suite.
+  const fixture = new URL(
+    "../tests/vetting-evidence-fixture.ts",
+    import.meta.url,
+  ).href;
+  const script = `
+    import { mock } from "bun:test";
+    import { EventEmitter } from "node:events";
+    const fs = await import("node:fs/promises");
+    mock.module("node:fs/promises", () => ({ ...fs,
+      readFile: async () => JSON.stringify({ pid: 12345, completed: true }),
+      readdir: async () => { await Bun.sleep(1200); return []; },
+    }));
+    Object.defineProperty(process, "platform", { value: "linux" });
+    process.kill = (pid) => { if (pid !== -12345) throw Error("Unowned signal"); return true; };
+    const { stopVettingEvidence } = await import(${JSON.stringify(fixture)});
+    const child = Object.assign(new EventEmitter(), { pid: 12345, exitCode: null, signalCode: null });
+    try {
+      await stopVettingEvidence(child, 0, true, "fixture-marker");
+      throw Error("Forced termination was reported as clean");
+    } catch (error) {
+      if (error.message !== "Local R2 shutdown timed out") throw error;
+    }
+  `;
+  const child = spawn(process.execPath, ["-e", script], {
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  let stderr = "";
+  child.stderr.on("data", (chunk) => {
+    stderr += String(chunk);
+  });
+  const [code] = await once(child, "exit");
+  expect(stderr).toBe("");
+  expect(code).toBe(0);
+}, 5000);
