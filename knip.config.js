@@ -8,7 +8,6 @@
 //   tailwindcss (ui, design-system, studio, apps)  resolved by @tailwindcss/vite and the lint plugin from CSS
 //   entry *.schema, *.contract              imported by the tests vibestack/testing/generate.ts writes under .cache/
 //   design-system eslint, eslint-plugin-better-tailwindcss, typescript-eslint  loaded by name in vibestack/design/test/design.test.ts
-//   contracts forge                         Foundry, installed beside Node, not from npm (packages/contracts/README.md)
 import vibelang from "vibelang/knip"
 
 export default {

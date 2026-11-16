@@ -5,7 +5,9 @@ is [AGENTS.md](AGENTS.md); the agent's loop is the
 [`sync` skill](.claude/skills/sync/SKILL.md); the stages of
 `pnpm check` are [below](#stages-of-pnpm-check).
 
-In the vibestack repository, "the order example" is
+A path under `vibestack/` names a file of the
+[vibestack repository](https://github.com/lalalune/vibestack), which the
+installed package does not ship. There, "the order example" is
 `vibestack/examples/order/spec/index.md` and "the tracker example" is
 `vibestack/examples/dashboard/spec/tracker.md`. The root `spec/index.md` links to
 `spec/app/index.md`, the hello world in `apps/app` that uses one of each thing
@@ -23,14 +25,13 @@ with the reason.
 | `sometimes` | each `sometimes` goal is reached, and each event happens in some simulated state | the model is invalid, or simulation stopped at an `always` failure |
 | `replay` | the generated TypeScript agrees with Quint on the simulated traces | as `sometimes` |
 | `types` | the `vibelang` compiler checks `src/`, the tests and `gen/` ([shell skill](.claude/skills/shell/SKILL.md)) | a stage above failed; without a `tsconfig.json` it passes as skipped only when there is no `src/` or `test/` |
-| `proof` | Dafny proves each unit's obligations, or `spec/lock.json` records them as simulated only | model, simulation or replay failed |
-| `tests` | the package's [tests](AGENTS.md#tests) pass, each cites a story or rule the spec has and reaches past `gen/`, and its drivers import `gen/` as types only | model, simulation or replay failed |
-| `traces` | the application, through its drivers, `driver:` programs and recorded traces, agrees with the spec ([Conformance](#conformance)) | model, simulation or replay failed |
+| `proof` | Dafny proves each unit's obligations, or `spec/lock.json` records them as simulated only | a stage above `types` failed; it runs beside `types` |
+| `tests` | the package's [tests](AGENTS.md#tests) pass, each cites a story or rule the spec has and reaches past `gen/`, and its drivers import `gen/` as types only | a stage above failed |
+| `traces` | the application, through its drivers, `driver:` programs and recorded traces, agrees with the spec ([Conformance](#conformance)) | a stage above failed |
+| `explore` | Bombadil explores the package's page, served by its `start` or `dev` script, and the properties of `test/bombadil.ts`, or Bombadil's defaults, hold in every state it reaches ([Exploring the page](#exploring-the-page)) | a stage above failed; a `-` line on a platform Bombadil has no executable for |
 | `review` | every story, rule and contract changed since `spec/lock.json` was accepted ([Review](#review)) | never |
 
-Types and proofs run concurrently. Tests and traces still report their own
-results when types or proofs fail; a green result there does not clear the
-failed stage.
+Types and proofs run concurrently; tests, traces and explore wait for both.
 
 ## Writing a spec
 
@@ -118,10 +119,17 @@ from its name and signature:
 | `pure val within_leadsToPaid = 3` | a bound for a `leadsTo` rule: every run meets it within 3 events, from 1 to 100 | a search of simulated traces for a run that does not ("Liveness", below) |
 | any other `pure val` or `pure def` | a constant or helper | the same constant or function |
 
+When a reachability search uses multiple trace lengths, it tries short,
+single-threaded batches before spending the full search budgets. A trace
+that reaches the goal or breaks a rule goes through the usual replay.
+
 A transition parameter named `by` identifies its sender. All such parameters
 use the same type. It is supplied separately as `enabled(current, event, by)`
 and `step(current, event, by)`; it never comes from `parseEvent`. The shell
-must validate the authenticated sender before supplying it.
+must validate the authenticated sender before supplying it. Once any
+transition takes `by`, `step`, `enabled` and `Machine.send` take a sender for
+every event. In the generated Dafny it is `by_`, as a proof file's lemma
+headers spell it.
 
 A helper that takes the state first and returns the state would be taken for
 a transition. Give it the state as its second parameter, or return something
@@ -139,10 +147,14 @@ Refused, each with a message saying why: the generated and harness names
 `current`, `event`, `state`, …) and `ProofLib`; JavaScript globals and
 keywords (`Number`, `delete`, …); Quint built-ins (`to`, `next`, `all`,
 `size`, …); a parameter named like a variant; a variant field called `tag`;
+two record types with the same fields; a field `__proto__`; names beginning
+`std_` (`parseSpec` in `vibestack/parse.ts`), or `nth_`, `get_`, `lookup<n>_`
+or another prefix the generated module uses for itself (`GENERATED` in
+`vibestack/gen.ts`);
 and near-misses of the conventions above such as `alwayspaid` or `CanPay`.
 A state machine is also refused the names of its Effect adapter: `Rejected`,
-`NotAnEvent`, `NotAState`, `NotASender`, `Machine`, `machine`, `apply`,
-`decodeEvent`, `decodeState` and `decodeSender` ([shell skill](.claude/skills/shell/SKILL.md)).
+`NotAnEvent`, `NotAState`, `NotASender`, `Machine`, `machine`, `machineOver`,
+`stored`, `apply`, `decodeEvent`, `decodeState` and `decodeSender` ([shell skill](.claude/skills/shell/SKILL.md)).
 
 ### Using one spec from another
 
@@ -166,7 +178,7 @@ Generated code uses the imported spec's full module path.
   from their `std/` directory, when the importing spec's directory has no
   `net.md` or `net/index.md`. It is simulated and proved with the specs that
   import it, never reviewed.
-  [`vibestack/std/net.md`](vibestack/std/net.md) is a network that loses, repeats and reorders:
+  `vibestack/std/net.md` is a network that loses, repeats and reorders:
   the numbers of the messages in flight, with `N::send`, `N::take` (to
   deliver or lose one), `N::repeat`, and laws for an `always` rule that only
   messages sent are in flight. `vibestack/fixtures/ping.md` uses it.
@@ -301,7 +313,7 @@ stage with the name of the construct.
   the position is outside it.
 - **Guard every partial operation in the definition that uses it.** An index
   outside a list, a missing map key and a zero divisor stop the simulator and
-  cannot be proved safe. Test first and give a default, as `problemAt` does
+  cannot be proved safe; in the generated code one throws a `RangeError`. Test first and give a default, as `problemAt` does
   in the tracker example. For a map the form is exactly
   `if (m.keys().contains(k)) m.get(k) else 0`.
 - **`/` and `%` go towards zero**, as in Quint: `-7 / 2` is `-3` and `-7 % 2`
@@ -408,10 +420,13 @@ another spec is named `spec/<file>: <rule>`. A renamed heading is one rule
 removed and one new.
 
 The versioned `spec/lock.json` holds `specs` keyed by source path, `contracts`
-keyed by source file, and `unproved` keyed by proof unit. `pnpm exec spec migrate`
-consolidates older per-spec ledgers without accepting new reviews or proof
-exceptions. A proof exception in the old list form is not carried over: its
-obligations are reported as not proved until proved or accepted again. Commit the resulting lock with the specs.
+keyed by source file, and `unproved` keyed by proof unit. Commit it with the
+specs.
+
+When an accepted simulated-only obligation proves or is removed, `review`
+lists its obsolete exception. `pnpm accept` removes obsolete exceptions
+when it records the spec and contract reviews. Only `pnpm accept unproved`
+can add exceptions.
 
 Removed spec paths stay in review until their removal is accepted.
 
@@ -448,8 +463,12 @@ line.
   Both return a fresh copy, so nothing the caller keeps can change it
   afterwards.
 - Calling a transition directly (`pay(o, 5)`) is only meaningful when its
-  guard holds. Application code goes through `apply`, or a `Machine`, of the
-  Effect adapter ([shell skill](.claude/skills/shell/SKILL.md)), which use `enabled` and `step`.
+  guard holds. Application code goes through `apply`, or a `Machine` in memory
+  (`machine()`), kept in a store (`stored(key)`) or kept by the shell
+  (`machineOver(start, keep)`), of the Effect adapter
+  `gen/<name>.effect.vibe`, which use `enabled` and `step`; a React component
+  goes through `useMachine` of `gen/<name>.react.ts`
+  ([shell skill](.claude/skills/shell/SKILL.md)).
 - `gen/` is rebuilt by `pnpm gen` and `pnpm check`, and by
   `pnpm install` when every spec is valid.
 
@@ -497,6 +516,41 @@ The walks use the fixed normal or nightly profile
   until its `reset`, `dispatch` and `observe` are filled in. It never
   replaces a driver. A shell on the generated `machine()` needs none.
 
+### Exploring the page
+
+The `explore` stage drives a package's page in a real browser with
+[Bombadil](https://github.com/antithesishq/bombadil): it clicks, types,
+scrolls and reloads at random, and checks properties in every state it
+reaches. A package has a page when it has an `index.html` at its top or
+under `src/`.
+
+- **Served by the package itself.** `check` runs its `start` script, or
+  `dev` when that is not the studio, and explores the first
+  `http://localhost` or `127.0.0.1` address it prints within 300 s. A page
+  with neither script fails.
+- **In Chromium.** Playwright's Chromium (`pnpm exec playwright install
+  chromium`), or the browser `CHROME` names. Bombadil runs on Linux x64 and
+  arm64 and on Apple silicon; elsewhere the stage prints a `-` line and CI
+  explores the page.
+- **For a fixed time, from no seed.** The fixed profile's seconds, Chrome's
+  start included ([budgets](CONTRIBUTING.md#seeds-and-budgets)). The
+  actions are random, so two runs explore differently.
+- **`test/bombadil.ts` says what must hold.** It is an ES module Bombadil
+  bundles itself. Re-export `@antithesishq/bombadil/browser/defaults` (no
+  uncaught exception or unhandled rejection, no console error, no HTTP
+  error), and export a property for each rule the page must keep, citing
+  it as a test does. The types come from `@antithesishq/bombadil`, which
+  `spec init` adds. Without the file, the defaults are checked.
+  `apps/app/test/bombadil.ts` is a worked one.
+- **A broken property is saved.** The run is kept in
+  `test/__traces__/bombadil`, which is not committed;
+  `pnpm exec bombadil browser inspect test/__traces__/bombadil` shows each
+  state. Later runs replay it first: one that still breaks fails, one that
+  cannot run keeps it, and one that breaks nothing or no longer applies to
+  the page removes it. A bug worth keeping fixed becomes a step of the journey it broke.
+- **A pass is remembered** until the package's test inputs, Bombadil's
+  version or the script change. The nightly check always explores afresh.
+
 ## Large applications
 
 - **One spec per area**, each a few hundred lines: a state machine for each
@@ -519,8 +573,9 @@ The walks use the fixed normal or nightly profile
 ## Checking harder
 
 Simulation is seeded from what it simulates and the fixed profile, so a run
-repeats exactly. `pnpm all check -- --nightly` uses the larger nightly profile
-and always checks afresh. A
+repeats exactly; exploring the page does not. `pnpm all check -- --nightly`
+uses the larger nightly profile, explores each page five times as long, and
+always checks afresh. A
 failing `always` rule or an unreached `sometimes` goal prints its seed and the
 `pnpm exec quint run` command that replays it.
 

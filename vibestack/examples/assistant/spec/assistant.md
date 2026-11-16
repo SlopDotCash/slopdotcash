@@ -53,7 +53,8 @@ type Effect = Said({ text: str }) | Filled({ page: Page, card: SecretCard }) | S
 
 What is saved survives a restart: the card, the bill, what was charged, the
 last request and the one last answered, queued effects and the last delivery
-number. The turn, the browser page and whether a reply is awaited are in memory.
+number. The turn and its budget, the browser page and whether a reply is
+awaited (`waiting`) are in memory, so a restart resets them.
 
 ```quint
 type Assistant = {
@@ -241,9 +242,19 @@ pure def decline(s: Assistant, by: Actor): Assistant =
 
 ### A bill is paid only on the biller's own page
 
+The person confirms on that page, and the payment it queues is carried out
+(its delivery acknowledged) only while that page is the one showing. A queued
+payment waits, and the effects queued behind it with it, while a lookalike or
+no known page shows, as after a restart, until the biller's own page loads.
+
 ```quint
 pure def stepPaidOnlyOnGenuine(before: Assistant, via: str, after: Assistant): bool =
-  (after.bill.paid and not(before.bill.paid)) implies after.page == Genuine
+  val oldest = before.pending.nthOr(0, Said({ text: "" }))
+  ((after.bill.paid and not(before.bill.paid)) implies after.page == Genuine)
+    and (via == "acknowledge" implies match oldest {
+      | Submitted(p) => before.page == Genuine and p.page == Genuine
+      | _ => true
+    })
 ```
 
 ### A paid bill was reviewed
@@ -321,9 +332,19 @@ pure def sometimesCardSaved(s: Assistant): bool = s.card != ""
 
 ### Card details go only into the biller's own page
 
+A card fill is queued only for the biller's own page, and carried out (its
+delivery acknowledged) only while that page is the one showing. A queued
+fill waits, and the effects queued behind it with it, while a lookalike or
+no known page shows, as after a restart, until the biller's own page loads.
+
 ```quint
-pure def stepFilledOnlyGenuine(before: Assistant, after: Assistant, out: List[Effect]): bool =
+pure def stepFilledOnlyGenuine(before: Assistant, via: str, after: Assistant, out: List[Effect]): bool =
+  val oldest = before.pending.nthOr(0, Said({ text: "" }))
   out.every(e => match e { | Filled(f) => f.page == Genuine | _ => true })
+    and (via == "acknowledge" implies match oldest {
+      | Filled(f) => before.page == Genuine and f.page == Genuine
+      | _ => true
+    })
 ```
 
 ### Card details can be filled in
@@ -345,9 +366,9 @@ type SecretCard = str
 
 ### The model sees nothing secret
 
-What the model is shown to choose its next action: the turn, the page and the
-bill. `Seen` has no secret field, so `check` refuses any of its fields that
-the card could reach.
+What the model is shown to choose its next action: the turn and its budget,
+the page, whether a request is waiting, and the bill. `Seen` has no secret
+field, so `check` refuses any of its fields that the card could reach.
 
 ```quint
 type Seen = { phase: Phase, budget: int, page: Page, waiting: bool, bill: Bill }
@@ -397,13 +418,24 @@ pure def sometimesRestartedAfterPaying(s: Assistant): bool = s.phase == Idle and
 Effects are delivered oldest first. The next delivery number is one more
 than `delivered`; it stays the same across retries and restarts. The outside
 service must apply each delivery number at most once within this assistant's
-account, and return success when that number was already applied.
+account, and return success when that number was already applied. A card
+fill or a payment at the head waits until the page it names, the biller's own,
+is the one showing ("Card details go only into the biller's own page", "A bill
+is paid only on the biller's own page").
 
 ```quint
 pure val deliveryValues = Set(1, 2, 3)
 
+pure def waitsForTheBillersPage(s: Assistant): bool =
+  val first = s.pending.nthOr(0, Said({ text: "" }))
+  match first {
+    | Filled(f) => not(s.page == Genuine and f.page == s.page)
+    | Submitted(p) => not(s.page == Genuine and p.page == s.page)
+    | _ => false
+  }
+
 pure def canAcknowledge(s: Assistant, delivery: int, by: Actor): bool =
-  by == World and s.pending.length() > 0 and delivery == s.delivered + 1
+  by == World and s.pending.length() > 0 and delivery == s.delivered + 1 and not(waitsForTheBillersPage(s))
 
 pure def acknowledge(s: Assistant, delivery: int, by: Actor): Assistant =
   { ...s, pending: s.pending.removeAt(0), delivered: s.delivered + 1 }
