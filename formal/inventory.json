@@ -500,13 +500,13 @@
     },
     {
       "path": "backend/payments/vault-snapshots.ts",
-      "sha256": "83ad0679a5882f1e37876258ea7bfb51998dbf2db3dc5376d453fb5cb872ede0",
+      "sha256": "912ca2416bc3f83835e36be46c51e38eb14f34effe688c492a6fba29883d46e7",
       "models": [
         "formal/models/payments/chain_evidence.qnt",
         "formal/models/payments/vault_initial_snapshot.qnt",
         "formal/models/rewards/monthly_coordinator.qnt"
       ],
-      "candidateLines": [12, 62, 124, 136, 142, 196],
+      "candidateLines": [13, 64, 126, 138, 144, 199],
       "review": "mapped-abstraction"
     },
     {
