@@ -20,14 +20,17 @@ obligation).
 
 ## Story: Submit optional private evidence without blocking a contribution
 
-A contributor may decline evidence collection, or inspect and redact one
-local snapshot and upload exactly those bytes.
+A contributor may decline evidence collection, declare a human-only
+contribution, or inspect and redact one local snapshot and upload exactly
+those bytes. The contributor's client (sender `contributorClient`) decides;
+the Slop server's authenticated replies (sender `slopServer`) report the run
+and the stored digest.
 
 ### Evidence state is separate from ordinary submission
 
 ```quint
 import localReceipt as LR from "./localReceipt"
-type EvidencePhase = Undecided | Declined | Selected | Stored | UploadFailed
+type EvidencePhase = Undecided | Declined | HumanOnly | Selected | Stored | UploadFailed
 type MediaType = PlainText | NdjsonText
 type ServerStage = NoServerRun | AwaitingTrace | TraceUploaded | TraceFinalized
 type Snapshot = { digest: str, size: int, media: MediaType, inspected: bool, disclosed: bool, consent: bool }
@@ -38,12 +41,31 @@ type SignedReceipt = { signed: bool, runDigest: str, traceDigest: str, deviceKey
 type Evidence = { phase: EvidencePhase, digest: str, size: int, storedDigest: str, receipt: SignedReceipt }
 pure val maxTraceBytes = 8388608
 pure val signatureVerifier = -1
+pure val slopServer = -2
+pure val contributorClient = 1
 pure val noSnapshot: Snapshot = { digest: "", size: 0, media: PlainText, inspected: false, disclosed: false, consent: false }
 pure val noReceipt: SignedReceipt = { signed: false, runDigest: "", traceDigest: "", deviceKey: "",
   provider: "", model: "", client: "" }
 pure val initial: Evidence = { phase: Undecided, digest: "", size: 0, storedDigest: "", receipt: noReceipt }
-pure def canDecline(e: Evidence): bool = e.phase == Undecided or e.phase == Selected or e.phase == UploadFailed
-pure def decline(e: Evidence): Evidence = { ...e, phase: Declined }
+pure def canDecline(e: Evidence, by: int): bool = by == contributorClient
+  and (e.phase == Undecided or e.phase == Selected or e.phase == UploadFailed)
+pure def decline(e: Evidence, by: int): Evidence = { ...e, phase: Declined }
+```
+
+### A human-only contribution uploads no agent trace and signs no agent receipt
+
+The private trace contract (`backend/trace/README.md`, "Private trace
+privacy contract") lets a human who did not use an agent declare a
+human-only contribution; that contributor uploads no agent trace. Selection
+is refused afterwards.
+
+```quint
+pure def canDeclareHumanOnly(e: Evidence, by: int): bool = by == contributorClient and e.phase == Undecided
+  and not(e.receipt.signed)
+pure def declareHumanOnly(e: Evidence, by: int): Evidence = { ...e, phase: HumanOnly }
+pure def alwaysHumanOnlyHasNoTrace(e: Evidence): bool = e.phase == HumanOnly implies
+  e.digest == "" and e.storedDigest == "" and not(e.receipt.signed)
+pure def sometimesHumanOnly(e: Evidence): bool = e.phase == HumanOnly
 ```
 
 ### Only one inspected, disclosed, consented snapshot of bounded size can be selected
@@ -53,14 +75,15 @@ The contributor inspects and redacts the selected file first (CLAUDE.md
 shows its path, byte count, media type and SHA-256 digest before
 authorization. The uploader performs no redaction and stores the exact
 selected bytes: the selected bytes are the retained bytes. A changed file is
-a new selection with a new digest.
+a new selection with a new digest. Selection is refused after a human-only
+declaration.
 
 ```quint
 pure def validSnapshot(snapshot: Snapshot): bool = snapshot.digest != "" and 1 <= snapshot.size
   and snapshot.size <= maxTraceBytes and snapshot.inspected and snapshot.disclosed and snapshot.consent
-pure def canSelectTrace(e: Evidence, snapshot: Snapshot): bool = validSnapshot(snapshot) and
+pure def canSelectTrace(e: Evidence, by: int, snapshot: Snapshot): bool = by == contributorClient and validSnapshot(snapshot) and
   (e.phase == Undecided or e.phase == Declined or e.phase == UploadFailed or e.phase == Stored)
-pure def selectTrace(e: Evidence, snapshot: Snapshot): Evidence =
+pure def selectTrace(e: Evidence, by: int, snapshot: Snapshot): Evidence =
   { ...e, phase: Selected, digest: snapshot.digest, size: snapshot.size }
 pure def alwaysSelection(e: Evidence): bool = ((e.phase == Selected or e.phase == Stored) implies
   e.digest != "" and 1 <= e.size and e.size <= maxTraceBytes)
@@ -78,19 +101,21 @@ attempt keeps whatever the server retained.
 ```quint
 pure def consistentRun(reply: RunReply): bool = reply.serverRun != "" and reply.stage != NoServerRun
   and ((reply.stage == AwaitingTrace) iff (reply.storedDigest == ""))
-pure def canRegister(e: Evidence, runReply: RunReply): bool = e.phase == Selected and consistentRun(runReply)
+pure def canRegister(e: Evidence, by: int, runReply: RunReply): bool = by == slopServer and e.phase == Selected
+  and consistentRun(runReply)
   and (e.storedDigest == "" or runReply.storedDigest == e.storedDigest)
-pure def register(e: Evidence, runReply: RunReply): Evidence =
+pure def register(e: Evidence, by: int, runReply: RunReply): Evidence =
   { ...e, storedDigest: if (e.storedDigest == "") runReply.storedDigest else e.storedDigest }
-pure def canStore(e: Evidence, uploadReply: UploadReply): bool = e.phase == Selected and e.storedDigest == ""
+pure def canStore(e: Evidence, by: int, uploadReply: UploadReply): bool = by == slopServer and e.phase == Selected
+  and e.storedDigest == ""
   and uploadReply.serverRun != "" and uploadReply.digest == e.digest and uploadReply.stage == TraceUploaded
-pure def store(e: Evidence, uploadReply: UploadReply): Evidence = { ...e, phase: Stored, storedDigest: uploadReply.digest }
-pure def canReuse(e: Evidence): bool = e.phase == Selected and e.storedDigest != "" and e.storedDigest == e.digest
-pure def reuse(e: Evidence): Evidence = { ...e, phase: Stored }
-pure def canRefuseDifferentSelection(e: Evidence): bool = e.phase == Selected and e.storedDigest != "" and e.storedDigest != e.digest
-pure def refuseDifferentSelection(e: Evidence): Evidence = { ...e, phase: UploadFailed }
-pure def canStopAttempt(e: Evidence): bool = e.phase == Selected or e.phase == Stored
-pure def stopAttempt(e: Evidence): Evidence =
+pure def store(e: Evidence, by: int, uploadReply: UploadReply): Evidence = { ...e, phase: Stored, storedDigest: uploadReply.digest }
+pure def canReuse(e: Evidence, by: int): bool = by == contributorClient and e.phase == Selected and e.storedDigest != "" and e.storedDigest == e.digest
+pure def reuse(e: Evidence, by: int): Evidence = { ...e, phase: Stored }
+pure def canRefuseDifferentSelection(e: Evidence, by: int): bool = by == contributorClient and e.phase == Selected and e.storedDigest != "" and e.storedDigest != e.digest
+pure def refuseDifferentSelection(e: Evidence, by: int): Evidence = { ...e, phase: UploadFailed }
+pure def canStopAttempt(e: Evidence, by: int): bool = by == contributorClient and (e.phase == Selected or e.phase == Stored)
+pure def stopAttempt(e: Evidence, by: int): Evidence =
   { ...e, phase: if (e.storedDigest != "" and e.storedDigest == e.digest) Stored else UploadFailed }
 pure def alwaysStoredExact(e: Evidence): bool = e.phase == Stored implies e.storedDigest == e.digest and e.digest != ""
 pure def stepStoredDigestImmutable(before: Evidence, after: Evidence): bool =
@@ -119,7 +144,7 @@ pure def receiptMatchesRun(receipt: SignedReceipt, local: LR::LocalReceipt): boo
   and receipt.provider == local.declared.provider and receipt.model == local.declared.model
   and receipt.client == local.declared.client
 pure def canSignReceipt(e: Evidence, by: int, receipt: SignedReceipt, local: LR::LocalReceipt): bool =
-  by == signatureVerifier and not(e.receipt.signed)
+  by == signatureVerifier and not(e.receipt.signed) and e.phase != HumanOnly
   and receiptComplete(receipt) and receiptMatchesRun(receipt, local)
   and (receipt.traceDigest == "" or (e.phase == Stored and receipt.traceDigest == e.storedDigest))
 pure def signReceipt(e: Evidence, by: int, receipt: SignedReceipt, local: LR::LocalReceipt): Evidence = { ...e, receipt: receipt }
@@ -147,7 +172,7 @@ pure val uploadReplyValues = Set({ serverRun: "r1", digest: "d1", stage: TraceUp
 pure val receiptA: SignedReceipt = { signed: true, runDigest: "run", traceDigest: "", deviceKey: "key",
   provider: "p", model: "m", client: "c" }
 pure val receiptValues = Set(receiptA, { ...receiptA, traceDigest: "d1" }, { ...receiptA, provider: "" })
-pure val byValues = Set(1, signatureVerifier)
+pure val byValues = Set(contributorClient, 2, signatureVerifier, slopServer)
 pure val completedLocal: LR::LocalReceipt = { ...LR::initial, started: true, active: false, startedAt: 1,
   declared: { provider: "p", model: "m", client: "c", lane: LR::ContributionLane }, result: LR::Succeeded,
   installed: { template: "0123456789abcdef0123456789abcdef01234567", revision: 1, digest: "m1" },

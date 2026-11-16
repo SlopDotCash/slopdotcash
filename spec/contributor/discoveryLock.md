@@ -21,12 +21,14 @@ processes before manual recovery. Elapsed time alone never removes the lock.
 
 ### Acquisition scans for a clear lock under a guard that excludes startup
 
-A new owner enters an acquisition guard, observes that the previous owner's
-process lease is inactive and that no command is active for its owner token,
-and only then commits the acquisition. The scan and rename gap is explicit: a
-helper cannot begin startup while the acquisition guard is held. Another
-invocation that finds the guard held, a live owner or an active command
-fails with a contention error and changes nothing.
+Each invocation, from any installed skill copy, starts with its own owner
+token and waits. At most one waiting invocation enters the acquisition guard
+(an exclusive directory), observes that the previous owner's process lease
+is inactive and that no command is active for its owner token, and only then
+commits the acquisition. The scan and rename gap is explicit: a helper
+cannot begin startup while the acquisition guard is held. Another invocation
+that finds the guard held, a live owner or an active command fails with a
+contention error, ends, and changes nothing else.
 
 ```quint
 import commandCompletion as CC from "./commandCompletion"
@@ -38,16 +40,22 @@ type StaleCleanup = StaleRemoved | CleanupFails | CleanupAndRollbackFail
 type DiscoveryLock = { owner: int, parentLive: bool, generation: int, guard: Guard, candidate: int, observedClear: bool,
   requestOwner: int, requestPresent: bool, helperLive: bool, phase: HelperPhase, commandLease: bool, childLive: bool,
   childPublished: bool, closeObserved: bool, launchOwner: int, primary: Failure, timeElapsed: bool,
-  stalePending: bool, staleRemnants: int, takeovers: int, aggregate: bool, contentions: int, releaseFailures: int }
+  stalePending: bool, staleRemnants: int, takeovers: int, aggregate: bool, contentions: int, releaseFailures: int,
+  waiting: List[int], contended: List[int], raced: bool }
 pure val initial: DiscoveryLock = { owner: 0, parentLive: false, generation: 0, guard: NoGuard, candidate: 0,
   observedClear: false, requestOwner: 0, requestPresent: false, helperLive: false, phase: HelperNone,
   commandLease: false, childLive: false, childPublished: false, closeObserved: false, launchOwner: 0,
   primary: NoLockFailure, timeElapsed: false, stalePending: false, staleRemnants: 0, takeovers: 0, aggregate: false,
-  contentions: 0, releaseFailures: 0 }
+  contentions: 0, releaseFailures: 0, waiting: List(), contended: List(), raced: false }
 pure def commandActive(s: DiscoveryLock): bool = s.commandLease and (s.helperLive or not(s.childPublished) or s.childLive)
-pure def canEnterAcquire(s: DiscoveryLock, owner: int): bool = s.guard == NoGuard and owner > 0 and s.generation < 9007199254740000
-  and not(s.aggregate)
-pure def enterAcquire(s: DiscoveryLock, owner: int): DiscoveryLock = { ...s, guard: AcquireGuard, candidate: owner, observedClear: false }
+pure def canInvoke(s: DiscoveryLock, owner: int): bool = owner > 0 and owner != s.owner and not(s.waiting.includes(owner))
+  and not(s.contended.includes(owner)) and owner != s.candidate
+pure def invoke(s: DiscoveryLock, owner: int): DiscoveryLock =
+  { ...s, waiting: s.waiting.append(owner), raced: s.raced or s.waiting.length() > 0 or s.guard == AcquireGuard }
+pure def canEnterAcquire(s: DiscoveryLock, owner: int): bool = s.guard == NoGuard and s.waiting.includes(owner)
+  and s.generation < 9007199254740000 and not(s.aggregate)
+pure def enterAcquire(s: DiscoveryLock, owner: int): DiscoveryLock = { ...s, guard: AcquireGuard, candidate: owner, observedClear: false,
+  waiting: s.waiting.select(x => x != owner) }
 pure def canObserveClear(s: DiscoveryLock): bool = s.guard == AcquireGuard and not(s.parentLive) and not(commandActive(s))
 pure def observeClear(s: DiscoveryLock): DiscoveryLock = { ...s, observedClear: true }
 pure def canCommitAcquire(s: DiscoveryLock): bool = s.guard == AcquireGuard and s.observedClear and not(s.stalePending)
@@ -57,15 +65,23 @@ pure def commitAcquire(s: DiscoveryLock): DiscoveryLock = { ...s, owner: s.candi
   phase: if (s.helperLive) s.phase else HelperNone, guard: if (s.owner == 0) NoGuard else AcquireGuard,
   stalePending: s.owner != 0, takeovers: if (s.owner == 0) s.takeovers else s.takeovers + 1 }
 pure def canRefuseAcquire(s: DiscoveryLock): bool = s.guard == AcquireGuard and not(s.observedClear)
-pure def refuseAcquire(s: DiscoveryLock): DiscoveryLock = { ...s, guard: NoGuard, contentions: s.contentions + 1 }
-pure def canContend(s: DiscoveryLock, owner: int): bool = owner > 0 and owner != s.owner and owner != s.candidate
+pure def refuseAcquire(s: DiscoveryLock): DiscoveryLock = { ...s, guard: NoGuard, contentions: s.contentions + 1,
+  contended: s.contended.append(s.candidate) }
+pure def canContend(s: DiscoveryLock, owner: int): bool = s.waiting.includes(owner)
   and (s.guard != NoGuard or s.parentLive or commandActive(s)) and s.contentions < 9007199254740000
-pure def contend(s: DiscoveryLock, owner: int): DiscoveryLock = { ...s, contentions: s.contentions + 1 }
+pure def contend(s: DiscoveryLock, owner: int): DiscoveryLock = { ...s, contentions: s.contentions + 1,
+  waiting: s.waiting.select(x => x != owner), contended: s.contended.append(owner) }
 pure def alwaysClearScanHolds(s: DiscoveryLock): bool = ((s.observedClear and s.guard == AcquireGuard) implies not(commandActive(s)))
   and ((s.observedClear and s.guard == AcquireGuard and not(s.stalePending)) implies not(s.parentLive))
   and (s.guard == AcquireGuard implies s.candidate > 0 and not(s.aggregate))
+pure def alwaysOneOwnerAndOneAcquirer(s: DiscoveryLock): bool =
+  not(s.waiting.includes(s.candidate) and s.guard == AcquireGuard) and (s.owner != 0 implies not(s.waiting.includes(s.owner)))
+    and s.waiting.every(o => o > 0 and s.waiting.select(x => x == o).length() == 1 and not(s.contended.includes(o)))
+    and s.contended.every(o => o != s.owner)
+pure def sometimesTwoInvocationsOneAcquires(s: DiscoveryLock): bool = s.raced and s.owner != 0 and s.parentLive
+  and s.contended.length() > 0 and s.guard == NoGuard
 pure def stepContentionChangesNothing(before: DiscoveryLock, via: str, after: DiscoveryLock): bool =
-  (via == "contend" or via == "refuseAcquire") implies after.owner == before.owner and after.parentLive == before.parentLive
+  (via == "contend" or via == "refuseAcquire" or via == "invoke") implies after.owner == before.owner and after.parentLive == before.parentLive
     and after.commandLease == before.commandLease and after.generation == before.generation
 pure def stepTakeoverOnlyWhenStale(before: DiscoveryLock, after: DiscoveryLock): bool =
   (before.owner != 0 and after.owner != 0 and after.owner != before.owner) implies
@@ -208,7 +224,7 @@ pure def sometimesCrashedGuardHeldAfterTime(s: DiscoveryLock): bool = s.guard ==
 pure def sometimesLegacyLeaseHeldAfterTime(s: DiscoveryLock): bool = s.commandLease and s.phase == HelperCrashed and s.timeElapsed and not(s.childPublished)
 pure def sometimesRecovered(s: DiscoveryLock): bool = s.phase == HelperDone and s.generation >= 1 and not(s.commandLease) and not(s.parentLive) and s.timeElapsed
 pure def sometimesBookkeepingFailureKept(s: DiscoveryLock): bool = s.primary == BookkeepingFailure and s.phase == HelperDone
-pure val ownerValues = Set(1, 2)
+pure val ownerValues = Set(1, 2, 3)
 pure val sValues = Set(initial, { ...initial, owner: 1, commandLease: true, childLive: true, launchOwner: 1, childPublished: true },
   { ...initial, owner: 1, guard: CrashedGuard })
 pure val cleanupValues = Set(StaleRemoved, CleanupFails, CleanupAndRollbackFail)
@@ -217,7 +233,8 @@ pure val releasingReport: CC::Completion = { ...CC::initial, phase: CC::Releasin
 pure val reportValues = Set(releasingReport, { ...releasingReport, command: CC::NonzeroCommand, primary: CC::CommandFailure,
   outputRetained: true, reportPublished: false }, CC::initial)
 pure val weight_finishStaleCleanup = 6
-pure val weight_contend = 2
+pure val weight_contend = 4
+pure val weight_invoke = 6
 pure val weight_enterAcquire = 6
 pure val weight_observeClear = 6
 pure val weight_commitAcquire = 6

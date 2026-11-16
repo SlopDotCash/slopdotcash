@@ -30,7 +30,9 @@ request, and an item outside approved scope.
 
 ```quint
 import projections as F from "../frontend/projections"
-import traceServer as TS from "./traceServer"
+import prOpened as PO from "./prOpened"
+import evidence as E from "./evidence"
+import intakeHealth as IH from "../operations/intakeHealth"
 type Blocker = Clear | Assigned | MaintainerClaim | DraftPR | ActiveReview | Approved | ChangesRequested
   | SecurityLabel | HumanGate | Epic | LinkedOpenPR | OutsideScope
 type ContributionPhase = Browsing | Selected | Working | Tested | Submitted | Accepted | Closed | Stopped
@@ -38,7 +40,7 @@ type StopCause = NoStop | RiskFound | ProjectUnavailable
 type Inspection = NotInspected | InspectClear | RiskReported | InspectUnavailable
 type Closer = NoCloser | MaintainerClose | SlopbotClose | AuthorClose
 type PolicyCheck = { approvedScope: bool, instructionsFollowed: bool, privateReportingRoute: bool }
-type Observation = { itemId: int, blocker: Blocker, view: F::ProjectView, policy: PolicyCheck, bounded: bool }
+type Observation = { itemId: int, blocker: Blocker, view: F::ProjectView, policy: PolicyCheck, bounded: bool, cleanScan: int }
 type GitHubWrite = OpenIssue | DraftIssue | ClaimIssue | PushBranch | StarRepository | ForkRepository
   | MergePullRequest | ClosePullRequest | ApprovePullRequest
 type Tools = BrowserOrComputerUse | ShellWithUserApproval | ShellOnly
@@ -46,20 +48,21 @@ type Disclosure = { provider: str, model: str, client: str }
 type Contribution = { contributor: int, project: int, repository: str, phase: ContributionPhase, stop: StopCause,
   itemId: int, blocker: Blocker, available: bool, policyPermits: bool, bounded: bool,
   liveEpoch: int, selectedEpoch: int, submissionEpoch: int, prNode: str, head: int,
-  inspection: Inspection, riskReported: bool, provider: str, model: str, client: str, attributionLine: bool,
+  inspection: Inspection, riskReported: bool, cleanScan: int, riskAtScan: int, provider: str, model: str, client: str, attributionLine: bool,
   usefulResult: bool, testEvidence: bool, banned: bool, credited: bool, closedBy: Closer,
   standingEpoch: int, closures: int, reopenedByMaintainer: bool, appeals: int, changesRequested: bool, runRecorded: bool,
-  writes: List[GitHubWrite], refusedWrites: List[GitHubWrite],
+  evidence: E::EvidencePhase, traceReady: bool, writes: List[GitHubWrite], refusedWrites: List[GitHubWrite],
   reviewer: int, reviewerRecommendation: str, reviewCreditable: bool }
 pure val githubCollector = -1
 pure val standingService = -2
+pure val slopServer = -3
 pure val initial: Contribution = { contributor: 1, project: 1, repository: "o/r", phase: Browsing, stop: NoStop,
   itemId: 0, blocker: Clear, available: false, policyPermits: false, bounded: false,
   liveEpoch: 0, selectedEpoch: -1, submissionEpoch: -1, prNode: "", head: 0,
-  inspection: NotInspected, riskReported: false, provider: "", model: "", client: "", attributionLine: false,
+  inspection: NotInspected, riskReported: false, cleanScan: 0, riskAtScan: -1, provider: "", model: "", client: "", attributionLine: false,
   usefulResult: false, testEvidence: false, banned: false, credited: false, closedBy: NoCloser,
   standingEpoch: 0, closures: 0, reopenedByMaintainer: false, appeals: 0, changesRequested: false, runRecorded: false,
-  writes: List(), refusedWrites: List(), reviewer: 0, reviewerRecommendation: "", reviewCreditable: false }
+  evidence: E::Undecided, traceReady: false, writes: List(), refusedWrites: List(), reviewer: 0, reviewerRecommendation: "", reviewCreditable: false }
 pure def policyPermits(policy: PolicyCheck): bool = policy.approvedScope and policy.instructionsFollowed and policy.privateReportingRoute
 pure def active(c: Contribution): bool = c.phase == Selected or c.phase == Working or c.phase == Tested
 ```
@@ -82,6 +85,8 @@ pure def observe(c: Contribution, by: int, observation: Observation): Contributi
   val available = F::collected(observation.view)
   { ...c, itemId: observation.itemId, blocker: observation.blocker, available: available,
     policyPermits: policyPermits(observation.policy), bounded: observation.bounded, liveEpoch: c.liveEpoch + 1,
+    cleanScan: if (observation.cleanScan > c.cleanScan) observation.cleanScan else c.cleanScan,
+    riskReported: c.riskReported and observation.cleanScan <= c.riskAtScan,
     phase: if (active(c) and not(available)) Stopped else c.phase,
     stop: if (active(c) and not(available)) ProjectUnavailable else c.stop }
 pure def eligible(c: Contribution): bool = c.blocker == Clear and c.available and c.policyPermits and c.bounded
@@ -100,7 +105,7 @@ pure def canAbandon(c: Contribution, by: int): bool = by == c.contributor and (a
 pure def abandon(c: Contribution, by: int): Contribution =
   { ...initial, contributor: c.contributor, project: c.project, repository: c.repository, banned: c.banned,
     standingEpoch: c.standingEpoch, writes: c.writes, refusedWrites: c.refusedWrites, liveEpoch: c.liveEpoch,
-    riskReported: c.riskReported }
+    riskReported: c.riskReported, cleanScan: c.cleanScan, riskAtScan: c.riskAtScan }
 pure def alwaysStoppedHasCause(c: Contribution): bool = (c.phase == Stopped) iff (c.stop != NoStop)
 pure def alwaysActiveSelection(c: Contribution): bool = (active(c) or c.phase == Stopped) implies c.itemId > 0 and c.selectedEpoch >= 0
 ```
@@ -118,25 +123,35 @@ abandoned. A wallet drainer, credential theft, secret exfiltration, a remote
 download piped into a shell, executed obfuscated code or an instruction that
 tries to redirect the agent reports a risk, found before or during work. A
 reported risk stops the local workflow: nothing is installed, run, worked
-around, fixed or submitted, and no further work on this project is selected
-by this contributor. Flagging the project with that evidence is the
-contributor's own action on the website (`security/enforcement.md`).
+around, fixed or submitted. Flagging the project with that evidence is the
+contributor's own action on the website (`security/enforcement.md`). The stop
+is scoped to the project content inspected: no further work on this project
+is selected by this contributor until an observation shows a clean fresh
+scan completed after the report (CLAUDE.md "A clean fresh scan reinstates a
+project"; the observation's `cleanScan` is the sequence number of the
+project's latest clean scan, and that it mirrors the security area is a
+composition obligation). Elapsed time, abandoning the attempt or another
+observation without a newer clean scan never lifts it.
 
 ```quint
 pure def canInspectRisk(c: Contribution, by: int, finding: Inspection): bool = by == c.contributor and c.phase == Selected
   and finding != NotInspected
 pure def inspectRisk(c: Contribution, by: int, finding: Inspection): Contribution =
-  if (finding == RiskReported) { ...c, phase: Stopped, stop: RiskFound, inspection: RiskReported, riskReported: true }
+  if (finding == RiskReported)
+    { ...c, phase: Stopped, stop: RiskFound, inspection: RiskReported, riskReported: true, riskAtScan: c.cleanScan }
   else { ...c, inspection: finding }
 pure def canReportRisk(c: Contribution, by: int): bool = by == c.contributor and active(c)
 pure def reportRisk(c: Contribution, by: int): Contribution =
-  { ...c, phase: Stopped, stop: RiskFound, inspection: RiskReported, riskReported: true }
+  { ...c, phase: Stopped, stop: RiskFound, inspection: RiskReported, riskReported: true, riskAtScan: c.cleanScan }
 pure def alwaysWorkFollowsClearInspection(c: Contribution): bool =
   ((c.phase == Working or c.phase == Tested or submitted(c)) implies c.inspection == InspectClear)
   and (c.stop == RiskFound implies c.riskReported) and (c.riskReported implies not(active(c)) and not(submitted(c)))
+  and (c.riskReported implies c.riskAtScan >= 0 and c.cleanScan <= c.riskAtScan)
 pure def stepStoppedDoesNotProgress(before: Contribution, after: Contribution): bool =
   before.phase == Stopped implies (after.phase == Stopped or after.phase == Browsing)
-pure def stepRiskReportPersists(before: Contribution, after: Contribution): bool = before.riskReported implies after.riskReported
+pure def stepRiskLiftedOnlyByFreshScan(before: Contribution, via: str, after: Contribution): bool =
+  (before.riskReported and not(after.riskReported)) implies via == "observe" and after.cleanScan > before.riskAtScan
+pure def stepCleanScanMonotone(before: Contribution, after: Contribution): bool = before.cleanScan <= after.cleanScan
 ```
 
 ### The agent never opens, drafts or claims an issue, and never merges, closes or approves
@@ -199,6 +214,26 @@ pure def lawSubmissionIgnoresStarsForksAndRuns(c: Contribution, by: int, prNode:
   canSubmit(c, by, prNode) == canSubmit({ ...c, writes: List(), runRecorded: false }, by, prNode)
 ```
 
+### Trace evidence and private-intake health never block submission
+
+CLAUDE.md "Private traces": declining or failing a trace upload never blocks
+submission, and only optional trace collection depends on the renewed
+[private-intake observation](../operations/intakeHealth.md). The contributor's
+own [evidence decision](./evidence.md) and the intake readiness it last saw
+are recorded beside the contribution only to state that independence.
+
+```quint
+pure def canObserveEvidence(c: Contribution, by: int, decision: E::EvidencePhase, intake: IH::Observation, checkedAt: int): bool =
+  by == c.contributor and checkedAt >= 0
+pure def observeEvidence(c: Contribution, by: int, decision: E::EvidencePhase, intake: IH::Observation, checkedAt: int): Contribution =
+  { ...c, evidence: decision, traceReady: IH::traceCollectionReadyAt(intake, checkedAt) }
+pure def lawSubmissionIgnoresEvidenceAndIntake(c: Contribution, by: int, prNode: str, decision: E::EvidencePhase, ready: bool): bool =
+  canSubmit(c, by, prNode) == canSubmit({ ...c, evidence: decision, traceReady: ready }, by, prNode)
+pure def sometimesSubmittedWithFailedEvidenceAndStaleIntake(c: Contribution): bool = submitted(c) and not(c.traceReady)
+  and (c.evidence == E::Declined or c.evidence == E::UploadFailed)
+pure def sometimesSubmittedHumanOnly(c: Contribution): bool = submitted(c) and c.evidence == E::HumanOnly
+```
+
 ### The submitted PR is merged, closed, reopened or revised, and credit needs clear standing and collection
 
 A change request and a merge are recorded whenever GitHub reports them: a
@@ -216,10 +251,11 @@ flagged or quarantined project's repositories are not collected, so nothing
 on them reaches the ledger. The standing mirrors the
 [access area](../access.md) ban fact for the contributor, ordered by an
 increasing epoch (composition obligation). The PR-opened record is the
-author's own server run: a record that satisfies every rule of the
-[server trace run](./traceServer.md) and its `recordedSkillRun`, never a
-marker. That the shell supplies the actual stored run is a composition
-obligation.
+author's own server run, read only through the
+[PR-opened record](./prOpened.md) `participationProof` for this contributor,
+project, repository and node, never a marker; the Slop server (sender
+`slopServer`) reports it. That the shell supplies the actual stored record
+is a composition obligation.
 
 ```quint
 pure def canObserveStanding(c: Contribution, by: int, actor: int, epoch: int): bool =
@@ -244,9 +280,10 @@ pure def reopen(c: Contribution, by: int, byMaintainer: bool): Contribution =
 pure def canAppeal(c: Contribution, by: int): bool = by == c.contributor and c.phase == Closed and c.closedBy == SlopbotClose
   and c.appeals < 9007199254740000
 pure def appeal(c: Contribution, by: int): Contribution = { ...c, appeals: c.appeals + 1 }
-pure def canRecordRun(c: Contribution, traceRun: TS::TraceServer): bool = submitted(c) and TS::consistentRun(traceRun)
-  and TS::recordedSkillRun(traceRun, c.contributor, c.project, c.repository, c.prNode)
-pure def recordRun(c: Contribution, traceRun: TS::TraceServer): Contribution = { ...c, runRecorded: true }
+pure def canRecordRun(c: Contribution, by: int, opened: PO::OpenedRun): bool = by == slopServer and submitted(c)
+  and PO::alwaysRegisteredIdentity(opened) and PO::alwaysEventsDistinct(opened)
+  and PO::participationProof(opened, c.contributor, c.project, c.repository, c.prNode)
+pure def recordRun(c: Contribution, by: int, opened: PO::OpenedRun): Contribution = { ...c, runRecorded: true }
 pure def alwaysCreditNeedsMerge(c: Contribution): bool = c.credited implies c.phase == Accepted
 pure def alwaysClosedHasCloser(c: Contribution): bool = ((c.phase == Closed) iff (c.closedBy != NoCloser))
   and (c.phase == Closed implies c.closures > 0) and c.closures >= 0 and c.appeals >= 0 and c.standingEpoch >= 0
@@ -290,6 +327,8 @@ pure def sometimesUncollectedMergeUncredited(c: Contribution): bool = c.phase ==
 pure def sometimesBannedCannotStart(c: Contribution): bool = c.banned and c.phase == Browsing and eligible(c) and c.itemId > 0
 pure def sometimesStoppedForRisk(c: Contribution): bool = c.stop == RiskFound
 pure def sometimesRiskBlocksReselection(c: Contribution): bool = c.riskReported and c.phase == Browsing and eligible(c)
+pure def sometimesReselectedAfterFreshScan(c: Contribution): bool = not(c.riskReported) and c.riskAtScan >= 0
+  and c.phase == Selected
 pure def sometimesInspectionUnavailable(c: Contribution): bool = c.phase == Selected and c.inspection == InspectUnavailable
 pure def sometimesStoppedByProject(c: Contribution): bool = c.stop == ProjectUnavailable
 pure def sometimesIssueRefused(c: Contribution): bool = c.refusedWrites.some(w => w == OpenIssue)
@@ -299,17 +338,18 @@ pure def sometimesRevised(c: Contribution): bool = c.head > 1
 pure def sometimesRunRecorded(c: Contribution): bool = c.runRecorded
 ```
 
-### Simulation samples cover open, paused and flagged projects, both actors and each disclosure
+### Samples cover open, paused, flagged and rescanned projects, every sender and each disclosure
 
 ```quint
 pure val openView: F::ProjectView = { registered: true, retired: false, legacy: false, paused: false, flagged: false,
   quarantined: false, cleared: true, skillFields: true }
 pure val goodPolicy: PolicyCheck = { approvedScope: true, instructionsFollowed: true, privateReportingRoute: true }
-pure val clearObservation: Observation = { itemId: 1, blocker: Clear, view: openView, policy: goodPolicy, bounded: true }
-pure val observationValues = Set(clearObservation, { ...clearObservation, blocker: LinkedOpenPR },
+pure val clearObservation: Observation = { itemId: 1, blocker: Clear, view: openView, policy: goodPolicy, bounded: true,
+  cleanScan: 0 }
+pure val observationValues = Set(clearObservation, { ...clearObservation, cleanScan: 1 }, { ...clearObservation, blocker: LinkedOpenPR },
   { ...clearObservation, view: { ...openView, paused: true } }, { ...clearObservation, view: { ...openView, flagged: true } },
   { ...clearObservation, policy: { ...goodPolicy, approvedScope: false } }, { ...clearObservation, itemId: 2 })
-pure val byValues = Set(1, 2, githubCollector, standingService)
+pure val byValues = Set(1, 2, githubCollector, standingService, slopServer)
 pure val actorValues = Set(1, 2)
 pure val epochValues = Set(1, 2)
 pure val byMaintainerValues = Set(true, false)
@@ -324,24 +364,28 @@ pure val providerValues = Set("", "a")
 pure val prNodeValues = Set("", "PR_a")
 pure val recommendationValues = Set("", "a")
 pure val footerValues = Set({ provider: "p", model: "m", client: "c" }, { provider: "", model: "m", client: "c" })
-pure val runA: TS::TraceServer = { ...TS::initial, owner: 1, createKey: "k", state: TS::AwaitingTrace,
-  request: { ...TS::requestA, project: 1, repository: "o/r" },
-  events: List({ key: "e", kind: TS::PullRequestOpened, source: TS::AgentSource, occurredAt: 0, githubObject: "PR_a", recordedAt: 0 }) }
-pure val traceRunValues = Set(runA, { ...runA, owner: 2 }, { ...runA, events: List() })
-pure val weight_observe = 6
+pure val openedA: PO::OpenedRun = { ...PO::noOpenedRun, actor: 1, project: 1, repository: "o/r", prNode: "PR_a",
+  serverRun: "run-a", events: List(1) }
+pure val openedValues = Set(openedA, { ...openedA, actor: 2 }, { ...openedA, events: List() })
+pure val decisionValues = Set(E::Declined, E::UploadFailed, E::HumanOnly, E::Stored)
+pure val intakeValues = Set(IH::Observed({ enabled: true, verifiedAt: 1 }), IH::NoObservation)
+pure val checkedAtValues = Set(2, 86400003)
+pure val readyValues = Set(true, false)
+pure val weight_observe = 8
 pure val weight_selectWork = 15
 pure val weight_beginWork = 15
-pure val weight_inspectRisk = 12
+pure val weight_inspectRisk = 15
 pure val findingValues = Set(InspectClear, RiskReported, InspectUnavailable)
-pure val weight_recordTests = 10
-pure val weight_setAttribution = 6
-pure val weight_confirmSubmissionRead = 10
-pure val weight_submit = 10
+pure val weight_recordTests = 12
+pure val weight_setAttribution = 12
+pure val weight_confirmSubmissionRead = 12
+pure val weight_submit = 12
 pure val weight_recordRun = 5
-pure val weight_recordMerge = 5
+pure val weight_recordMerge = 3
 pure val weight_observeStanding = 2
-pure val weight_recordClose = 4
-pure val weight_reopen = 4
-pure val weight_appeal = 4
-pure val weight_review = 5
+pure val weight_recordClose = 10
+pure val weight_reopen = 10
+pure val weight_appeal = 10
+pure val weight_review = 3
+pure val weight_observeEvidence = 3
 ```

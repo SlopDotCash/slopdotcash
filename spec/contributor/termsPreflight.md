@@ -34,12 +34,15 @@ type Phase = Idle | ReadingTerms | VerifyingDocuments | Started | Refused
 type Fetch = { ok: bool, redirected: bool, withinLimit: bool }
 type Terms = { fetch: Fetch, exactIdentity: bool, authorityVerified: bool, proofRevision: int, termsRevision: int,
   receiptActive: bool, activatedAt: int, proofVerifiedAt: int, documents: int }
-type TermsPreflight = { phase: Phase, pending: int, revision: int, recordVersion: int, acknowledgedRevision: int,
+type Binding = { authorityVerified: bool, proofRevision: int, activatedAt: int, proofVerifiedAt: int }
+type TermsPreflight = { phase: Phase, pending: int, revision: int, binding: Binding, recordVersion: int, acknowledgedRevision: int,
   refusals: int, fromCache: int, fromNetwork: int, cacheRejected: bool, cacheCloseFailed: bool, cachePublishFailed: bool,
-  documentsRequired: bool, projectActive: bool, researching: bool }
-pure val initial: TermsPreflight = { phase: Idle, pending: 0, revision: 0, recordVersion: 0, acknowledgedRevision: 0,
+  documentsRequired: bool, projectActive: bool, researching: bool, accepted: List[Accepted] }
+pure val noBinding: Binding = { authorityVerified: false, proofRevision: 0, activatedAt: 0, proofVerifiedAt: 0 }
+pure val initial: TermsPreflight = { phase: Idle, pending: 0, revision: 0, binding: noBinding, recordVersion: 0,
+  acknowledgedRevision: 0,
   refusals: 0, fromCache: 0, fromNetwork: 0, cacheRejected: false, cacheCloseFailed: false, cachePublishFailed: false,
-  documentsRequired: false, projectActive: false, researching: false }
+  documentsRequired: false, projectActive: false, researching: false, accepted: List() }
 pure def fetched(f: Fetch): bool = f.ok and not(f.redirected) and f.withinLimit
 pure def termsBound(t: Terms): bool = fetched(t.fetch) and t.exactIdentity and t.termsRevision > 0
   and 0 <= t.documents and t.documents <= 3
@@ -50,15 +53,20 @@ pure def canStartPlain(p: TermsPreflight): bool = startable(p)
 pure def startPlain(p: TermsPreflight): TermsPreflight = { ...p, phase: Started, recordVersion: 1, acknowledgedRevision: 0 }
 pure def canStartVerified(p: TermsPreflight): bool = startable(p) and p.refusals < 9007199254740000
 pure def startVerified(p: TermsPreflight): TermsPreflight = { ...p, phase: ReadingTerms, pending: 0, revision: 0,
-  fromCache: 0, fromNetwork: 0, cacheRejected: false, cacheCloseFailed: false, cachePublishFailed: false }
+  binding: noBinding, accepted: List(), fromCache: 0, fromNetwork: 0, cacheRejected: false, cacheCloseFailed: false, cachePublishFailed: false }
 pure def canReadTerms(p: TermsPreflight, terms: Terms): bool = p.phase == ReadingTerms
 pure def readTerms(p: TermsPreflight, terms: Terms): TermsPreflight =
   if (termsBound(terms)) { ...p, phase: VerifyingDocuments, pending: terms.documents, revision: terms.termsRevision,
+    binding: { authorityVerified: terms.authorityVerified, proofRevision: terms.proofRevision, activatedAt: terms.activatedAt,
+      proofVerifiedAt: terms.proofVerifiedAt },
     documentsRequired: terms.documents > 0 }
   else { ...p, phase: Refused, pending: 0, refusals: p.refusals + 1 }
-pure def lawProofBindsCurrentTerms(terms: Terms): bool = (termsBound(terms) and terms.authorityVerified) implies
-  terms.proofRevision == terms.termsRevision and terms.activatedAt == terms.proofVerifiedAt
-pure def lawPlainStartNeedsNoPreflight(p: TermsPreflight): bool = startable(p) implies canStartPlain(p)
+pure def alwaysAcknowledgementBindsCurrentProof(p: TermsPreflight): bool =
+  ((p.recordVersion == 2 and p.binding.authorityVerified) implies
+    p.binding.proofRevision == p.acknowledgedRevision and p.binding.activatedAt == p.binding.proofVerifiedAt)
+  and (p.recordVersion == 1 implies p.acknowledgedRevision == 0)
+pure def stepRefusalWritesNoRecord(before: TermsPreflight, after: TermsPreflight): bool =
+  (after.phase == Refused and before.phase != Refused) implies after.recordVersion == 0 and after.acknowledgedRevision == 0
 ```
 
 ### Each named document is digest-verified on an allowlisted host, and the cache never grants authority
@@ -76,19 +84,21 @@ blocks valid bytes and never grants authority to unverified ones.
 type Host = GitHub | RawGitHub | ProximityPrize | OtherHost
 type Document = { host: Host, immutableUrl: bool, cachedMatches: bool, closeFails: bool, fetch: Fetch,
   digestMatches: bool, publishFails: bool }
+type Accepted = { document: Document, cached: bool }
 pure def allowedHost(h: Host): bool = h == GitHub or h == RawGitHub or h == ProximityPrize
 pure def cacheable(d: Document): bool = d.host == RawGitHub and d.immutableUrl
 pure def usesCache(d: Document): bool = cacheable(d) and d.cachedMatches
 pure def documentVerified(d: Document): bool =
   allowedHost(d.host) and (usesCache(d) or (fetched(d.fetch) and d.digestMatches))
-pure def lawCacheOnlyForImmutableUrls(d: Document): bool = usesCache(d) implies d.immutableUrl and d.host == RawGitHub
 pure def lawOtherHostNeverVerified(d: Document): bool = d.host == OtherHost implies not(documentVerified(d))
 pure def canVerifyDocument(p: TermsPreflight, d: Document): bool = p.phase == VerifyingDocuments and p.pending > 0
 pure def verifyDocument(p: TermsPreflight, d: Document): TermsPreflight =
   if (not(documentVerified(d))) { ...p, phase: Refused, pending: 0, refusals: p.refusals + 1 }
   else if (usesCache(d)) { ...p, pending: p.pending - 1, fromCache: p.fromCache + 1,
+    accepted: p.accepted.append({ document: d, cached: true }),
     cacheCloseFailed: p.cacheCloseFailed or d.closeFails }
   else { ...p, pending: p.pending - 1, fromNetwork: p.fromNetwork + 1,
+    accepted: p.accepted.append({ document: d, cached: false }),
     cacheRejected: p.cacheRejected or cacheable(d),
     cacheCloseFailed: p.cacheCloseFailed or (cacheable(d) and d.closeFails),
     cachePublishFailed: p.cachePublishFailed or (cacheable(d) and d.publishFails) }
@@ -106,6 +116,11 @@ pure def alwaysPending(p: TermsPreflight): bool = 0 <= p.pending and p.pending <
   and (p.phase == ReadingTerms implies p.fromCache == 0 and p.fromNetwork == 0)
   and (p.recordVersion == 2 implies p.fromCache + p.fromNetwork <= 3 and (p.documentsRequired iff p.fromCache + p.fromNetwork > 0))
   and p.refusals >= 0 and p.fromCache >= 0 and p.fromNetwork >= 0
+pure def alwaysAcceptedDocumentsVerified(p: TermsPreflight): bool =
+  p.accepted.length() == p.fromCache + p.fromNetwork
+  and p.accepted.every(a => allowedHost(a.document.host) and
+    (if (a.cached) a.document.host == RawGitHub and a.document.immutableUrl and a.document.cachedMatches
+     else fetched(a.document.fetch) and a.document.digestMatches))
 pure def sometimesAcknowledged(p: TermsPreflight): bool = p.recordVersion == 2 and p.fromCache > 0
 pure def sometimesRefusedWithoutRecord(p: TermsPreflight): bool = p.phase == Refused and p.recordVersion == 0
 pure def sometimesPlainAfterRefusal(p: TermsPreflight): bool = p.recordVersion == 1 and p.refusals > 0
@@ -144,7 +159,6 @@ pure val dValues = Set(okDocument, { ...okDocument, cachedMatches: true }, { ...
   { ...okDocument, immutableUrl: false, cachedMatches: true, digestMatches: false },
   { ...okDocument, host: GitHub, immutableUrl: false }, { ...okDocument, host: OtherHost },
   { ...okDocument, digestMatches: false }, { ...okDocument, fetch: { ...okFetch, redirected: true } })
-pure val pValues = Set(initial, { ...initial, phase: Refused, refusals: 1 }, { ...initial, phase: Started, recordVersion: 1 })
 pure val weight_startVerified = 6
 pure val weight_readTerms = 6
 pure val weight_verifyDocument = 8

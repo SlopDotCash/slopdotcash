@@ -44,13 +44,13 @@ type LocalCheck = { version: Version, provenance: SA::Provenance, completeTree: 
 type ProjectObservation = { project: int, view: F::ProjectView }
 type Installation = { project: int, phase: InstallPhase, locked: bool, processAlive: bool, wrapperAlive: bool, attempt: int,
   target: Version, active: Version, old: Version, versions: List[Version], explicitRollback: bool, explicitTemplate: bool,
-  admitted: bool, cleared: bool, inspection: Inspection, riskReported: bool, readback: bool, committed: bool, sameBytes: bool,
+  admitted: bool, cleared: bool, inspection: Inspection, riskVersions: List[Version], readback: bool, committed: bool, sameBytes: bool,
   workRoots: List[int], stagedCandidates: List[int], temporaryLinks: List[int],
   primary: InstallError, cleanupFailed: bool, local: LocalAuthorization, localVersion: Version, output: InstallOutput, delivered: bool }
 pure val noVersion: Version = { template: "", revision: 0, digest: "" }
 pure val initial: Installation = { project: 1, phase: Idle, locked: false, processAlive: true, wrapperAlive: true, attempt: 0,
   target: noVersion, active: noVersion, old: noVersion, versions: List(), explicitRollback: false, explicitTemplate: false,
-  admitted: false, cleared: false, inspection: NotInspected, riskReported: false, readback: false, committed: false,
+  admitted: false, cleared: false, inspection: NotInspected, riskVersions: List(), readback: false, committed: false,
   sameBytes: false, workRoots: List(), stagedCandidates: List(), temporaryLinks: List(), primary: NoError,
   cleanupFailed: false, local: NotChecked, localVersion: noVersion, output: NoOutput, delivered: false }
 pure def validVersion(v: Version): bool = v.template != "" and v.revision > 0 and v.digest != ""
@@ -82,7 +82,7 @@ pure def retainedVersion(i: Installation, v: Version): bool = i.versions.include
 pure def installableHere(i: Installation, observation: ProjectObservation): bool =
   observation.project == i.project and F::installable(observation.view)
 pure def canBegin(i: Installation, version: Version, rollback: bool, explicitTemplate: bool, observation: ProjectObservation): bool =
-  not(i.locked) and i.processAlive and not(i.riskReported) and not(openAttempt(i)) and i.attempt < 9007199254740991
+  not(i.locked) and i.processAlive and not(i.riskVersions.includes(version)) and not(openAttempt(i)) and i.attempt < 9007199254740991
     and validVersion(version) and installableHere(i, observation) and
     (if (rollback) i.active.revision > 0 and retainedVersion(i, version) else version.revision >= i.active.revision)
 pure def begin(i: Installation, version: Version, rollback: bool, explicitTemplate: bool, observation: ProjectObservation): Installation =
@@ -108,8 +108,12 @@ prompt-injection risks are inspected before installation or execution. The
 staged skill files are inspected after admission and before verification.
 The inspection is clear, reports a risk, or could not be completed. An
 unavailable inspection can be repeated and never verifies; a reported risk
-stops the attempt before anything is committed and ends local installation
-for this project. Installation is permitted only by current project
+stops the attempt before anything is committed. The stop is scoped to the
+inspected bytes: that version (template commit, D1 revision and digest) is
+never begun, verified or activated again, while a later revision or template
+is new content that gets its own fresh inspection (PRD section 4 asks only to
+report the risk and stop the local workflow; reinstatement of a flagged
+project needs a clean fresh scan, CLAUDE.md "Add a project"). Installation is permitted only by current project
 clearance (listed, not paused, flagged or quarantined) together with a clear
 inspection of this attempt's bytes.
 
@@ -118,13 +122,16 @@ pure def canInspectRisk(i: Installation, finding: Inspection): bool = i.phase ==
   and finding != NotInspected and i.inspection != InspectClear
 pure def inspectRisk(i: Installation, finding: Inspection): Installation =
   if (finding == RiskReported)
-    { ...i, phase: if (i.workRoots.includes(i.attempt)) Cleaning else Closing, inspection: RiskReported, riskReported: true,
-      primary: RiskStop }
+    { ...i, phase: if (i.workRoots.includes(i.attempt)) Cleaning else Closing, inspection: RiskReported,
+      riskVersions: if (i.riskVersions.includes(i.target)) i.riskVersions else i.riskVersions.append(i.target), primary: RiskStop }
   else { ...i, inspection: finding }
 pure def permitted(i: Installation, observation: ProjectObservation): bool =
-  installableHere(i, observation) and i.inspection == InspectClear and not(i.riskReported)
-pure def stepRiskEndsInstallation(before: Installation, after: Installation): bool =
-  before.riskReported implies after.riskReported and after.active == before.active
+  installableHere(i, observation) and i.inspection == InspectClear and not(i.riskVersions.includes(i.target))
+pure def stepRiskyVersionNeverActivated(before: Installation, after: Installation): bool =
+  before.riskVersions.every(v => after.riskVersions.includes(v))
+    and (after.active != before.active implies not(after.riskVersions.includes(after.active)))
+pure def sometimesNewRevisionAfterRisk(i: Installation): bool = i.riskVersions.length() > 0 and i.phase == Complete
+  and i.output == Activated and not(i.riskVersions.includes(i.active))
 ```
 
 ### An exact unchanged release keeps the installed identity
@@ -249,7 +256,7 @@ pure def alwaysActiveRetained(i: Installation): bool = i.active.revision > 0 imp
 pure def alwaysCandidateVerified(i: Installation): bool =
   (i.phase == Verifying or i.phase == VerifiedBytes or i.phase == Retained or i.phase == LinkReady or i.phase == Committed or i.phase == ReadBack) implies i.admitted
   and ((i.phase == VerifiedBytes or i.phase == Retained or i.phase == LinkReady or i.phase == Committed or i.phase == ReadBack)
-    implies i.cleared and i.inspection == InspectClear and not(i.riskReported))
+    implies i.cleared and i.inspection == InspectClear and not(i.riskVersions.includes(i.target)))
 pure def alwaysCandidateRetained(i: Installation): bool =
   (i.phase == Retained or i.phase == LinkReady or i.phase == Committed or i.phase == ReadBack) implies retainedVersion(i, i.target)
 pure def alwaysUncommittedRetainsActive(i: Installation): bool = (openAttempt(i) and not(i.committed)) implies i.active == i.old
@@ -278,7 +285,7 @@ pure def sometimesRecovered(i: Installation): bool = i.phase == Failed and i.pri
 pure def sometimesUnchanged(i: Installation): bool = i.phase == Complete and i.output == Unchanged
 pure def sometimesCommittedAndUnverified(i: Installation): bool = i.phase == Failed and i.committed and not(i.readback)
 pure def sometimesWrapperDeathKeepsLock(i: Installation): bool = not(i.wrapperAlive) and i.locked and i.processAlive
-pure def sometimesRiskStopped(i: Installation): bool = i.phase == Failed and i.riskReported and i.primary == RiskStop
+pure def sometimesRiskStopped(i: Installation): bool = i.phase == Failed and i.riskVersions.includes(i.target) and i.primary == RiskStop
   and not(i.committed)
 pure def sometimesClearanceLostRefused(i: Installation): bool = i.phase == Failed and not(i.cleared) and i.primary == BeforeCommitError
 pure def sometimesUpgradeNeedsNewAuthorization(i: Installation): bool = i.phase == Complete and i.output == Activated
@@ -309,11 +316,11 @@ pure val v1: Version = { template: "0123456789abcdef0123456789abcdef01234567", r
 pure val versionValues = Set(v1, { ...v1, revision: 2, digest: "m2" }, { ...v1, template: "fedcba9876543210fedcba9876543210fedcba98" })
 pure val admittedRead: SA::SkillRead = { ...SA::initial, transport: SA::Admitted, source: SA::CanonicalApi, attempts: 1,
   selection: { role: SA::ContributorSkill, project: 1, commit: v1.template, registryRevision: 1, registryDigest: "m1" },
-  checked: { commit: v1.template, provenance: SA::Committed, completeFiles: true, matchingBlobs: true, renderedDigest: "m1" },
+  checked: SA::exactCheck(v1.template, "m1"),
   projectOpen: true, projectFresh: true }
 pure val readValues = Set(admittedRead,
   { ...admittedRead, selection: { role: SA::ContributorSkill, project: 1, commit: v1.template, registryRevision: 2, registryDigest: "m2" },
-    checked: { commit: v1.template, provenance: SA::Committed, completeFiles: true, matchingBlobs: true, renderedDigest: "m2" } },
+    checked: SA::exactCheck(v1.template, "m2") },
   { ...admittedRead, transport: SA::Downloaded },
   { ...admittedRead, checked: SA::unchecked },
   { ...admittedRead, selection: { role: SA::ContributorSkill, project: 2, commit: v1.template, registryRevision: 1, registryDigest: "m1" } })

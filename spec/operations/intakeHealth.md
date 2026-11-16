@@ -16,7 +16,8 @@ hourly cron, the code release once after migrations, and an operator running
 the recovery script with Cloudflare credentials. A `GitHubAnswer` is the
 verdict of the renewer's own authenticated read of GitHub's status endpoint.
 The hourly watch workflow only reads the public status and holds no secrets
-and no publication lock. Clock values are UTC epoch milliseconds.
+and no publication lock. Time passes only by the platform clock (sender
+`PlatformClock`). Clock values are UTC epoch milliseconds.
 
 ## Story: Renew the observation only from a usable GitHub answer
 
@@ -38,7 +39,7 @@ write is conditional: an answer read earlier than the stored observation,
 delivered late, never replaces it.
 
 ```quint
-type Renewer = IdentityCron | ReleaseJob | OperatorScript | HealthWatch | Contributor
+type Renewer = IdentityCron | ReleaseJob | OperatorScript | HealthWatch | Contributor | PlatformClock
 type Skip = Unreachable | RateLimited | Unauthorized | Rejected | Malformed
 type GitHubAnswer = ReportingEnabled | ReportingDisabled | Unusable({ reason: Skip })
 type Observation = NoObservation | Observed({ enabled: bool, verifiedAt: int })
@@ -49,8 +50,8 @@ type Health = { clock: int, observation: Observation, last: RenewalResult, failu
 pure val initial: Health = { clock: 1, observation: NoObservation, last: NotRun, failures: 0, skips: 0, renewals: 0, alerts: 0,
   failedInvocations: 0, read: NoRead, tokenRejected: false }
 pure def renewerAllowed(by: Renewer): bool = by == IdentityCron or by == ReleaseJob or by == OperatorScript
-pure def canAdvanceClock(h: Health, now: int): bool = now > h.clock
-pure def advanceClock(h: Health, now: int): Health = { ...h, clock: now }
+pure def canAdvanceClock(h: Health, by: Renewer, now: int): bool = by == PlatformClock and now > h.clock
+pure def advanceClock(h: Health, by: Renewer, now: int): Health = { ...h, clock: now }
 pure def observedAt(h: Health): int =
   val observation = h.observation
   match observation { | Observed(o) => o.verifiedAt | NoObservation => 0 }
@@ -143,13 +144,13 @@ pure def stepWatchReadsOnly(before: Health, via: str, after: Health): bool =
 pure def sometimesWatchAlerted(h: Health): bool = h.alerts > 0
 ```
 
-### Simulation samples cover every answer and both freshness boundaries
+### Samples cover every answer, every sender and both freshness boundaries
 
 ```quint
 pure val nowValues = Set(2, 3600002, 10800003, 86400003, 86400004)
 pure val answerValues = Set(ReportingEnabled, ReportingDisabled, Unusable({ reason: Unreachable }), Unusable({ reason: RateLimited }),
   Unusable({ reason: Malformed }), Unusable({ reason: Unauthorized }))
-pure val byValues = Set(IdentityCron, ReleaseJob, OperatorScript, HealthWatch, Contributor)
+pure val byValues = Set(IdentityCron, ReleaseJob, OperatorScript, HealthWatch, Contributor, PlatformClock)
 pure val observationValues = Set(NoObservation, Observed({ enabled: true, verifiedAt: 1 }), Observed({ enabled: false, verifiedAt: 1 }),
   Observed({ enabled: true, verifiedAt: 400000 }))
 pure val readAtValues = Set(1, 2, 3600002, 86400003)
