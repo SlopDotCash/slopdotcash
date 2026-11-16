@@ -207,11 +207,18 @@ export function githubIngestionReadTransport(
       const commitFilePage =
         /^\/commits\/[a-f0-9]{40}$/u.test(repositoryPath) &&
         /^\?per_page=100&page=[1-9]\d*$/u.test(url.search);
-      const fileReadRetry = pullFiles
-        ? { status: 500, limit: 2 }
-        : commitFilePage
-          ? { status: 422, limit: 1 }
-          : null;
+      const commitPulls =
+        !url.username &&
+        !url.password &&
+        !url.hash &&
+        /^\/commits\/[a-f0-9]{40}\/pulls$/u.test(repositoryPath) &&
+        /^\?per_page=100(?:&page=[1-9]\d*)?$/u.test(url.search);
+      const readRetry =
+        pullFiles || commitPulls
+          ? { status: 500, limit: 2 }
+          : commitFilePage
+            ? { status: 422, limit: 1 }
+            : null;
       const callerSignal =
         init && "signal" in init ? init.signal : request?.signal;
       callerSignal?.throwIfAborted();
@@ -249,7 +256,7 @@ export function githubIngestionReadTransport(
         cache.set(key, cached);
         return replay(cached);
       }
-      let fileReadRetries = 0;
+      let readRetries = 0;
       for (let attempt = 1; ; ) {
         callerSignal?.throwIfAborted();
         checkDeadline();
@@ -285,15 +292,15 @@ export function githubIngestionReadTransport(
           retainedDiscussion = null;
           continue;
         }
-        // GitHub can fail to serve a known file page temporarily. Retry that
+        // GitHub can fail to serve a known evidence page temporarily. Retry that
         // exact page without resetting the quota budget or changing pagination.
         if (
-          fileReadRetry &&
-          response.status === fileReadRetry.status &&
-          fileReadRetries < fileReadRetry.limit
+          readRetry &&
+          response.status === readRetry.status &&
+          readRetries < readRetry.limit
         ) {
-          fileReadRetries += 1;
-          const delay = fileReadRetries * 1_000;
+          readRetries += 1;
+          const delay = readRetries * 1_000;
           await response.body?.cancel();
           checkDeadline(delay);
           await (callerSignal

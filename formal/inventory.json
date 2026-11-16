@@ -4087,11 +4087,11 @@
     },
     {
       "path": "scripts/github-ingestion-read.ts",
-      "sha256": "4b6ac8e7415a2b5b98d0917c95fdd40a71cce2b04a065dcff9e216768b02d32f",
+      "sha256": "6c566a5b88d3c7cddf309c9489d90f7245d0e8a86ba9437bdf781a2d37ce8f80",
       "models": ["formal/models/points/github_ingestion_read.qnt"],
       "candidateLines": [
-        35, 53, 86, 107, 109, 127, 165, 211, 213, 248, 269, 279, 284, 288, 292,
-        306, 315, 337, 347, 356, 364
+        35, 53, 86, 107, 109, 127, 165, 218, 220, 255, 276, 286, 291, 295, 299,
+        313, 322, 344, 354, 363, 371
       ],
       "review": "mapped-abstraction"
     },
@@ -14068,7 +14068,7 @@
     },
     {
       "path": "formal/models/points/github_ingestion_read.qnt",
-      "sha256": "d07bc925202148307de5c485c8180e3492b10a3ae0ddba7cba3f1d9f512af297",
+      "sha256": "3f0b7659156d276320dde6054dc172f2b7f4ffc4421ce24b44968ac178964120",
       "sources": [
         "scripts/github-discussion-cache.ts",
         "scripts/github-ingestion-read.ts",
@@ -14079,6 +14079,11 @@
         "authorizationDoesNotRetryTest",
         "commitFileErrorRecoversTest",
         "commitFileErrorRetriesOnceTest",
+        "commitPullServerErrorRecoversTest",
+        "commitPullServerErrorsStayBoundedTest",
+        "commitPullServerRetryPreservesQuotaCountTest",
+        "commitPullServerRetryRespectsCheckpointTest",
+        "commitPullValidationErrorNeverRetriesTest",
         "confirmedCheckpointReadTest",
         "mismatchedValidatorCannotReplayTest",
         "mismatchedValidatorReadsLiveTest",
