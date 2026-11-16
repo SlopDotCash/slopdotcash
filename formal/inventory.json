@@ -3914,9 +3914,9 @@
     },
     {
       "path": "scripts/escrow-acceptance/solana-local.ts",
-      "sha256": "99261a1cfdb1e858014f2c4a1e730fd64f85d1f4170a3db2ae6cd1886d1d66fe",
+      "sha256": "613f6defb5a7b23f0576d4debf88296ca2569281f1bb2a72db02543589db7ba8",
       "models": ["formal/models/contracts/local_solana_acceptance.qnt"],
-      "candidateLines": [58, 59, 60, 61, 72, 117, 210],
+      "candidateLines": [58, 59, 60, 61, 72, 117, 214],
       "review": "mapped-abstraction"
     },
     {
@@ -8373,7 +8373,7 @@
     },
     {
       "path": "workers/payments/index.ts",
-      "sha256": "94d754a7be87756bf117be786701c0edea9a7739e69071a65c8366eefcb157e0",
+      "sha256": "e26d0379b6b9b30cf79e60035b971d35a7d9927b40e3ceced444077ebe495108",
       "models": [
         "formal/models/payments/payment_reopen_landing.qnt",
         "formal/models/payments/payment_unsigned_retirement.qnt",
@@ -8392,10 +8392,10 @@
     },
     {
       "path": "workers/payments/reconcile.ts",
-      "sha256": "3e9926d64c6cb7e0810912ce06a46643764dba2d696b7575ed708b6cbb18d827",
+      "sha256": "3d3298580b59b74dbc1bad1bcd0f90ff2b8519396791d8d2056562969f0e7570",
       "models": ["formal/models/payments/payment_dispatch.qnt"],
       "candidateLines": [
-        7, 22, 27, 28, 47, 48, 52, 63, 101, 109, 115, 125, 133
+        7, 22, 27, 28, 47, 48, 52, 71, 110, 118, 124, 134, 142
       ],
       "review": "mapped-abstraction"
     },
