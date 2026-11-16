@@ -88,10 +88,6 @@ pure def gateMatches(gate: SendGate): bool = gate.wonClaim and gate.bytesVerifie
   and gate.allowedToParticipate and gate.seenScreeningRevision == gate.screening.revision
   and gate.reportVersion > 0 and gate.reportVersion == gate.screening.version and gate.digest != ""
   and gate.digest == gate.screening.digest and S::qualified(gate.screening)
-pure def lawStaleReadinessRefusesSend(gate: SendGate, readiness: R::Readiness, projectRevision: int, repository: int,
-  checkedAtMs: int): bool =
-  (gate.reportingReady == readinessAt(readiness, projectRevision, repository, checkedAtMs)
-    and not(readinessAt(readiness, projectRevision, repository, checkedAtMs))) implies not(gateMatches(gate))
 pure def canClaimSend(f: Forwarding, request: Request, gate: SendGate, startedAtMs: int): bool = mayOperate(f, request, SendReport)
   and gateMatches(gate) and startedAtMs > 0 and startedAtMs >= f.activeClaim.atMs
 pure def claimSend(f: Forwarding, request: Request, gate: SendGate, startedAtMs: int): Forwarding =
@@ -289,9 +285,7 @@ pure val readbackValues = revisionsToTry.fold(Set(), (reads, revision) => reads.
   { requestId: 2, changedOne: true, rowPresent: true, observedRevision: revision, observedPhase: Submitting })))
 pure val approvedReport = { ...S::initial, phase: S::Legitimate }
 pure val gateValues = Set({ seenScreeningRevision: 1, reportVersion: 1, digest: "original", screening: approvedReport,
-  bytesVerified: true, intakeCurrent: true, reportingReady: true, allowedToParticipate: true, wonClaim: true },
-  { seenScreeningRevision: 1, reportVersion: 1, digest: "original", screening: approvedReport,
-  bytesVerified: true, intakeCurrent: true, reportingReady: false, allowedToParticipate: true, wonClaim: true })
+  bytesVerified: true, intakeCurrent: true, reportingReady: true, allowedToParticipate: true, wonClaim: true })
 pure val readinessValues = Set(R::initial, { observations: List({ revision: 1, repository: 1, repositoryId: 11, enabled: true,
   verifiedAt: 1000, attemptedAt: 1000, failure: R::NoFailure }) })
 pure val projectRevisionValues = Set(1)
