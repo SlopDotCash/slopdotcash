@@ -15,10 +15,7 @@ import {
   type TargetRepository,
 } from "../src/lib/repositories.mjs";
 import { collectValueEvidence } from "../workers/slopbot/value-evidence";
-import type {
-  CommitChangeEvidence,
-  EvidenceClient,
-} from "../workers/slopbot/value-evidence-types";
+import type { EvidenceClient } from "../workers/slopbot/value-evidence-types";
 import {
   VALUE_FILE_EXPANSION_LIMIT,
   validValueFileRequest,
@@ -41,96 +38,6 @@ export interface PublicMergeRepository {
 }
 
 const run = promisify(execFile);
-
-const COMMIT_PAGE_LIMIT = 2048;
-const COMMIT_PAGE_BYTES = 32 * 1024 * 1024;
-const commitPagePath = /^([a-f0-9]{40})\?per_page=100&page=[1-9][0-9]*$/u;
-const gitSha = /^[a-f0-9]{40}$/u;
-
-function lineCount(value: number): boolean {
-  return Number.isSafeInteger(value) && value >= 0;
-}
-
-function validCommitChangePage(value: unknown, sha: string): boolean {
-  const page = value as CommitChangeEvidence | null;
-  return (
-    page?.sha === sha &&
-    typeof page.html_url === "string" &&
-    page.html_url.length > 0 &&
-    Array.isArray(page.parents) &&
-    page.parents.every((parent) => gitSha.test(parent?.sha ?? "")) &&
-    !!page.stats &&
-    lineCount(page.stats.additions) &&
-    lineCount(page.stats.deletions) &&
-    page.stats.total === page.stats.additions + page.stats.deletions &&
-    Array.isArray(page.files) &&
-    page.files.length <= 100 &&
-    page.files.every(
-      (file) =>
-        file &&
-        typeof file.filename === "string" &&
-        file.filename.length > 0 &&
-        typeof file.status === "string" &&
-        file.status.length > 0 &&
-        lineCount(file.additions) &&
-        lineCount(file.deletions) &&
-        (file.previous_filename === undefined ||
-          typeof file.previous_filename === "string") &&
-        (file.patch === undefined || typeof file.patch === "string") &&
-        (file.blob_url === null || typeof file.blob_url === "string"),
-    ) &&
-    new Set(page.files.map((file) => file.filename)).size === page.files.length
-  );
-}
-
-/** Share immutable commit-change pages between evidence reads of one source. */
-export function memoizeCommitChangePages(
-  client: EvidenceClient,
-  repository: string,
-  identity: PublicMergeRepository,
-): EvidenceClient {
-  const repositoryPath = `/repos/${repository}`;
-  const commitPath = `${repositoryPath}/commits/`;
-  const pages = new Map<string, string>();
-  let bytes = 0;
-  let matchesRepository = false;
-  const scoped = Object.create(client) as EvidenceClient;
-  scoped.get = async <T>(path: string): Promise<T | null> => {
-    const sha =
-      matchesRepository && path.startsWith(commitPath)
-        ? commitPagePath.exec(path.slice(commitPath.length))?.[1]
-        : undefined;
-    const saved = sha ? pages.get(path) : undefined;
-    if (saved !== undefined) return JSON.parse(saved) as T;
-    const value = await client.get<T>(path);
-    if (path === repositoryPath) {
-      const live = value as PublicMergeRepository | null;
-      matchesRepository =
-        identity.private === false &&
-        live?.private === false &&
-        live.id === identity.id &&
-        live.node_id === identity.node_id;
-    }
-    if (
-      sha !== undefined &&
-      matchesRepository &&
-      !pages.has(path) &&
-      pages.size < COMMIT_PAGE_LIMIT &&
-      bytes < COMMIT_PAGE_BYTES &&
-      validCommitChangePage(value, sha)
-    ) {
-      const page = JSON.stringify(value);
-      const size = Buffer.byteLength(page);
-      // Retain earlier pages when full so sequential recovery still reuses them.
-      if (bytes + size <= COMMIT_PAGE_BYTES) {
-        pages.set(path, page);
-        bytes += size;
-      }
-    }
-    return value;
-  };
-  return scoped;
-}
 
 /** The same isolated Git boundary is used for acquisition and object reads. */
 export function publicGitProcess(directory: string, args: string[]) {

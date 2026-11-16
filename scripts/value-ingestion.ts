@@ -25,6 +25,7 @@ import { assertPenaltyHistory } from "../src/lib/score-penalties";
 import type { GitHubClient } from "../workers/slopbot/github";
 import type { PublishedPenaltyHistory as PublishedPenaltyRow } from "../workers/slopbot/penalties";
 import { loadPolicy } from "../workers/slopbot/review";
+import { publicationCommitPages } from "../workers/slopbot/value-commit-pages";
 import { readValueDecisionFromHistory } from "../workers/slopbot/value-consumption";
 import {
   collectValueContext,
@@ -35,7 +36,6 @@ import {
   collectValueReferenceEvidence,
 } from "../workers/slopbot/value-evidence";
 import type {
-  EvidenceClient,
   Pull,
   RelatedPullRequest,
 } from "../workers/slopbot/value-evidence-types";
@@ -54,7 +54,6 @@ import {
 import { fetchProjectRegistry } from "./sync-project-registry.mjs";
 import {
   hydrateValueMergeSource,
-  memoizeCommitChangePages,
   type PublicMergeRepository,
 } from "./value-merge-ingestion";
 
@@ -531,6 +530,7 @@ export async function loadValueInputs(
     }
   }
   const sourceCache = new Map<string, WorkUnitSource>();
+  const commitPages = publicationCommitPages();
   const observedGroups = new Map<string, string | null>();
   const groups = new Map<string, JointDecision>();
 
@@ -565,10 +565,8 @@ export async function loadValueInputs(
     recipe?: ValueMergeRecipe,
   ) {
     const { repository, identity } = await repositoryIdentity(repositoryId);
-    const hydrate = async (
-      raw: WorkUnitSource,
-      client: EvidenceClient = github,
-    ) => {
+    const client = commitPages(github);
+    const hydrate = async (raw: WorkUnitSource) => {
       const collected = {
         ...raw,
         evidence: await collectValueContext(github, raw.evidence, contextPaths),
@@ -593,7 +591,6 @@ export async function loadValueInputs(
         throw new Error("Joint source identity changed between records");
       return hydrate(cached);
     }
-    const client = memoizeCommitChangePages(github, repository.id, identity);
     const evidence = await collectValueEvidence(client, repository.id, number);
     const outcome = census.get(id);
     if (
@@ -623,7 +620,7 @@ export async function loadValueInputs(
     };
     const collected = { evidence, policy };
     sourceCache.set(id, collected);
-    return hydrate(collected, client);
+    return hydrate(collected);
   }
 
   async function legacy(collected: WorkUnitSource) {

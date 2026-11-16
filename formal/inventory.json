@@ -4953,24 +4953,25 @@
     },
     {
       "path": "scripts/value-ingestion.ts",
-      "sha256": "cf1dce641eb4c0ee0f839a8614544b8b7dc00b3a81d6c0e96fe88b2a827a7f18",
+      "sha256": "9fcbc16bd3502021fa4e6c2b5b6fdd24b980242f0c4faa5245ee719a79f9d406",
       "models": [
         "formal/models/points/implementation_credit.qnt",
         "formal/models/points/implementation_credit_gate.qnt",
+        "formal/models/points/value_source_cache.qnt",
         "formal/models/slopbot/value_feed_deadline.qnt",
         "formal/models/slopbot/value_ingestion.qnt"
       ],
       "candidateLines": [
-        68, 79, 126, 127, 128, 129, 131, 132, 199, 200, 201, 203, 204, 745, 765,
-        887, 923, 962, 986
+        67, 78, 125, 126, 127, 128, 130, 131, 198, 199, 200, 202, 203, 742, 762,
+        884, 920, 959, 983
       ],
       "review": "mapped-abstraction"
     },
     {
       "path": "scripts/value-merge-ingestion.ts",
-      "sha256": "b1ddf3279baa7e98988fb26b358f80da4ad02d8b64858874928053dbb05468e9",
+      "sha256": "c8e663c51148f4d729e5ac192d5b8bf3da868c282fc98df72087160a682f2f55",
       "models": ["formal/models/slopbot/merge_evidence_acquisition.qnt"],
-      "candidateLines": [73, 74, 382, 383],
+      "candidateLines": [289, 290],
       "review": "mapped-abstraction"
     },
     {
@@ -14360,8 +14361,11 @@
     },
     {
       "path": "formal/models/points/value_source_cache.qnt",
-      "sha256": "0bca3b7f14e34fb46cd248cab5bbf391a8d456a0fd1956e67744a01cf5db0aeb",
-      "sources": ["workers/slopbot/value-commit-pages.ts"],
+      "sha256": "f84e89315b30af08da593d0796716d2df52313048369e2041d521f476b585aa1",
+      "sources": [
+        "scripts/value-ingestion.ts",
+        "workers/slopbot/value-commit-pages.ts"
+      ],
       "scenarios": [
         "currentPublicIdentityPermitsReuseTest",
         "incompleteCannotRetainTest",

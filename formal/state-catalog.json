@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "meaning": "Declared lifecycle candidates. This intentionally incomplete syntactic census cannot find every implicit state, establish reachability, or prove source/model correspondence. Review the open work listed in formal/README.md as well.",
-  "inventorySha256": "3f4068e2f48390263e178608484d92248df63d4407093b0ae4623cc2e5239bfd",
+  "inventorySha256": "f1351a5f58c587abc5dc6fae7b53b4de78e5de168dfcd80876b4b0f6266b01cd",
   "states": [
     {
       "path": "backend/fee-conversions/handler.ts",
@@ -2277,13 +2277,14 @@
     },
     {
       "path": "scripts/value-ingestion.ts",
-      "line": 439,
+      "line": 438,
       "name": "AttributionOutcome",
       "kind": "string-union",
       "values": ["headRefOid", "id", "number", "updatedAt", "url"],
       "models": [
         "formal/models/points/implementation_credit.qnt",
         "formal/models/points/implementation_credit_gate.qnt",
+        "formal/models/points/value_source_cache.qnt",
         "formal/models/slopbot/value_feed_deadline.qnt",
         "formal/models/slopbot/value_ingestion.qnt"
       ],
@@ -2298,13 +2299,14 @@
     },
     {
       "path": "scripts/value-ingestion.ts",
-      "line": 448,
+      "line": 447,
       "name": "phase",
       "kind": "string-union",
       "values": ["commit-attributions", "value-histories"],
       "models": [
         "formal/models/points/implementation_credit.qnt",
         "formal/models/points/implementation_credit_gate.qnt",
+        "formal/models/points/value_source_cache.qnt",
         "formal/models/slopbot/value_feed_deadline.qnt",
         "formal/models/slopbot/value_ingestion.qnt"
       ],
