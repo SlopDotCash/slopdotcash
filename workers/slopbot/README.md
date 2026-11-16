@@ -174,6 +174,8 @@ Value scoring is a separate pipeline from advisory/close review. Entry points:
 | Live registry / authority checks | `value-consumer.ts`, `registry.ts` |
 | Historical / import intake | `value-import.ts`, `value-import-service.ts` |
 
+The authenticated Pages assessment import accepts `Accept: application/x-ndjson` for long-running publication. It sends pending heartbeat frames, then one `{status, body}` terminal frame containing the ordinary HTTP result. A pending frame or interrupted stream does not prove publication. Reconcile the exact record through public assessment history before retrying. Requests without this Accept type keep the ordinary JSON response.
+
 Trusted objective-quality evidence (dormant until a verifier host and
 qualification exist) is documented in [`QUALITY.md`](QUALITY.md) and
 implemented in `quality.ts`. Keep

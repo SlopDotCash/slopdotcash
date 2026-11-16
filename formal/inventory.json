@@ -43,9 +43,9 @@
     },
     {
       "path": ".github/workflows/fee-worker-bindings.yml",
-      "sha256": "8aca0460d92dd212ff4ce662b8dd95a4005237e7ffdd6acc346b5cbb18c883f7",
+      "sha256": "5245f5ebf3ebdbc65e3b69ac1bbc5936889e4dcb6da867698180b8db19073aea",
       "models": ["formal/models/release/workflow_authority.qnt"],
-      "candidateLines": [],
+      "candidateLines": [25],
       "review": "mapped-abstraction"
     },
     {
@@ -134,9 +134,9 @@
     },
     {
       "path": ".github/workflows/reviewed-historical-points.yml",
-      "sha256": "b58d09eb8b0366790bcd5090a8d4121cbc01a42e5241fd50c81d3e2e1bcc23c0",
+      "sha256": "5dd36efc2bde60d2268a4dc9d47f4abc8c1573c9922148b157978ff30c60423b",
       "models": ["formal/models/points/source_import.qnt"],
-      "candidateLines": [],
+      "candidateLines": [39],
       "review": "mapped-abstraction"
     },
     {
@@ -1197,12 +1197,14 @@
     },
     {
       "path": "backend/slopbot/value-import.ts",
-      "sha256": "73ed9315caee7c3f22a4da44d1714fc3c9d50ebdd7f09877b39870e62543f102",
+      "sha256": "56e23e7700c4a530ac6b01996539fe5974d1acfff18ae8598b1ec33b885e53c4",
       "models": [
         "formal/models/api/api_request_composition.qnt",
         "formal/models/slopbot/historical_subscription_intake.qnt"
       ],
-      "candidateLines": [23, 25],
+      "candidateLines": [
+        24, 26, 97, 101, 110, 115, 118, 121, 122, 123, 124, 140
+      ],
       "review": "mapped-abstraction"
     },
     {
@@ -2133,7 +2135,7 @@
     },
     {
       "path": "functions/api/v1/[[path]].ts",
-      "sha256": "ed8af23b205a7723a97586a8e3da2404fd73ab17fe0fa25d96f204c9ebfba834",
+      "sha256": "7e59776ff2e71e4a6116f6e73cf7fdb7bd3c7447e246e1150942fca6be01141d",
       "models": [
         "formal/models/api/api_request_composition.qnt",
         "formal/models/api/identity_consumer_exchange.qnt",
@@ -4079,6 +4081,16 @@
       "review": "mapped-abstraction"
     },
     {
+      "path": "scripts/inspect-fee-worker-operations.ts",
+      "sha256": "858692d88fa7274117f3f98b4f0054ca812ce3e766f26964ed8b90832cde6bdc",
+      "models": ["formal/models/release/workflow_authority.qnt"],
+      "candidateLines": [
+        40, 44, 56, 58, 79, 117, 156, 165, 170, 173, 200, 217, 224, 263, 348,
+        378, 382, 503
+      ],
+      "review": "mapped-abstraction"
+    },
+    {
       "path": "scripts/install-ci-chromium.sh",
       "sha256": "8dea3d439d4de289f68fabab2f956e45d772ffbb75745cb93421c963981357e0",
       "models": ["formal/models/tooling/formal_toolchain.qnt"],
@@ -4405,9 +4417,9 @@
     },
     {
       "path": "scripts/private-payout-packet.ts",
-      "sha256": "904f5c2eeac392f21ba5a28ec14ae07b525a5baaa281f7bdf4161b4c2a208f1f",
+      "sha256": "76834ca65fec51044bd4c78f3061943f5672f89acd9ae34ba172c684e0edfcc8",
       "models": ["formal/models/points/source_import.qnt"],
-      "candidateLines": [82],
+      "candidateLines": [30, 127, 135, 158],
       "review": "mapped-abstraction"
     },
     {
@@ -4492,9 +4504,9 @@
     },
     {
       "path": "scripts/qualify-value-models.ts",
-      "sha256": "9ce1c7ad0c327cfb083f6693bc246d4060aff4102910c308ee565937baa73c57",
+      "sha256": "ac071af313784eb6be707a94e20d13f2d907cd18b9bea13928abcec2112fefe6",
       "models": ["formal/models/slopbot/qualification_value_budget.qnt"],
-      "candidateLines": [230],
+      "candidateLines": [99, 248],
       "review": "mapped-abstraction"
     },
     {
@@ -14665,7 +14677,7 @@
     },
     {
       "path": "formal/models/release/workflow_authority.qnt",
-      "sha256": "f0261ccf3a037d98627b30d137060e7e937d4a5f8a19eb0ba5a198711b0ff012",
+      "sha256": "ed1019ea045f3e9f01d958c01709db6d0a79c989164cd9201c71431415ee4a18",
       "sources": [
         ".github/workflows/cancel-closed-pr-runs.yml",
         ".github/workflows/fee-worker-bindings.yml",
@@ -14676,6 +14688,7 @@
         ".github/workflows/referral-root-watch.yml",
         ".github/workflows/vetting-controller.yml",
         "scripts/inspect-fee-worker-bindings.ts",
+        "scripts/inspect-fee-worker-operations.ts",
         "scripts/run-vetting-controller.ts"
       ],
       "scenarios": [
