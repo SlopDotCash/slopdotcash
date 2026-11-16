@@ -479,6 +479,8 @@ The rolling ledger covers a complete 35-day window. Publish exact bounds and cou
 
 Make Featured and Community projects discoverable. An administrator's Featured setting controls the D1 listing tier, independent of funding or payment history. Apply the same rules to ordinary and bounty projects. Featuring never guarantees payment.
 
+A project page shows the network of each recorded vault (with its payout asset when known), the project's website and its X account, each only when present. Owners set or clear the website and X account on Add project and in project settings; they are presentation links (`links.website`, `links.x`) published as an immutable owner revision, not material terms (operator decision, 16 November 2026; #2295).
+
 Paused projects remain listed, but their repositories are not collected or scored. Retired projects disappear from lists while history still resolves. Legacy community projects remain retired. Their IDs exist only in `src/lib/legacy-projects.json` for Points and profile validation; never list, collect, score, or pay them.
 
 Profiles and cycle pages show finalized ordinary vault payments with project, recorded contribution month, net asset amount, and transaction link. If the contribution month is missing, show it as unavailable. Never infer it from indexing time. Preserve closed-account privacy and distinguish pending or unavailable evidence from payment.

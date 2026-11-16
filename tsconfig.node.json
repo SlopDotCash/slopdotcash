@@ -48,6 +48,7 @@
     "src/lib/solana-wire.ts",
     "src/lib/canonical-json.ts",
     "src/lib/project-revision-changes.ts",
+    "src/lib/project-links.ts",
     "src/lib/points.ts",
     "src/lib/points-implementation-corrections.ts",
     "src/lib/original-contributor-repair.ts",
