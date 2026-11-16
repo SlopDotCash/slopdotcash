@@ -50,9 +50,10 @@ export type Diagnostics = {
   allowPreviewApiMisses(): void;
   /**
    * Accepts the cancellation of the app's shared background reads: the
-   * session, inbox, email preference, vault, points and payment reads. Their
-   * panels cancel them when a step leaves or reloads them, or when the local
-   * server passes the request deadline. Every other cancellation counts.
+   * session, inbox, email preferences, public project activity and funding,
+   * vaults, points and payments. Their panels cancel them when a step leaves
+   * or reloads them, or when the local server passes the request deadline.
+   * Every other cancellation counts.
    */
   allowCanceledBackgroundReads(): void;
   /** How many recorded failures so far match the pattern. */
@@ -283,7 +284,7 @@ export const test = base.extend<{ diagnostics: Diagnostics }>({
         allowCanceledBackgroundReads: () =>
           allowed.push(
             new RegExp(
-              `^(?:net::ERR_ABORTED|NS_BINDING_ABORTED) GET ${escapeRegExp(origin)}/api/v1/(?:project-session|notifications(?:/(?:email|incomplete-assessments))?|project-vaults/[^ /?]+|points/[^ ?]+|payments/[^ ?]+)(?:\\?[^ ]*)?$`,
+              `^(?:net::ERR_ABORTED|NS_BINDING_ABORTED) GET ${escapeRegExp(origin)}/api/v1/(?:project-session|notifications(?:/(?:email|incomplete-assessments))?|merge-activity|pool-funding|project-vaults/[^ /?]+|points/[^ ?]+|payments/[^ ?]+)(?:\\?[^ ]*)?$`,
               "u",
             ),
           ),
