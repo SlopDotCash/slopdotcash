@@ -476,7 +476,7 @@
     },
     {
       "path": "backend/payments/monthly.ts",
-      "sha256": "e2c22f60a2bc033cac96fb884e7c424649921ed6fe40886d9e292a76baa726a3",
+      "sha256": "f67fde842db695d64f439fc87bc92f63f05427a411d0bda0eb911ad2be9922dd",
       "models": [
         "formal/models/rewards/monthly_coordinator.qnt",
         "formal/models/rewards/monthly_cutoff_queue.qnt",
@@ -487,10 +487,10 @@
         "formal/models/rewards/monthly_source_conflict.qnt"
       ],
       "candidateLines": [
-        90, 132, 136, 139, 140, 153, 331, 421, 532, 582, 584, 598, 608, 618,
-        624, 642, 761, 765, 788, 793, 816, 880, 907, 916, 936, 1016, 1135, 1190,
-        1238, 1333, 1335, 1366, 1368, 1371, 1490, 1512, 1521, 1534, 1540, 1584,
-        1610, 1616, 1620, 1675, 1692
+        80, 98, 140, 144, 147, 148, 161, 339, 429, 540, 590, 592, 606, 616, 626,
+        632, 650, 769, 773, 796, 801, 824, 888, 915, 924, 944, 1024, 1143, 1198,
+        1246, 1362, 1364, 1401, 1403, 1406, 1526, 1548, 1557, 1570, 1576, 1620,
+        1646, 1652, 1656, 1711, 1728
       ],
       "review": "mapped-abstraction"
     },
@@ -15136,7 +15136,7 @@
     },
     {
       "path": "formal/models/rewards/monthly_owner_cuts.qnt",
-      "sha256": "4270cfe39d99fa700a607c60fc9ec257d610e0c879527d320ff81e359ba21f46",
+      "sha256": "deef2eb5829ed338855ef0deae631b466b183c55df5f1b90fd1087e394310b42",
       "sources": [
         "backend/notifications/events.ts",
         "backend/payments/handler.ts",
@@ -15151,7 +15151,10 @@
         "finalWindowRefusesCutTest",
         "finalizeWaitsAfterCutTest",
         "increaseNeedsNoReasonTest",
-        "optOutAllowsLateCutTest"
+        "optOutAllowsLateCutTest",
+        "pledgedCoordinatorFreezeTest",
+        "pledgedCutoffRefusesChangeTest",
+        "pledgedWindowRefusesCutTest"
       ]
     },
     {

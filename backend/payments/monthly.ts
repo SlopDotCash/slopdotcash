@@ -76,6 +76,14 @@ import {
   pledgeKeepsMonth,
 } from "./month-pledges";
 
+/**
+ * MONTH_PLEDGED_SQL for the allocation change insert, with its numbered
+ * parameters: project ?9, period ?2, and the paying vault's network ?18 and
+ * address ?19, both null when no pledge can keep the month.
+ */
+const PLEDGED_MONTH_SQL =
+  "EXISTS(SELECT 1 FROM vault_month_pledges WHERE project_id=?9 AND network=?18 AND vault=?19 AND period=?2 AND amount<>'0')";
+
 /** The project bound as ?1 is not retired, read from its current manifest. */
 const NOT_RETIRED_SQL =
   "EXISTS(SELECT 1 FROM projects WHERE id=? AND json_extract(manifest,'$.listingTier') IS NOT 'retired')";
@@ -1303,7 +1311,25 @@ export function monthlyOwnerService(deps: {
         );
       const noticeDeadline =
         isCut && cutoff ? new Date(cutoff.getTime() - CUT_NOTICE_MS) : null;
-      const automatic = await automaticMonthlyPayment(deps.db, project.id);
+      // A month pledged on chain in the vault that pays it freezes at the
+      // cutoff whatever the default says (operator decision, 15 November
+      // 2026), so its changes close as an automatic month's do. The statement
+      // checks the stored pledge again at execution time.
+      const served = servedDeployment(project.manifest, deps.networks());
+      const pledgeScope = pledgeKeepsMonth(!!served, project.manifest)
+        ? served
+        : null;
+      const pledged = async () =>
+        !!pledgeScope &&
+        (await monthPledged(deps.db, {
+          projectId: project.id,
+          network: pledgeScope.network,
+          vault: pledgeScope.vault,
+          period,
+        }));
+      const automatic =
+        (await automaticMonthlyPayment(deps.db, project.id)) ||
+        (await pledged());
       // Proposal reads may cross the cutoff. Use the write's time, after
       // those reads, for both eligibility and the recorded change.
       const changedAt = deps.now();
@@ -1329,7 +1355,10 @@ export function monthlyOwnerService(deps: {
         // The registry version used for owner authorization must also remain
         // current when this statement executes.
         // A cut also needs the notice window open when automatic
-        // finalization is on, by both clocks, at execution time.
+        // finalization is on, by both clocks, at execution time. A month
+        // pledged in the paying vault takes both automatic conditions, the
+        // pledge read again here; the clause comes last because the ban
+        // query's positional parameter takes the next number (?11).
         const insert = deps.db
           .prepare(
             `INSERT INTO monthly_allocation_changes(project_id,period,sequence,github_user_id,gross_base,actor_id,created_at)
@@ -1340,7 +1369,11 @@ export function monthlyOwnerService(deps: {
                AND EXISTS(SELECT 1 FROM projects WHERE id=?12 AND revision=?13 AND manifest_sha256=?14)
                AND (?15=0 OR ?16 IS NULL
                  OR COALESCE((SELECT automatic FROM monthly_payment_settings WHERE project_id=?9 ORDER BY sequence DESC LIMIT 1),1)=0
-                 OR (?17=0 AND strftime('%Y-%m-%dT%H:%M:%fZ','now')<?16))`,
+                 OR (?17=0 AND strftime('%Y-%m-%dT%H:%M:%fZ','now')<?16))
+               AND (NOT ${PLEDGED_MONTH_SQL}
+                 OR ((?8=0 AND (?10 IS NULL OR strftime('%Y-%m-%dT%H:%M:%fZ','now')<?10))
+                   AND (?15=0 OR ?16 IS NULL
+                     OR (?17=0 AND strftime('%Y-%m-%dT%H:%M:%fZ','now')<?16))))`,
           )
           .bind(
             project.id,
@@ -1360,6 +1393,8 @@ export function monthlyOwnerService(deps: {
             Number(isCut),
             noticeDeadline?.toISOString() ?? null,
             Number(noticePassed),
+            pledgeScope?.network ?? null,
+            pledgeScope?.vault ?? null,
           );
         // A cut's record and its notice commit only with the change row.
         const results = !isCut
@@ -1422,7 +1457,8 @@ export function monthlyOwnerService(deps: {
         await assertMonthlyParticipation(deps.db, actor.githubId);
         if (
           cutoff !== null &&
-          (await automaticMonthlyPayment(deps.db, project.id))
+          ((await automaticMonthlyPayment(deps.db, project.id)) ||
+            (await pledged()))
         ) {
           // A cut refused only by the notice window, before the cutoff.
           if (isCut && !cutoffPassed && Date.now() < cutoff.getTime())
