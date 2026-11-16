@@ -35,3 +35,16 @@ targets = ["assert", "underflow", "overflow", "divByZero"]
 show_proved_safe = true
 show_unproved = true
 show_unsupported = true
+
+# CHC proves the lemmas of the never-deployed test/smt/EscrowLemmas.sol about the library ProjectEscrow inlines.
+[profile.smt_chc]
+out = ".cache/smt-chc/out"
+cache_path = ".cache/smt-chc/cache"
+
+[profile.smt_chc.model_checker]
+contracts = { "test/smt/EscrowLemmas.sol" = ["EscrowLemmas"] }
+engine = "chc"
+targets = ["assert", "underflow", "overflow", "divByZero"]
+show_proved_safe = true
+show_unproved = true
+show_unsupported = true
