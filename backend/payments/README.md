@@ -396,7 +396,8 @@ Points history. Replaying an identical batch remains valid.
    with every earlier obligation of the same vault that is still unreserved,
    less every other month's open pledge, which the contract keeps apart.
    An underfunded month waits for a deposit and creates nothing. The steward
-   gets one Inbox payout exception for that month (key
+   (or, for an Organization steward, the project's lister) gets one Inbox
+   payout exception for that month (key
    `monthly-underfunded:PROJECT:YYYY-MM`), however often the coordinator
    retries. Before it creates new obligations, the coordinator excludes accounts
    with an active moderator ban. It records the exact ban in
