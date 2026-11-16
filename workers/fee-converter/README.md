@@ -264,6 +264,15 @@ verify those routes. Any of them can replace KyberSwap behind
 
 ## States
 
+The authenticated admin `GET /api/v1/admin/fee-conversions` includes a `claims`
+report with the latest 100 claim attempts, all finalized live claim totals by
+network, fee wallet and asset, and state counts for the last 24 hours. The
+report exposes the recorded project, vault, transaction and finalized receipt
+amount. The earlier estimate remains separate because fees can accrue before
+the claim lands. Signed transaction bytes and complete stored quotes stay in
+D1. The existing conversion and buyback reports keep their own records and
+totals.
+
 | State       | Meaning                                                                                                                                                                                           |
 | ----------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `quoted`    | Dry run: a quote that passed every check. Live: a quote not yet signed; closed as `failed` after one hour if the run ended.                                                                       |
