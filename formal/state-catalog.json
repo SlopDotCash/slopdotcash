@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "meaning": "Declared lifecycle candidates. This intentionally incomplete syntactic census cannot find every implicit state, establish reachability, or prove source/model correspondence. Review the open work listed in formal/README.md as well.",
-  "inventorySha256": "319c3108869d95daeedc93d1496c7d2a58e36776dc5a34b1572f8d6fd8461643",
+  "inventorySha256": "b8393c8a69a286a879e751d799ebc150eb76497a138c02b8a3194454a8cd143b",
   "states": [
     {
       "path": "backend/fee-conversions/handler.ts",
@@ -1911,6 +1911,16 @@
       "review": "candidate-only"
     },
     {
+      "path": "migrations/0130_slopbot_ready_labels.sql",
+      "line": 15,
+      "name": "state",
+      "kind": "sql-check",
+      "values": ["not-ready", "off", "ready"],
+      "models": ["formal/models/slopbot/bot_ready_label.qnt"],
+      "lexicallyUnmentionedValues": ["not-ready", "off", "ready"],
+      "review": "candidate-only"
+    },
+    {
       "path": "scripts/check-direct-payment-disclosures.ts",
       "line": 26,
       "name": "state",
@@ -2603,7 +2613,7 @@
     },
     {
       "path": "src/ProjectProposalPage.tsx",
-      "line": 869,
+      "line": 1032,
       "name": "state",
       "kind": "string-union",
       "values": ["done", "error", "idle", "loading"],
@@ -2627,7 +2637,7 @@
     },
     {
       "path": "src/ProjectProposalPage.tsx",
-      "line": 1346,
+      "line": 1509,
       "name": "status",
       "kind": "string-union",
       "values": ["idle", "submitting"],
@@ -2651,7 +2661,7 @@
     },
     {
       "path": "src/ProjectProposalPage.tsx",
-      "line": 2205,
+      "line": 2373,
       "name": "state",
       "kind": "string-union",
       "values": ["idle", "publishing"],
@@ -2675,7 +2685,7 @@
     },
     {
       "path": "src/ProjectProposalPage.tsx",
-      "line": 2210,
+      "line": 2378,
       "name": "state",
       "kind": "string-union",
       "values": ["idle", "removed", "removing"],
@@ -2699,7 +2709,7 @@
     },
     {
       "path": "src/ProjectProposalPage.tsx",
-      "line": 2217,
+      "line": 2385,
       "name": "state",
       "kind": "string-union",
       "values": ["idle", "loading"],
@@ -4043,12 +4053,13 @@
     },
     {
       "path": "workers/slopbot/index.ts",
-      "line": 197,
+      "line": 216,
       "name": "INSTALLATION_STATES",
       "kind": "string-union",
       "values": ["active", "removed", "suspended"],
       "models": [
         "formal/models/slopbot/bot_installation_lifecycle.qnt",
+        "formal/models/slopbot/bot_ready_label.qnt",
         "formal/models/slopbot/bot_webhook_delivery.qnt"
       ],
       "lexicallyUnmentionedValues": ["active"],
@@ -4135,6 +4146,32 @@
         "formal/models/slopbot/bot_webhook_delivery.qnt"
       ],
       "lexicallyUnmentionedValues": [],
+      "review": "candidate-only"
+    },
+    {
+      "path": "workers/slopbot/ready-label.ts",
+      "line": 334,
+      "name": "SlopbotVerdict",
+      "kind": "string-union",
+      "values": ["finding", "limited", "missing", "none", "running"],
+      "models": ["formal/models/slopbot/bot_ready_label.qnt"],
+      "lexicallyUnmentionedValues": [
+        "finding",
+        "limited",
+        "missing",
+        "none",
+        "running"
+      ],
+      "review": "candidate-only"
+    },
+    {
+      "path": "workers/slopbot/ready-label.ts",
+      "line": 647,
+      "name": "state",
+      "kind": "string-union",
+      "values": ["not-ready", "off", "ready"],
+      "models": ["formal/models/slopbot/bot_ready_label.qnt"],
+      "lexicallyUnmentionedValues": ["not-ready", "off", "ready"],
       "review": "candidate-only"
     },
     {
