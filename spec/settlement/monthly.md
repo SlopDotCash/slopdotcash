@@ -481,8 +481,8 @@ pure def sometimesOptedOutFrozenByOwner(m: Monthly): bool = m.trigger == OwnerTr
 pure def sometimesLateCutThenAutomaticFreeze(m: Monthly): bool = m.trigger == AutomaticTrigger
   and m.latestCutAt + cutNoticeSeconds > cutoff(m)
 pure val periodValues = Set(202611, 202610)
-pure val nowValues = Set(1793491300, 1796083300, 1796260000, 1796342400, 1796342600, 1796343000, 1796346400)
-pure val reasonLengthValues = Set(19, 20, 501)
+pure val nowValues = Set(1793491300, 1796083300, 1796256100, 1796342400, 1796342600, 1796343000)
+pure val reasonLengthValues = Set(19, 20, 500)
 pure val eligible: Eligibility = { revision: 1, active: true, verifiedPool: true, paused: false, restricted: false,
   retired: false, vaultRegistered: true, networkServed: true, receiptPolicyActive: true, monthlyPoolReward: true }
 pure val eligibilityValues = Set(eligible, { ...eligible, paused: true }, { ...eligible, revision: 2 })
