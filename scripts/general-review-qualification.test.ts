@@ -124,24 +124,84 @@ test("general-review dry run prepares the case without calling a provider", asyn
   expect(source.requests).toHaveLength(0);
 });
 
-test("general review follows an exact Orbio quota rejection to a real served verdict", async () => {
-  const fallback = provider();
-  let calls = 0;
+test("general review follows a Surplus spending denial to a real Orbio verdict", async () => {
+  const requests: { url: string; model: string }[] = [];
   const result = await qualifyGeneralReview(
     { ORBIO_API_KEY: "synthetic-orbio", SURPLUS_API_KEY: "synthetic-surplus" },
     false,
     (async (input, init) => {
-      calls++;
-      if (calls === 1)
+      const request = new Request(input, init);
+      const wire = (await request.json()) as { model: string };
+      requests.push({ url: request.url, model: wire.model });
+      if (requests.length === 1)
+        return Response.json(
+          {
+            type: "error",
+            error: {
+              type: "invalid_request_error",
+              detail: {
+                window: "month",
+                limit_micro: 100,
+                spent_micro: 100,
+                resets_at: "2026-12-01T00:00:00.000Z",
+              },
+            },
+          },
+          { status: 400 },
+        );
+      return Response.json({
+        type: "message",
+        role: "assistant",
+        model: "anthropic/claude-sonnet-5.5",
+        usage: { input_tokens: 20, output_tokens: 30, cost: 0.0001 },
+        content: [{ type: "text", text: JSON.stringify(verdict) }],
+        stop_reason: "end_turn",
+      });
+    }) as typeof fetch,
+  );
+  expect(result.provider).toBe("orbio");
+  expect(result.model).toBe("anthropic/claude-sonnet-5.5");
+  expect(result.requests).toBe(2);
+  expect(result.outcome).toBe("marker uncertainty preserved");
+  expect(requests.map((request) => request.model)).toEqual([
+    "claude-sonnet-5.5",
+    "anthropic/claude-sonnet-5.5",
+  ]);
+});
+
+test("an Orbio quota rejection after a Surplus denial fails qualification within two requests", async () => {
+  let calls = 0;
+  await expect(
+    qualifyGeneralReview(
+      {
+        ORBIO_API_KEY: "synthetic-orbio",
+        SURPLUS_API_KEY: "synthetic-surplus",
+      },
+      false,
+      (async (_input: RequestInfo | URL, _init?: RequestInit) => {
+        calls++;
+        if (calls === 1)
+          return Response.json(
+            {
+              type: "error",
+              error: {
+                type: "invalid_request_error",
+                detail: {
+                  window: "month",
+                  limit_micro: 100,
+                  spent_micro: 100,
+                  resets_at: "2026-12-01T00:00:00.000Z",
+                },
+              },
+            },
+            { status: 400 },
+          );
         return Response.json(
           { error: { type: "insufficient_quota" } },
           { status: 402 },
         );
-      return fallback.fetch(input, init);
-    }) as typeof fetch,
-  );
-  expect(result.provider).toBe("surplus");
-  expect(result.requests).toBe(2);
-  expect(result.outcome).toBe("marker uncertainty preserved");
+      }) as typeof fetch,
+    ),
+  ).rejects.toThrow();
   expect(calls).toBe(2);
 });

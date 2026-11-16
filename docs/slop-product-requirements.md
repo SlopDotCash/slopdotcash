@@ -233,11 +233,11 @@ The separate reviewer skill is advisory. It checks correctness, tests, security,
 
 ### Review and scoring
 
-Slopbot is required, always free, and limited to registered repositories. Never charge a project vault for bot review.
+Slopbot is required, always free, and limited to registered repositories. Never charge a project vault for bot review. Free advisory reviews are capped at 2,000 pull requests or issues per repository per UTC month; later reviews of an item already reviewed that month are not limited, and value assessment is not capped (operator decision, 16 November 2026).
 
 Apply effective repository security, scope, ignore, and rejection rules before review. Review exact source against approved base-branch rules. Run untrusted code only in approved isolation without secrets or posting credentials.
 
-Owner decision, 11 November 2026: use Orbio first and Surplus Intelligence as backup. Start with Claude Sonnet 5.5 through Orbio. Any Orbio failure, including exhausted credits, goes directly to Surplus Claude Sonnet 5.5, then Surplus GPT-6.1 Terra. Do not retry another Orbio model before the backup. Use these lower-cost models for active API review, scoring, repository scanning, and private-report analysis. Preserve historical model attribution and billing records. Show no-findings, limited-coverage, and retryable-failure outcomes. Identify unreviewed content. A limited review cannot label, close, penalize, or claim full verification. Large or binary evidence must not silently exhaust attempts.
+Operator decision, 16 November 2026: use Surplus Intelligence first and Orbio as the backstop. Start with Claude Sonnet 5.5 through Surplus, then Surplus GPT-6.1 Terra, then Claude Sonnet 5.5 through Orbio. A Surplus spending denial skips the remaining Surplus model and goes directly to Orbio. If Orbio does not serve a valid result, the request waits for the Surplus budget reset. This replaces the owner decision of 11 November 2026, which used Orbio first and Surplus as backup. Use these lower-cost models for active API review, scoring, repository scanning, and private-report analysis. Preserve historical model attribution and billing records. Show no-findings, limited-coverage, and retryable-failure outcomes. Identify unreviewed content. A limited review cannot label, close, penalize, or claim full verification. Large or binary evidence must not silently exhaust attempts.
 
 Slopbot assesses PR size and value and credits useful reviews under section 7. Maintainers decide merges. Preserve repository opt-outs and exemptions.
 
@@ -476,6 +476,8 @@ Retain every open issue and PR in snapshots for source-count integrity. Publish 
 The rolling ledger covers a complete 35-day window. Publish exact bounds and counts; deduplicate permanent GitHub IDs. Default rankings to Points. Preserve equal ranks, shareable filters, source coverage, and exact periods. Slopbot does not enter human rankings.
 
 Make Featured and Community projects discoverable. An administrator's Featured setting controls the D1 listing tier, independent of funding or payment history. Apply the same rules to ordinary and bounty projects. Featuring never guarantees payment.
+
+A project page shows the network of each recorded vault (with its payout asset when known), the project's website and its X account, each only when present. Owners set or clear the website and X account on Add project and in project settings; they are presentation links (`links.website`, `links.x`) published as an immutable owner revision, not material terms (operator decision, 16 November 2026; #2295).
 
 Paused projects remain listed, but their repositories are not collected or scored. Retired projects disappear from lists while history still resolves. Legacy community projects remain retired. Their IDs exist only in `src/lib/legacy-projects.json` for Points and profile validation; never list, collect, score, or pay them.
 

@@ -9,6 +9,7 @@ import {
 } from "../tests/value-binary-fixture";
 import { priceUsage } from "../workers/slopbot/contracts";
 import {
+  budgetResetAt,
   type CallRecord,
   type ModelEnv,
   runRoute,
@@ -36,8 +37,10 @@ function requireThat(value: unknown): asserts value {
 
 /** Only this process's synthetic qualification traffic passes this boundary.
  * The ordinary model prompt/schema remain intact; output is capped for the
- * synthetic cases. Missing receipts stop calls except a quota refusal whose
- * entire preflight cost bound remains reserved. */
+ * synthetic cases. Missing receipts stop calls except an exact Orbio quota
+ * refusal or a structured Surplus spending denial, whose entire preflight cost
+ * bound remains reserved. Surplus serves first; a Surplus spending denial
+ * moves the route to Orbio within the same two-request ceiling. */
 export function qualificationTransport(
   fetcher: typeof fetch,
   purpose: "value" | "general-review" = "value",
@@ -100,9 +103,15 @@ export function qualificationTransport(
         rejection?.error?.type === "insufficient_quota" &&
         (rejection.error.code === undefined ||
           rejection.error.code === "insufficient_quota");
-      // A rejected Orbio request still has an unknown actual charge. Reserve
-      // its complete preflight bound before allowing the ordinary fallback.
-      requireThat(receipt.cost !== null || quotaRejected);
+      // A structured Surplus spending denial served nothing; the route then
+      // skips the other Surplus model and asks Orbio.
+      const budgetDenied =
+        provider === "surplus" &&
+        budgetResetAt({ status: response.status, error: receipt.value }) !==
+          null;
+      // A rejected request without a receipt still has an unknown actual
+      // charge. Reserve its complete preflight bound before any fallback.
+      requireThat(receipt.cost !== null || quotaRejected || budgetDenied);
       spent += receipt.cost ?? bound.costMicroUsd;
       requireThat(spent <= PATH_BUDGET);
       uncertain = false;
@@ -298,7 +307,12 @@ if (
   import.meta.url === pathToFileURL(process.argv[1]).href
 ) {
   const { dryRun, authorized } = protectedMainRelease();
-  if (!dryRun && (!authorized || !process.env.ORBIO_API_KEY?.trim())) {
+  if (
+    !dryRun &&
+    (!authorized ||
+      !process.env.SURPLUS_API_KEY?.trim() ||
+      !process.env.ORBIO_API_KEY?.trim())
+  ) {
     process.stderr.write(
       "Slopbot model qualification requires the protected main release and both provider keys.\n",
     );
