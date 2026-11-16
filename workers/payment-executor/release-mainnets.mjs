@@ -1,9 +1,9 @@
 import { spawnSync } from "node:child_process";
-import { createHash } from "node:crypto";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { createHash, randomUUID } from "node:crypto";
+import { mkdir, readFile, unlink, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
+import { setTimeout as wait } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
-import { assertActiveVersionTagged } from "../../scripts/worker-release.mjs";
 import { HISTORICAL_PROJECTS } from "../../src/lib/projects.mjs";
 import {
   readMonthlySchedule,
@@ -21,15 +21,32 @@ export const mainnetWranglerProvider = (args, env = process.env) =>
     timeout: 120_000,
     env,
   });
-const run = async (provider, args) => {
-  const result = await provider(args);
-  if (result.status !== 0) throw new Error(`Attester ${args[0]} failed`);
-  return result.stdout;
+const run = async (provider, network, args, env) => {
+  const result = await provider(args, env);
+  if (result.status === 0) return result.stdout;
+
+  // Report structured subprocess metadata without exposing Wrangler output.
+  const details = [];
+  if (Number.isInteger(result.status)) details.push(`exit ${result.status}`);
+  if (result.signal === "SIGTERM" || result.signal === "SIGKILL")
+    details.push(result.signal);
+  const spawnError = result.error?.code;
+  if (["ETIMEDOUT", "ENOBUFS", "ENOENT", "EACCES"].includes(spawnError))
+    details.push(spawnError);
+  const apiCode = /\[code: ([0-9]{1,6})\]/u.exec(result.stderr ?? "")?.[1];
+  if (apiCode) details.push(`Cloudflare code ${apiCode}`);
+  const context = details.length ? ` (${details.join(", ")})` : "";
+  throw new Error(`${network} attester ${args[0]} failed${context}`);
 };
 
 async function readSecretInventory(provider, path, network) {
   for (let attempt = 0; attempt < 3; attempt++) {
-    const output = await run(provider, ["secret", "list", "--config", path]);
+    const output = await run(provider, network, [
+      "secret",
+      "list",
+      "--config",
+      path,
+    ]);
     try {
       return JSON.parse(output);
     } catch {
@@ -148,6 +165,105 @@ async function readPlan(directory, sha) {
   return plan;
 }
 
+function parseWranglerMetadata(text, subject) {
+  try {
+    return JSON.parse(text);
+  } catch {
+    throw new Error(`${subject} did not return valid JSON`);
+  }
+}
+
+async function deployAttester(provider, entry, path, directory, sha) {
+  const receiptPath = join(
+    directory,
+    `${entry.name}-${randomUUID()}.deploy.jsonl`,
+  );
+  await writeFile(receiptPath, "", { flag: "wx", mode: 0o600 });
+  try {
+    await run(
+      provider,
+      entry.network,
+      [
+        "deploy",
+        "--config",
+        path,
+        `--tag=${sha}`,
+        `--message=slop.cash release ${sha}`,
+      ],
+      { ...process.env, WRANGLER_OUTPUT_FILE_PATH: receiptPath },
+    );
+    const receipts = (await readFile(receiptPath, "utf8"))
+      .split("\n")
+      .filter((line) => line.trim())
+      .map((line) => parseWranglerMetadata(line, "Attester deploy receipt"))
+      .filter((record) => record?.type === "deploy");
+    const [receipt] = receipts;
+    if (
+      receipts.length !== 1 ||
+      receipt.version !== 1 ||
+      receipt.worker_name !== entry.name ||
+      typeof receipt.version_id !== "string" ||
+      !/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/u.test(receipt.version_id)
+    )
+      throw new Error(
+        `${entry.network} attester deploy did not report an exact Worker version`,
+      );
+    return receipt.version_id;
+  } finally {
+    await unlink(receiptPath);
+  }
+}
+
+async function confirmAttesterVersion(provider, entry, path, versionId, sha) {
+  let failure;
+  for (const delay of [0, 2_000, 5_000]) {
+    if (delay) await wait(delay);
+    try {
+      const deployment = parseWranglerMetadata(
+        await run(provider, entry.network, [
+          "deployments",
+          "status",
+          "--config",
+          path,
+          "--json",
+        ]),
+        "Attester deployment status",
+      );
+      const active =
+        Array.isArray(deployment?.versions) && deployment.versions.length === 1
+          ? deployment.versions[0]
+          : null;
+      if (active?.percentage !== 100 || active.version_id !== versionId)
+        throw new Error(
+          "published version is not the sole version at 100% traffic",
+        );
+
+      const version = parseWranglerMetadata(
+        await run(provider, entry.network, [
+          "versions",
+          "view",
+          versionId,
+          "--config",
+          path,
+          "--json",
+        ]),
+        "Attester version details",
+      );
+      if (version?.id !== versionId)
+        throw new Error("version lookup returned a different identity");
+      if (version.annotations?.["workers/tag"] !== sha)
+        throw new Error("published version is missing the tested source tag");
+      return;
+    } catch (error) {
+      failure = error;
+    }
+  }
+  throw new Error(
+    `${entry.network} attester version does not match tested source`,
+    { cause: failure },
+  );
+}
+
 export async function publishMainnetRelease({ directory, sha, provider }) {
   const plan = await readPlan(directory, sha);
   for (const entry of plan.services) {
@@ -155,31 +271,14 @@ export async function publishMainnetRelease({ directory, sha, provider }) {
     const path = join(directory, `${entry.name}.json`);
     if (digest(await readFile(path)) !== entry.configSha256)
       throw new Error("Prepared attester configuration changed");
-    await run(provider, [
-      "deploy",
-      "--config",
+    const versionId = await deployAttester(
+      provider,
+      entry,
       path,
-      `--tag=${sha}`,
-      `--message=slop.cash release ${sha}`,
-    ]);
-    const versions = JSON.parse(
-      await run(provider, ["versions", "list", "--name", entry.name, "--json"]),
-    );
-    const deployment = JSON.parse(
-      await run(provider, [
-        "deployments",
-        "status",
-        "--name",
-        entry.name,
-        "--json",
-      ]),
-    );
-    assertActiveVersionTagged({
-      deployment,
-      versions,
+      directory,
       sha,
-      message: `${entry.network} attester version does not match tested source`,
-    });
+    );
+    await confirmAttesterVersion(provider, entry, path, versionId, sha);
     entry.published = true;
   }
   await writeFile(
