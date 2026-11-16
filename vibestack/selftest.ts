@@ -16,6 +16,7 @@ import { exec, run as tool } from "./run.ts";
 import { migrateLocks, pendingSpecs, readLedger, showPending, writeLedger } from "./review.ts";
 import { nodeRunsVibelang, packageScripts, testInputs, testReceipt } from "./util.ts";
 import { profile } from "./testing/profile.ts";
+import { bigNumberInteger } from "./gen/types.ts";
 import { canonical, check as conformanceCheck, ConformanceError, departure, replay as replayTrace } from "./conformance.ts";
 import { conformance as checkTraces, conformanceFound } from "./conform.ts";
 import { acceptContracts, acceptReviews, check, checkVerifiedSource, danglingCitations, expandListHelpers, generated, init, parseSpec, pending, pendingContracts, readSpecs, replay, show, typecheckAll, type Result, type Spec } from "./spec.ts";
@@ -2103,4 +2104,14 @@ pure def lawOwn(own: int): bool = shadowOwn(own) == own`));
     const ledger = path.join(root, "spec/lock.json");
     assert.ok(!fs.existsSync(ledger) || !fs.readFileSync(ledger, "utf8").includes("src-inc.ts"), text);
   });
+});
+
+test("a trace integer of 16 or more digits that Quint wrote as a BigNumber decodes to the same integer", () => {
+  const n = (x: number | string) => ({ "#bigint": String(x) });
+  // Written by quint 0.33.1 for the 10^15 wei gas ceiling of spec/operations/escrowQualification.md.
+  assert.equal(bigNumberInteger({ s: n(1), e: n(15), c: [n(10)] }), 10n ** 15n);
+  assert.equal(bigNumberInteger({ s: n(-1), e: n(19), c: [n(123456), n(78901234560000)] }), -12345678901234560000n);
+  assert.equal(bigNumberInteger({ s: n(1), e: n(29), c: [n(10), n(0), n(1)] }), 10n ** 29n + 1n);
+  assert.equal(bigNumberInteger({ s: n(1), e: n(0), c: [n(15)] }), undefined, "1.5 is not an integer");
+  assert.equal(bigNumberInteger({ s: n(1), e: n(15), c: [n(10)], d: n(0) }), undefined, "a record with other fields is not a BigNumber");
 });
