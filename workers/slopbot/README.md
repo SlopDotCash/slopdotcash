@@ -223,6 +223,12 @@ Value scoring is a separate pipeline from advisory/close review. Entry points:
 
 The authenticated Pages assessment import accepts `Accept: application/x-ndjson` for long-running publication. It sends pending heartbeat frames, then one `{status, body}` terminal frame containing the ordinary HTTP result. A pending frame or interrupted stream does not prove publication. Reconcile the exact record through public assessment history before retrying. Requests without this Accept type keep the ordinary JSON response.
 
+The private publisher records a failed import's fixed stage, zero-based source
+index/count, allowlisted error name/HTTP status and bounded message SHA-256.
+It retains no message, body, stack, path or source identity and rethrows the
+original failure. The protected intake diagnostic reprojects only that exact
+structured shape; an observation is not a publication receipt.
+
 Trusted objective-quality evidence (dormant until a verifier host and
 qualification exist) is documented in [`QUALITY.md`](QUALITY.md) and
 implemented in `quality.ts`. Keep
