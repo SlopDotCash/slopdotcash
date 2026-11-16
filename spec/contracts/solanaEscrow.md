@@ -80,6 +80,16 @@ pure def alwaysConfigSeparate(p: Program): bool = if (p.configured)
 pure def sometimesImmutable(p: Program): bool = p.build == CurrentBuild and p.configured and p.upgradeAuthority == ""
 ```
 
+### Block time is positive
+
+Awards record the cluster's `unix_timestamp` as their commitment time and
+bindings as their binding time; both must be positive, and a live
+cluster's timestamp is never zero.
+
+```quint
+pure def alwaysClockStarted(p: Program): bool = p.now > 0
+```
+
 ## Story: Admit only the supported asset behavior
 
 ### A Token-2022 mint has at most metadata extensions and no active authority, and its token accounts at most ImmutableOwner
@@ -91,7 +101,9 @@ authority and metadata that names the mint itself; any other or unknown
 extension refuses. `admitted_token_account` admits a classic account, or an
 initialized Token-2022 account whose only extension is `ImmutableOwner`. A
 token account must belong to the project's token program. Native SOL uses a
-program-owned vault, never a wrapped token.
+program-owned vault, never a wrapped token. The earlier build's project
+holds a classic SPL mint, so every existing project's asset is admitted,
+including one that has not migrated yet.
 
 ```quint
 pure def admittedMint(m: MintFacts): bool = m.kind == ClassicSpl or (m.kind == Token2022
@@ -100,7 +112,7 @@ pure def admittedMint(m: MintFacts): bool = m.kind == ClassicSpl or (m.kind == T
   and m.extensions.length() <= 2 and m.extensions.every(x => m.extensions.select(y => y == x).length() == 1))
 pure def admittedAccount(a: AccountFacts, kind: TokenKind): bool = a.kind == kind and (a.kind == ClassicSpl
   or (a.kind == Token2022 and a.initialized and a.extensions.length() <= 1 and a.extensions.every(x => x == "ImmutableOwner")))
-pure def alwaysAdmittedAsset(p: Program): bool = p.layout == CurrentLayout implies (p.native or admittedMint(p.mint))
+pure def alwaysAdmittedAsset(p: Program): bool = p.layout != NoProject implies (p.native or admittedMint(p.mint))
 pure def sometimesToken2022Funded(p: Program): bool = not(p.native) and p.mint.kind == Token2022 and p.deposited > 0
 ```
 
@@ -152,7 +164,11 @@ that build's obligations with their recorded fee, payout fees already sent
 (counted in `payout_fees` but never accrued) and expired months that left
 the outstanding count. The rules on fees accounted, paid totals, award fees
 and monthly outstanding gross therefore cover projects created by the
-current build and migrated projects without such history.
+current build and migrated projects without such history. Before a project
+exists, no rotation is pending and monthly commitments are off with a zero
+cap, since only a live project's owner proposes a rotation or sets the cap;
+both delays are zero and the asset is not native SOL, since only opening a
+project sets them.
 
 ```quint
 pure def canCreateLegacyProject(p: Program, project: str, identity: str, feeRecipient: str, amount: int, by: str): bool =
@@ -166,7 +182,9 @@ pure def canMigrateProject(p: Program): bool = p.build == CurrentBuild and p.lay
 pure def migrateProject(p: Program): Program = { ...p, layout: CurrentLayout, accruedFees: 0, monthlyOutstanding: 0 }
 pure def alwaysProjectShape(p: Program): bool =
   (p.layout == NoProject implies p.owner == "" and p.deposited == 0 and p.vaultAmount == 0 and p.unsolicited == 0
-    and p.awards.length() == 0 and p.months.length() == 0 and p.bindings.length() == 0)
+    and p.awards.length() == 0 and p.months.length() == 0 and p.bindings.length() == 0
+    and p.pendingIdentity == "" and not(p.monthlyEnabled) and p.monthlyCap == 0
+    and p.bindingDelay == 0 and p.rotationDelay == 0 and not(p.native))
     and (p.layout == LegacyLayout implies p.awards.length() == 0 and p.months.length() == 0 and p.bindings.length() == 0
       and p.accruedFees == 0 and p.monthlyOutstanding == 0 and p.reserved == 0)
     and (p.layout != NoProject implies p.owner != "" and p.identityAuthority != "" and p.feeRecipient != ""
@@ -426,13 +444,15 @@ pure def sometimesWholeReserveReleased(p: Program): bool = p.months.some(m => m.
 ### Each period has one month within the cap at admission, and outstanding gross is the sum of unsettled totals
 
 A wholly released month settled no leaf; every settled source is a leaf of
-its month and settles once. Only an ordinary project holds months.
+its month and settles once. Each settled leaf moved a positive gross, so a
+month has settled no more leaves than its committed gross. Only an ordinary
+project holds months.
 
 ```quint
 pure def alwaysMonthsWellFormed(p: Program): bool = p.months.every(m =>
   p.months.select(o => o.period == m.period).length() == 1 and L::validPeriod(m.period)
     and m.total > 0 and m.total <= m.cap and m.committed >= 0 and m.committed <= m.total
-    and m.released >= 0 and m.released <= m.committed and m.frozenAt > 0
+    and m.released >= 0 and m.released <= m.committed and m.frozenAt > 0 and m.settled.length() <= m.committed
     and (m.wholeReleased implies m.released == m.total and m.committed == m.total and m.settled.length() == 0)
     and m.settled.every(s => m.settled.select(o => o == s).length() == 1 and m.leaves.some(l => l.source == s)))
 pure def alwaysOutstandingMatchesMonths(p: Program): bool = p.monthlyOutstanding == sumUnsettled(p.months)

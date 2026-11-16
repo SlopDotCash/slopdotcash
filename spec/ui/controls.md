@@ -31,7 +31,7 @@ pure def describedBy(f: Field): List[Description] =
   (if (f.invalid and f.hasError) List(ErrorText) else List()).concat(if (f.hasHint) List(HintText) else List())
 pure def lawInvalidFieldNamesItsError(f: Field): bool =
   f.invalid and f.hasError implies describedBy(f).nthOr(0, HintText) == ErrorText
-pure def lawValidFieldShowsNoError(f: Field): bool = not(f.invalid) implies not(describedBy(f).includes(ErrorText))
+pure def lawValidFieldShowsNoError(f: Field): bool = not(f.invalid) implies not(describedBy(f).some(d => d == ErrorText))
 pure val fValues = Set({ invalid: false, hasError: false, hasHint: true }, { invalid: true, hasError: true, hasHint: true },
   { invalid: true, hasError: true, hasHint: false }, { invalid: false, hasError: true, hasHint: false })
 ```
