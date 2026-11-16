@@ -801,6 +801,10 @@ jobs:
       name: slop-staging
       url: https://staging.slop.cash
     steps:
+      - name: Set staging order retry deadline
+        run: |
+          # Keep quota recovery in the first five minutes of the 20-minute job.
+          echo "STAGING_ORDER_RETRY_UNTIL=$(($(date +%s) + 300))" >> "$GITHUB_ENV"
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           ref: ${{ github.sha }}
@@ -1105,7 +1109,7 @@ jobs:
           fi
 
       - name: Refuse older retained production data
-        if: steps.release-input.outputs.superseded != 'true' && inputs.use_published_data == true
+        if: steps.release-input.outputs.superseded != 'true' && inputs.use_published_data == true && (inputs.rotate_robinhood_rpc_from || '') == '' && (inputs.rotate_solana_rpc_from || '') == ''
         run: bun scripts/check-retained-release-data.ts dist
 
       - name: Require scoped Cloudflare credentials

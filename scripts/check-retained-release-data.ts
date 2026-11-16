@@ -6,6 +6,7 @@ import { readBoundedJson } from "../src/lib/browser-json";
 import { assertLeaderboardSnapshot } from "../src/lib/leaderboard";
 import { readLeaderboardBytes } from "../src/lib/leaderboard-transport.mjs";
 import type { ProfileIndex } from "../src/lib/profiles";
+import { isExactUtc } from "../src/lib/record-validation.mjs";
 import { downloadLeaderboard } from "./download-leaderboard";
 import { assertRetainedProfiles } from "./published-profiles";
 
@@ -14,10 +15,10 @@ export function assertRetainedReleaseTimes(
   published: { leaderboard: string; profiles: string },
 ) {
   for (const name of ["leaderboard", "profiles"] as const) {
+    if (!isExactUtc(retained[name]) || !isExactUtc(published[name]))
+      throw new Error(`Invalid ${name} generation time`);
     const before = Date.parse(retained[name]);
     const current = Date.parse(published[name]);
-    if (!Number.isFinite(before) || !Number.isFinite(current))
-      throw new Error(`Invalid ${name} generation time`);
     if (before < current)
       throw new Error(`Retained ${name} is older than current publication`);
   }

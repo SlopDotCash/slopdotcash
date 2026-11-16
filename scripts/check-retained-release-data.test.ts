@@ -40,6 +40,23 @@ test("equal and newer retained generation times pass", () => {
   ).toThrow("Invalid leaderboard");
 });
 
+for (const invalid of [
+  "2026-02-30T00:00:00.000Z",
+  "2026-11-16T00:00:00Z",
+  "2026-11-16T00:00:00.000+00:00",
+]) {
+  for (const side of ["retained", "published"] as const) {
+    test(`refuses ${side} noncanonical time ${invalid}`, () => {
+      const retained = { leaderboard: newer, profiles: newer };
+      const published = { leaderboard: newer, profiles: newer };
+      (side === "retained" ? retained : published).profiles = invalid;
+      expect(() => assertRetainedReleaseTimes(retained, published)).toThrow(
+        "Invalid profiles generation time",
+      );
+    });
+  }
+}
+
 test("normal read accepts registry-extended profiles and refuses newer live profiles", async () => {
   const directory = await mkdtemp(join(tmpdir(), "retained-release-test-"));
   try {

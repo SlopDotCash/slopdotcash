@@ -14,19 +14,20 @@
     },
     {
       "path": ".github/workflows/deploy.yml",
-      "sha256": "b63e8436f0fa263350b0b3cf4649c8943609dcd9f2201a4be0b0fdc43349b97a",
+      "sha256": "bc6215d9399de3ecbf3dc24600e0eed051a525e3a84902273148ecc5c396bb10",
       "models": [
         "formal/models/release/ci_browser_evidence.qnt",
         "formal/models/release/ci_browser_runtime.qnt",
         "formal/models/release/ci_coverage.qnt",
         "formal/models/release/release_proof_gate.qnt",
-        "formal/models/release/release_publication.qnt"
+        "formal/models/release/release_publication.qnt",
+        "formal/models/release/staging_release_order.qnt"
       ],
       "candidateLines": [
         36, 46, 119, 249, 287, 288, 345, 379, 435, 515, 520, 635, 641, 709, 712,
-        738, 739, 760, 772, 838, 1068, 1096, 1188, 1279, 1385, 1387, 1388, 1592,
-        1675, 1828, 1830, 1860, 1969, 1991, 2062, 2073, 2098, 2169, 2182, 2195,
-        2204, 2205, 2206
+        738, 739, 760, 772, 804, 842, 1072, 1100, 1192, 1283, 1389, 1391, 1392,
+        1596, 1679, 1832, 1834, 1864, 1973, 1995, 2066, 2077, 2102, 2173, 2186,
+        2199, 2208, 2209, 2210
       ],
       "review": "mapped-abstraction"
     },
@@ -3515,16 +3516,18 @@
     },
     {
       "path": "scripts/check-retained-release-data.ts",
-      "sha256": "7ed98af69d9cae68d33c2374dfe48ad15a33ef2d3c8c754a58215e092192880a",
+      "sha256": "7530ec4fc152e572f4a8404a44b9e346259e98cad0d5420c5b57d35a1a612575",
       "models": ["formal/models/release/release_publication.qnt"],
       "candidateLines": [],
       "review": "mapped-abstraction"
     },
     {
       "path": "scripts/check-staging-order.mjs",
-      "sha256": "d0c77a68c0451c7a73e33413d631b4a15da3006352d6912adac8b8b40be3fbe1",
+      "sha256": "8a3bae9b39d1be4c4773802628245c3df7ca7899a9293628951d8d0247059ddd",
       "models": ["formal/models/release/staging_release_order.qnt"],
-      "candidateLines": [60, 62],
+      "candidateLines": [
+        4, 8, 36, 40, 41, 56, 67, 78, 81, 82, 84, 113, 115, 143, 212, 237
+      ],
       "review": "mapped-abstraction"
     },
     {
@@ -14494,14 +14497,28 @@
     },
     {
       "path": "formal/models/release/staging_release_order.qnt",
-      "sha256": "2ef20f0116e2f17c564b58b99ece196379cb42883d4ef7e4b22427dc80cec51d",
-      "sources": ["scripts/check-staging-order.mjs"],
+      "sha256": "91db17ebec6009138aaa6d46aa0f6b764675bbe05e2ea9baa5e95bf4a2f297db",
+      "sources": [
+        ".github/workflows/deploy.yml",
+        "scripts/check-staging-order.mjs"
+      ],
       "scenarios": [
         "branchForcePushRefusedTest",
+        "expiredWaitCannotResumeTest",
+        "initialSuccessDoesNotSpendRetryBudgetTest",
+        "insufficientSharedDeadlineRefusesTest",
+        "invalidDelayRefusesTest",
         "newerFailedReleaseBlocksRollbackTest",
+        "nonQuotaFailureRefusesTest",
         "nonReleaseFixtureIsNotRollbackTest",
         "qualificationDoesNotEraseEarlierReleaseTest",
-        "qualificationDoesNotHideLaterReleaseTest"
+        "qualificationDoesNotHideLaterReleaseTest",
+        "retryCannotResumeBeforeValidatedDelayTest",
+        "retryChecksAncestryAgainTest",
+        "retryRechecksEarlierExemptionsTest",
+        "retryWaitsAndStartsFreshTest",
+        "secondQuotaFailureRefusesTest",
+        "zeroDelayStillRequiresFreshHistoryTest"
       ]
     },
     {

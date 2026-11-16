@@ -27,6 +27,12 @@ test("retained and fresh preparation have separate lanes with one production loc
   expect(
     deployment.indexOf("Refuse older retained production data"),
   ).toBeLessThan(deployment.indexOf("Require scoped Cloudflare credentials"));
+  const freshness = deployment
+    .split("      - name: Refuse older retained production data\n")[1]
+    .split("\n      - name:")[0];
+  expect(freshness).toContain("inputs.use_published_data == true");
+  expect(freshness).toContain("(inputs.rotate_robinhood_rpc_from || '') == ''");
+  expect(freshness).toContain("(inputs.rotate_solana_rpc_from || '') == ''");
 });
 const step = (name: string) =>
   workflow.split(`      - name: ${name}\n`)[1].split("\n      - name:")[0];
