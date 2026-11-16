@@ -109,6 +109,13 @@ function holding(state: AccountState): Holding {
     amount: new DataView(bytes.buffer, bytes.byteOffset).getBigUint64(64, true),
   };
 }
+/** Lamports a classic wrapped SOL account holds above its rent reserve. */
+function wrappedLamports(token: Holding) {
+  const view = new DataView(token.bytes.buffer, token.bytes.byteOffset);
+  if (view.getUint32(109, true) !== 1)
+    throw new Error("Route native input is not a wrapped SOL account");
+  return BigInt(token.state.lamports) - view.getBigUint64(113, true);
+}
 function isWritable(
   parsed: ParsedTransaction,
   proof: SolanaAccountProof,
@@ -361,8 +368,14 @@ export function assertSolanaRouteSimulation(
     source.bytes[108] !== 1
   )
     throw new Error("Route simulation redirected the input");
+  // SyncNative folds lamports anyone sent to the wrapped SOL account into its
+  // amount, so an existing native input is measured by those lamports.
+  const held =
+    review.expected.nativeInput && review.source
+      ? wrappedLamports(review.source)
+      : (review.source?.amount ?? 0n);
   if (
-    (review.source?.amount ?? 0n) - source.amount !==
+    held - source.amount !==
       (review.expected.nativeInput ? 0n : review.expected.amountIn) ||
     destination.amount - (review.destination?.amount ?? 0n) <
       review.expected.minimumOut

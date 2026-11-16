@@ -53,15 +53,24 @@ export async function finalizedEvmRevert(
  * receipts and uncertain submissions remain held; absence is not failure proof. */
 export async function reconcileFailedAttempts(
   db: D1Database,
+  networks: readonly string[],
   deployments: readonly DeploymentView<"chain" | "vault", "chainId">[],
   rpcUrls: Record<string, string>,
   genesisHashes: Record<string, string> = {},
   now = new Date(),
 ): Promise<void> {
+  // The scope is the networks this run serves (PAYMENT_NETWORKS), not the
+  // reviewed deployments: a served network can have no reviewed deployment
+  // (its project's manifest was skipped), and its attempts must still be
+  // selected so the deployment match below reports them — no other run can
+  // judge them. The shared database also holds every other network's
+  // attempts; those belong to their own networks' runs, so they stay
+  // unselected here.
   const result = await db
     .prepare(
-      "SELECT json_group_array(json_object('id',a.id,'obligationId',o.id,'network',o.network,'vault',o.vault,'transactionId',a.transaction_id)) items FROM payment_attempts a JOIN payment_obligations o ON o.id=a.obligation_id WHERE a.state IN ('submitted','unknown') AND a.transaction_id IS NOT NULL AND o.state='reserved'",
+      "SELECT json_group_array(json_object('id',a.id,'obligationId',o.id,'network',o.network,'vault',o.vault,'transactionId',a.transaction_id)) items FROM payment_attempts a JOIN payment_obligations o ON o.id=a.obligation_id WHERE o.network IN (SELECT value FROM json_each(?)) AND a.state IN ('submitted','unknown') AND a.transaction_id IS NOT NULL AND o.state='reserved'",
     )
+    .bind(JSON.stringify(networks))
     .first<{ items: string }>();
   // One attempt's failure must not stop reconciliation of the others (PAY-07).
   const failures: unknown[] = [];

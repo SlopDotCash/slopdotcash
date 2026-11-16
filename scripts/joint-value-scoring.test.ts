@@ -30,6 +30,7 @@ afterAll(() => setSystemTime());
 
 const HUMAN_CLAIM = "a".repeat(64);
 const BOT_CLAIM = "b".repeat(64);
+const OLD_PATH_CLAIM = "e".repeat(64);
 
 function snapshotWithJointUnits(
   botClaimActors: string[],
@@ -37,6 +38,7 @@ function snapshotWithJointUnits(
   options: {
     historicalCarrier?: boolean;
     missingCommit?: boolean;
+    renamedHumanFile?: boolean;
     completionInOtherPR?: boolean;
   } = {},
 ) {
@@ -79,7 +81,11 @@ function snapshotWithJointUnits(
         ? [
             {
               ...unit("wu_shared", HUMAN_CLAIM),
-              claimIds: [HUMAN_CLAIM, BOT_CLAIM],
+              claimIds: [
+                HUMAN_CLAIM,
+                ...(options.renamedHumanFile ? [OLD_PATH_CLAIM] : []),
+                BOT_CLAIM,
+              ],
               assessment: {
                 status: "assessed",
                 tier: "large",
@@ -93,6 +99,15 @@ function snapshotWithJointUnits(
     evidence: {
       claims: [
         claim(HUMAN_CLAIM, [PENALIZED_AUTHOR.id]),
+        ...(options.renamedHumanFile
+          ? [
+              {
+                ...claim(OLD_PATH_CLAIM, [PENALIZED_AUTHOR.id]),
+                commitSha: HUMAN_CLAIM.slice(0, 40),
+                path: "src/old.ts",
+              },
+            ]
+          : []),
         claim(BOT_CLAIM, botClaimActors),
       ],
       sources: [
@@ -147,6 +162,12 @@ function snapshotWithJointUnits(
                           status: "modified",
                           additions: changedLines[index],
                           deletions: 0,
+                          ...(options.renamedHumanFile && index === 0
+                            ? {
+                                status: "renamed",
+                                previous_filename: "src/old.ts",
+                              }
+                            : {}),
                         },
                       ],
                     }),
@@ -227,6 +248,21 @@ test("a joint unit keeps its value and splits it by each author's claimed lines"
     ["wu_shared", PENALIZED_AUTHOR.id, 21.6],
     ["wu_shared", PROJECT_OWNER.id, 2.4],
   ]);
+});
+
+test("a renamed file's old and new path claims split by its changed lines once", () => {
+  const snapshot = snapshotWithJointUnits([PROJECT_OWNER.id], [90, 10], {
+    renamedHumanFile: true,
+  });
+  expect(jointMerges(snapshot)).toEqual([
+    ["wu_shared", PENALIZED_AUTHOR.id, 21.6],
+    ["wu_shared", PROJECT_OWNER.id, 2.4],
+  ]);
+  expect(
+    snapshot.valueAssessmentCoverage?.find(
+      (item) => item.pullRequestId === "PR_november",
+    ),
+  ).toMatchObject({ status: "assessed" });
 });
 
 test("a shared joint unit with missing line evidence holds its sources", () => {
