@@ -10,8 +10,12 @@ function fixture(
 ) {
   let calls = 0;
   const waits: number[] = [];
+  const urls: string[] = [];
   const transport = Object.assign(
-    async () => responses[Math.min(calls++, responses.length - 1)](),
+    async (input: Parameters<typeof fetch>[0]) => {
+      urls.push(input instanceof Request ? input.url : String(input));
+      return responses[Math.min(calls++, responses.length - 1)]();
+    },
     {
       preconnect: fetch.preconnect,
     },
@@ -27,7 +31,7 @@ function fixture(
     { quotaDeadlineMs: options.quotaDeadlineMs },
   );
   const client = GitHubClient.forToken("test-token", read);
-  return { client, read, waits, calls: () => calls };
+  return { client, read, urls, waits, calls: () => calls };
 }
 
 test("source reads wait for the reported exhausted REST window and retain the complete answer", async () => {
@@ -135,6 +139,51 @@ test("persistent PR file failures return the complete third HTTP 500 response", 
   expect(f.calls()).toBe(3);
   expect(f.waits).toEqual([1_000, 2_000]);
 });
+
+const commitSha = "a".repeat(40);
+const commitPath = `/repos/owner/repo/commits/${commitSha}`;
+const commitFilesPath = `${commitPath}?per_page=100&page=1`;
+const commitReadError = () =>
+  Response.json({ message: "Validation Failed" }, { status: 422 });
+
+for (const path of [
+  commitFilesPath,
+  `/repositories/42/commits/${commitSha}?per_page=100&page=2`,
+]) {
+  test(`commit file reads retry HTTP 422 on the same page at ${path}`, async () => {
+    const commit = { sha: commitSha, files: [{ filename: "source.ts" }] };
+    const f = fixture([commitReadError, () => Response.json(commit)]);
+    expect(await f.client.get<typeof commit>(path)).toEqual(commit);
+    expect(f.urls).toEqual(Array(2).fill(`https://api.github.com${path}`));
+    expect(f.waits).toEqual([1_000]);
+  });
+}
+
+test("persistent commit file failures return the complete second HTTP 422 response", async () => {
+  const finalBody = { message: "Still unavailable", errors: ["commit"] };
+  const f = fixture([
+    commitReadError,
+    () => Response.json(finalBody, { status: 422 }),
+  ]);
+  const response = await f.read(`https://api.github.com${commitFilesPath}`);
+  expect(response.status).toBe(422);
+  expect(await response.json()).toEqual(finalBody);
+  expect(f.calls()).toBe(2);
+  expect(f.waits).toEqual([1_000]);
+});
+
+for (const path of [
+  commitPath,
+  "/repos/owner/repo/commits/abcdef0?per_page=100&page=1",
+  pullFilesPath,
+]) {
+  test(`other HTTP 422 responses return immediately at ${path}`, async () => {
+    const f = fixture([commitReadError]);
+    await expect(f.client.get(path)).rejects.toMatchObject({ status: 422 });
+    expect(f.calls()).toBe(1);
+    expect(f.waits).toEqual([]);
+  });
+}
 
 test("PR file backoff checkpoints when its first wait would reach the collection deadline", async () => {
   const f = fixture([fileReadError], { quotaDeadlineMs: 1_001_000 });

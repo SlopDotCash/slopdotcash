@@ -4007,11 +4007,11 @@
     },
     {
       "path": "scripts/github-ingestion-read.ts",
-      "sha256": "e076a5dc60441617696094013e07d286e5bf4a33915e4c7f18f5bde903f50f45",
+      "sha256": "4b6ac8e7415a2b5b98d0917c95fdd40a71cce2b04a065dcff9e216768b02d32f",
       "models": ["formal/models/points/github_ingestion_read.qnt"],
       "candidateLines": [
-        35, 53, 86, 107, 109, 127, 165, 239, 260, 270, 275, 279, 281, 293, 302,
-        324, 334, 343, 351
+        35, 53, 86, 107, 109, 127, 165, 211, 213, 248, 269, 279, 284, 288, 292,
+        306, 315, 337, 347, 356, 364
       ],
       "review": "mapped-abstraction"
     },
@@ -13858,7 +13858,7 @@
     },
     {
       "path": "formal/models/points/github_ingestion_read.qnt",
-      "sha256": "a3d445c17e010e0d8e5e38facc773f9b7bcba2cb886b03184483d623ec9f0603",
+      "sha256": "d07bc925202148307de5c485c8180e3492b10a3ae0ddba7cba3f1d9f512af297",
       "sources": [
         "scripts/github-discussion-cache.ts",
         "scripts/github-ingestion-read.ts",
@@ -13867,6 +13867,8 @@
       ],
       "scenarios": [
         "authorizationDoesNotRetryTest",
+        "commitFileErrorRecoversTest",
+        "commitFileErrorRetriesOnceTest",
         "confirmedCheckpointReadTest",
         "mismatchedValidatorCannotReplayTest",
         "mismatchedValidatorReadsLiveTest",
@@ -13879,6 +13881,7 @@
         "serverRetryRespectsCheckpointTest",
         "timedOutCheckpointCannotPublishTest",
         "unrelatedServerErrorNeverRetriesTest",
+        "unrelatedValidationErrorNeverRetriesTest",
         "writeDoesNotRetryTest"
       ]
     },

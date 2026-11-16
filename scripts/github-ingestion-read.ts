@@ -199,10 +199,19 @@ export function githubIngestionReadTransport(
       const retryable =
         url.origin === "https://api.github.com" && method === "GET";
       if (!retryable) return transport(input, init);
-      const pullFiles =
-        /^\/(?:repos\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+|repositories\/[1-9]\d*)\/pulls\/[1-9]\d*\/files$/u.test(
+      const repositoryPath =
+        /^\/(?:repos\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+|repositories\/[1-9]\d*)(\/.*)$/u.exec(
           url.pathname,
-        );
+        )?.[1] ?? "";
+      const pullFiles = /^\/pulls\/[1-9]\d*\/files$/u.test(repositoryPath);
+      const commitFilePage =
+        /^\/commits\/[a-f0-9]{40}$/u.test(repositoryPath) &&
+        /^\?per_page=100&page=[1-9]\d*$/u.test(url.search);
+      const fileReadRetry = pullFiles
+        ? { status: 500, limit: 2 }
+        : commitFilePage
+          ? { status: 422, limit: 1 }
+          : null;
       const callerSignal =
         init && "signal" in init ? init.signal : request?.signal;
       callerSignal?.throwIfAborted();
@@ -240,7 +249,7 @@ export function githubIngestionReadTransport(
         cache.set(key, cached);
         return replay(cached);
       }
-      let serverErrorRetries = 0;
+      let fileReadRetries = 0;
       for (let attempt = 1; ; ) {
         callerSignal?.throwIfAborted();
         checkDeadline();
@@ -276,11 +285,15 @@ export function githubIngestionReadTransport(
           retainedDiscussion = null;
           continue;
         }
-        // GitHub can fail to serve a PR file page temporarily. Retry that
+        // GitHub can fail to serve a known file page temporarily. Retry that
         // exact page without resetting the quota budget or changing pagination.
-        if (pullFiles && response.status === 500 && serverErrorRetries < 2) {
-          serverErrorRetries += 1;
-          const delay = serverErrorRetries * 1_000;
+        if (
+          fileReadRetry &&
+          response.status === fileReadRetry.status &&
+          fileReadRetries < fileReadRetry.limit
+        ) {
+          fileReadRetries += 1;
+          const delay = fileReadRetries * 1_000;
           await response.body?.cancel();
           checkDeadline(delay);
           await (callerSignal
