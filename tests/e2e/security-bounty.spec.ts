@@ -3350,8 +3350,8 @@ test("admin placement and explicit bounty type drive generic project pages @regi
   shown = closed;
   await page.goto("/", { waitUntil: "networkidle" });
   await page.reload({ waitUntil: "networkidle" });
-  // With no open paid bounty the home page omits the section.
-  await expect(section).toHaveCount(0);
+  await expect(section.locator(".project-card")).toHaveCount(0);
+  await expect(section).toContainText("No open bounties.");
 });
 
 for (const slowPage of [false, true]) {

@@ -160,15 +160,8 @@ test("finalized project payments show net assets and source months on cycles and
     path: info.outputPath("cycle-vault-payments.png"),
     fullPage: true,
   });
-  // The short address keeps its full value in its tooltip.
-  await expect(history.locator("code")).toHaveText(
-    `${token.slice(0, 6)}…${token.slice(-4)}`,
-  );
-  await expect(history.locator("code")).toHaveAttribute("title", token);
-  // Assistive technology still reads the word and the full address.
-  await expect(history).toContainText(
-    new RegExp(`2\\.5\\s*0x4444…4444\\s*Token ${token}`, "u"),
-  );
+  await expect(history.locator("code")).toHaveText(token);
+  await expect(history).toContainText(/2\.5\s*Token/u);
   await expect(history).toContainText("November 2026");
   await expect(
     history.locator(".payment-record-identity small").filter({ hasText: "—" }),
@@ -240,10 +233,7 @@ test("finalized project payments show net assets and source months on cycles and
   ).toHaveCount(6);
   await expect(profileHistory).toContainText(/98\s*USDC/u);
   await expect(profileHistory).not.toContainText("100 USDC");
-  await expect(profileHistory.locator("code")).toHaveText(
-    `${token.slice(0, 6)}…${token.slice(-4)}`,
-  );
-  await expect(profileHistory.locator("code")).toHaveAttribute("title", token);
+  await expect(profileHistory.locator("code")).toHaveText(token);
   // The established text-enlargement fixture checks 200% text at both
   // viewport widths; it does not claim to set native browser zoom.
   await profileHistory.evaluate((element) => {

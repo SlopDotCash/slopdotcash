@@ -3155,9 +3155,9 @@ function ProjectUpdateForm({
             ))}
           </section>
         ) : null}
-        {attempted && !valid ? (
+        {attempted && (!valid || !changed) ? (
           <p className="form-error" role="alert">
-            Fix the marked fields.
+            {changed ? "Fix the marked fields." : "Nothing changed."}
           </p>
         ) : null}
         {loadError ? (
@@ -3169,10 +3169,7 @@ function ProjectUpdateForm({
           <button
             className="button primary-button"
             disabled={
-              submission.state === "publishing" ||
-              base === null ||
-              staleDraft ||
-              !changed
+              submission.state === "publishing" || base === null || staleDraft
             }
             onClick={() => void publish()}
             type="button"
