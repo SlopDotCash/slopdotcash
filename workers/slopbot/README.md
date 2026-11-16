@@ -134,6 +134,41 @@ decides. If it is present and valid, its `closure` flag and per-category
 `off` / `label` / `close` restrictions still apply (`contracts.ts`). If it is
 present but invalid, review falls back to label-only with no closure.
 
+## Ready label
+
+Operator decision, 16 November 2026 (PRD section 5). When a project owner
+turns on `slopbot.readyLabel` in project settings (absent means off),
+`ready-label.ts` adds the `slopbot:ready` label and one line to the review
+comment while all of these hold at the pull request's exact head commit:
+
+1. GitHub's `mergeable_state` is `clean` (or `has_hooks`): mergeable with every
+   check passing. Slopbot has no Checks permission, so it reads this from the
+   pull request itself.
+2. Slopbot's latest review of that head (`slopbot_reviews.revision`) completed
+   with category `none`, no coverage limitation and the comment action. A pull
+   request Slopbot did not review (an exempt maintainer, a draft, the monthly
+   cap) never gets the label.
+3. The required approvals (default 1) on that head commit come from distinct
+   `User` accounts other than the author whose repository permission is
+   `write` or `admin`, and no such account's latest review requests changes.
+4. Changed lines and files are within the owner's caps (defaults 400 and 20).
+5. No changed path (or previous path of a rename) is protected. The built-in
+   set in `ready-label.ts` covers `.github/` and CI configuration, dependency
+   manifests and lockfiles, contracts and payment code, skill, agent and
+   policy files, the Slop project manifest, `SECURITY.md`, binary files and
+   files without a text diff, deleted files, and more than 300 deleted lines.
+   Owner patterns add to it and never remove from it.
+
+The label comes off on a new push or when a condition stops holding. Pull
+request pushes, draft changes and review decisions queue a `ready_label` job,
+and so does every finished pull request review. Check results have no webhook
+here, so a pending result is checked again every 10 minutes for up to 14 days
+per head commit, and a labelled pull request every hour
+(`slopbot_ready_labels`, `dispatchReadyChecks`). A closed or merged pull request
+keeps its last label. Every write re-reads the head commit first. Slopbot never
+merges: a human does. Labels and comments are already within Issues and Pull
+requests write, and Points and scoring are unchanged.
+
 ## Free reviews, budget blocks, spend
 
 Free advisory reviews are capped at 2,000 pull requests or issues per
