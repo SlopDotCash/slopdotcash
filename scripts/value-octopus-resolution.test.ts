@@ -194,3 +194,93 @@ test("an octopus with a newly added path stays held until every parent snapshot 
     rmSync(input.path, { recursive: true, force: true });
   }
 });
+
+/** `git merge one two` from the base: a three-parent octopus whose two
+ * branches edit different lines of one file. */
+function threeParentOctopus(result: string) {
+  const path = mkdtempSync(join(tmpdir(), "slop-octopus-three-"));
+  const env = {
+    ...process.env,
+    GIT_CONFIG_NOSYSTEM: "1",
+    GIT_CONFIG_GLOBAL: "/dev/null",
+    GIT_AUTHOR_NAME: "Fixture",
+    GIT_AUTHOR_EMAIL: "fixture@example.invalid",
+    GIT_COMMITTER_NAME: "Fixture",
+    GIT_COMMITTER_EMAIL: "fixture@example.invalid",
+    GIT_CONFIG_COUNT: "1",
+    GIT_CONFIG_KEY_0: "init.defaultBranch",
+    GIT_CONFIG_VALUE_0: "main",
+  };
+  const git = (args: string[], text?: string) =>
+    execFileSync("git", ["--git-dir", path, ...args], {
+      env,
+      input: text,
+      encoding: "utf8",
+    }).trim();
+  git(["init", "--bare", "--template=", path]);
+  const tree = (text: string) =>
+    git(
+      ["mktree"],
+      `100644 blob ${git(["hash-object", "-w", "--stdin"], text)}\tfix.ts\n`,
+    );
+  const commit = (value: string, parents: string[], message: string) =>
+    git(["commit-tree", value, ...parents.flatMap((p) => ["-p", p])], message);
+  const base = commit(tree("a\nb\nc\nd\ne\n"), [], "base");
+  const one = commit(tree("A\nb\nc\nd\ne\n"), [base], "branch one");
+  const two = commit(tree("a\nb\nc\nd\nE\n"), [base], "branch two");
+  const parents = [base, one, two];
+  const head = commit(tree(result), parents, "octopus");
+  const source = makeOriginal();
+  const native = {
+    ...source.evidence.commits[0],
+    sha: head,
+    parents: parents.map((sha) => ({ sha })),
+  };
+  source.evidence.commits = [native];
+  source.evidence.pull.head.sha = head;
+  source.evidence.pull.commits = 1;
+  source.evidence.pull.merged_at = "2026-10-27T00:00:00Z";
+  source.evidence.pull.closed_at = source.evidence.pull.merged_at;
+  source.evidence.pull.merge_commit_sha = head;
+  source.evidence.commitAttribution = [];
+  source.evidence.files[0].filename = "fix.ts";
+  return { path, source, native };
+}
+
+test("a clean three-parent octopus records no resolution edit", async () => {
+  const input = threeParentOctopus("A\nb\nc\nd\nE\n");
+  try {
+    verifyMergeObjectStore([mergeInput(input.source.evidence)], input.path);
+    const resolutions = await collectVerifiedMergeResolutions(
+      mergeInput(input.source.evidence),
+      input.path,
+    );
+    const resolution = resolutions[0];
+    expect(resolutions).toHaveLength(1);
+    if (resolution?.kind !== "combined-parent-delta") throw Error("fixture");
+    expect(resolution.paths).toEqual([]);
+    expect(resolution.patch).toBe("");
+    expect(mergeResolutionLineCounts(resolution, input.native)).toEqual([]);
+  } finally {
+    rmSync(input.path, { recursive: true, force: true });
+  }
+});
+
+test("a three-parent octopus keeps an edit absent from every parent", async () => {
+  const input = threeParentOctopus("A\nb\nc\nresolved\nd\nE\n");
+  try {
+    verifyMergeObjectStore([mergeInput(input.source.evidence)], input.path);
+    const resolutions = await collectVerifiedMergeResolutions(
+      mergeInput(input.source.evidence),
+      input.path,
+    );
+    const resolution = resolutions[0];
+    if (resolution?.kind !== "combined-parent-delta") throw Error("fixture");
+    expect(resolution.paths).toEqual(["fix.ts"]);
+    expect(mergeResolutionLineCounts(resolution, input.native)).toEqual([
+      { path: "fix.ts", additions: 1, deletions: 0 },
+    ]);
+  } finally {
+    rmSync(input.path, { recursive: true, force: true });
+  }
+});
