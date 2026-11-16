@@ -4,10 +4,10 @@ import { assert, it } from "@effect/vitest"
 import { openingOf, pathTo } from "../src/address.ts"
 import { current, opened, routes } from "../src/routes.vibe"
 
-/** The route a page loaded at `path` with `search` shows. */
-effect function load(path: string, search: string) {
+/** The route a page loaded at `path` with `search` and `hash` shows. */
+effect function load(path: string, search: string, hash: string) {
   provide routes {
-    try opened(try Effect.try(() => openingOf(path, search)))
+    try opened(try Effect.try(() => openingOf(path, search, hash)))
     return try current()
   }
 }
@@ -15,14 +15,17 @@ effect function load(path: string, search: string) {
 // spec/app/index.md, "Story: Open a page by its address"
 it.effect("Open a page by its address", () => effect {
   // spec/app/index.md, "Each address names exactly one route kind, and an address that names none is unknown"
-  const profile = try load(try Effect.try(() => pathTo(["contributors", "a/b c"])), "")
+  const profile = try load(try Effect.try(() => pathTo(["contributors", "a/b c"])), "", "")
   // spec/app/index.md, "The shell shows one route, opened from the address"
-  const fromX = try load("/points/", "?x=1")
-  const undecodable = try load("/projects/%E0%A4%A", "")
+  const fromX = try load("/points/", "?x=1", "")
+  const undecodable = try load("/projects/%E0%A4%A", "", "")
   // spec/app/index.md, "An old address opens the page that replaced it"
-  const wallet = try load("//wallet", "")
+  const wallet = try load("//wallet", "", "")
+  const securitySettings = try load("/projects/slop/manage/", "", "#security-settings")
+  const otherSection = try load("/projects/slop/manage", "", "#danger")
   try Effect.try(() => assert.deepStrictEqual(
-    [profile.route, fromX.route.kind, undecodable.route.kind, wallet.route.kind],
-    [{ kind: "Profile", projectId: "", cycleId: "", login: "a/b c" }, "Account", "Unknown", "Account"],
+    [profile.route, fromX.route.kind, undecodable.route.kind, wallet.route.kind, securitySettings.route, otherSection.route.kind],
+    [{ kind: "Profile", projectId: "", cycleId: "", login: "a/b c" }, "Account", "Unknown", "Account",
+      { kind: "SecurityProgram", projectId: "slop", cycleId: "", login: "" }, "ManageProject"],
   ))
 })

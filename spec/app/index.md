@@ -15,9 +15,10 @@ which page an address opens is decided here, and nowhere else.
 ### The shell shows one route, opened from the address
 
 The shell starts on the home page. The browser hands it the path's segments,
-already split at `/`, without empty ones, and percent-decoded, and whether the
-query carries `x` (the X connection's return to `/points`). A path that does
-not decode opens the unknown page.
+already split at `/`, without empty ones, and percent-decoded, so a trailing
+slash changes nothing; whether the query carries `x` (the X connection's
+return to `/points`); and whether the hash is `#security-settings`. A path
+that does not decode opens the unknown page.
 
 ```quint
 type RouteKind = Home | HowItWorks | Sponsors | CycleArchive | Cycle | Points | Account | Login | Earnings | Inbox |
@@ -29,19 +30,25 @@ pure def page(kind: RouteKind): Route = { kind: kind, projectId: "", cycleId: ""
 pure val initial: Shell = { route: page(Home), opened: 0 }
 
 pure def canOpen(s: Shell, segments: List[str]): bool = segments.every(segment => segment != "")
-pure def open(s: Shell, segments: List[str], withX: bool): Shell = { route: parse(segments, withX), opened: s.opened + 1 }
+pure def open(s: Shell, segments: List[str], withX: bool, securitySettings: bool): Shell =
+  { route: parse(segments, withX, securitySettings), opened: s.opened + 1 }
 pure def openUndecodable(s: Shell): Shell = { route: page(Unknown), opened: s.opened + 1 }
 ```
 
 ### An old address opens the page that replaced it
 
-`/wallet` is the account's wallets, and a project's `funding` and `awards`
-sections are the project page itself.
+`/wallet` is the account's wallets, a project's `funding` and `awards`
+sections are the project page itself, and a project's settings opened at
+`#security-settings` are its security program. The other hashes development
+adds or keeps on these redirects only scroll to a section of the page the
+route already names, so they are not part of the route.
 
 ```quint
-pure def canonical(segments: List[str]): List[str] =
+pure def canonical(segments: List[str], securitySettings: bool): List[str] =
   val third = segments.nthOr(2, "")
   if (segments == List("wallet")) List("account")
+  else if (segments.length() == 3 and segments.nthOr(0, "") == "projects" and third == "manage" and securitySettings)
+    List("projects", segments.nthOr(1, ""), "security")
   else if (segments.length() == 3 and segments.nthOr(0, "") == "projects" and (third == "funding" or third == "awards"))
     List("projects", segments.nthOr(1, ""))
   else segments
@@ -60,8 +67,8 @@ pure def namedKind(segment: str): RouteKind =
   else if (segment == "vetting-evidence") VettingEvidence else if (segment == "security") SecurityCases else Unknown
 pure def namedPage(segment: str, kind: RouteKind): bool = kind != Unknown and namedKind(segment) == kind
 
-pure def matchesKnown(kind: RouteKind, segments: List[str], withX: bool): bool =
-  val path = canonical(segments)
+pure def matchesKnown(kind: RouteKind, segments: List[str], withX: bool, securitySettings: bool): bool =
+  val path = canonical(segments, securitySettings)
   val n = path.length()
   val first = path.nthOr(0, "")
   val second = path.nthOr(1, "")
@@ -81,11 +88,12 @@ pure def matchesKnown(kind: RouteKind, segments: List[str], withX: bool): bool =
 
 pure val knownKinds = List(Home, HowItWorks, Sponsors, CycleArchive, Cycle, Points, Account, Login, Earnings, Inbox, Admin,
   NewProject, VettingEvidence, SecurityCases, Project, ManageProject, SecurityProgram, Profile)
-pure def kindMatches(kind: RouteKind, segments: List[str], withX: bool): bool =
-  if (kind == Unknown) not(knownKinds.some(known => matchesKnown(known, segments, withX))) else matchesKnown(kind, segments, withX)
+pure def kindMatches(kind: RouteKind, segments: List[str], withX: bool, securitySettings: bool): bool =
+  if (kind == Unknown) not(knownKinds.some(known => matchesKnown(known, segments, withX, securitySettings)))
+  else matchesKnown(kind, segments, withX, securitySettings)
 
-pure def parse(segments: List[str], withX: bool): Route =
-  val path = canonical(segments)
+pure def parse(segments: List[str], withX: bool, securitySettings: bool): Route =
+  val path = canonical(segments, securitySettings)
   val n = path.length()
   val first = path.nthOr(0, "")
   val second = path.nthOr(1, "")
@@ -101,8 +109,8 @@ pure def parse(segments: List[str], withX: bool): Route =
   else if (n == 3 and first == "cycles") { ...page(Cycle), projectId: second, cycleId: third }
   else page(Unknown)
 
-pure def lawEachAddressNamesOneKind(kind: RouteKind, segments: List[str], withX: bool): bool =
-  (parse(segments, withX).kind == kind) iff kindMatches(kind, segments, withX)
+pure def lawEachAddressNamesOneKind(kind: RouteKind, segments: List[str], withX: bool, securitySettings: bool): bool =
+  (parse(segments, withX, securitySettings).kind == kind) iff kindMatches(kind, segments, withX, securitySettings)
 ```
 
 ### A route carries exactly the identifiers its page needs
