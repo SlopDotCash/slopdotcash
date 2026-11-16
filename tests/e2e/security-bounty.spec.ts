@@ -5932,10 +5932,12 @@ test("a departed Inbox read action preserves a new account's report draft @regis
   request,
   diagnostics,
 }) => {
-  // The real SPA navigation deliberately leaves Home while its public Points
-  // shards may still be loading. Their aborts are the expected cleanup.
+  // The test deliberately leaves Home while its public reads are in flight.
   diagnostics.allow(
     /^(?:net::ERR_ABORTED|NS_BINDING_ABORTED) GET http:\/\/127\.0\.0\.1:[0-9]+\/data\/points(?:-summary|\/[0-9a-f])?\.json$/u,
+  );
+  diagnostics.allow(
+    /^(?:net::ERR_ABORTED|NS_BINDING_ABORTED) GET http:\/\/127\.0\.0\.1:[0-9]+\/api\/v1\/(?:merge-activity|pool-funding)$/u,
   );
   test.skip(process.env.SLOP_E2E_PRIVATE_INTAKE !== "1", "Private intake lane");
   test.setTimeout(120_000);
