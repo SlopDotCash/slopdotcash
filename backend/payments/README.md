@@ -39,6 +39,16 @@ wallets and off-curve Solana destinations need a separately reviewed recovery
 path; they cannot skip signature verification. Legacy claim semantics remain
 unchanged.
 
+An authenticated Solana recipient uses `POST /wallets/solana-bind/prepare`
+with a reserved `obligationId` to obtain the attester's half-signed binding.
+When no attempt exists, this request creates one for the current authorized
+claim only while its outbox is ready. Concurrent preparation reuses that
+attempt. An active attempt for an earlier claim stays with that claim until
+reconciled. The destination wallet co-signs the exact returned transaction and
+submits it to `POST /wallets/solana-bind/complete`. The completion route cannot
+create an attempt. This flow also serves authorized private bounty recipients
+through their separate payment ledger and case-access audit.
+
 The repository owner approved this replacement and recovery policy directly
 in the 27 October 2026 review. Registration alone never displaces an authorized
 wallet. The derived

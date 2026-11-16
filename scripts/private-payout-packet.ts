@@ -1,11 +1,13 @@
 /** Private owner-reviewed packet transport through a fixed operational R2 bucket. */
 import { execFileSync } from "node:child_process";
-import { createGunzip } from "node:zlib";
+import { createBrotliDecompress, createGunzip } from "node:zlib";
 import { sha256Hex } from "../src/lib/sha256";
 
 const BUCKET = "slop-reviewed-payouts";
 export interface PrivatePacketManifest {
   schemaVersion: "1";
+  /** Omitted on retained gzip manifests. */
+  compression?: "br";
   rawSha256: string;
   rawBytes: number;
   compressedSha256: string;
@@ -25,7 +27,9 @@ export function parsePrivatePacketManifest(
   requireThat(
     value &&
       Object.keys(value).sort().join(",") ===
-        "chunks,compressedBytes,compressedSha256,rawBytes,rawSha256,schemaVersion" &&
+        (value.compression === "br"
+          ? "chunks,compressedBytes,compressedSha256,compression,rawBytes,rawSha256,schemaVersion"
+          : "chunks,compressedBytes,compressedSha256,rawBytes,rawSha256,schemaVersion") &&
       value.schemaVersion === "1" &&
       digest(value.rawSha256) &&
       digest(value.compressedSha256) &&
@@ -190,7 +194,10 @@ export function privatePayoutStorage(
           sha256Hex(compressed) === manifest.compressedSha256,
         "Private packet compression binding differs",
       );
-      const decoder = createGunzip();
+      const decoder =
+        manifest.compression === "br"
+          ? createBrotliDecompress()
+          : createGunzip();
       const raw: Buffer[] = [];
       let length = 0;
       const result = (async () => {
