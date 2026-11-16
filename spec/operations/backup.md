@@ -336,8 +336,8 @@ pure def canRetireGeneration(b: Backup, generation: int): bool = b.phase == Clea
   and generationOf(b, generation).state == GenerationFrozen and generationMarked(b, generation)
 pure def retireGeneration(b: Backup, generation: int): Backup =
   { ...b, generations: withGeneration(b, generation, GenerationRetired, true) }
-pure def settled(b: Backup, key: int): bool = b.deletionReceipts.includes(key) or b.retentionMissingTargets.includes(key)
-pure def canSettleReference(b: Backup, key: int): bool = targetOf(b, key).key == key and not(settled(b, key))
+pure def referenceSettled(b: Backup, key: int): bool = b.deletionReceipts.includes(key) or b.retentionMissingTargets.includes(key)
+pure def canSettleReference(b: Backup, key: int): bool = targetOf(b, key).key == key and not(referenceSettled(b, key))
   and generationOf(b, targetOf(b, key).generation).state == GenerationRetired
 pure def settleReference(b: Backup, key: int): Backup =
   if (targetOf(b, key).copy == Backed) { ...b, deletionReceipts: b.deletionReceipts.append(key) }

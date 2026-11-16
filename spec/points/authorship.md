@@ -68,10 +68,10 @@ of an eligible recipient holds attribution.
 pure def primaryRecipient(o: Observed): int = match o { | Seen(x) => if (x.linked and eligibleKind(x.kind) and x.actor > 0) x.actor else 0 | Unknown => 0 }
 pure def copyRecipient(c: CopyBinding): int = match c { | VerifiedCopy(x) => if (eligibleKind(x.kind) and x.actor > 0) x.actor else 0 | _ => 0 }
 pure def sourceRecipient(o: Observed): int = match o { | Seen(x) => if (eligibleKind(x.kind) and x.actor > 0) x.actor else 0 | Unknown => 0 }
-pure def carriedRecipient(a: CommitAttribution): int = match a.carry {
-  | VerifiedCarry(x) => if (CO::octoberReplacementScope(a.project, a.occurredAt) and x.original > 0
-      and (not(x.followup) or x.parentEdges)) x.original else 0
+pure def carryTarget(carry: CarryBinding, inScope: bool): int = match carry {
+  | VerifiedCarry(x) => if (inScope and x.original > 0 and (not(x.followup) or x.parentEdges)) x.original else 0
   | _ => 0 }
+pure def carriedRecipient(a: CommitAttribution): int = carryTarget(a.carry, CO::octoberReplacementScope(a.project, a.occurredAt))
 pure def recipientFor(a: CommitAttribution): int =
   if (carriedRecipient(a) > 0) carriedRecipient(a)
   else if (primaryRecipient(a.primary) > 0) primaryRecipient(a.primary)

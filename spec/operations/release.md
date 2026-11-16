@@ -163,17 +163,17 @@ and every release check still run. A collection that stops at its checkpoint
 deadline leaves no valid data, so it cannot publish.
 
 ```quint
-type CheckpointAttempt = { run: int, branch: str, event: RefKind, workflow: str, completed: bool, ageHours: int, responses: int }
+type CheckpointAttempt = { runId: int, branch: str, event: RefKind, workflow: str, completed: bool, ageHours: int, responses: int }
 pure val checkpointMaxAgeHours = 48
 pure def trustedCheckpoint(attempt: CheckpointAttempt): bool =
-  attempt.run > 0 and attempt.branch == "main" and (attempt.event == BranchPush or attempt.event == WorkflowDispatch)
+  attempt.runId > 0 and attempt.branch == "main" and (attempt.event == BranchPush or attempt.event == WorkflowDispatch)
     and attempt.workflow == ".github/workflows/deploy.yml" and attempt.completed
     and attempt.ageHours >= 0 and attempt.ageHours <= checkpointMaxAgeHours and attempt.responses >= 0
 pure def canResumeDiscussions(r: Release, attempt: CheckpointAttempt, by: Actor): bool =
   r.phase == Candidate and r.configured and by == TrustedWorkflow and r.manualRun and r.environment == Production
     and r.dataKind == NoData and r.checkpointRun == 0 and not(r.deadlineReached) and trustedCheckpoint(attempt)
 pure def resumeDiscussions(r: Release, attempt: CheckpointAttempt, by: Actor): Release =
-  { ...r, checkpointRun: attempt.run, reusedPending: attempt.responses }
+  { ...r, checkpointRun: attempt.runId, reusedPending: attempt.responses }
 pure def canRevalidate(r: Release, matchesLive: bool, by: Actor): bool =
   r.phase == Candidate and by == TrustedWorkflow and r.checkpointRun > 0 and r.reusedPending > 0 and not(r.deadlineReached)
 pure def revalidate(r: Release, matchesLive: bool, by: Actor): Release =
@@ -516,7 +516,7 @@ pure val taggedSourceValues = Set(1, 2)
 pure val rivalValues = Set(1, 2, 3)
 pure val valueValues = Set(true, false)
 pure val matchesLiveValues = Set(true, false)
-pure val trustedAttempt: CheckpointAttempt = { run: 41, branch: "main", event: WorkflowDispatch,
+pure val trustedAttempt: CheckpointAttempt = { runId: 41, branch: "main", event: WorkflowDispatch,
   workflow: ".github/workflows/deploy.yml", completed: true, ageHours: 47, responses: 1 }
 pure val attemptValues = Set(trustedAttempt, { ...trustedAttempt, responses: 0 }, { ...trustedAttempt, ageHours: 49 },
   { ...trustedAttempt, branch: "development" }, { ...trustedAttempt, event: PullRequestRef }, { ...trustedAttempt, completed: false })

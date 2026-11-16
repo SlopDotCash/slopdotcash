@@ -34,15 +34,17 @@ pure val slopMarker = "slop-contribution-attribution:v1"
 pure val legacyMarkers = Set("eliza-computer-attribution:v1", "elizaos-contribution-attribution:v1", "elizaos-contribution-attribution:v2")
 pure def acceptedMarker(marker: str): bool = marker == slopMarker or legacyMarkers.contains(marker)
 pure def assessed(s: TextSource, actor: int): bool = s.author == actor and actor > 0 and not(s.bot) and s.attached and s.signal
-pure def validSource(s: TextSource): bool = match s.declaration {
+pure def validDeclaration(d: Declaration): bool = match d {
   | ExactDeclaration => true
   | HumanOnly => true
   | MarkerDeclaration(m) => acceptedMarker(m.marker) and m.matchesFooter
   | _ => false }
-pure def invalidSource(s: TextSource): bool = match s.declaration {
+pure def invalidDeclaration(d: Declaration): bool = match d {
   | Malformed => true
   | MarkerDeclaration(m) => not(acceptedMarker(m.marker) and m.matchesFooter)
   | _ => false }
+pure def validSource(s: TextSource): bool = validDeclaration(s.declaration)
+pure def invalidSource(s: TextSource): bool = invalidDeclaration(s.declaration)
 pure def lawLegacyMarkersStayAccepted(marker: str): bool = legacyMarkers.contains(marker) implies acceptedMarker(marker)
 pure def lawUnknownMarkerIsInvalid(node: int, actor: int): bool =
   invalidSource({ node: node, author: actor, bot: false, attached: true, signal: true,
