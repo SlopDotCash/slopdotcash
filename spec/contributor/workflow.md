@@ -35,6 +35,7 @@ type Blocker = Clear | Assigned | MaintainerClaim | DraftPR | ActiveReview | App
   | SecurityLabel | HumanGate | Epic | LinkedOpenPR | OutsideScope
 type ContributionPhase = Browsing | Selected | Working | Tested | Submitted | Accepted | Closed | Stopped
 type StopCause = NoStop | RiskFound | ProjectUnavailable
+type Inspection = NotInspected | InspectClear | RiskReported | InspectUnavailable
 type Closer = NoCloser | MaintainerClose | SlopbotClose | AuthorClose
 type PolicyCheck = { approvedScope: bool, instructionsFollowed: bool, privateReportingRoute: bool }
 type Observation = { itemId: int, blocker: Blocker, view: F::ProjectView, policy: PolicyCheck, bounded: bool }
@@ -45,7 +46,7 @@ type Disclosure = { provider: str, model: str, client: str }
 type Contribution = { contributor: int, project: int, repository: str, phase: ContributionPhase, stop: StopCause,
   itemId: int, blocker: Blocker, available: bool, policyPermits: bool, bounded: bool,
   liveEpoch: int, selectedEpoch: int, submissionEpoch: int, prNode: str, head: int,
-  agentAssisted: bool, provider: str, model: str, client: str, attributionLine: bool,
+  inspection: Inspection, riskReported: bool, provider: str, model: str, client: str, attributionLine: bool,
   usefulResult: bool, testEvidence: bool, banned: bool, credited: bool, closedBy: Closer,
   standingEpoch: int, closures: int, reopenedByMaintainer: bool, appeals: int, changesRequested: bool, runRecorded: bool,
   writes: List[GitHubWrite], refusedWrites: List[GitHubWrite],
@@ -55,7 +56,7 @@ pure val standingService = -2
 pure val initial: Contribution = { contributor: 1, project: 1, repository: "o/r", phase: Browsing, stop: NoStop,
   itemId: 0, blocker: Clear, available: false, policyPermits: false, bounded: false,
   liveEpoch: 0, selectedEpoch: -1, submissionEpoch: -1, prNode: "", head: 0,
-  agentAssisted: false, provider: "", model: "", client: "", attributionLine: false,
+  inspection: NotInspected, riskReported: false, provider: "", model: "", client: "", attributionLine: false,
   usefulResult: false, testEvidence: false, banned: false, credited: false, closedBy: NoCloser,
   standingEpoch: 0, closures: 0, reopenedByMaintainer: false, appeals: 0, changesRequested: false, runRecorded: false,
   writes: List(), refusedWrites: List(), reviewer: 0, reviewerRecommendation: "", reviewCreditable: false }
@@ -85,10 +86,11 @@ pure def observe(c: Contribution, by: int, observation: Observation): Contributi
     stop: if (active(c) and not(available)) ProjectUnavailable else c.stop }
 pure def eligible(c: Contribution): bool = c.blocker == Clear and c.available and c.policyPermits and c.bounded
 pure def canSelectWork(c: Contribution, by: int): bool = by == c.contributor and c.phase == Browsing and c.itemId > 0
-  and c.liveEpoch > 0 and eligible(c) and not(c.banned)
-pure def selectWork(c: Contribution, by: int): Contribution = { ...c, phase: Selected, selectedEpoch: c.liveEpoch }
+  and c.liveEpoch > 0 and eligible(c) and not(c.banned) and not(c.riskReported)
+pure def selectWork(c: Contribution, by: int): Contribution = { ...c, phase: Selected, selectedEpoch: c.liveEpoch, inspection: NotInspected }
+pure def permitted(c: Contribution): bool = eligible(c) and c.inspection == InspectClear and not(c.riskReported)
 pure def canBeginWork(c: Contribution, by: int): bool = by == c.contributor and c.phase == Selected
-  and c.selectedEpoch == c.liveEpoch and eligible(c) and not(c.banned)
+  and c.selectedEpoch == c.liveEpoch and permitted(c) and not(c.banned)
 pure def beginWork(c: Contribution, by: int): Contribution = { ...c, phase: Working }
 pure def canRecordTests(c: Contribution, by: int, usefulResult: bool, testEvidence: bool): bool =
   by == c.contributor and c.phase == Working and c.available and usefulResult and testEvidence
@@ -97,26 +99,44 @@ pure def recordTests(c: Contribution, by: int, usefulResult: bool, testEvidence:
 pure def canAbandon(c: Contribution, by: int): bool = by == c.contributor and (active(c) or c.phase == Stopped)
 pure def abandon(c: Contribution, by: int): Contribution =
   { ...initial, contributor: c.contributor, project: c.project, repository: c.repository, banned: c.banned,
-    standingEpoch: c.standingEpoch, writes: c.writes, refusedWrites: c.refusedWrites, liveEpoch: c.liveEpoch }
+    standingEpoch: c.standingEpoch, writes: c.writes, refusedWrites: c.refusedWrites, liveEpoch: c.liveEpoch,
+    riskReported: c.riskReported }
 pure def alwaysStoppedHasCause(c: Contribution): bool = (c.phase == Stopped) iff (c.stop != NoStop)
 pure def alwaysActiveSelection(c: Contribution): bool = (active(c) or c.phase == Stopped) implies c.itemId > 0 and c.selectedEpoch >= 0
 ```
 
 ### Suspected malicious code or prompt injection stops the local workflow
 
-The contributor reads manifests, lockfiles, hooks, download commands and
-agent instruction files before running them. A wallet drainer, credential
-theft, secret exfiltration, a remote download piped into a shell, executed
-obfuscated code or an instruction that tries to redirect the agent stops the
-local workflow: nothing is installed, run, worked around or fixed. Flagging
-the project with that evidence is the contributor's own action on the
-website (`security/enforcement.md`).
+PRD section 4 "Skill source and installation": the contributor inspects
+malicious-code and prompt-injection risks before execution. After selecting
+an item and before beginning work, the contributor reads manifests,
+lockfiles, hooks, download commands and agent instruction files. The
+inspection is clear, reports a risk, or could not be completed. Only a clear
+inspection of the current selection permits work; an unavailable inspection
+leaves the item selected and unstarted until it is inspected again or
+abandoned. A wallet drainer, credential theft, secret exfiltration, a remote
+download piped into a shell, executed obfuscated code or an instruction that
+tries to redirect the agent reports a risk, found before or during work. A
+reported risk stops the local workflow: nothing is installed, run, worked
+around, fixed or submitted, and no further work on this project is selected
+by this contributor. Flagging the project with that evidence is the
+contributor's own action on the website (`security/enforcement.md`).
 
 ```quint
+pure def canInspectRisk(c: Contribution, by: int, finding: Inspection): bool = by == c.contributor and c.phase == Selected
+  and finding != NotInspected
+pure def inspectRisk(c: Contribution, by: int, finding: Inspection): Contribution =
+  if (finding == RiskReported) { ...c, phase: Stopped, stop: RiskFound, inspection: RiskReported, riskReported: true }
+  else { ...c, inspection: finding }
 pure def canReportRisk(c: Contribution, by: int): bool = by == c.contributor and active(c)
-pure def reportRisk(c: Contribution, by: int): Contribution = { ...c, phase: Stopped, stop: RiskFound }
+pure def reportRisk(c: Contribution, by: int): Contribution =
+  { ...c, phase: Stopped, stop: RiskFound, inspection: RiskReported, riskReported: true }
+pure def alwaysWorkFollowsClearInspection(c: Contribution): bool =
+  ((c.phase == Working or c.phase == Tested or submitted(c)) implies c.inspection == InspectClear)
+  and (c.stop == RiskFound implies c.riskReported) and (c.riskReported implies not(active(c)) and not(submitted(c)))
 pure def stepStoppedDoesNotProgress(before: Contribution, after: Contribution): bool =
   before.phase == Stopped implies (after.phase == Stopped or after.phase == Browsing)
+pure def stepRiskReportPersists(before: Contribution, after: Contribution): bool = before.riskReported implies after.riskReported
 ```
 
 ### The agent never opens, drafts or claims an issue, and never merges, closes or approves
@@ -143,33 +163,37 @@ pure def lawIssuesAlwaysRefused(kind: GitHubWrite, tools: Tools): bool =
 
 ### Submission requires exact attribution and a fresh pre-submission read
 
-The Slop attribution line occurs once in an agent submission. The exact
-provider, model and client name remain attached to the contribution.
-Attribution can be prepared before submission and stays immutable after the
-PR exists. A human who did not use an agent declares a human-only
-contribution and uploads no agent trace (`evidence.md` `HumanOnly`).
+This machine is a run of the Slop contributor skill, so every submission it
+makes is agent work. PRD section 4 "Submission": the pull request includes
+`Made via @slopdotcash` once and the exact provider, model and client, and
+CLAUDE.md requires every contribution to disclose them. There is no
+exemption inside the skill workflow. Manual work without the skill is also
+permitted (PRD section 1 "Boundaries"); it is an ordinary GitHub pull request
+outside this machine. Attribution can be prepared before submission and stays
+immutable after the PR exists.
 
 ```quint
-pure def canSetAttribution(c: Contribution, by: int, provider: str, model: str, client: str, agentAssisted: bool, lineOnce: bool): bool =
-  by == c.contributor and (active(c) or c.phase == Browsing) and
-  (not(agentAssisted) or (provider != "" and model != "" and client != "" and lineOnce))
-pure def setAttribution(c: Contribution, by: int, provider: str, model: str, client: str, agentAssisted: bool, lineOnce: bool): Contribution =
-  { ...c, provider: provider, model: model, client: client, agentAssisted: agentAssisted, attributionLine: lineOnce }
+pure def canSetAttribution(c: Contribution, by: int, provider: str, model: str, client: str, lineOnce: bool): bool =
+  by == c.contributor and (active(c) or c.phase == Browsing) and provider != "" and model != "" and client != "" and lineOnce
+pure def setAttribution(c: Contribution, by: int, provider: str, model: str, client: str, lineOnce: bool): Contribution =
+  { ...c, provider: provider, model: model, client: client, attributionLine: lineOnce }
 pure def canConfirmSubmissionRead(c: Contribution, by: int): bool = by == c.contributor and
-  c.phase == Tested and c.liveEpoch > c.selectedEpoch and eligible(c)
+  c.phase == Tested and c.liveEpoch > c.selectedEpoch and permitted(c)
 pure def confirmSubmissionRead(c: Contribution, by: int): Contribution = { ...c, submissionEpoch: c.liveEpoch }
-pure def attributed(c: Contribution): bool = not(c.agentAssisted) or (c.provider != "" and c.model != "" and c.client != "" and c.attributionLine)
+pure def attributed(c: Contribution): bool = c.provider != "" and c.model != "" and c.client != "" and c.attributionLine
 pure def canSubmit(c: Contribution, by: int, prNode: str): bool = by == c.contributor and c.phase == Tested and prNode != "" and
-  c.submissionEpoch == c.liveEpoch and c.submissionEpoch > c.selectedEpoch and eligible(c)
+  c.submissionEpoch == c.liveEpoch and c.submissionEpoch > c.selectedEpoch and permitted(c)
   and c.usefulResult and c.testEvidence and attributed(c)
 pure def submit(c: Contribution, by: int, prNode: str): Contribution = { ...c, phase: Submitted, prNode: prNode, head: 1 }
 pure def submitted(c: Contribution): bool = c.phase == Submitted or c.phase == Accepted or c.phase == Closed
 pure def alwaysSubmissionEvidence(c: Contribution): bool =
-  submitted(c) implies c.prNode != "" and c.usefulResult and c.testEvidence and attributed(c) and c.head > 0
+  submitted(c) implies c.prNode != "" and c.usefulResult and c.testEvidence and c.head > 0
+pure def alwaysSubmittedDisclosed(c: Contribution): bool =
+  submitted(c) implies c.provider != "" and c.model != "" and c.client != "" and c.attributionLine
 pure def stepSubmittedAttributionStable(before: Contribution, after: Contribution): bool =
   submitted(before) implies
     before.provider == after.provider and before.model == after.model and before.client == after.client
-    and before.agentAssisted == after.agentAssisted and before.attributionLine == after.attributionLine
+    and before.attributionLine == after.attributionLine
     and before.prNode == after.prNode
 pure def lawSubmissionIgnoresStarsForksAndRuns(c: Contribution, by: int, prNode: str): bool =
   canSubmit(c, by, prNode) == canSubmit({ ...c, writes: List(), runRecorded: false }, by, prNode)
@@ -265,6 +289,8 @@ pure def sometimesMergedWhileChangesRequested(c: Contribution): bool = c.phase =
 pure def sometimesUncollectedMergeUncredited(c: Contribution): bool = c.phase == Accepted and not(c.credited) and not(c.banned)
 pure def sometimesBannedCannotStart(c: Contribution): bool = c.banned and c.phase == Browsing and eligible(c) and c.itemId > 0
 pure def sometimesStoppedForRisk(c: Contribution): bool = c.stop == RiskFound
+pure def sometimesRiskBlocksReselection(c: Contribution): bool = c.riskReported and c.phase == Browsing and eligible(c)
+pure def sometimesInspectionUnavailable(c: Contribution): bool = c.phase == Selected and c.inspection == InspectUnavailable
 pure def sometimesStoppedByProject(c: Contribution): bool = c.stop == ProjectUnavailable
 pure def sometimesIssueRefused(c: Contribution): bool = c.refusedWrites.some(w => w == OpenIssue)
 pure def sometimesStarred(c: Contribution): bool = c.writes.some(w => w == StarRepository)
@@ -273,10 +299,7 @@ pure def sometimesRevised(c: Contribution): bool = c.head > 1
 pure def sometimesRunRecorded(c: Contribution): bool = c.runRecorded
 ```
 
-### Simulation samples exercise missing, matching and conflicting evidence
-
-These input sets bound simulation only. The generated guards accept every
-value allowed by their declared types and product rules.
+### Simulation samples cover open, paused and flagged projects, both actors and each disclosure
 
 ```quint
 pure val openView: F::ProjectView = { registered: true, retired: false, legacy: false, paused: false, flagged: false,
@@ -292,7 +315,8 @@ pure val epochValues = Set(1, 2)
 pure val byMaintainerValues = Set(true, false)
 pure val viewValues = Set(openView, { ...openView, paused: true })
 pure val testedState: Contribution = { ...initial, phase: Tested, itemId: 1, available: true, policyPermits: true, bounded: true,
-  liveEpoch: 2, selectedEpoch: 1, submissionEpoch: 2, usefulResult: true, testEvidence: true }
+  liveEpoch: 2, selectedEpoch: 1, submissionEpoch: 2, usefulResult: true, testEvidence: true, inspection: InspectClear,
+  provider: "a", model: "a", client: "a", attributionLine: true }
 pure val cValues = Set(initial, testedState, { ...testedState, writes: List(StarRepository), runRecorded: true })
 pure val clientValues = Set("", "a")
 pure val modelValues = Set("", "a")
@@ -307,6 +331,8 @@ pure val traceRunValues = Set(runA, { ...runA, owner: 2 }, { ...runA, events: Li
 pure val weight_observe = 6
 pure val weight_selectWork = 15
 pure val weight_beginWork = 15
+pure val weight_inspectRisk = 12
+pure val findingValues = Set(InspectClear, RiskReported, InspectUnavailable)
 pure val weight_recordTests = 10
 pure val weight_setAttribution = 6
 pure val weight_confirmSubmissionRead = 10

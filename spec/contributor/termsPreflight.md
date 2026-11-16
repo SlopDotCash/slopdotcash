@@ -1,74 +1,151 @@
 # Live project terms preflight
 
-PRD sections 4 and 8. Before preparing a private report the contributor
-reads the project's current `terms.json` and security page
-(`skills/project-contributor-template/scripts/terms-preflight.mjs`, legacy
-`contributor_terms_preflight`). Live terms, not `project.json`, set any
-bounty, scope, safe testing and disclosure rules. A local cache can avoid a
-download only for immutable bytes matching the expected digest; a cache
-failure never grants authority and never blocks valid network bytes. The
-preflight acknowledges terms; it never grants project admission, and a
-paused project still accepts a private report without resuming unsafe
-research: active research needs acknowledged terms and a collected project
+PRD sections 4 and 8. `skills/project-contributor-template/scripts/terms-preflight.mjs`
+(`preflight`, legacy `contributor_terms_preflight`, tests
+`scripts/terms-preflight.test.ts`) runs when a contributor starts a measured
+run with `run-receipt.mjs start --verify-policy`. `SKILL.md` does not invoke
+it. It is optional: ordinary GitHub submission needs no policy
+acknowledgement (CLAUDE.md "Installer and attribution"), and the
+[work model](./workflow.md) imports nothing from this unit. Live terms, not
+`project.json`, set any bounty, scope, safe testing and disclosure rules. The
+preflight acknowledges terms; it never grants project admission, and a paused
+project still accepts a private report without resuming unsafe research:
+active research needs acknowledged terms and a collected project
 (`frontend/projections.md` `collected`), and a later observation that the
 project is not collected stops it. The project observation is the client's
 own read of the cached public projection.
 
 ## Story: Acknowledge only the exact current terms
 
-### Cached or downloaded documents must match the current policy revision and digest
+### Start without the option writes a version 1 record; with it, a version 2 record after the preflight
+
+The preflight reads `https://slop.cash/projects/<id>/terms.json`, the only
+policy authority, with redirects refused and a 1 MiB limit. The policy must
+name this project with schema version 1. When repository authority is
+verified, its proof's `policyRevision` equals the current terms revision, and
+the receipt policy is active with `activatedAt` equal to the proof's
+`verifiedAt`. The record carries `policyAcknowledgement` with the
+acknowledged revision. Every refusal fails start without creating a record;
+a later start, with or without the option, is a new attempt.
 
 ```quint
 import projections as F from "../frontend/projections"
-type CacheState = NoCache | CacheVerified | CacheRejected
-type DocumentSource = NoDocuments | FromCache | FromNetwork | NotRequired
-type TermsPreflight = { policyRead: bool, revisionMatches: bool, documentsRequired: bool, cache: CacheState,
-  documents: DocumentSource, acknowledged: bool, cacheCloseFailed: bool, cachePublishFailed: bool, projectActive: bool,
-  researching: bool }
-pure val initial: TermsPreflight = { policyRead: false, revisionMatches: false, documentsRequired: true, cache: NoCache,
-  documents: NoDocuments, acknowledged: false, cacheCloseFailed: false, cachePublishFailed: false, projectActive: false,
-  researching: false }
-pure def haveDocuments(t: TermsPreflight): bool = t.documents != NoDocuments
-pure def canReadPolicy(t: TermsPreflight): bool = not(t.policyRead)
-pure def readPolicy(t: TermsPreflight, revisionMatches: bool, documentsRequired: bool): TermsPreflight =
-  { ...t, policyRead: true, revisionMatches: revisionMatches, documentsRequired: documentsRequired }
-pure def canReadCache(t: TermsPreflight): bool = t.policyRead and t.cache == NoCache and t.documentsRequired
-pure def readCache(t: TermsPreflight, immutableSource: bool, digestMatches: bool): TermsPreflight =
-  { ...t, cache: if (immutableSource and digestMatches) CacheVerified else CacheRejected }
-pure def canUseCache(t: TermsPreflight): bool = t.cache == CacheVerified
-pure def useCache(t: TermsPreflight): TermsPreflight = { ...t, documents: FromCache }
-pure def canFailCacheClose(t: TermsPreflight): bool = t.cache != NoCache and not(t.cacheCloseFailed)
-pure def failCacheClose(t: TermsPreflight): TermsPreflight = { ...t, cacheCloseFailed: true }
-pure def canDownload(t: TermsPreflight, validAuthority: bool, validDigest: bool): bool =
-  t.policyRead and t.documentsRequired and validAuthority and validDigest
-pure def download(t: TermsPreflight, validAuthority: bool, validDigest: bool): TermsPreflight = { ...t, documents: FromNetwork }
-pure def canSkipDocuments(t: TermsPreflight): bool = t.policyRead and not(t.documentsRequired)
-pure def skipDocuments(t: TermsPreflight): TermsPreflight = { ...t, documents: NotRequired }
-pure def canFailCachePublication(t: TermsPreflight): bool = t.documents == FromNetwork and not(t.cachePublishFailed)
-pure def failCachePublication(t: TermsPreflight): TermsPreflight = { ...t, cachePublishFailed: true }
-pure def observeProject(t: TermsPreflight, view: F::ProjectView): TermsPreflight =
-  { ...t, projectActive: F::collected(view), researching: t.researching and F::collected(view) }
-pure def canAcknowledge(t: TermsPreflight): bool = t.policyRead and t.revisionMatches and haveDocuments(t) and not(t.acknowledged)
-pure def acknowledge(t: TermsPreflight): TermsPreflight = { ...t, acknowledged: true }
-pure def canBeginResearch(t: TermsPreflight): bool = t.acknowledged and t.projectActive and not(t.researching)
-pure def beginResearch(t: TermsPreflight): TermsPreflight = { ...t, researching: true }
-pure def alwaysAcknowledgedExact(t: TermsPreflight): bool = t.acknowledged implies t.policyRead and t.revisionMatches and haveDocuments(t)
-pure def alwaysCachedDocumentsVerified(t: TermsPreflight): bool = (t.documents == FromCache implies t.cache == CacheVerified)
-  and (not(t.policyRead) implies t.documents == NoDocuments and t.cache == NoCache)
-  and (t.cache != NoCache implies t.documentsRequired)
-  and (t.documents == NotRequired implies not(t.documentsRequired))
-  and ((t.documents == FromNetwork or t.documents == FromCache) implies t.documentsRequired)
-pure def alwaysResearchNeedsActiveProject(t: TermsPreflight): bool = t.researching implies t.acknowledged and t.projectActive
-pure def stepPolicyFixed(before: TermsPreflight, after: TermsPreflight): bool =
-  before.policyRead implies after.revisionMatches == before.revisionMatches and after.documentsRequired == before.documentsRequired
-pure def sometimesCacheCloseFailureStillAcknowledged(t: TermsPreflight): bool = t.acknowledged and t.cacheCloseFailed
-pure def sometimesRejectedCacheThenNetwork(t: TermsPreflight): bool = t.acknowledged and t.cache == CacheRejected
-  and t.documents == FromNetwork
-pure def sometimesResearchStoppedByPause(t: TermsPreflight): bool = t.acknowledged and not(t.projectActive) and not(t.researching)
-  and t.policyRead and t.documentsRequired
-pure def sometimesResearching(t: TermsPreflight): bool = t.researching
-pure def sometimesPausedNoDocumentsAcknowledged(t: TermsPreflight): bool = t.acknowledged and not(t.documentsRequired) and not(t.projectActive)
+type Phase = Idle | ReadingTerms | VerifyingDocuments | Started | Refused
+type Fetch = { ok: bool, redirected: bool, withinLimit: bool }
+type Terms = { fetch: Fetch, exactIdentity: bool, authorityVerified: bool, proofRevision: int, termsRevision: int,
+  receiptActive: bool, activatedAt: int, proofVerifiedAt: int, documents: int }
+type TermsPreflight = { phase: Phase, pending: int, revision: int, recordVersion: int, acknowledgedRevision: int,
+  refusals: int, fromCache: int, fromNetwork: int, cacheRejected: bool, cacheCloseFailed: bool, cachePublishFailed: bool,
+  documentsRequired: bool, projectActive: bool, researching: bool }
+pure val initial: TermsPreflight = { phase: Idle, pending: 0, revision: 0, recordVersion: 0, acknowledgedRevision: 0,
+  refusals: 0, fromCache: 0, fromNetwork: 0, cacheRejected: false, cacheCloseFailed: false, cachePublishFailed: false,
+  documentsRequired: false, projectActive: false, researching: false }
+pure def fetched(f: Fetch): bool = f.ok and not(f.redirected) and f.withinLimit
+pure def termsBound(t: Terms): bool = fetched(t.fetch) and t.exactIdentity and t.termsRevision > 0
+  and 0 <= t.documents and t.documents <= 3
+  and (t.authorityVerified implies
+    (t.proofRevision == t.termsRevision and t.receiptActive and t.activatedAt == t.proofVerifiedAt))
+pure def startable(p: TermsPreflight): bool = p.phase == Idle or p.phase == Refused
+pure def canStartPlain(p: TermsPreflight): bool = startable(p)
+pure def startPlain(p: TermsPreflight): TermsPreflight = { ...p, phase: Started, recordVersion: 1, acknowledgedRevision: 0 }
+pure def canStartVerified(p: TermsPreflight): bool = startable(p) and p.refusals < 9007199254740000
+pure def startVerified(p: TermsPreflight): TermsPreflight = { ...p, phase: ReadingTerms, pending: 0, revision: 0,
+  fromCache: 0, fromNetwork: 0, cacheRejected: false, cacheCloseFailed: false, cachePublishFailed: false }
+pure def refused(p: TermsPreflight): TermsPreflight = { ...p, phase: Refused, pending: 0, refusals: p.refusals + 1 }
+pure def canReadTerms(p: TermsPreflight, terms: Terms): bool = p.phase == ReadingTerms
+pure def readTerms(p: TermsPreflight, terms: Terms): TermsPreflight =
+  if (termsBound(terms)) { ...p, phase: VerifyingDocuments, pending: terms.documents, revision: terms.termsRevision,
+    documentsRequired: terms.documents > 0 }
+  else refused(p)
+pure def lawProofBindsCurrentTerms(terms: Terms): bool = (termsBound(terms) and terms.authorityVerified) implies
+  terms.proofRevision == terms.termsRevision and terms.activatedAt == terms.proofVerifiedAt
+pure def lawPlainStartNeedsNoPreflight(p: TermsPreflight): bool = startable(p) implies canStartPlain(p)
+```
+
+### Each named document is digest-verified on an allowlisted host, and the cache never grants authority
+
+The LICENSE, inbound terms and prize rules named with a SHA-256 digest are read
+only from `github.com`, `raw.githubusercontent.com` or `proximityprize.org`
+over HTTPS without credentials, port or fragment, with redirects refused and a
+4 MiB limit. A cached copy is reused only for an immutable
+`raw.githubusercontent.com` URL pinned to a 40-character commit, and only
+when its bytes match the digest. A rejected cache falls back to the network.
+Failing to close a cache handle or to publish fetched bytes to the cache never
+blocks valid bytes and never grants authority to unverified ones.
+
+```quint
+type Host = GitHub | RawGitHub | ProximityPrize | OtherHost
+type Document = { host: Host, immutableUrl: bool, cachedMatches: bool, closeFails: bool, fetch: Fetch,
+  digestMatches: bool, publishFails: bool }
+pure def allowedHost(h: Host): bool = h == GitHub or h == RawGitHub or h == ProximityPrize
+pure def cacheable(d: Document): bool = d.host == RawGitHub and d.immutableUrl
+pure def usesCache(d: Document): bool = cacheable(d) and d.cachedMatches
+pure def documentVerified(d: Document): bool =
+  allowedHost(d.host) and (usesCache(d) or (fetched(d.fetch) and d.digestMatches))
+pure def lawCacheOnlyForImmutableUrls(d: Document): bool = usesCache(d) implies d.immutableUrl and d.host == RawGitHub
+pure def lawOtherHostNeverVerified(d: Document): bool = d.host == OtherHost implies not(documentVerified(d))
+pure def canVerifyDocument(p: TermsPreflight, d: Document): bool = p.phase == VerifyingDocuments and p.pending > 0
+pure def verifyDocument(p: TermsPreflight, d: Document): TermsPreflight =
+  if (not(documentVerified(d))) refused(p)
+  else if (usesCache(d)) { ...p, pending: p.pending - 1, fromCache: p.fromCache + 1,
+    cacheCloseFailed: p.cacheCloseFailed or d.closeFails }
+  else { ...p, pending: p.pending - 1, fromNetwork: p.fromNetwork + 1,
+    cacheRejected: p.cacheRejected or cacheable(d),
+    cacheCloseFailed: p.cacheCloseFailed or (cacheable(d) and d.closeFails),
+    cachePublishFailed: p.cachePublishFailed or (cacheable(d) and d.publishFails) }
+pure def canAcknowledge(p: TermsPreflight): bool = p.phase == VerifyingDocuments and p.pending == 0
+pure def acknowledge(p: TermsPreflight): TermsPreflight =
+  { ...p, phase: Started, recordVersion: 2, acknowledgedRevision: p.revision }
+pure def alwaysRecordMatchesVersion(p: TermsPreflight): bool =
+  ((p.phase == Started) iff (p.recordVersion > 0)) and ((p.recordVersion == 2) iff (p.acknowledgedRevision > 0))
+  and (p.recordVersion == 2 implies p.acknowledgedRevision == p.revision)
+  and (p.recordVersion == 0 or p.recordVersion == 1 or p.recordVersion == 2)
+pure def alwaysPending(p: TermsPreflight): bool = 0 <= p.pending and p.pending <= 3
+  and (p.phase != VerifyingDocuments implies p.pending == 0)
+  and (p.phase == VerifyingDocuments implies p.revision > 0)
+  and (p.recordVersion == 2 implies p.fromCache + p.fromNetwork <= 3 and (p.documentsRequired iff p.fromCache + p.fromNetwork > 0))
+  and p.refusals >= 0
+pure def sometimesAcknowledged(p: TermsPreflight): bool = p.recordVersion == 2 and p.fromCache > 0
+pure def sometimesRefusedWithoutRecord(p: TermsPreflight): bool = p.phase == Refused and p.recordVersion == 0
+pure def sometimesPlainAfterRefusal(p: TermsPreflight): bool = p.recordVersion == 1 and p.refusals > 0
+pure def sometimesCacheCloseFailureStillAcknowledged(p: TermsPreflight): bool = p.recordVersion == 2 and p.cacheCloseFailed
+pure def sometimesRejectedCacheThenNetwork(p: TermsPreflight): bool = p.recordVersion == 2 and p.cacheRejected
+pure def sometimesPublicationFailureAcknowledged(p: TermsPreflight): bool = p.recordVersion == 2 and p.cachePublishFailed
+```
+
+### Research needs acknowledged terms and a collected project
+
+```quint
+pure def observeProject(p: TermsPreflight, view: F::ProjectView): TermsPreflight =
+  { ...p, projectActive: F::collected(view), researching: p.researching and F::collected(view) }
+pure def canBeginResearch(p: TermsPreflight): bool = p.recordVersion == 2 and p.projectActive and not(p.researching)
+pure def beginResearch(p: TermsPreflight): TermsPreflight = { ...p, researching: true }
+pure def alwaysResearchNeedsActiveProject(p: TermsPreflight): bool = p.researching implies p.recordVersion == 2 and p.projectActive
+pure def sometimesResearchStoppedByPause(p: TermsPreflight): bool = p.recordVersion == 2 and not(p.projectActive)
+  and not(p.researching) and p.documentsRequired
+pure def sometimesResearching(p: TermsPreflight): bool = p.researching
+pure def sometimesPausedNoDocumentsAcknowledged(p: TermsPreflight): bool = p.recordVersion == 2 and not(p.documentsRequired)
+  and not(p.projectActive)
 pure val openView: F::ProjectView = { registered: true, retired: false, legacy: false, paused: false, flagged: false,
   quarantined: false, cleared: true, skillFields: true }
 pure val viewValues = Set(openView, { ...openView, paused: true })
-pure def sometimesPublicationFailureAcknowledged(t: TermsPreflight): bool = t.acknowledged and t.cachePublishFailed
+pure val okFetch: Fetch = { ok: true, redirected: false, withinLimit: true }
+pure val boundTerms: Terms = { fetch: okFetch, exactIdentity: true, authorityVerified: true, proofRevision: 2,
+  termsRevision: 2, receiptActive: true, activatedAt: 7, proofVerifiedAt: 7, documents: 1 }
+pure val termsValues = Set(boundTerms, { ...boundTerms, documents: 0, authorityVerified: false, proofRevision: 1 },
+  { ...boundTerms, documents: 2 }, { ...boundTerms, proofRevision: 1 }, { ...boundTerms, activatedAt: 8 },
+  { ...boundTerms, receiptActive: false }, { ...boundTerms, fetch: { ...okFetch, redirected: true } },
+  { ...boundTerms, fetch: { ...okFetch, withinLimit: false } })
+pure val okDocument: Document = { host: RawGitHub, immutableUrl: true, cachedMatches: false, closeFails: false, fetch: okFetch,
+  digestMatches: true, publishFails: false }
+pure val dValues = Set(okDocument, { ...okDocument, cachedMatches: true }, { ...okDocument, cachedMatches: true, closeFails: true },
+  { ...okDocument, publishFails: true }, { ...okDocument, closeFails: true },
+  { ...okDocument, immutableUrl: false, cachedMatches: true, digestMatches: false },
+  { ...okDocument, host: GitHub, immutableUrl: false }, { ...okDocument, host: OtherHost },
+  { ...okDocument, digestMatches: false }, { ...okDocument, fetch: { ...okFetch, redirected: true } })
+pure val pValues = Set(initial, { ...initial, phase: Refused, refusals: 1 }, { ...initial, phase: Started, recordVersion: 1 })
+pure val weight_startVerified = 6
+pure val weight_readTerms = 6
+pure val weight_verifyDocument = 8
+pure val weight_acknowledge = 6
+```

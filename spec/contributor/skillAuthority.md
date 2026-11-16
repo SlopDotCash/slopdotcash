@@ -144,7 +144,7 @@ pure def sometimesUninstallableRefused(s: SkillRead): bool = s.transport == Refu
   and s.projectFresh and not(s.projectOpen)
 ```
 
-### Simulation samples
+### Simulation samples cover every role, refused byte checks and closed project views
 
 ```quint
 pure val sha = "0123456789abcdef0123456789abcdef01234567"

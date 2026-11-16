@@ -2,9 +2,12 @@
 
 This model covers PRD sections 4 and 9 and CLAUDE.md "Private traces" and
 "Installer and attribution". It is the abstract contributor-side view of one
-optional private trace. The [client retry machine](./runEvidence.md) refines
-it, so its consent, exact-selection and stored-digest rules hold of every
-reachable retry state. The server records that accept, reserve, attach and
+optional private trace, and the only trace decision machine: the
+[client retry machine](./runEvidence.md) refines it, so its consent,
+inspection, exact-selection and stored-digest rules hold of every reachable
+retry state. Submitting the pull request belongs to the
+[work model](./workflow.md), whose `submit` reads no evidence state, so
+declining, failing or never deciding evidence never blocks a contribution. The server records that accept, reserve, attach and
 finalize the bytes are the [server trace run](./traceServer.md). This unit
 holds no trace bytes, assertion, token or capability.
 
@@ -17,64 +20,51 @@ obligation).
 
 ## Story: Submit optional private evidence without blocking a contribution
 
-A contributor may decline evidence collection, declare a human-only
-contribution, or inspect one local snapshot and upload exactly those bytes.
-Submitting the pull request is independent of every evidence state.
+A contributor may decline evidence collection, or inspect and redact one
+local snapshot and upload exactly those bytes.
 
 ### Evidence state is separate from ordinary submission
 
 ```quint
 import localReceipt as LR from "./localReceipt"
-type EvidencePhase = Undecided | Declined | HumanOnly | Selected | Stored | UploadFailed
+type EvidencePhase = Undecided | Declined | Selected | Stored | UploadFailed
 type MediaType = PlainText | NdjsonText
 type ServerStage = NoServerRun | AwaitingTrace | TraceUploaded | TraceFinalized
-type Snapshot = { digest: str, size: int, media: MediaType, disclosed: bool, consent: bool }
+type Snapshot = { digest: str, size: int, media: MediaType, inspected: bool, disclosed: bool, consent: bool }
 type RunReply = { serverRun: str, stage: ServerStage, storedDigest: str }
 type UploadReply = { serverRun: str, digest: str, stage: ServerStage }
 type SignedReceipt = { signed: bool, runDigest: str, traceDigest: str, deviceKey: str,
   provider: str, model: str, client: str }
-type Evidence = { phase: EvidencePhase, digest: str, size: int, storedDigest: str,
-  prSubmitted: bool, receipt: SignedReceipt }
+type Evidence = { phase: EvidencePhase, digest: str, size: int, storedDigest: str, receipt: SignedReceipt }
 pure val maxTraceBytes = 8388608
 pure val signatureVerifier = -1
-pure val noSnapshot: Snapshot = { digest: "", size: 0, media: PlainText, disclosed: false, consent: false }
+pure val noSnapshot: Snapshot = { digest: "", size: 0, media: PlainText, inspected: false, disclosed: false, consent: false }
 pure val noReceipt: SignedReceipt = { signed: false, runDigest: "", traceDigest: "", deviceKey: "",
   provider: "", model: "", client: "" }
-pure val initial: Evidence = { phase: Undecided, digest: "", size: 0, storedDigest: "",
-  prSubmitted: false, receipt: noReceipt }
-pure def canSubmitPR(e: Evidence): bool = not(e.prSubmitted)
-pure def submitPR(e: Evidence): Evidence = { ...e, prSubmitted: true }
+pure val initial: Evidence = { phase: Undecided, digest: "", size: 0, storedDigest: "", receipt: noReceipt }
 pure def canDecline(e: Evidence): bool = e.phase == Undecided or e.phase == Selected or e.phase == UploadFailed
 pure def decline(e: Evidence): Evidence = { ...e, phase: Declined }
 ```
 
-### A human-only contribution uploads no agent trace and signs no agent receipt
+### Only one inspected, disclosed, consented snapshot of bounded size can be selected
 
-```quint
-pure def canDeclareHumanOnly(e: Evidence): bool = e.phase == Undecided and not(e.receipt.signed)
-pure def declareHumanOnly(e: Evidence): Evidence = { ...e, phase: HumanOnly }
-pure def alwaysHumanOnlyHasNoTrace(e: Evidence): bool = (e.phase == HumanOnly implies
-  e.digest == "" and e.storedDigest == "" and not(e.receipt.signed))
-  and (e.phase == Undecided implies e.digest == "" and e.storedDigest == "")
-```
-
-### Only one disclosed, consented snapshot of bounded size can be selected
-
-The command opens the file once, reads one snapshot, and shows its path, byte
-count, media type and SHA-256 digest before authorization. The uploader
-performs no redaction: the selected bytes are the retained bytes. A changed
-file is a new selection with a new digest. Selection is refused after a
-human-only declaration.
+The contributor inspects and redacts the selected file first (CLAUDE.md
+"Private traces"). The command then opens it once, reads one snapshot, and
+shows its path, byte count, media type and SHA-256 digest before
+authorization. The uploader performs no redaction and stores the exact
+selected bytes: the selected bytes are the retained bytes. A changed file is
+a new selection with a new digest.
 
 ```quint
 pure def validSnapshot(snapshot: Snapshot): bool = snapshot.digest != "" and 1 <= snapshot.size
-  and snapshot.size <= maxTraceBytes and snapshot.disclosed and snapshot.consent
+  and snapshot.size <= maxTraceBytes and snapshot.inspected and snapshot.disclosed and snapshot.consent
 pure def canSelectTrace(e: Evidence, snapshot: Snapshot): bool = validSnapshot(snapshot) and
   (e.phase == Undecided or e.phase == Declined or e.phase == UploadFailed or e.phase == Stored)
 pure def selectTrace(e: Evidence, snapshot: Snapshot): Evidence =
   { ...e, phase: Selected, digest: snapshot.digest, size: snapshot.size }
-pure def alwaysSelection(e: Evidence): bool = (e.phase == Selected or e.phase == Stored) implies
-  e.digest != "" and 1 <= e.size and e.size <= maxTraceBytes
+pure def alwaysSelection(e: Evidence): bool = ((e.phase == Selected or e.phase == Stored) implies
+  e.digest != "" and 1 <= e.size and e.size <= maxTraceBytes)
+  and (e.phase == Undecided implies e.digest == "" and e.storedDigest == "")
 ```
 
 ### The server's retained digest is learned once and never replaced
@@ -129,7 +119,7 @@ pure def receiptMatchesRun(receipt: SignedReceipt, local: LR::LocalReceipt): boo
   and receipt.provider == local.declared.provider and receipt.model == local.declared.model
   and receipt.client == local.declared.client
 pure def canSignReceipt(e: Evidence, by: int, receipt: SignedReceipt, local: LR::LocalReceipt): bool =
-  by == signatureVerifier and not(e.receipt.signed) and e.phase != HumanOnly
+  by == signatureVerifier and not(e.receipt.signed)
   and receiptComplete(receipt) and receiptMatchesRun(receipt, local)
   and (receipt.traceDigest == "" or (e.phase == Stored and receipt.traceDigest == e.storedDigest))
 pure def signReceipt(e: Evidence, by: int, receipt: SignedReceipt, local: LR::LocalReceipt): Evidence = { ...e, receipt: receipt }
@@ -137,23 +127,20 @@ pure def alwaysReceiptBindsEvidence(e: Evidence): bool = e.receipt.signed implie
   and (e.receipt.traceDigest == "" or e.receipt.traceDigest == e.storedDigest)
 pure def stepReceiptImmutable(before: Evidence, after: Evidence): bool =
   before.receipt.signed implies after.receipt == before.receipt
-pure def sometimesDeclinedAndSubmitted(e: Evidence): bool = e.phase == Declined and e.prSubmitted
-pure def sometimesFailedAndSubmitted(e: Evidence): bool = e.phase == UploadFailed and e.prSubmitted
-pure def sometimesHumanOnlySubmitted(e: Evidence): bool = e.phase == HumanOnly and e.prSubmitted
+pure def sometimesDeclined(e: Evidence): bool = e.phase == Declined and e.digest != ""
+pure def sometimesUploadFailed(e: Evidence): bool = e.phase == UploadFailed
 pure def sometimesStored(e: Evidence): bool = e.phase == Stored
 pure def sometimesReceiptWithoutTrace(e: Evidence): bool = e.receipt.signed and e.receipt.traceDigest == ""
 pure def sometimesReceiptBindsTrace(e: Evidence): bool = e.receipt.signed and e.receipt.traceDigest != ""
 pure def sometimesChangedSelectionRefused(e: Evidence): bool = e.phase == UploadFailed and e.storedDigest != "" and e.storedDigest != e.digest
 ```
 
-### Simulation samples exercise missing, matching and conflicting evidence
-
-These input sets bound simulation only. The generated guards accept every
-value allowed by their declared types and product rules.
+### Simulation samples cover uninspected, unconsented, empty and changed snapshots and each receipt binding
 
 ```quint
-pure val snapA: Snapshot = { digest: "d1", size: 2, media: NdjsonText, disclosed: true, consent: true }
-pure val snapshotValues = Set(snapA, { ...snapA, digest: "d2" }, { ...snapA, consent: false }, { ...snapA, size: 0 })
+pure val snapA: Snapshot = { digest: "d1", size: 2, media: NdjsonText, inspected: true, disclosed: true, consent: true }
+pure val snapshotValues = Set(snapA, { ...snapA, digest: "d2" }, { ...snapA, consent: false }, { ...snapA, size: 0 },
+  { ...snapA, inspected: false })
 pure val runReplyValues = Set({ serverRun: "r1", stage: AwaitingTrace, storedDigest: "" },
   { serverRun: "r1", stage: TraceUploaded, storedDigest: "d1" })
 pure val uploadReplyValues = Set({ serverRun: "r1", digest: "d1", stage: TraceUploaded })

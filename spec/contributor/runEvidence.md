@@ -20,8 +20,12 @@ pull-request-opened record is the [`opened` command](./openedRun.md).
 A trace attempt starts from the active local measured run (the
 [local receipt](./localReceipt.md) state, a record satisfying every local
 receipt rule; that the shell supplies the actual stored record is a
-composition obligation) and a disclosed, consented snapshot. The bounded server preflight must report enabled private intake no
-older than 24 hours; the server rechecks it at upload. The exact returned
+composition obligation) and an inspected, disclosed, consented snapshot. The
+bounded server preflight must report the
+[private-intake observation](../operations/intakeHealth.md) ready for trace
+collection at the time of the check (`traceCollectionReadyAt`: enabled,
+verified no more than 24 hours earlier and no more than five minutes in the
+future); the server rechecks it at upload. Contribution never reads it. The exact returned
 server run ID belongs to that request. Retrying the stable create-run
 identity can find server state awaiting upload, already uploaded or
 finalized, and the server's stage never moves backwards. An already stored
@@ -30,9 +34,9 @@ body is immutable.
 ```quint
 import evidence as E from "./evidence"
 import localReceipt as LR from "./localReceipt"
+import intakeHealth as IH from "../operations/intakeHealth"
 type LocalPhase = LocalIdle | LocalSelected | Registered | LocalStored | Confirmed
 type StopReason = LostResponse | ServerRefused | TransportFailed
-type IntakePreflight = { enabled: bool, ageSeconds: int }
 type FinalizeReply = { serverRun: str, digest: str, stage: E::ServerStage }
 type TraceRun = { phase: LocalPhase, serverStage: E::ServerStage, serverRun: str, selected: E::Snapshot,
   storedDigest: str, failure: bool }
@@ -40,11 +44,10 @@ pure val initial: TraceRun = { phase: LocalIdle, serverStage: E::NoServerRun, se
   storedDigest: "", failure: false }
 pure def stageRank(stage: E::ServerStage): int =
   if (stage == E::NoServerRun) 0 else if (stage == E::AwaitingTrace) 1 else if (stage == E::TraceUploaded) 2 else 3
-pure def intakeFresh(intake: IntakePreflight): bool = intake.enabled and 0 <= intake.ageSeconds and intake.ageSeconds <= 86400
-pure def canSelectTrace(s: TraceRun, snapshot: E::Snapshot, intake: IntakePreflight, local: LR::LocalReceipt): bool =
-  (s.phase == LocalIdle or s.phase == Confirmed) and E::validSnapshot(snapshot) and intakeFresh(intake)
+pure def canSelectTrace(s: TraceRun, snapshot: E::Snapshot, intake: IH::Observation, checkedAt: int, local: LR::LocalReceipt): bool =
+  (s.phase == LocalIdle or s.phase == Confirmed) and E::validSnapshot(snapshot) and IH::traceCollectionReadyAt(intake, checkedAt)
     and LR::consistentReceipt(local) and local.started and local.active
-pure def selectTrace(s: TraceRun, snapshot: E::Snapshot, intake: IntakePreflight, local: LR::LocalReceipt): TraceRun =
+pure def selectTrace(s: TraceRun, snapshot: E::Snapshot, intake: IH::Observation, checkedAt: int, local: LR::LocalReceipt): TraceRun =
   { ...s, phase: LocalSelected, selected: snapshot, failure: false }
 pure def canRegister(s: TraceRun, runReply: E::RunReply): bool = s.phase == LocalSelected and E::consistentRun(runReply)
   and (s.serverRun == "" or runReply.serverRun == s.serverRun) and stageRank(runReply.stage) >= stageRank(s.serverStage)
@@ -114,9 +117,11 @@ pure def sometimesChangedRefused(s: TraceRun): bool = s.failure and s.phase == L
 ### Simulation uses bounded representative digests and distinct identities
 
 ```quint
-pure val snapA: E::Snapshot = { digest: "d1", size: 2, media: E::NdjsonText, disclosed: true, consent: true }
-pure val snapshotValues = Set(snapA, { ...snapA, digest: "d2" }, { ...snapA, consent: false })
-pure val intakeValues = Set({ enabled: true, ageSeconds: 10 }, { enabled: true, ageSeconds: 90000 }, { enabled: false, ageSeconds: 10 })
+pure val snapA: E::Snapshot = { digest: "d1", size: 2, media: E::NdjsonText, inspected: true, disclosed: true, consent: true }
+pure val snapshotValues = Set(snapA, { ...snapA, digest: "d2" }, { ...snapA, consent: false }, { ...snapA, inspected: false })
+pure val intakeValues = Set(IH::Observed({ enabled: true, verifiedAt: 1000 }), IH::Observed({ enabled: false, verifiedAt: 1000 }),
+  IH::NoObservation)
+pure val checkedAtValues = Set(2000, 86401001)
 pure val localActive: LR::LocalReceipt = { ...LR::initial, started: true, active: true, startedAt: 1,
   declared: { provider: "p", model: "m", client: "c", lane: LR::ContributionLane },
   installed: { template: "0123456789abcdef0123456789abcdef01234567", revision: 1, digest: "m1" } }

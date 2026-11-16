@@ -44,7 +44,10 @@ output before releasing the owning discovery lock. A release failure still
 makes the invocation fail. A prior command or request cleanup failure remains
 the primary error. Cleanup diagnostics do not erase a prior failure or the
 fact that report output was already written. This machine follows one helper
-result through one report; process killing, lock recovery and stdout writes
+result through one report. The [discovery lock](./discoveryLock.md)
+releases its ownership only for a report in the releasing phase that
+satisfies this machine's cleanup-order and publication rules, and models
+contention, stale takeover and recovery; process killing and stdout writes
 require their corresponding shell evidence.
 
 ```quint

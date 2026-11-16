@@ -26,8 +26,11 @@ An enabled or disabled answer writes the observation with the renewal time.
 Disabled reporting stops collection at the next read. An unreachable,
 rate-limited, unauthorized, rejected or malformed answer leaves the previous
 observation in place, so it expires on schedule rather than being refreshed
-on bad evidence. A refused token is retried anonymously once by the adapter;
-the verdict here is the final answer. A failed database write is an explicit
+on bad evidence. A renewer reads GitHub with its optional read-only token
+or anonymously. A token GitHub refuses, or one of the wrong shape, is
+reported and the read is repeated anonymously once, never again with a
+token: an unauthorized answer to a token read is never the verdict, and the
+anonymous answer is. A failed database write is an explicit
 failed renewal and changes nothing. A skipped renewal is also an explicit
 operational failure: the invocation reports failure even though nothing was
 written. Each renewer stamps the observation with its own read time, and the
@@ -40,10 +43,11 @@ type Skip = Unreachable | RateLimited | Unauthorized | Rejected | Malformed
 type GitHubAnswer = ReportingEnabled | ReportingDisabled | Unusable({ reason: Skip })
 type Observation = NoObservation | Observed({ enabled: bool, verifiedAt: int })
 type RenewalResult = NotRun | Renewed | OlderThanStored | Skipped({ reason: Skip }) | WriteFailed
+type ReadStage = NoRead | TokenRead | AnonymousRead
 type Health = { clock: int, observation: Observation, last: RenewalResult, failures: int, skips: int, renewals: int, alerts: int,
-  failedInvocations: int }
+  failedInvocations: int, read: ReadStage, tokenRejected: bool }
 pure val initial: Health = { clock: 1, observation: NoObservation, last: NotRun, failures: 0, skips: 0, renewals: 0, alerts: 0,
-  failedInvocations: 0 }
+  failedInvocations: 0, read: NoRead, tokenRejected: false }
 pure def renewerAllowed(by: Renewer): bool = by == IdentityCron or by == ReleaseJob or by == OperatorScript
 pure def canAdvanceClock(h: Health, now: int): bool = now > h.clock
 pure def advanceClock(h: Health, now: int): Health = { ...h, clock: now }
@@ -53,13 +57,27 @@ pure def observedAt(h: Health): int =
 pure def written(isEnabled: bool, readAt: int, h: Health): Health =
   if (readAt > observedAt(h)) { ...h, observation: Observed({ enabled: isEnabled, verifiedAt: readAt }), last: Renewed, renewals: h.renewals + 1 }
   else { ...h, last: OlderThanStored }
-pure def canRenew(h: Health, answer: GitHubAnswer, readAt: int, by: Renewer): bool = renewerAllowed(by) and readAt > 0 and readAt <= h.clock
-pure def renew(h: Health, answer: GitHubAnswer, readAt: int, by: Renewer): Health = match answer {
-  | ReportingEnabled => written(true, readAt, h)
-  | ReportingDisabled => written(false, readAt, h)
-  | Unusable(u) => { ...h, last: Skipped({ reason: u.reason }), skips: h.skips + 1, failedInvocations: h.failedInvocations + 1 } }
-pure def canFailWrite(h: Health, by: Renewer): bool = renewerAllowed(by)
-pure def failWrite(h: Health, by: Renewer): Health = { ...h, last: WriteFailed, failures: h.failures + 1, failedInvocations: h.failedInvocations + 1 }
+pure def canStartRead(h: Health, by: Renewer, withToken: bool): bool = renewerAllowed(by) and h.read == NoRead
+pure def startRead(h: Health, by: Renewer, withToken: bool): Health =
+  { ...h, read: if (withToken) TokenRead else AnonymousRead, tokenRejected: false }
+pure def canRejectToken(h: Health, by: Renewer): bool = renewerAllowed(by) and h.read == TokenRead
+pure def rejectToken(h: Health, by: Renewer): Health = { ...h, read: AnonymousRead, tokenRejected: true }
+pure def canRenew(h: Health, answer: GitHubAnswer, readAt: int, by: Renewer): bool = renewerAllowed(by) and h.read != NoRead
+  and readAt > 0 and readAt <= h.clock and not(h.read == TokenRead and answer == Unusable({ reason: Unauthorized }))
+pure def renew(h: Health, answer: GitHubAnswer, readAt: int, by: Renewer): Health =
+  val done = { ...h, read: NoRead }
+  match answer {
+  | ReportingEnabled => written(true, readAt, done)
+  | ReportingDisabled => written(false, readAt, done)
+  | Unusable(u) => { ...done, last: Skipped({ reason: u.reason }), skips: h.skips + 1, failedInvocations: h.failedInvocations + 1 } }
+pure def canFailWrite(h: Health, by: Renewer): bool = renewerAllowed(by) and h.read != NoRead
+pure def failWrite(h: Health, by: Renewer): Health =
+  { ...h, read: NoRead, last: WriteFailed, failures: h.failures + 1, failedInvocations: h.failedInvocations + 1 }
+pure def alwaysRejectedTokenNotReused(h: Health): bool = h.tokenRejected implies h.read != TokenRead
+pure def stepAnonymousRetryOnce(before: Health, after: Health): bool = before.read == AnonymousRead implies after.read != TokenRead
+pure def lawRefusedTokenIsRetriedAnonymously(h: Health, readAt: int, by: Renewer): bool =
+  h.read == TokenRead implies not(canRenew(h, Unusable({ reason: Unauthorized }), readAt, by))
+pure def sometimesRenewedAfterTokenRejected(h: Health): bool = renewedLast(h.last) and h.tokenRejected
 pure def alwaysUnsuccessfulRenewalsReported(h: Health): bool = h.failedInvocations == h.failures + h.skips
   and h.failures >= 0 and h.skips >= 0
 pure def alwaysObservationNotFuture(h: Health): bool = observedAt(h) >= 0 and observedAt(h) <= h.clock
@@ -129,11 +147,14 @@ pure def sometimesWatchAlerted(h: Health): bool = h.alerts > 0
 
 ```quint
 pure val nowValues = Set(2, 3600002, 10800003, 86400003, 86400004)
-pure val answerValues = Set(ReportingEnabled, ReportingDisabled, Unusable({ reason: Unreachable }), Unusable({ reason: RateLimited }), Unusable({ reason: Malformed }))
+pure val answerValues = Set(ReportingEnabled, ReportingDisabled, Unusable({ reason: Unreachable }), Unusable({ reason: RateLimited }),
+  Unusable({ reason: Malformed }), Unusable({ reason: Unauthorized }))
 pure val byValues = Set(IdentityCron, ReleaseJob, OperatorScript, HealthWatch, Contributor)
 pure val observationValues = Set(NoObservation, Observed({ enabled: true, verifiedAt: 1 }), Observed({ enabled: false, verifiedAt: 1 }),
   Observed({ enabled: true, verifiedAt: 400000 }))
 pure val readAtValues = Set(1, 2, 3600002, 86400003)
 pure val weight_renew = 4
+pure val weight_startRead = 4
+pure val hValues = Set(initial, { ...initial, read: TokenRead, clock: 3600002 }, { ...initial, read: AnonymousRead, tokenRejected: true })
 pure val weight_advanceClock = 4
 ```
