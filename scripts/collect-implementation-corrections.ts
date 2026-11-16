@@ -3215,14 +3215,22 @@ export async function octoberOriginalContributorPartsProof(
       originalClaims.some((original) => original.path === claim.path),
     );
     const candidates = strongest.length ? strongest : matching;
+    const candidateSources = candidates.map(([id]) =>
+      sources.find((source) => source.sourceId === id),
+    );
     const recipients = new Set(
-      candidates.map(([id]) => {
-        const source = sources.find((source) => source.sourceId === id);
-        return source?.author?.id;
-      }),
+      candidateSources.map((source) => source?.author?.id),
+    );
+    // A maintainer may open originals that carry other people's commits; the
+    // unit proof credits each part to its sole commit author, so compare both.
+    const originators = new Set(
+      candidateSources.map(
+        (source) =>
+          source && (soleOriginalPrimary(source) ?? source.author)?.id,
+      ),
     );
     requireThat(
-      recipients.size === 1,
+      recipients.size === 1 && originators.size === 1,
       "Native follow-up has multiple originating contributors",
     );
     candidates[0][1].push(claim);
