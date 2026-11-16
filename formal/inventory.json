@@ -4705,9 +4705,12 @@
     },
     {
       "path": "scripts/rotate-fee-solana-rpc.ts",
-      "sha256": "d28cff44fd991d50a30baa689c65ba3d72f456e07a75bc1f88b5678b1c6f344d",
+      "sha256": "e97e568c1587bf2a9c24ca3fbfcaa535249a76827e799aaad283f903bb3be3dc",
       "models": ["formal/models/release/release_publication.qnt"],
-      "candidateLines": [40, 41, 42, 43, 45, 111, 153, 183, 305, 343, 364, 460],
+      "candidateLines": [
+        40, 41, 42, 43, 45, 111, 153, 176, 191, 192, 220, 221, 246, 368, 406,
+        427, 524
+      ],
       "review": "mapped-abstraction"
     },
     {
