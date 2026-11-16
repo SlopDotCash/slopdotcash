@@ -88,6 +88,13 @@
       "review": "mapped-abstraction"
     },
     {
+      "path": ".github/workflows/payment-event-reconciliation.yml",
+      "sha256": "ae1bc9598235cc4ea546cb6885146bab87bb7a3ef47b6faad8accf65c4233030",
+      "models": ["formal/models/release/workflow_authority.qnt"],
+      "candidateLines": [],
+      "review": "mapped-abstraction"
+    },
+    {
       "path": ".github/workflows/points-implementation-corrections.yml",
       "sha256": "0a356db3786c3e3633e88250dea626747d1bd9303f5bbd5dd3e6a7e1740240d8",
       "models": [
@@ -4603,6 +4610,16 @@
       "sha256": "8a05111c52cc8d8d8a855d4ab3a81be2e5fde5f29be892af8e5236a2dc38e9f2",
       "models": ["formal/models/release/readme_proof_binding.qnt"],
       "candidateLines": [6],
+      "review": "mapped-abstraction"
+    },
+    {
+      "path": "scripts/reconcile-payment-events.ts",
+      "sha256": "fa65a4a17addaea184ebd8131ef653572e7c2e2401c237cc135c4302bf100755",
+      "models": ["formal/models/payments/chain_evidence.qnt"],
+      "candidateLines": [
+        43, 184, 210, 214, 215, 216, 271, 354, 371, 386, 387, 448, 506, 509,
+        512, 562, 616
+      ],
       "review": "mapped-abstraction"
     },
     {
@@ -12970,7 +12987,7 @@
     },
     {
       "path": "formal/models/payments/chain_evidence.qnt",
-      "sha256": "dec3692972ec76f2ffc0a2f16173c82dc606bb4ff2ea0b30fa26f4ace44506ea",
+      "sha256": "e90640d6cb7d4a6704555d9d07ee75027c7395a3d6cac5c3870460ed52370d12",
       "sources": [
         "backend/payments/evm-adapter.ts",
         "backend/payments/solana-funding.ts",
@@ -12978,7 +12995,8 @@
         "backend/payments/verified-evidence.ts",
         "contracts/evm/adapter.ts",
         "contracts/solana/adapter.ts",
-        "contracts/solana/wallet-transactions.ts"
+        "contracts/solana/wallet-transactions.ts",
+        "scripts/reconcile-payment-events.ts"
       ],
       "scenarios": [
         "acceptedTest",
@@ -14796,12 +14814,13 @@
     },
     {
       "path": "formal/models/release/workflow_authority.qnt",
-      "sha256": "702f56c49fbad971ef04402f11e7a0f8aff23863a17c7f492b1c18db825d3886",
+      "sha256": "6bd5090cda24bc0db486f66f41faa5b33813d46bb58234510638b9dd7118b936",
       "sources": [
         ".github/workflows/cancel-closed-pr-runs.yml",
         ".github/workflows/fee-worker-bindings.yml",
         ".github/workflows/monthly-rewards.yml",
         ".github/workflows/october-rewards.yml",
+        ".github/workflows/payment-event-reconciliation.yml",
         ".github/workflows/private-intake-watch.yml",
         ".github/workflows/production-watch.yml",
         ".github/workflows/referral-root-watch.yml",
