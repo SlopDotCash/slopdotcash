@@ -1,0 +1,84 @@
+{
+  "sourceMain": "6b3b9d0b979f0608d87941f1146056a98513ffcf",
+  "source": "spec/contributor/commandCompletion.md",
+  "sourceHash": "785d2a97e92005b5520c636ce6122c7b8462abe66004d99072369957bffcb8f2",
+  "proof": {
+    "generatedDafnySha256": "b57b754ade6a99e0041f74f5bd78a34ad014905908caa569478b6c5c91c7da79",
+    "total": 26,
+    "unproved": [],
+    "exhausted": [],
+    "resting": {},
+    "errors": []
+  },
+  "simulation": {
+    "command": "seed 208075606343037; to simulate again: pnpm exec quint run gen/contributor__commandCompletion.run.qnt --main contributor__commandCompletion_run --step step --invariant inv --max-samples 300 --max-steps 25 --mbt --seed 208075606343037",
+    "replayed": 20
+  },
+  "witnesses": {
+    "sometimesSuccess": {
+      "command": "seed 208075606343037; to simulate again: pnpm exec quint run gen/contributor__commandCompletion.run.qnt --main contributor__commandCompletion_run --step step --invariant inv --max-samples 300 --max-steps 25 --mbt --seed 208075606343037",
+      "events": [
+        {
+          "type": "finishCommand",
+          "commandResult": "SuccessfulCommand"
+        },
+        {
+          "type": "cleanupRequest",
+          "failed": false
+        },
+        {
+          "type": "classify"
+        },
+        {
+          "type": "release",
+          "failed": false
+        }
+      ]
+    },
+    "sometimesFailureAfterPublication": {
+      "command": "seed 107916338617831; to simulate again: pnpm exec quint run gen/contributor__commandCompletion.run.qnt --main contributor__commandCompletion_run --step step --invariant never_sometimesFailureAfterPublication --max-samples 778 --max-steps 9 --mbt --seed 107916338617831",
+      "events": [
+        {
+          "type": "finishCommand",
+          "commandResult": "SuccessfulCommand"
+        },
+        {
+          "type": "cleanupRequest",
+          "failed": false
+        },
+        {
+          "type": "classify"
+        },
+        {
+          "type": "release",
+          "failed": true
+        }
+      ]
+    },
+    "sometimesBothCleanupsPreserveCommand": {
+      "command": "seed 208075606343037; to simulate again: pnpm exec quint run gen/contributor__commandCompletion.run.qnt --main contributor__commandCompletion_run --step step --invariant inv --max-samples 300 --max-steps 25 --mbt --seed 208075606343037",
+      "events": [
+        {
+          "type": "finishCommand",
+          "commandResult": "NonzeroCommand"
+        },
+        {
+          "type": "cleanupRequest",
+          "failed": true
+        },
+        {
+          "type": "classify"
+        },
+        {
+          "type": "release",
+          "failed": true
+        }
+      ]
+    }
+  },
+  "directed": [
+    "all 3 command outcomes × both request cleanup outcomes × both release outcomes",
+    "invalid pending outcome and premature cleanup refused",
+    "first error and already published output persist"
+  ]
+}

@@ -1,0 +1,501 @@
+{
+  "sourceMain": "78eed5564d796119d82ae541c36b0c770263dc5f",
+  "sourceDevelopment": "6b8eaf6ac8c7d54c927737964e76767e5065d946",
+  "source": "spec/security/screening.md",
+  "sourceHash": "27fafe9f9765065177d967ce33197c4bcfb4ccb75efe965ce8b6fe48f37b76a9",
+  "proofFileHash": "af4b8bc53cae54a1b72f5e63ed71aff85553d493c64607a8d0d593d5421a4b20",
+  "proof": {
+    "generatedDafnySha256": "8ff4a48ffc2315f754dd5c8134df5bf0ee687b2e5c4bc5d25abc6cea0c58789d",
+    "total": 39,
+    "unproved": [],
+    "exhausted": [],
+    "resting": {},
+    "errors": []
+  },
+  "simulation": {
+    "command": "seed 47953863319244; to simulate again: pnpm exec quint run gen/security__screening.run.qnt --main security__screening_run --step step --invariant inv --max-samples 80 --max-steps 45 --mbt --seed 47953863319244",
+    "replayed": 30
+  },
+  "witnesses": {
+    "sometimesLegitimate": {
+      "command": "seed 47953863319244; to simulate again: pnpm exec quint run gen/security__screening.run.qnt --main security__screening_run --step step --invariant inv --max-samples 80 --max-steps 45 --mbt --seed 47953863319244",
+      "events": [
+        {
+          "type": "claim",
+          "seenRevision": 1,
+          "nowMs": 1,
+          "admitted": true
+        },
+        {
+          "type": "claim",
+          "seenRevision": 2,
+          "nowMs": 1800001,
+          "admitted": true
+        },
+        {
+          "type": "finish",
+          "token": {
+            "revision": 3,
+            "version": 1,
+            "digest": "original"
+          },
+          "input": {
+            "exactVersionLoaded": true,
+            "duplicateEvidence": false,
+            "route": "Surplus"
+          },
+          "observation": {
+            "tag": "Proposal",
+            "phase": "Legitimate",
+            "validResponse": true,
+            "matchesPriorCase": true,
+            "suppliedPriorCases": true
+          }
+        },
+        {
+          "type": "replace",
+          "seenRevision": 4,
+          "digest": "revised",
+          "evidence": {
+            "isReporter": true,
+            "draftOrFailed": true,
+            "noAdvisory": true,
+            "caseNeedsInformation": false,
+            "exactCaseCas": true,
+            "allowedCaseState": true,
+            "exactObjectStored": true,
+            "admitted": true
+          }
+        },
+        {
+          "type": "claim",
+          "seenRevision": 5,
+          "nowMs": 2,
+          "admitted": true
+        },
+        {
+          "type": "finish",
+          "token": {
+            "revision": 6,
+            "version": 2,
+            "digest": "revised"
+          },
+          "input": {
+            "exactVersionLoaded": true,
+            "duplicateEvidence": false,
+            "route": "Surplus"
+          },
+          "observation": {
+            "tag": "Proposal",
+            "phase": "Legitimate",
+            "validResponse": true,
+            "matchesPriorCase": false,
+            "suppliedPriorCases": false
+          }
+        },
+        {
+          "type": "reviewReport",
+          "seenRevision": 7,
+          "decision": "Forward",
+          "currentMaintainer": true,
+          "checkedReason": true
+        },
+        {
+          "type": "reviewReport",
+          "seenRevision": 8,
+          "decision": "Forward",
+          "currentMaintainer": true,
+          "checkedReason": true
+        },
+        {
+          "type": "reviewReport",
+          "seenRevision": 9,
+          "decision": "RequestInformation",
+          "currentMaintainer": true,
+          "checkedReason": true
+        }
+      ]
+    },
+    "sometimesNeedsInformation": {
+      "command": "seed 47953863319244; to simulate again: pnpm exec quint run gen/security__screening.run.qnt --main security__screening_run --step step --invariant inv --max-samples 80 --max-steps 45 --mbt --seed 47953863319244",
+      "events": [
+        {
+          "type": "claim",
+          "seenRevision": 1,
+          "nowMs": 2,
+          "admitted": true
+        },
+        {
+          "type": "claim",
+          "seenRevision": 2,
+          "nowMs": 1800001,
+          "admitted": true
+        },
+        {
+          "type": "finish",
+          "token": {
+            "revision": 3,
+            "version": 1,
+            "digest": "original"
+          },
+          "input": {
+            "exactVersionLoaded": true,
+            "duplicateEvidence": true,
+            "route": "Surplus"
+          },
+          "observation": {
+            "tag": "DuplicateEvidence"
+          }
+        },
+        {
+          "type": "replace",
+          "seenRevision": 4,
+          "digest": "new",
+          "evidence": {
+            "isReporter": true,
+            "draftOrFailed": true,
+            "noAdvisory": true,
+            "caseNeedsInformation": false,
+            "exactCaseCas": true,
+            "allowedCaseState": true,
+            "exactObjectStored": true,
+            "admitted": true
+          }
+        },
+        {
+          "type": "claim",
+          "seenRevision": 5,
+          "nowMs": 900000,
+          "admitted": true
+        },
+        {
+          "type": "claim",
+          "seenRevision": 6,
+          "nowMs": 1800001,
+          "admitted": true
+        },
+        {
+          "type": "reviewReport",
+          "seenRevision": 7,
+          "decision": "Forward",
+          "currentMaintainer": true,
+          "checkedReason": true
+        },
+        {
+          "type": "reviewReport",
+          "seenRevision": 8,
+          "decision": "Forward",
+          "currentMaintainer": true,
+          "checkedReason": true
+        },
+        {
+          "type": "reviewReport",
+          "seenRevision": 9,
+          "decision": "Forward",
+          "currentMaintainer": true,
+          "checkedReason": true
+        }
+      ]
+    },
+    "sometimesUnavailable": {
+      "command": "seed 47953863319244; to simulate again: pnpm exec quint run gen/security__screening.run.qnt --main security__screening_run --step step --invariant inv --max-samples 80 --max-steps 45 --mbt --seed 47953863319244",
+      "events": [
+        {
+          "type": "reviewReport",
+          "seenRevision": 1,
+          "decision": "Forward",
+          "currentMaintainer": true,
+          "checkedReason": true
+        },
+        {
+          "type": "route",
+          "seenRevision": 2,
+          "routing": {
+            "checkedContext": true,
+            "eligibleRecipients": false,
+            "actingTechnicalApprover": true
+          }
+        },
+        {
+          "type": "reviewReport",
+          "seenRevision": 3,
+          "decision": "Forward",
+          "currentMaintainer": true,
+          "checkedReason": true
+        },
+        {
+          "type": "reviewReport",
+          "seenRevision": 4,
+          "decision": "Forward",
+          "currentMaintainer": true,
+          "checkedReason": true
+        },
+        {
+          "type": "reviewReport",
+          "seenRevision": 5,
+          "decision": "RequestInformation",
+          "currentMaintainer": true,
+          "checkedReason": true
+        },
+        {
+          "type": "replace",
+          "seenRevision": 6,
+          "digest": "revised",
+          "evidence": {
+            "isReporter": true,
+            "draftOrFailed": true,
+            "noAdvisory": true,
+            "caseNeedsInformation": false,
+            "exactCaseCas": true,
+            "allowedCaseState": true,
+            "exactObjectStored": true,
+            "admitted": true
+          }
+        },
+        {
+          "type": "claim",
+          "seenRevision": 7,
+          "nowMs": 900000,
+          "admitted": true
+        },
+        {
+          "type": "finish",
+          "token": {
+            "revision": 8,
+            "version": 2,
+            "digest": "revised"
+          },
+          "input": {
+            "exactVersionLoaded": false,
+            "duplicateEvidence": false,
+            "route": "Absent"
+          },
+          "observation": {
+            "tag": "Unready"
+          }
+        },
+        {
+          "type": "claim",
+          "seenRevision": 9,
+          "nowMs": 2,
+          "admitted": true
+        }
+      ]
+    },
+    "sometimesRevised": {
+      "command": "seed 47953863319244; to simulate again: pnpm exec quint run gen/security__screening.run.qnt --main security__screening_run --step step --invariant inv --max-samples 80 --max-steps 45 --mbt --seed 47953863319244",
+      "events": [
+        {
+          "type": "reviewReport",
+          "seenRevision": 1,
+          "decision": "RequestInformation",
+          "currentMaintainer": true,
+          "checkedReason": true
+        },
+        {
+          "type": "replace",
+          "seenRevision": 2,
+          "digest": "revised",
+          "evidence": {
+            "isReporter": true,
+            "draftOrFailed": true,
+            "noAdvisory": true,
+            "caseNeedsInformation": false,
+            "exactCaseCas": true,
+            "allowedCaseState": true,
+            "exactObjectStored": true,
+            "admitted": true
+          }
+        },
+        {
+          "type": "reviewReport",
+          "seenRevision": 3,
+          "decision": "Forward",
+          "currentMaintainer": true,
+          "checkedReason": true
+        },
+        {
+          "type": "route",
+          "seenRevision": 4,
+          "routing": {
+            "checkedContext": true,
+            "eligibleRecipients": true,
+            "actingTechnicalApprover": false
+          }
+        },
+        {
+          "type": "reviewReport",
+          "seenRevision": 5,
+          "decision": "Forward",
+          "currentMaintainer": true,
+          "checkedReason": true
+        },
+        {
+          "type": "reviewReport",
+          "seenRevision": 6,
+          "decision": "RequestInformation",
+          "currentMaintainer": true,
+          "checkedReason": true
+        },
+        {
+          "type": "replace",
+          "seenRevision": 7,
+          "digest": "new",
+          "evidence": {
+            "isReporter": true,
+            "draftOrFailed": true,
+            "noAdvisory": true,
+            "caseNeedsInformation": false,
+            "exactCaseCas": true,
+            "allowedCaseState": true,
+            "exactObjectStored": true,
+            "admitted": true
+          }
+        },
+        {
+          "type": "claim",
+          "seenRevision": 8,
+          "nowMs": 900001,
+          "admitted": true
+        },
+        {
+          "type": "claim",
+          "seenRevision": 9,
+          "nowMs": 1800001,
+          "admitted": true
+        }
+      ]
+    },
+    "sometimesRouted": {
+      "command": "seed 47953863319244; to simulate again: pnpm exec quint run gen/security__screening.run.qnt --main security__screening_run --step step --invariant inv --max-samples 80 --max-steps 45 --mbt --seed 47953863319244",
+      "events": [
+        {
+          "type": "reviewReport",
+          "seenRevision": 1,
+          "decision": "RequestInformation",
+          "currentMaintainer": true,
+          "checkedReason": true
+        },
+        {
+          "type": "replace",
+          "seenRevision": 2,
+          "digest": "revised",
+          "evidence": {
+            "isReporter": true,
+            "draftOrFailed": true,
+            "noAdvisory": true,
+            "caseNeedsInformation": false,
+            "exactCaseCas": true,
+            "allowedCaseState": true,
+            "exactObjectStored": true,
+            "admitted": true
+          }
+        },
+        {
+          "type": "reviewReport",
+          "seenRevision": 3,
+          "decision": "Forward",
+          "currentMaintainer": true,
+          "checkedReason": true
+        },
+        {
+          "type": "route",
+          "seenRevision": 4,
+          "routing": {
+            "checkedContext": true,
+            "eligibleRecipients": true,
+            "actingTechnicalApprover": false
+          }
+        },
+        {
+          "type": "reviewReport",
+          "seenRevision": 5,
+          "decision": "Forward",
+          "currentMaintainer": true,
+          "checkedReason": true
+        },
+        {
+          "type": "reviewReport",
+          "seenRevision": 6,
+          "decision": "RequestInformation",
+          "currentMaintainer": true,
+          "checkedReason": true
+        },
+        {
+          "type": "replace",
+          "seenRevision": 7,
+          "digest": "new",
+          "evidence": {
+            "isReporter": true,
+            "draftOrFailed": true,
+            "noAdvisory": true,
+            "caseNeedsInformation": false,
+            "exactCaseCas": true,
+            "allowedCaseState": true,
+            "exactObjectStored": true,
+            "admitted": true
+          }
+        },
+        {
+          "type": "claim",
+          "seenRevision": 8,
+          "nowMs": 900001,
+          "admitted": true
+        },
+        {
+          "type": "claim",
+          "seenRevision": 9,
+          "nowMs": 1800001,
+          "admitted": true
+        }
+      ]
+    }
+  },
+  "directed": [
+    "durable receipt precedes and rate-admits screening",
+    "running retry uses inclusive fifteen-minute boundary",
+    "old claim completion refuses after new claim",
+    "exact duplicates suppress the provider",
+    "fixed route and incomplete answer fail closed",
+    "prior-case matches suppress provider language",
+    "report replacement fences concurrent case and intake writers",
+    "human decision fences in-flight screening",
+    "owner self-notice exclusion and recoverable missing contacts",
+    "private notice and previous report version persist after replacement"
+  ],
+  "pinnedSources": {
+    "backend/security/report-intake.ts": "560978be97005fa3b8f8404224add91a6c3eeb3c4b8aa803a07eb374adc7be07",
+    "backend/security/report-intake.test.ts": "e024d218f5e2812d5179cb9c126e71d0cae535f30c08ceffd87bd9ba2801b7ee",
+    "backend/security/analysis.ts": "51dca7422c7766b65e4a014ef622ab6aecbcf0f40f7d8cc227eb2ad57a90405e",
+    "backend/security/submission-store.ts": "7df0935d12ffe50671430abbdea0eb25e80bbb015061ca57ac5c1e2cebb91794",
+    "migrations/0101_durable_security_intake.sql": "9b62a2c583139a91eb7400fc667f041eff78b411885ea2a62832a02d4a42f798",
+    "formal/models/api/api_private_intake.qnt": "30e37494bfade0846eb065295bf9a72b2f4e880176e8315cd479675cadec90c9"
+  },
+  "legacyNamedCases": 17,
+  "legacyCoverage": {
+    "mapped": [
+      "freshRunningScreenNotReclaimedTest",
+      "staleScreenCannotOverwriteRetryTest",
+      "unavailableScreenRetriesTest",
+      "heldReportRevisedAndRequeuedTest",
+      "forwardOverridesSpamTest",
+      "forwardedReportNotRescreenedTest",
+      "staleCompletionCannotAssessTest",
+      "duplicateRemainsRecoverableTest"
+    ],
+    "partiallyMapped": [
+      "legitimateRoutesAndForwardsTest",
+      "heldReportCannotSendTest",
+      "requestInformationBlocksSendTest"
+    ],
+    "separateForwarding": [
+      "sendWithoutGrantRefusedTest",
+      "otherAccountGrantRefusedTest",
+      "expiredGrantRefusesReconcileTest",
+      "renewedGrantReconcilesTest",
+      "rateLimitedReopensDraftTest",
+      "emptyReconcileReopensDraftTest"
+    ]
+  },
+  "boundary": "One durable report. The shell retains exact R2 bytes, validates prior-case identity and privacy, authenticates reviewers, admits rolling-rate work, verifies the atomic case D1 update, and writes the private notification outbox. GitHub user grant and separate advisory receipt verification remain distinct."
+}

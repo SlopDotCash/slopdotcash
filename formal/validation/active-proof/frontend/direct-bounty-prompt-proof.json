@@ -1,0 +1,21 @@
+{
+  "toolchain": {
+    "node": "v26.13.1",
+    "dafny": "4.11.0",
+    "lsc": "0.6.9"
+  },
+  "unit": "frontend__directBountyPrompt.ts",
+  "total": 92,
+  "unproved": [],
+  "errors": [],
+  "exhausted": [],
+  "resting": {},
+  "sha256": {
+    "spec/frontend/directBountyPrompt.md": "3153d6670dcddaa7cc99d72c02a97d600ea3153b00930bc5970cbc53b2801b04"
+  },
+  "generated": {
+    "typescript": "58f29aa0ac1cb14ae7f3b36da4c7c193a1efefadc4ea58fa680243dbced9fd67",
+    "dafny": "c49d22471dbd936e1b70d89740eeb8b73ae2edd129cd542657c56cbc21fc08a5"
+  },
+  "offered": []
+}

@@ -1,0 +1,8 @@
+
+  direct_bounty_income_witness
+    ok verifiedFeeCashWaitsForCompleteCaseBookingTest passed 1 test(s)
+    ok canonicalTimesExcludeEarlierIncomeAndHoldMissingEvidenceTest passed 1 test(s)
+    ok solanaBundleAddsOneFeeAndRequiresOneMatchingTimeTest passed 1 test(s)
+    ok caseAndNetworkTransactionIdentitiesCannotReplayTest passed 1 test(s)
+
+  4 passing (1388ms)

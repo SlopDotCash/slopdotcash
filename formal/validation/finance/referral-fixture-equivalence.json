@@ -1,0 +1,21 @@
+{
+  "results": [
+    {
+      "name": "filedLedger",
+      "exactStateEqual": true,
+      "sha256": "d8c47ebbb53f96233e96c38de1726742721dfac9681bc40b8fed59f53da76e18"
+    },
+    {
+      "name": "fundedChain",
+      "exactStateEqual": true,
+      "sha256": "34a7dda0fdc67199b8ce4e0eb74f71e1d151cb3622765c1fef6959e0d89efd77"
+    },
+    {
+      "name": "reviewedControl",
+      "exactStateEqual": true,
+      "sha256": "f6dc8285969715f0259bc168fe01f56a2504cb4284f3b5c9c53176fec5b16437"
+    }
+  ],
+  "source": "spec/settlement/referralPublication.md",
+  "sourceSha256": "2288ae248dcf6ba7a427542f465e31d3bd0f986fd84b5b90e81e863fd245d9ec"
+}

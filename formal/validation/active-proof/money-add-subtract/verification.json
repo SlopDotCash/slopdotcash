@@ -1,0 +1,20 @@
+{
+  "unit": "settlement__money.ts",
+  "sourceHashes": {
+    "spec/settlement/money.md": "801d269c4fa02d62cac4d5d37412d831793daf16aff7a751c07e10a5ce383f4b",
+    "spec/settlement/money.proof.dfy": "14d6ad9a6d3faa11f32a2abbc1bc9470c247161cbd9fe64fa06af38df1ed8922"
+  },
+  "generatedDafnySha256": "7ed318924ed9b3b8babb474e1c3a001549ee489e59c1467d0a2b86c1b10737d3",
+  "total": 31,
+  "unproved": [
+    "lawDivisionRemainder: (lawDivisionRemainder(a, b) == true)",
+    "lawDivisionReconstructs: (lawDivisionReconstructs(a, b) == true)",
+    "lawFullPrivateConservation: (lawFullPrivateConservation(a) == true)",
+    "lawFullOrdinaryConservation: (lawFullOrdinaryConservation(a) == true)"
+  ],
+  "exhausted": [
+    "lawDivisionReconstructs: (lawDivisionReconstructs(a, b) == true)"
+  ],
+  "resting": {},
+  "errors": []
+}

@@ -1,0 +1,25 @@
+{
+  "snapshot": {
+    "spec/settlement/money.md": "cb766a9b5b99f5509da5478ca15ecbe1c77a09127956d9524e7447c7d0939978",
+    "spec/settlement/reserveRelease.md": "02be6a6e826006bb01aad801f0e2334b36ac47fbee81752c259918b44b79f98a"
+  },
+  "seed": 411,
+  "steps": 25,
+  "traces": 100,
+  "events": {
+    "qualifyUpgrade": 1058,
+    "observe": 176,
+    "check": 124,
+    "approve": 105,
+    "ownerSign": 92,
+    "retireFailedAttempt": 18,
+    "changeOwner": 53,
+    "settlePart": 67,
+    "finalize": 51
+  },
+  "goals": {
+    "sometimesReleased": 51,
+    "sometimesObservedThenReleased": 3,
+    "sometimesPartialHeld": 49
+  }
+}

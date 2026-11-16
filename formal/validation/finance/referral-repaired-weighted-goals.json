@@ -1,0 +1,137 @@
+{
+  "status": "complete",
+  "samplesPerSeed": 100,
+  "maxSteps": 20,
+  "seeds": [
+    812,
+    813
+  ],
+  "countsMeaning": "Counts are over all 100 retained traces per seed, not exhaustive reachability.",
+  "snapshot": {
+    "spec/settlement/money.md": "cb766a9b5b99f5509da5478ca15ecbe1c77a09127956d9524e7447c7d0939978",
+    "spec/settlement/referralAccrual.md": "7d8c666da177c63701fd1e9133fc94d2005aaea41cb3a0fa5fbb0bff4f7ef2b3",
+    "spec/settlement/referralDistributor.md": "9806b4cd07201302c90313cb2ed894c2ee0b7ef953c8bcc0abf1b1da9d75e673",
+    "spec/settlement/referrals.md": "70f1701d007216eff36152de00b41020a01a772cece96950ef9563a89699a373",
+    "spec/settlement/referralPublication.md": "34b7a91a6777b034cf72742ece7d126db85892835213da68d4d367bd9be51b08"
+  },
+  "results": [
+    {
+      "unit": "settlement__referralAccrual",
+      "seed": 812,
+      "safetyPassed": true,
+      "replayPassed": true,
+      "traces": 100,
+      "goalTraceCounts": {
+        "sometimesFiled": 100,
+        "sometimesExcludedRecorded": 9,
+        "sometimesMultiProject": 9
+      },
+      "eventCounts": {
+        "capture": 200,
+        "configure": 100,
+        "enableDryRun": 650,
+        "startMonth": 213,
+        "fileMonth": 200,
+        "disable": 574,
+        "setRate": 17,
+        "abandonMonth": 13,
+        "accrueNext": 33
+      },
+      "missingTransitions": [],
+      "missingGoals": [],
+      "again": "seed 12741891072982; to simulate again: pnpm exec quint run gen/settlement__referralAccrual.run.qnt --main settlement__referralAccrual_run --step step --invariant inv --max-samples 100 --max-steps 20 --mbt --seed 12741891072982"
+    },
+    {
+      "unit": "settlement__referralPublication",
+      "seed": 812,
+      "safetyPassed": true,
+      "replayPassed": true,
+      "traces": 100,
+      "goalTraceCounts": {
+        "sometimesUncertain": 32,
+        "sometimesClaimed": 49,
+        "sometimesVoided": 41
+      },
+      "eventCounts": {
+        "prepare": 105,
+        "journal": 110,
+        "submit": 109,
+        "finalize": 90,
+        "claim": 49,
+        "setPostingPaused": 559,
+        "observeDay": 100,
+        "refreshCache": 481,
+        "invalidateCache": 207,
+        "voidRoot": 41,
+        "acknowledgeVoid": 41,
+        "loseObservation": 57,
+        "finalizeFailure": 15,
+        "retransmit": 28,
+        "discardPrepared": 8
+      },
+      "missingTransitions": [],
+      "missingGoals": [],
+      "rolloverSettlementTraceCount": 10,
+      "again": "seed 87866407830652; to simulate again: pnpm exec quint run gen/settlement__referralPublication.run.qnt --main settlement__referralPublication_run --step step --invariant inv --max-samples 100 --max-steps 20 --mbt --seed 87866407830652"
+    },
+    {
+      "unit": "settlement__referralAccrual",
+      "seed": 813,
+      "safetyPassed": true,
+      "replayPassed": true,
+      "traces": 100,
+      "goalTraceCounts": {
+        "sometimesFiled": 100,
+        "sometimesExcludedRecorded": 3,
+        "sometimesMultiProject": 3
+      },
+      "eventCounts": {
+        "configure": 100,
+        "enableDryRun": 662,
+        "startMonth": 212,
+        "fileMonth": 200,
+        "capture": 200,
+        "disable": 583,
+        "accrueNext": 18,
+        "abandonMonth": 12,
+        "setRate": 13
+      },
+      "missingTransitions": [],
+      "missingGoals": [],
+      "again": "seed 70787061956322; to simulate again: pnpm exec quint run gen/settlement__referralAccrual.run.qnt --main settlement__referralAccrual_run --step step --invariant inv --max-samples 100 --max-steps 20 --mbt --seed 70787061956322"
+    },
+    {
+      "unit": "settlement__referralPublication",
+      "seed": 813,
+      "safetyPassed": true,
+      "replayPassed": true,
+      "traces": 100,
+      "goalTraceCounts": {
+        "sometimesUncertain": 33,
+        "sometimesClaimed": 49,
+        "sometimesVoided": 42
+      },
+      "eventCounts": {
+        "prepare": 106,
+        "setPostingPaused": 521,
+        "discardPrepared": 7,
+        "observeDay": 99,
+        "refreshCache": 517,
+        "journal": 104,
+        "submit": 103,
+        "loseObservation": 53,
+        "retransmit": 27,
+        "finalize": 92,
+        "claim": 49,
+        "invalidateCache": 231,
+        "voidRoot": 42,
+        "acknowledgeVoid": 42,
+        "finalizeFailure": 7
+      },
+      "missingTransitions": [],
+      "missingGoals": [],
+      "rolloverSettlementTraceCount": 6,
+      "again": "seed 181349216719737; to simulate again: pnpm exec quint run gen/settlement__referralPublication.run.qnt --main settlement__referralPublication_run --step step --invariant inv --max-samples 100 --max-steps 20 --mbt --seed 181349216719737"
+    }
+  ]
+}

@@ -1,0 +1,23 @@
+{
+  "unit": "settlement__money.ts",
+  "specHash": "cb766a9b5b99f5509da5478ca15ecbe1c77a09127956d9524e7447c7d0939978",
+  "proofHash": "c963c019e25af747ffc8c6f1ccde302ce211182fc852f872e42324585b32e95a",
+  "total": 9,
+  "unproved": [
+    "lawDivisionRemainder: (lawDivisionRemainder(a, b) == true)",
+    "lawDivisionReconstructs: (lawDivisionReconstructs(a, b) == true)",
+    "lawFullPrivateConservation: (lawFullPrivateConservation(a) == true)",
+    "lawFullOrdinaryConservation: (lawFullOrdinaryConservation(a) == true)"
+  ],
+  "errors": [],
+  "exhausted": [
+    "lawDivisionReconstructs: (lawDivisionReconstructs(a, b) == true)"
+  ],
+  "resting": {},
+  "status": "multiply-one-verified-four-other-laws-unproved",
+  "spec": "spec/settlement/money.md",
+  "originalProofHash": "4ef9c14a579f84b696a70b771d65213d81516ee9ee601470c4eb8243959ebc11",
+  "candidate": "money.proof.dfy",
+  "log": "verification.log",
+  "method": "Unmodified Vibestack prove() in isolated scratch with exactly the current money spec, no offered axioms or proof exceptions, including LemmaScript integrity and Dafny audit."
+}

@@ -159,11 +159,12 @@
       ],
       "inputs": [
         "vibestack/**",
-        "!vibestack/examples/{assistant,dashboard,fullstack}/**",
-        "!**/{node_modules,dist,.vibe,.cache,.spec-cache,.turbo,generated,storybook-static}/**",
+        "!**/{node_modules,dist,.vibe,.cache,.spec-cache,.turbo,generated,storybook-static,__traces__}/**",
         "!{apps,packages,vibestack/studio,vibestack/examples}/**/gen/**",
         "packages/**",
         ".claude/skills/**",
+        ".agents/skills/**",
+        ".claude/settings.json",
         "AGENTS.md",
         "SPEC.md",
         "spec/**",
@@ -234,12 +235,10 @@
         "tsconfig.json",
         "*.config.js",
         "*.config.ts",
-        ".madgerc"
+        ".madgerc",
+        ".jscpd.json"
       ],
       "outputs": []
-    },
-    "//#examples": {
-      "cache": false
     },
     "dev": {
       "cache": false,
@@ -270,6 +269,33 @@
         "generated/**",
         "design.md"
       ]
+    },
+    "@repo/ui#gen": {
+      "dependsOn": [
+        "//#gen"
+      ],
+      "outputs": [
+        "gen/**",
+        "generated/**"
+      ]
+    },
+    "@repo/contracts#build": {
+      "dependsOn": [
+        "gen",
+        "//#gen",
+        "^build"
+      ],
+      "outputs": [
+        "evm/out/**"
+      ]
+    },
+    "@repo/contracts#test": {
+      "dependsOn": [
+        "gen",
+        "//#gen",
+        "^build"
+      ],
+      "outputs": []
     }
   },
   "remoteCache": {

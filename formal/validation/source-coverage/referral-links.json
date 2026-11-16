@@ -1,0 +1,1061 @@
+{
+  "sourceDevelopment": "0d0f0817a439df03cc022bf7aeed4bbe64ef4c65",
+  "sourceHashes": {
+    "spec/backend/referralCodes.md": "0d1ae80d41ef792ed38461d4945ebc1cab63e9628d317c2e0f0cc46dca660311",
+    "spec/backend/referralCodes.proof.dfy": "35e47ce235f11301d039fc1def64305c9835235edb5fb047a7659db07eac4adb",
+    "spec/frontend/referralSettings.md": "be162ae92ebb9ef3852757276b85c24ca6c4b34caab4d66bd803cf9ba32ea919"
+  },
+  "checks": [
+    {
+      "unit": "backend__referralCodes",
+      "proof": {
+        "generatedDafnySha256": "a534e74da5f5eb441cae016151d502866a9172a4aa0969fabf21ad16b93d1f09",
+        "total": 6,
+        "unproved": [],
+        "exhausted": [],
+        "resting": {},
+        "errors": []
+      },
+      "simulation": {
+        "command": "seed 111840454210963; to simulate again: pnpm exec quint run gen/backend__referralCodes.run.qnt --main backend__referralCodes_run --step step --invariant inv --max-samples 350 --max-steps 25 --mbt --seed 111840454210963",
+        "replayed": 30
+      },
+      "witnesses": {
+        "sometimesDistinctOwners": {
+          "command": "seed 111840454210963; to simulate again: pnpm exec quint run gen/backend__referralCodes.run.qnt --main backend__referralCodes_run --step step --invariant inv --max-samples 350 --max-steps 25 --mbt --seed 111840454210963",
+          "events": [
+            {
+              "type": "choose",
+              "name": {
+                "text": "Alpha",
+                "key": "alpha",
+                "syntaxValid": true,
+                "reserved": false
+              },
+              "sameOrigin": true,
+              "team": false,
+              "github": "LoginBelongsToActor",
+              "by": "alice-id"
+            },
+            {
+              "type": "choose",
+              "name": {
+                "text": "Alpha",
+                "key": "alpha",
+                "syntaxValid": true,
+                "reserved": false
+              },
+              "sameOrigin": true,
+              "team": false,
+              "github": "LoginBelongsToActor",
+              "by": "alice-id"
+            },
+            {
+              "type": "choose",
+              "name": {
+                "text": "echo",
+                "key": "echo",
+                "syntaxValid": true,
+                "reserved": false
+              },
+              "sameOrigin": true,
+              "team": false,
+              "github": "NotAGitHubLogin",
+              "by": "alice-id"
+            },
+            {
+              "type": "choose",
+              "name": {
+                "text": "echo",
+                "key": "echo",
+                "syntaxValid": true,
+                "reserved": false
+              },
+              "sameOrigin": true,
+              "team": false,
+              "github": "NotAGitHubLogin",
+              "by": "alice-id"
+            },
+            {
+              "type": "choose",
+              "name": {
+                "text": "ALPHA",
+                "key": "alpha",
+                "syntaxValid": true,
+                "reserved": false
+              },
+              "sameOrigin": true,
+              "team": false,
+              "github": "LoginBelongsToActor",
+              "by": "alice-id"
+            },
+            {
+              "type": "choose",
+              "name": {
+                "text": "charlie",
+                "key": "charlie",
+                "syntaxValid": true,
+                "reserved": false
+              },
+              "sameOrigin": true,
+              "team": false,
+              "github": "NotAGitHubLogin",
+              "by": "alice-id"
+            },
+            {
+              "type": "choose",
+              "name": {
+                "text": "charlie",
+                "key": "charlie",
+                "syntaxValid": true,
+                "reserved": false
+              },
+              "sameOrigin": true,
+              "team": false,
+              "github": "LookupUnavailable",
+              "by": "alice-id"
+            },
+            {
+              "type": "choose",
+              "name": {
+                "text": "echo",
+                "key": "echo",
+                "syntaxValid": true,
+                "reserved": false
+              },
+              "sameOrigin": true,
+              "team": false,
+              "github": "NotAGitHubLogin",
+              "by": "alice-id"
+            },
+            {
+              "type": "choose",
+              "name": {
+                "text": "Bravo",
+                "key": "bravo",
+                "syntaxValid": true,
+                "reserved": false
+              },
+              "sameOrigin": true,
+              "team": false,
+              "github": "LoginBelongsToActor",
+              "by": "bob-id"
+            },
+            {
+              "type": "choose",
+              "name": {
+                "text": "echo",
+                "key": "echo",
+                "syntaxValid": true,
+                "reserved": false
+              },
+              "sameOrigin": true,
+              "team": false,
+              "github": "LoginElsewhere",
+              "by": "alice-id"
+            },
+            {
+              "type": "choose",
+              "name": {
+                "text": "charlie",
+                "key": "charlie",
+                "syntaxValid": true,
+                "reserved": false
+              },
+              "sameOrigin": true,
+              "team": false,
+              "github": "NotAGitHubLogin",
+              "by": "alice-id"
+            },
+            {
+              "type": "choose",
+              "name": {
+                "text": "echo",
+                "key": "echo",
+                "syntaxValid": true,
+                "reserved": false
+              },
+              "sameOrigin": true,
+              "team": false,
+              "github": "LoginElsewhere",
+              "by": "alice-id"
+            },
+            {
+              "type": "choose",
+              "name": {
+                "text": "ALPHA",
+                "key": "alpha",
+                "syntaxValid": true,
+                "reserved": false
+              },
+              "sameOrigin": true,
+              "team": false,
+              "github": "LoginElsewhere",
+              "by": "alice-id"
+            },
+            {
+              "type": "choose",
+              "name": {
+                "text": "Alpha",
+                "key": "alpha",
+                "syntaxValid": true,
+                "reserved": false
+              },
+              "sameOrigin": true,
+              "team": false,
+              "github": "LookupUnavailable",
+              "by": "alice-id"
+            },
+            {
+              "type": "choose",
+              "name": {
+                "text": "charlie",
+                "key": "charlie",
+                "syntaxValid": true,
+                "reserved": false
+              },
+              "sameOrigin": true,
+              "team": false,
+              "github": "LoginBelongsToActor",
+              "by": "alice-id"
+            },
+            {
+              "type": "choose",
+              "name": {
+                "text": "ALPHA",
+                "key": "alpha",
+                "syntaxValid": true,
+                "reserved": false
+              },
+              "sameOrigin": true,
+              "team": false,
+              "github": "LookupUnavailable",
+              "by": "alice-id"
+            },
+            {
+              "type": "choose",
+              "name": {
+                "text": "echo",
+                "key": "echo",
+                "syntaxValid": true,
+                "reserved": false
+              },
+              "sameOrigin": true,
+              "team": false,
+              "github": "LoginElsewhere",
+              "by": "alice-id"
+            },
+            {
+              "type": "choose",
+              "name": {
+                "text": "charlie",
+                "key": "charlie",
+                "syntaxValid": true,
+                "reserved": false
+              },
+              "sameOrigin": true,
+              "team": false,
+              "github": "NotAGitHubLogin",
+              "by": "alice-id"
+            },
+            {
+              "type": "choose",
+              "name": {
+                "text": "charlie",
+                "key": "charlie",
+                "syntaxValid": true,
+                "reserved": false
+              },
+              "sameOrigin": true,
+              "team": false,
+              "github": "LookupUnavailable",
+              "by": "alice-id"
+            },
+            {
+              "type": "choose",
+              "name": {
+                "text": "charlie",
+                "key": "charlie",
+                "syntaxValid": true,
+                "reserved": false
+              },
+              "sameOrigin": true,
+              "team": false,
+              "github": "LookupUnavailable",
+              "by": "alice-id"
+            },
+            {
+              "type": "choose",
+              "name": {
+                "text": "ALPHA",
+                "key": "alpha",
+                "syntaxValid": true,
+                "reserved": false
+              },
+              "sameOrigin": true,
+              "team": false,
+              "github": "LoginAbsent",
+              "by": "alice-id"
+            },
+            {
+              "type": "choose",
+              "name": {
+                "text": "charlie",
+                "key": "charlie",
+                "syntaxValid": true,
+                "reserved": false
+              },
+              "sameOrigin": true,
+              "team": false,
+              "github": "NotAGitHubLogin",
+              "by": "alice-id"
+            },
+            {
+              "type": "choose",
+              "name": {
+                "text": "echo",
+                "key": "echo",
+                "syntaxValid": true,
+                "reserved": false
+              },
+              "sameOrigin": true,
+              "team": false,
+              "github": "LoginElsewhere",
+              "by": "alice-id"
+            },
+            {
+              "type": "choose",
+              "name": {
+                "text": "Bravo",
+                "key": "bravo",
+                "syntaxValid": true,
+                "reserved": false
+              },
+              "sameOrigin": true,
+              "team": false,
+              "github": "LookupUnavailable",
+              "by": "bob-id"
+            },
+            {
+              "type": "choose",
+              "name": {
+                "text": "foxtrot",
+                "key": "foxtrot",
+                "syntaxValid": true,
+                "reserved": false
+              },
+              "sameOrigin": true,
+              "team": false,
+              "github": "LoginBelongsToActor",
+              "by": "alice-id"
+            }
+          ]
+        },
+        "sometimesReplacedLink": {
+          "command": "seed 111840454210963; to simulate again: pnpm exec quint run gen/backend__referralCodes.run.qnt --main backend__referralCodes_run --step step --invariant inv --max-samples 350 --max-steps 25 --mbt --seed 111840454210963",
+          "events": [
+            {
+              "type": "choose",
+              "name": {
+                "text": "charlie",
+                "key": "charlie",
+                "syntaxValid": true,
+                "reserved": false
+              },
+              "sameOrigin": true,
+              "team": false,
+              "github": "NotAGitHubLogin",
+              "by": "bob-id"
+            },
+            {
+              "type": "choose",
+              "name": {
+                "text": "charlie",
+                "key": "charlie",
+                "syntaxValid": true,
+                "reserved": false
+              },
+              "sameOrigin": true,
+              "team": false,
+              "github": "LoginAbsent",
+              "by": "bob-id"
+            },
+            {
+              "type": "choose",
+              "name": {
+                "text": "charlie",
+                "key": "charlie",
+                "syntaxValid": true,
+                "reserved": false
+              },
+              "sameOrigin": true,
+              "team": false,
+              "github": "LoginAbsent",
+              "by": "bob-id"
+            },
+            {
+              "type": "choose",
+              "name": {
+                "text": "Alpha",
+                "key": "alpha",
+                "syntaxValid": true,
+                "reserved": false
+              },
+              "sameOrigin": true,
+              "team": false,
+              "github": "NotAGitHubLogin",
+              "by": "alice-id"
+            },
+            {
+              "type": "choose",
+              "name": {
+                "text": "Alpha",
+                "key": "alpha",
+                "syntaxValid": true,
+                "reserved": false
+              },
+              "sameOrigin": true,
+              "team": false,
+              "github": "LoginElsewhere",
+              "by": "alice-id"
+            },
+            {
+              "type": "choose",
+              "name": {
+                "text": "Alpha",
+                "key": "alpha",
+                "syntaxValid": true,
+                "reserved": false
+              },
+              "sameOrigin": true,
+              "team": false,
+              "github": "LoginBelongsToActor",
+              "by": "alice-id"
+            },
+            {
+              "type": "choose",
+              "name": {
+                "text": "foxtrot",
+                "key": "foxtrot",
+                "syntaxValid": true,
+                "reserved": false
+              },
+              "sameOrigin": true,
+              "team": false,
+              "github": "NotAGitHubLogin",
+              "by": "alice-id"
+            },
+            {
+              "type": "choose",
+              "name": {
+                "text": "delta",
+                "key": "delta",
+                "syntaxValid": true,
+                "reserved": false
+              },
+              "sameOrigin": true,
+              "team": false,
+              "github": "LoginBelongsToActor",
+              "by": "alice-id"
+            },
+            {
+              "type": "choose",
+              "name": {
+                "text": "Bravo",
+                "key": "bravo",
+                "syntaxValid": true,
+                "reserved": false
+              },
+              "sameOrigin": true,
+              "team": false,
+              "github": "NotAGitHubLogin",
+              "by": "alice-id"
+            },
+            {
+              "type": "choose",
+              "name": {
+                "text": "foxtrot",
+                "key": "foxtrot",
+                "syntaxValid": true,
+                "reserved": false
+              },
+              "sameOrigin": true,
+              "team": false,
+              "github": "NotAGitHubLogin",
+              "by": "alice-id"
+            },
+            {
+              "type": "choose",
+              "name": {
+                "text": "echo",
+                "key": "echo",
+                "syntaxValid": true,
+                "reserved": false
+              },
+              "sameOrigin": true,
+              "team": false,
+              "github": "LoginBelongsToActor",
+              "by": "alice-id"
+            },
+            {
+              "type": "choose",
+              "name": {
+                "text": "charlie",
+                "key": "charlie",
+                "syntaxValid": true,
+                "reserved": false
+              },
+              "sameOrigin": true,
+              "team": false,
+              "github": "LoginBelongsToActor",
+              "by": "bob-id"
+            },
+            {
+              "type": "choose",
+              "name": {
+                "text": "echo",
+                "key": "echo",
+                "syntaxValid": true,
+                "reserved": false
+              },
+              "sameOrigin": true,
+              "team": false,
+              "github": "LoginAbsent",
+              "by": "alice-id"
+            },
+            {
+              "type": "choose",
+              "name": {
+                "text": "ALPHA",
+                "key": "alpha",
+                "syntaxValid": true,
+                "reserved": false
+              },
+              "sameOrigin": true,
+              "team": false,
+              "github": "NotAGitHubLogin",
+              "by": "alice-id"
+            },
+            {
+              "type": "choose",
+              "name": {
+                "text": "charlie",
+                "key": "charlie",
+                "syntaxValid": true,
+                "reserved": false
+              },
+              "sameOrigin": true,
+              "team": false,
+              "github": "NotAGitHubLogin",
+              "by": "bob-id"
+            },
+            {
+              "type": "choose",
+              "name": {
+                "text": "charlie",
+                "key": "charlie",
+                "syntaxValid": true,
+                "reserved": false
+              },
+              "sameOrigin": true,
+              "team": false,
+              "github": "LoginElsewhere",
+              "by": "bob-id"
+            },
+            {
+              "type": "choose",
+              "name": {
+                "text": "Bravo",
+                "key": "bravo",
+                "syntaxValid": true,
+                "reserved": false
+              },
+              "sameOrigin": true,
+              "team": false,
+              "github": "LoginElsewhere",
+              "by": "alice-id"
+            },
+            {
+              "type": "choose",
+              "name": {
+                "text": "echo",
+                "key": "echo",
+                "syntaxValid": true,
+                "reserved": false
+              },
+              "sameOrigin": true,
+              "team": false,
+              "github": "LoginElsewhere",
+              "by": "alice-id"
+            },
+            {
+              "type": "choose",
+              "name": {
+                "text": "delta",
+                "key": "delta",
+                "syntaxValid": true,
+                "reserved": false
+              },
+              "sameOrigin": true,
+              "team": false,
+              "github": "LookupUnavailable",
+              "by": "alice-id"
+            },
+            {
+              "type": "choose",
+              "name": {
+                "text": "foxtrot",
+                "key": "foxtrot",
+                "syntaxValid": true,
+                "reserved": false
+              },
+              "sameOrigin": true,
+              "team": false,
+              "github": "LookupUnavailable",
+              "by": "alice-id"
+            },
+            {
+              "type": "choose",
+              "name": {
+                "text": "Alpha",
+                "key": "alpha",
+                "syntaxValid": true,
+                "reserved": false
+              },
+              "sameOrigin": true,
+              "team": false,
+              "github": "NotAGitHubLogin",
+              "by": "alice-id"
+            },
+            {
+              "type": "choose",
+              "name": {
+                "text": "delta",
+                "key": "delta",
+                "syntaxValid": true,
+                "reserved": false
+              },
+              "sameOrigin": true,
+              "team": false,
+              "github": "LoginElsewhere",
+              "by": "alice-id"
+            },
+            {
+              "type": "choose",
+              "name": {
+                "text": "Bravo",
+                "key": "bravo",
+                "syntaxValid": true,
+                "reserved": false
+              },
+              "sameOrigin": true,
+              "team": false,
+              "github": "LoginAbsent",
+              "by": "alice-id"
+            },
+            {
+              "type": "choose",
+              "name": {
+                "text": "ALPHA",
+                "key": "alpha",
+                "syntaxValid": true,
+                "reserved": false
+              },
+              "sameOrigin": true,
+              "team": false,
+              "github": "LoginAbsent",
+              "by": "alice-id"
+            },
+            {
+              "type": "choose",
+              "name": {
+                "text": "delta",
+                "key": "delta",
+                "syntaxValid": true,
+                "reserved": false
+              },
+              "sameOrigin": true,
+              "team": false,
+              "github": "LoginElsewhere",
+              "by": "alice-id"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "unit": "frontend__referralSettings",
+      "proof": {
+        "generatedDafnySha256": "007689428666752050a1ea0206c18afbc293a0941b4acfb41ff15ace711110b0",
+        "total": 27,
+        "unproved": [],
+        "exhausted": [],
+        "resting": {},
+        "errors": []
+      },
+      "simulation": {
+        "command": "seed 86218823198305; to simulate again: pnpm exec quint run gen/frontend__referralSettings.run.qnt --main frontend__referralSettings_run --step step --invariant inv --max-samples 350 --max-steps 25 --mbt --seed 86218823198305",
+        "replayed": 30
+      },
+      "witnesses": {
+        "sometimesSaving": {
+          "command": "seed 86218823198305; to simulate again: pnpm exec quint run gen/frontend__referralSettings.run.qnt --main frontend__referralSettings_run --step step --invariant inv --max-samples 350 --max-steps 25 --mbt --seed 86218823198305",
+          "events": [
+            {
+              "type": "signOut"
+            },
+            {
+              "type": "signOut"
+            },
+            {
+              "type": "signOut"
+            },
+            {
+              "type": "mount",
+              "actor": "bob-id",
+              "code": "Alpha"
+            },
+            {
+              "type": "submit",
+              "text": "Alpha",
+              "normalized": "b",
+              "syntaxValid": true
+            },
+            {
+              "type": "signOut"
+            },
+            {
+              "type": "signOut"
+            },
+            {
+              "type": "signOut"
+            },
+            {
+              "type": "mount",
+              "actor": "alice-id",
+              "code": "Alpha"
+            },
+            {
+              "type": "submit",
+              "text": "Alpha",
+              "normalized": "a",
+              "syntaxValid": false
+            },
+            {
+              "type": "edit",
+              "text": "Bravo"
+            },
+            {
+              "type": "mount",
+              "actor": "alice-id",
+              "code": "Alpha"
+            },
+            {
+              "type": "submit",
+              "text": "Alpha",
+              "normalized": "b",
+              "syntaxValid": false
+            },
+            {
+              "type": "submit",
+              "text": "Alpha",
+              "normalized": "",
+              "syntaxValid": false
+            },
+            {
+              "type": "edit",
+              "text": "Bravo"
+            },
+            {
+              "type": "mount",
+              "actor": "bob-id",
+              "code": ""
+            },
+            {
+              "type": "mount",
+              "actor": "alice-id",
+              "code": "Alpha"
+            },
+            {
+              "type": "signOut"
+            },
+            {
+              "type": "mount",
+              "actor": "alice-id",
+              "code": "Bravo"
+            },
+            {
+              "type": "submit",
+              "text": "Bravo",
+              "normalized": "b",
+              "syntaxValid": false
+            },
+            {
+              "type": "signOut"
+            },
+            {
+              "type": "signOut"
+            },
+            {
+              "type": "signOut"
+            },
+            {
+              "type": "mount",
+              "actor": "alice-id",
+              "code": "Bravo"
+            },
+            {
+              "type": "edit",
+              "text": "Bravo"
+            }
+          ]
+        },
+        "sometimesSaved": {
+          "command": "seed 86218823198305; to simulate again: pnpm exec quint run gen/frontend__referralSettings.run.qnt --main frontend__referralSettings_run --step step --invariant inv --max-samples 350 --max-steps 25 --mbt --seed 86218823198305",
+          "events": [
+            {
+              "type": "mount",
+              "actor": "bob-id",
+              "code": "Alpha"
+            },
+            {
+              "type": "edit",
+              "text": ""
+            },
+            {
+              "type": "signOut"
+            },
+            {
+              "type": "signOut"
+            },
+            {
+              "type": "mount",
+              "actor": "bob-id",
+              "code": ""
+            },
+            {
+              "type": "submit",
+              "text": "",
+              "normalized": "a",
+              "syntaxValid": true
+            },
+            {
+              "type": "resolve",
+              "actor": "bob-id",
+              "lifetime": 2,
+              "request": 1,
+              "answer": {
+                "tag": "Stored",
+                "code": "Bravo"
+              }
+            },
+            {
+              "type": "edit",
+              "text": "Bravo"
+            },
+            {
+              "type": "signOut"
+            },
+            {
+              "type": "signOut"
+            },
+            {
+              "type": "signOut"
+            },
+            {
+              "type": "mount",
+              "actor": "bob-id",
+              "code": ""
+            },
+            {
+              "type": "edit",
+              "text": "Alpha"
+            },
+            {
+              "type": "edit",
+              "text": ""
+            },
+            {
+              "type": "submit",
+              "text": "",
+              "normalized": "a",
+              "syntaxValid": false
+            },
+            {
+              "type": "mount",
+              "actor": "alice-id",
+              "code": ""
+            },
+            {
+              "type": "edit",
+              "text": ""
+            },
+            {
+              "type": "signOut"
+            },
+            {
+              "type": "signOut"
+            },
+            {
+              "type": "mount",
+              "actor": "alice-id",
+              "code": "Alpha"
+            },
+            {
+              "type": "mount",
+              "actor": "alice-id",
+              "code": "Bravo"
+            },
+            {
+              "type": "signOut"
+            },
+            {
+              "type": "signOut"
+            },
+            {
+              "type": "signOut"
+            },
+            {
+              "type": "signOut"
+            }
+          ]
+        },
+        "sometimesFailedPreservesLink": {
+          "command": "seed 86218823198305; to simulate again: pnpm exec quint run gen/frontend__referralSettings.run.qnt --main frontend__referralSettings_run --step step --invariant inv --max-samples 350 --max-steps 25 --mbt --seed 86218823198305",
+          "events": [
+            {
+              "type": "mount",
+              "actor": "bob-id",
+              "code": ""
+            },
+            {
+              "type": "signOut"
+            },
+            {
+              "type": "signOut"
+            },
+            {
+              "type": "mount",
+              "actor": "alice-id",
+              "code": "Bravo"
+            },
+            {
+              "type": "submit",
+              "text": "Bravo",
+              "normalized": "a",
+              "syntaxValid": true
+            },
+            {
+              "type": "resolve",
+              "actor": "alice-id",
+              "lifetime": 2,
+              "request": 1,
+              "answer": {
+                "tag": "FailedAnswer"
+              }
+            },
+            {
+              "type": "mount",
+              "actor": "alice-id",
+              "code": ""
+            },
+            {
+              "type": "mount",
+              "actor": "alice-id",
+              "code": ""
+            },
+            {
+              "type": "mount",
+              "actor": "alice-id",
+              "code": "Alpha"
+            },
+            {
+              "type": "mount",
+              "actor": "alice-id",
+              "code": "Alpha"
+            },
+            {
+              "type": "signOut"
+            },
+            {
+              "type": "signOut"
+            },
+            {
+              "type": "signOut"
+            },
+            {
+              "type": "signOut"
+            },
+            {
+              "type": "mount",
+              "actor": "bob-id",
+              "code": "Bravo"
+            },
+            {
+              "type": "submit",
+              "text": "Bravo",
+              "normalized": "b",
+              "syntaxValid": false
+            },
+            {
+              "type": "submit",
+              "text": "Bravo",
+              "normalized": "b",
+              "syntaxValid": false
+            },
+            {
+              "type": "submit",
+              "text": "Bravo",
+              "normalized": "a",
+              "syntaxValid": true
+            },
+            {
+              "type": "mount",
+              "actor": "bob-id",
+              "code": "Bravo"
+            },
+            {
+              "type": "submit",
+              "text": "Bravo",
+              "normalized": "a",
+              "syntaxValid": true
+            },
+            {
+              "type": "mount",
+              "actor": "bob-id",
+              "code": ""
+            },
+            {
+              "type": "signOut"
+            },
+            {
+              "type": "mount",
+              "actor": "alice-id",
+              "code": "Bravo"
+            },
+            {
+              "type": "signOut"
+            },
+            {
+              "type": "mount",
+              "actor": "alice-id",
+              "code": "Bravo"
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "directed": [
+    "origin, session, syntax, team and reserved refusals",
+    "negative and unavailable GitHub lookup",
+    "active link uses current GitHub login",
+    "invalid, closed, mismatched, and unavailable lookup outcomes",
+    "permanent ownership and actual five-name cap",
+    "return to a retired name at cap with case change",
+    "local invalid submission and single flight",
+    "negative and empty save preserve existing link",
+    "stale responses across account changes and remounts",
+    "successful save and sign out"
+  ]
+}

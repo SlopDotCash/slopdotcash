@@ -1,0 +1,4 @@
+settlement__money.dfy(377,0): Error: a postcondition could not be proved on this return path
+settlement__money.dfy(376,30): Related location: this is the postcondition that could not be proved
+
+Dafny program verifier finished with 0 verified, 1 error

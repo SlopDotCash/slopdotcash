@@ -1,0 +1,260 @@
+{
+  "sourceMain": "6b3b9d0b979f0608d87941f1146056a98513ffcf",
+  "source": "spec/contributor/sessionExchange.md",
+  "sourceHash": "1d167ce597dc319bf55fca6dd12512e2dd49c56c54ce37f64a7e65e1fefa90b2",
+  "proof": {
+    "generatedDafnySha256": "347d8dd87ca8beaa73f8a91a5e571378e656029ab02a69b1000fec1e9e75f268",
+    "total": 107,
+    "unproved": [],
+    "exhausted": [],
+    "resting": {},
+    "errors": []
+  },
+  "simulation": {
+    "command": "seed 118372540639888; to simulate again: pnpm exec quint run gen/contributor__sessionExchange.run.qnt --main contributor__sessionExchange_run --step step --invariant inv --max-samples 400 --max-steps 34 --mbt --seed 118372540639888",
+    "replayed": 25
+  },
+  "witnesses": {
+    "sometimesReady": {
+      "command": "seed 182255681175634; to simulate again: pnpm exec quint run gen/contributor__sessionExchange.run.qnt --main contributor__sessionExchange_run --step step --invariant never_sometimesReady --max-samples 637 --max-steps 22 --mbt --seed 182255681175634",
+      "events": [
+        {
+          "type": "begin",
+          "attempt": 1,
+          "key": "key-a"
+        },
+        {
+          "type": "acceptStart",
+          "deadline": 20,
+          "delay": 2
+        },
+        {
+          "type": "receiveStart",
+          "attempt": 1,
+          "valid": true
+        },
+        {
+          "type": "waitPoll"
+        },
+        {
+          "type": "authorizeFlow",
+          "actor": "actor-a"
+        },
+        {
+          "type": "acceptPoll",
+          "assertionUntil": 20
+        },
+        {
+          "type": "receivePoll",
+          "attempt": 1,
+          "retry": 1,
+          "valid": true
+        },
+        {
+          "type": "exchange",
+          "bearerUntil": 30,
+          "exactAssertion": true,
+          "signed": true
+        },
+        {
+          "type": "receiveBearer",
+          "attempt": 1,
+          "valid": true
+        },
+        {
+          "type": "authenticateCreate",
+          "currentAuthority": true
+        },
+        {
+          "type": "observeTime",
+          "time": 3
+        },
+        {
+          "type": "commitCreate",
+          "response": {
+            "serverId": "server-a",
+            "status": "AwaitingTrace"
+          },
+          "actorAndKeyMatched": true
+        },
+        {
+          "type": "receiveCreate",
+          "attempt": 1,
+          "exactSchema": true
+        }
+      ]
+    },
+    "sometimesLostButCommitted": {
+      "command": "seed 266398756570698; to simulate again: pnpm exec quint run gen/contributor__sessionExchange.run.qnt --main contributor__sessionExchange_run --step step --invariant never_sometimesLostButCommitted --max-samples 369 --max-steps 38 --mbt --seed 266398756570698",
+      "directedQuint": {
+        "command": "quint test slop-session-lost-create.qnt --seed=523 --max-samples=1",
+        "testSource": "module slop_session_lost_create {\n  import contributor__sessionExchange as E from \"./contributor__sessionExchange\"\n  var state: E::Exchange\n  action init = state' = E::initial\n  action begin = state' = E::begin(state, 1, \"payload-digest\")\n  action start = state' = E::acceptStart(state, 7, 2)\n  action show = state' = E::receiveStart(state, 1, true)\n  action authorize = state' = E::authorizeFlow(state, \"immutable-github-id\")\n  action waitPoll = state' = E::waitPoll(state)\n  action poll = state' = E::acceptPoll(state, 6)\n  action assertion = state' = E::receivePoll(state, 1, 2, true)\n  action exchange = state' = E::exchange(state, 8, true, true)\n  action receive = state' = E::receiveBearer(state, 1, true)\n  action access = state' = E::authenticateCreate(state, true)\n  action commit = state' = E::commitCreate(state, { serverId: \"existing-run\", status: E::Finalized }, true)\n  action lose = state' = E::receiveCreate(state, 1, false)\n  run lostWriteReplyTest = init.then(begin).then(start).then(show).then(authorize)\n    .then(waitPoll).then(poll).then(assertion).then(exchange).then(receive).then(access)\n    .then(commit).then(lose).expect(E::sometimesLostButCommitted(state) and state.snapshot.serverId == \"existing-run\")\n}\n",
+        "testSha256": "b3758574caddd31c3ab7d5b129f94748d72597c485b0b703fe438c224538f979",
+        "output": "slop_session_lost_create\n    ok lostWriteReplyTest passed 1 test(s)\n\n  1 passing (82ms)"
+      }
+    },
+    "sometimesConsumedWithoutBearer": {
+      "command": "seed 118372540639888; to simulate again: pnpm exec quint run gen/contributor__sessionExchange.run.qnt --main contributor__sessionExchange_run --step step --invariant inv --max-samples 400 --max-steps 34 --mbt --seed 118372540639888",
+      "events": [
+        {
+          "type": "begin",
+          "attempt": 1,
+          "key": "key-a"
+        },
+        {
+          "type": "observeTime",
+          "time": 3
+        },
+        {
+          "type": "acceptStart",
+          "deadline": 20,
+          "delay": 2
+        },
+        {
+          "type": "receiveStart",
+          "attempt": 1,
+          "valid": true
+        },
+        {
+          "type": "authorizeFlow",
+          "actor": "actor-b"
+        },
+        {
+          "type": "waitPoll"
+        },
+        {
+          "type": "acceptPoll",
+          "assertionUntil": 10
+        },
+        {
+          "type": "receivePoll",
+          "attempt": 1,
+          "retry": 1,
+          "valid": true
+        },
+        {
+          "type": "exchange",
+          "bearerUntil": 10,
+          "exactAssertion": true,
+          "signed": false
+        },
+        {
+          "type": "receiveBearer",
+          "attempt": 1,
+          "valid": false
+        },
+        {
+          "type": "begin",
+          "attempt": 2,
+          "key": "key-b"
+        },
+        {
+          "type": "acceptStart",
+          "deadline": 20,
+          "delay": 1
+        },
+        {
+          "type": "receiveStart",
+          "attempt": 2,
+          "valid": false
+        },
+        {
+          "type": "observeTime",
+          "time": 20
+        },
+        {
+          "type": "observeTime",
+          "time": 20
+        },
+        {
+          "type": "observeTime",
+          "time": 20
+        },
+        {
+          "type": "observeTime",
+          "time": 20
+        },
+        {
+          "type": "observeTime",
+          "time": 20
+        },
+        {
+          "type": "observeTime",
+          "time": 20
+        },
+        {
+          "type": "observeTime",
+          "time": 20
+        },
+        {
+          "type": "observeTime",
+          "time": 20
+        },
+        {
+          "type": "observeTime",
+          "time": 20
+        },
+        {
+          "type": "observeTime",
+          "time": 20
+        },
+        {
+          "type": "observeTime",
+          "time": 20
+        },
+        {
+          "type": "observeTime",
+          "time": 20
+        },
+        {
+          "type": "observeTime",
+          "time": 20
+        },
+        {
+          "type": "observeTime",
+          "time": 20
+        },
+        {
+          "type": "observeTime",
+          "time": 20
+        },
+        {
+          "type": "observeTime",
+          "time": 20
+        },
+        {
+          "type": "observeTime",
+          "time": 20
+        },
+        {
+          "type": "observeTime",
+          "time": 20
+        },
+        {
+          "type": "observeTime",
+          "time": 20
+        },
+        {
+          "type": "observeTime",
+          "time": 20
+        },
+        {
+          "type": "observeTime",
+          "time": 20
+        }
+      ]
+    }
+  },
+  "directed": [
+    "fresh start and trusted displayed handoff",
+    "early pending response, authoritative delay, and expired polling",
+    "consumed flow on lost assertion response",
+    "assertion expires before reply and before exchange",
+    "signature failure consumes assertion",
+    "lost and expired bearer handling",
+    "successful authorization can precede expiry",
+    "lost create reply preserves exact response projection",
+    "failed write and interrupted local invocation",
+    "user retry uses a distinct invocation and rejects stale responses"
+  ]
+}

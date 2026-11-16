@@ -1,0 +1,32 @@
+{
+  "scratch": "/tmp/slop-referral-modeled-buyback-valid-burn",
+  "specHashes": {
+    "spec/settlement/money.md": "801d269c4fa02d62cac4d5d37412d831793daf16aff7a751c07e10a5ce383f4b",
+    "spec/settlement/half.md": "295d7fe379d149205880a3f738a5c8628ba17fadb0f90fb791bdd943256ed521",
+    "spec/fees/buyback.md": "805bf185354dc70865ee85f8d8ffcb08882c18f79cfe4e0380f932c7ecb0d999"
+  },
+  "simulations": [
+    {
+      "name": "fees__buyback",
+      "step": "step",
+      "traces": 35,
+      "goals": [
+        "sometimesInTransit",
+        "sometimesRefunded",
+        "sometimesBurned"
+      ],
+      "command": "seed 137503259824924; to simulate again: pnpm exec quint run gen/fees__buyback.run.qnt --main fees__buyback_run --step step --invariant inv --max-samples 150 --max-steps 24 --mbt --seed 137503259824924"
+    },
+    {
+      "name": "fees__buyback",
+      "step": "probe",
+      "traces": 35,
+      "goals": [
+        "sometimesInTransit",
+        "sometimesRefunded",
+        "sometimesBurned"
+      ],
+      "command": "seed 156222116904640; to simulate again: pnpm exec quint run gen/fees__buyback.run.qnt --main fees__buyback_run --step probe --invariant inv --max-samples 150 --max-steps 24 --mbt --seed 156222116904640"
+    }
+  ]
+}

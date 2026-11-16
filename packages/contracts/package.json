@@ -1,0 +1,9 @@
+{
+  "name": "@repo/contracts",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "build": "cd evm && forge build && cd ../solana && cargo check --locked --target-dir .cache/target",
+    "test": "cd evm && forge test && FOUNDRY_PROFILE=smt forge build --deny warnings src/EscrowMath.sol && cd ../solana && cargo test --locked --target-dir .cache/target"
+  }
+}

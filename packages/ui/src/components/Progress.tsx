@@ -16,7 +16,7 @@ export function Progress({ value, max = 100, className, ...props }: ProgressProp
   return (
     <ProgressPrimitive.Root value={done} max={max} className={cn("h-2 w-full overflow-hidden rounded-lg bg-secondary", className)} {...props}>
       <ProgressPrimitive.Indicator
-        className={cn("size-full origin-left bg-primary transition-transform", done === null && "animate-pulse")}
+        className={cn("size-full origin-left bg-primary motion-safe:transition-transform motion-safe:duration-base", done === null && "motion-safe:animate-pulse")}
         style={done === null ? undefined : { transform: `scaleX(${done / max})` }}
       />
     </ProgressPrimitive.Root>

@@ -1,0 +1,24 @@
+{
+  "scratch": "/var/folders/1g/77s889gx10n7mtl6z1nfrxzm0000gn/T/slop-wallet-registration-60K4t3",
+  "snapshot": {
+    "spec/backend/wallets.md": "c2f024263e30cbcdde00fa36d79e44f9ec8687ed0b8b3651c6628899352bc13b"
+  },
+  "simulations": [
+    {
+      "unit": "backend__wallets",
+      "broken": false,
+      "traces": 100,
+      "samples": 100,
+      "steps": 20,
+      "replayPassed": true,
+      "again": "seed 107952821665554; to simulate again: pnpm exec quint run gen/backend__wallets.run.qnt --main backend__wallets_run --step step --invariant inv --max-samples 100 --max-steps 20 --mbt --seed 107952821665554"
+    }
+  ],
+  "proofs": [],
+  "equivalence": {
+    "priorSnapshot": "23122a0d14d9aa3f28842900d73de092fa1e32d19e0fdc5eca45d11a6adef39c",
+    "currentSnapshot": "c2f024263e30cbcdde00fa36d79e44f9ec8687ed0b8b3651c6628899352bc13b",
+    "priorGeneratedTs": "ce76b464f45faf9d840d1a2962801469a4745e286377c6aae1cde78bedf319b8",
+    "currentGeneratedTs": "ce76b464f45faf9d840d1a2962801469a4745e286377c6aae1cde78bedf319b8"
+  }
+}

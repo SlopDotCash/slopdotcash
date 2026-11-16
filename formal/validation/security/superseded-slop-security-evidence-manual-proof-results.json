@@ -1,0 +1,21 @@
+[
+  {
+    "unit": "security__evidence.ts",
+    "total": 54,
+    "unproved": [
+      "markPermanent: (inv(e) ==> canMarkPermanent(e, ref) ==> alwaysPermanentRetained(markPermanent(e, ref)))",
+      "markPermanent: (inv(e) ==> canMarkPermanent(e, ref) ==> alwaysReferenceHistory(markPermanent(e, ref)))",
+      "markPermanent: (inv(e) ==> canMarkPermanent(e, ref) ==> alwaysDeletionAuthorized(markPermanent(e, ref)))",
+      "markPermanent: (inv(e) ==> canMarkPermanent(e, ref) ==> stepRetainsReferences(e, markPermanent(e, ref)))",
+      "expireReference: (inv(e) ==> canExpireReference(e, ref) ==> alwaysPermanentRetained(expireReference(e, ref)))",
+      "expireReference: (inv(e) ==> canExpireReference(e, ref) ==> alwaysReferenceHistory(expireReference(e, ref)))",
+      "expireReference: (inv(e) ==> canExpireReference(e, ref) ==> alwaysDeletionAuthorized(expireReference(e, ref)))",
+      "expireReference: (inv(e) ==> canExpireReference(e, ref) ==> stepRetainsReferences(e, expireReference(e, ref)))",
+      "step: inv(step(current, event))"
+    ],
+    "errors": [
+      "SingletonUnionMembers (security__evidence.dfy:440) does not verify: forall x :: x in values + Std.Collections.Seq.Filter((set_x: int) => !((set_x in values)), [value]) <==> x in values || x == value; a lemma that is not generated must prove"
+    ],
+    "exhausted": []
+  }
+]

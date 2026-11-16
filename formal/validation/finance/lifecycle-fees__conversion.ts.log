@@ -1,0 +1,11 @@
+solver: Z3 4.15.4 (/opt/homebrew/Cellar/z3/4.15.4/bin/z3)
+Generated: /private/var/folders/1g/77s889gx10n7mtl6z1nfrxzm0000gn/T/slop-audit-repair-WAD6J0/gen/proof/fees__conversion/fees__conversion.dfy.gen
+Created: /private/var/folders/1g/77s889gx10n7mtl6z1nfrxzm0000gn/T/slop-audit-repair-WAD6J0/gen/proof/fees__conversion/fees__conversion.dfy
+Generated: /private/var/folders/1g/77s889gx10n7mtl6z1nfrxzm0000gn/T/slop-audit-repair-WAD6J0/gen/proof/fees__conversion/fees__conversion.dfy.gen
+
+Dafny program verifier finished with 22 verified, 0 errors
+
+---- dafny audit ----
+Dafny auditor completed with 0 findings
+
+Dafny program verifier did not attempt verification

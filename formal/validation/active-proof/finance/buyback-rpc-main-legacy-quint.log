@@ -1,0 +1,15 @@
+
+  buyback_market
+    ok offKeepsRobinhoodUntouchedTest passed 1 test(s)
+    ok dryRunSignsNothingTest passed 1 test(s)
+    ok liveBuybackNeedsLiveConverterTest passed 1 test(s)
+    ok converterOffStopsEverythingTest passed 1 test(s)
+    ok claimBuyBurnTest passed 1 test(s)
+    ok swapNeedsItsFinalApprovalTest passed 1 test(s)
+    ok movedPriceRefusesTheSwapTest passed 1 test(s)
+    ok revertedSwapReleasesAndRetriesTest passed 1 test(s)
+    ok pausedTokenOnlyWaitsTest passed 1 test(s)
+    ok burnPausedInFlightRetriesOnceTest passed 1 test(s)
+    ok offMidwayKeepsOpenSendsTest passed 1 test(s)
+
+  11 passing (1032ms)

@@ -1,0 +1,72 @@
+{
+  "scratch": "/var/folders/1g/77s889gx10n7mtl6z1nfrxzm0000gn/T/slop-audit-repair-WAD6J0",
+  "snapshot": {
+    "spec/settlement/money.md": "cb766a9b5b99f5509da5478ca15ecbe1c77a09127956d9524e7447c7d0939978",
+    "spec/fees/conversion.md": "eeb0d6913a1b56c5e8a766e07b2e66fa959a0911da284f4e6a5d5db3dc4463ed",
+    "spec/settlement/contributorAllocation.md": "c06014613d081559ab845d451b36d8b5cfeac6d82e86a1f0a689dd833ed60a89",
+    "spec/settlement/reserveRelease.md": "133ee6f6be73b41d1c6ad2f499bce5193791f891bca512d69a84ad7dbc054ee9"
+  },
+  "simulations": [
+    {
+      "unit": "settlement__contributorAllocation",
+      "broken": false,
+      "traces": 20,
+      "samples": 1000,
+      "steps": 30,
+      "replayPassed": true,
+      "again": "seed 240690049374754; to simulate again: pnpm exec quint run gen/settlement__contributorAllocation.run.qnt --main settlement__contributorAllocation_run --step step --invariant inv --max-samples 1000 --max-steps 30 --mbt --seed 240690049374754"
+    },
+    {
+      "unit": "fees__conversion",
+      "broken": false,
+      "traces": 20,
+      "samples": 1000,
+      "steps": 30,
+      "replayPassed": true,
+      "again": "seed 271595789522525; to simulate again: pnpm exec quint run gen/fees__conversion.run.qnt --main fees__conversion_run --step step --invariant inv --max-samples 1000 --max-steps 30 --mbt --seed 271595789522525"
+    },
+    {
+      "unit": "settlement__reserveRelease",
+      "broken": false,
+      "traces": 20,
+      "samples": 1000,
+      "steps": 30,
+      "replayPassed": true,
+      "again": "seed 181276180023221; to simulate again: pnpm exec quint run gen/settlement__reserveRelease.run.qnt --main settlement__reserveRelease_run --step step --invariant inv --max-samples 1000 --max-steps 30 --mbt --seed 181276180023221"
+    }
+  ],
+  "proofs": [
+    {
+      "unit": "fees__conversion.ts",
+      "total": 114,
+      "unproved": [],
+      "errors": [],
+      "exhausted": [],
+      "log": "formal/validation/finance/lifecycle-fees__conversion.ts.log"
+    },
+    {
+      "unit": "settlement__contributorAllocation.ts",
+      "total": 32,
+      "unproved": [],
+      "errors": [],
+      "exhausted": [],
+      "log": "formal/validation/finance/lifecycle-settlement__contributorAllocation.ts.log"
+    },
+    {
+      "unit": "settlement__reserveRelease.ts",
+      "total": 74,
+      "unproved": [
+        "check: (inv(r) ==> canCheck(r, root, total, height, requestRevision, by_) ==> alwaysBoundApproval(check(r, root, total, height, requestRevision, by_)))",
+        "finalize: (inv(r) ==> canFinalize(r, height, releasedAmount, settledAmount) ==> alwaysWholeRelease(finalize(r, height, releasedAmount, settledAmount)))",
+        "finalize: (inv(r) ==> canFinalize(r, height, releasedAmount, settledAmount) ==> alwaysValidAmounts(finalize(r, height, releasedAmount, settledAmount)))",
+        "finalize: (inv(r) ==> canFinalize(r, height, releasedAmount, settledAmount) ==> alwaysConserved(finalize(r, height, releasedAmount, settledAmount)))",
+        "settlePart: (inv(r) ==> canSettlePart(r, amount) ==> alwaysValidAmounts(settlePart(r, amount)))",
+        "settlePart: (inv(r) ==> canSettlePart(r, amount) ==> alwaysConserved(settlePart(r, amount)))",
+        "step: inv(step(current, event, by_))"
+      ],
+      "errors": [],
+      "exhausted": [],
+      "log": "formal/validation/finance/lifecycle-settlement__reserveRelease.ts.log"
+    }
+  ]
+}

@@ -1,0 +1,7 @@
+
+  accountDirectedCheck
+    ok twoSessionsWitnessTest passed 1 test(s)
+    ok exactExpiryWitnessTest passed 1 test(s)
+    ok setConsentWitnessTest passed 1 test(s)
+
+  3 passing (1328ms)

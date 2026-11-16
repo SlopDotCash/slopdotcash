@@ -1,0 +1,10 @@
+
+  pointsQuotaWitness
+    ok trustedRestoreTest passed 1 test(s)
+    ok parallelStrictResetTest passed 1 test(s)
+    ok missingResetPreventsResumeTest passed 1 test(s)
+    ok noProgressCutoffTest passed 1 test(s)
+    ok cumulativeBudgetAndCacheTest passed 1 test(s)
+    ok invalidApplyRefusalsTest passed 1 test(s)
+
+  6 passing (1263ms)

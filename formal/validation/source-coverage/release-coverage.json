@@ -1,0 +1,649 @@
+{
+  "sourceMain": "21663f12cd276dfc7b4c913e3b9fbe34c153f99a",
+  "sourceHashes": {
+    "spec/operations/releaseCoverage.md": "9e002447408487e82d859c4ecdcbb16664d0b9cb323298333520030e4f617109",
+    "spec/operations/release.md": "4ed36d5d184079d482210a62934d4867bc7b009235d5d6a3d6cc5e397fe92981"
+  },
+  "proofs": [
+    {
+      "unit": "operations__releaseCoverage.ts",
+      "generatedDafnySha256": "afcb8062d77b960f48af042e22a391b3dfe43a52b55900746b61854900c11110",
+      "total": 8,
+      "unproved": [],
+      "exhausted": [],
+      "resting": {},
+      "errors": []
+    },
+    {
+      "unit": "operations__release.ts",
+      "generatedDafnySha256": "1e3063034f269e50c148c4fa52a46cfbddaf8b924ea6a956866bdbea92cfa456",
+      "total": 55,
+      "unproved": [],
+      "exhausted": [],
+      "resting": {},
+      "errors": []
+    }
+  ],
+  "simulation": {
+    "command": "seed 78992848851936; to simulate again: pnpm exec quint run gen/operations__release.run.qnt --main operations__release_run --step step --invariant inv --max-samples 500 --max-steps 25 --mbt --seed 78992848851936",
+    "replayed": 35
+  },
+  "witnesses": {
+    "sometimesVerified": {
+      "command": "seed 15310152754033; to simulate again: pnpm exec quint run gen/operations__release.run.qnt --main operations__release_run --step step --invariant never_sometimesVerified --max-samples 800 --max-steps 35 --mbt --seed 15310152754033",
+      "events": [
+        {
+          "type": "recordGate",
+          "gate": "ModelInventory",
+          "source": 1
+        },
+        {
+          "type": "configure",
+          "environment": "Production",
+          "trustedWorkflow": true,
+          "isolatedSecrets": true
+        },
+        {
+          "type": "recordGate",
+          "gate": "Unit",
+          "source": 1
+        },
+        {
+          "type": "recordGate",
+          "gate": "Isolation",
+          "source": 1
+        },
+        {
+          "type": "observeBranchHead",
+          "sourceHead": 2
+        },
+        {
+          "type": "selectManualCoverage",
+          "authenticatedDispatch": true,
+          "skipProofs": true,
+          "skipBrowserTests": false
+        },
+        {
+          "type": "observeBranchHead",
+          "sourceHead": 1
+        },
+        {
+          "type": "recordGate",
+          "gate": "Isolation",
+          "source": 1
+        },
+        {
+          "type": "recordGate",
+          "gate": "ModelInventory",
+          "source": 1
+        },
+        {
+          "type": "recordGate",
+          "gate": "ModelInventory",
+          "source": 1
+        },
+        {
+          "type": "recordGate",
+          "gate": "Browser",
+          "source": 1
+        },
+        {
+          "type": "recordGate",
+          "gate": "Types",
+          "source": 1
+        },
+        {
+          "type": "recordGate",
+          "gate": "Identity",
+          "source": 1
+        },
+        {
+          "type": "recordGate",
+          "gate": "ProofInventory",
+          "source": 1
+        },
+        {
+          "type": "recordGate",
+          "gate": "Proofs",
+          "source": 1
+        },
+        {
+          "type": "recordGate",
+          "gate": "Identity",
+          "source": 1
+        },
+        {
+          "type": "recordGate",
+          "gate": "Identity",
+          "source": 1
+        },
+        {
+          "type": "recordGate",
+          "gate": "Browser",
+          "source": 1
+        },
+        {
+          "type": "recordGate",
+          "gate": "Isolation",
+          "source": 1
+        },
+        {
+          "type": "recordGate",
+          "gate": "Unit",
+          "source": 1
+        },
+        {
+          "type": "recordGate",
+          "gate": "ModelInventory",
+          "source": 1
+        },
+        {
+          "type": "collectData",
+          "environment": "Production",
+          "registryDigest": 1,
+          "githubDigest": 1,
+          "recordedAt": 1
+        },
+        {
+          "type": "check",
+          "artifactDigest": 1
+        },
+        {
+          "type": "acquireLock"
+        },
+        {
+          "type": "acquireLock"
+        },
+        {
+          "type": "acquireLock"
+        },
+        {
+          "type": "publish"
+        },
+        {
+          "type": "reconcilePublication",
+          "deployment": 1,
+          "observedDigest": 1,
+          "environment": "Production"
+        },
+        {
+          "type": "verifyServed",
+          "deployment": 1,
+          "digest": 1,
+          "environment": "Production",
+          "dnsTlsHeaders": true
+        }
+      ]
+    },
+    "sometimesUncertain": {
+      "command": "seed 177653964366850; to simulate again: pnpm exec quint run gen/operations__release.run.qnt --main operations__release_run --step step --invariant never_sometimesUncertain --max-samples 800 --max-steps 35 --mbt --seed 177653964366850",
+      "events": [
+        {
+          "type": "configure",
+          "environment": "Production",
+          "trustedWorkflow": true,
+          "isolatedSecrets": true
+        },
+        {
+          "type": "recordGate",
+          "gate": "Unit",
+          "source": 1
+        },
+        {
+          "type": "recordGate",
+          "gate": "ModelInventory",
+          "source": 1
+        },
+        {
+          "type": "recordGate",
+          "gate": "Proofs",
+          "source": 1
+        },
+        {
+          "type": "recordGate",
+          "gate": "Proofs",
+          "source": 1
+        },
+        {
+          "type": "recordGate",
+          "gate": "Isolation",
+          "source": 1
+        },
+        {
+          "type": "collectData",
+          "environment": "Production",
+          "registryDigest": 1,
+          "githubDigest": 1,
+          "recordedAt": 1
+        },
+        {
+          "type": "recordGate",
+          "gate": "ModelInventory",
+          "source": 1
+        },
+        {
+          "type": "recordGate",
+          "gate": "ProofInventory",
+          "source": 1
+        },
+        {
+          "type": "recordGate",
+          "gate": "Unit",
+          "source": 1
+        },
+        {
+          "type": "recordGate",
+          "gate": "Models",
+          "source": 1
+        },
+        {
+          "type": "recordGate",
+          "gate": "BrowserSmoke",
+          "source": 1
+        },
+        {
+          "type": "selectManualCoverage",
+          "authenticatedDispatch": true,
+          "skipProofs": true,
+          "skipBrowserTests": false
+        },
+        {
+          "type": "recordGate",
+          "gate": "ModelInventory",
+          "source": 1
+        },
+        {
+          "type": "recordGate",
+          "gate": "Models",
+          "source": 1
+        },
+        {
+          "type": "recordGate",
+          "gate": "Identity",
+          "source": 1
+        },
+        {
+          "type": "recordGate",
+          "gate": "Browser",
+          "source": 1
+        },
+        {
+          "type": "recordGate",
+          "gate": "BrowserSmoke",
+          "source": 1
+        },
+        {
+          "type": "recordGate",
+          "gate": "Isolation",
+          "source": 1
+        },
+        {
+          "type": "recordGate",
+          "gate": "BrowserSmoke",
+          "source": 1
+        },
+        {
+          "type": "recordGate",
+          "gate": "ModelInventory",
+          "source": 1
+        },
+        {
+          "type": "recordGate",
+          "gate": "ProofInventory",
+          "source": 1
+        },
+        {
+          "type": "recordGate",
+          "gate": "ProofInventory",
+          "source": 1
+        },
+        {
+          "type": "recordGate",
+          "gate": "Types",
+          "source": 1
+        },
+        {
+          "type": "recordGate",
+          "gate": "ProofInventory",
+          "source": 1
+        },
+        {
+          "type": "recordGate",
+          "gate": "Unit",
+          "source": 1
+        },
+        {
+          "type": "recordGate",
+          "gate": "Types",
+          "source": 1
+        },
+        {
+          "type": "check",
+          "artifactDigest": 1
+        },
+        {
+          "type": "acquireLock"
+        },
+        {
+          "type": "publish"
+        },
+        {
+          "type": "loseResponse"
+        }
+      ]
+    },
+    "sometimesStaging": {
+      "command": "seed 63065999576687; to simulate again: pnpm exec quint run gen/operations__release.run.qnt --main operations__release_run --step step --invariant never_sometimesStaging --max-samples 800 --max-steps 35 --mbt --seed 63065999576687",
+      "events": [
+        {
+          "type": "recordGate",
+          "gate": "BrowserSmoke",
+          "source": 1
+        },
+        {
+          "type": "observeBranchHead",
+          "sourceHead": 1
+        },
+        {
+          "type": "observeBranchHead",
+          "sourceHead": 2
+        },
+        {
+          "type": "configure",
+          "environment": "Staging",
+          "trustedWorkflow": false,
+          "isolatedSecrets": true
+        },
+        {
+          "type": "configure",
+          "environment": "Staging",
+          "trustedWorkflow": true,
+          "isolatedSecrets": true
+        },
+        {
+          "type": "collectData",
+          "environment": "Staging",
+          "registryDigest": 1,
+          "githubDigest": 1,
+          "recordedAt": 1
+        },
+        {
+          "type": "collectData",
+          "environment": "Staging",
+          "registryDigest": 1,
+          "githubDigest": 1,
+          "recordedAt": 1
+        },
+        {
+          "type": "observeBranchHead",
+          "sourceHead": 1
+        },
+        {
+          "type": "recordGate",
+          "gate": "ProofInventory",
+          "source": 1
+        },
+        {
+          "type": "recordGate",
+          "gate": "Identity",
+          "source": 1
+        },
+        {
+          "type": "observeBranchHead",
+          "sourceHead": 1
+        },
+        {
+          "type": "recordGate",
+          "gate": "Unit",
+          "source": 1
+        },
+        {
+          "type": "recordGate",
+          "gate": "Isolation",
+          "source": 1
+        },
+        {
+          "type": "selectManualCoverage",
+          "authenticatedDispatch": true,
+          "skipProofs": false,
+          "skipBrowserTests": true
+        },
+        {
+          "type": "recordGate",
+          "gate": "Identity",
+          "source": 1
+        },
+        {
+          "type": "recordGate",
+          "gate": "Proofs",
+          "source": 1
+        },
+        {
+          "type": "recordGate",
+          "gate": "Types",
+          "source": 1
+        },
+        {
+          "type": "recordGate",
+          "gate": "ModelInventory",
+          "source": 1
+        },
+        {
+          "type": "recordGate",
+          "gate": "Identity",
+          "source": 1
+        },
+        {
+          "type": "recordGate",
+          "gate": "Unit",
+          "source": 1
+        },
+        {
+          "type": "recordGate",
+          "gate": "Types",
+          "source": 1
+        },
+        {
+          "type": "recordGate",
+          "gate": "Unit",
+          "source": 1
+        },
+        {
+          "type": "recordGate",
+          "gate": "Models",
+          "source": 1
+        },
+        {
+          "type": "recordGate",
+          "gate": "Models",
+          "source": 1
+        },
+        {
+          "type": "recordGate",
+          "gate": "BrowserSmoke",
+          "source": 1
+        },
+        {
+          "type": "check",
+          "artifactDigest": 1
+        },
+        {
+          "type": "acquireLock"
+        },
+        {
+          "type": "publish"
+        },
+        {
+          "type": "reconcilePublication",
+          "deployment": 1,
+          "observedDigest": 1,
+          "environment": "Staging"
+        },
+        {
+          "type": "verifyServed",
+          "deployment": 1,
+          "digest": 1,
+          "environment": "Staging",
+          "dnsTlsHeaders": true
+        }
+      ]
+    },
+    "sometimesRecoveredUnpublished": {
+      "command": "seed 84098035949037; to simulate again: pnpm exec quint run gen/operations__release.run.qnt --main operations__release_run --step step --invariant never_sometimesRecoveredUnpublished --max-samples 800 --max-steps 35 --mbt --seed 84098035949037",
+      "events": [
+        {
+          "type": "configure",
+          "environment": "Production",
+          "trustedWorkflow": true,
+          "isolatedSecrets": true
+        },
+        {
+          "type": "selectManualCoverage",
+          "authenticatedDispatch": true,
+          "skipProofs": true,
+          "skipBrowserTests": true
+        },
+        {
+          "type": "recordGate",
+          "gate": "Unit",
+          "source": 1
+        },
+        {
+          "type": "recordGate",
+          "gate": "Browser",
+          "source": 1
+        },
+        {
+          "type": "recordGate",
+          "gate": "Models",
+          "source": 1
+        },
+        {
+          "type": "recordGate",
+          "gate": "Types",
+          "source": 1
+        },
+        {
+          "type": "recordGate",
+          "gate": "Identity",
+          "source": 1
+        },
+        {
+          "type": "recordGate",
+          "gate": "Browser",
+          "source": 1
+        },
+        {
+          "type": "recordGate",
+          "gate": "ModelInventory",
+          "source": 1
+        },
+        {
+          "type": "recordGate",
+          "gate": "ProofInventory",
+          "source": 1
+        },
+        {
+          "type": "recordGate",
+          "gate": "Unit",
+          "source": 1
+        },
+        {
+          "type": "recordGate",
+          "gate": "ProofInventory",
+          "source": 1
+        },
+        {
+          "type": "recordGate",
+          "gate": "Identity",
+          "source": 1
+        },
+        {
+          "type": "recordGate",
+          "gate": "BrowserSmoke",
+          "source": 1
+        },
+        {
+          "type": "recordGate",
+          "gate": "Identity",
+          "source": 1
+        },
+        {
+          "type": "recordGate",
+          "gate": "Identity",
+          "source": 1
+        },
+        {
+          "type": "recordGate",
+          "gate": "Unit",
+          "source": 1
+        },
+        {
+          "type": "recordGate",
+          "gate": "Types",
+          "source": 1
+        },
+        {
+          "type": "collectData",
+          "environment": "Production",
+          "registryDigest": 1,
+          "githubDigest": 1,
+          "recordedAt": 1
+        },
+        {
+          "type": "retainSnapshot",
+          "environment": "Production",
+          "digest": 1,
+          "originalRecordedAt": 1,
+          "explicitManual": true,
+          "bootstrap": false
+        },
+        {
+          "type": "recordGate",
+          "gate": "Unit",
+          "source": 1
+        },
+        {
+          "type": "recordGate",
+          "gate": "Isolation",
+          "source": 1
+        },
+        {
+          "type": "check",
+          "artifactDigest": 1
+        },
+        {
+          "type": "acquireLock"
+        },
+        {
+          "type": "acquireLock"
+        },
+        {
+          "type": "publish"
+        },
+        {
+          "type": "proveUnpublished",
+          "confirmedUnpublished": true
+        }
+      ]
+    }
+  },
+  "directed": [
+    "push ignores both options in both environments",
+    "all four manual option combinations",
+    "omitted model and browser lanes do not create receipts",
+    "refuse without each required common or full-lane receipt",
+    "smoke requires own receipt",
+    "retained same-environment snapshot requires authenticated dispatch",
+    "known publish loss can reconcile and verify served bytes",
+    "foreign manual dispatch is refused",
+    "promotion, PR, nightly selection"
+  ],
+  "legacyQuint": {
+    "path": "formal/models/release/ci_coverage.qnt",
+    "sha256": "c8ed89ba784400cd1e9dfd9fec87223ec164d754e7478dc4a7b42af393c7a9f1",
+    "typecheck": "passed",
+    "command": "quint test <isolated-source-file> --seed=812 --max-samples=100",
+    "testOutput": "ci_coverage\n    ok releaseCoverageTest passed 1 test(s)\n    ok developmentCoverageTest passed 1 test(s)\n    ok fixtureSelectsChainCoverageTest passed 1 test(s)\n    ok pushCannotSkipTest passed 1 test(s)\n    ok manualRunSkipsProofsAndBrowserLanesTest passed 1 test(s)\n    ok manualRunSkipsOnlyProofsTest passed 1 test(s)\n    ok manualRunIsCompleteByDefaultTest passed 1 test(s)\n    ok modelSourceSelectsAffectedModelsTest passed 1 test(s)\n\n  8 passing (1288ms)"
+  }
+}

@@ -9,8 +9,9 @@ pushed. The old application remains on its existing branches.
 
 The source manifest pins every repository and commit. The requested `develop`
 branch resolves to this repository's `development` integration branch. Its PRD
-is byte-identical to the PRD at the pinned `main` commit. The PRD snapshot and
-Slop contribution and agent policies remain available under `docs/`.
+is byte-identical to the PRD at the matching `main` commit. The source manifest
+records both current revisions and preserves the original requirements pin.
+The PRD snapshot and Slop contribution and agent policies remain under `docs/`.
 
 The user's 13 November 2026 decision overrides one sentence of the source PRD.
 New project drafts start with automatic closure unchecked. Missing saved
@@ -18,9 +19,9 @@ consent is false. Existing project consent stays as recorded.
 
 Current policy includes November's repository-append flow, line-weighted
 implementation Points, the separate contributor allocation, buyback rules,
-referral reactivation conditions and environment-specific published-data
-release option. Earlier snapshots in the original project history remain
-historical evidence.
+referral reactivation conditions, custom referral links, public referred
+projects, provisional EVM vault funding and manual release coverage options.
+Earlier snapshots remain in the original project history.
 
 ## Ownership
 
@@ -43,6 +44,24 @@ implementation starts, a matching `apps/<name>` or `packages/<name>` owns that
 area under Vibestack's normal generation rules. Cross-area rules use imports
 and composed machines, and the generated core owns product state.
 
+```mermaid
+flowchart LR
+  GitHub[GitHub identity and accepted work] --> Backend[Accounts and registry]
+  Backend --> Contributor[Contributor workflow]
+  Contributor --> Slopbot[Review and appeals]
+  Slopbot --> Points[Points and source journal]
+  Points --> Monthly[Monthly allocation]
+  Security[Admission and private reports] --> Backend
+  Security --> Award[Human award decision]
+  Monthly --> Settlement[Vault and payment composition]
+  Award --> Settlement
+  Settlement --> Fees[Received fees and buyback]
+  Backend --> Frontend[Account-owned browser views]
+  Settlement --> Frontend
+  Security --> Frontend
+  Operations[Notices, recovery and release] --> Frontend
+```
+
 The template application remains its original greeting demonstration. Its
 tests and drivers exercise the toolchain. The migration adds no Slop runtime,
 database migration, route, signer, deployment or transaction.
@@ -53,6 +72,8 @@ database migration, route, signer, deployment or transaction.
 line range and owning spec paths. `formal/model-map.json` inventories every
 legacy model, source mapping, action, scenario and digest, with its destination
 area. `reference/slop-main/formal/` preserves the original models and inventories.
+`reference/slop-main-delta/` retains six later legacy model inputs with separate
+verification and successor mappings.
 
 A mapped source establishes traceability. Equivalence requires a reviewed
 transition-by-transition comparison or refinement proof. Legacy scenarios must
@@ -63,6 +84,13 @@ The active specs describe external observations through explicit parameters.
 Their eventual adapters must verify identity, authority, signatures, exact
 bytes, current revisions and finality before producing those events. Formal
 proofs of those parameters' consequences do not verify the external facts.
+
+The generated event decoder checks structure and invariants. The trusted shell
+authenticates the sender and obtains authorization and evidence facts from
+their owning services. Fields such as `moderator`, `freshAuthority`,
+`receiptMatches` and `finalized` must be computed from those verified records.
+A request body cannot assert them on the caller's own behalf. Each eventual
+adapter journey must include a forged-fact request and a role-revocation race.
 
 ## Verification and acceptance
 

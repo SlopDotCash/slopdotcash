@@ -1,0 +1,11 @@
+{
+  "unit": "settlement__signer.ts",
+  "total": 19,
+  "unproved": [],
+  "errors": [],
+  "exhausted": [],
+  "source": "spec/settlement/signer.md",
+  "sha256": "0eb06b5e673bb020ee5fbcc4a775d4e9777cbb4bbc89e127b6bdd6d7739835a9",
+  "command": "Vibestack prove() with the generated settlement__signer proof unit, Dafny 4.11 and pinned solver, no proof exceptions",
+  "log": "formal/validation/finance/signer-proof.log"
+}

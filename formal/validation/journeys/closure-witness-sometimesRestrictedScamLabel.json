@@ -1,0 +1,1870 @@
+{
+  "goal": "sometimesRestrictedScamLabel",
+  "reached": true,
+  "replay": true,
+  "command": "seed 24481481401210; to simulate again: pnpm exec quint run gen/slopbot__closure.run.qnt --main slopbot__closure_run --step step --invariant never_sometimesRestrictedScamLabel --max-samples 10000 --max-steps 30 --mbt --seed 24481481401210",
+  "sourceHashes": {
+    "spec/slopbot/closure.md": "e68e86ceb091be37354f1486c8dad650090bc7085614e2cd5ffb5e99faa4d68f"
+  },
+  "trace": [
+    {
+      "state": {
+        "identity": {
+          "project": 1,
+          "repository": 1,
+          "prNode": "pr",
+          "revision": "head",
+          "contentDigest": "review"
+        },
+        "context": {
+          "identity": {
+            "project": 1,
+            "repository": 1,
+            "prNode": "pr",
+            "revision": "head",
+            "contentDigest": "review"
+          },
+          "scope": "Unregistered",
+          "source": "SourceUnknown",
+          "activeInstallation": false,
+          "openItem": false,
+          "completeCoverage": false,
+          "reviewAllowed": false,
+          "securityAuthorized": false,
+          "closurePolicyAllows": false,
+          "unassigned": false
+        },
+        "evidence": {
+          "member": false,
+          "authenticatedRun": false,
+          "exactPr": false,
+          "knownNonMaintainer": false,
+          "qualified": false,
+          "independent": false,
+          "withinCap": false,
+          "production": false
+        },
+        "consent": false,
+        "verdictRecorded": false,
+        "verdictScope": "Unregistered",
+        "uncertain": false,
+        "category": "OutOfScope",
+        "now": 0,
+        "heldAt": 0,
+        "hold": "NoHold",
+        "closed": false,
+        "labelApplied": false,
+        "securityCommented": false,
+        "reopened": false,
+        "moderatorNotice": false
+      },
+      "lawsHold": true
+    },
+    {
+      "event": {
+        "type": "observeContext",
+        "context": {
+          "identity": {
+            "project": 1,
+            "repository": 1,
+            "prNode": "pr",
+            "revision": "head",
+            "contentDigest": "review"
+          },
+          "scope": "FullReview",
+          "source": "SourceSuperseded",
+          "activeInstallation": true,
+          "openItem": true,
+          "completeCoverage": true,
+          "reviewAllowed": true,
+          "securityAuthorized": false,
+          "closurePolicyAllows": true,
+          "unassigned": true
+        }
+      },
+      "state": {
+        "identity": {
+          "project": 1,
+          "repository": 1,
+          "prNode": "pr",
+          "revision": "head",
+          "contentDigest": "review"
+        },
+        "context": {
+          "identity": {
+            "project": 1,
+            "repository": 1,
+            "prNode": "pr",
+            "revision": "head",
+            "contentDigest": "review"
+          },
+          "scope": "FullReview",
+          "source": "SourceSuperseded",
+          "activeInstallation": true,
+          "openItem": true,
+          "completeCoverage": true,
+          "reviewAllowed": true,
+          "securityAuthorized": false,
+          "closurePolicyAllows": true,
+          "unassigned": true
+        },
+        "evidence": {
+          "member": false,
+          "authenticatedRun": false,
+          "exactPr": false,
+          "knownNonMaintainer": false,
+          "qualified": false,
+          "independent": false,
+          "withinCap": false,
+          "production": false
+        },
+        "consent": false,
+        "verdictRecorded": false,
+        "verdictScope": "Unregistered",
+        "uncertain": false,
+        "category": "OutOfScope",
+        "now": 0,
+        "heldAt": 0,
+        "hold": "NoHold",
+        "closed": false,
+        "labelApplied": false,
+        "securityCommented": false,
+        "reopened": false,
+        "moderatorNotice": false
+      },
+      "lawsHold": true
+    },
+    {
+      "event": {
+        "type": "recordEvidence",
+        "evidence": {
+          "member": true,
+          "authenticatedRun": true,
+          "exactPr": true,
+          "knownNonMaintainer": true,
+          "qualified": true,
+          "independent": true,
+          "withinCap": true,
+          "production": false
+        }
+      },
+      "state": {
+        "identity": {
+          "project": 1,
+          "repository": 1,
+          "prNode": "pr",
+          "revision": "head",
+          "contentDigest": "review"
+        },
+        "context": {
+          "identity": {
+            "project": 1,
+            "repository": 1,
+            "prNode": "pr",
+            "revision": "head",
+            "contentDigest": "review"
+          },
+          "scope": "FullReview",
+          "source": "SourceSuperseded",
+          "activeInstallation": true,
+          "openItem": true,
+          "completeCoverage": true,
+          "reviewAllowed": true,
+          "securityAuthorized": false,
+          "closurePolicyAllows": true,
+          "unassigned": true
+        },
+        "evidence": {
+          "member": true,
+          "authenticatedRun": true,
+          "exactPr": true,
+          "knownNonMaintainer": true,
+          "qualified": true,
+          "independent": true,
+          "withinCap": true,
+          "production": false
+        },
+        "consent": false,
+        "verdictRecorded": false,
+        "verdictScope": "Unregistered",
+        "uncertain": false,
+        "category": "OutOfScope",
+        "now": 0,
+        "heldAt": 0,
+        "hold": "NoHold",
+        "closed": false,
+        "labelApplied": false,
+        "securityCommented": false,
+        "reopened": false,
+        "moderatorNotice": false
+      },
+      "lawsHold": true
+    },
+    {
+      "event": {
+        "type": "observeContext",
+        "context": {
+          "identity": {
+            "project": 1,
+            "repository": 1,
+            "prNode": "pr",
+            "revision": "head",
+            "contentDigest": "review"
+          },
+          "scope": "FullReview",
+          "source": "SourceSuperseded",
+          "activeInstallation": true,
+          "openItem": true,
+          "completeCoverage": true,
+          "reviewAllowed": true,
+          "securityAuthorized": false,
+          "closurePolicyAllows": true,
+          "unassigned": true
+        }
+      },
+      "state": {
+        "identity": {
+          "project": 1,
+          "repository": 1,
+          "prNode": "pr",
+          "revision": "head",
+          "contentDigest": "review"
+        },
+        "context": {
+          "identity": {
+            "project": 1,
+            "repository": 1,
+            "prNode": "pr",
+            "revision": "head",
+            "contentDigest": "review"
+          },
+          "scope": "FullReview",
+          "source": "SourceSuperseded",
+          "activeInstallation": true,
+          "openItem": true,
+          "completeCoverage": true,
+          "reviewAllowed": true,
+          "securityAuthorized": false,
+          "closurePolicyAllows": true,
+          "unassigned": true
+        },
+        "evidence": {
+          "member": true,
+          "authenticatedRun": true,
+          "exactPr": true,
+          "knownNonMaintainer": true,
+          "qualified": true,
+          "independent": true,
+          "withinCap": true,
+          "production": false
+        },
+        "consent": false,
+        "verdictRecorded": false,
+        "verdictScope": "Unregistered",
+        "uncertain": false,
+        "category": "OutOfScope",
+        "now": 0,
+        "heldAt": 0,
+        "hold": "NoHold",
+        "closed": false,
+        "labelApplied": false,
+        "securityCommented": false,
+        "reopened": false,
+        "moderatorNotice": false
+      },
+      "lawsHold": true
+    },
+    {
+      "event": {
+        "type": "observeContext",
+        "context": {
+          "identity": {
+            "project": 1,
+            "repository": 1,
+            "prNode": "pr",
+            "revision": "head",
+            "contentDigest": "review"
+          },
+          "scope": "FullReview",
+          "source": "SourceUnknown",
+          "activeInstallation": true,
+          "openItem": true,
+          "completeCoverage": true,
+          "reviewAllowed": true,
+          "securityAuthorized": false,
+          "closurePolicyAllows": true,
+          "unassigned": true
+        }
+      },
+      "state": {
+        "identity": {
+          "project": 1,
+          "repository": 1,
+          "prNode": "pr",
+          "revision": "head",
+          "contentDigest": "review"
+        },
+        "context": {
+          "identity": {
+            "project": 1,
+            "repository": 1,
+            "prNode": "pr",
+            "revision": "head",
+            "contentDigest": "review"
+          },
+          "scope": "FullReview",
+          "source": "SourceUnknown",
+          "activeInstallation": true,
+          "openItem": true,
+          "completeCoverage": true,
+          "reviewAllowed": true,
+          "securityAuthorized": false,
+          "closurePolicyAllows": true,
+          "unassigned": true
+        },
+        "evidence": {
+          "member": true,
+          "authenticatedRun": true,
+          "exactPr": true,
+          "knownNonMaintainer": true,
+          "qualified": true,
+          "independent": true,
+          "withinCap": true,
+          "production": false
+        },
+        "consent": false,
+        "verdictRecorded": false,
+        "verdictScope": "Unregistered",
+        "uncertain": false,
+        "category": "OutOfScope",
+        "now": 0,
+        "heldAt": 0,
+        "hold": "NoHold",
+        "closed": false,
+        "labelApplied": false,
+        "securityCommented": false,
+        "reopened": false,
+        "moderatorNotice": false
+      },
+      "lawsHold": true
+    },
+    {
+      "event": {
+        "type": "observeContext",
+        "context": {
+          "identity": {
+            "project": 1,
+            "repository": 1,
+            "prNode": "pr",
+            "revision": "head",
+            "contentDigest": "review"
+          },
+          "scope": "Unregistered",
+          "source": "SourceCurrent",
+          "activeInstallation": true,
+          "openItem": true,
+          "completeCoverage": true,
+          "reviewAllowed": true,
+          "securityAuthorized": false,
+          "closurePolicyAllows": true,
+          "unassigned": true
+        }
+      },
+      "state": {
+        "identity": {
+          "project": 1,
+          "repository": 1,
+          "prNode": "pr",
+          "revision": "head",
+          "contentDigest": "review"
+        },
+        "context": {
+          "identity": {
+            "project": 1,
+            "repository": 1,
+            "prNode": "pr",
+            "revision": "head",
+            "contentDigest": "review"
+          },
+          "scope": "Unregistered",
+          "source": "SourceCurrent",
+          "activeInstallation": true,
+          "openItem": true,
+          "completeCoverage": true,
+          "reviewAllowed": true,
+          "securityAuthorized": false,
+          "closurePolicyAllows": true,
+          "unassigned": true
+        },
+        "evidence": {
+          "member": true,
+          "authenticatedRun": true,
+          "exactPr": true,
+          "knownNonMaintainer": true,
+          "qualified": true,
+          "independent": true,
+          "withinCap": true,
+          "production": false
+        },
+        "consent": false,
+        "verdictRecorded": false,
+        "verdictScope": "Unregistered",
+        "uncertain": false,
+        "category": "OutOfScope",
+        "now": 0,
+        "heldAt": 0,
+        "hold": "NoHold",
+        "closed": false,
+        "labelApplied": false,
+        "securityCommented": false,
+        "reopened": false,
+        "moderatorNotice": false
+      },
+      "lawsHold": true
+    },
+    {
+      "event": {
+        "type": "observeContext",
+        "context": {
+          "identity": {
+            "project": 1,
+            "repository": 1,
+            "prNode": "pr",
+            "revision": "head",
+            "contentDigest": "review"
+          },
+          "scope": "FullReview",
+          "source": "SourceCurrent",
+          "activeInstallation": true,
+          "openItem": true,
+          "completeCoverage": false,
+          "reviewAllowed": true,
+          "securityAuthorized": false,
+          "closurePolicyAllows": true,
+          "unassigned": true
+        }
+      },
+      "state": {
+        "identity": {
+          "project": 1,
+          "repository": 1,
+          "prNode": "pr",
+          "revision": "head",
+          "contentDigest": "review"
+        },
+        "context": {
+          "identity": {
+            "project": 1,
+            "repository": 1,
+            "prNode": "pr",
+            "revision": "head",
+            "contentDigest": "review"
+          },
+          "scope": "FullReview",
+          "source": "SourceCurrent",
+          "activeInstallation": true,
+          "openItem": true,
+          "completeCoverage": false,
+          "reviewAllowed": true,
+          "securityAuthorized": false,
+          "closurePolicyAllows": true,
+          "unassigned": true
+        },
+        "evidence": {
+          "member": true,
+          "authenticatedRun": true,
+          "exactPr": true,
+          "knownNonMaintainer": true,
+          "qualified": true,
+          "independent": true,
+          "withinCap": true,
+          "production": false
+        },
+        "consent": false,
+        "verdictRecorded": false,
+        "verdictScope": "Unregistered",
+        "uncertain": false,
+        "category": "OutOfScope",
+        "now": 0,
+        "heldAt": 0,
+        "hold": "NoHold",
+        "closed": false,
+        "labelApplied": false,
+        "securityCommented": false,
+        "reopened": false,
+        "moderatorNotice": false
+      },
+      "lawsHold": true
+    },
+    {
+      "event": {
+        "type": "recordEvidence",
+        "evidence": {
+          "member": false,
+          "authenticatedRun": false,
+          "exactPr": false,
+          "knownNonMaintainer": false,
+          "qualified": false,
+          "independent": false,
+          "withinCap": false,
+          "production": false
+        }
+      },
+      "state": {
+        "identity": {
+          "project": 1,
+          "repository": 1,
+          "prNode": "pr",
+          "revision": "head",
+          "contentDigest": "review"
+        },
+        "context": {
+          "identity": {
+            "project": 1,
+            "repository": 1,
+            "prNode": "pr",
+            "revision": "head",
+            "contentDigest": "review"
+          },
+          "scope": "FullReview",
+          "source": "SourceCurrent",
+          "activeInstallation": true,
+          "openItem": true,
+          "completeCoverage": false,
+          "reviewAllowed": true,
+          "securityAuthorized": false,
+          "closurePolicyAllows": true,
+          "unassigned": true
+        },
+        "evidence": {
+          "member": false,
+          "authenticatedRun": false,
+          "exactPr": false,
+          "knownNonMaintainer": false,
+          "qualified": false,
+          "independent": false,
+          "withinCap": false,
+          "production": false
+        },
+        "consent": false,
+        "verdictRecorded": false,
+        "verdictScope": "Unregistered",
+        "uncertain": false,
+        "category": "OutOfScope",
+        "now": 0,
+        "heldAt": 0,
+        "hold": "NoHold",
+        "closed": false,
+        "labelApplied": false,
+        "securityCommented": false,
+        "reopened": false,
+        "moderatorNotice": false
+      },
+      "lawsHold": true
+    },
+    {
+      "event": {
+        "type": "observeTime",
+        "observedAt": 0
+      },
+      "state": {
+        "identity": {
+          "project": 1,
+          "repository": 1,
+          "prNode": "pr",
+          "revision": "head",
+          "contentDigest": "review"
+        },
+        "context": {
+          "identity": {
+            "project": 1,
+            "repository": 1,
+            "prNode": "pr",
+            "revision": "head",
+            "contentDigest": "review"
+          },
+          "scope": "FullReview",
+          "source": "SourceCurrent",
+          "activeInstallation": true,
+          "openItem": true,
+          "completeCoverage": false,
+          "reviewAllowed": true,
+          "securityAuthorized": false,
+          "closurePolicyAllows": true,
+          "unassigned": true
+        },
+        "evidence": {
+          "member": false,
+          "authenticatedRun": false,
+          "exactPr": false,
+          "knownNonMaintainer": false,
+          "qualified": false,
+          "independent": false,
+          "withinCap": false,
+          "production": false
+        },
+        "consent": false,
+        "verdictRecorded": false,
+        "verdictScope": "Unregistered",
+        "uncertain": false,
+        "category": "OutOfScope",
+        "now": 0,
+        "heldAt": 0,
+        "hold": "NoHold",
+        "closed": false,
+        "labelApplied": false,
+        "securityCommented": false,
+        "reopened": false,
+        "moderatorNotice": false
+      },
+      "lawsHold": true
+    },
+    {
+      "event": {
+        "type": "recordEvidence",
+        "evidence": {
+          "member": true,
+          "authenticatedRun": true,
+          "exactPr": true,
+          "knownNonMaintainer": false,
+          "qualified": true,
+          "independent": true,
+          "withinCap": true,
+          "production": true
+        }
+      },
+      "state": {
+        "identity": {
+          "project": 1,
+          "repository": 1,
+          "prNode": "pr",
+          "revision": "head",
+          "contentDigest": "review"
+        },
+        "context": {
+          "identity": {
+            "project": 1,
+            "repository": 1,
+            "prNode": "pr",
+            "revision": "head",
+            "contentDigest": "review"
+          },
+          "scope": "FullReview",
+          "source": "SourceCurrent",
+          "activeInstallation": true,
+          "openItem": true,
+          "completeCoverage": false,
+          "reviewAllowed": true,
+          "securityAuthorized": false,
+          "closurePolicyAllows": true,
+          "unassigned": true
+        },
+        "evidence": {
+          "member": true,
+          "authenticatedRun": true,
+          "exactPr": true,
+          "knownNonMaintainer": false,
+          "qualified": true,
+          "independent": true,
+          "withinCap": true,
+          "production": true
+        },
+        "consent": false,
+        "verdictRecorded": false,
+        "verdictScope": "Unregistered",
+        "uncertain": false,
+        "category": "OutOfScope",
+        "now": 0,
+        "heldAt": 0,
+        "hold": "NoHold",
+        "closed": false,
+        "labelApplied": false,
+        "securityCommented": false,
+        "reopened": false,
+        "moderatorNotice": false
+      },
+      "lawsHold": true
+    },
+    {
+      "event": {
+        "type": "observeTime",
+        "observedAt": 604799
+      },
+      "state": {
+        "identity": {
+          "project": 1,
+          "repository": 1,
+          "prNode": "pr",
+          "revision": "head",
+          "contentDigest": "review"
+        },
+        "context": {
+          "identity": {
+            "project": 1,
+            "repository": 1,
+            "prNode": "pr",
+            "revision": "head",
+            "contentDigest": "review"
+          },
+          "scope": "FullReview",
+          "source": "SourceCurrent",
+          "activeInstallation": true,
+          "openItem": true,
+          "completeCoverage": false,
+          "reviewAllowed": true,
+          "securityAuthorized": false,
+          "closurePolicyAllows": true,
+          "unassigned": true
+        },
+        "evidence": {
+          "member": true,
+          "authenticatedRun": true,
+          "exactPr": true,
+          "knownNonMaintainer": false,
+          "qualified": true,
+          "independent": true,
+          "withinCap": true,
+          "production": true
+        },
+        "consent": false,
+        "verdictRecorded": false,
+        "verdictScope": "Unregistered",
+        "uncertain": false,
+        "category": "OutOfScope",
+        "now": 604799,
+        "heldAt": 0,
+        "hold": "NoHold",
+        "closed": false,
+        "labelApplied": false,
+        "securityCommented": false,
+        "reopened": false,
+        "moderatorNotice": false
+      },
+      "lawsHold": true
+    },
+    {
+      "event": {
+        "type": "recordEvidence",
+        "evidence": {
+          "member": false,
+          "authenticatedRun": false,
+          "exactPr": false,
+          "knownNonMaintainer": false,
+          "qualified": false,
+          "independent": false,
+          "withinCap": false,
+          "production": false
+        }
+      },
+      "state": {
+        "identity": {
+          "project": 1,
+          "repository": 1,
+          "prNode": "pr",
+          "revision": "head",
+          "contentDigest": "review"
+        },
+        "context": {
+          "identity": {
+            "project": 1,
+            "repository": 1,
+            "prNode": "pr",
+            "revision": "head",
+            "contentDigest": "review"
+          },
+          "scope": "FullReview",
+          "source": "SourceCurrent",
+          "activeInstallation": true,
+          "openItem": true,
+          "completeCoverage": false,
+          "reviewAllowed": true,
+          "securityAuthorized": false,
+          "closurePolicyAllows": true,
+          "unassigned": true
+        },
+        "evidence": {
+          "member": false,
+          "authenticatedRun": false,
+          "exactPr": false,
+          "knownNonMaintainer": false,
+          "qualified": false,
+          "independent": false,
+          "withinCap": false,
+          "production": false
+        },
+        "consent": false,
+        "verdictRecorded": false,
+        "verdictScope": "Unregistered",
+        "uncertain": false,
+        "category": "OutOfScope",
+        "now": 604799,
+        "heldAt": 0,
+        "hold": "NoHold",
+        "closed": false,
+        "labelApplied": false,
+        "securityCommented": false,
+        "reopened": false,
+        "moderatorNotice": false
+      },
+      "lawsHold": true
+    },
+    {
+      "event": {
+        "type": "saveConsent",
+        "currentOwner": true,
+        "consent": false
+      },
+      "state": {
+        "identity": {
+          "project": 1,
+          "repository": 1,
+          "prNode": "pr",
+          "revision": "head",
+          "contentDigest": "review"
+        },
+        "context": {
+          "identity": {
+            "project": 1,
+            "repository": 1,
+            "prNode": "pr",
+            "revision": "head",
+            "contentDigest": "review"
+          },
+          "scope": "FullReview",
+          "source": "SourceCurrent",
+          "activeInstallation": true,
+          "openItem": true,
+          "completeCoverage": false,
+          "reviewAllowed": true,
+          "securityAuthorized": false,
+          "closurePolicyAllows": true,
+          "unassigned": true
+        },
+        "evidence": {
+          "member": false,
+          "authenticatedRun": false,
+          "exactPr": false,
+          "knownNonMaintainer": false,
+          "qualified": false,
+          "independent": false,
+          "withinCap": false,
+          "production": false
+        },
+        "consent": false,
+        "verdictRecorded": false,
+        "verdictScope": "Unregistered",
+        "uncertain": false,
+        "category": "OutOfScope",
+        "now": 604799,
+        "heldAt": 0,
+        "hold": "NoHold",
+        "closed": false,
+        "labelApplied": false,
+        "securityCommented": false,
+        "reopened": false,
+        "moderatorNotice": false
+      },
+      "lawsHold": true
+    },
+    {
+      "event": {
+        "type": "saveConsent",
+        "currentOwner": true,
+        "consent": false
+      },
+      "state": {
+        "identity": {
+          "project": 1,
+          "repository": 1,
+          "prNode": "pr",
+          "revision": "head",
+          "contentDigest": "review"
+        },
+        "context": {
+          "identity": {
+            "project": 1,
+            "repository": 1,
+            "prNode": "pr",
+            "revision": "head",
+            "contentDigest": "review"
+          },
+          "scope": "FullReview",
+          "source": "SourceCurrent",
+          "activeInstallation": true,
+          "openItem": true,
+          "completeCoverage": false,
+          "reviewAllowed": true,
+          "securityAuthorized": false,
+          "closurePolicyAllows": true,
+          "unassigned": true
+        },
+        "evidence": {
+          "member": false,
+          "authenticatedRun": false,
+          "exactPr": false,
+          "knownNonMaintainer": false,
+          "qualified": false,
+          "independent": false,
+          "withinCap": false,
+          "production": false
+        },
+        "consent": false,
+        "verdictRecorded": false,
+        "verdictScope": "Unregistered",
+        "uncertain": false,
+        "category": "OutOfScope",
+        "now": 604799,
+        "heldAt": 0,
+        "hold": "NoHold",
+        "closed": false,
+        "labelApplied": false,
+        "securityCommented": false,
+        "reopened": false,
+        "moderatorNotice": false
+      },
+      "lawsHold": true
+    },
+    {
+      "event": {
+        "type": "recordEvidence",
+        "evidence": {
+          "member": false,
+          "authenticatedRun": false,
+          "exactPr": false,
+          "knownNonMaintainer": false,
+          "qualified": false,
+          "independent": false,
+          "withinCap": false,
+          "production": false
+        }
+      },
+      "state": {
+        "identity": {
+          "project": 1,
+          "repository": 1,
+          "prNode": "pr",
+          "revision": "head",
+          "contentDigest": "review"
+        },
+        "context": {
+          "identity": {
+            "project": 1,
+            "repository": 1,
+            "prNode": "pr",
+            "revision": "head",
+            "contentDigest": "review"
+          },
+          "scope": "FullReview",
+          "source": "SourceCurrent",
+          "activeInstallation": true,
+          "openItem": true,
+          "completeCoverage": false,
+          "reviewAllowed": true,
+          "securityAuthorized": false,
+          "closurePolicyAllows": true,
+          "unassigned": true
+        },
+        "evidence": {
+          "member": false,
+          "authenticatedRun": false,
+          "exactPr": false,
+          "knownNonMaintainer": false,
+          "qualified": false,
+          "independent": false,
+          "withinCap": false,
+          "production": false
+        },
+        "consent": false,
+        "verdictRecorded": false,
+        "verdictScope": "Unregistered",
+        "uncertain": false,
+        "category": "OutOfScope",
+        "now": 604799,
+        "heldAt": 0,
+        "hold": "NoHold",
+        "closed": false,
+        "labelApplied": false,
+        "securityCommented": false,
+        "reopened": false,
+        "moderatorNotice": false
+      },
+      "lawsHold": true
+    },
+    {
+      "event": {
+        "type": "observeContext",
+        "context": {
+          "identity": {
+            "project": 1,
+            "repository": 1,
+            "prNode": "pr",
+            "revision": "head",
+            "contentDigest": "review"
+          },
+          "scope": "Retired",
+          "source": "SourceCurrent",
+          "activeInstallation": true,
+          "openItem": true,
+          "completeCoverage": true,
+          "reviewAllowed": true,
+          "securityAuthorized": false,
+          "closurePolicyAllows": true,
+          "unassigned": true
+        }
+      },
+      "state": {
+        "identity": {
+          "project": 1,
+          "repository": 1,
+          "prNode": "pr",
+          "revision": "head",
+          "contentDigest": "review"
+        },
+        "context": {
+          "identity": {
+            "project": 1,
+            "repository": 1,
+            "prNode": "pr",
+            "revision": "head",
+            "contentDigest": "review"
+          },
+          "scope": "Retired",
+          "source": "SourceCurrent",
+          "activeInstallation": true,
+          "openItem": true,
+          "completeCoverage": true,
+          "reviewAllowed": true,
+          "securityAuthorized": false,
+          "closurePolicyAllows": true,
+          "unassigned": true
+        },
+        "evidence": {
+          "member": false,
+          "authenticatedRun": false,
+          "exactPr": false,
+          "knownNonMaintainer": false,
+          "qualified": false,
+          "independent": false,
+          "withinCap": false,
+          "production": false
+        },
+        "consent": false,
+        "verdictRecorded": false,
+        "verdictScope": "Unregistered",
+        "uncertain": false,
+        "category": "OutOfScope",
+        "now": 604799,
+        "heldAt": 0,
+        "hold": "NoHold",
+        "closed": false,
+        "labelApplied": false,
+        "securityCommented": false,
+        "reopened": false,
+        "moderatorNotice": false
+      },
+      "lawsHold": true
+    },
+    {
+      "event": {
+        "type": "saveConsent",
+        "currentOwner": true,
+        "consent": true
+      },
+      "state": {
+        "identity": {
+          "project": 1,
+          "repository": 1,
+          "prNode": "pr",
+          "revision": "head",
+          "contentDigest": "review"
+        },
+        "context": {
+          "identity": {
+            "project": 1,
+            "repository": 1,
+            "prNode": "pr",
+            "revision": "head",
+            "contentDigest": "review"
+          },
+          "scope": "Retired",
+          "source": "SourceCurrent",
+          "activeInstallation": true,
+          "openItem": true,
+          "completeCoverage": true,
+          "reviewAllowed": true,
+          "securityAuthorized": false,
+          "closurePolicyAllows": true,
+          "unassigned": true
+        },
+        "evidence": {
+          "member": false,
+          "authenticatedRun": false,
+          "exactPr": false,
+          "knownNonMaintainer": false,
+          "qualified": false,
+          "independent": false,
+          "withinCap": false,
+          "production": false
+        },
+        "consent": true,
+        "verdictRecorded": false,
+        "verdictScope": "Unregistered",
+        "uncertain": false,
+        "category": "OutOfScope",
+        "now": 604799,
+        "heldAt": 0,
+        "hold": "NoHold",
+        "closed": false,
+        "labelApplied": false,
+        "securityCommented": false,
+        "reopened": false,
+        "moderatorNotice": false
+      },
+      "lawsHold": true
+    },
+    {
+      "event": {
+        "type": "recordEvidence",
+        "evidence": {
+          "member": false,
+          "authenticatedRun": false,
+          "exactPr": false,
+          "knownNonMaintainer": false,
+          "qualified": false,
+          "independent": false,
+          "withinCap": false,
+          "production": false
+        }
+      },
+      "state": {
+        "identity": {
+          "project": 1,
+          "repository": 1,
+          "prNode": "pr",
+          "revision": "head",
+          "contentDigest": "review"
+        },
+        "context": {
+          "identity": {
+            "project": 1,
+            "repository": 1,
+            "prNode": "pr",
+            "revision": "head",
+            "contentDigest": "review"
+          },
+          "scope": "Retired",
+          "source": "SourceCurrent",
+          "activeInstallation": true,
+          "openItem": true,
+          "completeCoverage": true,
+          "reviewAllowed": true,
+          "securityAuthorized": false,
+          "closurePolicyAllows": true,
+          "unassigned": true
+        },
+        "evidence": {
+          "member": false,
+          "authenticatedRun": false,
+          "exactPr": false,
+          "knownNonMaintainer": false,
+          "qualified": false,
+          "independent": false,
+          "withinCap": false,
+          "production": false
+        },
+        "consent": true,
+        "verdictRecorded": false,
+        "verdictScope": "Unregistered",
+        "uncertain": false,
+        "category": "OutOfScope",
+        "now": 604799,
+        "heldAt": 0,
+        "hold": "NoHold",
+        "closed": false,
+        "labelApplied": false,
+        "securityCommented": false,
+        "reopened": false,
+        "moderatorNotice": false
+      },
+      "lawsHold": true
+    },
+    {
+      "event": {
+        "type": "observeContext",
+        "context": {
+          "identity": {
+            "project": 1,
+            "repository": 1,
+            "prNode": "pr",
+            "revision": "head",
+            "contentDigest": "review"
+          },
+          "scope": "FullReview",
+          "source": "SourceCurrent",
+          "activeInstallation": true,
+          "openItem": true,
+          "completeCoverage": false,
+          "reviewAllowed": true,
+          "securityAuthorized": false,
+          "closurePolicyAllows": true,
+          "unassigned": true
+        }
+      },
+      "state": {
+        "identity": {
+          "project": 1,
+          "repository": 1,
+          "prNode": "pr",
+          "revision": "head",
+          "contentDigest": "review"
+        },
+        "context": {
+          "identity": {
+            "project": 1,
+            "repository": 1,
+            "prNode": "pr",
+            "revision": "head",
+            "contentDigest": "review"
+          },
+          "scope": "FullReview",
+          "source": "SourceCurrent",
+          "activeInstallation": true,
+          "openItem": true,
+          "completeCoverage": false,
+          "reviewAllowed": true,
+          "securityAuthorized": false,
+          "closurePolicyAllows": true,
+          "unassigned": true
+        },
+        "evidence": {
+          "member": false,
+          "authenticatedRun": false,
+          "exactPr": false,
+          "knownNonMaintainer": false,
+          "qualified": false,
+          "independent": false,
+          "withinCap": false,
+          "production": false
+        },
+        "consent": true,
+        "verdictRecorded": false,
+        "verdictScope": "Unregistered",
+        "uncertain": false,
+        "category": "OutOfScope",
+        "now": 604799,
+        "heldAt": 0,
+        "hold": "NoHold",
+        "closed": false,
+        "labelApplied": false,
+        "securityCommented": false,
+        "reopened": false,
+        "moderatorNotice": false
+      },
+      "lawsHold": true
+    },
+    {
+      "event": {
+        "type": "observeTime",
+        "observedAt": 1209600
+      },
+      "state": {
+        "identity": {
+          "project": 1,
+          "repository": 1,
+          "prNode": "pr",
+          "revision": "head",
+          "contentDigest": "review"
+        },
+        "context": {
+          "identity": {
+            "project": 1,
+            "repository": 1,
+            "prNode": "pr",
+            "revision": "head",
+            "contentDigest": "review"
+          },
+          "scope": "FullReview",
+          "source": "SourceCurrent",
+          "activeInstallation": true,
+          "openItem": true,
+          "completeCoverage": false,
+          "reviewAllowed": true,
+          "securityAuthorized": false,
+          "closurePolicyAllows": true,
+          "unassigned": true
+        },
+        "evidence": {
+          "member": false,
+          "authenticatedRun": false,
+          "exactPr": false,
+          "knownNonMaintainer": false,
+          "qualified": false,
+          "independent": false,
+          "withinCap": false,
+          "production": false
+        },
+        "consent": true,
+        "verdictRecorded": false,
+        "verdictScope": "Unregistered",
+        "uncertain": false,
+        "category": "OutOfScope",
+        "now": 1209600,
+        "heldAt": 0,
+        "hold": "NoHold",
+        "closed": false,
+        "labelApplied": false,
+        "securityCommented": false,
+        "reopened": false,
+        "moderatorNotice": false
+      },
+      "lawsHold": true
+    },
+    {
+      "event": {
+        "type": "observeTime",
+        "observedAt": 1209600
+      },
+      "state": {
+        "identity": {
+          "project": 1,
+          "repository": 1,
+          "prNode": "pr",
+          "revision": "head",
+          "contentDigest": "review"
+        },
+        "context": {
+          "identity": {
+            "project": 1,
+            "repository": 1,
+            "prNode": "pr",
+            "revision": "head",
+            "contentDigest": "review"
+          },
+          "scope": "FullReview",
+          "source": "SourceCurrent",
+          "activeInstallation": true,
+          "openItem": true,
+          "completeCoverage": false,
+          "reviewAllowed": true,
+          "securityAuthorized": false,
+          "closurePolicyAllows": true,
+          "unassigned": true
+        },
+        "evidence": {
+          "member": false,
+          "authenticatedRun": false,
+          "exactPr": false,
+          "knownNonMaintainer": false,
+          "qualified": false,
+          "independent": false,
+          "withinCap": false,
+          "production": false
+        },
+        "consent": true,
+        "verdictRecorded": false,
+        "verdictScope": "Unregistered",
+        "uncertain": false,
+        "category": "OutOfScope",
+        "now": 1209600,
+        "heldAt": 0,
+        "hold": "NoHold",
+        "closed": false,
+        "labelApplied": false,
+        "securityCommented": false,
+        "reopened": false,
+        "moderatorNotice": false
+      },
+      "lawsHold": true
+    },
+    {
+      "event": {
+        "type": "observeContext",
+        "context": {
+          "identity": {
+            "project": 1,
+            "repository": 1,
+            "prNode": "pr",
+            "revision": "head",
+            "contentDigest": "review"
+          },
+          "scope": "FullReview",
+          "source": "SourceUnknown",
+          "activeInstallation": true,
+          "openItem": true,
+          "completeCoverage": true,
+          "reviewAllowed": true,
+          "securityAuthorized": false,
+          "closurePolicyAllows": true,
+          "unassigned": true
+        }
+      },
+      "state": {
+        "identity": {
+          "project": 1,
+          "repository": 1,
+          "prNode": "pr",
+          "revision": "head",
+          "contentDigest": "review"
+        },
+        "context": {
+          "identity": {
+            "project": 1,
+            "repository": 1,
+            "prNode": "pr",
+            "revision": "head",
+            "contentDigest": "review"
+          },
+          "scope": "FullReview",
+          "source": "SourceUnknown",
+          "activeInstallation": true,
+          "openItem": true,
+          "completeCoverage": true,
+          "reviewAllowed": true,
+          "securityAuthorized": false,
+          "closurePolicyAllows": true,
+          "unassigned": true
+        },
+        "evidence": {
+          "member": false,
+          "authenticatedRun": false,
+          "exactPr": false,
+          "knownNonMaintainer": false,
+          "qualified": false,
+          "independent": false,
+          "withinCap": false,
+          "production": false
+        },
+        "consent": true,
+        "verdictRecorded": false,
+        "verdictScope": "Unregistered",
+        "uncertain": false,
+        "category": "OutOfScope",
+        "now": 1209600,
+        "heldAt": 0,
+        "hold": "NoHold",
+        "closed": false,
+        "labelApplied": false,
+        "securityCommented": false,
+        "reopened": false,
+        "moderatorNotice": false
+      },
+      "lawsHold": true
+    },
+    {
+      "event": {
+        "type": "observeTime",
+        "observedAt": 1209600
+      },
+      "state": {
+        "identity": {
+          "project": 1,
+          "repository": 1,
+          "prNode": "pr",
+          "revision": "head",
+          "contentDigest": "review"
+        },
+        "context": {
+          "identity": {
+            "project": 1,
+            "repository": 1,
+            "prNode": "pr",
+            "revision": "head",
+            "contentDigest": "review"
+          },
+          "scope": "FullReview",
+          "source": "SourceUnknown",
+          "activeInstallation": true,
+          "openItem": true,
+          "completeCoverage": true,
+          "reviewAllowed": true,
+          "securityAuthorized": false,
+          "closurePolicyAllows": true,
+          "unassigned": true
+        },
+        "evidence": {
+          "member": false,
+          "authenticatedRun": false,
+          "exactPr": false,
+          "knownNonMaintainer": false,
+          "qualified": false,
+          "independent": false,
+          "withinCap": false,
+          "production": false
+        },
+        "consent": true,
+        "verdictRecorded": false,
+        "verdictScope": "Unregistered",
+        "uncertain": false,
+        "category": "OutOfScope",
+        "now": 1209600,
+        "heldAt": 0,
+        "hold": "NoHold",
+        "closed": false,
+        "labelApplied": false,
+        "securityCommented": false,
+        "reopened": false,
+        "moderatorNotice": false
+      },
+      "lawsHold": true
+    },
+    {
+      "event": {
+        "type": "observeContext",
+        "context": {
+          "identity": {
+            "project": 1,
+            "repository": 1,
+            "prNode": "pr",
+            "revision": "head",
+            "contentDigest": "review"
+          },
+          "scope": "SecurityOnly",
+          "source": "SourceCurrent",
+          "activeInstallation": true,
+          "openItem": true,
+          "completeCoverage": true,
+          "reviewAllowed": true,
+          "securityAuthorized": true,
+          "closurePolicyAllows": true,
+          "unassigned": true
+        }
+      },
+      "state": {
+        "identity": {
+          "project": 1,
+          "repository": 1,
+          "prNode": "pr",
+          "revision": "head",
+          "contentDigest": "review"
+        },
+        "context": {
+          "identity": {
+            "project": 1,
+            "repository": 1,
+            "prNode": "pr",
+            "revision": "head",
+            "contentDigest": "review"
+          },
+          "scope": "SecurityOnly",
+          "source": "SourceCurrent",
+          "activeInstallation": true,
+          "openItem": true,
+          "completeCoverage": true,
+          "reviewAllowed": true,
+          "securityAuthorized": true,
+          "closurePolicyAllows": true,
+          "unassigned": true
+        },
+        "evidence": {
+          "member": false,
+          "authenticatedRun": false,
+          "exactPr": false,
+          "knownNonMaintainer": false,
+          "qualified": false,
+          "independent": false,
+          "withinCap": false,
+          "production": false
+        },
+        "consent": true,
+        "verdictRecorded": false,
+        "verdictScope": "Unregistered",
+        "uncertain": false,
+        "category": "OutOfScope",
+        "now": 1209600,
+        "heldAt": 0,
+        "hold": "NoHold",
+        "closed": false,
+        "labelApplied": false,
+        "securityCommented": false,
+        "reopened": false,
+        "moderatorNotice": false
+      },
+      "lawsHold": true
+    },
+    {
+      "event": {
+        "type": "recordVerdict",
+        "reviewScope": "SecurityOnly",
+        "uncertain": false,
+        "category": "Scam"
+      },
+      "state": {
+        "identity": {
+          "project": 1,
+          "repository": 1,
+          "prNode": "pr",
+          "revision": "head",
+          "contentDigest": "review"
+        },
+        "context": {
+          "identity": {
+            "project": 1,
+            "repository": 1,
+            "prNode": "pr",
+            "revision": "head",
+            "contentDigest": "review"
+          },
+          "scope": "SecurityOnly",
+          "source": "SourceCurrent",
+          "activeInstallation": true,
+          "openItem": true,
+          "completeCoverage": true,
+          "reviewAllowed": true,
+          "securityAuthorized": true,
+          "closurePolicyAllows": true,
+          "unassigned": true
+        },
+        "evidence": {
+          "member": false,
+          "authenticatedRun": false,
+          "exactPr": false,
+          "knownNonMaintainer": false,
+          "qualified": false,
+          "independent": false,
+          "withinCap": false,
+          "production": false
+        },
+        "consent": true,
+        "verdictRecorded": true,
+        "verdictScope": "SecurityOnly",
+        "uncertain": false,
+        "category": "Scam",
+        "now": 1209600,
+        "heldAt": 0,
+        "hold": "NoHold",
+        "closed": false,
+        "labelApplied": false,
+        "securityCommented": false,
+        "reopened": false,
+        "moderatorNotice": false
+      },
+      "lawsHold": true
+    },
+    {
+      "event": {
+        "type": "labelSecurityScam"
+      },
+      "state": {
+        "identity": {
+          "project": 1,
+          "repository": 1,
+          "prNode": "pr",
+          "revision": "head",
+          "contentDigest": "review"
+        },
+        "context": {
+          "identity": {
+            "project": 1,
+            "repository": 1,
+            "prNode": "pr",
+            "revision": "head",
+            "contentDigest": "review"
+          },
+          "scope": "SecurityOnly",
+          "source": "SourceCurrent",
+          "activeInstallation": true,
+          "openItem": true,
+          "completeCoverage": true,
+          "reviewAllowed": true,
+          "securityAuthorized": true,
+          "closurePolicyAllows": true,
+          "unassigned": true
+        },
+        "evidence": {
+          "member": false,
+          "authenticatedRun": false,
+          "exactPr": false,
+          "knownNonMaintainer": false,
+          "qualified": false,
+          "independent": false,
+          "withinCap": false,
+          "production": false
+        },
+        "consent": true,
+        "verdictRecorded": true,
+        "verdictScope": "SecurityOnly",
+        "uncertain": false,
+        "category": "Scam",
+        "now": 1209600,
+        "heldAt": 0,
+        "hold": "NoHold",
+        "closed": false,
+        "labelApplied": true,
+        "securityCommented": false,
+        "reopened": false,
+        "moderatorNotice": false
+      },
+      "lawsHold": true
+    },
+    {
+      "event": {
+        "type": "observeTime",
+        "observedAt": 1209600
+      },
+      "state": {
+        "identity": {
+          "project": 1,
+          "repository": 1,
+          "prNode": "pr",
+          "revision": "head",
+          "contentDigest": "review"
+        },
+        "context": {
+          "identity": {
+            "project": 1,
+            "repository": 1,
+            "prNode": "pr",
+            "revision": "head",
+            "contentDigest": "review"
+          },
+          "scope": "SecurityOnly",
+          "source": "SourceCurrent",
+          "activeInstallation": true,
+          "openItem": true,
+          "completeCoverage": true,
+          "reviewAllowed": true,
+          "securityAuthorized": true,
+          "closurePolicyAllows": true,
+          "unassigned": true
+        },
+        "evidence": {
+          "member": false,
+          "authenticatedRun": false,
+          "exactPr": false,
+          "knownNonMaintainer": false,
+          "qualified": false,
+          "independent": false,
+          "withinCap": false,
+          "production": false
+        },
+        "consent": true,
+        "verdictRecorded": true,
+        "verdictScope": "SecurityOnly",
+        "uncertain": false,
+        "category": "Scam",
+        "now": 1209600,
+        "heldAt": 0,
+        "hold": "NoHold",
+        "closed": false,
+        "labelApplied": true,
+        "securityCommented": false,
+        "reopened": false,
+        "moderatorNotice": false
+      },
+      "lawsHold": true
+    },
+    {
+      "event": {
+        "type": "observeTime",
+        "observedAt": 1209600
+      },
+      "state": {
+        "identity": {
+          "project": 1,
+          "repository": 1,
+          "prNode": "pr",
+          "revision": "head",
+          "contentDigest": "review"
+        },
+        "context": {
+          "identity": {
+            "project": 1,
+            "repository": 1,
+            "prNode": "pr",
+            "revision": "head",
+            "contentDigest": "review"
+          },
+          "scope": "SecurityOnly",
+          "source": "SourceCurrent",
+          "activeInstallation": true,
+          "openItem": true,
+          "completeCoverage": true,
+          "reviewAllowed": true,
+          "securityAuthorized": true,
+          "closurePolicyAllows": true,
+          "unassigned": true
+        },
+        "evidence": {
+          "member": false,
+          "authenticatedRun": false,
+          "exactPr": false,
+          "knownNonMaintainer": false,
+          "qualified": false,
+          "independent": false,
+          "withinCap": false,
+          "production": false
+        },
+        "consent": true,
+        "verdictRecorded": true,
+        "verdictScope": "SecurityOnly",
+        "uncertain": false,
+        "category": "Scam",
+        "now": 1209600,
+        "heldAt": 0,
+        "hold": "NoHold",
+        "closed": false,
+        "labelApplied": true,
+        "securityCommented": false,
+        "reopened": false,
+        "moderatorNotice": false
+      },
+      "lawsHold": true
+    },
+    {
+      "event": {
+        "type": "commentSecurity"
+      },
+      "state": {
+        "identity": {
+          "project": 1,
+          "repository": 1,
+          "prNode": "pr",
+          "revision": "head",
+          "contentDigest": "review"
+        },
+        "context": {
+          "identity": {
+            "project": 1,
+            "repository": 1,
+            "prNode": "pr",
+            "revision": "head",
+            "contentDigest": "review"
+          },
+          "scope": "SecurityOnly",
+          "source": "SourceCurrent",
+          "activeInstallation": true,
+          "openItem": true,
+          "completeCoverage": true,
+          "reviewAllowed": true,
+          "securityAuthorized": true,
+          "closurePolicyAllows": true,
+          "unassigned": true
+        },
+        "evidence": {
+          "member": false,
+          "authenticatedRun": false,
+          "exactPr": false,
+          "knownNonMaintainer": false,
+          "qualified": false,
+          "independent": false,
+          "withinCap": false,
+          "production": false
+        },
+        "consent": true,
+        "verdictRecorded": true,
+        "verdictScope": "SecurityOnly",
+        "uncertain": false,
+        "category": "Scam",
+        "now": 1209600,
+        "heldAt": 0,
+        "hold": "NoHold",
+        "closed": false,
+        "labelApplied": true,
+        "securityCommented": true,
+        "reopened": false,
+        "moderatorNotice": false
+      },
+      "lawsHold": true
+    }
+  ]
+}

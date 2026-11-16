@@ -31,6 +31,8 @@ export function scriptedWorld(scene: Scene) {
     },
     effect perform(delivery, carried) {
       if (scene.receipts.has(delivery)) return
+      // spec/assistant.md, "A bill is paid only on the biller's own page"; spec/assistant.md, "Card details go only into the biller's own page"
+      if (carried.tag !== "Said" && (scene.page !== "Genuine" || carried.page !== scene.page)) throw new NoAnswer({ from: "World" })
       scene.done.push(carried)
       scene.receipts.add(delivery)
     }

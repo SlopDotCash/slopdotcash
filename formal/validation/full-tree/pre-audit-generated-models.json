@@ -1,0 +1,477 @@
+{
+  "meaning": "Generated Quint identities written by the full-tree check begun before the final coverage audit. Later source changes are checked separately; this snapshot does not certify the final tree.",
+  "files": [
+    {
+      "path": "gen/access.qnt",
+      "sha256": "0791148a2329c4ffb636131ecab3134cef128038e50709d67048f4edf5959dea"
+    },
+    {
+      "path": "gen/access.run.qnt",
+      "sha256": "4107002a52a08da5698b9640da0383ad8a0a7b9b0e8155adfa6b46821a97129c"
+    },
+    {
+      "path": "gen/app.qnt",
+      "sha256": "7f4de1461a0ccb00423d4b968110ac717b2d1e9ad78574b98fc74afafe8a45a1"
+    },
+    {
+      "path": "gen/app.run.qnt",
+      "sha256": "d01ffe8f2c1fe86e9a6a2b1b93d5c535681986d9681ce6db3d404779b7477a66"
+    },
+    {
+      "path": "gen/backend.qnt",
+      "sha256": "93ae3cca9baeaad87338cccc6b963ac469d8b7eff0526cca2dd82628a86d0b31"
+    },
+    {
+      "path": "gen/backend.run.qnt",
+      "sha256": "6e64d809b173c00e32b8c075e62eafab0c5fcc601ad8d11450fd7cf4d52988f0"
+    },
+    {
+      "path": "gen/backend__accounts.qnt",
+      "sha256": "d26f25c86f4559702b92b0e5328f67eeffe35f215aec93f703f0f78a5fce83cf"
+    },
+    {
+      "path": "gen/backend__accounts.run.qnt",
+      "sha256": "83d7f2b47019d735d0de4e8a00d6f7848c94d71978c12f209e2e1d24f5dc4025"
+    },
+    {
+      "path": "gen/backend__email.qnt",
+      "sha256": "a214b55c028f4c862de0b4fee4ed22873da92076612998c433c9684309ffcf51"
+    },
+    {
+      "path": "gen/backend__email.run.qnt",
+      "sha256": "a208258971ae60ea6e275dfac38a5134b6ce1c20f5b7b4f934e2a4b4ad240333"
+    },
+    {
+      "path": "gen/backend__projects.qnt",
+      "sha256": "cd5ffa061f23f27039d350fd0219a8627f1a752eeb22409d85bccbe21266bbd3"
+    },
+    {
+      "path": "gen/backend__projects.run.qnt",
+      "sha256": "3b50a6f7117c796bab40259391f2a0e16a2645ab82a6933a477a8db66258532a"
+    },
+    {
+      "path": "gen/backend__wallets.qnt",
+      "sha256": "2ed000cb164248b37fc88b82320ba1af7ebaa9d9c92d396895119e0920c9a298"
+    },
+    {
+      "path": "gen/backend__wallets.run.qnt",
+      "sha256": "3ca6b45bd9a54a033af7c9df69e444e7478eb372b16252154e3597fdf1386bfa"
+    },
+    {
+      "path": "gen/composition.qnt",
+      "sha256": "f539dbfefca01241c0edd47d6e0f553b500958aefcf334668a4bf6ab25f8463a"
+    },
+    {
+      "path": "gen/composition.run.qnt",
+      "sha256": "193c2bac036dadf845ede977e215607b640482e4acf0ae39cb0f5a32fe784a4f"
+    },
+    {
+      "path": "gen/contributor.qnt",
+      "sha256": "1c69325488c05b302ca56b5617a4e1f6701c2d7a3b81067e292745abcbc17376"
+    },
+    {
+      "path": "gen/contributor.run.qnt",
+      "sha256": "16f691cb35c562cf3c870bb5d2c6960c433003d2bd3930d4a400b7cadfcd9587"
+    },
+    {
+      "path": "gen/contributor__evidence.qnt",
+      "sha256": "2669c5e600b3ae070217ad4f73c932aa8695be654dc98d46c430f044ece3ebd1"
+    },
+    {
+      "path": "gen/contributor__evidence.run.qnt",
+      "sha256": "1ef7fec86a73e5ef129c5ae361a47875ecb61a2e2dd4e8eb8c9e1545d2d0f198"
+    },
+    {
+      "path": "gen/contributor__installation.qnt",
+      "sha256": "c8cc4abb5702644ef96bf8d39642860f272c5340fa94f1d20fe33c80d40a7ed2"
+    },
+    {
+      "path": "gen/contributor__installation.run.qnt",
+      "sha256": "17634c7a4953c9097ec2e20119a6b14d33263e353cb5e3cebd89074557210be1"
+    },
+    {
+      "path": "gen/contributor__workflow.qnt",
+      "sha256": "e23b3244525ecd1ead29f77b7e8a97c2028a26448619688c1e7e02ae15cf4645"
+    },
+    {
+      "path": "gen/contributor__workflow.run.qnt",
+      "sha256": "89201c3cacda400ec8dac0999f10c274014f40c550609a62f9a67e124af9f89b"
+    },
+    {
+      "path": "gen/fees.qnt",
+      "sha256": "c4dd2cd937a289702d64b332a961e98781d44c2a91a6373ad206c5922f37f048"
+    },
+    {
+      "path": "gen/fees.run.qnt",
+      "sha256": "c1740c3b30d27a07ad1b64f15a14da0fcdbe83f8dfbb4da30fac18013716d81c"
+    },
+    {
+      "path": "gen/fees__buyback.qnt",
+      "sha256": "e81b55a2306244e36f30376561eb6fc2913be0c55939225168744a6bc5d62ca1"
+    },
+    {
+      "path": "gen/fees__buyback.run.qnt",
+      "sha256": "1edb8d1047cfbb27f6d2c786833a0294aedd1619da9b8531fbb129b101e1a590"
+    },
+    {
+      "path": "gen/fees__conversion.qnt",
+      "sha256": "84f8048ba88fb469debc2092aebe5e17141993fdf5fe829fdc1b834f8f6606ad"
+    },
+    {
+      "path": "gen/fees__conversion.run.qnt",
+      "sha256": "383fe3a6c20ecd0e203978698b95829b227c2743702be5d0634d160bfc66c038"
+    },
+    {
+      "path": "gen/frontend.qnt",
+      "sha256": "be0193ae93dd0d9b287dd60daa73cc9fdb451ccdd31734ee3eaf93ca6269b08f"
+    },
+    {
+      "path": "gen/frontend.run.qnt",
+      "sha256": "fe0f78bdda3f6116081f799d7e844941d782d1d3d1530ab9b3ebb5a8faeb107b"
+    },
+    {
+      "path": "gen/frontend__drafts.qnt",
+      "sha256": "86d9c591550d12d1493ee7a678e25254ed552ecaeeaf3768068e95d7fe13aa26"
+    },
+    {
+      "path": "gen/frontend__drafts.run.qnt",
+      "sha256": "ec762a334ba0db03a18bce3abb83d69f8726387f599c3be17941ca8fd5a3e32c"
+    },
+    {
+      "path": "gen/frontend__navigation.qnt",
+      "sha256": "82f97187c2cc346d461ce18a496a0b685fb815b673c981b68dcba76007c2375e"
+    },
+    {
+      "path": "gen/frontend__navigation.run.qnt",
+      "sha256": "8d490cb1d6558cb173879c44dbd53a935120489809a729887d8907099f8a787d"
+    },
+    {
+      "path": "gen/frontend__projections.qnt",
+      "sha256": "dc4934911ea7413fcdaef596f650b563e2d2402097d1dd591a034046c6548c74"
+    },
+    {
+      "path": "gen/frontend__projections.run.qnt",
+      "sha256": "efde05ed843a0e144699af1ef702eed044c39521d08a7bff521a03d9401a593c"
+    },
+    {
+      "path": "gen/frontend__requests.qnt",
+      "sha256": "4795d0127feaad6dee9f6440e0210d2a86d33ef6ab28383b00026b0c9de7597c"
+    },
+    {
+      "path": "gen/frontend__requests.run.qnt",
+      "sha256": "2739713858896caaa3bee4fa97ccda5c14c4ebc7c9f876404e8820131a763696"
+    },
+    {
+      "path": "gen/governance.qnt",
+      "sha256": "e6fd67ffb400014296c75f9df572b7609d6e133a7fdc1a51094f5cc4acbac4d8"
+    },
+    {
+      "path": "gen/governance.run.qnt",
+      "sha256": "9b2e42edb2c240ae3d8180fd12c237deea1625481689df690c0b7dc040988acf"
+    },
+    {
+      "path": "gen/index.qnt",
+      "sha256": "405d4f994c564157b8d28f4a417e39862c941db77a8eed2b08e077c4b4aa4452"
+    },
+    {
+      "path": "gen/index.run.qnt",
+      "sha256": "488bf07190ffff821a4bcbf14f72769d1d0e0db6145a80aee78cca9d854a6e9a"
+    },
+    {
+      "path": "gen/operations.qnt",
+      "sha256": "328777579c419ff38235d690ca69965bd6372a3f3efcdeb18832d57ae25beda8"
+    },
+    {
+      "path": "gen/operations.run.qnt",
+      "sha256": "6ba5c28192f74b0424c930d922c17494c575495e5aa2b0401f785c2cc9b383f9"
+    },
+    {
+      "path": "gen/operations__backup.qnt",
+      "sha256": "1816d52449a4d7e03e663b4366ba28525348a013968557fd98684607f752f30c"
+    },
+    {
+      "path": "gen/operations__backup.run.qnt",
+      "sha256": "46c749a622044d142edde49d0249c7004c4345486ba57e5378b29536f1bad686"
+    },
+    {
+      "path": "gen/operations__local.qnt",
+      "sha256": "cb581ed7d62f6bdbbc3d4c89b39553404deabb6b61d5bab9df4dacf724d9ef75"
+    },
+    {
+      "path": "gen/operations__local.run.qnt",
+      "sha256": "08f4771d8b7354d4de0dcd4c0edd177f454046031664cb7a711fd330de06e9ee"
+    },
+    {
+      "path": "gen/operations__notifications.qnt",
+      "sha256": "ad59b08751bb1fad7107da13a9aa4c2147da31c5d55b14409029f36e4974e2f0"
+    },
+    {
+      "path": "gen/operations__notifications.run.qnt",
+      "sha256": "9e0fa5200f894fb15f994479e51f81f5c75108f0fc031cee78b8cad84b05c973"
+    },
+    {
+      "path": "gen/operations__release.qnt",
+      "sha256": "9d63407be1275456e9cf3c59d6e128285c70b62f8b813680f836a1fdd3d4300a"
+    },
+    {
+      "path": "gen/operations__release.run.qnt",
+      "sha256": "fd1bf7b53cf412312f932d014182148657d27ffe291942b93b100672b49f09eb"
+    },
+    {
+      "path": "gen/points.qnt",
+      "sha256": "7b82a5c1549428c2f911c9d47578272a666fb9b0e511e9ad2519e49637bcc955"
+    },
+    {
+      "path": "gen/points.run.qnt",
+      "sha256": "a8be6d05ab71ce87569044e2c2acc623673d0808c76127b22f9599a8698c2dcf"
+    },
+    {
+      "path": "gen/points__allocation.qnt",
+      "sha256": "cc6c55be4faed7b74eebb4f92e1a1ca3935eeac9f31209eaa35bb43f5fc55787"
+    },
+    {
+      "path": "gen/points__allocation.run.qnt",
+      "sha256": "ad9d92eea5f915356b30bea7887b3088acc891db409e04575fddc75e633faf88"
+    },
+    {
+      "path": "gen/points__authorship.qnt",
+      "sha256": "c6ce8d25601601ec8265e1da4e57ca1b24c757980745d30488ef99e5f0386a1e"
+    },
+    {
+      "path": "gen/points__authorship.run.qnt",
+      "sha256": "b031d85e13ca0c261428cd968d46b165dc52511883d515eeb3a62cb66a50a400"
+    },
+    {
+      "path": "gen/points__census.qnt",
+      "sha256": "9920630e8ae2d5e2635790557cd7bfca3fc211f06938442fc9a0ee16ce0de0f0"
+    },
+    {
+      "path": "gen/points__census.run.qnt",
+      "sha256": "dfc768def970fe7608accd15afcc6f29596c4ecfcfe26b2f47325836a14b4369"
+    },
+    {
+      "path": "gen/points__journal.qnt",
+      "sha256": "27e43db744924b37a025b2746a56e5c2bc1716e93fc14a4163920f157744cfdb"
+    },
+    {
+      "path": "gen/points__journal.run.qnt",
+      "sha256": "77dc3de8fadb9462ee6b74a7d0c5a3e86df4753b5b63496f0d1687cd9eb54e71"
+    },
+    {
+      "path": "gen/points__penalties.qnt",
+      "sha256": "6cc7bce9ca88860bd11526ffdabbfda89ade1fda1b1c9012c76cf9e5aa043805"
+    },
+    {
+      "path": "gen/points__penalties.run.qnt",
+      "sha256": "c254edfec5ef3fe1c27b61b659a9f36a27e939463e2842ebea43893218e3f50f"
+    },
+    {
+      "path": "gen/points__reviews.qnt",
+      "sha256": "9b8902ba87252463193dde1e57f759d7232440c0663c2069a98f6b2c7f746a3e"
+    },
+    {
+      "path": "gen/points__reviews.run.qnt",
+      "sha256": "dbd87e3dffeecd47cb5d3c438cebcdb4c213f436a8a13691d310bbc3178f7bdf"
+    },
+    {
+      "path": "gen/projectComposition.qnt",
+      "sha256": "0f3826666c6e98a3d595a5c30da7aecf9ddf2f6e4722f40a41cf831e93b52678"
+    },
+    {
+      "path": "gen/projectComposition.run.qnt",
+      "sha256": "b9d3dad2a096d8aa5f452c7e3b3c54d7adff9c950acf0a7a606df7add98c89c5"
+    },
+    {
+      "path": "gen/security.qnt",
+      "sha256": "9c4be4847422bf22273856f9a09d4cabcddb4d8990531016676c9501fffaf1aa"
+    },
+    {
+      "path": "gen/security.run.qnt",
+      "sha256": "4952b2d75c062f9a3519b99767b5143ce7306e80fb84a776244b345713d06c59"
+    },
+    {
+      "path": "gen/security__admission.qnt",
+      "sha256": "4f375fb66ef1ad1dae5b2981d7ced57a8325dadbf2e1ba609676d86dabf549d3"
+    },
+    {
+      "path": "gen/security__admission.run.qnt",
+      "sha256": "6ae235bb533d0774fcaa25b6fc40684fefef72f4aa2f8f3e20c35ac9e7c15a1f"
+    },
+    {
+      "path": "gen/security__cases.qnt",
+      "sha256": "c7233b6f9aea34a5d38476f8c74d2451d911701054a81aa7761c58205e5cf626"
+    },
+    {
+      "path": "gen/security__cases.run.qnt",
+      "sha256": "06a2dbd3cfdb469aa768d0625544f439b5f97520adaaa9f485c6bffe6459fc4b"
+    },
+    {
+      "path": "gen/security__enforcement.qnt",
+      "sha256": "385b5f648b65db3fcdf2cd8f61c398213ee70a59adf8dfb00609902a3bcb2178"
+    },
+    {
+      "path": "gen/security__enforcement.run.qnt",
+      "sha256": "032730ae20bc1dd63f6bcc123d8275cb83752744f5ddab6f2c8a9933927e9058"
+    },
+    {
+      "path": "gen/security__evidence.qnt",
+      "sha256": "3da0c1900b078654244c80f679c75998c47a526ad6687f480d2f3ffd1b91404a"
+    },
+    {
+      "path": "gen/security__evidence.run.qnt",
+      "sha256": "592a060db96fd17d1c56a02054cee70aa4f0e921598d1397ce931a957adf7d34"
+    },
+    {
+      "path": "gen/security__intake.qnt",
+      "sha256": "692e43d4d11a9bc6284091aba79a2f86a1d2d6e8e693902a03c74ae186171b4c"
+    },
+    {
+      "path": "gen/security__intake.run.qnt",
+      "sha256": "1241038d2588402abe2b72978b3705f57f8ff60ee64393fb82468ced01c25db6"
+    },
+    {
+      "path": "gen/security__privacy.qnt",
+      "sha256": "772d32b0d939ab99b730efb25dbc26635eb0f975d1d4ae365d077c396379a5f4"
+    },
+    {
+      "path": "gen/security__privacy.run.qnt",
+      "sha256": "69ab45ab506254c785f530ecea263145e49cf3e524758f47efb7a9062bfdf39c"
+    },
+    {
+      "path": "gen/security__terms.qnt",
+      "sha256": "ebbb9494e9fe33cbddf3f8c494640e39ae37786ee4a43951c431446e18c63b25"
+    },
+    {
+      "path": "gen/security__terms.run.qnt",
+      "sha256": "552105d4fa1e656294908c887242314f6c1a5a51d5eab8f60cf003d0da24284a"
+    },
+    {
+      "path": "gen/settlement.qnt",
+      "sha256": "a84185ec06681c8769037df1b6aa7d61c9750e6bfe4e1008290b288deaf985f1"
+    },
+    {
+      "path": "gen/settlement.run.qnt",
+      "sha256": "e057f7caff288ead51513a2bee3e294916b39cbe50b3d06412b10d25171e9382"
+    },
+    {
+      "path": "gen/settlement__allocation.qnt",
+      "sha256": "3e9a3fc4bdbd18dd26f02ea1bedbe009b4ad583a330b71d2f9f1245b00277a45"
+    },
+    {
+      "path": "gen/settlement__allocation.run.qnt",
+      "sha256": "cdfbf7e040e59d361bc46cb982ad131c13c6dceed8189de18172807036177afe"
+    },
+    {
+      "path": "gen/settlement__composition.qnt",
+      "sha256": "1461a427190574d9f83c63b2680a6e443ca1924c4b069c123b9b1314bf46eae9"
+    },
+    {
+      "path": "gen/settlement__composition.run.qnt",
+      "sha256": "5134418027ddbb2f1c6762ef5e72c0bcfa1eaf4ab98aa53b490fafb478c818ee"
+    },
+    {
+      "path": "gen/settlement__contributorAllocation.qnt",
+      "sha256": "fe3229a2fb31417b3c8f8504b5691bedfa35ed3c732d556c0bfcde25f1ced4e9"
+    },
+    {
+      "path": "gen/settlement__contributorAllocation.run.qnt",
+      "sha256": "6bbba86339cd7e61e6cb8d583db7e60f59708faa63f8eefaeaddfdddb6e2e634"
+    },
+    {
+      "path": "gen/settlement__money.qnt",
+      "sha256": "bf786dcbdbc5c6baa95dda8d56a3da800f0b64b32e6a5a80405b4332680035f2"
+    },
+    {
+      "path": "gen/settlement__money.run.qnt",
+      "sha256": "ba70d28b10376ef0857439799836e59655dd7145efbeee3bce66614775aa7f3d"
+    },
+    {
+      "path": "gen/settlement__monthly.qnt",
+      "sha256": "fe3d2f4cdf74347bf9be7c49e9a44dd259e095e8c3914a049649787aee0263ef"
+    },
+    {
+      "path": "gen/settlement__monthly.run.qnt",
+      "sha256": "880649fb4b969b99de8c1627136b5a3307ff5971a44cf658731d21eaee83a2cc"
+    },
+    {
+      "path": "gen/settlement__payment.qnt",
+      "sha256": "8db7444906429101e7365b0d29754c4ceb4e2485e6aef612464c34c39ce15175"
+    },
+    {
+      "path": "gen/settlement__payment.run.qnt",
+      "sha256": "77377ebb13d5296b0c3cbd3230bb65d61d2a539a2cde4cf550c4fd4d013749a8"
+    },
+    {
+      "path": "gen/settlement__recovery.qnt",
+      "sha256": "cf3ed7deaeb874f929221d50b8ba0797ff2723e5b74fc886a5a6729992803c8e"
+    },
+    {
+      "path": "gen/settlement__recovery.run.qnt",
+      "sha256": "1f6e8a2a829412c135fc9d2c0230eba586570ab8626e93baf055a8093c8dfdb6"
+    },
+    {
+      "path": "gen/settlement__referrals.qnt",
+      "sha256": "a19e6c7ef263aa143cd73237682eeb7f15931e9aee69dc54c47effa3fff0cbef"
+    },
+    {
+      "path": "gen/settlement__referrals.run.qnt",
+      "sha256": "2deda435dc1b508f57510691b24d8fc1381bf373c467d3b6be8c2b7f4b310092"
+    },
+    {
+      "path": "gen/settlement__reserveRelease.qnt",
+      "sha256": "bdf577078192cd435a2af2d614b75b11dd876c0e481d92976b7407773f61e9e8"
+    },
+    {
+      "path": "gen/settlement__reserveRelease.run.qnt",
+      "sha256": "95da6777bb05577eb36d40d3e9fae049c9143d784f6b9ebe9e8d435ab723209f"
+    },
+    {
+      "path": "gen/settlement__signer.qnt",
+      "sha256": "7e27e7f0a35e76b32dd11425e1d2ee4ce02cf9f47d26134ec01872d3962e2f8c"
+    },
+    {
+      "path": "gen/settlement__signer.run.qnt",
+      "sha256": "22f41107653f8cee601a1396aec440e06f704f47433638f453e9444293d2db2a"
+    },
+    {
+      "path": "gen/settlement__vault.qnt",
+      "sha256": "44514fb3afe71ecc67f2348adb5965da48028dfe1995dc93a847eaaf8f21208c"
+    },
+    {
+      "path": "gen/settlement__vault.run.qnt",
+      "sha256": "de9c3d841c54d03c379be25beb2af577d6ab13c48e19147a5f182ba40665903b"
+    },
+    {
+      "path": "gen/slopbot.qnt",
+      "sha256": "75c5657fc0539c336e2f9711ae9380165c813a00f479de1f919232f7f6c007e5"
+    },
+    {
+      "path": "gen/slopbot.run.qnt",
+      "sha256": "9fb82927aee52a912748cf4238049d4b359af16878692883f53e03c92a4c3828"
+    },
+    {
+      "path": "gen/slopbot__appeals.qnt",
+      "sha256": "f26614160e9fcb773200ae31e5e454cad3897c85f4cfa37e3a64064b38e039a3"
+    },
+    {
+      "path": "gen/slopbot__appeals.run.qnt",
+      "sha256": "fb52dbb9286fecd27571a4dd29fc4ac4e3f9b291433629daf5c3aaefbef2b78c"
+    },
+    {
+      "path": "gen/slopbot__closure.qnt",
+      "sha256": "3f694a76919fa04fccb45c7c603f27f61d75c038508cbf31218dcffb80be5aa5"
+    },
+    {
+      "path": "gen/slopbot__closure.run.qnt",
+      "sha256": "936b7f816ded46709dcf313ed270839a7299f75e8607f4bf8f99541777916dc0"
+    },
+    {
+      "path": "gen/slopbot__review.qnt",
+      "sha256": "989938d3c8db369494d86352e30a7ac5bd17001e9b837081ecb5436c0813e3d5"
+    },
+    {
+      "path": "gen/slopbot__review.run.qnt",
+      "sha256": "d34d38ad926999ca68bcdd8aa68e0e642d91bae8932910a29d5529791604d6a9"
+    }
+  ]
+}

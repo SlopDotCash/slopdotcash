@@ -1,0 +1,39 @@
+{
+  "scratch": "/tmp/slop-referral-verify-half-order",
+  "specHashes": {
+    "spec/settlement/money.md": "232b15ff434a1ea7aaaf385aeac05d0fad805b512ba7e0dba64fb6bd2819cbb4",
+    "spec/settlement/money.proof.dfy": "1cb4e9420913011c8c88b3cd6ad3c1498e0d27d8fe561c05d768f377513d5c47",
+    "spec/settlement/half.md": "295d7fe379d149205880a3f738a5c8628ba17fadb0f90fb791bdd943256ed521",
+    "spec/settlement/half.proof.dfy": "36ba8dc21e4ae05e143bf718b0770677eb1e9fe3d628c0f2c45c6683e387121e"
+  },
+  "rows": [
+    {
+      "unit": "settlement__half.ts",
+      "total": 2,
+      "unproved": [],
+      "exhausted": [],
+      "errors": [],
+      "resting": {},
+      "proofDafnySha256": "385ebd86a9ef00187a95c0eca12937845531e2cddf4169afd57fdd166ad9c472",
+      "proofSource": {
+        "file": "spec/settlement/half.proof.dfy",
+        "sha256": "36ba8dc21e4ae05e143bf718b0770677eb1e9fe3d628c0f2c45c6683e387121e"
+      },
+      "checkedImportedLemmas": 0
+    }
+  ],
+  "differential": {
+    "cases": 330,
+    "orderPairs": 327,
+    "distinctAmounts": 110,
+    "checks": [
+      "exact BigInt quotient and remainder",
+      "generic monetary division agreement",
+      "valid arbitrary-length limbs",
+      "padded encodings retained by value",
+      "monotonic half across ordered adjacent values"
+    ]
+  },
+  "generatedTypeScriptSha256": "1a448ab20a76f70926d30bc70cb1987e5159149cf884fae06aeeab25e09a81c2",
+  "generatedQuintSha256": "cf9f9e98513c04442c0270903c1df619a41b09004acca2e0db855cabe5c79797"
+}

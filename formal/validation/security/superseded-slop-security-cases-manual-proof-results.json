@@ -1,0 +1,21 @@
+[
+  {
+    "unit": "security__cases.ts",
+    "total": 130,
+    "unproved": [
+      "decide: (inv(c) ==> canDecide(c, by_, checkedEpoch, finding, related) ==> alwaysScreeningIsAdvisory(decide(c, by_, checkedEpoch, finding, related)))",
+      "decide: (inv(c) ==> canDecide(c, by_, checkedEpoch, finding, related) ==> alwaysAwardHasAcceptance(decide(c, by_, checkedEpoch, finding, related)))",
+      "decide: (inv(c) ==> canDecide(c, by_, checkedEpoch, finding, related) ==> alwaysAppealState(decide(c, by_, checkedEpoch, finding, related)))",
+      "decide: (inv(c) ==> canDecide(c, by_, checkedEpoch, finding, related) ==> alwaysAppealSource(decide(c, by_, checkedEpoch, finding, related)))",
+      "decide: (inv(c) ==> canDecide(c, by_, checkedEpoch, finding, related) ==> alwaysRelatedApproval(decide(c, by_, checkedEpoch, finding, related)))",
+      "decide: (inv(c) ==> canDecide(c, by_, checkedEpoch, finding, related) ==> alwaysVerifiedPatchMatches(decide(c, by_, checkedEpoch, finding, related)))",
+      "decide: (inv(c) ==> canDecide(c, by_, checkedEpoch, finding, related) ==> alwaysExactDisclosure(decide(c, by_, checkedEpoch, finding, related)))",
+      "decide: (inv(c) ==> canDecide(c, by_, checkedEpoch, finding, related) ==> stepPreservesApprovedAward(c, decide(c, by_, checkedEpoch, finding, related)))",
+      "step: inv(step(current, event, by_))"
+    ],
+    "errors": [
+      "SingletonUnionMembers (security__cases.dfy:576) does not verify: forall x :: x in values + Std.Collections.Seq.Filter((set_x: int) => !((set_x in values)), [value]) <==> x in values || x == value; a lemma that is not generated must prove"
+    ],
+    "exhausted": []
+  }
+]

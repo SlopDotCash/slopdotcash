@@ -1,0 +1,929 @@
+{
+  "legacyMain": "e96069ce2a403588ca2129b1ebb943f7bb0972a6",
+  "scope": "Exact source pointers and transition-level accounting for four retained value-assessment models. Side-effecting adapters, provider truth, historical import and current-history consumption require separate evidence.",
+  "successor": {
+    "path": "spec/slopbot/valueInference.md",
+    "sha256": "efe1773d023e9b5c250d1dc7fba4488f5b1f8b9922f5efcda3d04cbcc5c5bd89"
+  },
+  "anchors": [
+    {
+      "path": "workers/slopbot/value-consumer.ts",
+      "sha256": "ded02225fa4c6d658245a8fbbcd261a4fe60de1b0a7a67f8bf56a406d06f0753",
+      "entries": [
+        {
+          "line": 185,
+          "anchor": "const mayCall ="
+        },
+        {
+          "line": 130,
+          "anchor": "await assertValueInstallationRepositories"
+        },
+        {
+          "line": 204,
+          "anchor": "The remote and local authority reads can also outlive both leases"
+        },
+        {
+          "line": 285,
+          "anchor": "publishWorkUnitAssessment("
+        }
+      ]
+    },
+    {
+      "path": "workers/slopbot/value-processing.ts",
+      "sha256": "4a6bfc9ba153c0878963915c84a13fdaa3cac2c87e2653dc04c575218e79aeb4",
+      "entries": [
+        {
+          "line": 77,
+          "anchor": "export async function claimValueRequest"
+        },
+        {
+          "line": 114,
+          "anchor": "export async function ownsValueRequest"
+        },
+        {
+          "line": 139,
+          "anchor": "export async function finishValueRequest"
+        }
+      ]
+    },
+    {
+      "path": "workers/slopbot/value-source-leases.ts",
+      "sha256": "17befef2df6756616508d1245ee5d4d7844f9661f1236d92e039c921b7d23588",
+      "entries": [
+        {
+          "line": 27,
+          "anchor": "export async function claimValueSources"
+        },
+        {
+          "line": 24,
+          "anchor": "All-or-none source ownership"
+        },
+        {
+          "line": 52,
+          "anchor": "export async function ownsValueSources"
+        }
+      ]
+    },
+    {
+      "path": "workers/slopbot/value-inference.ts",
+      "sha256": "dca3d158a5764f369346f2fad56d27a34e93e06fdd35bb4e6c1f826a329b9d75",
+      "entries": [
+        {
+          "line": 114,
+          "anchor": "VALUE_INFERENCE_ATTEMPT_LIMIT = 3"
+        },
+        {
+          "line": 168,
+          "anchor": "const retained = await readValueInference"
+        },
+        {
+          "line": 192,
+          "anchor": "const admission = await admitValueAttempt"
+        },
+        {
+          "line": 218,
+          "anchor": "await recordCalls("
+        },
+        {
+          "line": 227,
+          "anchor": "await retainValueInference("
+        },
+        {
+          "line": 235,
+          "anchor": "await completeValueAttempt("
+        }
+      ]
+    },
+    {
+      "path": "workers/slopbot/value-budget.ts",
+      "sha256": "0ba0a4e25402ec854ee5d26061287c30d7031da59810a402f85b97e7c4acb335",
+      "entries": [
+        {
+          "line": 9,
+          "anchor": "export function countedValueAttemptsSql"
+        },
+        {
+          "line": 36,
+          "anchor": "function valueAttemptRefusalSql"
+        },
+        {
+          "line": 161,
+          "anchor": "async function reserveBudget"
+        },
+        {
+          "line": 247,
+          "anchor": "export async function reconcileValueBudget"
+        }
+      ]
+    },
+    {
+      "path": "workers/slopbot/value-publication-fence.ts",
+      "sha256": "deb8ef9188f2ac419c8f156278d17d33b6cd36ff83864b9d95356fd596f71b14",
+      "entries": [
+        {
+          "line": 36,
+          "anchor": "export async function registeredValuePublication"
+        },
+        {
+          "line": 67,
+          "anchor": "All predicates execute with the INSERT"
+        },
+        {
+          "line": 68,
+          "anchor": "export const VALUE_PUBLICATION_FENCE_SQL"
+        }
+      ]
+    },
+    {
+      "path": "workers/slopbot/failure-alerts.ts",
+      "sha256": "283d8eb97585ccfbd44c602114b72a4ad7f7c9dd6f3537205d8841dd5fb1133d",
+      "entries": [
+        {
+          "line": 13,
+          "anchor": "export async function dispatchFailureAlert"
+        },
+        {
+          "line": 11,
+          "anchor": "No provider exception text"
+        }
+      ]
+    },
+    {
+      "path": "workers/slopbot/spend-alerts.ts",
+      "sha256": "2d778ce10576864ef3e937a2e5c9ff90cbf0a9ae288cb961fec8906add2405d4",
+      "entries": [
+        {
+          "line": 11,
+          "anchor": "Claim one pending milestone per invocation"
+        },
+        {
+          "line": 16,
+          "anchor": "export async function dispatchSpendAlert"
+        }
+      ]
+    },
+    {
+      "path": "workers/slopbot/models.ts",
+      "sha256": "6d4e3e5f22d28254ff71574d403992bff2a44625b9e570f7b354459e76e5504e",
+      "entries": [
+        {
+          "line": 22,
+          "anchor": "export const TRIAGE_ROUTE"
+        },
+        {
+          "line": 136,
+          "anchor": "An absent credential makes this gateway unavailable"
+        },
+        {
+          "line": 140,
+          "anchor": "Recheck after a failed provider call"
+        },
+        {
+          "line": 166,
+          "anchor": "result.servedModel !== step.model"
+        }
+      ]
+    }
+  ],
+  "models": {
+    "formal/models/slopbot/bot_value_precall_authority.qnt": {
+      "sourceSha256": "8b46ca7a75be2a53b02eafc1f450c0a4bc28d7e7d4aa163d5709233c8f66e7f1",
+      "actions": {
+        "init": {
+          "status": "modeled-projection",
+          "successorDefinitions": [
+            "initial"
+          ]
+        },
+        "begin": {
+          "status": "modeled-projection",
+          "successorDefinitions": [
+            "beginCheck"
+          ]
+        },
+        "remoteReply": {
+          "status": "modeled-projection",
+          "successorDefinitions": [
+            "remoteReply"
+          ]
+        },
+        "checkRegistry": {
+          "status": "modeled-projection",
+          "successorDefinitions": [
+            "candidateCurrent",
+            "finishCheck"
+          ]
+        },
+        "checkInstallation": {
+          "status": "modeled-projection",
+          "successorDefinitions": [
+            "candidateCurrent",
+            "finishCheck"
+          ]
+        },
+        "checkRequest": {
+          "status": "modeled-projection",
+          "successorDefinitions": [
+            "live",
+            "finishCheck"
+          ]
+        },
+        "checkSource": {
+          "status": "modeled-projection",
+          "successorDefinitions": [
+            "owns",
+            "finishCheck"
+          ]
+        },
+        "call": {
+          "status": "modeled-projection",
+          "successorDefinitions": [
+            "canCall",
+            "call"
+          ]
+        },
+        "restrictProject": {
+          "status": "modeled-projection",
+          "successorDefinitions": [
+            "observe"
+          ]
+        },
+        "suspendInstallation": {
+          "status": "modeled-projection",
+          "successorDefinitions": [
+            "observe"
+          ]
+        },
+        "expireRequest": {
+          "status": "modeled-projection",
+          "successorDefinitions": [
+            "observe",
+            "live"
+          ]
+        },
+        "expireSource": {
+          "status": "modeled-projection",
+          "successorDefinitions": [
+            "observe",
+            "owns"
+          ]
+        },
+        "step": {
+          "status": "generated-harness",
+          "successorDefinitions": [
+            "initial"
+          ]
+        }
+      },
+      "scenarios": {
+        "activeAuthorityReachesProviderTest": {
+          "status": "modeled-projection",
+          "successorDefinitions": [
+            "beginCheck",
+            "remoteReply",
+            "finishCheck",
+            "call"
+          ]
+        },
+        "pauseDuringMembershipPreventsCallTest": {
+          "status": "modeled-projection",
+          "successorDefinitions": [
+            "observe",
+            "candidateCurrent",
+            "canCall"
+          ]
+        },
+        "suspensionDuringMembershipPreventsCallTest": {
+          "status": "modeled-projection",
+          "successorDefinitions": [
+            "observe",
+            "locallyAuthorized",
+            "canCall"
+          ]
+        },
+        "unavailableMembershipPreventsCallTest": {
+          "status": "modeled-projection",
+          "successorDefinitions": [
+            "remoteReply",
+            "candidateCurrent",
+            "canCall"
+          ]
+        },
+        "expiredRequestAfterAuthorityStillPreventsCallTest": {
+          "status": "modeled-projection",
+          "successorDefinitions": [
+            "live",
+            "canCall"
+          ]
+        },
+        "expiredSourceAfterAuthorityStillPreventsCallTest": {
+          "status": "modeled-projection",
+          "successorDefinitions": [
+            "owns",
+            "canCall"
+          ]
+        },
+        "requestExpiryBetweenLeaseReadsPreventsCallTest": {
+          "status": "modeled-projection",
+          "successorDefinitions": [
+            "candidateCurrent",
+            "checkedCurrent",
+            "canCall"
+          ]
+        },
+        "laterRevocationDoesNotUndoCompletedCheckTest": {
+          "status": "modeled-projection",
+          "successorDefinitions": [
+            "observe",
+            "canCall"
+          ]
+        },
+        "alreadyStartedCallRemainsRecordedTest": {
+          "status": "modeled-projection",
+          "successorDefinitions": [
+            "recordCall",
+            "saveUsage"
+          ]
+        }
+      }
+    },
+    "formal/models/slopbot/bot_value_attempt_recovery.qnt": {
+      "sourceSha256": "9392d9cdf9a76dc7582a9ba7996a620599c751abe76babab5ef1c478c1a473b7",
+      "actions": {
+        "init": {
+          "status": "modeled-projection",
+          "successorDefinitions": [
+            "initial"
+          ]
+        },
+        "expireA": {
+          "status": "modeled-projection",
+          "successorDefinitions": [
+            "observe",
+            "live"
+          ]
+        },
+        "recordA": {
+          "status": "modeled-projection",
+          "successorDefinitions": [
+            "recordCall",
+            "saveUsage"
+          ]
+        },
+        "retainA": {
+          "status": "modeled-projection",
+          "successorDefinitions": [
+            "retain"
+          ]
+        },
+        "completeA": {
+          "status": "modeled-projection",
+          "successorDefinitions": [
+            "complete"
+          ]
+        },
+        "publishA": {
+          "status": "modeled-projection",
+          "successorDefinitions": [
+            "captureFence",
+            "canPublish",
+            "publish"
+          ]
+        },
+        "claimB": {
+          "status": "modeled-projection",
+          "successorDefinitions": [
+            "claim",
+            "ownGroup"
+          ]
+        },
+        "firstReadB": {
+          "status": "modeled-projection",
+          "successorDefinitions": [
+            "admission"
+          ]
+        },
+        "admitB": {
+          "status": "modeled-projection",
+          "successorDefinitions": [
+            "canAdmit",
+            "admit"
+          ]
+        },
+        "replyB": {
+          "status": "modeled-projection",
+          "successorDefinitions": [
+            "admission"
+          ]
+        },
+        "terminalReadB": {
+          "status": "modeled-projection",
+          "successorDefinitions": [
+            "admission"
+          ]
+        },
+        "reserveB": {
+          "status": "modeled-projection",
+          "successorDefinitions": [
+            "reserve"
+          ]
+        },
+        "callB": {
+          "status": "modeled-projection",
+          "successorDefinitions": [
+            "call"
+          ]
+        },
+        "publishB": {
+          "status": "modeled-projection",
+          "successorDefinitions": [
+            "publish"
+          ]
+        },
+        "dueB": {
+          "status": "missing-transition",
+          "successorDefinitions": []
+        },
+        "step": {
+          "status": "generated-harness",
+          "successorDefinitions": [
+            "initial"
+          ]
+        }
+      },
+      "scenarios": {
+        "lateFreeReceiptResumesAtRetryTest": {
+          "status": "partial-model",
+          "successorDefinitions": [
+            "admission",
+            "reconcile"
+          ]
+        },
+        "pendingReceiptDoesNotChangeBeforeReplyTest": {
+          "status": "modeled-projection",
+          "successorDefinitions": [
+            "counted",
+            "admission"
+          ]
+        },
+        "completedNonFreeExhaustionRemainsTerminalTest": {
+          "status": "modeled-projection",
+          "successorDefinitions": [
+            "complete",
+            "terminal",
+            "admission"
+          ]
+        },
+        "incompleteNonFreeCostDoesNotEndRequestTest": {
+          "status": "modeled-projection",
+          "successorDefinitions": [
+            "saveUsage",
+            "terminal",
+            "admission"
+          ]
+        },
+        "retainedBetweenReadAndAdmissionIsRecheckedTest": {
+          "status": "modeled-projection",
+          "successorDefinitions": [
+            "retain",
+            "admission",
+            "canAdmit",
+            "canReserve"
+          ]
+        },
+        "unknownHoldsNeverAuthorizeFourthCallTest": {
+          "status": "modeled-projection",
+          "successorDefinitions": [
+            "counted",
+            "alwaysAttemptLimit",
+            "canReserve"
+          ]
+        },
+        "completionRequiresSuccessfulRetentionTest": {
+          "status": "modeled-projection",
+          "successorDefinitions": [
+            "canComplete",
+            "retain"
+          ]
+        },
+        "oldOwnerCannotPublishRetainedResultTest": {
+          "status": "modeled-projection",
+          "successorDefinitions": [
+            "canPublish",
+            "observe"
+          ]
+        }
+      }
+    },
+    "formal/models/slopbot/bot_value_budget.qnt": {
+      "sourceSha256": "7cbb41790f4d21626b32155f5ec385ca8727ed5521786ce4213a810ea39c3b84",
+      "actions": {
+        "init": {
+          "status": "modeled-projection",
+          "successorDefinitions": [
+            "initial"
+          ]
+        },
+        "reserve": {
+          "status": "modeled-projection",
+          "successorDefinitions": [
+            "canReserve",
+            "reserve"
+          ]
+        },
+        "provider": {
+          "status": "modeled-projection",
+          "successorDefinitions": [
+            "recordCall",
+            "saveUsage"
+          ]
+        },
+        "completeNoCall": {
+          "status": "modeled-projection",
+          "successorDefinitions": [
+            "endWithoutCall",
+            "complete"
+          ]
+        },
+        "reconcile": {
+          "status": "modeled-projection",
+          "successorDefinitions": [
+            "canReconcile",
+            "reconcile"
+          ]
+        },
+        "abandonUncertain": {
+          "status": "modeled-projection",
+          "successorDefinitions": [
+            "observe",
+            "heldCap",
+            "unboundedHold"
+          ]
+        },
+        "step": {
+          "status": "generated-harness",
+          "successorDefinitions": [
+            "initial"
+          ]
+        }
+      },
+      "scenarios": {
+        "providerOverchargeRemainsHeldTest": {
+          "status": "modeled-projection",
+          "successorDefinitions": [
+            "canReconcile",
+            "heldCap"
+          ]
+        },
+        "unknownAlertsBlockCappedModeTest": {
+          "status": "modeled-projection",
+          "successorDefinitions": [
+            "unboundedHold",
+            "budgetAllows"
+          ]
+        },
+        "unknownCappedCallRetainsEstimateAndHoldTest": {
+          "status": "modeled-projection",
+          "successorDefinitions": [
+            "chargeTotal",
+            "canReconcile",
+            "heldCap"
+          ]
+        },
+        "exactReconciliationReleasesCapacityTest": {
+          "status": "modeled-projection",
+          "successorDefinitions": [
+            "reconcile",
+            "heldCap"
+          ]
+        },
+        "authorityRefusalBeforeCallReleasesHoldTest": {
+          "status": "modeled-projection",
+          "successorDefinitions": [
+            "endWithoutCall",
+            "complete",
+            "reconcile"
+          ]
+        },
+        "alertsRefusalBeforeCallRestoresCappedModeTest": {
+          "status": "modeled-projection",
+          "successorDefinitions": [
+            "endWithoutCall",
+            "reconcile",
+            "unboundedHold"
+          ]
+        },
+        "completedNoCallReleasesCapacityTest": {
+          "status": "modeled-projection",
+          "successorDefinitions": [
+            "complete",
+            "canReconcile",
+            "reconcile"
+          ]
+        },
+        "unfinishedNoCallRemainsHeldTest": {
+          "status": "modeled-projection",
+          "successorDefinitions": [
+            "counted",
+            "canReconcile"
+          ]
+        }
+      }
+    },
+    "formal/models/slopbot/bot_value_pipeline.qnt": {
+      "sourceSha256": "8fc4ecf1dc5f0eb6c81d75a3ee313f6fac0bd45b71439ba4e107edb834e9b110",
+      "actions": {
+        "init": {
+          "status": "modeled-projection",
+          "successorDefinitions": [
+            "initial"
+          ]
+        },
+        "startA": {
+          "status": "modeled-projection",
+          "successorDefinitions": [
+            "claim"
+          ]
+        },
+        "startB": {
+          "status": "modeled-projection",
+          "successorDefinitions": [
+            "claim"
+          ]
+        },
+        "collectA": {
+          "status": "modeled-projection",
+          "successorDefinitions": [
+            "canOwnGroup",
+            "ownGroup"
+          ]
+        },
+        "collectB": {
+          "status": "modeled-projection",
+          "successorDefinitions": [
+            "canOwnGroup",
+            "ownGroup"
+          ]
+        },
+        "incompleteA": {
+          "status": "modeled-projection",
+          "successorDefinitions": [
+            "canOwnGroup"
+          ]
+        },
+        "holdA": {
+          "status": "modeled-projection",
+          "successorDefinitions": [
+            "canOwnGroup",
+            "ownGroup"
+          ]
+        },
+        "holdB": {
+          "status": "modeled-projection",
+          "successorDefinitions": [
+            "canOwnGroup",
+            "ownGroup"
+          ]
+        },
+        "busyB": {
+          "status": "modeled-projection",
+          "successorDefinitions": [
+            "canOwnGroup"
+          ]
+        },
+        "partitionA": {
+          "status": "modeled-projection",
+          "successorDefinitions": [
+            "setSource",
+            "validGroup"
+          ]
+        },
+        "partitionB": {
+          "status": "modeled-projection",
+          "successorDefinitions": [
+            "setSource",
+            "validGroup"
+          ]
+        },
+        "beginPreCallA": {
+          "status": "modeled-projection",
+          "successorDefinitions": [
+            "beginCheck"
+          ]
+        },
+        "beginPreCallB": {
+          "status": "modeled-projection",
+          "successorDefinitions": [
+            "beginCheck"
+          ]
+        },
+        "finishPreCallA": {
+          "status": "modeled-projection",
+          "successorDefinitions": [
+            "remoteReply",
+            "finishCheck"
+          ]
+        },
+        "finishPreCallB": {
+          "status": "modeled-projection",
+          "successorDefinitions": [
+            "remoteReply",
+            "finishCheck"
+          ]
+        },
+        "assessA": {
+          "status": "modeled-projection",
+          "successorDefinitions": [
+            "admit",
+            "reserve",
+            "call"
+          ]
+        },
+        "assessB": {
+          "status": "modeled-projection",
+          "successorDefinitions": [
+            "admit",
+            "reserve",
+            "call"
+          ]
+        },
+        "recordA": {
+          "status": "modeled-projection",
+          "successorDefinitions": [
+            "recordCall",
+            "saveUsage"
+          ]
+        },
+        "recordB": {
+          "status": "modeled-projection",
+          "successorDefinitions": [
+            "recordCall",
+            "saveUsage"
+          ]
+        },
+        "retainA": {
+          "status": "modeled-projection",
+          "successorDefinitions": [
+            "retain"
+          ]
+        },
+        "retainB": {
+          "status": "modeled-projection",
+          "successorDefinitions": [
+            "retain"
+          ]
+        },
+        "reuseA": {
+          "status": "modeled-projection",
+          "successorDefinitions": [
+            "admission"
+          ]
+        },
+        "reuseB": {
+          "status": "modeled-projection",
+          "successorDefinitions": [
+            "admission"
+          ]
+        },
+        "beginPublicationA": {
+          "status": "modeled-projection",
+          "successorDefinitions": [
+            "captureFence"
+          ]
+        },
+        "beginPublicationB": {
+          "status": "modeled-projection",
+          "successorDefinitions": [
+            "captureFence"
+          ]
+        },
+        "publishA": {
+          "status": "modeled-projection",
+          "successorDefinitions": [
+            "canPublish",
+            "publish"
+          ]
+        },
+        "publishB": {
+          "status": "modeled-projection",
+          "successorDefinitions": [
+            "canPublish",
+            "publish"
+          ]
+        },
+        "refuseA": {
+          "status": "modeled-projection",
+          "successorDefinitions": [
+            "canPublish"
+          ]
+        },
+        "refuseB": {
+          "status": "modeled-projection",
+          "successorDefinitions": [
+            "canPublish"
+          ]
+        },
+        "finishA": {
+          "status": "modeled-projection",
+          "successorDefinitions": [
+            "publish"
+          ]
+        },
+        "finishB": {
+          "status": "modeled-projection",
+          "successorDefinitions": [
+            "publish"
+          ]
+        },
+        "currentA": {
+          "status": "modeled-projection",
+          "successorDefinitions": [
+            "admission"
+          ]
+        },
+        "currentB": {
+          "status": "modeled-projection",
+          "successorDefinitions": [
+            "admission"
+          ]
+        },
+        "tick": {
+          "status": "modeled-projection",
+          "successorDefinitions": [
+            "observe"
+          ]
+        },
+        "step": {
+          "status": "generated-harness",
+          "successorDefinitions": [
+            "initial"
+          ]
+        }
+      },
+      "scenarios": {
+        "expiredPublicationReusesInferenceTest": {
+          "status": "modeled-projection",
+          "successorDefinitions": [
+            "admission",
+            "retain",
+            "observe",
+            "canPublish"
+          ]
+        },
+        "wholeGroupOwnershipExcludesOverlapTest": {
+          "status": "modeled-projection",
+          "successorDefinitions": [
+            "canOwnGroup",
+            "owns"
+          ]
+        },
+        "overlappingConsumerWaitsThenReadsCurrentTest": {
+          "status": "modeled-projection",
+          "successorDefinitions": [
+            "canOwnGroup",
+            "admission",
+            "publish"
+          ]
+        },
+        "missingGroupCannotSpendTest": {
+          "status": "modeled-projection",
+          "successorDefinitions": [
+            "canOwnGroup",
+            "canAdmit"
+          ]
+        },
+        "unrecordedUsageCannotBecomeRetainedTest": {
+          "status": "modeled-projection",
+          "successorDefinitions": [
+            "canRetain",
+            "saveUsage"
+          ]
+        },
+        "leaseExpiryDuringInferenceStillKeepsReusableReceiptTest": {
+          "status": "modeled-projection",
+          "successorDefinitions": [
+            "observe",
+            "recordCall",
+            "saveUsage",
+            "retain",
+            "admission"
+          ]
+        },
+        "leaseExpiryDuringPreCallCheckPreventsSpendTest": {
+          "status": "modeled-projection",
+          "successorDefinitions": [
+            "observe",
+            "checkedCurrent",
+            "canCall"
+          ]
+        }
+      }
+    }
+  },
+  "remaining": [
+    "Durable queue retry timestamps, parking/reactivation, subscription historical import, and exact history pagination have independent owners or need their own units.",
+    "This projection covers one exact source group and inference key. Overlapping nonidentical groups and multi-key budget atomicity need a compositional shell check. A source lease uses the request deadline in native code.",
+    "The authority check intentionally rechecks exact current state through provider start and publication. The legacy law permitting a completed check immediately before revocation identifies a shell interleaving outside this atomic guard.",
+    "Private intake claim/routing remains separate. The pinned section 8 report analyzer uses the Surplus-only screening route. The broader section 5 wording needs to be represented precisely without changing the actual configured screening route."
+  ]
+}

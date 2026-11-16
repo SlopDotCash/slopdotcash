@@ -1,0 +1,9 @@
+{
+  "status": "identical-generated-input",
+  "unit": "settlement__payment.ts",
+  "validatedSpecSha256": "c9f0be82542055dd005b1f99a6526f0fed827acc603ad71441c8c000cc6fd8ae",
+  "currentSpecSha256": "cec541e396aaa2f44573af1754b609a3d491f1122eb2faf146e050a47efd7d55",
+  "validatedGeneratedSha256": "c72d11260b0a5cadbef57046ba2ceb1a6fc1112425a73e6cf8244c220d633ec7",
+  "currentGeneratedSha256": "c72d11260b0a5cadbef57046ba2ceb1a6fc1112425a73e6cf8244c220d633ec7",
+  "method": "Byte comparison of the complete generated payment TypeScript emitted by unmodified Vibestack generation for the payment proof snapshot and current composition snapshot. Only explanatory Markdown prose differs."
+}

@@ -1,0 +1,326 @@
+[
+  {
+    "file": "spec/security/admission.md",
+    "typecheck": true,
+    "simulation": true,
+    "command": "seed 84533038297989; to simulate again: pnpm exec quint run gen/security__admission.run.qnt --main security__admission_run --step step --invariant inv --max-samples 1000 --max-steps 30 --mbt --seed 84533038297989",
+    "traceCount": 100,
+    "replay": true,
+    "events": [
+      "request",
+      "acquire",
+      "interrupt",
+      "resume",
+      "markIncomplete",
+      "reviewBatch",
+      "retain",
+      "checkDeterministically",
+      "recordMalice",
+      "synthesize",
+      "pass"
+    ],
+    "missingEvents": [],
+    "goals": [
+      {
+        "goal": "sometimesClean",
+        "found": true
+      },
+      {
+        "goal": "sometimesIncomplete",
+        "found": true
+      },
+      {
+        "goal": "sometimesMalicious",
+        "found": true
+      }
+    ]
+  },
+  {
+    "file": "spec/security/cases.md",
+    "typecheck": true,
+    "simulation": true,
+    "command": "seed 4853706414747; to simulate again: pnpm exec quint run gen/security__cases.run.qnt --main security__cases_run --step step --invariant inv --max-samples 1000 --max-steps 30 --mbt --seed 4853706414747",
+    "traceCount": 100,
+    "replay": true,
+    "events": [
+      "approveDisclosure",
+      "publishDisclosure",
+      "screen",
+      "decide",
+      "revoke",
+      "notifyOwner",
+      "appeal",
+      "recordPatch",
+      "resolveAppeal",
+      "verifyPatch",
+      "consentRecognition",
+      "retryScreen",
+      "recordCapacityWait",
+      "approveAward",
+      "reviewRelated",
+      "declineAward"
+    ],
+    "missingEvents": [],
+    "goals": [
+      {
+        "goal": "sometimesCapacityWait",
+        "found": true
+      },
+      {
+        "goal": "sometimesAccepted",
+        "found": true
+      },
+      {
+        "goal": "sometimesAppealed",
+        "found": true
+      },
+      {
+        "goal": "sometimesVerifiedPatch",
+        "found": true
+      },
+      {
+        "goal": "sometimesDisclosed",
+        "found": true
+      }
+    ]
+  },
+  {
+    "file": "spec/security/enforcement.md",
+    "typecheck": true,
+    "simulation": true,
+    "command": "seed 12193164794110; to simulate again: pnpm exec quint run gen/security__enforcement.run.qnt --main security__enforcement_run --step step --invariant inv --max-samples 1000 --max-steps 30 --mbt --seed 12193164794110",
+    "traceCount": 100,
+    "replay": true,
+    "events": [
+      "recordClean",
+      "confirmMalice",
+      "retire",
+      "advanceDay",
+      "recognizeFrozen",
+      "flag",
+      "withdrawFlag",
+      "quarantine",
+      "reinstateBan",
+      "appendRepository",
+      "grantOwnerExemption",
+      "revokeExemption",
+      "checkSetup",
+      "reinstateFlags"
+    ],
+    "missingEvents": [],
+    "goals": [
+      {
+        "goal": "sometimesAppendedPaused",
+        "found": true
+      },
+      {
+        "goal": "sometimesRetired",
+        "found": true
+      },
+      {
+        "goal": "sometimesPaused",
+        "found": true
+      },
+      {
+        "goal": "sometimesExempt",
+        "found": true
+      },
+      {
+        "goal": "sometimesReinstated",
+        "found": true
+      }
+    ]
+  },
+  {
+    "file": "spec/security/intake.md",
+    "typecheck": true,
+    "simulation": true,
+    "command": "seed 128832856110415; to simulate again: pnpm exec quint run gen/security__intake.run.qnt --main security__intake_run --step step --invariant inv --max-samples 1000 --max-steps 30 --mbt --seed 128832856110415",
+    "traceCount": 100,
+    "replay": true,
+    "events": [
+      "begin",
+      "interruptUpload",
+      "verifyObject",
+      "commitReceipt",
+      "authorizeForwarding",
+      "reconcileReceipt",
+      "startForwarding",
+      "proveUnsent",
+      "confirmForwarding",
+      "retryUpload"
+    ],
+    "missingEvents": [],
+    "goals": [
+      {
+        "goal": "sometimesReceived",
+        "found": true
+      },
+      {
+        "goal": "sometimesForwarded",
+        "found": true
+      }
+    ]
+  },
+  {
+    "file": "spec/security/privacy.md",
+    "typecheck": true,
+    "simulation": true,
+    "command": "seed 232566580005640; to simulate again: pnpm exec quint run gen/security__privacy.run.qnt --main security__privacy_run --step step --invariant inv --max-samples 1000 --max-steps 30 --mbt --seed 232566580005640",
+    "traceCount": 100,
+    "replay": true,
+    "events": [
+      "expire",
+      "requestRead",
+      "recordAudit",
+      "deliver"
+    ],
+    "missingEvents": [],
+    "goals": [
+      {
+        "goal": "sometimesReportRead",
+        "found": true
+      },
+      {
+        "goal": "sometimesScannerRead",
+        "found": true
+      }
+    ]
+  },
+  {
+    "file": "spec/slopbot/appeals.md",
+    "typecheck": true,
+    "simulation": true,
+    "command": "seed 107049317032412; to simulate again: pnpm exec quint run gen/slopbot__appeals.run.qnt --main slopbot__appeals_run --step step --invariant inv --max-samples 1000 --max-steps 30 --mbt --seed 107049317032412",
+    "traceCount": 100,
+    "replay": true,
+    "events": [
+      "open",
+      "escalate",
+      "age",
+      "resolve",
+      "replay",
+      "publish",
+      "propose",
+      "rejectProposal"
+    ],
+    "missingEvents": [],
+    "goals": [
+      {
+        "goal": "sometimesEscalated",
+        "found": true
+      },
+      {
+        "goal": "sometimesReversed",
+        "found": true
+      }
+    ]
+  },
+  {
+    "file": "spec/slopbot/closure.md",
+    "typecheck": true,
+    "simulation": true,
+    "command": "seed 218415638491221; to simulate again: pnpm exec quint run gen/slopbot__closure.run.qnt --main slopbot__closure_run --step step --invariant inv --max-samples 1000 --max-steps 30 --mbt --seed 218415638491221",
+    "traceCount": 100,
+    "replay": true,
+    "events": [
+      "saveConsent",
+      "recordParticipant",
+      "wait",
+      "recordQualification",
+      "recordVerdict",
+      "labelUncertain",
+      "recordActivation"
+    ],
+    "missingEvents": [
+      "close",
+      "reopen"
+    ],
+    "goals": [
+      {
+        "goal": "sometimesClosed",
+        "found": true
+      },
+      {
+        "goal": "sometimesUncertainLabel",
+        "found": true
+      },
+      {
+        "goal": "sometimesReopened",
+        "found": true
+      }
+    ]
+  },
+  {
+    "file": "spec/slopbot/review.md",
+    "typecheck": true,
+    "simulation": true,
+    "command": "seed 213365565994251; to simulate again: pnpm exec quint run gen/slopbot__review.run.qnt --main slopbot__review_run --step step --invariant inv --max-samples 1000 --max-steps 30 --mbt --seed 213365565994251",
+    "traceCount": 100,
+    "replay": true,
+    "events": [
+      "bindSource",
+      "start",
+      "finish",
+      "retry",
+      "failAttempt"
+    ],
+    "missingEvents": [],
+    "goals": [
+      {
+        "goal": "sometimesComplete",
+        "found": true
+      },
+      {
+        "goal": "sometimesLimited",
+        "found": true
+      },
+      {
+        "goal": "sometimesBackup",
+        "found": true
+      },
+      {
+        "goal": "sometimesProviderFailure",
+        "found": true
+      }
+    ]
+  },
+  {
+    "file": "spec/operations/backup.md",
+    "typecheck": true,
+    "simulation": true,
+    "command": "seed 44381419161884; to simulate again: pnpm exec quint run gen/operations__backup.run.qnt --main operations__backup_run --step step --invariant inv --max-samples 1000 --max-steps 30 --mbt --seed 44381419161884",
+    "traceCount": 100,
+    "replay": true,
+    "events": [
+      "advanceDay",
+      "start",
+      "interrupt",
+      "resume",
+      "copyPage",
+      "verifyPage",
+      "finish",
+      "expireBackup",
+      "beginRestore",
+      "checkChain",
+      "writeDestination",
+      "refuseRestore",
+      "readDestination"
+    ],
+    "missingEvents": [],
+    "goals": [
+      {
+        "goal": "sometimesBackupComplete",
+        "found": true
+      },
+      {
+        "goal": "sometimesRestored",
+        "found": true
+      },
+      {
+        "goal": "sometimesInterrupted",
+        "found": true
+      }
+    ]
+  }
+]

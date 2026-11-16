@@ -1,0 +1,2466 @@
+{
+  "scope": "Focused legacy-to-successor transition accounting. Exact successor names denote a projection only. Runtime conformance, equivalence and unlisted source models remain open.",
+  "legacyMain": "6b3b9d0b979f0608d87941f1146056a98513ffcf",
+  "successorBase": "a48772f60",
+  "modelsReviewed": [
+    {
+      "legacyModel": "formal/models/ui/ui_vault_batched_deposit.qnt",
+      "sourceSha256": "8c22f56883e1cbf2f8c5af0803632b23f32a149253644fdd8e4d2fd55a638297",
+      "sourceEntries": [
+        "src/VaultActions.tsx",
+        "src/lib/evm-vault-actions.ts"
+      ],
+      "evidenceEntries": [
+        "tests/e2e/vault-actions.spec.ts"
+      ],
+      "actions": {
+        "start": {
+          "status": "modeled-projection",
+          "reason": "Review consumes the observed wallet capability; chain outcomes arrive separately.",
+          "successors": [
+            {
+              "path": "spec/frontend/batchedDeposit.md",
+              "definitions": [
+                "review"
+              ]
+            }
+          ]
+        },
+        "init": {
+          "status": "modeled-projection",
+          "reason": "Begins with no saved wallet intent and no deposit evidence.",
+          "successors": [
+            {
+              "path": "spec/frontend/batchedDeposit.md",
+              "definitions": [
+                "initial"
+              ]
+            }
+          ]
+        },
+        "review": {
+          "status": "modeled-projection",
+          "reason": "Offers the batch only when atomic capability is already supported.",
+          "successors": [
+            {
+              "path": "spec/frontend/batchedDeposit.md",
+              "definitions": [
+                "review",
+                "canSaveIntent"
+              ]
+            }
+          ]
+        },
+        "request": {
+          "status": "modeled-projection",
+          "reason": "Writes unique owner-bound exact intent before the one prompt.",
+          "successors": [
+            {
+              "path": "spec/frontend/batchedDeposit.md",
+              "definitions": [
+                "canSaveIntent",
+                "saveIntent"
+              ]
+            }
+          ]
+        },
+        "walletReturnsReference": {
+          "status": "modeled-projection",
+          "reason": "Keeps a nonempty wallet reference for future lookup, separate from chain finality.",
+          "successors": [
+            {
+              "path": "spec/frontend/batchedDeposit.md",
+              "definitions": [
+                "keepWalletReference"
+              ]
+            }
+          ]
+        },
+        "walletRefuses": {
+          "status": "modeled-projection",
+          "reason": "Definitive capability refusal permits the separate-signature path.",
+          "successors": [
+            {
+              "path": "spec/frontend/batchedDeposit.md",
+              "definitions": [
+                "refuseBatch"
+              ]
+            }
+          ]
+        },
+        "walletDeclines": {
+          "status": "modeled-projection",
+          "reason": "Wallet decline closes the intent without funding.",
+          "successors": [
+            {
+              "path": "spec/frontend/batchedDeposit.md",
+              "definitions": [
+                "declineBatch"
+              ]
+            }
+          ]
+        },
+        "walletUnclear": {
+          "status": "modeled-projection",
+          "reason": "Missing response preserves intent. Actual send status awaits chain evidence.",
+          "successors": [
+            {
+              "path": "spec/frontend/batchedDeposit.md",
+              "definitions": [
+                "keepUncertain"
+              ]
+            }
+          ]
+        },
+        "mine": {
+          "status": "modeled-projection",
+          "reason": "Included canonical observation is not final.",
+          "successors": [
+            {
+              "path": "spec/frontend/batchedDeposit.md",
+              "definitions": [
+                "observeChain"
+              ]
+            }
+          ]
+        },
+        "replace": {
+          "status": "modeled-projection",
+          "reason": "Later pending observation withdraws included status.",
+          "successors": [
+            {
+              "path": "spec/frontend/batchedDeposit.md",
+              "definitions": [
+                "observeChain"
+              ]
+            }
+          ]
+        },
+        "finalize": {
+          "status": "modeled-projection",
+          "reason": "Exact successful event or proven failure are separate terminal results.",
+          "successors": [
+            {
+              "path": "spec/frontend/batchedDeposit.md",
+              "definitions": [
+                "observeChain",
+                "alwaysEvidenceForTerminal"
+              ]
+            }
+          ]
+        },
+        "walletReports": {
+          "status": "modeled-projection",
+          "reason": "Wallet report only gives a transaction hint or definite not-sent result.",
+          "successors": [
+            {
+              "path": "spec/frontend/batchedDeposit.md",
+              "definitions": [
+                "nameTransaction",
+                "reportNotSent"
+              ]
+            }
+          ]
+        },
+        "readChain": {
+          "status": "modeled-projection",
+          "reason": "Chain adapter delivers the exact intent digest and transaction outcome; its conformance remains open.",
+          "successors": [
+            {
+              "path": "spec/frontend/batchedDeposit.md",
+              "definitions": [
+                "canObserveChain",
+                "observeChain"
+              ]
+            }
+          ]
+        },
+        "checkReference": {
+          "status": "modeled-projection",
+          "reason": "Concrete reference is bound to the saved intent and never establishes finality.",
+          "successors": [
+            {
+              "path": "spec/frontend/batchedDeposit.md",
+              "definitions": [
+                "canNameTransaction",
+                "nameTransaction",
+                "reportNotSent"
+              ]
+            }
+          ]
+        },
+        "checkNamed": {
+          "status": "modeled-projection",
+          "reason": "Uses the matching transaction identity and verified adapter fact.",
+          "successors": [
+            {
+              "path": "spec/frontend/batchedDeposit.md",
+              "definitions": [
+                "canObserveChain",
+                "observeChain"
+              ]
+            }
+          ]
+        },
+        "checkEnteredHash": {
+          "status": "modeled-projection",
+          "reason": "Only original owner can resume exact uncertain intent with a hash.",
+          "successors": [
+            {
+              "path": "spec/frontend/batchedDeposit.md",
+              "definitions": [
+                "recoverHash",
+                "canObserveChain"
+              ]
+            }
+          ]
+        },
+        "step": {
+          "status": "generated-harness",
+          "reason": "Vibestack generates dispatch from the successor transitions.",
+          "successors": []
+        }
+      },
+      "scenarios": {
+        "oneRequestTest": {
+          "status": "modeled-projection",
+          "reason": "Atomic request plus final event yields verification; included evidence alone leaves request pending.",
+          "successors": [
+            {
+              "path": "spec/frontend/batchedDeposit.md",
+              "definitions": [
+                "saveIntent",
+                "observeChain",
+                "sometimesOneBatch"
+              ]
+            }
+          ]
+        },
+        "readyWalletKeepsTwoRequestsTest": {
+          "status": "modeled-projection",
+          "reason": "Upgrade-needed capability remains on separate-signature path.",
+          "successors": [
+            {
+              "path": "spec/frontend/batchedDeposit.md",
+              "definitions": [
+                "review",
+                "sometimesSeparate"
+              ]
+            }
+          ]
+        },
+        "refusedTest": {
+          "status": "modeled-projection",
+          "reason": "Definite wallet refusal closes batch path and offers separate flow.",
+          "successors": [
+            {
+              "path": "spec/frontend/batchedDeposit.md",
+              "definitions": [
+                "refuseBatch"
+              ]
+            }
+          ]
+        },
+        "walletStatusIsNotProofTest": {
+          "status": "modeled-projection",
+          "reason": "Reference completion only produces named transaction, never verified deposit.",
+          "successors": [
+            {
+              "path": "spec/frontend/batchedDeposit.md",
+              "definitions": [
+                "nameTransaction",
+                "alwaysEvidenceForTerminal"
+              ]
+            }
+          ]
+        },
+        "revertedBatchTest": {
+          "status": "modeled-projection",
+          "reason": "Finalized failure concludes without claimed deposit.",
+          "successors": [
+            {
+              "path": "spec/frontend/batchedDeposit.md",
+              "definitions": [
+                "observeChain",
+                "alwaysEvidenceForTerminal"
+              ]
+            }
+          ]
+        },
+        "unclearReplyTest": {
+          "status": "modeled-projection",
+          "reason": "Uncertain response retains intent and owner-entered hash may later verify.",
+          "successors": [
+            {
+              "path": "spec/frontend/batchedDeposit.md",
+              "definitions": [
+                "keepUncertain",
+                "recoverHash",
+                "observeChain"
+              ]
+            }
+          ]
+        }
+      }
+    },
+    {
+      "legacyModel": "formal/models/payments/payment_worker_run.qnt",
+      "sourceSha256": "1d99d28bae74fcdefafb2867be2d54f17528f4482b3de55c64511ca421fca826",
+      "sourceEntries": [
+        "workers/fee-converter/index.ts",
+        "workers/fee-converter/wrangler.toml",
+        "workers/fee-converter/wrangler.staging.toml",
+        "workers/operator-keeper/wrangler.toml",
+        "workers/payment-executor/entrypoint.ts",
+        "workers/payment-executor/signer-stacks.mjs",
+        "workers/payments/deployments.ts",
+        "workers/payments/registry-database.mjs",
+        "workers/referral-accrual/wrangler.toml"
+      ],
+      "evidenceEntries": [],
+      "actions": {
+        "init": {
+          "status": "modeled-projection",
+          "reason": "Starts inert.",
+          "successors": [
+            {
+              "path": "spec/operations/paymentJobs.md",
+              "definitions": [
+                "initial"
+              ]
+            }
+          ]
+        },
+        "configure": {
+          "status": "modeled-projection",
+          "reason": "Captures mode, exact active configuration, independent release authority and per-network work.",
+          "successors": [
+            {
+              "path": "spec/operations/paymentJobs.md",
+              "definitions": [
+                "configure"
+              ]
+            }
+          ]
+        },
+        "begin": {
+          "status": "modeled-projection",
+          "reason": "Requires valid configuration and service role, with an additional live-mode release gate.",
+          "successors": [
+            {
+              "path": "spec/operations/paymentJobs.md",
+              "definitions": [
+                "canBegin",
+                "begin"
+              ]
+            }
+          ]
+        },
+        "first": {
+          "status": "modeled-projection",
+          "reason": "Any configured network may be read and separately executed or failed.",
+          "successors": [
+            {
+              "path": "spec/operations/paymentJobs.md",
+              "definitions": [
+                "startRead",
+                "settleRead",
+                "startExecution",
+                "settleExecution"
+              ]
+            }
+          ]
+        },
+        "second": {
+          "status": "modeled-projection",
+          "reason": "The same transition operates a distinct network row.",
+          "successors": [
+            {
+              "path": "spec/operations/paymentJobs.md",
+              "definitions": [
+                "startRead",
+                "settleRead",
+                "startExecution",
+                "settleExecution"
+              ]
+            }
+          ]
+        },
+        "report": {
+          "status": "modeled-projection",
+          "reason": "Only all-terminal run state produces a final summary.",
+          "successors": [
+            {
+              "path": "spec/operations/paymentJobs.md",
+              "definitions": [
+                "canReport",
+                "report"
+              ]
+            }
+          ]
+        },
+        "step": {
+          "status": "generated-harness",
+          "reason": "Vibestack dispatches generated events.",
+          "successors": []
+        }
+      },
+      "scenarios": {
+        "offInertTest": {
+          "status": "modeled-projection",
+          "reason": "Off scheduler mode admits no run.",
+          "successors": [
+            {
+              "path": "spec/operations/paymentJobs.md",
+              "definitions": [
+                "canBegin"
+              ]
+            }
+          ]
+        },
+        "roleRefusedTest": {
+          "status": "modeled-projection",
+          "reason": "A configured execute job cannot start with missing role.",
+          "successors": [
+            {
+              "path": "spec/operations/paymentJobs.md",
+              "definitions": [
+                "canBegin"
+              ]
+            }
+          ]
+        },
+        "isolatedFailureTest": {
+          "status": "modeled-projection",
+          "reason": "Failed and successful network outcomes can both appear in a terminal summary.",
+          "successors": [
+            {
+              "path": "spec/operations/paymentJobs.md",
+              "definitions": [
+                "sometimesIndependentFailure",
+                "report"
+              ]
+            }
+          ]
+        }
+      }
+    },
+    {
+      "legacyModel": "formal/models/payments/payment_dispatch.qnt",
+      "sourceSha256": "ce74d4658ec2030dcde4c7127ec0c91f410dcd10168731ad6e9bd35ab1899149",
+      "sourceEntries": [
+        "backend/payments/verified-evidence.ts",
+        "migrations/0011_payments.sql",
+        "migrations/0017_robinhood_chain.sql",
+        "migrations/0021_multi_asset_vault_snapshots.sql",
+        "backend/payments/dispatch.ts",
+        "backend/payments/ledger.ts",
+        "workers/payments/reconcile.ts",
+        "workers/payments/scanner.ts",
+        "workers/security-payments/index.ts",
+        "migrations/0057_private_security_payments.sql",
+        "backend/security/payment-database.ts",
+        "backend/payments/handler.ts"
+      ],
+      "evidenceEntries": [
+        "backend/payments/dispatch.test.ts",
+        "workers/payments/dispatch-clock.workflow.mjs",
+        "workers/payments/recovery.integration.ts",
+        "workers/payments/refused-broadcast.test.ts",
+        "workers/payments/served-network-recovery.test.ts"
+      ],
+      "actions": {
+        "init": {
+          "status": "modeled-projection",
+          "reason": "A reserved obligation supplied by the canonical financial owner and an authorized claim put its isolated row into ready.",
+          "successors": [
+            {
+              "path": "spec/settlement/paymentDispatch.md",
+              "definitions": [
+                "initial",
+                "admit",
+                "authorizeWallet"
+              ]
+            }
+          ]
+        },
+        "lease": {
+          "status": "modeled-projection",
+          "reason": "An increasing grant identity fences writes. Replacement requires a processing lease past its 60-second expiry.",
+          "successors": [
+            {
+              "path": "spec/settlement/paymentDispatch.md",
+              "definitions": [
+                "canAcquire",
+                "acquire",
+                "owns"
+              ]
+            }
+          ]
+        },
+        "prepare": {
+          "status": "modeled-projection",
+          "reason": "A captured request with a matching current token durably creates one stable attempt key before executor submission.",
+          "successors": [
+            {
+              "path": "spec/settlement/paymentDispatch.md",
+              "definitions": [
+                "readClaim",
+                "canPrepare",
+                "prepare"
+              ]
+            }
+          ]
+        },
+        "success": {
+          "status": "modeled-projection",
+          "reason": "An exact callback can record the attempt transaction, with queue changes restricted to the current lease.",
+          "successors": [
+            {
+              "path": "spec/settlement/paymentDispatch.md",
+              "definitions": [
+                "returnSuccess"
+              ]
+            }
+          ]
+        },
+        "ambiguous": {
+          "status": "modeled-projection",
+          "reason": "An uncertain callback retains the same attempt and clears only its own lease to ready.",
+          "successors": [
+            {
+              "path": "spec/settlement/paymentDispatch.md",
+              "definitions": [
+                "returnAmbiguous"
+              ]
+            }
+          ]
+        },
+        "replaceWallet": {
+          "status": "modeled-projection",
+          "reason": "Scoped wallet proof changes current claim, keeping historical authorized claim and immutable attempt binding.",
+          "successors": [
+            {
+              "path": "spec/settlement/paymentDispatch.md",
+              "definitions": [
+                "authorizeWallet",
+                "clearCurrentWallet"
+              ]
+            }
+          ]
+        },
+        "hold": {
+          "status": "modeled-projection",
+          "reason": "Dispatcher parks a missing or mismatching wallet claim under the matching token. Unsigned retirement can return the token to ready instead.",
+          "successors": [
+            {
+              "path": "spec/settlement/paymentDispatch.md",
+              "definitions": [
+                "canPark",
+                "park"
+              ]
+            }
+          ]
+        },
+        "releaseHold": {
+          "status": "modeled-projection",
+          "reason": "Effective wallet authorization resumes a held row only when no active attempt names a different wallet.",
+          "successors": [
+            {
+              "path": "spec/settlement/paymentDispatch.md",
+              "definitions": [
+                "mayRelease",
+                "authorizeWallet"
+              ]
+            }
+          ]
+        },
+        "finalized": {
+          "status": "modeled-projection",
+          "reason": "Exact finalized vault payout consumes the actor-owned reserve and sets the canonical financial, dispatch and vault projections in one transition. The transaction can be absent from retained attempts.",
+          "successors": [
+            {
+              "path": "spec/settlement/paymentDispatch.md",
+              "definitions": [
+                "canIndexFinalized",
+                "indexFinalized"
+              ]
+            },
+            {
+              "path": "spec/settlement/composition.md",
+              "definitions": [
+                "canReconcile",
+                "reconcile",
+                "alwaysCanonicalReceiptAgrees"
+              ]
+            },
+            {
+              "path": "spec/settlement/payment.md",
+              "definitions": [
+                "vaultPayoutMatches",
+                "recordVaultPayment"
+              ]
+            },
+            {
+              "path": "spec/settlement/vault.md",
+              "definitions": [
+                "reservationMatches",
+                "payReserved"
+              ]
+            }
+          ]
+        },
+        "externalPaid": {
+          "status": "modeled-projection",
+          "reason": "Exact finalized vault payout consumes the actor-owned reserve and sets the canonical financial, dispatch and vault projections in one transition. The transaction can be absent from retained attempts.",
+          "successors": [
+            {
+              "path": "spec/settlement/paymentDispatch.md",
+              "definitions": [
+                "exactReceipt",
+                "canIndexFinalized",
+                "indexFinalized"
+              ]
+            },
+            {
+              "path": "spec/settlement/composition.md",
+              "definitions": [
+                "canReconcile",
+                "reconcile",
+                "alwaysCanonicalReceiptAgrees"
+              ]
+            },
+            {
+              "path": "spec/settlement/payment.md",
+              "definitions": [
+                "vaultPayoutMatches",
+                "recordVaultPayment"
+              ]
+            },
+            {
+              "path": "spec/settlement/vault.md",
+              "definitions": [
+                "reservationMatches",
+                "payReserved"
+              ]
+            }
+          ]
+        },
+        "inspectFailure": {
+          "status": "modeled-projection",
+          "reason": "Concurrent reconcilers capture independent immutable attempt keys and transactions.",
+          "successors": [
+            {
+              "path": "spec/settlement/paymentDispatch.md",
+              "definitions": [
+                "canInspectFailure",
+                "inspectFailure"
+              ]
+            }
+          ]
+        },
+        "settleFailure": {
+          "status": "modeled-projection",
+          "reason": "Exact finalized reverts retire the captured attempt. A later duplicate or stale observation cannot reopen a successor.",
+          "successors": [
+            {
+              "path": "spec/settlement/paymentDispatch.md",
+              "definitions": [
+                "settleFailure"
+              ]
+            }
+          ]
+        },
+        "step": {
+          "status": "generated-harness",
+          "reason": "Generated successor dispatch drives independently enabled transitions and tests stuttering for stale observations.",
+          "successors": [
+            {
+              "path": "spec/settlement/paymentDispatch.md",
+              "definitions": [
+                "initial",
+                "settleFailure"
+              ]
+            }
+          ]
+        }
+      },
+      "scenarios": {
+        "ambiguousClearsLeaseTest": {
+          "status": "modeled-projection",
+          "reason": "An uncertain callback returns current processing to ready and holds the attempt for idempotent continuation.",
+          "successors": [
+            {
+              "path": "spec/settlement/paymentDispatch.md",
+              "definitions": [
+                "returnAmbiguous"
+              ]
+            }
+          ]
+        },
+        "ambiguousCannotSubmitTest": {
+          "status": "modeled-projection",
+          "reason": "A late callback may fill attempt metadata after a lease was cleared without submitting its outbox.",
+          "successors": [
+            {
+              "path": "spec/settlement/paymentDispatch.md",
+              "definitions": [
+                "returnAmbiguous",
+                "returnSuccess"
+              ]
+            }
+          ]
+        },
+        "heldUnderOldWalletRun": {
+          "status": "modeled-projection",
+          "reason": "A new claim with a different wallet does not retire an uncertain prior-claim obligation.",
+          "successors": [
+            {
+              "path": "spec/settlement/paymentDispatch.md",
+              "definitions": [
+                "authorizeWallet",
+                "readClaim",
+                "park"
+              ]
+            }
+          ]
+        },
+        "guardedReleaseKeepsUncertainHoldTest": {
+          "status": "modeled-projection",
+          "reason": "Authorized successor cannot release the hold while a foreign active attempt remains.",
+          "successors": [
+            {
+              "path": "spec/settlement/paymentDispatch.md",
+              "definitions": [
+                "mayRelease",
+                "authorizeWallet"
+              ]
+            }
+          ]
+        },
+        "unguardedReleaseIsReparkedTest": {
+          "status": "negative-control-not-product",
+          "reason": "Legacy unguarded release is a deliberate negative control. Actual authorization leaves the hold pending prior-attempt reconciliation.",
+          "successors": [
+            {
+              "path": "spec/settlement/paymentDispatch.md",
+              "definitions": [
+                "mayRelease",
+                "authorizeWallet"
+              ]
+            }
+          ]
+        },
+        "staleLeaseRefusedTest": {
+          "status": "modeled-projection",
+          "reason": "A prior claim read cannot create a new attempt when the processing lease was replaced.",
+          "successors": [
+            {
+              "path": "spec/settlement/paymentDispatch.md",
+              "definitions": [
+                "canAcquire",
+                "canPrepare"
+              ]
+            }
+          ]
+        },
+        "ambiguousRetryTest": {
+          "status": "modeled-projection",
+          "reason": "New lease and replay carry the original attempt key through executor callback and indexed final payout.",
+          "successors": [
+            {
+              "path": "spec/settlement/paymentDispatch.md",
+              "definitions": [
+                "returnAmbiguous",
+                "acquire",
+                "reuse",
+                "returnSuccess",
+                "indexFinalized"
+              ]
+            }
+          ]
+        },
+        "conflictingResponseTest": {
+          "status": "modeled-projection",
+          "reason": "A conflicting current reply holds the row while retaining the first recorded transaction.",
+          "successors": [
+            {
+              "path": "spec/settlement/paymentDispatch.md",
+              "definitions": [
+                "returnSuccess"
+              ]
+            }
+          ]
+        },
+        "lateOriginalAfterWalletReplacementTest": {
+          "status": "modeled-projection",
+          "reason": "Receipt uses historical authorized claim even after newly effective wallet, without rebinding the old attempt.",
+          "successors": [
+            {
+              "path": "spec/settlement/paymentDispatch.md",
+              "definitions": [
+                "authorizeWallet",
+                "returnSuccess",
+                "exactReceipt",
+                "indexFinalized"
+              ]
+            },
+            {
+              "path": "spec/settlement/composition.md",
+              "definitions": [
+                "canReconcile",
+                "reconcile",
+                "alwaysPaidConsumesReserve"
+              ]
+            }
+          ]
+        },
+        "staleConflictCannotHoldCompletedTest": {
+          "status": "modeled-projection",
+          "reason": "Stale conflicting callback preserves current submitted status and recorded attempt transaction.",
+          "successors": [
+            {
+              "path": "spec/settlement/paymentDispatch.md",
+              "definitions": [
+                "returnSuccess"
+              ]
+            }
+          ]
+        },
+        "staleFailurePreservesSubmittedSuccessorTest": {
+          "status": "modeled-projection",
+          "reason": "Two reads can capture the same rejected attempt, and a late duplicate cannot touch a later attempt or submitted queue.",
+          "successors": [
+            {
+              "path": "spec/settlement/paymentDispatch.md",
+              "definitions": [
+                "inspectFailure",
+                "settleFailure"
+              ]
+            }
+          ]
+        },
+        "externalPaidWithoutRecordedTxTest": {
+          "status": "modeled-projection",
+          "reason": "Exact scanner receipt can consume a reserved vault obligation even with no attempt transaction to associate.",
+          "successors": [
+            {
+              "path": "spec/settlement/paymentDispatch.md",
+              "definitions": [
+                "exactReceipt",
+                "indexFinalized"
+              ]
+            },
+            {
+              "path": "spec/settlement/composition.md",
+              "definitions": [
+                "canReconcile",
+                "reconcile",
+                "alwaysPaidConsumesReserve"
+              ]
+            }
+          ]
+        },
+        "externalPaidBesideRecordedTxTest": {
+          "status": "modeled-projection",
+          "reason": "Exact scanner receipt has independent canonical identity and preserves the other attempt transaction.",
+          "successors": [
+            {
+              "path": "spec/settlement/paymentDispatch.md",
+              "definitions": [
+                "indexFinalized"
+              ]
+            },
+            {
+              "path": "spec/settlement/composition.md",
+              "definitions": [
+                "canReconcile",
+                "reconcile",
+                "alwaysPaidConsumesReserve"
+              ]
+            }
+          ]
+        },
+        "paidIsAbsorbingTest": {
+          "status": "modeled-projection",
+          "reason": "No lease can acquire after canonical indexing. Queue and receipt remain fixed.",
+          "successors": [
+            {
+              "path": "spec/settlement/paymentDispatch.md",
+              "definitions": [
+                "canAcquire",
+                "stepIndexedIsAbsorbing"
+              ]
+            }
+          ]
+        },
+        "noSecondReceiptAfterExternalPaidTest": {
+          "status": "modeled-projection",
+          "reason": "Another payout event cannot replace the canonical vault receipt. Exact replay is idempotent.",
+          "successors": [
+            {
+              "path": "spec/settlement/paymentDispatch.md",
+              "definitions": [
+                "canIndexFinalized",
+                "indexFinalized"
+              ]
+            },
+            {
+              "path": "spec/settlement/composition.md",
+              "definitions": [
+                "canReconcile",
+                "reconcile",
+                "alwaysPaidConsumesReserve"
+              ]
+            }
+          ]
+        },
+        "noResponseAfterPaidTest": {
+          "status": "source-refinement",
+          "reason": "Pinned native SQL allows an already started callback to persist exact attempt metadata after external indexing. The cleared token prevents moving the indexed outbox or changing the canonical receipt. The original no-metadata branch is a stronger projection.",
+          "successors": [
+            {
+              "path": "spec/settlement/paymentDispatch.md",
+              "definitions": [
+                "returnSuccess",
+                "stepIndexedIsAbsorbing"
+              ]
+            }
+          ]
+        }
+      },
+      "sourceBindings": [
+        {
+          "path": "backend/payments/dispatch.ts",
+          "sha256": "fce0c6562bed2596cea0a876d5ebeafe44855e891fef54e3fcae8dbb1017d447",
+          "anchors": [
+            {
+              "line": 33,
+              "anchor": "const lease = crypto.randomUUID()"
+            },
+            {
+              "line": 40,
+              "anchor": "new Date(now.getTime() + 60000)"
+            },
+            {
+              "line": 68,
+              "anchor": "previous.claim_id !== payment.claimId"
+            },
+            {
+              "line": 91,
+              "anchor": "INSERT INTO payment_attempts"
+            },
+            {
+              "line": 101,
+              "anchor": "idempotencyKey: id"
+            },
+            {
+              "line": 112,
+              "anchor": "UPDATE payment_attempts SET state='submitted'"
+            },
+            {
+              "line": 146,
+              "anchor": "UPDATE payment_outbox SET state='held'"
+            }
+          ]
+        },
+        {
+          "path": "backend/payments/ledger.ts",
+          "sha256": "651666b54866ad0d39e53d4fe812dda21f20f440de8105ac9a3d4c252200f879",
+          "anchors": [
+            {
+              "line": 154,
+              "anchor": "await adapter.verifyFinalized(input)"
+            },
+            {
+              "line": 182,
+              "anchor": "Finalized vault asset snapshot required"
+            },
+            {
+              "line": 200,
+              "anchor": "paymentObligationDecision("
+            },
+            {
+              "line": 239,
+              "anchor": "Payout destination is not an authorized contributor wallet"
+            },
+            {
+              "line": 325,
+              "anchor": "UPDATE payment_obligations SET state='paid'"
+            },
+            {
+              "line": 332,
+              "anchor": "UPDATE payment_outbox SET state='paid'"
+            },
+            {
+              "line": 339,
+              "anchor": "UPDATE payment_attempts SET state='finalized'"
+            }
+          ]
+        },
+        {
+          "path": "backend/payments/verified-evidence.ts",
+          "sha256": "7618a7ced8cd7e408ba7255e0bf838891b7cf20202e31d409cd8d1b97876470f",
+          "anchors": [
+            {
+              "line": 137,
+              "anchor": "export function paymentObligationDecision"
+            },
+            {
+              "line": 24,
+              "anchor": "export function paymentEvidenceMatches"
+            }
+          ]
+        },
+        {
+          "path": "backend/payments/handler.ts",
+          "sha256": "b0e3b3b8b350e6a129af4b2f06fdb9597e93a4ec9d242a931dd5852e5ab76faa",
+          "anchors": [
+            {
+              "line": 901,
+              "anchor": "ON CONFLICT(obligation_id) DO UPDATE SET state='ready'"
+            }
+          ]
+        },
+        {
+          "path": "backend/security/payment-database.ts",
+          "sha256": "2081788fc171b889c5527796f69760f7fa7505d70598354989dac49c0c98ea9e",
+          "anchors": [
+            {
+              "line": 6,
+              "anchor": "export function securityPaymentDatabase"
+            }
+          ]
+        },
+        {
+          "path": "workers/security-payments/index.ts",
+          "sha256": "b54e8c484758f410f9b3d874420be01f495d764804a9e49c33592c10def3f530",
+          "anchors": [
+            {
+              "line": 29,
+              "anchor": "ON CONFLICT(obligation_id) DO UPDATE SET state='ready'"
+            }
+          ]
+        },
+        {
+          "path": "workers/payments/index.ts",
+          "sha256": "1c9e2ea8e9eb57ec3f3a9e358f3ab6b09869edc90b9680377e358cc2a49e6218",
+          "anchors": [
+            {
+              "line": 86,
+              "anchor": "export async function recoverUncertainAttempts"
+            },
+            {
+              "line": 148,
+              "anchor": "if (outcome.retired === true && outcome.transactionId === null)"
+            },
+            {
+              "line": 191,
+              "anchor": "if (!status.submitted)"
+            }
+          ]
+        },
+        {
+          "path": "workers/payments/reconcile.ts",
+          "sha256": "3e9926d64c6cb7e0810912ce06a46643764dba2d696b7575ed708b6cbb18d827",
+          "anchors": [
+            {
+              "line": 54,
+              "anchor": "export async function reconcileFailedAttempts"
+            },
+            {
+              "line": 130,
+              "anchor": "Another reconciler may already have retired this attempt"
+            }
+          ]
+        },
+        {
+          "path": "workers/payments/scanner.ts",
+          "sha256": "859e9352f0a7a9dd5ad62dbfb45a511d9fee3d039ca57d6fe9eae327c700b5c5",
+          "anchors": [
+            {
+              "line": 23,
+              "anchor": "A cursor advances only after every recognized finalized event"
+            }
+          ]
+        },
+        {
+          "path": "migrations/0011_payments.sql",
+          "sha256": "076232ab09dc40e5656850985b441d696c4903b50d847912cfea27eeb9c601f3",
+          "anchors": [
+            {
+              "line": 24,
+              "anchor": "CREATE TABLE payment_outbox"
+            },
+            {
+              "line": 29,
+              "anchor": "CREATE TABLE payment_attempts"
+            },
+            {
+              "line": 71,
+              "anchor": "CREATE TABLE payment_attempt_failures"
+            }
+          ]
+        },
+        {
+          "path": "workers/payment-executor/README.md",
+          "sha256": "7d462350d94844eb07e09835cf27ec57c7f61cc61a6310fe47b4bd642fa6fc56",
+          "anchors": [
+            {
+              "line": 288,
+              "anchor": "Its journal transaction either finds a previously signed"
+            },
+            {
+              "line": 293,
+              "anchor": "signed bytes commit in the same journal transaction"
+            }
+          ]
+        },
+        {
+          "path": "backend/payments/dispatch.test.ts",
+          "sha256": "c60bba040d80c3001804ba53d24d0403fe88ce40b613bc22e3a9894969dcbbe5",
+          "anchors": [
+            {
+              "line": 141,
+              "anchor": "a late dispatch response cannot replace"
+            },
+            {
+              "line": 339,
+              "anchor": "Quint ambiguous-send trace conforms"
+            },
+            {
+              "line": 423,
+              "anchor": "Quint late original remains payable"
+            }
+          ]
+        }
+      ],
+      "successorSha256": "ee69d737b4b4c093330e3159b1b9c278b3036c0b4d176afb6b6100992e84f005",
+      "boundary": "The canonical composition checks actor-owned reserve, exact vault receipt, historic wallet authority and immutable amounts in one finalized transition. Native D1 conflicting concurrent paid-event integration and atomic persistence adapter remain runtime conformance.",
+      "composedSuccessors": [
+        {
+          "path": "spec/settlement/paymentDispatch.md",
+          "sha256": "ee69d737b4b4c093330e3159b1b9c278b3036c0b4d176afb6b6100992e84f005"
+        },
+        {
+          "path": "spec/settlement/composition.md",
+          "sha256": "dc0109df85c26a729916235e245ccc3831e64dbbf15e619c8a37fdcf19d460a5"
+        },
+        {
+          "path": "spec/settlement/payment.md",
+          "sha256": "8ed715161511f58b5b4fd951868bf2b538447db9d49d77ab657299952f54959b"
+        },
+        {
+          "path": "spec/settlement/vault.md",
+          "sha256": "8b65119c2fa355b37b093cedcc1b862439492c7acde8c712c0968434c93484e2"
+        }
+      ]
+    },
+    {
+      "legacyModel": "formal/models/payments/vault_initial_snapshot.qnt",
+      "sourceSha256": "8234ea0fd2b4572f31970900d423a59385200f6e53e9eeea963941f213cb9c41",
+      "sourceEntries": [
+        "backend/projects/vault-setup.ts",
+        "backend/projects/handler.ts",
+        "backend/payments/vault-snapshots.ts",
+        "backend/security/payment-database.ts",
+        "workers/payments/index.ts",
+        "contracts/solana/adapter.ts",
+        "src/lib/vault-setup.ts",
+        "scripts/recover-vault-observations.ts"
+      ],
+      "evidenceEntries": [
+        "scripts/vault-setup-network-failure.test.ts",
+        "scripts/solana-vault-setup-network-failure.test.ts",
+        "backend/payments/vault-snapshots.test.ts",
+        "scripts/recover-vault-observations.test.ts"
+      ],
+      "actions": {
+        "init": {
+          "status": "modeled-projection",
+          "reason": "First immutable registry revision, two independently absent observations and no requests.",
+          "successors": [
+            {
+              "path": "spec/settlement/vaultSnapshots.md",
+              "definitions": [
+                "initial"
+              ]
+            }
+          ]
+        },
+        "begin": {
+          "status": "modeled-projection",
+          "reason": "Capture current revision and recognize existing normalized exact transaction and network in its payout purpose.",
+          "successors": [
+            {
+              "path": "spec/settlement/vaultSnapshots.md",
+              "definitions": [
+                "beginRegistration"
+              ]
+            }
+          ]
+        },
+        "beginRecovery": {
+          "status": "modeled-projection",
+          "reason": "Trusted ordinary Solana mainnet selection requires registration and absence of a retained observation.",
+          "successors": [
+            {
+              "path": "spec/settlement/vaultSnapshots.md",
+              "definitions": [
+                "canBeginRecovery",
+                "beginRecovery"
+              ]
+            }
+          ]
+        },
+        "register": {
+          "status": "modeled-projection",
+          "reason": "Recognize exact retained transaction first, otherwise require finalized matching creation and compare-and-append against current immutable revision.",
+          "successors": [
+            {
+              "path": "spec/settlement/vaultSnapshots.md",
+              "definitions": [
+                "beginRegistration",
+                "checkCreation",
+                "commitRegistration"
+              ]
+            }
+          ]
+        },
+        "totals": {
+          "status": "modeled-projection",
+          "reason": "Consume exact finalized vault and asset read after chain trust check where required.",
+          "successors": [
+            {
+              "path": "spec/settlement/vaultSnapshots.md",
+              "definitions": [
+                "pinGenesis",
+                "checkGenesis",
+                "canReadTotals",
+                "readTotals"
+              ]
+            }
+          ]
+        },
+        "priorRead": {
+          "status": "modeled-projection",
+          "reason": "Check current scoped prior row before permitting a second authoritative compare at write time.",
+          "successors": [
+            {
+              "path": "spec/settlement/vaultSnapshots.md",
+              "definitions": [
+                "readPrior"
+              ]
+            }
+          ]
+        },
+        "observationFails": {
+          "status": "modeled-projection",
+          "reason": "Post-registration RPC, prior-read or write failures preserve immutably registered deployment.",
+          "successors": [
+            {
+              "path": "spec/settlement/vaultSnapshots.md",
+              "definitions": [
+                "observationFails"
+              ]
+            }
+          ]
+        },
+        "write": {
+          "status": "modeled-projection",
+          "reason": "Atomic latest-row guard orders block and observation time, preserves old service fee and rejects decrease of each full-width cumulative counter. Uncertain replies may leave a committed row.",
+          "successors": [
+            {
+              "path": "spec/settlement/vaultSnapshots.md",
+              "definitions": [
+                "writable",
+                "write"
+              ]
+            }
+          ]
+        },
+        "step": {
+          "status": "generated-harness",
+          "reason": "Generated successor dispatch and legacy finite harness stutter.",
+          "successors": [
+            {
+              "path": "spec/settlement/vaultSnapshots.md",
+              "definitions": [
+                "initial",
+                "write"
+              ]
+            }
+          ]
+        },
+        "ready": {
+          "status": "generated-harness",
+          "reason": "Legacy test pairs request capture with registry admission. Successor separates creation evidence and final immutable append.",
+          "successors": [
+            {
+              "path": "spec/settlement/vaultSnapshots.md",
+              "definitions": [
+                "beginRegistration",
+                "checkCreation",
+                "commitRegistration"
+              ]
+            }
+          ]
+        },
+        "observed": {
+          "status": "generated-harness",
+          "reason": "Legacy macro pairs totals and prior read. Solana successor additionally checks configured genesis root first.",
+          "successors": [
+            {
+              "path": "spec/settlement/vaultSnapshots.md",
+              "definitions": [
+                "pinGenesis",
+                "checkGenesis",
+                "readTotals",
+                "readPrior"
+              ]
+            }
+          ]
+        }
+      },
+      "scenarios": {
+        "registrationSeedsSnapshotTest": {
+          "status": "modeled-projection",
+          "reason": "The first exact finalized row can be stored only after canonical registration.",
+          "successors": [
+            {
+              "path": "spec/settlement/vaultSnapshots.md",
+              "definitions": [
+                "commitRegistration",
+                "readTotals",
+                "readPrior",
+                "write"
+              ]
+            }
+          ]
+        },
+        "unavailableReadRetainsRegistrationTest": {
+          "status": "modeled-projection",
+          "reason": "Unavailable read returns 503 while retaining the registered deployment.",
+          "successors": [
+            {
+              "path": "spec/settlement/vaultSnapshots.md",
+              "definitions": [
+                "commitRegistration",
+                "observationFails"
+              ]
+            }
+          ]
+        },
+        "identityRefusalNeverSeedsTest": {
+          "status": "modeled-projection",
+          "reason": "Wrong network, vault or Solana project PDA, asset or reviewed identity cannot progress to an observation write.",
+          "successors": [
+            {
+              "path": "spec/settlement/vaultSnapshots.md",
+              "definitions": [
+                "exactObservation",
+                "readTotals"
+              ]
+            }
+          ]
+        },
+        "retrySeedsWithoutAnotherRevisionTest": {
+          "status": "modeled-projection",
+          "reason": "Same network and creation transaction retry may seed with no new registry revision, even with a stale expected revision.",
+          "successors": [
+            {
+              "path": "spec/settlement/vaultSnapshots.md",
+              "definitions": [
+                "beginRegistration",
+                "write"
+              ]
+            }
+          ]
+        },
+        "failedWriteRetainsRegistrationTest": {
+          "status": "modeled-projection",
+          "reason": "Explicit write failure preserves registry and does not create an observation.",
+          "successors": [
+            {
+              "path": "spec/settlement/vaultSnapshots.md",
+              "definitions": [
+                "write",
+                "stepWritePreservesRegistry"
+              ]
+            }
+          ]
+        },
+        "lostWriteReplyDoesNotProveMissingSnapshotTest": {
+          "status": "modeled-projection",
+          "reason": "A successful conditional write with lost acknowledgment leaves an observable row and returns 503.",
+          "successors": [
+            {
+              "path": "spec/settlement/vaultSnapshots.md",
+              "definitions": [
+                "write"
+              ]
+            }
+          ]
+        },
+        "racingOlderBlockCannotReplaceNewerTest": {
+          "status": "modeled-projection",
+          "reason": "Commit compares the latest row and returns older when newer finalized block wins.",
+          "successors": [
+            {
+              "path": "spec/settlement/vaultSnapshots.md",
+              "definitions": [
+                "isOlder",
+                "writable",
+                "write"
+              ]
+            }
+          ]
+        },
+        "racingSameBlockOlderTimeCannotReplaceTest": {
+          "status": "modeled-projection",
+          "reason": "A same-block older observation instant does not replace a newer row.",
+          "successors": [
+            {
+              "path": "spec/settlement/vaultSnapshots.md",
+              "definitions": [
+                "isOlder",
+                "writable",
+                "write"
+              ]
+            }
+          ]
+        },
+        "racingLowerCounterRefusesTest": {
+          "status": "modeled-projection",
+          "reason": "A decrease of any cumulative counter refuses across calls that shared the same earlier row.",
+          "successors": [
+            {
+              "path": "spec/settlement/vaultSnapshots.md",
+              "definitions": [
+                "countersAdvance",
+                "writable",
+                "write"
+              ]
+            }
+          ]
+        },
+        "privateAndOrdinaryStoresRemainSeparateTest": {
+          "status": "modeled-projection",
+          "reason": "Each payout purpose owns an independently scoped registered deployment and snapshot row.",
+          "successors": [
+            {
+              "path": "spec/settlement/vaultSnapshots.md",
+              "definitions": [
+                "setDeployment",
+                "alwaysObservationScoped",
+                "write"
+              ]
+            }
+          ]
+        },
+        "registrationRefusalCreatesNoSnapshotTest": {
+          "status": "modeled-projection",
+          "reason": "A wrong transaction or unverified creation never admits a deployment.",
+          "successors": [
+            {
+              "path": "spec/settlement/vaultSnapshots.md",
+              "definitions": [
+                "checkCreation",
+                "canReadTotals",
+                "canWrite"
+              ]
+            }
+          ]
+        },
+        "priorReadFailureKeepsImmutableRegistrationTest": {
+          "status": "modeled-projection",
+          "reason": "A failure after exact totals preserves the immutable registry append.",
+          "successors": [
+            {
+              "path": "spec/settlement/vaultSnapshots.md",
+              "definitions": [
+                "observationFails",
+                "stepRegistrationIsImmutable"
+              ]
+            }
+          ]
+        },
+        "missingSnapshotRecoveryNeverAppendsRevisionTest": {
+          "status": "modeled-projection",
+          "reason": "Trusted repair uses the registered row and the same observation writer with no registry mutation.",
+          "successors": [
+            {
+              "path": "spec/settlement/vaultSnapshots.md",
+              "definitions": [
+                "beginRecovery",
+                "write",
+                "stepWritePreservesRegistry"
+              ]
+            }
+          ]
+        },
+        "recoveryCannotSelectRetainedSnapshotTest": {
+          "status": "modeled-projection",
+          "reason": "A preexisting row prevents selection. A selected repair still uses the canonical conditional guard if a normal writer wins first.",
+          "successors": [
+            {
+              "path": "spec/settlement/vaultSnapshots.md",
+              "definitions": [
+                "canBeginRecovery",
+                "writable",
+                "write"
+              ]
+            }
+          ]
+        },
+        "recoveryRefusesUnregisteredDeploymentTest": {
+          "status": "modeled-projection",
+          "reason": "Missing registration cannot authorize an observation or repair.",
+          "successors": [
+            {
+              "path": "spec/settlement/vaultSnapshots.md",
+              "definitions": [
+                "canBeginRead",
+                "canBeginRecovery"
+              ]
+            }
+          ]
+        },
+        "recoveryDoesNotSelectPrivateBountyTest": {
+          "status": "modeled-projection",
+          "reason": "Trusted repair only selects the ordinary registry and observation scope.",
+          "successors": [
+            {
+              "path": "spec/settlement/vaultSnapshots.md",
+              "definitions": [
+                "canBeginRecovery",
+                "beginRecovery"
+              ]
+            }
+          ]
+        },
+        "untrustedRecoveryCannotWriteTest": {
+          "status": "modeled-projection",
+          "reason": "The trusted release workflow evidence gate precedes repair selection.",
+          "successors": [
+            {
+              "path": "spec/settlement/vaultSnapshots.md",
+              "definitions": [
+                "canBeginRecovery"
+              ]
+            }
+          ]
+        },
+        "racingRegistrationDoesNotAppendTwiceTest": {
+          "status": "modeled-projection",
+          "reason": "Concurrent first requests with one captured revision cannot append twice. Fresh exact replay may retry observation.",
+          "successors": [
+            {
+              "path": "spec/settlement/vaultSnapshots.md",
+              "definitions": [
+                "beginRegistration",
+                "commitRegistration"
+              ]
+            }
+          ]
+        }
+      },
+      "sourceBindings": [
+        {
+          "path": "backend/projects/handler.ts",
+          "sha256": "39686b61d5d4ab0ed1e891e6486f8cfea03b98d7bb8d381855ac62c43b18ec0f",
+          "anchors": [
+            {
+              "line": 1476,
+              "anchor": "d.deploymentTransaction === transactionId"
+            },
+            {
+              "line": 1517,
+              "anchor": "const stored = await deps.persistence.getRevisionText"
+            },
+            {
+              "line": 1568,
+              "anchor": "const deployment = await deps.vaultSetup.register"
+            },
+            {
+              "line": 1585,
+              "anchor": "await deps.vaultSetup.observe(updated"
+            }
+          ]
+        },
+        {
+          "path": "backend/projects/vault-setup.ts",
+          "sha256": "8feb7d085ff0a4ecadfe37cfd749ec8776a5910b10161dac903675d2f4a30053",
+          "anchors": [
+            {
+              "line": 73,
+              "anchor": "export async function readRegisteredVaultTotals"
+            },
+            {
+              "line": 489,
+              "anchor": "async observe(project, deployment, payoutPolicy)"
+            },
+            {
+              "line": 501,
+              "anchor": "securityPaymentDatabase(deps.db)"
+            },
+            {
+              "line": 510,
+              "anchor": "\"vault_snapshot_unavailable\""
+            }
+          ]
+        },
+        {
+          "path": "backend/payments/vault-snapshots.ts",
+          "sha256": "1e8f8bbc7a3834b589e3457bc8d3da36e8b2b769ac5e0ac8039c0145a8c371cf",
+          "anchors": [
+            {
+              "line": 28,
+              "anchor": "const CUMULATIVE"
+            },
+            {
+              "line": 35,
+              "anchor": "const CURRENT"
+            },
+            {
+              "line": 117,
+              "anchor": "firstDecreasedCounter(incomingCounters"
+            },
+            {
+              "line": 130,
+              "anchor": "const monotonicCounters"
+            },
+            {
+              "line": 142,
+              "anchor": "ON CONFLICT(project_id,network,vault)"
+            },
+            {
+              "line": 159,
+              "anchor": "result.meta?.changes !== 1"
+            }
+          ]
+        },
+        {
+          "path": "workers/payments/deployments.ts",
+          "sha256": "207caeb93e20adb2880c3aea26db81f4c8f557c1beccd4dc2c91f98fb34ccce2",
+          "anchors": [
+            {
+              "line": 55,
+              "anchor": "export async function loadRegistryPaymentDeployments"
+            },
+            {
+              "line": 116,
+              "anchor": "A payment vault cannot be shared between registry programs"
+            }
+          ]
+        },
+        {
+          "path": "backend/security/payment-database.ts",
+          "sha256": "2081788fc171b889c5527796f69760f7fa7505d70598354989dac49c0c98ea9e",
+          "anchors": [
+            {
+              "line": 6,
+              "anchor": "export function securityPaymentDatabase"
+            }
+          ]
+        },
+        {
+          "path": "scripts/recover-vault-observations.ts",
+          "sha256": "727d79eba94520c48704f367c8c774752cf651be11efff21548d60589cd6bd2a",
+          "anchors": [
+            {
+              "line": 13,
+              "anchor": "requireTrustedObservationRecovery("
+            },
+            {
+              "line": 98,
+              "anchor": "loadRegistryPaymentDeployments(db, [\"solana-mainnet\"])"
+            },
+            {
+              "line": 110,
+              "anchor": "if (prior) {"
+            },
+            {
+              "line": 114,
+              "anchor": "await storeVaultSnapshot("
+            }
+          ]
+        }
+      ],
+      "development": "0d0f0817a439df03cc022bf7aeed4bbe64ef4c65",
+      "developmentBindings": [
+        {
+          "path": "backend/projects/handler.ts",
+          "sha256": "d7b50e2db234ce8a2d6c3814ccef1b534c7ee79e30bc051ecb255fde73c8bf79",
+          "anchors": [
+            {
+              "line": 1577,
+              "anchor": "if (verified.evidence !== \"finalized\")"
+            }
+          ]
+        },
+        {
+          "path": "workers/payments/index.ts",
+          "sha256": "f601a441c6da64bf28ef6551fb2e9b9012d3d2f4adb2711fd469c99915e28486",
+          "anchors": [
+            {
+              "line": 665,
+              "anchor": "await assertSolanaGenesis({"
+            },
+            {
+              "line": 84,
+              "anchor": "const pin = "
+            }
+          ]
+        },
+        {
+          "path": "contracts/solana/adapter.ts",
+          "sha256": "ddcdf520792de627eaf9a278b596e1c71bc0802932560c9a1b56729d122269e0",
+          "anchors": [
+            {
+              "line": 262,
+              "anchor": "export async function assertSolanaGenesis"
+            },
+            {
+              "line": 281,
+              "anchor": "await assertSolanaGenesis(config)"
+            }
+          ]
+        },
+        {
+          "path": "workers/payments/solana-progress.workflow.mjs",
+          "sha256": "60602b70da2e944b39c52a44a391bff4224116910502783b15a87a0ab3c1fa57",
+          "anchors": [
+            {
+              "line": 216,
+              "anchor": "assert.deepEqual(methods, [])"
+            },
+            {
+              "line": 223,
+              "anchor": "assert.deepEqual(methods.splice(0), [\"getGenesisHash\", \"getGenesisHash\"])"
+            }
+          ]
+        }
+      ],
+      "successorSha256": "6be41ba1b57b67145b1776d3e03946f2d94dc711cae347416260612aa3b1ba1b",
+      "boundary": "One project, one immutable ordinary and one private deployment. D1, finalized RPC and authorization conformance remain external. Solana discovery checkpoint ownership is separate. Registry-wide duplicate deployment rejection, block-range, timestamp and canonical string decoding are adapter responsibilities."
+    },
+    {
+      "legacyModel": "formal/models/payments/operator_keeper_lifecycle.qnt",
+      "sourceSha256": "7377521ae45adfa5ad7469e8492170b3a87ef406d613fd22e9a83437e2f1d89d",
+      "sourceEntries": [
+        "workers/operator-keeper/index.ts",
+        "workers/operator-keeper/storage.ts",
+        "scripts/payment-keeper/keeper.ts",
+        "scripts/payment-keeper/storage.ts",
+        "scripts/payment-keeper/signer.ts",
+        "scripts/payment-keeper/budget.ts"
+      ],
+      "evidenceEntries": [
+        "scripts/payment-keeper/evm.integration.ts"
+      ],
+      "actions": {
+        "init": {
+          "status": "modeled-projection",
+          "reason": "An inactive object instance has no shared run and no initialized durable registry/attempt.",
+          "successors": [
+            {
+              "path": "spec/settlement/keeperLifecycle.md",
+              "definitions": [
+                "initial"
+              ]
+            }
+          ]
+        },
+        "configure": {
+          "status": "modeled-projection",
+          "reason": "Captures job mode, validity, registry and selected projects before starting this instance.",
+          "successors": [
+            {
+              "path": "spec/settlement/keeperLifecycle.md",
+              "definitions": [
+                "configure"
+              ]
+            },
+            {
+              "path": "spec/operations/paymentJobs.md",
+              "definitions": [
+                "configure"
+              ]
+            }
+          ]
+        },
+        "request": {
+          "status": "modeled-projection",
+          "reason": "Public and wrong internal routes terminate as no work. Cron off returns before config checks. Invalid cron refuses dispatch.",
+          "successors": [
+            {
+              "path": "spec/settlement/keeperLifecycle.md",
+              "definitions": [
+                "request"
+              ]
+            }
+          ]
+        },
+        "dispatch": {
+          "status": "modeled-projection",
+          "reason": "Current-instance request attaches to unique live run; idle slot allocates next run identity.",
+          "successors": [
+            {
+              "path": "spec/settlement/keeperLifecycle.md",
+              "definitions": [
+                "canDispatch",
+                "dispatch",
+                "sometimesCoalesced"
+              ]
+            }
+          ]
+        },
+        "selectMode": {
+          "status": "modeled-projection",
+          "reason": "Off settles empty, invalid settles a redacted failure, live and dry modes continue to identity.",
+          "successors": [
+            {
+              "path": "spec/settlement/keeperLifecycle.md",
+              "definitions": [
+                "selectMode"
+              ]
+            }
+          ]
+        },
+        "identity": {
+          "status": "modeled-projection",
+          "reason": "Journal initialization and restart preserve exact registry identity; storage failure or mismatch settles a failure.",
+          "successors": [
+            {
+              "path": "spec/settlement/keeperLifecycle.md",
+              "definitions": [
+                "checkIdentity"
+              ]
+            },
+            {
+              "path": "spec/settlement/keeperRpc.md",
+              "definitions": [
+                "preflight"
+              ]
+            },
+            {
+              "path": "spec/settlement/keeperScan.md",
+              "definitions": [
+                "confirmPreflight"
+              ]
+            }
+          ]
+        },
+        "indexReads": {
+          "status": "modeled-projection",
+          "reason": "A working dry or execute mode may persist observed evidence; exact per-receipt verifier is another unit.",
+          "successors": [
+            {
+              "path": "spec/settlement/keeperLifecycle.md",
+              "definitions": [
+                "indexReads"
+              ]
+            },
+            {
+              "path": "spec/settlement/keeperScan.md",
+              "definitions": [
+                "verifyReceipt",
+                "indexReceipt"
+              ]
+            }
+          ]
+        },
+        "stageAttempt": {
+          "status": "modeled-projection",
+          "reason": "Current execute run may stage one representative exact signed byte identity under an independently verified authorization.",
+          "successors": [
+            {
+              "path": "spec/settlement/keeperLifecycle.md",
+              "definitions": [
+                "canStageAttempt",
+                "stageAttempt"
+              ]
+            }
+          ]
+        },
+        "commitAttempt": {
+          "status": "modeled-projection",
+          "reason": "Storage atomically commits bytes, nonce and pending gas. Failure drops only staged bytes and retains earlier journal.",
+          "successors": [
+            {
+              "path": "spec/settlement/keeperLifecycle.md",
+              "definitions": [
+                "commitAttempt",
+                "alwaysCommitIsAtomic"
+              ]
+            }
+          ]
+        },
+        "broadcast": {
+          "status": "modeled-projection",
+          "reason": "All broadcasts require already committed exact bytes, current execute run and open native gas liability.",
+          "successors": [
+            {
+              "path": "spec/settlement/keeperLifecycle.md",
+              "definitions": [
+                "canBroadcast",
+                "broadcast"
+              ]
+            }
+          ]
+        },
+        "gasEvidence": {
+          "status": "modeled-projection",
+          "reason": "Exact finalized native charge releases gas only; unavailable evidence records partial and keeps reserve.",
+          "successors": [
+            {
+              "path": "spec/settlement/keeperLifecycle.md",
+              "definitions": [
+                "recordGasEvidence",
+                "alwaysSeparateGasTerminal"
+              ]
+            }
+          ]
+        },
+        "itemFailure": {
+          "status": "modeled-projection",
+          "reason": "Independent core failure affects terminal disposition without erasing prior work.",
+          "successors": [
+            {
+              "path": "spec/settlement/keeperLifecycle.md",
+              "definitions": [
+                "itemFailure"
+              ]
+            }
+          ]
+        },
+        "finish": {
+          "status": "modeled-projection",
+          "reason": "Settle core result and free next-run slot before response delivery.",
+          "successors": [
+            {
+              "path": "spec/settlement/keeperLifecycle.md",
+              "definitions": [
+                "finish",
+                "settleRun"
+              ]
+            }
+          ]
+        },
+        "fatal": {
+          "status": "modeled-projection",
+          "reason": "Core failure gets one settled redacted delivery outcome without erasing journal.",
+          "successors": [
+            {
+              "path": "spec/settlement/keeperLifecycle.md",
+              "definitions": [
+                "fatal",
+                "deliver"
+              ]
+            }
+          ]
+        },
+        "deliver": {
+          "status": "modeled-projection",
+          "reason": "Waiting request receives only its captured settled run, or loses delivery without altering durable state.",
+          "successors": [
+            {
+              "path": "spec/settlement/keeperLifecycle.md",
+              "definitions": [
+                "canDeliver",
+                "deliver",
+                "responseRow"
+              ]
+            }
+          ]
+        },
+        "inspectScheduled": {
+          "status": "modeled-projection",
+          "reason": "Scheduled caller checks body, distinguishes partial and malformed responses from completion.",
+          "successors": [
+            {
+              "path": "spec/settlement/keeperLifecycle.md",
+              "definitions": [
+                "canInspectScheduled",
+                "inspectScheduled"
+              ]
+            }
+          ]
+        },
+        "restart": {
+          "status": "modeled-projection",
+          "reason": "New config can change, staging and waiting lost core stop, completed responses and durable bytes remain.",
+          "successors": [
+            {
+              "path": "spec/settlement/keeperLifecycle.md",
+              "definitions": [
+                "restart",
+                "stepRestartRetainsDurableState"
+              ]
+            }
+          ]
+        },
+        "step": {
+          "status": "generated-harness",
+          "reason": "Legacy scheduling/stutter dispatcher. Vibestack generated dispatcher chooses new model actions.",
+          "successors": []
+        },
+        "core": {
+          "status": "generated-harness",
+          "reason": "Scenario macro selects mode and checks journal identity before core work.",
+          "successors": [
+            {
+              "path": "spec/settlement/keeperLifecycle.md",
+              "definitions": [
+                "selectMode",
+                "checkIdentity"
+              ]
+            }
+          ]
+        },
+        "executing": {
+          "status": "generated-harness",
+          "reason": "Scenario macro uses approved execute config and current internal request to start work.",
+          "successors": [
+            {
+              "path": "spec/settlement/keeperLifecycle.md",
+              "definitions": [
+                "configure",
+                "request",
+                "dispatch",
+                "selectMode",
+                "checkIdentity"
+              ]
+            }
+          ]
+        },
+        "committed": {
+          "status": "generated-harness",
+          "reason": "Scenario macro stages and atomically commits exact signed bytes, nonce and gas.",
+          "successors": [
+            {
+              "path": "spec/settlement/keeperLifecycle.md",
+              "definitions": [
+                "stageAttempt",
+                "commitAttempt"
+              ]
+            }
+          ]
+        }
+      },
+      "scenarios": {
+        "publicRouteCannotReachKeeperTest": {
+          "status": "modeled-projection",
+          "reason": "Public route returns 404 before shared run allocation.",
+          "successors": [
+            {
+              "path": "spec/settlement/keeperLifecycle.md",
+              "definitions": [
+                "request",
+                "canDispatch"
+              ]
+            }
+          ]
+        },
+        "wrongInternalRouteDoesNoWorkTest": {
+          "status": "modeled-projection",
+          "reason": "Wrong object route returns 404 without dispatch.",
+          "successors": [
+            {
+              "path": "spec/settlement/keeperLifecycle.md",
+              "definitions": [
+                "request",
+                "canDispatch"
+              ]
+            }
+          ]
+        },
+        "offCronDoesNotValidateConfigurationTest": {
+          "status": "modeled-projection",
+          "reason": "Off cron return precedes validating config or journal.",
+          "successors": [
+            {
+              "path": "spec/settlement/keeperLifecycle.md",
+              "definitions": [
+                "request"
+              ]
+            }
+          ]
+        },
+        "directOffTickReturnsEmptyResultTest": {
+          "status": "modeled-projection",
+          "reason": "Direct off may reach object but its core returns no work and HTTP 200.",
+          "successors": [
+            {
+              "path": "spec/settlement/keeperLifecycle.md",
+              "definitions": [
+                "selectMode",
+                "deliver"
+              ]
+            }
+          ]
+        },
+        "invalidCronConfigurationStartsNoObjectWorkTest": {
+          "status": "modeled-projection",
+          "reason": "Bad configuration before scheduled dispatch becomes explicit error.",
+          "successors": [
+            {
+              "path": "spec/settlement/keeperLifecycle.md",
+              "definitions": [
+                "request"
+              ]
+            }
+          ]
+        },
+        "invalidDirectConfigurationIsRedacted503Test": {
+          "status": "modeled-projection",
+          "reason": "A direct invalid core delivery is redacted HTTP 503.",
+          "successors": [
+            {
+              "path": "spec/settlement/keeperLifecycle.md",
+              "definitions": [
+                "selectMode",
+                "responseRow",
+                "deliver"
+              ]
+            }
+          ]
+        },
+        "overlappingRequestsShareOneCoreRunTest": {
+          "status": "modeled-projection",
+          "reason": "Current waiters share run identity and consume independently.",
+          "successors": [
+            {
+              "path": "spec/settlement/keeperLifecycle.md",
+              "definitions": [
+                "dispatch",
+                "sometimesCoalesced",
+                "deliver"
+              ]
+            }
+          ]
+        },
+        "settledPromiseDoesNotWaitForResponseDeliveryTest": {
+          "status": "modeled-projection",
+          "reason": "Settled core clears live slot while previous requester may still wait.",
+          "successors": [
+            {
+              "path": "spec/settlement/keeperLifecycle.md",
+              "definitions": [
+                "finish",
+                "dispatch",
+                "deliver"
+              ]
+            }
+          ]
+        },
+        "dryRunMayPersistReadStateWithoutSigningTest": {
+          "status": "modeled-projection",
+          "reason": "Dry run indexes observations but cannot prepare a signed attempt.",
+          "successors": [
+            {
+              "path": "spec/settlement/keeperLifecycle.md",
+              "definitions": [
+                "indexReads",
+                "canStageAttempt"
+              ]
+            }
+          ]
+        },
+        "dryRunCannotPrepareSignedAttemptTest": {
+          "status": "modeled-projection",
+          "reason": "Only Execute mode admits staging.",
+          "successors": [
+            {
+              "path": "spec/settlement/keeperLifecycle.md",
+              "definitions": [
+                "canStageAttempt"
+              ]
+            }
+          ]
+        },
+        "stagedSigningDoesNotAuthorizeBroadcastTest": {
+          "status": "modeled-projection",
+          "reason": "Staging alone leaves broadcast denied.",
+          "successors": [
+            {
+              "path": "spec/settlement/keeperLifecycle.md",
+              "definitions": [
+                "stageAttempt",
+                "canBroadcast"
+              ]
+            }
+          ]
+        },
+        "failedTransactionRollsBackNonceAndLiabilityTest": {
+          "status": "modeled-projection",
+          "reason": "Failed storage commit leaves all durable components unchanged and marks partial.",
+          "successors": [
+            {
+              "path": "spec/settlement/keeperLifecycle.md",
+              "definitions": [
+                "commitAttempt"
+              ]
+            }
+          ]
+        },
+        "instanceLossDiscardsOnlyUncommittedAttemptTest": {
+          "status": "modeled-projection",
+          "reason": "Restart abandons staged content and interrupted waiters.",
+          "successors": [
+            {
+              "path": "spec/settlement/keeperLifecycle.md",
+              "definitions": [
+                "stageAttempt",
+                "restart"
+              ]
+            }
+          ]
+        },
+        "committedAttemptSurvivesRestartTest": {
+          "status": "modeled-projection",
+          "reason": "Committed bytes, nonce and gas survive exact registry recheck.",
+          "successors": [
+            {
+              "path": "spec/settlement/keeperLifecycle.md",
+              "definitions": [
+                "commitAttempt",
+                "restart",
+                "checkIdentity",
+                "broadcast"
+              ]
+            }
+          ]
+        },
+        "unknownSendReusesJournalAfterRestartTest": {
+          "status": "modeled-projection",
+          "reason": "An unknown send retains exact bytes for restart replay.",
+          "successors": [
+            {
+              "path": "spec/settlement/keeperLifecycle.md",
+              "definitions": [
+                "broadcast",
+                "restart",
+                "sometimesReplayed"
+              ]
+            }
+          ]
+        },
+        "changedProjectSelectionKeepsSameLiabilityTest": {
+          "status": "modeled-projection",
+          "reason": "Project selection is not journal identity and does not release gas.",
+          "successors": [
+            {
+              "path": "spec/settlement/keeperLifecycle.md",
+              "definitions": [
+                "restart",
+                "checkIdentity"
+              ]
+            }
+          ]
+        },
+        "changedRegistryCannotReuseJournalTest": {
+          "status": "modeled-projection",
+          "reason": "A different registry under same object fails durable identity admission.",
+          "successors": [
+            {
+              "path": "spec/settlement/keeperLifecycle.md",
+              "definitions": [
+                "restart",
+                "checkIdentity",
+                "deliver"
+              ]
+            }
+          ]
+        },
+        "stoppingNewInstanceKeepsUnknownAttemptTest": {
+          "status": "modeled-projection",
+          "reason": "Restart to Off keeps pending durable attempt and disables scheduler work.",
+          "successors": [
+            {
+              "path": "spec/settlement/keeperLifecycle.md",
+              "definitions": [
+                "restart",
+                "request",
+                "stepRestartRetainsDurableState"
+              ]
+            }
+          ]
+        },
+        "partialFailureIsHttp200ButScheduledFailureTest": {
+          "status": "modeled-projection",
+          "reason": "Scheduled response validation distinguishes partial HTTP 200 from success.",
+          "successors": [
+            {
+              "path": "spec/settlement/keeperLifecycle.md",
+              "definitions": [
+                "itemFailure",
+                "finish",
+                "deliver",
+                "inspectScheduled"
+              ]
+            }
+          ]
+        },
+        "lostResponseDoesNotUndoSignedAttemptTest": {
+          "status": "modeled-projection",
+          "reason": "Lost requester delivery neither rolls back bytes nor releases native liability.",
+          "successors": [
+            {
+              "path": "spec/settlement/keeperLifecycle.md",
+              "definitions": [
+                "deliver",
+                "stepRetainCommittedBytes"
+              ]
+            }
+          ]
+        },
+        "settledResponseCanArriveAfterInstanceReplacementTest": {
+          "status": "modeled-projection",
+          "reason": "Finished response history remains separate from abandoned in-flight work.",
+          "successors": [
+            {
+              "path": "spec/settlement/keeperLifecycle.md",
+              "definitions": [
+                "restart",
+                "deliver",
+                "stepRestartRetainsDurableState"
+              ]
+            }
+          ]
+        },
+        "unavailableGasEvidenceKeepsLiabilityTest": {
+          "status": "modeled-projection",
+          "reason": "A missing exact charge preserves fee reserve.",
+          "successors": [
+            {
+              "path": "spec/settlement/keeperLifecycle.md",
+              "definitions": [
+                "recordGasEvidence"
+              ]
+            }
+          ]
+        },
+        "exactGasEvidenceReleasesOnlyGasLiabilityTest": {
+          "status": "modeled-projection",
+          "reason": "Exact charge resolves only native hold, and retains signed content and nonce history.",
+          "successors": [
+            {
+              "path": "spec/settlement/keeperLifecycle.md",
+              "definitions": [
+                "recordGasEvidence",
+                "stepRetainCommittedBytes"
+              ]
+            }
+          ]
+        }
+      },
+      "sourceBindings": [
+        {
+          "path": "workers/operator-keeper/index.ts",
+          "sha256": "a52933a9123833ab13c10663c1fbe6cab69fb8daf428b65af81c53649d9a4547",
+          "anchors": [
+            {
+              "line": 131,
+              "anchor": "private async tick"
+            },
+            {
+              "line": 145,
+              "anchor": "async fetch(request"
+            },
+            {
+              "line": 150,
+              "anchor": "this.running ??="
+            },
+            {
+              "line": 167,
+              "anchor": "async scheduled"
+            },
+            {
+              "line": 14,
+              "anchor": "idFromName("
+            }
+          ]
+        },
+        {
+          "path": "workers/operator-keeper/storage.ts",
+          "sha256": "df4a4af5f015790d922ea44e3bed0e3ee364c2a0d818a536a45825b4dfdaf652",
+          "anchors": [
+            {
+              "line": 5,
+              "anchor": "initializeKeeperSchema"
+            },
+            {
+              "line": 53,
+              "anchor": "storage.transaction(callback)"
+            }
+          ]
+        },
+        {
+          "path": "scripts/payment-keeper/keeper.ts",
+          "sha256": "188959981875144d819a0d6a73495b34ba48622cdd1f061b1b0db524864370b7",
+          "anchors": [
+            {
+              "line": 136,
+              "anchor": "store.journal.transaction"
+            },
+            {
+              "line": 368,
+              "anchor": "reconcileGas("
+            }
+          ]
+        },
+        {
+          "path": "scripts/payment-keeper/storage.ts",
+          "sha256": "e35ee7f391fb65cbda40d088f4d47e2d8958305e6ae70c8651d66dc557d8e6e1",
+          "anchors": [
+            {
+              "line": 54,
+              "anchor": "The host must include every db write"
+            },
+            {
+              "line": 81,
+              "anchor": "transaction: (callback)"
+            }
+          ]
+        },
+        {
+          "path": "scripts/payment-keeper/signer.ts",
+          "sha256": "2345d4dbd8bf677d817725f8994b389cec504b531496d2edd8f4ce871942cf7f",
+          "anchors": [
+            {
+              "line": 8,
+              "anchor": "export "
+            }
+          ]
+        },
+        {
+          "path": "scripts/payment-keeper/budget.ts",
+          "sha256": "8301544417ebeeedd3c6329f833f53e15e8503a71c29888666d8cfd9e8698c14",
+          "anchors": [
+            {
+              "line": 61,
+              "anchor": "function reserve"
+            },
+            {
+              "line": 122,
+              "anchor": "Unknown sends keep"
+            },
+            {
+              "line": 289,
+              "anchor": "Receipt evidence releases only"
+            }
+          ]
+        },
+        {
+          "path": "scripts/payment-keeper/evm.integration.ts",
+          "sha256": "a21ac326dabf89a378a9b32eb17fc4f65750e375cfc600f82f19d2e9e254ce0b",
+          "anchors": []
+        }
+      ],
+      "successorSha256": "8e273428614145ef40a3de37089c0f1080a55ffbbb178d7a65dca499c22e38e4",
+      "boundary": "Deployment/runtime comparison remains open. This one-row lifecycle has no actual signer bytes, nonce value, balanced gas ledger, multi-attempt replacement ladder or crash-conformance claim."
+    }
+  ]
+}

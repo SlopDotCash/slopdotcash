@@ -1,0 +1,208 @@
+{
+  "applicationMain": "78eed5564d796119d82ae541c36b0c770263dc5f",
+  "retainedModelMain": "6b3b9d0b979f0608d87941f1146056a98513ffcf",
+  "legacyModel": "formal/models/ui/ui_snapshot_contract.qnt",
+  "legacyModelSha256": "48ccde9f23c25f0ea9828a0f089d7e9f0cc0702533cd535fe7c25c6e33d5cabc",
+  "successor": {
+    "path": "spec/frontend/rankedSnapshot.md",
+    "sha256": "c426806425e92583183f45bcad23db247819d759a08d386a6f2f0db64633d988"
+  },
+  "source": {
+    "path": "src/lib/leaderboard.ts",
+    "sha256": "13d9845a433db2c3b29ffb3d912211179ee65bd271b345b18b13c9a675db2fa5",
+    "anchors": [
+      {
+        "purpose": "producerCutoffs",
+        "from": 2874,
+        "to": 2955,
+        "start": "export function createLeaderboardSnapshot(",
+        "end": "}"
+      },
+      {
+        "purpose": "hydrationClassAndEligibility",
+        "from": 3055,
+        "to": 3100,
+        "start": "const mergedPullRequestOutcomes = sortWithParsedTimes(",
+        "end": "}"
+      },
+      {
+        "purpose": "outcomeIdentityAndHalfOpenWindow",
+        "from": 3172,
+        "to": 3199,
+        "start": "const outcomeIds = new Set(",
+        "end": "}"
+      },
+      {
+        "purpose": "baseScoringWindow",
+        "from": 7187,
+        "to": 7210,
+        "start": "const window = assertObject(snapshot.window, \"snapshot.window\");",
+        "end": ");"
+      },
+      {
+        "purpose": "publishedCoverage",
+        "from": 8188,
+        "to": 8287,
+        "start": "const counts = assertObject(source.counts, \"snapshot.source.counts\");",
+        "end": ");"
+      },
+      {
+        "purpose": "paymentAlternativeAndOmission",
+        "from": 8290,
+        "to": 8325,
+        "start": "if (",
+        "end": ");"
+      },
+      {
+        "purpose": "deltaRemovalsAndOrder",
+        "from": 8353,
+        "to": 8437,
+        "start": "function applyPaymentRecords<T extends { id: string }>(",
+        "end": ");"
+      },
+      {
+        "purpose": "exactOmissionShapeAndCutoff",
+        "from": 8464,
+        "to": 8509,
+        "start": "function assertPaymentReviewBasisOmitted(",
+        "end": "}"
+      },
+      {
+        "purpose": "freshPublicationOwnedElsewhere",
+        "from": 8547,
+        "to": 8590,
+        "start": "export function assertPublishableLeaderboardSnapshot(",
+        "end": "throw new Error(\"snapshot.generatedAt cannot be in the future\");"
+      }
+    ]
+  },
+  "actions": {
+    "init": {
+      "status": "modeled-projection",
+      "reason": "No candidate is exposed until validated.",
+      "successorDefinitions": [
+        "initial"
+      ]
+    },
+    "addOutcome": {
+      "status": "modeled-projection",
+      "reason": "The separately collected outcome class is provided to the builder guard.",
+      "successorDefinitions": [
+        "validHydration"
+      ]
+    },
+    "hydrate": {
+      "status": "modeled-projection",
+      "reason": "First detailed node hydration belongs to the outcome census, its time window and the full-detail class.",
+      "successorDefinitions": [
+        "firstHydration",
+        "validHydration"
+      ]
+    },
+    "hydrateReview": {
+      "status": "modeled-projection",
+      "reason": "Review-only hydration independently belongs to the outcome census and must be disjoint.",
+      "successorDefinitions": [
+        "validHydration"
+      ]
+    },
+    "queueOne": {
+      "status": "modeled-projection",
+      "reason": "Each queue array matches its own published count.",
+      "successorDefinitions": [
+        "validCoverage"
+      ]
+    },
+    "loseQueueRow": {
+      "status": "modeled-projection",
+      "reason": "Dropping a row without updating its published count refuses the candidate.",
+      "successorDefinitions": [
+        "validCoverage",
+        "inspect"
+      ]
+    },
+    "paymentBasis": {
+      "status": "source-refinement",
+      "reason": "Exactly one explicit or omission form admits payment. Both absent permits score-only archival reads.",
+      "successorDefinitions": [
+        "scoreAcceptable",
+        "paymentAcceptable",
+        "validExplicit",
+        "validOmission"
+      ]
+    },
+    "retainOldReview": {
+      "status": "modeled-projection",
+      "reason": "Any substantive score review before the exclusive cutoff contradicts omission, regardless of continuity.",
+      "successorDefinitions": [
+        "hasPreCutoffReview",
+        "validOmission"
+      ]
+    },
+    "publish": {
+      "status": "source-refinement",
+      "reason": "Builder and consumer structural decisions are separate. Fresh publication and ranking remain existing owners.",
+      "successorDefinitions": [
+        "validateBuild",
+        "inspect"
+      ]
+    },
+    "step": {
+      "status": "generated-harness",
+      "reason": "Generated transitions drive inspection from valid and invalid candidate envelopes.",
+      "successorDefinitions": [
+        "inspect",
+        "validateBuild"
+      ]
+    }
+  },
+  "scenarios": {
+    "completeTest": {
+      "status": "modeled-projection",
+      "reason": "Exact builder sources and explicit basis produce structurally valid views.",
+      "successorDefinitions": [
+        "validHydration",
+        "validExplicit",
+        "validateBuild"
+      ]
+    },
+    "missingSourceTest": {
+      "status": "modeled-projection",
+      "reason": "Hydrating an ID absent from outcome census refuses the builder.",
+      "successorDefinitions": [
+        "validHydration",
+        "validateBuild"
+      ]
+    },
+    "duplicateHydrationTest": {
+      "status": "modeled-projection",
+      "reason": "The same node cannot appear in both hydration classes even when it has an outcome.",
+      "successorDefinitions": [
+        "validHydration"
+      ]
+    },
+    "omittedOldReviewTest": {
+      "status": "modeled-projection",
+      "reason": "Pre-cutoff substantive score review contradicts the omission marker.",
+      "successorDefinitions": [
+        "validOmission",
+        "inspect"
+      ]
+    },
+    "missingQueueTest": {
+      "status": "modeled-projection",
+      "reason": "Declared queue count must match its own array length.",
+      "successorDefinitions": [
+        "validCoverage",
+        "inspect"
+      ]
+    }
+  },
+  "boundaries": [
+    "The exact score-schema and publishable leaderboard guards remain adapter conformance, including raw schema validation and rank, registry, attribution identity and arithmetic outside this projection.",
+    "The patch model reconstructs exact ledger membership and ordered attribution values. Native ledger order uses descending Points, source number and locale tie break in the existing rank/presentation owner.",
+    "Raw absence for the legacy closed-unmerged count normalizes to zero. Queue counts check native array lengths. Collection owns deduplication of queued records before serialization.",
+    "A builder census may contain formal reviews the published score ledger omitted. Producer basis choice checks input reviews; browser omission checks published substantive review events.",
+    "This unit retains validated digests as a structural gate. Cache lifetimes, archive deployment and financial admission remain their canonical owners."
+  ]
+}

@@ -1,0 +1,18 @@
+{
+  "probes": [
+    {
+      "name": "fees__conversion",
+      "invariant": "never_allows_canRetain",
+      "reached": true,
+      "command": "seed 218918268800873; to simulate again: pnpm exec quint run gen/fees__conversion.run.qnt --main fees__conversion_run --step probe --invariant never_allows_canRetain --max-samples 200 --max-steps 20 --mbt --seed 218918268800873",
+      "replay": true
+    },
+    {
+      "name": "settlement__contributorAllocation",
+      "invariant": "never_allows_canExpire",
+      "reached": true,
+      "command": "seed 139201600156626; to simulate again: pnpm exec quint run gen/settlement__contributorAllocation.run.qnt --main settlement__contributorAllocation_run --step probe --invariant never_allows_canExpire --max-samples 200 --max-steps 20 --mbt --seed 139201600156626",
+      "replay": true
+    }
+  ]
+}

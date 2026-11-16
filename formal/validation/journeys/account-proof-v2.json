@@ -1,0 +1,50 @@
+{
+  "source": "/Users/shawwalters/.codex/worktrees/slop-vibestack-spec/slopdotcash",
+  "scratch": "/tmp/slop-account-proof-v2",
+  "sourceHashes": {
+    "spec/backend/email.md": "50c35c43e69f5bc394e8b9678c225bd0bcbd6b76219d3b0bfbe36dc97358b28f",
+    "spec/backend/accounts.md": "ecd464884aa42edf59cf32aa6c738b9341a088be3fb27565bc6a61ffa1f92359"
+  },
+  "simulations": [],
+  "proofs": [
+    {
+      "unit": "backend__email.ts",
+      "total": 16,
+      "unproved": [],
+      "errors": [],
+      "exhausted": [],
+      "log": "formal/validation/journeys/account-proof-v2-backend__email.ts.log",
+      "spec": "spec/backend/email.md",
+      "sourceSha256": "50c35c43e69f5bc394e8b9678c225bd0bcbd6b76219d3b0bfbe36dc97358b28f",
+      "inputs": {
+        "spec/backend/email.md": "50c35c43e69f5bc394e8b9678c225bd0bcbd6b76219d3b0bfbe36dc97358b28f"
+      },
+      "sourceCurrent": true,
+      "status": "passed",
+      "proofFile": null,
+      "proofSha256": null,
+      "proofLibrarySha256": "4c9f8dcbd9918f7d4b282ad9531b4cf0096ea389c015149b1786d0fe4ebd8e29"
+    },
+    {
+      "unit": "backend__accounts.ts",
+      "total": 217,
+      "unproved": [],
+      "errors": [],
+      "exhausted": [],
+      "log": "formal/validation/journeys/account-proof-v2-backend__accounts.ts.log",
+      "spec": "spec/backend/accounts.md",
+      "sourceSha256": "ecd464884aa42edf59cf32aa6c738b9341a088be3fb27565bc6a61ffa1f92359",
+      "inputs": {
+        "spec/backend/accounts.md": "ecd464884aa42edf59cf32aa6c738b9341a088be3fb27565bc6a61ffa1f92359",
+        "spec/backend/email.md": "50c35c43e69f5bc394e8b9678c225bd0bcbd6b76219d3b0bfbe36dc97358b28f"
+      },
+      "sourceCurrent": true,
+      "status": "passed",
+      "proofFile": null,
+      "proofSha256": null,
+      "proofLibrarySha256": "4c9f8dcbd9918f7d4b282ad9531b4cf0096ea389c015149b1786d0fe4ebd8e29"
+    }
+  ],
+  "status": "complete",
+  "meaning": "Current account/session and composed enrollment obligations. No live OAuth provider or durable adapter was exercised."
+}

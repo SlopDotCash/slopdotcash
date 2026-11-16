@@ -1,0 +1,22 @@
+solver: Z3 4.15.4 (/opt/homebrew/Cellar/z3/4.15.4/bin/z3)
+Generated: /private/var/folders/1g/77s889gx10n7mtl6z1nfrxzm0000gn/T/slop-financial-journeys-Lq6b8b/gen/proof/settlement__signer/settlement__signer.dfy.gen
+Created: /private/var/folders/1g/77s889gx10n7mtl6z1nfrxzm0000gn/T/slop-financial-journeys-Lq6b8b/gen/proof/settlement__signer/settlement__signer.dfy
+Generated: /private/var/folders/1g/77s889gx10n7mtl6z1nfrxzm0000gn/T/slop-financial-journeys-Lq6b8b/gen/proof/settlement__signer/settlement__signer.dfy.gen
+settlement__signer.dfy(45,0): Error: a postcondition could not be proved on this return path
+settlement__signer.dfy(44,99): Related location: this is the postcondition that could not be proved
+settlement__signer.dfy(103,34): Related location: this proposition could not be proved
+
+Dafny program verifier finished with 10 verified, 1 error
+
+---- each definition with a failure, every assertion isolated ----
+settlement__signer.isolated.dfy(217,0): Error: a postcondition could not be proved on this return path
+settlement__signer.isolated.dfy(216,99): Related location: this is the postcondition that could not be proved
+settlement__signer.isolated.dfy(103,34): Related location: this proposition could not be proved
+
+Dafny program verifier finished with 1 verified, 1 error
+Results File: /private/var/folders/1g/77s889gx10n7mtl6z1nfrxzm0000gn/T/slop-financial-journeys-Lq6b8b/gen/proof/settlement__signer/settlement__signer.isolated.csv
+
+---- dafny audit ----
+Dafny auditor completed with 0 findings
+
+Dafny program verifier did not attempt verification

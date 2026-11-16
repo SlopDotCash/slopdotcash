@@ -1,0 +1,77 @@
+{
+  "scratch": "/tmp/slop-referral-verify-buyback-half-order",
+  "specHashes": {
+    "spec/settlement/money.md": "8879e849ce981a16c6a1dce663ef587caaa2f4639914e41b899fe9227e2f916c",
+    "spec/settlement/money.proof.dfy": "0a9662e9319ea6b18b480c815f541e4a6f5203b24a0c270c4e1472e22a7ef3bb",
+    "spec/settlement/half.md": "295d7fe379d149205880a3f738a5c8628ba17fadb0f90fb791bdd943256ed521",
+    "spec/settlement/half.proof.dfy": "36ba8dc21e4ae05e143bf718b0770677eb1e9fe3d628c0f2c45c6683e387121e",
+    "spec/fees/buyback.md": "709729d6a21d1a204a95c8a15fdb98d8b04497f225b77dd6249ccfedd91eec05",
+    "spec/fees/buyback.proof.dfy": "87f62b97d53815b5f6da24113d4408a2afa70639e956a99b8fc6f032ec2904df"
+  },
+  "rows": [
+    {
+      "unit": "settlement__money.ts",
+      "total": 17,
+      "unproved": [
+        "lawDivisionRemainder: (lawDivisionRemainder(a, b) == true)",
+        "lawDivisionReconstructs: (lawDivisionReconstructs(a, b) == true)",
+        "lawFullPrivateConservation: (lawFullPrivateConservation(a) == true)",
+        "lawFullOrdinaryConservation: (lawFullOrdinaryConservation(a) == true)"
+      ],
+      "exhausted": [
+        "lawDivisionReconstructs: (lawDivisionReconstructs(a, b) == true)"
+      ],
+      "errors": [],
+      "resting": {},
+      "proofDafnySha256": "81eb1dd2212f12f67cd237b64b50193168e2093a43a364eae5d2a639a7cd2b43",
+      "proofSource": {
+        "file": "spec/settlement/money.proof.dfy",
+        "sha256": "0a9662e9319ea6b18b480c815f541e4a6f5203b24a0c270c4e1472e22a7ef3bb"
+      },
+      "checkedImportedLemmas": 0
+    },
+    {
+      "unit": "settlement__half.ts",
+      "total": 2,
+      "unproved": [],
+      "exhausted": [],
+      "errors": [],
+      "resting": {},
+      "proofDafnySha256": "fa809089dc1a757138d465f8c22155d1af814029c4b6e36835a1dda2112bb8dc",
+      "proofSource": {
+        "file": "spec/settlement/half.proof.dfy",
+        "sha256": "36ba8dc21e4ae05e143bf718b0770677eb1e9fe3d628c0f2c45c6683e387121e"
+      },
+      "checkedImportedLemmas": 13
+    },
+    {
+      "unit": "fees__buyback.ts",
+      "total": 94,
+      "unproved": [
+        "recordIncome: (inv(b) ==> canRecordIncome(b, receipt, incomeAmount, receivedAt, finalized) ==> alwaysShareBounded(recordIncome(b, receipt, incomeAmount, receivedAt, finalized)))",
+        "recordIncome: (inv(b) ==> canRecordIncome(b, receipt, incomeAmount, receivedAt, finalized) ==> stepIncomeMonotonic(b, recordIncome(b, receipt, incomeAmount, receivedAt, finalized)))",
+        "order: (inv(b) ==> canOrder(b, orderRequest) ==> alwaysPendingOrderReserved(order(b, orderRequest)))",
+        "observeRefund: (inv(b) ==> canObserveRefund(b, order, amount, beneficiary, height, finalized) ==> alwaysShareBounded(observeRefund(b, order, amount, beneficiary, height, finalized)))",
+        "purchase: (inv(b) ==> canPurchase(b, purchaseRequest) ==> alwaysBurnBounded(purchase(b, purchaseRequest)))",
+        "purchase: (inv(b) ==> canPurchase(b, purchaseRequest) ==> stepIncomeMonotonic(b, purchase(b, purchaseRequest)))",
+        "commitBurn: (inv(b) ==> canCommitBurn(b, quantity, value, destination, tokenPaused) ==> alwaysBurnBounded(commitBurn(b, quantity, value, destination, tokenPaused)))",
+        "commitBurn: (inv(b) ==> canCommitBurn(b, quantity, value, destination, tokenPaused) ==> stepIncomeMonotonic(b, commitBurn(b, quantity, value, destination, tokenPaused)))",
+        "finalizeBurn: (inv(b) ==> canFinalizeBurn(b, quantity, height, finalized) ==> alwaysBurnBounded(finalizeBurn(b, quantity, height, finalized)))",
+        "receiveSlopFee: (inv(b) ==> canReceiveSlopFee(b, receipt, quantity, receivedAt, finalized) ==> alwaysBurnBounded(receiveSlopFee(b, receipt, quantity, receivedAt, finalized)))",
+        "receiveSlopFee: (inv(b) ==> canReceiveSlopFee(b, receipt, quantity, receivedAt, finalized) ==> stepIncomeMonotonic(b, receiveSlopFee(b, receipt, quantity, receivedAt, finalized)))",
+        "step: inv(step(current, event, by_))"
+      ],
+      "exhausted": [],
+      "errors": [],
+      "resting": {
+        "step: inv(step(current, event, by_))": "recordIncome: (inv(b) ==> canRecordIncome(b, receipt, incomeAmount, receivedAt, finalized) ==> alwaysShareBounded(recordIncome(b, receipt, incomeAmount, receivedAt, finalized)))"
+      },
+      "proofDafnySha256": "ef41ddcfbeac0724e3e90933cbad830ca8992ed4c6f0990cd4e3efc7287adf04",
+      "proofSource": {
+        "file": "spec/fees/buyback.proof.dfy",
+        "sha256": "87f62b97d53815b5f6da24113d4408a2afa70639e956a99b8fc6f032ec2904df"
+      },
+      "checkedImportedLemmas": 15
+    }
+  ]
+}

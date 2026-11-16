@@ -1,0 +1,46 @@
+{
+  "specHashes": {
+    "spec/settlement/money.md": "65d72012c72c335adddbb78d3934687c0fce7442ad51b5404090130af42a4c5b",
+    "spec/settlement/money.proof.dfy": "e587ba519b953cf1841085ae1b097e169521cc30d1199116b754a4efb0353bf7",
+    "spec/settlement/referralAccrual.md": "b5bf2ea5825a29e59cc2bd021ed3623fa6f07e5398e803b7dea0b0296254b135",
+    "spec/settlement/referralAccrual.proof.dfy": "f32c1766b92716912f5c2b881c943255346c08d8f76885e0a3d850ecb1c189e1",
+    "spec/settlement/referralDistributor.md": "9806b4cd07201302c90313cb2ed894c2ee0b7ef953c8bcc0abf1b1da9d75e673",
+    "spec/settlement/referralDistributor.proof.dfy": "91fb202584ab94b6d687d348e3f950ab08c0da32562be45bc49555b1717d4458",
+    "spec/settlement/referrals.md": "70f1701d007216eff36152de00b41020a01a772cece96950ef9563a89699a373",
+    "spec/settlement/referralPublication.md": "86d0ccb3e1b1ac54e0d48e6b9901ccb9065154a6894f01812be7dec81839e75a",
+    "spec/settlement/referralPublication.proof.dfy": "8c700cfee4e742125ef2c7719f03d1c4522082f469f175aa801d94f53287735f"
+  },
+  "rows": [
+    {
+      "unit": "settlement__money.ts",
+      "sourceHashes": {
+        "spec/settlement/money.md": "65d72012c72c335adddbb78d3934687c0fce7442ad51b5404090130af42a4c5b",
+        "spec/settlement/money.proof.dfy": "e587ba519b953cf1841085ae1b097e169521cc30d1199116b754a4efb0353bf7"
+      },
+      "generatedDafnySha256": "0ddbfce51163214ff9e04257c4ddc430c692af1a9fe8ac645fc250f5a5159196",
+      "total": 38,
+      "unproved": [],
+      "exhausted": [],
+      "resting": {},
+      "errors": [],
+      "reusedVerifiedResult": "/tmp/slop-active-money-unit-gap"
+    },
+    {
+      "unit": "settlement__referralPublication.ts",
+      "total": 287,
+      "unproved": [],
+      "exhausted": [],
+      "errors": [],
+      "resting": {},
+      "proofDafnySha256": "a01ea750a88a4f57e160965eeb278372890db52dc1fece8a33ce101e2283932c",
+      "proofSource": {
+        "file": "spec/settlement/referralPublication.proof.dfy",
+        "sha256": "8c700cfee4e742125ef2c7719f03d1c4522082f469f175aa801d94f53287735f"
+      },
+      "checkedImportedLemmas": 38
+    }
+  ],
+  "proofLog": "formal/validation/finance/referral-publication-proof-complete.log",
+  "proofLogSha256": "28cd593eea90e1e7085e022b9ec6bfaf8697826669d8399ac500e919f413198e",
+  "note": "Canonical Vibestack proof imports the 38 checked shared money obligations from the hash-matched unit at f8a5bea8c. The proof uses explicit guards and retained values for accrual, distributor, and activation inputs."
+}

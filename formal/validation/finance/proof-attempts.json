@@ -1,0 +1,35 @@
+{
+  "status": "complete-with-unproved",
+  "scope": "Pure specification arithmetic lemmas only. No proof assumptions, acceptance exceptions, generated-code edits, tool changes, or application changes.",
+  "retainedProof": {
+    "file": "spec/settlement/money.proof.dfy",
+    "sha256": "4ef9c14a579f84b696a70b771d65213d81516ee9ee601470c4eb8243959ebc11",
+    "proved": [
+      "lawEqualReflexive",
+      "lawZeroIdentity"
+    ],
+    "completeUnitReport": "formal/validation/finance/proofs.json"
+  },
+  "attempts": [
+    {
+      "name": "multiply-one: scalar fold induction and zero-left identity",
+      "result": "unproved",
+      "detail": "The scalar prefix-fold induction verifies, but the helper-to-generated-function equalities and final multiplication equality were not established. Failing candidates were removed from the active proof file.",
+      "candidate": "formal/validation/finance/multiply-one-generated-candidate-1.dfy",
+      "logs": [
+        "formal/validation/finance/multiply-one-one-candidate.log",
+        "formal/validation/finance/multiply-one-zero-candidate.log"
+      ]
+    },
+    {
+      "name": "multiply-one: explicit reveal and generated fold equality",
+      "result": "unproved",
+      "detail": "The scalar fold-to-multiplySmall assertion still does not verify. No result was accepted.",
+      "candidate": "formal/validation/finance/multiply-one-generated-candidate-2.dfy",
+      "logs": [
+        "formal/validation/finance/multiply-one-scale-2.log"
+      ]
+    }
+  ],
+  "remainingMathematics": "Full-width add/subtract conservation and validity, quotient/remainder reconstruction and bounds, fee conservation and largest-remainder allocation still require general limb/fold induction. Finite differential checks are retained separately and are not substituted for these proofs."
+}

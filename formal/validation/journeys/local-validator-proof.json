@@ -1,0 +1,29 @@
+{
+  "sourceHashes": {
+    "spec/operations/localCommand.md": "54eba1490cd95dd2838c24db1006c68107a3de10b86a057bcd1d853effc05ba0",
+    "spec/operations/localValidator.md": "d67282b42a8e49b96e17c81e241ca8d6ad6a640666fdaedb5171733a09e98f61"
+  },
+  "toolchain": {
+    "dafny": "4.11.0",
+    "z3": "4.15.4"
+  },
+  "method": "Vibestack proofUnits and prove without imported axioms or acceptance exceptions.",
+  "proofs": [
+    {
+      "unit": "operations__localCommand.ts",
+      "total": 26,
+      "unproved": [],
+      "errors": [],
+      "exhausted": [],
+      "log": "local-validator-operations__localCommand.ts.log"
+    },
+    {
+      "unit": "operations__localValidator.ts",
+      "total": 50,
+      "unproved": [],
+      "errors": [],
+      "exhausted": [],
+      "log": "local-validator-operations__localValidator.ts.log"
+    }
+  ]
+}

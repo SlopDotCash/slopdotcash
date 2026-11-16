@@ -1,0 +1,613 @@
+{
+  "status": "complete",
+  "snapshot": {
+    "spec/settlement/money.md": "cb766a9b5b99f5509da5478ca15ecbe1c77a09127956d9524e7447c7d0939978",
+    "spec/fees/buyback.md": "cbada43fb50195958e95e239924d48ff997e4a14762890555112c171d6077ee1",
+    "spec/fees/conversion.md": "3aec2802bbf5dfe9b67e99cff226f7253930d0adbaff7fb26107d396eaff9c49",
+    "spec/fees/index.md": "221be82ccdcfca981224204f2a1953e444f18257334eac44c9c109d96eeffefd",
+    "spec/settlement/allocation.md": "99109245ea3ba1f19fdbf75802b578c0d57940418c213b847188553ff404531f",
+    "spec/settlement/vault.md": "76605964dbaeab24b00742637965b4e338890e4e84103e395f6ce6713780b6c5",
+    "spec/settlement/payment.md": "8398366aadf5534536a78211bd657c3ab716f5848f7ce6ca91d86ef5178cdc4b",
+    "spec/settlement/composition.md": "b11b7d872ae2024f42b499bede24619b2bdb81a38e4d9de71d8535c3665db3b8",
+    "spec/settlement/contributorAllocation.md": "a78744d7045a91d19f5cc523eadfc05117d0e667aba3baa8d2bd20b1cd1f1a5f",
+    "spec/settlement/index.md": "aef02abad5b2518306023b1d001914c9241968fa130e00fe21d447c8b82d7070",
+    "spec/settlement/monthly.md": "aba4e09eef3906bb5a541514ea91c75252e5f7f34b85c30dfde7cb3762549f69",
+    "spec/settlement/recovery.md": "521dbaf5984c54f1d084b769ac2c327293e6d45e1dec05433795655cab72ccb7",
+    "spec/settlement/referrals.md": "d112b7dc5448281a96ab7bba1a523a061f9eb82359a00bd076c46e546d9e2efc",
+    "spec/settlement/reserveRelease.md": "4284dd71848542a8e177a817b15bc5ec4a0e135b669c36abef2f4967bceaa856",
+    "spec/settlement/signer.md": "0eb06b5e673bb020ee5fbcc4a775d4e9777cbb4bbc89e127b6bdd6d7739835a9"
+  },
+  "results": [
+    {
+      "file": "spec/settlement/money.md",
+      "sha256": "cb766a9b5b99f5509da5478ca15ecbe1c77a09127956d9524e7447c7d0939978",
+      "typecheck": true,
+      "generated": true,
+      "transitions": [],
+      "goals": []
+    },
+    {
+      "file": "spec/fees/buyback.md",
+      "sha256": "cbada43fb50195958e95e239924d48ff997e4a14762890555112c171d6077ee1",
+      "typecheck": true,
+      "generated": true,
+      "transitions": [
+        "activate",
+        "recordIncome",
+        "order",
+        "broadcast",
+        "observeArrival",
+        "observeRefund",
+        "purchase",
+        "commitBurn",
+        "finalizeBurn",
+        "continueCycle",
+        "selectSource",
+        "reserveLocalShare",
+        "receiveSlopFee"
+      ],
+      "goals": [
+        "sometimesInTransit",
+        "sometimesRefunded",
+        "sometimesBurned"
+      ],
+      "simulation": true,
+      "command": "seed 233224331600015; to simulate again: pnpm exec quint run gen/fees__buyback.run.qnt --main fees__buyback_run --step step --invariant inv --max-samples 100 --max-steps 30 --mbt --seed 233224331600015",
+      "replay": true,
+      "events": [
+        "selectSource",
+        "activate",
+        "receiveSlopFee",
+        "continueCycle",
+        "recordIncome",
+        "reserveLocalShare",
+        "purchase",
+        "commitBurn",
+        "finalizeBurn",
+        "order",
+        "broadcast",
+        "observeArrival",
+        "observeRefund"
+      ],
+      "missingEvents": [],
+      "goalResults": [
+        {
+          "name": "sometimesInTransit",
+          "reached": true
+        },
+        {
+          "name": "sometimesRefunded",
+          "reached": true
+        },
+        {
+          "name": "sometimesBurned",
+          "reached": true
+        }
+      ]
+    },
+    {
+      "file": "spec/fees/conversion.md",
+      "sha256": "3aec2802bbf5dfe9b67e99cff226f7253930d0adbaff7fb26107d396eaff9c49",
+      "typecheck": true,
+      "generated": true,
+      "transitions": [
+        "chooseNetwork",
+        "receive",
+        "enableRelease",
+        "reserve",
+        "sign",
+        "broadcast",
+        "loseObservation",
+        "retain",
+        "confirm",
+        "confirmFailure",
+        "retry",
+        "nextReceipt",
+        "observeDay",
+        "expire"
+      ],
+      "goals": [
+        "sometimesConverted",
+        "sometimesUncertain",
+        "sometimesFailed"
+      ],
+      "simulation": true,
+      "command": "seed 123762768258698; to simulate again: pnpm exec quint run gen/fees__conversion.run.qnt --main fees__conversion_run --step step --invariant inv --max-samples 100 --max-steps 30 --mbt --seed 123762768258698",
+      "replay": true,
+      "events": [
+        "observeDay",
+        "receive",
+        "enableRelease",
+        "reserve",
+        "sign",
+        "broadcast",
+        "loseObservation",
+        "confirmFailure",
+        "retry",
+        "confirm",
+        "nextReceipt",
+        "chooseNetwork",
+        "expire"
+      ],
+      "missingEvents": [
+        "retain"
+      ],
+      "goalResults": [
+        {
+          "name": "sometimesConverted",
+          "reached": true
+        },
+        {
+          "name": "sometimesUncertain",
+          "reached": true
+        },
+        {
+          "name": "sometimesFailed",
+          "reached": true
+        }
+      ]
+    },
+    {
+      "file": "spec/fees/index.md",
+      "sha256": "221be82ccdcfca981224204f2a1953e444f18257334eac44c9c109d96eeffefd",
+      "typecheck": true,
+      "generated": true,
+      "transitions": [],
+      "goals": []
+    },
+    {
+      "file": "spec/settlement/allocation.md",
+      "sha256": "99109245ea3ba1f19fdbf75802b578c0d57940418c213b847188553ff404531f",
+      "typecheck": true,
+      "generated": true,
+      "transitions": [],
+      "goals": []
+    },
+    {
+      "file": "spec/settlement/vault.md",
+      "sha256": "76605964dbaeab24b00742637965b4e338890e4e84103e395f6ce6713780b6c5",
+      "typecheck": true,
+      "generated": true,
+      "transitions": [
+        "deposit",
+        "reserve",
+        "payReserved",
+        "refund"
+      ],
+      "goals": [
+        "sometimesReserved",
+        "sometimesConcurrentReserves",
+        "sometimesPaid",
+        "sometimesRefunded"
+      ],
+      "simulation": true,
+      "command": "seed 12650578696350; to simulate again: pnpm exec quint run gen/settlement__vault.run.qnt --main settlement__vault_run --step step --invariant inv --max-samples 100 --max-steps 30 --mbt --seed 12650578696350",
+      "replay": true,
+      "events": [
+        "deposit",
+        "reserve",
+        "refund",
+        "payReserved"
+      ],
+      "missingEvents": [],
+      "goalResults": [
+        {
+          "name": "sometimesReserved",
+          "reached": true
+        },
+        {
+          "name": "sometimesConcurrentReserves",
+          "reached": true
+        },
+        {
+          "name": "sometimesPaid",
+          "reached": true
+        },
+        {
+          "name": "sometimesRefunded",
+          "reached": true
+        }
+      ]
+    },
+    {
+      "file": "spec/settlement/payment.md",
+      "sha256": "8398366aadf5534536a78211bd657c3ab716f5848f7ce6ca91d86ef5178cdc4b",
+      "typecheck": true,
+      "generated": true,
+      "transitions": [
+        "configure",
+        "releaseFullRail",
+        "bind",
+        "journal",
+        "submit",
+        "loseReceipt",
+        "retransmit",
+        "hold",
+        "resume",
+        "recordFailure",
+        "reconcile"
+      ],
+      "goals": [
+        "sometimesUncertain",
+        "sometimesPaid",
+        "sometimesPrivate",
+        "sometimesFullHeld",
+        "sometimesHeld"
+      ],
+      "simulation": true,
+      "command": "seed 33250238087997; to simulate again: pnpm exec quint run gen/settlement__payment.run.qnt --main settlement__payment_run --step step --invariant inv --max-samples 100 --max-steps 30 --mbt --seed 33250238087997",
+      "replay": true,
+      "events": [
+        "configure",
+        "bind",
+        "hold",
+        "resume",
+        "journal",
+        "submit",
+        "loseReceipt",
+        "recordFailure",
+        "releaseFullRail",
+        "retransmit"
+      ],
+      "missingEvents": [
+        "reconcile"
+      ],
+      "goalResults": [
+        {
+          "name": "sometimesUncertain",
+          "reached": true
+        },
+        {
+          "name": "sometimesPaid",
+          "reached": false
+        },
+        {
+          "name": "sometimesPrivate",
+          "reached": true
+        },
+        {
+          "name": "sometimesFullHeld",
+          "reached": true
+        },
+        {
+          "name": "sometimesHeld",
+          "reached": true
+        }
+      ]
+    },
+    {
+      "file": "spec/settlement/composition.md",
+      "sha256": "b11b7d872ae2024f42b499bede24619b2bdb81a38e4d9de71d8535c3665db3b8",
+      "typecheck": true,
+      "generated": true,
+      "transitions": [
+        "deposit",
+        "configure",
+        "bind",
+        "reserve",
+        "journal",
+        "submit",
+        "loseReceipt",
+        "retransmit",
+        "reconcile"
+      ],
+      "goals": [
+        "sometimesReserved",
+        "sometimesUncertainReserved",
+        "sometimesPaidTogether"
+      ],
+      "simulation": true,
+      "command": "seed 263085937189779; to simulate again: pnpm exec quint run gen/settlement__composition.run.qnt --main settlement__composition_run --step step --invariant inv --max-samples 100 --max-steps 30 --mbt --seed 263085937189779",
+      "replay": true,
+      "events": [
+        "deposit",
+        "configure",
+        "bind",
+        "reserve",
+        "journal",
+        "submit",
+        "loseReceipt",
+        "retransmit"
+      ],
+      "missingEvents": [
+        "reconcile"
+      ],
+      "goalResults": [
+        {
+          "name": "sometimesReserved",
+          "reached": true
+        },
+        {
+          "name": "sometimesUncertainReserved",
+          "reached": true
+        },
+        {
+          "name": "sometimesPaidTogether",
+          "reached": false
+        }
+      ]
+    },
+    {
+      "file": "spec/settlement/contributorAllocation.md",
+      "sha256": "a78744d7045a91d19f5cc523eadfc05117d0e667aba3baa8d2bd20b1cd1f1a5f",
+      "typecheck": true,
+      "generated": true,
+      "transitions": [
+        "publish",
+        "confirmWallet",
+        "replaceWallet",
+        "recordSend",
+        "expire",
+        "closeBatch"
+      ],
+      "goals": [
+        "sometimesSent",
+        "sometimesUnclaimed"
+      ],
+      "simulation": true,
+      "command": "seed 270961566293842; to simulate again: pnpm exec quint run gen/settlement__contributorAllocation.run.qnt --main settlement__contributorAllocation_run --step step --invariant inv --max-samples 100 --max-steps 30 --mbt --seed 270961566293842",
+      "replay": true,
+      "events": [
+        "publish",
+        "confirmWallet",
+        "replaceWallet",
+        "recordSend",
+        "closeBatch"
+      ],
+      "missingEvents": [
+        "expire"
+      ],
+      "goalResults": [
+        {
+          "name": "sometimesSent",
+          "reached": true
+        },
+        {
+          "name": "sometimesUnclaimed",
+          "reached": true
+        }
+      ]
+    },
+    {
+      "file": "spec/settlement/index.md",
+      "sha256": "aef02abad5b2518306023b1d001914c9241968fa130e00fe21d447c8b82d7070",
+      "typecheck": true,
+      "generated": true,
+      "transitions": [],
+      "goals": []
+    },
+    {
+      "file": "spec/settlement/monthly.md",
+      "sha256": "aba4e09eef3906bb5a541514ea91c75252e5f7f34b85c30dfde7cb3762549f69",
+      "typecheck": true,
+      "generated": true,
+      "transitions": [
+        "propose",
+        "adjust",
+        "setAutomatic",
+        "setCap",
+        "reachCutoff",
+        "freeze",
+        "autoFreeze",
+        "fund",
+        "registerWallet",
+        "pay"
+      ],
+      "goals": [
+        "sometimesWalletlessReserve",
+        "sometimesIndependentPayment",
+        "sometimesCompleted",
+        "sometimesEmptyMonth"
+      ],
+      "simulation": true,
+      "command": "seed 131455078646219; to simulate again: pnpm exec quint run gen/settlement__monthly.run.qnt --main settlement__monthly_run --step step --invariant inv --max-samples 100 --max-steps 30 --mbt --seed 131455078646219",
+      "replay": true,
+      "events": [
+        "reachCutoff",
+        "setCap",
+        "propose",
+        "freeze",
+        "registerWallet",
+        "fund",
+        "pay",
+        "setAutomatic",
+        "autoFreeze",
+        "adjust"
+      ],
+      "missingEvents": [],
+      "goalResults": [
+        {
+          "name": "sometimesWalletlessReserve",
+          "reached": true
+        },
+        {
+          "name": "sometimesIndependentPayment",
+          "reached": true
+        },
+        {
+          "name": "sometimesCompleted",
+          "reached": true
+        },
+        {
+          "name": "sometimesEmptyMonth",
+          "reached": true
+        }
+      ]
+    },
+    {
+      "file": "spec/settlement/recovery.md",
+      "sha256": "521dbaf5984c54f1d084b769ac2c327293e6d45e1dec05433795655cab72ccb7",
+      "typecheck": true,
+      "generated": true,
+      "transitions": [
+        "requestChange",
+        "consent",
+        "retire",
+        "presentSuccessor",
+        "oldWins",
+        "successorPaid"
+      ],
+      "goals": [
+        "sometimesSuccessor",
+        "sometimesOldWinner",
+        "sometimesSuccessorWinner"
+      ],
+      "simulation": true,
+      "command": "seed 147352335278975; to simulate again: pnpm exec quint run gen/settlement__recovery.run.qnt --main settlement__recovery_run --step step --invariant inv --max-samples 100 --max-steps 30 --mbt --seed 147352335278975",
+      "replay": true,
+      "events": [
+        "requestChange",
+        "consent",
+        "retire",
+        "presentSuccessor",
+        "successorPaid",
+        "oldWins"
+      ],
+      "missingEvents": [],
+      "goalResults": [
+        {
+          "name": "sometimesSuccessor",
+          "reached": true
+        },
+        {
+          "name": "sometimesOldWinner",
+          "reached": true
+        },
+        {
+          "name": "sometimesSuccessorWinner",
+          "reached": true
+        }
+      ]
+    },
+    {
+      "file": "spec/settlement/referrals.md",
+      "sha256": "d112b7dc5448281a96ab7bba1a523a061f9eb82359a00bd076c46e546d9e2efc",
+      "typecheck": true,
+      "generated": true,
+      "transitions": [
+        "recordFunding",
+        "startWatcher",
+        "activate",
+        "dryRun",
+        "postRoot",
+        "claim",
+        "voidRoot"
+      ],
+      "goals": [
+        "sometimesDryRun",
+        "sometimesClaimed",
+        "sometimesVoided"
+      ],
+      "simulation": true,
+      "command": "seed 247556779051616; to simulate again: pnpm exec quint run gen/settlement__referrals.run.qnt --main settlement__referrals_run --step step --invariant inv --max-samples 100 --max-steps 30 --mbt --seed 247556779051616",
+      "replay": true,
+      "events": [
+        "dryRun",
+        "recordFunding",
+        "startWatcher",
+        "activate",
+        "postRoot",
+        "claim",
+        "voidRoot"
+      ],
+      "missingEvents": [],
+      "goalResults": [
+        {
+          "name": "sometimesDryRun",
+          "reached": true
+        },
+        {
+          "name": "sometimesClaimed",
+          "reached": true
+        },
+        {
+          "name": "sometimesVoided",
+          "reached": true
+        }
+      ]
+    },
+    {
+      "file": "spec/settlement/reserveRelease.md",
+      "sha256": "4284dd71848542a8e177a817b15bc5ec4a0e135b669c36abef2f4967bceaa856",
+      "typecheck": true,
+      "generated": true,
+      "transitions": [
+        "observe",
+        "qualifyUpgrade",
+        "check",
+        "approve",
+        "ownerSign",
+        "finalize",
+        "changeOwner",
+        "settlePart"
+      ],
+      "goals": [
+        "sometimesReleased",
+        "sometimesPartialHeld"
+      ],
+      "simulation": true,
+      "command": "seed 167677590748464; to simulate again: pnpm exec quint run gen/settlement__reserveRelease.run.qnt --main settlement__reserveRelease_run --step step --invariant inv --max-samples 100 --max-steps 30 --mbt --seed 167677590748464",
+      "replay": true,
+      "events": [
+        "changeOwner",
+        "settlePart",
+        "qualifyUpgrade",
+        "observe",
+        "check",
+        "approve"
+      ],
+      "missingEvents": [
+        "ownerSign",
+        "finalize"
+      ],
+      "goalResults": [
+        {
+          "name": "sometimesReleased",
+          "reached": false
+        },
+        {
+          "name": "sometimesPartialHeld",
+          "reached": true
+        }
+      ]
+    },
+    {
+      "file": "spec/settlement/signer.md",
+      "sha256": "0eb06b5e673bb020ee5fbcc4a775d4e9777cbb4bbc89e127b6bdd6d7739835a9",
+      "typecheck": true,
+      "generated": true,
+      "transitions": [
+        "authorize",
+        "signBinding",
+        "cancelBinding",
+        "finalizeBinding",
+        "finalizeCancellation"
+      ],
+      "goals": [
+        "sometimesOldBindingWins",
+        "sometimesCancellationWins"
+      ],
+      "simulation": true,
+      "command": "seed 265213740009636; to simulate again: pnpm exec quint run gen/settlement__signer.run.qnt --main settlement__signer_run --step step --invariant inv --max-samples 100 --max-steps 30 --mbt --seed 265213740009636",
+      "replay": true,
+      "events": [
+        "authorize",
+        "signBinding",
+        "finalizeBinding",
+        "cancelBinding",
+        "finalizeCancellation"
+      ],
+      "missingEvents": [],
+      "goalResults": [
+        {
+          "name": "sometimesOldBindingWins",
+          "reached": true
+        },
+        {
+          "name": "sometimesCancellationWins",
+          "reached": true
+        }
+      ]
+    }
+  ]
+}

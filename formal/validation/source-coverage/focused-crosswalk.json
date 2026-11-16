@@ -1,0 +1,2065 @@
+{
+  "scope": "Focused action-by-action and scenario-by-scenario review. Modeled projection identifies a corresponding rule only. Complete behavior equivalence, source replay, live conformance and untouched retained models remain unestablished.",
+  "legacyMain": "6b3b9d0b979f0608d87941f1146056a98513ffcf",
+  "migrationHead": "778ae268338bc5039f85d5cdb9770a2c4b6aad71",
+  "modelsReviewed": [
+    {
+      "legacyPath": "formal/models/api/api_accounts.qnt",
+      "sourceSha256": "933a96ce34d3c4f976ad3a50f70ac5d06f9c04ff1485bec20c061bd015faf9d0",
+      "sourceEntries": [
+        "migrations/0008_points.sql",
+        "migrations/0063_account_closure_notification_events.sql",
+        "migrations/0056_points_telegram.sql",
+        "backend/points/handler.ts",
+        "backend/identity-assertion.ts"
+      ],
+      "evidenceEntries": [],
+      "actions": {
+        "init": {
+          "status": "modeled-projection",
+          "reason": "Starts signed out. A fixed synthetic obligation is moved to the separate funded-rights policy.",
+          "successors": [
+            {
+              "path": "spec/backend/accounts.md",
+              "definitions": [
+                "initial"
+              ]
+            },
+            {
+              "path": "spec/access.md",
+              "definitions": [
+                "initial"
+              ]
+            }
+          ]
+        },
+        "join": {
+          "status": "modeled-projection",
+          "reason": "Ordinary authenticated sign-in and explicit reopening are separate and preserve permanent actor ID.",
+          "successors": [
+            {
+              "path": "spec/backend/accounts.md",
+              "definitions": [
+                "signIn",
+                "reopen"
+              ]
+            }
+          ]
+        },
+        "otherSession": {
+          "status": "modeled-projection",
+          "reason": "Sign-in with a fresh session ID appends a separate active session.",
+          "successors": [
+            {
+              "path": "spec/backend/accounts.md",
+              "definitions": [
+                "signIn"
+              ]
+            }
+          ]
+        },
+        "connectX": {
+          "status": "modeled-projection",
+          "reason": "A live session and external OAuth evidence connect a permanently reserved X identity.",
+          "successors": [
+            {
+              "path": "spec/backend/accounts.md",
+              "definitions": [
+                "canConnectX",
+                "connectX"
+              ]
+            }
+          ]
+        },
+        "optIn": {
+          "status": "modeled-projection",
+          "reason": "Two independent consent purposes bind to account and current session.",
+          "successors": [
+            {
+              "path": "spec/backend/accounts.md",
+              "definitions": [
+                "canSetEmailConsent",
+                "setEmailConsent"
+              ]
+            }
+          ]
+        },
+        "revoke": {
+          "status": "modeled-projection",
+          "reason": "The successor adds live caller checks to target revocation and separate current-session sign-out.",
+          "successors": [
+            {
+              "path": "spec/backend/accounts.md",
+              "definitions": [
+                "endSession",
+                "revokeSession"
+              ]
+            }
+          ]
+        },
+        "close": {
+          "status": "modeled-projection",
+          "reason": "Confirmed closure clears all sessions, X visibility and consent, while the wallet/payment policies own retained obligations.",
+          "successors": [
+            {
+              "path": "spec/backend/accounts.md",
+              "definitions": [
+                "close"
+              ]
+            },
+            {
+              "path": "spec/access.md",
+              "definitions": [
+                "fundedPaymentAllowed"
+              ]
+            }
+          ]
+        },
+        "step": {
+          "status": "generated-harness",
+          "reason": "Vibestack generates event dispatch and enabled guards from transitions.",
+          "successors": []
+        }
+      },
+      "scenarios": {
+        "closureTest": {
+          "status": "partial-model",
+          "reason": "Account model checks session and X/consent outcome. Funded rights are separately specified, with no account-close-to-settlement conformance trace yet.",
+          "successors": [
+            {
+              "path": "spec/backend/accounts.md",
+              "definitions": [
+                "close"
+              ]
+            },
+            {
+              "path": "spec/access.md",
+              "definitions": [
+                "fundedPaymentAllowed"
+              ]
+            }
+          ]
+        },
+        "reopenTest": {
+          "status": "modeled-projection",
+          "reason": "Explicit reopening restores public membership without reconnecting X.",
+          "successors": [
+            {
+              "path": "spec/backend/accounts.md",
+              "definitions": [
+                "reopen"
+              ]
+            }
+          ]
+        },
+        "currentSignoutTest": {
+          "status": "modeled-projection",
+          "reason": "Per-session sign-out differs from closing every session.",
+          "successors": [
+            {
+              "path": "spec/backend/accounts.md",
+              "definitions": [
+                "endSession"
+              ]
+            }
+          ]
+        }
+      }
+    },
+    {
+      "legacyPath": "formal/models/ui/ui_private_report_identity.qnt",
+      "sourceSha256": "2fa807e87eda1c73a85cc558080ed8f3ca7166f4f410bf7a3821bc3deaa04f72",
+      "sourceEntries": [
+        "src/SecurityBounty.tsx"
+      ],
+      "evidenceEntries": [
+        "tests/e2e/security-bounty.spec.ts"
+      ],
+      "actions": {
+        "init": {
+          "status": "modeled-projection",
+          "reason": "Browser composition starts without private detail identities.",
+          "successors": [
+            {
+              "path": "spec/composition.md",
+              "definitions": [
+                "initial"
+              ]
+            },
+            {
+              "path": "spec/frontend/reportDetails.md",
+              "definitions": [
+                "emptyDetails"
+              ]
+            }
+          ]
+        },
+        "openFirst": {
+          "status": "modeled-projection",
+          "reason": "Exact case-authorized submission mounts in the current account and navigation epoch.",
+          "successors": [
+            {
+              "path": "spec/composition.md",
+              "definitions": [
+                "canOpenDetail",
+                "openDetail"
+              ]
+            }
+          ]
+        },
+        "openSecond": {
+          "status": "modeled-projection",
+          "reason": "Exact case-authorized submission mounts in the current account and navigation epoch.",
+          "successors": [
+            {
+              "path": "spec/composition.md",
+              "definitions": [
+                "canOpenDetail",
+                "openDetail"
+              ]
+            }
+          ]
+        },
+        "closeFirst": {
+          "status": "modeled-projection",
+          "reason": "Closes only the chosen submission and retains every sibling.",
+          "successors": [
+            {
+              "path": "spec/composition.md",
+              "definitions": [
+                "closeDetail"
+              ]
+            },
+            {
+              "path": "spec/frontend/reportDetails.md",
+              "definitions": [
+                "lawCloseKeepsSibling"
+              ]
+            }
+          ]
+        },
+        "closeSecond": {
+          "status": "modeled-projection",
+          "reason": "Closes only the chosen submission and retains every sibling.",
+          "successors": [
+            {
+              "path": "spec/composition.md",
+              "definitions": [
+                "closeDetail"
+              ]
+            },
+            {
+              "path": "spec/frontend/reportDetails.md",
+              "definitions": [
+                "lawCloseKeepsSibling"
+              ]
+            }
+          ]
+        },
+        "accountChanges": {
+          "status": "modeled-projection",
+          "reason": "Reauthentication and sign-out clear all detail IDs, plus retained drafts.",
+          "successors": [
+            {
+              "path": "spec/composition.md",
+              "definitions": [
+                "authenticate",
+                "logout",
+                "stepAccountChangeClearsDetails"
+              ]
+            }
+          ]
+        },
+        "step": {
+          "status": "generated-harness",
+          "reason": "Legacy closed finite dispatcher is retained. Successor lacks its sibling-detail state.",
+          "successors": []
+        }
+      },
+      "scenarios": {
+        "bothOpenKeepDistinctReferencesTest": {
+          "status": "modeled-projection",
+          "reason": "Independent submission/section reference labels for two mounted details.",
+          "successors": [
+            {
+              "path": "spec/frontend/reportDetails.md",
+              "definitions": [
+                "lawHeadingReferencesDistinct"
+              ]
+            },
+            {
+              "path": "spec/composition.md",
+              "definitions": [
+                "sometimesSiblingDetails"
+              ]
+            }
+          ]
+        },
+        "closingOneKeepsTheOtherTest": {
+          "status": "modeled-projection",
+          "reason": "A close leaves a distinct mounted sibling.",
+          "successors": [
+            {
+              "path": "spec/composition.md",
+              "definitions": [
+                "closeDetail"
+              ]
+            },
+            {
+              "path": "spec/frontend/reportDetails.md",
+              "definitions": [
+                "lawCloseKeepsSibling"
+              ]
+            }
+          ]
+        },
+        "accountChangeRemovesBothTest": {
+          "status": "modeled-projection",
+          "reason": "Account switch clears the complete mounted detail projection.",
+          "successors": [
+            {
+              "path": "spec/composition.md",
+              "definitions": [
+                "authenticate",
+                "stepAccountChangeClearsDetails"
+              ]
+            }
+          ]
+        }
+      }
+    },
+    {
+      "legacyPath": "formal/models/ui/ui_snapshot_cache.qnt",
+      "sourceSha256": "a100607886c47157b5303f58e68ae0984416a7028b952f1d771837b5b6f60aae",
+      "sourceEntries": [
+        "src/lib/use-snapshot.ts"
+      ],
+      "evidenceEntries": [],
+      "actions": {
+        "init": {
+          "status": "modeled-projection",
+          "reason": "Starts with no retained cache, visible result or subscriber binding.",
+          "successors": [
+            {
+              "path": "spec/frontend/snapshotCache.md",
+              "definitions": [
+                "initial"
+              ]
+            }
+          ]
+        },
+        "acquire": {
+          "status": "modeled-projection",
+          "reason": "Creates exact read and lease pair for distinct subscriber instances.",
+          "successors": [
+            {
+              "path": "spec/frontend/snapshotCache.md",
+              "definitions": [
+                "canAcquire",
+                "acquire"
+              ]
+            }
+          ]
+        },
+        "cacheHit": {
+          "status": "modeled-projection",
+          "reason": "Mounts a validated cached version without sharing active read binding.",
+          "successors": [
+            {
+              "path": "spec/frontend/snapshotCache.md",
+              "definitions": [
+                "canCacheHit",
+                "cacheHit"
+              ]
+            }
+          ]
+        },
+        "force": {
+          "status": "modeled-projection",
+          "reason": "Advances read identity, invalidates cached value and keeps visible result.",
+          "successors": [
+            {
+              "path": "spec/frontend/snapshotCache.md",
+              "definitions": [
+                "beginRead",
+                "stepNewestNeverMovesBack"
+              ]
+            }
+          ]
+        },
+        "release": {
+          "status": "modeled-projection",
+          "reason": "Releases exactly the original consumer lease, preserves newer leases, and requests deferred disposal.",
+          "successors": [
+            {
+              "path": "spec/frontend/snapshotCache.md",
+              "definitions": [
+                "canRelease",
+                "release"
+              ]
+            }
+          ]
+        },
+        "flushRelease": {
+          "status": "modeled-projection",
+          "reason": "Aborts a queued transport only when no exact subscriber remains.",
+          "successors": [
+            {
+              "path": "spec/frontend/snapshotCache.md",
+              "definitions": [
+                "canFlushRelease",
+                "flushRelease"
+              ]
+            }
+          ]
+        },
+        "failure": {
+          "status": "modeled-projection",
+          "reason": "Failure leaves each independently displayed value unchanged.",
+          "successors": [
+            {
+              "path": "spec/frontend/snapshotCache.md",
+              "definitions": [
+                "failRead",
+                "stepRetainedDisplayOnFailure"
+              ]
+            }
+          ]
+        },
+        "complete": {
+          "status": "modeled-projection",
+          "reason": "Newest read publishes cache, while each exact latest consumer binding may receive its own validated snapshot.",
+          "successors": [
+            {
+              "path": "spec/frontend/snapshotCache.md",
+              "definitions": [
+                "canComplete",
+                "complete",
+                "latestBinding"
+              ]
+            }
+          ]
+        },
+        "step": {
+          "status": "generated-harness",
+          "reason": "Legacy tie and subscription dispatcher retained. The active model generates its single-resource dispatcher.",
+          "successors": []
+        }
+      },
+      "scenarios": {
+        "failedForcedRefreshKeepsVisibleRecordTest": {
+          "status": "modeled-projection",
+          "reason": "Failed forced refresh preserves displayed version independently of cache.",
+          "successors": [
+            {
+              "path": "spec/frontend/snapshotCache.md",
+              "definitions": [
+                "beginRead",
+                "failRead",
+                "stepRetainedDisplayOnFailure"
+              ]
+            }
+          ]
+        },
+        "replacedEffectCannotAcceptOldReadTest": {
+          "status": "modeled-projection",
+          "reason": "Older subscription cannot overwrite newer binding.",
+          "successors": [
+            {
+              "path": "spec/frontend/snapshotCache.md",
+              "definitions": [
+                "latestBinding",
+                "complete"
+              ]
+            }
+          ]
+        },
+        "oldCleanupCannotUnbindNewReadTest": {
+          "status": "modeled-projection",
+          "reason": "Cleanup matches exact captured consumer, lease and read identity.",
+          "successors": [
+            {
+              "path": "spec/frontend/snapshotCache.md",
+              "definitions": [
+                "canRelease",
+                "release"
+              ]
+            }
+          ]
+        },
+        "cachedMountTest": {
+          "status": "modeled-projection",
+          "reason": "Consumer can mount existing validated cache.",
+          "successors": [
+            {
+              "path": "spec/frontend/snapshotCache.md",
+              "definitions": [
+                "canCacheHit",
+                "cacheHit"
+              ]
+            }
+          ]
+        },
+        "oldReadCannotReplaceRefreshCacheTest": {
+          "status": "modeled-projection",
+          "reason": "A late earlier result cannot publish the shared cache.",
+          "successors": [
+            {
+              "path": "spec/frontend/snapshotCache.md",
+              "definitions": [
+                "complete",
+                "stepNewestNeverMovesBack"
+              ]
+            }
+          ]
+        },
+        "replacementEffectCanJoinBeforeAbortTest": {
+          "status": "modeled-projection",
+          "reason": "New subscriber keeps an otherwise queued transport alive.",
+          "successors": [
+            {
+              "path": "spec/frontend/snapshotCache.md",
+              "definitions": [
+                "acquire",
+                "flushRelease"
+              ]
+            }
+          ]
+        },
+        "lastConsumerAbortsTest": {
+          "status": "modeled-projection",
+          "reason": "Deferred cleanup after last lease releases prevents completion.",
+          "successors": [
+            {
+              "path": "spec/frontend/snapshotCache.md",
+              "definitions": [
+                "release",
+                "flushRelease",
+                "canComplete"
+              ]
+            }
+          ]
+        }
+      }
+    },
+    {
+      "legacyPath": "formal/models/contributor/contributor_command_completion.qnt",
+      "sourceSha256": "04ea7cf17a4dee2c2dd71ccde0f019a40337258fd672ef188690a5743afef9df",
+      "sourceEntries": [
+        "skills/project-contributor-template/scripts/live-report.mjs"
+      ],
+      "evidenceEntries": [
+        "scripts/contributor-discovery-lifetime.test.ts",
+        "scripts/contributor-discovery-startup.test.ts"
+      ],
+      "actions": {
+        "init": {
+          "status": "modeled-projection",
+          "reason": "The command completion unit records this exact lifecycle stage and retains the first helper, cleanup or release failure.",
+          "successors": [
+            {
+              "path": "spec/contributor/commandCompletion.md",
+              "definitions": [
+                "initial"
+              ]
+            }
+          ]
+        },
+        "command": {
+          "status": "modeled-projection",
+          "reason": "The command completion unit records this exact lifecycle stage and retains the first helper, cleanup or release failure.",
+          "successors": [
+            {
+              "path": "spec/contributor/commandCompletion.md",
+              "definitions": [
+                "finishCommand"
+              ]
+            }
+          ]
+        },
+        "cleanupRequest": {
+          "status": "modeled-projection",
+          "reason": "The command completion unit records this exact lifecycle stage and retains the first helper, cleanup or release failure.",
+          "successors": [
+            {
+              "path": "spec/contributor/commandCompletion.md",
+              "definitions": [
+                "cleanupRequest"
+              ]
+            }
+          ]
+        },
+        "classify": {
+          "status": "modeled-projection",
+          "reason": "The command completion unit records this exact lifecycle stage and retains the first helper, cleanup or release failure.",
+          "successors": [
+            {
+              "path": "spec/contributor/commandCompletion.md",
+              "definitions": [
+                "classify"
+              ]
+            }
+          ]
+        },
+        "release": {
+          "status": "modeled-projection",
+          "reason": "The command completion unit records this exact lifecycle stage and retains the first helper, cleanup or release failure.",
+          "successors": [
+            {
+              "path": "spec/contributor/commandCompletion.md",
+              "definitions": [
+                "release"
+              ]
+            }
+          ]
+        },
+        "step": {
+          "status": "generated-harness",
+          "reason": "Legacy argument enumeration and dispatch only.",
+          "successors": []
+        }
+      },
+      "scenarios": {
+        "cleanSuccessTest": {
+          "status": "modeled-projection",
+          "reason": "Covered by the focused directed replay, including all command, request cleanup and outer release outcome combinations.",
+          "successors": [
+            {
+              "path": "spec/contributor/commandCompletion.md",
+              "definitions": [
+                "finishCommand",
+                "cleanupRequest",
+                "classify",
+                "release",
+                "stepFirstFailurePersists"
+              ]
+            }
+          ]
+        },
+        "nonzeroCommandSurvivesRequestCleanupTest": {
+          "status": "modeled-projection",
+          "reason": "Covered by the focused directed replay, including all command, request cleanup and outer release outcome combinations.",
+          "successors": [
+            {
+              "path": "spec/contributor/commandCompletion.md",
+              "definitions": [
+                "finishCommand",
+                "cleanupRequest",
+                "classify",
+                "release",
+                "stepFirstFailurePersists"
+              ]
+            }
+          ]
+        },
+        "thrownCommandSurvivesRequestCleanupTest": {
+          "status": "modeled-projection",
+          "reason": "Covered by the focused directed replay, including all command, request cleanup and outer release outcome combinations.",
+          "successors": [
+            {
+              "path": "spec/contributor/commandCompletion.md",
+              "definitions": [
+                "finishCommand",
+                "cleanupRequest",
+                "classify",
+                "release",
+                "stepFirstFailurePersists"
+              ]
+            }
+          ]
+        },
+        "primaryDiscoveryErrorSurvivesReleaseTest": {
+          "status": "modeled-projection",
+          "reason": "Covered by the focused directed replay, including all command, request cleanup and outer release outcome combinations.",
+          "successors": [
+            {
+              "path": "spec/contributor/commandCompletion.md",
+              "definitions": [
+                "finishCommand",
+                "cleanupRequest",
+                "classify",
+                "release",
+                "stepFirstFailurePersists"
+              ]
+            }
+          ]
+        },
+        "bothCleanupsPreserveCommandFailureTest": {
+          "status": "modeled-projection",
+          "reason": "Covered by the focused directed replay, including all command, request cleanup and outer release outcome combinations.",
+          "successors": [
+            {
+              "path": "spec/contributor/commandCompletion.md",
+              "definitions": [
+                "finishCommand",
+                "cleanupRequest",
+                "classify",
+                "release",
+                "stepFirstFailurePersists"
+              ]
+            }
+          ]
+        },
+        "successfulCommandFailsOnRequestCleanupTest": {
+          "status": "modeled-projection",
+          "reason": "Covered by the focused directed replay, including all command, request cleanup and outer release outcome combinations.",
+          "successors": [
+            {
+              "path": "spec/contributor/commandCompletion.md",
+              "definitions": [
+                "finishCommand",
+                "cleanupRequest",
+                "classify",
+                "release",
+                "stepFirstFailurePersists"
+              ]
+            }
+          ]
+        },
+        "successfulReportFailsOnReleaseTest": {
+          "status": "modeled-projection",
+          "reason": "Covered by the focused directed replay, including all command, request cleanup and outer release outcome combinations.",
+          "successors": [
+            {
+              "path": "spec/contributor/commandCompletion.md",
+              "definitions": [
+                "finishCommand",
+                "cleanupRequest",
+                "classify",
+                "release",
+                "stepFirstFailurePersists"
+              ]
+            }
+          ]
+        },
+        "earlierCleanupErrorSurvivesReleaseTest": {
+          "status": "modeled-projection",
+          "reason": "Covered by the focused directed replay, including all command, request cleanup and outer release outcome combinations.",
+          "successors": [
+            {
+              "path": "spec/contributor/commandCompletion.md",
+              "definitions": [
+                "finishCommand",
+                "cleanupRequest",
+                "classify",
+                "release",
+                "stepFirstFailurePersists"
+              ]
+            }
+          ]
+        }
+      }
+    },
+    {
+      "legacyPath": "formal/models/contributor/skill_source_authority.qnt",
+      "sourceSha256": "4c20ea7d5da237fe314dad25e4d0ba9b8216b477b8c736d209b75af0886b054c",
+      "sourceEntries": [
+        "skills/project-contributor-template/scripts/skill-authority.mjs",
+        "scripts/skill-source-matches-commit.mjs"
+      ],
+      "evidenceEntries": [],
+      "actions": {
+        "init": {
+          "status": "modeled-projection",
+          "reason": "The authority component owns this stage for one bounded object and the exact selected payload. GitHub, crypto and filesystem adapters require conformance.",
+          "successors": [
+            {
+              "path": "spec/contributor/skillAuthority.md",
+              "definitions": [
+                "initial"
+              ]
+            }
+          ]
+        },
+        "selectRole": {
+          "status": "modeled-projection",
+          "reason": "The authority component owns this stage for one bounded object and the exact selected payload. GitHub, crypto and filesystem adapters require conformance.",
+          "successors": [
+            {
+              "path": "spec/contributor/skillAuthority.md",
+              "definitions": [
+                "selectRole"
+              ]
+            }
+          ]
+        },
+        "fetch": {
+          "status": "modeled-projection",
+          "reason": "The authority component owns this stage for one bounded object and the exact selected payload. GitHub, crypto and filesystem adapters require conformance.",
+          "successors": [
+            {
+              "path": "spec/contributor/skillAuthority.md",
+              "definitions": [
+                "canFetch",
+                "fetch",
+                "sendCredential"
+              ]
+            }
+          ]
+        },
+        "transient": {
+          "status": "modeled-projection",
+          "reason": "The authority component owns this stage for one bounded object and the exact selected payload. GitHub, crypto and filesystem adapters require conformance.",
+          "successors": [
+            {
+              "path": "spec/contributor/skillAuthority.md",
+              "definitions": [
+                "rejectRead",
+                "transient",
+                "nextDelay"
+              ]
+            }
+          ]
+        },
+        "integrityFailure": {
+          "status": "modeled-projection",
+          "reason": "The authority component owns this stage for one bounded object and the exact selected payload. GitHub, crypto and filesystem adapters require conformance.",
+          "successors": [
+            {
+              "path": "spec/contributor/skillAuthority.md",
+              "definitions": [
+                "rejectRead",
+                "transient"
+              ]
+            }
+          ]
+        },
+        "complete": {
+          "status": "modeled-projection",
+          "reason": "The authority component owns this stage for one bounded object and the exact selected payload. GitHub, crypto and filesystem adapters require conformance.",
+          "successors": [
+            {
+              "path": "spec/contributor/skillAuthority.md",
+              "definitions": [
+                "downloadComplete"
+              ]
+            }
+          ]
+        },
+        "compare": {
+          "status": "modeled-projection",
+          "reason": "The authority component owns this stage for one bounded object and the exact selected payload. GitHub, crypto and filesystem adapters require conformance.",
+          "successors": [
+            {
+              "path": "spec/contributor/skillAuthority.md",
+              "definitions": [
+                "compare"
+              ]
+            }
+          ]
+        },
+        "currentProject": {
+          "status": "modeled-projection",
+          "reason": "The authority component owns this stage for one bounded object and the exact selected payload. GitHub, crypto and filesystem adapters require conformance.",
+          "successors": [
+            {
+              "path": "spec/contributor/skillAuthority.md",
+              "definitions": [
+                "observeProject"
+              ]
+            }
+          ]
+        },
+        "admit": {
+          "status": "modeled-projection",
+          "reason": "The authority component owns this stage for one bounded object and the exact selected payload. GitHub, crypto and filesystem adapters require conformance.",
+          "successors": [
+            {
+              "path": "spec/contributor/skillAuthority.md",
+              "definitions": [
+                "canAdmit",
+                "admit",
+                "bytesAdmitted"
+              ]
+            }
+          ]
+        },
+        "step": {
+          "status": "generated-harness",
+          "reason": "Legacy transport and role simulator dispatcher.",
+          "successors": []
+        }
+      },
+      "scenarios": {
+        "transientMayRetryTest": {
+          "status": "modeled-projection",
+          "reason": "The focused validation exercises exact bytes, all three roles and registry bindings, security clearance and retry outcomes.",
+          "successors": [
+            {
+              "path": "spec/contributor/skillAuthority.md",
+              "definitions": [
+                "canFetch",
+                "rejectRead",
+                "compare",
+                "canAdmit",
+                "bytesAdmitted"
+              ]
+            }
+          ]
+        },
+        "digestFailureCannotRetryTest": {
+          "status": "modeled-projection",
+          "reason": "The focused validation exercises exact bytes, all three roles and registry bindings, security clearance and retry outcomes.",
+          "successors": [
+            {
+              "path": "spec/contributor/skillAuthority.md",
+              "definitions": [
+                "canFetch",
+                "rejectRead",
+                "compare",
+                "canAdmit",
+                "bytesAdmitted"
+              ]
+            }
+          ]
+        },
+        "extraFileRefusedTest": {
+          "status": "modeled-projection",
+          "reason": "The focused validation exercises exact bytes, all three roles and registry bindings, security clearance and retry outcomes.",
+          "successors": [
+            {
+              "path": "spec/contributor/skillAuthority.md",
+              "definitions": [
+                "canFetch",
+                "rejectRead",
+                "compare",
+                "canAdmit",
+                "bytesAdmitted"
+              ]
+            }
+          ]
+        },
+        "pausedProjectRefusedTest": {
+          "status": "modeled-projection",
+          "reason": "The focused validation exercises exact bytes, all three roles and registry bindings, security clearance and retry outcomes.",
+          "successors": [
+            {
+              "path": "spec/contributor/skillAuthority.md",
+              "definitions": [
+                "canFetch",
+                "rejectRead",
+                "compare",
+                "canAdmit",
+                "bytesAdmitted"
+              ]
+            }
+          ]
+        },
+        "staticSkillNeedsNoRegistryTest": {
+          "status": "modeled-projection",
+          "reason": "The focused validation exercises exact bytes, all three roles and registry bindings, security clearance and retry outcomes.",
+          "successors": [
+            {
+              "path": "spec/contributor/skillAuthority.md",
+              "definitions": [
+                "canFetch",
+                "rejectRead",
+                "compare",
+                "canAdmit",
+                "bytesAdmitted"
+              ]
+            }
+          ]
+        },
+        "staticSkillRejectsRegistryBindingTest": {
+          "status": "modeled-projection",
+          "reason": "The focused validation exercises exact bytes, all three roles and registry bindings, security clearance and retry outcomes.",
+          "successors": [
+            {
+              "path": "spec/contributor/skillAuthority.md",
+              "definitions": [
+                "canFetch",
+                "rejectRead",
+                "compare",
+                "canAdmit",
+                "bytesAdmitted"
+              ]
+            }
+          ]
+        },
+        "reviewerDoesNotRequireOpenProjectTest": {
+          "status": "modeled-projection",
+          "reason": "The focused validation exercises exact bytes, all three roles and registry bindings, security clearance and retry outcomes.",
+          "successors": [
+            {
+              "path": "spec/contributor/skillAuthority.md",
+              "definitions": [
+                "canFetch",
+                "rejectRead",
+                "compare",
+                "canAdmit",
+                "bytesAdmitted"
+              ]
+            }
+          ]
+        },
+        "reviewerStillNeedsManifestTest": {
+          "status": "modeled-projection",
+          "reason": "The focused validation exercises exact bytes, all three roles and registry bindings, security clearance and retry outcomes.",
+          "successors": [
+            {
+              "path": "spec/contributor/skillAuthority.md",
+              "definitions": [
+                "canFetch",
+                "rejectRead",
+                "compare",
+                "canAdmit",
+                "bytesAdmitted"
+              ]
+            }
+          ]
+        },
+        "contributorNeedsBindingTest": {
+          "status": "modeled-projection",
+          "reason": "The focused validation exercises exact bytes, all three roles and registry bindings, security clearance and retry outcomes.",
+          "successors": [
+            {
+              "path": "spec/contributor/skillAuthority.md",
+              "definitions": [
+                "canFetch",
+                "rejectRead",
+                "compare",
+                "canAdmit",
+                "bytesAdmitted"
+              ]
+            }
+          ]
+        },
+        "reviewerNeedsBindingTest": {
+          "status": "modeled-projection",
+          "reason": "The focused validation exercises exact bytes, all three roles and registry bindings, security clearance and retry outcomes.",
+          "successors": [
+            {
+              "path": "spec/contributor/skillAuthority.md",
+              "definitions": [
+                "canFetch",
+                "rejectRead",
+                "compare",
+                "canAdmit",
+                "bytesAdmitted"
+              ]
+            }
+          ]
+        },
+        "staticSkillStillNeedsExactBytesTest": {
+          "status": "modeled-projection",
+          "reason": "The focused validation exercises exact bytes, all three roles and registry bindings, security clearance and retry outcomes.",
+          "successors": [
+            {
+              "path": "spec/contributor/skillAuthority.md",
+              "definitions": [
+                "canFetch",
+                "rejectRead",
+                "compare",
+                "canAdmit",
+                "bytesAdmitted"
+              ]
+            }
+          ]
+        }
+      }
+    },
+    {
+      "legacyPath": "formal/models/contributor/skill_installation.qnt",
+      "sourceSha256": "73e896274d801ebdfad25f12fac81c8a6844ebfad3e3f0e378cfe82acb34215d",
+      "sourceEntries": [
+        "src/lib/install-command.ts",
+        "src/lib/project-skill.mjs",
+        "src/lib/project-skill-publication.mjs"
+      ],
+      "evidenceEntries": [],
+      "actions": {
+        "init": {
+          "status": "modeled-projection",
+          "reason": "The installation model records this stage or refusal with the owning process invocation. Filesystem, authority, and output are shell conformance.",
+          "successors": [
+            {
+              "path": "spec/contributor/installation.md",
+              "definitions": [
+                "initial"
+              ]
+            }
+          ]
+        },
+        "begin": {
+          "status": "modeled-projection",
+          "reason": "The installation model records this stage or refusal with the owning process invocation. Filesystem, authority, and output are shell conformance.",
+          "successors": [
+            {
+              "path": "spec/contributor/installation.md",
+              "definitions": [
+                "begin"
+              ]
+            }
+          ]
+        },
+        "stageArchive": {
+          "status": "modeled-projection",
+          "reason": "The installation model records this stage or refusal with the owning process invocation. Filesystem, authority, and output are shell conformance.",
+          "successors": [
+            {
+              "path": "spec/contributor/installation.md",
+              "definitions": [
+                "download"
+              ]
+            }
+          ]
+        },
+        "verifyBytes": {
+          "status": "modeled-projection",
+          "reason": "The installation model records this stage or refusal with the owning process invocation. Filesystem, authority, and output are shell conformance.",
+          "successors": [
+            {
+              "path": "spec/contributor/installation.md",
+              "definitions": [
+                "verify"
+              ]
+            }
+          ]
+        },
+        "noChange": {
+          "status": "modeled-projection",
+          "reason": "The installation model records this stage or refusal with the owning process invocation. Filesystem, authority, and output are shell conformance.",
+          "successors": [
+            {
+              "path": "spec/contributor/installation.md",
+              "definitions": [
+                "recordUnchanged"
+              ]
+            }
+          ]
+        },
+        "retain": {
+          "status": "modeled-projection",
+          "reason": "The installation model records this stage or refusal with the owning process invocation. Filesystem, authority, and output are shell conformance.",
+          "successors": [
+            {
+              "path": "spec/contributor/installation.md",
+              "definitions": [
+                "retain"
+              ]
+            }
+          ]
+        },
+        "prepareLink": {
+          "status": "modeled-projection",
+          "reason": "The installation model records this stage or refusal with the owning process invocation. Filesystem, authority, and output are shell conformance.",
+          "successors": [
+            {
+              "path": "spec/contributor/installation.md",
+              "definitions": [
+                "prepareLink"
+              ]
+            }
+          ]
+        },
+        "activate": {
+          "status": "modeled-projection",
+          "reason": "The installation model records this stage or refusal with the owning process invocation. Filesystem, authority, and output are shell conformance.",
+          "successors": [
+            {
+              "path": "spec/contributor/installation.md",
+              "definitions": [
+                "commit"
+              ]
+            }
+          ]
+        },
+        "confirmReadback": {
+          "status": "modeled-projection",
+          "reason": "The installation model records this stage or refusal with the owning process invocation. Filesystem, authority, and output are shell conformance.",
+          "successors": [
+            {
+              "path": "spec/contributor/installation.md",
+              "definitions": [
+                "confirm"
+              ]
+            }
+          ]
+        },
+        "printSuccess": {
+          "status": "modeled-projection",
+          "reason": "The installation model records this stage or refusal with the owning process invocation. Filesystem, authority, and output are shell conformance.",
+          "successors": [
+            {
+              "path": "spec/contributor/installation.md",
+              "definitions": [
+                "emitActivation"
+              ]
+            }
+          ]
+        },
+        "failure": {
+          "status": "modeled-projection",
+          "reason": "The installation model records this stage or refusal with the owning process invocation. Filesystem, authority, and output are shell conformance.",
+          "successors": [
+            {
+              "path": "spec/contributor/installation.md",
+              "definitions": [
+                "recordFailure"
+              ]
+            }
+          ]
+        },
+        "linkFailure": {
+          "status": "modeled-projection",
+          "reason": "The installation model records this stage or refusal with the owning process invocation. Filesystem, authority, and output are shell conformance.",
+          "successors": [
+            {
+              "path": "spec/contributor/installation.md",
+              "definitions": [
+                "recordFailure"
+              ]
+            }
+          ]
+        },
+        "readbackFailure": {
+          "status": "modeled-projection",
+          "reason": "The installation model records this stage or refusal with the owning process invocation. Filesystem, authority, and output are shell conformance.",
+          "successors": [
+            {
+              "path": "spec/contributor/installation.md",
+              "definitions": [
+                "recordFailure"
+              ]
+            }
+          ]
+        },
+        "cleanup": {
+          "status": "modeled-projection",
+          "reason": "The installation model records this stage or refusal with the owning process invocation. Filesystem, authority, and output are shell conformance.",
+          "successors": [
+            {
+              "path": "spec/contributor/installation.md",
+              "definitions": [
+                "cleanup"
+              ]
+            }
+          ]
+        },
+        "finish": {
+          "status": "modeled-projection",
+          "reason": "The installation model records this stage or refusal with the owning process invocation. Filesystem, authority, and output are shell conformance.",
+          "successors": [
+            {
+              "path": "spec/contributor/installation.md",
+              "definitions": [
+                "finish"
+              ]
+            }
+          ]
+        },
+        "permission": {
+          "status": "modeled-projection",
+          "reason": "The installation model records this stage or refusal with the owning process invocation. Filesystem, authority, and output are shell conformance.",
+          "successors": [
+            {
+              "path": "spec/contributor/installation.md",
+              "definitions": [
+                "canBegin",
+                "canVerify"
+              ]
+            }
+          ]
+        },
+        "step": {
+          "status": "generated-harness",
+          "reason": "Vibestack dispatch covers the active installation transitions, with differing abstraction boundaries.",
+          "successors": []
+        }
+      },
+      "scenarios": {
+        "olderTemplateNewerPolicyTest": {
+          "status": "modeled-projection",
+          "reason": "The focused evidence exercises the corresponding version, unchanged-byte, failure, readback or owned-cleanup behavior.",
+          "successors": [
+            {
+              "path": "spec/contributor/installation.md",
+              "definitions": [
+                "begin",
+                "verify",
+                "recordUnchanged",
+                "retain",
+                "commit",
+                "confirm",
+                "recordFailure",
+                "cleanup",
+                "finish"
+              ]
+            }
+          ]
+        },
+        "explicitRollbackTest": {
+          "status": "modeled-projection",
+          "reason": "The focused evidence exercises the corresponding version, unchanged-byte, failure, readback or owned-cleanup behavior.",
+          "successors": [
+            {
+              "path": "spec/contributor/installation.md",
+              "definitions": [
+                "begin",
+                "verify",
+                "recordUnchanged",
+                "retain",
+                "commit",
+                "confirm",
+                "recordFailure",
+                "cleanup",
+                "finish"
+              ]
+            }
+          ]
+        },
+        "interruptedActivationTest": {
+          "status": "modeled-projection",
+          "reason": "The focused evidence exercises the corresponding version, unchanged-byte, failure, readback or owned-cleanup behavior.",
+          "successors": [
+            {
+              "path": "spec/contributor/installation.md",
+              "definitions": [
+                "begin",
+                "verify",
+                "recordUnchanged",
+                "retain",
+                "commit",
+                "confirm",
+                "recordFailure",
+                "cleanup",
+                "finish"
+              ]
+            }
+          ]
+        },
+        "cleanupFailureAfterCommitTest": {
+          "status": "modeled-projection",
+          "reason": "The focused evidence exercises the corresponding version, unchanged-byte, failure, readback or owned-cleanup behavior.",
+          "successors": [
+            {
+              "path": "spec/contributor/installation.md",
+              "definitions": [
+                "begin",
+                "verify",
+                "recordUnchanged",
+                "retain",
+                "commit",
+                "confirm",
+                "recordFailure",
+                "cleanup",
+                "finish"
+              ]
+            }
+          ]
+        },
+        "cleanupFailureThenSameVersionRetryTest": {
+          "status": "modeled-projection",
+          "reason": "The focused evidence exercises the corresponding version, unchanged-byte, failure, readback or owned-cleanup behavior.",
+          "successors": [
+            {
+              "path": "spec/contributor/installation.md",
+              "definitions": [
+                "begin",
+                "verify",
+                "recordUnchanged",
+                "retain",
+                "commit",
+                "confirm",
+                "recordFailure",
+                "cleanup",
+                "finish"
+              ]
+            }
+          ]
+        },
+        "readbackFailureLeavesCommittedTargetTest": {
+          "status": "modeled-projection",
+          "reason": "The focused evidence exercises the corresponding version, unchanged-byte, failure, readback or owned-cleanup behavior.",
+          "successors": [
+            {
+              "path": "spec/contributor/installation.md",
+              "definitions": [
+                "begin",
+                "verify",
+                "recordUnchanged",
+                "retain",
+                "commit",
+                "confirm",
+                "recordFailure",
+                "cleanup",
+                "finish"
+              ]
+            }
+          ]
+        },
+        "readbackFailureThenVerifiedRetryTest": {
+          "status": "modeled-projection",
+          "reason": "The focused evidence exercises the corresponding version, unchanged-byte, failure, readback or owned-cleanup behavior.",
+          "successors": [
+            {
+              "path": "spec/contributor/installation.md",
+              "definitions": [
+                "begin",
+                "verify",
+                "recordUnchanged",
+                "retain",
+                "commit",
+                "confirm",
+                "recordFailure",
+                "cleanup",
+                "finish"
+              ]
+            }
+          ]
+        },
+        "rollbackReadbackFailureKeepsRollbackCommitTest": {
+          "status": "modeled-projection",
+          "reason": "The focused evidence exercises the corresponding version, unchanged-byte, failure, readback or owned-cleanup behavior.",
+          "successors": [
+            {
+              "path": "spec/contributor/installation.md",
+              "definitions": [
+                "begin",
+                "verify",
+                "recordUnchanged",
+                "retain",
+                "commit",
+                "confirm",
+                "recordFailure",
+                "cleanup",
+                "finish"
+              ]
+            }
+          ]
+        },
+        "failedTemporaryLinkCleanupRetainsOnlyOwnedArtifactsTest": {
+          "status": "modeled-projection",
+          "reason": "The focused evidence exercises the corresponding version, unchanged-byte, failure, readback or owned-cleanup behavior.",
+          "successors": [
+            {
+              "path": "spec/contributor/installation.md",
+              "definitions": [
+                "begin",
+                "verify",
+                "recordUnchanged",
+                "retain",
+                "commit",
+                "confirm",
+                "recordFailure",
+                "cleanup",
+                "finish"
+              ]
+            }
+          ]
+        },
+        "retryReusesRetainedVersionTest": {
+          "status": "modeled-projection",
+          "reason": "The focused evidence exercises the corresponding version, unchanged-byte, failure, readback or owned-cleanup behavior.",
+          "successors": [
+            {
+              "path": "spec/contributor/installation.md",
+              "definitions": [
+                "begin",
+                "verify",
+                "recordUnchanged",
+                "retain",
+                "commit",
+                "confirm",
+                "recordFailure",
+                "cleanup",
+                "finish"
+              ]
+            }
+          ]
+        },
+        "unchangedBytesKeepOriginalIdentityTest": {
+          "status": "modeled-projection",
+          "reason": "The focused evidence exercises the corresponding version, unchanged-byte, failure, readback or owned-cleanup behavior.",
+          "successors": [
+            {
+              "path": "spec/contributor/installation.md",
+              "definitions": [
+                "begin",
+                "verify",
+                "recordUnchanged",
+                "retain",
+                "commit",
+                "confirm",
+                "recordFailure",
+                "cleanup",
+                "finish"
+              ]
+            }
+          ]
+        },
+        "refusalBeforeStagingCreatesNoTemporaryArtifactsTest": {
+          "status": "modeled-projection",
+          "reason": "The focused evidence exercises the corresponding version, unchanged-byte, failure, readback or owned-cleanup behavior.",
+          "successors": [
+            {
+              "path": "spec/contributor/installation.md",
+              "definitions": [
+                "begin",
+                "verify",
+                "recordUnchanged",
+                "retain",
+                "commit",
+                "confirm",
+                "recordFailure",
+                "cleanup",
+                "finish"
+              ]
+            }
+          ]
+        },
+        "cleanupFailurePreservesEarlierErrorTest": {
+          "status": "modeled-projection",
+          "reason": "The focused evidence exercises the corresponding version, unchanged-byte, failure, readback or owned-cleanup behavior.",
+          "successors": [
+            {
+              "path": "spec/contributor/installation.md",
+              "definitions": [
+                "begin",
+                "verify",
+                "recordUnchanged",
+                "retain",
+                "commit",
+                "confirm",
+                "recordFailure",
+                "cleanup",
+                "finish"
+              ]
+            }
+          ]
+        },
+        "readbackAndCleanupFailureKeepsPrimaryTest": {
+          "status": "modeled-projection",
+          "reason": "The focused evidence exercises the corresponding version, unchanged-byte, failure, readback or owned-cleanup behavior.",
+          "successors": [
+            {
+              "path": "spec/contributor/installation.md",
+              "definitions": [
+                "begin",
+                "verify",
+                "recordUnchanged",
+                "retain",
+                "commit",
+                "confirm",
+                "recordFailure",
+                "cleanup",
+                "finish"
+              ]
+            }
+          ]
+        },
+        "noChangeCleanupFailureDoesNotClaimNewActivationTest": {
+          "status": "modeled-projection",
+          "reason": "The focused evidence exercises the corresponding version, unchanged-byte, failure, readback or owned-cleanup behavior.",
+          "successors": [
+            {
+              "path": "spec/contributor/installation.md",
+              "definitions": [
+                "begin",
+                "verify",
+                "recordUnchanged",
+                "retain",
+                "commit",
+                "confirm",
+                "recordFailure",
+                "cleanup",
+                "finish"
+              ]
+            }
+          ]
+        }
+      }
+    },
+    {
+      "legacyPath": "formal/models/contributor/skill_run_local.qnt",
+      "sourceSha256": "277df1836250e1bdf4e1ad2e278e31921383d37f7bdf07721c65ea72be789b64",
+      "sourceEntries": [
+        "skills/project-contributor-template/scripts/run-receipt.mjs",
+        "src/lib/run-receipts.ts"
+      ],
+      "evidenceEntries": [],
+      "actions": {
+        "init": {
+          "status": "modeled-projection",
+          "reason": "The successor owns the corresponding local completion or remote evidence stage, with exact identity and refusal rules. Adapter conformance remains separate.",
+          "successors": [
+            {
+              "path": "spec/contributor/localReceipt.md",
+              "definitions": [
+                "initial"
+              ]
+            }
+          ]
+        },
+        "start": {
+          "status": "modeled-projection",
+          "reason": "The successor owns the corresponding local completion or remote evidence stage, with exact identity and refusal rules. Adapter conformance remains separate.",
+          "successors": [
+            {
+              "path": "spec/contributor/localReceipt.md",
+              "definitions": [
+                "start"
+              ]
+            }
+          ]
+        },
+        "prepareFinish": {
+          "status": "modeled-projection",
+          "reason": "The successor owns the corresponding local completion or remote evidence stage, with exact identity and refusal rules. Adapter conformance remains separate.",
+          "successors": [
+            {
+              "path": "spec/contributor/localReceipt.md",
+              "definitions": [
+                "prepareFinish"
+              ]
+            }
+          ]
+        },
+        "validateCandidate": {
+          "status": "modeled-projection",
+          "reason": "The successor owns the corresponding local completion or remote evidence stage, with exact identity and refusal rules. Adapter conformance remains separate.",
+          "successors": [
+            {
+              "path": "spec/contributor/localReceipt.md",
+              "definitions": [
+                "validate"
+              ]
+            }
+          ]
+        },
+        "rejectCandidate": {
+          "status": "modeled-projection",
+          "reason": "The successor owns the corresponding local completion or remote evidence stage, with exact identity and refusal rules. Adapter conformance remains separate.",
+          "successors": [
+            {
+              "path": "spec/contributor/localReceipt.md",
+              "definitions": [
+                "reject"
+              ]
+            }
+          ]
+        },
+        "stage": {
+          "status": "modeled-projection",
+          "reason": "The successor owns the corresponding local completion or remote evidence stage, with exact identity and refusal rules. Adapter conformance remains separate.",
+          "successors": [
+            {
+              "path": "spec/contributor/localReceipt.md",
+              "definitions": [
+                "stage"
+              ]
+            }
+          ]
+        },
+        "publish": {
+          "status": "modeled-projection",
+          "reason": "The successor owns the corresponding local completion or remote evidence stage, with exact identity and refusal rules. Adapter conformance remains separate.",
+          "successors": [
+            {
+              "path": "spec/contributor/localReceipt.md",
+              "definitions": [
+                "publish"
+              ]
+            }
+          ]
+        },
+        "competingFinishWins": {
+          "status": "modeled-projection",
+          "reason": "The successor owns the corresponding local completion or remote evidence stage, with exact identity and refusal rules. Adapter conformance remains separate.",
+          "successors": [
+            {
+              "path": "spec/contributor/localReceipt.md",
+              "definitions": [
+                "competingWriter"
+              ]
+            }
+          ]
+        },
+        "removeTemporary": {
+          "status": "modeled-projection",
+          "reason": "The successor owns the corresponding local completion or remote evidence stage, with exact identity and refusal rules. Adapter conformance remains separate.",
+          "successors": [
+            {
+              "path": "spec/contributor/localReceipt.md",
+              "definitions": [
+                "cleanupTemporary"
+              ]
+            }
+          ]
+        },
+        "removeActive": {
+          "status": "modeled-projection",
+          "reason": "The successor owns the corresponding local completion or remote evidence stage, with exact identity and refusal rules. Adapter conformance remains separate.",
+          "successors": [
+            {
+              "path": "spec/contributor/localReceipt.md",
+              "definitions": [
+                "removeActive"
+              ]
+            }
+          ]
+        },
+        "precommitFailure": {
+          "status": "modeled-projection",
+          "reason": "The successor owns the corresponding local completion or remote evidence stage, with exact identity and refusal rules. Adapter conformance remains separate.",
+          "successors": [
+            {
+              "path": "spec/contributor/localReceipt.md",
+              "definitions": [
+                "failBeforeCommit"
+              ]
+            }
+          ]
+        },
+        "replayCompleted": {
+          "status": "modeled-projection",
+          "reason": "The successor owns the corresponding local completion or remote evidence stage, with exact identity and refusal rules. Adapter conformance remains separate.",
+          "successors": [
+            {
+              "path": "spec/contributor/localReceipt.md",
+              "definitions": [
+                "replayCompleted"
+              ]
+            }
+          ]
+        },
+        "observeInvalidHistoricalRecord": {
+          "status": "modeled-projection",
+          "reason": "The successor owns the corresponding local completion or remote evidence stage, with exact identity and refusal rules. Adapter conformance remains separate.",
+          "successors": [
+            {
+              "path": "spec/contributor/localReceipt.md",
+              "definitions": [
+                "observeInvalidHistory"
+              ]
+            }
+          ]
+        },
+        "reuseUploaded": {
+          "status": "modeled-projection",
+          "reason": "The successor owns the corresponding local completion or remote evidence stage, with exact identity and refusal rules. Adapter conformance remains separate.",
+          "successors": [
+            {
+              "path": "spec/contributor/runEvidence.md",
+              "definitions": [
+                "reuse"
+              ]
+            }
+          ]
+        },
+        "finalizeTrace": {
+          "status": "modeled-projection",
+          "reason": "The successor owns the corresponding local completion or remote evidence stage, with exact identity and refusal rules. Adapter conformance remains separate.",
+          "successors": [
+            {
+              "path": "spec/contributor/runEvidence.md",
+              "definitions": [
+                "finalize"
+              ]
+            }
+          ]
+        },
+        "lostTraceResponse": {
+          "status": "modeled-projection",
+          "reason": "The successor owns the corresponding local completion or remote evidence stage, with exact identity and refusal rules. Adapter conformance remains separate.",
+          "successors": [
+            {
+              "path": "spec/contributor/runEvidence.md",
+              "definitions": [
+                "loseResponse"
+              ]
+            }
+          ]
+        },
+        "refuseChangedTrace": {
+          "status": "modeled-projection",
+          "reason": "The successor owns the corresponding local completion or remote evidence stage, with exact identity and refusal rules. Adapter conformance remains separate.",
+          "successors": [
+            {
+              "path": "spec/contributor/runEvidence.md",
+              "definitions": [
+                "refuseDifferentSelection"
+              ]
+            }
+          ]
+        },
+        "registerOpened": {
+          "status": "modeled-projection",
+          "reason": "The successor owns the corresponding local completion or remote evidence stage, with exact identity and refusal rules. Adapter conformance remains separate.",
+          "successors": [
+            {
+              "path": "spec/contributor/runEvidence.md",
+              "definitions": [
+                "registerOpened"
+              ]
+            }
+          ]
+        },
+        "selectTrace": {
+          "status": "modeled-projection",
+          "reason": "The successor owns the corresponding local completion or remote evidence stage, with exact identity and refusal rules. Adapter conformance remains separate.",
+          "successors": [
+            {
+              "path": "spec/contributor/runEvidence.md",
+              "definitions": [
+                "selectTrace"
+              ]
+            }
+          ]
+        },
+        "register": {
+          "status": "modeled-projection",
+          "reason": "The successor owns the corresponding local completion or remote evidence stage, with exact identity and refusal rules. Adapter conformance remains separate.",
+          "successors": [
+            {
+              "path": "spec/contributor/runEvidence.md",
+              "definitions": [
+                "register"
+              ]
+            }
+          ]
+        },
+        "upload": {
+          "status": "modeled-projection",
+          "reason": "The successor owns the corresponding local completion or remote evidence stage, with exact identity and refusal rules. Adapter conformance remains separate.",
+          "successors": [
+            {
+              "path": "spec/contributor/runEvidence.md",
+              "definitions": [
+                "upload"
+              ]
+            }
+          ]
+        },
+        "recordPullRequest": {
+          "status": "modeled-projection",
+          "reason": "The successor owns the corresponding local completion or remote evidence stage, with exact identity and refusal rules. Adapter conformance remains separate.",
+          "successors": [
+            {
+              "path": "spec/contributor/runEvidence.md",
+              "definitions": [
+                "recordOpened",
+                "lawOpenedRetryIdempotent"
+              ]
+            }
+          ]
+        },
+        "step": {
+          "status": "generated-harness",
+          "reason": "Legacy scheduler dispatch retained to exercise interleavings absent in active simplified workflow.",
+          "successors": []
+        }
+      },
+      "scenarios": {
+        "optionalEvidenceDoesNotBlockReceiptTest": {
+          "status": "modeled-projection",
+          "reason": "The focused exact-data scenario evaluates this separation or recovery using immutable completion, exact remote digests or a distinct authenticated PR event.",
+          "successors": [
+            {
+              "path": "spec/contributor/localReceipt.md",
+              "definitions": [
+                "start",
+                "validate",
+                "publish",
+                "competingWriter",
+                "replayCompleted"
+              ]
+            }
+          ]
+        },
+        "recordBeforeFinalizationTest": {
+          "status": "modeled-projection",
+          "reason": "The focused exact-data scenario evaluates this separation or recovery using immutable completion, exact remote digests or a distinct authenticated PR event.",
+          "successors": [
+            {
+              "path": "spec/contributor/runEvidence.md",
+              "definitions": [
+                "register",
+                "upload",
+                "reuse",
+                "finalize",
+                "refuseDifferentSelection",
+                "recordOpened"
+              ]
+            }
+          ]
+        },
+        "openedDoesNotNeedMeasuredRunTest": {
+          "status": "modeled-projection",
+          "reason": "The focused exact-data scenario evaluates this separation or recovery using immutable completion, exact remote digests or a distinct authenticated PR event.",
+          "successors": [
+            {
+              "path": "spec/contributor/runEvidence.md",
+              "definitions": [
+                "register",
+                "upload",
+                "reuse",
+                "finalize",
+                "refuseDifferentSelection",
+                "recordOpened"
+              ]
+            },
+            {
+              "path": "spec/contributor/localReceipt.md",
+              "definitions": [
+                "start",
+                "validate",
+                "publish",
+                "competingWriter",
+                "replayCompleted"
+              ]
+            }
+          ]
+        },
+        "backwardClockCannotPoisonCompletedRecordTest": {
+          "status": "modeled-projection",
+          "reason": "The focused exact-data scenario evaluates this separation or recovery using immutable completion, exact remote digests or a distinct authenticated PR event.",
+          "successors": [
+            {
+              "path": "spec/contributor/localReceipt.md",
+              "definitions": [
+                "start",
+                "validate",
+                "publish",
+                "competingWriter",
+                "replayCompleted"
+              ]
+            }
+          ]
+        },
+        "invalidCandidateCannotPublishTest": {
+          "status": "modeled-projection",
+          "reason": "The focused exact-data scenario evaluates this separation or recovery using immutable completion, exact remote digests or a distinct authenticated PR event.",
+          "successors": [
+            {
+              "path": "spec/contributor/localReceipt.md",
+              "definitions": [
+                "start",
+                "validate",
+                "publish",
+                "competingWriter",
+                "replayCompleted"
+              ]
+            }
+          ]
+        },
+        "cleanupFailureLeavesValidReplayTest": {
+          "status": "modeled-projection",
+          "reason": "The focused exact-data scenario evaluates this separation or recovery using immutable completion, exact remote digests or a distinct authenticated PR event.",
+          "successors": [
+            {
+              "path": "spec/contributor/localReceipt.md",
+              "definitions": [
+                "start",
+                "validate",
+                "publish",
+                "competingWriter",
+                "replayCompleted"
+              ]
+            }
+          ]
+        },
+        "activeRemovalFailureCanReplayTest": {
+          "status": "modeled-projection",
+          "reason": "The focused exact-data scenario evaluates this separation or recovery using immutable completion, exact remote digests or a distinct authenticated PR event.",
+          "successors": [
+            {
+              "path": "spec/contributor/localReceipt.md",
+              "definitions": [
+                "start",
+                "validate",
+                "publish",
+                "competingWriter",
+                "replayCompleted"
+              ]
+            }
+          ]
+        },
+        "concurrentFinishPreservesFirstWinnerTest": {
+          "status": "modeled-projection",
+          "reason": "The focused exact-data scenario evaluates this separation or recovery using immutable completion, exact remote digests or a distinct authenticated PR event.",
+          "successors": [
+            {
+              "path": "spec/contributor/localReceipt.md",
+              "definitions": [
+                "start",
+                "validate",
+                "publish",
+                "competingWriter",
+                "replayCompleted"
+              ]
+            }
+          ]
+        },
+        "invalidExistingRecordRemainsExplicitErrorTest": {
+          "status": "modeled-projection",
+          "reason": "The focused exact-data scenario evaluates this separation or recovery using immutable completion, exact remote digests or a distinct authenticated PR event.",
+          "successors": [
+            {
+              "path": "spec/contributor/localReceipt.md",
+              "definitions": [
+                "start",
+                "validate",
+                "publish",
+                "competingWriter",
+                "replayCompleted"
+              ]
+            }
+          ]
+        },
+        "traceRetryUsesStoredDigestTest": {
+          "status": "modeled-projection",
+          "reason": "The focused exact-data scenario evaluates this separation or recovery using immutable completion, exact remote digests or a distinct authenticated PR event.",
+          "successors": [
+            {
+              "path": "spec/contributor/runEvidence.md",
+              "definitions": [
+                "register",
+                "upload",
+                "reuse",
+                "finalize",
+                "refuseDifferentSelection",
+                "recordOpened"
+              ]
+            }
+          ]
+        },
+        "changedTraceCannotReplaceUploadTest": {
+          "status": "modeled-projection",
+          "reason": "The focused exact-data scenario evaluates this separation or recovery using immutable completion, exact remote digests or a distinct authenticated PR event.",
+          "successors": [
+            {
+              "path": "spec/contributor/runEvidence.md",
+              "definitions": [
+                "register",
+                "upload",
+                "reuse",
+                "finalize",
+                "refuseDifferentSelection",
+                "recordOpened"
+              ]
+            }
+          ]
+        },
+        "openedRetryIdentityIsSeparateTest": {
+          "status": "modeled-projection",
+          "reason": "The focused exact-data scenario evaluates this separation or recovery using immutable completion, exact remote digests or a distinct authenticated PR event.",
+          "successors": [
+            {
+              "path": "spec/contributor/runEvidence.md",
+              "definitions": [
+                "register",
+                "upload",
+                "reuse",
+                "finalize",
+                "refuseDifferentSelection",
+                "recordOpened"
+              ]
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

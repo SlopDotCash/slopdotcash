@@ -1,0 +1,173 @@
+{
+  "unit": "settlement__recovery.ts",
+  "sourceHashes": {
+    "spec/settlement/recovery.md": "8b195819b102971152bb155def8d1298e67ef463e7727296b9bbc2c7f8557f89"
+  },
+  "result": {
+    "total": 20,
+    "unproved": [],
+    "exhausted": [],
+    "resting": {},
+    "errors": []
+  },
+  "simulations": [
+    {
+      "step": "step",
+      "seed": 812,
+      "command": "seed 157218679962592; to simulate again: pnpm exec quint run gen/settlement__recovery.run.qnt --main settlement__recovery_run --step step --invariant inv --max-samples 250 --max-steps 25 --mbt --seed 157218679962592",
+      "broken": false,
+      "traces": 100,
+      "events": [
+        "requestChange",
+        "consent",
+        "retire",
+        "presentSuccessor",
+        "successorPaid",
+        "oldWins"
+      ],
+      "goals": [
+        "sometimesSuccessor",
+        "sometimesOldWinner",
+        "sometimesSuccessorWinner"
+      ]
+    },
+    {
+      "step": "probe",
+      "seed": 813,
+      "command": "seed 12143645536148; to simulate again: pnpm exec quint run gen/settlement__recovery.run.qnt --main settlement__recovery_run --step probe --invariant inv --max-samples 250 --max-steps 25 --mbt --seed 12143645536148",
+      "broken": false,
+      "traces": 100,
+      "events": [
+        "oldWins",
+        "requestChange",
+        "consent",
+        "retire",
+        "presentSuccessor",
+        "successorPaid"
+      ],
+      "goals": [
+        "sometimesSuccessor",
+        "sometimesOldWinner",
+        "sometimesSuccessorWinner"
+      ]
+    }
+  ],
+  "journey": {
+    "events": [
+      [
+        {
+          "type": "requestChange",
+          "wallet": "new"
+        },
+        "wrong",
+        false
+      ],
+      [
+        {
+          "type": "requestChange",
+          "wallet": "new"
+        },
+        "reporter",
+        true
+      ],
+      [
+        {
+          "type": "consent",
+          "wallet": "new",
+          "consentRevision": 1
+        },
+        "reporter",
+        false
+      ],
+      [
+        {
+          "type": "consent",
+          "wallet": "new",
+          "consentRevision": 2
+        },
+        "reporter",
+        true
+      ],
+      [
+        {
+          "type": "presentSuccessor",
+          "request": 2
+        },
+        "reporter",
+        false
+      ],
+      [
+        {
+          "type": "retire",
+          "request": 1,
+          "retirement": "NoEvidence",
+          "height": 1
+        },
+        "reporter",
+        false
+      ],
+      [
+        {
+          "type": "retire",
+          "request": 1,
+          "retirement": "FinalizedFailure",
+          "height": 1
+        },
+        "reporter",
+        true
+      ],
+      [
+        {
+          "type": "oldWins",
+          "request": 1,
+          "height": 2
+        },
+        "reporter",
+        false
+      ],
+      [
+        {
+          "type": "presentSuccessor",
+          "request": 2
+        },
+        "reporter",
+        true
+      ],
+      [
+        {
+          "type": "successorPaid",
+          "request": 2,
+          "wallet": "old",
+          "height": 2
+        },
+        "reporter",
+        false
+      ],
+      [
+        {
+          "type": "successorPaid",
+          "request": 2,
+          "wallet": "new",
+          "height": 2
+        },
+        "reporter",
+        true
+      ]
+    ],
+    "finalState": {
+      "phase": "Paid",
+      "oldRequest": 1,
+      "newRequest": 2,
+      "oldWallet": "old",
+      "newWallet": "new",
+      "oldConsent": 1,
+      "newConsent": 2,
+      "retirement": "FinalizedFailure",
+      "evidenceHeight": 2,
+      "paidLeg": true,
+      "canonicalRequest": 2
+    }
+  },
+  "proofLog": "recovery-current-dafny.log",
+  "qualification": "The consent event uses consentRevision so the generated Dafny parameter cannot shadow the transition. A newly retired request requires current renewed consent, explicit retirement evidence and its height. The exact generated-core journey covers both refusal and canonical success."
+}

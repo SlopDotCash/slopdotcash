@@ -1,0 +1,5 @@
+{
+  "status": "superseded-by-final-sampling-weights",
+  "reason": "Simulation-only weights improve reachability of long referral paths; product rules and invalid examples are unchanged.",
+  "acceptance": false
+}

@@ -1,0 +1,41 @@
+{
+  "specHashes": {
+    "spec/settlement/money.md": "65d72012c72c335adddbb78d3934687c0fce7442ad51b5404090130af42a4c5b",
+    "spec/settlement/money.proof.dfy": "e587ba519b953cf1841085ae1b097e169521cc30d1199116b754a4efb0353bf7",
+    "spec/settlement/referralAccrual.md": "b5bf2ea5825a29e59cc2bd021ed3623fa6f07e5398e803b7dea0b0296254b135",
+    "spec/settlement/referralAccrual.proof.dfy": "f32c1766b92716912f5c2b881c943255346c08d8f76885e0a3d850ecb1c189e1"
+  },
+  "rows": [
+    {
+      "unit": "settlement__money.ts",
+      "sourceHashes": {
+        "spec/settlement/money.md": "65d72012c72c335adddbb78d3934687c0fce7442ad51b5404090130af42a4c5b",
+        "spec/settlement/money.proof.dfy": "e587ba519b953cf1841085ae1b097e169521cc30d1199116b754a4efb0353bf7"
+      },
+      "generatedDafnySha256": "0ddbfce51163214ff9e04257c4ddc430c692af1a9fe8ac645fc250f5a5159196",
+      "total": 38,
+      "unproved": [],
+      "exhausted": [],
+      "resting": {},
+      "errors": [],
+      "reusedVerifiedResult": "/tmp/slop-active-money-unit-gap"
+    },
+    {
+      "unit": "settlement__referralAccrual.ts",
+      "total": 191,
+      "unproved": [],
+      "exhausted": [],
+      "errors": [],
+      "resting": {},
+      "proofDafnySha256": "7bbdc03fcfa94e48963ad58052ed1c2aedcd9f561f9bfa0cdd868cec86051c93",
+      "proofSource": {
+        "file": "spec/settlement/referralAccrual.proof.dfy",
+        "sha256": "f32c1766b92716912f5c2b881c943255346c08d8f76885e0a3d850ecb1c189e1"
+      },
+      "checkedImportedLemmas": 38
+    }
+  ],
+  "proofLog": "formal/validation/finance/referral-accrual-proof-complete.log",
+  "proofLogSha256": "7ed463cc6c90e0301fd6e4cceb07dee2f6891e98e6a7aef40be58bf537fa4b12",
+  "note": "Canonical Vibestack proof imports the 38 checked shared money obligations from the hash-matched unit at f8a5bea8c."
+}

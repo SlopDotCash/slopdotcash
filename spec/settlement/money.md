@@ -35,6 +35,22 @@ pure def positiveAmount(a: Amount): bool = compareAmounts(a, zero) > 0
 pure def lawEqualReflexive(a: Amount): bool = equalAmounts(a, a)
 ```
 
+### Equivalent padded amounts have the same order against every other amount
+
+Trailing zero digits carry no value. Equality is symmetric, and replacing one
+operand with an equivalent padded representation preserves both orders of a
+comparison and every equality result. Every valid value is at least zero.
+
+```quint
+pure def lawEqualSymmetric(a: Amount, b: Amount): bool = equalAmounts(a, b) == equalAmounts(b, a)
+pure def lawEqualOrder(a: Amount, b: Amount, c: Amount): bool = equalAmounts(a, b) implies
+  compareAmounts(a, c) == compareAmounts(b, c) and compareAmounts(c, a) == compareAmounts(c, b)
+pure def lawEqualSubstitution(a: Amount, b: Amount, c: Amount): bool = equalAmounts(a, b) implies
+  (equalAmounts(a, c) == equalAmounts(b, c)) and (equalAmounts(c, a) == equalAmounts(c, b))
+pure def lawZeroOrder(a: Amount): bool = validAmount(a) implies
+  compareAmounts(a, zero) >= 0 and compareAmounts(zero, a) <= 0
+```
+
 ### Addition carries each limb and subtraction borrows each limb
 
 Subtraction is used only after the caller establishes that the minuend covers the subtrahend. These operations impose no asset-decimal convention. An invalid incoming limb vector is refused before a financial transition.
@@ -60,6 +76,80 @@ pure def subtractAmounts(a: Amount, b: Amount): Amount =
 pure def lawZeroIdentity(a: Amount): bool = validAmount(a) implies equalAmounts(addAmounts(a, zero), a)
 ```
 
+### Carry and borrow preserve valid base-unit digits
+
+A valid operand is a nonempty sequence of digits from zero to 999. Addition
+returns a valid amount, including when the final carry adds a limb.
+Subtraction produces valid digits. The caller still checks the minuend before
+using a subtraction as a financial amount.
+
+```quint
+pure def lawAdditionValid(a: Amount, b: Amount): bool =
+  (validAmount(a) and validAmount(b)) implies validAmount(addAmounts(a, b))
+pure def lawSubtractionValid(a: Amount, b: Amount): bool =
+  (validAmount(a) and validAmount(b)) implies validAmount(subtractAmounts(a, b))
+```
+
+### Addition is independent of operand order
+
+Reordering the operands preserves the exact sum, including its limb sequence.
+
+```quint
+pure def lawAddCommutative(a: Amount, b: Amount): bool = addAmounts(a, b) == addAmounts(b, a)
+```
+
+### Addition is positive exactly when at least one summand is positive
+
+All valid amounts are nonnegative. A positive share therefore makes the
+recipient total positive, even across trailing zero limbs.
+
+```quint
+pure def lawPositiveAddition(a: Amount, b: Amount): bool =
+  (validAmount(a) and validAmount(b)) implies
+    (positiveAmount(addAmounts(a, b)) == (positiveAmount(a) or positiveAmount(b)))
+```
+
+### Compatible amounts obey exact order, addition and subtraction
+
+Comparison gives the same order as the value of the digits, including zero
+padding. Adding the same valid amount preserves order and equivalent values.
+Subtraction reconstructs the original value once the subtrahend is added back.
+
+```quint
+pure def lawNumericOrderTotal(a: Amount, b: Amount): bool =
+  (validAmount(a) and validAmount(b)) implies
+    compareAmounts(a, b) >= -1 and compareAmounts(a, b) <= 1 and compareAmounts(a, b) == (0 - compareAmounts(b, a))
+pure def lawNumericOrderTransitive(a: Amount, b: Amount, c: Amount): bool =
+  (validAmount(a) and validAmount(b) and validAmount(c)) implies
+    ((compareAmounts(a, b) <= 0 and compareAmounts(b, c) <= 0) implies compareAmounts(a, c) <= 0)
+      and ((compareAmounts(a, b) < 0 and compareAmounts(b, c) <= 0) implies compareAmounts(a, c) < 0)
+      and ((compareAmounts(a, b) <= 0 and compareAmounts(b, c) < 0) implies compareAmounts(a, c) < 0)
+pure def lawAddOrder(a: Amount, b: Amount, c: Amount): bool =
+  (validAmount(a) and validAmount(b) and validAmount(c)) implies
+    compareAmounts(addAmounts(a, c), addAmounts(b, c)) == compareAmounts(a, b)
+pure def lawUnitGap(a: Amount, b: Amount): bool =
+  (validAmount(a) and validAmount(b) and compareAmounts(a, b) < 0) implies
+    compareAmounts(addAmounts(a, List(1)), b) <= 0
+pure def lawAddMonotone(a: Amount, b: Amount): bool =
+  (validAmount(a) and validAmount(b)) implies compareAmounts(addAmounts(a, b), a) >= 0
+pure def lawAddCongruence(a: Amount, b: Amount, c: Amount): bool =
+  (validAmount(a) and validAmount(b) and validAmount(c) and equalAmounts(a, b)) implies
+    equalAmounts(addAmounts(a, c), addAmounts(b, c)) and equalAmounts(addAmounts(c, a), addAmounts(c, b))
+pure def lawAddAssociative(a: Amount, b: Amount, c: Amount): bool =
+  (validAmount(a) and validAmount(b) and validAmount(c)) implies
+    equalAmounts(addAmounts(addAmounts(a, b), c), addAmounts(a, addAmounts(b, c)))
+pure def lawSubtractionReconstructs(a: Amount, b: Amount): bool =
+  (validAmount(a) and validAmount(b) and compareAmounts(a, b) >= 0) implies
+    equalAmounts(addAmounts(subtractAmounts(a, b), b), a)
+pure def lawSubtractCongruence(a: Amount, b: Amount, c: Amount): bool =
+  (validAmount(a) and validAmount(b) and validAmount(c) and equalAmounts(a, b)) implies
+    ((compareAmounts(a, c) >= 0) implies equalAmounts(subtractAmounts(a, c), subtractAmounts(b, c)))
+      and ((compareAmounts(c, a) >= 0) implies equalAmounts(subtractAmounts(c, a), subtractAmounts(c, b)))
+pure def lawSubtractionAtMost(a: Amount, b: Amount): bool =
+  (validAmount(a) and validAmount(b) and compareAmounts(a, b) >= 0) implies
+    compareAmounts(subtractAmounts(a, b), a) <= 0
+```
+
 ### Ordinary fees round upward and private splits require exact division
 
 Scalar compatibility helpers retain existing safe-integer callers. Full-width fee and allocation operations below use limb arithmetic. A one-unit ordinary award has zero net. A private 75/25 award requires exact quarter division and never adds the ordinary fee.
@@ -71,6 +161,20 @@ pure def privateResearcher(scalarGross: int): int = if (scalarGross >= 0 and sca
 pure def privateSponsor(scalarGross: int): int = if (scalarGross >= 0 and scalarGross % 4 == 0) scalarGross / 4 else 0
 pure def lawOrdinaryConservation(scalarGross: int): bool = scalarGross >= 0 implies ordinaryNet(scalarGross) + ordinaryFee(scalarGross) == scalarGross
 pure def lawPrivateConservation(scalarGross: int): bool = (scalarGross >= 0 and scalarGross % 4 == 0) implies privateResearcher(scalarGross) + privateSponsor(scalarGross) == scalarGross
+```
+
+### Contract amounts stay inside the unsigned integer range of their network
+
+EVM escrow counters and amounts are `uint128`; Solana program amounts are
+`u64`. D1 stores the same base units. An amount above the network maximum
+cannot be represented on chain and is refused before any obligation, cap,
+allocation or deposit uses it.
+
+```quint
+pure val maxU64: Amount = List(615, 551, 709, 73, 744, 446, 18)
+pure val maxU128: Amount = List(455, 211, 768, 431, 607, 374, 463, 463, 938, 920, 366, 282, 340)
+pure def withinMaximum(a: Amount, maximum: Amount): bool = validAmount(a) and compareAmounts(a, maximum) <= 0
+pure def lawRangeIsValid(a: Amount, maximum: Amount): bool = withinMaximum(a, maximum) implies validAmount(a)
 ```
 
 ## Story: Admit the exact supported token behavior
@@ -118,28 +222,56 @@ pure def reverseAmount(a: Amount): Amount = a.foldl(List(), (acc, digit) => List
 pure def lawMultiplyOne(a: Amount): bool = validAmount(a) implies equalAmounts(multiplyAmounts(a, List(1)), a)
 ```
 
+### Full-width products preserve value, distributivity, and exact cancellation
+
+Equivalent limb vectors produce equivalent products. Multiplication by a
+positive valid amount is injective over valid amounts and distributes over
+addition. Division by one preserves the dividend and leaves zero remainder.
+
+```quint
+pure def lawMultiplyCongruence(a: Amount, b: Amount, c: Amount): bool =
+  (validAmount(a) and validAmount(b) and validAmount(c) and equalAmounts(a, b)) implies
+    equalAmounts(multiplyAmounts(a, c), multiplyAmounts(b, c)) and equalAmounts(multiplyAmounts(c, a), multiplyAmounts(c, b))
+pure def lawMultiplyCommutative(a: Amount, b: Amount): bool =
+  (validAmount(a) and validAmount(b)) implies equalAmounts(multiplyAmounts(a, b), multiplyAmounts(b, a))
+pure def lawMultiplyAddition(a: Amount, b: Amount, c: Amount): bool =
+  (validAmount(a) and validAmount(b) and validAmount(c)) implies
+    equalAmounts(multiplyAmounts(a, addAmounts(b, c)), addAmounts(multiplyAmounts(a, b), multiplyAmounts(a, c)))
+pure def lawMultiplyCancellation(a: Amount, b: Amount, c: Amount): bool =
+  (validAmount(a) and validAmount(b) and validAmount(c) and positiveAmount(c)) implies
+    compareAmounts(multiplyAmounts(a, c), multiplyAmounts(b, c)) == compareAmounts(a, b)
+pure def lawMultiplyZero(a: Amount): bool = validAmount(a) implies
+  equalAmounts(multiplyAmounts(a, zero), zero) and equalAmounts(multiplyAmounts(zero, a), zero)
+pure def lawDivisionByOne(a: Amount): bool = validAmount(a) implies
+  equalAmounts(divideAmounts(a, List(1)).quotient, a) and equalAmounts(divideAmounts(a, List(1)).remainder, zero)
+```
+
 ### Long division chooses each quotient limb by ten fixed binary decisions
 
 The dividend is processed from its most significant limb. The prior remainder is below the divisor, so bringing down one base-1000 limb yields a quotient digit below 1000. The bit decisions select the largest digit whose product fits. Division by zero returns the input as remainder and a zero quotient, and financial callers require a positive divisor.
 
 ```quint
+pure val quotientBits = List(512, 256, 128, 64, 32, 16, 8, 4, 2, 1)
+pure def quotientCandidate(digit: int, bit: int, partial: Amount, divisor: Amount): int =
+  if (digit + bit < 1000 and compareAmounts(multiplySmall(divisor, digit + bit), partial) <= 0) digit + bit else digit
 pure def quotientDigit(partial: Amount, divisor: Amount): int =
-  List(512, 256, 128, 64, 32, 16, 8, 4, 2, 1).foldl(0, (digit, bit) =>
-    if (digit + bit < 1000 and compareAmounts(multiplySmall(divisor, digit + bit), partial) <= 0)
-      digit + bit else digit)
+  quotientBits.foldl(0, (digit, bit) => quotientCandidate(digit, bit, partial, divisor))
+pure def divisionStep(acc: Division, nextDigit: int, divisor: Amount): Division =
+  val broughtDown = List(nextDigit).concat(acc.remainder)
+  val selected = quotientDigit(broughtDown, divisor)
+  { quotient: acc.quotient.append(selected),
+    remainder: subtractAmounts(broughtDown, multiplySmall(divisor, selected)) }
 pure def divideAmounts(dividend: Amount, divisor: Amount): Division =
-  val divided = reverseAmount(dividend).foldl({ quotient: List(), remainder: zero }, (acc, digit) => {
-    quotient: acc.quotient.append(quotientDigit(List(digit).concat(acc.remainder), divisor)),
-    remainder: subtractAmounts(List(digit).concat(acc.remainder),
-      multiplySmall(divisor, quotientDigit(List(digit).concat(acc.remainder), divisor)))
-  })
+  val divided = reverseAmount(dividend).foldl({ quotient: List(), remainder: zero },
+    (acc, digit) => divisionStep(acc, digit, divisor))
   if (not(positiveAmount(divisor))) { quotient: zero, remainder: dividend }
   else { quotient: reverseAmount(divided.quotient), remainder: divided.remainder }
-pure val aValues = Set(List(0), List(1), List(999), List(0, 1), List(999, 999), List(123, 456, 789, 123, 456, 789, 1))
-pure val bValues = Set(List(1), List(2), List(50), List(999), List(0, 1), List(5, 12))
+pure val aValues = Set(List(0), List(1), List(999), List(0, 1), List(999, 1))
+pure val bValues = Set(List(1), List(2), List(50), List(999), List(0, 1))
 pure def lawDivisionReconstructs(a: Amount, b: Amount): bool =
+  val divided = divideAmounts(a, b)
   (validAmount(a) and validAmount(b) and positiveAmount(b)) implies
-    equalAmounts(addAmounts(multiplyAmounts(divideAmounts(a, b).quotient, b), divideAmounts(a, b).remainder), a)
+    equalAmounts(addAmounts(multiplyAmounts(divided.quotient, b), divided.remainder), a)
 pure def lawDivisionRemainder(a: Amount, b: Amount): bool =
   (validAmount(a) and validAmount(b) and positiveAmount(b)) implies
     compareAmounts(divideAmounts(a, b).remainder, b) < 0
@@ -161,10 +293,32 @@ pure def lawFullPrivateConservation(a: Amount): bool = privateSplitPossible(a) i
   equalAmounts(addAmounts(privateFeeAmount(a), privateResearcherAmount(a)), a)
 ```
 
+### Multiplication, division and derived fees preserve valid limb representations
+
+Products, quotient, remainder and fees retain nonempty base-1000 limbs.
+A single-limb multiplication factor must be between zero and 999.
+
+```quint
+pure def lawMultiplySmallValid(a: Amount, factor: int): bool =
+  (validAmount(a) and factor >= 0 and factor < 1000) implies validAmount(multiplySmall(a, factor))
+pure def lawMultiplyValid(a: Amount, b: Amount): bool =
+  (validAmount(a) and validAmount(b)) implies validAmount(multiplyAmounts(a, b))
+pure def lawDivisionValid(a: Amount, b: Amount): bool =
+  val divided = divideAmounts(a, b)
+  (validAmount(a) and validAmount(b)) implies validAmount(divided.quotient) and validAmount(divided.remainder)
+pure def lawOrdinaryAmountsValid(a: Amount): bool =
+  validAmount(a) implies validAmount(ordinaryFeeAmount(a)) and validAmount(ordinaryNetAmount(a))
+pure def lawPrivateAmountsValid(a: Amount): bool =
+  validAmount(a) implies validAmount(privateFeeAmount(a)) and validAmount(privateResearcherAmount(a))
+```
+
 ### Simulation samples exercise missing, matching and conflicting evidence
 
-These input sets bound simulation only. The generated guards accept every
-value allowed by their declared types and product rules.
+These input sets bound simulation only. Routine random exploration uses at
+most two limbs so arithmetic does not dominate state coverage. Independent
+BigInt differential cases and guided journeys cover values through 2^256 - 1.
+General proofs quantify over arbitrary-length amounts. The generated guards
+accept every value allowed by their declared types and product rules.
 
 ```quint
 pure val assetValues = Set("", "a", "b")
@@ -175,7 +329,7 @@ pure val expectedNetworkValues = Set("", "a", "b")
 pure val expectedProgramValues = Set("", "a", "b")
 pure val factorValues = Set(0, 1, 2)
 pure val scalarGrossValues = Set(0, 1, 2, 49, 50, 51)
-pure val grossValues = Set(List(0), List(1), List(4), List(50), List(0, 0, 0, 0, 0, 0, 1))
+pure val grossValues = Set(List(0), List(1), List(4), List(50), List(0, 1))
 pure val mintBytesValues = Set(0, 1, 2)
 pure val nValues = Set(0, 1, 2)
 pure val networkValues = Set("", "a", "b")

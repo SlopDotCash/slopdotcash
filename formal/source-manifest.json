@@ -7,9 +7,10 @@
     "repository": "SlopDotCash/slopdotcash",
     "requestedBranch": "develop",
     "resolvedBranch": "development",
-    "commit": "cde1f719cda7fc52a0f26dcbbcd524cd2cd7c138",
+    "commit": "5268ca066dfc67251715eceaa5c1e943b80a0b6c",
     "path": "docs/slop-product-requirements.md",
-    "sha256": "b3a8651f7f76e82844d01ede99676de7854f59de0774880dff80be89cc1a0c5b"
+    "sha256": "84dec2d53b1a2cf670265bd3954c68ca6d7a5b548721ea3d60e4e903ceec95a7",
+    "matchingMainCommit": "ee1a4b2cd2672245537928380e425f5bd9ecb994"
   },
   "legacyModels": {
     "repository": "SlopDotCash/slopdotcash",
@@ -24,5 +25,14 @@
       "source": "User reply in migration chat",
       "decision": "New project automatic-closure control starts unchecked. Missing consent remains false."
     }
-  ]
+  ],
+  "initialRequirements": {
+    "repository": "SlopDotCash/slopdotcash",
+    "requestedBranch": "develop",
+    "resolvedBranch": "development",
+    "commit": "cde1f719cda7fc52a0f26dcbbcd524cd2cd7c138",
+    "path": "docs/slop-product-requirements.md",
+    "sha256": "b3a8651f7f76e82844d01ede99676de7854f59de0774880dff80be89cc1a0c5b"
+  },
+  "latestAuditedApplicationMain": "ee1a4b2cd2672245537928380e425f5bd9ecb994"
 }

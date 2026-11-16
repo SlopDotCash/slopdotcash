@@ -1,0 +1,552 @@
+{
+  "source": "spec/frontend/provisionalVault.md",
+  "sourceSha256": "28e2a302434d78130683df1ae76586cc128ecc68737c9fc1a6f2ee1266c4d215",
+  "legacyMain": "e96069ce2a403588ca2129b1ebb943f7bb0972a6",
+  "scope": "Model, generated replay and proof. Chain, wallet, browser and storage conformance remain open.",
+  "model": "passed",
+  "proof": {
+    "total": 107,
+    "unproved": [],
+    "exhausted": [],
+    "resting": {},
+    "errors": []
+  },
+  "simulation": {
+    "command": "seed 264384910310862; to simulate again: pnpm exec quint run gen/frontend__provisionalVault.run.qnt --main frontend__provisionalVault_run --step step --invariant inv --max-samples 300 --max-steps 20 --mbt --seed 264384910310862",
+    "replayed": 25
+  },
+  "witnesses": {
+    "sometimesProvisional": {
+      "check": "seed 264384910310862; to simulate again: pnpm exec quint run gen/frontend__provisionalVault.run.qnt --main frontend__provisionalVault_run --step step --invariant inv --max-samples 300 --max-steps 20 --mbt --seed 264384910310862",
+      "events": [
+        {
+          "type": "includeCreation",
+          "block": 1
+        },
+        {
+          "type": "checkCreation",
+          "readOk": true
+        },
+        {
+          "type": "openPrompt",
+          "by": "owner"
+        },
+        {
+          "type": "sign",
+          "transaction": 2,
+          "by": "owner"
+        },
+        {
+          "type": "includeDeposit",
+          "transaction": 2,
+          "block": 2,
+          "evidence": "ExactDepositEvent"
+        },
+        {
+          "type": "checkCreation",
+          "readOk": true
+        },
+        {
+          "type": "checkDeposit"
+        },
+        {
+          "type": "replaceCreation"
+        },
+        {
+          "type": "includeCreation",
+          "block": 1
+        },
+        {
+          "type": "includeDeposit",
+          "transaction": 2,
+          "block": 2,
+          "evidence": "ExactDepositEvent"
+        },
+        {
+          "type": "replaceCreation"
+        },
+        {
+          "type": "includeDeposit",
+          "transaction": 2,
+          "block": 2,
+          "evidence": "VerifiedAbsentCode"
+        },
+        {
+          "type": "finalizeDeposit",
+          "transaction": 2,
+          "block": 2
+        },
+        {
+          "type": "checkDeposit"
+        },
+        {
+          "type": "reviewCreation",
+          "kind": "BountyEvm",
+          "matching": true
+        },
+        {
+          "type": "checkCreation",
+          "readOk": false
+        },
+        {
+          "type": "checkCreation",
+          "readOk": true
+        },
+        {
+          "type": "reload"
+        },
+        {
+          "type": "includeCreation",
+          "block": 2
+        },
+        {
+          "type": "replaceCreation"
+        }
+      ]
+    },
+    "sometimesReplaced": {
+      "check": "seed 264384910310862; to simulate again: pnpm exec quint run gen/frontend__provisionalVault.run.qnt --main frontend__provisionalVault_run --step step --invariant inv --max-samples 300 --max-steps 20 --mbt --seed 264384910310862",
+      "events": [
+        {
+          "type": "includeCreation",
+          "block": 1
+        },
+        {
+          "type": "checkCreation",
+          "readOk": true
+        },
+        {
+          "type": "openPrompt",
+          "by": "owner"
+        },
+        {
+          "type": "sign",
+          "transaction": 2,
+          "by": "owner"
+        },
+        {
+          "type": "includeDeposit",
+          "transaction": 2,
+          "block": 2,
+          "evidence": "ExactDepositEvent"
+        },
+        {
+          "type": "checkCreation",
+          "readOk": true
+        },
+        {
+          "type": "checkDeposit"
+        },
+        {
+          "type": "replaceCreation"
+        },
+        {
+          "type": "includeCreation",
+          "block": 1
+        },
+        {
+          "type": "includeDeposit",
+          "transaction": 2,
+          "block": 2,
+          "evidence": "ExactDepositEvent"
+        },
+        {
+          "type": "replaceCreation"
+        },
+        {
+          "type": "includeDeposit",
+          "transaction": 2,
+          "block": 2,
+          "evidence": "VerifiedAbsentCode"
+        },
+        {
+          "type": "finalizeDeposit",
+          "transaction": 2,
+          "block": 2
+        },
+        {
+          "type": "checkDeposit"
+        },
+        {
+          "type": "reviewCreation",
+          "kind": "BountyEvm",
+          "matching": true
+        },
+        {
+          "type": "checkCreation",
+          "readOk": false
+        },
+        {
+          "type": "checkCreation",
+          "readOk": true
+        },
+        {
+          "type": "reload"
+        },
+        {
+          "type": "includeCreation",
+          "block": 2
+        },
+        {
+          "type": "replaceCreation"
+        }
+      ]
+    },
+    "sometimesPendingTransfer": {
+      "check": "seed 264384910310862; to simulate again: pnpm exec quint run gen/frontend__provisionalVault.run.qnt --main frontend__provisionalVault_run --step step --invariant inv --max-samples 300 --max-steps 20 --mbt --seed 264384910310862",
+      "events": [
+        {
+          "type": "includeCreation",
+          "block": 1
+        },
+        {
+          "type": "checkCreation",
+          "readOk": true
+        },
+        {
+          "type": "openPrompt",
+          "by": "owner"
+        },
+        {
+          "type": "sign",
+          "transaction": 2,
+          "by": "owner"
+        },
+        {
+          "type": "includeDeposit",
+          "transaction": 2,
+          "block": 2,
+          "evidence": "ExactDepositEvent"
+        },
+        {
+          "type": "checkCreation",
+          "readOk": true
+        },
+        {
+          "type": "checkDeposit"
+        },
+        {
+          "type": "replaceCreation"
+        },
+        {
+          "type": "includeCreation",
+          "block": 1
+        },
+        {
+          "type": "includeDeposit",
+          "transaction": 2,
+          "block": 2,
+          "evidence": "ExactDepositEvent"
+        },
+        {
+          "type": "replaceCreation"
+        },
+        {
+          "type": "includeDeposit",
+          "transaction": 2,
+          "block": 2,
+          "evidence": "VerifiedAbsentCode"
+        },
+        {
+          "type": "finalizeDeposit",
+          "transaction": 2,
+          "block": 2
+        },
+        {
+          "type": "checkDeposit"
+        },
+        {
+          "type": "reviewCreation",
+          "kind": "BountyEvm",
+          "matching": true
+        },
+        {
+          "type": "checkCreation",
+          "readOk": false
+        },
+        {
+          "type": "checkCreation",
+          "readOk": true
+        },
+        {
+          "type": "reload"
+        },
+        {
+          "type": "includeCreation",
+          "block": 2
+        },
+        {
+          "type": "replaceCreation"
+        }
+      ]
+    },
+    "sometimesVerifiedBeforeRegistration": {
+      "check": "seed 89318188519319; to simulate again: pnpm exec quint run gen/frontend__provisionalVault.run.qnt --main frontend__provisionalVault_run --step step --invariant never_sometimesVerifiedBeforeRegistration --max-samples 200 --max-steps 30 --mbt --seed 89318188519319",
+      "events": [
+        {
+          "type": "reviewCreation",
+          "kind": "BountyEvm",
+          "matching": false
+        },
+        {
+          "type": "includeCreation",
+          "block": 1
+        },
+        {
+          "type": "replaceCreation"
+        },
+        {
+          "type": "reload"
+        },
+        {
+          "type": "reload"
+        },
+        {
+          "type": "reload"
+        },
+        {
+          "type": "reviewCreation",
+          "kind": "OrdinaryEvmToken",
+          "matching": true
+        },
+        {
+          "type": "includeCreation",
+          "block": 2
+        },
+        {
+          "type": "replaceCreation"
+        },
+        {
+          "type": "reviewCreation",
+          "kind": "EvmNative",
+          "matching": false
+        },
+        {
+          "type": "includeCreation",
+          "block": 2
+        },
+        {
+          "type": "reload"
+        },
+        {
+          "type": "replaceCreation"
+        },
+        {
+          "type": "reviewCreation",
+          "kind": "OrdinaryEvmToken",
+          "matching": true
+        },
+        {
+          "type": "checkCreation",
+          "readOk": false
+        },
+        {
+          "type": "checkCreation",
+          "readOk": true
+        },
+        {
+          "type": "reload"
+        },
+        {
+          "type": "reload"
+        },
+        {
+          "type": "checkCreation",
+          "readOk": false
+        },
+        {
+          "type": "reload"
+        },
+        {
+          "type": "reload"
+        },
+        {
+          "type": "includeCreation",
+          "block": 1
+        },
+        {
+          "type": "reload"
+        },
+        {
+          "type": "checkCreation",
+          "readOk": true
+        },
+        {
+          "type": "finalizeCreation",
+          "block": 1
+        },
+        {
+          "type": "openPrompt",
+          "by": "owner"
+        },
+        {
+          "type": "sign",
+          "transaction": 2,
+          "by": "owner"
+        },
+        {
+          "type": "includeDeposit",
+          "transaction": 2,
+          "block": 2,
+          "evidence": "ExactDepositEvent"
+        },
+        {
+          "type": "finalizeDeposit",
+          "transaction": 2,
+          "block": 2
+        },
+        {
+          "type": "checkDeposit"
+        }
+      ]
+    },
+    "sometimesCounted": {
+      "check": "seed 17044541295286; to simulate again: pnpm exec quint run gen/frontend__provisionalVault.run.qnt --main frontend__provisionalVault_run --step step --invariant never_sometimesCounted --max-samples 375 --max-steps 16 --mbt --seed 17044541295286",
+      "events": [
+        {
+          "type": "includeCreation",
+          "block": 2
+        },
+        {
+          "type": "finalizeCreation",
+          "block": 2
+        },
+        {
+          "type": "checkCreation",
+          "readOk": true
+        },
+        {
+          "type": "openPrompt",
+          "by": "owner"
+        },
+        {
+          "type": "sign",
+          "transaction": 2,
+          "by": "owner"
+        },
+        {
+          "type": "includeDeposit",
+          "transaction": 2,
+          "block": 2,
+          "evidence": "ExactDepositEvent"
+        },
+        {
+          "type": "checkDeposit"
+        },
+        {
+          "type": "finalizeDeposit",
+          "transaction": 2,
+          "block": 2
+        },
+        {
+          "type": "checkDeposit"
+        },
+        {
+          "type": "reload"
+        },
+        {
+          "type": "countDeposit"
+        }
+      ]
+    },
+    "sometimesNoVault": {
+      "check": "seed 264384910310862; to simulate again: pnpm exec quint run gen/frontend__provisionalVault.run.qnt --main frontend__provisionalVault_run --step step --invariant inv --max-samples 300 --max-steps 20 --mbt --seed 264384910310862",
+      "events": [
+        {
+          "type": "includeCreation",
+          "block": 1
+        },
+        {
+          "type": "checkCreation",
+          "readOk": true
+        },
+        {
+          "type": "openPrompt",
+          "by": "owner"
+        },
+        {
+          "type": "sign",
+          "transaction": 2,
+          "by": "owner"
+        },
+        {
+          "type": "includeDeposit",
+          "transaction": 2,
+          "block": 2,
+          "evidence": "ExactDepositEvent"
+        },
+        {
+          "type": "checkCreation",
+          "readOk": true
+        },
+        {
+          "type": "checkDeposit"
+        },
+        {
+          "type": "replaceCreation"
+        },
+        {
+          "type": "includeCreation",
+          "block": 1
+        },
+        {
+          "type": "includeDeposit",
+          "transaction": 2,
+          "block": 2,
+          "evidence": "ExactDepositEvent"
+        },
+        {
+          "type": "replaceCreation"
+        },
+        {
+          "type": "includeDeposit",
+          "transaction": 2,
+          "block": 2,
+          "evidence": "VerifiedAbsentCode"
+        },
+        {
+          "type": "finalizeDeposit",
+          "transaction": 2,
+          "block": 2
+        },
+        {
+          "type": "checkDeposit"
+        },
+        {
+          "type": "reviewCreation",
+          "kind": "BountyEvm",
+          "matching": true
+        },
+        {
+          "type": "checkCreation",
+          "readOk": false
+        },
+        {
+          "type": "checkCreation",
+          "readOk": true
+        },
+        {
+          "type": "reload"
+        },
+        {
+          "type": "includeCreation",
+          "block": 2
+        },
+        {
+          "type": "replaceCreation"
+        }
+      ]
+    }
+  },
+  "directed": [
+    "owner only",
+    "prompt protects registration",
+    "included before finalized",
+    "dropped creation",
+    "empty address no vault",
+    "final deposit before registration",
+    "duplicate count refusal",
+    "ineligible vault kinds",
+    "outage preserves form"
+  ]
+}

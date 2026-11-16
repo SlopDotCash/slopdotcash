@@ -1,0 +1,126 @@
+{
+  "scope": "Focused models and generated replay. D1 atomicity, GitHub authorization, finalized RPC and normalized policy adapters require application conformance.",
+  "legacyMain": "6b3b9d0b979f0608d87941f1146056a98513ffcf",
+  "development": "0d0f0817a439df03cc022bf7aeed4bbe64ef4c65",
+  "sourceInputs": [
+    {
+      "path": "spec/settlement/money.md",
+      "sha256": "cb766a9b5b99f5509da5478ca15ecbe1c77a09127956d9524e7447c7d0939978"
+    },
+    {
+      "path": "spec/settlement/vaultSnapshots.md",
+      "sha256": "6be41ba1b57b67145b1776d3e03946f2d94dc711cae347416260612aa3b1ba1b"
+    }
+  ],
+  "results": {
+    "settlement__vaultSnapshots": {
+      "simulation": {
+        "command": "seed 150511568155212; to simulate again: pnpm exec quint run gen/settlement__vaultSnapshots.run.qnt --main settlement__vaultSnapshots_run --step step --invariant inv --max-samples 180 --max-steps 24 --mbt --seed 150511568155212",
+        "replayed": 20
+      },
+      "proof": {
+        "total": 62,
+        "unproved": [],
+        "exhausted": [],
+        "resting": {},
+        "errors": []
+      }
+    }
+  },
+  "directed": [
+    "registrationSeedsSnapshotTest",
+    "unavailableReadRetainsRegistrationTest",
+    "identityRefusalNeverSeedsTest",
+    "retrySeedsWithoutAnotherRevisionTest",
+    "failedWriteRetainsRegistrationTest",
+    "lostWriteReplyDoesNotProveMissingSnapshotTest",
+    "racingOlderBlockCannotReplaceNewerTest",
+    "racingSameBlockOlderTimeCannotReplaceTest",
+    "racingLowerCounterRefusesTest",
+    "privateAndOrdinaryStoresRemainSeparateTest",
+    "registrationRefusalCreatesNoSnapshotTest",
+    "priorReadFailureKeepsImmutableRegistrationTest",
+    "missingSnapshotRecoveryNeverAppendsRevisionTest",
+    "recoveryCannotSelectRetainedSnapshotTest",
+    "recoveryRefusesUnregisteredDeploymentTest",
+    "recoveryDoesNotSelectPrivateBountyTest",
+    "untrustedRecoveryCannotWriteTest",
+    "racingRegistrationDoesNotAppendTwiceTest",
+    "all five arbitrary-width counters refuse regression",
+    "nullable balance differs from zero and current balance may decrease",
+    "pending or included creation cannot register",
+    "wrong expected creation revision and payout purpose refuse",
+    "unfinalized totals refuse",
+    "matching genesis enables totals",
+    "missing genesis makes zero RPCs",
+    "wrong genesis makes at most one probe and no totals",
+    "older and newer trusted repair can race against regular writer",
+    "retained compatible reviewed revision can attach against captured current revision",
+    "incompatible retained reviewed revision and atomic current revision conflicts refuse",
+    "wrong network or transaction cannot replay existing registration"
+  ],
+  "reachability": {
+    "test": "reachableRecoveryTest",
+    "goals": [
+      "sometimesRegisteredWithoutObservation",
+      "sometimesStored",
+      "sometimesTrustedRecovery"
+    ],
+    "result": "passed",
+    "events": [
+      {
+        "type": "beginRegistration",
+        "requestId": 1,
+        "purpose": "Ordinary",
+        "network": "Solana",
+        "tx": "creation-one",
+        "expected": 1,
+        "authorized": true
+      },
+      {
+        "type": "checkCreation",
+        "requestId": 1,
+        "creation": "baseCreation with identity solana"
+      },
+      {
+        "type": "commitRegistration",
+        "requestId": 1,
+        "saved": true
+      },
+      {
+        "type": "observationFails",
+        "requestId": 1
+      },
+      {
+        "type": "beginRecovery",
+        "requestId": 2,
+        "trustedMain": true
+      },
+      {
+        "type": "pinGenesis",
+        "requestId": 2,
+        "pinnedRoot": "genesis"
+      },
+      {
+        "type": "checkGenesis",
+        "requestId": 2,
+        "seenRoot": "genesis"
+      },
+      {
+        "type": "readTotals",
+        "requestId": 2,
+        "observation": "solanaRead",
+        "finalized": true
+      },
+      {
+        "type": "readPrior",
+        "requestId": 2
+      },
+      {
+        "type": "write",
+        "requestId": 2,
+        "reply": "WriteAcknowledged"
+      }
+    ]
+  }
+}

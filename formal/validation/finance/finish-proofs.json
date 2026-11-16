@@ -1,0 +1,22 @@
+{
+  "snapshot": {
+    "spec/settlement/money.md": "cb766a9b5b99f5509da5478ca15ecbe1c77a09127956d9524e7447c7d0939978",
+    "spec/settlement/payment.md": "c9f0be82542055dd005b1f99a6526f0fed827acc603ad71441c8c000cc6fd8ae"
+  },
+  "results": [
+    {
+      "unit": "settlement__payment.ts",
+      "total": 90,
+      "unproved": [
+        "configure: (inv(p) ==> canConfigure(p, purpose, rail, gross) ==> alwaysCorrectFee(configure(p, purpose, rail, gross)))",
+        "configure: (inv(p) ==> canConfigure(p, purpose, rail, gross) ==> alwaysConserved(configure(p, purpose, rail, gross)))",
+        "step: inv(step(current, event, by_))"
+      ],
+      "errors": [],
+      "exhausted": [],
+      "proofFile": null,
+      "proofSha256": null,
+      "log": "formal/validation/finance/finish-settlement__payment.ts.log"
+    }
+  ]
+}

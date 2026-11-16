@@ -1,0 +1,492 @@
+{
+  "sourceHashes": {
+    "spec/backend/accounts.md": "ecd464884aa42edf59cf32aa6c738b9341a088be3fb27565bc6a61ffa1f92359",
+    "spec/backend/email.md": "50c35c43e69f5bc394e8b9678c225bd0bcbd6b76219d3b0bfbe36dc97358b28f"
+  },
+  "method": "Directed walks through generated parseEvent, enabled, step, inv and parseState.",
+  "scope": "Specification only. This does not execute a production OAuth, D1 or email adapter.",
+  "journeys": [
+    {
+      "name": "currentSignoutKeepsOtherSession",
+      "legacy": "api_accounts.currentSignoutTest",
+      "steps": [
+        {
+          "event": {
+            "type": "signIn",
+            "actorId": 1,
+            "handle": "login",
+            "sessionId": 1,
+            "expiresAt": 10,
+            "oauthVerified": true,
+            "disclosed": true
+          },
+          "by": 1,
+          "accepted": true
+        },
+        {
+          "event": {
+            "type": "signIn",
+            "actorId": 1,
+            "handle": "login",
+            "sessionId": 2,
+            "expiresAt": 10,
+            "oauthVerified": true,
+            "disclosed": true
+          },
+          "by": 1,
+          "accepted": true
+        },
+        {
+          "event": {
+            "type": "endSession",
+            "currentSession": 1
+          },
+          "by": 1,
+          "accepted": true
+        },
+        {
+          "event": {
+            "type": "endSession",
+            "currentSession": 1
+          },
+          "by": 1,
+          "accepted": false
+        }
+      ],
+      "final": {
+        "membership": "Open",
+        "sessionStates": [
+          "RevokedSession",
+          "ActiveSession",
+          "UnknownSession"
+        ],
+        "hasLinkedX": false,
+        "reservations": [],
+        "closureCount": 0,
+        "hasVerifiedEmail": false,
+        "pendingVerification": false,
+        "activityConsent": false,
+        "securityConsent": false
+      }
+    },
+    {
+      "name": "targetedRevocationRetainsCallerAndRejectsForeignActor",
+      "legacy": "api_accounts.revoke",
+      "steps": [
+        {
+          "event": {
+            "type": "signIn",
+            "actorId": 1,
+            "handle": "login",
+            "sessionId": 1,
+            "expiresAt": 10,
+            "oauthVerified": true,
+            "disclosed": true
+          },
+          "by": 1,
+          "accepted": true
+        },
+        {
+          "event": {
+            "type": "signIn",
+            "actorId": 1,
+            "handle": "login",
+            "sessionId": 2,
+            "expiresAt": 10,
+            "oauthVerified": true,
+            "disclosed": true
+          },
+          "by": 1,
+          "accepted": true
+        },
+        {
+          "event": {
+            "type": "revokeSession",
+            "currentSession": 1,
+            "targetSession": 2
+          },
+          "by": 2,
+          "accepted": false
+        },
+        {
+          "event": {
+            "type": "revokeSession",
+            "currentSession": 1,
+            "targetSession": 2
+          },
+          "by": 1,
+          "accepted": true
+        }
+      ],
+      "final": {
+        "membership": "Open",
+        "sessionStates": [
+          "ActiveSession",
+          "RevokedSession",
+          "UnknownSession"
+        ],
+        "hasLinkedX": false,
+        "reservations": [],
+        "closureCount": 0,
+        "hasVerifiedEmail": false,
+        "pendingVerification": false,
+        "activityConsent": false,
+        "securityConsent": false
+      }
+    },
+    {
+      "name": "expiryUsesExactDeadline",
+      "legacy": "PRD section 3 read and revocation requirements",
+      "steps": [
+        {
+          "event": {
+            "type": "signIn",
+            "actorId": 1,
+            "handle": "login",
+            "sessionId": 1,
+            "expiresAt": 2,
+            "oauthVerified": true,
+            "disclosed": true
+          },
+          "by": 1,
+          "accepted": true
+        },
+        {
+          "event": {
+            "type": "signIn",
+            "actorId": 1,
+            "handle": "login",
+            "sessionId": 2,
+            "expiresAt": 4,
+            "oauthVerified": true,
+            "disclosed": true
+          },
+          "by": 1,
+          "accepted": true
+        },
+        {
+          "event": {
+            "type": "advanceTime",
+            "now": 2
+          },
+          "by": 1,
+          "accepted": true
+        },
+        {
+          "event": {
+            "type": "close",
+            "currentSession": 1,
+            "confirmation": "login"
+          },
+          "by": 1,
+          "accepted": false
+        }
+      ],
+      "final": {
+        "membership": "Open",
+        "sessionStates": [
+          "ExpiredSession",
+          "ActiveSession",
+          "UnknownSession"
+        ],
+        "hasLinkedX": false,
+        "reservations": [],
+        "closureCount": 0,
+        "hasVerifiedEmail": false,
+        "pendingVerification": false,
+        "activityConsent": false,
+        "securityConsent": false
+      }
+    },
+    {
+      "name": "closureWithdrawsHouseholdStateAndReopenDoesNotRestoreIt",
+      "legacy": "api_accounts.closureTest + reopenTest, account close handler",
+      "steps": [
+        {
+          "event": {
+            "type": "signIn",
+            "actorId": 1,
+            "handle": "login",
+            "sessionId": 1,
+            "expiresAt": 10,
+            "oauthVerified": true,
+            "disclosed": true
+          },
+          "by": 1,
+          "accepted": true
+        },
+        {
+          "event": {
+            "type": "signIn",
+            "actorId": 1,
+            "handle": "login",
+            "sessionId": 2,
+            "expiresAt": 10,
+            "oauthVerified": true,
+            "disclosed": true
+          },
+          "by": 1,
+          "accepted": true
+        },
+        {
+          "event": {
+            "type": "connectX",
+            "currentSession": 1,
+            "xId": "123456789012345678901234567890",
+            "oauthVerified": true,
+            "reservationOwned": true,
+            "disclosed": true
+          },
+          "by": 1,
+          "accepted": true
+        },
+        {
+          "event": {
+            "type": "enrollEmail",
+            "currentSession": 1,
+            "address": "first",
+            "digest": "token-1",
+            "expiresAt": 8
+          },
+          "by": 1,
+          "accepted": true
+        },
+        {
+          "event": {
+            "type": "verifyEmail",
+            "currentSession": 1,
+            "digest": "token-1"
+          },
+          "by": 1,
+          "accepted": true
+        },
+        {
+          "event": {
+            "type": "setEmailConsent",
+            "currentSession": 1,
+            "security": true,
+            "activity": true
+          },
+          "by": 1,
+          "accepted": true
+        },
+        {
+          "event": {
+            "type": "enrollEmail",
+            "currentSession": 1,
+            "address": "second",
+            "digest": "token-2",
+            "expiresAt": 8
+          },
+          "by": 1,
+          "accepted": true
+        },
+        {
+          "event": {
+            "type": "close",
+            "currentSession": 1,
+            "confirmation": "wrong"
+          },
+          "by": 1,
+          "accepted": false
+        },
+        {
+          "event": {
+            "type": "close",
+            "currentSession": 1,
+            "confirmation": "login"
+          },
+          "by": 2,
+          "accepted": false
+        },
+        {
+          "event": {
+            "type": "close",
+            "currentSession": 1,
+            "confirmation": "login"
+          },
+          "by": 1,
+          "accepted": true
+        },
+        {
+          "event": {
+            "type": "signIn",
+            "actorId": 1,
+            "handle": "login",
+            "sessionId": 3,
+            "expiresAt": 10,
+            "oauthVerified": true,
+            "disclosed": true
+          },
+          "by": 1,
+          "accepted": false
+        },
+        {
+          "event": {
+            "type": "reopen",
+            "handle": "login",
+            "sessionId": 2,
+            "expiresAt": 10,
+            "oauthVerified": true,
+            "disclosed": true
+          },
+          "by": 1,
+          "accepted": false
+        },
+        {
+          "event": {
+            "type": "reopen",
+            "handle": "login",
+            "sessionId": 3,
+            "expiresAt": 10,
+            "oauthVerified": true,
+            "disclosed": true
+          },
+          "by": 1,
+          "accepted": true
+        },
+        {
+          "event": {
+            "type": "verifyEmail",
+            "currentSession": 3,
+            "digest": "token-2"
+          },
+          "by": 1,
+          "accepted": false
+        },
+        {
+          "event": {
+            "type": "connectX",
+            "currentSession": 1,
+            "xId": "123456789012345678901234567890",
+            "oauthVerified": true,
+            "reservationOwned": true,
+            "disclosed": true
+          },
+          "by": 1,
+          "accepted": false
+        },
+        {
+          "event": {
+            "type": "connectX",
+            "currentSession": 3,
+            "xId": "123456789012345678901234567890",
+            "oauthVerified": true,
+            "reservationOwned": true,
+            "disclosed": true
+          },
+          "by": 1,
+          "accepted": true
+        }
+      ],
+      "final": {
+        "membership": "Open",
+        "sessionStates": [
+          "UnknownSession",
+          "UnknownSession",
+          "ActiveSession"
+        ],
+        "hasLinkedX": true,
+        "reservations": [
+          "123456789012345678901234567890"
+        ],
+        "closureCount": 1,
+        "hasVerifiedEmail": true,
+        "pendingVerification": false,
+        "activityConsent": false,
+        "securityConsent": false
+      }
+    },
+    {
+      "name": "ordinarySignInPublishesExistingLinkWithoutChangingMail",
+      "legacy": "PRD section 3 visibility decision",
+      "steps": [
+        {
+          "event": {
+            "type": "signIn",
+            "actorId": 1,
+            "handle": "login",
+            "sessionId": 1,
+            "expiresAt": 10,
+            "oauthVerified": true,
+            "disclosed": true
+          },
+          "by": 1,
+          "accepted": true
+        },
+        {
+          "event": {
+            "type": "connectX",
+            "currentSession": 1,
+            "xId": "123456789012345678901234567890",
+            "oauthVerified": true,
+            "reservationOwned": true,
+            "disclosed": true
+          },
+          "by": 1,
+          "accepted": true
+        },
+        {
+          "event": {
+            "type": "enrollEmail",
+            "currentSession": 1,
+            "address": "first",
+            "digest": "token-1",
+            "expiresAt": 8
+          },
+          "by": 1,
+          "accepted": true
+        },
+        {
+          "event": {
+            "type": "verifyEmail",
+            "currentSession": 1,
+            "digest": "token-1"
+          },
+          "by": 1,
+          "accepted": true
+        },
+        {
+          "event": {
+            "type": "setEmailConsent",
+            "currentSession": 1,
+            "security": true,
+            "activity": true
+          },
+          "by": 1,
+          "accepted": true
+        },
+        {
+          "event": {
+            "type": "signIn",
+            "actorId": 1,
+            "handle": "login",
+            "sessionId": 2,
+            "expiresAt": 10,
+            "oauthVerified": true,
+            "disclosed": true
+          },
+          "by": 1,
+          "accepted": true
+        }
+      ],
+      "final": {
+        "membership": "Open",
+        "sessionStates": [
+          "ActiveSession",
+          "ActiveSession",
+          "UnknownSession"
+        ],
+        "hasLinkedX": true,
+        "reservations": [
+          "123456789012345678901234567890"
+        ],
+        "closureCount": 0,
+        "hasVerifiedEmail": true,
+        "pendingVerification": true,
+        "activityConsent": true,
+        "securityConsent": true
+      }
+    }
+  ]
+}

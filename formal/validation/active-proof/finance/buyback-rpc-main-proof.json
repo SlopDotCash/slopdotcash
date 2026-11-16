@@ -1,0 +1,22 @@
+{
+  "toolchain": {
+    "node": "v26.13.1",
+    "dafny": "4.11.0",
+    "lsc": "0.6.9"
+  },
+  "unit": "fees__buybackRpc.ts",
+  "total": 6,
+  "unproved": [],
+  "errors": [],
+  "exhausted": [],
+  "resting": {},
+  "sha256": {
+    "spec/fees/buybackRpc.md": "7a41c92a6359f79a3aee2d62e09eb6e3d313c8a88a3702373a520c8a94e3485b",
+    "spec/settlement/money.md": "65d72012c72c335adddbb78d3934687c0fce7442ad51b5404090130af42a4c5b"
+  },
+  "generated": {
+    "typescript": "b8c26e167c040eb3ac79a9bc2de052baee4b721adb18e8aff41f29121fa57855",
+    "dafny": "d7647d030df32baf3d118f7688bd34d8c450c31daa87b748c3cf027748a2e62d"
+  },
+  "offered": []
+}

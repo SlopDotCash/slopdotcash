@@ -1,0 +1,154 @@
+{
+  "sourceCommit": "78eed5564d796119d82ae541c36b0c770263dc5f",
+  "sourceHashes": {
+    "docs/slop-product-requirements.md": "50356a1565139c611ec025270f6a60e39bd0a0abb8658cb68ce4b569e6b6eee1",
+    "scripts/generate-points.ts": "811d28039e65358d56284f39d50eeb0408fe13ea1b9b573d2ab7721ae22fc984",
+    "src/lib/points.ts": "0f7bb496f9744cf73eabdec0c7b0b2e1eea140d349e3bd45f10568cd27048a6c",
+    "scripts/points-history-recovery.test.ts": "8eb7745d1024a06a4cdd9131279977f960935d3e48e3bdf8bee65ea383b40a63"
+  },
+  "specHashes": {
+    "spec/points/publication.md": "59fb20095e17fe9d582feee70873402eb54a63e807a3f0195585ee11270c2f80",
+    "spec/points/publication.proof.dfy": "a2f830a454cc7b7dfe58f69ada3ff414cdff948ea55d6cd9fc526dfb33ea102f",
+    "spec/points/recovery.md": "2426821b88449c8d2fbe50e18c3c64986524522721b6e285addc17632aa8c540",
+    "spec/points/recovery.proof.dfy": "88f480f0654cc40bea99cf03677e7ccf8611deb93a3ca68bbc321d6108edbd29"
+  },
+  "proof": {
+    "unit": "points__recovery.ts",
+    "total": 9,
+    "unproved": [],
+    "exhausted": [],
+    "errors": [],
+    "resting": {},
+    "proofDafnySha256": "2b4a3a9529e3500335cc1b64240bdf710dfe780b87d6ba0dd05e8faa3fa3a9d0",
+    "proofSource": {
+      "file": "spec/points/recovery.proof.dfy",
+      "sha256": "88f480f0654cc40bea99cf03677e7ccf8611deb93a3ca68bbc321d6108edbd29"
+    },
+    "checkedImportedLemmas": 0,
+    "log": "formal/validation/source-coverage/points-recovery.proof.log",
+    "logSha256": "1d1c16d619e90e16000de2bb1cb215e5d444ef3e100d45132610665b21902bd1"
+  },
+  "simulation": [
+    {
+      "unit": "points__recovery",
+      "step": "step",
+      "passed": true,
+      "replay": true,
+      "traces": 75,
+      "command": "seed 234860047241939; to simulate again: pnpm exec quint run gen/points__recovery.run.qnt --main points__recovery_run --step step --invariant inv --max-samples 500 --max-steps 12 --mbt --seed 234860047241939",
+      "events": [
+        "recover",
+        "refuse"
+      ],
+      "goals": [
+        {
+          "name": "sometimesCoverageOnlyRecovered",
+          "reached": true
+        },
+        {
+          "name": "sometimesWrongEnvironment",
+          "reached": true
+        },
+        {
+          "name": "sometimesUnverified",
+          "reached": true
+        },
+        {
+          "name": "sometimesDiverged",
+          "reached": true
+        }
+      ]
+    },
+    {
+      "unit": "points__recovery",
+      "step": "probe",
+      "passed": true,
+      "replay": true,
+      "traces": 75,
+      "command": "seed 86528965696140; to simulate again: pnpm exec quint run gen/points__recovery.run.qnt --main points__recovery_run --step probe --invariant inv --max-samples 500 --max-steps 12 --mbt --seed 86528965696140",
+      "events": [
+        "recover",
+        "refuse"
+      ],
+      "goals": [
+        {
+          "name": "sometimesCoverageOnlyRecovered",
+          "reached": true
+        },
+        {
+          "name": "sometimesWrongEnvironment",
+          "reached": true
+        },
+        {
+          "name": "sometimesUnverified",
+          "reached": true
+        },
+        {
+          "name": "sometimesDiverged",
+          "reached": true
+        }
+      ]
+    }
+  ],
+  "directed": {
+    "passed": true,
+    "requests": [
+      {
+        "name": "checkpoint coverage-only refresh",
+        "event": "recover",
+        "result": "Recovered"
+      },
+      {
+        "name": "Pages coverage-only refresh",
+        "event": "recover",
+        "result": "Recovered"
+      },
+      {
+        "name": "longer checkpoint with earlier generation time",
+        "event": "recover",
+        "result": "Recovered"
+      },
+      {
+        "name": "longer Pages copy with newer checkpoint time",
+        "event": "recover",
+        "result": "Recovered"
+      },
+      {
+        "name": "equal lengths choose Pages order and retain exact tuple variants",
+        "event": "recover",
+        "result": "Recovered"
+      },
+      {
+        "name": "changed bytes at the same revision identity",
+        "event": "refuse",
+        "result": "DivergingHistory"
+      },
+      {
+        "name": "disjoint revisions",
+        "event": "refuse",
+        "result": "DivergingHistory"
+      },
+      {
+        "name": "refused checkpoint bytes",
+        "event": "refuse",
+        "result": "UnverifiedCopy"
+      },
+      {
+        "name": "refused Pages bytes",
+        "event": "refuse",
+        "result": "UnverifiedCopy"
+      },
+      {
+        "name": "staging cannot import production",
+        "event": "refuse",
+        "result": "WrongEnvironment"
+      },
+      {
+        "name": "verified staging remains staging",
+        "event": "recover",
+        "result": "Recovered"
+      }
+    ]
+  },
+  "boundary": "The model consumes validated complete checkpoint and Pages observations from the requested environment. HTTP retry, bootstrap, shard verification and publication effects remain adapter conformance obligations."
+}

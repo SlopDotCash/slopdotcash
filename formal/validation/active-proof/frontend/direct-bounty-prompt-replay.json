@@ -1,0 +1,28 @@
+{
+  "sourceHashes": {
+    "spec/frontend/directBountyPrompt.md": "3153d6670dcddaa7cc99d72c02a97d600ea3153b00930bc5970cbc53b2801b04"
+  },
+  "seed": 809,
+  "traces": 250,
+  "maxSteps": 24,
+  "transitions": {
+    "open": 250,
+    "mount": 748,
+    "reserve": 797,
+    "resolve": 387,
+    "check": 2916,
+    "observeHash": 240,
+    "observeEmpty": 232,
+    "depart": 298,
+    "restoreLegacy": 132
+  },
+  "goals": {
+    "sometimesPending": 226,
+    "sometimesKnownInMemory": 30,
+    "sometimesBothHashes": 27,
+    "sometimesLegacyCandidate": 88,
+    "sometimesChecked": 212
+  },
+  "replayed": true,
+  "again": "seed 19316085717784; to simulate again: pnpm exec quint run gen/frontend__directBountyPrompt.run.qnt --main frontend__directBountyPrompt_run --step step --invariant inv --max-samples 250 --max-steps 24 --mbt --seed 19316085717784"
+}

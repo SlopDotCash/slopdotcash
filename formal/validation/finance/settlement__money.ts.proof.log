@@ -1,0 +1,115 @@
+solver: Z3 4.15.4 (/opt/homebrew/Cellar/z3/4.15.4/bin/z3)
+Generated: /private/var/folders/1g/77s889gx10n7mtl6z1nfrxzm0000gn/T/slop-financial-journeys-nYUDPg/gen/proof/settlement__money/settlement__money.dfy.gen
+Created: /private/var/folders/1g/77s889gx10n7mtl6z1nfrxzm0000gn/T/slop-financial-journeys-nYUDPg/gen/proof/settlement__money/settlement__money.dfy
+Generated: /private/var/folders/1g/77s889gx10n7mtl6z1nfrxzm0000gn/T/slop-financial-journeys-nYUDPg/gen/proof/settlement__money/settlement__money.dfy.gen
+settlement__money.dfy(217,0): Error: a postcondition could not be proved on this return path
+settlement__money.dfy(216,29): Related location: this is the postcondition that could not be proved
+settlement__money.dfy(248,0): Error: a postcondition could not be proved on this return path
+settlement__money.dfy(247,38): Related location: this is the postcondition that could not be proved
+settlement__money.dfy(257,6): Error: Verification out of resource (lawDivisionReconstructs_ensures)
+settlement__money.dfy(298,0): Error: a postcondition could not be proved on this return path
+settlement__money.dfy(297,41): Related location: this is the postcondition that could not be proved
+settlement__money.dfy(308,0): Error: a postcondition could not be proved on this return path
+settlement__money.dfy(307,42): Related location: this is the postcondition that could not be proved
+
+Dafny program verifier finished with 21 verified, 4 errors, 1 out of resource
+
+---- each definition with a failure, every assertion isolated ----
+settlement__money.isolated.dfy(382,0): Error: a postcondition could not be proved on this return path
+settlement__money.isolated.dfy(381,29): Related location: this is the postcondition that could not be proved
+settlement__money.isolated.dfy(387,0): Error: a postcondition could not be proved on this return path
+settlement__money.isolated.dfy(386,38): Related location: this is the postcondition that could not be proved
+settlement__money.isolated.dfy(391,41): Error: Verification out of resource (isolated2_lawDivisionReconstructs_ensures)
+settlement__money.isolated.dfy(397,0): Error: a postcondition could not be proved on this return path
+settlement__money.isolated.dfy(396,41): Related location: this is the postcondition that could not be proved
+settlement__money.isolated.dfy(402,0): Error: a postcondition could not be proved on this return path
+settlement__money.isolated.dfy(401,42): Related location: this is the postcondition that could not be proved
+
+Dafny program verifier finished with 0 verified, 4 errors, 1 out of resource
+Results File: /private/var/folders/1g/77s889gx10n7mtl6z1nfrxzm0000gn/T/slop-financial-journeys-nYUDPg/gen/proof/settlement__money/settlement__money.isolated.csv
+
+---- dafny audit ----
+DafnyStandardLibraries.dfy(15327,26): Warning: Omega: Declaration has explicit `{:axiom}` attribute. Possible mitigation: Provide a proof or test.
+DafnyStandardLibraries.dfy(15332,17): Warning: Succ: Declaration has explicit `{:axiom}` attribute. Possible mitigation: Provide a proof or test.
+DafnyStandardLibraries.dfy(15335,26): Warning: PlusLimit: Declaration has explicit `{:axiom}` attribute. Possible mitigation: Provide a proof or test.
+DafnyStandardLibraries.dfy(15351,17): Warning: PlusDefinition: Declaration has explicit `{:axiom}` attribute. Possible mitigation: Provide a proof or test.
+DafnyStandardLibraries.dfy(15354,17): Warning: PlusStrictlyIncreasingOnRight: Declaration has explicit `{:axiom}` attribute. Possible mitigation: Provide a proof or test.
+DafnyStandardLibraries.dfy(15359,17): Warning: PlusIncreasingOnLeft: Declaration has explicit `{:axiom}` attribute. Possible mitigation: Provide a proof or test.
+DafnyStandardLibraries.dfy(15379,17): Warning: PlusIsAssociative: Declaration has explicit `{:axiom}` attribute. Possible mitigation: Provide a proof or test.
+DafnyStandardLibraries.dfy(15383,26): Warning: TimesLimit: Declaration has explicit `{:axiom}` attribute. Possible mitigation: Provide a proof or test.
+DafnyStandardLibraries.dfy(15414,17): Warning: TimesStrictlyIncreasingOnRight: Declaration has explicit `{:axiom}` attribute. Possible mitigation: Provide a proof or test.
+DafnyStandardLibraries.dfy(15419,17): Warning: TimesIncreasingOnLeft: Declaration has explicit `{:axiom}` attribute. Possible mitigation: Provide a proof or test.
+DafnyStandardLibraries.dfy(15423,17): Warning: TimesDistributesOnLeft: Declaration has explicit `{:axiom}` attribute. Possible mitigation: Provide a proof or test.
+DafnyStandardLibraries.dfy(11981,20): Warning: Valid: Ghost declaration has no body and has an ensures clause. Possible mitigation: Provide a body or add `{:axiom}`.
+DafnyStandardLibraries.dfy(11986,23): Warning: ValidChange: Ghost declaration has no body and has an ensures clause. Possible mitigation: Provide a body or add `{:axiom}`.
+DafnyStandardLibraries.dfy(11990,19): Warning: ValidImpliesValidChange: Ghost declaration has no body and has an ensures clause. Possible mitigation: Provide a body or add `{:axiom}`.
+DafnyStandardLibraries.dfy(1809,19): Warning: Reads: Ghost declaration has no body and has an ensures clause. Possible mitigation: Provide a body or add `{:axiom}`.
+DafnyStandardLibraries.dfy(1824,11): Warning: Invoke: Compiled declaration has no body and has an ensures clause. Possible mitigation: Provide a body or add `{:axiom}`.
+DafnyStandardLibraries.dfy(34,38): Warning: Action: Trait method calls may not terminate (uses `@AssumeCrossModuleTermination`). Possible mitigation: Remove if possible.
+DafnyStandardLibraries.dfy(37,20): Warning: Valid: Ghost declaration has no body and has an ensures clause. Possible mitigation: Provide a body or add `{:axiom}`.
+DafnyStandardLibraries.dfy(43,23): Warning: ValidChange: Ghost declaration has no body and has an ensures clause. Possible mitigation: Provide a body or add `{:axiom}`.
+DafnyStandardLibraries.dfy(119,38): Warning: TotalActionProof: Trait method calls may not terminate (uses `@AssumeCrossModuleTermination`). Possible mitigation: Remove if possible.
+DafnyStandardLibraries.dfy(120,19): Warning: Action: Ghost declaration has no body and has an ensures clause. Possible mitigation: Provide a body or add `{:axiom}`.
+DafnyStandardLibraries.dfy(122,10): Warning: AnyInputIsValid: Ghost declaration has no body and has an ensures clause. Possible mitigation: Provide a body or add `{:axiom}`.
+DafnyStandardLibraries.dfy(128,38): Warning: DefaultTotalActionProof: Trait method calls may not terminate (uses `@AssumeCrossModuleTermination`). Possible mitigation: Remove if possible.
+DafnyStandardLibraries.dfy(441,19): Warning: FirstAction: Ghost declaration has no body and has an ensures clause. Possible mitigation: Provide a body or add `{:axiom}`.
+DafnyStandardLibraries.dfy(443,19): Warning: SecondAction: Ghost declaration has no body and has an ensures clause. Possible mitigation: Provide a body or add `{:axiom}`.
+DafnyStandardLibraries.dfy(447,10): Warning: CanInvokeFirst: Ghost declaration has no body and has an ensures clause. Possible mitigation: Provide a body or add `{:axiom}`.
+DafnyStandardLibraries.dfy(453,10): Warning: CanInvokeSecond: Ghost declaration has no body and has an ensures clause. Possible mitigation: Provide a body or add `{:axiom}`.
+DafnyStandardLibraries.dfy(458,10): Warning: CanReturn: Ghost declaration has no body and has an ensures clause. Possible mitigation: Provide a body or add `{:axiom}`.
+DafnyStandardLibraries.dfy(463,20): Warning: ComposedValidHistory: Ghost declaration has no body and has an ensures clause. Possible mitigation: Provide a body or add `{:axiom}`.
+DafnyStandardLibraries.dfy(1103,38): Warning: IConsumer: Trait method calls may not terminate (uses `@AssumeCrossModuleTermination`). Possible mitigation: Remove if possible.
+DafnyStandardLibraries.dfy(1191,38): Warning: Consumer: Trait method calls may not terminate (uses `@AssumeCrossModuleTermination`). Possible mitigation: Remove if possible.
+DafnyStandardLibraries.dfy(1273,11): Warning: Invoke: Compiled declaration has no body and has an ensures clause. Possible mitigation: Provide a body or add `{:axiom}`.
+DafnyStandardLibraries.dfy(1375,38): Warning: ArrayWriter: Trait method calls may not terminate (uses `@AssumeCrossModuleTermination`). Possible mitigation: Remove if possible.
+DafnyStandardLibraries.dfy(1462,38): Warning: DynamicArrayWriter: Trait method calls may not terminate (uses `@AssumeCrossModuleTermination`). Possible mitigation: Remove if possible.
+DafnyStandardLibraries.dfy(1629,38): Warning: FoldingConsumerTotalActionProof: Trait method calls may not terminate (uses `@AssumeCrossModuleTermination`). Possible mitigation: Remove if possible.
+DafnyStandardLibraries.dfy(1678,38): Warning: SeqWriter: Trait method calls may not terminate (uses `@AssumeCrossModuleTermination`). Possible mitigation: Remove if possible.
+DafnyStandardLibraries.dfy(1751,38): Warning: SeqWriterTotalActionProof: Trait method calls may not terminate (uses `@AssumeCrossModuleTermination`). Possible mitigation: Remove if possible.
+DafnyStandardLibraries.dfy(2078,38): Warning: IProducer: Trait method calls may not terminate (uses `@AssumeCrossModuleTermination`). Possible mitigation: Remove if possible.
+DafnyStandardLibraries.dfy(2092,19): Warning: Action: Ghost declaration has no body and has an ensures clause. Possible mitigation: Provide a body or add `{:axiom}`.
+DafnyStandardLibraries.dfy(2096,10): Warning: ProducesSet: Ghost declaration has no body and has an ensures clause. Possible mitigation: Provide a body or add `{:axiom}`.
+DafnyStandardLibraries.dfy(2104,38): Warning: FunctionalIProducer: Trait method calls may not terminate (uses `@AssumeCrossModuleTermination`). Possible mitigation: Remove if possible.
+DafnyStandardLibraries.dfy(2250,38): Warning: Producer: Trait method calls may not terminate (uses `@AssumeCrossModuleTermination`). Possible mitigation: Remove if possible.
+DafnyStandardLibraries.dfy(2251,20): Warning: Valid: Ghost declaration has no body and has an ensures clause. Possible mitigation: Provide a body or add `{:axiom}`.
+DafnyStandardLibraries.dfy(2343,13): Warning: ProducedCount: Compiled declaration has no body and has an ensures clause. Possible mitigation: Provide a body or add `{:axiom}`.
+DafnyStandardLibraries.dfy(2404,11): Warning: Invoke: Compiled declaration has no body and has an ensures clause. Possible mitigation: Provide a body or add `{:axiom}`.
+DafnyStandardLibraries.dfy(2425,11): Warning: ForEach: Compiled declaration has no body and has an ensures clause. Possible mitigation: Provide a body or add `{:axiom}`.
+DafnyStandardLibraries.dfy(2438,11): Warning: Fill: Compiled declaration has no body and has an ensures clause. Possible mitigation: Provide a body or add `{:axiom}`.
+DafnyStandardLibraries.dfy(2942,19): Warning: Producer: Ghost declaration has no body and has an ensures clause. Possible mitigation: Provide a body or add `{:axiom}`.
+DafnyStandardLibraries.dfy(2946,10): Warning: ProducesSet: Ghost declaration has no body and has an ensures clause. Possible mitigation: Provide a body or add `{:axiom}`.
+DafnyStandardLibraries.dfy(3579,11): Warning: Invoke: Compiled declaration has no body and has an ensures clause. Possible mitigation: Provide a body or add `{:axiom}`.
+DafnyStandardLibraries.dfy(3599,38): Warning: OutputterOfNewProducers: Trait method calls may not terminate (uses `@AssumeCrossModuleTermination`). Possible mitigation: Remove if possible.
+DafnyStandardLibraries.dfy(3607,11): Warning: Invoke: Compiled declaration has no body and has an ensures clause. Possible mitigation: Provide a body or add `{:axiom}`.
+DafnyStandardLibraries-notarget.dfy(16,28): Warning: MakeSetReader: Declaration has explicit `{:axiom}` attribute. Possible mitigation: Provide a proof or test.
+DafnyStandardLibraries-notarget.dfy(27,4): Warning: _ctor: Declaration has explicit `{:axiom}` attribute. Possible mitigation: Provide a proof or test.
+DafnyStandardLibraries-notarget.dfy(34,28): Warning: Keys: Declaration has explicit `{:axiom}` attribute. Possible mitigation: Provide a proof or test.
+DafnyStandardLibraries-notarget.dfy(36,28): Warning: HasKey: Declaration has explicit `{:axiom}` attribute. Possible mitigation: Provide a proof or test.
+DafnyStandardLibraries-notarget.dfy(38,28): Warning: Values: Declaration has explicit `{:axiom}` attribute. Possible mitigation: Provide a proof or test.
+DafnyStandardLibraries-notarget.dfy(40,28): Warning: Items: Declaration has explicit `{:axiom}` attribute. Possible mitigation: Provide a proof or test.
+DafnyStandardLibraries-notarget.dfy(42,28): Warning: Put: Declaration has explicit `{:axiom}` attribute. Possible mitigation: Provide a proof or test.
+DafnyStandardLibraries-notarget.dfy(44,28): Warning: Get: Declaration has explicit `{:axiom}` attribute. Possible mitigation: Provide a proof or test.
+DafnyStandardLibraries-notarget.dfy(46,28): Warning: Remove: Declaration has explicit `{:axiom}` attribute. Possible mitigation: Provide a proof or test.
+DafnyStandardLibraries-notarget.dfy(48,28): Warning: Size: Declaration has explicit `{:axiom}` attribute. Possible mitigation: Provide a proof or test.
+DafnyStandardLibraries-notarget.dfy(52,4): Warning: _ctor: Declaration has explicit `{:axiom}` attribute. Possible mitigation: Provide a proof or test.
+DafnyStandardLibraries-notarget.dfy(59,28): Warning: Get: Declaration has explicit `{:axiom}` attribute. Possible mitigation: Provide a proof or test.
+DafnyStandardLibraries-notarget.dfy(61,28): Warning: Put: Declaration has explicit `{:axiom}` attribute. Possible mitigation: Provide a proof or test.
+DafnyStandardLibraries-notarget.dfy(65,4): Warning: _ctor: Declaration has explicit `{:axiom}` attribute. Possible mitigation: Provide a proof or test.
+DafnyStandardLibraries-notarget.dfy(67,28): Warning: Lock: Declaration has explicit `{:axiom}` attribute. Possible mitigation: Provide a proof or test.
+DafnyStandardLibraries-notarget.dfy(69,28): Warning: Unlock: Declaration has explicit `{:axiom}` attribute. Possible mitigation: Provide a proof or test.
+DafnyStandardLibraries.dfy(17250,17): Warning: CharsConsistent: Declaration has explicit `{:axiom}` attribute. Possible mitigation: Provide a proof or test.
+DafnyStandardLibraries.dfy(17870,4): Warning: CharIsUnicodeScalarValue: Definition has `assume {:axiom}` statement in body. Possible mitigation: Replace with `assert` and prove.
+DafnyStandardLibraries.dfy(502,38): Warning: BulkAction: Trait method calls may not terminate (uses `@AssumeCrossModuleTermination`). Possible mitigation: Remove if possible.
+DafnyStandardLibraries.dfy(503,11): Warning: Map: Compiled declaration has no body and has an ensures clause. Possible mitigation: Provide a body or add `{:axiom}`.
+DafnyStandardLibraries.dfy(522,38): Warning: BatchReader: Trait method calls may not terminate (uses `@AssumeCrossModuleTermination`). Possible mitigation: Remove if possible.
+DafnyStandardLibraries.dfy(691,38): Warning: BatchSeqWriter: Trait method calls may not terminate (uses `@AssumeCrossModuleTermination`). Possible mitigation: Remove if possible.
+DafnyStandardLibraries.dfy(776,38): Warning: BatchSeqWriterTotalProof: Trait method calls may not terminate (uses `@AssumeCrossModuleTermination`). Possible mitigation: Remove if possible.
+DafnyStandardLibraries.dfy(828,38): Warning: BatchArrayWriter: Trait method calls may not terminate (uses `@AssumeCrossModuleTermination`). Possible mitigation: Remove if possible.
+DafnyStandardLibraries.dfy(947,38): Warning: BatchArrayWriterTotalProof: Trait method calls may not terminate (uses `@AssumeCrossModuleTermination`). Possible mitigation: Remove if possible.
+DafnyStandardLibraries.dfy(12460,17): Warning: CharsConsistent: Declaration has explicit `{:axiom}` attribute. Possible mitigation: Provide a proof or test.
+DafnyStandardLibraries.dfy(12345,4): Warning: ToNat16: Definition has `assume {:axiom}` statement in body. Possible mitigation: Replace with `assert` and prove.
+DafnyStandardLibraries.dfy(15081,4): Warning: Members: Definition has `assume {:axiom}` statement in body. Possible mitigation: Replace with `assert` and prove.
+DafnyStandardLibraries.dfy(15091,4): Warning: Items: Definition has `assume {:axiom}` statement in body. Possible mitigation: Replace with `assert` and prove.
+Dafny auditor completed with 81 findings
+
+Dafny program verifier did not attempt verification

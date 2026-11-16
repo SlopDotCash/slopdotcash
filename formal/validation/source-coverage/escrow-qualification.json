@@ -1,0 +1,1980 @@
+{
+  "sourceMain": "78eed5564d796119d82ae541c36b0c770263dc5f",
+  "sourceDevelopment": "6b8eaf6ac8c7d54c927737964e76767e5065d946",
+  "source": "spec/operations/escrowQualification.md",
+  "sourceHash": "f6fe181b0a481a267fc0020fb5ab9a12b85b6deceac901d4714d81784f8f702a",
+  "proofFileHash": null,
+  "proof": {
+    "generatedDafnySha256": "9aa567cad94edb33b68dc6e66aee2c250871feec80527cce25ff130d81c116a5",
+    "total": 147,
+    "unproved": [],
+    "exhausted": [],
+    "resting": {},
+    "errors": []
+  },
+  "simulation": {
+    "command": "seed 36165756517369; to simulate again: pnpm exec quint run gen/operations__escrowQualification.run.qnt --main operations__escrowQualification_run --step step --invariant inv --max-samples 80 --max-steps 45 --mbt --seed 36165756517369",
+    "replayed": 80
+  },
+  "witnesses": {
+    "sometimesHeld": {
+      "command": "seed 36165756517369; to simulate again: pnpm exec quint run gen/operations__escrowQualification.run.qnt --main operations__escrowQualification_run --step step --invariant inv --max-samples 80 --max-steps 45 --mbt --seed 36165756517369",
+      "events": [
+        {
+          "type": "admitPlan",
+          "plan": {
+            "network": "Base",
+            "vault": "vault",
+            "asset": "USDC",
+            "review": "plan",
+            "monthlyCap": 1000000000,
+            "automatic": false
+          },
+          "evidence": {
+            "nonMoneyLive": true,
+            "exactAssetAndVault": true,
+            "currentAuthority": true,
+            "exactDeployment": true,
+            "applicableTestnet": true,
+            "ownerAuthorized": true
+          }
+        },
+        {
+          "type": "retainHistorical",
+          "operation": {
+            "key": "setup",
+            "transaction": "base-setup",
+            "kind": "SupportingWrite",
+            "gasLimit": 1,
+            "gross": 0,
+            "net": 0,
+            "fee": 0,
+            "actor": 0
+          },
+          "result": {
+            "network": "Base",
+            "vault": "vault",
+            "transaction": "base-setup",
+            "finalized": true,
+            "exactOperation": true,
+            "succeeded": true,
+            "actualGas": 1
+          }
+        },
+        {
+          "type": "retainHistorical",
+          "operation": {
+            "key": "deposit",
+            "transaction": "base-deposit",
+            "kind": "Deposit",
+            "gasLimit": 1,
+            "gross": 10000000,
+            "net": 0,
+            "fee": 0,
+            "actor": 0
+          },
+          "result": {
+            "network": "Base",
+            "vault": "vault",
+            "transaction": "base-deposit",
+            "finalized": true,
+            "exactOperation": true,
+            "succeeded": true,
+            "actualGas": 1
+          }
+        },
+        {
+          "type": "retainHistorical",
+          "operation": {
+            "key": "payout",
+            "transaction": "base-payout",
+            "kind": "Payout",
+            "gasLimit": 1,
+            "gross": 1000000,
+            "net": 980000,
+            "fee": 20000,
+            "actor": 18633264
+          },
+          "result": {
+            "network": "Base",
+            "vault": "vault",
+            "transaction": "base-payout",
+            "finalized": true,
+            "exactOperation": true,
+            "succeeded": true,
+            "actualGas": 1
+          }
+        },
+        {
+          "type": "completeLane",
+          "reconciled": true
+        },
+        {
+          "type": "activateLane",
+          "activation": {
+            "network": "Base",
+            "vault": "vault",
+            "review": "plan",
+            "sharedEvmQualified": false,
+            "currentAuthority": true,
+            "exactDeployment": true,
+            "exactAsset": true,
+            "finalized": true,
+            "ownerAuthorized": true
+          }
+        },
+        {
+          "type": "admitPlan",
+          "plan": {
+            "network": "Solana",
+            "vault": "vault",
+            "asset": "USDC",
+            "review": "plan",
+            "monthlyCap": 1000000000,
+            "automatic": false
+          },
+          "evidence": {
+            "nonMoneyLive": true,
+            "exactAssetAndVault": true,
+            "currentAuthority": true,
+            "exactDeployment": true,
+            "applicableTestnet": true,
+            "ownerAuthorized": true
+          }
+        },
+        {
+          "type": "retainAttempt",
+          "operation": {
+            "key": "deposit",
+            "transaction": "robinhood-deposit",
+            "kind": "Deposit",
+            "gasLimit": 1,
+            "gross": 10000000,
+            "net": 0,
+            "fee": 0,
+            "actor": 0
+          },
+          "checks": {
+            "currentAuthority": true,
+            "exactPlanAuthorized": true,
+            "eligible": true,
+            "simulationPassed": true,
+            "reconciled": true
+          }
+        },
+        {
+          "type": "missReceipt"
+        }
+      ]
+    },
+    "sometimesStopped": {
+      "command": "seed 36165756517369; to simulate again: pnpm exec quint run gen/operations__escrowQualification.run.qnt --main operations__escrowQualification_run --step step --invariant inv --max-samples 80 --max-steps 45 --mbt --seed 36165756517369",
+      "events": [
+        {
+          "type": "admitPlan",
+          "plan": {
+            "network": "Base",
+            "vault": "vault",
+            "asset": "USDC",
+            "review": "plan",
+            "monthlyCap": 1000000000,
+            "automatic": false
+          },
+          "evidence": {
+            "nonMoneyLive": true,
+            "exactAssetAndVault": true,
+            "currentAuthority": true,
+            "exactDeployment": true,
+            "applicableTestnet": true,
+            "ownerAuthorized": true
+          }
+        },
+        {
+          "type": "retainHistorical",
+          "operation": {
+            "key": "deposit",
+            "transaction": "base-deposit",
+            "kind": "Deposit",
+            "gasLimit": 1,
+            "gross": 10000000,
+            "net": 0,
+            "fee": 0,
+            "actor": 0
+          },
+          "result": {
+            "network": "Base",
+            "vault": "vault",
+            "transaction": "base-deposit",
+            "finalized": true,
+            "exactOperation": true,
+            "succeeded": true,
+            "actualGas": 1
+          }
+        },
+        {
+          "type": "retainHistorical",
+          "operation": {
+            "key": "payout",
+            "transaction": "base-payout",
+            "kind": "Payout",
+            "gasLimit": 1,
+            "gross": 1000000,
+            "net": 980000,
+            "fee": 20000,
+            "actor": 18633264
+          },
+          "result": {
+            "network": "Base",
+            "vault": "vault",
+            "transaction": "base-payout",
+            "finalized": true,
+            "exactOperation": true,
+            "succeeded": true,
+            "actualGas": 1
+          }
+        },
+        {
+          "type": "retainHistorical",
+          "operation": {
+            "key": "setup",
+            "transaction": "base-setup",
+            "kind": "SupportingWrite",
+            "gasLimit": 1,
+            "gross": 0,
+            "net": 0,
+            "fee": 0,
+            "actor": 0
+          },
+          "result": {
+            "network": "Base",
+            "vault": "vault",
+            "transaction": "base-setup",
+            "finalized": true,
+            "exactOperation": true,
+            "succeeded": true,
+            "actualGas": 1
+          }
+        },
+        {
+          "type": "completeLane",
+          "reconciled": true
+        },
+        {
+          "type": "activateLane",
+          "activation": {
+            "network": "Base",
+            "vault": "vault",
+            "review": "plan",
+            "sharedEvmQualified": false,
+            "currentAuthority": true,
+            "exactDeployment": true,
+            "exactAsset": true,
+            "finalized": true,
+            "ownerAuthorized": true
+          }
+        },
+        {
+          "type": "admitPlan",
+          "plan": {
+            "network": "Solana",
+            "vault": "vault",
+            "asset": "USDC",
+            "review": "plan",
+            "monthlyCap": 1000000000,
+            "automatic": false
+          },
+          "evidence": {
+            "nonMoneyLive": true,
+            "exactAssetAndVault": true,
+            "currentAuthority": true,
+            "exactDeployment": true,
+            "applicableTestnet": true,
+            "ownerAuthorized": true
+          }
+        },
+        {
+          "type": "retainHistorical",
+          "operation": {
+            "key": "deposit",
+            "transaction": "solana-deposit",
+            "kind": "Deposit",
+            "gasLimit": 1,
+            "gross": 10000000,
+            "net": 0,
+            "fee": 0,
+            "actor": 0
+          },
+          "result": {
+            "network": "Solana",
+            "vault": "vault",
+            "transaction": "solana-deposit",
+            "finalized": true,
+            "exactOperation": true,
+            "succeeded": true,
+            "actualGas": 1
+          }
+        },
+        {
+          "type": "retainHistorical",
+          "operation": {
+            "key": "payout",
+            "transaction": "solana-payout",
+            "kind": "Payout",
+            "gasLimit": 1,
+            "gross": 1000000,
+            "net": 980000,
+            "fee": 20000,
+            "actor": 18633264
+          },
+          "result": {
+            "network": "Solana",
+            "vault": "vault",
+            "transaction": "solana-payout",
+            "finalized": true,
+            "exactOperation": true,
+            "succeeded": true,
+            "actualGas": 1
+          }
+        },
+        {
+          "type": "retainHistorical",
+          "operation": {
+            "key": "setup",
+            "transaction": "solana-setup",
+            "kind": "SupportingWrite",
+            "gasLimit": 1,
+            "gross": 0,
+            "net": 0,
+            "fee": 0,
+            "actor": 0
+          },
+          "result": {
+            "network": "Solana",
+            "vault": "vault",
+            "transaction": "solana-setup",
+            "finalized": true,
+            "exactOperation": true,
+            "succeeded": true,
+            "actualGas": 1
+          }
+        },
+        {
+          "type": "completeLane",
+          "reconciled": true
+        },
+        {
+          "type": "activateLane",
+          "activation": {
+            "network": "Solana",
+            "vault": "vault",
+            "review": "plan",
+            "sharedEvmQualified": true,
+            "currentAuthority": true,
+            "exactDeployment": true,
+            "exactAsset": true,
+            "finalized": true,
+            "ownerAuthorized": true
+          }
+        },
+        {
+          "type": "admitPlan",
+          "plan": {
+            "network": "Robinhood",
+            "vault": "vault",
+            "asset": "USDG",
+            "review": "plan",
+            "monthlyCap": 1000000000,
+            "automatic": false
+          },
+          "evidence": {
+            "nonMoneyLive": true,
+            "exactAssetAndVault": true,
+            "currentAuthority": true,
+            "exactDeployment": true,
+            "applicableTestnet": true,
+            "ownerAuthorized": true
+          }
+        },
+        {
+          "type": "stopBeforeAttempt",
+          "checks": {
+            "currentAuthority": true,
+            "exactPlanAuthorized": true,
+            "eligible": true,
+            "simulationPassed": false,
+            "reconciled": true
+          }
+        },
+        {
+          "type": "resume",
+          "checks": {
+            "currentAuthority": true,
+            "exactPlanAuthorized": true,
+            "eligible": true,
+            "simulationPassed": true,
+            "reconciled": true
+          }
+        },
+        {
+          "type": "retainAttempt",
+          "operation": {
+            "key": "setup",
+            "transaction": "robinhood-setup",
+            "kind": "SupportingWrite",
+            "gasLimit": 1,
+            "gross": 0,
+            "net": 0,
+            "fee": 0,
+            "actor": 0
+          },
+          "checks": {
+            "currentAuthority": true,
+            "exactPlanAuthorized": true,
+            "eligible": true,
+            "simulationPassed": true,
+            "reconciled": true
+          }
+        },
+        {
+          "type": "reconcileAttempt",
+          "result": {
+            "network": "Robinhood",
+            "vault": "vault",
+            "transaction": "robinhood-setup",
+            "finalized": true,
+            "exactOperation": true,
+            "succeeded": true,
+            "actualGas": 1
+          }
+        },
+        {
+          "type": "retainHistorical",
+          "operation": {
+            "key": "deposit",
+            "transaction": "robinhood-deposit",
+            "kind": "Deposit",
+            "gasLimit": 1,
+            "gross": 10000000,
+            "net": 0,
+            "fee": 0,
+            "actor": 0
+          },
+          "result": {
+            "network": "Robinhood",
+            "vault": "vault",
+            "transaction": "robinhood-deposit",
+            "finalized": true,
+            "exactOperation": true,
+            "succeeded": true,
+            "actualGas": 1
+          }
+        },
+        {
+          "type": "retainHistorical",
+          "operation": {
+            "key": "payout",
+            "transaction": "robinhood-payout",
+            "kind": "Payout",
+            "gasLimit": 1,
+            "gross": 1000000,
+            "net": 980000,
+            "fee": 20000,
+            "actor": 18633264
+          },
+          "result": {
+            "network": "Robinhood",
+            "vault": "vault",
+            "transaction": "robinhood-payout",
+            "finalized": true,
+            "exactOperation": true,
+            "succeeded": true,
+            "actualGas": 1
+          }
+        },
+        {
+          "type": "completeLane",
+          "reconciled": true
+        },
+        {
+          "type": "activateLane",
+          "activation": {
+            "network": "Robinhood",
+            "vault": "vault",
+            "review": "plan",
+            "sharedEvmQualified": false,
+            "currentAuthority": true,
+            "exactDeployment": true,
+            "exactAsset": true,
+            "finalized": true,
+            "ownerAuthorized": true
+          }
+        },
+        {
+          "type": "activateEthereum",
+          "activation": {
+            "network": "Ethereum",
+            "vault": "",
+            "review": "plan",
+            "sharedEvmQualified": true,
+            "currentAuthority": true,
+            "exactDeployment": true,
+            "exactAsset": true,
+            "finalized": true,
+            "ownerAuthorized": true
+          }
+        }
+      ]
+    },
+    "sometimesPaid": {
+      "command": "seed 36165756517369; to simulate again: pnpm exec quint run gen/operations__escrowQualification.run.qnt --main operations__escrowQualification_run --step step --invariant inv --max-samples 80 --max-steps 45 --mbt --seed 36165756517369",
+      "events": [
+        {
+          "type": "admitPlan",
+          "plan": {
+            "network": "Base",
+            "vault": "vault",
+            "asset": "USDC",
+            "review": "plan",
+            "monthlyCap": 1000000000,
+            "automatic": false
+          },
+          "evidence": {
+            "nonMoneyLive": true,
+            "exactAssetAndVault": true,
+            "currentAuthority": true,
+            "exactDeployment": true,
+            "applicableTestnet": true,
+            "ownerAuthorized": true
+          }
+        },
+        {
+          "type": "retainHistorical",
+          "operation": {
+            "key": "deposit",
+            "transaction": "base-deposit",
+            "kind": "Deposit",
+            "gasLimit": 1,
+            "gross": 10000000,
+            "net": 0,
+            "fee": 0,
+            "actor": 0
+          },
+          "result": {
+            "network": "Base",
+            "vault": "vault",
+            "transaction": "base-deposit",
+            "finalized": true,
+            "exactOperation": true,
+            "succeeded": true,
+            "actualGas": 1
+          }
+        },
+        {
+          "type": "retainHistorical",
+          "operation": {
+            "key": "payout",
+            "transaction": "base-payout",
+            "kind": "Payout",
+            "gasLimit": 1,
+            "gross": 1000000,
+            "net": 980000,
+            "fee": 20000,
+            "actor": 18633264
+          },
+          "result": {
+            "network": "Base",
+            "vault": "vault",
+            "transaction": "base-payout",
+            "finalized": true,
+            "exactOperation": true,
+            "succeeded": true,
+            "actualGas": 1
+          }
+        },
+        {
+          "type": "retainHistorical",
+          "operation": {
+            "key": "setup",
+            "transaction": "base-setup",
+            "kind": "SupportingWrite",
+            "gasLimit": 1,
+            "gross": 0,
+            "net": 0,
+            "fee": 0,
+            "actor": 0
+          },
+          "result": {
+            "network": "Base",
+            "vault": "vault",
+            "transaction": "base-setup",
+            "finalized": true,
+            "exactOperation": true,
+            "succeeded": true,
+            "actualGas": 1
+          }
+        },
+        {
+          "type": "completeLane",
+          "reconciled": true
+        },
+        {
+          "type": "activateLane",
+          "activation": {
+            "network": "Base",
+            "vault": "vault",
+            "review": "plan",
+            "sharedEvmQualified": false,
+            "currentAuthority": true,
+            "exactDeployment": true,
+            "exactAsset": true,
+            "finalized": true,
+            "ownerAuthorized": true
+          }
+        },
+        {
+          "type": "admitPlan",
+          "plan": {
+            "network": "Solana",
+            "vault": "vault",
+            "asset": "USDC",
+            "review": "plan",
+            "monthlyCap": 1000000000,
+            "automatic": false
+          },
+          "evidence": {
+            "nonMoneyLive": true,
+            "exactAssetAndVault": true,
+            "currentAuthority": true,
+            "exactDeployment": true,
+            "applicableTestnet": true,
+            "ownerAuthorized": true
+          }
+        },
+        {
+          "type": "retainHistorical",
+          "operation": {
+            "key": "deposit",
+            "transaction": "solana-deposit",
+            "kind": "Deposit",
+            "gasLimit": 1,
+            "gross": 10000000,
+            "net": 0,
+            "fee": 0,
+            "actor": 0
+          },
+          "result": {
+            "network": "Solana",
+            "vault": "vault",
+            "transaction": "solana-deposit",
+            "finalized": true,
+            "exactOperation": true,
+            "succeeded": true,
+            "actualGas": 1
+          }
+        },
+        {
+          "type": "retainHistorical",
+          "operation": {
+            "key": "payout",
+            "transaction": "solana-payout",
+            "kind": "Payout",
+            "gasLimit": 1,
+            "gross": 1000000,
+            "net": 980000,
+            "fee": 20000,
+            "actor": 18633264
+          },
+          "result": {
+            "network": "Solana",
+            "vault": "vault",
+            "transaction": "solana-payout",
+            "finalized": true,
+            "exactOperation": true,
+            "succeeded": true,
+            "actualGas": 1
+          }
+        },
+        {
+          "type": "retainHistorical",
+          "operation": {
+            "key": "setup",
+            "transaction": "solana-setup",
+            "kind": "SupportingWrite",
+            "gasLimit": 1,
+            "gross": 0,
+            "net": 0,
+            "fee": 0,
+            "actor": 0
+          },
+          "result": {
+            "network": "Solana",
+            "vault": "vault",
+            "transaction": "solana-setup",
+            "finalized": true,
+            "exactOperation": true,
+            "succeeded": true,
+            "actualGas": 1
+          }
+        },
+        {
+          "type": "completeLane",
+          "reconciled": true
+        },
+        {
+          "type": "activateLane",
+          "activation": {
+            "network": "Solana",
+            "vault": "vault",
+            "review": "plan",
+            "sharedEvmQualified": true,
+            "currentAuthority": true,
+            "exactDeployment": true,
+            "exactAsset": true,
+            "finalized": true,
+            "ownerAuthorized": true
+          }
+        },
+        {
+          "type": "admitPlan",
+          "plan": {
+            "network": "Robinhood",
+            "vault": "vault",
+            "asset": "USDG",
+            "review": "plan",
+            "monthlyCap": 1000000000,
+            "automatic": false
+          },
+          "evidence": {
+            "nonMoneyLive": true,
+            "exactAssetAndVault": true,
+            "currentAuthority": true,
+            "exactDeployment": true,
+            "applicableTestnet": true,
+            "ownerAuthorized": true
+          }
+        },
+        {
+          "type": "stopBeforeAttempt",
+          "checks": {
+            "currentAuthority": true,
+            "exactPlanAuthorized": true,
+            "eligible": true,
+            "simulationPassed": false,
+            "reconciled": true
+          }
+        },
+        {
+          "type": "resume",
+          "checks": {
+            "currentAuthority": true,
+            "exactPlanAuthorized": true,
+            "eligible": true,
+            "simulationPassed": true,
+            "reconciled": true
+          }
+        },
+        {
+          "type": "retainAttempt",
+          "operation": {
+            "key": "setup",
+            "transaction": "robinhood-setup",
+            "kind": "SupportingWrite",
+            "gasLimit": 1,
+            "gross": 0,
+            "net": 0,
+            "fee": 0,
+            "actor": 0
+          },
+          "checks": {
+            "currentAuthority": true,
+            "exactPlanAuthorized": true,
+            "eligible": true,
+            "simulationPassed": true,
+            "reconciled": true
+          }
+        },
+        {
+          "type": "reconcileAttempt",
+          "result": {
+            "network": "Robinhood",
+            "vault": "vault",
+            "transaction": "robinhood-setup",
+            "finalized": true,
+            "exactOperation": true,
+            "succeeded": true,
+            "actualGas": 1
+          }
+        },
+        {
+          "type": "retainHistorical",
+          "operation": {
+            "key": "deposit",
+            "transaction": "robinhood-deposit",
+            "kind": "Deposit",
+            "gasLimit": 1,
+            "gross": 10000000,
+            "net": 0,
+            "fee": 0,
+            "actor": 0
+          },
+          "result": {
+            "network": "Robinhood",
+            "vault": "vault",
+            "transaction": "robinhood-deposit",
+            "finalized": true,
+            "exactOperation": true,
+            "succeeded": true,
+            "actualGas": 1
+          }
+        },
+        {
+          "type": "retainHistorical",
+          "operation": {
+            "key": "payout",
+            "transaction": "robinhood-payout",
+            "kind": "Payout",
+            "gasLimit": 1,
+            "gross": 1000000,
+            "net": 980000,
+            "fee": 20000,
+            "actor": 18633264
+          },
+          "result": {
+            "network": "Robinhood",
+            "vault": "vault",
+            "transaction": "robinhood-payout",
+            "finalized": true,
+            "exactOperation": true,
+            "succeeded": true,
+            "actualGas": 1
+          }
+        },
+        {
+          "type": "completeLane",
+          "reconciled": true
+        },
+        {
+          "type": "activateLane",
+          "activation": {
+            "network": "Robinhood",
+            "vault": "vault",
+            "review": "plan",
+            "sharedEvmQualified": false,
+            "currentAuthority": true,
+            "exactDeployment": true,
+            "exactAsset": true,
+            "finalized": true,
+            "ownerAuthorized": true
+          }
+        },
+        {
+          "type": "activateEthereum",
+          "activation": {
+            "network": "Ethereum",
+            "vault": "",
+            "review": "plan",
+            "sharedEvmQualified": true,
+            "currentAuthority": true,
+            "exactDeployment": true,
+            "exactAsset": true,
+            "finalized": true,
+            "ownerAuthorized": true
+          }
+        }
+      ]
+    },
+    "sometimesThreeLanesQualified": {
+      "command": "seed 36165756517369; to simulate again: pnpm exec quint run gen/operations__escrowQualification.run.qnt --main operations__escrowQualification_run --step step --invariant inv --max-samples 80 --max-steps 45 --mbt --seed 36165756517369",
+      "events": [
+        {
+          "type": "admitPlan",
+          "plan": {
+            "network": "Base",
+            "vault": "vault",
+            "asset": "USDC",
+            "review": "plan",
+            "monthlyCap": 1000000000,
+            "automatic": false
+          },
+          "evidence": {
+            "nonMoneyLive": true,
+            "exactAssetAndVault": true,
+            "currentAuthority": true,
+            "exactDeployment": true,
+            "applicableTestnet": true,
+            "ownerAuthorized": true
+          }
+        },
+        {
+          "type": "retainHistorical",
+          "operation": {
+            "key": "deposit",
+            "transaction": "base-deposit",
+            "kind": "Deposit",
+            "gasLimit": 1,
+            "gross": 10000000,
+            "net": 0,
+            "fee": 0,
+            "actor": 0
+          },
+          "result": {
+            "network": "Base",
+            "vault": "vault",
+            "transaction": "base-deposit",
+            "finalized": true,
+            "exactOperation": true,
+            "succeeded": true,
+            "actualGas": 1
+          }
+        },
+        {
+          "type": "retainHistorical",
+          "operation": {
+            "key": "payout",
+            "transaction": "base-payout",
+            "kind": "Payout",
+            "gasLimit": 1,
+            "gross": 1000000,
+            "net": 980000,
+            "fee": 20000,
+            "actor": 18633264
+          },
+          "result": {
+            "network": "Base",
+            "vault": "vault",
+            "transaction": "base-payout",
+            "finalized": true,
+            "exactOperation": true,
+            "succeeded": true,
+            "actualGas": 1
+          }
+        },
+        {
+          "type": "retainHistorical",
+          "operation": {
+            "key": "setup",
+            "transaction": "base-setup",
+            "kind": "SupportingWrite",
+            "gasLimit": 1,
+            "gross": 0,
+            "net": 0,
+            "fee": 0,
+            "actor": 0
+          },
+          "result": {
+            "network": "Base",
+            "vault": "vault",
+            "transaction": "base-setup",
+            "finalized": true,
+            "exactOperation": true,
+            "succeeded": true,
+            "actualGas": 1
+          }
+        },
+        {
+          "type": "completeLane",
+          "reconciled": true
+        },
+        {
+          "type": "activateLane",
+          "activation": {
+            "network": "Base",
+            "vault": "vault",
+            "review": "plan",
+            "sharedEvmQualified": false,
+            "currentAuthority": true,
+            "exactDeployment": true,
+            "exactAsset": true,
+            "finalized": true,
+            "ownerAuthorized": true
+          }
+        },
+        {
+          "type": "admitPlan",
+          "plan": {
+            "network": "Solana",
+            "vault": "vault",
+            "asset": "USDC",
+            "review": "plan",
+            "monthlyCap": 1000000000,
+            "automatic": false
+          },
+          "evidence": {
+            "nonMoneyLive": true,
+            "exactAssetAndVault": true,
+            "currentAuthority": true,
+            "exactDeployment": true,
+            "applicableTestnet": true,
+            "ownerAuthorized": true
+          }
+        },
+        {
+          "type": "retainHistorical",
+          "operation": {
+            "key": "deposit",
+            "transaction": "solana-deposit",
+            "kind": "Deposit",
+            "gasLimit": 1,
+            "gross": 10000000,
+            "net": 0,
+            "fee": 0,
+            "actor": 0
+          },
+          "result": {
+            "network": "Solana",
+            "vault": "vault",
+            "transaction": "solana-deposit",
+            "finalized": true,
+            "exactOperation": true,
+            "succeeded": true,
+            "actualGas": 1
+          }
+        },
+        {
+          "type": "retainHistorical",
+          "operation": {
+            "key": "payout",
+            "transaction": "solana-payout",
+            "kind": "Payout",
+            "gasLimit": 1,
+            "gross": 1000000,
+            "net": 980000,
+            "fee": 20000,
+            "actor": 18633264
+          },
+          "result": {
+            "network": "Solana",
+            "vault": "vault",
+            "transaction": "solana-payout",
+            "finalized": true,
+            "exactOperation": true,
+            "succeeded": true,
+            "actualGas": 1
+          }
+        },
+        {
+          "type": "retainHistorical",
+          "operation": {
+            "key": "setup",
+            "transaction": "solana-setup",
+            "kind": "SupportingWrite",
+            "gasLimit": 1,
+            "gross": 0,
+            "net": 0,
+            "fee": 0,
+            "actor": 0
+          },
+          "result": {
+            "network": "Solana",
+            "vault": "vault",
+            "transaction": "solana-setup",
+            "finalized": true,
+            "exactOperation": true,
+            "succeeded": true,
+            "actualGas": 1
+          }
+        },
+        {
+          "type": "completeLane",
+          "reconciled": true
+        },
+        {
+          "type": "activateLane",
+          "activation": {
+            "network": "Solana",
+            "vault": "vault",
+            "review": "plan",
+            "sharedEvmQualified": true,
+            "currentAuthority": true,
+            "exactDeployment": true,
+            "exactAsset": true,
+            "finalized": true,
+            "ownerAuthorized": true
+          }
+        },
+        {
+          "type": "admitPlan",
+          "plan": {
+            "network": "Robinhood",
+            "vault": "vault",
+            "asset": "USDG",
+            "review": "plan",
+            "monthlyCap": 1000000000,
+            "automatic": false
+          },
+          "evidence": {
+            "nonMoneyLive": true,
+            "exactAssetAndVault": true,
+            "currentAuthority": true,
+            "exactDeployment": true,
+            "applicableTestnet": true,
+            "ownerAuthorized": true
+          }
+        },
+        {
+          "type": "stopBeforeAttempt",
+          "checks": {
+            "currentAuthority": true,
+            "exactPlanAuthorized": true,
+            "eligible": true,
+            "simulationPassed": false,
+            "reconciled": true
+          }
+        },
+        {
+          "type": "resume",
+          "checks": {
+            "currentAuthority": true,
+            "exactPlanAuthorized": true,
+            "eligible": true,
+            "simulationPassed": true,
+            "reconciled": true
+          }
+        },
+        {
+          "type": "retainAttempt",
+          "operation": {
+            "key": "setup",
+            "transaction": "robinhood-setup",
+            "kind": "SupportingWrite",
+            "gasLimit": 1,
+            "gross": 0,
+            "net": 0,
+            "fee": 0,
+            "actor": 0
+          },
+          "checks": {
+            "currentAuthority": true,
+            "exactPlanAuthorized": true,
+            "eligible": true,
+            "simulationPassed": true,
+            "reconciled": true
+          }
+        },
+        {
+          "type": "reconcileAttempt",
+          "result": {
+            "network": "Robinhood",
+            "vault": "vault",
+            "transaction": "robinhood-setup",
+            "finalized": true,
+            "exactOperation": true,
+            "succeeded": true,
+            "actualGas": 1
+          }
+        },
+        {
+          "type": "retainHistorical",
+          "operation": {
+            "key": "deposit",
+            "transaction": "robinhood-deposit",
+            "kind": "Deposit",
+            "gasLimit": 1,
+            "gross": 10000000,
+            "net": 0,
+            "fee": 0,
+            "actor": 0
+          },
+          "result": {
+            "network": "Robinhood",
+            "vault": "vault",
+            "transaction": "robinhood-deposit",
+            "finalized": true,
+            "exactOperation": true,
+            "succeeded": true,
+            "actualGas": 1
+          }
+        },
+        {
+          "type": "retainHistorical",
+          "operation": {
+            "key": "payout",
+            "transaction": "robinhood-payout",
+            "kind": "Payout",
+            "gasLimit": 1,
+            "gross": 1000000,
+            "net": 980000,
+            "fee": 20000,
+            "actor": 18633264
+          },
+          "result": {
+            "network": "Robinhood",
+            "vault": "vault",
+            "transaction": "robinhood-payout",
+            "finalized": true,
+            "exactOperation": true,
+            "succeeded": true,
+            "actualGas": 1
+          }
+        },
+        {
+          "type": "completeLane",
+          "reconciled": true
+        },
+        {
+          "type": "activateLane",
+          "activation": {
+            "network": "Robinhood",
+            "vault": "vault",
+            "review": "plan",
+            "sharedEvmQualified": false,
+            "currentAuthority": true,
+            "exactDeployment": true,
+            "exactAsset": true,
+            "finalized": true,
+            "ownerAuthorized": true
+          }
+        },
+        {
+          "type": "activateEthereum",
+          "activation": {
+            "network": "Ethereum",
+            "vault": "",
+            "review": "plan",
+            "sharedEvmQualified": true,
+            "currentAuthority": true,
+            "exactDeployment": true,
+            "exactAsset": true,
+            "finalized": true,
+            "ownerAuthorized": true
+          }
+        }
+      ]
+    },
+    "sometimesThreeLanesActivated": {
+      "command": "seed 36165756517369; to simulate again: pnpm exec quint run gen/operations__escrowQualification.run.qnt --main operations__escrowQualification_run --step step --invariant inv --max-samples 80 --max-steps 45 --mbt --seed 36165756517369",
+      "events": [
+        {
+          "type": "admitPlan",
+          "plan": {
+            "network": "Base",
+            "vault": "vault",
+            "asset": "USDC",
+            "review": "plan",
+            "monthlyCap": 1000000000,
+            "automatic": false
+          },
+          "evidence": {
+            "nonMoneyLive": true,
+            "exactAssetAndVault": true,
+            "currentAuthority": true,
+            "exactDeployment": true,
+            "applicableTestnet": true,
+            "ownerAuthorized": true
+          }
+        },
+        {
+          "type": "retainHistorical",
+          "operation": {
+            "key": "deposit",
+            "transaction": "base-deposit",
+            "kind": "Deposit",
+            "gasLimit": 1,
+            "gross": 10000000,
+            "net": 0,
+            "fee": 0,
+            "actor": 0
+          },
+          "result": {
+            "network": "Base",
+            "vault": "vault",
+            "transaction": "base-deposit",
+            "finalized": true,
+            "exactOperation": true,
+            "succeeded": true,
+            "actualGas": 1
+          }
+        },
+        {
+          "type": "retainHistorical",
+          "operation": {
+            "key": "payout",
+            "transaction": "base-payout",
+            "kind": "Payout",
+            "gasLimit": 1,
+            "gross": 1000000,
+            "net": 980000,
+            "fee": 20000,
+            "actor": 18633264
+          },
+          "result": {
+            "network": "Base",
+            "vault": "vault",
+            "transaction": "base-payout",
+            "finalized": true,
+            "exactOperation": true,
+            "succeeded": true,
+            "actualGas": 1
+          }
+        },
+        {
+          "type": "retainHistorical",
+          "operation": {
+            "key": "setup",
+            "transaction": "base-setup",
+            "kind": "SupportingWrite",
+            "gasLimit": 1,
+            "gross": 0,
+            "net": 0,
+            "fee": 0,
+            "actor": 0
+          },
+          "result": {
+            "network": "Base",
+            "vault": "vault",
+            "transaction": "base-setup",
+            "finalized": true,
+            "exactOperation": true,
+            "succeeded": true,
+            "actualGas": 1
+          }
+        },
+        {
+          "type": "completeLane",
+          "reconciled": true
+        },
+        {
+          "type": "activateLane",
+          "activation": {
+            "network": "Base",
+            "vault": "vault",
+            "review": "plan",
+            "sharedEvmQualified": false,
+            "currentAuthority": true,
+            "exactDeployment": true,
+            "exactAsset": true,
+            "finalized": true,
+            "ownerAuthorized": true
+          }
+        },
+        {
+          "type": "admitPlan",
+          "plan": {
+            "network": "Solana",
+            "vault": "vault",
+            "asset": "USDC",
+            "review": "plan",
+            "monthlyCap": 1000000000,
+            "automatic": false
+          },
+          "evidence": {
+            "nonMoneyLive": true,
+            "exactAssetAndVault": true,
+            "currentAuthority": true,
+            "exactDeployment": true,
+            "applicableTestnet": true,
+            "ownerAuthorized": true
+          }
+        },
+        {
+          "type": "retainHistorical",
+          "operation": {
+            "key": "deposit",
+            "transaction": "solana-deposit",
+            "kind": "Deposit",
+            "gasLimit": 1,
+            "gross": 10000000,
+            "net": 0,
+            "fee": 0,
+            "actor": 0
+          },
+          "result": {
+            "network": "Solana",
+            "vault": "vault",
+            "transaction": "solana-deposit",
+            "finalized": true,
+            "exactOperation": true,
+            "succeeded": true,
+            "actualGas": 1
+          }
+        },
+        {
+          "type": "retainHistorical",
+          "operation": {
+            "key": "payout",
+            "transaction": "solana-payout",
+            "kind": "Payout",
+            "gasLimit": 1,
+            "gross": 1000000,
+            "net": 980000,
+            "fee": 20000,
+            "actor": 18633264
+          },
+          "result": {
+            "network": "Solana",
+            "vault": "vault",
+            "transaction": "solana-payout",
+            "finalized": true,
+            "exactOperation": true,
+            "succeeded": true,
+            "actualGas": 1
+          }
+        },
+        {
+          "type": "retainHistorical",
+          "operation": {
+            "key": "setup",
+            "transaction": "solana-setup",
+            "kind": "SupportingWrite",
+            "gasLimit": 1,
+            "gross": 0,
+            "net": 0,
+            "fee": 0,
+            "actor": 0
+          },
+          "result": {
+            "network": "Solana",
+            "vault": "vault",
+            "transaction": "solana-setup",
+            "finalized": true,
+            "exactOperation": true,
+            "succeeded": true,
+            "actualGas": 1
+          }
+        },
+        {
+          "type": "completeLane",
+          "reconciled": true
+        },
+        {
+          "type": "activateLane",
+          "activation": {
+            "network": "Solana",
+            "vault": "vault",
+            "review": "plan",
+            "sharedEvmQualified": true,
+            "currentAuthority": true,
+            "exactDeployment": true,
+            "exactAsset": true,
+            "finalized": true,
+            "ownerAuthorized": true
+          }
+        },
+        {
+          "type": "admitPlan",
+          "plan": {
+            "network": "Robinhood",
+            "vault": "vault",
+            "asset": "USDG",
+            "review": "plan",
+            "monthlyCap": 1000000000,
+            "automatic": false
+          },
+          "evidence": {
+            "nonMoneyLive": true,
+            "exactAssetAndVault": true,
+            "currentAuthority": true,
+            "exactDeployment": true,
+            "applicableTestnet": true,
+            "ownerAuthorized": true
+          }
+        },
+        {
+          "type": "stopBeforeAttempt",
+          "checks": {
+            "currentAuthority": true,
+            "exactPlanAuthorized": true,
+            "eligible": true,
+            "simulationPassed": false,
+            "reconciled": true
+          }
+        },
+        {
+          "type": "resume",
+          "checks": {
+            "currentAuthority": true,
+            "exactPlanAuthorized": true,
+            "eligible": true,
+            "simulationPassed": true,
+            "reconciled": true
+          }
+        },
+        {
+          "type": "retainAttempt",
+          "operation": {
+            "key": "setup",
+            "transaction": "robinhood-setup",
+            "kind": "SupportingWrite",
+            "gasLimit": 1,
+            "gross": 0,
+            "net": 0,
+            "fee": 0,
+            "actor": 0
+          },
+          "checks": {
+            "currentAuthority": true,
+            "exactPlanAuthorized": true,
+            "eligible": true,
+            "simulationPassed": true,
+            "reconciled": true
+          }
+        },
+        {
+          "type": "reconcileAttempt",
+          "result": {
+            "network": "Robinhood",
+            "vault": "vault",
+            "transaction": "robinhood-setup",
+            "finalized": true,
+            "exactOperation": true,
+            "succeeded": true,
+            "actualGas": 1
+          }
+        },
+        {
+          "type": "retainHistorical",
+          "operation": {
+            "key": "deposit",
+            "transaction": "robinhood-deposit",
+            "kind": "Deposit",
+            "gasLimit": 1,
+            "gross": 10000000,
+            "net": 0,
+            "fee": 0,
+            "actor": 0
+          },
+          "result": {
+            "network": "Robinhood",
+            "vault": "vault",
+            "transaction": "robinhood-deposit",
+            "finalized": true,
+            "exactOperation": true,
+            "succeeded": true,
+            "actualGas": 1
+          }
+        },
+        {
+          "type": "retainHistorical",
+          "operation": {
+            "key": "payout",
+            "transaction": "robinhood-payout",
+            "kind": "Payout",
+            "gasLimit": 1,
+            "gross": 1000000,
+            "net": 980000,
+            "fee": 20000,
+            "actor": 18633264
+          },
+          "result": {
+            "network": "Robinhood",
+            "vault": "vault",
+            "transaction": "robinhood-payout",
+            "finalized": true,
+            "exactOperation": true,
+            "succeeded": true,
+            "actualGas": 1
+          }
+        },
+        {
+          "type": "completeLane",
+          "reconciled": true
+        },
+        {
+          "type": "activateLane",
+          "activation": {
+            "network": "Robinhood",
+            "vault": "vault",
+            "review": "plan",
+            "sharedEvmQualified": false,
+            "currentAuthority": true,
+            "exactDeployment": true,
+            "exactAsset": true,
+            "finalized": true,
+            "ownerAuthorized": true
+          }
+        },
+        {
+          "type": "activateEthereum",
+          "activation": {
+            "network": "Ethereum",
+            "vault": "",
+            "review": "plan",
+            "sharedEvmQualified": true,
+            "currentAuthority": true,
+            "exactDeployment": true,
+            "exactAsset": true,
+            "finalized": true,
+            "ownerAuthorized": true
+          }
+        }
+      ]
+    },
+    "sometimesEthereumActive": {
+      "command": "seed 36165756517369; to simulate again: pnpm exec quint run gen/operations__escrowQualification.run.qnt --main operations__escrowQualification_run --step step --invariant inv --max-samples 80 --max-steps 45 --mbt --seed 36165756517369",
+      "events": [
+        {
+          "type": "admitPlan",
+          "plan": {
+            "network": "Base",
+            "vault": "vault",
+            "asset": "USDC",
+            "review": "plan",
+            "monthlyCap": 1000000000,
+            "automatic": false
+          },
+          "evidence": {
+            "nonMoneyLive": true,
+            "exactAssetAndVault": true,
+            "currentAuthority": true,
+            "exactDeployment": true,
+            "applicableTestnet": true,
+            "ownerAuthorized": true
+          }
+        },
+        {
+          "type": "retainHistorical",
+          "operation": {
+            "key": "deposit",
+            "transaction": "base-deposit",
+            "kind": "Deposit",
+            "gasLimit": 1,
+            "gross": 10000000,
+            "net": 0,
+            "fee": 0,
+            "actor": 0
+          },
+          "result": {
+            "network": "Base",
+            "vault": "vault",
+            "transaction": "base-deposit",
+            "finalized": true,
+            "exactOperation": true,
+            "succeeded": true,
+            "actualGas": 1
+          }
+        },
+        {
+          "type": "retainHistorical",
+          "operation": {
+            "key": "payout",
+            "transaction": "base-payout",
+            "kind": "Payout",
+            "gasLimit": 1,
+            "gross": 1000000,
+            "net": 980000,
+            "fee": 20000,
+            "actor": 18633264
+          },
+          "result": {
+            "network": "Base",
+            "vault": "vault",
+            "transaction": "base-payout",
+            "finalized": true,
+            "exactOperation": true,
+            "succeeded": true,
+            "actualGas": 1
+          }
+        },
+        {
+          "type": "retainHistorical",
+          "operation": {
+            "key": "setup",
+            "transaction": "base-setup",
+            "kind": "SupportingWrite",
+            "gasLimit": 1,
+            "gross": 0,
+            "net": 0,
+            "fee": 0,
+            "actor": 0
+          },
+          "result": {
+            "network": "Base",
+            "vault": "vault",
+            "transaction": "base-setup",
+            "finalized": true,
+            "exactOperation": true,
+            "succeeded": true,
+            "actualGas": 1
+          }
+        },
+        {
+          "type": "completeLane",
+          "reconciled": true
+        },
+        {
+          "type": "activateLane",
+          "activation": {
+            "network": "Base",
+            "vault": "vault",
+            "review": "plan",
+            "sharedEvmQualified": false,
+            "currentAuthority": true,
+            "exactDeployment": true,
+            "exactAsset": true,
+            "finalized": true,
+            "ownerAuthorized": true
+          }
+        },
+        {
+          "type": "admitPlan",
+          "plan": {
+            "network": "Solana",
+            "vault": "vault",
+            "asset": "USDC",
+            "review": "plan",
+            "monthlyCap": 1000000000,
+            "automatic": false
+          },
+          "evidence": {
+            "nonMoneyLive": true,
+            "exactAssetAndVault": true,
+            "currentAuthority": true,
+            "exactDeployment": true,
+            "applicableTestnet": true,
+            "ownerAuthorized": true
+          }
+        },
+        {
+          "type": "retainHistorical",
+          "operation": {
+            "key": "deposit",
+            "transaction": "solana-deposit",
+            "kind": "Deposit",
+            "gasLimit": 1,
+            "gross": 10000000,
+            "net": 0,
+            "fee": 0,
+            "actor": 0
+          },
+          "result": {
+            "network": "Solana",
+            "vault": "vault",
+            "transaction": "solana-deposit",
+            "finalized": true,
+            "exactOperation": true,
+            "succeeded": true,
+            "actualGas": 1
+          }
+        },
+        {
+          "type": "retainHistorical",
+          "operation": {
+            "key": "payout",
+            "transaction": "solana-payout",
+            "kind": "Payout",
+            "gasLimit": 1,
+            "gross": 1000000,
+            "net": 980000,
+            "fee": 20000,
+            "actor": 18633264
+          },
+          "result": {
+            "network": "Solana",
+            "vault": "vault",
+            "transaction": "solana-payout",
+            "finalized": true,
+            "exactOperation": true,
+            "succeeded": true,
+            "actualGas": 1
+          }
+        },
+        {
+          "type": "retainHistorical",
+          "operation": {
+            "key": "setup",
+            "transaction": "solana-setup",
+            "kind": "SupportingWrite",
+            "gasLimit": 1,
+            "gross": 0,
+            "net": 0,
+            "fee": 0,
+            "actor": 0
+          },
+          "result": {
+            "network": "Solana",
+            "vault": "vault",
+            "transaction": "solana-setup",
+            "finalized": true,
+            "exactOperation": true,
+            "succeeded": true,
+            "actualGas": 1
+          }
+        },
+        {
+          "type": "completeLane",
+          "reconciled": true
+        },
+        {
+          "type": "activateLane",
+          "activation": {
+            "network": "Solana",
+            "vault": "vault",
+            "review": "plan",
+            "sharedEvmQualified": true,
+            "currentAuthority": true,
+            "exactDeployment": true,
+            "exactAsset": true,
+            "finalized": true,
+            "ownerAuthorized": true
+          }
+        },
+        {
+          "type": "admitPlan",
+          "plan": {
+            "network": "Robinhood",
+            "vault": "vault",
+            "asset": "USDG",
+            "review": "plan",
+            "monthlyCap": 1000000000,
+            "automatic": false
+          },
+          "evidence": {
+            "nonMoneyLive": true,
+            "exactAssetAndVault": true,
+            "currentAuthority": true,
+            "exactDeployment": true,
+            "applicableTestnet": true,
+            "ownerAuthorized": true
+          }
+        },
+        {
+          "type": "stopBeforeAttempt",
+          "checks": {
+            "currentAuthority": true,
+            "exactPlanAuthorized": true,
+            "eligible": true,
+            "simulationPassed": false,
+            "reconciled": true
+          }
+        },
+        {
+          "type": "resume",
+          "checks": {
+            "currentAuthority": true,
+            "exactPlanAuthorized": true,
+            "eligible": true,
+            "simulationPassed": true,
+            "reconciled": true
+          }
+        },
+        {
+          "type": "retainAttempt",
+          "operation": {
+            "key": "setup",
+            "transaction": "robinhood-setup",
+            "kind": "SupportingWrite",
+            "gasLimit": 1,
+            "gross": 0,
+            "net": 0,
+            "fee": 0,
+            "actor": 0
+          },
+          "checks": {
+            "currentAuthority": true,
+            "exactPlanAuthorized": true,
+            "eligible": true,
+            "simulationPassed": true,
+            "reconciled": true
+          }
+        },
+        {
+          "type": "reconcileAttempt",
+          "result": {
+            "network": "Robinhood",
+            "vault": "vault",
+            "transaction": "robinhood-setup",
+            "finalized": true,
+            "exactOperation": true,
+            "succeeded": true,
+            "actualGas": 1
+          }
+        },
+        {
+          "type": "retainHistorical",
+          "operation": {
+            "key": "deposit",
+            "transaction": "robinhood-deposit",
+            "kind": "Deposit",
+            "gasLimit": 1,
+            "gross": 10000000,
+            "net": 0,
+            "fee": 0,
+            "actor": 0
+          },
+          "result": {
+            "network": "Robinhood",
+            "vault": "vault",
+            "transaction": "robinhood-deposit",
+            "finalized": true,
+            "exactOperation": true,
+            "succeeded": true,
+            "actualGas": 1
+          }
+        },
+        {
+          "type": "retainHistorical",
+          "operation": {
+            "key": "payout",
+            "transaction": "robinhood-payout",
+            "kind": "Payout",
+            "gasLimit": 1,
+            "gross": 1000000,
+            "net": 980000,
+            "fee": 20000,
+            "actor": 18633264
+          },
+          "result": {
+            "network": "Robinhood",
+            "vault": "vault",
+            "transaction": "robinhood-payout",
+            "finalized": true,
+            "exactOperation": true,
+            "succeeded": true,
+            "actualGas": 1
+          }
+        },
+        {
+          "type": "completeLane",
+          "reconciled": true
+        },
+        {
+          "type": "activateLane",
+          "activation": {
+            "network": "Robinhood",
+            "vault": "vault",
+            "review": "plan",
+            "sharedEvmQualified": false,
+            "currentAuthority": true,
+            "exactDeployment": true,
+            "exactAsset": true,
+            "finalized": true,
+            "ownerAuthorized": true
+          }
+        },
+        {
+          "type": "activateEthereum",
+          "activation": {
+            "network": "Ethereum",
+            "vault": "",
+            "review": "plan",
+            "sharedEvmQualified": true,
+            "currentAuthority": true,
+            "exactDeployment": true,
+            "exactAsset": true,
+            "finalized": true,
+            "ownerAuthorized": true
+          }
+        }
+      ]
+    }
+  },
+  "directed": [
+    "network order and verified non-money launch",
+    "approved asset amounts and immutable recipient",
+    "shared Base gas includes supporting writes",
+    "missing receipt holds one attempt and same bytes",
+    "wrong network, unfinalized or excessive-fee receipts refuse",
+    "finalized rejection consumes gas and fences retry",
+    "exact historical completed work cannot repeat",
+    "activation consumes the exact retained vault and review for each qualified lane",
+    "Ethereum shared-EVM waiver still needs its own finalized approval",
+    "separate native, Token-2022 and Solana preparation controls"
+  ],
+  "pinnedSources": {
+    "scripts/escrow-acceptance/evm.ts": "565b3ddc4e963e183e83293b6c8982c5c6e8faeb4b870194b84a54f0ef4dd531",
+    "formal/models/contracts/evm_upgrade_qualification.qnt": "c90f4ea3851b55153e1504fb7781f1dd39a482a1a82dd1f6a75e43c44c687498",
+    "formal/models/payments/deployment_plan.qnt": "26ad93d8bc7510662aa17555a5305bada7b543c23a9590a0d754b0e0f477c8a1",
+    "docs/slop-product-requirements.md": "50356a1565139c611ec025270f6a60e39bd0a0abb8658cb68ce4b569e6b6eee1"
+  },
+  "boundary": "Qualification policy and evidence journal. No keys or transaction effects. The adapter proves exact deployment, asset/vault identity, verified plan scope, signer authority, signed bytes and canonical receipt identity. Full EVM contract-upgrade topology and storage preservation, Solana build receipts and live chain conformance remain external."
+}

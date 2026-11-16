@@ -3,14 +3,22 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
+  "sideEffects": [
+    "./fonts.ts"
+  ],
   "exports": {
     "./tokens.json": "./tokens.json",
     "./tokens.css": "./generated/tokens.css",
-    "./theme.css": "./generated/theme.css"
+    "./theme.css": "./generated/theme.css",
+    "./fonts": "./fonts.ts"
   },
   "scripts": {
     "build": "node ../../vibestack/design/cli.ts build",
     "check": "node ../../vibestack/design/cli.ts check"
+  },
+  "dependencies": {
+    "@fontsource-variable/bricolage-grotesque": "catalog:",
+    "@fontsource/jetbrains-mono": "catalog:"
   },
   "devDependencies": {
     "eslint": "catalog:",

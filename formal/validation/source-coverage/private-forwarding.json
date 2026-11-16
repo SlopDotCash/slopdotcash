@@ -1,0 +1,179 @@
+{
+  "sourceCommit": "78eed5564d796119d82ae541c36b0c770263dc5f",
+  "sourceHashes": {
+    "docs/slop-product-requirements.md": "50356a1565139c611ec025270f6a60e39bd0a0abb8658cb68ce4b569e6b6eee1",
+    "backend/security/submissions.ts": "371a98e9159dc145e9e638788b6faa94c402f068f9dde40e0d61944ff5a13e01",
+    "backend/security/submission-store.ts": "7df0935d12ffe50671430abbdea0eb25e80bbb015061ca57ac5c1e2cebb91794",
+    "backend/security/intake-grant.ts": "d4b7bba02c5fa46f380275a7060c939c18615c31f9556ff7392a560f2ffb2e3f",
+    "backend/security/github-advisories.ts": "73a7abf37cc3c6330cbd4022ee9a1c08f1fba47b8e6b1327212895b041bceaf2",
+    "backend/security/submissions.test.ts": "b2ae9fb5a6f9d1da616bbbcd2d2193f47b7bae339b7087ed81a75910fddd5dcd",
+    "formal/models/api/api_private_intake.qnt": "30e37494bfade0846eb065295bf9a72b2f4e880176e8315cd479675cadec90c9",
+    "formal/models/api/api_report_forward_revision.qnt": "dbf74a3b997d01ec49913d067e2264ad46e68ed6f584041bf9b469e22d4cdc1e",
+    "formal/models/api/api_submission_recovery.qnt": "8b39e8302787904f8979c4175aac8263a5068e3e60ca9471f7ad3099e44ea95f",
+    "formal/models/api/submission_receipt_verification.qnt": "fbdbafcaab15eb73e05be34a12946ca6b430fa5ac5d5615375888a47a19f2c83"
+  },
+  "specHashes": {
+    "spec/security/screening.md": "27fafe9f9765065177d967ce33197c4bcfb4ccb75efe965ce8b6fe48f37b76a9",
+    "spec/security/screening.proof.dfy": "af4b8bc53cae54a1b72f5e63ed71aff85553d493c64607a8d0d593d5421a4b20",
+    "spec/security/forwarding.md": "acc27bf07ce3ce9f7172bb021806eec926ff37d204e21fa105893c0a923d0a4c",
+    "spec/security/forwarding.proof.dfy": "e0fe0c79cf03f6b48a071c747f84d896bf5874fc736fe0001466b24db6136cd4"
+  },
+  "proof": {
+    "unit": "security__forwarding.ts",
+    "total": 94,
+    "unproved": [],
+    "exhausted": [],
+    "errors": [],
+    "resting": {},
+    "proofDafnySha256": "b0796d689ad4170ac3a4556062376ab22a3bb79761316b2f6f8e247f4f90a31d",
+    "proofSource": {
+      "file": "spec/security/forwarding.proof.dfy",
+      "sha256": "e0fe0c79cf03f6b48a071c747f84d896bf5874fc736fe0001466b24db6136cd4"
+    },
+    "checkedImportedLemmas": 0,
+    "log": "formal/validation/source-coverage/private-forwarding.proof.log",
+    "logSha256": "bdc97453aa9b530ea21385cdb8210ce9c996d79b413ddf2b542c23ee55e0f800"
+  },
+  "directed": {
+    "generatedTypeScript": true,
+    "completedPaths": 19,
+    "comparisonSteps": 111,
+    "transitions": [
+      "claimSend",
+      "expireVerification",
+      "holdLateCopy",
+      "loseReceiptReply",
+      "markInterrupted",
+      "readReceipt",
+      "reconcile",
+      "recordClaimRead",
+      "recordCreated",
+      "recordPostResult",
+      "startPost"
+    ],
+    "cases": [
+      "stale, incorrect role, wrong session, expiry and disallowed consent refuse at claim",
+      "missing and stale readbacks cannot borrow a current claim",
+      "owned readback may post late without accepting its obsolete outcome",
+      "expired and installation grants cannot list, incomplete or early empty listings preserve uncertainty",
+      "rate limit provably opens the same draft without listing",
+      "terminal provider refusal retains case, and retryable provider refusal may retry",
+      "resend adopts earliest observed copy and keeps duplicates",
+      "resend with listing error retains its accepted copy",
+      "verified receipt identity, authorized contacts and committed-link recovery",
+      "canonical copy survives mismatched facts and competing case",
+      "verification expiry is strict and wrong immutable reporter fails",
+      "GHSA read must bind exact author and private marker",
+      "direct live report",
+      "direct 404",
+      "direct report unobservable",
+      "maintainer drafted advisory",
+      "withdrawn direct report",
+      "credited non-author",
+      "unrelated direct GHSA"
+    ],
+    "quint": {
+      "passed": true,
+      "kind": "Quint exact transition values and blocked inputs compared with generated TypeScript",
+      "cases": 12,
+      "comparisonSteps": 111,
+      "stdout": "\n  security__forwarding_directed\n    ok journey1Test passed 1 test(s)\n    ok journey2Test passed 1 test(s)\n    ok journey3Test passed 1 test(s)\n    ok journey4Test passed 1 test(s)\n    ok journey5Test passed 1 test(s)\n    ok journey6Test passed 1 test(s)\n    ok journey7Test passed 1 test(s)\n    ok journey8Test passed 1 test(s)\n    ok journey9Test passed 1 test(s)\n    ok journey10Test passed 1 test(s)\n    ok journey11Test passed 1 test(s)\n    ok journey12Test passed 1 test(s)\n\n  12 passing (3242ms)\n",
+      "stderr": ""
+    }
+  },
+  "boundary": "The saved-report worker rules consume authenticated grant validation, exact response parsing and committed D1 evidence. The legacy direct path is modeled as receipt fact classification. Real provider behavior and adapters remain integration obligations.",
+  "simulation": [
+    {
+      "unit": "security__forwarding",
+      "step": "step",
+      "passed": true,
+      "replay": true,
+      "traces": 30,
+      "command": "seed 127411024779757; to simulate again: pnpm exec quint run gen/security__forwarding.run.qnt --main security__forwarding_run --step step --invariant inv --max-samples 64 --max-steps 12 --mbt --seed 127411024779757",
+      "events": [
+        "claimSend",
+        "recordClaimRead",
+        "startPost",
+        "recordPostResult",
+        "holdLateCopy",
+        "reconcile",
+        "readReceipt",
+        "markInterrupted",
+        "loseReceiptReply",
+        "recordCreated",
+        "expireVerification"
+      ],
+      "goals": [
+        {
+          "name": "sometimesRetryableDraft",
+          "reached": true
+        },
+        {
+          "name": "sometimesUncertain",
+          "reached": true
+        },
+        {
+          "name": "sometimesSubmitted",
+          "reached": true
+        },
+        {
+          "name": "sometimesDuplicates",
+          "reached": true
+        },
+        {
+          "name": "sometimesContactsUnavailable",
+          "reached": true
+        },
+        {
+          "name": "sometimesReceiptRecovered",
+          "reached": true
+        }
+      ]
+    },
+    {
+      "unit": "security__forwarding",
+      "step": "probe",
+      "passed": true,
+      "replay": true,
+      "traces": 30,
+      "command": "seed 8405607239495; to simulate again: pnpm exec quint run gen/security__forwarding.run.qnt --main security__forwarding_run --step probe --invariant inv --max-samples 64 --max-steps 12 --mbt --seed 8405607239495",
+      "events": [
+        "claimSend",
+        "recordClaimRead",
+        "startPost",
+        "recordPostResult",
+        "holdLateCopy",
+        "recordCreated",
+        "readReceipt",
+        "reconcile",
+        "markInterrupted"
+      ],
+      "goals": [
+        {
+          "name": "sometimesRetryableDraft",
+          "reached": true
+        },
+        {
+          "name": "sometimesUncertain",
+          "reached": true
+        },
+        {
+          "name": "sometimesSubmitted",
+          "reached": true
+        },
+        {
+          "name": "sometimesDuplicates",
+          "reached": true
+        },
+        {
+          "name": "sometimesContactsUnavailable",
+          "reached": true
+        },
+        {
+          "name": "sometimesReceiptRecovered",
+          "reached": false
+        }
+      ]
+    }
+  ]
+}

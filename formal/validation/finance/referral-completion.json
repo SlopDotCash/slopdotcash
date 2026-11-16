@@ -1,0 +1,64 @@
+{
+  "scratch": "/var/folders/1g/77s889gx10n7mtl6z1nfrxzm0000gn/T/slop-referral-completion-WyiT8t",
+  "snapshot": {
+    "spec/settlement/money.md": "cb766a9b5b99f5509da5478ca15ecbe1c77a09127956d9524e7447c7d0939978",
+    "spec/settlement/referralAccrual.md": "015d404a16238f06ffa2122455d77e209e4ec9e12291edbecc298ee8bcd290d0",
+    "spec/settlement/referralDistributor.md": "a4787831326ae67277b93177fab67d54511b1d1e1949f89ec1638bd4c5c5ab3d",
+    "spec/settlement/referrals.md": "70f1701d007216eff36152de00b41020a01a772cece96950ef9563a89699a373",
+    "spec/settlement/referralPublication.md": "e0e00eacc314b956dca57720b26695a0bde1f60fc3dacf460caaf209326ae981"
+  },
+  "simulations": [
+    {
+      "unit": "settlement__referrals",
+      "broken": false,
+      "traces": 20,
+      "samples": 1000,
+      "steps": 30,
+      "replayPassed": true,
+      "again": "seed 129406984736250; to simulate again: pnpm exec quint run gen/settlement__referrals.run.qnt --main settlement__referrals_run --step step --invariant inv --max-samples 1000 --max-steps 30 --mbt --seed 129406984736250"
+    },
+    {
+      "unit": "settlement__referralDistributor",
+      "broken": false,
+      "traces": 20,
+      "samples": 1000,
+      "steps": 30,
+      "replayPassed": true,
+      "again": "seed 197667890138872; to simulate again: pnpm exec quint run gen/settlement__referralDistributor.run.qnt --main settlement__referralDistributor_run --step step --invariant inv --max-samples 1000 --max-steps 30 --mbt --seed 197667890138872"
+    },
+    {
+      "unit": "settlement__referralAccrual",
+      "broken": false,
+      "traces": 20,
+      "samples": 1000,
+      "steps": 30,
+      "replayPassed": true,
+      "again": "seed 78441794186650; to simulate again: pnpm exec quint run gen/settlement__referralAccrual.run.qnt --main settlement__referralAccrual_run --step step --invariant inv --max-samples 1000 --max-steps 30 --mbt --seed 78441794186650"
+    }
+  ],
+  "proofs": [
+    {
+      "unit": "settlement__referrals.ts",
+      "total": 6,
+      "unproved": [],
+      "errors": [],
+      "exhausted": [],
+      "log": "formal/validation/finance/referral-settlement__referrals.ts.log"
+    }
+  ],
+  "status": "focused-proofs-superseded-by-canonical-full-tree-check",
+  "stoppedAt": "2026-11-14T04:04:02.006469+00:00",
+  "supersededProofUnits": [
+    "settlement__referralAccrual.ts",
+    "settlement__referralDistributor.ts",
+    "settlement__referralPublication.ts"
+  ],
+  "reason": "Parent requested stop of redundant unfinished focused proofs; the root canonical pnpm check will own final proof outcomes.",
+  "snapshotCurrent": {
+    "spec/settlement/money.md": true,
+    "spec/settlement/referralAccrual.md": true,
+    "spec/settlement/referralDistributor.md": true,
+    "spec/settlement/referrals.md": true,
+    "spec/settlement/referralPublication.md": false
+  }
+}

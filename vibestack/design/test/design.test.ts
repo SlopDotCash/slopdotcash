@@ -25,7 +25,7 @@ test("generated CSS is deterministic and a token change touches only that token'
   const copy = JSON.parse(JSON.stringify(tokens)) as Tokens
   expect([tokensCss(copy), themeCss(copy)]).toEqual([tokensCss(tokens), themeCss(tokens)])
   const next = applyChanges(tokens, [primary]).tokens
-  expect(changedLines(tokensCss(tokens), tokensCss(next))).toEqual(["  --primary: oklch(0.45 0.2 277);"])
+  expect(changedLines(tokensCss(tokens), tokensCss(next))).toEqual(Array(2).fill("  --primary: oklch(0.45 0.2 277);"))
   expect(themeCss(next)).toBe(themeCss(tokens))
   const dark = applyChanges(tokens, [{ ...primary, path: "color.dark.primary", value: "oklch(0.75 0.15 282)" }]).tokens
   expect(changedLines(tokensCss(tokens), tokensCss(dark))).toEqual(["  --primary: oklch(0.75 0.15 282);", "    --primary: oklch(0.75 0.15 282);"])
@@ -40,6 +40,7 @@ test("apply accepts a valid change and rejects an unknown path, an invalid color
   expect(() => applyChanges(tokens, [{ ...primary, path: "constructor.name" }])).toThrow("unknown token path")
   expect(() => applyChanges(tokens, [{ ...primary, value: "#4f46e5" }])).toThrow(/expected oklch/)
   expect(() => applyChanges(tokens, [{ ...primary, value: "oklch(0.9 0.05 277)" }])).toThrow(/color\.light\.primary-foreground on primary: contrast .* is below 4\.5/)
+  expect(() => applyChanges(tokens, [{ path: "color.dark.input", value: tokens.color.dark.background, reason: "invisible field" }])).toThrow(/color\.dark\.input on background: contrast 1\.00 is below 3/)
   expect(() => applyChanges(tokens, [{ path: primary.path, value: primary.value }])).toThrow(/reason/)
   const { radius: _, ...rest } = tokens
   expect(() => parseTokens({ ...rest, spacing: "1rem" })).toThrow("unknown token path: spacing\nradius: missing")
@@ -64,11 +65,10 @@ test("the ESLint config flags values that bypass the tokens and accepts token cl
   const config = designSystem({ tailwind, tokens, entryPoint: join(copy, "generated/theme.css") })
   const eslint = new ESLint({ cwd: dir, overrideConfigFile: true, overrideConfig: [{ files: ["**/*.tsx"], languageOptions: { parser } }, ...config] })
   const lint = async (name: string) => (await eslint.lintText(readFileSync(here(`fixtures/${name}`), "utf8"), { filePath: name }))[0]!.messages
+  const [restricted, literal] = ["better-tailwindcss/no-restricted-classes", "design-system/no-literal-colors"]
   expect((await lint("bad.tsx")).map(({ line, ruleId }: { line: number; ruleId: string }) => [line, ruleId])).toEqual([
-    [2, "better-tailwindcss/no-restricted-classes"],
-    [3, "better-tailwindcss/no-restricted-classes"],
-    [4, "design-system/no-literal-colors"],
-    [5, "design-system/no-literal-colors"],
+    [1, literal], [3, restricted], [4, restricted], [5, literal], [6, literal],
+    ...Array.from({ length: 10 }, (_, i) => [8 + i, restricted]), [18, literal], [19, literal],
   ])
   expect(await lint("good.tsx")).toEqual([])
 }, 60_000)

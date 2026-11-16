@@ -1,0 +1,14 @@
+[
+  {
+    "command": "node /tmp/slop-prove-evidence-manual.mjs",
+    "status": "stopped-after-source-or-proof-revision",
+    "preservedLog": "formal/validation/security/superseded-slop-security-evidence-manual-proof.log",
+    "descendantsStopped": 3
+  },
+  {
+    "command": "node /tmp/slop-prove-cases-manual.mjs",
+    "status": "stopped-after-source-or-proof-revision",
+    "preservedLog": "formal/validation/security/superseded-slop-security-cases-manual-proof.log",
+    "descendantsStopped": 3
+  }
+]

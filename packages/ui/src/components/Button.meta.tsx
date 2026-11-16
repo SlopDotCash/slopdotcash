@@ -31,16 +31,23 @@ export const meta: ComponentMeta<ButtonProps> = {
       await userEvent.click(within(canvasElement).getByRole("link"));
       await expect(args.onClick).toHaveBeenCalled();
     },
-    Loading: ({ canvasElement }: { canvasElement: HTMLElement }) => expect(within(canvasElement).getByRole("button").getAttribute("aria-busy")).toBe("true"),
+    // spec/ui/controls.md, "A disabled or busy control refuses activation and stays named"
+    Loading: ({ canvasElement }: { canvasElement: HTMLElement }) => {
+      const button = within(canvasElement).getByRole<HTMLButtonElement>("button", { name: "Button" });
+      return expect([button.disabled, button.getAttribute("aria-busy"), button.getAttribute("aria-disabled")]).toEqual([false, "true", "true"]);
+    },
     // A link has no `disabled`: it says so and leaves the tab order.
+    // spec/ui/controls.md, "A disabled or busy control refuses activation and stays named"
     "Disabled link": async ({ canvasElement }: { canvasElement: HTMLElement }) => {
       const anchor = within(canvasElement).getByRole("link");
       await expect([anchor.getAttribute("aria-disabled"), anchor.tabIndex]).toEqual(["true", -1]);
       await refusesChild(anchor, disabledLink.onClick);
     },
+    // A busy link stays in the tab order.
+    // spec/ui/controls.md, "A disabled or busy control refuses activation and stays named"
     "Loading link": async ({ canvasElement }: { canvasElement: HTMLElement }) => {
       const anchor = within(canvasElement).getByRole("link");
-      await expect([anchor.getAttribute("aria-disabled"), anchor.getAttribute("aria-busy"), anchor.tabIndex]).toEqual(["true", "true", -1]);
+      await expect([anchor.getAttribute("aria-disabled"), anchor.getAttribute("aria-busy"), anchor.tabIndex]).toEqual(["true", "true", 0]);
       await refusesChild(anchor, loadingLink.onClick);
     },
   },

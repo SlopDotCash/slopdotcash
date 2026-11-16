@@ -1,0 +1,76 @@
+{
+  "snapshot": {
+    "spec/backend/wallets.md": "c2f024263e30cbcdde00fa36d79e44f9ec8687ed0b8b3651c6628899352bc13b"
+  },
+  "sourceCommit": "6b3b9d0b979f0608d87941f1146056a98513ffcf",
+  "owningSources": {
+    "backend/payments/wallet-registration.ts": "7ebddc0a7a2ef63dd20f7602d56e3d76151b519756fcb870e3260665b30ff1fb",
+    "backend/payments/handler.ts": "b0e3b3b8b350e6a129af4b2f06fdb9597e93a4ec9d242a931dd5852e5ab76faa",
+    "backend/payments/possession.ts": "08d9d2fc2272dfb9146032559babe2e35679d444afae276b7ee3e11e01ea7908",
+    "migrations/0011_payments.sql": "076232ab09dc40e5656850985b441d696c4903b50d847912cfea27eeb9c601f3",
+    "migrations/0100_effective_payment_wallets.sql": "c7d4482cb21971396657db276ffcd476228f2cb55e71db634d9fe3e2a29b1a11"
+  },
+  "random": {
+    "traces": 100,
+    "eventCounts": {
+      "register": 1453,
+      "issue": 200,
+      "readProof": 91,
+      "consume": 73,
+      "commitAuthorization": 73,
+      "observeTime": 54,
+      "selectChain": 51,
+      "restoreHistorical": 5
+    },
+    "goalTraceCounts": {
+      "sometimesConsumedButUnsigned": 72,
+      "sometimesBound": 31,
+      "sometimesPriorStillEffective": 24
+    },
+    "transitionsNotReached": []
+  },
+  "guided": {
+    "events": 69,
+    "journeys": 7,
+    "enabledEventCounts": {
+      "register": 11,
+      "selectChain": 1,
+      "restoreHistorical": 1,
+      "issue": 9,
+      "readProof": 10,
+      "consume": 9,
+      "commitAuthorization": 9,
+      "observeTime": 1
+    },
+    "artifact": "formal/validation/journeys/wallet-registration-journeys.json"
+  },
+  "earlierRandom": {
+    "snapshot": {
+      "spec/backend/wallets.md": "23122a0d14d9aa3f28842900d73de092fa1e32d19e0fdc5eca45d11a6adef39c"
+    },
+    "traces": 100,
+    "eventCounts": {
+      "register": 1506,
+      "issue": 200,
+      "readProof": 88,
+      "consume": 67,
+      "commitAuthorization": 67,
+      "observeTime": 68,
+      "selectChain": 4
+    },
+    "goalTraceCounts": {
+      "sometimesPriorStillEffective": 25,
+      "sometimesBound": 33,
+      "sometimesConsumedButUnsigned": 67
+    },
+    "transitionsNotReached": [
+      "restoreHistorical"
+    ]
+  },
+  "equivalentGeneratedTypeScript": {
+    "priorSnapshot": "23122a0d14d9aa3f28842900d73de092fa1e32d19e0fdc5eca45d11a6adef39c",
+    "currentSnapshot": "c2f024263e30cbcdde00fa36d79e44f9ec8687ed0b8b3651c6628899352bc13b",
+    "priorGeneratedTs": "ce76b464f45faf9d840d1a2962801469a4745e286377c6aae1cde78bedf319b8",
+    "currentGeneratedTs": "ce76b464f45faf9d840d1a2962801469a4745e286377c6aae1cde78bedf319b8"
+  }
+}

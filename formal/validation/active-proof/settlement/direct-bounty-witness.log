@@ -1,0 +1,9 @@
+
+  direct_bounty_witness
+    ok walletChangeHoldsOnlyResearcherAndOldFinalizedPayoutStillCountsTest passed 1 test(s)
+    ok feeOnlySuccessorKeepsThePaidResearcherAndOriginalPayerTest passed 1 test(s)
+    ok renewedConsentAndFinalizedRetirementMustMatchTheUnpaidRequestTest passed 1 test(s)
+    ok everyRetainedSolanaMessageNeedsRetirementEvidenceTest passed 1 test(s)
+    ok uniqueCanonicalTransactionAcrossLegsAndLedgersTest passed 1 test(s)
+
+  5 passing (1400ms)

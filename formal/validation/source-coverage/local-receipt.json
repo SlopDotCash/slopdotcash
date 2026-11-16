@@ -1,0 +1,616 @@
+{
+  "sourceMain": "6b3b9d0b979f0608d87941f1146056a98513ffcf",
+  "source": "spec/contributor/localReceipt.md",
+  "sourceHash": "b14b7e28017c4c4c855295ce5d50865ac2f143ccb88813bc95405977dd7638d6",
+  "proof": {
+    "generatedDafnySha256": "89084eb3eac60baee20e1a2a8358ed00f5232bdbcae4fd34253367f861ffa61b",
+    "total": 74,
+    "unproved": [],
+    "exhausted": [],
+    "resting": {},
+    "errors": []
+  },
+  "simulation": {
+    "command": "seed 182111126990842; to simulate again: pnpm exec quint run gen/contributor__localReceipt.run.qnt --main contributor__localReceipt_run --step step --invariant inv --max-samples 400 --max-steps 28 --mbt --seed 182111126990842",
+    "replayed": 25
+  },
+  "witnesses": {
+    "sometimesFinishedWithoutCapture": {
+      "command": "seed 182111126990842; to simulate again: pnpm exec quint run gen/contributor__localReceipt.run.qnt --main contributor__localReceipt_run --step step --invariant inv --max-samples 400 --max-steps 28 --mbt --seed 182111126990842",
+      "events": [
+        {
+          "type": "start",
+          "startedAt": 2,
+          "consent": false,
+          "available": false
+        },
+        {
+          "type": "prepareFinish",
+          "candidate": {
+            "digest": "run-a",
+            "completionAt": -1,
+            "valid": true
+          }
+        },
+        {
+          "type": "reject"
+        },
+        {
+          "type": "prepareFinish",
+          "candidate": {
+            "digest": "run-a",
+            "completionAt": -1,
+            "valid": true
+          }
+        },
+        {
+          "type": "reject"
+        },
+        {
+          "type": "prepareFinish",
+          "candidate": {
+            "digest": "run-a",
+            "completionAt": 2,
+            "valid": true
+          }
+        },
+        {
+          "type": "validate"
+        },
+        {
+          "type": "stage"
+        },
+        {
+          "type": "publish"
+        },
+        {
+          "type": "cleanupTemporary",
+          "succeeds": true
+        },
+        {
+          "type": "removeActive",
+          "succeeds": false
+        },
+        {
+          "type": "replayCompleted",
+          "identityMatches": true,
+          "cleanupWorks": true
+        },
+        {
+          "type": "replayCompleted",
+          "identityMatches": false,
+          "cleanupWorks": true
+        },
+        {
+          "type": "replayCompleted",
+          "identityMatches": false,
+          "cleanupWorks": true
+        },
+        {
+          "type": "replayCompleted",
+          "identityMatches": true,
+          "cleanupWorks": true
+        },
+        {
+          "type": "replayCompleted",
+          "identityMatches": false,
+          "cleanupWorks": true
+        },
+        {
+          "type": "replayCompleted",
+          "identityMatches": false,
+          "cleanupWorks": false
+        },
+        {
+          "type": "replayCompleted",
+          "identityMatches": true,
+          "cleanupWorks": false
+        },
+        {
+          "type": "replayCompleted",
+          "identityMatches": true,
+          "cleanupWorks": false
+        },
+        {
+          "type": "replayCompleted",
+          "identityMatches": false,
+          "cleanupWorks": true
+        },
+        {
+          "type": "replayCompleted",
+          "identityMatches": false,
+          "cleanupWorks": false
+        },
+        {
+          "type": "replayCompleted",
+          "identityMatches": false,
+          "cleanupWorks": true
+        },
+        {
+          "type": "replayCompleted",
+          "identityMatches": true,
+          "cleanupWorks": false
+        },
+        {
+          "type": "replayCompleted",
+          "identityMatches": true,
+          "cleanupWorks": false
+        },
+        {
+          "type": "replayCompleted",
+          "identityMatches": false,
+          "cleanupWorks": true
+        },
+        {
+          "type": "replayCompleted",
+          "identityMatches": true,
+          "cleanupWorks": false
+        },
+        {
+          "type": "replayCompleted",
+          "identityMatches": true,
+          "cleanupWorks": false
+        },
+        {
+          "type": "replayCompleted",
+          "identityMatches": false,
+          "cleanupWorks": true
+        }
+      ]
+    },
+    "sometimesTemporaryCleanupFailed": {
+      "command": "seed 182111126990842; to simulate again: pnpm exec quint run gen/contributor__localReceipt.run.qnt --main contributor__localReceipt_run --step step --invariant inv --max-samples 400 --max-steps 28 --mbt --seed 182111126990842",
+      "events": [
+        {
+          "type": "start",
+          "startedAt": 2,
+          "consent": false,
+          "available": false
+        },
+        {
+          "type": "prepareFinish",
+          "candidate": {
+            "digest": "run-a",
+            "completionAt": -1,
+            "valid": true
+          }
+        },
+        {
+          "type": "reject"
+        },
+        {
+          "type": "prepareFinish",
+          "candidate": {
+            "digest": "run-a",
+            "completionAt": 2,
+            "valid": true
+          }
+        },
+        {
+          "type": "validate"
+        },
+        {
+          "type": "stage"
+        },
+        {
+          "type": "competingWriter",
+          "contender": {
+            "digest": "run-b",
+            "completionAt": 2,
+            "valid": true
+          }
+        },
+        {
+          "type": "replayCompleted",
+          "identityMatches": true,
+          "cleanupWorks": false
+        },
+        {
+          "type": "replayCompleted",
+          "identityMatches": false,
+          "cleanupWorks": false
+        },
+        {
+          "type": "replayCompleted",
+          "identityMatches": false,
+          "cleanupWorks": true
+        },
+        {
+          "type": "cleanupTemporary",
+          "succeeds": true
+        },
+        {
+          "type": "replayCompleted",
+          "identityMatches": false,
+          "cleanupWorks": true
+        },
+        {
+          "type": "replayCompleted",
+          "identityMatches": true,
+          "cleanupWorks": true
+        },
+        {
+          "type": "replayCompleted",
+          "identityMatches": true,
+          "cleanupWorks": false
+        },
+        {
+          "type": "replayCompleted",
+          "identityMatches": false,
+          "cleanupWorks": false
+        },
+        {
+          "type": "replayCompleted",
+          "identityMatches": true,
+          "cleanupWorks": false
+        },
+        {
+          "type": "replayCompleted",
+          "identityMatches": true,
+          "cleanupWorks": true
+        },
+        {
+          "type": "replayCompleted",
+          "identityMatches": false,
+          "cleanupWorks": false
+        },
+        {
+          "type": "replayCompleted",
+          "identityMatches": false,
+          "cleanupWorks": true
+        },
+        {
+          "type": "replayCompleted",
+          "identityMatches": false,
+          "cleanupWorks": true
+        },
+        {
+          "type": "replayCompleted",
+          "identityMatches": true,
+          "cleanupWorks": true
+        },
+        {
+          "type": "replayCompleted",
+          "identityMatches": false,
+          "cleanupWorks": true
+        },
+        {
+          "type": "replayCompleted",
+          "identityMatches": true,
+          "cleanupWorks": true
+        },
+        {
+          "type": "replayCompleted",
+          "identityMatches": false,
+          "cleanupWorks": true
+        },
+        {
+          "type": "replayCompleted",
+          "identityMatches": true,
+          "cleanupWorks": true
+        },
+        {
+          "type": "replayCompleted",
+          "identityMatches": true,
+          "cleanupWorks": true
+        },
+        {
+          "type": "replayCompleted",
+          "identityMatches": false,
+          "cleanupWorks": true
+        },
+        {
+          "type": "replayCompleted",
+          "identityMatches": false,
+          "cleanupWorks": false
+        }
+      ]
+    },
+    "sometimesInvalidHistory": {
+      "command": "seed 182111126990842; to simulate again: pnpm exec quint run gen/contributor__localReceipt.run.qnt --main contributor__localReceipt_run --step step --invariant inv --max-samples 400 --max-steps 28 --mbt --seed 182111126990842",
+      "events": [
+        {
+          "type": "start",
+          "startedAt": 1,
+          "consent": true,
+          "available": true
+        },
+        {
+          "type": "prepareFinish",
+          "candidate": {
+            "digest": "run-a",
+            "completionAt": 2,
+            "valid": false
+          }
+        },
+        {
+          "type": "reject"
+        },
+        {
+          "type": "observeInvalidHistory",
+          "digest": "run-b"
+        },
+        {
+          "type": "replayCompleted",
+          "identityMatches": true,
+          "cleanupWorks": false
+        },
+        {
+          "type": "replayCompleted",
+          "identityMatches": false,
+          "cleanupWorks": false
+        },
+        {
+          "type": "replayCompleted",
+          "identityMatches": true,
+          "cleanupWorks": false
+        },
+        {
+          "type": "replayCompleted",
+          "identityMatches": false,
+          "cleanupWorks": true
+        },
+        {
+          "type": "replayCompleted",
+          "identityMatches": true,
+          "cleanupWorks": true
+        },
+        {
+          "type": "replayCompleted",
+          "identityMatches": true,
+          "cleanupWorks": false
+        },
+        {
+          "type": "replayCompleted",
+          "identityMatches": false,
+          "cleanupWorks": true
+        },
+        {
+          "type": "replayCompleted",
+          "identityMatches": false,
+          "cleanupWorks": false
+        },
+        {
+          "type": "replayCompleted",
+          "identityMatches": false,
+          "cleanupWorks": true
+        },
+        {
+          "type": "replayCompleted",
+          "identityMatches": false,
+          "cleanupWorks": true
+        },
+        {
+          "type": "replayCompleted",
+          "identityMatches": false,
+          "cleanupWorks": false
+        },
+        {
+          "type": "replayCompleted",
+          "identityMatches": true,
+          "cleanupWorks": false
+        },
+        {
+          "type": "replayCompleted",
+          "identityMatches": false,
+          "cleanupWorks": false
+        },
+        {
+          "type": "replayCompleted",
+          "identityMatches": true,
+          "cleanupWorks": true
+        },
+        {
+          "type": "replayCompleted",
+          "identityMatches": false,
+          "cleanupWorks": false
+        },
+        {
+          "type": "replayCompleted",
+          "identityMatches": false,
+          "cleanupWorks": true
+        },
+        {
+          "type": "replayCompleted",
+          "identityMatches": true,
+          "cleanupWorks": true
+        },
+        {
+          "type": "replayCompleted",
+          "identityMatches": true,
+          "cleanupWorks": true
+        },
+        {
+          "type": "replayCompleted",
+          "identityMatches": true,
+          "cleanupWorks": true
+        },
+        {
+          "type": "replayCompleted",
+          "identityMatches": false,
+          "cleanupWorks": true
+        },
+        {
+          "type": "replayCompleted",
+          "identityMatches": false,
+          "cleanupWorks": true
+        },
+        {
+          "type": "replayCompleted",
+          "identityMatches": true,
+          "cleanupWorks": false
+        },
+        {
+          "type": "replayCompleted",
+          "identityMatches": true,
+          "cleanupWorks": false
+        },
+        {
+          "type": "replayCompleted",
+          "identityMatches": false,
+          "cleanupWorks": true
+        }
+      ]
+    },
+    "sometimesRace": {
+      "command": "seed 182111126990842; to simulate again: pnpm exec quint run gen/contributor__localReceipt.run.qnt --main contributor__localReceipt_run --step step --invariant inv --max-samples 400 --max-steps 28 --mbt --seed 182111126990842",
+      "events": [
+        {
+          "type": "start",
+          "startedAt": 2,
+          "consent": true,
+          "available": true
+        },
+        {
+          "type": "prepareFinish",
+          "candidate": {
+            "digest": "run-a",
+            "completionAt": -1,
+            "valid": true
+          }
+        },
+        {
+          "type": "reject"
+        },
+        {
+          "type": "prepareFinish",
+          "candidate": {
+            "digest": "run-a",
+            "completionAt": 2,
+            "valid": true
+          }
+        },
+        {
+          "type": "validate"
+        },
+        {
+          "type": "failBeforeCommit"
+        },
+        {
+          "type": "prepareFinish",
+          "candidate": {
+            "digest": "run-a",
+            "completionAt": 2,
+            "valid": false
+          }
+        },
+        {
+          "type": "failBeforeCommit"
+        },
+        {
+          "type": "prepareFinish",
+          "candidate": {
+            "digest": "run-a",
+            "completionAt": 2,
+            "valid": true
+          }
+        },
+        {
+          "type": "validate"
+        },
+        {
+          "type": "failBeforeCommit"
+        },
+        {
+          "type": "prepareFinish",
+          "candidate": {
+            "digest": "run-a",
+            "completionAt": -1,
+            "valid": true
+          }
+        },
+        {
+          "type": "reject"
+        },
+        {
+          "type": "prepareFinish",
+          "candidate": {
+            "digest": "run-a",
+            "completionAt": -1,
+            "valid": true
+          }
+        },
+        {
+          "type": "failBeforeCommit"
+        },
+        {
+          "type": "prepareFinish",
+          "candidate": {
+            "digest": "run-a",
+            "completionAt": 2,
+            "valid": false
+          }
+        },
+        {
+          "type": "failBeforeCommit"
+        },
+        {
+          "type": "prepareFinish",
+          "candidate": {
+            "digest": "run-a",
+            "completionAt": -1,
+            "valid": true
+          }
+        },
+        {
+          "type": "failBeforeCommit"
+        },
+        {
+          "type": "prepareFinish",
+          "candidate": {
+            "digest": "run-a",
+            "completionAt": 2,
+            "valid": true
+          }
+        },
+        {
+          "type": "failBeforeCommit"
+        },
+        {
+          "type": "prepareFinish",
+          "candidate": {
+            "digest": "run-a",
+            "completionAt": 2,
+            "valid": true
+          }
+        },
+        {
+          "type": "validate"
+        },
+        {
+          "type": "stage"
+        },
+        {
+          "type": "cleanupTemporary",
+          "succeeds": true
+        },
+        {
+          "type": "competingWriter",
+          "contender": {
+            "digest": "run-b",
+            "completionAt": 2,
+            "valid": true
+          }
+        },
+        {
+          "type": "replayCompleted",
+          "identityMatches": true,
+          "cleanupWorks": true
+        },
+        {
+          "type": "replayCompleted",
+          "identityMatches": true,
+          "cleanupWorks": false
+        }
+      ]
+    }
+  },
+  "directed": [
+    "receipt with no trace or usage capture",
+    "backward clock and invalid receipts refuse publication",
+    "temporary cleanup failure retains first completion",
+    "active-file cleanup failure can replay",
+    "concurrent winner and exact completed replay",
+    "invalid historical file remains and signals explicit failure"
+  ]
+}

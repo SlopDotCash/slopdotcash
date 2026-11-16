@@ -1,0 +1,79 @@
+{
+  "scope": "Focused models and generated replay. Browser and producer snapshot structural gate, exact coverage, payment basis hydration, and refusal. Raw parsers and deployment remain external.",
+  "sourceInputs": [
+    {
+      "path": "spec/frontend/rankedSnapshot.md",
+      "sha256": "c426806425e92583183f45bcad23db247819d759a08d386a6f2f0db64633d988"
+    }
+  ],
+  "results": {
+    "frontend__rankedSnapshot": {
+      "simulation": {
+        "command": "seed 103193842069994; to simulate again: pnpm exec quint run gen/frontend__rankedSnapshot.run.qnt --main frontend__rankedSnapshot_run --step step --invariant inv --max-samples 120 --max-steps 22 --mbt --seed 103193842069994",
+        "replayed": 18
+      },
+      "proof": {
+        "total": 10,
+        "unproved": [],
+        "exhausted": [],
+        "resting": {},
+        "errors": []
+      }
+    }
+  },
+  "directed": [
+    "completeTest",
+    "missingSourceTest",
+    "duplicateHydrationTest",
+    "omittedOldReviewTest",
+    "missingQueueTest",
+    "detail eligible absent refuses",
+    "empty immutable source refused",
+    "per-class first occurrence retained",
+    "exact inclusive lower and exclusive upper hydration bounds",
+    "generation may equal cutoff but cannot precede",
+    "exact separate queue counts and 35-day windows",
+    "shared actor rows count one source",
+    "direct and indirect source IDs disjoint",
+    "missing indirect count is zero",
+    "detail and review distinct identity counts",
+    "continuity reviews excluded only from coverage",
+    "resolved issue rows count independently",
+    "duplicate ledger event IDs refuse",
+    "score-only archived artifact cannot replace payment",
+    "omission requires exact policy cutoff and reason",
+    "explicit and omitted forms conflict",
+    "pre-cutoff continuity review contradicts omission",
+    "review exactly at cutoff permits marker",
+    "legacy unrelated credit may precede cutoff",
+    "explicit delta reconstructs exact rows and attribution values",
+    "missing duplicate or conflicting delta IDs refuse",
+    "alternate ledger must satisfy same coverage",
+    "attribution order must cover every ID exactly once",
+    "refusal retains both last structurally accepted views"
+  ],
+  "retainedModelMain": "6b3b9d0b979f0608d87941f1146056a98513ffcf",
+  "applicationMain": "78eed5564d796119d82ae541c36b0c770263dc5f",
+  "generatedDafnySha256": "0ce1533f64869de3aeea93b2551cc72fce95f80bf358222a4fb8144062d90f09",
+  "reachability": {
+    "distinctViewsTest": {
+      "passed": true,
+      "goals": [
+        "sometimesPayment",
+        "sometimesScoreOnly",
+        "sometimesRefused"
+      ],
+      "events": [
+        "validateBuild(valid, explicit)",
+        "inspect(archival score only)",
+        "inspect(invalid omission)"
+      ]
+    },
+    "missingSourceRefusedTest": {
+      "passed": true,
+      "events": [
+        "validateBuild(detail without outcome)"
+      ]
+    }
+  }
+}

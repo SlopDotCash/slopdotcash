@@ -1,0 +1,16 @@
+solver: Z3 4.15.4 (/opt/homebrew/Cellar/z3/4.15.4/bin/z3)
+Generated: /Users/shawwalters/.codex/worktrees/slop-vibestack-spec/slopdotcash/gen/proof/settlement__recovery/settlement__recovery.dfy.gen
+Created: /Users/shawwalters/.codex/worktrees/slop-vibestack-spec/slopdotcash/gen/proof/settlement__recovery/settlement__recovery.dfy
+WARNING: '===' compares non-primitive operands (Recovery === Recovery): structural equality in the proof, but reference equality when this TypeScript runs. Sound only if operands are primitives or a canonical (string/number) encoding; otherwise compare via an explicit structural equals.
+Generated: /Users/shawwalters/.codex/worktrees/slop-vibestack-spec/slopdotcash/gen/proof/settlement__recovery/settlement__recovery.dfy.gen
+WARNING: '===' compares non-primitive operands (Recovery === Recovery): structural equality in the proof, but reference equality when this TypeScript runs. Sound only if operands are primitives or a canonical (string/number) encoding; otherwise compare via an explicit structural equals.
+settlement__recovery.dfy(44,92): Error: non-function expression (of type int) is called with parameters
+settlement__recovery.dfy(45,89): Error: non-function expression (of type int) is called with parameters
+settlement__recovery.dfy(46,90): Error: non-function expression (of type int) is called with parameters
+3 resolution/type errors detected in settlement__recovery.dfy
+
+---- dafny audit ----
+settlement__recovery.dfy(44,92): Error: non-function expression (of type int) is called with parameters
+settlement__recovery.dfy(45,89): Error: non-function expression (of type int) is called with parameters
+settlement__recovery.dfy(46,90): Error: non-function expression (of type int) is called with parameters
+3 resolution/type errors detected in settlement__recovery.dfy

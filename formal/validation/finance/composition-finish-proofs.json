@@ -1,0 +1,32 @@
+{
+  "snapshot": {
+    "spec/settlement/money.md": "cb766a9b5b99f5509da5478ca15ecbe1c77a09127956d9524e7447c7d0939978",
+    "spec/settlement/vault.md": "76605964dbaeab24b00742637965b4e338890e4e84103e395f6ce6713780b6c5",
+    "spec/settlement/payment.md": "cec541e396aaa2f44573af1754b609a3d491f1122eb2faf146e050a47efd7d55",
+    "spec/settlement/composition.md": "81e874de4b53d9638648530a91cf3862c9c2e9e79715f2d95393f99ad8e1bb4c"
+  },
+  "results": [
+    {
+      "unit": "settlement__composition.ts",
+      "total": 38,
+      "unproved": [
+        "deposit: (inv(s) ==> canDeposit(s, amount, asset, receipt, finalized) ==> alwaysChildRules(deposit(s, amount, asset, receipt, finalized)))",
+        "configure: (inv(s) ==> canConfigure(s, purpose, rail, gross) ==> alwaysChildRules(configure(s, purpose, rail, gross)))",
+        "reserve: (inv(s) ==> canReserve(s) ==> alwaysChildRules(reserve(s)))",
+        "reconcile: (inv(s) ==> canReconcile(s, evidence) ==> alwaysChildRules(reconcile(s, evidence)))",
+        "reconcile: (inv(s) ==> canReconcile(s, evidence) ==> alwaysPaidConsumesReserve(reconcile(s, evidence)))",
+        "step: inv(step(current, event, by_))"
+      ],
+      "errors": [],
+      "exhausted": [
+        "deposit: (inv(s) ==> canDeposit(s, amount, asset, receipt, finalized) ==> alwaysChildRules(deposit(s, amount, asset, receipt, finalized)))",
+        "configure: (inv(s) ==> canConfigure(s, purpose, rail, gross) ==> alwaysChildRules(configure(s, purpose, rail, gross)))",
+        "reconcile: (inv(s) ==> canReconcile(s, evidence) ==> alwaysChildRules(reconcile(s, evidence)))",
+        "reconcile: (inv(s) ==> canReconcile(s, evidence) ==> alwaysPaidConsumesReserve(reconcile(s, evidence)))"
+      ],
+      "proofFile": null,
+      "proofSha256": null,
+      "log": "formal/validation/finance/finish-settlement__composition.ts.log"
+    }
+  ]
+}

@@ -1,0 +1,20 @@
+{
+  "scratch": "/var/folders/1g/77s889gx10n7mtl6z1nfrxzm0000gn/T/slop-wallet-registration-PILoxn",
+  "snapshot": {
+    "spec/backend/wallets.md": "c2f024263e30cbcdde00fa36d79e44f9ec8687ed0b8b3651c6628899352bc13b"
+  },
+  "simulations": [],
+  "proofs": [
+    {
+      "unit": "backend__wallets.ts",
+      "total": 90,
+      "unproved": [],
+      "errors": [],
+      "exhausted": [],
+      "proofSha256": "8ef7e5b862c5abe51bc4cc0a0479c9f2f104fdcd6d6b5ead0389f64351b7e052",
+      "log": "formal/validation/journeys/wallet-registration-helper-backend__wallets.ts.log",
+      "proofFile": "formal/validation/journeys/wallet-registration-candidate.proof.dfy",
+      "proofLocation": "Isolated proof candidate. The canonical full-tree snapshot was already running before this artifact was available."
+    }
+  ]
+}

@@ -1,0 +1,346 @@
+
+> vibestack@0.1.0 check /Users/shawwalters/.codex/worktrees/slop-vibestack-spec/slopdotcash
+> node vibestack/spec.ts check
+
+✓ model     spec/access.md: 3 transitions, 3 always, 1 step, 3 sometimes
+✓ model     spec/app/index.md: 1 transitions, 2 always, 1 step, 1 sometimes, 1 laws
+✓ model     spec/backend/accounts.md: 8 transitions, 8 always, 1 step, 3 sometimes, 1 laws
+✓ model     spec/backend/email.md: 6 transitions, 1 always, 1 step, 3 sometimes
+✓ model     spec/backend/index.md: definitions only
+✓ model     spec/backend/projects.md: 14 transitions, 8 always, 6 step, 7 sometimes
+✓ model     spec/backend/wallets.md: 7 transitions, 3 always, 1 step, 3 sometimes
+✓ model     spec/frontend/navigation.md: 4 transitions, 2 always, 2 sometimes
+✓ model     spec/frontend/drafts.md: 8 transitions, 1 always, 1 step, 3 sometimes
+✓ model     spec/composition.md: 6 transitions, 2 always, 1 step, 2 sometimes
+✓ model     spec/contributor/evidence.md: 8 transitions, 6 always, 3 sometimes
+✓ model     spec/contributor/index.md: definitions only
+✓ model     spec/contributor/installation.md: 10 transitions, 7 always, 3 sometimes
+✓ model     spec/contributor/workflow.md: 12 transitions, 2 always, 1 step, 3 sometimes
+✓ model     spec/settlement/money.md: 9 laws
+✓ model     spec/fees/buyback.md: 13 transitions, 4 always, 1 step, 3 sometimes, 1 laws
+✓ model     spec/fees/conversion.md: 14 transitions, 5 always, 1 step, 3 sometimes
+✓ model     spec/fees/index.md: definitions only
+✓ model     spec/frontend/index.md: definitions only
+✓ model     spec/frontend/projections.md: 12 laws
+✓ model     spec/frontend/requests.md: 4 transitions, 1 always, 8 sometimes
+✓ model     spec/governance.md: 4 transitions, 1 always, 3 sometimes, 3 laws
+✓ model     spec/index.md: definitions only
+✓ model     spec/operations/backup.md: 13 transitions, 3 always, 3 sometimes
+✓ model     spec/operations/index.md: definitions only
+✓ model     spec/operations/local.md: 3 transitions, 2 always, 2 sometimes
+✓ model     spec/operations/notifications.md: 16 transitions, 2 always, 1 step, 3 sometimes
+✓ model     spec/operations/release.md: 12 transitions, 3 always, 1 step, 4 sometimes, 1 laws
+✓ model     spec/points/allocation.md: 4 laws
+✓ model     spec/points/authorship.md: 7 transitions, 4 always, 4 sometimes
+✓ model     spec/points/census.md: 7 transitions, 8 always, 2 sometimes
+✓ model     spec/points/index.md: definitions only
+✓ model     spec/points/journal.md: 4 transitions, 5 always, 1 step, 2 sometimes
+✓ model     spec/points/penalties.md: 4 transitions, 5 always, 2 step, 5 sometimes
+✓ model     spec/points/reviews.md: 2 transitions, 5 always, 2 sometimes
+✓ model     spec/security/enforcement.md: 16 transitions, 8 always, 1 step, 6 sometimes
+✓ model     spec/projectComposition.md: 3 laws
+✓ model     spec/security/admission.md: 11 transitions, 4 always, 1 step, 3 sometimes
+✓ model     spec/security/cases.md: 16 transitions, 7 always, 1 step, 5 sometimes
+✓ model     spec/security/evidence.md: 13 transitions, 3 always, 1 step, 3 sometimes
+✓ model     spec/security/index.md: definitions only
+✓ model     spec/security/intake.md: 11 transitions, 4 always, 1 step, 4 sometimes
+✓ model     spec/security/privacy.md: 4 transitions, 2 always, 2 sometimes, 2 laws
+✓ model     spec/security/terms.md: 5 laws
+✓ model     spec/settlement/allocation.md: 2 laws
+✓ model     spec/settlement/vault.md: 4 transitions, 5 always, 2 step, 4 sometimes
+✓ model     spec/settlement/payment.md: 11 transitions, 4 always, 2 step, 5 sometimes
+✓ model     spec/settlement/composition.md: 9 transitions, 4 always, 3 sometimes
+✓ model     spec/settlement/contributorAllocation.md: 6 transitions, 2 always, 2 step, 2 sometimes
+✓ model     spec/settlement/index.md: definitions only
+✓ model     spec/settlement/monthly.md: 10 transitions, 5 always, 2 step, 1 leadsTo, 4 sometimes, 1 laws
+✓ model     spec/settlement/recovery.md: 6 transitions, 2 always, 1 step, 3 sometimes
+✓ model     spec/settlement/referrals.md: 7 transitions, 2 always, 1 step, 3 sometimes
+✓ model     spec/settlement/reserveRelease.md: 8 transitions, 3 always, 2 sometimes
+✓ model     spec/settlement/signer.md: 5 transitions, 2 always, 1 step, 2 sometimes, 2 laws
+✓ model     spec/slopbot/appeals.md: 8 transitions, 3 always, 1 step, 2 sometimes
+✓ model     spec/slopbot/closure.md: 10 transitions, 4 always, 3 sometimes
+✓ model     spec/slopbot/index.md: definitions only
+✓ model     spec/slopbot/review.md: 5 transitions, 5 always, 4 sometimes, 1 laws
+✓ always    no rule broken in 12000 simulated traces
+✓ sometimes sometimesAppealOpen is reachable
+✓ sometimes sometimesReinstated is reachable
+✓ sometimes sometimesBannedWithFunding is reachable
+✓ sometimes 3 of 3 guards allow their event in some reachable state, and refuse it in another
+✓ replay    generated TypeScript agrees with Quint on 403 traces: every state, and 16 definitions evaluated on them
+✓ always    no rule broken in 12000 simulated traces
+✓ sometimes sometimesGreetedTwice is reachable
+✓ sometimes 1 of 1 guards allow their event in some reachable state, and refuse it in another
+✓ replay    generated TypeScript agrees with Quint on 401 traces: every state, every law, and 7 definitions evaluated on them
+✓ always    no rule broken in 12000 simulated traces
+✓ sometimes sometimesSignedIn is reachable
+✓ sometimes sometimesClosed is reachable
+✓ sometimes sometimesDisconnected is reachable
+✓ sometimes 8 of 8 guards allow their event in some reachable state, and refuse it in another
+✓ replay    generated TypeScript agrees with Quint on 403 traces: every state, every law, and 31 definitions evaluated on them
+✓ always    no rule broken in 12000 simulated traces
+✓ sometimes sometimesVerified is reachable
+✓ sometimes sometimesBothConsent is reachable
+✓ sometimes sometimesIndependentNotice is reachable
+✓ sometimes 5 of 5 guards allow their event in some reachable state, and refuse it in another
+✓ replay    generated TypeScript agrees with Quint on 403 traces: every state, and 16 definitions evaluated on them
+✓ always    no rule broken in 12000 simulated traces
+✓ sometimes sometimesPublishedUnfunded is reachable
+✓ sometimes sometimesRetired is reachable
+✓ sometimes sometimesCancelled is reachable
+✓ sometimes sometimesAppendedRepositoryDeferred is reachable
+✓ sometimes sometimesLaterMaintainer is reachable
+✓ sometimes sometimesCancelledUpdate is reachable
+✓ sometimes sometimesPublishedUpdate is reachable
+✓ sometimes 14 of 14 guards allow their event in some reachable state, and refuse it in another
+✓ replay    generated TypeScript agrees with Quint on 407 traces: every state, and 48 definitions evaluated on them; not compared on their own, because the simulator had no arguments for them: beginPublish, completePublish, retryPublish, appendRepository, retire
+✓ always    no rule broken in 12000 simulated traces
+✓ sometimes sometimesBound is reachable
+✓ sometimes sometimesUncertain is reachable
+✓ sometimes sometimesCancelled is reachable
+✓ sometimes 7 of 7 guards allow their event in some reachable state, and refuse it in another
+✓ replay    generated TypeScript agrees with Quint on 403 traces: every state, and 21 definitions evaluated on them
+✓ always    no rule broken in 12000 simulated traces
+✓ sometimes sometimesPrivateDestination is reachable
+✓ sometimes sometimesSignedOutAfterUse is reachable
+✓ sometimes 2 of 2 guards allow their event in some reachable state, and refuse it in another
+✓ replay    generated TypeScript agrees with Quint on 402 traces: every state, and 11 definitions evaluated on them
+✓ always    no rule broken in 12000 simulated traces
+✓ sometimes sometimesReceived is reachable
+✓ sometimes sometimesUncertain is reachable
+✓ sometimes sometimesStorageFailure is reachable
+✓ sometimes 7 of 7 guards allow their event in some reachable state; never seen to refuse it within 20 events or for any value tried, so check that each restricts what its rule says: canOpen
+✓ replay    generated TypeScript agrees with Quint on 403 traces: every state, and 18 definitions evaluated on them; not compared on their own, because the simulator had no arguments for them: loseResponse, retry
+✓ always    no rule broken in 12000 simulated traces
+✓ sometimes sometimesReportSubmitted is reachable
+✓ sometimes sometimesLogoutClears is reachable
+✓ sometimes 5 of 5 guards allow their event in some reachable state; never seen to refuse it within 20 events or for any value tried, so check that each restricts what its rule says: canAuthenticate
+✓ replay    generated TypeScript agrees with Quint on 402 traces: every state, and 15 definitions evaluated on them; not compared on their own, because the simulator had no arguments for them: submitReport
+✓ always    no rule broken in 12000 simulated traces
+✓ sometimes sometimesDeclinedAndSubmitted is reachable
+✓ sometimes sometimesStored is reachable
+✓ sometimes sometimesFailedAndSubmitted is reachable
+✓ sometimes 6 of 6 guards allow their event in some reachable state, and refuse it in another
+✓ replay    generated TypeScript agrees with Quint on 403 traces: every state, and 23 definitions evaluated on them
+✓ always    no rule broken in 12000 simulated traces
+✓ sometimes sometimesInstalled is reachable
+✓ sometimes sometimesLocalAuthorized is reachable
+✓ sometimes sometimesRecovered is reachable
+✓ sometimes 10 of 10 guards allow their event in some reachable state, and refuse it in another
+✓ replay    generated TypeScript agrees with Quint on 403 traces: every state, and 30 definitions evaluated on them; not compared on their own, because the simulator had no arguments for them: confirm
+✓ always    no rule broken in 12000 simulated traces
+✓ sometimes sometimesSubmittedWithoutRun is reachable
+✓ sometimes sometimesAccepted is reachable
+✓ sometimes sometimesAdvised is reachable
+✓ sometimes 11 of 11 guards allow their event in some reachable state, and refuse it in another
+✓ replay    generated TypeScript agrees with Quint on 404 traces: every state, and 21 definitions evaluated on them; not compared on their own, because the simulator had no arguments for them: selectWork, beginWork, abandon, confirmSubmissionRead, submit, recordRun, recordMerge, review
+✓ always    no rule broken in 12000 simulated traces
+✓ replay    generated TypeScript agrees with Quint on 400 traces: every state, every law, and 32 definitions evaluated on them; not compared on their own, because the simulator had no arguments for them: divisionStep
+✓ always    no rule broken in 12000 simulated traces
+✓ sometimes sometimesInTransit is reachable
+✓ sometimes sometimesRefunded is reachable
+✓ sometimes sometimesBurned is reachable
+✓ sometimes 13 of 13 guards allow their event in some reachable state, and refuse it in another
+✓ replay    generated TypeScript agrees with Quint on 403 traces: every state, every law, and 36 definitions evaluated on them; not compared on their own, because the simulator had no arguments for them: finalizeBurn, spentInWindow
+✓ always    no rule broken in 12000 simulated traces
+✓ sometimes sometimesConverted is reachable
+✓ sometimes sometimesUncertain is reachable
+✓ sometimes sometimesFailed is reachable
+✓ sometimes 14 of 14 guards allow their event in some reachable state, and refuse it in another
+✓ replay    generated TypeScript agrees with Quint on 403 traces: every state, and 41 definitions evaluated on them; not compared on their own, because the simulator had no arguments for them: loseObservation, expire
+✓ always    no rule broken in 12000 simulated traces
+✓ replay    generated TypeScript agrees with Quint on 400 traces: every state, every law, and 25 definitions evaluated on them
+✓ always    no rule broken in 12000 simulated traces
+✓ sometimes sometimesCurrent is reachable
+✓ sometimes sometimesEmpty is reachable
+✓ sometimes sometimesStale is reachable
+✓ sometimes sometimesDenied is reachable
+✓ sometimes sometimesInvalid is reachable
+✓ sometimes sometimesUnavailable is reachable
+✓ sometimes sometimesFailed is reachable
+✓ sometimes sometimesCancelled is reachable
+✓ sometimes 4 of 4 guards allow their event in some reachable state, and refuse it in another
+✓ replay    generated TypeScript agrees with Quint on 408 traces: every state, and 17 definitions evaluated on them
+✓ always    no rule broken in 12000 simulated traces
+✓ sometimes sometimesReviewed is reachable
+✓ sometimes sometimesWaived is reachable
+✓ sometimes sometimesTimeout is reachable
+✓ sometimes 4 of 4 guards allow their event in some reachable state, and refuse it in another
+✓ replay    generated TypeScript agrees with Quint on 403 traces: every state, every law, and 18 definitions evaluated on them
+✓ always    no rule broken in 12000 simulated traces
+✓ sometimes sometimesBackupComplete is reachable
+✓ sometimes sometimesRestored is reachable
+✓ sometimes sometimesInterrupted is reachable
+✓ sometimes 13 of 13 guards allow their event in some reachable state, and refuse it in another
+✓ replay    generated TypeScript agrees with Quint on 403 traces: every state, and 30 definitions evaluated on them; not compared on their own, because the simulator had no arguments for them: refuseRestore, writeDestination, readDestination
+✓ always    no rule broken in 12000 simulated traces
+✓ sometimes sometimesLocalSession is reachable
+✓ sometimes sometimesExpired is reachable
+✓ sometimes 3 of 3 guards allow their event in some reachable state, and refuse it in another
+✓ replay    generated TypeScript agrees with Quint on 402 traces: every state, and 10 definitions evaluated on them
+✓ always    no rule broken in 12000 simulated traces
+✓ sometimes sometimesDelivered is reachable
+✓ sometimes sometimesUncertain is reachable
+✓ sometimes sometimesCancelled is reachable
+✓ sometimes 16 of 16 guards allow their event in some reachable state; never seen to refuse it within 20 events or for any value tried, so check that each restricts what its rule says: canChangeDestination
+✓ replay    generated TypeScript agrees with Quint on 405 traces: every state, and 32 definitions evaluated on them; not compared on their own, because the simulator had no arguments for them: send, retirePreparation, accept, reject, loseResponse, confirmDelivery
+✓ always    no rule broken in 12000 simulated traces
+✓ sometimes sometimesStaging is reachable
+✓ sometimes sometimesRecoveredUnpublished is reachable
+✓ sometimes sometimesVerified is reachable
+✓ sometimes sometimesUncertain is reachable
+✓ sometimes 12 of 12 guards allow their event in some reachable state; never seen to refuse it within 20 events or for any value tried, so check that each restricts what its rule says: canConfigure, canObserveBranchHead
+✓ replay    generated TypeScript agrees with Quint on 404 traces: every state, every law, and 31 definitions evaluated on them; not compared on their own, because the simulator had no arguments for them: check, acquireLock, publish, loseResponse, reconcilePublication, proveUnpublished, verifyServed
+✓ always    no rule broken in 12000 simulated traces
+✓ replay    generated TypeScript agrees with Quint on 400 traces: every state, every law, and 5 definitions evaluated on them; not compared on their own, because the simulator had no arguments for them: validRecipients, lineTotal, allocationWeight, weightTotal, eligibleAllocation, pointTotal, floorShare, pointRemainder, floorTotal, remainderRank, allocatePoints, canWriteAllocation
+✓ always    no rule broken in 12000 simulated traces
+✓ sometimes sometimesPrimary is reachable
+✓ sometimes sometimesOriginalFallback is reachable
+✓ sometimes sometimesSourceFallback is reachable
+✓ sometimes sometimesCredited is reachable
+✓ sometimes 7 of 7 guards allow their event in some reachable state, and refuse it in another
+✓ replay    generated TypeScript agrees with Quint on 404 traces: every state, and 23 definitions evaluated on them
+✓ always    no rule broken in 12000 simulated traces
+✓ sometimes sometimesPublished is reachable
+✓ sometimes sometimesIncomplete is reachable
+✓ sometimes 7 of 7 guards allow their event in some reachable state, and refuse it in another
+✓ replay    generated TypeScript agrees with Quint on 402 traces: every state, and 24 definitions evaluated on them; not compared on their own, because the simulator had no arguments for them: publish
+✓ always    no rule broken in 12000 simulated traces
+✓ sometimes sometimesCredited is reachable
+✓ sometimes sometimesFrozen is reachable
+✓ sometimes 4 of 4 guards allow their event in some reachable state, and refuse it in another
+✓ replay    generated TypeScript agrees with Quint on 402 traces: every state, and 16 definitions evaluated on them
+✓ always    no rule broken in 12000 simulated traces
+✓ sometimes sometimesSeveralSources is reachable
+✓ sometimes sometimesCappedPenalty is reachable
+✓ sometimes sometimesReversedPenalty is reachable
+✓ sometimes sometimesFrozen is reachable
+✓ sometimes sometimesPenaltyAfterFreeze is reachable
+✓ sometimes 4 of 4 guards allow their event in some reachable state, and refuse it in another
+✓ replay    generated TypeScript agrees with Quint on 405 traces: every state, and 25 definitions evaluated on them
+✓ always    no rule broken in 12000 simulated traces
+✓ sometimes sometimesReviewed is reachable
+✓ sometimes sometimesFiveReviewers is reachable
+✓ sometimes 2 of 2 guards allow their event in some reachable state, and refuse it in another
+✓ replay    generated TypeScript agrees with Quint on 402 traces: every state, and 15 definitions evaluated on them; not compared on their own, because the simulator had no arguments for them: reviewFloor, reviewRemainder, reviewRank, reviewShare
+✓ always    no rule broken in 12000 simulated traces
+✓ sometimes sometimesQuarantineRecovered is reachable
+✓ sometimes sometimesAppendedPaused is reachable
+✓ sometimes sometimesRetired is reachable
+✓ sometimes sometimesPaused is reachable
+✓ sometimes sometimesExempt is reachable
+✓ sometimes sometimesReinstated is reachable
+✓ sometimes 16 of 16 guards allow their event in some reachable state, and refuse it in another
+✓ replay    generated TypeScript agrees with Quint on 406 traces: every state, and 48 definitions evaluated on them; not compared on their own, because the simulator had no arguments for them: checkSetup, reinstateFlags, reinstateBan, releaseQuarantine, activeFlag
+✓ always    no rule broken in 12000 simulated traces
+✓ replay    generated TypeScript agrees with Quint on 400 traces: every state, every law, and 6 definitions evaluated on them
+✓ always    no rule broken in 12000 simulated traces
+✓ sometimes sometimesClean is reachable
+✓ sometimes sometimesIncomplete is reachable
+✓ sometimes sometimesMalicious is reachable
+✓ sometimes 11 of 11 guards allow their event in some reachable state, and refuse it in another
+✓ replay    generated TypeScript agrees with Quint on 403 traces: every state, and 29 definitions evaluated on them; not compared on their own, because the simulator had no arguments for them: pass
+✓ always    no rule broken in 12000 simulated traces
+✓ sometimes sometimesCapacityWait is reachable
+✓ sometimes sometimesAccepted is reachable
+✓ sometimes sometimesAppealed is reachable
+✓ sometimes sometimesVerifiedPatch is reachable
+✓ sometimes sometimesDisclosed is reachable
+✓ sometimes 16 of 16 guards allow their event in some reachable state, and refuse it in another
+✓ replay    generated TypeScript agrees with Quint on 405 traces: every state, and 45 definitions evaluated on them
+✓ always    no rule broken in 12000 simulated traces
+✓ sometimes sometimesPermanent is reachable
+✓ sometimes sometimesCleaned is reachable
+✓ sometimes sometimesShared is reachable
+✓ sometimes 13 of 13 guards allow their event in some reachable state, and refuse it in another
+✓ replay    generated TypeScript agrees with Quint on 403 traces: every state, and 31 definitions evaluated on them; not compared on their own, because the simulator had no arguments for them: claimDelete, observeAbsence, recordCleanup, deleteBytes
+✓ always    no rule broken in 12000 simulated traces
+✓ sometimes sometimesUnavailable is reachable
+✓ sometimes sometimesDenied is reachable
+✓ sometimes sometimesReceived is reachable
+✓ sometimes sometimesForwarded is reachable
+✓ sometimes 11 of 11 guards allow their event in some reachable state; never seen to refuse it within 20 events or for any value tried, so check that each restricts what its rule says: canObserveAvailability
+✓ replay    generated TypeScript agrees with Quint on 404 traces: every state, and 31 definitions evaluated on them
+✓ always    no rule broken in 12000 simulated traces
+✓ sometimes sometimesReportRead is reachable
+✓ sometimes sometimesScannerRead is reachable
+✓ sometimes 4 of 4 guards allow their event in some reachable state, and refuse it in another
+✓ replay    generated TypeScript agrees with Quint on 402 traces: every state, every law, and 17 definitions evaluated on them
+✓ always    no rule broken in 12000 simulated traces
+✓ replay    generated TypeScript agrees with Quint on 400 traces: every state, every law, and 8 definitions evaluated on them
+✓ always    no rule broken in 12000 simulated traces
+✓ replay    generated TypeScript agrees with Quint on 400 traces: every state, every law, and 8 definitions evaluated on them; not compared on their own, because the simulator had no arguments for them: weightedPortion, portionTotal, remainderRank, portion, allocatedTotal
+✓ always    no rule broken in 12000 simulated traces
+✓ sometimes sometimesReserved is reachable
+✓ sometimes sometimesConcurrentReserves is reachable
+✓ sometimes sometimesPaid is reachable
+✓ sometimes sometimesRefunded is reachable
+✓ sometimes 4 of 4 guards allow their event in some reachable state, and refuse it in another
+✓ replay    generated TypeScript agrees with Quint on 404 traces: every state, and 20 definitions evaluated on them
+✓ always    no rule broken in 12000 simulated traces
+✓ sometimes sometimesUncertain is reachable
+✓ sometimes sometimesPaid is reachable
+✓ sometimes sometimesPrivate is reachable
+✓ sometimes sometimesFullHeld is reachable
+✓ sometimes sometimesHeld is reachable
+✓ sometimes 11 of 11 guards allow their event in some reachable state, and refuse it in another
+✓ replay    generated TypeScript agrees with Quint on 405 traces: every state, and 36 definitions evaluated on them
+✓ always    no rule broken in 12000 simulated traces
+✓ sometimes sometimesReserved is reachable
+✓ sometimes sometimesUncertainReserved is reachable
+✓ sometimes sometimesPaidTogether is reachable
+✓ sometimes 9 of 9 guards allow their event in some reachable state, and refuse it in another
+✓ replay    generated TypeScript agrees with Quint on 403 traces: every state, and 25 definitions evaluated on them; not compared on their own, because the simulator had no arguments for them: reconcile
+✓ always    no rule broken in 12000 simulated traces
+✓ sometimes sometimesSent is reachable
+✓ sometimes sometimesUnclaimed is reachable
+✓ sometimes 6 of 6 guards allow their event in some reachable state, and refuse it in another
+✓ replay    generated TypeScript agrees with Quint on 402 traces: every state, and 19 definitions evaluated on them
+✓ always    no rule broken in 12000 simulated traces, and no fair run that stops or loops in 2000 of them breaks a `leadsTo` rule (116387 loops found)
+✓ sometimes sometimesWalletlessReserve is reachable
+✓ sometimes sometimesIndependentPayment is reachable
+✓ sometimes sometimesCompleted is reachable
+✓ sometimes sometimesEmptyMonth is reachable
+✓ sometimes 10 of 10 guards allow their event in some reachable state, and refuse it in another
+✓ replay    generated TypeScript agrees with Quint on 2204 traces: every state, every law, and 35 definitions evaluated on them; not compared on their own, because the simulator had no arguments for them: pay
+✓ always    no rule broken in 12000 simulated traces
+✓ sometimes sometimesSuccessor is reachable
+✓ sometimes sometimesOldWinner is reachable
+✓ sometimes sometimesSuccessorWinner is reachable
+✓ sometimes 6 of 6 guards allow their event in some reachable state, and refuse it in another
+✓ replay    generated TypeScript agrees with Quint on 403 traces: every state, and 17 definitions evaluated on them; not compared on their own, because the simulator had no arguments for them: successorPaid
+✓ always    no rule broken in 12000 simulated traces
+✓ sometimes sometimesDryRun is reachable
+✓ sometimes sometimesClaimed is reachable
+✓ sometimes sometimesVoided is reachable
+✓ sometimes 7 of 7 guards allow their event in some reachable state, and refuse it in another
+✓ replay    generated TypeScript agrees with Quint on 403 traces: every state, and 22 definitions evaluated on them
+✓ always    no rule broken in 12000 simulated traces
+✓ sometimes sometimesReleased is reachable
+✓ sometimes sometimesPartialHeld is reachable
+✓ sometimes 8 of 8 guards allow their event in some reachable state, and refuse it in another
+✓ replay    generated TypeScript agrees with Quint on 402 traces: every state, and 20 definitions evaluated on them; not compared on their own, because the simulator had no arguments for them: finalize
+✓ always    no rule broken in 12000 simulated traces
+✓ sometimes sometimesOldBindingWins is reachable
+✓ sometimes sometimesCancellationWins is reachable
+✓ sometimes 5 of 5 guards allow their event in some reachable state, and refuse it in another
+✓ replay    generated TypeScript agrees with Quint on 402 traces: every state, every law, and 18 definitions evaluated on them
+✓ always    no rule broken in 12000 simulated traces
+✓ sometimes sometimesEscalated is reachable
+✓ sometimes sometimesReversed is reachable
+✓ sometimes 8 of 8 guards allow their event in some reachable state, and refuse it in another
+✓ replay    generated TypeScript agrees with Quint on 402 traces: every state, and 23 definitions evaluated on them
+✓ always    no rule broken in 12000 simulated traces
+✓ sometimes sometimesClosed is reachable
+✓ sometimes sometimesUncertainLabel is reachable
+✓ sometimes sometimesReopened is reachable
+✓ sometimes 10 of 10 guards allow their event in some reachable state; never seen to refuse it within 20 events or for any value tried, so check that each restricts what its rule says: canRecordParticipant, canRecordQualification, canRecordActivation, canRecordVerdict
+✓ replay    generated TypeScript agrees with Quint on 403 traces: every state, and 25 definitions evaluated on them; not compared on their own, because the simulator had no arguments for them: close, labelOutOfScope, reopen
+✓ always    no rule broken in 12000 simulated traces
+✓ sometimes sometimesComplete is reachable
+✓ sometimes sometimesLimited is reachable
+✓ sometimes sometimesBackup is reachable
+✓ sometimes sometimesProviderFailure is reachable
+✓ sometimes 5 of 5 guards allow their event in some reachable state, and refuse it in another
+✓ replay    generated TypeScript agrees with Quint on 404 traces: every state, every law, and 21 definitions evaluated on them; not compared on their own, because the simulator had no arguments for them: failAttempt, retry
+✓ types     application typechecks against the generated contract
+✓ types     apps/app: application typechecks against the generated contract

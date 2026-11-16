@@ -1,0 +1,22 @@
+{
+  "sourceHashes": {
+    "spec/settlement/money.md": "65d72012c72c335adddbb78d3934687c0fce7442ad51b5404090130af42a4c5b",
+    "spec/settlement/directBounty.md": "57e396faaa8b0ea0d035dbf50b9914bde7a5c5cb12a492eb27c5f078d9e10ab2",
+    "spec/fees/directBountyIncome.md": "2e9c8c74d6bec0cad6ac501a7ddb7aed6d65673988903906b9fa3518eec1e070"
+  },
+  "seed": 810,
+  "traces": 120,
+  "maxSteps": 16,
+  "transitions": {
+    "recordCash": 240,
+    "book": 240
+  },
+  "goals": {
+    "sometimesReceivedOnly": 120,
+    "sometimesSeparateReceiptsBooked": 120,
+    "sometimesBundleBooked": 120,
+    "sometimesCrossCutoverPreparation": 120
+  },
+  "replayed": true,
+  "again": "seed 84933880106767; to simulate again: pnpm exec quint run gen/fees__directBountyIncome.run.qnt --main fees__directBountyIncome_run --step step --invariant inv --max-samples 120 --max-steps 16 --mbt --seed 84933880106767"
+}

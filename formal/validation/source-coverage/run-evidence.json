@@ -1,0 +1,125 @@
+{
+  "sourceMain": "6b3b9d0b979f0608d87941f1146056a98513ffcf",
+  "source": "spec/contributor/runEvidence.md",
+  "sourceHash": "a9e47997cf7521c2c9e6c4468dcaa42659a166d316eda8f9bbbcf51947e9d2af",
+  "proofSourceSha256": "ae232b6c6c0f3fb57674a45a68e8eaf7db70582b6da3ce4abb40c7f3d0c361df",
+  "proof": {
+    "generatedDafnySha256": "482cfd6512b7fcfb6b48240e9b65839acfacd3db438147fe3c80f7af4f8f6079",
+    "total": 39,
+    "unproved": [],
+    "exhausted": [],
+    "resting": {},
+    "errors": []
+  },
+  "simulation": {
+    "command": "seed 265424417019523; to simulate again: pnpm exec quint run gen/contributor__runEvidence.run.qnt --main contributor__runEvidence_run --step step --invariant inv --max-samples 400 --max-steps 24 --mbt --seed 265424417019523",
+    "replayed": 24
+  },
+  "witnesses": {
+    "sometimesConfirmed": {
+      "command": "seed 265424417019523; to simulate again: pnpm exec quint run gen/contributor__runEvidence.run.qnt --main contributor__runEvidence_run --step step --invariant inv --max-samples 400 --max-steps 24 --mbt --seed 265424417019523",
+      "events": [
+        {
+          "type": "selectTrace",
+          "digest": "digest-a",
+          "activeAndInspected": true,
+          "intakeCurrent": true
+        },
+        {
+          "type": "register",
+          "remoteRun": "remoteRun-a",
+          "currentActorAndExactIdentity": true
+        },
+        {
+          "type": "upload",
+          "remoteRun": "remoteRun-a",
+          "digest": "digest-a",
+          "exactStoredBytes": true
+        },
+        {
+          "type": "finalize",
+          "remoteRun": "remoteRun-a",
+          "digest": "digest-a",
+          "exactObjectIdentity": true
+        },
+        {
+          "type": "loseResponse"
+        },
+        {
+          "type": "selectTrace",
+          "digest": "digest-a",
+          "activeAndInspected": true,
+          "intakeCurrent": true
+        },
+        {
+          "type": "register",
+          "remoteRun": "remoteRun-a",
+          "currentActorAndExactIdentity": true
+        },
+        {
+          "type": "loseResponse"
+        }
+      ]
+    },
+    "sometimesChangedRefused": {
+      "command": "seed 265424417019523; to simulate again: pnpm exec quint run gen/contributor__runEvidence.run.qnt --main contributor__runEvidence_run --step step --invariant inv --max-samples 400 --max-steps 24 --mbt --seed 265424417019523",
+      "events": [
+        {
+          "type": "selectTrace",
+          "digest": "digest-b",
+          "activeAndInspected": true,
+          "intakeCurrent": true
+        },
+        {
+          "type": "register",
+          "remoteRun": "remoteRun-a",
+          "currentActorAndExactIdentity": true
+        },
+        {
+          "type": "upload",
+          "remoteRun": "remoteRun-a",
+          "digest": "digest-b",
+          "exactStoredBytes": true
+        },
+        {
+          "type": "finalize",
+          "remoteRun": "remoteRun-a",
+          "digest": "digest-b",
+          "exactObjectIdentity": true
+        },
+        {
+          "type": "loseResponse"
+        },
+        {
+          "type": "selectTrace",
+          "digest": "digest-a",
+          "activeAndInspected": true,
+          "intakeCurrent": true
+        },
+        {
+          "type": "register",
+          "remoteRun": "remoteRun-a",
+          "currentActorAndExactIdentity": true
+        },
+        {
+          "type": "refuseDifferentSelection"
+        },
+        {
+          "type": "selectTrace",
+          "digest": "digest-a",
+          "activeAndInspected": true,
+          "intakeCurrent": true
+        }
+      ]
+    }
+  },
+  "directed": [
+    "optional trace refuses stale status and mismatched server identity",
+    "upload finalizes exact durable digest",
+    "same-digest retry never writes a second object",
+    "changed digest retains prior object while refusing local success",
+    "authenticated PR run independent of measured run",
+    "exact body retry and new event body stay distinct",
+    "wrong author, exact run mismatch and final PR refusal"
+  ]
+}

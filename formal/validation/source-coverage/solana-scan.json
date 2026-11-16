@@ -1,0 +1,358 @@
+{
+  "sourceDevelopment": "0d0f0817a439df03cc022bf7aeed4bbe64ef4c65",
+  "source": "spec/settlement/solanaScan.md",
+  "sourceHash": "a54b27136066e7f6f2ee7937f10a272a0bce6f219d21c17816558835d6c0d9bf",
+  "proof": {
+    "generatedDafnySha256": "f3e9a7d3950a2f42d858c0b3ba81329ee76ab571aa7b517d1bf14e6831421eb7",
+    "total": 22,
+    "unproved": [],
+    "exhausted": [],
+    "resting": {},
+    "errors": []
+  },
+  "simulation": {
+    "command": "seed 1652026831790; to simulate again: pnpm exec quint run gen/settlement__solanaScan.run.qnt --main settlement__solanaScan_run --step step --invariant inv --max-samples 400 --max-steps 25 --mbt --seed 1652026831790",
+    "replayed": 24
+  },
+  "witnesses": {
+    "sometimesStaged": {
+      "command": "seed 1652026831790; to simulate again: pnpm exec quint run gen/settlement__solanaScan.run.qnt --main settlement__solanaScan_run --step step --invariant inv --max-samples 400 --max-steps 25 --mbt --seed 1652026831790",
+      "events": [
+        {
+          "type": "openInterval",
+          "generation": 1,
+          "identity": "PinnedGenesis"
+        },
+        {
+          "type": "discoverPage",
+          "generation": 1,
+          "revision": 0,
+          "identity": "PinnedGenesis",
+          "oldestFirst": [
+            "a"
+          ],
+          "coverage": "ShortPage"
+        },
+        {
+          "type": "checkpoint",
+          "generation": 1,
+          "revision": 1,
+          "identity": "PinnedGenesis",
+          "signature": "a",
+          "observation": "ListedFailure"
+        },
+        {
+          "type": "closeInterval",
+          "generation": 1,
+          "revision": 2,
+          "identity": "PinnedGenesis"
+        },
+        {
+          "type": "openInterval",
+          "generation": 2,
+          "identity": "PinnedGenesis"
+        },
+        {
+          "type": "discoverPage",
+          "generation": 2,
+          "revision": 0,
+          "identity": "PinnedGenesis",
+          "oldestFirst": [
+            "b",
+            "c"
+          ],
+          "coverage": "ShortPage"
+        },
+        {
+          "type": "checkpoint",
+          "generation": 2,
+          "revision": 1,
+          "identity": "PinnedGenesis",
+          "signature": "b",
+          "observation": "ListedFailure"
+        },
+        {
+          "type": "checkpoint",
+          "generation": 2,
+          "revision": 2,
+          "identity": "PinnedGenesis",
+          "signature": "c",
+          "observation": "FinalizedUnrelated"
+        },
+        {
+          "type": "closeInterval",
+          "generation": 2,
+          "revision": 3,
+          "identity": "PinnedGenesis"
+        },
+        {
+          "type": "openInterval",
+          "generation": 3,
+          "identity": "PinnedGenesis"
+        },
+        {
+          "type": "discoverPage",
+          "generation": 3,
+          "revision": 0,
+          "identity": "PinnedGenesis",
+          "oldestFirst": [
+            "b",
+            "c"
+          ],
+          "coverage": "ShortPage"
+        },
+        {
+          "type": "checkpoint",
+          "generation": 3,
+          "revision": 1,
+          "identity": "PinnedGenesis",
+          "signature": "b",
+          "observation": "FinalizedUnrelated"
+        },
+        {
+          "type": "checkpoint",
+          "generation": 3,
+          "revision": 2,
+          "identity": "PinnedGenesis",
+          "signature": "c",
+          "observation": "ListedFailure"
+        },
+        {
+          "type": "closeInterval",
+          "generation": 3,
+          "revision": 3,
+          "identity": "PinnedGenesis"
+        }
+      ]
+    },
+    "sometimesCheckpointed": {
+      "command": "seed 1652026831790; to simulate again: pnpm exec quint run gen/settlement__solanaScan.run.qnt --main settlement__solanaScan_run --step step --invariant inv --max-samples 400 --max-steps 25 --mbt --seed 1652026831790",
+      "events": [
+        {
+          "type": "openInterval",
+          "generation": 1,
+          "identity": "PinnedGenesis"
+        },
+        {
+          "type": "discoverPage",
+          "generation": 1,
+          "revision": 0,
+          "identity": "PinnedGenesis",
+          "oldestFirst": [
+            "a"
+          ],
+          "coverage": "ShortPage"
+        },
+        {
+          "type": "checkpoint",
+          "generation": 1,
+          "revision": 1,
+          "identity": "PinnedGenesis",
+          "signature": "a",
+          "observation": "ListedFailure"
+        },
+        {
+          "type": "closeInterval",
+          "generation": 1,
+          "revision": 2,
+          "identity": "PinnedGenesis"
+        },
+        {
+          "type": "openInterval",
+          "generation": 2,
+          "identity": "PinnedGenesis"
+        },
+        {
+          "type": "discoverPage",
+          "generation": 2,
+          "revision": 0,
+          "identity": "PinnedGenesis",
+          "oldestFirst": [
+            "b",
+            "c"
+          ],
+          "coverage": "ShortPage"
+        },
+        {
+          "type": "checkpoint",
+          "generation": 2,
+          "revision": 1,
+          "identity": "PinnedGenesis",
+          "signature": "b",
+          "observation": "ListedFailure"
+        },
+        {
+          "type": "checkpoint",
+          "generation": 2,
+          "revision": 2,
+          "identity": "PinnedGenesis",
+          "signature": "c",
+          "observation": "FinalizedUnrelated"
+        },
+        {
+          "type": "closeInterval",
+          "generation": 2,
+          "revision": 3,
+          "identity": "PinnedGenesis"
+        },
+        {
+          "type": "openInterval",
+          "generation": 3,
+          "identity": "PinnedGenesis"
+        },
+        {
+          "type": "discoverPage",
+          "generation": 3,
+          "revision": 0,
+          "identity": "PinnedGenesis",
+          "oldestFirst": [
+            "b",
+            "c"
+          ],
+          "coverage": "ShortPage"
+        },
+        {
+          "type": "checkpoint",
+          "generation": 3,
+          "revision": 1,
+          "identity": "PinnedGenesis",
+          "signature": "b",
+          "observation": "FinalizedUnrelated"
+        },
+        {
+          "type": "checkpoint",
+          "generation": 3,
+          "revision": 2,
+          "identity": "PinnedGenesis",
+          "signature": "c",
+          "observation": "ListedFailure"
+        },
+        {
+          "type": "closeInterval",
+          "generation": 3,
+          "revision": 3,
+          "identity": "PinnedGenesis"
+        }
+      ]
+    },
+    "sometimesClosedAfterProgress": {
+      "command": "seed 1652026831790; to simulate again: pnpm exec quint run gen/settlement__solanaScan.run.qnt --main settlement__solanaScan_run --step step --invariant inv --max-samples 400 --max-steps 25 --mbt --seed 1652026831790",
+      "events": [
+        {
+          "type": "openInterval",
+          "generation": 1,
+          "identity": "PinnedGenesis"
+        },
+        {
+          "type": "discoverPage",
+          "generation": 1,
+          "revision": 0,
+          "identity": "PinnedGenesis",
+          "oldestFirst": [
+            "a"
+          ],
+          "coverage": "ShortPage"
+        },
+        {
+          "type": "checkpoint",
+          "generation": 1,
+          "revision": 1,
+          "identity": "PinnedGenesis",
+          "signature": "a",
+          "observation": "ListedFailure"
+        },
+        {
+          "type": "closeInterval",
+          "generation": 1,
+          "revision": 2,
+          "identity": "PinnedGenesis"
+        },
+        {
+          "type": "openInterval",
+          "generation": 2,
+          "identity": "PinnedGenesis"
+        },
+        {
+          "type": "discoverPage",
+          "generation": 2,
+          "revision": 0,
+          "identity": "PinnedGenesis",
+          "oldestFirst": [
+            "b",
+            "c"
+          ],
+          "coverage": "ShortPage"
+        },
+        {
+          "type": "checkpoint",
+          "generation": 2,
+          "revision": 1,
+          "identity": "PinnedGenesis",
+          "signature": "b",
+          "observation": "ListedFailure"
+        },
+        {
+          "type": "checkpoint",
+          "generation": 2,
+          "revision": 2,
+          "identity": "PinnedGenesis",
+          "signature": "c",
+          "observation": "FinalizedUnrelated"
+        },
+        {
+          "type": "closeInterval",
+          "generation": 2,
+          "revision": 3,
+          "identity": "PinnedGenesis"
+        },
+        {
+          "type": "openInterval",
+          "generation": 3,
+          "identity": "PinnedGenesis"
+        },
+        {
+          "type": "discoverPage",
+          "generation": 3,
+          "revision": 0,
+          "identity": "PinnedGenesis",
+          "oldestFirst": [
+            "b",
+            "c"
+          ],
+          "coverage": "ShortPage"
+        },
+        {
+          "type": "checkpoint",
+          "generation": 3,
+          "revision": 1,
+          "identity": "PinnedGenesis",
+          "signature": "b",
+          "observation": "FinalizedUnrelated"
+        },
+        {
+          "type": "checkpoint",
+          "generation": 3,
+          "revision": 2,
+          "identity": "PinnedGenesis",
+          "signature": "c",
+          "observation": "ListedFailure"
+        },
+        {
+          "type": "closeInterval",
+          "generation": 3,
+          "revision": 3,
+          "identity": "PinnedGenesis"
+        }
+      ]
+    }
+  },
+  "directed": [
+    "missing, mismatched and unavailable genesis",
+    "exact full-page threshold and resumable discovery",
+    "oldest-first processing across a 1,000-signature boundary",
+    "stale page and checkpoint refusal",
+    "missing, failed and unrelated evidence outcomes",
+    "atomic prefix, generation and revision fences",
+    "empty successor interval retains finalized cursor"
+  ]
+}

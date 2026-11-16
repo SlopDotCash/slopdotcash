@@ -1,0 +1,49 @@
+[
+  {
+    "unit": "operations__local.ts",
+    "total": 8,
+    "unproved": [],
+    "errors": [],
+    "exhausted": []
+  },
+  {
+    "unit": "operations__notifications.ts",
+    "total": 50,
+    "unproved": [],
+    "errors": [],
+    "exhausted": []
+  },
+  {
+    "unit": "security__privacy.ts",
+    "total": 12,
+    "unproved": [],
+    "errors": [],
+    "exhausted": []
+  },
+  {
+    "unit": "security__admission.ts",
+    "total": 35,
+    "unproved": [
+      "request: (inv(s) ==> canRequest(s, repository, commit) ==> stepPreservesPermanentEvidence(s, request(s, repository, commit)))",
+      "acquire: (inv(s) ==> canAcquire(s, repository, commit, entries) ==> alwaysCoverageBounds(acquire(s, repository, commit, entries)))",
+      "acquire: (inv(s) ==> canAcquire(s, repository, commit, entries) ==> stepPreservesPermanentEvidence(s, acquire(s, repository, commit, entries)))",
+      "reviewBatch: (inv(s) ==> canReviewBatch(s, count, distinct) ==> stepPreservesPermanentEvidence(s, reviewBatch(s, count, distinct)))",
+      "checkDeterministically: (inv(s) ==> canCheckDeterministically(s) ==> stepPreservesPermanentEvidence(s, checkDeterministically(s)))",
+      "synthesize: (inv(s) ==> canSynthesize(s) ==> stepPreservesPermanentEvidence(s, synthesize(s)))",
+      "interrupt: (inv(s) ==> canInterrupt(s) ==> stepPreservesPermanentEvidence(s, interrupt(s)))",
+      "markIncomplete: (inv(s) ==> canMarkIncomplete(s) ==> stepPreservesPermanentEvidence(s, markIncomplete(s)))",
+      "resume: (inv(s) ==> canResume(s) ==> stepPreservesPermanentEvidence(s, resume(s)))",
+      "recordMalice: (inv(s) ==> canRecordMalice(s) ==> stepPreservesPermanentEvidence(s, recordMalice(s)))",
+      "step: inv(step(current, event))"
+    ],
+    "errors": [],
+    "exhausted": []
+  },
+  {
+    "unit": "slopbot__closure.ts",
+    "total": 29,
+    "unproved": [],
+    "errors": [],
+    "exhausted": []
+  }
+]

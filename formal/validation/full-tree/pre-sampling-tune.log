@@ -1,0 +1,64 @@
+PASS model spec/access.md spec/access.md: 3 transitions, 3 always, 1 step, 3 sometimes
+PASS model spec/app/index.md spec/app/index.md: 1 transitions, 2 always, 1 step, 1 sometimes, 1 laws
+PASS model spec/backend/accounts.md spec/backend/accounts.md: 8 transitions, 8 always, 1 step, 3 sometimes, 1 laws
+PASS model spec/backend/email.md spec/backend/email.md: 6 transitions, 1 always, 1 step, 3 sometimes
+PASS model spec/backend/index.md spec/backend/index.md: definitions only
+PASS model spec/backend/projects.md spec/backend/projects.md: 14 transitions, 8 always, 6 step, 7 sometimes
+PASS model spec/backend/listing.md spec/backend/listing.md: 2 transitions, 2 always, 3 step, 2 sometimes, 3 laws
+PASS model spec/backend/wallets.md spec/backend/wallets.md: 7 transitions, 3 always, 1 step, 3 sometimes
+PASS model spec/frontend/navigation.md spec/frontend/navigation.md: 4 transitions, 2 always, 2 sometimes
+PASS model spec/frontend/drafts.md spec/frontend/drafts.md: 8 transitions, 1 always, 1 step, 3 sometimes
+PASS model spec/composition.md spec/composition.md: 6 transitions, 2 always, 1 step, 2 sometimes
+PASS model spec/contributor/evidence.md spec/contributor/evidence.md: 8 transitions, 6 always, 3 sometimes
+PASS model spec/contributor/index.md spec/contributor/index.md: definitions only
+PASS model spec/contributor/installation.md spec/contributor/installation.md: 10 transitions, 7 always, 3 sometimes
+PASS model spec/contributor/workflow.md spec/contributor/workflow.md: 12 transitions, 2 always, 1 step, 3 sometimes
+PASS model spec/settlement/money.md spec/settlement/money.md: 9 laws
+PASS model spec/fees/buyback.md spec/fees/buyback.md: 13 transitions, 5 always, 1 step, 3 sometimes, 1 laws
+PASS model spec/fees/conversion.md spec/fees/conversion.md: 14 transitions, 7 always, 1 step, 3 sometimes
+PASS model spec/fees/index.md spec/fees/index.md: definitions only
+PASS model spec/frontend/index.md spec/frontend/index.md: definitions only
+PASS model spec/frontend/requests.md spec/frontend/requests.md: 4 transitions, 1 always, 8 sometimes
+PASS model spec/frontend/presentation.md spec/frontend/presentation.md: 19 laws
+PASS model spec/frontend/projections.md spec/frontend/projections.md: 12 laws
+PASS model spec/governance.md spec/governance.md: 4 transitions, 1 always, 3 sometimes, 3 laws
+PASS model spec/index.md spec/index.md: definitions only
+PASS model spec/operations/backup.md spec/operations/backup.md: 13 transitions, 5 always, 3 sometimes
+PASS model spec/operations/index.md spec/operations/index.md: definitions only
+PASS model spec/operations/local.md spec/operations/local.md: 3 transitions, 2 always, 2 sometimes
+PASS model spec/operations/notifications.md spec/operations/notifications.md: 16 transitions, 2 always, 1 step, 3 sometimes
+PASS model spec/operations/release.md spec/operations/release.md: 12 transitions, 3 always, 1 step, 4 sometimes, 1 laws
+PASS model spec/points/allocation.md spec/points/allocation.md: 4 laws
+PASS model spec/points/authorship.md spec/points/authorship.md: 7 transitions, 4 always, 4 sometimes
+PASS model spec/points/census.md spec/points/census.md: 7 transitions, 8 always, 2 sometimes
+PASS model spec/points/index.md spec/points/index.md: definitions only
+PASS model spec/points/journal.md spec/points/journal.md: 4 transitions, 5 always, 1 step, 2 sometimes
+PASS model spec/points/penalties.md spec/points/penalties.md: 4 transitions, 5 always, 2 step, 5 sometimes
+PASS model spec/points/reviews.md spec/points/reviews.md: 2 transitions, 5 always, 2 sometimes
+PASS model spec/security/enforcement.md spec/security/enforcement.md: 16 transitions, 8 always, 1 step, 6 sometimes
+PASS model spec/projectComposition.md spec/projectComposition.md: 3 laws
+PASS model spec/security/admission.md spec/security/admission.md: 11 transitions, 4 always, 1 step, 3 sometimes
+PASS model spec/security/cases.md spec/security/cases.md: 16 transitions, 7 always, 1 step, 5 sometimes
+PASS model spec/security/evidence.md spec/security/evidence.md: 13 transitions, 3 always, 1 step, 3 sometimes
+PASS model spec/security/index.md spec/security/index.md: definitions only
+PASS model spec/security/intake.md spec/security/intake.md: 11 transitions, 4 always, 1 step, 4 sometimes
+PASS model spec/security/privacy.md spec/security/privacy.md: 4 transitions, 2 always, 2 sometimes, 2 laws
+PASS model spec/security/terms.md spec/security/terms.md: 5 laws
+PASS model spec/settlement/allocation.md spec/settlement/allocation.md: 2 laws
+PASS model spec/settlement/vault.md spec/settlement/vault.md: 4 transitions, 5 always, 2 step, 4 sometimes
+PASS model spec/settlement/payment.md spec/settlement/payment.md: 11 transitions, 6 always, 2 step, 5 sometimes
+PASS model spec/settlement/composition.md spec/settlement/composition.md: 9 transitions, 4 always, 3 sometimes
+PASS model spec/settlement/contributorAllocation.md spec/settlement/contributorAllocation.md: 6 transitions, 3 always, 2 step, 2 sometimes
+PASS model spec/settlement/index.md spec/settlement/index.md: definitions only
+PASS model spec/settlement/monthly.md spec/settlement/monthly.md: 10 transitions, 5 always, 2 step, 1 leadsTo, 4 sometimes, 1 laws
+PASS model spec/settlement/recovery.md spec/settlement/recovery.md: 6 transitions, 2 always, 1 step, 3 sometimes
+PASS model spec/settlement/referralAccrual.md spec/settlement/referralAccrual.md: 9 transitions, 16 always, 5 step, 3 sometimes
+PASS model spec/settlement/referralDistributor.md spec/settlement/referralDistributor.md: 12 transitions, 10 always, 2 step, 3 sometimes
+PASS model spec/settlement/referrals.md spec/settlement/referrals.md: 4 transitions, 1 always, 2 sometimes
+PASS model spec/settlement/referralPublication.md spec/settlement/referralPublication.md: 15 transitions, 12 always, 4 step, 3 sometimes
+PASS model spec/settlement/reserveRelease.md spec/settlement/reserveRelease.md: 8 transitions, 7 always, 2 step, 2 sometimes
+PASS model spec/settlement/signer.md spec/settlement/signer.md: 5 transitions, 2 always, 1 step, 2 sometimes, 2 laws
+PASS model spec/slopbot/appeals.md spec/slopbot/appeals.md: 8 transitions, 3 always, 1 step, 2 sometimes
+PASS model spec/slopbot/closure.md spec/slopbot/closure.md: 10 transitions, 4 always, 3 sometimes
+PASS model spec/slopbot/index.md spec/slopbot/index.md: definitions only
+PASS model spec/slopbot/review.md spec/slopbot/review.md: 5 transitions, 5 always, 4 sometimes, 1 laws

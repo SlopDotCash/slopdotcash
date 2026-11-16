@@ -1,0 +1,440 @@
+{
+  "goal": "sometimesEvidenceFailure",
+  "reached": true,
+  "replay": true,
+  "command": "seed 102023074720966; to simulate again: pnpm exec quint run gen/settlement__keeperScan.run.qnt --main settlement__keeperScan_run --step step --invariant never_sometimesEvidenceFailure --max-samples 1500 --max-steps 25 --mbt --seed 102023074720966",
+  "trace": [
+    {
+      "state": {
+        "phase": "NotRunning",
+        "stage": "Preflight",
+        "identity": {
+          "network": "BaseMainnet",
+          "signer": 2,
+          "budget": 3,
+          "projects": 4,
+          "registry": 5,
+          "objectId": 1,
+          "journal": 7
+        },
+        "endpoint": 1,
+        "selection": 0,
+        "failure": {
+          "operation": "OtherOp",
+          "outcome": "OtherWork",
+          "observedStage": "OtherStage",
+          "hasError": false,
+          "classifiedError": "UnrecognizedError"
+        }
+      },
+      "lawsHold": true
+    },
+    {
+      "event": {
+        "type": "begin",
+        "identity": {
+          "network": "BaseMainnet",
+          "signer": 2,
+          "budget": 3,
+          "projects": 4,
+          "registry": 5,
+          "objectId": 1,
+          "journal": 7
+        },
+        "endpoint": 2,
+        "selection": 1
+      },
+      "state": {
+        "phase": "RunningScan",
+        "stage": "Preflight",
+        "identity": {
+          "network": "BaseMainnet",
+          "signer": 2,
+          "budget": 3,
+          "projects": 4,
+          "registry": 5,
+          "objectId": 1,
+          "journal": 7
+        },
+        "endpoint": 2,
+        "selection": 1,
+        "failure": {
+          "operation": "OtherOp",
+          "outcome": "OtherWork",
+          "observedStage": "OtherStage",
+          "hasError": false,
+          "classifiedError": "UnrecognizedError"
+        }
+      },
+      "lawsHold": true
+    },
+    {
+      "event": {
+        "type": "confirmPreflight",
+        "rpc": {
+          "identity": {
+            "network": "BaseMainnet",
+            "signer": 2,
+            "budget": 3,
+            "projects": 4,
+            "registry": 5,
+            "objectId": 1,
+            "journal": 7
+          },
+          "originalEndpoint": 1,
+          "endpoint": 2,
+          "overrideEndpoint": 2,
+          "overrideKind": "HttpsOverride",
+          "selection": 1,
+          "observed": "BaseMainnet",
+          "phase": "ChainReady"
+        },
+        "deploymentVerified": true
+      },
+      "state": {
+        "phase": "RunningScan",
+        "stage": "AuthorityRead",
+        "identity": {
+          "network": "BaseMainnet",
+          "signer": 2,
+          "budget": 3,
+          "projects": 4,
+          "registry": 5,
+          "objectId": 1,
+          "journal": 7
+        },
+        "endpoint": 2,
+        "selection": 1,
+        "failure": {
+          "operation": "OtherOp",
+          "outcome": "OtherWork",
+          "observedStage": "OtherStage",
+          "hasError": false,
+          "classifiedError": "UnrecognizedError"
+        }
+      },
+      "lawsHold": true
+    },
+    {
+      "event": {
+        "type": "advance",
+        "checkPassed": true
+      },
+      "state": {
+        "phase": "RunningScan",
+        "stage": "SignerRole",
+        "identity": {
+          "network": "BaseMainnet",
+          "signer": 2,
+          "budget": 3,
+          "projects": 4,
+          "registry": 5,
+          "objectId": 1,
+          "journal": 7
+        },
+        "endpoint": 2,
+        "selection": 1,
+        "failure": {
+          "operation": "OtherOp",
+          "outcome": "OtherWork",
+          "observedStage": "OtherStage",
+          "hasError": false,
+          "classifiedError": "UnrecognizedError"
+        }
+      },
+      "lawsHold": true
+    },
+    {
+      "event": {
+        "type": "advance",
+        "checkPassed": true
+      },
+      "state": {
+        "phase": "RunningScan",
+        "stage": "GasReconcile",
+        "identity": {
+          "network": "BaseMainnet",
+          "signer": 2,
+          "budget": 3,
+          "projects": 4,
+          "registry": 5,
+          "objectId": 1,
+          "journal": 7
+        },
+        "endpoint": 2,
+        "selection": 1,
+        "failure": {
+          "operation": "OtherOp",
+          "outcome": "OtherWork",
+          "observedStage": "OtherStage",
+          "hasError": false,
+          "classifiedError": "UnrecognizedError"
+        }
+      },
+      "lawsHold": true
+    },
+    {
+      "event": {
+        "type": "advance",
+        "checkPassed": true
+      },
+      "state": {
+        "phase": "RunningScan",
+        "stage": "PaymentScan",
+        "identity": {
+          "network": "BaseMainnet",
+          "signer": 2,
+          "budget": 3,
+          "projects": 4,
+          "registry": 5,
+          "objectId": 1,
+          "journal": 7
+        },
+        "endpoint": 2,
+        "selection": 1,
+        "failure": {
+          "operation": "OtherOp",
+          "outcome": "OtherWork",
+          "observedStage": "OtherStage",
+          "hasError": false,
+          "classifiedError": "UnrecognizedError"
+        }
+      },
+      "lawsHold": true
+    },
+    {
+      "event": {
+        "type": "beginReceipt"
+      },
+      "state": {
+        "phase": "RunningScan",
+        "stage": "PaymentEvidence",
+        "identity": {
+          "network": "BaseMainnet",
+          "signer": 2,
+          "budget": 3,
+          "projects": 4,
+          "registry": 5,
+          "objectId": 1,
+          "journal": 7
+        },
+        "endpoint": 2,
+        "selection": 1,
+        "failure": {
+          "operation": "OtherOp",
+          "outcome": "OtherWork",
+          "observedStage": "OtherStage",
+          "hasError": false,
+          "classifiedError": "UnrecognizedError"
+        }
+      },
+      "lawsHold": true
+    },
+    {
+      "event": {
+        "type": "verifyReceipt",
+        "verified": true
+      },
+      "state": {
+        "phase": "RunningScan",
+        "stage": "PaymentIndex",
+        "identity": {
+          "network": "BaseMainnet",
+          "signer": 2,
+          "budget": 3,
+          "projects": 4,
+          "registry": 5,
+          "objectId": 1,
+          "journal": 7
+        },
+        "endpoint": 2,
+        "selection": 1,
+        "failure": {
+          "operation": "OtherOp",
+          "outcome": "OtherWork",
+          "observedStage": "OtherStage",
+          "hasError": false,
+          "classifiedError": "UnrecognizedError"
+        }
+      },
+      "lawsHold": true
+    },
+    {
+      "event": {
+        "type": "indexReceipt",
+        "indexed": true
+      },
+      "state": {
+        "phase": "RunningScan",
+        "stage": "PaymentScan",
+        "identity": {
+          "network": "BaseMainnet",
+          "signer": 2,
+          "budget": 3,
+          "projects": 4,
+          "registry": 5,
+          "objectId": 1,
+          "journal": 7
+        },
+        "endpoint": 2,
+        "selection": 1,
+        "failure": {
+          "operation": "OtherOp",
+          "outcome": "OtherWork",
+          "observedStage": "OtherStage",
+          "hasError": false,
+          "classifiedError": "UnrecognizedError"
+        }
+      },
+      "lawsHold": true
+    },
+    {
+      "event": {
+        "type": "beginReceipt"
+      },
+      "state": {
+        "phase": "RunningScan",
+        "stage": "PaymentEvidence",
+        "identity": {
+          "network": "BaseMainnet",
+          "signer": 2,
+          "budget": 3,
+          "projects": 4,
+          "registry": 5,
+          "objectId": 1,
+          "journal": 7
+        },
+        "endpoint": 2,
+        "selection": 1,
+        "failure": {
+          "operation": "OtherOp",
+          "outcome": "OtherWork",
+          "observedStage": "OtherStage",
+          "hasError": false,
+          "classifiedError": "UnrecognizedError"
+        }
+      },
+      "lawsHold": true
+    },
+    {
+      "event": {
+        "type": "verifyReceipt",
+        "verified": true
+      },
+      "state": {
+        "phase": "RunningScan",
+        "stage": "PaymentIndex",
+        "identity": {
+          "network": "BaseMainnet",
+          "signer": 2,
+          "budget": 3,
+          "projects": 4,
+          "registry": 5,
+          "objectId": 1,
+          "journal": 7
+        },
+        "endpoint": 2,
+        "selection": 1,
+        "failure": {
+          "operation": "OtherOp",
+          "outcome": "OtherWork",
+          "observedStage": "OtherStage",
+          "hasError": false,
+          "classifiedError": "UnrecognizedError"
+        }
+      },
+      "lawsHold": true
+    },
+    {
+      "event": {
+        "type": "indexReceipt",
+        "indexed": true
+      },
+      "state": {
+        "phase": "RunningScan",
+        "stage": "PaymentScan",
+        "identity": {
+          "network": "BaseMainnet",
+          "signer": 2,
+          "budget": 3,
+          "projects": 4,
+          "registry": 5,
+          "objectId": 1,
+          "journal": 7
+        },
+        "endpoint": 2,
+        "selection": 1,
+        "failure": {
+          "operation": "OtherOp",
+          "outcome": "OtherWork",
+          "observedStage": "OtherStage",
+          "hasError": false,
+          "classifiedError": "UnrecognizedError"
+        }
+      },
+      "lawsHold": true
+    },
+    {
+      "event": {
+        "type": "beginReceipt"
+      },
+      "state": {
+        "phase": "RunningScan",
+        "stage": "PaymentEvidence",
+        "identity": {
+          "network": "BaseMainnet",
+          "signer": 2,
+          "budget": 3,
+          "projects": 4,
+          "registry": 5,
+          "objectId": 1,
+          "journal": 7
+        },
+        "endpoint": 2,
+        "selection": 1,
+        "failure": {
+          "operation": "OtherOp",
+          "outcome": "OtherWork",
+          "observedStage": "OtherStage",
+          "hasError": false,
+          "classifiedError": "UnrecognizedError"
+        }
+      },
+      "lawsHold": true
+    },
+    {
+      "event": {
+        "type": "recordFailure",
+        "classifiedError": "EvmFailure"
+      },
+      "state": {
+        "phase": "FailedScan",
+        "stage": "PaymentEvidence",
+        "identity": {
+          "network": "BaseMainnet",
+          "signer": 2,
+          "budget": 3,
+          "projects": 4,
+          "registry": 5,
+          "objectId": 1,
+          "journal": 7
+        },
+        "endpoint": 2,
+        "selection": 1,
+        "failure": {
+          "operation": "DeploymentOp",
+          "outcome": "UnavailableWork",
+          "observedStage": "PaymentEvidence",
+          "hasError": true,
+          "classifiedError": "EvmFailure"
+        }
+      },
+      "lawsHold": true
+    }
+  ],
+  "sourceHashes": {
+    "spec/settlement/keeperDiagnostics.md": "c36fb32f4e28000dc1224d04ee2120e79cadd4d91b2433f4bf8af944528bf04e",
+    "spec/settlement/keeperRpc.md": "163e49a1435ddd2e3446a020d1a339101ae6ade76a47c526e2ba5a02f01c8393",
+    "spec/settlement/keeperScan.md": "67ada5f6f952a8f7949dbf97fb7d383982ee50e0edf638c8dcf0e7ce8b07cc0a"
+  }
+}

@@ -1,0 +1,106 @@
+{
+  "source": "PRD section 6 and reviewed deployed-contract postconditions",
+  "simulation": [
+    {
+      "name": "settlement__vault",
+      "traces": 150,
+      "seed": 401,
+      "maxSteps": 30,
+      "broken": false,
+      "replayed": true,
+      "transitions": {
+        "deposit": 223,
+        "reserve": 211,
+        "refund": 57,
+        "payReserved": 20
+      },
+      "reached": {
+        "sometimesReserved": 114,
+        "sometimesConcurrentReserves": 94,
+        "sometimesPaid": 20,
+        "sometimesRefunded": 57
+      },
+      "again": "seed 166605514299024; to simulate again: pnpm exec quint run gen/settlement__vault.run.qnt --main settlement__vault_run --step step --invariant inv --max-samples 150 --max-steps 30 --mbt --seed 166605514299024",
+      "inputs": {
+        "spec/settlement/money.md": "232b15ff434a1ea7aaaf385aeac05d0fad805b512ba7e0dba64fb6bd2819cbb4",
+        "spec/settlement/vault.md": "b173bd0c43b63a7a2695598ea469c3cb59080c2ca5d86401733460fb751525fb",
+        "spec/settlement/payment.md": "ba8914c4bc4077bc5d091336cbd2c59aa44b7cb7e95757bc8acfc49c6e042e1f",
+        "spec/settlement/composition.md": "c83b2de7cb627fcbf398c82506206c3058515591890af9674119a84224b9f152"
+      }
+    },
+    {
+      "name": "settlement__payment",
+      "traces": 150,
+      "seed": 401,
+      "maxSteps": 30,
+      "broken": false,
+      "replayed": true,
+      "transitions": {
+        "configure": 150,
+        "hold": 1561,
+        "resume": 1359,
+        "bind": 150,
+        "journal": 289,
+        "recordFailure": 263,
+        "submit": 132,
+        "releaseFullRail": 42,
+        "retransmit": 66,
+        "loseReceipt": 59,
+        "reconcile": 21
+      },
+      "reached": {
+        "sometimesUncertain": 101,
+        "sometimesPaid": 21,
+        "sometimesPrivate": 52,
+        "sometimesFullHeld": 42,
+        "sometimesHeld": 147
+      },
+      "again": "seed 213400828709857; to simulate again: pnpm exec quint run gen/settlement__payment.run.qnt --main settlement__payment_run --step step --invariant inv --max-samples 150 --max-steps 30 --mbt --seed 213400828709857",
+      "inputs": {
+        "spec/settlement/money.md": "232b15ff434a1ea7aaaf385aeac05d0fad805b512ba7e0dba64fb6bd2819cbb4",
+        "spec/settlement/vault.md": "b173bd0c43b63a7a2695598ea469c3cb59080c2ca5d86401733460fb751525fb",
+        "spec/settlement/payment.md": "ba8914c4bc4077bc5d091336cbd2c59aa44b7cb7e95757bc8acfc49c6e042e1f",
+        "spec/settlement/composition.md": "c83b2de7cb627fcbf398c82506206c3058515591890af9674119a84224b9f152"
+      }
+    },
+    {
+      "name": "settlement__composition",
+      "traces": 150,
+      "seed": 401,
+      "maxSteps": 30,
+      "broken": false,
+      "replayed": true,
+      "transitions": {
+        "configure": 150,
+        "deposit": 447,
+        "bind": 150,
+        "reserve": 139,
+        "journal": 139,
+        "submit": 115,
+        "loseReceipt": 1232,
+        "retransmit": 1232,
+        "reconcile": 27
+      },
+      "reached": {
+        "sometimesReserved": 139,
+        "sometimesUncertainReserved": 112,
+        "sometimesPaidTogether": 27
+      },
+      "again": "seed 256913168425803; to simulate again: pnpm exec quint run gen/settlement__composition.run.qnt --main settlement__composition_run --step step --invariant inv --max-samples 150 --max-steps 30 --mbt --seed 256913168425803",
+      "inputs": {
+        "spec/settlement/money.md": "232b15ff434a1ea7aaaf385aeac05d0fad805b512ba7e0dba64fb6bd2819cbb4",
+        "spec/settlement/vault.md": "b173bd0c43b63a7a2695598ea469c3cb59080c2ca5d86401733460fb751525fb",
+        "spec/settlement/payment.md": "ba8914c4bc4077bc5d091336cbd2c59aa44b7cb7e95757bc8acfc49c6e042e1f",
+        "spec/settlement/composition.md": "c83b2de7cb627fcbf398c82506206c3058515591890af9674119a84224b9f152"
+      }
+    }
+  ],
+  "quintWitness": "formal/validation/active-proof/settlement/settlement-history-witness.qnt",
+  "quintOutput": "formal/validation/active-proof/settlement/settlement-history-witness.log",
+  "directedGeneratedTypeScriptTransitions": 12,
+  "sourceCorrections": [
+    "Retain exact finalized vault payment attempts by obligation independently of cumulative paid balance.",
+    "Check finalized reserved balance before subtraction.",
+    "Derive principal directly from each purpose\u2019s specified split."
+  ]
+}

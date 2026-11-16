@@ -1,0 +1,725 @@
+{
+  "scope": "Structural and lexical inventory, plus exact observed source branch changes. This inventory alone establishes no transition equivalence, source conformance or absence of implicit behavior.",
+  "migrationHead": "778ae268338bc5039f85d5cdb9770a2c4b6aad71",
+  "pinned": {
+    "models": 473,
+    "declaredActions": 5800,
+    "declaredScenarios": 4962,
+    "distinctModelSourceRefs": 815,
+    "distinctModelEvidenceRefs": 155,
+    "inventorySourceCount": 906,
+    "reviewKinds": {
+      "mapped-abstraction": 815,
+      "reviewed-no-independent-state": 91
+    },
+    "declaredStateCandidates": 255,
+    "modelsByDomain": {
+      "api": {
+        "models": 75,
+        "actions": 1055,
+        "scenarios": 1111
+      },
+      "contracts": {
+        "models": 28,
+        "actions": 298,
+        "scenarios": 222
+      },
+      "contributor": {
+        "models": 14,
+        "actions": 188,
+        "scenarios": 158
+      },
+      "fees": {
+        "models": 16,
+        "actions": 169,
+        "scenarios": 110
+      },
+      "payments": {
+        "models": 47,
+        "actions": 562,
+        "scenarios": 535
+      },
+      "points": {
+        "models": 21,
+        "actions": 135,
+        "scenarios": 98
+      },
+      "referrals": {
+        "models": 8,
+        "actions": 66,
+        "scenarios": 37
+      },
+      "release": {
+        "models": 16,
+        "actions": 137,
+        "scenarios": 102
+      },
+      "rewards": {
+        "models": 21,
+        "actions": 172,
+        "scenarios": 118
+      },
+      "slopbot": {
+        "models": 55,
+        "actions": 535,
+        "scenarios": 360
+      },
+      "tooling": {
+        "models": 18,
+        "actions": 263,
+        "scenarios": 235
+      },
+      "ui": {
+        "models": 108,
+        "actions": 1591,
+        "scenarios": 1437
+      },
+      "vetting": {
+        "models": 46,
+        "actions": 629,
+        "scenarios": 439
+      }
+    },
+    "checkedBindings": [
+      "Each retained file SHA-256 matches model-map.json",
+      "Each retained file action and run declaration is recorded in declaration order",
+      "Every candidate successor file exists"
+    ]
+  },
+  "origin": {
+    "main": {
+      "head": "e96069ce2a403588ca2129b1ebb943f7bb0972a6",
+      "pinnedBase": "6b3b9d0b979f0608d87941f1146056a98513ffcf",
+      "prdGitBlob": "afc56a4441df51ca2856fe5d0da3df2a26705986",
+      "prdSha256": "2e9c7a6f14d9db95b9cf634d18e1b3a8f4c5309728fecd482831eb985ba66bdd",
+      "modelCount": 477,
+      "modelChanges": [
+        {
+          "change": "M",
+          "path": "formal/models/contracts/solana_validator_callers.qnt",
+          "sha256": "91b33055c4f3cac1c6db6b5b9509fa7468e6a77e056364c050174a5b37775ed3",
+          "actions": [
+            "initial",
+            "init",
+            "begin",
+            "observe",
+            "foreignPort",
+            "admitTests",
+            "fundingSettled",
+            "finishTests",
+            "cancelStartup",
+            "closeReturns",
+            "confirmStop",
+            "stopFails",
+            "removeLedger",
+            "completeStage",
+            "step",
+            "ready",
+            "successfulStop"
+          ],
+          "scenarios": [
+            "foreignRpcCannotAdmitTestsTest",
+            "twoIndependentStagesRequireTwoCurrentReceiptsTest",
+            "oldStoppedReceiptCannotAdmitSecondStageTest",
+            "acceptanceRemovesLedgerOnlyAfterConfirmedStopTest",
+            "primaryFailureSurvivesCleanupFailureTest",
+            "cleanupFailureCannotPassTest",
+            "canceledStartupStillWaitsForOwnedStopTest",
+            "lateReadyIsNotAStopReceiptTest",
+            "receiptDoesNotReplaceAwaitedStopTest",
+            "badExitCannotPassWithStoppedReceiptTest",
+            "readyReceiptStillRequiresLocalFundingTest",
+            "localAirdropTimeoutStillWaitsForValidatorStopTest",
+            "localAirdropFailureSurvivesValidatorCleanupFailureTest",
+            "eachShellStageRequiresItsOwnFundingTest"
+          ]
+        },
+        {
+          "change": "A",
+          "path": "formal/models/payments/operator_keeper_diagnostics.qnt",
+          "sha256": "d2173192c20133574dd6048dc9c1a8c1e00045de6f0a93454a64f826030e9151",
+          "actions": [
+            "init",
+            "begin",
+            "advance",
+            "beginReceipt",
+            "verifiedReceipt",
+            "indexedReceipt",
+            "recordFailure",
+            "complete",
+            "addFixture",
+            "publish",
+            "step"
+          ],
+          "scenarios": [
+            "successfulAndEmptyResultsStaySilentTest",
+            "emptyRunStaysSilentTest",
+            "unknownValuesCollapseWithoutPrivateDataTest",
+            "identicalFailuresAggregatePositiveCountsTest",
+            "nondeploymentCannotBorrowStageOrRpcCauseTest",
+            "waitingWithoutErrorDoesNotTriggerFailureTest",
+            "spoofedRpcNameRemainsOtherTest",
+            "unavailableSubclassHasPriorityTest",
+            "verifierFailureRetainsEvidenceStageTest",
+            "indexFailureRetainsIndexStageTest",
+            "successfulCallbackRestoresScannerStageTest",
+            "diagnosticDoesNotEraseExistingFailureTest"
+          ]
+        },
+        {
+          "change": "A",
+          "path": "formal/models/payments/operator_keeper_rpc.qnt",
+          "sha256": "1aba1a76fc1059a518e2e50417a92becac02c8f5cc6cb151a864a1d59ce7cf65",
+          "actions": [
+            "init",
+            "choose",
+            "resolve",
+            "preflight",
+            "step"
+          ],
+          "scenarios": [
+            "existingConfigRemainsAvailableTest",
+            "rotationRetainsIdentityAndJournalTest",
+            "removingOverrideRestoresOriginalTest",
+            "emptyOverrideRefusesTest",
+            "malformedOverrideRefusesTest",
+            "insecureOverrideRefusesTest",
+            "wrongChainRefusesTest"
+          ]
+        },
+        {
+          "change": "A",
+          "path": "formal/models/points/historical_implementation_allocation.qnt",
+          "sha256": "fdd3e11c9680b44501ae2daf20c6a641399c4fb24f3cd8de1b76c32229aa967b",
+          "actions": [
+            "init",
+            "prepare",
+            "protect",
+            "atomicImport",
+            "revoke",
+            "replay",
+            "step",
+            "unsafeProtectedImport",
+            "unsafeRevalue",
+            "unsafeReplayRestores"
+          ],
+          "scenarios": [
+            "unchangedPoolAndAppendOnlyTest",
+            "incompleteConnectedProofHeldTest",
+            "privateProtectedPoolHeldTest",
+            "protectionRaceBeforeAtomicImportTest",
+            "changedPredecessorRefusesImportTest",
+            "replayAfterRevocationNeverRestoresTest",
+            "protectionBypassNegativeControlTest",
+            "revaluationNegativeControlTest",
+            "replayResurrectionNegativeControlTest"
+          ]
+        },
+        {
+          "change": "M",
+          "path": "formal/models/points/journal_publication.qnt",
+          "sha256": "515102c904c4b4474305c60c7dff4484d5e304e2506ce0ce7c01551d127f0840",
+          "actions": [
+            "init",
+            "stage",
+            "commit",
+            "reject",
+            "interrupt",
+            "step"
+          ],
+          "scenarios": [
+            "extendsExactPrefixTest",
+            "reorderIsRejectedTest",
+            "stalePreparedPublicationIsRejectedTest",
+            "interruptedStagePreservesPublicationTest",
+            "duplicateCannotReplaceRecordTest"
+          ]
+        },
+        {
+          "change": "M",
+          "path": "formal/models/tooling/formal_process.qnt",
+          "sha256": "c2ea55da758b483d4f232bf9ebaa916e8f744c97ec8c523d2227f394f61f4143",
+          "actions": [
+            "init",
+            "start",
+            "startBrowser",
+            "browserSpawnFailure",
+            "launcherExit",
+            "exitCheckpoint",
+            "invalidCheckpoint",
+            "checkpointIoFailure",
+            "cancel",
+            "managedServer",
+            "captureManaged",
+            "changedOwner",
+            "managedServerClosed",
+            "interrupt",
+            "cooperativeExit",
+            "interruptDeadline",
+            "killGroup",
+            "killManaged",
+            "drain",
+            "cleanup",
+            "temporaryRemovalFailure",
+            "cleanupDeadline",
+            "report",
+            "step"
+          ],
+          "scenarios": [
+            "cleanSuccessTest",
+            "timeoutKillsDescendantTest",
+            "exitedLauncherStillOwnsChildTest",
+            "canceledCleanupCannotPassTest",
+            "failureCannotPublishSuccessTest",
+            "cleanupFailureIsExplicitTest",
+            "cooperativeBrowserInterruptClosesServerTest",
+            "uncooperativeBrowserCannotClaimCleanupTest",
+            "normalBrowserClosesManagedServerTest",
+            "forcedBrowserCleanupStopsCapturedGroupTest",
+            "unknownGroupCannotBeKilledTest",
+            "changedGroupCannotBeKilledTest",
+            "normalExitCheckpointRetainsDetachedServerTest",
+            "missingExitCheckpointCannotPassTest",
+            "refusedCheckpointCannotPassTest",
+            "changedNormalExitOwnerCannotBeKilledTest",
+            "changedNormalExitOwnerRefusesSuccessTest",
+            "ownershipReadFailureStillClosesObservedServerTest",
+            "ownershipReadFailureDoesNotAcquireUnknownServerTest",
+            "temporaryRemovalFailureStillReportsTest",
+            "earlierFailureSurvivesTemporaryRemovalFailureTest",
+            "timeoutRetainsLiveResourcesWhenRemovalFailsTest",
+            "timeoutCanRemoveDirectoryWithoutStoppingServerTest",
+            "drainedTimeoutRetainsFailedRemovalTest",
+            "failedSpawnRetainsUnremovedDirectoryTest",
+            "failedSpawnMayRemoveDirectoryTest",
+            "interruptedExitCheckpointClosesRetainedServerTest",
+            "interruptedCheckpointIoFailureClosesObservedServerTest",
+            "refusedCheckpointDuringInterruptCannotPassTest",
+            "localAirdropDeadlineEscalatesAfterGraceTest"
+          ]
+        },
+        {
+          "change": "M",
+          "path": "formal/models/ui/ui_vault_auto_check.qnt",
+          "sha256": "a3930ddbb678e51d3f7a7b0da4e976c395493a95c9f583471a507015bdff7da8",
+          "actions": [
+            "start",
+            "init",
+            "connect",
+            "mine",
+            "replace",
+            "finalize",
+            "autoCheck",
+            "manualCheck",
+            "autoCheckFails",
+            "settle",
+            "promptDeposit",
+            "refuseDeposit",
+            "step"
+          ],
+          "scenarios": [
+            "failedReadShowsThenClearsTest",
+            "approvalBeforeFinalityTest",
+            "transferWaitsForFinalityTest",
+            "replacedApprovalTest",
+            "recoveryHashNeedsClickTest",
+            "receivedWithdrawnAfterReplacementTest",
+            "revertedTransferNeverReceivedTest",
+            "approvalNeverReceivedTest",
+            "failedTransferTest",
+            "attemptLimitTest"
+          ]
+        },
+        {
+          "change": "A",
+          "path": "formal/models/ui/ui_vault_provisional_funding.qnt",
+          "sha256": "8b61ecc24e3acb1ee45a88644218c4f25301f5a71d36bb1f2a15f921e5276feb",
+          "actions": [
+            "start",
+            "init",
+            "mineCreation",
+            "replace",
+            "finalize",
+            "ask",
+            "openPrompt",
+            "decline",
+            "sign",
+            "mineDeposit",
+            "finalizeDeposit",
+            "check",
+            "observe",
+            "reload",
+            "step"
+          ],
+          "scenarios": [
+            "fundsBeforeFinalityTest",
+            "depositVerifiesBeforeRegistrationTest",
+            "unregisteredDepositIsNotCountedTest",
+            "droppedCreationHidesFormTest",
+            "reincludedCreationRestoresFormTest",
+            "depositWithoutVaultEndsClearlyTest",
+            "promptDefersRegistrationTest",
+            "promptThenRegistrationTest",
+            "reloadRestoresFormTest",
+            "revertedCreationOffersNoFormTest"
+          ]
+        }
+      ],
+      "runtimeChangesUnderSrcBackendSkills": [
+        "M\tbackend/projects/README.md",
+        "M\tbackend/projects/handler.ts",
+        "M\tbackend/projects/vault-setup.ts",
+        "M\tsrc/OwnerVaultSetup.tsx",
+        "M\tsrc/VaultActions.tsx",
+        "M\tsrc/lib/evm-vault-actions.test.ts",
+        "M\tsrc/lib/evm-vault-actions.ts",
+        "M\tsrc/lib/leaderboard.ts",
+        "M\tsrc/lib/monthly-commitment-actions.ts",
+        "M\tsrc/lib/owner-commitment-actions.ts",
+        "A\tsrc/lib/points-implementation-corrections.ts",
+        "M\tsrc/lib/points.ts",
+        "M\tsrc/lib/web-analytics.mjs"
+      ]
+    },
+    "development": {
+      "head": "0d0f0817a439df03cc022bf7aeed4bbe64ef4c65",
+      "pinnedBase": "cde1f719cda7fc52a0f26dcbbcd524cd2cd7c138",
+      "prdGitBlob": "996fb3760524f19d445a351b3b630fa41e1a0a6c",
+      "prdSha256": "87dca51dca6647a61b54f792bebcf9e595f2eed02f8412be75473e009d4da96f",
+      "modelCount": 479,
+      "modelChanges": [
+        {
+          "change": "M",
+          "path": "formal/models/contracts/solana_validator_callers.qnt",
+          "sha256": "91b33055c4f3cac1c6db6b5b9509fa7468e6a77e056364c050174a5b37775ed3",
+          "actions": [
+            "initial",
+            "init",
+            "begin",
+            "observe",
+            "foreignPort",
+            "admitTests",
+            "fundingSettled",
+            "finishTests",
+            "cancelStartup",
+            "closeReturns",
+            "confirmStop",
+            "stopFails",
+            "removeLedger",
+            "completeStage",
+            "step",
+            "ready",
+            "successfulStop"
+          ],
+          "scenarios": [
+            "foreignRpcCannotAdmitTestsTest",
+            "twoIndependentStagesRequireTwoCurrentReceiptsTest",
+            "oldStoppedReceiptCannotAdmitSecondStageTest",
+            "acceptanceRemovesLedgerOnlyAfterConfirmedStopTest",
+            "primaryFailureSurvivesCleanupFailureTest",
+            "cleanupFailureCannotPassTest",
+            "canceledStartupStillWaitsForOwnedStopTest",
+            "lateReadyIsNotAStopReceiptTest",
+            "receiptDoesNotReplaceAwaitedStopTest",
+            "badExitCannotPassWithStoppedReceiptTest",
+            "readyReceiptStillRequiresLocalFundingTest",
+            "localAirdropTimeoutStillWaitsForValidatorStopTest",
+            "localAirdropFailureSurvivesValidatorCleanupFailureTest",
+            "eachShellStageRequiresItsOwnFundingTest"
+          ]
+        },
+        {
+          "change": "M",
+          "path": "formal/models/fees/buyback_market.qnt",
+          "sha256": "cf7919a1735d2888bd8aa7f8a6b376dd58a29d58e19f25d35309df1df5ffbacb",
+          "actions": [
+            "init",
+            "configure",
+            "startRun",
+            "endRun",
+            "pause",
+            "price",
+            "signClaim",
+            "claimFinalized",
+            "noteClaim",
+            "signApproval",
+            "approvalFinalized",
+            "signSwap",
+            "refuseSwap",
+            "loseSwapResponse",
+            "swapFinalized",
+            "swapReverted",
+            "noteBuy",
+            "signBurn",
+            "waitPaused",
+            "loseBurnResponse",
+            "burnFinalized",
+            "burnReverted",
+            "step"
+          ],
+          "scenarios": [
+            "offKeepsRobinhoodUntouchedTest",
+            "dryRunSignsNothingTest",
+            "liveBuybackNeedsLiveConverterTest",
+            "converterOffStopsEverythingTest",
+            "claimBuyBurnTest",
+            "swapNeedsItsFinalApprovalTest",
+            "movedPriceRefusesTheSwapTest",
+            "revertedSwapReleasesAndRetriesTest",
+            "pausedTokenOnlyWaitsTest",
+            "burnPausedInFlightRetriesOnceTest",
+            "offMidwayKeepsOpenSendsTest"
+          ]
+        },
+        {
+          "change": "A",
+          "path": "formal/models/payments/operator_keeper_diagnostics.qnt",
+          "sha256": "d2173192c20133574dd6048dc9c1a8c1e00045de6f0a93454a64f826030e9151",
+          "actions": [
+            "init",
+            "begin",
+            "advance",
+            "beginReceipt",
+            "verifiedReceipt",
+            "indexedReceipt",
+            "recordFailure",
+            "complete",
+            "addFixture",
+            "publish",
+            "step"
+          ],
+          "scenarios": [
+            "successfulAndEmptyResultsStaySilentTest",
+            "emptyRunStaysSilentTest",
+            "unknownValuesCollapseWithoutPrivateDataTest",
+            "identicalFailuresAggregatePositiveCountsTest",
+            "nondeploymentCannotBorrowStageOrRpcCauseTest",
+            "waitingWithoutErrorDoesNotTriggerFailureTest",
+            "spoofedRpcNameRemainsOtherTest",
+            "unavailableSubclassHasPriorityTest",
+            "verifierFailureRetainsEvidenceStageTest",
+            "indexFailureRetainsIndexStageTest",
+            "successfulCallbackRestoresScannerStageTest",
+            "diagnosticDoesNotEraseExistingFailureTest"
+          ]
+        },
+        {
+          "change": "A",
+          "path": "formal/models/payments/operator_keeper_rpc.qnt",
+          "sha256": "1aba1a76fc1059a518e2e50417a92becac02c8f5cc6cb151a864a1d59ce7cf65",
+          "actions": [
+            "init",
+            "choose",
+            "resolve",
+            "preflight",
+            "step"
+          ],
+          "scenarios": [
+            "existingConfigRemainsAvailableTest",
+            "rotationRetainsIdentityAndJournalTest",
+            "removingOverrideRestoresOriginalTest",
+            "emptyOverrideRefusesTest",
+            "malformedOverrideRefusesTest",
+            "insecureOverrideRefusesTest",
+            "wrongChainRefusesTest"
+          ]
+        },
+        {
+          "change": "M",
+          "path": "formal/models/payments/solana_scan_checkpoint.qnt",
+          "sha256": "324fcf3762a164dbc0a14449f347560c78374f33d600378c2e47effaf7f2505c",
+          "actions": [
+            "init",
+            "discover",
+            "captureA",
+            "captureB",
+            "verifyA",
+            "verifyB",
+            "checkpointA",
+            "checkpointB",
+            "restart",
+            "laterArrival",
+            "close",
+            "setIdentity",
+            "refuseUnpinned",
+            "step"
+          ],
+          "scenarios": [
+            "discoveryBeforeProcessingTest",
+            "missingClusterRefusesDiscoveryTest",
+            "wrongClusterRefusesProcessingTest",
+            "unpinnedClusterCannotChangeDiscoveryOrProcessingTest",
+            "staleCheckpointCannotRewindTest",
+            "restartKeepsVerifiedPrefixTest",
+            "laterArrivalOutsideIntervalTest"
+          ]
+        },
+        {
+          "change": "A",
+          "path": "formal/models/referrals/referral_code.qnt",
+          "sha256": "ae07f679326d291ecfb851675f85c0d74f52c114e6dcd0cb7f05b001bfd09bbf",
+          "actions": [
+            "init",
+            "choose",
+            "refuse",
+            "step"
+          ],
+          "scenarios": [
+            "replacedNameStaysWithItsAccountTest",
+            "otherAccountCannotTakeAReplacedNameTest",
+            "reservedNameRefusedTest",
+            "teamAccountRefusedTest",
+            "anotherGithubLoginRefusedTest",
+            "refusedNameChangesNothingTest",
+            "limitRefusesANewNameTest",
+            "limitStillAllowsAReturnTest"
+          ]
+        },
+        {
+          "change": "M",
+          "path": "formal/models/tooling/formal_process.qnt",
+          "sha256": "c2ea55da758b483d4f232bf9ebaa916e8f744c97ec8c523d2227f394f61f4143",
+          "actions": [
+            "init",
+            "start",
+            "startBrowser",
+            "browserSpawnFailure",
+            "launcherExit",
+            "exitCheckpoint",
+            "invalidCheckpoint",
+            "checkpointIoFailure",
+            "cancel",
+            "managedServer",
+            "captureManaged",
+            "changedOwner",
+            "managedServerClosed",
+            "interrupt",
+            "cooperativeExit",
+            "interruptDeadline",
+            "killGroup",
+            "killManaged",
+            "drain",
+            "cleanup",
+            "temporaryRemovalFailure",
+            "cleanupDeadline",
+            "report",
+            "step"
+          ],
+          "scenarios": [
+            "cleanSuccessTest",
+            "timeoutKillsDescendantTest",
+            "exitedLauncherStillOwnsChildTest",
+            "canceledCleanupCannotPassTest",
+            "failureCannotPublishSuccessTest",
+            "cleanupFailureIsExplicitTest",
+            "cooperativeBrowserInterruptClosesServerTest",
+            "uncooperativeBrowserCannotClaimCleanupTest",
+            "normalBrowserClosesManagedServerTest",
+            "forcedBrowserCleanupStopsCapturedGroupTest",
+            "unknownGroupCannotBeKilledTest",
+            "changedGroupCannotBeKilledTest",
+            "normalExitCheckpointRetainsDetachedServerTest",
+            "missingExitCheckpointCannotPassTest",
+            "refusedCheckpointCannotPassTest",
+            "changedNormalExitOwnerCannotBeKilledTest",
+            "changedNormalExitOwnerRefusesSuccessTest",
+            "ownershipReadFailureStillClosesObservedServerTest",
+            "ownershipReadFailureDoesNotAcquireUnknownServerTest",
+            "temporaryRemovalFailureStillReportsTest",
+            "earlierFailureSurvivesTemporaryRemovalFailureTest",
+            "timeoutRetainsLiveResourcesWhenRemovalFailsTest",
+            "timeoutCanRemoveDirectoryWithoutStoppingServerTest",
+            "drainedTimeoutRetainsFailedRemovalTest",
+            "failedSpawnRetainsUnremovedDirectoryTest",
+            "failedSpawnMayRemoveDirectoryTest",
+            "interruptedExitCheckpointClosesRetainedServerTest",
+            "interruptedCheckpointIoFailureClosesObservedServerTest",
+            "refusedCheckpointDuringInterruptCannotPassTest",
+            "localAirdropDeadlineEscalatesAfterGraceTest"
+          ]
+        },
+        {
+          "change": "A",
+          "path": "formal/models/ui/ui_referral_code.qnt",
+          "sha256": "a54dcc058c0ce5d2fbeb63bd2e2e68302a4d05ede128c72de470417b8c1e820a",
+          "actions": [
+            "init",
+            "edit",
+            "submit",
+            "saveAnswer",
+            "accountChange",
+            "staleAnswer",
+            "step"
+          ],
+          "scenarios": [
+            "savedNameShowsAndARefusalKeepsItTest",
+            "secondSaveWaitsForTheFirstTest",
+            "accountChangeDropsAnEarlierSaveTest",
+            "earlierSaveCannotAnswerAfterAccountChangeTest"
+          ]
+        },
+        {
+          "change": "A",
+          "path": "formal/models/ui/ui_vault_provisional_funding.qnt",
+          "sha256": "8b61ecc24e3acb1ee45a88644218c4f25301f5a71d36bb1f2a15f921e5276feb",
+          "actions": [
+            "start",
+            "init",
+            "mineCreation",
+            "replace",
+            "finalize",
+            "ask",
+            "openPrompt",
+            "decline",
+            "sign",
+            "mineDeposit",
+            "finalizeDeposit",
+            "check",
+            "observe",
+            "reload",
+            "step"
+          ],
+          "scenarios": [
+            "fundsBeforeFinalityTest",
+            "depositVerifiesBeforeRegistrationTest",
+            "unregisteredDepositIsNotCountedTest",
+            "droppedCreationHidesFormTest",
+            "reincludedCreationRestoresFormTest",
+            "depositWithoutVaultEndsClearlyTest",
+            "promptDefersRegistrationTest",
+            "promptThenRegistrationTest",
+            "reloadRestoresFormTest",
+            "revertedCreationOffersNoFormTest"
+          ]
+        }
+      ],
+      "runtimeChangesUnderSrcBackendSkills": [
+        "M\tbackend/payments/README.md",
+        "M\tbackend/points/handler.ts",
+        "M\tbackend/projects/README.md",
+        "M\tbackend/projects/handler.ts",
+        "M\tbackend/projects/vault-setup.ts",
+        "A\tbackend/referrals/codes.test.ts",
+        "A\tbackend/referrals/codes.ts",
+        "M\tsrc/OwnerVaultSetup.tsx",
+        "M\tsrc/Points.tsx",
+        "A\tsrc/ReferralCode.tsx",
+        "M\tsrc/VaultActions.tsx",
+        "M\tsrc/design-system.css",
+        "M\tsrc/lib/evm-vault-actions.test.ts",
+        "M\tsrc/lib/evm-vault-actions.ts",
+        "A\tsrc/lib/referral-code.ts",
+        "M\tsrc/lib/web-analytics.mjs"
+      ]
+    }
+  },
+  "prdPolicyDeltas": {
+    "both": [
+      "Section 6 owner-only provisional EVM ordinary-token vault funding after matching canonical inclusion and before finalized registration",
+      "Section 9 explicit same-origin production Cloudflare reporting configuration"
+    ],
+    "developmentOnly": [
+      "Section 11 owner-selected referral-link names with permanent per-actor reservation and one active name"
+    ]
+  }
+}

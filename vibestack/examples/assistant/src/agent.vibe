@@ -1,6 +1,6 @@
 // The program around spec/assistant.md: it knows who sent each event from the service the event came
 // through, never from what was said (spec/assistant.md, "Who sends an event").
-import { Machine, type NotAnEvent, type Rejected, seen } from "../gen/assistant.effect.vibe"
+import { canAcknowledge, Machine, type NotAnEvent, type Rejected, seen } from "../gen/assistant.effect.vibe"
 import type * as T from "../gen/assistant.effect.vibe"
 
 export error NoAnswer { from: T.Actor }
@@ -15,7 +15,10 @@ export service Model {
 export service World {
   bill(request: number): number!NoAnswer
   page(): T.Page!!
-  /** Apply each delivery number once for this assistant; a retry returns the previous success. */
+  /**
+   * Apply each delivery number once for this assistant; a retry returns the previous success. A fill or a payment
+   * is applied only while the page it names is showing: the page can change after `deliver` last read it.
+   */
   perform(delivery: number, carried: T.Effect): void!NoAnswer
 }
 
@@ -29,14 +32,21 @@ export interface Turn {
 }
 
 /** Finish the saved effects, oldest first, keeping each delivery number until the world confirms it. */
-export effect function deliver(): void!NoAnswer!(Machine | World) {
+export effect function deliver(): void!(NoAnswer | Rejected)!(Machine | World) {
   const machine = try Machine
   const world = try World
   while (true) {
-    const state = try machine.get()
+    let state = try machine.get()
+    const first = state.pending[0]
+    if (first === undefined) return
+    // spec/assistant.md, "Card details go only into the biller's own page"
+    // spec/assistant.md, "A bill is paid only on the biller's own page"
+    // A fill or payment waits for that page, judged by the page the world shows now.
+    if (first.tag !== "Said") state = (try machine.send({ type: "load", page: try world.page() }, "World")).state
     const carried = state.pending[0]
     if (carried === undefined) return
     const delivery = state.delivered + 1
+    if (!canAcknowledge(state, delivery, "World")) return
     try world.perform(delivery, carried)
     // Another delivery worker may already have acknowledged this same id.
     machine.send({ type: "acknowledge", delivery }, "World") catch () => undefined

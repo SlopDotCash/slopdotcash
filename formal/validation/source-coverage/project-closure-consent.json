@@ -1,0 +1,32 @@
+{
+  "sourceMain": "ee1a4b2cd2672245537928380e425f5bd9ecb994",
+  "sourceDevelopment": "5268ca066dfc67251715eceaa5c1e943b80a0b6c",
+  "source": "spec/backend/closureConsent.md",
+  "sourceHash": "6bd226d9081642e7835d3a0ffef841ef78afa5b9f44a2fda39997cad616cf7a0",
+  "proofFileHash": null,
+  "proof": {
+    "generatedDafnySha256": "d5254e447e6e0141ea225ddadaf4f721ce742e9bc597aef7a1e2378523802459",
+    "total": 6,
+    "unproved": [],
+    "exhausted": [],
+    "resting": {},
+    "errors": []
+  },
+  "simulation": {
+    "command": "seed 212481471587963; to simulate again: pnpm exec quint run gen/backend__closureConsent.run.qnt --main backend__closureConsent_run --step probe --invariant inv --max-samples 60 --max-steps 10 --mbt --seed 212481471587963",
+    "replayed": 20
+  },
+  "witnesses": {},
+  "directed": [
+    "new defaults and bounty control scope",
+    "existing exact values hydrate and round trip",
+    "authorized explicit opt-in and opt-out",
+    "stale, wrong project and nonowner refusals"
+  ],
+  "pinnedSources": {
+    "src/ProjectProposalPage.tsx": "72e2bd50f9020339eebc022738d29f96812427d120e95fa2485c02ef46e55541",
+    "docs/slop-product-requirements.md": "84dec2d53b1a2cf670265bd3954c68ca6d7a5b548721ea3d60e4e903ceec95a7",
+    "formal/models/ui/ui_project_setup.qnt": "7b24c126b9fa2295d0a274f307df40699044005638c86d31b8eb03793e6814b9"
+  },
+  "policyOverride": "User instructed the new setup control to start unchecked. The pinned legacy form starts checked. The source snapshot is retained as evidence."
+}

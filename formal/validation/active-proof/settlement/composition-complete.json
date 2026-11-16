@@ -1,0 +1,500 @@
+{
+  "toolchain": {
+    "node": "v26.13.1",
+    "dafny": "4.11.0",
+    "lsc": "0.6.9"
+  },
+  "unit": "settlement__composition.ts",
+  "total": 38,
+  "unproved": [],
+  "errors": [],
+  "exhausted": [],
+  "resting": {},
+  "sha256": {
+    "spec/settlement/composition.md": "c83b2de7cb627fcbf398c82506206c3058515591890af9674119a84224b9f152",
+    "spec/settlement/vault.md": "b173bd0c43b63a7a2695598ea469c3cb59080c2ca5d86401733460fb751525fb",
+    "spec/settlement/payment.md": "ba8914c4bc4077bc5d091336cbd2c59aa44b7cb7e95757bc8acfc49c6e042e1f",
+    "spec/settlement/money.md": "4a0d4ea094817e47a835d3c022fdcf4c57cabaf0de60b502ddeaa151d99785e2",
+    "spec/settlement/composition.proof.dfy": "7c9bd4adde05341329847b731cb728ca74129b161fbfa9b8cb34a6354b474c3d"
+  },
+  "generated": {
+    "typescript": "53f837de6e95ce7a3f2a0f8bbff723e75d929d14365b48954421ad23e41dbff8",
+    "dafny": "8fd2b69e7b8719118d6c2b1a0442c2d84d4c2eeb4b4517fd74d1a97cf1536817"
+  },
+  "offered": [
+    {
+      "fn": "settlement__money_lawEqualReflexive",
+      "proved": [
+        true
+      ]
+    },
+    {
+      "fn": "settlement__money_lawZeroOrder",
+      "proved": [
+        true
+      ]
+    },
+    {
+      "fn": "settlement__money_lawEqualSymmetric",
+      "proved": [
+        true
+      ]
+    },
+    {
+      "fn": "settlement__money_lawEqualOrder",
+      "proved": [
+        true
+      ]
+    },
+    {
+      "fn": "settlement__money_lawEqualSubstitution",
+      "proved": [
+        true
+      ]
+    },
+    {
+      "fn": "settlement__money_lawZeroIdentity",
+      "proved": [
+        true
+      ]
+    },
+    {
+      "fn": "settlement__money_lawAdditionValid",
+      "proved": [
+        true
+      ]
+    },
+    {
+      "fn": "settlement__money_lawSubtractionValid",
+      "proved": [
+        true
+      ]
+    },
+    {
+      "fn": "settlement__money_lawAddCommutative",
+      "proved": [
+        true
+      ]
+    },
+    {
+      "fn": "settlement__money_lawPositiveAddition",
+      "proved": [
+        true
+      ]
+    },
+    {
+      "fn": "settlement__money_lawNumericOrderTotal",
+      "proved": [
+        true
+      ]
+    },
+    {
+      "fn": "settlement__money_lawNumericOrderTransitive",
+      "proved": [
+        true
+      ]
+    },
+    {
+      "fn": "settlement__money_lawAddOrder",
+      "proved": [
+        true
+      ]
+    },
+    {
+      "fn": "settlement__money_lawAddMonotone",
+      "proved": [
+        true
+      ]
+    },
+    {
+      "fn": "settlement__money_lawSubtractionAtMost",
+      "proved": [
+        true
+      ]
+    },
+    {
+      "fn": "settlement__money_lawAddCongruence",
+      "proved": [
+        true
+      ]
+    },
+    {
+      "fn": "settlement__money_lawAddAssociative",
+      "proved": [
+        true
+      ]
+    },
+    {
+      "fn": "settlement__money_lawSubtractionReconstructs",
+      "proved": [
+        true
+      ]
+    },
+    {
+      "fn": "settlement__money_lawSubtractCongruence",
+      "proved": [
+        true
+      ]
+    },
+    {
+      "fn": "settlement__money_lawPrivateConservation",
+      "proved": [
+        true
+      ]
+    },
+    {
+      "fn": "settlement__money_lawOrdinaryConservation",
+      "proved": [
+        true
+      ]
+    },
+    {
+      "fn": "settlement__money_lawMultiplyOne",
+      "proved": [
+        true
+      ]
+    },
+    {
+      "fn": "settlement__money_lawMultiplyCongruence",
+      "proved": [
+        true
+      ]
+    },
+    {
+      "fn": "settlement__money_lawMultiplyCommutative",
+      "proved": [
+        true
+      ]
+    },
+    {
+      "fn": "settlement__money_lawMultiplyAddition",
+      "proved": [
+        true
+      ]
+    },
+    {
+      "fn": "settlement__money_lawMultiplyCancellation",
+      "proved": [
+        true
+      ]
+    },
+    {
+      "fn": "settlement__money_lawDivisionByOne",
+      "proved": [
+        true
+      ]
+    },
+    {
+      "fn": "settlement__money_lawDivisionRemainder",
+      "proved": [
+        true
+      ]
+    },
+    {
+      "fn": "settlement__money_lawDivisionReconstructs",
+      "proved": [
+        true
+      ]
+    },
+    {
+      "fn": "settlement__money_lawFullPrivateConservation",
+      "proved": [
+        true
+      ]
+    },
+    {
+      "fn": "settlement__money_lawFullOrdinaryConservation",
+      "proved": [
+        true
+      ]
+    },
+    {
+      "fn": "settlement__money_lawMultiplySmallValid",
+      "proved": [
+        true
+      ]
+    },
+    {
+      "fn": "settlement__money_lawMultiplyValid",
+      "proved": [
+        true
+      ]
+    },
+    {
+      "fn": "settlement__money_lawDivisionValid",
+      "proved": [
+        true
+      ]
+    },
+    {
+      "fn": "settlement__money_lawPrivateAmountsValid",
+      "proved": [
+        true
+      ]
+    },
+    {
+      "fn": "settlement__money_lawOrdinaryAmountsValid",
+      "proved": [
+        true
+      ]
+    },
+    {
+      "fn": "settlement__vault_deposit",
+      "proved": [
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true
+      ]
+    },
+    {
+      "fn": "settlement__vault_reserve",
+      "proved": [
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true
+      ]
+    },
+    {
+      "fn": "settlement__vault_payReserved",
+      "proved": [
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true
+      ]
+    },
+    {
+      "fn": "settlement__vault_refund",
+      "proved": [
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true
+      ]
+    },
+    {
+      "fn": "settlement__vault_step",
+      "proved": [
+        true
+      ]
+    },
+    {
+      "fn": "settlement__vault_initialHolds",
+      "proved": [
+        true
+      ]
+    },
+    {
+      "fn": "settlement__payment_configure",
+      "proved": [
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true
+      ]
+    },
+    {
+      "fn": "settlement__payment_releaseFullRail",
+      "proved": [
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true
+      ]
+    },
+    {
+      "fn": "settlement__payment_bind",
+      "proved": [
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true
+      ]
+    },
+    {
+      "fn": "settlement__payment_journal",
+      "proved": [
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true
+      ]
+    },
+    {
+      "fn": "settlement__payment_submit",
+      "proved": [
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true
+      ]
+    },
+    {
+      "fn": "settlement__payment_loseReceipt",
+      "proved": [
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true
+      ]
+    },
+    {
+      "fn": "settlement__payment_retransmit",
+      "proved": [
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true
+      ]
+    },
+    {
+      "fn": "settlement__payment_hold",
+      "proved": [
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true
+      ]
+    },
+    {
+      "fn": "settlement__payment_resume",
+      "proved": [
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true
+      ]
+    },
+    {
+      "fn": "settlement__payment_recordFailure",
+      "proved": [
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true
+      ]
+    },
+    {
+      "fn": "settlement__payment_reconcile",
+      "proved": [
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true
+      ]
+    },
+    {
+      "fn": "settlement__payment_step",
+      "proved": [
+        true
+      ]
+    },
+    {
+      "fn": "settlement__payment_initialHolds",
+      "proved": [
+        true
+      ]
+    }
+  ],
+  "checkedDependencies": {
+    "settlement__money.ts": {
+      "sourceHashes": {
+        "spec/settlement/money.md": "4a0d4ea094817e47a835d3c022fdcf4c57cabaf0de60b502ddeaa151d99785e2",
+        "spec/settlement/money.proof.dfy": "d41fdad29b4f1c0125f101feaeef21e5f99342f152fade10576983dbf11d90b3"
+      },
+      "generatedDafnySha256": "57b000fc689552625365d6259aeb5a77a94650fdb6310536edce6265379ada51",
+      "proofRecord": "formal/validation/active-proof/money-complete/verification.json"
+    },
+    "settlement__vault.ts": {
+      "sourceHashes": {
+        "spec/settlement/vault.md": "b173bd0c43b63a7a2695598ea469c3cb59080c2ca5d86401733460fb751525fb",
+        "spec/settlement/money.md": "4a0d4ea094817e47a835d3c022fdcf4c57cabaf0de60b502ddeaa151d99785e2",
+        "spec/settlement/vault.proof.dfy": "c3e7f269f4e1834437f8228af321c3602d39ff736d27824b8aa9e8e20982ad46"
+      },
+      "generatedDafnySha256": "3e0610eadd8dd13c29a876f44beac5502795652d976d78cd0cc79ce086fa4ac0",
+      "proofRecord": "formal/validation/active-proof/settlement/vault-money-complete.json"
+    },
+    "settlement__payment.ts": {
+      "sourceHashes": {
+        "spec/settlement/payment.md": "ba8914c4bc4077bc5d091336cbd2c59aa44b7cb7e95757bc8acfc49c6e042e1f",
+        "spec/settlement/money.md": "4a0d4ea094817e47a835d3c022fdcf4c57cabaf0de60b502ddeaa151d99785e2",
+        "spec/settlement/payment.proof.dfy": "c98afe84fbc961ea8787aec2a15b13f98dfabc8ef42f8c48c6e49694c1fb1405"
+      },
+      "generatedDafnySha256": "146b812f37aef8d2b795cd08fd6deec9579a437f869796ad389d75f4e360eb97",
+      "proofRecord": "formal/validation/active-proof/settlement/payment-complete.json"
+    }
+  },
+  "log": "formal/validation/active-proof/settlement/composition-complete.log",
+  "proofLibrarySha256": "4c9f8dcbd9918f7d4b282ad9531b4cf0096ea389c015149b1786d0fe4ebd8e29",
+  "proved": 38
+}

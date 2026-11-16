@@ -1,0 +1,15 @@
+[
+  {
+    "unit": "security__evidence.ts",
+    "total": 54,
+    "unproved": [
+      "markPermanent: (inv(e) ==> canMarkPermanent(e, ref) ==> alwaysPermanentRetained(markPermanent(e, ref)))",
+      "expireReference: (inv(e) ==> canExpireReference(e, ref) ==> alwaysPermanentRetained(expireReference(e, ref)))",
+      "expireReference: (inv(e) ==> canExpireReference(e, ref) ==> alwaysReferenceHistory(expireReference(e, ref)))",
+      "deleteBytes: (inv(e) ==> canDeleteBytes(e) ==> alwaysDeletionAuthorized(deleteBytes(e)))",
+      "step: inv(step(current, event))"
+    ],
+    "errors": [],
+    "exhausted": []
+  }
+]

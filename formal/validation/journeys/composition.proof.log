@@ -1,0 +1,13 @@
+solver: Z3 4.15.4 (/opt/homebrew/Cellar/z3/4.15.4/bin/z3)
+Generated: /private/tmp/slop-root-proofs-repaired/gen/proof/composition/composition.dfy.gen
+Created: /private/tmp/slop-root-proofs-repaired/gen/proof/composition/composition.dfy
+WARNING: '===' compares non-primitive operands (frontend__drafts_Draft === frontend__drafts_Draft): structural equality in the proof, but reference equality when this TypeScript runs. Sound only if operands are primitives or a canonical (string/number) encoding; otherwise compare via an explicit structural equals.
+Generated: /private/tmp/slop-root-proofs-repaired/gen/proof/composition/composition.dfy.gen
+WARNING: '===' compares non-primitive operands (frontend__drafts_Draft === frontend__drafts_Draft): structural equality in the proof, but reference equality when this TypeScript runs. Sound only if operands are primitives or a canonical (string/number) encoding; otherwise compare via an explicit structural equals.
+
+Dafny program verifier finished with 12 verified, 0 errors
+
+---- dafny audit ----
+Dafny auditor completed with 0 findings
+
+Dafny program verifier did not attempt verification

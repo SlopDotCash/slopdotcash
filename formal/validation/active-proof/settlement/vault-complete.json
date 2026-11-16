@@ -1,0 +1,223 @@
+{
+  "toolchain": {
+    "node": "v26.13.1",
+    "dafny": "4.11.0",
+    "lsc": "0.6.9"
+  },
+  "unit": "settlement__vault.ts",
+  "total": 42,
+  "unproved": [],
+  "errors": [],
+  "exhausted": [],
+  "resting": {},
+  "sha256": {
+    "spec/settlement/vault.md": "b173bd0c43b63a7a2695598ea469c3cb59080c2ca5d86401733460fb751525fb",
+    "spec/settlement/money.md": "801d269c4fa02d62cac4d5d37412d831793daf16aff7a751c07e10a5ce383f4b",
+    "spec/settlement/vault.proof.dfy": "c3e7f269f4e1834437f8228af321c3602d39ff736d27824b8aa9e8e20982ad46"
+  },
+  "generated": {
+    "typescript": "2b5c8903d2f02022c05783b84fc465768cfdc9f0b8d318b65905754d96f55d9b",
+    "dafny": "23786240758b71079b7b338058fb141e0102e046c11a4347e0763383ffc37515"
+  },
+  "offered": [
+    {
+      "fn": "settlement__money_lawEqualReflexive",
+      "proved": [
+        true
+      ]
+    },
+    {
+      "fn": "settlement__money_lawZeroOrder",
+      "proved": [
+        true
+      ]
+    },
+    {
+      "fn": "settlement__money_lawEqualSymmetric",
+      "proved": [
+        true
+      ]
+    },
+    {
+      "fn": "settlement__money_lawEqualOrder",
+      "proved": [
+        true
+      ]
+    },
+    {
+      "fn": "settlement__money_lawEqualSubstitution",
+      "proved": [
+        true
+      ]
+    },
+    {
+      "fn": "settlement__money_lawZeroIdentity",
+      "proved": [
+        true
+      ]
+    },
+    {
+      "fn": "settlement__money_lawAdditionValid",
+      "proved": [
+        true
+      ]
+    },
+    {
+      "fn": "settlement__money_lawSubtractionValid",
+      "proved": [
+        true
+      ]
+    },
+    {
+      "fn": "settlement__money_lawAddCommutative",
+      "proved": [
+        true
+      ]
+    },
+    {
+      "fn": "settlement__money_lawPositiveAddition",
+      "proved": [
+        true
+      ]
+    },
+    {
+      "fn": "settlement__money_lawNumericOrderTotal",
+      "proved": [
+        true
+      ]
+    },
+    {
+      "fn": "settlement__money_lawNumericOrderTransitive",
+      "proved": [
+        true
+      ]
+    },
+    {
+      "fn": "settlement__money_lawAddOrder",
+      "proved": [
+        true
+      ]
+    },
+    {
+      "fn": "settlement__money_lawAddMonotone",
+      "proved": [
+        true
+      ]
+    },
+    {
+      "fn": "settlement__money_lawSubtractionAtMost",
+      "proved": [
+        true
+      ]
+    },
+    {
+      "fn": "settlement__money_lawAddCongruence",
+      "proved": [
+        true
+      ]
+    },
+    {
+      "fn": "settlement__money_lawAddAssociative",
+      "proved": [
+        true
+      ]
+    },
+    {
+      "fn": "settlement__money_lawSubtractionReconstructs",
+      "proved": [
+        true
+      ]
+    },
+    {
+      "fn": "settlement__money_lawSubtractCongruence",
+      "proved": [
+        true
+      ]
+    },
+    {
+      "fn": "settlement__money_lawPrivateConservation",
+      "proved": [
+        true
+      ]
+    },
+    {
+      "fn": "settlement__money_lawOrdinaryConservation",
+      "proved": [
+        true
+      ]
+    },
+    {
+      "fn": "settlement__money_lawMultiplyOne",
+      "proved": [
+        true
+      ]
+    },
+    {
+      "fn": "settlement__money_lawDivisionRemainder",
+      "proved": [
+        false
+      ]
+    },
+    {
+      "fn": "settlement__money_lawDivisionReconstructs",
+      "proved": [
+        false
+      ]
+    },
+    {
+      "fn": "settlement__money_lawFullPrivateConservation",
+      "proved": [
+        false
+      ]
+    },
+    {
+      "fn": "settlement__money_lawFullOrdinaryConservation",
+      "proved": [
+        false
+      ]
+    },
+    {
+      "fn": "settlement__money_lawMultiplySmallValid",
+      "proved": [
+        true
+      ]
+    },
+    {
+      "fn": "settlement__money_lawMultiplyValid",
+      "proved": [
+        true
+      ]
+    },
+    {
+      "fn": "settlement__money_lawDivisionValid",
+      "proved": [
+        true
+      ]
+    },
+    {
+      "fn": "settlement__money_lawPrivateAmountsValid",
+      "proved": [
+        true
+      ]
+    },
+    {
+      "fn": "settlement__money_lawOrdinaryAmountsValid",
+      "proved": [
+        true
+      ]
+    }
+  ],
+  "checkedDependencies": {
+    "settlement__money.ts": {
+      "sourceHashes": {
+        "spec/settlement/money.md": "801d269c4fa02d62cac4d5d37412d831793daf16aff7a751c07e10a5ce383f4b",
+        "spec/settlement/money.proof.dfy": "14d6ad9a6d3faa11f32a2abbc1bc9470c247161cbd9fe64fa06af38df1ed8922"
+      },
+      "generatedDafnySha256": "7ed318924ed9b3b8babb474e1c3a001549ee489e59c1467d0a2b86c1b10737d3",
+      "proofRecord": "formal/validation/active-proof/money-add-subtract/verification.json"
+    }
+  },
+  "log": "formal/validation/active-proof/settlement/vault-complete.log",
+  "proofLibrarySha256": "4c9f8dcbd9918f7d4b282ad9531b4cf0096ea389c015149b1786d0fe4ebd8e29",
+  "proved": 42
+}

@@ -1,0 +1,325 @@
+{
+  "sourceMain": "6b3b9d0b979f0608d87941f1146056a98513ffcf",
+  "source": "spec/slopbot/reviewLease.md",
+  "sourceHash": "63a122e86f8e19950c624eb07ba873acaae1a5bb9c28701768265de9c3fb1f01",
+  "proof": {
+    "generatedDafnySha256": "f49f06388d7dd96fde16a62a9b04cd9f0a70ffce7f13541b132720730c671247",
+    "total": 26,
+    "unproved": [],
+    "exhausted": [],
+    "resting": {},
+    "errors": []
+  },
+  "simulation": {
+    "command": "seed 224660268036912; to simulate again: pnpm exec quint run gen/slopbot__reviewLease.run.qnt --main slopbot__reviewLease_run --step step --invariant inv --max-samples 350 --max-steps 22 --mbt --seed 224660268036912",
+    "replayed": 25
+  },
+  "witnesses": {
+    "sometimesExpired": {
+      "command": "seed 224660268036912; to simulate again: pnpm exec quint run gen/slopbot__reviewLease.run.qnt --main slopbot__reviewLease_run --step step --invariant inv --max-samples 350 --max-steps 22 --mbt --seed 224660268036912",
+      "events": [
+        {
+          "type": "claim",
+          "token": 1,
+          "expires": 3,
+          "capacityAvailable": true
+        },
+        {
+          "type": "observeTime",
+          "time": 3
+        },
+        {
+          "type": "claim",
+          "token": 3,
+          "expires": 5,
+          "capacityAvailable": true
+        },
+        {
+          "type": "finish",
+          "token": 3,
+          "status": "Completed"
+        },
+        {
+          "type": "observeTime",
+          "time": 4
+        },
+        {
+          "type": "observeTime",
+          "time": 5
+        },
+        {
+          "type": "observeTime",
+          "time": 5
+        },
+        {
+          "type": "observeTime",
+          "time": 5
+        },
+        {
+          "type": "observeTime",
+          "time": 5
+        },
+        {
+          "type": "observeTime",
+          "time": 5
+        },
+        {
+          "type": "observeTime",
+          "time": 5
+        },
+        {
+          "type": "observeTime",
+          "time": 5
+        },
+        {
+          "type": "observeTime",
+          "time": 5
+        },
+        {
+          "type": "observeTime",
+          "time": 5
+        },
+        {
+          "type": "observeTime",
+          "time": 5
+        },
+        {
+          "type": "observeTime",
+          "time": 5
+        },
+        {
+          "type": "observeTime",
+          "time": 5
+        },
+        {
+          "type": "observeTime",
+          "time": 5
+        },
+        {
+          "type": "observeTime",
+          "time": 5
+        },
+        {
+          "type": "observeTime",
+          "time": 5
+        },
+        {
+          "type": "observeTime",
+          "time": 5
+        },
+        {
+          "type": "observeTime",
+          "time": 5
+        }
+      ]
+    },
+    "sometimesRetryCompleted": {
+      "command": "seed 224660268036912; to simulate again: pnpm exec quint run gen/slopbot__reviewLease.run.qnt --main slopbot__reviewLease_run --step step --invariant inv --max-samples 350 --max-steps 22 --mbt --seed 224660268036912",
+      "events": [
+        {
+          "type": "claim",
+          "token": 1,
+          "expires": 3,
+          "capacityAvailable": true
+        },
+        {
+          "type": "observeTime",
+          "time": 3
+        },
+        {
+          "type": "claim",
+          "token": 3,
+          "expires": 5,
+          "capacityAvailable": true
+        },
+        {
+          "type": "finish",
+          "token": 3,
+          "status": "Completed"
+        },
+        {
+          "type": "observeTime",
+          "time": 4
+        },
+        {
+          "type": "observeTime",
+          "time": 5
+        },
+        {
+          "type": "observeTime",
+          "time": 5
+        },
+        {
+          "type": "observeTime",
+          "time": 5
+        },
+        {
+          "type": "observeTime",
+          "time": 5
+        },
+        {
+          "type": "observeTime",
+          "time": 5
+        },
+        {
+          "type": "observeTime",
+          "time": 5
+        },
+        {
+          "type": "observeTime",
+          "time": 5
+        },
+        {
+          "type": "observeTime",
+          "time": 5
+        },
+        {
+          "type": "observeTime",
+          "time": 5
+        },
+        {
+          "type": "observeTime",
+          "time": 5
+        },
+        {
+          "type": "observeTime",
+          "time": 5
+        },
+        {
+          "type": "observeTime",
+          "time": 5
+        },
+        {
+          "type": "observeTime",
+          "time": 5
+        },
+        {
+          "type": "observeTime",
+          "time": 5
+        },
+        {
+          "type": "observeTime",
+          "time": 5
+        },
+        {
+          "type": "observeTime",
+          "time": 5
+        },
+        {
+          "type": "observeTime",
+          "time": 5
+        }
+      ]
+    },
+    "sometimesSkippedRetryIsFirst": {
+      "command": "seed 224660268036912; to simulate again: pnpm exec quint run gen/slopbot__reviewLease.run.qnt --main slopbot__reviewLease_run --step step --invariant inv --max-samples 350 --max-steps 22 --mbt --seed 224660268036912",
+      "events": [
+        {
+          "type": "claim",
+          "token": 1,
+          "expires": 4,
+          "capacityAvailable": true
+        },
+        {
+          "type": "finish",
+          "token": 1,
+          "status": "Skipped"
+        },
+        {
+          "type": "observeTime",
+          "time": 3
+        },
+        {
+          "type": "claim",
+          "token": 2,
+          "expires": 5,
+          "capacityAvailable": true
+        },
+        {
+          "type": "recordCall",
+          "token": 2
+        },
+        {
+          "type": "finish",
+          "token": 2,
+          "status": "Failed"
+        },
+        {
+          "type": "claim",
+          "token": 3,
+          "expires": 5,
+          "capacityAvailable": true
+        },
+        {
+          "type": "recordCall",
+          "token": 3
+        },
+        {
+          "type": "finish",
+          "token": 3,
+          "status": "Skipped"
+        },
+        {
+          "type": "observeTime",
+          "time": 3
+        },
+        {
+          "type": "observeTime",
+          "time": 4
+        },
+        {
+          "type": "observeTime",
+          "time": 5
+        },
+        {
+          "type": "observeTime",
+          "time": 5
+        },
+        {
+          "type": "observeTime",
+          "time": 5
+        },
+        {
+          "type": "observeTime",
+          "time": 5
+        },
+        {
+          "type": "observeTime",
+          "time": 5
+        },
+        {
+          "type": "observeTime",
+          "time": 5
+        },
+        {
+          "type": "observeTime",
+          "time": 5
+        },
+        {
+          "type": "observeTime",
+          "time": 5
+        },
+        {
+          "type": "observeTime",
+          "time": 5
+        },
+        {
+          "type": "observeTime",
+          "time": 5
+        },
+        {
+          "type": "observeTime",
+          "time": 5
+        }
+      ]
+    }
+  },
+  "directed": [
+    "claim capacity and current token admission",
+    "expiry refuses finish before takeover",
+    "takeover fences late calls and completion",
+    "skipped before inference resumes as first",
+    "failed inference retains retry history",
+    "completed review cannot be reused"
+  ]
+}

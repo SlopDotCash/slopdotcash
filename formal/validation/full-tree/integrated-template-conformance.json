@@ -1,0 +1,12 @@
+{
+  "qualification": "Existing template greeting driver against its unchanged application specification. Reuses exact-key baseline Quint event samples. Product entry points await implementation.",
+  "results": [
+    [
+      true,
+      "traces",
+      "test/drivers/app.ts: 1 journeys, 5 malformed inputs, 1000 walks of seed 1 agree with spec/app/index.md",
+      "",
+      "test/drivers/app.ts"
+    ]
+  ]
+}

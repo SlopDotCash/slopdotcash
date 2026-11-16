@@ -1,0 +1,338 @@
+{
+  "applicationMain": "78eed5564d796119d82ae541c36b0c770263dc5f",
+  "retainedModelMain": "6b3b9d0b979f0608d87941f1146056a98513ffcf",
+  "legacyModel": "formal/models/slopbot/bot_webhook_delivery.qnt",
+  "legacyModelSha256": "fb6c91026e5d49dbbf6fc3131a4477f62146c86ad54a9258cfd11373501df82c",
+  "successor": {
+    "path": "spec/slopbot/webhookDelivery.md",
+    "sha256": "57bca5f57a780e02a1e0eb8a20ca483f2bce987fa72a573e5c86d2b558e60645"
+  },
+  "anchors": [
+    {
+      "path": "workers/slopbot/index.ts",
+      "sha256": "2b399ea27fe5816edb60067a53328e9dd1c94949fbe6b112a3578a46461da411",
+      "entries": [
+        {
+          "line": 51,
+          "anchor": "const MAX_WEBHOOK_BYTES"
+        },
+        {
+          "line": 52,
+          "anchor": "const REVIEW_ACTIONS"
+        },
+        {
+          "line": 62,
+          "anchor": "const VALUE_ACTIONS"
+        },
+        {
+          "line": 88,
+          "anchor": "export function jobFor"
+        },
+        {
+          "line": 375,
+          "anchor": "request.method !== \"POST\""
+        },
+        {
+          "line": 383,
+          "anchor": "await readLimitedBody"
+        },
+        {
+          "line": 391,
+          "anchor": "await verifyWebhookSignature"
+        },
+        {
+          "line": 407,
+          "anchor": "fatal: true"
+        },
+        {
+          "line": 413,
+          "anchor": "JSON.parse(text)"
+        },
+        {
+          "line": 425,
+          "anchor": "store.claimInstallationDelivery"
+        },
+        {
+          "line": 436,
+          "anchor": "store.recordDelivery"
+        },
+        {
+          "line": 464,
+          "anchor": "await registeredRepository"
+        },
+        {
+          "line": 476,
+          "anchor": "await reviewRegistration"
+        },
+        {
+          "line": 481,
+          "anchor": "await reversalOnlyRegistration"
+        },
+        {
+          "line": 492,
+          "anchor": "await recordReopenSource"
+        },
+        {
+          "line": 505,
+          "anchor": "SLOPBOT_QUEUE.send(job)"
+        },
+        {
+          "line": 519,
+          "anchor": "store.releaseDelivery"
+        }
+      ]
+    },
+    {
+      "path": "workers/slopbot/github.ts",
+      "sha256": "3a3f39affb5a364a06f089adca73c4d8099e1cb882f05e2bb8359e57c255c3a8",
+      "entries": [
+        {
+          "line": 11,
+          "anchor": "export async function verifyWebhookSignature"
+        },
+        {
+          "line": 25,
+          "anchor": "return constantTimeEqual"
+        }
+      ]
+    },
+    {
+      "path": "workers/slopbot/persistence.ts",
+      "sha256": "c614fa593a195345e9711a134ff0f8065405ed487e858ec415d586c19eb0af90",
+      "entries": [
+        {
+          "line": 24,
+          "anchor": "export async function recordDelivery"
+        },
+        {
+          "line": 45,
+          "anchor": "export async function completeDelivery"
+        },
+        {
+          "line": 54,
+          "anchor": "export async function releaseDelivery"
+        },
+        {
+          "line": 59,
+          "anchor": "DELETE FROM slopbot_deliveries"
+        },
+        {
+          "line": 65,
+          "anchor": "export async function claimInstallationDelivery"
+        },
+        {
+          "line": 107,
+          "anchor": "export async function completeInstallationDelivery"
+        }
+      ]
+    },
+    {
+      "path": "workers/slopbot/value-requests.ts",
+      "sha256": "f70ef5e2459232e165a964728025b293f2e42fae1cdba382c8b701348c499086",
+      "entries": [
+        {
+          "line": 16,
+          "anchor": "export async function recordValueRequest"
+        },
+        {
+          "line": 60,
+          "anchor": "Value delivery identity changed"
+        }
+      ]
+    },
+    {
+      "path": "workers/slopbot/reopen-source.ts",
+      "sha256": "4078e3258954a11650da13f0188f384c7ec6dd68bc2989a6941a6fce6272424e",
+      "entries": [
+        {
+          "line": 26,
+          "anchor": "export async function recordReopenSource"
+        },
+        {
+          "line": 70,
+          "anchor": "Reopen delivery source differs"
+        },
+        {
+          "line": 74,
+          "anchor": "export async function reopenSource"
+        },
+        {
+          "line": 95,
+          "anchor": "export async function confirmReopen"
+        }
+      ]
+    },
+    {
+      "path": "workers/slopbot/registry.ts",
+      "sha256": "4f643a1c6c632dd6bcc5353d714d3b437b77d85dece7a914f2fdb8e6954eed34",
+      "entries": [
+        {
+          "line": 184,
+          "anchor": "export async function reviewRegistration"
+        },
+        {
+          "line": 204,
+          "anchor": "export async function reversalOnlyRegistration"
+        },
+        {
+          "line": 242,
+          "anchor": "export async function registeredRepository"
+        }
+      ]
+    },
+    {
+      "path": "workers/slopbot/review.ts",
+      "sha256": "ac03ebad5b2a566bf93d9821f571ed572b3f4016ae068cb2b571bee16d28a248",
+      "entries": [
+        {
+          "line": 2403,
+          "anchor": "job.kind === \"human_reopen\" ? await reopenSource"
+        },
+        {
+          "line": 2425,
+          "anchor": "An author reopening their own item is an appeal"
+        },
+        {
+          "line": 2437,
+          "anchor": "The maintainer decision binds the reopened revision"
+        },
+        {
+          "line": 2460,
+          "anchor": "await confirmReopen"
+        }
+      ]
+    },
+    {
+      "path": "workers/slopbot/reopen-source.test.ts",
+      "sha256": "7b0eb67161d2df48b031401f78f0d31abb550446c02e1c85dcc85c0fb69bf8d4",
+      "entries": [
+        {
+          "line": 89,
+          "anchor": "a lost queue response retains"
+        },
+        {
+          "line": 131,
+          "anchor": "only a confirmed bound receipt"
+        },
+        {
+          "line": 166,
+          "anchor": "a late reopen check"
+        },
+        {
+          "line": 218,
+          "anchor": "missing or unsigned reopen"
+        }
+      ]
+    }
+  ],
+  "scope": "Exact source transition accounting. Shell verifies bounded/WebCrypto/JSON decoding, event and command grammar, registry adapter, D1 and at-least-once queue behavior. This projection tracks one delivery ID.",
+  "actions": {
+    "init": {
+      "status": "modeled-projection",
+      "reason": "Receipt, value binding and reopen binding are independently absent.",
+      "successorDefinitions": [
+        "initial"
+      ]
+    },
+    "authenticate": {
+      "status": "modeled-projection",
+      "reason": "Bounded ingress authenticates the same exact buffer before decode.",
+      "successorDefinitions": [
+        "receive",
+        "authenticate"
+      ]
+    },
+    "parse": {
+      "status": "modeled-projection",
+      "reason": "Fatal UTF-8 and object JSON must decode from the authenticated buffer before write.",
+      "successorDefinitions": [
+        "decode"
+      ]
+    },
+    "receive": {
+      "status": "source-refinement",
+      "reason": "An ordinary receipt can be claimed while pending without an original-body guard. Separate pinned value and reopen rows independently compare identity.",
+      "successorDefinitions": [
+        "claim",
+        "inspectValue",
+        "bindReopen"
+      ]
+    },
+    "bindValue": {
+      "status": "modeled-projection",
+      "reason": "Active admission and immutable installation/repository/name/PR binding are checked independently of queue.",
+      "successorDefinitions": [
+        "inspectValue"
+      ]
+    },
+    "retainReopen": {
+      "status": "modeled-projection",
+      "reason": "Valid source is recorded before a queue call and cannot be overwritten.",
+      "successorDefinitions": [
+        "bindReopen"
+      ]
+    },
+    "enqueue": {
+      "status": "modeled-projection",
+      "reason": "Review, security-only, reversal-only and no work have separate routing. Queue acceptance and ACK can diverge.",
+      "successorDefinitions": [
+        "queueScope",
+        "inspectQueue",
+        "send"
+      ]
+    },
+    "complete": {
+      "status": "source-refinement",
+      "reason": "Both successfully queued and no-job decisions may complete the ordinary receipt.",
+      "successorDefinitions": [
+        "complete"
+      ]
+    },
+    "queueFailure": {
+      "status": "modeled-projection",
+      "reason": "Release ordinary receipt or preserve one with reopen source. The independent value request always remains.",
+      "successorDefinitions": [
+        "send",
+        "releaseOrdinary"
+      ]
+    },
+    "step": {
+      "status": "generated-harness",
+      "reason": "Generated candidate dispatch with explicit no-op and refusal outcomes.",
+      "successorDefinitions": [
+        "initial",
+        "complete"
+      ]
+    }
+  },
+  "scenarios": {
+    "lostAckMayRedeliverTest": {
+      "status": "modeled-projection",
+      "reason": "The same exact reopen and value metadata survive lost queue ACK, changed payload is refused by the specific source pin and exact retry may enqueue a second time.",
+      "successorDefinitions": [
+        "bindReopen",
+        "inspectValue",
+        "send",
+        "claim",
+        "complete"
+      ]
+    },
+    "unauthenticatedCannotPersistTest": {
+      "status": "modeled-projection",
+      "reason": "Bad signature, invalid UTF-8 or invalid JSON object cannot reach receipt claim.",
+      "successorDefinitions": [
+        "receive",
+        "authenticate",
+        "decode",
+        "claim"
+      ]
+    }
+  },
+  "externalBoundaries": [
+    "Ordinary processed delivery is a deduplication record. Pending delivery is not exclusive, and a late ordinary failure may remove a row already completed by a concurrent handler.",
+    "Opaque body parser validates method/path, actual bounded bytes, HMAC, strict JSON, nested event classification and command grammar before the model receives decoded fields.",
+    "The receipt can record one queue message twice after lost acceptance acknowledgment. Review/appeal/value consumers retain their own identities and idempotent decisions.",
+    "Installation ordered mutation and notices are intentionally separate; this model covers its webhook receipt and retry only.",
+    "Current maintainer and GitHub item identity evidence may authorize exact reopen confirmation. Penalty reversal, cleanup and scope rechecks on GitHub are downstream."
+  ]
+}

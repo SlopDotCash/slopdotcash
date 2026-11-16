@@ -1,0 +1,82 @@
+{
+  "sourceInputs": {
+    "spec/frontend/navigation.md": "25cd192a17ec647982912658ea214e2479ba73473a2f5a67ea55c3206b2731e0",
+    "spec/frontend/drafts.md": "c30ef5bcd0f2e9c36e0600aa350525804c3e6967d9a10d4f85e310710ae97ed9",
+    "spec/frontend/reportDetails.md": "81a1083797788bf1841a22e7b0a97793cca7cce03c956cc12e9454b8fee4c8f1",
+    "spec/frontend/reportDetails.proof.dfy": "604b0906c4bb18e6211967ce3ecd87404d6cf82160335bd98d0c3c9680a85c70",
+    "spec/composition.md": "82c11e2a8b99c767d3ee721c80ebd06ac3e3a35a8b56a4d54e05476955d29018",
+    "spec/settlement/money.md": "65d72012c72c335adddbb78d3934687c0fce7442ad51b5404090130af42a4c5b",
+    "spec/settlement/money.proof.dfy": "e587ba519b953cf1841085ae1b097e169521cc30d1199116b754a4efb0353bf7",
+    "spec/frontend/projections.md": "635399e7681905c91017d927d9df583af7126fa6a655399a76cab04a3aa612c6",
+    "spec/operations/releaseCoverage.md": "9e002447408487e82d859c4ecdcbb16664d0b9cb323298333520030e4f617109",
+    "spec/operations/release.md": "ee00b6382a6759e82dc92d815f9f3fdb0a207f5aff531c70d7eff4cbcd547935",
+    "spec/security/terms.md": "b39ba589fb34a5e49273cf682975f56835eccb6ed168240b1a53decb5d1920d8",
+    "spec/settlement/contributorAllocation.md": "c06014613d081559ab845d451b36d8b5cfeac6d82e86a1f0a689dd833ed60a89"
+  },
+  "units": {
+    "frontend__reportDetails.ts": {
+      "total": 2,
+      "unproved": [],
+      "exhausted": [],
+      "resting": {},
+      "errors": [],
+      "meaningSha256": "f3abd7edcd4a4e3d8be9c1dce2e3e401fc406c93d941911661d0714614375556",
+      "generatedDafnySha256": "1f808ab11e608df0d9433f84c65ab0e091f7446a0d3aa32a4834d32812e6b6ca",
+      "proofSource": {
+        "file": "spec/frontend/reportDetails.proof.dfy",
+        "sha256": "604b0906c4bb18e6211967ce3ecd87404d6cf82160335bd98d0c3c9680a85c70"
+      }
+    },
+    "security__terms.ts": {
+      "total": 5,
+      "unproved": [],
+      "exhausted": [],
+      "resting": {},
+      "errors": [],
+      "meaningSha256": "ffd9782d05b30d3a7275ceb17f78f306fed8ea04332a34511d6de50fb157745d",
+      "generatedDafnySha256": "40bae72ddff3b39621a5ca7fdc5ab29b92b6d0b3a6b433816515ae5676c910da",
+      "proofSource": null
+    },
+    "frontend__projections.ts": {
+      "total": 12,
+      "unproved": [],
+      "exhausted": [],
+      "resting": {},
+      "errors": [],
+      "meaningSha256": "0019c39cd2c728a910522270e31d2326a2b7209ead7816bb4dcb1b0dcb17643f",
+      "generatedDafnySha256": "45df5bb147b7f54e43129cc5673cac91a76910f78c03fe64811c20f38109491b",
+      "proofSource": null
+    },
+    "composition.ts": {
+      "total": 42,
+      "unproved": [],
+      "exhausted": [],
+      "resting": {},
+      "errors": [],
+      "meaningSha256": "81bf504527373ec76097c9e746ac8a7fe49d52f1395bd1ae0cc42ed9c7402814",
+      "generatedDafnySha256": "759a7bc23e0a9688127878485adca37ab49e2d98973cb3de3895c7744d7e1d20",
+      "proofSource": null
+    },
+    "operations__release.ts": {
+      "total": 55,
+      "unproved": [],
+      "exhausted": [],
+      "resting": {},
+      "errors": [],
+      "meaningSha256": "4e3dc06138353ee6aa83cb30c2fda8682cd0cc5a46ed3bb835cd82792a0ba482",
+      "generatedDafnySha256": "1e3063034f269e50c148c4fa52a46cfbddaf8b924ea6a956866bdbea92cfa456",
+      "proofSource": null
+    },
+    "settlement__contributorAllocation.ts": {
+      "total": 32,
+      "unproved": [],
+      "exhausted": [],
+      "resting": {},
+      "errors": [],
+      "meaningSha256": "fcf30a1fc5c275842cbe9368f1efc44373d6be3456d190c63275ab165b54cc67",
+      "generatedDafnySha256": "3845825467877b4ccce436b787830482a2f8409f66acf68fffeb421f6e0eb241",
+      "proofSource": null
+    }
+  },
+  "qualification": "Vibestack proof on the exact units and imported definitions. No imported proof axioms offered."
+}

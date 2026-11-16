@@ -1,0 +1,11 @@
+
+  direct_bounty_prompt_witness
+    ok walletResultsMergeAcrossSlotsAndDepartureTest passed 1 test(s)
+    ok lateReturnAndRejectionCannotOverwriteANewerSameNonceTest passed 1 test(s)
+    ok failedMarkerOrUnknownNeverLaunchesAnotherPromptTest passed 1 test(s)
+    ok failedHashWriteRecoversOnlyOwnedMemoryTest passed 1 test(s)
+    ok legacyAndExplicitClearNeverRepeatOrCheckTheStoredCandidateTest passed 1 test(s)
+    ok candidateCompareAndSwapRefusesTheWholeCheckTest passed 1 test(s)
+    ok markerFreshnessHasNoModelCountLimitTest passed 1 test(s)
+
+  7 passing (1538ms)

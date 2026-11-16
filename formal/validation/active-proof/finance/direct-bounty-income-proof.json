@@ -1,0 +1,23 @@
+{
+  "toolchain": {
+    "node": "v26.13.1",
+    "dafny": "4.11.0",
+    "lsc": "0.6.9"
+  },
+  "unit": "fees__directBountyIncome.ts",
+  "total": 14,
+  "unproved": [],
+  "errors": [],
+  "exhausted": [],
+  "resting": {},
+  "sha256": {
+    "spec/fees/directBountyIncome.md": "2e9c8c74d6bec0cad6ac501a7ddb7aed6d65673988903906b9fa3518eec1e070",
+    "spec/settlement/money.md": "65d72012c72c335adddbb78d3934687c0fce7442ad51b5404090130af42a4c5b",
+    "spec/settlement/directBounty.md": "57e396faaa8b0ea0d035dbf50b9914bde7a5c5cb12a492eb27c5f078d9e10ab2"
+  },
+  "generated": {
+    "typescript": "2b906e4220e64659db94bed086bf83c4bb45248db92d314e9b61c509b81ea875",
+    "dafny": "7b5dc2f89692637cbca4edaa23e0221194c9195e5af475f1c4215e1b94a5fb3e"
+  },
+  "offered": []
+}

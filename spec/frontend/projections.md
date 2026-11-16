@@ -31,17 +31,20 @@ pure val pValues = Set(
 
 Private-case amounts, counts and revealing totals never enter ordinary pages.
 Missing contribution month stays unavailable rather than using indexing time.
+Net amounts preserve the exact full-width asset base units from settlement;
+public rendering must never coerce them to a JavaScript number.
 
 ```quint
-type PaymentView = { privateCase: bool, closedAccount: bool, finalized: bool, exact: bool, contributionMonth: int, net: int }
-pure def publicPayment(payment: PaymentView): bool = not(payment.privateCase) and not(payment.closedAccount) and payment.finalized and payment.exact and payment.net >= 0
+import money as M from "../settlement/money"
+type PaymentView = { privateCase: bool, closedAccount: bool, finalized: bool, exact: bool, contributionMonth: int, net: M::Amount }
+pure def publicPayment(payment: PaymentView): bool = not(payment.privateCase) and not(payment.closedAccount) and payment.finalized and payment.exact and M::validAmount(payment.net)
 pure def knownContributionMonth(payment: PaymentView): bool = payment.contributionMonth > 0
 pure def lawPrivatePaymentNeverPublic(payment: PaymentView): bool = payment.privateCase implies not(publicPayment(payment))
 pure def lawPublicPaymentHasFinality(payment: PaymentView): bool = publicPayment(payment) implies payment.finalized and payment.exact and not(payment.closedAccount)
 pure val paymentValues = Set(
-  { privateCase: true, closedAccount: false, finalized: true, exact: true, contributionMonth: 202611, net: 98 },
-  { privateCase: false, closedAccount: false, finalized: true, exact: true, contributionMonth: 0, net: 98 },
-  { privateCase: false, closedAccount: true, finalized: false, exact: false, contributionMonth: 0, net: 0 }
+  { privateCase: true, closedAccount: false, finalized: true, exact: true, contributionMonth: 202611, net: List(98) },
+  { privateCase: false, closedAccount: false, finalized: true, exact: true, contributionMonth: 0, net: List(98) },
+  { privateCase: false, closedAccount: true, finalized: false, exact: false, contributionMonth: 0, net: List(0) }
 )
 ```
 
@@ -76,6 +79,85 @@ pure val eValues = Set(
   { keyboard: true, screenReader: true, mobile: true, zoom200: true, contrastAA: true, reducedMotion: true, visibleConsent: true, exactAmounts: true, recovery: true, links: true, console: true, network: true },
   { keyboard: false, screenReader: true, mobile: true, zoom200: true, contrastAA: true, reducedMotion: true, visibleConsent: true, exactAmounts: true, recovery: true, links: true, console: true, network: true }
 )
+```
+
+## Story: Distinguish an award decision from its funding and payment
+
+### Award, funding and settlement status are independent facts
+
+The account and case services supply these facts from their owning records.
+An approved award can remain underfunded or await a wallet. A scheduled or
+submitted payment keeps its financial obligation until exact finality is
+reconciled. A missing funding observation remains unavailable. The separate
+contributor token allocation owns its Unclaimed state.
+
+```quint
+type AwardDecision = Projected | UnderReview | ApprovedAward | ExcludedAward
+type FundingObservation = FundingUnavailable | Underfunded | Funded
+type PaymentDisplay = PaymentUnavailable | PaymentUnderfunded | AwaitingWallet | ReadyToPay | ScheduledPayment | HeldPayment | SubmittedPayment | PaidPayment
+type AwardFacts = { decision: AwardDecision, funding: FundingObservation, wallet: bool,
+  scheduled: bool, held: bool, submitted: bool, exactFinality: bool }
+pure def paymentDisplay(facts: AwardFacts): PaymentDisplay =
+  if (facts.exactFinality) PaidPayment
+  else if (facts.submitted) SubmittedPayment
+  else if (facts.held) HeldPayment
+  else if (facts.funding == FundingUnavailable) PaymentUnavailable
+  else if (facts.funding == Underfunded) PaymentUnderfunded
+  else if (not(facts.wallet)) AwaitingWallet
+  else if (facts.scheduled) ScheduledPayment
+  else ReadyToPay
+pure def lawPaidNeedsFinality(facts: AwardFacts): bool =
+  paymentDisplay(facts) == PaidPayment implies facts.exactFinality
+pure def lawApprovalIsNotPayment(facts: AwardFacts): bool =
+  facts.decision == ApprovedAward and not(facts.exactFinality) implies paymentDisplay(facts) != PaidPayment
+pure def lawMissingFundingIsUnavailable(facts: AwardFacts): bool =
+  facts.funding == FundingUnavailable and not(facts.exactFinality) and not(facts.submitted) and not(facts.held)
+    implies paymentDisplay(facts) == PaymentUnavailable
+pure val factsValues = Set(
+  { decision: ApprovedAward, funding: Underfunded, wallet: false, scheduled: false, held: false, submitted: false, exactFinality: false },
+  { decision: ApprovedAward, funding: Funded, wallet: false, scheduled: false, held: false, submitted: false, exactFinality: false },
+  { decision: ApprovedAward, funding: Funded, wallet: true, scheduled: true, held: false, submitted: false, exactFinality: false },
+  { decision: ApprovedAward, funding: Funded, wallet: true, scheduled: false, held: false, submitted: true, exactFinality: true },
+  { decision: UnderReview, funding: FundingUnavailable, wallet: false, scheduled: false, held: false, submitted: false, exactFinality: false }
+)
+```
+
+## Story: Read Points standings with equal ranks for equal totals
+
+### Monthly and lifetime standings sum the same accepted-work history
+
+The journal supplies already validated public accepted-work rows. Participation,
+private-case money, token use and Slopbot activity are excluded before this
+projection. A zero period selects lifetime history. A positive period selects
+that exact UTC contribution period, without changing its occurrence date.
+
+```quint
+type StandingEntry = { actor: int, period: int, points: int }
+pure def lifetimePoints(entries: List[StandingEntry], actor: int): int =
+  entries.foldl(0, (total, entry) => total +
+    (if (entry.actor == actor) entry.points else 0))
+pure def pointsFor(entries: List[StandingEntry], actor: int, period: int): int =
+  if (period == 0) lifetimePoints(entries, actor)
+  else entries.foldl(0, (total, entry) => total +
+    (if (entry.actor == actor and entry.period == period) entry.points else 0))
+pure def higherCount(totals: List[int], points: int): int =
+  totals.foldl(0, (count, total) => count + (if (total > points) 1 else 0))
+pure def rankAt(totals: List[int], points: int): int = 1 + higherCount(totals, points)
+pure def lawEqualPointsHaveEqualRank(totals: List[int], left: int, right: int): bool =
+  left == right implies rankAt(totals, left) == rankAt(totals, right)
+pure def lawLifetimeIncludesEveryPeriod(entries: List[StandingEntry], actor: int): bool =
+  pointsFor(entries, actor, 0) == entries.foldl(0, (total, entry) => total +
+    (if (entry.actor == actor) entry.points else 0))
+pure val entriesValues = Set(
+  List(),
+  List({ actor: 1, period: 1, points: 10 }, { actor: 1, period: 2, points: 30 }, { actor: 2, period: 1, points: 30 })
+)
+pure val totalsValues = Set(List(), List(10, 30, 30))
+pure val leftValues = Set(10, 30)
+pure val rightValues = Set(10, 30)
+pure val actorValues = Set(1, 2)
+pure val periodValues = Set(0, 1, 2)
+pure val pointsValues = Set(10, 30)
 ```
 
 ### Simulation samples exercise missing, matching and conflicting evidence

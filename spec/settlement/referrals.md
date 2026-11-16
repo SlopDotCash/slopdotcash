@@ -6,67 +6,68 @@ PRD section 11 preserves the referral program and its recorded reactivation appr
 
 ### Program configuration starts off and posting requires independent activation
 
+The funding line is the passed governance proposal's finalized transfer of
+exactly 2,000,000 program tokens; its evidence names the proposal, its
+outcome and the finalized transaction. The root watcher must be operated by
+someone other than the root poster. The owner can return the program to off
+at any time; that stops accrual and posting and preserves history.
+
 ```quint
 type ReferralMode = Off | DryRun | Posting
- type Referral = { mode: ReferralMode, reactivationApproved: bool, tokenExists: bool,
-  fundingFinalized: bool, watcherOperating: bool, root: int, rootTotal: int,
-  projectTotal: int, claimed: int, sealed: bool, voided: bool }
+type ProposalOutcome = ProposalPassed | ProposalFailed | ProposalPending
+type FundingEvidence = { amount: int, proposal: str, outcome: ProposalOutcome, transaction: str, finalizedBlock: int }
+type WatcherEvidence = { operator: str, heartbeatBlock: int }
+type Referral = { mode: ReferralMode, reactivationApproved: bool, tokenExists: bool,
+  fundingFinalized: bool, watcherOperating: bool, poster: str, watcher: str, activations: int }
 pure val initial: Referral = { mode: Off, reactivationApproved: true, tokenExists: true,
-  fundingFinalized: false, watcherOperating: false, root: 0, rootTotal: 0,
-  projectTotal: 0, claimed: 0, sealed: false, voided: false }
+  fundingFinalized: false, watcherOperating: false, poster: "poster", watcher: "", activations: 0 }
 pure def canDryRun(r: Referral, by: str): bool = r.mode == Off and r.reactivationApproved and by == "owner"
 pure def dryRun(r: Referral, by: str): Referral = { ...r, mode: DryRun }
-pure def canRecordFunding(r: Referral, amount: int, proposalPassed: bool, finalized: bool): bool =
-  r.mode != Posting and amount == 2000000 and proposalPassed and finalized
-pure def recordFunding(r: Referral, amount: int, proposalPassed: bool, finalized: bool): Referral =
-  { ...r, fundingFinalized: true }
-pure def canStartWatcher(r: Referral, independent: bool): bool = r.mode != Posting and independent
-pure def startWatcher(r: Referral, independent: bool): Referral = { ...r, watcherOperating: true }
+pure def canRecordFunding(r: Referral, funding: FundingEvidence): bool =
+  r.mode != Posting and not(r.fundingFinalized) and funding.amount == 2000000 and funding.proposal != ""
+    and funding.outcome == ProposalPassed and funding.transaction != "" and funding.finalizedBlock > 0
+pure def recordFunding(r: Referral, funding: FundingEvidence): Referral = { ...r, fundingFinalized: true }
+pure def canStartWatcher(r: Referral, watcher: WatcherEvidence): bool =
+  r.mode != Posting and watcher.operator != "" and watcher.operator != r.poster and watcher.heartbeatBlock > 0
+pure def startWatcher(r: Referral, watcher: WatcherEvidence): Referral = { ...r, watcherOperating: true, watcher: watcher.operator }
 pure def canActivate(r: Referral, by: str): bool = r.mode == DryRun and by == "owner"
   and r.reactivationApproved and r.tokenExists and r.fundingFinalized and r.watcherOperating
-pure def activate(r: Referral, by: str): Referral = { ...r, mode: Posting }
+pure def activate(r: Referral, by: str): Referral = { ...r, mode: Posting, activations: r.activations + 1 }
+pure def canDeactivate(r: Referral, by: str): bool = r.mode != Off and by == "owner"
+pure def deactivate(r: Referral, by: str): Referral = { ...r, mode: Off }
 pure val byValues = Set("owner", "wrong")
-pure val amountValues = Set(1, 3, 2000000)
+pure val fundingValues = Set({ amount: 2000000, proposal: "p1", outcome: ProposalPassed, transaction: "t", finalizedBlock: 5 },
+  { amount: 2000000, proposal: "p1", outcome: ProposalPending, transaction: "t", finalizedBlock: 5 },
+  { amount: 3, proposal: "p1", outcome: ProposalPassed, transaction: "t", finalizedBlock: 5 },
+  { amount: 2000000, proposal: "p1", outcome: ProposalPassed, transaction: "t", finalizedBlock: 0 })
+pure val watcherValues = Set({ operator: "watcher", heartbeatBlock: 3 }, { operator: "poster", heartbeatBlock: 3 })
 ```
 
-### Cumulative roots obey both pool caps and never reduce a paid total
+### Posting requires every recorded activation fact
 
-This model represents one referred project and one recipient. Whole-program aggregation must compose independent project totals into the same two-million-token cap. Accrual eligibility is independently checked below. A root with a successful claim is sealed immediately.
+Accrual records live in [the accrual ledger](./referralAccrual.md). Root history,
+claims and uncertain posting attempts live in [root publication](./referralPublication.md).
+This control machine owns activation only and cannot itself issue a root or payment.
 
 ```quint
-pure def canPostRoot(r: Referral, root: int, amount: int): bool =
-  r.mode == Posting and root > r.root and amount > 0
-    and r.rootTotal + amount <= 2000000 and r.projectTotal + amount <= 250000
-pure def postRoot(r: Referral, root: int, amount: int): Referral =
-  { ...r, root: root, rootTotal: r.rootTotal + amount, projectTotal: r.projectTotal + amount,
-    sealed: false, voided: false }
-pure def canClaim(r: Referral, root: int, cumulative: int, walletMatches: bool): bool =
-  r.mode == Posting and root == r.root and not(r.voided) and walletMatches
-    and cumulative > r.claimed and cumulative <= r.rootTotal
-pure def claim(r: Referral, root: int, cumulative: int, walletMatches: bool): Referral =
-  { ...r, claimed: cumulative, sealed: true }
-pure def canVoidRoot(r: Referral, root: int, by: str): bool =
-  r.mode == Posting and root == r.root and r.root > 0 and not(r.sealed) and not(r.voided) and by == "owner"
-pure def voidRoot(r: Referral, root: int, by: str): Referral = { ...r, voided: true }
-pure def alwaysClaimBounded(r: Referral): bool = r.claimed >= 0 and r.claimed <= r.rootTotal
-  and r.rootTotal <= 2000000 and r.projectTotal <= 250000
 pure def alwaysActivationReady(r: Referral): bool = r.mode == Posting implies
-  r.reactivationApproved and r.tokenExists and r.fundingFinalized and r.watcherOperating
-pure def stepClaimsPermanent(before: Referral, after: Referral): bool = after.claimed >= before.claimed
+  r.reactivationApproved and r.tokenExists and r.fundingFinalized and r.watcherOperating and r.watcher != r.poster
+type PostingNetwork = RobinhoodTestnet | RobinhoodMainnet
+pure def mayPostOn(r: Referral, network: PostingNetwork): bool =
+  if (network == RobinhoodTestnet) r.mode != Off else r.mode == Posting
+pure def alwaysMainnetOnlyWhenPosting(r: Referral): bool = mayPostOn(r, RobinhoodMainnet) implies r.mode == Posting
+pure def sometimesDeactivatedAfterPosting(r: Referral): bool = r.mode == Off and r.activations > 0
 pure def sometimesDryRun(r: Referral): bool = r.mode == DryRun
-pure def sometimesClaimed(r: Referral): bool = r.claimed > 0
-pure def sometimesVoided(r: Referral): bool = r.voided
+pure def sometimesPosting(r: Referral): bool = r.mode == Posting
 ```
 
-### Eligibility uses finalized stablecoin payouts and immutable captured referrers
+### Poster gas has transaction and UTC-day ceilings
 
-Team roles, bans, public holds, self-referrals and stale identity evidence refuse accrual. The first paid month begins a twelve-month eligibility window. The applied rate is retained with each filed record. Dry-run records never post roots.
+The exact payout eligibility and calendar-anniversary rules live in the
+[accrual ledger](./referralAccrual.md). Posting reserves no more than the
+approved 0.0002 ETH per send and 0.002 ETH per UTC day.
 
 ```quint
-pure def eligiblePayout(paid: bool, stablecoin: bool, month: int, firstPaidMonth: int,
-  team: bool, banned: bool, held: bool, selfReferral: bool): bool =
-  paid and stablecoin and month >= 0 and firstPaidMonth >= 0 and month >= firstPaidMonth
-    and month - firstPaidMonth < 12 and not(team) and not(banned) and not(held) and not(selfReferral)
 pure def posterGasAllowed(transactionWei: int, dayWei: int): bool =
   transactionWei >= 0 and transactionWei <= 200000000000000
     and dayWei >= 0 and dayWei <= 2000000000000000
@@ -78,10 +79,6 @@ These input sets bound simulation only. The generated guards accept every
 value allowed by their declared types and product rules.
 
 ```quint
-pure val cumulativeValues = Set(0, 1, 2)
 pure val dayWeiValues = Set(0, 1, 2)
-pure val firstPaidMonthValues = Set(0, 1, 2)
-pure val monthValues = Set(0, 1, 2)
-pure val rootValues = Set(0, 1, 2)
 pure val transactionWeiValues = Set(0, 1, 2)
 ```

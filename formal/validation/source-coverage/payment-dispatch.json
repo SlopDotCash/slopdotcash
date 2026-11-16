@@ -1,0 +1,166 @@
+{
+  "scope": "Focused models and generated replay. D1 commits, scoped executor evidence, canonical wallet identity and finalized RPC require application conformance.",
+  "legacyMain": "6b3b9d0b979f0608d87941f1146056a98513ffcf",
+  "development": "0d0f0817a439df03cc022bf7aeed4bbe64ef4c65",
+  "sourceInputs": [
+    {
+      "path": "spec/settlement/paymentDispatch.md",
+      "sha256": "c122f31d9b7c0ba7eea803c8fb74112142c54646408bc99f79ab080415b229ad"
+    }
+  ],
+  "results": {
+    "settlement__paymentDispatch": {
+      "simulation": {
+        "command": "seed 200737885779867; to simulate again: pnpm exec quint run gen/settlement__paymentDispatch.run.qnt --main settlement__paymentDispatch_run --step step --invariant inv --max-samples 180 --max-steps 22 --mbt --seed 200737885779867",
+        "replayed": 20
+      },
+      "proof": {
+        "total": 107,
+        "unproved": [],
+        "exhausted": [],
+        "resting": {},
+        "errors": []
+      }
+    }
+  },
+  "directed": [
+    "ambiguousClearsLeaseTest",
+    "ambiguousCannotSubmitTest",
+    "heldUnderOldWalletRun",
+    "guardedReleaseKeepsUncertainHoldTest",
+    "unguardedReleaseIsReparkedTest negative control refused",
+    "staleLeaseRefusedTest",
+    "ambiguousRetryTest",
+    "conflictingResponseTest",
+    "lateOriginalAfterWalletReplacementTest",
+    "staleConflictCannotHoldCompletedTest",
+    "staleFailurePreservesSubmittedSuccessorTest",
+    "externalPaidWithoutRecordedTxTest",
+    "externalPaidBesideRecordedTxTest",
+    "paidIsAbsorbingTest",
+    "noSecondReceiptAfterExternalPaidTest",
+    "noResponseAfterPaidTest source refinement",
+    "acquisition requires current authorized queue and strict 60 second lease expiration",
+    "exact historical destination after current claim removal",
+    "invalid receipt scope, terms, asset, destination, finality and success refused",
+    "same canonical receipt idempotent and event identity conflict refused",
+    "post-index exact success, unknown and failed metadata cannot reopen or rewrite receipt",
+    "same-tx post-index callback preserves canonical receipt",
+    "missing executor journal cannot retire",
+    "unsigned tombstone retires captured attempt and preserves a live lease",
+    "stale tombstone response cannot reopen a submitted successor",
+    "chain-observed journal restores exact signature and conflicting responses preserve it",
+    "foreign scope journal refused",
+    "Solana unseen signed retry preserves key and EVM submission remains",
+    "ordinary and private scope use the same guards with separate receipt identities"
+  ],
+  "reachability": [
+    {
+      "test": "externalAndReplayTest",
+      "result": "passed",
+      "goals": [
+        "sometimesUnknown",
+        "sometimesRetried",
+        "sometimesExternalIndex"
+      ],
+      "events": [
+        {
+          "type": "admit",
+          "target": "ordinaryTarget",
+          "reservedEvidence": true
+        },
+        {
+          "type": "authorizeWallet",
+          "binding": "walletOne",
+          "verifiedWallet": true
+        },
+        {
+          "type": "acquire",
+          "token": 1
+        },
+        {
+          "type": "readClaim",
+          "token": 1
+        },
+        {
+          "type": "prepare",
+          "token": 1,
+          "key": "attempt-one"
+        },
+        {
+          "type": "returnAmbiguous",
+          "token": 1
+        },
+        {
+          "type": "acquire",
+          "token": 2
+        },
+        {
+          "type": "readClaim",
+          "token": 2
+        },
+        {
+          "type": "reuse",
+          "token": 2
+        },
+        {
+          "type": "indexFinalized",
+          "receipt": "paidReceipt"
+        }
+      ]
+    },
+    {
+      "test": "oldWalletHoldTest",
+      "result": "passed",
+      "goals": [
+        "sometimesHeld"
+      ],
+      "events": [
+        {
+          "type": "admit",
+          "target": "ordinaryTarget",
+          "reservedEvidence": true
+        },
+        {
+          "type": "authorizeWallet",
+          "binding": "walletOne",
+          "verifiedWallet": true
+        },
+        {
+          "type": "acquire",
+          "token": 1
+        },
+        {
+          "type": "readClaim",
+          "token": 1
+        },
+        {
+          "type": "prepare",
+          "token": 1,
+          "key": "attempt-one"
+        },
+        {
+          "type": "returnAmbiguous",
+          "token": 1
+        },
+        {
+          "type": "authorizeWallet",
+          "binding": "walletTwo",
+          "verifiedWallet": true
+        },
+        {
+          "type": "acquire",
+          "token": 2
+        },
+        {
+          "type": "readClaim",
+          "token": 2
+        },
+        {
+          "type": "park",
+          "token": 2
+        }
+      ]
+    }
+  ]
+}

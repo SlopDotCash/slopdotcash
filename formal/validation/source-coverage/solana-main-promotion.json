@@ -1,0 +1,78 @@
+{
+  "developmentSource": "0d0f0817a439df03cc022bf7aeed4bbe64ef4c65",
+  "promotion": "90932a2e4cc76fe77bd77faa3ebed5e6134255f3",
+  "mainSource": "ee1a4b2cd2672245537928380e425f5bd9ecb994",
+  "identicalSourceSha256": {
+    "workers/payments/index.ts": "f601a441c6da64bf28ef6551fb2e9b9012d3d2f4adb2711fd469c99915e28486",
+    "workers/payments/scanner.ts": "e2fecc7acd891cd55b954f3027da78bb8f2c8320dae2741329eac62168ac049e",
+    "workers/payments/solana-progress.workflow.mjs": "60602b70da2e944b39c52a44a391bff4224116910502783b15a87a0ab3c1fa57",
+    "contracts/solana/adapter.ts": "ddcdf520792de627eaf9a278b596e1c71bc0802932560c9a1b56729d122269e0",
+    "formal/models/payments/solana_scan_checkpoint.qnt": "324fcf3762a164dbc0a14449f347560c78374f33d600378c2e47effaf7f2505c",
+    "backend/payments/README.md": "c34fbe499a67273667c7c1c8903c370f87d95f86ee19700b57ecefcc705d5bd9",
+    "migrations/0012_solana_scan_backlog.sql": "cf017dca34f1679e3887b1ebe0631e17eb9baffe47bc134a1f09804f522714a6"
+  },
+  "status": "byte-identical-promoted-source",
+  "activeModels": {
+    "spec/settlement/solanaScan.md": {
+      "sha256": "a54b27136066e7f6f2ee7937f10a272a0bce6f219d21c17816558835d6c0d9bf",
+      "proofReceipt": "formal/validation/source-coverage/solana-scan.json",
+      "generatedDafnySha256": "f3e9a7d3950a2f42d858c0b3ba81329ee76ab571aa7b517d1bf14e6831421eb7",
+      "provedObligations": 22,
+      "focusedSimulationAndDirectedEvidence": "formal/validation/source-coverage/solana-scan.json"
+    },
+    "spec/settlement/vaultSnapshots.md": {
+      "sha256": "6be41ba1b57b67145b1776d3e03946f2d94dc711cae347416260612aa3b1ba1b",
+      "proofReceipt": "formal/validation/full-tree/current-financial-proofs.json",
+      "generatedDafnySha256": "386d6806f65bd9637a6968846ea34f8009bb27ee06cd2b0a43540dd32f9ee7c1",
+      "provedObligations": 62,
+      "focusedSimulationAndDirectedEvidence": "formal/validation/source-coverage/vault-snapshots.json"
+    }
+  },
+  "proofInventory": "formal/validation/full-tree/current-proof-coverage.json",
+  "crosswalk": [
+    {
+      "behavior": "Select the trust root for the deployment network before any scanner or totals RPC. A missing root performs no RPC; mismatched or unavailable genesis performs no following reads or writes.",
+      "mainSource": [
+        "workers/payments/index.ts:80–86,658–670,686–695",
+        "workers/payments/scanner.ts:124–147",
+        "contracts/solana/adapter.ts:262–273"
+      ],
+      "spec": [
+        "spec/settlement/solanaScan.md:17–46",
+        "spec/settlement/vaultSnapshots.md:139–176,186–198"
+      ],
+      "sourceWitness": [
+        "workers/payments/solana-progress.workflow.mjs:199–224,289–293",
+        "formal/models/payments/solana_scan_checkpoint.qnt:50–61"
+      ]
+    },
+    {
+      "behavior": "The scheduled vault totals read and scanner have separate genesis checks. A correctly pinned empty discovery persists a ready interval without a staged page or new cursor; a failed totals read cannot create a snapshot.",
+      "mainSource": [
+        "workers/payments/index.ts:645–700",
+        "workers/payments/scanner.ts:168–224"
+      ],
+      "spec": [
+        "spec/settlement/solanaScan.md:50–74,106–111",
+        "spec/settlement/vaultSnapshots.md:164–198"
+      ],
+      "sourceWitness": [
+        "workers/payments/solana-progress.workflow.mjs:226–239"
+      ]
+    },
+    {
+      "behavior": "A previously captured pinned read can finish independently. Only matching generation and revision can atomically persist the processed prefix and cursor. Missing or partial transaction evidence does not advance either.",
+      "mainSource": [
+        "workers/payments/scanner.ts:162–167,226–309"
+      ],
+      "spec": [
+        "spec/settlement/solanaScan.md:82–108,114–124"
+      ],
+      "sourceWitness": [
+        "formal/models/payments/solana_scan_checkpoint.qnt:20–37,62–65",
+        "workers/payments/solana-progress.workflow.mjs:289–309"
+      ]
+    }
+  ],
+  "qualification": "Compared exact archived Git blobs and current specification semantics. Existing model proofs and directed replay evidence apply to the documented behavior. The workflow test is cited as source-authored evidence; no hosted run, live RPC or new production snapshot was exercised in this crosswalk."
+}

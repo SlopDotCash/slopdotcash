@@ -1,0 +1,33 @@
+{
+  "scratch": "/tmp/slop-referral-verify-buyback-rpc3",
+  "specHashes": {
+    "spec/fees/buybackRpc.md": "0c1749945423ea64545cc836c65e3efdba649bea1cb696ad123f98765e8096f5"
+  },
+  "rows": [
+    {
+      "unit": "fees__buybackRpc.ts",
+      "total": 3,
+      "unproved": [],
+      "exhausted": [],
+      "errors": [],
+      "resting": {},
+      "proofDafnySha256": "5e1e5a7d0c47f0fac6b5a7d31884de6287c6e4b24cb04902bb17e771668c52fc",
+      "proofSource": null,
+      "checkedImportedLemmas": 0
+    }
+  ],
+  "quintSha256": "324a75a20ba6488d71e15bed474ff4ef8a71a12c684731c297cd52647308c857",
+  "runtimeSha256": "9f59d2b45b54a66d43c3ed421a033cb0bccbaa5d60b5c42061a4fef5f014ef84",
+  "simulation": {
+    "traces": 35,
+    "command": "seed 112035674301674; to simulate again: pnpm exec quint run gen/fees__buybackRpc.run.qnt --main fees__buybackRpc_run --step probe --invariant inv --max-samples 75 --max-steps 15 --mbt --seed 112035674301674"
+  },
+  "directed": {
+    "passed": 18,
+    "methods": [
+      "success preserves exact height and hash",
+      "fourteen fail-closed evidence variants",
+      "three inactive run scopes omit observation"
+    ]
+  }
+}

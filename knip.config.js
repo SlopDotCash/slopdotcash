@@ -58,6 +58,11 @@ export default {
         "typescript-eslint"
       ]
     },
+    "packages/contracts": {
+      "ignoreBinaries": [
+        "forge"
+      ]
+    },
     "vibestack/studio": {
       "entry": [
         "src/main.vibe",

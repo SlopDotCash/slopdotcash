@@ -16,7 +16,8 @@ reject external redirects and invalid route parameters before making an event.
 type Page = Home | Projects | Project | AddProject | ManageProject | Profile | Rankings | Cycle | Settings | Payouts | Inbox | Report | Recovery | Administration | Gone
 type Navigation = { page: Page, returnPage: Page, actor: int, epoch: int, privateEpoch: int, privateRows: int }
 pure val initial: Navigation = { page: Home, returnPage: Home, actor: 0, epoch: 0, privateEpoch: 0, privateRows: 0 }
-pure def privatePage(page: Page): bool = Set(AddProject, ManageProject, Settings, Payouts, Inbox, Report, Recovery, Administration).contains(page)
+pure def privatePage(page: Page): bool = page == AddProject or page == ManageProject or page == Settings or
+  page == Payouts or page == Inbox or page == Report or page == Recovery or page == Administration
 ```
 
 ### Navigation gates private destinations on a signed-in account

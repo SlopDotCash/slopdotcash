@@ -1,0 +1,11 @@
+solver: Z3 4.15.4 (/opt/homebrew/Cellar/z3/4.15.4/bin/z3)
+Generated: /private/tmp/slop-local-validator-fixed-proof/gen/proof/operations__localValidator/operations__localValidator.dfy.gen
+Created: /private/tmp/slop-local-validator-fixed-proof/gen/proof/operations__localValidator/operations__localValidator.dfy
+Generated: /private/tmp/slop-local-validator-fixed-proof/gen/proof/operations__localValidator/operations__localValidator.dfy.gen
+
+Dafny program verifier finished with 13 verified, 0 errors
+
+---- dafny audit ----
+Dafny auditor completed with 0 findings
+
+Dafny program verifier did not attempt verification

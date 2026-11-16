@@ -1,0 +1,26 @@
+
+ RUN  v5.1.0 /private/tmp/slop-spec-final-integration
+
+ ✓ |node| vibestack/design/test/design.test.ts (4 tests) 8464ms
+   ✓ apply accepts a valid change and rejects an unknown path, an invalid color and broken contrast 455ms
+   ✓ the ESLint config flags values that bypass the tokens and accepts token classes 7948ms
+ ✓ |node| vibestack/stories/test/stories.test.ts (13 tests) 7624ms
+   ✓ caps the stories of a component, taking an option of each prop before a second of any 3030ms
+   ✓ writes the same bytes again, and nothing when nothing changed 2142ms
+   ✓ rewrites only what a change touches, and removes what a deleted component left 2439ms
+ ✓ |node| vibestack/testing/test/testing.test.ts (17 tests) 84417ms
+   ✓ properties (12)
+     ✓ UserId, a branded, tagged, recursive or transforming schema, round-trips to a stable encoding 458ms
+     ✓ Tree, a branded, tagged, recursive or transforming schema, round-trips to a stable encoding 2208ms
+     ✓ User, a branded, tagged, recursive or transforming schema, round-trips to a stable encoding 393ms
+     ✓ a property uses its fixed profile unless the property declares its own samples 375ms
+   ✓ generated tests (4)
+     ✓ are the same bytes on every run, follow their sources, and pass for a package that keeps its contracts 80424ms
+     ✓ runs the fixed normal and nightly sample counts despite obsolete environment overrides 28787ms
+     ✓ fail the package's run before any test when a module gets none, and say why 11125ms
+     ✓ fail with the seed and the shrunk counterexample 34774ms
+
+ Test Files  3 passed (3)
+      Tests  34 passed (34)
+   Start at  01:53:53
+   Duration  94.20s (tests 88%, import 10%, transform 2%)

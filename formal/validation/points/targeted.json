@@ -1,0 +1,547 @@
+{
+  "base": "b6dfe096bf094ff9ece1ba8838392da2b556b281",
+  "quint": "0.33.1",
+  "dafny": "4.11.0",
+  "sampleSeed": 812,
+  "results": {
+    "points__allocation": {
+      "source": "spec/points/allocation.md",
+      "sha256": "88fb3f1f3658dab887d763fd959145342b6783129c00d143a4690d48062d0ed3",
+      "typecheck": "passed",
+      "generation": "passed"
+    },
+    "points__journal": {
+      "source": "spec/points/journal.md",
+      "sha256": "4ed1dbc6cf4b5cef41d0fe669393c5aa1136586d489c927476feba8ea15a3188",
+      "typecheck": "passed",
+      "generation": "passed"
+    },
+    "points__corrections": {
+      "source": "spec/points/corrections.md",
+      "sha256": "84ea708b143c1589f6198893a54e07156bc7f904523f28086a8aaaceb5b9f833",
+      "typecheck": "passed",
+      "generation": "passed",
+      "simulation": {
+        "check": "seed 84796457303355; to simulate again: pnpm exec quint run gen/points__corrections.run.qnt --main points__corrections_run --step step --invariant inv --max-samples 250 --max-steps 12 --mbt --seed 84796457303355",
+        "maxSamples": 250,
+        "maxSteps": 12,
+        "violations": 0,
+        "replayedTraces": 25
+      },
+      "witnesses": {
+        "sometimesApplied": {
+          "check": "seed 84796457303355; to simulate again: pnpm exec quint run gen/points__corrections.run.qnt --main points__corrections_run --step step --invariant inv --max-samples 250 --max-steps 12 --mbt --seed 84796457303355",
+          "events": [
+            {
+              "type": "prepare",
+              "manifest": {
+                "digest": "stale",
+                "source": 1,
+                "predecessor": 0,
+                "connectedProof": true,
+                "recipients": [
+                  {
+                    "actor": 1,
+                    "lines": 1
+                  },
+                  {
+                    "actor": 2,
+                    "lines": 2
+                  }
+                ]
+              }
+            },
+            {
+              "type": "prepare",
+              "manifest": {
+                "digest": "manifest",
+                "source": 1,
+                "predecessor": 1,
+                "connectedProof": true,
+                "recipients": [
+                  {
+                    "actor": 1,
+                    "lines": 1
+                  },
+                  {
+                    "actor": 2,
+                    "lines": 2
+                  }
+                ]
+              }
+            },
+            {
+              "type": "commit"
+            }
+          ]
+        },
+        "sometimesProtected": {
+          "check": "seed 84796457303355; to simulate again: pnpm exec quint run gen/points__corrections.run.qnt --main points__corrections_run --step step --invariant inv --max-samples 250 --max-steps 12 --mbt --seed 84796457303355",
+          "events": [
+            {
+              "type": "protect"
+            },
+            {
+              "type": "prepare",
+              "manifest": {
+                "digest": "manifest",
+                "source": 1,
+                "predecessor": 1,
+                "connectedProof": true,
+                "recipients": [
+                  {
+                    "actor": 1,
+                    "lines": 1
+                  },
+                  {
+                    "actor": 2,
+                    "lines": 2
+                  }
+                ]
+              }
+            }
+          ]
+        },
+        "sometimesStale": {
+          "check": "seed 84796457303355; to simulate again: pnpm exec quint run gen/points__corrections.run.qnt --main points__corrections_run --step step --invariant inv --max-samples 250 --max-steps 12 --mbt --seed 84796457303355",
+          "events": [
+            {
+              "type": "prepare",
+              "manifest": {
+                "digest": "second",
+                "source": 1,
+                "predecessor": 2,
+                "connectedProof": true,
+                "recipients": [
+                  {
+                    "actor": 1,
+                    "lines": 1
+                  },
+                  {
+                    "actor": 2,
+                    "lines": 2
+                  }
+                ]
+              }
+            }
+          ]
+        },
+        "sometimesEvidenceHeld": {
+          "check": "seed 84796457303355; to simulate again: pnpm exec quint run gen/points__corrections.run.qnt --main points__corrections_run --step step --invariant inv --max-samples 250 --max-steps 12 --mbt --seed 84796457303355",
+          "events": [
+            {
+              "type": "prepare",
+              "manifest": {
+                "digest": "incomplete",
+                "source": 1,
+                "predecessor": 1,
+                "connectedProof": false,
+                "recipients": [
+                  {
+                    "actor": 1,
+                    "lines": 1
+                  },
+                  {
+                    "actor": 2,
+                    "lines": 2
+                  }
+                ]
+              }
+            }
+          ]
+        },
+        "sometimesReplayAfterRevocation": {
+          "check": "seed 76025118132103; to simulate again: pnpm exec quint run gen/points__corrections.run.qnt --main points__corrections_run --step step --invariant never_sometimesReplayAfterRevocation --max-samples 500 --max-steps 20 --mbt --seed 76025118132103",
+          "events": [
+            {
+              "type": "prepare",
+              "manifest": {
+                "digest": "second",
+                "source": 1,
+                "predecessor": 2,
+                "connectedProof": true,
+                "recipients": [
+                  {
+                    "actor": 1,
+                    "lines": 1
+                  },
+                  {
+                    "actor": 2,
+                    "lines": 2
+                  }
+                ]
+              }
+            },
+            {
+              "type": "prepare",
+              "manifest": {
+                "digest": "manifest",
+                "source": 1,
+                "predecessor": 1,
+                "connectedProof": true,
+                "recipients": [
+                  {
+                    "actor": 1,
+                    "lines": 1
+                  },
+                  {
+                    "actor": 2,
+                    "lines": 2
+                  }
+                ]
+              }
+            },
+            {
+              "type": "commit"
+            },
+            {
+              "type": "revoke",
+              "verifiedRevocation": true
+            },
+            {
+              "type": "protect"
+            },
+            {
+              "type": "prepare",
+              "manifest": {
+                "digest": "manifest",
+                "source": 1,
+                "predecessor": 1,
+                "connectedProof": true,
+                "recipients": [
+                  {
+                    "actor": 1,
+                    "lines": 1
+                  },
+                  {
+                    "actor": 2,
+                    "lines": 2
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      },
+      "directedGeneratedAssertions": [
+        {
+          "law": "lawProtectionRace",
+          "args": [
+            {
+              "digest": "manifest",
+              "source": 1,
+              "predecessor": 1,
+              "connectedProof": true,
+              "recipients": [
+                {
+                  "actor": 1,
+                  "lines": 1
+                },
+                {
+                  "actor": 2,
+                  "lines": 2
+                }
+              ]
+            }
+          ],
+          "result": "passed"
+        },
+        {
+          "law": "lawStalePredecessor",
+          "args": [
+            {
+              "digest": "manifest",
+              "source": 1,
+              "predecessor": 1,
+              "connectedProof": true,
+              "recipients": [
+                {
+                  "actor": 1,
+                  "lines": 1
+                },
+                {
+                  "actor": 2,
+                  "lines": 2
+                }
+              ]
+            }
+          ],
+          "result": "passed"
+        },
+        {
+          "law": "lawReplayPreservesRevocation",
+          "args": [
+            {
+              "digest": "manifest",
+              "source": 1,
+              "predecessor": 1,
+              "connectedProof": true,
+              "recipients": [
+                {
+                  "actor": 1,
+                  "lines": 1
+                },
+                {
+                  "actor": 2,
+                  "lines": 2
+                }
+              ]
+            }
+          ],
+          "result": "passed"
+        },
+        {
+          "law": "lawCanonicalWeightPreserved",
+          "args": [
+            {
+              "digest": "manifest",
+              "source": 1,
+              "predecessor": 1,
+              "connectedProof": true,
+              "recipients": [
+                {
+                  "actor": 1,
+                  "lines": 1
+                },
+                {
+                  "actor": 2,
+                  "lines": 2
+                }
+              ]
+            }
+          ],
+          "result": "passed"
+        }
+      ]
+    },
+    "points__publication": {
+      "source": "spec/points/publication.md",
+      "sha256": "59fb20095e17fe9d582feee70873402eb54a63e807a3f0195585ee11270c2f80",
+      "typecheck": "passed",
+      "generation": "passed",
+      "simulation": {
+        "check": "seed 226164398486741; to simulate again: pnpm exec quint run gen/points__publication.run.qnt --main points__publication_run --step step --invariant inv --max-samples 250 --max-steps 12 --mbt --seed 226164398486741",
+        "maxSamples": 250,
+        "maxSteps": 12,
+        "violations": 0,
+        "replayedTraces": 25
+      },
+      "witnesses": {
+        "sometimesExtended": {
+          "check": "seed 200410550336651; to simulate again: pnpm exec quint run gen/points__publication.run.qnt --main points__publication_run --step step --invariant never_sometimesExtended --max-samples 834 --max-steps 12 --mbt --seed 200410550336651",
+          "events": [
+            {
+              "type": "stage",
+              "candidate": [
+                {
+                  "id": 1,
+                  "digest": "first"
+                }
+              ]
+            },
+            {
+              "type": "observeCanonical",
+              "snapshot": [
+                {
+                  "id": 1,
+                  "digest": "first"
+                },
+                {
+                  "id": 2,
+                  "digest": "second"
+                },
+                {
+                  "id": 3,
+                  "digest": "third"
+                }
+              ],
+              "verified": true
+            },
+            {
+              "type": "observeCanonical",
+              "snapshot": [
+                {
+                  "id": 1,
+                  "digest": "first"
+                },
+                {
+                  "id": 2,
+                  "digest": "second"
+                },
+                {
+                  "id": 3,
+                  "digest": "third"
+                }
+              ],
+              "verified": true
+            },
+            {
+              "type": "publish"
+            },
+            {
+              "type": "observeCanonical",
+              "snapshot": [
+                {
+                  "id": 1,
+                  "digest": "first"
+                },
+                {
+                  "id": 2,
+                  "digest": "second"
+                },
+                {
+                  "id": 3,
+                  "digest": "third"
+                }
+              ],
+              "verified": true
+            },
+            {
+              "type": "publishConcurrent",
+              "candidate": [
+                {
+                  "id": 1,
+                  "digest": "first"
+                },
+                {
+                  "id": 2,
+                  "digest": "second"
+                }
+              ]
+            }
+          ]
+        },
+        "sometimesRejected": {
+          "check": "seed 226164398486741; to simulate again: pnpm exec quint run gen/points__publication.run.qnt --main points__publication_run --step step --invariant inv --max-samples 250 --max-steps 12 --mbt --seed 226164398486741",
+          "events": [
+            {
+              "type": "stage",
+              "candidate": [
+                {
+                  "id": 1,
+                  "digest": "first"
+                },
+                {
+                  "id": 2,
+                  "digest": "second"
+                }
+              ]
+            },
+            {
+              "type": "reject"
+            }
+          ]
+        },
+        "sometimesInterrupted": {
+          "check": "seed 226164398486741; to simulate again: pnpm exec quint run gen/points__publication.run.qnt --main points__publication_run --step step --invariant inv --max-samples 250 --max-steps 12 --mbt --seed 226164398486741",
+          "events": [
+            {
+              "type": "observeCanonical",
+              "snapshot": [
+                {
+                  "id": 1,
+                  "digest": "first"
+                }
+              ],
+              "verified": true
+            },
+            {
+              "type": "stage",
+              "candidate": [
+                {
+                  "id": 1,
+                  "digest": "changed"
+                },
+                {
+                  "id": 2,
+                  "digest": "second"
+                }
+              ]
+            },
+            {
+              "type": "interrupt"
+            }
+          ]
+        },
+        "sometimesStale": {
+          "check": "seed 226164398486741; to simulate again: pnpm exec quint run gen/points__publication.run.qnt --main points__publication_run --step step --invariant inv --max-samples 250 --max-steps 12 --mbt --seed 226164398486741",
+          "events": [
+            {
+              "type": "observeCanonical",
+              "snapshot": [
+                {
+                  "id": 1,
+                  "digest": "first"
+                },
+                {
+                  "id": 2,
+                  "digest": "second"
+                }
+              ],
+              "verified": true
+            },
+            {
+              "type": "stage",
+              "candidate": [
+                {
+                  "id": 1,
+                  "digest": "first"
+                }
+              ]
+            },
+            {
+              "type": "publishConcurrent",
+              "candidate": [
+                {
+                  "id": 1,
+                  "digest": "first"
+                },
+                {
+                  "id": 2,
+                  "digest": "second"
+                }
+              ]
+            }
+          ]
+        }
+      },
+      "directedGeneratedAssertions": [
+        {
+          "law": "lawRejectReorder",
+          "args": [
+            2
+          ],
+          "result": "passed"
+        },
+        {
+          "law": "lawRejectDuplicate",
+          "args": [
+            "duplicate"
+          ],
+          "result": "passed"
+        },
+        {
+          "law": "lawRejectChanged",
+          "args": [
+            "changed"
+          ],
+          "result": "passed"
+        },
+        {
+          "law": "lawStalePrepared",
+          "args": [
+            2
+          ],
+          "result": "passed"
+        },
+        {
+          "law": "lawRejectUncommitted",
+          "args": [
+            2
+          ],
+          "result": "passed"
+        }
+      ]
+    }
+  }
+}

@@ -1,0 +1,88 @@
+{
+  "scope": "Focused models and generated replay. Signed webhook admission, independent durable source receipts, ordinary retries and exact reopen decisions. Native queue, D1, WebCrypto and GitHub conformance remain external.",
+  "sourceInputs": [
+    {
+      "path": "spec/slopbot/webhookDelivery.md",
+      "sha256": "57bca5f57a780e02a1e0eb8a20ca483f2bce987fa72a573e5c86d2b558e60645"
+    }
+  ],
+  "results": {
+    "slopbot__webhookDelivery": {
+      "simulation": {
+        "command": "seed 90170165993732; to simulate again: pnpm exec quint run gen/slopbot__webhookDelivery.run.qnt --main slopbot__webhookDelivery_run --step step --invariant inv --max-samples 120 --max-steps 22 --mbt --seed 90170165993732",
+        "replayed": 18
+      },
+      "proof": {
+        "total": 50,
+        "unproved": [],
+        "exhausted": [],
+        "resting": {},
+        "errors": []
+      }
+    }
+  },
+  "directed": [
+    "wrong route and 25 MiB boundary",
+    "HMAC covers exact body before durable receipt",
+    "missing delivery ID, bad strict UTF8, invalid JSON shape and byte mismatch refuse",
+    "valid corrected ingress proceeds without poisoned receipt",
+    "ignored no-job completion and exact duplicate early reply",
+    "valuation-only completion and retained source",
+    "security-only paused registration and no valuation",
+    "retired permits existing reversal job kinds but no ordinary review",
+    "unregistered refuses reversal",
+    "private and self review excluded, own quality receipt admitted",
+    "missing reopen metadata completes without decision",
+    "queue ACK loss keeps exact reopen binding and replay may queue twice",
+    "changed reopen cannot overwrite pin",
+    "ordinary ACK loss releases only ordinary receipt",
+    "value source survives ordinary receipt release and changed value tuple refuses",
+    "ordinary replay can make a new routing decision without a general body pin",
+    "live registration rechecked on value write",
+    "pending receipt permits concurrent requests",
+    "native concurrent release can leave acknowledged queue with no receipt",
+    "completion error releases ordinary receipt",
+    "installation receipt retries without ordinary release and requires retained installation event",
+    "consumer rechecks exact reopen, item state, authority and active debit",
+    "author appeal names current revision and maintainer can confirm original after push"
+  ],
+  "retainedModelMain": "6b3b9d0b979f0608d87941f1146056a98513ffcf",
+  "applicationMain": "78eed5564d796119d82ae541c36b0c770263dc5f",
+  "generatedDafnySha256": "2fde0c2b3c2a8010005e87ff1204aafb855060560b8f3ebf53cd37d7b7c63c95",
+  "reachability": {
+    "retainedReopenTest": {
+      "passed": true,
+      "goals": [
+        "sometimesValued",
+        "sometimesReopenRetained",
+        "sometimesConfirmed"
+      ],
+      "events": [
+        "receive",
+        "authenticate",
+        "decode",
+        "claim",
+        "inspectValue",
+        "inspectQueue",
+        "bindReopen",
+        "send(QueuedAckLost)",
+        "confirmReopen"
+      ]
+    },
+    "ordinaryReleasedTest": {
+      "passed": true,
+      "goals": [
+        "sometimesReleased"
+      ],
+      "events": [
+        "receive",
+        "authenticate",
+        "decode",
+        "claim",
+        "inspectValue",
+        "inspectQueue",
+        "send(QueuedAckLost)"
+      ]
+    }
+  }
+}
