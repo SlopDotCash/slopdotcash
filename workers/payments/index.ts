@@ -730,6 +730,7 @@ export async function syncRegistryVaults(env: PaymentsWorkerEnvironment) {
             genesisHash: paymentSolanaGenesis(env, deployment.network),
           });
         const totals = await readDeploymentVaultTotals(deployment, rpcUrl);
+        if (deployment.payoutPolicy === "security-bounty") return totals;
         // A failed pledge read keeps the stored pledges and is reported; the
         // counters still refresh.
         try {

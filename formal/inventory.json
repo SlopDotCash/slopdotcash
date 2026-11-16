@@ -524,14 +524,14 @@
     },
     {
       "path": "backend/payments/vault-snapshots.ts",
-      "sha256": "b85302f454d7371440983d041656b93051d8e51d4fba9d5d3df37063ba44f973",
+      "sha256": "28bdee9764823da89d29a3a2aac52519763913f241042ec86e260c9215df1c99",
       "models": [
         "formal/models/payments/chain_evidence.qnt",
         "formal/models/payments/vault_initial_snapshot.qnt",
         "formal/models/rewards/monthly_coordinator.qnt",
         "formal/models/rewards/monthly_month_pledge.qnt"
       ],
-      "candidateLines": [13, 71, 133, 145, 151, 211, 224, 260],
+      "candidateLines": [14, 73, 135, 147, 153, 215, 228, 264],
       "review": "mapped-abstraction"
     },
     {
@@ -8335,7 +8335,7 @@
     },
     {
       "path": "workers/payments/index.ts",
-      "sha256": "09a13fc413515d643221eb38bf73127a62608f3e85182115ce68133dc328777b",
+      "sha256": "94d754a7be87756bf117be786701c0edea9a7739e69071a65c8366eefcb157e0",
       "models": [
         "formal/models/payments/payment_reopen_landing.qnt",
         "formal/models/payments/payment_unsigned_retirement.qnt",
