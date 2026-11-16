@@ -10,6 +10,7 @@ import { GitHubClient } from "./github";
 import { type D1Database, installationActive } from "./persistence";
 import { requireRegisteredRepository } from "./registry";
 import { loadPolicy, type ReviewEnv } from "./review";
+import type { publicationCommitPages } from "./value-commit-pages";
 import { readValueDecision } from "./value-consumption";
 import { collectValueContext, valueContextSelections } from "./value-context";
 import { collectValueEvidence, findRepository } from "./value-evidence";
@@ -152,6 +153,7 @@ export async function publishValueAssessment(
   supersedes: string | null,
   revisionReason: string | null = null,
   claim?: ValueClaim,
+  commitPages?: ReturnType<typeof publicationCommitPages>,
 ) {
   if (
     !claim &&
@@ -181,7 +183,7 @@ export async function publishValueAssessment(
   );
   await assertValueInstallationRepositories(github, [evidence]);
   const current = await verifyCurrentValueSource(
-    github,
+    commitPages ? commitPages(github) : github,
     evidence,
     result,
     repositories,
