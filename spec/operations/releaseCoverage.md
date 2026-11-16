@@ -72,8 +72,8 @@ type CollectionOutcome = CollectionComplete | DeadlineStopped
 type ReusedResponse = { matchesLive: bool, revalidated: bool }
 pure def admittedResponses(responses: List[ReusedResponse]): List[ReusedResponse] =
   responses.select(x => x.revalidated and x.matchesLive)
-pure def publishable(request: Requests, outcome: CollectionOutcome, receipts: CheckReceipts): bool =
-  outcome == CollectionComplete and releaseReceiptsPass(request, receipts)
+pure def publishable(request: Requests, collection: CollectionOutcome, receipts: CheckReceipts): bool =
+  collection == CollectionComplete and releaseReceiptsPass(request, receipts)
 pure def lawResumeOnlyManualMain(request: Requests): bool =
   (coverage(request).eligible and request.resumeDiscussions) implies
     explicitManual(request) and request.target == Main and not(request.usePublishedData)

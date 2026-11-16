@@ -5,10 +5,14 @@ logs for one year; CLAUDE.md keeps successful bounded admission-scan evidence
 permanently (owner decision, 27 October 2026). The pinned sources are
 `workers/vetting-backup/{core.ts,README.md}` and the legacy
 `vetting_backup_chain`, `vetting_retention` and `vetting_generation_retirement`
-models. Raw evidence generations and their retirement markers belong to the
-[evidence specification](../security/evidence.md); this machine owns the
-daily backup cycle, its retention selection, access-log cleanup and the
-restoration check that gates enabling retention.
+models. The [evidence specification](../security/evidence.md) owns the
+references to shared evidence; this machine owns the daily backup cycle, the
+storage generations and their retirement, retention selection, access-log
+cleanup and the restoration check that gates enabling retention. Its queue
+is single-consumer (`max_concurrency = 1`, `max_batch_size = 1`,
+`max_retries = 5`, dead-letter queue `slop-vetting-backup-failed`), and no
+other service calls the backup or cleanup routines, so the queue's messages
+are the only writers of the cycle and run one at a time.
 
 Day values are UTC days from the D1 clock. The `by` sender is the
 authenticated release workflow or operator. Page digests are SHA-256 values
@@ -19,10 +23,13 @@ come from the private destination bucket.
 
 ### One cycle copies an ordered verified prefix and completes one manifest
 
-The scheduled start opens a cycle for each UTC day, in its own day prefix,
-only when no cycle is copying, queued as failed or cleaning up; a completed or
-cleaned cycle never blocks the next day's snapshot. A later cron resumes the
-open cycle instead of starting an overlapping snapshot. The machine follows
+The scheduled start records a cycle row for each UTC day, in its own day
+prefix, and opens the earliest recorded cycle only when no cycle is copying,
+queued as failed or cleaning up; a completed or cleaned cycle never blocks the
+next day's snapshot. A later cron resumes the open cycle instead of starting
+an overlapping snapshot, and a day recorded meanwhile waits behind it: a
+cycle with a failure queue entry or without its `complete.json` blocks every
+later cycle, its cleanup included. At most one page message is in flight. The machine follows
 the latest cycle; earlier cycles' copies expire under the bucket's 30-day
 lifecycle rule, an external storage obligation. Pages are copied and verified in order. A duplicate delivery of a
 copied page changes nothing. A page that fails five times moves to the
@@ -38,12 +45,17 @@ type Generation = LegacyNullGeneration | Generational
 type Copy = Unclassified | Backed | Changed | Missing
 type Retention = Kept | PermanentAdmission | Deleted | RetentionHeld | RetentionMissing
 type AuditEntry = { day: int, removed: bool }
+type GenerationState = GenerationOpen | GenerationFrozen | GenerationRetired
+type StorageGeneration = { id: int, state: GenerationState, referencesEligible: bool }
+type Target = { key: int, generation: int, written: bool, published: bool, marker: bool, recorded: bool, copy: Copy }
 type EvidenceObject = { id: int, closedDay: int, admission: bool, generation: Generation, declared: int, stored: int,
   marker: bool, copy: Copy, receiptDay: int, receiptDigest: int, retention: Retention }
 type Backup = { phase: BackupPhase, cycleDay: int, clockDay: int, expectedPages: int, pageDigests: List[int], verifiedPages: int,
   failures: int, manifestDigest: int, completeDigest: int, restore: RestorePhase, restoreSource: int, destinationDigest: int,
   restorePrefix: Prefix, chainChecked: bool, restoredCycles: List[int], completedDays: List[int], retentionEnabled: bool,
-  objects: List[EvidenceObject], accessLog: List[AuditEntry] }
+  objects: List[EvidenceObject], accessLog: List[AuditEntry], startedDays: List[int], waitingDays: List[int],
+  generations: List[StorageGeneration], targets: List[Target], retirementReleased: bool,
+  deletionReceipts: List[int], retentionMissingTargets: List[int] }
 pure val initial: Backup = { phase: NotStarted, cycleDay: 0, clockDay: 0, expectedPages: 0, pageDigests: List(), verifiedPages: 0,
   failures: 0, manifestDigest: 0, completeDigest: 0, restore: NoRestore, restoreSource: 0, destinationDigest: 0,
   restorePrefix: RestoreCheckPrefix, chainChecked: false, restoredCycles: List(), completedDays: List(), retentionEnabled: false,
@@ -52,16 +64,24 @@ pure val initial: Backup = { phase: NotStarted, cycleDay: 0, clockDay: 0, expect
     { ...unclassified, id: 3, generation: LegacyNullGeneration, declared: 7, stored: 7 },
     { ...unclassified, id: 4, declared: 7, stored: 8 },
     { ...unclassified, id: 5, declared: 7, stored: 0 }),
-  accessLog: List({ day: 0, removed: false }, { day: 200, removed: false }) }
+  accessLog: List({ day: 0, removed: false }, { day: 200, removed: false }), startedDays: List(), waitingDays: List(),
+  generations: List({ id: 1, state: GenerationOpen, referencesEligible: false }, { id: 2, state: GenerationOpen, referencesEligible: false }),
+  targets: List(), retirementReleased: false, deletionReceipts: List(), retentionMissingTargets: List() }
 pure val unclassified: EvidenceObject = { id: 0, closedDay: 0, admission: false, generation: Generational, declared: 0, stored: 0,
   marker: false, copy: Unclassified, receiptDay: 0, receiptDigest: 0, retention: Kept }
 pure def cycleOpen(b: Backup): bool = b.phase == Copying or b.phase == FailedQueue or b.phase == CleanupPending
 pure def restoreInFlight(b: Backup): bool = b.restore == CheckingChain or b.restore == WritingDestination or b.restore == RestoreUncertain
+pure def nextCycleDay(b: Backup): int = if (b.waitingDays.length() > 0) b.waitingDays.nthOr(0, 0) else b.clockDay
+pure def canQueueDay(b: Backup): bool = cycleOpen(b) and b.clockDay > b.cycleDay and not(b.waitingDays.includes(b.clockDay))
+pure def queueDay(b: Backup): Backup = { ...b, waitingDays: b.waitingDays.append(b.clockDay) }
 pure def canStart(b: Backup, pages: int, digest: int): bool = not(cycleOpen(b)) and not(restoreInFlight(b))
-  and pages >= 0 and digest > 0 and b.clockDay > b.cycleDay
-pure def start(b: Backup, pages: int, digest: int): Backup = { ...b, phase: Copying, cycleDay: b.clockDay, expectedPages: pages,
+  and pages >= 0 and digest > 0 and nextCycleDay(b) > b.cycleDay
+pure def start(b: Backup, pages: int, digest: int): Backup = { ...b, phase: Copying, cycleDay: nextCycleDay(b), expectedPages: pages,
   manifestDigest: digest, pageDigests: List(), verifiedPages: 0, failures: 0, completeDigest: 0, restore: NoRestore,
-  restoreSource: 0, destinationDigest: 0, chainChecked: false }
+  restoreSource: 0, destinationDigest: 0, chainChecked: false, startedDays: b.startedDays.append(nextCycleDay(b)),
+  waitingDays: b.waitingDays.select(d => d != nextCycleDay(b)) }
+pure def earlierCyclesComplete(b: Backup): bool = b.startedDays.every(d => d >= b.cycleDay or b.completedDays.includes(d))
+pure def cleanupBlocked(b: Backup): bool = b.waitingDays.length() > 0 and (b.phase == Copying or b.phase == FailedQueue)
 pure def canCopyPage(b: Backup, digest: int): bool = b.phase == Copying and digest > 0
   and b.pageDigests.length() < b.expectedPages and b.pageDigests.length() == b.verifiedPages
 pure def copyPage(b: Backup, digest: int): Backup = { ...b, pageDigests: b.pageDigests.append(digest), failures: 0 }
@@ -86,6 +106,21 @@ pure def alwaysCompleteManifest(b: Backup): bool =
   (b.phase == BackupComplete or b.phase == CleanupPending or b.phase == Cleaned or b.phase == BackupExpired) implies
     b.completeDigest == b.manifestDigest and b.completeDigest > 0 and b.verifiedPages == b.expectedPages
 pure def alwaysFailedQueueIsNotComplete(b: Backup): bool = b.phase == FailedQueue implies b.completeDigest == 0 and b.failures == 5
+pure def alwaysOneMessageInFlight(b: Backup): bool = b.pageDigests.length() <= b.verifiedPages + 1
+  and ((b.phase == BackupComplete or b.phase == CleanupPending) implies b.pageDigests.length() == b.verifiedPages)
+pure def alwaysCyclesInOrder(b: Backup): bool = earlierCyclesComplete(b)
+  and b.startedDays.every(d => d > 0 and d <= b.cycleDay) and b.waitingDays.every(d => d > 0 and d <= b.clockDay)
+  and (b.phase != NotStarted implies b.startedDays.includes(b.cycleDay))
+  and (b.phase == NotStarted implies b.startedDays == List() and b.cycleDay == 0)
+  and b.completedDays.every(d => b.startedDays.includes(d))
+  and ((b.phase == BackupComplete or b.phase == CleanupPending or b.phase == Cleaned or b.phase == BackupExpired)
+    implies b.completedDays.includes(b.cycleDay))
+pure def stepCleanupNeverWhileBlocked(before: Backup, via: str, after: Backup): bool =
+  (via == "beginCleanup" or via == "classify" or via == "writeMissingMarker" or via == "retain" or via == "freezeGeneration"
+    or via == "markTarget" or via == "retireGeneration") implies (earlierCyclesComplete(before) and not(cleanupBlocked(before)))
+pure def sometimesLaterDayBlocked(b: Backup): bool = b.phase == FailedQueue and cleanupBlocked(b)
+pure def sometimesWaitingDayStarted(b: Backup): bool = b.startedDays.length() >= 2 and b.completedDays.length() >= 1
+  and b.phase == Copying and b.cycleDay < b.clockDay
 pure def stepReplayKeepsCursor(before: Backup, via: str, after: Backup): bool =
   via == "replayFailed" implies after.pageDigests == before.pageDigests and after.verifiedPages == before.verifiedPages
 pure def sometimesFailedQueue(b: Backup): bool = b.phase == FailedQueue
@@ -214,6 +249,119 @@ pure def sometimesLateWriteBacked(b: Backup): bool = b.objects.some(o => o.id ==
 pure def sometimesAdmissionKept(b: Backup): bool = b.objects.some(o => o.retention == PermanentAdmission)
 ```
 
+## Story: Retire a storage generation only after every reserved target is marked and recorded
+
+### Writers reserve a fresh target, and a frozen generation refuses reservations and pointer publication
+
+Every writer reserves a fresh physical target in an open generation before
+its create-only write; a repair publishes a new target through a pointer
+compare-and-set and never overwrites an old one. A new reservation is a new
+reference, so the generation no longer meets the retention predicate until
+its references are closed again. Cleanup freezes a generation only when all
+its remaining references meet the retention predicate, after a complete
+snapshot, with no earlier cycle incomplete and retirement released. A frozen
+or retired generation refuses new references, reservations and pointer
+publication. An earlier admitted write to a reserved target still lands when
+it precedes the target's marker.
+
+```quint
+pure val noTarget: Target = { key: 0, generation: 0, written: false, published: false, marker: false, recorded: false, copy: Unclassified }
+pure val noGeneration: StorageGeneration = { id: 0, state: GenerationRetired, referencesEligible: false }
+pure def generationOf(b: Backup, generation: int): StorageGeneration = b.generations.nthOr(generation - 1, noGeneration)
+pure def targetOf(b: Backup, key: int): Target = b.targets.nthOr(key - 1, noTarget)
+pure def withGeneration(b: Backup, generation: int, state: GenerationState, eligibleRefs: bool): List[StorageGeneration] =
+  b.generations.listMap(g => if (g.id == generation) { ...g, state: state, referencesEligible: eligibleRefs } else g)
+pure def withTarget(b: Backup, key: int, t: Target): List[Target] = b.targets.listMap(x => if (x.key == key) t else x)
+pure def canReserveTarget(b: Backup, generation: int): bool = generationOf(b, generation).id == generation
+  and generationOf(b, generation).state == GenerationOpen
+pure def reserveTarget(b: Backup, generation: int): Backup =
+  { ...b, targets: b.targets.append({ ...noTarget, key: b.targets.length() + 1, generation: generation }),
+    generations: withGeneration(b, generation, GenerationOpen, false) }
+pure def canWriteTarget(b: Backup, key: int): bool = targetOf(b, key).key == key and not(targetOf(b, key).written)
+  and not(targetOf(b, key).marker)
+pure def writeTarget(b: Backup, key: int): Backup = { ...b, targets: withTarget(b, key, { ...targetOf(b, key), written: true }) }
+pure def canPublishPointer(b: Backup, key: int): bool = targetOf(b, key).key == key and targetOf(b, key).written
+  and not(targetOf(b, key).published) and generationOf(b, targetOf(b, key).generation).state == GenerationOpen
+pure def publishPointer(b: Backup, key: int): Backup = { ...b, targets: withTarget(b, key, { ...targetOf(b, key), published: true }) }
+pure def canCloseReferences(b: Backup, generation: int): bool = generationOf(b, generation).id == generation
+  and generationOf(b, generation).state == GenerationOpen and not(generationOf(b, generation).referencesEligible)
+pure def closeReferences(b: Backup, generation: int): Backup = { ...b, generations: withGeneration(b, generation, GenerationOpen, true) }
+pure def canSetRetirementRelease(b: Backup, released: bool, by: str): bool = by == "releaseWorkflow"
+  and released != b.retirementReleased and (released implies b.restoredCycles.length() > 0)
+pure def setRetirementRelease(b: Backup, released: bool, by: str): Backup = { ...b, retirementReleased: released }
+pure def canFreezeGeneration(b: Backup, generation: int): bool = b.phase == CleanupPending and b.retentionEnabled
+  and b.retirementReleased and earlierCyclesComplete(b) and generationOf(b, generation).id == generation
+  and generationOf(b, generation).state == GenerationOpen and generationOf(b, generation).referencesEligible
+pure def freezeGeneration(b: Backup, generation: int): Backup =
+  { ...b, generations: withGeneration(b, generation, GenerationFrozen, true) }
+pure def alwaysTargetsReservedFresh(b: Backup): bool = b.targets.every(t => t.key > 0 and targetOf(b, t.key) == t
+  and generationOf(b, t.generation).id == t.generation)
+  and b.generations.every(g => g.id > 0 and generationOf(b, g.id) == g)
+pure def stepFrozenRefusesNewWork(before: Backup, after: Backup): bool =
+  before.generations.every(g => g.state != GenerationOpen implies
+    (after.targets.every(t => t.generation == g.id implies before.targets.includes(t) or (targetOf(before, t.key).key == t.key
+      and t.published == targetOf(before, t.key).published)) and generationOf(after, g.id).state != GenerationOpen))
+pure def stepTargetsNeverRemoved(before: Backup, after: Backup): bool = after.targets.length() >= before.targets.length()
+  and before.targets.every(t => targetOf(after, t.key).key == t.key and targetOf(after, t.key).generation == t.generation
+    and (t.written implies targetOf(after, t.key).written) and (t.marker implies targetOf(after, t.key).marker)
+    and (t.published implies targetOf(after, t.key).published))
+pure def sometimesFrozenWithLateWrite(b: Backup): bool =
+  b.targets.some(t => t.written and not(t.published) and generationOf(b, t.generation).state == GenerationFrozen)
+```
+
+### A generation retires only with a verified marker and a D1 record for every reserved target
+
+The single consumer processes each reserved target of a frozen generation,
+unpublished writes included. Existing bytes are copied and verified before a
+permanent, non-evidence marker replaces them: an exact copy is `backed`,
+different bytes `changed`, and an absent target `missing` behind its marker.
+The D1 retirement record follows the verified marker. Retirement stays
+disabled until the release variable is set after a proven restoration. A
+retired generation's reference receives a deletion receipt only when its
+target is backed; a changed or missing target records `retention-missing`.
+Markers, receipts and records are permanent.
+
+```quint
+pure def canMarkTarget(b: Backup, key: int, exact: bool): bool = b.phase == CleanupPending and b.retirementReleased
+  and earlierCyclesComplete(b) and targetOf(b, key).key == key and not(targetOf(b, key).marker)
+  and generationOf(b, targetOf(b, key).generation).state == GenerationFrozen
+pure def markTarget(b: Backup, key: int, exact: bool): Backup = { ...b, targets: withTarget(b, key, { ...targetOf(b, key), marker: true,
+  copy: if (not(targetOf(b, key).written)) Missing else if (exact) Backed else Changed }) }
+pure def canRecordRetirement(b: Backup, key: int): bool = targetOf(b, key).key == key and targetOf(b, key).marker
+  and not(targetOf(b, key).recorded)
+pure def recordRetirement(b: Backup, key: int): Backup = { ...b, targets: withTarget(b, key, { ...targetOf(b, key), recorded: true }) }
+pure def generationMarked(b: Backup, generation: int): bool = b.targets.every(t => t.generation == generation implies t.marker and t.recorded)
+pure def canRetireGeneration(b: Backup, generation: int): bool = b.phase == CleanupPending and b.retirementReleased
+  and earlierCyclesComplete(b) and generationOf(b, generation).id == generation
+  and generationOf(b, generation).state == GenerationFrozen and generationMarked(b, generation)
+pure def retireGeneration(b: Backup, generation: int): Backup =
+  { ...b, generations: withGeneration(b, generation, GenerationRetired, true) }
+pure def settled(b: Backup, key: int): bool = b.deletionReceipts.includes(key) or b.retentionMissingTargets.includes(key)
+pure def canSettleReference(b: Backup, key: int): bool = targetOf(b, key).key == key and not(settled(b, key))
+  and generationOf(b, targetOf(b, key).generation).state == GenerationRetired
+pure def settleReference(b: Backup, key: int): Backup =
+  if (targetOf(b, key).copy == Backed) { ...b, deletionReceipts: b.deletionReceipts.append(key) }
+  else { ...b, retentionMissingTargets: b.retentionMissingTargets.append(key) }
+pure def alwaysRetiredFullyMarked(b: Backup): bool = b.generations.every(g => g.state == GenerationRetired implies generationMarked(b, g.id))
+  and b.targets.every(t => (t.recorded implies t.marker) and (t.marker iff t.copy != Unclassified)
+    and (t.copy == Missing implies not(t.written)) and (t.published implies t.written)
+    and (t.marker implies generationOf(b, t.generation).state != GenerationOpen))
+pure def alwaysReceiptsNeedBackedRetiredTargets(b: Backup): bool =
+  b.deletionReceipts.every(k => targetOf(b, k).key == k and targetOf(b, k).copy == Backed
+    and generationOf(b, targetOf(b, k).generation).state == GenerationRetired)
+  and b.retentionMissingTargets.every(k => targetOf(b, k).key == k and targetOf(b, k).copy != Backed
+    and generationOf(b, targetOf(b, k).generation).state == GenerationRetired)
+pure def stepRetirementNeedsRelease(before: Backup, after: Backup): bool =
+  after.generations.every(g => (g.state != GenerationOpen and generationOf(before, g.id).state == GenerationOpen)
+    implies before.retirementReleased)
+pure def stepSettlementsPermanent(before: Backup, after: Backup): bool =
+  before.deletionReceipts.every(k => after.deletionReceipts.includes(k))
+    and before.retentionMissingTargets.every(k => after.retentionMissingTargets.includes(k))
+pure def sometimesGenerationRetired(b: Backup): bool = b.generations.some(g => g.state == GenerationRetired)
+pure def sometimesDeletionReceipt(b: Backup): bool = b.deletionReceipts.length() > 0
+pure def sometimesTargetMissingRecorded(b: Backup): bool = b.targets.some(t => t.copy == Missing and b.retentionMissingTargets.includes(t.key))
+```
+
 ## Story: Expire backups and access logs on their own schedules
 
 ### Backups expire after thirty days and access-log entries after one year
@@ -270,4 +418,15 @@ pure val weight_start = 6
 pure val weight_classify = 6
 pure val weight_writeMissingMarker = 4
 pure val weight_beginCleanup = 4
+pure val generationValues = Set(1, 2)
+pure val keyValues = Set(1, 2)
+pure val exactValues = Set(true, false)
+pure val releasedValues = Set(true, false)
+pure val weight_reserveTarget = 3
+pure val weight_freezeGeneration = 8
+pure val weight_markTarget = 8
+pure val weight_recordRetirement = 8
+pure val weight_retireGeneration = 8
+pure val weight_settleReference = 8
+pure val weight_setRetirementRelease = 4
 ```
