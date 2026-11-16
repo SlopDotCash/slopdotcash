@@ -1,5 +1,5 @@
 // Run Miniflare in its supported Node runtime; the tests still use real R2.
-import { writeFile, rename } from "node:fs/promises";
+import { rename, writeFile } from "node:fs/promises";
 import { convertV4MiniflareOptions, Miniflare } from "miniflare";
 
 const runtime = new Miniflare(

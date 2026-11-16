@@ -1,10 +1,9 @@
 import { expect, test } from "bun:test";
 import { type ChildProcess, spawn } from "node:child_process";
-import { EventEmitter } from "node:events";
+import { EventEmitter, once } from "node:events";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { once } from "node:events";
 import { stopVettingEvidence } from "../tests/vetting-evidence-fixture";
 
 function ready(child: ChildProcess): Promise<string> {
