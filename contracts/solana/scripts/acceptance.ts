@@ -398,7 +398,8 @@ export function escrow(programId: PublicKey) {
     /**
      * The Ed25519 program check of the identity authority's signature over
      * `message`, then commit_monthly. `signedMessage` lets a run present a
-     * signature over other bytes than the instruction arguments.
+     * signature over other bytes than the instruction arguments. `monthPledge`,
+     * when the period has a pledge PDA, is appended as the optional last account.
      */
     commitMonthly: (input: {
       payer: PublicKey;
@@ -411,6 +412,7 @@ export function escrow(programId: PublicKey) {
       authority: PublicKey;
       signature: Uint8Array;
       signedMessage: Uint8Array;
+      monthPledge?: PublicKey;
     }) => {
       const offsets = Buffer.alloc(16);
       offsets[0] = 1;
@@ -448,6 +450,7 @@ export function escrow(programId: PublicKey) {
             ),
             meta(new PublicKey("Sysvar1nstructions1111111111111111111111111")),
             meta(SystemProgram.programId),
+            ...(input.monthPledge ? [meta(input.monthPledge, true)] : []),
           ],
           u32(input.period),
           input.root,

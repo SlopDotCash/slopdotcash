@@ -9,8 +9,10 @@
  *   node scripts/config-plan.mjs projects reviewed-config-input.json
  *     Lists every Project account of the program and whether the Config pins it.
  *   node scripts/config-plan.mjs migrate reviewed-config-input.json
- *     Builds one unsigned `migrate_project` transaction per 316-byte Project,
- *     paid by `payer`. Any key may sign it; it only grows the account.
+ *     Builds one unsigned `migrate_project` transaction per Project of an earlier
+ *     layout (316 or 332 bytes), paid by `payer`. Any key may sign it; it only grows
+ *     the account. Run it right after the program upgrade: until then the new program
+ *     cannot read those projects.
  *
  * The input file holds `programId`, `upgradeAuthority`, `codeSha256`,
  * `identityAuthority`, `feeRecipient` and `rotationAuthority`. RPC URL, expected genesis and a fresh
@@ -29,13 +31,14 @@ import {
 import { verifyProgram } from "./owner-plan.mjs";
 
 const PROJECT_DISCRIMINATOR = "cda8bdcab5f78e13";
-/** Project sizes before and after accrued fees and the monthly gate were appended. */
-const LEGACY_PROJECT_SIZE = 316;
+/** Project sizes before accrued fees and the monthly gate, and before month pledges, were
+ * appended. Both migrate to PROJECT_SIZE. */
+const LEGACY_PROJECT_SIZES = [316, 332];
 /** MonthlyAllocation discriminator and its current size. A month of an earlier size cannot be
  * read by this build, and its outstanding gross would block owner commits for good. */
 const MONTH_DISCRIMINATOR = "1170c1902bd6fc6b";
 const MONTH_SIZE = 109;
-const PROJECT_SIZE = 332;
+const PROJECT_SIZE = 340;
 const UPGRADEABLE_LOADER = new PublicKey(
   "BPFLoaderUpgradeab1e11111111111111111111111",
 );
@@ -162,16 +165,16 @@ export async function listProjects(input, runtime) {
           mint: base58(data.subarray(168, 200)),
           pinned:
             pinned !== null &&
-            data.length === PROJECT_SIZE &&
+            [LEGACY_PROJECT_SIZES[1], PROJECT_SIZE].includes(data.length) &&
             feeRecipient === pinned.feeRecipient.toBase58(),
-          migrationRequired: data.length === LEGACY_PROJECT_SIZE,
+          migrationRequired: LEGACY_PROJECT_SIZES.includes(data.length),
         };
       })
       .sort((a, b) => a.address.localeCompare(b.address)),
   };
 }
 
-/** Unsigned migrate_project transactions for every Project of the 316-byte layout. */
+/** Unsigned migrate_project transactions for every Project of an earlier layout. */
 export async function migratePlan(input, runtime) {
   if (typeof input.payer !== "string")
     throw new Error("migrate_project needs a payer for the added rent");
