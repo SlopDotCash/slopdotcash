@@ -31,8 +31,8 @@ module bot_notice_delivery {
   }
   val invariant = all { s.calls <= s.claimed, s.claimed <= s.earned,
     s.receipts.length() <= s.calls }
-  run primaryAndBackupFailuresBothNotifyTest = init.then(freshCall("orbio", true))
-    .then(freshCall("surplus", true)).expect(s.earned == 2).then(claim).then(send)
+  run primaryAndBackupFailuresBothNotifyTest = init.then(freshCall("surplus", true))
+    .then(freshCall("orbio", true)).expect(s.earned == 2).then(claim).then(send)
     .then(receipt("accepted")).then(claim).then(send).then(receipt("accepted"))
     .expect(s.calls == 2 and s.claimed == 2 and invariant)
   run successfulAndOtherCallsNeverNotifyTest = init.then(freshCall("orbio", false))
