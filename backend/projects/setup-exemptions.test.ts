@@ -1,5 +1,8 @@
 import { describe, expect, test } from "bun:test";
-import type { ProjectRecord } from "../../src/lib/project-contracts";
+import {
+  type ProjectRecord,
+  slopbotInstallScopeNote,
+} from "../../src/lib/project-contracts";
 import type { ProjectDefinition } from "../../src/lib/projects.mjs";
 import { scanClearanceView } from "../../src/lib/scan-clearance";
 import type { VettingClearance } from "../../src/lib/vetting-contracts";
@@ -179,7 +182,7 @@ describe("quarantined scan status presentation", () => {
       "Findings in Slop's skill template block clearance.",
     );
     expect(result.nextAction.message).toBe(
-      "Findings in Slop's skill template block clearance.",
+      "Findings in Slop's skill template block clearance. Check for an updated skill template first.",
     );
   });
 
@@ -287,7 +290,9 @@ describe("summarize findings location classification", () => {
       const result = status({ state: "quarantined", assessment: summary });
       if (location === "unknown") {
         expect(result.checks.scan.message).toBe("Findings block clearance.");
-        expect(result.nextAction.message).toBe("Findings block clearance.");
+        expect(result.nextAction.message).toBe(
+          "Findings block clearance. Review the scan result first.",
+        );
       }
     },
   );
@@ -780,7 +785,9 @@ describe("setup of a project with more than one repository", () => {
     });
     expect(result.state).toBe("action_required");
     expect(result.nextAction.kind).toBe("install_slopbot");
-    expect(result.nextAction.message).toContain(second);
+    expect(result.nextAction.message).toBe(
+      `Not installed on ${second}. ${slopbotInstallScopeNote(second)}`,
+    );
     const suspended = setup(cleared, {
       state: "read",
       access: { installation: "suspended", installationId: 9 },

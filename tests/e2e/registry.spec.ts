@@ -2399,11 +2399,11 @@ test("an applicant publishes an application stored before self-service setup wit
   await expectAccessible(page, { include: ".setup-pending-applications" });
   await setSlopbot(`${project.repository}/installed`);
   await entry.getByRole("button", { name: "Retry", exact: true }).click();
-  // The published entry shows only its setup state, on a link to the
-  // management page; that page shows each check (asserted below).
-  await expect(
-    entry.getByRole("link", { name: `Manage ${project.name}`, exact: true }),
-  ).toHaveText("Scanning");
+  // The published entry keeps the live setup panel; the management page
+  // shows the same checks (asserted below).
+  await expect(entry.locator(".project-setup-status h2")).toHaveText(
+    /^Setup\s*Scanning$/u,
+  );
   await expectAccessible(page, { include: ".setup-pending-applications" });
   await page.screenshot({
     path: test.info().outputPath("pending-application-published.png"),

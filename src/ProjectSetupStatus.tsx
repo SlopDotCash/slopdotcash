@@ -288,12 +288,9 @@ function ProjectSetupStatusForActor({
         <>
           {setup.state !== "ready" ? (
             <>
-              {/* The badges and buttons already say "install" and "queued". */}
-              {setup.nextAction.kind === "install_slopbot" ||
-              setup.nextAction.kind === "wait_for_scan" ||
-              !setup.nextAction.message ? null : (
+              {setup.nextAction.message ? (
                 <p role="status">{setup.nextAction.message}</p>
-              )}
+              ) : null}
               {setup.checks.scan.clearance ? (
                 <ScanClearanceBadges view={setup.checks.scan.clearance} />
               ) : null}
@@ -464,6 +461,17 @@ function ProjectSetupStatusForActor({
               </dd>
             </div>
           </dl>
+          <details className="setup-details">
+            <summary>Check details</summary>
+            <dl>
+              <dt>GitHub access</dt>
+              <dd>{setup.checks.authority.message}</dd>
+              <dt>Slopbot</dt>
+              <dd>{setup.checks.installation.message}</dd>
+              <dt>Security scan</dt>
+              <dd>{setup.checks.scan.message}</dd>
+            </dl>
+          </details>
         </>
       )}
       {error ? (

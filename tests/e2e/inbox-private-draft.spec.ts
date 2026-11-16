@@ -190,7 +190,7 @@ test("compact Inbox keeps private report metadata scoped through refresh and out
     "Unread",
   );
   await expect(
-    page.getByRole("button", { name: "Mark all read", exact: true }),
+    page.getByRole("button", { name: "Mark page read", exact: true }),
   ).toBeVisible();
   await expect(receipt).toHaveCount(1);
   await expect(page.locator(".security-case-choice")).toHaveCount(0);

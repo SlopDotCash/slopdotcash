@@ -820,10 +820,9 @@ function SecurityBounties() {
     (project) =>
       project.status === "active" && project.securityBounty?.status === "open",
   );
-  if (programs.length === 0) return null;
   return (
     <section
-      className="section shell home-security-section"
+      className={`section shell home-security-section${programs.length === 0 ? " home-security-section--empty" : ""}`}
       aria-labelledby="home-security-title"
       id="security-bounties"
     >
@@ -835,49 +834,56 @@ function SecurityBounties() {
           <Plus aria-hidden="true" /> Add a bounty
         </Link>
       </div>
-      <div className="project-grid">
-        {programs.map((project) => {
-          const terms = project.securityBounty;
-          if (!terms) return null;
-          return (
-            <Link
-              className="project-card"
-              key={project.id}
-              href={
-                hasBountyOverview(project)
-                  ? `/projects/${project.slug}`
-                  : `/projects/${project.slug}/security`
-              }
-            >
-              <div className="project-card-heading">
-                <ProjectImage lazy project={project} />
-                <h3>
-                  <span
-                    role="img"
-                    aria-label="Security bounty"
-                    title="Security bounty"
-                  >
-                    <Shield aria-hidden="true" size={22} />
-                  </span>{" "}
-                  {project.name}
-                </h3>
-                <ArrowRight aria-hidden="true" />
-              </div>
-              <div className="project-card-content">
-                <p className="project-bounty">
-                  <strong>{securityBountyAmountLabel(terms)}</strong>
-                  <span>
-                    {terms.eligibility === "critical-loss-of-funds"
-                      ? "/ Critical"
-                      : "/ Finding"}
-                  </span>
-                </p>
-                <BountyFundingState terms={terms} />
-              </div>
-            </Link>
-          );
-        })}
-      </div>
+      {programs.length === 0 ? (
+        <p className="project-tier-note">
+          No open bounties. <a href="#projects">Report privately</a> on any
+          project.
+        </p>
+      ) : (
+        <div className="project-grid">
+          {programs.map((project) => {
+            const terms = project.securityBounty;
+            if (!terms) return null;
+            return (
+              <Link
+                className="project-card"
+                key={project.id}
+                href={
+                  hasBountyOverview(project)
+                    ? `/projects/${project.slug}`
+                    : `/projects/${project.slug}/security`
+                }
+              >
+                <div className="project-card-heading">
+                  <ProjectImage lazy project={project} />
+                  <h3>
+                    <span
+                      role="img"
+                      aria-label="Security bounty"
+                      title="Security bounty"
+                    >
+                      <Shield aria-hidden="true" size={22} />
+                    </span>{" "}
+                    {project.name}
+                  </h3>
+                  <ArrowRight aria-hidden="true" />
+                </div>
+                <div className="project-card-content">
+                  <p className="project-bounty">
+                    <strong>{securityBountyAmountLabel(terms)}</strong>
+                    <span>
+                      {terms.eligibility === "critical-loss-of-funds"
+                        ? "/ Critical"
+                        : "/ Finding"}
+                    </span>
+                  </p>
+                  <BountyFundingState terms={terms} />
+                </div>
+              </Link>
+            );
+          })}
+        </div>
+      )}
     </section>
   );
 }

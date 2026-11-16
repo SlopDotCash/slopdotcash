@@ -3,7 +3,6 @@ import {
   Clock,
   Coins,
   ExternalLink,
-  Info,
   type LucideIcon,
   Send,
   TriangleAlert,
@@ -21,7 +20,6 @@ import {
   type PaymentChain,
 } from "./lib/payments/contracts";
 import { formatAssetSymbol } from "./lib/reward-asset.mjs";
-import { shortAddress } from "./lib/wallets";
 import { StatusBadge } from "./Presentation";
 
 type PayoutTone = "success" | "warning" | "danger" | "neutral";
@@ -197,13 +195,10 @@ export function PayoutAmount({
         <span className="payout-unit payout-token">
           <Coins aria-hidden="true" size={16} />
           {address ? (
-            <>
-              {/* biome-ignore lint/a11y/noNoninteractiveTabindex: Keyboard users must be able to reach the full token address. */}
-              <code tabIndex={0} title={address}>
-                {shortAddress(address)}
-              </code>
-              <span className="visually-hidden">Token {address}</span>
-            </>
+            <span>
+              <span className="visually-hidden">Token </span>
+              <code>{address}</code>
+            </span>
           ) : null}
         </span>
       )}
@@ -211,7 +206,7 @@ export function PayoutAmount({
   );
 }
 
-/** The net amount of a payout with its fee; the gross award is named on the info mark. */
+/** The net amount of a payout, with its gross award and fee visible on every input device. */
 export function NetAmount({
   payout,
 }: {
@@ -242,20 +237,21 @@ export function NetAmount({
         <span
           className="payout-exact"
           role="region"
+          aria-label="Gross amount"
+          // biome-ignore lint/a11y/noNoninteractiveTabindex: Keyboard users must be able to scroll the exact value.
+          tabIndex={0}
+        >
+          Gross {formatAssetAmount(payout.grossBase, payout)}
+        </span>
+        {/* biome-ignore lint/a11y/useSemanticElements: A labelled scroll region must remain inline within amount text. */}
+        <span
+          className="payout-exact"
+          role="region"
           aria-label="Fee amount"
           // biome-ignore lint/a11y/noNoninteractiveTabindex: Keyboard users must be able to scroll the exact value.
           tabIndex={0}
         >
           −{formatAssetAmount(payout.feeBase, payout)} fee
-        </span>{" "}
-        <span
-          role="img"
-          // biome-ignore lint/a11y/noNoninteractiveTabindex: Keyboard users must be able to reach the gross amount.
-          tabIndex={0}
-          aria-label={`Gross ${formatAssetAmount(payout.grossBase, payout)}`}
-          title={`Gross ${formatAssetAmount(payout.grossBase, payout)}`}
-        >
-          <Info aria-hidden="true" size={12} />
         </span>
       </small>
     </span>

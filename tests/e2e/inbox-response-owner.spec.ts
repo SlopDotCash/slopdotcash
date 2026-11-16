@@ -106,7 +106,7 @@ for (const action of ["acknowledge", "read"] as const) {
     });
     const trigger = () =>
       action === "read"
-        ? page.getByRole("button", { name: "Mark all read", exact: true })
+        ? page.getByRole("button", { name: "Mark page read", exact: true })
         : page.getByRole("button", { name: /^Acknowledge:/u });
     const report = (id: string) =>
       page.getByText(`Private report for ${id}`, { exact: true });
@@ -614,7 +614,7 @@ test("Inbox focus during a write retains the completed mutation readback", async
     await page.goto("/inbox", { waitUntil: "networkidle" });
     await expect(page.getByText("1 unread", { exact: true })).toBeVisible();
     await page
-      .getByRole("button", { name: "Mark all read", exact: true })
+      .getByRole("button", { name: "Mark page read", exact: true })
       .click();
     await started;
     await page.evaluate(async () => {
@@ -631,7 +631,7 @@ test("Inbox focus during a write retains the completed mutation readback", async
       page.getByRole("img", { name: "Unread", exact: true }),
     ).toHaveCount(0);
     await expect(
-      page.getByRole("button", { name: "Mark all read", exact: true }),
+      page.getByRole("button", { name: "Mark page read", exact: true }),
     ).toHaveCount(0);
     expect(reads).toBe(2);
   } finally {

@@ -243,13 +243,13 @@ export function ProfilePage({
                   {PENALTY_CATEGORY_LABELS[penalty.category] ??
                     penalty.category}
                 </StatusBadge>
-                <span
-                  title={`${formatPointsFromThirds(
-                    appliedPenalties.get(penalty.id) ?? 0,
-                  )} applied`}
-                >
+                <span>
                   {formatCycleMonth(penalty.occurredAt.slice(0, 7))} −
-                  {formatPointsFromThirds(penalty.debitThirds)} pts
+                  {formatPointsFromThirds(penalty.debitThirds)} pts ·{" "}
+                  {formatPointsFromThirds(
+                    appliedPenalties.get(penalty.id) ?? 0,
+                  )}{" "}
+                  applied
                 </span>
               </li>
             ))}

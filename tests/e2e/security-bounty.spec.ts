@@ -5997,7 +5997,7 @@ test("a departed Inbox read action preserves a new account's report draft @regis
   await page.goto("/inbox", { waitUntil: "networkidle" });
   await expect(page).toHaveURL(/\/inbox$/u);
   await expect(
-    page.getByRole("button", { name: "Mark all read", exact: true }),
+    page.getByRole("button", { name: "Mark page read", exact: true }),
   ).toBeVisible();
   let readCompleted = false;
   let delayed = false;
@@ -6038,7 +6038,7 @@ test("a departed Inbox read action preserves a new account's report draft @regis
   });
   try {
     const mark = page.getByRole("button", {
-      name: "Mark all read",
+      name: "Mark page read",
       exact: true,
     });
     await mark.focus();

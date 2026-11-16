@@ -4,7 +4,6 @@ import {
   Download,
   Eye,
   Infinity as InfinityIcon,
-  Info,
   LoaderCircle,
   LockKeyhole,
   TriangleAlert,
@@ -266,12 +265,15 @@ export default function VettingEvidencePage() {
                 </dl>
                 <p className="operations-retention">
                   {run.permanentAdmissionEvidence ? (
-                    <StatusBadge
-                      icon={<InfinityIcon />}
-                      title="Retained permanently; each read needs a grant"
-                    >
-                      Permanent
-                    </StatusBadge>
+                    <>
+                      <StatusBadge
+                        icon={<InfinityIcon />}
+                        title="Retained permanently; each read needs a grant"
+                      >
+                        Permanent
+                      </StatusBadge>{" "}
+                      Grant per read.
+                    </>
                   ) : run.expiresAt === null ? (
                     <StatusBadge
                       icon={<Clock />}
@@ -283,26 +285,22 @@ export default function VettingEvidencePage() {
                     <StatusBadge icon={<Clock />} title="Access expiry">
                       Expires {run.expiresAt}
                     </StatusBadge>
-                  )}{" "}
-                  <span
-                    aria-label="Backups, deletion and legal holds are separate"
-                    role="img"
-                    title={data.retentionBoundary}
-                  >
-                    <Info aria-hidden="true" size={14} />
-                  </span>
+                  )}
                 </p>
+                <p className="operations-retention">{data.retentionBoundary}</p>
               </details>
               {run.assembly ? (
-                <p>
-                  <StatusBadge
-                    title={run.assembly.reason}
-                    tone={run.assembly.retained ? "info" : "warning"}
-                  >
-                    {run.assembly.retained
-                      ? "Assembly retained"
-                      : "Assembly unverified"}
-                  </StatusBadge>
+                <p className="operations-caution">
+                  <span>
+                    <StatusBadge
+                      tone={run.assembly.retained ? "info" : "warning"}
+                    >
+                      {run.assembly.retained
+                        ? "Assembly retained"
+                        : "Assembly unverified"}
+                    </StatusBadge>{" "}
+                    {run.assembly.reason} Clean admission unavailable.
+                  </span>
                 </p>
               ) : null}
 

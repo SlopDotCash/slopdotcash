@@ -952,12 +952,9 @@ export function VettingSection({
       ) : (
         <>
           {state.value.service.state === "unavailable" ? (
-            <p
-              className="form-error"
-              role="alert"
-              title={state.value.service.reason}
-            >
-              <CircleAlert aria-hidden="true" /> Scanner offline
+            <p className="form-error" role="alert">
+              <CircleAlert aria-hidden="true" /> Vetting unavailable.{" "}
+              {state.value.service.reason}
             </p>
           ) : null}
           {!state.value.projects.some((project) => project.id === projectId) ? (
@@ -1001,25 +998,50 @@ export function VettingSection({
                         <div>
                           <dt>Decided by</dt>
                           <dd>
-                            {clearance.state === "unscanned" ? (
-                              "Awaiting admission scan"
-                            ) : clearance.state === "unverified" ? (
-                              clearance.reason
-                            ) : clearance.assessment ===
-                              null ? null : clearance.state === "stale" ? (
-                              <span
-                                title={`Live head ${clearance.live.commitSha}, template ${clearance.live.templateSha256}. Last scan ${clearance.assessment.commitSha}.`}
-                              >
-                                Head {clearance.live.commitSha.slice(0, 7)} ≠
-                                scanned{" "}
-                                {clearance.assessment.commitSha.slice(0, 7)}
-                              </span>
-                            ) : (
-                              `Rev ${clearance.assessment.revision} · ${STATE_TEXT[clearance.assessment.state]}`
-                            )}
+                            {clearance.state === "unscanned"
+                              ? "Awaiting admission scan"
+                              : clearance.state === "unverified"
+                                ? clearance.reason
+                                : clearance.assessment === null
+                                  ? null
+                                  : clearance.state === "stale"
+                                    ? "Head ≠ scanned"
+                                    : `Rev ${clearance.assessment.revision} · ${STATE_TEXT[clearance.assessment.state]}`}
                           </dd>
                         </div>
                       )}
+                      {clearance.state === "stale" &&
+                      clearance.assessment !== null ? (
+                        <>
+                          <div>
+                            <dt>Live head</dt>
+                            <dd>
+                              <CopyIdentifier
+                                label="live head commit"
+                                value={clearance.live.commitSha}
+                              />
+                            </dd>
+                          </div>
+                          <div>
+                            <dt>Live template</dt>
+                            <dd>
+                              <CopyIdentifier
+                                label="live skill template digest"
+                                value={clearance.live.templateSha256}
+                              />
+                            </dd>
+                          </div>
+                          <div>
+                            <dt>Last scan</dt>
+                            <dd>
+                              <CopyIdentifier
+                                label="last scanned commit"
+                                value={clearance.assessment.commitSha}
+                              />
+                            </dd>
+                          </div>
+                        </>
+                      ) : null}
                       {"assessment" in clearance &&
                       clearance.assessment !== null ? (
                         <div>

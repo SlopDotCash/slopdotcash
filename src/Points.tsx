@@ -1453,8 +1453,10 @@ function XAccountLink({ account }: { account: XAccount }) {
 }
 function PublicXLink({ actorId }: { actorId: string }) {
   const [account, setAccount] = useState<XAccount | null>(null);
+  const [failed, setFailed] = useState(false);
   useEffect(() => {
     setAccount(null);
+    setFailed(false);
     if (!productOrigin()) return;
     const c = new AbortController();
     void requestJson(
@@ -1462,14 +1464,17 @@ function PublicXLink({ actorId }: { actorId: string }) {
       { signal: c.signal },
     )
       .then((v) => setAccount(v ? xAccount(v) : null))
-      // A failed lookup shows no link.
-      .catch(() => undefined);
+      .catch(() => {
+        if (!c.signal.aborted) setFailed(true);
+      });
     return () => c.abort();
   }, [actorId]);
   return account ? (
     <span className="points-social-link">
       <XAccountLink account={account} />
     </span>
+  ) : failed ? (
+    <small>X unavailable</small>
   ) : null;
 }
 type Person = {

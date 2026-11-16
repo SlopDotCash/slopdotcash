@@ -346,19 +346,15 @@ test("payout rows distinguish test networks and retain exact award details at 20
         .getByRole("link", { name: "eliza", exact: true }),
     ).toHaveAttribute("href", "/projects/eliza");
     await expect(row.getByText(amount, { exact: true })).toBeVisible();
-    await expect(row.locator(".payout-token code")).toHaveAttribute(
-      "title",
-      token,
-    );
-    await expect(
-      row.getByText(`Token ${token}`, { exact: true }),
-    ).toBeAttached();
+    await expect(row.locator(".payout-token code")).toBeVisible();
+    await expect(row.locator(".payout-token code")).toHaveText(token);
     await expect(row.locator(".payout-pill")).toHaveText(state);
     await expect(
-      row.locator(".payout-amount small").getByRole("img", {
-        name: /^Gross 123,456,789,012,345,678\.123456789012345678 /u,
+      row.locator(".payout-amount small").getByRole("region", {
+        name: "Gross amount",
+        exact: true,
       }),
-    ).toBeVisible();
+    ).toHaveText(/^Gross 123,456,789,012,345,678\.123456789012345678 /u);
     await expect(
       row.locator(".payout-amount small").getByRole("region", {
         name: "Fee amount",
@@ -368,7 +364,7 @@ test("payout rows distinguish test networks and retain exact award details at 20
   }
   await enlargeText(page.locator(".earnings-page"));
   for (const row of await rows.all()) {
-    for (const label of ["Exact amount", "Fee amount"]) {
+    for (const label of ["Exact amount", "Gross amount", "Fee amount"]) {
       const region = row.getByRole("region", { name: label, exact: true });
       expect(
         await region.evaluate((node) => {
@@ -418,10 +414,11 @@ test("a recipient reviews the exact vault and signs consent without claiming pay
       .locator(".payout-row")
       .getByRole("link", { name: "eliza", exact: true }),
   ).toHaveAttribute("href", "/projects/eliza");
-  const gross = page.getByRole("img", { name: "Gross 1 USDC", exact: true });
+  const gross = page.getByRole("region", { name: "Gross amount", exact: true });
   const fee = page.getByRole("region", { name: "Fee amount", exact: true });
   await expect(gross).toBeVisible();
   await expect(fee).toBeVisible();
+  await expect(gross).toHaveText("Gross 1 USDC");
   await expect(fee).toHaveText("−0.02 USDC fee");
   await page.getByRole("button", { name: "Authorize payout wallet" }).click();
   const review = page.getByRole("dialog", {

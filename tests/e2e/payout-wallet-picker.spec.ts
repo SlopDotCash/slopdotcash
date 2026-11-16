@@ -839,16 +839,15 @@ test(
         name: "Change EVM address?",
       }),
     ).toBeFocused();
-    // Each short address keeps its full value in its tooltip.
+    // Both addresses are shown in full before anything is registered.
     await expect(
-      confirmation.getByTitle(`Saved address ${savedAddress}`, { exact: true }),
+      confirmation.getByText(savedAddress, { exact: true }),
     ).toBeVisible();
     await expect(
-      confirmation.getByTitle(`Wallet account ${evmAddress}`, { exact: true }),
+      confirmation.getByText(evmAddress, { exact: true }),
     ).toBeVisible();
-    await expect(
-      confirmation.getByRole("img", { name: "changes to", exact: true }),
-    ).toBeVisible();
+    await expect(confirmation).toContainText(`Saved address${savedAddress}`);
+    await expect(confirmation).toContainText(`Wallet account${evmAddress}`);
     // The picker ran before the account read, and nothing is registered yet.
     expect(await walletCalls(page)).toEqual([
       "MetaMask:wallet_requestPermissions",

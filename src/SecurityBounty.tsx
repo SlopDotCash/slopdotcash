@@ -203,10 +203,6 @@ function SeverityChip({ severity }: { severity: string }) {
   );
 }
 
-function shortAddress(value: string): string {
-  return value.length > 14 ? `${value.slice(0, 6)}…${value.slice(-4)}` : value;
-}
-
 type DirectOwnerRequest = {
   rail: "direct";
   asset: { symbol: string; decimals: number; address: string };
@@ -468,6 +464,13 @@ function IntakeHandoff({
       <h2 id="security-report">Private report</h2>
       <p>
         <StatusBadge icon={<LockKeyhole />}>Private</StatusBadge>
+        {state.status === "checked" &&
+        state.value.paidParticipation !== "open" ? (
+          <>
+            {" "}
+            <StatusBadge tone="warning">No paid reports</StatusBadge>
+          </>
+        ) : null}
       </p>
       {state.status === "checked" && state.value.storedIntake === true ? (
         <AutomaticReportForm session={session} project={project} />
@@ -502,17 +505,15 @@ function IntakeHandoff({
               </div>
             ) : (
               <p className="admin-status security-readiness">
-                <StatusBadge
-                  tone="success"
-                  icon={<ShieldCheck />}
-                  title={`Checked ${
-                    state.value.checkedAt
-                      ? formatUtc(state.value.checkedAt)
-                      : "at an unknown time"
-                  }`}
-                >
+                <StatusBadge tone="success" icon={<ShieldCheck />}>
                   GitHub on
-                </StatusBadge>
+                </StatusBadge>{" "}
+                <span>
+                  Checked{" "}
+                  {state.value.checkedAt
+                    ? formatUtc(state.value.checkedAt)
+                    : "at an unknown time"}
+                </span>
               </p>
             )}
             {state.stale ? null : (
@@ -863,13 +864,12 @@ export function SecurityProgramPage({
                 {terms.funding.state === "pledged" ? (
                   <StatusBadge tone="warning">Pledged</StatusBadge>
                 ) : (
-                  <StatusBadge
-                    tone="success"
-                    icon={<Check />}
-                    title={terms.funding.evidence}
-                  >
-                    Verified {formatUtc(terms.funding.verifiedAt)}
-                  </StatusBadge>
+                  <>
+                    <StatusBadge tone="success" icon={<Check />}>
+                      Verified {formatUtc(terms.funding.verifiedAt)}
+                    </StatusBadge>{" "}
+                    {terms.funding.evidence}
+                  </>
                 )}
               </Fact>
               <Fact term="Awards">
@@ -880,13 +880,18 @@ export function SecurityProgramPage({
                   ? ` · closes ${formatUtc(terms.capacity.closesAt)}`
                   : ""}
               </Fact>
+              <Fact term="When funds run out">
+                {terms.capacity.exhaustionRule}
+              </Fact>
               {terms.rewardMode === "bounty-only" ? (
                 <Fact term="Other work">
                   <StatusBadge>Bounty only</StatusBadge>
                 </Fact>
               ) : null}
             </dl>
-            <p>Owner decides awards.</p>
+            <p>
+              Owner decides awards. Terms at receipt apply. No other payout fee.
+            </p>
           </section>
         </details>
         <section aria-labelledby="security-scope" className="admin-card">
@@ -914,20 +919,15 @@ export function SecurityProgramPage({
                         {deployment.network}
                       </NetworkName>{" "}
                       <span className="operations-identifier">
-                        <code
-                          title={
-                            deployment.codeIdentity
-                              ? `${deployment.address} (${deployment.codeIdentity})`
-                              : deployment.address
-                          }
-                        >
-                          {shortAddress(deployment.address)}
-                        </code>
+                        <code>{deployment.address}</code>
                         <CopyButton
                           label={`${deployment.network} deployment address`}
                           text={deployment.address}
                         />
                       </span>
+                      {deployment.codeIdentity
+                        ? ` (${deployment.codeIdentity})`
+                        : ""}
                     </li>
                   ))}
                 </ul>
@@ -3448,14 +3448,15 @@ function AppealTriagePanel({
                 {confidence}%{" "}
               </>
             )}
-            <StatusBadge
-              title={triage.escalationReasons
+            <StatusBadge>Moderator decides</StatusBadge>
+          </p>
+          {triage.escalationReasons.length === 0 ? null : (
+            <p>
+              {triage.escalationReasons
                 .map((reason) => ESCALATION_LABELS[reason] ?? reason)
                 .join("; ")}
-            >
-              Moderator decides
-            </StatusBadge>
-          </p>
+            </p>
+          )}
           <p>{triage.rationale}</p>
         </>
       ) : triage.state === "unavailable" ? (

@@ -5,7 +5,6 @@ import {
   Check,
   ChevronLeft,
   ChevronRight,
-  Info,
   LoaderCircle,
   Lock,
 } from "lucide-react";
@@ -104,6 +103,12 @@ const STATE_TEXT: Record<
   reserved: "Reserved",
   paid: "Paid",
   conflict: "Conflict",
+};
+
+/** Why an award in this state is neither reserved nor paid. */
+const STATE_REASON: Partial<Record<keyof typeof STATE_TEXT, string>> = {
+  excluded: "Account banned",
+  conflict: "Another award holds this source",
 };
 
 export default function OwnerAwards({
@@ -899,19 +904,15 @@ export default function OwnerAwards({
                                       ? "success"
                                       : "warning"
                                   }
-                                  icon={
-                                    award.state === "conflict" ? (
-                                      <Info size={12} />
-                                    ) : undefined
-                                  }
-                                  title={
-                                    award.state === "conflict"
-                                      ? "Another award holds this source"
-                                      : undefined
-                                  }
                                 >
                                   {STATE_TEXT[award.state]}
                                 </StatusBadge>
+                                {STATE_REASON[award.state] ? (
+                                  <>
+                                    {" "}
+                                    <small>{STATE_REASON[award.state]}</small>
+                                  </>
+                                ) : null}
                               </dd>
                             </div>
                           </dl>

@@ -2838,7 +2838,7 @@ function ProjectUpdateForm({
     field === "vault" || field === "monthly"
       ? "next-month"
       : ["slopbot", "image", "headline", "description"].includes(field) ||
-          scanCleared
+          executableCleared
         ? "live"
         : "rescan";
   const effectChip = (effect: ChangeEffect) =>

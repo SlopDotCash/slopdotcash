@@ -10,7 +10,7 @@ import {
   publishStoredApplication,
 } from "./lib/project-api";
 import { SLOPBOT_INSTALL_URL } from "./lib/project-contracts";
-import { SetupStateBadge } from "./ProjectSetupStatus";
+import { ProjectSetupStatusPanel } from "./ProjectSetupStatus";
 
 type Publication =
   | { status: "idle" | "submitting" | "cancelling" | "cancelled" }
@@ -141,14 +141,8 @@ function PendingApplication({
         ) : (
           <strong>{application.manifest.name}</strong>
         )}
-        {publication.status === "published" ? (
-          <a
-            aria-label={`Manage ${application.manifest.name}`}
-            href={`/projects/${publication.result.project.id}/manage`}
-          >
-            <SetupStateBadge state={publication.result.setup.state} />
-          </a>
-        ) : publication.status === "cancelled" ? null : (
+        {publication.status === "published" ||
+        publication.status === "cancelled" ? null : (
           <>
             {application.publishable === false ? null : (
               <button
@@ -203,6 +197,14 @@ function PendingApplication({
             </>
           ) : null}
         </p>
+      ) : null}
+      {publication.status === "published" ? (
+        <ProjectSetupStatusPanel
+          actorId={actorId}
+          projectId={publication.result.project.id}
+          initial={publication.result.setup}
+          showProjectLink={false}
+        />
       ) : null}
     </article>
   );

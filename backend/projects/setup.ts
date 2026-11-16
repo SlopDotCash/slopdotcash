@@ -478,7 +478,7 @@ export function projectSetupStatus(input: {
     state = "action_required";
     nextAction = action(
       "install_slopbot",
-      installation.message,
+      `${installation.message} ${slopbotInstallScopeNote(repository)}`,
       SLOPBOT_INSTALL_URL,
     );
   } else if (authority.state === "retry") {
@@ -506,7 +506,18 @@ export function projectSetupStatus(input: {
     nextAction = action("wait_for_scan", scan.message);
   } else if (scan.state === "quarantined") {
     state = "action_required";
-    nextAction = action("request_scan", scan.message);
+    const loc =
+      clearance.state === "quarantined"
+        ? clearance.assessment.findingsLocation
+        : undefined;
+    nextAction = action(
+      "request_scan",
+      loc === "template"
+        ? `${scan.message} Check for an updated skill template first.`
+        : loc === "unknown"
+          ? `${scan.message} Review the scan result first.`
+          : scan.message,
+    );
   } else {
     state = "retry";
     nextAction = action("retry_scan", scan.message);

@@ -165,6 +165,7 @@ export default function InboxPage() {
     run,
   } = useAction();
   const actionActive = useRef(false);
+  const [message, setMessage] = useState("");
   const generation = useRef(0);
   const loadController = useRef<AbortController | null>(null);
   useEffect(
@@ -260,6 +261,7 @@ export default function InboxPage() {
         loadController.current = null;
         acceptRecipient(null);
         setState({ status: "signed-out" });
+        setMessage("");
         setActionError(null);
       }),
     [acceptRecipient, setActionError],
@@ -283,6 +285,7 @@ export default function InboxPage() {
 
   function act(
     action: (expectedActorId: string) => Promise<"ok" | "signed-out">,
+    done: string,
   ) {
     if (
       actionActive.current ||
@@ -295,6 +298,7 @@ export default function InboxPage() {
     const expectedActorId = recipient;
     const previous = state;
     const current = ++generation.current;
+    setMessage("");
     setState({ status: "loading" });
     const ownsView = async () => {
       if (generation.current !== current) return false;
@@ -339,7 +343,14 @@ export default function InboxPage() {
           loadController.current?.abort();
           loadController.current = controller;
           const next = await loadInbox(controller.signal, cursor);
-          if (generation.current === current) receive(next);
+          if (generation.current === current) {
+            receive(next);
+            if (
+              next.status === "ready" &&
+              next.value.recipientGithubId === expectedActorId
+            )
+              setMessage(done);
+          }
         } catch (caught) {
           if (await ownsView()) {
             setState(previous);
@@ -439,9 +450,14 @@ export default function InboxPage() {
         <InboxList
           busy={busy}
           response={state.value}
-          onMark={(keys) => void act((actorId) => markRead(keys, actorId))}
+          onMark={(keys) =>
+            void act((actorId) => markRead(keys, actorId), "Marked read")
+          }
           onAcknowledge={(notification) =>
-            void act((actorId) => acknowledgeSecurity(notification, actorId))
+            void act(
+              (actorId) => acknowledgeSecurity(notification, actorId),
+              "Notice acknowledged",
+            )
           }
         />
       ) : null}
@@ -457,6 +473,7 @@ export default function InboxPage() {
             onClick={() => {
               setCursor(previousPages.at(-1) ?? null);
               setPreviousPages((pages) => pages.slice(0, -1));
+              setMessage("");
             }}
           >
             <ChevronLeft aria-hidden="true" size={18} /> Newer
@@ -470,12 +487,14 @@ export default function InboxPage() {
             onClick={() => {
               setPreviousPages((pages) => [...pages, cursor]);
               setCursor(state.value.nextCursor ?? null);
+              setMessage("");
             }}
           >
             Older <ChevronRight aria-hidden="true" size={18} />
           </button>
         </nav>
       ) : null}
+      {message ? <p role="status">{message}</p> : null}
       {actionError ? (
         <p className="form-error" role="alert">
           {actionError}
@@ -516,7 +535,7 @@ function InboxList({
             disabled={busy}
             onClick={() => onMark(unreadKeys)}
           >
-            Mark all read
+            Mark page read
           </button>
         </div>
       ) : null}

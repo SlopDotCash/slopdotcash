@@ -388,6 +388,7 @@ export default function OwnerCommitment({
                 <dd>{formatBaseUnits(review.freeBalance, review.decimals)}</dd>
               </dl>
               <CompactIdentifier
+                open
                 label="token address"
                 value={review.plan.deployment.asset}
                 preview={
@@ -412,6 +413,7 @@ export default function OwnerCommitment({
       ) : null}
       {activePlan && (
         <CompactIdentifier
+          open
           label="vault address"
           value={activePlan.deployment.vault}
           preview={`Vault ${shortAddress(activePlan.deployment.vault)}`}

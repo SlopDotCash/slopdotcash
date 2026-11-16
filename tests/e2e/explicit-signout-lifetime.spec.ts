@@ -264,7 +264,7 @@ for (const activeWrite of [false, true]) {
     await expect(page.getByText(notice, { exact: true })).toBeVisible();
     if (activeWrite) {
       await page
-        .getByRole("button", { name: "Mark all read", exact: true })
+        .getByRole("button", { name: "Mark page read", exact: true })
         .click();
       await held.requested;
     }

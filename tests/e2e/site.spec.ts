@@ -1134,7 +1134,7 @@ test("reaches and reads older inbox notifications without losing the page", asyn
   ).toHaveCount(0);
   await expect(page.locator(".inbox-item")).toHaveCount(100);
   await page
-    .getByRole("button", { name: "Mark all read", exact: true })
+    .getByRole("button", { name: "Mark page read", exact: true })
     .click();
   await expect(
     page.locator(".route-page-header").getByText("1 unread", { exact: true }),
@@ -1143,7 +1143,7 @@ test("reaches and reads older inbox notifications without losing the page", asyn
   await expect(page.locator(".inbox-item")).toHaveCount(1);
   await expect(page.locator(".inbox-item")).toContainText("project-100");
   await page
-    .getByRole("button", { name: "Mark all read", exact: true })
+    .getByRole("button", { name: "Mark page read", exact: true })
     .click();
   await expect(page.locator(".route-page-header")).not.toContainText("unread");
   await expect(page.locator(".inbox-summary")).toHaveCount(0);

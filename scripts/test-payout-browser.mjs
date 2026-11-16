@@ -208,7 +208,7 @@ try {
     !(await paidRow.innerText()).includes("Local EVM test") ||
     (await amount.locator("strong").innerText()).trim() !== "98" ||
     !amountText.includes("Gross 100 token ") ||
-    !amountText.includes("fee 2 token ") ||
+    !amountText.includes("−2 token ") ||
     !amountText.includes(paid.payments[0].assetAddress)
   )
     throw new Error(

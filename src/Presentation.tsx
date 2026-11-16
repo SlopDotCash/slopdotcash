@@ -830,10 +830,7 @@ export function WalletConnection<T extends { id: string; name: string }>({
           aria-label="Connected"
           title="Connected"
         />{" "}
-        <code title={address}>
-          {address.slice(0, address.startsWith("0x") ? 6 : 4)}…
-          {address.slice(-4)}
-        </code>
+        <code>{address}</code>
       </p>
     );
   if (!wallets.length) return empty ?? null;

@@ -142,8 +142,9 @@ export function HowItWorksPage() {
       <section className="custody-proof money-states">
         <h2 id="payments">Payment stages</h2>
         <p>
-          Paid automatically 72 h after month end. A cut needs a public reason
-          and 24 h notice.
+          Funded awards pay automatically 72 h after month end unless the owner
+          turned this off. Awards without a wallet stay reserved. A cut needs a
+          public reason and 24 h notice.
         </p>
         <PaymentLifecycle />
       </section>
@@ -342,6 +343,11 @@ function WhoBuildsOnSlop({
   const pinnedFile = (path: string) =>
     `${SOURCE_REPOSITORY}/blob/${browserDeployment.branch}/${path}`;
   const repositoryUrl = (repo: string) => `https://github.com/${repo}`;
+  const massCount = outside.massAccounts.length;
+  const massNote =
+    massCount === 0
+      ? ""
+      : ` · ${count.format(massCount)} mass ${massCount === 1 ? "account" : "accounts"} excluded`;
   const footprint =
     state.status === "ready" ? summarizeWhoBuilds(state.snapshot) : null;
   const models =
@@ -359,23 +365,13 @@ function WhoBuildsOnSlop({
       <MetricGrid>
         <MetricTile
           label="build AI tooling"
-          value={
-            <span
-              title={`${count.format(all.aiPrimary)} of ${count.format(all.classifiable)} with classifiable public work`}
-            >
-              {percent(all.aiPrimary, all.classifiable)}
-            </span>
-          }
+          value={percent(all.aiPrimary, all.classifiable)}
+          detail={`${count.format(all.aiPrimary)} of ${count.format(all.classifiable)} classifiable`}
         />
         <MetricTile
           label="merged into AI repos"
-          value={
-            <span
-              title={`${count.format(all.aiExternalPr)} of ${count.format(all.size)}`}
-            >
-              {percent(all.aiExternalPr, all.size)}
-            </span>
-          }
+          value={percent(all.aiExternalPr, all.size)}
+          detail={`${count.format(all.aiExternalPr)} of ${count.format(all.size)}`}
         />
       </MetricGrid>
       <details className="audience-data">
@@ -384,16 +380,12 @@ function WhoBuildsOnSlop({
           <MetricTile
             label={`outside PRs · ${count.format(outside.externalReposExMass)} repos`}
             value={count.format(outside.externalPrsExMass)}
+            detail={`since 1 Jan 2026${massNote}`}
           />
           <MetricTile
             label="median AI repo"
-            value={
-              <span
-                title={`${percentOfRatio(outside.aiRepoShareUnder10)} have fewer than ten stars`}
-              >
-                {count.format(outside.aiRepoMedianStars)}★
-              </span>
-            }
+            value={`${count.format(outside.aiRepoMedianStars)}★`}
+            detail={`${percentOfRatio(outside.aiRepoShareUnder10)} under 10 stars`}
           />
         </MetricGrid>
         <div className="who-builds-grid">
@@ -494,16 +486,11 @@ function WhoBuildsOnSlop({
             />
             <MetricTile
               label="PRs name model"
-              value={
-                <span
-                  title={`${count.format(models.totals.mergedPullRequestsWithModel)} of ${count.format(models.totals.mergedPullRequests)}`}
-                >
-                  {percent(
-                    models.totals.mergedPullRequestsWithModel,
-                    models.totals.mergedPullRequests,
-                  )}
-                </span>
-              }
+              value={percent(
+                models.totals.mergedPullRequestsWithModel,
+                models.totals.mergedPullRequests,
+              )}
+              detail={`${count.format(models.totals.mergedPullRequestsWithModel)} of ${count.format(models.totals.mergedPullRequests)}`}
             />
           </MetricGrid>
         ) : null}

@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "meaning": "Declared lifecycle candidates. This intentionally incomplete syntactic census cannot find every implicit state, establish reachability, or prove source/model correspondence. Review the open work listed in formal/README.md as well.",
-  "inventorySha256": "18d8a9d1583fad06014c651b56d1e17d7f1e078aabd4c3498cc29a45b48eb59f",
+  "inventorySha256": "14c7562b2c9fd5355cb9cd1699df8d34df073a61279ab9e3081aa2c6e8256f44",
   "states": [
     {
       "path": "backend/fee-conversions/handler.ts",
@@ -2345,7 +2345,7 @@
     },
     {
       "path": "src/App.tsx",
-      "line": 1176,
+      "line": 1182,
       "name": "useState",
       "kind": "string-union",
       "values": ["blocked", "error", "loading", "ready"],
@@ -2477,7 +2477,7 @@
     },
     {
       "path": "src/Points.tsx",
-      "line": 1482,
+      "line": 1487,
       "name": "status",
       "kind": "string-union",
       "values": ["error", "loading", "preview"],
@@ -2693,7 +2693,7 @@
     },
     {
       "path": "src/SecurityBounty.tsx",
-      "line": 369,
+      "line": 365,
       "name": "state",
       "kind": "string-union",
       "values": ["disabled", "forbidden", "ready", "unavailable"],
@@ -2972,7 +2972,7 @@
     },
     {
       "path": "src/VettingEvidence.tsx",
-      "line": 385,
+      "line": 383,
       "name": "useState",
       "kind": "string-union",
       "values": ["", "downloading", "verified-download", "verified-text"],

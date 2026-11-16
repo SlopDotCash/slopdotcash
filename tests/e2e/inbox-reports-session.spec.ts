@@ -104,7 +104,7 @@ test("one Inbox shows reports and notifications for its confirmed recipient", as
       fullPage: false,
     });
     await page
-      .getByRole("button", { name: "Mark all read", exact: true })
+      .getByRole("button", { name: "Mark page read", exact: true })
       .dblclick();
     await expect.poll(() => markRequests).toBe(1);
     await expect(

@@ -468,9 +468,17 @@ export function SecurityProgramEditor({
                 max="1000"
                 required={!afterApproval}
                 placeholder={afterApproval ? "No limit" : undefined}
+                aria-describedby={
+                  afterApproval ? "bounty-awards-help" : undefined
+                }
                 value={awards}
                 onChange={(event) => setAwards(event.target.value)}
               />
+              {afterApproval && (
+                <p id="bounty-awards-help">
+                  Blank = each finding reviewed separately
+                </p>
+              )}
               <label htmlFor="bounty-commit">
                 Source commit (
                 {existing?.scope.sourceRevisions[0]?.repository ??
@@ -574,7 +582,8 @@ export function SecurityProgramEditor({
                   </div>
                 ))}
               </fieldset>
-              <p title="Project contacts">
+              <p>
+                Contacts:{" "}
                 {(existing?.approvers.technical ?? [actor]).map((person) => (
                   <span key={person.githubId}>
                     <StatusBadge icon={<GithubIcon />}>
@@ -599,7 +608,8 @@ export function SecurityProgramEditor({
                   }
                 >
                   {status}
-                </StatusBadge>
+                </StatusBadge>{" "}
+                <StatusBadge>Future reports only</StatusBadge>
               </h3>
               <SecurityOffer
                 amountPreview={preview ?? undefined}

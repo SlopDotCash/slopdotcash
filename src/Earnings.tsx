@@ -1,5 +1,4 @@
 import {
-  ArrowRight,
   Check,
   ExternalLink,
   Eye,
@@ -864,28 +863,31 @@ export function EarningsPage({
                         >
                           Change {family.label} address?
                         </h3>
-                        <p>
-                          <code
-                            className="wallet-address"
-                            title={`Saved address ${pendingChange.saved}`}
-                          >
-                            {shortAddress(pendingChange.saved)}
-                          </code>{" "}
-                          <ArrowRight
-                            aria-label="changes to"
-                            role="img"
-                            size={16}
-                          />{" "}
-                          <code
-                            className="wallet-address"
-                            title={`Wallet account ${pendingChange.address}`}
-                          >
-                            {shortAddress(pendingChange.address)}
-                          </code>
-                        </p>
+                        <dl>
+                          <div>
+                            <dt>Saved address</dt>
+                            <dd>
+                              <code className="wallet-address">
+                                {pendingChange.saved}
+                              </code>
+                            </dd>
+                          </div>
+                          <div>
+                            <dt>Wallet account</dt>
+                            <dd>
+                              <code className="wallet-address">
+                                {pendingChange.address}
+                              </code>
+                            </dd>
+                          </div>
+                        </dl>
                         <p className="wallet-consequence">
                           <Eye aria-hidden="true" size={16} />{" "}
-                          <strong>Public and permanent</strong>
+                          <strong>
+                            Your GitHub identity and this address become public
+                            and permanent.
+                          </strong>{" "}
+                          The earlier address stays public.
                         </p>
                         <div className="wallet-change-actions">
                           <button
