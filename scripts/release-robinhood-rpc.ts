@@ -298,7 +298,7 @@ export async function qualifyRpc(
   return observed;
 }
 
-function cloudflare() {
+export function cloudflare() {
   const account = process.env.CLOUDFLARE_ACCOUNT_ID;
   const token = process.env.CLOUDFLARE_API_TOKEN;
   check(
@@ -327,7 +327,7 @@ function cloudflare() {
   };
 }
 
-async function inspectVersion(
+export async function inspectVersion(
   get: ReturnType<typeof cloudflare>,
   id: string,
 ): Promise<Version> {
@@ -339,7 +339,7 @@ async function inspectVersion(
   return version;
 }
 
-async function workerState(
+export async function workerState(
   get: ReturnType<typeof cloudflare>,
 ): Promise<WorkerState> {
   const [{ deployments }, { items }] = await Promise.all([
@@ -467,7 +467,7 @@ async function checkJournal(
   else requireQuietJournal(await response.json());
 }
 
-function requireLiveMain(sha: string) {
+export function requireLiveMain(sha: string) {
   const main = execFileSync(
     "git",
     [
@@ -485,7 +485,7 @@ function requireLiveMain(sha: string) {
   );
 }
 
-function runWrangler(args: string[]) {
+export function runWrangler(args: string[]) {
   const env: NodeJS.ProcessEnv = {
     ...process.env,
     WRANGLER_LOG: "log",
