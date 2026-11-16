@@ -558,7 +558,11 @@ Import only that verified packet by dispatching the same digest with `apply`.
 while the ordinary scanner catches up. It neither sends transactions nor moves
 the scanner cursor. A manual main-branch run pins the SHA-256 of the private
 `SLOP_PAYMENT_RECONCILIATION_PACKET` secret; `apply` defaults to false. The
-production credentials stay in the protected workflow. Public artifacts contain
+production credentials stay in the protected workflow. Configure the dedicated
+`SLOP_PAYMENT_RECONCILIATION_RPC_URLS` environment secret as a JSON map from
+registered EVM network IDs to HTTPS endpoints used only for read-only chain
+verification. Keep the shared release `PAYMENT_RPC_URLS` secret unchanged; its
+Solana-only observation-recovery scope is separate. Public artifacts contain
 only the packet digest, source commit and aggregate verification counts.
 
 The runner reads the current immutable project revision and frozen funded monthly
