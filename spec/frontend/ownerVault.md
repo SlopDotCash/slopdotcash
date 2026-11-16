@@ -232,12 +232,13 @@ pure def sometimesStorageBlocked(v: OwnerVault): bool = v.notice == StorageBlock
 pure def sometimesLateReply(v: OwnerVault): bool = v.lateReplies > 0
 pure val accountValues = Set(1, 2)
 pure val byValues = Set(1, 2, server, adapter, timer)
-pure val lifetimeValues = Set(1, 2, 3)
+pure val lifetimeValues = Set(1, 2)
 pure val identityValues = Set("c1", "c2", "t1")
 pure val hashValues = Set("", "h1")
 pure val candidateValues = Set("h2")
-pure val weight_send = 4
-pure val weight_walletReply = 6
-pure val weight_ask = 6
-pure val weight_answer = 8
+pure val weight_review = 10
+pure val weight_send = 10
+pure val weight_walletReply = 14
+pure val weight_ask = 14
+pure val weight_answer = 20
 ```

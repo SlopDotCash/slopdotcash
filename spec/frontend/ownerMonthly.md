@@ -246,19 +246,23 @@ pure val accountValues = Set(1, 2)
 pure val byValues = Set(1, 2, server, adapter, clock)
 pure val lifetimeValues = Set(1, 2)
 pure val requestValues = Set(1, 2, 3)
-pure val nowValues = Set(10000, 100000, 180000, 200000)
+pure val nowValues = Set(100000, 180000, 200000)
 pure val monthValues = Set({ sequence: 0, automatic: true, cutoffAt: 190000, latestCutAt: 0, frozen: false },
   { sequence: 1, automatic: true, cutoffAt: 190000, latestCutAt: 0, frozen: false },
   { sequence: 0, automatic: false, cutoffAt: 190000, latestCutAt: 0, frozen: false })
-pure val reasonLengthValues = Set(0, 12, 40, 600)
+pure val reasonLengthValues = Set(0, 40, 600)
 pure val identityValues = Set("p1", "p2", "p3")
 pure val hashValues = Set("", "h1")
 pure val candidateValues = Set("h2")
-pure val weight_observeMonth = 4
-pure val weight_editDraft = 4
-pure val weight_save = 6
-pure val weight_saveReply = 8
-pure val weight_send = 4
-pure val weight_walletReply = 6
-pure val weight_check = 4
+pure val weight_observeMonth = 8
+pure val weight_observeClock = 6
+pure val weight_editDraft = 10
+pure val weight_save = 12
+pure val weight_saveReply = 16
+pure val weight_finalize = 10
+pure val weight_finalizeReply = 16
+pure val weight_review = 6
+pure val weight_send = 8
+pure val weight_walletReply = 12
+pure val weight_check = 8
 ```

@@ -156,6 +156,11 @@ pure def alwaysSlotsKeyed(p: SolanaPrompt): bool = p.messages.every(m => m != ""
     or (keyedAt(m, p).attempt.bytesId == m and p.used.includes(keyedAt(m, p).attempt.identity))))
 pure def alwaysAwaitingSaved(p: SolanaPrompt): bool = p.phase == Awaiting implies
   p.awaiting != "" and visible(p).identity == p.awaiting
+pure def alwaysPlanBehindPhase(p: SolanaPrompt): bool = (p.phase != NoPlan implies p.message != "")
+  and ((p.awaiting != "") iff (p.phase == Awaiting))
+  and ((p.phase != NoPlan and p.phase != Planned) implies p.actor > 0)
+pure def alwaysLiveAttemptVisible(p: SolanaPrompt): bool = (p.phase == Awaiting or p.phase == Submitted or p.phase == Uncertain
+  or p.phase == Checking or p.phase == HistoryCheck) implies visible(p) != WA::noAttempt
 pure def alwaysExpiredPastBlockhash(p: SolanaPrompt): bool = (p.phase == Expired or p.phase == HistoryCheck) implies p.height > p.lastValid
 pure def alwaysSignedOutIdle(p: SolanaPrompt): bool = p.actor == 0 implies (p.phase == NoPlan or p.phase == Planned) and p.awaiting == ""
 pure def sometimesVerified(p: SolanaPrompt): bool = p.phase == Verified

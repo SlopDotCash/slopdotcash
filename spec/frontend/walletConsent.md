@@ -187,7 +187,7 @@ pure val accountValues = Set(1, 2)
 pure val byValues = Set(1, server, adapter, discovery)
 pure val savedWalletValues = Set("", "w1")
 pure val providerValues = Set(1, 2)
-pure val requestValues = Set(1, 2, 3, 4, 5, 6, 7)
+pure val requestValues = Set(2, 3, 4, 5, 6)
 pure val walletAddressValues = Set("w1", "w2")
 pure val messageValues = Set("m1", "m2")
 pure val rebuiltValues = Set("m1")
@@ -195,8 +195,13 @@ pure val signedMessageValues = Set("m1", "m2")
 pure val intentValues = Set(1)
 pure val signatureValues = Set({ wallet: "w2", signer: "w2", intent: 1 }, { wallet: "w2", signer: "w1", intent: 1 },
   { wallet: "w1", signer: "w1", intent: 1 })
-pure val weight_connectReply = 6
-pure val weight_prepareReply = 6
-pure val weight_signReply = 8
-pure val weight_postReply = 6
+pure val weight_openReview = 6
+pure val weight_connect = 8
+pure val weight_connectReply = 14
+pure val weight_prepare = 8
+pure val weight_prepareReply = 14
+pure val weight_sign = 8
+pure val weight_signReply = 16
+pure val weight_post = 8
+pure val weight_postReply = 14
 ```

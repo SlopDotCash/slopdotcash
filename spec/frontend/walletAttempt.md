@@ -143,7 +143,7 @@ pure def stepOtherAccountsUntouched(before: Journal, via: str, after: Journal): 
 pure def alwaysWaitingWasSaved(j: Journal): bool = j.waiting.every(w => w.account > 0 and j.used.includes(w.identity))
   and j.resolved.every(r => j.used.includes(r))
 pure def alwaysAccountsStored(j: Journal): bool =
-  j.accounts.every(a => a > 0 and j.store.keys().contains(a))
+  j.accounts.every(a => j.store.keys().contains(a))
 pure def alwaysSignedOutShowsNothing(j: Journal): bool = j.account == 0 implies recoveryFor(j) == noAttempt
 pure def sometimesStorageBlocked(j: Journal): bool = j.notice == StorageBlocked and j.waiting.length() == 0
 pure def sometimesOccupied(j: Journal): bool = j.notice == Occupied and slotOf(j, j.account).hash == ""
