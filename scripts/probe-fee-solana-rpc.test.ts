@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
 import { runInNewContext } from "node:vm";
+import { convertV4MiniflareOptions, Miniflare } from "miniflare";
 import {
   probeFeeSolanaRpc,
   requireSolanaProbeCandidate,
@@ -354,4 +355,89 @@ test("untrusted exchange host refuses before credential-bearing preview invocati
     cloudflareCode: null,
   });
   expect(calls).toHaveLength(2);
+});
+
+test("native Worker executes fixed RPC reads and preserves response refusal status", async () => {
+  const calls: string[] = [];
+  const runtime = new Miniflare(
+    convertV4MiniflareOptions({
+      modules: true,
+      compatibilityDate: "2026-09-14",
+      script: solanaProbeWorker,
+      outboundService: async (request: Request) => {
+        const body = (await request.json()) as { method: string };
+        calls.push(body.method);
+        if (body.method === "getAccountInfo")
+          return new Response("private provider refusal", { status: 403 });
+        const result: Record<string, unknown> = {
+          getGenesisHash: "5eykt4UsFv8P8NJdTREpY1vzqKqZKvdpKuc147dw2N9d",
+          getSlot: 10,
+          getBlock: { blockhash: "block", previousBlockhash: "parent" },
+          getFirstAvailableBlock: 0,
+        };
+        return Response.json({
+          jsonrpc: "2.0",
+          id: 1,
+          result: result[body.method],
+        });
+      },
+    }),
+  );
+  try {
+    const response = await runtime.dispatchFetch(
+      "https://probe.invalid/probe",
+      { method: "POST", body: JSON.stringify({ candidate }) },
+    );
+    const value = safeSolanaProbeResult(await response.json());
+    expect(calls).toHaveLength(10);
+    expect(value.rows.every((row) => row.mainnet && row.finalizedBlock)).toBe(
+      true,
+    );
+    expect(
+      value.rows.every(
+        (row) =>
+          row.reads.find((read) => read.method === "getAccountInfo")
+            ?.httpStatus === 403,
+      ),
+    ).toBe(true);
+    expect(value.rows.every((row) => row.mintVerified === false)).toBe(true);
+    expect(
+      value.rows.every(
+        (row) =>
+          row.reads.find((read) => read.method === "getAccountInfo")
+            ?.errorCategory === "invalid-json",
+      ),
+    ).toBe(true);
+    expect(JSON.stringify(value)).not.toContain("private provider refusal");
+  } finally {
+    await runtime.dispose();
+  }
+}, 30000);
+
+test("probe exceptions and redirect bodies retain only fixed diagnostic categories", async () => {
+  const handler = runInNewContext(
+    solanaProbeWorker.replace("export default", "globalThis.probe ="),
+    {
+      Response,
+      URL,
+      AbortSignal,
+      atob,
+      fetch: async () => {
+        throw new TypeError(candidate);
+      },
+    },
+  );
+  const response = await handler.fetch(
+    new Request("https://probe.invalid/probe", {
+      method: "POST",
+      body: JSON.stringify({ candidate }),
+    }),
+  );
+  const value = safeSolanaProbeResult(await response.json());
+  expect(
+    value.rows.every((row) =>
+      row.reads.every((read) => read.errorCategory === "TypeError"),
+    ),
+  ).toBe(true);
+  expect(JSON.stringify(value)).not.toContain(candidate);
 });

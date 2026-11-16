@@ -115,7 +115,14 @@ import { localVettingEvidence } from "../tests/vetting-evidence-fixture";
 
 let retained: Awaited<ReturnType<typeof localVettingEvidence>>;
 afterEach(async () => {
-  await retained?.dispose();
+  const previous = retained;
+  retained = undefined!;
+  try {
+    await previous?.dispose();
+  } finally {
+    sqlite?.close();
+    sqlite = undefined!;
+  }
 });
 let vetting: CloudflareVettingPersistence;
 let scans = 0;
@@ -141,10 +148,16 @@ beforeEach(async () => {
   sqlite = database.sqlite;
   db = database.db;
   persistence = new CloudflareProjectPersistence(database.db);
-  retained = await localVettingEvidence(
-    database.db,
-    () => new Date("2026-10-18T12:00:00.000Z"),
-  );
+  try {
+    retained = await localVettingEvidence(
+      database.db,
+      () => new Date("2026-10-18T12:00:00.000Z"),
+    );
+  } catch (error) {
+    sqlite.close();
+    sqlite = undefined!;
+    throw error;
+  }
   vetting = new CloudflareVettingPersistence(
     database.db,
     async (a) => a.result !== null && retained.evidence.retained(a.result),
