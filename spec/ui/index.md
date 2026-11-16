@@ -51,7 +51,8 @@ A control is shown to a person who may ask the system for reduced motion,
 and is focused by the keyboard or by the pointer. Under reduced motion no
 control transitions or animates. Keyboard focus shows the `ring` token and no
 outline of the browser's own; pointer focus shows it only in a field that
-takes typing, where the caret's place matters. `controls.browser.test.tsx`
+takes typing, a text field or a select, which a typed letter chooses in, as
+the browser keeps it for the keys that follow. `controls.browser.test.tsx`
 shows each primitive in these states in Chromium and compares its computed
 style with `moves` and `showsRing`.
 
@@ -65,7 +66,7 @@ pure def show(s: Shown, kind: ControlKind): Shown = { kind: kind, motion: s.moti
 pure def prefer(s: Shown, motion: Motion): Shown = { ...s, motion: motion }
 pure def reach(s: Shown, focus: Focus): Shown = { ...s, focus: focus }
 
-pure def takesTyping(kind: ControlKind): bool = kind == Text or kind == LongText
+pure def takesTyping(kind: ControlKind): bool = kind == Text or kind == LongText or kind == Choice
 pure def moves(s: Shown): bool = s.motion == FullMotion
 pure def showsRing(s: Shown): bool = s.focus == KeyboardFocus or (s.focus == PointerFocus and takesTyping(s.kind))
 pure def sometimesStillWithRing(s: Shown): bool = s.motion == ReducedMotion and s.focus == KeyboardFocus and s.kind == Toggle
