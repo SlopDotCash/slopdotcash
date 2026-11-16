@@ -3980,11 +3980,11 @@
     },
     {
       "path": "scripts/github-ingestion-read.ts",
-      "sha256": "f305345f6dbf48ededc9c85e1dcce82d6b12dfe77289dee3a5760767e87ce9bb",
+      "sha256": "c9718082a07abcf123dac2a34433c0d87fe9217fb56c62cee855aebe8f4dcb6c",
       "models": ["formal/models/points/github_ingestion_read.qnt"],
       "candidateLines": [
-        37, 70, 91, 93, 111, 149, 219, 239, 249, 254, 260, 269, 291, 301, 310,
-        316
+        35, 53, 86, 107, 109, 127, 165, 235, 255, 265, 270, 276, 285, 307, 317,
+        326, 334
       ],
       "review": "mapped-abstraction"
     },
@@ -13794,7 +13794,7 @@
     },
     {
       "path": "formal/models/points/github_ingestion_read.qnt",
-      "sha256": "0acbfdc0fb6729ca71188c9c5fedfe6322e0eea9e8c9aa34fda20032a2d0f9ca",
+      "sha256": "fdc3629501e65b3ed04384f98031b25241095a142281a52fdef4b22059bff295",
       "sources": [
         "scripts/github-discussion-cache.ts",
         "scripts/github-ingestion-read.ts",
@@ -13808,6 +13808,8 @@
         "mismatchedValidatorReadsLiveTest",
         "readResumesAfterLimitTest",
         "repeatedLimitFailsTest",
+        "repeatedSecondaryLimitFailsTest",
+        "secondaryLimitMessageResumesTest",
         "timedOutCheckpointCannotPublishTest",
         "writeDoesNotRetryTest"
       ]
