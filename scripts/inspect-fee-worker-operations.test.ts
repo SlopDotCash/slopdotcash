@@ -2,6 +2,7 @@ import { expect, test } from "bun:test";
 import { sqliteD1 } from "../tests/sqlite-d1";
 import {
   feeErrorCategory,
+  feeRpcMethod,
   inspectFeeOperations,
   sanitizeFeeTail,
   summarizeFeeDatabase,
@@ -339,4 +340,53 @@ test("tail cleanup checks provider success even on HTTP 200", async () => {
     message: "Fee operational inspection failed",
     completedReads: { expectedEveryMinute: true },
   });
+});
+
+test("RPC refusals cannot masquerade as a lease failure", () => {
+  expect(
+    feeErrorCategory("Solana getAccountInfo: Please use another endpoint"),
+  ).toBe("rpc-unavailable");
+  expect(feeErrorCategory("Solana getAccountInfo: IP blocked")).toBe(
+    "rpc-blocked",
+  );
+  expect(feeErrorCategory("Solana getBalance: HTTP 403 forbidden")).toBe(
+    "authentication",
+  );
+  expect(feeErrorCategory("Solana getBalance: 429 rate limit")).toBe(
+    "rpc-rate-limit",
+  );
+  expect(feeErrorCategory("Fee conversion lock lost, lease expired")).toBe(
+    "lease",
+  );
+});
+
+test("RPC method diagnostic returns only an enumerated exact client prefix", () => {
+  expect(feeRpcMethod("Solana getAccountInfo: Please retry " + secret)).toBe(
+    "getAccountInfo",
+  );
+  expect(feeRpcMethod("Solana privateMethod: " + secret)).toBeUndefined();
+  expect(feeRpcMethod(secret + " Solana getAccountInfo:")).toBeUndefined();
+  const result = sanitizeFeeTail({
+    scriptName: "slop-fee-converter",
+    logs: [
+      {
+        message: [
+          JSON.stringify({
+            event: "fee_claim_error",
+            network: "solana",
+            error: "Solana getAccountInfo: IP blocked " + secret,
+          }),
+        ],
+      },
+    ],
+  });
+  expect(result?.records).toEqual([
+    {
+      event: "fee_claim_error",
+      network: "solana",
+      errorCategory: "rpc-blocked",
+      rpcMethod: "getAccountInfo",
+    },
+  ]);
+  expect(JSON.stringify(result)).not.toContain(secret);
 });
