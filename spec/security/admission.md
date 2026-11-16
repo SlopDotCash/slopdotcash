@@ -41,6 +41,7 @@ assignment never changes. The intake refuses a result for any other commit or
 template (`commit_mismatch`, HTTP 422) and the assessment stays pending.
 
 ```quint
+import sandbox as SB from "./sandbox"
 type Disposition = NoDisposition | DIncomplete | DClean | DMalicious
 type Refusal = NoRefusal | RepositoryMissing | RepositoryMoved | PathRefused | IdentityMismatch
 type Review = NotRun | ReviewCompleted | ReviewDeclined
@@ -51,19 +52,21 @@ type Phase = Queued | Acquiring | Reviewing | Evidence | Publishing | IntentReco
   | PublicationRejected | Recorded | Superseded
 type Assignment = { assessment: int, repository: int, identityEpoch: int, requestedAt: int, revision: int, manifestDigest: int,
   commit: int, template: int, policy: int }
+type Citation = { assessment: int, repository: int, identityEpoch: int, commit: int }
 type Scan = { assignment: Assignment, phase: Phase, attempts: int, staleTemplate: bool, successorTemplate: int,
   inventory: int, inventoryDigest: int, reviewed: int, deterministic: bool, ambiguous: bool, uncoveredExecutable: int, blocked: int,
   primary: Review, escalation: Escalation, specialist: Review, synthesis: bool,
   refusal: Refusal, disposition: Disposition, confirmation: Confirmation,
-  reused: bool, reuseOrigin: int, originPermanent: bool, retained: bool,
+  reused: bool, reuseOrigin: Citation, originPermanent: bool, retained: bool,
   digest: int, sends: int, acceptedDigest: int, recorded: Disposition, investigation: Investigation, investigationId: int }
 pure val queuedAssignment: Assignment = { assessment: 1, repository: 1, identityEpoch: 1, requestedAt: 1, revision: 1,
   manifestDigest: 1, commit: 1, template: 1, policy: 1 }
+pure val noCitation: Citation = { assessment: 0, repository: 0, identityEpoch: 0, commit: 0 }
 pure val initial: Scan = { assignment: queuedAssignment, phase: Queued, attempts: 0, staleTemplate: false, successorTemplate: 0,
   inventory: 0, inventoryDigest: 0, reviewed: 0, deterministic: false, ambiguous: false, uncoveredExecutable: 0, blocked: 0,
   primary: NotRun, escalation: NoEscalation, specialist: NotRun, synthesis: false,
   refusal: NoRefusal, disposition: NoDisposition, confirmation: NoConfirmation,
-  reused: false, reuseOrigin: 0, originPermanent: false, retained: false,
+  reused: false, reuseOrigin: noCitation, originPermanent: false, retained: false,
   digest: 0, sends: 0, acceptedDigest: 0, recorded: NoDisposition, investigation: NoInvestigation, investigationId: 0 }
 pure def validAssignment(a: Assignment): bool =
   a.assessment > 0 and a.repository > 0 and a.identityEpoch > 0 and a.requestedAt > 0 and a.revision > 0 and
@@ -73,8 +76,6 @@ pure def stepAssignmentFixed(before: Scan, after: Scan): bool = before.assignmen
 pure def intakeAccepts(stored: Assignment, result: Assignment): bool =
   result.assessment == stored.assessment and result.repository == stored.repository and
   result.commit == stored.commit and result.template == stored.template
-pure def lawMismatchedResultRefused(stored: Assignment, result: Assignment): bool =
-  (result.commit != stored.commit or result.template != stored.template) implies not(intakeAccepts(stored, result))
 pure val storedValues = Set(queuedAssignment)
 pure val resultValues = Set(queuedAssignment, { ...queuedAssignment, commit: 2 }, { ...queuedAssignment, template: 2 })
 ```
@@ -97,7 +98,7 @@ type ServiceFailure = ProcessKilled | SourceUnavailable | ReuseLookupFailed | Re
 pure def resetRun(target: Phase, s: Scan): Scan =
   { ...s, phase: target, inventory: 0, inventoryDigest: 0, reviewed: 0, deterministic: false, ambiguous: false,
     uncoveredExecutable: 0, blocked: 0, primary: NotRun, escalation: NoEscalation, specialist: NotRun, synthesis: false,
-    refusal: NoRefusal, disposition: NoDisposition, confirmation: NoConfirmation, reused: false, reuseOrigin: 0,
+    refusal: NoRefusal, disposition: NoDisposition, confirmation: NoConfirmation, reused: false, reuseOrigin: noCitation,
     originPermanent: false, retained: false, digest: 0 }
 pure def canStart(s: Scan): bool = s.phase == Queued and not(s.staleTemplate)
 pure def start(s: Scan): Scan = { ...resetRun(Acquiring, s), attempts: s.attempts + 1 }
@@ -168,33 +169,18 @@ pure def alwaysRefusalIsIncompleteWithoutReview(s: Scan): bool =
 When a release replaces the template before a pending scan can finish, the
 next refresh queues the current template with the original source commit and
 manifest as a new assessment. The old assignment stays unchanged and is never
-consumed. A recorded result needs no routine rescan. A retry after a recorded
-result is likewise a new assessment of the same repository, never this one.
+consumed. A recorded result needs no routine rescan. Because the assignment
+never changes, a retry after a recorded result is likewise a new assessment of
+the same repository, never this one.
 
 ```quint
 pure def canRequeueWithTemplate(s: Scan, template: int): bool =
   s.phase == Queued and s.staleTemplate and template > 0 and template != s.assignment.template
 pure def requeueWithTemplate(s: Scan, template: int): Scan = { ...s, phase: Superseded, successorTemplate: template }
-pure def templateSuccessor(s: Scan, assessment: int, requestedAt: int): Assignment =
-  { ...s.assignment, assessment: assessment, template: s.successorTemplate, requestedAt: requestedAt }
-pure def retryAllowed(s: Scan, following: Assignment): bool =
-  (s.phase == Recorded or s.phase == PublicationRejected or s.phase == Superseded) and validAssignment(following) and
-  following.assessment > s.assignment.assessment and following.repository == s.assignment.repository and
-  following.requestedAt >= s.assignment.requestedAt
-pure def lawTemplateSuccessorKeepsCommit(s: Scan, assessment: int, requestedAt: int): bool =
-  templateSuccessor(s, assessment, requestedAt).commit == s.assignment.commit and
-  templateSuccessor(s, assessment, requestedAt).manifestDigest == s.assignment.manifestDigest and
-  templateSuccessor(s, assessment, requestedAt).repository == s.assignment.repository and
-  templateSuccessor(s, assessment, requestedAt).identityEpoch == s.assignment.identityEpoch
-pure def lawRetryIsNewAssessment(s: Scan, following: Assignment): bool =
-  retryAllowed(s, following) implies following.assessment != s.assignment.assessment
 pure def alwaysSupersededUnconsumed(s: Scan): bool =
   s.phase == Superseded implies s.recorded == NoDisposition and s.sends == 0 and s.successorTemplate > 0 and
     s.successorTemplate != s.assignment.template
 pure val templateValues = Set(1, 2)
-pure val assessmentValues = Set(2)
-pure val requestedAtValues = Set(1, 3)
-pure val followingValues = Set({ ...queuedAssignment, assessment: 2, commit: 2 }, queuedAssignment)
 ```
 
 ### Every reviewed batch covers the next unreviewed inventory entries
@@ -228,27 +214,31 @@ pure def alwaysCoverageBounds(s: Scan): bool =
 
 ### Risky artifacts run in an isolated sandbox without network or secrets
 
-One disposable [sandbox](./sandbox.md) run covers each risky artifact. Its
-contract requires disabled internet and no provided secrets, so a run that
-reports either is refused and covers nothing. An artifact is released only
-after a clean static or detonation analysis; a suspicious or malicious
-analysis blocks it (`vetting_artifacts` states `quarantined`, `released`,
-`blocked`), and a blocked artifact prevents a clean result.
+One disposable [sandbox](./sandbox.md) run covers risky artifacts. Only a
+completed run (destroyed after a verified, isolated execution) counts. An
+executed artifact is released after a clean behavior analysis; a suspicious
+or malicious analysis blocks it (`vetting_artifacts` states `quarantined`,
+`released`, `blocked`), and a blocked artifact prevents a clean result. A
+not-executable artifact or a run at its output or time limit stays uncovered,
+so the result is incomplete. A failed isolation or cleanup is a service
+failure that leaves the assessment pending.
 
 ```quint
-type ArtifactAnalysis = StaticClean | DetonationClean | Suspicious | MaliciousBehavior
-type SandboxRun = { artifacts: int, internetDisabled: bool, secretsProvided: bool, analysis: ArtifactAnalysis }
-pure def canRunIsolated(s: Scan, sandboxRun: SandboxRun): bool =
-  s.phase == Reviewing and s.deterministic and sandboxRun.internetDisabled and not(sandboxRun.secretsProvided) and
-  sandboxRun.artifacts > 0 and sandboxRun.artifacts <= s.uncoveredExecutable
-pure def runIsolated(s: Scan, sandboxRun: SandboxRun): Scan =
-  if (sandboxRun.analysis == StaticClean or sandboxRun.analysis == DetonationClean)
-    { ...s, uncoveredExecutable: s.uncoveredExecutable - sandboxRun.artifacts }
-  else { ...s, uncoveredExecutable: s.uncoveredExecutable - sandboxRun.artifacts, blocked: s.blocked + sandboxRun.artifacts }
-pure val sandboxRunValues = Set({ artifacts: 1, internetDisabled: true, secretsProvided: false, analysis: DetonationClean },
-  { artifacts: 1, internetDisabled: true, secretsProvided: false, analysis: Suspicious },
-  { artifacts: 1, internetDisabled: false, secretsProvided: false, analysis: StaticClean },
-  { artifacts: 1, internetDisabled: true, secretsProvided: true, analysis: StaticClean })
+type BehaviorAnalysis = BehaviorClean | Suspicious | MaliciousBehavior
+type ArtifactRun = { artifacts: int, run: SB::Sandbox, analysis: BehaviorAnalysis }
+pure def canRunIsolated(s: Scan, artifactRun: ArtifactRun): bool =
+  s.phase == Reviewing and s.deterministic and SB::completed(artifactRun.run) and
+  artifactRun.artifacts > 0 and artifactRun.artifacts <= s.uncoveredExecutable
+pure def runIsolated(s: Scan, artifactRun: ArtifactRun): Scan =
+  if (artifactRun.run.result != SB::Executed) s
+  else if (artifactRun.analysis == BehaviorClean) { ...s, uncoveredExecutable: s.uncoveredExecutable - artifactRun.artifacts }
+  else { ...s, uncoveredExecutable: s.uncoveredExecutable - artifactRun.artifacts, blocked: s.blocked + artifactRun.artifacts }
+pure val sandboxDone: SB::Sandbox = { ...SB::initial, phase: SB::Destroyed, result: SB::Executed }
+pure val artifactRunValues = Set({ artifacts: 1, run: sandboxDone, analysis: BehaviorClean },
+  { artifacts: 1, run: sandboxDone, analysis: Suspicious },
+  { artifacts: 1, run: { ...sandboxDone, result: SB::LimitReached, coverageGap: true }, analysis: BehaviorClean },
+  { artifacts: 1, run: { ...sandboxDone, phase: SB::CleanupFailed }, analysis: BehaviorClean },
+  { artifacts: 1, run: { ...sandboxDone, result: SB::IsolationFailed }, analysis: BehaviorClean })
 ```
 
 ### The primary review decides and an ambiguous or high-risk finding needs the specialist
@@ -296,7 +286,7 @@ review completed and every required specialist review completed. Anything
 else is incomplete. Malice requires a confirmation with basis
 `reproducible-behavior` or `verified-source-evidence` from the separate
 trusted reviewer outside the guest and model context (`PUBLICATION.md`), and
-an ambiguous match first needs the specialist review.
+an ambiguous or high-risk finding first needs the completed specialist review.
 
 ```quint
 pure def reviewsComplete(s: Scan): bool = s.primary == ReviewCompleted and specialistSettled(s)
@@ -307,20 +297,20 @@ pure def synthesize(s: Scan): Scan =
   { ...s, synthesis: true, phase: Evidence, disposition: if (s.uncoveredExecutable == 0 and s.blocked == 0) DClean else DIncomplete }
 pure def canConfirmMalice(s: Scan, confirmation: Confirmation): bool =
   s.phase == Reviewing and s.deterministic and s.primary == ReviewCompleted and confirmation != NoConfirmation and
-  (s.ambiguous implies s.specialist == ReviewCompleted)
+  specialistSettled(s)
 pure def confirmMalice(s: Scan, confirmation: Confirmation): Scan =
   { ...s, phase: Evidence, disposition: DMalicious, confirmation: confirmation }
 pure def alwaysMaliceConfirmed(s: Scan): bool =
-  s.disposition == DMalicious implies s.confirmation != NoConfirmation and (s.ambiguous implies s.specialist == ReviewCompleted)
+  s.disposition == DMalicious implies s.confirmation != NoConfirmation and specialistSettled(s)
 pure def alwaysCleanComplete(s: Scan): bool =
-  s.disposition == DClean implies (s.reused and s.reuseOrigin > 0) or cleanEvidence(s)
+  s.disposition == DClean implies (s.reused and s.reuseOrigin.assessment > 0) or cleanEvidence(s)
 ```
 
 ### A reused clean result cites one original clean scan of the same repository and commit
 
 The scanner may reuse an original result before fresh isolated execution.
 The API compares the stored original row with this assessment: same immutable
-repository, commit, acquired-input inventory digest, template and policy; the
+repository id and identity epoch (the same node id history), commit, acquired-input inventory digest, template and policy; the
 original is clean, not itself reused, and its evidence is retained; no
 quarantine or ban was recorded after it; and it covers the active flags.
 Reuse marks the original evidence permanent. Another repository never
@@ -328,26 +318,28 @@ inherits the result, and a reused result never lifts a flag pause
 (`backend/vetting/reuse.ts`, `verified-reuse.ts`).
 
 ```quint
-type ReuseOrigin = { assessment: int, disposition: Disposition, reused: bool, repository: int, commit: int,
+type ReuseOrigin = { assessment: int, disposition: Disposition, reused: bool, repository: int, identityEpoch: int, commit: int,
   inventoryDigest: int, template: int, policy: int, retained: bool, laterRestriction: bool, flagsCovered: bool }
 pure def canReuse(s: Scan, origin: ReuseOrigin): bool =
   s.phase == Reviewing and s.reviewed == 0 and not(s.deterministic) and
   origin.assessment > 0 and origin.assessment != s.assignment.assessment and origin.disposition == DClean and
   not(origin.reused) and origin.retained and origin.repository == s.assignment.repository and
-  origin.commit == s.assignment.commit and origin.inventoryDigest == s.inventoryDigest and
+  origin.identityEpoch == s.assignment.identityEpoch and origin.commit == s.assignment.commit and origin.inventoryDigest == s.inventoryDigest and
   origin.template == s.assignment.template and origin.policy == s.assignment.policy and
   not(origin.laterRestriction) and origin.flagsCovered
 pure def reuse(s: Scan, origin: ReuseOrigin): Scan =
-  { ...s, phase: Evidence, disposition: DClean, reused: true, reuseOrigin: origin.assessment, originPermanent: true }
-pure val reusable = { assessment: 9, disposition: DClean, reused: false, repository: 1, commit: 1, inventoryDigest: 7,
+  { ...s, phase: Evidence, disposition: DClean, reused: true, originPermanent: true,
+    reuseOrigin: { assessment: origin.assessment, repository: origin.repository, identityEpoch: origin.identityEpoch, commit: origin.commit } }
+pure val reusable = { assessment: 9, disposition: DClean, reused: false, repository: 1, identityEpoch: 1, commit: 1, inventoryDigest: 7,
   template: 1, policy: 1, retained: true, laterRestriction: false, flagsCovered: true }
 pure val originValues = Set(reusable, { ...reusable, reused: true }, { ...reusable, inventoryDigest: 8 },
-  { ...reusable, disposition: DIncomplete }, { ...reusable, repository: 2 }, { ...reusable, laterRestriction: true },
+  { ...reusable, disposition: DIncomplete }, { ...reusable, repository: 2 }, { ...reusable, identityEpoch: 2 },
+  { ...reusable, laterRestriction: true },
   { ...reusable, flagsCovered: false })
-pure def lawReuseNeedsSameRepository(s: Scan, origin: ReuseOrigin): bool =
-  (origin.repository != s.assignment.repository or origin.commit != s.assignment.commit) implies not(canReuse(s, origin))
 pure def alwaysReuseCitesOrigin(s: Scan): bool =
-  s.reused implies s.reuseOrigin > 0 and s.reuseOrigin != s.assignment.assessment and s.originPermanent
+  s.reused implies s.reuseOrigin.assessment > 0 and s.reuseOrigin.assessment != s.assignment.assessment and s.originPermanent
+    and s.reuseOrigin.repository == s.assignment.repository and s.reuseOrigin.identityEpoch == s.assignment.identityEpoch
+    and s.reuseOrigin.commit == s.assignment.commit
 pure val sValues = Set(initial, { ...initial, phase: Reviewing, inventoryDigest: 7 },
   { ...initial, phase: Recorded, disposition: DClean, recorded: DClean, retained: true, digest: 5, acceptedDigest: 5, sends: 1 })
 ```
@@ -383,24 +375,27 @@ Preparation fixes the exact result bytes and their digest. The publication
 journal reserves one directory per assessment and writes the intent before
 the single signed request. The API verifies the Ed25519 signature against
 `VETTING_RESULT_PUBLIC_KEYS` and the assignment, then records the result and
-returns the assessment identity and state. A lost or malformed response, a
-mismatched returned digest, or an interruption after the intent stays
-unknown, and a later call for the same assessment refuses to send; only the
-restricted admin assessment record with the same digest reconciles it. A
-rejected attempt stays recorded for an operator, and recovery is a new
-assessment. A recorded result never changes; an incomplete result never
-becomes clean.
+returns the assessment identity and state. The API accepts a result only for
+its stored pending assignment (`intakeAccepts`); a different commit or template
+is rejected (`commit_mismatch`). A lost or malformed response, a mismatched
+returned digest, or an interruption after the intent stays unknown, and a
+later call for the same assessment refuses to send; only the restricted admin
+assessment record with the same digest reconciles it. A rejected attempt
+leaves the stored assessment pending and is journaled, so no pass sends it
+again; it waits for operator inspection (`workers/vetting/README.md`). A
+recorded result never changes; an incomplete result never becomes clean.
 
 ```quint
 type ReceiptKind = ReceiptAccepted | ReceiptRejected | ReceiptLost
-type Receipt = { kind: ReceiptKind, digest: int }
+type Receipt = { kind: ReceiptKind, digest: int, stored: Assignment }
 type RecordRead = RecordMatches | RecordStillPending | RecordUnavailable
 type AdminRecord = { read: RecordRead, digest: int }
 pure def canRecordIntent(s: Scan, digest: int): bool = s.phase == Publishing and s.sends == 0 and digest > 0
 pure def recordIntent(s: Scan, digest: int): Scan = { ...s, phase: IntentRecorded, digest: digest }
 pure def canSend(s: Scan): bool = s.phase == IntentRecorded and s.sends == 0
 pure def send(s: Scan): Scan = { ...s, phase: Sent, sends: s.sends + 1 }
-pure def canRecordReceipt(s: Scan, response: Receipt): bool = s.phase == Sent
+pure def canRecordReceipt(s: Scan, response: Receipt): bool =
+  s.phase == Sent and (response.kind == ReceiptAccepted implies intakeAccepts(response.stored, s.assignment))
 pure def recordReceipt(s: Scan, response: Receipt): Scan =
   if (response.kind == ReceiptAccepted and response.digest == s.digest)
     { ...s, phase: Recorded, recorded: s.disposition, acceptedDigest: response.digest }
@@ -412,8 +407,11 @@ pure def reconcileFromAdminRecord(s: Scan, record: AdminRecord): Scan =
     { ...s, phase: Recorded, recorded: s.disposition, acceptedDigest: record.digest }
   else s
 pure val digestValues = Set(5)
-pure val responseValues = Set({ kind: ReceiptAccepted, digest: 5 }, { kind: ReceiptAccepted, digest: 6 },
-  { kind: ReceiptRejected, digest: 0 }, { kind: ReceiptLost, digest: 0 })
+pure val responseValues = Set({ kind: ReceiptAccepted, digest: 5, stored: queuedAssignment },
+  { kind: ReceiptAccepted, digest: 6, stored: queuedAssignment },
+  { kind: ReceiptAccepted, digest: 5, stored: { ...queuedAssignment, commit: 2 } },
+  { kind: ReceiptRejected, digest: 0, stored: { ...queuedAssignment, commit: 2 } },
+  { kind: ReceiptLost, digest: 0, stored: queuedAssignment })
 pure val recordValues = Set({ read: RecordMatches, digest: 5 }, { read: RecordMatches, digest: 6 },
   { read: RecordStillPending, digest: 0 }, { read: RecordUnavailable, digest: 0 })
 pure def alwaysAtMostOneSend(s: Scan): bool =
@@ -463,7 +461,6 @@ pure def closeInvestigation(s: Scan, finding: Disposition): Scan =
     else InvestigationIncomplete }
 pure def investigationBlocks(s: Scan): bool = s.investigation != NoInvestigation and s.investigation != InvestigationClean
 pure def passes(s: Scan): bool = s.phase == Recorded and s.recorded == DClean and s.retained and not(investigationBlocks(s))
-pure def alwaysOpenInvestigationBlocksPass(s: Scan): bool = investigationBlocks(s) implies not(passes(s))
 pure def alwaysInvestigationIdentified(s: Scan): bool =
   (s.investigation != NoInvestigation) iff (s.investigationId > s.assignment.assessment)
 pure val investigationIdValues = Set(2, 3)
@@ -505,7 +502,6 @@ pure def lawRecordedOutcomeValid(s: Scan): bool =
     alwaysMaliceConfirmed(s)) implies validOutcome(outcomeOf(s))
 pure def lawUnconfirmedMaliceRefused(o: Outcome): bool =
   (o.disposition == DMalicious and o.confirmation == NoConfirmation) implies not(validOutcome(o))
-pure def lawReusedNeverLiftsFlagPause(rec: AssessmentRecord): bool = rec.reused implies not(liftsFlagPause(rec))
 pure def lawUnreadableEvidenceNeverLifts(s: Scan): bool = not(liftsFlagPause(recordOf(s, false)))
 pure val oValues = Set({ assessment: 1, repository: 1, revision: 1, disposition: DMalicious, confirmation: NoConfirmation, reused: false, retained: true },
   { assessment: 1, repository: 1, revision: 1, disposition: DMalicious, confirmation: ReproducibleBehavior, reused: false, retained: true },
@@ -518,16 +514,16 @@ pure def sometimesCleanRecorded(s: Scan): bool = s.phase == Recorded and s.recor
 pure def sometimesReusedClean(s: Scan): bool = s.phase == Recorded and s.recorded == DClean and s.reused
 pure def sometimesSpecialist(s: Scan): bool = s.disposition == DClean and s.escalation == Ambiguous and s.specialist == ReviewCompleted
 pure def sometimesIncompleteRecorded(s: Scan): bool = s.phase == Recorded and s.recorded == DIncomplete
-pure def sometimesRefusedIncomplete(s: Scan): bool = s.disposition == DIncomplete and s.refusal == IdentityMismatch and s.phase == Publishing
+pure def sometimesRefusedIncomplete(s: Scan): bool = s.phase == Recorded and s.recorded == DIncomplete and s.refusal != NoRefusal
 pure def sometimesMaliciousRecorded(s: Scan): bool = s.phase == Recorded and s.recorded == DMalicious
 pure def sometimesRetriedAfterOutage(s: Scan): bool = s.phase == Publishing and s.attempts >= 2
 pure def sometimesPublicationUnknown(s: Scan): bool = s.phase == PublicationUnknown and s.sends == 1
 pure def sometimesReconciled(s: Scan): bool = s.phase == Recorded and s.sends == 0
 pure def sometimesPublicationRejected(s: Scan): bool = s.phase == PublicationRejected
 pure def sometimesSuperseded(s: Scan): bool = s.phase == Superseded
-pure def sometimesInvestigationBlocksPass(s: Scan): bool = s.phase == Recorded and s.recorded == DClean and investigationBlocks(s)
+pure def sometimesInvestigationBlocksPass(s: Scan): bool = s.phase == Recorded and s.recorded == DClean and s.retained and not(passes(s))
 pure def sometimesUncoveredIncomplete(s: Scan): bool = s.disposition == DIncomplete and s.synthesis
-pure def sometimesBlockedArtifactIncomplete(s: Scan): bool = s.disposition == DIncomplete and s.blocked > 0 and s.synthesis
+pure def sometimesBlockedArtifactIncomplete(s: Scan): bool = s.phase == Recorded and s.recorded == DIncomplete and s.blocked > 0
 ```
 
 ### Simulation weights steer runs to each outcome
