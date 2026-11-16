@@ -41,13 +41,14 @@ type Output = { row: int, output: int }
 type Credit = { key: B::IncomeKey, amount: M::Amount }
 type FeeFlow = { fee: CV::Fee, journal: J::FeeJournal, buyback: B::Buyback, entries: List[FeeEntry], outputs: List[Output], credits: List[Credit] }
 pure val initial: FeeFlow = { fee: CV::initial, journal: J::initial, buyback: B::initial, entries: List(), outputs: List(), credits: List() }
-pure def transferOf(e: SourceEvidence): CV::FinalizedTransfer =
-  { receipt: e.receipt, token: e.token, amount: e.amount, toFeeWallet: true, sameAsset: true, finalized: true }
-pure def cashMatches(s: FeeFlow, e: SourceEvidence): bool =
-  s.journal.received.some(row => row.caseId == e.caseId and M::equalAmounts(row.amount, M::smallAmount(e.amount)))
-pure def sourceAdmitted(s: FeeFlow, e: SourceEvidence): bool =
-  if (e.source == PayoutFee) e.reconciled and e.caseId == 0
-  else e.caseId > 0 and cashMatches(s, e) and not(s.entries.some(x => x.source == DirectAwardFee and x.caseId == e.caseId))
+pure def transferOf(evidence: SourceEvidence): CV::FinalizedTransfer =
+  { receipt: evidence.receipt, token: evidence.token, amount: evidence.amount, toFeeWallet: true, sameAsset: true, finalized: true }
+pure def cashMatches(s: FeeFlow, evidence: SourceEvidence): bool =
+  s.journal.received.some(row => row.caseId == evidence.caseId and M::equalAmounts(row.amount, M::smallAmount(evidence.amount)))
+pure def sourceAdmitted(s: FeeFlow, evidence: SourceEvidence): bool =
+  if (evidence.source == PayoutFee) evidence.reconciled and evidence.caseId == 0
+  else evidence.caseId > 0 and cashMatches(s, evidence)
+    and not(s.entries.some(x => x.source == DirectAwardFee and x.caseId == evidence.caseId))
 pure def canReceive(s: FeeFlow, evidence: SourceEvidence, by: R::Sender): bool =
   by == R::Worker and evidence.chainTime > 0 and sourceAdmitted(s, evidence)
     and not(s.entries.some(x => x.receipt == evidence.receipt)) and CV::canReceiveFee(s.fee, transferOf(evidence), R::Worker)
@@ -97,8 +98,8 @@ pure def canSetReleaseVariable(s: FeeFlow, variable: bool, by: R::Sender): bool 
 pure def setReleaseVariable(s: FeeFlow, variable: bool, by: R::Sender): FeeFlow = { ...s, fee: CV::setReleaseVariable(s.fee, variable, by) }
 pure def canVerifyReadiness(s: FeeFlow, by: R::Sender): bool = CV::canVerifyReadiness(s.fee, by)
 pure def verifyReadiness(s: FeeFlow, by: R::Sender): FeeFlow = { ...s, fee: CV::verifyReadiness(s.fee, by) }
-pure def canAddToken(s: FeeFlow, asset: CV::AssetKind, by: R::Sender): bool = CV::canAddToken(s.fee, asset, by)
-pure def addToken(s: FeeFlow, asset: CV::AssetKind, by: R::Sender): FeeFlow = { ...s, fee: CV::addToken(s.fee, asset, by) }
+pure def canAddToken(s: FeeFlow, asset: CV::HoldingKind, by: R::Sender): bool = CV::canAddToken(s.fee, asset, by)
+pure def addToken(s: FeeFlow, asset: CV::HoldingKind, by: R::Sender): FeeFlow = { ...s, fee: CV::addToken(s.fee, asset, by) }
 pure def canAcquireLease(s: FeeFlow, runId: int, trigger: CV::Trigger, by: R::Sender): bool = CV::canAcquireLease(s.fee, runId, trigger, by)
 pure def acquireLease(s: FeeFlow, runId: int, trigger: CV::Trigger, by: R::Sender): FeeFlow = { ...s, fee: CV::acquireLease(s.fee, runId, trigger, by) }
 pure def canEvaluate(s: FeeFlow, runId: int, quote: CV::Quote, by: R::Sender): bool = CV::canEvaluate(s.fee, runId, quote, by)
@@ -133,14 +134,12 @@ the fee Worker records income, on the buyback instance of this wallet's
 network.
 
 ```quint
-pure def networkOf(network: D::Network): R::Network =
-  if (network == D::Base) R::Base else if (network == D::Ethereum) R::Ethereum else if (network == D::Robinhood) R::Robinhood else R::Solana
 pure def entryFor(s: FeeFlow, feeReceipt: int): FeeEntry =
   s.entries.foldl({ source: PayoutFee, receipt: 0, token: 0, usdc: false, amount: 0, chainTime: 0, caseId: 0 },
     (found, e) => if (e.receipt == feeReceipt) e else found)
 pure def outputFor(s: FeeFlow, id: int): Output = s.outputs.foldl({ row: 0, output: 0 }, (found, o) => if (o.row == id) o else found)
 pure def booked(s: FeeFlow, caseId: int, amount: M::Amount): bool = s.journal.entries.some(row => row.caseId == caseId
-  and networkOf(row.sourceKey.network) == s.fee.network and M::equalAmounts(row.amount, amount))
+  and row.sourceKey.network == s.fee.network and M::equalAmounts(row.amount, amount))
 pure def credited(s: FeeFlow, key: B::IncomeKey): bool = s.credits.some(c => c.key == key)
 pure def canAdvanceBuybackClock(s: FeeFlow, now: int, by: R::Sender): bool = by == R::Worker and B::canAdvanceClock(s.buyback, now)
 pure def advanceBuybackClock(s: FeeFlow, now: int, by: R::Sender): FeeFlow = { ...s, buyback: B::advanceClock(s.buyback, now) }
@@ -176,14 +175,14 @@ pure def creditDirectFee(s: FeeFlow, feeReceipt: int, chainTime: int, by: R::Sen
   val key = { kind: B::DirectFee, network: s.fee.network, id: feeReceipt }
   { ...s, buyback: B::recordIncome(s.buyback, key, M::smallAmount(e.amount), chainTime),
     credits: s.credits.append({ key: key, amount: M::smallAmount(e.amount) }) }
-pure def backed(s: FeeFlow, c: Credit): bool =
-  if (c.key.kind == B::ConversionOutput) s.outputs.some(o => o.row == c.key.id and M::equalAmounts(c.amount, M::smallAmount(o.output)))
-  else s.entries.some(e => e.receipt == c.key.id and e.usdc and M::equalAmounts(c.amount, M::smallAmount(e.amount))
-    and (if (c.key.kind == B::UsdcClaim) e.source == PayoutFee else c.key.kind == B::DirectFee and e.source == DirectAwardFee))
+pure def backed(s: FeeFlow, credit: Credit): bool =
+  if (credit.key.kind == B::ConversionOutput) s.outputs.some(o => o.row == credit.key.id and M::equalAmounts(credit.amount, M::smallAmount(o.output)))
+  else s.entries.some(e => e.receipt == credit.key.id and e.usdc and M::equalAmounts(credit.amount, M::smallAmount(e.amount))
+    and (if (credit.key.kind == B::UsdcClaim) e.source == PayoutFee else credit.key.kind == B::DirectFee and e.source == DirectAwardFee))
 pure def alwaysIncomeBackedByReceiptOrConversion(s: FeeFlow): bool = s.credits.every(c => backed(s, c))
   and s.buyback.sources.length() == s.credits.length() and s.credits.every(c => s.buyback.sources.includes(c.key))
   and s.buyback.income == s.credits.foldl(M::zero, (total, c) => M::addAmounts(total, c.amount))
-pure def receiptKeyed(c: Credit): bool = c.key.kind != B::ConversionOutput
+pure def receiptKeyed(credit: Credit): bool = credit.key.kind != B::ConversionOutput
 pure def alwaysNoReceiptCountedTwice(s: FeeFlow): bool = s.credits.every(c => s.credits.select(x => x.key == c.key).length() == 1
   and (receiptKeyed(c) implies s.credits.select(x => receiptKeyed(x) and x.key.id == c.key.id).length() == 1))
 pure def sometimesUsdcFeeIncome(s: FeeFlow): bool = s.credits.some(c => c.key.kind == B::UsdcClaim)
@@ -203,6 +202,15 @@ pure val nowValues = Set(B::buybackStart + 1)
 pure val bountyValues = Set(J::separatePaid)
 pure val timingValues = Set(J::separateTimes)
 pure val readValues = Set(J::CurrentRead)
+pure val configValues = CV::configValues
+pure val variableValues = CV::variableValues
+pure val assetValues = CV::assetValues
+pure val runIdValues = CV::runIdValues
+pure val quoteValues = CV::quoteValues
+pure val nonceValues = CV::nonceValues
+pure val maximumValues = CV::maximumValues
+pure val sendValues = CV::sendValues
+pure val receiptValues = CV::receiptValues
 pure val weight_receive = 10
 pure val weight_recordCash = 6
 pure val weight_book = 6

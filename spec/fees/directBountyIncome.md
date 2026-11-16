@@ -40,11 +40,12 @@ unrelated transfer supplies no direct fee income.
 import money as M from "../settlement/money"
 import directBounty as D from "../settlement/directBounty"
 import buyback as B from "./buyback"
+import runtime as R from "./runtime"
 type JournalRead = CurrentRead | UnavailableRead | UnauthenticatedRead
 type Reader = SettlementJournal | OtherReader
 type CashStatus = UnknownCash | NoFeeReceipt | FeeReceived
 type BookingStatus = UnknownBooking | AwaitingCompletion | CompletedBeforeCutover | CompletedEligible
-type TimedReceipt = { network: D::Network, transaction: str, height: int, chainTime: int, authenticated: bool }
+type TimedReceipt = { network: R::Network, transaction: str, height: int, chainTime: int, authenticated: bool }
 type AwardTimes = { originalPreparedAt: int, aggregateVerifiedAt: int, feeTime: TimedReceipt, researcherTime: TimedReceipt }
 type FeeFact = { status: CashStatus, sourceKey: D::TxUse, caseId: int, asset: str, wallet: str, amount: M::Amount, height: int }
 type Recognition = { sourceKey: D::TxUse, caseId: int, asset: str, wallet: str, amount: M::Amount,
@@ -52,7 +53,7 @@ type Recognition = { sourceKey: D::TxUse, caseId: int, asset: str, wallet: str, 
   originalPreparedAt: int, aggregateVerifiedAt: int }
 type FeeJournal = { received: List[FeeFact], entries: List[Recognition] }
 pure val initial: FeeJournal = { received: List(), entries: List() }
-pure val noKey: D::TxUse = { network: D::Base, transaction: "" }
+pure val noKey: D::TxUse = { network: R::Base, transaction: "" }
 pure val noFee: FeeFact = { status: NoFeeReceipt, sourceKey: noKey, caseId: 0, asset: "", wallet: "", amount: M::zero, height: 0 }
 pure def exactPositiveFee(bounty: D::DirectBounty): bool = bounty.admitted and bounty.intent.active
   and D::validTerms(bounty.terms) and D::wellFormedIntent(bounty.terms, bounty.intent)
@@ -91,7 +92,7 @@ pure def completionTime(timing: AwardTimes): int =
   if (timing.feeTime.chainTime >= timing.researcherTime.chainTime) timing.feeTime.chainTime else timing.researcherTime.chainTime
 pure def completeTimeEvidence(bounty: D::DirectBounty, timing: AwardTimes): bool =
   matchesTime(bounty.feeReceipt, timing.feeTime) and matchesTime(bounty.researcherReceipt, timing.researcherTime)
-    and (bounty.terms.network != D::Solana or timing.feeTime == timing.researcherTime)
+    and (bounty.terms.network != R::Solana or timing.feeTime == timing.researcherTime)
     and timing.originalPreparedAt > 0 and timing.aggregateVerifiedAt >= timing.originalPreparedAt
 pure def eligibleTime(timing: AwardTimes): bool = timing.feeTime.chainTime >= B::buybackStart and completionTime(timing) >= B::buybackStart
 pure def bookingStatus(bounty: D::DirectBounty, timing: AwardTimes, read: JournalRead): BookingStatus =
@@ -149,17 +150,17 @@ pure def readback(j: FeeJournal, bounty: D::DirectBounty, timing: AwardTimes, re
       and row.researcherTx == wanted.researcherTx and row.feeHeight == wanted.feeHeight and row.feeChainTime == wanted.feeChainTime
       and row.researcherChainTime == wanted.researcherChainTime and row.completeAt == wanted.completeAt
       and row.originalPreparedAt == wanted.originalPreparedAt and row.aggregateVerifiedAt == wanted.aggregateVerifiedAt)
-pure def receivedFor(j: FeeJournal, network: D::Network, asset: str, wallet: str): M::Amount =
+pure def receivedFor(j: FeeJournal, network: R::Network, asset: str, wallet: str): M::Amount =
   j.received.foldl(M::zero, (total, row) => if (row.sourceKey.network == network and row.asset == asset and row.wallet == wallet)
     M::addAmounts(total, row.amount) else total)
-pure def incomeFor(j: FeeJournal, network: D::Network, asset: str, wallet: str): M::Amount =
+pure def incomeFor(j: FeeJournal, network: R::Network, asset: str, wallet: str): M::Amount =
   j.entries.foldl(M::zero, (total, row) => if (row.sourceKey.network == network and row.asset == asset and row.wallet == wallet)
     M::addAmounts(total, row.amount) else total)
 pure def validRecognition(row: Recognition): bool = row.caseId > 0 and row.asset != "" and row.wallet != ""
   and row.sourceKey.transaction != "" and row.researcherTx != "" and row.feeHeight > 0 and M::validAmount(row.amount) and M::positiveAmount(row.amount)
   and row.feeChainTime >= B::buybackStart and row.researcherChainTime > 0 and row.completeAt >= B::buybackStart
   and row.completeAt == (if (row.feeChainTime >= row.researcherChainTime) row.feeChainTime else row.researcherChainTime)
-  and ((row.sourceKey.network == D::Solana) == (row.sourceKey.transaction == row.researcherTx))
+  and ((row.sourceKey.network == R::Solana) == (row.sourceKey.transaction == row.researcherTx))
   and row.originalPreparedAt > 0 and row.aggregateVerifiedAt >= row.originalPreparedAt
 pure def validCash(row: FeeFact): bool = row.status == FeeReceived and row.caseId > 0 and row.sourceKey.transaction != ""
   and row.asset != "" and row.wallet != "" and row.height > 0 and M::validAmount(row.amount) and M::positiveAmount(row.amount)
@@ -181,8 +182,8 @@ pure def stepNewIdentity(before: FeeJournal, via: str, after: FeeJournal): bool 
 pure val noRecognition: Recognition = { sourceKey: noKey, caseId: 0, asset: "", wallet: "", amount: M::zero,
   researcherTx: "", feeHeight: 0, feeChainTime: 0, researcherChainTime: 0, completeAt: 0, originalPreparedAt: 0, aggregateVerifiedAt: 0 }
 pure def sometimesReceivedOnly(j: FeeJournal): bool = j.received.length() > 0 and j.entries.length() == 0
-pure def sometimesSeparateReceiptsBooked(j: FeeJournal): bool = j.entries.some(row => row.sourceKey.network != D::Solana)
-pure def sometimesBundleBooked(j: FeeJournal): bool = j.entries.some(row => row.sourceKey.network == D::Solana)
+pure def sometimesSeparateReceiptsBooked(j: FeeJournal): bool = j.entries.some(row => row.sourceKey.network != R::Solana)
+pure def sometimesBundleBooked(j: FeeJournal): bool = j.entries.some(row => row.sourceKey.network == R::Solana)
 pure def sometimesCrossCutoverPreparation(j: FeeJournal): bool = j.entries.some(row => row.originalPreparedAt < B::buybackStart)
 ```
 
@@ -199,10 +200,10 @@ pure val feeOnly: D::DirectBounty = { ...D::initial, admitted: true, terms: D::t
 pure val separatePaid: D::DirectBounty = { ...feeOnly, caseRevision: 5, researcherReceipt: D::researcherTransfer }
 pure val bundledPaid: D::DirectBounty = { ...separatePaid, terms: { ...D::termsSolana, caseId: 2 }, intent: D::solanaIntent,
   researcherReceipt: D::bundledTransfer, feeReceipt: D::bundledTransfer }
-pure val feeClock: TimedReceipt = { network: D::Base, transaction: "fee-tx", height: 2,
+pure val feeClock: TimedReceipt = { network: R::Base, transaction: "fee-tx", height: 2,
   chainTime: B::buybackStart + 1, authenticated: true }
 pure val researcherClock: TimedReceipt = { ...feeClock, transaction: "researcher-tx", chainTime: B::buybackStart + 2 }
-pure val bundleClock: TimedReceipt = { ...feeClock, network: D::Solana, transaction: "bundle-tx" }
+pure val bundleClock: TimedReceipt = { ...feeClock, network: R::Solana, transaction: "bundle-tx" }
 pure val separateTimes: AwardTimes = { originalPreparedAt: B::buybackStart - 1, aggregateVerifiedAt: B::buybackStart + 3,
   feeTime: feeClock, researcherTime: researcherClock }
 pure val bundleTimes: AwardTimes = { originalPreparedAt: B::buybackStart - 1, aggregateVerifiedAt: B::buybackStart + 3,

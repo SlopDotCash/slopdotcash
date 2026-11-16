@@ -42,7 +42,7 @@ cannot strand a send.
 ```quint
 import runtime as R from "./runtime"
 import feeReplacement as FR from "../settlement/feeReplacement"
-type AssetKind = TargetStable | ProjectToken | NativeAsset
+type HoldingKind = TargetStable | ProjectToken | NativeAsset
 type Trigger = Receipts | Recovery
 type SendKind = Conversion | Approval | Claim
 type RowState = Quoted | DustPending | Skipped | NoRoute | Submitted | Unknown | Finalized | Failed
@@ -56,7 +56,7 @@ type Row = { id: int, token: int, kind: SendKind, live: bool, state: RowState, r
   deadline: int, attempts: List[Attempt], output: int, createdAt: int }
 type Reservation = { id: int, runId: int, nonce: int, maximum: int, state: GasState, row: int, tx: int,
   settled: bool, actual: int, settledDay: int, blockhashSlot: int }
-type Holding = { token: int, asset: AssetKind, balance: int, feeIncome: int, topUps: int, sold: int, usdcOut: int,
+type Holding = { token: int, asset: HoldingKind, balance: int, feeIncome: int, topUps: int, sold: int, usdcOut: int,
   vault: int, vaultObserved: int, accrued: int, claimed: int }
 type Lease = { holder: int, expiresAt: int }
 type ReviewedVault = { vault: int, deployment: int, token: int }
@@ -137,8 +137,8 @@ pure val noHolding: Holding = { token: 0, asset: ProjectToken, balance: 0, feeIn
 pure def validToken(f: Fee, token: int): bool = token >= 1 and token <= f.holdings.length()
 pure def holding(f: Fee, token: int): Holding = f.holdings.nthOr(token - 1, noHolding)
 pure def withHolding(token: int, h: Holding, f: Fee): List[Holding] = f.holdings.listMap(x => if (x.token == token) h else x)
-pure def canAddToken(f: Fee, asset: AssetKind, by: R::Sender): bool = by == R::Worker and (asset == ProjectToken or not(f.holdings.some(h => h.asset == asset)))
-pure def addToken(f: Fee, asset: AssetKind, by: R::Sender): Fee =
+pure def canAddToken(f: Fee, asset: HoldingKind, by: R::Sender): bool = by == R::Worker and (asset == ProjectToken or not(f.holdings.some(h => h.asset == asset)))
+pure def addToken(f: Fee, asset: HoldingKind, by: R::Sender): Fee =
   { ...f, holdings: f.holdings.append({ ...noHolding, token: f.holdings.length() + 1, asset: asset }) }
 pure def canReceiveFee(f: Fee, transfer: FinalizedTransfer, by: R::Sender): bool = by == R::Worker and transfer.receipt > 0 and not(f.receipts.includes(transfer.receipt))
   and validToken(f, transfer.token) and transfer.amount > 0 and transfer.toFeeWallet and transfer.sameAsset and transfer.finalized

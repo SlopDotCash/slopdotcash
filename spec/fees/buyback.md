@@ -22,7 +22,7 @@ retains the outcome of every order. The single Robinhood Chain
 [purchase pool](./buybackPool.md) credits each proven arrival once and owns
 every purchase and burn under one set of caps. Evidence records name their
 verified source: income keys come from the owning journals (a composition
-obligation), `SendReceipt`, `ArrivalEvidence`, `RefundEvidence` and
+obligation), `BridgeReceipt`, `ArrivalEvidence`, `RefundEvidence` and
 `CancellationEvidence` from the chain observation adapter at a finalized
 block, and `BridgeQuote` from the pinned deBridge reader after every byte of
 the signed transaction was checked.
@@ -51,10 +51,10 @@ type OrderResult = OrderArrived | OrderRefunded | CreationFailed
 type OrderOutcome = { order: int, amount: int, takeAmount: int, result: OrderResult, height: int }
 type DecisionState = Quoted | Pending | Skipped | NoRoute
 type BridgeReason = NoReason | DayCapReached | BelowMinimum | UnsafeValue | NoRouteFound | NativeFeeAbove | CostAbove
-type Decision = { state: DecisionState, reason: BridgeReason, amount: int, live: bool, at: int }
+type BridgeDecision = { state: DecisionState, reason: BridgeReason, amount: int, live: bool, at: int }
 type Buyback = { runtime: R::Runtime, source: R::Network, clock: int, income: M::Amount, sources: List[IncomeKey], incomeTimes: List[int],
   committed: M::Amount, orderPhase: OrderPhase, order: int, orderAmount: int, takeAmount: int, orderedAt: int,
-  orders: List[int], approval: Send, orderSend: Send, unfilledReported: bool, outcomes: List[OrderOutcome], decisions: List[Decision],
+  orders: List[int], approval: Send, orderSend: Send, unfilledReported: bool, outcomes: List[OrderOutcome], decisions: List[BridgeDecision],
   bridgeSpends: List[Spend], bridgeNative: List[Spend], txs: List[int], finalizedHeight: int }
 pure val buybackStart = 1794441600000
 pure val dayMs = 86400000
@@ -112,11 +112,11 @@ recorded as quoted and signs nothing. A repeated decision with the same
 state, reason, amount and mode adds no record.
 
 ```quint
-type RouteResult = RouteFound | NoRouteResult
-type BridgeQuote = { route: RouteResult, amount: int, takeAmount: int, costBps: int, nativeFee: int }
+type BridgeRoute = RouteFound | NoRouteResult
+type BridgeQuote = { route: BridgeRoute, amount: int, takeAmount: int, costBps: int, nativeFee: int }
 pure val maximumSafeValue = 9007199254740991
 pure def nativeFeeCeiling(b: Buyback): int = if (b.source == R::Solana) 50000000 else 1000000
-pure def decisionOf(b: Buyback, quote: BridgeQuote): Decision =
+pure def decisionOf(b: Buyback, quote: BridgeQuote): BridgeDecision =
   val live = b.runtime.buybackMode == R::Live
   val base = { state: Skipped, reason: NoReason, amount: quote.amount, live: live, at: b.clock }
   if (spentInWindow(b.bridgeSpends, b.clock) >= 5000000000) { ...base, reason: DayCapReached }
@@ -126,7 +126,7 @@ pure def decisionOf(b: Buyback, quote: BridgeQuote): Decision =
   else if (quote.nativeFee > nativeFeeCeiling(b)) { ...base, reason: NativeFeeAbove }
   else if (quote.costBps > 150 or quote.takeAmount > quote.amount or quote.takeAmount <= 0) { ...base, reason: CostAbove }
   else { ...base, state: Quoted }
-pure def lastDecision(b: Buyback): Decision =
+pure def lastDecision(b: Buyback): BridgeDecision =
   b.decisions.nthOr(b.decisions.length() - 1, { state: Quoted, reason: NoReason, amount: -1, live: false, at: 0 })
 pure def canDecide(b: Buyback, quote: BridgeQuote): bool =
   R::runs(b.runtime) and b.runtime.buybackMode != R::Off and b.orderPhase == NoOrder and quote.amount >= 0
@@ -185,10 +185,10 @@ pure def canApproveOrder(b: Buyback, request: BridgeOrder): bool =
     and request.tx > 0 and not(b.txs.includes(request.tx))
 pure def approveOrder(b: Buyback, request: BridgeOrder): Buyback =
   { ...b, orderPhase: Approving, approval: { tx: request.tx, phase: Submitted, amount: request.amount }, txs: b.txs.append(request.tx) }
-pure def canSettleApproval(b: Buyback, receipt: SendReceipt): bool =
+pure def canSettleApproval(b: Buyback, receipt: BridgeReceipt): bool =
   b.orderPhase == Approving and (b.approval.phase == Submitted or b.approval.phase == Unknown)
     and receipt.tx == b.approval.tx and receipt.finalized
-pure def settleApproval(b: Buyback, receipt: SendReceipt): Buyback =
+pure def settleApproval(b: Buyback, receipt: BridgeReceipt): Buyback =
   if (receipt.succeeded) { ...b, approval: { ...b.approval, phase: Finalized } }
   else { ...b, orderPhase: NoOrder, approval: { ...b.approval, phase: Failed } }
 pure def canOrder(b: Buyback, request: BridgeOrder): bool =
@@ -211,16 +211,16 @@ failure of the order transaction releases its commitment and its rolling
 exposure, and the same share may be ordered again.
 
 ```quint
-type SendReceipt = { tx: int, succeeded: bool, finalized: bool }
+type BridgeReceipt = { tx: int, succeeded: bool, finalized: bool }
 pure def canLoseSend(b: Buyback, tx: int): bool =
   (b.approval.tx == tx and b.approval.phase == Submitted) or (b.orderSend.tx == tx and b.orderSend.phase == Submitted)
 pure def loseResponse(s: Send, tx: int): Send = if (s.tx == tx and s.phase == Submitted) { ...s, phase: Unknown } else s
 pure def loseSend(b: Buyback, tx: int): Buyback = { ...b, approval: loseResponse(b.approval, tx), orderSend: loseResponse(b.orderSend, tx) }
 pure def release(spends: List[Spend], id: int): List[Spend] = spends.listMap(s => if (s.id == id) { ...s, released: true } else s)
-pure def canSettleOrder(b: Buyback, receipt: SendReceipt): bool =
+pure def canSettleOrder(b: Buyback, receipt: BridgeReceipt): bool =
   b.orderPhase == Ordering and (b.orderSend.phase == Submitted or b.orderSend.phase == Unknown)
     and receipt.tx == b.orderSend.tx and receipt.finalized
-pure def settleOrder(b: Buyback, receipt: SendReceipt): Buyback =
+pure def settleOrder(b: Buyback, receipt: BridgeReceipt): Buyback =
   if (receipt.succeeded) { ...b, orderPhase: InTransit, orderSend: { ...b.orderSend, phase: Finalized }, orderedAt: b.clock }
   else { ...b, orderPhase: NoOrder, orderSend: { ...b.orderSend, phase: Failed },
     committed: M::subtractAmounts(b.committed, M::smallAmount(b.orderAmount)),

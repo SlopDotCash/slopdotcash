@@ -371,7 +371,7 @@ lemma approveOrder_ensures(b: Buyback, request: BridgeOrder)
   }
 }
 
-lemma settleApproval_ensures(b: Buyback, receipt: SendReceipt)
+lemma settleApproval_ensures(b: Buyback, receipt: BridgeReceipt)
   ensures (inv(b) ==> canSettleApproval(b, receipt) ==> alwaysSourcesOnce(settleApproval(b, receipt)))
   ensures (inv(b) ==> canSettleApproval(b, receipt) ==> alwaysRuntimeSound(settleApproval(b, receipt)))
   ensures (inv(b) ==> canSettleApproval(b, receipt) ==> alwaysShareBounded(settleApproval(b, receipt)))
@@ -447,7 +447,7 @@ lemma loseSend_ensures(b: Buyback, tx: int)
   }
 }
 
-lemma settleOrder_ensures(b: Buyback, receipt: SendReceipt)
+lemma settleOrder_ensures(b: Buyback, receipt: BridgeReceipt)
   ensures (inv(b) ==> canSettleOrder(b, receipt) ==> alwaysSourcesOnce(settleOrder(b, receipt)))
   ensures (inv(b) ==> canSettleOrder(b, receipt) ==> alwaysRuntimeSound(settleOrder(b, receipt)))
   ensures (inv(b) ==> canSettleOrder(b, receipt) ==> alwaysShareBounded(settleOrder(b, receipt)))
