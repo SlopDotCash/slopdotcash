@@ -541,7 +541,7 @@ under `src/`.
   error), and export a property for each rule the page must keep, citing
   it as a test does. The types come from `@antithesishq/bombadil`, which
   `spec init` adds. Without the file, the defaults are checked.
-  `apps/app/test/bombadil.ts` is a worked one.
+  `vibestack/examples/fullstack/test/bombadil.ts` is a worked one.
 - **A broken property is saved.** The run is kept in
   `test/__traces__/bombadil`, which is not committed;
   `pnpm exec bombadil browser inspect test/__traces__/bombadil` shows each
