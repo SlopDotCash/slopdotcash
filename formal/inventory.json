@@ -133,7 +133,7 @@
     },
     {
       "path": ".github/workflows/reviewed-historical-points.yml",
-      "sha256": "cb961b52599d5c180d2f542ec3468c69f849361a8df0091d83f4eda8ea3287e1",
+      "sha256": "b58d09eb8b0366790bcd5090a8d4121cbc01a42e5241fd50c81d3e2e1bcc23c0",
       "models": ["formal/models/points/source_import.qnt"],
       "candidateLines": [],
       "review": "mapped-abstraction"
@@ -4852,9 +4852,9 @@
     },
     {
       "path": "scripts/value-merge-ingestion.ts",
-      "sha256": "62734faf9f2d6bb99efd36028b74fef100cedb6032d779ef13b9a5ebd40ef29c",
+      "sha256": "c8e663c51148f4d729e5ac192d5b8bf3da868c282fc98df72087160a682f2f55",
       "models": ["formal/models/slopbot/merge_evidence_acquisition.qnt"],
-      "candidateLines": [286, 287],
+      "candidateLines": [289, 290],
       "review": "mapped-abstraction"
     },
     {

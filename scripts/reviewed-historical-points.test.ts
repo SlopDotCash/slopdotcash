@@ -2689,3 +2689,27 @@ for (const fault of [
       ).toThrow();
   });
 }
+
+test("historical publication installs the canonical merge runtime before verification", async () => {
+  const workflow = await Bun.file(
+    new URL(
+      "../.github/workflows/reviewed-historical-points.yml",
+      import.meta.url,
+    ),
+  ).text();
+  expect(workflow).toContain("timeout-minutes: 90");
+  const install = workflow.indexOf(
+    'scripts/install-value-merge-git.ts "$RUNNER_TEMP/value-merge-git"',
+  );
+  const verify = workflow.indexOf("scripts/run-reviewed-historical-points.ts");
+  expect(install).toBeGreaterThan(0);
+  expect(verify).toBeGreaterThan(install);
+  expect(workflow).toContain(
+    '"$RUNNER_TEMP/value-merge-git/bin" >> "$GITHUB_PATH"',
+  );
+  const source = await Bun.file(
+    new URL("./value-merge-ingestion.ts", import.meta.url),
+  ).text();
+  expect(source).toContain('["fetch", "fsck"].includes(args[0])');
+  expect(source).toContain(": command.options.timeout");
+});
