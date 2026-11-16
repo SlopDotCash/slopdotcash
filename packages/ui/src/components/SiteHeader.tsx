@@ -19,7 +19,8 @@ export function SiteHeader({ brand, nav, account, className, ...props }: SiteHea
     <header className={cn("sticky top-0 z-40 border-b border-border bg-background", className)} {...props}>
       <div className="mx-auto flex h-14 max-w-(--breakpoint-lg) items-center gap-4 px-4">
         {brand}
-        <div className="min-w-0 flex-1 overflow-x-auto">{nav}</div>
+        {/* Room inside the scroller for the focus ring, which it would otherwise clip. */}
+        <div className="min-w-0 flex-1 overflow-x-auto p-1">{nav}</div>
         {account}
       </div>
     </header>
