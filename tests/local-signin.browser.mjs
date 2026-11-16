@@ -279,7 +279,7 @@ try {
             .count(),
           0,
         );
-        for (const name of ["Wallets", "Email preferences"]) {
+        for (const name of ["Wallets", "Email"]) {
           const section = page.getByRole("region", { name, exact: true });
           await section.waitFor({ state: "visible" });
           assert.equal(await section.locator("summary").count(), 0);
