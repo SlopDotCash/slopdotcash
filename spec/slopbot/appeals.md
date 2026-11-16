@@ -17,10 +17,14 @@ the [penalty journal](../points/penalties.md) supply. The debit is either
 zero (no debit row: not closed, not penalty eligible, or a zero-debit
 category) or exactly the published table debit of the subject's category
 under the row's table version, so escalation by debit always follows the
-table. Value disputes use the
-same phases with their own subject in [value disputes](./valueDisputes.md).
-Upheld effects on GitHub and on the debit belong to closure and the penalty
-journal, which consume this machine's outcome.
+table. The same phases and escalation criteria govern the other appealable
+subjects, each with its own identity: a Points award revision in
+[Points disputes](../points/disputes.md), a retained value assessment in
+[value disputes](./valueDisputes.md), an account ban in
+[participation restrictions](../access.md) and a project restriction in
+[enforcement](../security/enforcement.md). Upheld effects on GitHub and on
+the debit belong to the close attempt and the penalty journal, which consume
+this machine's outcome in the [Slopbot composition](./composition.md).
 
 ## Story: The author appeals and Slopbot triages first
 
