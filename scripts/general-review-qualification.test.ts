@@ -82,7 +82,7 @@ test("general-review qualification refuses an absent or irrelevant limitation", 
   }
 });
 
-test("general-review provider failure never starts a fallback request", async () => {
+test("general-review receipted failures retain the two-request ceiling", async () => {
   const source = provider(null, 503);
   await expect(
     qualifyGeneralReview(
@@ -91,10 +91,10 @@ test("general-review provider failure never starts a fallback request", async ()
       source.fetch,
     ),
   ).rejects.toThrow();
-  expect(source.requests).toHaveLength(1);
+  expect(source.requests).toHaveLength(2);
 });
 
-test("general-review transport allows only one zero-cost request", async () => {
+test("general-review transport allows only two zero-cost requests", async () => {
   const source = provider();
   const transport = qualificationTransport(source.fetch, "general-review");
   const request = () =>
@@ -106,9 +106,11 @@ test("general-review transport allows only one zero-cost request", async () => {
       }),
     });
   await transport.fetch(request());
+  expect(await transport.mayCall()).toBe(true);
+  await transport.fetch(request());
   expect(await transport.mayCall()).toBe(false);
   await expect(transport.fetch(request())).rejects.toThrow();
-  expect(source.requests).toHaveLength(1);
+  expect(source.requests).toHaveLength(2);
 });
 
 test("general-review dry run prepares the case without calling a provider", async () => {
@@ -120,4 +122,26 @@ test("general-review dry run prepares the case without calling a provider", asyn
     requests: 0,
   });
   expect(source.requests).toHaveLength(0);
+});
+
+test("general review follows an exact Orbio quota rejection to a real served verdict", async () => {
+  const fallback = provider();
+  let calls = 0;
+  const result = await qualifyGeneralReview(
+    { ORBIO_API_KEY: "synthetic-orbio", SURPLUS_API_KEY: "synthetic-surplus" },
+    false,
+    (async (input, init) => {
+      calls++;
+      if (calls === 1)
+        return Response.json(
+          { error: { type: "insufficient_quota" } },
+          { status: 402 },
+        );
+      return fallback.fetch(input, init);
+    }) as typeof fetch,
+  );
+  expect(result.provider).toBe("surplus");
+  expect(result.requests).toBe(2);
+  expect(result.outcome).toBe("marker uncertainty preserved");
+  expect(calls).toBe(2);
 });

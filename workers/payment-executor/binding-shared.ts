@@ -175,7 +175,8 @@ function selectDeployment(
  * accepted only when it is an EVM registry network whose chain and chain id
  * both match the registry entry, or the local Anvil chain under the
  * integration override. A mainnet network also needs its reviewed
- * MAINNET_EXECUTION value, which is on for Base mainnet only.
+ * MAINNET_EXECUTION value, which is on for Base, Robinhood Chain and Solana
+ * mainnet.
  */
 export function selectReviewedEvmDeployment(
   env: Pick<

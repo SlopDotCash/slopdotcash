@@ -1,13 +1,16 @@
 // @source workers/identity/index.ts
 // @source workers/identity/handler.ts
 // @evidence workers/identity/failed-callback.test.ts
+// @evidence workers/identity/github-identity.test.ts
 // One resolveGithubIdentity invocation, at most one token request and one user
 // request, with finite HTTP/body/value classes. No retries. Token classes
 // abstract object shape, string length 16..512 and exact bearer/Bearer types;
 // user classes abstract positive safe-integer id, login syntax, and optional
 // type User + node-id syntax. readBoundedJson's 64KiB/error behavior is a
-// predicate. Existing callback tests inject the resolver: they do not execute
-// these real token/user fetch and parser branches.
+// predicate. Callback tests inject the resolver; github-identity.test.ts
+// exercises its actual token/user fetch and parser branches with synthetic
+// transport responses, including secret-safe diagnostic fields. These tests
+// do not prove a successful live GitHub exchange.
 // Fixed provider URLs, configured callback/form/PKCE binding, TLS, redirects,
 // GitHub truth and the two
 // 10-second fetch abort signals are external transport assumptions. There is

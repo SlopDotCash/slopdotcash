@@ -100,8 +100,10 @@ is accepted (Base Sepolia, Robinhood Chain Testnet, Ethereum Sepolia, Solana
 Devnet and Testnet); each network's chain and chain id come from
 `src/lib/escrow-policy.mjs`. A mainnet network (Base, Ethereum, Robinhood
 Chain, Solana) is accepted only when its value in `mainnet-execution.mjs` is
-`true`. Only `base-mainnet` is `true` (owner activation of 24 October 2026,
-`contracts/DEPLOY-MAINNET.md` section 3.6); every other value is `false`. Only
+`true`. `base-mainnet` is `true` (owner activation of 24 October 2026,
+`contracts/DEPLOY-MAINNET.md` section 3.6), and so are `robinhood-mainnet` and
+`solana-mainnet` (operator decision of 14 November 2026, section 3.7);
+`ethereum` is `false`. Only
 a reviewed pull request that records that network's production activation can
 change one. The local integration
 override exists only in the core APIs and is not forwarded by the hosted

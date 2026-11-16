@@ -123,6 +123,10 @@ returns the separate ten-minute contributor session described in
   persisted.
 - Expired flows and assertions are removed hourly. Trace retention is
   unaffected.
+- OAuth failures emit `github_identity_failed` with the token/user stage,
+  a fixed reason, HTTP status when available and an allowlisted OAuth error.
+  Unknown provider errors, response bodies and request values remain excluded.
+  Custom console logs remain enabled while invocation logs stay disabled.
 - Response bodies and application logs never contain GitHub codes or access
   tokens. Persisted Worker invocation logs are disabled because OAuth codes
   arrive in the standard callback query parameter. Do not enable full-URL

@@ -209,6 +209,8 @@ return new Response(null,{status:204});}catch{return new Response(null,{status:5
   assert.ok(requests.every((row) => row.projectId !== "zz-unrelated"));
   // Actual D1 execution crosses the cutoff after JavaScript has bound an
   // otherwise valid edit. The early and opted-out cases must still work.
+  // The recipient is proposed 0, so no edit here is a cut: a cut this close
+  // to the cutoff is refused by its 24-hour notice window instead.
   const template = JSON.parse(
     (
       await db
@@ -252,7 +254,7 @@ return new Response(null,{status:204});}catch{return new Response(null,{status:5
       .bind(cutoffPeriod, cutoffText, cutoffHash, "e".repeat(64), cutoffStamp),
     db
       .prepare(
-        "INSERT INTO monthly_reward_base_rows VALUES('eliza',?,'101','recipient','1',?)",
+        "INSERT INTO monthly_reward_base_rows VALUES('eliza',?,'101','recipient','0',?)",
       )
       .bind(cutoffPeriod, "f".repeat(64)),
   ]);

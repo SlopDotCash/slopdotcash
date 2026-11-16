@@ -69,6 +69,7 @@ test("only the current registry and exact complete collection authorize apply", 
     { ...receipt, ownershipComplete: false },
     { ...receipt, completeProofs: 1 },
     { ...receipt, totalPositivePools: input.candidates.length - 1 },
+    { ...receipt, projects: ["feed"] },
   ])
     expect(() =>
       verifyCorrectionCollection(input, invalid, registry, true),

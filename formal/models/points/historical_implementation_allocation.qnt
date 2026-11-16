@@ -1,10 +1,15 @@
 // @source src/lib/points-implementation-corrections.ts
+// @source src/lib/original-contributor-repair.ts
 // @source scripts/collect-implementation-corrections.ts
+// @source scripts/points-correction-registry.ts
 // @source scripts/prepare-implementation-corrections.ts
 // @source scripts/points-protection-sql.ts
 // @source scripts/generate-points.ts
 // @source .github/workflows/points-implementation-corrections.yml
 // @evidence scripts/points-implementation-corrections.test.ts
+// @evidence scripts/october-exact-source-proof.test.ts
+// @evidence workers/slopbot/value-original-repair.test.ts
+// @evidence scripts/points-correction-registry.test.ts
 // @evidence scripts/prepare-implementation-corrections.test.ts
 // @evidence scripts/points-protection-sql.test.ts
 // One existing three-Point pool, one manifest, three immutable actor identities,
