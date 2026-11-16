@@ -715,6 +715,15 @@ try {
   );
   assert.equal(
     sqlite
+      .query<{ n: number }, [string]>(
+        "SELECT count(*) n FROM vault_month_starts WHERE vault=?",
+      )
+      .get(vault)?.n,
+    0,
+    "Private bounty vaults do not record ordinary monthly funding evidence",
+  );
+  assert.equal(
+    sqlite
       .query<{ n: number }, []>("SELECT count(*) n FROM payment_obligations")
       .get()?.n,
     ordinaryDeployment ? 1 : 0,
