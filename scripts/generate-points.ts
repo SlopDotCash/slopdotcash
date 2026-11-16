@@ -321,8 +321,9 @@ async function archivePaths(directory: string): Promise<string[]> {
  * revisions in the chain. A snapshot application records its digest in
  * the journal coverage when it appends a revision, while a batch append
  * never records coverage. An award is batch-owned when its latest
- * revision carries the batch rule with a digest absent from the coverage.
- * A snapshot-owned award is never zeroed here, even when the snapshot
+ * revision carries the batch rule with a digest absent from coverage and
+ * no authoritative value decision. A snapshot-owned award is never zeroed
+ * here, even when the snapshot
  * that supplied it is absent from this run's inputs; snapshot corrections
  * stay with applyPointsSnapshot. An already-zero latest award needs no
  * successor, so replaying the same inputs appends nothing. Removing a whole
