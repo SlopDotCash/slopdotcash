@@ -18,9 +18,14 @@ projection and emits no signing or broadcasting effects.
 
 ### A standard award freezes its network, asset and two split amounts
 
-The case admission supplies the approved direct award, its immutable case
-revision and proof of exclusivity from the separate bounty vault. The reviewed
-route fixes the fee wallet. The case has no payment request until the current
+The [private case](../security/cases.md) supplies the approval through
+`caseApproval`: a committed `DirectAward` of a standard split, its exact gross
+amount, asset and immutable case revision. Exclusivity from the separate
+bounty vault and from every other report of the same root cause is the
+`DirectHold` of the [project bounty machine](../security/bounty.md). A
+full-award case never commits a direct standard award, so this journal can
+never pay it as 75/25. The reviewed route record (from the settlement route
+registry) fixes the network, asset and fee wallet. The case has no payment request until the current
 authorized reporter and payer, reporter consent and source proof are captured.
 A protocol-v2 EVM intent reserves adjacent nonces atomically, with the fee
 first. The cryptographic read proves the pending nonce and the durable store
@@ -29,11 +34,18 @@ one exact message containing both transfers.
 
 ```quint
 import money as M from "./money"
+import terms as T from "../security/terms"
+import cases as C from "../security/cases"
 type Network = Base | Ethereum | Robinhood | Solana
 type Lane = Researcher | Fee | Both
 type Wallet = { claim: int, address: str, digest: str }
 type Terms = { caseId: int, project: int, finding: int, payerActor: int, reporterActor: int, network: Network, asset: str,
-  feeWallet: str, gross: M::Amount }
+  feeWallet: str, gross: M::Amount, split: T::AwardSplit }
+type CaseApproval = { caseId: int, caseRevision: int, direct: bool, split: T::AwardSplit, gross: M::Amount, asset: str, rootCause: int }
+type QualifiedRoute = { network: Network, asset: str, feeWallet: str }
+pure def caseApproval(caseId: int, c: C::PrivateCase): CaseApproval = { caseId: caseId, caseRevision: c.revision,
+  direct: c.award == C::Approved and c.commitment == C::DirectAward, split: c.terms.split, gross: c.grossChosen,
+  asset: c.terms.asset, rootCause: c.rootCause }
 type Intent = { active: bool, generation: int, payer: Wallet, reporter: Wallet, researcherNonce: int, feeNonce: int,
   researcherAnchor: int, feeAnchor: int, message: str, earlierMessages: List[str] }
 type Transfer = { lane: Lane, network: Network, asset: str, payerAddress: str, researcherAddress: str, feeAddress: str,
@@ -51,7 +63,7 @@ pure val noWallet: Wallet = { claim: 0, address: "", digest: "" }
 pure val noIntent: Intent = { active: false, generation: 0, payer: noWallet, reporter: noWallet,
   researcherNonce: -1, feeNonce: -1, researcherAnchor: 0, feeAnchor: 0, message: "", earlierMessages: List() }
 pure val noTerms: Terms = { caseId: 0, project: 0, finding: 0, payerActor: 0, reporterActor: 0, network: Base,
-  asset: "", feeWallet: "", gross: M::zero }
+  asset: "", feeWallet: "", gross: M::zero, split: T::StandardSplit }
 pure val noRetirement: Retirement = { kind: Unverified, generation: 0, lane: Researcher, nonce: -1, message: "",
   coveredMessages: List(), height: 0, observation: "", certified: false, lowerSettled: false }
 pure val noTransfer: Transfer = { lane: Researcher, network: Base, asset: "", payerAddress: "", researcherAddress: "",
@@ -64,10 +76,21 @@ pure def validWallet(wallet: Wallet): bool = wallet.claim > 0 and wallet.address
 pure def validTerms(terms: Terms): bool = terms.caseId > 0 and terms.project > 0 and terms.finding > 0
   and terms.payerActor > 0 and terms.reporterActor > 0 and terms.payerActor != terms.reporterActor and terms.asset != ""
   and terms.feeWallet != "" and M::validAmount(terms.gross) and M::positiveAmount(terms.gross) and M::privateSplitPossible(terms.gross)
-pure def canAdmit(b: DirectBounty, terms: Terms, caseVersion: int, approvedExclusive: bool, routeQualified: bool): bool =
-  not(b.admitted) and validTerms(terms) and caseVersion > 0 and approvedExclusive and routeQualified
-pure def admit(b: DirectBounty, terms: Terms, caseVersion: int, approvedExclusive: bool, routeQualified: bool): DirectBounty =
+  and terms.split == T::StandardSplit
+pure def approvalMatches(terms: Terms, caseVersion: int, approval: CaseApproval, route: QualifiedRoute): bool =
+  approval.direct and approval.split == T::StandardSplit and approval.caseId == terms.caseId and approval.caseRevision == caseVersion
+    and approval.rootCause == terms.finding and approval.asset == terms.asset and M::equalAmounts(approval.gross, terms.gross)
+    and route.network == terms.network and route.asset == terms.asset and route.feeWallet == terms.feeWallet
+pure def canAdmit(b: DirectBounty, terms: Terms, caseVersion: int, approval: CaseApproval, route: QualifiedRoute): bool =
+  not(b.admitted) and validTerms(terms) and caseVersion > 0 and approvalMatches(terms, caseVersion, approval, route)
+pure def admit(b: DirectBounty, terms: Terms, caseVersion: int, approval: CaseApproval, route: QualifiedRoute): DirectBounty =
   { ...b, admitted: true, terms: terms, caseRevision: caseVersion }
+pure def lawFullAwardNeverAdmitted(terms: Terms, caseVersion: int, approval: CaseApproval, route: QualifiedRoute): bool =
+  (approval.split == T::FullAward or terms.split == T::FullAward) implies
+    not(validTerms(terms) and approvalMatches(terms, caseVersion, approval, route))
+pure def lawOnlyDirectCommitmentAdmitted(terms: Terms, caseVersion: int, c: C::PrivateCase, route: QualifiedRoute): bool =
+  approvalMatches(terms, caseVersion, caseApproval(terms.caseId, c), route) implies
+    c.award == C::Approved and c.commitment == C::DirectAward and c.terms.split == T::StandardSplit
 pure def canObserveCaseRevision(b: DirectBounty, caseVersion: int): bool = b.admitted and caseVersion > b.caseRevision
 pure def observeCaseRevision(b: DirectBounty, caseVersion: int): DirectBounty = { ...b, caseRevision: caseVersion }
 pure def canObserveWallets(b: DirectBounty, payerWallet: Wallet, reporterWallet: Wallet, authorizedRead: bool): bool =
@@ -274,7 +297,7 @@ pure val payerOne: Wallet = { claim: 1, address: "payer", digest: "payer-proof" 
 pure val reporterOne: Wallet = { claim: 1, address: "reporter", digest: "reporter-proof" }
 pure val reporterTwo: Wallet = { claim: 2, address: "new-reporter", digest: "new-proof" }
 pure val termsEvm: Terms = { caseId: 1, project: 1, finding: 1, payerActor: 1, reporterActor: 2,
-  network: Base, asset: "asset", feeWallet: "fees", gross: List(100) }
+  network: Base, asset: "asset", feeWallet: "fees", gross: List(100), split: T::StandardSplit }
 pure val termsSolana: Terms = { ...termsEvm, network: Solana }
 pure val evmIntent: Intent = { active: true, generation: 0, payer: payerOne, reporter: reporterOne,
   researcherNonce: 1, feeNonce: 0, researcherAnchor: 1, feeAnchor: 1, message: "", earlierMessages: List() }
@@ -303,6 +326,12 @@ pure val transferValues = Set(researcherTransfer).union(Set(feeTransfer)).union(
 pure val useValues = Set({ network: Base, transaction: "other-tx" }, { network: Base, transaction: "fee-tx" })
 pure val pairValues = Set({ researcher: researcherTransfer, fee: feeTransfer }, { researcher: researcherTransfer, fee: researcherTransfer })
 pure val caseVersionValues = Set(1, 2)
+pure val directCase: C::PrivateCase = { ...C::initial, submission: C::Verified, terms: T::standardTerms, revision: 1, award: C::Approved,
+  commitment: C::DirectAward, grossChosen: List(100), rootCause: 1 }
+pure val cValues = Set(C::initial, directCase, { ...directCase, terms: T::fullTerms, commitment: C::FullAwardHeld })
+pure val directApproval: CaseApproval = { caseId: 1, caseRevision: 1, direct: true, split: T::StandardSplit, gross: List(100), asset: "asset", rootCause: 1 }
+pure val approvalValues = Set(directApproval, { ...directApproval, caseRevision: 2 }, { ...directApproval, split: T::FullAward })
+pure val routeValues = Set({ network: Base, asset: "asset", feeWallet: "fees" }, { network: Solana, asset: "asset", feeWallet: "fees" })
 pure val observedRevisionValues = Set(1, 2, 3, 4, 5, 6, 7)
 pure val generationValues = Set(0, 1)
 pure val byValues = Set(1, 2)

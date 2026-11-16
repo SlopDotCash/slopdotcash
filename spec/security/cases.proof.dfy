@@ -1,29 +1,41 @@
-// A singleton set union keeps the old members and admits only its argument.
-lemma SingletonUnionMembers(values: seq<int>, value: int)
-  ensures forall x :: x in values + ProofLib.Filter((set_x: int) => !((set_x in values)), [value]) <==> x in values || x == value
+lemma revokeTriager_ensures(c: PrivateCase, by_: int, checkedEpoch: int, actor: int)
+  ensures (inv(c) ==> canRevokeTriager(c, by_, checkedEpoch, actor) ==> alwaysUnpaidHasNoAward(revokeTriager(c, by_, checkedEpoch, actor)))
+  ensures (inv(c) ==> canRevokeTriager(c, by_, checkedEpoch, actor) ==> alwaysVerifiedReceiptValid(revokeTriager(c, by_, checkedEpoch, actor)))
+  ensures (inv(c) ==> canRevokeTriager(c, by_, checkedEpoch, actor) ==> alwaysUnreceivedBlank(revokeTriager(c, by_, checkedEpoch, actor)))
+  ensures (inv(c) ==> canRevokeTriager(c, by_, checkedEpoch, actor) ==> alwaysTriagersExcludeReporter(revokeTriager(c, by_, checkedEpoch, actor)))
+  ensures (inv(c) ==> canRevokeTriager(c, by_, checkedEpoch, actor) ==> alwaysMembershipAudited(revokeTriager(c, by_, checkedEpoch, actor)))
+  ensures (inv(c) ==> canRevokeTriager(c, by_, checkedEpoch, actor) ==> alwaysDecidersExcludeReporter(revokeTriager(c, by_, checkedEpoch, actor)))
+  ensures (inv(c) ==> canRevokeTriager(c, by_, checkedEpoch, actor) ==> alwaysConfirmedHasRootCause(revokeTriager(c, by_, checkedEpoch, actor)))
+  ensures (inv(c) ==> canRevokeTriager(c, by_, checkedEpoch, actor) ==> alwaysRelatedApproval(revokeTriager(c, by_, checkedEpoch, actor)))
+  ensures (inv(c) ==> canRevokeTriager(c, by_, checkedEpoch, actor) ==> alwaysProposalCommitsNothing(revokeTriager(c, by_, checkedEpoch, actor)))
+  ensures (inv(c) ==> canRevokeTriager(c, by_, checkedEpoch, actor) ==> alwaysCommitmentMatchesAward(revokeTriager(c, by_, checkedEpoch, actor)))
+  ensures (inv(c) ==> canRevokeTriager(c, by_, checkedEpoch, actor) ==> alwaysApprovedWithinTerms(revokeTriager(c, by_, checkedEpoch, actor)))
+  ensures (inv(c) ==> canRevokeTriager(c, by_, checkedEpoch, actor) ==> alwaysFullAwardHeld(revokeTriager(c, by_, checkedEpoch, actor)))
+  ensures (inv(c) ==> canRevokeTriager(c, by_, checkedEpoch, actor) ==> alwaysStandardAwardRail(revokeTriager(c, by_, checkedEpoch, actor)))
+  ensures (inv(c) ==> canRevokeTriager(c, by_, checkedEpoch, actor) ==> alwaysCommittedFindingStands(revokeTriager(c, by_, checkedEpoch, actor)))
+  ensures (inv(c) ==> canRevokeTriager(c, by_, checkedEpoch, actor) ==> alwaysTriageEscalates(revokeTriager(c, by_, checkedEpoch, actor)))
+  ensures (inv(c) ==> canRevokeTriager(c, by_, checkedEpoch, actor) ==> alwaysTriageBoundToAppeal(revokeTriager(c, by_, checkedEpoch, actor)))
+  ensures (inv(c) ==> canRevokeTriager(c, by_, checkedEpoch, actor) ==> alwaysAppealState(revokeTriager(c, by_, checkedEpoch, actor)))
+  ensures (inv(c) ==> canRevokeTriager(c, by_, checkedEpoch, actor) ==> alwaysAppealSource(revokeTriager(c, by_, checkedEpoch, actor)))
+  ensures (inv(c) ==> canRevokeTriager(c, by_, checkedEpoch, actor) ==> stepReceiptFrozen(c, revokeTriager(c, by_, checkedEpoch, actor)))
+  ensures (inv(c) ==> canRevokeTriager(c, by_, checkedEpoch, actor) ==> stepMembershipHistoryRetained(c, revokeTriager(c, by_, checkedEpoch, actor)))
+  ensures (inv(c) ==> canRevokeTriager(c, by_, checkedEpoch, actor) ==> stepRelatedPermanent(c, revokeTriager(c, by_, checkedEpoch, actor)))
+  ensures (inv(c) ==> canRevokeTriager(c, by_, checkedEpoch, actor) ==> stepDecidersRetained(c, revokeTriager(c, by_, checkedEpoch, actor)))
+  ensures (inv(c) ==> canRevokeTriager(c, by_, checkedEpoch, actor) ==> stepCommittedAwardPermanent(c, revokeTriager(c, by_, checkedEpoch, actor)))
+  ensures (inv(c) ==> canRevokeTriager(c, by_, checkedEpoch, actor) ==> stepTriageIsAdvice(c, "revokeTriager", revokeTriager(c, by_, checkedEpoch, actor)))
+  ensures (inv(c) ==> canRevokeTriager(c, by_, checkedEpoch, actor) ==> stepAppealHistoryAppendOnly(c, revokeTriager(c, by_, checkedEpoch, actor)))
 {
-  forall x: int
-    ensures x in values + ProofLib.Filter((set_x: int) => !((set_x in values)), [value]) <==> x in values || x == value
-  {
-    ProofLib.FilterMember((set_x: int) => !((set_x in values)), [value], x);
+  if inv(c) && canRevokeTriager(c, by_, checkedEpoch, actor) {
+    var keep := (t: int) => (t != actor);
+    var after := revokeTriager(c, by_, checkedEpoch, actor);
+    RevokedTriagers(c, by_, checkedEpoch, actor);
+    ProofLib.FilterMember(keep, c.triagers, c.reporter);
+    assert !(c.reporter in after.triagers);
   }
 }
 
-lemma decide_ensures(c: PrivateCase, by_: int, checkedEpoch: int, finding: Finding, related: bool)
-  ensures (inv(c) ==> canDecide(c, by_, checkedEpoch, finding, related) ==> alwaysScreeningIsAdvisory(decide(c, by_, checkedEpoch, finding, related)))
-  ensures (inv(c) ==> canDecide(c, by_, checkedEpoch, finding, related) ==> alwaysAwardHasAcceptance(decide(c, by_, checkedEpoch, finding, related)))
-  ensures (inv(c) ==> canDecide(c, by_, checkedEpoch, finding, related) ==> alwaysAppealState(decide(c, by_, checkedEpoch, finding, related)))
-  ensures (inv(c) ==> canDecide(c, by_, checkedEpoch, finding, related) ==> alwaysAppealSource(decide(c, by_, checkedEpoch, finding, related)))
-  ensures (inv(c) ==> canDecide(c, by_, checkedEpoch, finding, related) ==> alwaysRelatedApproval(decide(c, by_, checkedEpoch, finding, related)))
-  ensures (inv(c) ==> canDecide(c, by_, checkedEpoch, finding, related) ==> alwaysVerifiedPatchMatches(decide(c, by_, checkedEpoch, finding, related)))
-  ensures (inv(c) ==> canDecide(c, by_, checkedEpoch, finding, related) ==> alwaysExactDisclosure(decide(c, by_, checkedEpoch, finding, related)))
-  ensures (inv(c) ==> canDecide(c, by_, checkedEpoch, finding, related) ==> stepPreservesApprovedAward(c, decide(c, by_, checkedEpoch, finding, related)))
+// A revocation keeps exactly the other triagers, through the library's filter view.
+lemma RevokedTriagers(c: PrivateCase, by_: int, checkedEpoch: int, actor: int)
+  ensures revokeTriager(c, by_, checkedEpoch, actor).triagers == ProofLib.Filter((t: int) => (t != actor), c.triagers)
 {
-  if inv(c) && canDecide(c, by_, checkedEpoch, finding, related) {
-    SingletonUnionMembers(c.deciders, by_);
-    var after := decide(c, by_, checkedEpoch, finding, related);
-    assert after.deciders == c.deciders + ProofLib.Filter((set_x: int) => !((set_x in c.deciders)), [by_]);
-    assert by_ in after.deciders;
-    assert |after.deciders| > 0;
-  }
 }
