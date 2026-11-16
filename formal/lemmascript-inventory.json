@@ -16,19 +16,11 @@
     "build outputs"
   ],
   "counts": {
-<<<<<<< HEAD
     "files": 790,
-    "functions": 12242,
+    "functions": 12271,
     "selectedContractTargets": 188,
-    "unprovedFunctions": 12054,
+    "unprovedFunctions": 12083,
     "nonTypeScriptFiles": 59
-=======
-    "files": 780,
-    "functions": 12130,
-    "selectedContractTargets": 188,
-    "unprovedFunctions": 11942,
-    "nonTypeScriptFiles": 57
->>>>>>> 5e6743b1aa0f0f7d4d2ac34208dbe1fc75a376b4
   },
   "limits": [
     "Inventory is accounting, not verification. Contract targets are not counted as proved without successful current evidence.",
