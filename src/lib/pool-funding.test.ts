@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
 import {
   asShown,
+  listedThisMonth,
   type PoolFundingIndex,
   poolFunded,
   poolFundingStatus,
@@ -390,4 +391,66 @@ test("a vault without pledge support reads exactly as before when the API omits 
       poolFundingStatus(project("250000000"), explicitNull, DEC(at)),
     ).toEqual(poolFundingStatus(project("250000000"), legacy, DEC(at)));
   }
+});
+
+function active(
+  cap: string,
+  patch: Partial<ProjectDefinition> = {},
+): ProjectDefinition {
+  return { ...project(cap), status: "active", ...patch } as ProjectDefinition;
+}
+
+test("only a funded monthly pool is listed this month", () => {
+  expect(listedThisMonth(active("250000000"), index({}), NOW)).toBe(true);
+  expect(
+    listedThisMonth(
+      active("250000000"),
+      index({ freeBalance: "249999999" }),
+      NOW,
+    ),
+  ).toBe(false);
+  // A points-only pool and a project with no vault are not funded either.
+  expect(listedThisMonth(active("0"), index({}), NOW)).toBe(false);
+  expect(listedThisMonth(active("250000000"), new Map(), NOW)).toBe(false);
+});
+
+test("an open security program and other reward kinds stay listed", () => {
+  const empty: PoolFundingIndex = new Map();
+  expect(
+    listedThisMonth(
+      active("0", {
+        securityBounty: { status: "open" },
+      } as unknown as Partial<ProjectDefinition>),
+      empty,
+      NOW,
+    ),
+  ).toBe(true);
+  // A draft program does not keep an unfunded pool listed.
+  expect(
+    listedThisMonth(
+      active("0", {
+        securityBounty: { status: "draft" },
+      } as unknown as Partial<ProjectDefinition>),
+      empty,
+      NOW,
+    ),
+  ).toBe(false);
+  expect(
+    listedThisMonth(
+      active("0", {
+        reward: { kind: "external-prize-share" },
+      } as unknown as Partial<ProjectDefinition>),
+      empty,
+      NOW,
+    ),
+  ).toBe(true);
+  // A paused project keeps its existing listing.
+  expect(listedThisMonth(active("0", { status: "paused" }), empty, NOW)).toBe(
+    true,
+  );
+});
+
+test("unread funding lists every project as before", () => {
+  expect(listedThisMonth(active("250000000"), null, NOW)).toBe(true);
+  expect(listedThisMonth(active("0"), null, NOW)).toBe(true);
 });

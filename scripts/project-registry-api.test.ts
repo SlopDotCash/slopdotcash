@@ -2522,6 +2522,8 @@ async function publicationRequests() {
           return { commitSha: livePin.commitSha, templateSha256 };
         },
       ),
+    // Funding is covered by its own discovery test; null lists as before.
+    poolFunding: async () => null,
     cache,
   };
   const get = (path: string) =>

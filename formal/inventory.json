@@ -750,8 +750,11 @@
     },
     {
       "path": "backend/projects/pool-funding.ts",
-      "sha256": "8a7e4c9dabc04d35a9dc0f250957cc48501880f9330462d2266ee5ddd6b95f6f",
-      "models": ["formal/models/ui/ui_pool_funding.qnt"],
+      "sha256": "2ad6fb4dc749fb8ffa86d88435440548e219b4644d792522068ddd30a17d4280",
+      "models": [
+        "formal/models/ui/ui_pool_funding.qnt",
+        "formal/models/ui/ui_project_listing.qnt"
+      ],
       "candidateLines": [8, 13],
       "review": "mapped-abstraction"
     },
@@ -787,14 +790,15 @@
     },
     {
       "path": "backend/projects/skill-publication.ts",
-      "sha256": "c4de162e6cc56f97c83e4b2e7b9a62eef89642ea447cd64920cc5e313aad3059",
+      "sha256": "a6b17a0120796322487a37ad3b135a17caa681a3d6a278e9b52daa460a71a4bb",
       "models": [
         "formal/models/api/api_project_registry.qnt",
         "formal/models/api/project_skill_publication.qnt",
+        "formal/models/ui/ui_project_listing.qnt",
         "formal/models/vetting/vetting_admission_clearance.qnt"
       ],
       "candidateLines": [
-        140, 142, 152, 177, 195, 205, 232, 235, 243, 261, 266, 302
+        152, 154, 164, 189, 223, 234, 261, 264, 272, 290, 295, 331
       ],
       "review": "mapped-abstraction"
     },
@@ -2127,8 +2131,11 @@
     },
     {
       "path": "functions/[[path]].ts",
-      "sha256": "b97369976ca02b5a98a72967d5e5d4a04a862a97bc937e77232d9b2331444897",
-      "models": ["formal/models/api/project_skill_publication.qnt"],
+      "sha256": "91fb4b7107ffe372371c78c2f83c35f96775742e0a9d099859a3f859b18e5c11",
+      "models": [
+        "formal/models/api/project_skill_publication.qnt",
+        "formal/models/ui/ui_project_listing.qnt"
+      ],
       "candidateLines": [],
       "review": "mapped-abstraction",
       "statelessReason": "Re-exports the stateless response middleware; no independent transition."
@@ -5131,7 +5138,7 @@
     },
     {
       "path": "src/App.tsx",
-      "sha256": "8a250513b4fc953d51b30b29a6bfab638853a9ac53784d80fe37b89b9c87fc65",
+      "sha256": "52edb93b2af4890be28eb6cc1640aa13dd425443891dea937fb2175ab442d9d5",
       "models": [
         "formal/models/ui/ui_clipboard_requests.qnt",
         "formal/models/ui/ui_cycle_archive.qnt",
@@ -5143,20 +5150,21 @@
         "formal/models/ui/ui_points_disputes.qnt",
         "formal/models/ui/ui_project_discovery.qnt",
         "formal/models/ui/ui_project_images.qnt",
+        "formal/models/ui/ui_project_listing.qnt",
         "formal/models/ui/ui_project_work.qnt",
         "formal/models/ui/ui_public_x_profile.qnt",
         "formal/models/ui/ui_setup_check_lifetime.qnt",
         "formal/models/ui/ui_vetting_inventory.qnt"
       ],
       "candidateLines": [
-        14, 16, 300, 310, 320, 331, 340, 341, 342, 343, 344, 346, 347, 408, 463,
-        464, 465, 468, 491, 557, 588, 625, 671, 675, 677, 685, 738, 799, 855,
-        884, 888, 1092, 1107, 1121, 1131, 1161, 1164, 1226, 1229, 1231, 1235,
-        1236, 1244, 1263, 1267, 1275, 1276, 1283, 1287, 1322, 1366, 1369, 1386,
-        1387, 1437, 1440, 1443, 1444, 1445, 1446, 1450, 1470, 1472, 1549, 1550,
-        1555, 1556, 1561, 1599, 1600, 1603, 1604, 1607, 1608, 1627, 1628, 1634,
-        1639, 1641, 1645, 1646, 1704, 1714, 1745, 1747, 1772, 1773, 1790, 1791,
-        1802, 1804, 1817, 1820, 1831
+        14, 16, 302, 312, 322, 333, 342, 343, 344, 345, 346, 348, 349, 410, 465,
+        466, 467, 470, 493, 559, 590, 627, 673, 677, 679, 687, 740, 801, 857,
+        887, 895, 1099, 1114, 1128, 1138, 1176, 1178, 1181, 1245, 1248, 1250,
+        1254, 1255, 1263, 1282, 1286, 1294, 1295, 1302, 1306, 1341, 1385, 1388,
+        1405, 1406, 1456, 1459, 1462, 1463, 1464, 1465, 1469, 1472, 1492, 1494,
+        1571, 1572, 1577, 1578, 1583, 1621, 1622, 1625, 1626, 1629, 1630, 1649,
+        1650, 1656, 1661, 1663, 1667, 1668, 1726, 1736, 1767, 1769, 1794, 1795,
+        1812, 1813, 1824, 1826, 1839, 1842, 1853
       ],
       "review": "mapped-abstraction"
     },
@@ -5760,11 +5768,14 @@
     },
     {
       "path": "src/PublicPages.tsx",
-      "sha256": "098b1480f03a6d88ddcb44c8c42887c22bcb99589781e2c12a0eeae7472255b0",
-      "models": ["formal/models/ui/ui_record_display.qnt"],
+      "sha256": "6e323cd70105be9fc252ac12dd2178827d3acb1f198f0b0bab10833f00ba8a4f",
+      "models": [
+        "formal/models/ui/ui_project_listing.qnt",
+        "formal/models/ui/ui_record_display.qnt"
+      ],
       "candidateLines": [
-        221, 306, 317, 374, 403, 404, 406, 407, 440, 442, 453, 602, 603, 605,
-        606, 613, 660, 662, 761
+        222, 307, 318, 375, 404, 405, 407, 408, 441, 443, 454, 603, 604, 606,
+        607, 614, 663, 665, 764
       ],
       "review": "mapped-abstraction",
       "statelessReason": "Public explanatory/sponsor rendering derives from supplied registry/snapshot props; no local state/effect or mutation. Child state remains separately modeled."
@@ -6622,9 +6633,14 @@
     },
     {
       "path": "src/lib/pool-funding.ts",
-      "sha256": "6fcd88156a09f2f41a2347e90c241b13f0d7751fdfff3b1d3ed7de310cc6937c",
-      "models": ["formal/models/ui/ui_pool_funding.qnt"],
-      "candidateLines": [13, 18, 191, 193, 195, 207, 235, 250, 271, 272, 281],
+      "sha256": "82154f50ad504284bd8008a9fb6b7745803f5b01d97f0b4ba6b6669bf88ed611",
+      "models": [
+        "formal/models/ui/ui_pool_funding.qnt",
+        "formal/models/ui/ui_project_listing.qnt"
+      ],
+      "candidateLines": [
+        13, 18, 191, 193, 195, 207, 235, 250, 271, 272, 281, 331, 333
+      ],
       "review": "mapped-abstraction"
     },
     {
@@ -18223,6 +18239,28 @@
         "ownerFailureUsesInitialTest",
         "priorCustomFailureIsRetainedTest",
         "projectReplacementResetsErrorsTest"
+      ]
+    },
+    {
+      "path": "formal/models/ui/ui_project_listing.qnt",
+      "sha256": "b431ffa8bbd59d26aa6c8326c6a40cee57e0d34d98016c7b73b321cba82a4a3b",
+      "sources": [
+        "backend/projects/pool-funding.ts",
+        "backend/projects/skill-publication.ts",
+        "functions/[[path]].ts",
+        "src/App.tsx",
+        "src/PublicPages.tsx",
+        "src/lib/pool-funding.ts"
+      ],
+      "scenarios": [
+        "externalPrizeStaysListedTest",
+        "failedReadsListAsBeforeTest",
+        "fundedPoolIsListedTest",
+        "fundingTheMonthListsItTest",
+        "loadingListsAsBeforeTest",
+        "pausedProjectKeepsItsListingTest",
+        "securityProgramStaysListedTest",
+        "unfundedPoolIsHiddenTest"
       ]
     },
     {

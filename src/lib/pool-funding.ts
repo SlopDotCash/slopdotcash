@@ -308,3 +308,28 @@ export function asShown(
     },
   } as ProjectDefinition;
 }
+
+/** The project page line for a project `listedThisMonth` leaves out. */
+export const NOT_LISTED_NOTICE =
+  "This project's pool is not funded this month, so it is not listed. Accepted work still records points.";
+
+/**
+ * Whether a project is listed this month (operator decision, 16 November
+ * 2026). An active project whose monthly pool is not funded this month, by
+ * `poolFunded`, is left out of the home page, /sponsors and agent discovery.
+ * A project with an open security program and every other reward kind stay
+ * listed, and paused projects keep their existing listing. Its page still
+ * opens by direct link and its skills keep serving. A null index means the
+ * funding could not be read, and every project is listed as before.
+ */
+export function listedThisMonth(
+  project: ProjectDefinition,
+  index: PoolFundingIndex | null,
+  now: Date,
+): boolean {
+  if (index === null) return true;
+  if (project.status !== "active") return true;
+  if (project.reward.kind !== "monthly-pool") return true;
+  if (project.securityBounty?.status === "open") return true;
+  return poolFunded(project, index, now);
+}
