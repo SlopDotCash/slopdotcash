@@ -20,6 +20,7 @@ catalog:
   eslint-plugin-boundaries: ^7.4.3
   eslint-plugin-react-hooks: ^7.1.1
   happy-dom: ^21.0.4
+  jscpd: ^5.4.2
   jsdom: ^31.0.1
   knip: ^6.45.1
   madge: ^8.0.0

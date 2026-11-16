@@ -83,7 +83,7 @@ consumed parent and an omitted source or conflicting claim refuse the read.
 
 ```quint
 pure def livingRows(h: History): List[Row] = h.rows.select(record => not(h.retired.contains(record.digest)))
-pure def stored(h: History, digest: int): Row =
+pure def rowOf(h: History, digest: int): Row =
   h.rows.select(record => record.digest == digest).nthOr(0, emptyRow)
 pure def ownSources(h: History, record: Row): bool =
   livingRows(h).every(owner =>
@@ -92,13 +92,13 @@ pure def ownClaims(h: History, record: Row): bool =
   livingRows(h).every(owner =>
     owner.claims.intersect(record.claims).size() == 0 or record.parents.contains(owner.digest))
 pure def completeParent(h: History, record: Row, digest: int): bool =
-  val parent = stored(h, digest)
+  val parent = rowOf(h, digest)
   parent.digest > 0 and parent.project == record.project and parent.sequence < record.sequence
     and not(h.retired.contains(parent.digest)) and parent.sources.subseteq(record.sources)
 pure def completeParents(h: History, record: Row): bool =
   record.parents.forall(digest => completeParent(h, record, digest))
 pure def exactRow(h: History, record: Row): bool =
-  record.exactRecord and record.digest > 0 and stored(h, record.digest).digest == 0 and record.project == h.project
+  record.exactRecord and record.digest > 0 and rowOf(h, record.digest).digest == 0 and record.project == h.project
     and record.sequence > h.cursor and record.sequence <= h.through and record.sources.size() > 0
     and record.sourceDigest > 0 and record.membersDigest > 0 and record.claimsDigest > 0 and record.rubric > 0
     and record.revisionReason == (record.parents.size() > 0 or record.legacy.size() > 0)
@@ -167,7 +167,7 @@ type Observation = { sourceDigest: int, rubric: int, membersDigest: int, claimsD
   completeEvidence: bool, exactProducer: bool, validAssessment: bool, everyUnitAssessed: bool }
 pure def exactIds(left: Set[int], right: Set[int]): bool = left.subseteq(right) and right.subseteq(left)
 pure def decision(h: History, observation: Observation): Verdict =
-  val record = stored(h, h.selected)
+  val record = rowOf(h, h.selected)
   if (h.selected <= 0) Missing
   else if (not(observation.completeEvidence)) Incomplete
   else if (record.sourceDigest != observation.sourceDigest or record.rubric != observation.rubric) Stale
@@ -185,7 +185,7 @@ pure def mayReuseCurrent(h: History): bool = h.phase == Decided and (h.outcome =
 pure def lawMissingSelectionNotReusable(h: History, observation: Observation): bool =
   (canConsume(h, observation) and h.selected == 0) implies not(mayReuseCurrent(consume(h, observation)))
 pure def lawChangedLegacyHeadIsStale(h: History, observation: Observation): bool =
-  val record = stored(h, h.selected)
+  val record = rowOf(h, h.selected)
   (canConsume(h, observation) and h.selected > 0 and observation.completeEvidence
     and observation.sourceDigest == record.sourceDigest and observation.rubric == record.rubric
     and exactIds(observation.verifiedLegacySources, observation.observedSources) and not(exactIds(observation.legacy, record.legacy)))

@@ -6,9 +6,11 @@
     "node": ">=26"
   },
   "scripts": {
+    "start": "node --import vibelang/register test/served.vibe",
     "check": "node ../spec.ts check",
     "gen": "node ../spec.ts gen",
     "accept": "node ../spec.ts accept",
+    "typecheck": "vibelang --noEmit -p .",
     "test": "vitest run",
     "build": "vite build"
   },
