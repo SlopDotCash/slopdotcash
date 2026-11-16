@@ -63,7 +63,7 @@ pure def announce(c: Consent, provider: int, sameMetadata: bool, by: int): Conse
   val conflicted = if (conflict and not(c.conflicted.includes(provider))) c.conflicted.append(provider) else c.conflicted
   val shown = c.phase != Closed and c.phase != Accepted and c.phase != KeptSaved and c.selected == provider and conflict
   { ...c, announced: if (c.announced.includes(provider)) c.announced else c.announced.append(provider),
-    legacy: c.legacy.select(p => p != provider), conflicted: conflicted,
+    conflicted: conflicted,
     phase: if (shown) Refused else c.phase, request: if (shown) c.request + 1 else c.request }
 pure def canObserveLegacy(c: Consent, provider: int, by: int): bool = by == discovery and provider > 0
   and not(c.announced.includes(provider)) and not(c.legacy.includes(provider))
