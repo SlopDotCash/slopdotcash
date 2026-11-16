@@ -19,6 +19,7 @@ import { requireSolanaProbeCandidate } from "./probe-fee-solana-rpc";
 import {
   qualifySolanaRpcPair,
   SOLANA_PUBLIC_PAIR,
+  validateRetainedSolanaProof,
 } from "./qualify-solana-rpc-pair";
 import {
   cloudflare,
@@ -117,6 +118,59 @@ export async function verifyFeeSourceParity(
   return paths;
 }
 
+/** A failed pre-activation run may supply history, never current authority. */
+export function validatePriorRotationProof(
+  value: unknown,
+  proofBytes: Uint8Array,
+  pair: readonly string[],
+  expectedPriorSource: string,
+) {
+  const receipt = value as {
+    schemaVersion?: number;
+    phase?: string;
+    checkout?: string;
+    deployedSource?: string;
+    previousVersion?: string;
+    runId?: unknown;
+    candidateVersion?: unknown;
+    verifiedAt?: unknown;
+    proofSha256?: string;
+  } | null;
+  requireCondition(
+    receipt?.schemaVersion === 1 &&
+      receipt.phase === "qualification" &&
+      sourceSha.test(expectedPriorSource) &&
+      receipt.checkout === expectedPriorSource &&
+      sourceSha.test(receipt.deployedSource ?? "") &&
+      uuid.test(receipt.previousVersion ?? "") &&
+      receipt.runId === undefined &&
+      receipt.candidateVersion === undefined &&
+      receipt.verifiedAt === undefined &&
+      /^[a-f0-9]{64}$/u.test(receipt.proofSha256 ?? ""),
+    "Prior rotation was not stopped before activation",
+  );
+  requireCondition(
+    createHash("sha256").update(proofBytes).digest("hex") ===
+      receipt.proofSha256,
+    "Prior rotation proof digest differs from its receipt",
+  );
+  const proof = validateRetainedSolanaProof(
+    JSON.parse(new TextDecoder().decode(proofBytes)),
+    pair,
+  );
+  requireCondition(
+    proof.coverage.every(
+      (value) =>
+        value.complete &&
+        value.blocks === 211 &&
+        value.digest ===
+          "8a58871a15801484a89e2283728a3b76643100608c50553b9acfd770c8c99368",
+    ),
+    "Prior rotation history is incomplete",
+  );
+  return proof;
+}
+
 export async function rotateFeeSolanaRpc() {
   const sha = process.env.GITHUB_SHA ?? "";
   const expectedVersion = process.env.SLOP_SOLANA_RPC_EXPECTED_VERSION ?? "";
@@ -199,6 +253,39 @@ export async function rotateFeeSolanaRpc() {
     closeSync(parent);
   };
   save();
+  const priorDirectory = process.env.SLOP_SOLANA_RPC_PRIOR_PROOF_DIRECTORY;
+  if (priorDirectory) {
+    const priorReceipt = JSON.parse(
+      readFileSync(
+        join(priorDirectory, "fee-solana-rpc-rotation.json"),
+        "utf8",
+      ),
+    );
+    const priorProof = readFileSync(
+      join(priorDirectory, "solana-rpc-rotation-proof.json"),
+    );
+    const priorSource = process.env.SLOP_SOLANA_RPC_PRIOR_SOURCE ?? "";
+    const priorRun = process.env.SLOP_SOLANA_RPC_PRIOR_RUN ?? "";
+    requireCondition(
+      /^[1-9][0-9]*$/u.test(priorRun),
+      "Prior proof run unavailable",
+    );
+    validatePriorRotationProof(
+      priorReceipt,
+      priorProof,
+      [candidateUrl, SOLANA_PUBLIC_PAIR[1]],
+      priorSource,
+    );
+    writeFileSync(
+      join(directory, "solana-rpc-public-pair-proof.json"),
+      priorProof,
+      { mode: 0o600, flag: "wx" },
+    );
+    receipt.priorProofSha256 = priorReceipt.proofSha256;
+    receipt.priorRun = priorRun;
+    receipt.priorSource = priorSource;
+    save();
+  }
   try {
     await qualifySolanaRpcPair(directory, [
       candidateUrl,
