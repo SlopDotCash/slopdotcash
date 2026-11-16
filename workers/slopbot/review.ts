@@ -1431,10 +1431,14 @@ async function runReview(
     });
     return routing.reason;
   }
-  // Free advisory reviews are capped per repository and UTC month (operator
-  // decision, 16 November 2026). Over the cap: no model call and no label,
-  // comment or close; the skip is recorded and a later month starts fresh.
-  if (!(await admitMonthlyReview(db, job.repositoryId, reviewKey))) {
+  // Free advisory reviews are capped at a number of distinct pull requests or
+  // issues per repository and UTC month (operator decision, 16 November 2026).
+  // An item already admitted this month is always reviewed again. A new item
+  // over the cap gets no model call and no label, comment or close; the skip
+  // is recorded and a later month starts fresh.
+  if (
+    !(await admitMonthlyReview(db, job.repositoryId, job.itemKind, job.number))
+  ) {
     await store.finishReview(db, reviewKey, claimToken, "skipped", {
       skipReason: MONTHLY_REVIEW_CAP_REASON,
     });

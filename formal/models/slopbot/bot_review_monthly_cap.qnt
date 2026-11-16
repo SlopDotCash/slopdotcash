@@ -2,64 +2,65 @@
 // @source workers/slopbot/review.ts
 // @source migrations/0129_slopbot_review_month_starts.sql
 // Free advisory reviews per repository and UTC month (operator decision,
-// 16 November 2026). CAP abstracts FREE_REVIEWS_PER_REPO_PER_MONTH = 2000.
-// Admission is one statement: a review key already started in that month is
-// admitted again without a new row; otherwise a row is added only below the
-// cap. A refused review records the skip and makes no model call or GitHub
-// action. Value assessment never reads this state.
+// 16 November 2026). The cap counts distinct pull requests or issues; CAP
+// abstracts FREE_REVIEWS_PER_REPO_PER_MONTH = 2000. Admission is one
+// statement: an item already admitted that month is admitted again for every
+// later review (new pushes, a moved base, retries) without a new row; a new
+// item gets a row only below the cap. A refused new item records the skip and
+// makes no model call or GitHub action. Value assessment never reads this
+// state.
 module bot_review_monthly_cap {
   pure val CAP = 1
-  type Start = { repo: int, month: int, key: int }
-  pure val STARTS: Set[Start] = tuples(Set(1, 2), Set(1, 2), Set(1, 2))
-    .map(t => { repo: t._1, month: t._2, key: t._3 })
-  // none, started (row recorded), called, published, skipped
-  var s: { status: Start -> str, valueCalls: int }
-  action init = s' = { status: STARTS.mapBy(_ => "none"), valueCalls: 0 }
-  def started(r: Start): bool = s.status.get(r).in(Set("started", "called", "published"))
+  type Item = { repo: int, month: int, item: int }
+  pure val ITEMS: Set[Item] = tuples(Set(1, 2), Set(1, 2), Set(1, 2))
+    .map(t => { repo: t._1, month: t._2, item: t._3 })
+  // status: none, admitted, skipped; reviews: model-backed reviews run
+  var s: { status: Item -> str, reviews: Item -> int, valueCalls: int }
+  action init = s' = { status: ITEMS.mapBy(_ => "none"),
+    reviews: ITEMS.mapBy(_ => 0), valueCalls: 0 }
+  def admittedItem(r: Item): bool = s.status.get(r) == "admitted"
   def used(repo: int, month: int): int =
-    STARTS.filter(r => r.repo == repo and r.month == month and started(r)).size()
-  def admitted(r: Start): bool = started(r) or used(r.repo, r.month) < CAP
-  action admitReview(r: Start): bool = all {
-    admitted(r), not(started(r)),
-    s' = s.with("status", s.status.set(r, "started"))
+    ITEMS.filter(r => r.repo == repo and r.month == month and admittedItem(r)).size()
+  def admits(r: Item): bool = admittedItem(r) or used(r.repo, r.month) < CAP
+  // One review of an item: admission, then the model call and its action.
+  action review(r: Item): bool = all {
+    admits(r), s.reviews.get(r) < 2,
+    s' = s.with("status", s.status.set(r, "admitted"))
+      .with("reviews", s.reviews.set(r, s.reviews.get(r) + 1))
   }
-  action readmitReview(r: Start): bool = all { started(r), s' = s }
-  action refuseReview(r: Start): bool = all {
-    not(admitted(r)), s' = s.with("status", s.status.set(r, "skipped"))
-  }
-  // Primary and confirmation calls, and their advisory action, need admission.
-  action modelCall(r: Start): bool = all {
-    s.status.get(r) == "started", s' = s.with("status", s.status.set(r, "called"))
-  }
-  action publish(r: Start): bool = all {
-    s.status.get(r) == "called", s' = s.with("status", s.status.set(r, "published"))
+  action refuse(r: Item): bool = all {
+    not(admits(r)), s' = s.with("status", s.status.set(r, "skipped"))
   }
   action valueAssessment = all {
     s.valueCalls < 1, s' = s.with("valueCalls", s.valueCalls + 1)
   }
   action step = {
-    nondet r = STARTS.oneOf()
-    any { admitReview(r), refuseReview(r), modelCall(r), publish(r),
-      valueAssessment, s' = s }
+    nondet r = ITEMS.oneOf()
+    any { review(r), refuse(r), valueAssessment, s' = s }
   }
-  val invariant = Set(1, 2).forall(repo => Set(1, 2).forall(month => used(repo, month) <= CAP))
-  run capRefusesNextReviewTest = init
-    .then(admitReview({ repo: 1, month: 1, key: 1 }))
-    .then(refuseReview({ repo: 1, month: 1, key: 2 }))
-    .expect(used(1, 1) == CAP and s.status.get({ repo: 1, month: 1, key: 2 }) == "skipped")
-  run retryOfStartedReviewIsNotCountedTwiceTest = init
-    .then(admitReview({ repo: 1, month: 1, key: 1 }))
-    .then(modelCall({ repo: 1, month: 1, key: 1 }))
-    .then(readmitReview({ repo: 1, month: 1, key: 1 }))
-    .expect(used(1, 1) == CAP)
+  val invariant = all {
+    Set(1, 2).forall(repo => Set(1, 2).forall(month => used(repo, month) <= CAP)),
+    ITEMS.forall(r => s.reviews.get(r) > 0 implies admittedItem(r)),
+    ITEMS.forall(r => s.status.get(r) == "skipped" implies s.reviews.get(r) == 0),
+  }
+  run newItemOverCapIsSkippedTest = init
+    .then(review({ repo: 1, month: 1, item: 1 }))
+    .then(refuse({ repo: 1, month: 1, item: 2 }))
+    .expect(used(1, 1) == CAP and s.status.get({ repo: 1, month: 1, item: 2 }) == "skipped"
+      and s.reviews.get({ repo: 1, month: 1, item: 2 }) == 0)
+  run admittedItemIsReviewedAgainAtCapTest = init
+    .then(review({ repo: 1, month: 1, item: 1 }))
+    .then(refuse({ repo: 1, month: 1, item: 2 }))
+    .then(review({ repo: 1, month: 1, item: 1 }))
+    .expect(used(1, 1) == CAP and s.reviews.get({ repo: 1, month: 1, item: 1 }) == 2)
   run otherRepositoryAndNewMonthAreUnaffectedTest = init
-    .then(admitReview({ repo: 1, month: 1, key: 1 }))
-    .then(admitReview({ repo: 2, month: 1, key: 2 }))
-    .then(admitReview({ repo: 1, month: 2, key: 2 }))
+    .then(review({ repo: 1, month: 1, item: 1 }))
+    .then(review({ repo: 2, month: 1, item: 2 }))
+    .then(review({ repo: 1, month: 2, item: 2 }))
     .expect(used(2, 1) == 1 and used(1, 2) == 1)
   run valueAssessmentIgnoresReviewCapTest = init
-    .then(admitReview({ repo: 1, month: 1, key: 1 }))
-    .then(refuseReview({ repo: 1, month: 1, key: 2 }))
+    .then(review({ repo: 1, month: 1, item: 1 }))
+    .then(refuse({ repo: 1, month: 1, item: 2 }))
     .then(valueAssessment)
     .expect(s.valueCalls == 1)
 }

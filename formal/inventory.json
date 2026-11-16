@@ -3456,9 +3456,9 @@
     },
     {
       "path": "migrations/0129_slopbot_review_month_starts.sql",
-      "sha256": "f53ee37a126dd08624360ae8017ae2ef8423fafbe2e532ef91214be6fd03cde7",
+      "sha256": "d611d7030eabc1528a8b9396a69e49a70349f9471daed40882b09af631c153c1",
       "models": ["formal/models/slopbot/bot_review_monthly_cap.qnt"],
-      "candidateLines": [4],
+      "candidateLines": [],
       "review": "mapped-abstraction"
     },
     {
@@ -8670,14 +8670,14 @@
     },
     {
       "path": "workers/slopbot/review-cap.ts",
-      "sha256": "0dabdae5a99e09f97357eb604eb75748cab6423a72a0d72486151cb46dc60ec3",
+      "sha256": "25aa0729d15981de4002050e1a897d653292328216016b14f891f9abb3ade483",
       "models": ["formal/models/slopbot/bot_review_monthly_cap.qnt"],
-      "candidateLines": [20, 32],
+      "candidateLines": [22, 36],
       "review": "mapped-abstraction"
     },
     {
       "path": "workers/slopbot/review.ts",
-      "sha256": "ed280aedc23a95b67766edc2057b0b9089ee41ce393d0839bc79c518c0a19ee0",
+      "sha256": "0e7d95389c45072666afb81edb7ae7caada1083b9aae94e24a9b095e7b8f0f0a",
       "models": [
         "formal/models/slopbot/bot_author_admission.qnt",
         "formal/models/slopbot/bot_close_capacity.qnt",
@@ -8693,10 +8693,10 @@
         3, 155, 269, 284, 293, 303, 306, 498, 652, 799, 828, 838, 973, 978, 983,
         985, 988, 990, 991, 1002, 1005, 1007, 1064, 1065, 1067, 1068, 1084,
         1090, 1141, 1163, 1164, 1172, 1177, 1278, 1280, 1300, 1319, 1396, 1401,
-        1481, 1596, 1603, 1604, 1639, 1656, 1659, 1660, 1822, 1827, 1889, 1902,
-        1907, 1914, 1915, 1919, 1920, 1928, 1944, 2001, 2148, 2208, 2214, 2225,
-        2251, 2281, 2306, 2314, 2337, 2342, 2418, 2419, 2469, 2504, 2555, 2700,
-        2957, 3032, 3198, 3209, 3217, 3315, 3316, 3356, 3406, 3420, 3436
+        1485, 1600, 1607, 1608, 1643, 1660, 1663, 1664, 1826, 1831, 1893, 1906,
+        1911, 1918, 1919, 1923, 1924, 1932, 1948, 2005, 2152, 2212, 2218, 2229,
+        2255, 2285, 2310, 2318, 2341, 2346, 2422, 2423, 2473, 2508, 2559, 2704,
+        2961, 3036, 3202, 3213, 3221, 3319, 3320, 3360, 3410, 3424, 3440
       ],
       "review": "mapped-abstraction"
     },
@@ -15615,16 +15615,16 @@
     },
     {
       "path": "formal/models/slopbot/bot_review_monthly_cap.qnt",
-      "sha256": "0d4744cb5abb683654ddf27ee590a71ca5e60bf96e18b857089c8e9ebf12a8cd",
+      "sha256": "b7cbd55e0bb2bde55f48ebe038849f473d8800a8a7b4729fef47551ba751f7be",
       "sources": [
         "migrations/0129_slopbot_review_month_starts.sql",
         "workers/slopbot/review-cap.ts",
         "workers/slopbot/review.ts"
       ],
       "scenarios": [
-        "capRefusesNextReviewTest",
+        "admittedItemIsReviewedAgainAtCapTest",
+        "newItemOverCapIsSkippedTest",
         "otherRepositoryAndNewMonthAreUnaffectedTest",
-        "retryOfStartedReviewIsNotCountedTwiceTest",
         "valueAssessmentIgnoresReviewCapTest"
       ]
     },

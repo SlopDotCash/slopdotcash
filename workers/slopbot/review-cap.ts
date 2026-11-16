@@ -4,7 +4,8 @@
 
 import type { D1Database } from "./persistence";
 
-/** Free advisory reviews one repository may start in one UTC calendar month. */
+/** Distinct pull requests or issues one repository may have reviewed for free
+ * in one UTC calendar month. */
 export const FREE_REVIEWS_PER_REPO_PER_MONTH = 2000;
 
 /** Recorded as the review's skip reason when the monthly cap refuses it. */
@@ -15,38 +16,42 @@ export function reviewMonth(at: Date): string {
   return at.toISOString().slice(0, 7);
 }
 
-/** Admit one advisory review before any model call. A review key counts once
- * per repository and month, however many model calls or retries it makes. The
- * insert and its count are one statement, so parallel reviews cannot push a
- * repository past the cap. Returns false when the month's cap is reached.
+/** Admit one advisory review before any model call. The cap counts distinct
+ * items: a pull request or issue already admitted this month is always
+ * admitted again (new pushes, a moved base, retries) and adds nothing. A new
+ * item is admitted only while the month has fewer than the cap. The insert and
+ * its count are one statement, so parallel reviews cannot push a repository
+ * past the cap. Returns false when a new item meets a full month.
  */
 export async function admitMonthlyReview(
   db: D1Database,
   repositoryId: number,
-  reviewKey: string,
+  itemKind: "issue" | "pull_request",
+  itemNumber: number,
   at: Date = new Date(),
 ): Promise<boolean> {
   const month = reviewMonth(at);
   await db
     .prepare(
-      `INSERT OR IGNORE INTO slopbot_review_month_starts (repository_id, month, review_key, started_at)
-       SELECT ?1, ?2, ?3, ?4
+      `INSERT OR IGNORE INTO slopbot_review_month_starts (repository_id, month, item_kind, item_number, started_at)
+       SELECT ?1, ?2, ?3, ?4, ?5
        WHERE (SELECT COUNT(*) FROM slopbot_review_month_starts
-              WHERE repository_id = ?1 AND month = ?2) < ?5`,
+              WHERE repository_id = ?1 AND month = ?2) < ?6`,
     )
     .bind(
       repositoryId,
       month,
-      reviewKey,
+      itemKind,
+      itemNumber,
       at.toISOString(),
       FREE_REVIEWS_PER_REPO_PER_MONTH,
     )
     .run();
   const row = await db
     .prepare(
-      "SELECT 1 AS ok FROM slopbot_review_month_starts WHERE repository_id = ? AND month = ? AND review_key = ?",
+      "SELECT 1 AS ok FROM slopbot_review_month_starts WHERE repository_id = ? AND month = ? AND item_kind = ? AND item_number = ?",
     )
-    .bind(repositoryId, month, reviewKey)
+    .bind(repositoryId, month, itemKind, itemNumber)
     .first();
   return row !== null;
 }

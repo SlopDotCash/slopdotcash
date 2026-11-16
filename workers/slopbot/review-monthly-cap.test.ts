@@ -26,6 +26,7 @@ const { privateKey } = generateKeyPairSync("rsa", {
   publicKeyEncoding: { type: "spki", format: "pem" },
 });
 
+/** Admitted items numbered from 1000, clear of the fixture pull request #5. */
 function seedStarts(
   sqlite: Database,
   repositoryId: number,
@@ -33,14 +34,15 @@ function seedStarts(
   count: number,
 ) {
   const insert = sqlite.prepare(
-    "INSERT INTO slopbot_review_month_starts(repository_id, month, review_key, started_at) VALUES (?, ?, ?, ?)",
+    "INSERT INTO slopbot_review_month_starts(repository_id, month, item_kind, item_number, started_at) VALUES (?, ?, ?, ?, ?)",
   );
   sqlite.transaction(() => {
     for (let i = 0; i < count; i++)
       insert.run(
         repositoryId,
         month,
-        `seed-${month}-${i}`,
+        i % 2 === 0 ? "pull_request" : "issue",
+        1000 + i,
         `${month}-01T00:00:00.000Z`,
       );
   })();
@@ -239,7 +241,7 @@ async function reviewOnePull(
   }
 }
 
-test("the 2,001st review of a repository in a month makes no model call and records the skip", async () => {
+test("the 2,001st distinct item of a repository in a month makes no model call and records the skip", async () => {
   const month = reviewMonth(new Date());
   const result = await reviewOnePull((sqlite, repositoryId) =>
     seedStarts(sqlite, repositoryId, month, FREE_REVIEWS_PER_REPO_PER_MONTH),
@@ -256,7 +258,7 @@ test("the 2,001st review of a repository in a month makes no model call and reco
   expect(result.started).toBe(FREE_REVIEWS_PER_REPO_PER_MONTH);
 });
 
-test("the 2,000th review of a month still runs and is counted once", async () => {
+test("the 2,000th distinct item of a month still runs and is counted once", async () => {
   const month = reviewMonth(new Date());
   const result = await reviewOnePull((sqlite, repositoryId) =>
     seedStarts(
@@ -266,6 +268,27 @@ test("the 2,000th review of a month still runs and is counted once", async () =>
       FREE_REVIEWS_PER_REPO_PER_MONTH - 1,
     ),
   );
+  expect(result.prompts).toHaveLength(1);
+  expect(result.comments).toHaveLength(1);
+  expect(result.review).toMatchObject({ status: "completed" });
+  expect(result.started).toBe(FREE_REVIEWS_PER_REPO_PER_MONTH);
+});
+
+test("a re-review of an item admitted earlier this month runs after the cap is reached", async () => {
+  const month = reviewMonth(new Date());
+  const result = await reviewOnePull((sqlite, repositoryId) => {
+    seedStarts(
+      sqlite,
+      repositoryId,
+      month,
+      FREE_REVIEWS_PER_REPO_PER_MONTH - 1,
+    );
+    // Pull request #5 was reviewed earlier this month at another revision.
+    sqlite.run(
+      "INSERT INTO slopbot_review_month_starts(repository_id, month, item_kind, item_number, started_at) VALUES (?, ?, 'pull_request', 5, ?)",
+      [repositoryId, month, `${month}-01T00:00:00.000Z`],
+    );
+  });
   expect(result.prompts).toHaveLength(1);
   expect(result.comments).toHaveLength(1);
   expect(result.review).toMatchObject({ status: "completed" });
@@ -302,19 +325,26 @@ test("a full previous month does not count against the new month", async () => {
   expect(result.started).toBe(1);
 });
 
-test("admission counts a review key once, refuses at the cap and resets by month", async () => {
+test("admission counts an item once, refuses a new item at the cap and resets by month", async () => {
   const { db, sqlite } = sqliteD1(MIGRATIONS);
   const d1 = db as unknown as D1Database;
   const november = new Date("2026-11-30T23:59:59.000Z");
   const december = new Date("2026-12-01T00:00:00.000Z");
   try {
     seedStarts(sqlite, 7, "2026-11", FREE_REVIEWS_PER_REPO_PER_MONTH - 1);
-    expect(await admitMonthlyReview(d1, 7, "last", november)).toBe(true);
-    // A retry or confirmation of the same review reuses its row.
-    expect(await admitMonthlyReview(d1, 7, "last", november)).toBe(true);
-    expect(await admitMonthlyReview(d1, 7, "over", november)).toBe(false);
-    expect(await admitMonthlyReview(d1, 8, "other-repo", november)).toBe(true);
-    expect(await admitMonthlyReview(d1, 7, "over", december)).toBe(true);
+    expect(await admitMonthlyReview(d1, 7, "pull_request", 1, november)).toBe(
+      true,
+    );
+    // New pushes, a moved base and retries review the same item again.
+    expect(await admitMonthlyReview(d1, 7, "pull_request", 1, november)).toBe(
+      true,
+    );
+    expect(
+      await admitMonthlyReview(d1, 7, "pull_request", 1000, november),
+    ).toBe(true);
+    expect(await admitMonthlyReview(d1, 7, "issue", 2, november)).toBe(false);
+    expect(await admitMonthlyReview(d1, 8, "issue", 2, november)).toBe(true);
+    expect(await admitMonthlyReview(d1, 7, "issue", 2, december)).toBe(true);
     const rows = sqlite
       .query(
         "SELECT month, COUNT(*) AS n FROM slopbot_review_month_starts WHERE repository_id = 7 GROUP BY month ORDER BY month",
@@ -324,11 +354,11 @@ test("admission counts a review key once, refuses at the cap and resets by month
       { month: "2026-11", n: FREE_REVIEWS_PER_REPO_PER_MONTH },
       { month: "2026-12", n: 1 },
     ]);
-    // Parallel admissions never pass the cap.
+    // Parallel admissions of new items never pass the cap.
     seedStarts(sqlite, 9, "2026-11", FREE_REVIEWS_PER_REPO_PER_MONTH - 3);
     const admitted = await Promise.all(
       Array.from({ length: 10 }, (_, i) =>
-        admitMonthlyReview(d1, 9, `parallel-${i}`, november),
+        admitMonthlyReview(d1, 9, "pull_request", i + 1, november),
       ),
     );
     expect(admitted.filter(Boolean)).toHaveLength(3);
