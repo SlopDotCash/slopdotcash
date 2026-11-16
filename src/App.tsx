@@ -43,6 +43,17 @@ import {
   homeProjects,
 } from "./lib/home-projects";
 import {
+  loadMergeActivity,
+  mergeActivityCardLine,
+  mergeActivityLine,
+} from "./lib/merge-activity";
+import {
+  asShown,
+  loadPoolFunding,
+  monthName,
+  poolFundingStatus,
+} from "./lib/pool-funding";
+import {
   findHistoricalProject,
   findProject,
   PROJECTS,
@@ -54,6 +65,7 @@ import { SOURCE_REPOSITORY } from "./lib/source-repository";
 import { useCopyFeedback } from "./lib/use-copy-feedback";
 import { useCycleIndex } from "./lib/use-cycle-index";
 import { useDirectTransfers } from "./lib/use-direct-transfers";
+import { usePublicResource } from "./lib/use-public-resource";
 import { type DataState, useSnapshot } from "./lib/use-snapshot";
 import {
   AccountPage,
@@ -636,7 +648,13 @@ function BountyFundingState({ terms }: { terms: SecurityBountyTerms }) {
   );
 }
 
-function ProjectCard({ project }: { project: ProjectDefinition }) {
+function ProjectCard({
+  project,
+  merge,
+}: {
+  project: ProjectDefinition;
+  merge?: string | null;
+}) {
   const bounty = hasProjectCardBounty(project)
     ? project.securityBounty
     : undefined;
@@ -685,12 +703,23 @@ function ProjectCard({ project }: { project: ProjectDefinition }) {
             reviews
           </small>
         ) : null}
+        {merge ? (
+          <small className="project-money-state project-merge-activity">
+            {merge}
+          </small>
+        ) : null}
       </div>
     </Link>
   );
 }
 
-function ProjectRow({ project }: { project: ProjectDefinition }) {
+function ProjectRow({
+  project,
+  merge,
+}: {
+  project: ProjectDefinition;
+  merge?: string | null;
+}) {
   const bounty = hasProjectCardBounty(project)
     ? project.securityBounty
     : undefined;
@@ -708,6 +737,9 @@ function ProjectRow({ project }: { project: ProjectDefinition }) {
         <span className="project-row-name">
           <strong>{project.name}</strong>
           <small>{project.description}</small>
+          {merge ? (
+            <small className="project-merge-activity">{merge}</small>
+          ) : null}
         </span>
         <span className="project-row-amount">{amount}</span>
         <ChevronRight aria-hidden="true" />
@@ -718,7 +750,13 @@ function ProjectRow({ project }: { project: ProjectDefinition }) {
 
 const COMMUNITY_PAGE_SIZE = 10;
 
-function CommunityProjects({ projects }: { projects: ProjectDefinition[] }) {
+function CommunityProjects({
+  projects,
+  mergeLine,
+}: {
+  projects: ProjectDefinition[];
+  mergeLine: (project: ProjectDefinition) => string | null;
+}) {
   const [page, setPage] = useState(0);
   if (projects.length === 0) return null;
   const pages = Math.ceil(projects.length / COMMUNITY_PAGE_SIZE);
@@ -735,7 +773,11 @@ function CommunityProjects({ projects }: { projects: ProjectDefinition[] }) {
       <h3 id="community-projects">Community</h3>
       <ul className="project-rows">
         {visible.map((project) => (
-          <ProjectRow key={project.id} project={project} />
+          <ProjectRow
+            key={project.id}
+            project={project}
+            merge={mergeLine(project)}
+          />
         ))}
       </ul>
       {pages > 1 ? (
@@ -789,6 +831,9 @@ function SecurityBounties() {
         <h2 className="home-section-title" id="home-security-title">
           Security bounties
         </h2>
+        <Link className="button primary-button" href="/projects/new">
+          <Plus aria-hidden="true" /> Add a bounty
+        </Link>
       </div>
       <div className="project-grid">
         {programs.map((project) => {
@@ -840,6 +885,26 @@ function SecurityBounties() {
 function HomePage() {
   const featuredProjects = homeProjects();
   const listedCommunityProjects = communityProjects();
+  // One shared read of the daily merge activity (#1993) for every card.
+  const [merge] = usePublicResource(
+    true,
+    loadMergeActivity,
+    "Merge activity unavailable",
+  );
+  // One shared read of vault balances: only money in a vault is shown.
+  const [funding] = usePublicResource(
+    true,
+    loadPoolFunding,
+    "Pool funding unavailable",
+  );
+  const now = new Date();
+  const fundingIndex = funding.status === "ready" ? funding.index : null;
+  const shown = (project: ProjectDefinition) =>
+    asShown(project, fundingIndex, now);
+  const mergeLine = (project: ProjectDefinition) =>
+    project.status === "active" && merge.status === "ready"
+      ? mergeActivityCardLine(merge.index.get(project.id), now)
+      : null;
   return (
     <main>
       <section className="hero shell">
@@ -867,12 +932,19 @@ function HomePage() {
                 <h3 id="featured-projects">Featured</h3>
                 <div className="project-grid">
                   {featuredProjects.map((project) => (
-                    <ProjectCard key={project.id} project={project} />
+                    <ProjectCard
+                      key={project.id}
+                      project={shown(project)}
+                      merge={mergeLine(project)}
+                    />
                   ))}
                 </div>
               </section>
             ) : null}
-            <CommunityProjects projects={listedCommunityProjects} />
+            <CommunityProjects
+              projects={listedCommunityProjects.map(shown)}
+              mergeLine={mergeLine}
+            />
           </>
         )}
       </section>
@@ -1360,10 +1432,28 @@ function ProjectHeader({ project }: { project: ProjectDefinition }) {
 }
 
 /** Shared copy for every registry reward model; no project-specific descriptions. */
-function ProjectRewardSummary({ project }: { project: ProjectDefinition }) {
+function ProjectRewardSummary({
+  project: registered,
+}: {
+  project: ProjectDefinition;
+}) {
+  const [funding] = usePublicResource(
+    registered.reward.kind === "monthly-pool",
+    loadPoolFunding,
+    "Pool funding unavailable",
+  );
+  const index = funding.status === "ready" ? funding.index : null;
+  const now = new Date();
+  const project = asShown(registered, index, now);
+  const status = poolFundingStatus(registered, index, now);
   return (
     <div className="project-overview">
       <div className="project-state-summary">
+        {status.state === "withdrawn" ? (
+          <p className="project-reward-status">
+            {`Funds were withdrawn from the vault during ${monthName(status.period)}; it no longer covers this month's amount.`}
+          </p>
+        ) : null}
         {projectRewardSummaries(project).map((summary) => (
           <p className="project-reward-status" key={summary.kind}>
             {summary.kind === "monthly-pool" ? (
@@ -1406,6 +1496,24 @@ function ProjectRewardSummary({ project }: { project: ProjectDefinition }) {
       </div>
     </div>
   );
+}
+
+/** #1993: how promptly the project merges outside work, from the daily D1 read. */
+function ProjectMergeActivity({ project }: { project: ProjectDefinition }) {
+  const active = project.status === "active";
+  const [state] = usePublicResource(
+    active,
+    loadMergeActivity,
+    "Merge activity unavailable",
+  );
+  if (!active || state.status === "loading") return null;
+  if (state.status === "error")
+    return (
+      <p className="project-merge-activity">Merge activity unavailable.</p>
+    );
+  // A repository not read yet shows nothing rather than an empty claim.
+  const line = mergeActivityLine(state.index.get(project.id), new Date());
+  return line ? <p className="project-merge-activity">{line}</p> : null;
 }
 
 function ProjectBountyIntroduction({
@@ -1458,6 +1566,7 @@ function ProjectPage({
         <div className="shell">
           <ProjectHeader project={project} />
           <ProjectRewardSummary project={project} />
+          <ProjectMergeActivity project={project} />
           {project.reward.reviewBudget?.fundingState === "committed" ? (
             <p>
               <ReviewBudget reviewBudget={project.reward.reviewBudget} />

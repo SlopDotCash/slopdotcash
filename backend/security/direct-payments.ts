@@ -531,6 +531,11 @@ export async function refreshDirectIntent(
       "payment_recovery_required",
       "The original Solana request is unavailable for safe refresh",
     );
+  if (
+    (await solanaRpc({ rpcUrl: settings.rpcUrl }, "getGenesisHash", [])) !==
+    (settings.genesisHash ?? (network.genesisHash as string))
+  )
+    throw new Error("Wrong Solana cluster");
   const state = (await solanaRpc(
     { rpcUrl: settings.rpcUrl },
     "isBlockhashValid",
@@ -1327,13 +1332,15 @@ export async function recoverDirectIntent(
         ),
       ).values(),
     ];
+    const genesisHash =
+      settings.genesisHash ??
+      (ESCROW_NETWORKS[c.intent.network as keyof typeof ESCROW_NETWORKS]
+        .genesisHash as string);
     let result: Awaited<ReturnType<typeof retireSolanaPlans>>;
     try {
       result = await retireSolanaPlans({
         ...settings,
-        genesisHash:
-          settings.genesisHash ??
-          (ESCROW_NETWORKS["solana-mainnet"].genesisHash as string),
+        genesisHash,
         payer: c.intent.payer.address,
         plans,
         signatures,
@@ -1373,9 +1380,7 @@ export async function recoverDirectIntent(
     next.solana = await solanaDirectOrRefuse(() =>
       prepareSolanaDirect({
         ...settings,
-        genesisHash:
-          settings.genesisHash ??
-          (ESCROW_NETWORKS["solana-mainnet"].genesisHash as string),
+        genesisHash,
         payer: c.intent.payer.address,
         asset: c.intent.asset,
         transfers: next.transfers,

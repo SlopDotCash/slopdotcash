@@ -169,12 +169,20 @@ export function vettingContext(
     vetting,
     github,
     loadTemplate,
-    /** A clearance counts only for the live branch head and template (VET-07). */
-    livePin: async (manifest: ProjectDefinition, templateSha256?: string) =>
+    /**
+     * A clearance counts only for the live branch head and template (VET-07).
+     * Each repository has its own head; the default is the first repository.
+     */
+    livePin: async (
+      manifest: ProjectDefinition,
+      repositoryId?: string,
+      templateSha256?: string,
+    ) =>
       readVettingPin(
         github,
         manifest,
         templateSha256 ?? (await loadTemplate()).index.templateSha256,
+        repositoryId,
       ),
   };
 }

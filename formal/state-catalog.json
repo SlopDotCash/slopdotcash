@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "meaning": "Declared lifecycle candidates. This intentionally incomplete syntactic census cannot find every implicit state, establish reachability, or prove source/model correspondence. Review the open work listed in formal/README.md as well.",
-  "inventorySha256": "af0fef57fbf1dd0508dc7ab430ebce10a3ebf84e6287423c0e252133b6f89ff1",
+  "inventorySha256": "8a43c2dca8f6ef29577d04ff0d4552f0249ed6fb18399e824af9ecd8bb1a546e",
   "states": [
     {
       "path": "backend/fee-conversions/handler.ts",
@@ -19,7 +19,7 @@
     },
     {
       "path": "backend/notifications/events.ts",
-      "line": 581,
+      "line": 610,
       "name": "stage",
       "kind": "string-union",
       "values": ["opened", "resolved"],
@@ -29,7 +29,8 @@
         "formal/models/api/points_dispute_decision.qnt",
         "formal/models/api/points_dispute_intake.qnt",
         "formal/models/api/points_dispute_lease.qnt",
-        "formal/models/api/wallet_claim_publication.qnt"
+        "formal/models/api/wallet_claim_publication.qnt",
+        "formal/models/rewards/monthly_owner_cuts.qnt"
       ],
       "lexicallyUnmentionedValues": ["opened"],
       "review": "candidate-only"
@@ -49,7 +50,7 @@
     },
     {
       "path": "backend/payments/monthly.ts",
-      "line": 863,
+      "line": 955,
       "name": "status",
       "kind": "string-union",
       "values": ["failed", "finalized", "pending"],
@@ -57,6 +58,7 @@
         "formal/models/rewards/monthly_coordinator.qnt",
         "formal/models/rewards/monthly_cutoff_queue.qnt",
         "formal/models/rewards/monthly_owner_completion.qnt",
+        "formal/models/rewards/monthly_owner_cuts.qnt",
         "formal/models/rewards/monthly_reserve.qnt",
         "formal/models/rewards/monthly_source_conflict.qnt"
       ],
@@ -65,7 +67,7 @@
     },
     {
       "path": "backend/payments/monthly.ts",
-      "line": 1350,
+      "line": 1567,
       "name": "chain_state",
       "kind": "string-union",
       "values": ["paid", "reserved"],
@@ -73,6 +75,7 @@
         "formal/models/rewards/monthly_coordinator.qnt",
         "formal/models/rewards/monthly_cutoff_queue.qnt",
         "formal/models/rewards/monthly_owner_completion.qnt",
+        "formal/models/rewards/monthly_owner_cuts.qnt",
         "formal/models/rewards/monthly_reserve.qnt",
         "formal/models/rewards/monthly_source_conflict.qnt"
       ],
@@ -107,7 +110,7 @@
     },
     {
       "path": "backend/projects/handler.ts",
-      "line": 2392,
+      "line": 2463,
       "name": "mode",
       "kind": "string-union",
       "values": ["apply", "preview"],
@@ -121,6 +124,7 @@
         "formal/models/api/api_project_revision_receipt.qnt",
         "formal/models/api/api_project_setup_check.qnt",
         "formal/models/api/api_registry_alias_transaction.qnt",
+        "formal/models/api/project_repository_append.qnt",
         "formal/models/payments/vault_initial_snapshot.qnt",
         "formal/models/referrals/referrer_attribution.qnt",
         "formal/models/ui/ui_admin_enforcement_intent.qnt",
@@ -132,14 +136,16 @@
         "formal/models/ui/ui_project_publication_lifetime.qnt",
         "formal/models/ui/ui_security_settings_lifetime.qnt",
         "formal/models/ui/ui_setup_check_lifetime.qnt",
-        "formal/models/vetting/vetting_admission_clearance.qnt"
+        "formal/models/ui/ui_vault_provisional_funding.qnt",
+        "formal/models/vetting/vetting_admission_clearance.qnt",
+        "formal/models/vetting/vetting_repository_clearance.qnt"
       ],
       "lexicallyUnmentionedValues": ["apply", "preview"],
       "review": "candidate-only"
     },
     {
       "path": "backend/projects/handler.ts",
-      "line": 2596,
+      "line": 2667,
       "name": "mode",
       "kind": "string-union",
       "values": ["apply", "preview"],
@@ -153,6 +159,7 @@
         "formal/models/api/api_project_revision_receipt.qnt",
         "formal/models/api/api_project_setup_check.qnt",
         "formal/models/api/api_registry_alias_transaction.qnt",
+        "formal/models/api/project_repository_append.qnt",
         "formal/models/payments/vault_initial_snapshot.qnt",
         "formal/models/referrals/referrer_attribution.qnt",
         "formal/models/ui/ui_admin_enforcement_intent.qnt",
@@ -164,14 +171,16 @@
         "formal/models/ui/ui_project_publication_lifetime.qnt",
         "formal/models/ui/ui_security_settings_lifetime.qnt",
         "formal/models/ui/ui_setup_check_lifetime.qnt",
-        "formal/models/vetting/vetting_admission_clearance.qnt"
+        "formal/models/ui/ui_vault_provisional_funding.qnt",
+        "formal/models/vetting/vetting_admission_clearance.qnt",
+        "formal/models/vetting/vetting_repository_clearance.qnt"
       ],
       "lexicallyUnmentionedValues": ["apply", "preview"],
       "review": "candidate-only"
     },
     {
       "path": "backend/projects/setup.ts",
-      "line": 50,
+      "line": 54,
       "name": "state",
       "kind": "string-union",
       "values": ["already_queued", "queued"],
@@ -179,7 +188,8 @@
         "formal/models/api/api_project_registry.qnt",
         "formal/models/api/api_project_setup_check.qnt",
         "formal/models/api/project_setup_status.qnt",
-        "formal/models/vetting/vetting_exemption_maintainer_authority.qnt"
+        "formal/models/vetting/vetting_exemption_maintainer_authority.qnt",
+        "formal/models/vetting/vetting_repository_clearance.qnt"
       ],
       "lexicallyUnmentionedValues": ["already_queued"],
       "review": "candidate-only"
@@ -242,7 +252,7 @@
     },
     {
       "path": "backend/security/analysis.ts",
-      "line": 362,
+      "line": 377,
       "name": "state",
       "kind": "string-union",
       "values": ["complete", "failed", "running", "unavailable"],
@@ -256,7 +266,7 @@
     },
     {
       "path": "backend/security/analysis.ts",
-      "line": 553,
+      "line": 609,
       "name": "state",
       "kind": "string-union",
       "values": ["failed", "unavailable"],
@@ -270,7 +280,7 @@
     },
     {
       "path": "backend/security/analysis.ts",
-      "line": 712,
+      "line": 744,
       "name": "state",
       "kind": "string-union",
       "values": ["complete", "failed", "running", "unavailable"],
@@ -284,7 +294,7 @@
     },
     {
       "path": "backend/security/analysis.ts",
-      "line": 853,
+      "line": 885,
       "name": "state",
       "kind": "string-union",
       "values": ["failed", "unavailable"],
@@ -391,7 +401,7 @@
     },
     {
       "path": "backend/security/submission-store.ts",
-      "line": 293,
+      "line": 296,
       "name": "review_decision",
       "kind": "string-union",
       "values": ["forward", "request-information"],
@@ -457,7 +467,7 @@
     },
     {
       "path": "backend/vetting/persistence.ts",
-      "line": 583,
+      "line": 637,
       "name": "recordResult",
       "kind": "string-union",
       "values": ["conflict", "recorded"],
@@ -468,6 +478,7 @@
         "formal/models/vetting/vetting_fixed_exemption.qnt",
         "formal/models/vetting/vetting_flag_reinstatement.qnt",
         "formal/models/vetting/vetting_malicious_reinstatement.qnt",
+        "formal/models/vetting/vetting_repository_clearance.qnt",
         "formal/models/vetting/vetting_result_atomic.qnt"
       ],
       "lexicallyUnmentionedValues": ["conflict", "recorded"],
@@ -2011,13 +2022,15 @@
     },
     {
       "path": "scripts/generate-leaderboard.ts",
-      "line": 217,
+      "line": 236,
       "name": "ExpectedRecordState",
       "kind": "string-union",
       "values": ["closed", "merged", "open"],
       "models": [
+        "formal/models/points/commit_line_cache.qnt",
         "formal/models/points/github_budget_window.qnt",
         "formal/models/points/github_census.qnt",
+        "formal/models/points/implementation_credit.qnt",
         "formal/models/points/ingestion_retry.qnt",
         "formal/models/points/pr_review_recovery.qnt",
         "formal/models/slopbot/value_feed_deadline.qnt",
@@ -2028,40 +2041,50 @@
     },
     {
       "path": "scripts/generate-leaderboard.ts",
-      "line": 352,
+      "line": 460,
       "name": "phase",
       "kind": "string-union",
       "values": [
+        "evidence-verification",
         "merged-pull-requests",
         "open-issues",
         "open-pull-requests",
-        "resolved-issues"
+        "participation-history",
+        "resolved-issues",
+        "review-census"
       ],
       "models": [
+        "formal/models/points/commit_line_cache.qnt",
         "formal/models/points/github_budget_window.qnt",
         "formal/models/points/github_census.qnt",
+        "formal/models/points/implementation_credit.qnt",
         "formal/models/points/ingestion_retry.qnt",
         "formal/models/points/pr_review_recovery.qnt",
         "formal/models/slopbot/value_feed_deadline.qnt",
         "formal/models/ui/ui_score_selection.qnt"
       ],
       "lexicallyUnmentionedValues": [
+        "evidence-verification",
         "merged-pull-requests",
         "open-issues",
         "open-pull-requests",
-        "resolved-issues"
+        "participation-history",
+        "resolved-issues",
+        "review-census"
       ],
       "review": "candidate-only"
     },
     {
       "path": "scripts/generate-leaderboard.ts",
-      "line": 3211,
+      "line": 3635,
       "name": "expectedState",
       "kind": "string-union",
       "values": ["closed", "merged"],
       "models": [
+        "formal/models/points/commit_line_cache.qnt",
         "formal/models/points/github_budget_window.qnt",
         "formal/models/points/github_census.qnt",
+        "formal/models/points/implementation_credit.qnt",
         "formal/models/points/ingestion_retry.qnt",
         "formal/models/points/pr_review_recovery.qnt",
         "formal/models/slopbot/value_feed_deadline.qnt",
@@ -2072,19 +2095,77 @@
     },
     {
       "path": "scripts/generate-leaderboard.ts",
-      "line": 3815,
+      "line": 4239,
       "name": "status",
       "kind": "string-union",
       "values": ["complete", "suppressed-limit"],
       "models": [
+        "formal/models/points/commit_line_cache.qnt",
         "formal/models/points/github_budget_window.qnt",
         "formal/models/points/github_census.qnt",
+        "formal/models/points/implementation_credit.qnt",
         "formal/models/points/ingestion_retry.qnt",
         "formal/models/points/pr_review_recovery.qnt",
         "formal/models/slopbot/value_feed_deadline.qnt",
         "formal/models/ui/ui_score_selection.qnt"
       ],
       "lexicallyUnmentionedValues": ["suppressed-limit"],
+      "review": "candidate-only"
+    },
+    {
+      "path": "scripts/payment-keeper/keeper.ts",
+      "line": 136,
+      "name": "KeeperFailureStage",
+      "kind": "string-union",
+      "values": [
+        "authority-read",
+        "award-state",
+        "gas-reconcile",
+        "monthly-state",
+        "payment-evidence",
+        "payment-index",
+        "payment-scan",
+        "preflight",
+        "signer-role"
+      ],
+      "models": [
+        "formal/models/payments/operator_keeper.qnt",
+        "formal/models/payments/operator_keeper_diagnostics.qnt",
+        "formal/models/payments/operator_keeper_lifecycle.qnt",
+        "formal/models/payments/stored_binding_broadcast_authority.qnt",
+        "formal/models/rewards/monthly_execution_recovery.qnt"
+      ],
+      "lexicallyUnmentionedValues": [],
+      "review": "candidate-only"
+    },
+    {
+      "path": "scripts/prepare-implementation-corrections.ts",
+      "line": 267,
+      "name": "CorrectionPhase",
+      "kind": "string-union",
+      "values": [
+        "allocation validation",
+        "collection and registry verification",
+        "participation restrictions read",
+        "preview or receipt generation",
+        "private financial protection read",
+        "protected import and readback",
+        "public Points read",
+        "trusted invocation"
+      ],
+      "models": [
+        "formal/models/points/historical_implementation_allocation.qnt"
+      ],
+      "lexicallyUnmentionedValues": [
+        "allocation validation",
+        "collection and registry verification",
+        "participation restrictions read",
+        "preview or receipt generation",
+        "private financial protection read",
+        "protected import and readback",
+        "public Points read",
+        "trusted invocation"
+      ],
       "review": "candidate-only"
     },
     {
@@ -2111,12 +2192,60 @@
       "review": "candidate-only"
     },
     {
+      "path": "scripts/run-october-rewards.ts",
+      "line": 42,
+      "name": "ValidationStage",
+      "kind": "string-union",
+      "values": [
+        "current owner authority",
+        "current project registry",
+        "current recipient eligibility",
+        "enforcement consistency",
+        "enforcement generation",
+        "enforcement records",
+        "existing proposal readback",
+        "financial protection",
+        "private Points checkpoint",
+        "proposal compilation",
+        "published Points validation",
+        "reviewed packet"
+      ],
+      "models": ["formal/models/rewards/october_proposal_import.qnt"],
+      "lexicallyUnmentionedValues": [
+        "current owner authority",
+        "current project registry",
+        "current recipient eligibility",
+        "enforcement consistency",
+        "enforcement generation",
+        "enforcement records",
+        "existing proposal readback",
+        "financial protection",
+        "private Points checkpoint",
+        "proposal compilation",
+        "published Points validation",
+        "reviewed packet"
+      ],
+      "review": "candidate-only"
+    },
+    {
+      "path": "scripts/value-file-recovery.ts",
+      "line": 108,
+      "name": "mode",
+      "kind": "string-union",
+      "values": ["100644", "100755"],
+      "models": ["formal/models/slopbot/merge_evidence_acquisition.qnt"],
+      "lexicallyUnmentionedValues": ["100644", "100755"],
+      "review": "candidate-only"
+    },
+    {
       "path": "scripts/value-ingestion.ts",
-      "line": 422,
-      "name": "outcomes",
+      "line": 437,
+      "name": "AttributionOutcome",
       "kind": "string-union",
       "values": ["headRefOid", "id", "number", "updatedAt", "url"],
       "models": [
+        "formal/models/points/implementation_credit.qnt",
+        "formal/models/points/implementation_credit_gate.qnt",
         "formal/models/slopbot/value_feed_deadline.qnt",
         "formal/models/slopbot/value_ingestion.qnt"
       ],
@@ -2127,6 +2256,21 @@
         "updatedAt",
         "url"
       ],
+      "review": "candidate-only"
+    },
+    {
+      "path": "scripts/value-ingestion.ts",
+      "line": 446,
+      "name": "phase",
+      "kind": "string-union",
+      "values": ["commit-attributions", "value-histories"],
+      "models": [
+        "formal/models/points/implementation_credit.qnt",
+        "formal/models/points/implementation_credit_gate.qnt",
+        "formal/models/slopbot/value_feed_deadline.qnt",
+        "formal/models/slopbot/value_ingestion.qnt"
+      ],
+      "lexicallyUnmentionedValues": ["commit-attributions", "value-histories"],
       "review": "candidate-only"
     },
     {
@@ -2176,7 +2320,7 @@
     },
     {
       "path": "src/App.tsx",
-      "line": 459,
+      "line": 471,
       "name": "useState",
       "kind": "string-union",
       "values": ["deleting", "holding", "typing"],
@@ -2201,7 +2345,7 @@
     },
     {
       "path": "src/App.tsx",
-      "line": 1104,
+      "line": 1176,
       "name": "useState",
       "kind": "string-union",
       "values": ["blocked", "error", "loading", "ready"],
@@ -2295,7 +2439,7 @@
     },
     {
       "path": "src/Points.tsx",
-      "line": 220,
+      "line": 227,
       "name": "useState",
       "kind": "string-union",
       "values": ["error", "loading", "ready"],
@@ -2314,7 +2458,7 @@
     },
     {
       "path": "src/Points.tsx",
-      "line": 551,
+      "line": 558,
       "name": "status",
       "kind": "string-union",
       "values": ["absent", "loading", "ready", "unavailable"],
@@ -2333,7 +2477,7 @@
     },
     {
       "path": "src/Points.tsx",
-      "line": 1460,
+      "line": 1482,
       "name": "status",
       "kind": "string-union",
       "values": ["error", "loading", "preview"],
@@ -2429,7 +2573,7 @@
     },
     {
       "path": "src/ProjectProposalPage.tsx",
-      "line": 865,
+      "line": 868,
       "name": "state",
       "kind": "string-union",
       "values": ["done", "error", "idle", "loading"],
@@ -2453,7 +2597,7 @@
     },
     {
       "path": "src/ProjectProposalPage.tsx",
-      "line": 1334,
+      "line": 1337,
       "name": "status",
       "kind": "string-union",
       "values": ["idle", "submitting"],
@@ -2477,7 +2621,7 @@
     },
     {
       "path": "src/ProjectProposalPage.tsx",
-      "line": 2168,
+      "line": 2221,
       "name": "state",
       "kind": "string-union",
       "values": ["idle", "publishing"],
@@ -2501,7 +2645,7 @@
     },
     {
       "path": "src/ProjectProposalPage.tsx",
-      "line": 2173,
+      "line": 2226,
       "name": "state",
       "kind": "string-union",
       "values": ["idle", "removed", "removing"],
@@ -2521,6 +2665,30 @@
         "formal/models/ui/ui_setup_check_lifetime.qnt"
       ],
       "lexicallyUnmentionedValues": ["removing"],
+      "review": "candidate-only"
+    },
+    {
+      "path": "src/ProjectProposalPage.tsx",
+      "line": 2233,
+      "name": "state",
+      "kind": "string-union",
+      "values": ["idle", "loading"],
+      "models": [
+        "formal/models/api/api_project_revision_receipt.qnt",
+        "formal/models/ui/ui_calendar_views.qnt",
+        "formal/models/ui/ui_draft_save_progress.qnt",
+        "formal/models/ui/ui_draft_slots.qnt",
+        "formal/models/ui/ui_focus_session.qnt",
+        "formal/models/ui/ui_image_decode.qnt",
+        "formal/models/ui/ui_project_authority.qnt",
+        "formal/models/ui/ui_project_draft.qnt",
+        "formal/models/ui/ui_project_publication_lifetime.qnt",
+        "formal/models/ui/ui_project_removal.qnt",
+        "formal/models/ui/ui_project_setup.qnt",
+        "formal/models/ui/ui_repository_lookup.qnt",
+        "formal/models/ui/ui_setup_check_lifetime.qnt"
+      ],
+      "lexicallyUnmentionedValues": [],
       "review": "candidate-only"
     },
     {
@@ -2776,6 +2944,33 @@
       "review": "candidate-only"
     },
     {
+      "path": "src/VaultActions.tsx",
+      "line": 423,
+      "name": "result",
+      "kind": "string-union",
+      "values": [
+        "approval-confirmed",
+        "failed",
+        "finalized",
+        "no-vault",
+        "not-sent",
+        "pending",
+        "received"
+      ],
+      "models": [
+        "formal/models/ui/ui_owner_bounty_funds.qnt",
+        "formal/models/ui/ui_owner_recovery_lifetime.qnt",
+        "formal/models/ui/ui_transaction.qnt",
+        "formal/models/ui/ui_vault_auto_check.qnt",
+        "formal/models/ui/ui_vault_batched_deposit.qnt",
+        "formal/models/ui/ui_vault_prompt_ownership.qnt",
+        "formal/models/ui/ui_vault_provisional_funding.qnt",
+        "formal/models/ui/ui_vault_recovery.qnt"
+      ],
+      "lexicallyUnmentionedValues": ["finalized"],
+      "review": "candidate-only"
+    },
+    {
       "path": "src/VettingEvidence.tsx",
       "line": 385,
       "name": "useState",
@@ -2819,7 +3014,7 @@
     },
     {
       "path": "src/lib/cycle-index.ts",
-      "line": 42,
+      "line": 43,
       "name": "CycleIndexState",
       "kind": "string-union",
       "values": [
@@ -2840,6 +3035,30 @@
       "review": "candidate-only"
     },
     {
+      "path": "src/lib/evm-vault-actions.ts",
+      "line": 379,
+      "name": "status",
+      "kind": "string-union",
+      "values": [
+        "failed",
+        "finalized",
+        "no-vault",
+        "not-sent",
+        "pending",
+        "received"
+      ],
+      "models": [
+        "formal/models/contracts/evm_owner_action.qnt",
+        "formal/models/ui/ui_monthly_setting_recovery.qnt",
+        "formal/models/ui/ui_vault_auto_check.qnt",
+        "formal/models/ui/ui_vault_batched_deposit.qnt",
+        "formal/models/ui/ui_vault_prompt_ownership.qnt",
+        "formal/models/ui/ui_vault_provisional_funding.qnt"
+      ],
+      "lexicallyUnmentionedValues": [],
+      "review": "candidate-only"
+    },
+    {
       "path": "src/lib/leaderboard-types.ts",
       "line": 72,
       "name": "state",
@@ -2851,7 +3070,7 @@
         "DISMISSED",
         "PENDING"
       ],
-      "models": [],
+      "models": ["formal/models/points/points_implementation_correction.qnt"],
       "lexicallyUnmentionedValues": [
         "APPROVED",
         "CHANGES_REQUESTED",
@@ -2863,32 +3082,22 @@
     },
     {
       "path": "src/lib/leaderboard-types.ts",
-      "line": 191,
+      "line": 199,
       "name": "stateReason",
       "kind": "string-union",
       "values": ["COMPLETED", "NOT_PLANNED", "REOPENED"],
-      "models": [],
+      "models": ["formal/models/points/points_implementation_correction.qnt"],
       "lexicallyUnmentionedValues": ["COMPLETED", "NOT_PLANNED", "REOPENED"],
       "review": "candidate-only"
     },
     {
       "path": "src/lib/leaderboard-types.ts",
-      "line": 339,
+      "line": 347,
       "name": "state",
       "kind": "string-union",
       "values": ["APPROVED", "CHANGES_REQUESTED"],
-      "models": [],
+      "models": ["formal/models/points/points_implementation_correction.qnt"],
       "lexicallyUnmentionedValues": ["APPROVED", "CHANGES_REQUESTED"],
-      "review": "candidate-only"
-    },
-    {
-      "path": "src/lib/leaderboard-types.ts",
-      "line": 490,
-      "name": "status",
-      "kind": "string-union",
-      "values": ["claimed", "unclaimed"],
-      "models": [],
-      "lexicallyUnmentionedValues": ["claimed", "unclaimed"],
       "review": "candidate-only"
     },
     {
@@ -2896,38 +3105,48 @@
       "line": 498,
       "name": "status",
       "kind": "string-union",
+      "values": ["claimed", "unclaimed"],
+      "models": ["formal/models/points/points_implementation_correction.qnt"],
+      "lexicallyUnmentionedValues": ["claimed", "unclaimed"],
+      "review": "candidate-only"
+    },
+    {
+      "path": "src/lib/leaderboard-types.ts",
+      "line": 506,
+      "name": "status",
+      "kind": "string-union",
       "values": ["complete", "missing", "partial"],
-      "models": [],
+      "models": ["formal/models/points/points_implementation_correction.qnt"],
       "lexicallyUnmentionedValues": ["complete", "missing", "partial"],
       "review": "candidate-only"
     },
     {
       "path": "src/lib/leaderboard-types.ts",
-      "line": 545,
+      "line": 553,
       "name": "status",
       "kind": "string-union",
       "values": ["candidate", "excluded"],
-      "models": [],
+      "models": ["formal/models/points/points_implementation_correction.qnt"],
       "lexicallyUnmentionedValues": ["candidate", "excluded"],
       "review": "candidate-only"
     },
     {
       "path": "src/lib/leaderboard-types.ts",
-      "line": 647,
+      "line": 655,
       "name": "status",
       "kind": "string-union",
       "values": ["complete", "suppressed-limit"],
-      "models": [],
+      "models": ["formal/models/points/points_implementation_correction.qnt"],
       "lexicallyUnmentionedValues": ["complete", "suppressed-limit"],
       "review": "candidate-only"
     },
     {
       "path": "src/lib/leaderboard-types.ts",
-      "line": 738,
+      "line": 777,
       "name": "jointValueDecisions",
       "kind": "string-union",
       "values": ["history", "latestDigest", "throughSequence"],
-      "models": [],
+      "models": ["formal/models/points/points_implementation_correction.qnt"],
       "lexicallyUnmentionedValues": [
         "history",
         "latestDigest",
@@ -2937,12 +3156,16 @@
     },
     {
       "path": "src/lib/leaderboard.ts",
-      "line": 4574,
+      "line": 4804,
       "name": "state",
       "kind": "string-union",
       "values": ["APPROVED", "CHANGES_REQUESTED"],
       "models": [
+        "formal/models/points/implementation_allocation.qnt",
+        "formal/models/points/implementation_credit.qnt",
+        "formal/models/points/implementation_credit_gate.qnt",
         "formal/models/points/legacy_score_caps.qnt",
+        "formal/models/points/points_implementation_correction.qnt",
         "formal/models/ui/ui_review_pool.qnt",
         "formal/models/ui/ui_score_ledger.qnt",
         "formal/models/ui/ui_score_selection.qnt",
@@ -3009,6 +3232,22 @@
       "values": ["approved", "excluded", "held"],
       "models": ["formal/models/rewards/historical_reward.qnt"],
       "lexicallyUnmentionedValues": ["excluded"],
+      "review": "candidate-only"
+    },
+    {
+      "path": "src/lib/points-implementation-corrections.ts",
+      "line": 345,
+      "name": "status",
+      "kind": "string-union",
+      "values": ["already-applied", "applied", "held", "retained", "unchanged"],
+      "models": [
+        "formal/models/points/historical_implementation_allocation.qnt"
+      ],
+      "lexicallyUnmentionedValues": [
+        "already-applied",
+        "retained",
+        "unchanged"
+      ],
       "review": "candidate-only"
     },
     {
@@ -3210,7 +3449,7 @@
     },
     {
       "path": "src/lib/project-view.ts",
-      "line": 98,
+      "line": 100,
       "name": "reason",
       "kind": "string-union",
       "values": [
@@ -3230,7 +3469,7 @@
     },
     {
       "path": "src/lib/project-view.ts",
-      "line": 131,
+      "line": 133,
       "name": "status",
       "kind": "string-union",
       "values": ["closed", "live"],
@@ -3309,7 +3548,7 @@
     },
     {
       "path": "src/lib/vetting-contracts.ts",
-      "line": 144,
+      "line": 163,
       "name": "exemption",
       "kind": "string-union",
       "values": [
@@ -3346,7 +3585,7 @@
     },
     {
       "path": "workers/fee-converter/buyback.ts",
-      "line": 149,
+      "line": 160,
       "name": "outcome",
       "kind": "string-union",
       "values": ["arrived", "refunded"],
@@ -3362,7 +3601,7 @@
     },
     {
       "path": "workers/fee-converter/buyback.ts",
-      "line": 211,
+      "line": 223,
       "name": "mode",
       "kind": "string-union",
       "values": ["dry_run", "live"],
@@ -3378,7 +3617,7 @@
     },
     {
       "path": "workers/fee-converter/buyback.ts",
-      "line": 217,
+      "line": 229,
       "name": "mode",
       "kind": "string-union",
       "values": ["dry_run", "live"],
@@ -3394,7 +3633,7 @@
     },
     {
       "path": "workers/fee-converter/buyback.ts",
-      "line": 318,
+      "line": 330,
       "name": "state",
       "kind": "string-union",
       "values": ["no_route", "pending", "quoted", "skipped"],
@@ -3527,7 +3766,7 @@
     },
     {
       "path": "workers/identity/index.ts",
-      "line": 45,
+      "line": 46,
       "name": "PrivateIntakeSkipReason",
       "kind": "string-union",
       "values": [
@@ -3559,13 +3798,15 @@
     },
     {
       "path": "workers/operator-keeper/index.ts",
-      "line": 52,
+      "line": 65,
       "name": "mode",
       "kind": "string-union",
       "values": ["dry_run", "execute", "off"],
       "models": [
         "formal/models/payments/operator_keeper.qnt",
-        "formal/models/payments/operator_keeper_lifecycle.qnt"
+        "formal/models/payments/operator_keeper_diagnostics.qnt",
+        "formal/models/payments/operator_keeper_lifecycle.qnt",
+        "formal/models/payments/operator_keeper_rpc.qnt"
       ],
       "lexicallyUnmentionedValues": [],
       "review": "candidate-only"
@@ -3761,11 +4002,14 @@
     },
     {
       "path": "workers/slopbot/github.ts",
-      "line": 188,
+      "line": 199,
       "name": "Exemption",
       "kind": "string-union",
       "values": ["exempt", "not-exempt", "unknown"],
-      "models": ["formal/models/slopbot/bot_repository_access.qnt"],
+      "models": [
+        "formal/models/points/github_ingestion_read.qnt",
+        "formal/models/slopbot/bot_repository_access.qnt"
+      ],
       "lexicallyUnmentionedValues": ["exempt", "not-exempt"],
       "review": "candidate-only"
     },
@@ -3938,6 +4182,16 @@
       "review": "candidate-only"
     },
     {
+      "path": "workers/slopbot/value-file-recovery.ts",
+      "line": 25,
+      "name": "mode",
+      "kind": "string-union",
+      "values": ["100644", "100755"],
+      "models": ["formal/models/slopbot/bot_evidence_integrity.qnt"],
+      "lexicallyUnmentionedValues": ["100644", "100755"],
+      "review": "candidate-only"
+    },
+    {
       "path": "workers/slopbot/value-inference.ts",
       "line": 171,
       "name": "reason",
@@ -3994,7 +4248,7 @@
     },
     {
       "path": "workers/slopbot/value-publication.ts",
-      "line": 60,
+      "line": 65,
       "name": "result",
       "kind": "string-union",
       "values": ["policySha", "sourceDigest"],
@@ -4059,13 +4313,15 @@
     },
     {
       "path": "workers/vetting/bounded-scan.ts",
-      "line": 686,
+      "line": 701,
       "name": "mode",
       "kind": "string-union",
       "values": ["cdata", "comment", "tag", "text", "value"],
       "models": [
         "formal/models/vetting/vetting_disposition.qnt",
-        "formal/models/vetting/vetting_gzip_expansion.qnt"
+        "formal/models/vetting/vetting_gzip_expansion.qnt",
+        "formal/models/vetting/vetting_local_helpers.qnt",
+        "formal/models/vetting/vetting_path_coverage.qnt"
       ],
       "lexicallyUnmentionedValues": [
         "cdata",

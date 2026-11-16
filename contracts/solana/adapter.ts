@@ -259,14 +259,26 @@ export async function solanaMintDecimals(
   return (await solanaMintDetails(config, mint)).decimals;
 }
 
+export async function assertSolanaGenesis({
+  rpcUrl,
+  genesisHash,
+}: {
+  rpcUrl: string;
+  genesisHash: string | undefined;
+}): Promise<void> {
+  if (typeof genesisHash !== "string" || !genesisHash)
+    throw new Error("Solana genesis trust root unavailable");
+  if ((await rpc({ rpcUrl }, "getGenesisHash", [])) !== genesisHash)
+    throw new Error("Wrong Solana cluster");
+}
+
 /** Verify finalized program bytes, loader, upgrade authority and singleton Config. */
 export async function verifySolanaProgram(
   config: SolanaProgramConfig,
 ): Promise<Uint8Array> {
   if (!/^[0-9a-f]{64}$/.test(config.codeSha256))
     throw new Error("Missing reviewed program digest");
-  if ((await rpc(config, "getGenesisHash", [])) !== config.genesisHash)
-    throw new Error("Wrong Solana cluster");
+  await assertSolanaGenesis(config);
   if (
     config.executedAtSlot !== undefined &&
     (!Number.isSafeInteger(config.executedAtSlot) || config.executedAtSlot < 0)

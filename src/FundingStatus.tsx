@@ -1,6 +1,6 @@
 import { Vault } from "lucide-react";
 import type { ProjectDefinition } from "./lib/projects.mjs";
-import { StatusBadge } from "./Presentation";
+import { paymentsOn, StatusBadge } from "./Presentation";
 
 /** One badge: a recorded vault that can pay, one whose payments are off, or none. */
 export function FundingStatus({
@@ -14,7 +14,7 @@ export function FundingStatus({
   if (project.reward.kind === "external-prize-share") return null;
   const [tone, label] = !project.escrow?.deployments.length
     ? (["neutral", "No vault"] as const)
-    : project.reward.paymentMode === "enabled"
+    : paymentsOn(project)
       ? (["success", "Live"] as const)
       : (["warning", "Payments off"] as const);
   return (

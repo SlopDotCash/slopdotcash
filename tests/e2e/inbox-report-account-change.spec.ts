@@ -18,7 +18,8 @@ async function privateReports(
   const id = (actor: string) => `ss_account_${actor}_private`;
   await page.route("**/api/v1/**", async (route) => {
     const request = route.request();
-    const path = new URL(request.url()).pathname;
+    const url = new URL(request.url());
+    const path = url.pathname;
     const actor = state.actor;
     const session = actor
       ? { githubId: actor, githubLogin: `account-${actor}` }
@@ -101,6 +102,17 @@ async function privateReports(
       state.mutations++;
       return route.fulfill({ status: 403, json: { error: "forbidden" } });
     }
+    if (
+      path.startsWith("/api/v1/security-submissions/") &&
+      url.searchParams.get("view") === "receipt"
+    )
+      return route.fulfill({
+        status: actor && path.endsWith(`/${id(actor)}`) ? 200 : 404,
+        json:
+          actor && path.endsWith(`/${id(actor)}`)
+            ? { recipientGithubId: actor, submission }
+            : { error: "not_found" },
+      });
     if (
       path.startsWith("/api/v1/security-submissions/") &&
       state.raceAtNextDetail

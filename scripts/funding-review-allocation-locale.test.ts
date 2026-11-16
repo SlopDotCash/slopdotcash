@@ -15,7 +15,11 @@
  * login tie break ranks first.
  */
 import { expect, spyOn, test } from "bun:test";
-import { createFundingReview } from "../src/lib/funding-review-data";
+import { assertQualityEvidence } from "../src/lib/contribution-quality";
+import {
+  assertFundingPreparation,
+  createFundingReview,
+} from "../src/lib/funding-review-data";
 
 const HASH_A = "a".repeat(64);
 const HASH_B = "b".repeat(64);
@@ -103,4 +107,52 @@ test("a tied funding-review remainder keeps its recipient when the host locale i
     lower.mockRestore();
     compare.mockRestore();
   }
+});
+
+test("fractional legacy thirds retain whole-Point precision in funding preparation", () => {
+  const fractional = preparation();
+  fractional.contributors[0].scoreThirds = "0.5";
+  fractional.contributors[1].scoreThirds = "0.6";
+  fractional.counts.scoreThirds = "1.1";
+  expect(assertFundingPreparation(fractional)).toEqual(fractional);
+  expect(() =>
+    assertQualityEvidence(
+      {
+        schemaVersion: "1",
+        projectId: fractional.projectId,
+        cycleId: fractional.cycleId,
+        sourceSnapshotSha256: fractional.sourceSnapshotSha256,
+        closureCensus: {
+          method: "repository-created-order-v1",
+          sourceSha256: HASH_A,
+          observedAt: fractional.observedAt,
+          discussionSourceSha256: null,
+        },
+        events: fractional.contributors.map((row, index) => ({
+          id: `PR_precision_${index}`,
+          actorId: row.actor.id,
+          url: `https://github.com/SlopDotCash/asi/pull/${index + 1}`,
+          title: "Accepted contribution",
+          kind: "implementation",
+          scoreThirds: Number(row.scoreThirds),
+          weight: row.weight,
+          flags: [],
+        })),
+        closures: [],
+      },
+      fractional,
+    ),
+  ).not.toThrow();
+  const changed = structuredClone(fractional);
+  changed.counts.scoreThirds = "1.1000000000000001";
+  expect(() => assertFundingPreparation(changed)).toThrow();
+  expect(
+    createFundingReview(fractional).contributors.map(
+      (row) => row.externalSharePartsPerMillion,
+    ),
+  ).toEqual(
+    createFundingReview(preparation()).contributors.map(
+      (row) => row.externalSharePartsPerMillion,
+    ),
+  );
 });

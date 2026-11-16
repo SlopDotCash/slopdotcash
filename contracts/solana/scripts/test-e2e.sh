@@ -75,7 +75,7 @@ start_validator() {
     cat .local/validator.log >&2
     return 1
   fi
-  solana --url "$ANCHOR_PROVIDER_URL" airdrop 100 --keypair "$ANCHOR_WALLET" >/dev/null
+  node scripts/airdrop-local.mjs
 }
 # CI qualifies the exact retained production artifact. Local runs without one
 # keep building their program as before. IDL extraction does not replace it.

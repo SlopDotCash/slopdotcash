@@ -218,5 +218,9 @@ test("a repository path acquired by another project before commit refuses the wh
         )
         .get("slopdotcash/asi") as { project_id: string }
     ).project_id,
-  }).toEqual({ result: "conflict", revision: 1, aliasOwner: other.id });
+  }).toEqual({
+    result: "repository_conflict",
+    revision: 1,
+    aliasOwner: other.id,
+  });
 });

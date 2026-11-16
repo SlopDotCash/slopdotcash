@@ -20,19 +20,21 @@ import {
   sep,
 } from "node:path";
 import { fileURLToPath } from "node:url";
+import type { ValueFileRequest } from "../workers/slopbot/value-file-recovery";
 import type { ValueMergeInput } from "../workers/slopbot/value-merge-profile";
 import {
   requiredMergeObjects,
   verifyMergeObjectStore,
 } from "./value-merge-objects";
 
-const MAX_BUNDLE = 25 * 1024 * 1024;
+const MAX_BUNDLE = 32 * 1024 * 1024;
 const MAX_INPUT = 8 * 1024 * 1024;
 
 export async function createValueMergeBundle(
   inputs: readonly ValueMergeInput[],
   repository: string,
   output: string,
+  fileRequests: readonly ValueFileRequest[] = [],
 ) {
   if (!isAbsolute(repository) || !isAbsolute(output))
     throw new Error("Merge repository and output paths must be absolute");
@@ -75,7 +77,7 @@ export async function createValueMergeBundle(
   const gitDir = execute(["-C", repository, "rev-parse", "--absolute-git-dir"])
     .toString("utf8")
     .trim();
-  const required = requiredMergeObjects(inputs, gitDir);
+  const required = requiredMergeObjects(inputs, gitDir, fileRequests);
   const objects = [
     ...new Set([...required.commits, ...required.trees, ...required.blobs]),
   ].sort();
@@ -105,7 +107,7 @@ export async function createValueMergeBundle(
     execute(["init", "--bare", "--template=", check]);
     execute(["--git-dir", check, "bundle", "verify", bundle]);
     execute(["--git-dir", check, "bundle", "unbundle", bundle]);
-    const verified = verifyMergeObjectStore(inputs, check);
+    const verified = verifyMergeObjectStore(inputs, check, fileRequests);
     if (JSON.stringify(verified) !== JSON.stringify(required))
       throw new Error("Constructed merge object closure changed");
     // `lastIndexOf("/")` finds no separator in a Windows output path, so the

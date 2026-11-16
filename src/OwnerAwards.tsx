@@ -49,6 +49,7 @@ import {
   MetricGrid,
   MetricTile,
   NetworkName,
+  paymentsOn,
   StatusBadge,
 } from "./Presentation";
 
@@ -67,6 +68,22 @@ function baseUnitsOf(value: string, decimals: number | null) {
     return trimmed;
   }
   return parseVaultAmount(trimmed, decimals).toString();
+}
+/**
+ * A change below the proposed amount is a cut (PRD section 6, operator
+ * decision of 15 November 2026). It needs this public reason, and the
+ * contributor gets this much notice before the month can lock.
+ */
+const CUT_REASON_MIN = 20;
+const CUT_REASON_MAX = 500;
+const CUT_NOTICE_MS = 24 * 60 * 60 * 1000;
+/** Whether a draft parses to an amount below the proposed amount. */
+function draftCut(value: string, decimals: number | null, proposed: string) {
+  try {
+    return BigInt(baseUnitsOf(value, decimals)) < BigInt(proposed);
+  } catch {
+    return false;
+  }
 }
 /** A release this browser submitted must stay visible until it settles. */
 function hasSubmittedRelease(projectId: string, suffix = "") {
@@ -145,7 +162,10 @@ export default function OwnerAwards({
     };
   }, []);
   const [drafts, setDrafts] = useState<
-    Record<string, Record<string, { value: string; base: string }>>
+    Record<
+      string,
+      Record<string, { value: string; base: string; reason?: string }>
+    >
   >({});
   const [selectedActor, setSelectedActor] = useState<string | null>(null);
   const [actionBusy, setActionBusy] = useState(false);
@@ -366,12 +386,19 @@ export default function OwnerAwards({
       if (!view?.proposal) return;
       const draft = drafts[view.period]?.[githubUserId];
       if (draft === undefined) return;
+      const grossBase = baseUnitsOf(draft.value, decimals);
+      const proposed = view.proposal.allocations.find(
+        (row) => row.githubUserId === githubUserId,
+      )?.proposedGrossBase;
+      const cut =
+        proposed !== undefined && BigInt(grossBase) < BigInt(proposed);
       const body = await call(
         `/monthly/${view.period}/allocations`,
         {
           githubUserId,
-          grossBase: baseUnitsOf(draft.value, decimals),
+          grossBase,
           expectedSequence: view.proposal.allocationSequence,
+          ...(cut ? { reason: (draft.reason ?? "").trim() } : {}),
         },
         "Monthly allocation",
         viewActor,
@@ -435,6 +462,20 @@ export default function OwnerAwards({
       ? Date.parse(view.cutoffAt)
       : null,
   );
+  // Cuts close 24 hours before the cutoff while automatic finalization is on,
+  // and the owner can finalize only 24 hours after the latest cut.
+  const cutsCloseAt =
+    view?.automatic && !view.run && view.cutoffAt
+      ? Date.parse(view.cutoffAt) - CUT_NOTICE_MS
+      : null;
+  useTimeBoundary(cutsCloseAt);
+  const finalizeFrom =
+    view?.proposal?.latestCutAt && !view.run
+      ? Date.parse(view.proposal.latestCutAt) + CUT_NOTICE_MS
+      : null;
+  useTimeBoundary(finalizeFrom);
+  const cutsClosed = cutsCloseAt !== null && Date.now() >= cutsCloseAt;
+  const finalizeWaits = finalizeFrom !== null && Date.now() < finalizeFrom;
 
   // Decision D1: with the automatic default on, the cutoff fixes the
   // allocations until the coordinator freezes them.
@@ -619,7 +660,7 @@ export default function OwnerAwards({
                   </p>
                 )}
               </section>
-              {project.reward.paymentMode !== "enabled" && (
+              {!paymentsOn(project) && (
                 <p role="status">
                   <StatusBadge>Payments off</StatusBadge>
                 </p>
@@ -652,6 +693,14 @@ export default function OwnerAwards({
                         // Finalization uses saved allocations, not unsaved input.
                         // Frozen awards below retain the fee returned by the API.
                         const fee = ordinaryFee(BigInt(row.grossBase));
+                        const draft = drafts[view.period]?.[row.githubUserId];
+                        const cutDraft =
+                          draft &&
+                          draftCut(draft.value, decimals, row.proposedGrossBase)
+                            ? draft
+                            : null;
+                        const reasonLength = (cutDraft?.reason ?? "").trim()
+                          .length;
                         return (
                           <li key={row.githubUserId}>
                             <div className="owner-award-recipient">
@@ -703,6 +752,7 @@ export default function OwnerAwards({
                                       [view.period]: {
                                         ...(drafts[view.period] ?? {}),
                                         [row.githubUserId]: {
+                                          ...draft,
                                           value: event.target.value,
                                           base: row.grossBase,
                                         },
@@ -710,14 +760,55 @@ export default function OwnerAwards({
                                     })
                                   }
                                 />
+                                {cutDraft ? (
+                                  <div className="owner-award-reason">
+                                    <label htmlFor={`${id}-reason`}>
+                                      Reason (shown publicly and sent to the
+                                      contributor)
+                                    </label>
+                                    <textarea
+                                      id={`${id}-reason`}
+                                      required
+                                      rows={2}
+                                      minLength={CUT_REASON_MIN}
+                                      maxLength={CUT_REASON_MAX}
+                                      aria-describedby={`${id}-reason-hint`}
+                                      disabled={busy || cutoffPassed}
+                                      value={cutDraft.reason ?? ""}
+                                      onChange={(event) =>
+                                        setDrafts({
+                                          ...drafts,
+                                          [view.period]: {
+                                            ...(drafts[view.period] ?? {}),
+                                            [row.githubUserId]: {
+                                              ...cutDraft,
+                                              reason: event.target.value,
+                                            },
+                                          },
+                                        })
+                                      }
+                                    />
+                                    <small
+                                      className="field-hint"
+                                      id={`${id}-reason-hint`}
+                                    >
+                                      {cutsClosed
+                                        ? "Cuts closed 24 hours before the cutoff. The contributor gets 24 hours of notice before a cut takes effect."
+                                        : `This is below the proposed amount. Write ${CUT_REASON_MIN} to ${CUT_REASON_MAX} characters. The month cannot lock until 24 hours after you save.`}
+                                    </small>
+                                  </div>
+                                ) : null}
                                 <button
                                   className="button secondary-button"
                                   type="button"
                                   disabled={
                                     busy ||
                                     cutoffPassed ||
-                                    drafts[view.period]?.[row.githubUserId] ===
-                                      undefined
+                                    draft === undefined ||
+                                    (cutDraft !== null &&
+                                      (cutsClosed ||
+                                        reasonLength < CUT_REASON_MIN ||
+                                        reasonLength > CUT_REASON_MAX))
                                   }
                                   aria-label={`Save ${row.login}`}
                                   onClick={() => void save(row.githubUserId)}
@@ -745,11 +836,21 @@ export default function OwnerAwards({
                       })}
                     </ul>
                   )}
+                  {view.canManage && finalizeWaits && finalizeFrom !== null ? (
+                    <p className="field-hint" role="status">
+                      A contributor gets 24 hours of notice after a cut. You can
+                      finalize from{" "}
+                      <time dateTime={new Date(finalizeFrom).toISOString()}>
+                        {formatDateTime(new Date(finalizeFrom).toISOString())}
+                      </time>
+                      .
+                    </p>
+                  ) : null}
                   {view.canManage && (
                     <button
                       className="button primary-button"
                       type="button"
-                      disabled={busy}
+                      disabled={busy || finalizeWaits}
                       onClick={() => void finalize()}
                     >
                       Finalize awards

@@ -13,6 +13,7 @@ import {
 import {
   createProjectView,
   type ProjectView,
+  projectActivityCollected,
   projectCycleHasOpened,
 } from "./project-view";
 import { PROJECTS } from "./projects.mjs";
@@ -116,11 +117,7 @@ async function loadSnapshot(
         .filter(
           (project) =>
             projectCycleHasOpened(value, project.id) &&
-            project.repositories.every((repository) =>
-              value.repositories.some(
-                (collected) => collected.id === repository.id,
-              ),
-            ),
+            projectActivityCollected(value, project),
         )
         .map((project) => createProjectView(value, project.id));
       return { status: "ready", snapshot: value, views, cycleIndex };

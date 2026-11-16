@@ -23,6 +23,8 @@ import {
 
 export const TOKEN_PROGRAM = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA";
 export const TOKEN_2022_PROGRAM = "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb";
+/** Maximum Token-2022 mint data admitted by the on-chain program. */
+export const MAX_TOKEN_2022_MINT_SIZE = 1024;
 
 /** Classic SPL Token mint size. */
 export const MINT_SIZE = 82;
@@ -119,6 +121,8 @@ export function readTokenMint(
   expectedMint?: Uint8Array,
 ): TokenMintReading {
   const { program, bytes } = tokenProgramData(value);
+  if (program === TOKEN_2022_PROGRAM && bytes.length > MAX_TOKEN_2022_MINT_SIZE)
+    throw new Error("Token-2022 mint exceeds the 1024-byte limit");
   if (bytes.length < MINT_SIZE) throw new Error("Truncated mint account");
   // Byte 45 is `is_initialized` in both layouts; byte 44 is the decimals.
   if (bytes[45] !== 1) throw new Error("Mint is not initialized");
@@ -155,12 +159,16 @@ export function readTokenMint(
     if (record.type === METADATA_POINTER) {
       if (payload.length !== METADATA_POINTER_LENGTH)
         throw new Error("Malformed metadata pointer");
+      if (payload.subarray(0, 32).some((byte) => byte !== 0))
+        throw new Error("Metadata pointer authority is not disabled");
       if (expectedMint && !equal(payload.subarray(32, 64), expectedMint))
         throw new Error("Metadata pointer does not name the mint");
       continue;
     }
     if (payload.length < TOKEN_METADATA_MIN_LENGTH)
       throw new Error("Malformed token metadata");
+    if (payload.subarray(0, 32).some((byte) => byte !== 0))
+      throw new Error("Token metadata update authority is not disabled");
     if (expectedMint && !equal(payload.subarray(32, 64), expectedMint))
       throw new Error("Token metadata does not embed the mint");
     if (!metadataPayloadValid(payload))

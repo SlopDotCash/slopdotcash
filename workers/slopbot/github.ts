@@ -1,12 +1,15 @@
 import { githubAppJwt, githubHeaders } from "../../backend/github";
 import { bytesToHex, decodeBase64 } from "../../src/lib/byte-encoding";
 import { constantTimeEqual } from "../identity/crypto";
+import { isConfirmedMissingPublicReference } from "./value-reference-query";
 
 // GitHub App plumbing: webhook signatures, App JWT, installation tokens, and
 // the few REST calls Slopbot is allowed to make (BOT-01, slopbot-v2 permissions).
 
 const API = "https://api.github.com";
 const encoder = new TextEncoder();
+const defaultTransport = ((input: RequestInfo | URL, init?: RequestInit) =>
+  fetch(input, init)) as typeof fetch;
 
 export async function verifyWebhookSignature(
   secret: string,
@@ -48,12 +51,15 @@ export class GitHubError extends Error {
 }
 
 export class GitHubClient {
-  private constructor(private readonly token: string) {}
+  private constructor(
+    private readonly token: string,
+    private readonly transport: typeof fetch = defaultTransport,
+  ) {}
 
   /** Existing GitHub token for read-only source ingestion outside the Worker. */
-  static forToken(token: string) {
+  static forToken(token: string, transport: typeof fetch = defaultTransport) {
     if (!token.trim()) throw new Error("GitHub source token is required");
-    return new GitHubClient(token);
+    return new GitHubClient(token, transport);
   }
 
   static async forInstallation(
@@ -84,7 +90,7 @@ export class GitHubClient {
     body?: unknown,
   ): Promise<{ status: number; data: T | null }> {
     const send = (url: string) =>
-      fetch(url, {
+      this.transport(url, {
         method,
         headers: {
           ...headers(this.token),
@@ -136,7 +142,12 @@ export class GitHubClient {
       "/graphql",
       { query, variables },
     );
-    if (!response.data?.data || response.data.errors?.length)
+    if (!response.data?.data)
+      throw new Error("GitHub GraphQL evidence is incomplete");
+    if (
+      response.data.errors?.length &&
+      !isConfirmedMissingPublicReference(query, variables, response.data)
+    )
       throw new Error("GitHub GraphQL evidence is incomplete");
     return response.data.data;
   }

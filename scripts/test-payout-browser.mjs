@@ -15,8 +15,16 @@ const fixture = spawn(
   { stdio: ["ignore", fixtureLog, fixtureLog] },
 );
 const preview = spawn(
-  "bunx",
-  ["vite", "preview", "--host", "127.0.0.1", "--port", "18549", "--strictPort"],
+  process.execPath,
+  [
+    "node_modules/vite/bin/vite.js",
+    "preview",
+    "--host",
+    "127.0.0.1",
+    "--port",
+    "18549",
+    "--strictPort",
+  ],
   { stdio: ["ignore", previewLog, previewLog] },
 );
 async function ready(url) {

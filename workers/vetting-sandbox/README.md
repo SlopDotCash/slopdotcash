@@ -124,6 +124,23 @@ The service verifies the bundle hash, complete object closure, strict Git
 integrity, exact ordered parents and ordinary changed paths. It then runs the
 existing canonical merge collector in a fresh bare repository.
 
+Historical imports may recover omitted text from the same verified bundle.
+The publisher derives exact paths and immutable refs from its fresh GitHub file
+inventories. A first isolated operation verifies the object closure and returns
+regular UTF-8 blobs with ref, tree, mode, Git blob and SHA-256 bindings. Blobs are
+compressed only for the existing 8 MiB result boundary and decompressed under
+the existing 256 MiB expansion bound. The ordinary source collector then reads
+those verified bytes, keeps raw GitHub counts, and repeats metadata checks.
+The second isolated operation reconstructs merges from the resulting complete
+canonical input. Publication performs another full source and policy recheck.
+Ordinary network file/context budgets and the merge recipe profile stay intact.
+Request-local text sharing and incremental canonical source hashing bound
+repeated file evidence without changing its digest. Each final source is still
+recollected and its complete source and policy digest checked before the
+verified equal original object is reused.
+Binary and symlink content remain outside this text recovery route. Missing or
+oversized operation evidence retains its hold.
+
 This fixed operation uses checksum-pinned Git 2.56.0. The 2.52 ort rename fixes
 correct automatic trees for valid histories, and 2.56 adds corrupt-tree
 refusals. Strict fsck remains required. The ordinary artifact operation keeps
@@ -132,7 +149,7 @@ Both build paths use Git 2.56's supported `NO_RUST` option; they do not require
 an unprovisioned Cargo toolchain. The consumer build includes HTTPS support;
 the offline sandbox build omits it.
 
-The merge operation accepts at most 25 MiB of bundle bytes. Its trusted input
+The merge operation accepts at most 32 MiB of bundle bytes. Its trusted input
 and complete result each have an 8 MiB bound. It retains the unprivileged,
 no-network process, 20-second CPU, 30-second wall, 32-process, 64-descriptor
 and 128 MiB Node heap limits. Its per-file limit is 128 MiB to admit the fixed

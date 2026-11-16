@@ -495,7 +495,8 @@ export async function lookupGitHubRepository(
     `/repos/${repository}`,
     apiOrigin,
   );
-  if (!repo)
+  // A private repository is not public facts, whichever token read it.
+  if (!repo || repo.private === true)
     throw new GithubLookupError(
       404,
       "not_found",
@@ -543,6 +544,8 @@ export async function lookupGitHubRepository(
     defaultBranch: repo.default_branch,
     branches,
     branchCommits,
+    fork: repo.fork !== false,
+    archived: repo.archived !== false,
     owner: {
       login: owner.login,
       actorId: String(owner.id),

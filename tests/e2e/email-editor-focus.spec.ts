@@ -129,6 +129,14 @@ async function serveAccount(
         ),
       });
     if (path === "/api/v1/payments/received") return route.fallback();
+    if (request.method() === "GET" && path === "/api/v1/merge-activity")
+      return route.fulfill({
+        json: { schema: "slop-merge-activity-v1", projects: [] },
+      });
+    if (request.method() === "GET" && path === "/api/v1/pool-funding")
+      return route.fulfill({
+        json: { schema: "slop-pool-funding-v1", projects: [] },
+      });
     if (path === "/api/v1/project-session") {
       await state.sessionGate?.promise;
       return route.fulfill({

@@ -1631,6 +1631,12 @@ test("private security bounty programs keep cases restricted from intake to awar
       path: test.info().outputPath("program-terms.png"),
       fullPage: true,
     });
+    const intakeRead = page.waitForResponse(
+      (response) =>
+        response.request().method() === "GET" &&
+        new URL(response.url()).pathname ===
+          `/api/v1/security-programs/${b.id}/intake`,
+    );
     await page.goto(`/projects/${b.id}/security`);
     await expect(page.locator(".route-page-header .route-metric")).toHaveText(
       "Bounty100,000 USDC",
@@ -1642,8 +1648,12 @@ test("private security bounty programs keep cases restricted from intake to awar
     const split = page.getByRole("region", { name: "Award split" });
     await expect(split).toContainText("Researcher · 75%75,000 USDC");
     await expect(split).toContainText("Slop · 25%25,000 USDC");
-    // Finish the overview background reads before explicitly closing this context.
-    // Strict diagnostics must still catch unexpected request cancellations.
+    // Finish this program's intake and font reads before leaving its page.
+    // Waiting only on the destination would cancel these requests first.
+    expect(await (await intakeRead).finished()).toBeNull();
+    await page.evaluate(async () => {
+      await document.fonts.ready;
+    });
     await page.goto(`/projects/${a.id}`, { waitUntil: "networkidle" });
     await expect(
       page.getByText("Loading records", { exact: true }),
@@ -2640,7 +2650,11 @@ test("private security bounty programs keep cases restricted from intake to awar
         "/.well-known/slop/projects.json",
         `/projects/${a.id}/security`,
         "/",
-      ].map(async (path) => (await request.get(path)).text()),
+      ].map(async (path) => {
+        const response = await request.get(path, { maxRetries: 1 });
+        expect(response.status(), path).toBe(200);
+        return response.text();
+      }),
     );
     for (const text of outputs) {
       expect(text).not.toContain("GHSA-");
@@ -3632,6 +3646,21 @@ test("Slop receives a private report before GitHub and keeps it in Inbox @regist
     const report = page.locator(
       `[aria-labelledby="submission-${submissionId}"]`,
     );
+    await expect
+      .poll(
+        () =>
+          privateReads.some((url) => {
+            const receipt = new URL(url);
+            return (
+              receipt.pathname ===
+                `/api/v1/security-submissions/${submissionId}` &&
+              receipt.searchParams.get("view") === "receipt"
+            );
+          }),
+        { timeout: 30_000 },
+      )
+      .toBe(true);
+    await expect(report).toBeVisible();
     await expect(page.locator(".security-report-text")).toHaveCount(0);
     await expect(page.getByText(description, { exact: true })).toHaveCount(0);
     await expect(
@@ -3646,7 +3675,11 @@ test("Slop receives a private report before GitHub and keeps it in Inbox @regist
       path: test.info().outputPath("slop-report-inbox-compact.png"),
       fullPage: true,
     });
-    expect(privateReads).toHaveLength(0);
+    expect(
+      privateReads.every(
+        (url) => new URL(url).searchParams.get("view") === "receipt",
+      ),
+    ).toBe(true);
     // Keep the real stored report and its authorization route. Hide just its
     // row from the recent projection, as the API does after 100 newer receipts.
     // The API regression separately creates all 101 receipts with real migrations.
@@ -3659,6 +3692,7 @@ test("Slop receives a private report before GitHub and keeps it in Inbox @regist
       );
       await route.fulfill({ response, json: body });
     };
+    privateReads.length = 0;
     await page.route("**/api/v1/security-submissions", withoutFocusedReceipt);
     await page.reload({ waitUntil: "networkidle" });
     await expect(report).toHaveClass(/is-focused/u);
@@ -3671,6 +3705,23 @@ test("Slop receives a private report before GitHub and keeps it in Inbox @regist
     await expect(page.locator(".security-report-text")).toHaveCount(0);
     await page.unroute("**/api/v1/security-submissions", withoutFocusedReceipt);
     const missingReceipt = "ss_missing_receipt_fixture";
+    const receiptPath = `**/api/v1/security-submissions/${missingReceipt}?view=receipt`;
+    const wrongReceipt = async (route: Route) => {
+      const url = new URL(route.request().url());
+      url.pathname = `/api/v1/security-submissions/${submissionId}`;
+      const response = await route.fetch({ url: url.href });
+      expect(response.status()).toBe(200);
+      await route.fulfill({ response });
+    };
+    await page.route(receiptPath, wrongReceipt);
+    await page.goto(`/inbox?view=reports&submission=${missingReceipt}`, {
+      waitUntil: "networkidle",
+    });
+    await expect(
+      page.getByText(/The private report receipt could not be verified/),
+    ).toBeVisible();
+    await expect(report).toHaveCount(1);
+    await page.unroute(receiptPath, wrongReceipt);
     diagnostics.allowResponse(
       404,
       "GET",
@@ -3740,16 +3791,55 @@ test("Slop receives a private report before GitHub and keeps it in Inbox @regist
         ],
         { stdio: "pipe" },
       );
-      await page.reload({ waitUntil: "networkidle" });
-      await reportBody(report).click();
-      await expect(report.locator(".security-report-text")).toHaveText(
-        description,
-      );
+      let releaseList!: () => void;
+      let listCaptured = false;
+      let listSnapshot: Record<string, unknown> = {};
+      const listGate = new Promise<void>((resolve) => {
+        releaseList = resolve;
+      });
+      const heldList = async (route: Route) => {
+        const response = await route.fetch();
+        expect(response.status()).toBe(200);
+        listSnapshot = await response.json();
+        listCaptured = true;
+        await listGate;
+        if (state === "queued") {
+          // Mark the stale list so the test observes when it actually renders.
+          await route.fulfill({
+            response,
+            json: { ...listSnapshot, authorityUnavailable: true },
+          });
+        } else {
+          await route.fulfill({
+            status: 503,
+            json: { message: "Recent reports unavailable." },
+          });
+        }
+      };
+      if (state === "running")
+        diagnostics.allowResponse(503, "GET", "/api/v1/security-submissions");
+      await page.route("**/api/v1/security-submissions", heldList);
+      await page.reload({ waitUntil: "domcontentloaded" });
+      await expect.poll(() => listCaptured).toBe(true);
       const retry = report.getByRole("button", {
         name: "Retry screening",
         exact: true,
       });
       await expect(retry).toBeVisible();
+      await expect(report.locator(".security-report-text")).toHaveCount(0);
+      if (state === "running") {
+        releaseList();
+        await expect(
+          page
+            .getByRole("alert")
+            .filter({ hasText: "Recent reports unavailable." }),
+        ).toBeVisible();
+        await expect(retry).toBeVisible();
+      }
+      await report.getByText("Read private report", { exact: true }).click();
+      await expect(report.locator(".security-report-text")).toHaveText(
+        description,
+      );
       await page.screenshot({
         path: test.info().outputPath(`recovery-${state}.png`),
         fullPage: true,
@@ -3776,9 +3866,41 @@ test("Slop receives a private report before GitHub and keeps it in Inbox @regist
             .intake.state;
         })
         .toBe("legitimate");
-      await page
-        .getByRole("button", { name: "Refresh reports", exact: true })
-        .click();
+      const refresh = page.getByRole("button", {
+        name: "Refresh reports",
+        exact: true,
+      });
+      if (state === "queued") {
+        releaseList();
+        const authority = page.getByText(
+          "Some maintainer access could not be checked. Your own reports are shown.",
+        );
+        await expect(authority).toBeVisible();
+        await page.unroute("**/api/v1/security-submissions", heldList);
+
+        // The screening POST schedules work and can return the queued receipt.
+        // Refresh now reads its completed state while the stale list is pending.
+        let releaseStaleList!: () => void;
+        const staleGate = new Promise<void>((resolve) => {
+          releaseStaleList = resolve;
+        });
+        const staleList = async (route: Route) => {
+          await staleGate;
+          await route.fulfill({
+            json: { ...listSnapshot, authorityUnavailable: false },
+          });
+        };
+        await page.route("**/api/v1/security-submissions", staleList);
+        await refresh.click();
+        await expect(retry).not.toBeVisible();
+        releaseStaleList();
+        await expect(authority).not.toBeVisible();
+        await expect(retry).not.toBeVisible();
+        await page.unroute("**/api/v1/security-submissions", staleList);
+      } else {
+        await page.unroute("**/api/v1/security-submissions", heldList);
+        await refresh.click();
+      }
       await expect(retry).not.toBeVisible();
       await expect(report.locator(".security-report-text")).toHaveText(
         description,
@@ -4929,6 +5051,26 @@ test("a registered Slop bounty vault keeps its split while the owner publishes t
       .locator(".security-program-editor")
       .getByRole("group", { name: "Asset", exact: true }),
   ).toHaveCount(0);
+  const refreshFunds = page.getByRole("button", {
+    name: "Refresh bounty funds",
+    exact: true,
+  });
+  await expect(refreshFunds).toBeEnabled();
+  await expect(
+    page.getByText("Loading bounty funds…", { exact: true }),
+  ).toBeHidden();
+  // The enabled state can precede the end of the button's color transition.
+  // Wait only for this control's finite animations before checking contrast.
+  await refreshFunds.evaluate(async (button) => {
+    await Promise.all(
+      button
+        .getAnimations()
+        .filter((animation) =>
+          Number.isFinite(animation.effect?.getComputedTiming().endTime),
+        )
+        .map((animation) => animation.finished.catch(() => {})),
+    );
+  });
   await expectAccessible(page);
   await page.screenshot({
     path: test.info().outputPath("registered-vault-locked.png"),
@@ -5782,10 +5924,12 @@ test("a departed Inbox read action preserves a new account's report draft @regis
   request,
   diagnostics,
 }) => {
-  // The real SPA navigation deliberately leaves Home while its public Points
-  // shards may still be loading. Their aborts are the expected cleanup.
+  // The test deliberately leaves Home while its public reads are in flight.
   diagnostics.allow(
     /^(?:net::ERR_ABORTED|NS_BINDING_ABORTED) GET http:\/\/127\.0\.0\.1:[0-9]+\/data\/points(?:-summary|\/[0-9a-f])?\.json$/u,
+  );
+  diagnostics.allow(
+    /^(?:net::ERR_ABORTED|NS_BINDING_ABORTED) GET http:\/\/127\.0\.0\.1:[0-9]+\/api\/v1\/(?:merge-activity|pool-funding)$/u,
   );
   test.skip(process.env.SLOP_E2E_PRIVATE_INTAKE !== "1", "Private intake lane");
   test.setTimeout(120_000);

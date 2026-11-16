@@ -11,16 +11,25 @@ import {
   ShieldCheck,
   Wallet,
 } from "lucide-react";
+import type { ReactNode } from "react";
 import { FundingStatus } from "./FundingStatus";
 import { Link } from "./Link";
 import { ContributionPointTiers, PenaltyPointTable } from "./PointsRules";
 import "./public-records.css";
 import { browserDeployment } from "./lib/browser-deployment";
+import { loadMergeActivity, mergeActivityCardLine } from "./lib/merge-activity";
 import { summarizeModelOutcomes } from "./lib/model-outcomes";
 import { POINTS_NOTICE } from "./lib/points";
+import {
+  asShown,
+  loadPoolFunding,
+  type PoolFundingIndex,
+} from "./lib/pool-funding";
 import { PROJECTS, type ProjectDefinition } from "./lib/projects.mjs";
+import { formatRewardCapDisplay } from "./lib/reward-amount";
 import { NETWORK_NAMES } from "./lib/reward-asset.mjs";
 import { SOURCE_REPOSITORY } from "./lib/source-repository";
+import { usePublicResource } from "./lib/use-public-resource";
 import type { DataState } from "./lib/use-snapshot";
 import {
   summarizeWhoBuilds,
@@ -31,11 +40,8 @@ import {
 import {
   DataNotice,
   ExternalLinkAnchor,
-  FundedMeter,
-  formatRewardMinor,
   MetricGrid,
   MetricTile,
-  monthlyPoolUnfunded,
   NetworkName,
   PaymentLifecycle,
   ReviewBudget,
@@ -135,7 +141,10 @@ export function HowItWorksPage() {
       </section>
       <section className="custody-proof money-states">
         <h2 id="payments">Payment stages</h2>
-        <p>Paid automatically 72 h after month end.</p>
+        <p>
+          Paid automatically 72 h after month end. A cut needs a public reason
+          and 24 h notice.
+        </p>
         <PaymentLifecycle />
       </section>
       <section
@@ -248,15 +257,49 @@ export function HowItWorksPage() {
               <p>An estimate at the cap, not a balance.</p>
             </div>
           </article>
+          <article className="faq-answer">
+            <h3>Is there a referral program?</h3>
+            <div>
+              <p>
+                Yes. You can refer a project today: sign in on slop.cash once,
+                then send its maintainer <code>slop.cash/r/</code> followed by
+                your GitHub login. The referral is recorded when the project
+                lists. A referrer receives SLOP only after a project they
+                brought in has paid its contributors.{" "}
+                <ExternalLinkAnchor href="https://record.slop.cash/referrals">
+                  Referral terms
+                </ExternalLinkAnchor>
+              </p>
+            </div>
+          </article>
+          <article className="faq-answer">
+            <h3>Does Slop buy back SLOP?</h3>
+            <div>
+              <p>
+                The buyback is configured live since 12 November 2026. Half of
+                eligible fee income funds SLOP purchases on Robinhood Chain once
+                minimum order sizes are met. Half of the SLOP acquired is
+                allocated to burning. The first verified bridge fill, purchase
+                and burn are still pending. Funding comes from fees, not the
+                treasury, and nothing is guaranteed.{" "}
+                <ExternalLinkAnchor href="https://record.slop.cash/buyback">
+                  How the buyback works
+                </ExternalLinkAnchor>
+              </p>
+            </div>
+          </article>
         </div>
       </section>
     </main>
   );
 }
 
-/** A project's pool as a funded meter, or a chip when nothing is funded. */
-function SponsorPool({ project }: { project: ProjectDefinition }) {
-  const { reward } = project;
+/** Only money in a vault is shown (operator decision, 15 November 2026). */
+function sponsorPoolLabel(
+  registered: ProjectDefinition,
+  index: PoolFundingIndex | null,
+): ReactNode {
+  const { reward } = registered;
   if (reward.kind === "external-prize-share" && reward.externalOpportunity) {
     return (
       <StatusBadge title={reward.externalOpportunity.name}>
@@ -264,21 +307,9 @@ function SponsorPool({ project }: { project: ProjectDefinition }) {
       </StatusBadge>
     );
   }
-  if (monthlyPoolUnfunded(reward)) {
-    return (
-      <StatusBadge title={`${reward.monthlyCapDisplay} monthly`}>
-        Not funded
-      </StatusBadge>
-    );
-  }
-  return (
-    <FundedMeter
-      fundedMinor={reward.committedMinor}
-      capMinor={reward.monthlyCapMinor}
-      funded={formatRewardMinor(reward.committedMinor, project.rewardAsset)}
-      cap={reward.monthlyCapDisplay}
-    />
-  );
+  const project = asShown(registered, index, new Date());
+  if (project.reward.monthlyCapMinor === "0") return "points only";
+  return `${formatRewardCapDisplay(project.reward.monthlyCapDisplay, project.rewardAsset)} monthly · in the vault`;
 }
 
 function WhoBuildsOnSlop({
@@ -497,6 +528,19 @@ export function SponsorsPage({
   state: DataState;
   retry: () => void;
 }) {
+  const [funding] = usePublicResource(
+    true,
+    loadPoolFunding,
+    "Pool funding unavailable",
+  );
+  const fundingIndex = funding.status === "ready" ? funding.index : null;
+  // One shared read of the daily merge activity (#1993) for every card.
+  const [merge] = usePublicResource(
+    true,
+    loadMergeActivity,
+    "Merge activity unavailable",
+  );
+  const now = new Date();
   return (
     <main className="shell evidence-page route-sponsors">
       <RoutePageHeader title="Fund a project" icon={<HandCoins />} />
@@ -518,9 +562,7 @@ export function SponsorsPage({
                   <strong>{project.name}</strong>
                   <ArrowRight aria-hidden="true" />
                 </Link>
-                <p>
-                  <SponsorPool project={project} />
-                </p>
+                <p>{sponsorPoolLabel(project, fundingIndex)}</p>
                 {project.reward.chain ? (
                   <NetworkName chain={project.reward.chain}>
                     {NETWORK_NAMES[project.reward.chain]}
@@ -530,6 +572,17 @@ export function SponsorsPage({
                   project={project}
                   className="route-sponsor-status"
                 />
+                {project.status === "active" && merge.status === "ready"
+                  ? (() => {
+                      const line = mergeActivityCardLine(
+                        merge.index.get(project.id),
+                        now,
+                      );
+                      return line ? (
+                        <small className="project-merge-activity">{line}</small>
+                      ) : null;
+                    })()
+                  : null}
                 {project.reward.reviewBudget?.fundingState === "committed" ? (
                   <small>
                     <ReviewBudget reviewBudget={project.reward.reviewBudget} />

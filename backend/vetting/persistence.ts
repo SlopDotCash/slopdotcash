@@ -10,6 +10,10 @@ import type {
   GithubActor,
   ProjectEnforcement,
 } from "../../src/lib/project-contracts";
+import {
+  findListedRepository,
+  repositoryIdentity as listedRepositoryIdentity,
+} from "../../src/lib/project-repositories.mjs";
 import { executableManifestContent } from "../../src/lib/project-revision-changes";
 import type { ProjectDefinition } from "../../src/lib/projects.mjs";
 import type {
@@ -65,6 +69,11 @@ export type VettingAssessment = {
   commitSha: string;
   /** The skill template input digest the queue assigned to the scan. */
   templateSha256: string;
+  /**
+   * The manifest repository id the scan covers. A row written before
+   * migration 0123 reads as the first repository of its own revision.
+   */
+  repositoryId: string;
   requestedBy: GithubActor;
   requestedAt: string;
   requestReason: string;
@@ -76,8 +85,11 @@ export type VettingAssessment = {
   completedAt: string | null;
 };
 
-/** Reads the live pin; throws when GitHub or the template cannot be read. */
-type VettingPinReader = () => Promise<VettingPin>;
+/**
+ * Reads the live pin of one repository (default: the first); throws when
+ * GitHub or the template cannot be read.
+ */
+type VettingPinReader = (repositoryId?: string) => Promise<VettingPin>;
 
 type AssessmentRow = {
   id: string;
@@ -97,10 +109,19 @@ type AssessmentRow = {
   result_sha256: string | null;
   signing_key_sha256: string | null;
   completed_at: string | null;
+  repository_id: string;
 };
 
-const COLUMNS =
-  "id, project_id, revision, manifest_sha256, content_sha256, commit_sha, template_sha256, requested_by_github_id, requested_by_github_login, requested_at, request_reason, state, policy_version, result, result_sha256, signing_key_sha256, completed_at";
+/**
+ * The manifest repository an assessment row scans. A NULL `repository_id`
+ * (rows before migration 0123) is the first repository of the row's own
+ * revision, the same rule the `vetting_assessments_same_pending` trigger uses.
+ */
+function scannedRepository(row: string): string {
+  return `COALESCE(${row}.repository_id, (SELECT json_extract(r.manifest, '$.repositories[0].id') FROM project_revisions r WHERE r.project_id = ${row}.project_id AND r.revision = ${row}.revision))`;
+}
+
+const COLUMNS = `id, project_id, revision, manifest_sha256, content_sha256, commit_sha, template_sha256, requested_by_github_id, requested_by_github_login, requested_at, request_reason, state, policy_version, result, result_sha256, signing_key_sha256, completed_at, ${scannedRepository("vetting_assessments")} AS repository_id`;
 
 function fromRow(row: AssessmentRow): VettingAssessment {
   return {
@@ -111,6 +132,7 @@ function fromRow(row: AssessmentRow): VettingAssessment {
     contentSha256: row.content_sha256,
     commitSha: row.commit_sha,
     templateSha256: row.template_sha256,
+    repositoryId: row.repository_id,
     requestedBy: {
       githubId: row.requested_by_github_id,
       githubLogin: row.requested_by_github_login,
@@ -142,21 +164,6 @@ export async function vettedContentSha256(manifest: object): Promise<string> {
       canonicalJson(executableManifestContent(manifest)),
     ),
   );
-}
-
-/** Admission follows one immutable repository, not a commit or mutable name. */
-function admissionRepository(manifest: object): string | null {
-  const { authority, repositories } = manifest as ProjectDefinition;
-  if (
-    repositories?.length !== 1 ||
-    !authority?.repositoryId ||
-    !authority.repositoryNodeId
-  )
-    return null;
-  return canonicalJson({
-    id: authority.repositoryId,
-    nodeId: authority.repositoryNodeId,
-  });
 }
 
 export function summarize(assessment: VettingAssessment): AssessmentSummary {
@@ -288,6 +295,10 @@ export class CloudflareVettingPersistence {
       null
     );
   }
+  /**
+   * Records an exemption of one listed repository: the first repository's
+   * identity in `authority`, or an appended repository's own identity.
+   */
   async grantAdmissionExemption(input: {
     id: string;
     projectId: string;
@@ -305,7 +316,7 @@ export class CloudflareVettingPersistence {
   }): Promise<boolean> {
     const result = await this.db
       .prepare(
-        `INSERT INTO vetting_admission_exemptions(id,project_id,revision,manifest_sha256,repository_id,repository_node_id,steward_id,steward_node_id,granted_by_github_id,granted_by_github_login,granted_at,reason,decision_reference,covered_assessment_ids) SELECT ?,?,?,?,?,?,?,?,?,?,?,?,?,(SELECT json_group_array(id) FROM vetting_assessments WHERE project_id=?) WHERE EXISTS(SELECT 1 FROM projects p WHERE p.id=? AND p.revision=? AND p.manifest_sha256=? AND json_extract(p.manifest,'$.authority.repositoryId')=? AND json_extract(p.manifest,'$.authority.repositoryNodeId')=? AND json_extract(p.manifest,'$.steward.github.actorId')=? AND json_extract(p.manifest,'$.steward.github.nodeId')=?) AND NOT EXISTS(${UNREVIEWED_MALICIOUS}) AND (SELECT COALESCE(MAX(rowid),0) FROM project_enforcements)=? AND NOT EXISTS(SELECT 1 FROM vetting_admission_exemptions g WHERE g.project_id=? AND g.repository_id=? AND g.repository_node_id=? AND g.steward_id=? AND g.steward_node_id=? AND NOT EXISTS(SELECT 1 FROM vetting_admission_exemption_revocations r WHERE r.exemption_id=g.id))`,
+        `INSERT INTO vetting_admission_exemptions(id,project_id,revision,manifest_sha256,repository_id,repository_node_id,steward_id,steward_node_id,granted_by_github_id,granted_by_github_login,granted_at,reason,decision_reference,covered_assessment_ids) SELECT ?,?,?,?,?,?,?,?,?,?,?,?,?,(SELECT json_group_array(id) FROM vetting_assessments WHERE project_id=?) WHERE EXISTS(SELECT 1 FROM projects p WHERE p.id=? AND p.revision=? AND p.manifest_sha256=? AND ((json_extract(p.manifest,'$.authority.repositoryId')=? AND json_extract(p.manifest,'$.authority.repositoryNodeId')=?) OR EXISTS(SELECT 1 FROM json_each(p.manifest,'$.repositories') listed WHERE listed.key>0 AND json_extract(listed.value,'$.githubId')=? AND json_extract(listed.value,'$.nodeId')=?)) AND json_extract(p.manifest,'$.steward.github.actorId')=? AND json_extract(p.manifest,'$.steward.github.nodeId')=?) AND NOT EXISTS(${UNREVIEWED_MALICIOUS}) AND (SELECT COALESCE(MAX(rowid),0) FROM project_enforcements)=? AND NOT EXISTS(SELECT 1 FROM vetting_admission_exemptions g WHERE g.project_id=? AND g.repository_id=? AND g.repository_node_id=? AND g.steward_id=? AND g.steward_node_id=? AND NOT EXISTS(SELECT 1 FROM vetting_admission_exemption_revocations r WHERE r.exemption_id=g.id))`,
       )
       .bind(
         input.id,
@@ -325,6 +336,8 @@ export class CloudflareVettingPersistence {
         input.projectId,
         input.revision,
         input.manifestSha256,
+        input.repositoryId,
+        input.repositoryNodeId,
         input.repositoryId,
         input.repositoryNodeId,
         input.stewardId,
@@ -382,6 +395,7 @@ export class CloudflareVettingPersistence {
     return (rows.results ?? []).map(fromRow);
   }
 
+  /** The latest scan of each project repository, when it is still pending. */
   async pendingAssessments(): Promise<VettingAssessment[]> {
     const rows = await this.db
       .prepare(
@@ -389,6 +403,7 @@ export class CloudflareVettingPersistence {
          WHERE state = 'pending' AND rowid = (
            SELECT MAX(current.rowid) FROM vetting_assessments current
            WHERE current.project_id = vetting_assessments.project_id
+             AND ${scannedRepository("current")} = ${scannedRepository("vetting_assessments")}
          ) ORDER BY requested_at, rowid LIMIT 100`,
       )
       .all<AssessmentRow>();
@@ -479,7 +494,7 @@ export class CloudflareVettingPersistence {
     {
       revision: number;
       contentSha256: string;
-      repositoryIdentity: string | null;
+      manifest: Partial<ProjectDefinition>;
     }[]
   > {
     const rows = await this.db
@@ -489,11 +504,14 @@ export class CloudflareVettingPersistence {
       .bind(projectId)
       .all<{ revision: number; manifest: string }>();
     return Promise.all(
-      (rows.results ?? []).map(async (row) => ({
-        revision: row.revision,
-        contentSha256: await vettedContentSha256(JSON.parse(row.manifest)),
-        repositoryIdentity: admissionRepository(JSON.parse(row.manifest)),
-      })),
+      (rows.results ?? []).map(async (row) => {
+        const manifest = JSON.parse(row.manifest) as Partial<ProjectDefinition>;
+        return {
+          revision: row.revision,
+          contentSha256: await vettedContentSha256(manifest),
+          manifest,
+        };
+      }),
     );
   }
 
@@ -511,7 +529,25 @@ export class CloudflareVettingPersistence {
     return row?.covered === 1;
   }
 
-  /** Refuses duplicate pins and stale replacements atomically. Older rows stay immutable. */
+  /** The first repository a stored revision lists, or null when it is missing. */
+  private async firstRepository(
+    projectId: string,
+    revision: number,
+  ): Promise<string | null> {
+    const row = await this.db
+      .prepare(
+        "SELECT json_extract(manifest, '$.repositories[0].id') AS repository_id FROM project_revisions WHERE project_id = ? AND revision = ?",
+      )
+      .bind(projectId, revision)
+      .first<{ repository_id: string | null }>();
+    return row?.repository_id ?? null;
+  }
+
+  /**
+   * Refuses duplicate pins and stale replacements atomically, per project
+   * repository. Older rows stay immutable. Every new row stores its
+   * repository id; one omitted by the caller is the revision's first.
+   */
   async createAssessment(
     assessment: Omit<
       VettingAssessment,
@@ -521,19 +557,28 @@ export class CloudflareVettingPersistence {
       | "resultSha256"
       | "signingKeySha256"
       | "completedAt"
-    >,
+      | "repositoryId"
+    > & { repositoryId?: string },
     replacesPendingId?: string,
   ): Promise<"created" | "conflict"> {
+    const repositoryId =
+      assessment.repositoryId ??
+      (await this.firstRepository(assessment.projectId, assessment.revision));
     try {
       await this.db
         .prepare(
-          `INSERT INTO vetting_assessments (id, project_id, revision, manifest_sha256, content_sha256, commit_sha, template_sha256, requested_by_github_id, requested_by_github_login, requested_at, request_reason, state, replaces_assessment_id, flag_ids)
-           SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?,
+          `INSERT INTO vetting_assessments (id, project_id, revision, manifest_sha256, content_sha256, commit_sha, template_sha256, requested_by_github_id, requested_by_github_login, requested_at, request_reason, state, replaces_assessment_id, repository_id, flag_ids)
+           SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?,
              (SELECT json_group_array(id) FROM (SELECT id FROM project_flags WHERE project_id = ? AND state = 'active' ORDER BY id))
            WHERE ? IS NULL OR EXISTS (
              SELECT 1 FROM vetting_assessments previous
              WHERE previous.id = ? AND previous.project_id = ? AND previous.state = 'pending'
-               AND previous.rowid = (SELECT MAX(rowid) FROM vetting_assessments WHERE project_id = ?)
+               AND ${scannedRepository("previous")} = ?
+               AND previous.rowid = (
+                 SELECT MAX(current.rowid) FROM vetting_assessments current
+                 WHERE current.project_id = previous.project_id
+                   AND ${scannedRepository("current")} = ?
+               )
            )`,
         )
         .bind(
@@ -549,11 +594,13 @@ export class CloudflareVettingPersistence {
           assessment.requestedAt,
           assessment.requestReason,
           replacesPendingId ?? null,
+          repositoryId,
           assessment.projectId,
           replacesPendingId ?? null,
           replacesPendingId ?? null,
           assessment.projectId,
-          assessment.projectId,
+          repositoryId,
+          repositoryId,
         )
         .run();
       if (replacesPendingId && !(await this.getAssessment(assessment.id)))
@@ -578,7 +625,14 @@ export class CloudflareVettingPersistence {
     resultSha256: string;
     signingKeySha256: string;
     operatorGithubIds?: readonly string[];
+    /** The live pin of the scanned repository; null when unreadable. */
     livePin?: VettingPin | null;
+    /**
+     * Reads the live pin of another repository of the project. A project
+     * with more than one repository reinstates only when every repository
+     * has a clean fresh scan at its own live pin.
+     */
+    readPin?: (repositoryId: string) => Promise<VettingPin>;
     at: string;
   }): Promise<"recorded" | "conflict"> {
     const { result } = input;
@@ -640,6 +694,7 @@ export class CloudflareVettingPersistence {
         result.policyVersion,
         input.livePin,
         input.at,
+        input.readPin,
       );
     const scanFailedDetail =
       result.disposition === "incomplete"
@@ -724,7 +779,10 @@ export class CloudflareVettingPersistence {
   /**
    * Plans the reinstatement of a flag-only pause from one fresh clean scan.
    * The scan must cover every active flag and, when a live pin is given,
-   * match it; a null pin means the live pin could not be read.
+   * match it; a null pin means the live pin could not be read. A project
+   * with more than one repository also needs, for every other repository, a
+   * fresh clean scan of the current content at that repository's own live
+   * pin that covers every active flag (PRD section 8).
    */
   private async planFlagReinstatement(
     assessmentId: string,
@@ -732,6 +790,7 @@ export class CloudflareVettingPersistence {
     policyVersion: string,
     livePin: VettingPin | null | undefined,
     at: string,
+    readPin?: (repositoryId: string) => Promise<VettingPin>,
   ): Promise<ProjectEnforcement | null> {
     const projects = new CloudflareProjectPersistence(this.db);
     const assessment = await this.getAssessment(assessmentId);
@@ -748,12 +807,53 @@ export class CloudflareVettingPersistence {
       !(await this.assessmentCoversActiveFlags(assessment.id))
     )
       return null;
+    const restriction = projectRestriction(
+      project.id,
+      await projects.listEnforcements(),
+    );
+    const currentContentSha256 = await vettedContentSha256(project.manifest);
+    const repositories = project.manifest.repositories;
+    if (repositories.length > 1) {
+      const scanned = findListedRepository(
+        repositories,
+        assessment.repositoryId,
+      )?.repository.id;
+      if (scanned === undefined || readPin === undefined) return null;
+      const assessments = await this.projectAssessments(project.id);
+      for (const repository of repositories) {
+        if (repository.id === scanned) continue;
+        let pin: VettingPin;
+        try {
+          pin = await readPin(repository.id);
+        } catch {
+          return null;
+        }
+        let fresh = false;
+        for (const candidate of assessments)
+          if (
+            candidate.state === "clean" &&
+            findListedRepository(repositories, candidate.repositoryId ?? "")
+              ?.repository.id === repository.id &&
+            !(
+              candidate.result &&
+              isScanResult(candidate.result) &&
+              candidate.result.reusedAssessmentId !== null
+            ) &&
+            candidate.requestedAt >= (restriction.since ?? "") &&
+            candidate.contentSha256 === currentContentSha256 &&
+            candidate.commitSha === pin.commitSha &&
+            candidate.templateSha256 === pin.templateSha256 &&
+            (await this.assessmentCoversActiveFlags(candidate.id))
+          ) {
+            fresh = true;
+            break;
+          }
+        if (!fresh) return null;
+      }
+    }
     return planScanReinstatement({
       project,
-      restriction: projectRestriction(
-        project.id,
-        await projects.listEnforcements(),
-      ),
+      restriction,
       scan: {
         assessmentId: assessment.id,
         requestedAt: assessment.requestedAt,
@@ -761,7 +861,7 @@ export class CloudflareVettingPersistence {
         keySha256,
         policyVersion,
       },
-      currentContentSha256: await vettedContentSha256(project.manifest),
+      currentContentSha256,
       at,
     });
   }
@@ -776,6 +876,7 @@ export class CloudflareVettingPersistence {
     assessmentId: string,
     livePin: VettingPin,
     at: string,
+    readPin?: (repositoryId: string) => Promise<VettingPin>,
   ): Promise<boolean> {
     const assessment = await this.getAssessment(assessmentId);
     const result = assessment?.result;
@@ -793,6 +894,7 @@ export class CloudflareVettingPersistence {
       assessment.policyVersion,
       livePin,
       at,
+      readPin,
     );
     if (!enforcement) return false;
     try {
@@ -821,30 +923,79 @@ export class CloudflareVettingPersistence {
     readPin: VettingPinReader,
     forReinstatement = false,
   ): Promise<VettingClearance> {
-    return this.clearance(
+    const entries = await this.repositoryClearances(
       projectId,
-      await vettedContentSha256(manifest),
+      manifest,
       throughRevision,
       readPin,
       forReinstatement,
-      admissionRepository(manifest),
-      (manifest as Partial<ProjectDefinition>).steward?.github,
     );
+    // One repository: its clearance exactly, with no repository field.
+    if (entries.length === 1) return entries[0].clearance;
+    // A confirmed malicious finding is project-wide.
+    const banned = entries.find((entry) => entry.clearance.state === "banned");
+    if (banned) return banned.clearance;
+    const blocking = entries.find(
+      (entry) => entry.clearance.state !== "cleared",
+    );
+    if (blocking)
+      return {
+        ...blocking.clearance,
+        repository: blocking.repositoryId,
+      } as VettingClearance;
+    const first = entries[0].clearance;
+    if (forReinstatement && first.state === "cleared" && first.assessment)
+      return {
+        ...first,
+        repositoryAssessments: entries.map(
+          ({ clearance }) =>
+            (clearance as { assessment: AssessmentSummary }).assessment,
+        ),
+      };
+    return first;
   }
 
-  /** Admission uses the latest actual assessment of this repository identity.
-   * Its original revision, commit and template remain evidence, never a claim
-   * about later content. Explicit reinstatement still requires the current pin.
-   * Malicious findings and retained-evidence checks apply to both paths. */
-  private async clearance(
+  /**
+   * The clearance of each repository of a manifest, in manifest order (PRD
+   * section 8: one admission for each immutable registered repository; a
+   * different repository cannot inherit clearance). Each repository uses
+   * only its own scans, exemptions, revision window and live pin. A
+   * confirmed malicious finding bans every repository.
+   */
+  async repositoryClearances(
     projectId: string,
-    contentSha256: string,
+    manifest: object,
     throughRevision: number,
     readPin: VettingPinReader,
     forReinstatement = false,
-    repositoryIdentity: string | null,
-    steward: { actorId: string; nodeId: string } | undefined,
-  ): Promise<VettingClearance> {
+  ): Promise<{ repositoryId: string; clearance: VettingClearance }[]> {
+    const definition = manifest as Partial<ProjectDefinition>;
+    const repositories = definition.repositories ?? [];
+    const context = await this.clearanceContext(projectId);
+    const contentSha256 = await vettedContentSha256(manifest);
+    const entries: readonly (
+      | ProjectDefinition["repositories"][number]
+      | null
+    )[] = repositories.length > 0 ? repositories : [null];
+    const results: { repositoryId: string; clearance: VettingClearance }[] = [];
+    for (const entry of entries)
+      results.push({
+        repositoryId: entry?.id ?? "",
+        clearance: await this.repositoryClearance(context, {
+          projectId,
+          manifest: definition,
+          entry,
+          contentSha256,
+          throughRevision,
+          readPin,
+          forReinstatement,
+        }),
+      });
+    return results;
+  }
+
+  /** Project-wide facts every repository's clearance reads. */
+  private async clearanceContext(projectId: string) {
     const assessments = await this.projectAssessments(projectId);
     const reviewed = await this.db
       .prepare(
@@ -863,34 +1014,93 @@ export class CloudflareVettingPersistence {
       (assessment) =>
         assessment.state === "malicious" && !waived.has(assessment.id),
     );
-    const malicious = findings.at(-1);
-    if (malicious && !forReinstatement)
-      return { state: "banned", assessment: summarize(malicious) };
     const grandfathered = await this.db
       .prepare(
         `SELECT 1 AS found FROM vetting_grandfathered_projects WHERE project_id = ?`,
       )
       .bind(projectId)
       .first<{ found: number }>();
-    if (grandfathered && !malicious && !forReinstatement)
-      return { state: "cleared", assessment: null, grandfathered: true };
+    let revisions: Awaited<ReturnType<typeof this.revisionContents>> | null =
+      null;
+    return {
+      assessments,
+      findings,
+      malicious: findings.at(-1),
+      grandfathered: grandfathered !== null,
+      revisions: async () => {
+        revisions ??= await this.revisionContents(projectId);
+        return revisions;
+      },
+    };
+  }
+
+  /** Admission uses the latest actual assessment of this repository identity.
+   * Its original revision, commit and template remain evidence, never a claim
+   * about later content. Explicit reinstatement still requires the current pin.
+   * Malicious findings and retained-evidence checks apply to both paths. */
+  private async repositoryClearance(
+    context: Awaited<ReturnType<typeof this.clearanceContext>>,
+    input: {
+      projectId: string;
+      manifest: Partial<ProjectDefinition>;
+      /** The repository; null only for a manifest that lists none. */
+      entry: ProjectDefinition["repositories"][number] | null;
+      contentSha256: string;
+      throughRevision: number;
+      readPin: VettingPinReader;
+      forReinstatement: boolean;
+    },
+  ): Promise<VettingClearance> {
+    const { projectId, manifest, entry, contentSha256, throughRevision } =
+      input;
+    const { forReinstatement } = input;
+    const { findings, malicious } = context;
+    if (malicious && !forReinstatement)
+      return { state: "banned", assessment: summarize(malicious) };
+    const repositories = manifest.repositories ?? [];
+    const first = entry === null || entry.id === repositories[0]?.id;
+    // A scan belongs to the listed repository it names. A scan of a
+    // repository the manifest no longer lists clears nothing, but it still
+    // counts against an exemption of the first repository.
+    const listed = (assessment: VettingAssessment) =>
+      findListedRepository(repositories, assessment.repositoryId ?? "")
+        ?.repository.id ?? null;
+    const own =
+      entry === null
+        ? context.assessments
+        : context.assessments.filter(
+            (assessment) => listed(assessment) === entry.id,
+          );
+    const accountable =
+      entry === null
+        ? context.assessments
+        : context.assessments.filter((assessment) => {
+            const name = listed(assessment);
+            return name === entry.id || (first && name === null);
+          });
+    // Migration 0075 grandfathers the repositories a project listed then;
+    // an appended repository, which records its own GitHub id, needs its own
+    // admission.
     if (
+      context.grandfathered &&
       !malicious &&
       !forReinstatement &&
-      repositoryIdentity !== null &&
-      steward
-    ) {
-      const identity = JSON.parse(repositoryIdentity) as {
-        id: string;
-        nodeId: string;
-      };
+      entry?.githubId === undefined
+    )
+      return { state: "cleared", assessment: null, grandfathered: true };
+    const identity =
+      entry === null
+        ? null
+        : listedRepositoryIdentity(manifest as ProjectDefinition, entry.id);
+    const steward = manifest.steward?.github;
+    if (!malicious && !forReinstatement && identity !== null && steward) {
       const exempt = await this.db
         .prepare(
           `${EXEMPTION_SELECT} WHERE g.project_id=? AND g.repository_id=? AND g.repository_node_id=? AND g.steward_id=? AND g.steward_node_id=? AND g.revision<=? AND r.exemption_id IS NULL ORDER BY g.sequence DESC LIMIT 1`,
         )
         .bind(
           projectId,
-          identity.id,
+          identity.githubId,
           identity.nodeId,
           steward.actorId,
           steward.nodeId,
@@ -915,15 +1125,15 @@ export class CloudflareVettingPersistence {
         );
         // Only a persisted automatic retry continues a covered request.
         // The free-form reason alone never grants exemption coverage.
-        for (let index = 1; index < assessments.length; index += 1)
+        for (let index = 1; index < accountable.length; index += 1)
           if (
-            predecessor.get(assessments[index].id) ===
-              assessments[index - 1].id &&
-            covered.has(assessments[index - 1].id) &&
-            replacesTemplate(assessments[index], assessments[index - 1])
+            predecessor.get(accountable[index].id) ===
+              accountable[index - 1].id &&
+            covered.has(accountable[index - 1].id) &&
+            replacesTemplate(accountable[index], accountable[index - 1])
           )
-            covered.add(assessments[index].id);
-        if (assessments.every((assessment) => covered.has(assessment.id)))
+            covered.add(accountable[index].id);
+        if (accountable.every((assessment) => covered.has(assessment.id)))
           return {
             state: "cleared",
             assessment: null,
@@ -941,21 +1151,27 @@ export class CloudflareVettingPersistence {
           };
       }
     }
-    const revisions = await this.revisionContents(projectId);
+    // Admission follows this repository's immutable identity back through
+    // the revisions; reinstatement follows the unchanged executable content.
+    const current = identity === null ? null : canonicalJson(identity);
     const window = new Map<number, string>();
+    const revisions = await context.revisions();
     for (let index = revisions.length - 1; index >= 0; index -= 1) {
       const revision = revisions[index];
       if (revision.revision > throughRevision) continue;
-      if (
-        forReinstatement
-          ? revision.contentSha256 !== contentSha256
-          : repositoryIdentity === null ||
-            revision.repositoryIdentity !== repositoryIdentity
-      )
-        break;
+      if (forReinstatement) {
+        if (revision.contentSha256 !== contentSha256) break;
+      } else {
+        if (entry === null || current === null) break;
+        const then = listedRepositoryIdentity(
+          revision.manifest as ProjectDefinition,
+          entry.id,
+        );
+        if (then === null || canonicalJson(then) !== current) break;
+      }
       window.set(revision.revision, revision.contentSha256);
     }
-    const relevant = assessments.filter(
+    const relevant = own.filter(
       (assessment) =>
         window.get(assessment.revision) === assessment.contentSha256,
     );
@@ -965,7 +1181,7 @@ export class CloudflareVettingPersistence {
     let pinned = relevant;
     if (forReinstatement) {
       try {
-        live = await readPin();
+        live = await input.readPin(entry?.id);
       } catch (error) {
         return {
           state: "unverified",

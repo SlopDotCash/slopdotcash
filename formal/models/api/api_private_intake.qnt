@@ -30,7 +30,7 @@
 module api_private_intake {
   var s: { phase: str, screening: str, stale: bool, review: str, routed: bool,
     rev: int, claim: int -> int, lastClaim: int, resultFrom: int,
-    reportVersion: int, grant: str, attempts: int,
+    reportVersion: int, grant: str, attempts: int, assessments: int,
     ungrantedCall: bool, sentUnqualified: bool, routedUnqualified: bool }
 
   val held = Set("needs-information", "spam", "unavailable")
@@ -45,7 +45,7 @@ module api_private_intake {
 
   action init = s' = { phase: "draft", screening: "queued", stale: false, review: "none",
     routed: false, rev: 1, claim: Set(1, 2).mapBy(_ => 0), lastClaim: 0, resultFrom: 0,
-    reportVersion: 1, grant: "none", attempts: 0,
+    reportVersion: 1, grant: "none", attempts: 0, assessments: 0,
     ungrantedCall: false, sentUnqualified: false, routedUnqualified: false }
 
   // screenStoredReport: claim with revision CAS.
@@ -57,6 +57,7 @@ module api_private_intake {
   action finishScreen(w: int, result: str): bool = all { s.claim.get(w) > 0,
     val applies = s.rev == s.claim.get(w) and s.screening == "running"
     s' = (if (applies) s.with("screening", result).with("rev", s.rev + 1).with("resultFrom", w)
+            .with("assessments", s.assessments + (if(result == "legitimate") 1 else 0))
           else s).with("claim", s.claim.set(w, 0)) }
   // A maintainer routing review; it takes precedence over screening.
   action reviewRouting(decision: str): bool = all { s.rev < 7,
@@ -118,6 +119,7 @@ module api_private_intake {
     s.screening == "running" implies s.lastClaim > 0,
     s.phase != "draft" and s.phase != "failed" implies s.attempts > 0,
     s.attempts <= 2, s.reportVersion <= 2, s.rev <= 8,
+    s.assessments <= s.reportVersion,
   }
 
   run legitimateRoutesAndForwardsTest = init.then(claimScreen(1)).then(finishScreen(1, "legitimate"))
@@ -157,4 +159,13 @@ module api_private_intake {
   run emptyReconcileReopensDraftTest = init.then(claimScreen(1)).then(finishScreen(1, "legitimate"))
     .then(authorize("reporter")).then(send).then(githubAnswer("uncertain")).then(reconcile(false))
     .expect(s.phase == "draft" and s.attempts == 1 and invariant)
+  // A superseded worker cannot start another assessment of the new report.
+  run staleCompletionCannotAssessTest = init.then(claimScreen(1))
+    .then(reviewRouting("request-information")).then(revise)
+    .then(claimScreen(2)).then(finishScreen(2, "legitimate"))
+    .then(finishScreen(1, "legitimate")).expect(s.assessments == 1 and invariant)
+  // A semantic duplicate remains saved for reporter revision or human review.
+  run duplicateRemainsRecoverableTest = init.then(claimScreen(1))
+    .then(finishScreen(1, "needs-information"))
+    .expect(canRevise and not(qualified) and s.assessments == 0)
 }

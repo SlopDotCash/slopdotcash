@@ -290,7 +290,19 @@ test("committed proposal unmount retires creation before dispatch", async ({
     };
   });
   await prepareCreationReview(page);
-  await holdProjectSessionUntilUnmount(page, ".proposal-form");
+  await holdProjectSessionUntilUnmount(page, ".proposal-form", undefined, {
+    holdConcurrentReads: true,
+  });
+  // A background session refresh must not consume the hold intended for the
+  // submit preflight. Both responses wait for the same committed unmount.
+  await page.evaluate(() => {
+    void fetch("/api/v1/project-session").then((response) => response.json());
+  });
+  await page.waitForFunction(
+    () =>
+      (window as typeof window & { heldEditorSession: { waiting: boolean } })
+        .heldEditorSession.waiting,
+  );
   await page.evaluate(() => {
     window.history.replaceState(window.history.state, "", "/how-it-works");
     window.history.pushState({}, "", "/projects/new");
@@ -299,6 +311,14 @@ test("committed proposal unmount retires creation before dispatch", async ({
     await page
       .getByRole("button", { name: "Create project", exact: true })
       .click();
+    await page.waitForFunction(
+      () =>
+        (
+          window as typeof window & {
+            heldEditorSession: { waitingReads: number };
+          }
+        ).heldEditorSession.waitingReads >= 2,
+    );
     await leaveEditorWithHeldSession(page);
     await expect(page.locator(".proposal-form")).toHaveCount(0);
     expect(writes).toBe(0);

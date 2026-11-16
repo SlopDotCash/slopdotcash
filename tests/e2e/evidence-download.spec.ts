@@ -414,6 +414,11 @@ test("large private evidence downloads with a single-use browser grant @registry
   );
   await page.keyboard.press("Enter");
   await grantWaiting;
+  const homeSummaryRead = page.waitForResponse(
+    (response) =>
+      response.request().method() === "GET" &&
+      new URL(response.url()).pathname === "/data/points-summary.json",
+  );
   try {
     // Leave through the actual SPA control while the real grant reply waits.
     await page.getByRole("link", { name: "Slop home", exact: true }).click();
@@ -433,6 +438,9 @@ test("large private evidence downloads with a single-use browser grant @registry
   expect(abandonedDownloads).toEqual([]);
   page.off("download", observeAbandoned);
   await page.unroute(`**${grantPath}`);
+  // Finish the home summary read and fonts before the next hard navigation.
+  expect(await (await homeSummaryRead).finished()).toBeNull();
+  await page.evaluate(() => document.fonts.ready);
   await page.goto(
     `/vetting-evidence?assessmentId=${assessment}&runId=${runId}`,
     { waitUntil: "networkidle" },

@@ -1,5 +1,6 @@
 // @source scripts/value-merge-ingestion.ts
 // @source scripts/value-merge-objects.ts
+// @source scripts/value-file-recovery.ts
 // @source scripts/value-merge-resolution.ts
 // @source scripts/collect-value-evidence.ts
 // @source scripts/create-value-merge-bundle.ts

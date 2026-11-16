@@ -19,6 +19,8 @@ export function valueFileReader(client: EvidenceClient, repository: string) {
       path.split("/").some((p) => !p || p === "." || p === "..")
     )
       return null;
+    const verified = await client.verifiedFile?.(repository, ref, path);
+    if (verified) return verified;
     if (++reads > 48) return null;
     const encoded = path.split("/").map(encodeURIComponent).join("/");
     const file = await client.get<{

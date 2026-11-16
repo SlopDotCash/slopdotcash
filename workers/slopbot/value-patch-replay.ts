@@ -143,8 +143,9 @@ function hasSubmittedPostimages(source: string, hunks: Hunk[]): boolean {
   });
 }
 
-/** Match each complete old hunk uniquely in the original parent, never in
- * progressively edited output. Ambiguous placement supplies no proof. */
+/** Match old hunks in the original parent, never progressively edited output.
+ * Repeated context is usable only when every occurrence is explicitly edited
+ * by the same before/after hunk and the accepted offsets bind them all. */
 function replay(
   parent: string,
   original: Hunk[],
@@ -155,7 +156,7 @@ function replay(
   for (let i = 0; i < original.length; i++) {
     const hunk = original[i];
     if (!hunk.before) return null;
-    let found = -1;
+    const matches: { at: number; line: number }[] = [];
     let from = 0;
     while (from <= parent.length) {
       const at = parent.indexOf(hunk.before, from);
@@ -165,17 +166,24 @@ function replay(
         (at === 0 || parent[at - 1] === "\n") &&
         (hunk.before.endsWith("\n") || end === parent.length)
       ) {
-        if (found !== -1) return null;
-        found = at;
+        matches.push({ at, line: parent.slice(0, at).split("\n").length });
       }
       from = at + 1;
     }
+    const expected = original.flatMap((candidate, index) =>
+      candidate.before === hunk.before && candidate.after === hunk.after
+        ? [accepted[index].oldStart]
+        : [],
+    );
     if (
-      found < cursor ||
-      found < 0 ||
-      parent.slice(0, found).split("\n").length !== accepted[i].oldStart
+      matches.length !== expected.length ||
+      new Set(expected).size !== expected.length ||
+      matches.some((match) => !expected.includes(match.line))
     )
       return null;
+    const found =
+      matches.find((match) => match.line === accepted[i].oldStart)?.at ?? -1;
+    if (found < cursor || found < 0) return null;
     output += parent.slice(cursor, found) + hunk.after;
     cursor = found + hunk.before.length;
     if (hunk.after && !hunk.after.endsWith("\n") && cursor !== parent.length)
@@ -186,7 +194,7 @@ function replay(
 
 /** A shifted squash needs full accepted-parent replay, not merely equality
  * after deleting hunk coordinates. Existing stacked-range proofs stay distinct. */
-export async function collectAcceptedPatchReplay(
+async function collectAcceptedPatchReplayBatch(
   client: EvidenceClient,
   repository: string,
   headSha: string,
@@ -244,24 +252,17 @@ export async function collectAcceptedPatchReplay(
       return null;
     parsed.push({ original: left, accepted: right });
   }
-  let reads = 0;
-  const bounded: EvidenceClient = {
-    async get<T>(path: string) {
-      if (++reads > 48) return null;
-      return client.get<T>(path);
-    },
-  };
   const paths = submitted.map((file) => file.filename);
-  const head = await readValuePaths(bounded, repository, headSha, paths);
+  const head = await readValuePaths(client, repository, headSha, paths);
   const parent = await readValuePaths(
-    bounded,
+    client,
     repository,
     merge.parents[0].sha,
     paths,
   );
-  const final = await readValuePaths(bounded, repository, merge.sha, paths);
+  const final = await readValuePaths(client, repository, merge.sha, paths);
   if (!head || !parent || !final) return null;
-  const read = valueFileReader(bounded, repository);
+  const read = valueFileReader(client, repository);
   const proof: AcceptedPatchReplay = {
     schemaVersion: 1,
     headSha,
@@ -318,4 +319,62 @@ export async function collectAcceptedPatchReplay(
     });
   }
   return proof;
+}
+
+/** Replay every submitted file, in bounded path batches. A later failure
+ * discards the complete candidate proof; an earlier batch is never published.
+ * Cache only immutable object/path reads within this one proof collection.
+ */
+export async function collectAcceptedPatchReplay(
+  client: EvidenceClient,
+  repository: string,
+  headSha: string,
+  files: FileChange[],
+  merge: { sha: string; parents: { sha: string }[]; files: FileChange[] },
+): Promise<AcceptedPatchReplay | null> {
+  if (
+    !files.length ||
+    files.length !== merge.files.length ||
+    new Set(files.map((file) => file.filename)).size !== files.length ||
+    new Set(merge.files.map((file) => file.filename)).size !==
+      merge.files.length
+  )
+    return null;
+  const submitted = [...files].sort((a, b) =>
+    a.filename.localeCompare(b.filename),
+  );
+  const accepted = new Map(merge.files.map((file) => [file.filename, file]));
+  if (submitted.some((file) => !accepted.has(file.filename))) return null;
+  const requests = new Map<string, Promise<unknown>>();
+  const immutable: EvidenceClient = {
+    async get<T>(path: string): Promise<T | null> {
+      // Keep each file's blob body within its reader lifetime. Only the
+      // shared immutable ancestor metadata needs cross-batch caching.
+      if (!path.startsWith(`/repos/${repository}/git/`))
+        return client.get<T>(path);
+      let request = requests.get(path);
+      if (!request) {
+        request = client.get<unknown>(path);
+        requests.set(path, request);
+      }
+      return (await request) as T | null;
+    },
+  };
+  let complete: AcceptedPatchReplay | null = null;
+  // Each file gets the existing bounded reader's complete byte budget.
+  // Shared immutable requests avoid re-fetching common ancestor trees.
+  for (let offset = 0; offset < submitted.length; offset++) {
+    const batch = submitted.slice(offset, offset + 1);
+    const proof = await collectAcceptedPatchReplayBatch(
+      immutable,
+      repository,
+      headSha,
+      batch,
+      { ...merge, files: batch.map((file) => accepted.get(file.filename)!) },
+    );
+    if (!proof) return null;
+    if (complete === null) complete = proof;
+    else complete.files.push(...proof.files);
+  }
+  return complete;
 }

@@ -75,7 +75,14 @@ every recognized event is verified and indexed. Base starts from the reviewed
 deployment transaction. EVM checkpoints cannot decrease when overlapping runs
 finish out of order; a failed page retains the last completed block. Run
 `node workers/payments/scanner-progress.workflow.mjs` for the native D1/public
-coverage regression. Solana stores one finalized signature page per run in a durable discovery
+coverage regression. Every EVM scan checks the RPC chain ID against the reviewed
+deployment before reading or advancing its cursor, including empty log pages.
+This check prevents new omissions; it does not repair a cursor advanced before
+the check was released. Audit such history from its trusted deployment boundary
+and reconcile retained events before treating that coverage as verified.
+Solana checks the RPC genesis hash against the configured network trust root
+before reading vault snapshots or touching discovery and processing
+checkpoints. Solana stores one finalized signature page per run in a durable discovery
 interval. After it reaches the preceding cursor, it indexes that interval
 oldest first, at most 100 transactions per run. Migration `0012` adds the pending
 pages and generation/revision checkpoints. Indexing verifies only this project's
@@ -278,6 +285,23 @@ real GitHub OAuth or public testnet deployment result.
 Automatic monthly payment is the PRD default for a funded project (PRD
 sections 6 and 7). Migration `0062` adds its private records.
 
+Implementation Points retain the accepted PR's value and are divided by verified
+commit additions plus deletions. An allocation-only correction conserves the
+previous PR total when a current value assessment is unavailable; it does not
+replace that total with a provisional minimum. Missing multi-author line
+evidence holds the previous allocation. Corrections append to the journal with
+the original contribution date.
+
+Points imports check these private records in the same atomic statement that
+accepts the new journal batch. A correction cannot change or add accepted-work
+Points in a frozen month, a month with an owner allocation decision, or a month
+with a retained direct payment. A legacy obligation without an exact monthly
+binding protects the whole project; its period is never inferred from indexing
+time. The reviewed Base qualification is outside earned rewards under PRD
+section 11. The guard exempts its exact finalized payment and reservation source.
+A refusal stops the release before Pages publication and retains the previous
+Points history. Replaying an identical batch remains valid.
+
 1. **Proposal.** The trusted `monthly-rewards.yml` workflow runs on the first
    three days of each month, on `main` for `slop-private` and on
    `development` for `slop-staging`. It freezes the complete ledger of the
@@ -295,18 +319,32 @@ sections 6 and 7). Migration `0062` adds its private records.
    gets no proposal; the other projects still get theirs. If the project is
    active again before the last run, the next run proposes the month. No cycle
    file, public decision or review PR is created.
-2. **Private changes.** The owner, the project steward or a current admin of
-   the immutable repository, changes amounts through
+2. **Owner changes and public cuts.** The owner, the project steward or a
+   current admin of the immutable repository, changes amounts through
    `GET /api/v1/payments/projects/:projectId/monthly/:YYYY-MM` and
    `POST .../monthly/:YYYY-MM/allocations` (`githubUserId`, `grossBase`,
-   `expectedSequence`). The month's total never exceeds its monthly amount, so
-   unallocated funds never raise a later month. Nobody changes their own
-   allocation. Each change is an append-only `monthly_allocation_changes` row
-   kept only for dispute handling and reconciliation; no route returns it and
-   no public reason exists. `POST .../monthly-settings` (`automatic`) turns
+   `expectedSequence`, and `reason` for a cut). The month's total never
+   exceeds its monthly amount, so unallocated funds never raise a later month.
+   Nobody changes their own allocation. Each change is an append-only
+   `monthly_allocation_changes` row. A change below the contributor's proposed
+   amount is a cut (operator decision, 15 November 2026): it needs a reason of
+   20 to 500 characters after trim, which is stored with the proposed and new
+   amounts in `monthly_allocation_cut_reasons` (migration 0126) in the same
+   batch as the change, and the contributor gets one Inbox notice per cut.
+   `GET .../monthly/:YYYY-MM/cuts` is public and lists each contributor whose
+   latest change is a cut, with login, proposed amount, new amount, reason and
+   time; the cycle page shows it. Other changes stay private and are kept for
+   dispute handling and reconciliation. With automatic finalization on, a cut
+   is refused in the last 24 hours before the cutoff (`cut_notice_window`),
+   and the owner's finalize is refused until 24 hours after the latest cut
+   (`cut_notice_pending`). The coordinator's freeze at the cutoff is
+   unchanged. `POST .../monthly-settings` (`automatic`) turns
    the automatic default off or on again. Write or maintain permission can
    read the month and prepare its commitment, but cannot change allocations,
-   the automatic default, finalization or reserve release.
+   the automatic default, finalization or reserve release. The same Slopbot
+   installation reader used by project setup verifies current permission and
+   the immutable public repository and steward identity for every monthly read
+   or action.
 3. **Execution snapshot.** `POST .../monthly/:YYYY-MM/finalize`
    (`expectedSequence`) freezes the current allocations now. Otherwise the
    payments Worker's scheduled coordinator freezes them at the cutoff,
@@ -454,3 +492,38 @@ Pages return at most 100 records. Continue with the returned `next` as `after`
 and the same `through` boundary; `total` applies to that boundary. The public
 client checks page continuity, duplicates and completeness before display, and
 keeps currencies separate. This read path creates no award or payment.
+
+### Reviewed October 2026 exception
+
+The manual `october-rewards.yml` workflow prepares only the five pools in the
+owner-approved October terms. It runs on current `main` in `slop-production`
+and shares the normal production publication lock. Its default is preview.
+The owner-reviewed packet is the private `OCTOBER_REWARDS_REVIEWED_PACKET`
+repository secret. The dispatch supplies its SHA-256 and an explicit `apply`
+boolean. Do not put the packet, recipient amounts or generated SQL in a public
+artifact or workflow input.
+
+The runner compares every reviewed identity and accepted-work weight with the
+complete published Points journal, clipped to October and the project's
+reward start. Payout-recognition awards are excluded. Existing deduplication
+and signed penalties are preserved. This cross-check validates the reviewed
+packet and creates no new valuation. Fresh private reads bind the packet to
+exact current registry bytes, enforcement generation, the Points batch,
+account eligibility and protected financial state. The runner verifies the
+packet reviewer's current owner or repository-admin authority through the same
+Slopbot App installation reader as the monthly owner API. Historical October
+payments may retain unknown license and inbound terms when that live authority
+is verified. This exception changes neither those stored terms nor the ordinary
+automatic proposal admission rule.
+
+Applying uses `prepare-october-rewards.ts` and the existing single-transaction
+D1 file importer. It records proposals only. Exact header and recipient-row
+readback is required after the import, including after a lost import response.
+A fully matching existing proposal is an idempotent replay even when Points
+have subsequently advanced. A different stored proposal refuses. Owner
+finalization and ordinary vault settlement remain separate operations.
+
+Only aggregate counts and the reviewed packet digest leave the trusted runner.
+The private packet, registry capture and SQL remain in its temporary directory.
+Set the private secret and run preview only after the final packet is reviewed.
+Import only that verified packet by dispatching the same digest with `apply`.

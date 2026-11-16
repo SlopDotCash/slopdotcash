@@ -4,7 +4,12 @@ import type { Page } from "@playwright/test";
 import { deploymentOrigins, deploymentTier } from "../../src/lib/deployment";
 import { PROJECTS } from "../../src/lib/projects.mjs";
 import { enlargeText } from "../text-size";
-import { expect, expectAccessible, test } from "./fixtures";
+import {
+  expect,
+  expectAccessible,
+  servePublicProjectReads,
+  test,
+} from "./fixtures";
 import { serveProjectMaintainer } from "./project-maintainer-fixture";
 
 const site = deploymentOrigins(
@@ -37,6 +42,7 @@ async function serveSite(page: Page) {
       ),
     });
   });
+  await servePublicProjectReads(page);
   await page.route("https://avatars.githubusercontent.com/**", (route) =>
     route.fulfill({ path: join(process.cwd(), "public/slop-mark.svg") }),
   );

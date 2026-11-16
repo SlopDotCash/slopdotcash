@@ -4,7 +4,12 @@ import type { Page } from "@playwright/test";
 import { deploymentOrigins, deploymentTier } from "../../src/lib/deployment";
 import type { DirectTransfer } from "../../src/lib/payments/contracts";
 import { cycleIndexFixture, snapshotFixture } from "../fixtures";
-import { expect, expectAccessible, test } from "./fixtures";
+import {
+  expect,
+  expectAccessible,
+  servePublicProjectReads,
+  test,
+} from "./fixtures";
 
 const site = deploymentOrigins(
   deploymentTier(process.env.VITE_SLOP_ENVIRONMENT),
@@ -53,6 +58,7 @@ async function fixtures(page: Page) {
           ),
         }),
   );
+  await servePublicProjectReads(page);
   await page.route("**/data/leaderboard.json?**", (route) =>
     route.fulfill({ json: snapshotFixture() }),
   );

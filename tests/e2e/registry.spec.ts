@@ -366,7 +366,11 @@ async function draftApplication(
 }
 
 async function listedProject(page: Page, id: string) {
-  const body = await (await page.request.get("/api/v1/projects")).json();
+  const response = await page.request.get("/api/v1/projects", {
+    maxRetries: 1,
+  });
+  expect(response.status()).toBe(200);
+  const body = await response.json();
   return body.projects.find((entry: { id: string }) => entry.id === id);
 }
 
@@ -716,9 +720,10 @@ test("an admin cannot activate or publish skills without canonical scan closure 
   // The approved paused project already shows on the public site from D1.
   await admin.goto(`/projects/${project.id}`);
   await expect(admin.locator("h1")).toHaveText(project.name);
-  // Native stablecoins use the shared reward label without a token address.
+  // A monthly amount with no funded vault reads as points only (operator
+  // decision, 15 November 2026), and no token address is shown.
   await expect(admin.locator(".project-reward-status")).toContainText(
-    "$1,000 /mo",
+    "Points only · no cash rewards",
   );
   await expect(admin.locator(".project-hero")).not.toContainText(
     "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913",

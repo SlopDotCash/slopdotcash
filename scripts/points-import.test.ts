@@ -119,7 +119,7 @@ test("a valid retained debit journal refuses an inexact negative Points total", 
 });
 
 test("safe penalties in three project scopes refuse an inexact actor total", () => {
-  const maximum = Number.MAX_SAFE_INTEGER;
+  const maximum = Math.floor(Number.MAX_SAFE_INTEGER / 10);
   const events = [0, 1, 2].map((index) => ({
     actor: PENALIZED_AUTHOR,
     repository: `https://github.com/example/project-${index}`,

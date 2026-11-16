@@ -46,7 +46,9 @@ test("monthly targets remain distinct from verified payment records", async ({
   await expect(
     card.getByText("Payments not active", { exact: true }),
   ).toHaveCount(0);
-  await expect(card.locator(".project-money-state")).toHaveCount(0);
+  // Only money in a vault is shown (operator decision, 15 November 2026):
+  // a monthly amount with no funded vault reads as points only.
+  await expect(card.locator(".project-money-state")).toHaveText("Points only");
   await page.screenshot({
     path: info.outputPath("home-payment-unavailable.png"),
     fullPage: true,
@@ -55,7 +57,9 @@ test("monthly targets remain distinct from verified payment records", async ({
   await expect(
     page.getByRole("heading", { name: "Eliza", exact: true, level: 1 }),
   ).toBeVisible();
-  await expect(page.locator(".project-reward-status")).toContainText("/mo");
+  await expect(page.locator(".project-reward-status")).toContainText(
+    "Points only · no cash rewards",
+  );
   await page.screenshot({
     path: info.outputPath("project-payment-unavailable.png"),
     fullPage: true,

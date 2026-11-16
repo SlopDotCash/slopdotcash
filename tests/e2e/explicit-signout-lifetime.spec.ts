@@ -3,7 +3,12 @@ import { join } from "node:path";
 import type { Page, Route } from "@playwright/test";
 import { deploymentOrigins, deploymentTier } from "../../src/lib/deployment";
 import { PROJECTS, type ProjectDefinition } from "../../src/lib/projects.mjs";
-import { escapeRegExp, expect, test } from "./fixtures";
+import {
+  escapeRegExp,
+  expect,
+  servePublicProjectReads,
+  test,
+} from "./fixtures";
 
 const { site } = deploymentOrigins(
   deploymentTier(process.env.VITE_SLOP_ENVIRONMENT),
@@ -163,6 +168,7 @@ async function serve(page: Page) {
       `Unexpected signout fixture request: ${request.method()} ${path}`,
     );
   });
+  await servePublicProjectReads(page);
   return state;
 }
 

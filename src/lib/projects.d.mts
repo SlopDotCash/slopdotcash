@@ -222,6 +222,10 @@ export interface ProjectDefinition {
     readonly githubUrl: string;
     readonly description: string;
     readonly integrationBranch: string;
+    /** Appended repositories only (never repositories[0]). */
+    readonly githubId?: string;
+    readonly nodeId?: string;
+    readonly countsFrom?: string;
   }[];
   readonly skill: {
     readonly id: string;

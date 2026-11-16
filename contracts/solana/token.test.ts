@@ -49,7 +49,7 @@ test("economic, hook, duplicate and unknown mint extensions cannot ride alongsid
   duplicate.set(fixture);
   duplicate.set(fixture.slice(166, 234), fixture.length);
   expect(() => inspectMintAccount(account(duplicate), mint)).toThrow();
-  for (const changed of [fixture.slice(0, -1), fixture.slice()]) {
+  for (const changed of [fixture.slice(0, 361), fixture.slice()]) {
     if (changed.length === fixture.length) changed[270] ^= 1; // Metadata's bound mint.
     expect(() => inspectMintAccount(account(changed), mint)).toThrow();
   }
@@ -75,17 +75,18 @@ test("ImmutableOwner token accounts preserve program identity and refuse unrelat
   ).toThrow();
 });
 
-test("Token-2022 metadata keeps full payload extents and admits large zero padding", () => {
-  const padded = new Uint8Array(fixture.length + 2 * 1024 * 1024);
+test("Token-2022 metadata keeps full payload extents inside the mint-size bound", () => {
+  const padded = new Uint8Array(1024);
   padded.set(fixture);
   const reading = readTokenMint(account(padded));
   expect(reading.extensions).toEqual([18, 19]);
   expect(reading.decimals).toBe(6);
   expect(reading.raw).toEqual(padded);
-  // A byte after the zero padding is an extension attempt, not ignored data.
-  padded[padded.length - 1] = 1;
-  expect(() => readTokenMint(account(padded))).toThrow(
-    "Unsupported Token-2022 extension 0",
+  // Even zero padding cannot grow an admitted mint beyond the program's limit.
+  const oversized = new Uint8Array(1025);
+  oversized.set(fixture);
+  expect(() => readTokenMint(account(oversized))).toThrow(
+    /exceeds the 1024-byte limit/,
   );
 });
 

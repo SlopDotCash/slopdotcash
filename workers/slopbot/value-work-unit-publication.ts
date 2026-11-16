@@ -6,6 +6,11 @@ import type { Job } from "./contracts";
 import { GitHubClient } from "./github";
 import { requireRegisteredRepository } from "./registry";
 import type { ReviewEnv } from "./review";
+import {
+  type ValueFileRecovery,
+  type ValueFileRequest,
+  verifiedValueFileClient,
+} from "./value-file-recovery";
 import { latestValueRecord } from "./value-journal";
 import type { ValueClaim } from "./value-processing";
 import { isSubscriptionProvenance } from "./value-producer";
@@ -26,7 +31,7 @@ import {
   prepareWorkUnitRecord,
 } from "./value-work-unit-journal";
 import type { WorkUnitAssessmentResult } from "./value-work-unit-review";
-import type { WorkUnitEvidence, WorkUnitSource } from "./value-work-unit-types";
+import type { WorkUnitEvidence } from "./value-work-unit-types";
 
 type Result = WorkUnitAssessmentResult;
 
@@ -49,23 +54,23 @@ export async function verifyCurrentWorkUnitSource(
     original.sourceDigest !== result.sourceDigest
   )
     throw new Error("Joint assessment does not bind the supplied source group");
-  const sources: WorkUnitSource[] = [];
   for (const [i, source] of original.sources.entries()) {
-    sources.push(
-      await verifyCurrentValueSource(
-        github,
-        source.evidence,
-        {
-          policySha: source.policy.sha,
-          sourceDigest: original.sourceDigests[i].digest,
-        },
-        repositories,
-        source.mergeRecipe,
-        "joint",
-      ),
+    await verifyCurrentValueSource(
+      github,
+      source.evidence,
+      {
+        policySha: source.policy.sha,
+        sourceDigest: original.sourceDigests[i].digest,
+      },
+      repositories,
+      source.mergeRecipe,
+      "joint",
+      original.sources,
     );
   }
-  const current = await prepareWorkUnitEvidence(sources, repositories);
+  // Every source digest was recomputed from fresh GitHub bytes above. Reuse
+  // exact original text objects after equality to keep publication bounded.
+  const current = await prepareWorkUnitEvidence(original.sources, repositories);
   if (
     current.limitations.length ||
     current.sourceDigest !== result.sourceDigest
@@ -92,6 +97,11 @@ export async function publishWorkUnitAssessment(
   legacyPredecessors: readonly string[],
   revisionReason: string | null,
   claim?: ValueClaim,
+  verifiedFiles?: {
+    requests: ValueFileRequest[];
+    recovery: ValueFileRecovery;
+    internText?: (text: string) => string;
+  },
 ) {
   if (
     !claim &&
@@ -137,7 +147,14 @@ export async function publishWorkUnitAssessment(
     evidence.sources.map((source) => source.evidence),
   );
   const current = await verifyCurrentWorkUnitSource(
-    github,
+    verifiedFiles
+      ? await verifiedValueFileClient(
+          github,
+          verifiedFiles.requests,
+          verifiedFiles.recovery,
+          verifiedFiles.internText,
+        )
+      : github,
     evidence,
     result,
     repositories,

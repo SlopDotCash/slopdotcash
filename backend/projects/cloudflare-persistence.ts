@@ -570,7 +570,7 @@ export class CloudflareProjectPersistence implements ProjectPersistence {
   async appendProjectRevision(
     input: ProjectRevisionInput,
     expectedEnforcementGeneration: number,
-  ): Promise<"updated" | "conflict"> {
+  ): Promise<"updated" | "conflict" | "repository_conflict"> {
     const nextRevision = input.expectedRevision + 1;
     // The revision applies only while no enforcement record has landed since
     // the caller read the restrictions it checked.
@@ -689,6 +689,11 @@ export class CloudflareProjectPersistence implements ProjectPersistence {
       ]);
       return results[1]?.meta?.changes === 1 ? "updated" : "conflict";
     } catch (error) {
+      if (
+        error instanceof Error &&
+        /UNIQUE constraint failed: project_repositories\./u.test(error.message)
+      )
+        return "repository_conflict";
       if (isConstraintConflict(error)) return "conflict";
       throw error;
     }

@@ -157,10 +157,12 @@ for (const token of [false, true])
         name: "Recover existing vault",
         exact: true,
       });
-      await setup.getByText("Recover vault", { exact: true }).click();
+      await setup
+        .getByText("Recover an existing vault", { exact: true })
+        .click();
       await recover.focus();
       await page.keyboard.press("Enter");
-      const hash = setup.getByLabel("Transaction hash", { exact: true });
+      const hash = setup.getByLabel("Creation transaction hash");
       await expect(hash).toBeVisible();
       await expect(setup.getByText(OWNER, { exact: true })).toBeVisible();
       if (token) {
@@ -201,7 +203,7 @@ for (const token of [false, true])
       await expect(setup.getByText(OWNER, { exact: true })).toHaveCount(0);
       await expect(
         setup.getByRole("button", {
-          name: "Review",
+          name: "Review vault creation",
           exact: true,
         }),
       ).toBeVisible();
@@ -211,10 +213,14 @@ for (const token of [false, true])
       await expect(recover).toBeHidden();
 
       // A failed creation keeps its saved request until the owner starts over.
-      await setup.getByText("Recover vault", { exact: true }).click();
+      await setup
+        .getByText("Recover an existing vault", { exact: true })
+        .click();
       await recover.click();
       await hash.fill(HASH);
-      await setup.getByRole("button", { name: "Check", exact: true }).click();
+      await setup
+        .getByRole("button", { name: "Check vault registration", exact: true })
+        .click();
       await expect(setup.getByRole("alert")).toHaveText(
         "The creation transaction failed on chain.",
       );
@@ -259,7 +265,7 @@ for (const token of [false, true])
         ).toBe(retained);
         await setup
           .getByRole("button", {
-            name: "Check",
+            name: "Check vault registration",
             exact: true,
           })
           .click();
@@ -269,13 +275,13 @@ for (const token of [false, true])
       }
       await setup
         .getByRole("button", {
-          name: "Start over",
+          name: "Review a new creation request",
           exact: true,
         })
         .click();
       await expect(
         setup.getByRole("button", {
-          name: "Start over",
+          name: "Review a new creation request",
           exact: true,
         }),
       ).toHaveCount(0);
@@ -286,7 +292,7 @@ for (const token of [false, true])
       ).toBeNull();
       await expect(
         setup.getByRole("button", {
-          name: "Review",
+          name: "Review vault creation",
           exact: true,
         }),
       ).toBeVisible();

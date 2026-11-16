@@ -344,6 +344,7 @@ test("durable executor verifies SQLite consent, pays a one-unit award, and retri
   const config = {
     projectId: "executor-project",
     network: input.network,
+    genesisHash: genesis,
     chain: "solana",
     vault: input.vault,
     programId: program.programId.toBase58(),
@@ -1349,6 +1350,7 @@ async function scannedProject(label) {
   const config = {
     projectId: `scanned-${label}`,
     network: "solana-localnet",
+    genesisHash: await provider.connection.getGenesisHash(),
     chain: "solana",
     vault: vault.toBase58(),
     programId: program.programId.toBase58(),
@@ -1366,7 +1368,6 @@ async function scannedProject(label) {
     ...config,
     mint: config.asset,
     rpcUrl: provider.connection.rpcEndpoint,
-    genesisHash: await provider.connection.getGenesisHash(),
   });
   rmSync(`.local/scanned-${label}.sqlite`, { force: true });
   const sql = new DatabaseSync(`.local/scanned-${label}.sqlite`);

@@ -89,6 +89,7 @@ export function recoveryOperator(endpoint: string): string | null {
   const host = url.hostname.toLowerCase();
   if (host === "api.mainnet-beta.solana.com") return "solana-public";
   if (host === "solana-rpc.publicnode.com") return "allnodes-publicnode";
+  if (host === "public.rpc.solanavibestation.com") return "solana-vibe-station";
   if (host.endsWith(".alchemy.com")) return "alchemy";
   if (host.endsWith(".helius-rpc.com")) return "helius";
   return null;

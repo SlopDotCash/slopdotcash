@@ -99,6 +99,16 @@ export async function serveProjectCycleIndex(
   );
 }
 
+/** Empty cached project reads for specs that serve the site from local files. */
+export async function servePublicProjectReads(page: Page): Promise<void> {
+  await page.route("**/api/v1/merge-activity", (route) =>
+    route.fulfill({ json: { schema: "slop-merge-activity-v1", projects: [] } }),
+  );
+  await page.route("**/api/v1/pool-funding", (route) =>
+    route.fulfill({ json: { schema: "slop-pool-funding-v1", projects: [] } }),
+  );
+}
+
 /**
  * Serves reporter 42's Inbox reads (session, empty registry, notifications,
  * cases and the listed private report) and passes every other API path to
@@ -111,15 +121,14 @@ export async function routeReporterInbox(
     automatic,
     onRequest,
   }: {
-    submission: () => unknown;
+    submission: () => { id: string };
     automatic: boolean;
     onRequest: (route: Route, path: string) => Promise<void>;
   },
 ) {
   await page.route("**/api/v1/**", async (route) => {
-    const path = new URL(route.request().url()).pathname.slice(
-      "/api/v1/".length,
-    );
+    const url = new URL(route.request().url());
+    const path = url.pathname.slice("/api/v1/".length);
     if (path === "project-session")
       return route.fulfill({
         json: {
@@ -153,6 +162,13 @@ export async function routeReporterInbox(
           automatic,
           submissions: [submission()],
         },
+      });
+    if (
+      path === `security-submissions/${submission().id}` &&
+      url.searchParams.get("view") === "receipt"
+    )
+      return route.fulfill({
+        json: { recipientGithubId: "42", submission: submission() },
       });
     return onRequest(route, path);
   });
