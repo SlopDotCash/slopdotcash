@@ -34,6 +34,7 @@ export function GeneratedSkillPreview({
 }) {
   const [selectedRole, setSelectedRole] = useState("Contributor skill");
   const [selectedPath, setSelectedPath] = useState("SKILL.md");
+  const [compactOpen, setCompactOpen] = useState(false);
   const manifestText = JSON.stringify(manifest);
   const [digestState, setDigestState] = useState<{
     source: string;
@@ -113,36 +114,47 @@ export function GeneratedSkillPreview({
   const path = paths.includes(selectedPath) ? selectedPath : paths[0];
   if (compact)
     return (
-      <details aria-label="Generated skills" className="skill-preview-compact">
-        <summary>
+      // A button, not a disclosure element: the review step keeps every
+      // choice visible and has no collapsed groups of fields.
+      <fieldset aria-label="Generated skills" className="skill-preview-compact">
+        <button
+          aria-expanded={compactOpen}
+          className="button secondary-button"
+          onClick={() => setCompactOpen(!compactOpen)}
+          type="button"
+        >
           <FileText size={16} aria-hidden="true" /> Preview skill
-        </summary>
-        <div className="skill-preview-controls">
-          <fieldset className="skill-preview-options">
-            <legend className="visually-hidden">Skill</legend>
-            {previews.map(({ role }) => (
-              <label key={role}>
-                <input
-                  checked={preview.role === role}
-                  name="project-skill-role"
-                  onChange={() => setSelectedRole(role)}
-                  type="radio"
-                  value={role}
-                />
-                <span>{role.replace(" skill", "")}</span>
-              </label>
-            ))}
-          </fieldset>
-        </div>
-        <textarea
-          aria-label={`${preview.role} SKILL.md`}
-          className="admin-code skill-preview-source"
-          readOnly
-          rows={8}
-          spellCheck={false}
-          value={decoder.decode(preview.files["SKILL.md"])}
-        />
-      </details>
+        </button>
+        {compactOpen ? (
+          <>
+            <div className="skill-preview-controls">
+              <fieldset className="skill-preview-options">
+                <legend className="visually-hidden">Skill</legend>
+                {previews.map(({ role }) => (
+                  <label key={role}>
+                    <input
+                      checked={preview.role === role}
+                      name="project-skill-role"
+                      onChange={() => setSelectedRole(role)}
+                      type="radio"
+                      value={role}
+                    />
+                    <span>{role.replace(" skill", "")}</span>
+                  </label>
+                ))}
+              </fieldset>
+            </div>
+            <textarea
+              aria-label={`${preview.role} SKILL.md`}
+              className="admin-code skill-preview-source"
+              readOnly
+              rows={8}
+              spellCheck={false}
+              value={decoder.decode(preview.files["SKILL.md"])}
+            />
+          </>
+        ) : null}
+      </fieldset>
     );
   const content = (
     <>

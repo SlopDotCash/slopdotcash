@@ -5265,7 +5265,7 @@ test("an accepted private report rechecks identity before navigation and preserv
     ).toBeVisible();
     await expect(
       page.getByText(
-        `Received for @${account(first).githubLogin}. Sign in as @${account(first).githubLogin} to open it.`,
+        `Your account changed or signed out. Sign in as @${account(first).githubLogin} to open the receipt.`,
         { exact: true },
       ),
     ).toBeVisible();
@@ -5351,9 +5351,12 @@ test("a received private report survives a session outage without being submitte
     .getByRole("button", { name: "Submit private report", exact: true })
     .click();
   await expect(
-    page.getByText("Received. Sign in again to open the receipt.", {
-      exact: true,
-    }),
+    page.getByText(
+      "This tab could not verify your current account. Try again.",
+      {
+        exact: true,
+      },
+    ),
   ).toBeVisible();
   await expect(
     page.getByText("Report not confirmed", { exact: true }),

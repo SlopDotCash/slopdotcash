@@ -348,6 +348,10 @@
   min-width: 0;
   display: grid;
   gap: 0.5rem;
+  margin: 0;
+  border: 0;
+  padding: 0;
+  justify-items: start;
 }
 
 .skill-preview-compact .skill-preview-controls {
