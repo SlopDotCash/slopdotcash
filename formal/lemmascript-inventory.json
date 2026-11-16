@@ -17,9 +17,9 @@
   ],
   "counts": {
     "files": 784,
-    "functions": 12204,
+    "functions": 12211,
     "selectedContractTargets": 188,
-    "unprovedFunctions": 12016,
+    "unprovedFunctions": 12023,
     "nonTypeScriptFiles": 57
   },
   "limits": [
