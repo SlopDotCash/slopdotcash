@@ -54,7 +54,7 @@ pure val paymentValues = Set(
 
 The boundary maps these routes to HTTP 404. Ordinary APIs and retained records
 keep their separate contracts. Private trace bodies have no readable route
-([trace privacy](../backend/accounts.md) owns that contract).
+([the trace server](../contributor/traceServer.md) owns that contract).
 
 ```quint
 pure def removedRoute(path: str): bool = Set("/models", "/receipts", "/data/cycles/eliza/2026-09/proposal.json", "/downloads/contribute-to-eliza.skill").contains(path)
@@ -125,6 +125,9 @@ pure def paymentDisplay(facts: AwardFacts): AwardDisplay =
     (if (facts.exactFinality or facts.submitted) InvalidAward else DecisionState({ decision: facts.decision }))
   else PaymentState({ payment: settlementDisplay(facts) })
 pure def showsPayment(display: AwardDisplay): bool = match display { | PaymentState(p) => true | _ => false }
+pure def showsPaymentState(display: AwardDisplay, shown: PaymentDisplay): bool =
+  match display { | PaymentState(p) => p.payment == shown | _ => false }
+pure def invalidAward(display: AwardDisplay): bool = match display { | InvalidAward => true | _ => false }
 pure def settlementDisplay(facts: AwardFacts): PaymentDisplay =
   if (facts.exactFinality) PaidPayment
   else if (facts.submitted) SubmittedPayment
@@ -135,16 +138,16 @@ pure def settlementDisplay(facts: AwardFacts): PaymentDisplay =
   else if (facts.scheduled) ScheduledPayment
   else ReadyToPay
 pure def lawPaidNeedsFinality(facts: AwardFacts): bool =
-  paymentDisplay(facts) == PaymentState({ payment: PaidPayment }) implies facts.exactFinality and facts.decision == ApprovedAward
+  showsPaymentState(paymentDisplay(facts), PaidPayment) implies facts.exactFinality and facts.decision == ApprovedAward
 pure def lawOnlyApprovedAwardsShowPaymentStates(facts: AwardFacts): bool =
   showsPayment(paymentDisplay(facts)) iff facts.decision == ApprovedAward
 pure def lawUnapprovedMoneyIsInvalid(facts: AwardFacts): bool =
-  (facts.decision != ApprovedAward and facts.exactFinality) implies paymentDisplay(facts) == InvalidAward
+  (facts.decision != ApprovedAward and facts.exactFinality) implies invalidAward(paymentDisplay(facts))
 pure def lawApprovalIsNotPayment(facts: AwardFacts): bool =
-  facts.decision == ApprovedAward and not(facts.exactFinality) implies paymentDisplay(facts) != PaymentState({ payment: PaidPayment })
+  facts.decision == ApprovedAward and not(facts.exactFinality) implies not(showsPaymentState(paymentDisplay(facts), PaidPayment))
 pure def lawMissingFundingIsUnavailable(facts: AwardFacts): bool =
   facts.decision == ApprovedAward and facts.funding == FundingUnavailable and not(facts.exactFinality) and not(facts.submitted)
-    and not(facts.held) implies paymentDisplay(facts) == PaymentState({ payment: PaymentUnavailable })
+    and not(facts.held) implies showsPaymentState(paymentDisplay(facts), PaymentUnavailable)
 pure val factsValues = Set(
   { decision: Projected, funding: Funded, wallet: true, scheduled: false, held: false, submitted: false, exactFinality: false },
   { decision: ExcludedAward, funding: Funded, wallet: true, scheduled: false, held: false, submitted: true, exactFinality: true },
@@ -180,8 +183,6 @@ pure def higherCount(totals: List[int], points: int): int =
 pure def rankAt(totals: List[int], points: int): int = 1 + higherCount(totals, points)
 pure def lawEqualPointsHaveEqualRank(totals: List[int], left: int, right: int): bool =
   left == right implies rankAt(totals, left) == rankAt(totals, right)
-pure def lawHigherTotalRanksAhead(totals: List[int], left: int, right: int): bool =
-  left > right implies rankAt(totals, left) <= rankAt(totals, right)
 pure val totalsValues = Set(List(), List(10, 30, 30))
 pure val leftValues = Set(10, 30)
 pure val rightValues = Set(10, 30)
@@ -304,10 +305,13 @@ pure def mergeLine(row: MergeRow): MergeLine =
   else if (not(validMergeRow(row))) MergeRefused
   else if (row.lastAttemptFailed) MergeStale({ observedAt: row.observedAt })
   else MergeCurrent({ observedAt: row.observedAt })
-pure def lawNoRowHidesTheLine(row: MergeRow): bool = not(row.present) implies mergeLine(row) == MergeHidden
+pure def lineHidden(line: MergeLine): bool = match line { | MergeHidden => true | _ => false }
+pure def lineRefused(line: MergeLine): bool = match line { | MergeRefused => true | _ => false }
+pure def staleSince(line: MergeLine, observedAt: int): bool = match line { | MergeStale(s) => s.observedAt == observedAt | _ => false }
+pure def lawNoRowHidesTheLine(row: MergeRow): bool = not(row.present) implies lineHidden(mergeLine(row))
 pure def lawFailedAttemptIsStale(row: MergeRow): bool = (row.present and validMergeRow(row) and row.lastAttemptFailed)
-  implies mergeLine(row) == MergeStale({ observedAt: row.observedAt })
-pure def lawInvalidRowRefused(row: MergeRow): bool = (row.present and not(validMergeRow(row))) implies mergeLine(row) == MergeRefused
+  implies staleSince(mergeLine(row), row.observedAt)
+pure def lawInvalidRowRefused(row: MergeRow): bool = (row.present and not(validMergeRow(row))) implies lineRefused(mergeLine(row))
 pure val rowValues = Set(
   { present: false, observedAt: 0, lastAttemptFailed: false, lastMergedAt: 0, waitingOutside: 0, mergedOutside30d: 0, medianDoubled: -1 },
   { present: true, observedAt: 5, lastAttemptFailed: true, lastMergedAt: 3, waitingOutside: 2, mergedOutside30d: 1, medianDoubled: 4 },

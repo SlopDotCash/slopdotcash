@@ -31,19 +31,19 @@ fresh for the journal.
 
 ```quint
 type Attempt = { identity: str, bytesId: str, hash: str, candidate: str }
-type Keyed = { account: int, attempt: Attempt }
 type Reply = NoReply | Signed | Declined | Uncertain
 type Notice = Quiet | Waiting | StorageBlocked | Occupied | Saved | KeepHash | Recover
 type Prompt = { account: int, identity: str, bytesId: str }
-type Journal = { account: int, storageReady: bool, store: List[Keyed], waiting: List[Prompt], used: List[str],
+type Journal = { account: int, storageReady: bool, store: int -> Attempt, accounts: List[int], waiting: List[Prompt],
+  resolved: List[str], used: List[str],
   notice: Notice, replied: str, reply: Reply }
 pure val noAttempt: Attempt = { identity: "", bytesId: "", hash: "", candidate: "" }
-pure val initial: Journal = { account: 0, storageReady: true, store: List(), waiting: List(), used: List(),
+pure val initial: Journal = { account: 0, storageReady: true, store: Map(), accounts: List(), waiting: List(), resolved: List(), used: List(),
   notice: Quiet, replied: "", reply: NoReply }
 pure def slotOf(j: Journal, account: int): Attempt =
-  j.store.foldl(noAttempt, (found, k) => if (k.account == account) k.attempt else found)
+  if (j.store.keys().contains(account)) j.store.get(account) else noAttempt
 pure def writeSlot(account: int, attempt: Attempt, j: Journal): Journal =
-  { ...j, store: j.store.select(k => k.account != account).append({ account: account, attempt: attempt }) }
+  { ...j, store: j.store.put(account, attempt), accounts: if (j.accounts.includes(account)) j.accounts else j.accounts.append(account) }
 pure def mayCreate(slot: Attempt): bool = slot == noAttempt
 pure def createIfEmpty(slot: Attempt, value: Attempt): Attempt = if (mayCreate(slot)) value else slot
 pure def canSignIn(j: Journal, account: int): bool = account > 0 and account != j.account
@@ -87,7 +87,7 @@ pure def compareAndClear(slot: Attempt, expected: Attempt): Attempt =
 pure def promptFor(j: Journal, identity: str): Prompt =
   j.waiting.foldl({ account: 0, identity: "", bytesId: "" }, (found, w) => if (w.identity == identity) w else found)
 pure def canResolve(j: Journal, identity: str, reply: Reply, hash: str): bool =
-  identity != "" and j.waiting.some(w => w.identity == identity) and reply != NoReply and ((reply == Signed) iff (hash != ""))
+  identity != "" and j.waiting.some(w => w.identity == identity) and not(j.resolved.includes(identity)) and reply != NoReply and ((reply == Signed) iff (hash != ""))
 pure def resolve(j: Journal, identity: str, reply: Reply, hash: str): Journal =
   val w = promptFor(j, identity)
   val slot = slotOf(j, w.account)
@@ -96,7 +96,7 @@ pure def resolve(j: Journal, identity: str, reply: Reply, hash: str): Journal =
     else if (reply == Signed) compareAndSet(slot, expected, { ...slot, hash: hash })
     else if (reply == Declined) compareAndClear(slot, expected) else slot
   val written = if (updated == slot) j else writeSlot(w.account, updated, j)
-  { ...written, waiting: j.waiting.select(p => p.identity != identity), replied: identity, reply: reply,
+  { ...written, resolved: j.resolved.append(identity), replied: identity, reply: reply,
     notice: if (w.account != j.account) j.notice
       else if (reply == Signed) (if (updated == slot) KeepHash else Saved)
       else if (reply == Uncertain) Recover else Quiet }
@@ -129,30 +129,31 @@ pure def recoveryFor(j: Journal): Attempt = if (j.account > 0) slotOf(j, j.accou
 
 ```quint
 pure def stepCreateNeverOverwrites(before: Journal, via: str, after: Journal): bool = via == "begin" implies
-  before.store.every(k => k.attempt == noAttempt or slotOf(after, k.account) == k.attempt)
+  before.accounts.every(a => slotOf(before, a) == noAttempt or slotOf(after, a) == slotOf(before, a))
 pure def stepPromptNeedsSavedSlot(before: Journal, via: str, after: Journal): bool =
   after.waiting.length() > before.waiting.length() implies
     via == "begin" and before.storageReady and slotOf(before, before.account) == noAttempt
 pure def stepReplyTouchesOnlyItsAttempt(before: Journal, via: str, after: Journal): bool = via == "resolve" implies
-  before.store.every(k => slotOf(after, k.account) == k.attempt or k.attempt.identity == after.replied)
+  before.accounts.every(a => slotOf(after, a) == slotOf(before, a) or slotOf(before, a).identity == after.replied)
 pure def stepUncertainKeepsAttempt(before: Journal, via: str, after: Journal): bool =
-  (via == "resolve" and after.reply == Uncertain) implies after.store == before.store
+  (via == "resolve" and after.reply == Uncertain) implies before.accounts.every(a => slotOf(after, a) == slotOf(before, a))
 pure def stepOtherAccountsUntouched(before: Journal, via: str, after: Journal): bool =
   (via == "begin" or via == "enterCandidate" or via == "clearSettled") implies
-    before.store.every(k => k.account == before.account or slotOf(after, k.account) == k.attempt)
+    before.accounts.every(a => a == before.account or slotOf(after, a) == slotOf(before, a))
 pure def alwaysWaitingWasSaved(j: Journal): bool = j.waiting.every(w => w.account > 0 and j.used.includes(w.identity))
-pure def alwaysOneAttemptPerSlot(j: Journal): bool =
-  j.store.every(k => j.store.select(o => o.account == k.account).length() == 1)
+  and j.resolved.every(r => j.used.includes(r))
+pure def alwaysAccountsStored(j: Journal): bool =
+  j.accounts.every(a => a > 0 and j.store.keys().contains(a))
 pure def alwaysSignedOutShowsNothing(j: Journal): bool = j.account == 0 implies recoveryFor(j) == noAttempt
 pure def sometimesStorageBlocked(j: Journal): bool = j.notice == StorageBlocked and j.waiting.length() == 0
 pure def sometimesOccupied(j: Journal): bool = j.notice == Occupied and slotOf(j, j.account).hash == ""
 pure def sometimesLateReplyKeepsRetry(j: Journal): bool = j.reply == Declined and j.replied != ""
-  and j.store.some(k => k.attempt.identity != "" and k.attempt.identity != j.replied and k.attempt.bytesId == "plan")
+  and j.accounts.some(a => slotOf(j, a).identity != "" and slotOf(j, a).identity != j.replied)
 pure def sometimesUncertainRecoverable(j: Journal): bool = j.reply == Uncertain and recoveryFor(j) != noAttempt
 pure def sometimesOtherAccountClean(j: Journal): bool = j.account > 0 and recoveryFor(j) == noAttempt
-  and j.store.some(k => k.account != j.account and k.attempt != noAttempt)
+  and j.accounts.some(a => a != j.account and slotOf(j, a) != noAttempt)
 pure def sometimesKeepHash(j: Journal): bool = j.notice == KeepHash
-pure def sometimesSettled(j: Journal): bool = j.used.length() > 0 and j.store.length() > 0 and j.store.every(k => k.attempt == noAttempt)
+pure def sometimesSettled(j: Journal): bool = j.used.length() > 0 and j.accounts.length() > 0 and j.accounts.every(a => slotOf(j, a) == noAttempt)
 pure val accountValues = Set(1, 2)
 pure val identityValues = Set("a1", "a2", "a3")
 pure val bytesIdValues = Set("plan")

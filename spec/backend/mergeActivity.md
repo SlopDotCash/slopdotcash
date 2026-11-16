@@ -15,8 +15,9 @@ of the other jobs and never fails the schedule for it) and the retained
 `api_merge_activity` model. The page line is a
 [projection](../frontend/projections.md).
 
-One instance is the stored rows of every measured repository. Time is whole
-hours. The shell's GitHub adapter supplies each repository's open and
+One instance is the stored row of one (project, repository) and the
+schedule's runs, which also read other repositories (`readOther`). Time is
+whole hours. The shell's GitHub adapter supplies each repository's open and
 recently merged pull requests with their author association, bot and draft
 flags and whether someone who can merge responded; any read error is a
 failure.
@@ -64,17 +65,17 @@ pure def lawNoMergesNoMedian(merged: List[MergedPull], now: int): bool =
 
 ### A bounded daily run reads due repositories of active projects
 
-The registry supplies the measured repositories: those of active, listed
-projects; a paused or retired project's repositories are not read. A
-repository is due when it has no row, 20 hours after its last attempt, or an
-hour after a failed one. One run reads at most 15 due repositories, oldest
-attempt first.
+The registry decides whether the repository is measured: it belongs to an
+active, listed project; a paused or retired project's repositories are not
+read. A repository is due when it has no row, 20 hours after its last
+attempt, or an hour after a failed one. One run reads at most 15 due
+repositories, oldest attempt first.
 
 ```quint
 type Table = MergeActivityRows | Scores | ProjectStatus | Payments
 type Write = { table: Table, repository: int }
-type Row = { repository: int, observedAt: int, attemptedAt: int, failed: bool, summary: Summary }
-type Merges = { now: int, measured: List[int], rows: List[Row], running: bool, reads: int }
+type Row = { stored: bool, observedAt: int, attemptedAt: int, failed: bool, summary: Summary }
+type Merges = { repository: int, now: int, measured: bool, row: Row, running: bool, reads: int }
 type Outcome = { state: Merges, out: List[Write] }
 pure val schedule = "slopbot-schedule"
 pure val registry = "registry"
@@ -82,17 +83,14 @@ pure val repositoriesPerRun = 15
 pure val refreshAfterHours = 20
 pure val retryAfterHours = 1
 pure val noSummary: Summary = { lastMergedAt: 0, waitingOutside: 0, waitingCapped: false, mergedOutside30d: 0, medianDoubled: -1 }
-pure val noRow: Row = { repository: 0, observedAt: 0, attemptedAt: 0, failed: false, summary: noSummary }
-pure val initial: Merges = { now: 1, measured: List(), rows: List(), running: false, reads: 0 }
-pure def rowFor(m: Merges, repository: int): Row = m.rows.foldl(noRow, (found, r) => if (r.repository == repository) r else found)
-pure def due(m: Merges, repository: int): bool =
-  val row = rowFor(m, repository)
-  row == noRow or m.now - row.attemptedAt >= (if (row.failed) retryAfterHours else refreshAfterHours)
-pure def upsert(row: Row, m: Merges): Merges = { ...m, rows: m.rows.select(r => r.repository != row.repository).append(row) }
+pure val noRow: Row = { stored: false, observedAt: 0, attemptedAt: 0, failed: false, summary: noSummary }
+pure val initial: Merges = { repository: 1, now: 1, measured: false, row: noRow, running: false, reads: 0 }
+pure def due(m: Merges): bool =
+  not(m.row.stored) or m.now - m.row.attemptedAt >= (if (m.row.failed) retryAfterHours else refreshAfterHours)
 pure def canObserveClock(m: Merges, now: int, by: str): bool = by == schedule and now > m.now
 pure def observeClock(m: Merges, now: int, by: str): Merges = { ...m, now: now }
-pure def canObserveRegistry(m: Merges, measured: List[int], by: str): bool = by == registry and measured.every(r => r > 0)
-pure def observeRegistry(m: Merges, measured: List[int], by: str): Merges = { ...m, measured: measured }
+pure def canObserveRegistry(m: Merges, measured: bool, by: str): bool = by == registry and measured != m.measured
+pure def observeRegistry(m: Merges, measured: bool, by: str): Merges = { ...m, measured: measured }
 pure def canStartRun(m: Merges, by: str): bool = by == schedule and not(m.running)
 pure def startRun(m: Merges, by: str): Merges = { ...m, running: true, reads: 0 }
 pure def canEndRun(m: Merges, by: str): bool = by == schedule and m.running
@@ -110,21 +108,21 @@ to the merge-activity rows only: nothing here changes a score, a project
 status or a payment.
 
 ```quint
-pure def readable(m: Merges, repository: int, by: str): bool = by == schedule and m.running
-  and m.reads < repositoriesPerRun and m.measured.includes(repository) and due(m, repository)
-pure def canReadSucceeded(m: Merges, repository: int, open: List[OpenPull], capped: bool, merged: List[MergedPull], by: str): bool =
-  readable(m, repository, by)
-pure def readSucceeded(m: Merges, repository: int, open: List[OpenPull], capped: bool, merged: List[MergedPull], by: str): Outcome =
-  { state: { ...upsert({ repository: repository, observedAt: m.now, attemptedAt: m.now, failed: false,
-      summary: summarize(open, capped, merged, m.now) }, m), reads: m.reads + 1 },
-    out: List({ table: MergeActivityRows, repository: repository }) }
-pure def canReadFailed(m: Merges, repository: int, by: str): bool = readable(m, repository, by)
-pure def readFailed(m: Merges, repository: int, by: str): Outcome =
-  val row = rowFor(m, repository)
-  val kept = if (row == noRow) { ...noRow, repository: repository } else row
-  { state: { ...upsert({ ...kept, attemptedAt: m.now, failed: true }, m), reads: m.reads + 1 },
-    out: List({ table: MergeActivityRows, repository: repository }) }
-pure def served(m: Merges): List[Row] = m.rows.select(r => r.observedAt > 0)
+pure def readable(m: Merges, by: str): bool = by == schedule and m.running and m.reads < repositoriesPerRun
+pure def canReadOther(m: Merges, by: str): bool = readable(m, by)
+pure def readOther(m: Merges, by: str): Outcome =
+  { state: { ...m, reads: m.reads + 1 }, out: List({ table: MergeActivityRows, repository: 0 }) }
+pure def canReadSucceeded(m: Merges, open: List[OpenPull], capped: bool, merged: List[MergedPull], by: str): bool =
+  readable(m, by) and m.measured and due(m)
+pure def readSucceeded(m: Merges, open: List[OpenPull], capped: bool, merged: List[MergedPull], by: str): Outcome =
+  { state: { ...m, reads: m.reads + 1, row: { stored: true, observedAt: m.now, attemptedAt: m.now, failed: false,
+      summary: summarize(open, capped, merged, m.now) } },
+    out: List({ table: MergeActivityRows, repository: m.repository }) }
+pure def canReadFailed(m: Merges, by: str): bool = readable(m, by) and m.measured and due(m)
+pure def readFailed(m: Merges, by: str): Outcome =
+  { state: { ...m, reads: m.reads + 1, row: { ...m.row, stored: true, attemptedAt: m.now, failed: true } },
+    out: List({ table: MergeActivityRows, repository: m.repository }) }
+pure def served(m: Merges): bool = m.row.stored and m.row.observedAt > 0
 ```
 
 ### Rules
@@ -133,26 +131,25 @@ pure def served(m: Merges): List[Row] = m.rows.select(r => r.observedAt > 0)
 pure def stepWritesOnlyMergeRows(before: Merges, via: str, after: Merges, out: List[Write]): bool =
   out.every(w => w.table == MergeActivityRows)
 pure def stepFailureKeepsLastValues(before: Merges, via: str, after: Merges): bool = via == "readFailed" implies
-  before.rows.every(r => rowFor(after, r.repository).observedAt == r.observedAt and rowFor(after, r.repository).summary == r.summary)
-pure def stepObservedNeverGoesBack(before: Merges, after: Merges): bool =
-  before.rows.every(r => rowFor(after, r.repository).observedAt >= r.observedAt)
+  after.row.observedAt == before.row.observedAt and after.row.summary == before.row.summary
+pure def stepObservedNeverGoesBack(before: Merges, after: Merges): bool = after.row.observedAt >= before.row.observedAt
 pure def alwaysRunBounded(m: Merges): bool = m.reads >= 0 and m.reads <= repositoriesPerRun
-pure def alwaysUnobservedHasNoValues(m: Merges): bool = m.rows.every(r => r.observedAt == 0 implies (r.failed and r.summary == noSummary))
-pure def alwaysTimesOrdered(m: Merges): bool = m.rows.every(r => r.observedAt <= r.attemptedAt and r.attemptedAt <= m.now
-  and r.repository > 0)
-pure def sometimesStaleServed(m: Merges): bool = served(m).some(r => r.failed and r.summary.mergedOutside30d > 0)
-pure def sometimesHiddenAfterFailure(m: Merges): bool = m.rows.some(r => r.observedAt == 0) and served(m).length() == 0
-pure def sometimesCurrent(m: Merges): bool = served(m).some(r => not(r.failed) and r.summary.waitingOutside > 0)
-pure def sometimesSeveralReadsInOneRun(m: Merges): bool = m.reads == 2 and m.running
+pure def alwaysUnobservedHasNoValues(m: Merges): bool = m.row.observedAt == 0 implies m.row.summary == noSummary
+  and (m.row.stored implies m.row.failed)
+pure def alwaysTimesOrdered(m: Merges): bool = m.row.observedAt <= m.row.attemptedAt and m.row.attemptedAt <= m.now and m.now >= 1
+pure def sometimesStaleServed(m: Merges): bool = served(m) and m.row.failed and m.row.summary.mergedOutside30d > 0
+pure def sometimesHiddenAfterFailure(m: Merges): bool = m.row.stored and not(served(m))
+pure def sometimesCurrent(m: Merges): bool = served(m) and not(m.row.failed) and m.row.summary.waitingOutside > 0
+pure def sometimesSeveralReadsInOneRun(m: Merges): bool = m.reads >= 2 and m.running and served(m)
+pure def sometimesRunFull(m: Merges): bool = m.reads == repositoriesPerRun
 pure val outsideOld: OpenPull = { association: Contributor, bot: false, draft: false, openedAt: 1, maintainerResponded: false }
 pure val outsideMerged: MergedPull = { association: FirstTimer, bot: false, openedAt: 1, mergedAt: 3 }
 pure val openValues = Set(List(), List(outsideOld, { ...outsideOld, association: Member }, { ...outsideOld, draft: true },
   { ...outsideOld, bot: true }))
 pure val mergedValues = Set(List(), List(outsideMerged, { ...outsideMerged, association: Owner }))
 pure val nowValues = Set(2, 22, 200)
-pure val measuredValues = Set(List(1, 2), List(1))
-pure val repositoryValues = Set(1, 2)
 pure val byValues = Set(schedule, registry)
+pure val weight_readOther = 8
 pure val weight_readSucceeded = 4
 pure val weight_readFailed = 4
 ```

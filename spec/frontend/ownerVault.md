@@ -40,7 +40,7 @@ type Phase = Idle | Reviewed | Awaiting | Sent | Unclear | Done | Failed
 type Origin = NoCheck | AutoCheck | OwnerCheck
 type Answer = StillPending | IncludedRead | FinalRead | Refused | Reverted | ReadFailed
 type Notice = Quiet | StorageBlocked | Occupied | WithdrawalRefused | Received | CheckFailed | Registered | Counted | TransferFailed
-type Flow = { phase: Phase, slot: WA::Attempt, slotOwner: int, awaiting: str, inflight: Origin,
+type Flow = { phase: Phase, slot: WA::Attempt, slotOwner: int, awaiting: str, sentLifetime: int, inflight: Origin,
   autoAsks: int, refusals: int, stopped: bool }
 type OwnerVault = { owner: int, lifetime: int, editing: bool, creation: Flow, transfer: Flow, notice: Notice, lateReplies: int,
   used: List[str] }
@@ -49,7 +49,7 @@ pure val adapter = -1
 pure val timer = -2
 pure val autoAskLimit = 4
 pure val refusalLimit = 3
-pure val idleFlow: Flow = { phase: Idle, slot: WA::noAttempt, slotOwner: 0, awaiting: "", inflight: NoCheck,
+pure val idleFlow: Flow = { phase: Idle, slot: WA::noAttempt, slotOwner: 0, awaiting: "", sentLifetime: 0, inflight: NoCheck,
   autoAsks: 0, refusals: 0, stopped: false }
 pure val initial: OwnerVault = { owner: 0, lifetime: 0, editing: false, creation: idleFlow, transfer: idleFlow, notice: Quiet, lateReplies: 0,
   used: List() }
@@ -94,7 +94,7 @@ pure def send(v: OwnerVault, target: Target, identity: str, stored: bool, by: in
   val free = WA::mayCreate(flow.slot) or flow.slotOwner != v.owner
   if (not(stored)) { ...v, notice: StorageBlocked }
   else if (not(free)) { ...v, notice: Occupied }
-  else withFlow(target, { ...flow, phase: Awaiting, awaiting: identity, slotOwner: v.owner,
+  else withFlow(target, { ...flow, phase: Awaiting, awaiting: identity, slotOwner: v.owner, sentLifetime: v.lifetime,
     slot: { ...WA::noAttempt, identity: identity, bytesId: if (target == Creation) "creation" else "transfer" } },
     { ...v, notice: Quiet, used: v.used.append(identity) })
 ```
@@ -102,7 +102,8 @@ pure def send(v: OwnerVault, target: Target, identity: str, stored: bool, by: in
 ### A wallet reply settles only its own attempt; an unclear one waits for the owner
 
 A returned hash is saved with compare-and-set; a decline clears the exact
-unsigned record. A reply after an account change or sign-out still lands in
+unsigned record. Each reply carries the page lifetime its request was sent
+in, and is applied once. A reply after an account change or sign-out still lands in
 its own account's slot but changes nothing on screen. An unclear result keeps
 the attempt: the owner checks wallet activity, then either enters the hash
 or explicitly confirms nothing was sent, which clears the slot and allows a
@@ -112,18 +113,18 @@ another account never sees it.
 ```quint
 pure def canWalletReply(v: OwnerVault, target: Target, lifetime: int, identity: str, reply: WA::Reply, hash: str, by: int): bool =
   by == adapter and identity != "" and flowOf(v, target).slot.identity == identity and reply != WA::NoReply
-    and ((reply == WA::Signed) iff (hash != "")) and lifetime > 0 and lifetime <= v.lifetime
+    and ((reply == WA::Signed) iff (hash != "")) and lifetime > 0 and lifetime == flowOf(v, target).sentLifetime
     and (lifetime < v.lifetime or flowOf(v, target).awaiting == identity)
 pure def walletReply(v: OwnerVault, target: Target, lifetime: int, identity: str, reply: WA::Reply, hash: str, by: int): OwnerVault =
   val flow = flowOf(v, target)
   val expected = { ...WA::noAttempt, identity: identity, bytesId: flow.slot.bytesId }
   val slot = if (reply == WA::Signed) WA::compareAndSet(flow.slot, expected, { ...flow.slot, hash: hash })
     else if (reply == WA::Declined) WA::compareAndClear(flow.slot, expected) else flow.slot
-  val kept = { ...flow, slot: slot }
+  val kept = { ...flow, slot: slot, sentLifetime: 0 }
   val shown = flow.slotOwner == v.owner and (flow.phase == Unclear or flow.phase == Sent)
   if (lifetime < v.lifetime) withFlow(target, { ...kept, phase: if (shown) resumed(kept, v.owner).phase else flow.phase },
     { ...v, lateReplies: v.lateReplies + 1 })
-  else withFlow(target, { ...flow, slot: slot, awaiting: "",
+  else withFlow(target, { ...flow, slot: slot, awaiting: "", sentLifetime: 0,
     phase: if (reply == WA::Signed) Sent else if (reply == WA::Declined) Reviewed else Unclear }, v)
 pure def canConfirmUnsent(v: OwnerVault, target: Target, by: int): bool = v.owner > 0 and by == v.owner
   and flowOf(v, target).phase == Unclear

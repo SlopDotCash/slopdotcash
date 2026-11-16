@@ -16,7 +16,9 @@ the [direct bounty journal](../settlement/directBounty.md) verifies receipts.
 
 One instance is one browser context on one case generation's payment form.
 Each prepared plan's message has its own [wallet attempt](./walletAttempt.md)
-slot, keyed by the message and the signed-in account. The sender `by` is the
+slot, keyed by the message and the account that created it; the server
+prepares each message for one payer, so a slot another account holds only
+refuses a send. The sender `by` is the
 signed-in account (positive), the server (`0`), the wallet adapter (`-1`) or
 the chain height reader (`-3`).
 
@@ -37,21 +39,23 @@ again.
 import walletAttempt as WA from "./walletAttempt"
 type Phase = NoPlan | Planned | Awaiting | Submitted | Uncertain | Expired | Checking | HistoryCheck | Verified
 type Notice = Quiet | StorageBlocked | Occupied | AccountChanged | NotFound | CheckFailed
-type Keyed = { message: str, owner: int, attempt: WA::Attempt }
+type Keyed = { owner: int, attempt: WA::Attempt }
 type Result = FinalizedMatch | StillPending | ExpiredUnlanded | CheckUnavailable
 type SolanaPrompt = { actor: int, lifetime: int, message: str, lastValid: int, height: int, phase: Phase, awaiting: str,
-  slots: List[Keyed], used: List[str], request: int, notice: Notice }
+  slots: str -> Keyed, messages: List[str], used: List[str], request: int, notice: Notice }
 pure val server = 0
 pure val adapter = -1
 pure val heightReader = -3
 pure val initial: SolanaPrompt = { actor: 0, lifetime: 0, message: "", lastValid: 0, height: 1, phase: NoPlan, awaiting: "",
-  slots: List(), used: List(), request: 0, notice: Quiet }
+  slots: Map(), messages: List(), used: List(), request: 0, notice: Quiet }
+pure val noKeyed: Keyed = { owner: 0, attempt: WA::noAttempt }
+pure def keyedAt(message: str, p: SolanaPrompt): Keyed = if (p.slots.keys().contains(message)) p.slots.get(message) else noKeyed
 pure def slotFor(message: str, owner: int, p: SolanaPrompt): WA::Attempt =
-  p.slots.foldl(WA::noAttempt, (found, k) => if (k.message == message and k.owner == owner) k.attempt else found)
+  if (keyedAt(message, p).owner == owner) keyedAt(message, p).attempt else WA::noAttempt
 pure def visible(p: SolanaPrompt): WA::Attempt = slotFor(p.message, p.actor, p)
 pure def writeVisible(attempt: WA::Attempt, p: SolanaPrompt): SolanaPrompt =
-  { ...p, slots: p.slots.select(k => not(k.message == p.message and k.owner == p.actor))
-    .append({ message: p.message, owner: p.actor, attempt: attempt }) }
+  { ...p, slots: p.slots.put(p.message, { owner: p.actor, attempt: attempt }),
+    messages: if (p.messages.includes(p.message)) p.messages else p.messages.append(p.message) }
 pure def phaseFor(attempt: WA::Attempt, p: SolanaPrompt): Phase =
   if (attempt == WA::noAttempt) (if (p.message == "") NoPlan else if (p.height > p.lastValid) Expired else Planned)
   else if (attempt.hash != "" or attempt.candidate != "") (if (p.height > p.lastValid) Expired else Submitted)
@@ -59,8 +63,8 @@ pure def phaseFor(attempt: WA::Attempt, p: SolanaPrompt): Phase =
 pure def canSignIn(p: SolanaPrompt, account: int, by: int): bool = account > 0 and by == account and account != p.actor
   and p.lifetime < 9007199254740991
 pure def signIn(p: SolanaPrompt, account: int, by: int): SolanaPrompt =
-  val next = { ...p, actor: account, lifetime: p.lifetime + 1, awaiting: "", notice: Quiet }
-  { ...next, phase: phaseFor(slotFor(p.message, account, p), next) }
+  val advanced = { ...p, actor: account, lifetime: p.lifetime + 1, awaiting: "", notice: Quiet }
+  { ...advanced, phase: phaseFor(slotFor(p.message, account, p), advanced) }
 pure def canSignOut(p: SolanaPrompt, by: int): bool = p.actor > 0 and by == p.actor
 pure def signOut(p: SolanaPrompt, by: int): SolanaPrompt =
   { ...p, actor: 0, lifetime: p.lifetime + 1, phase: if (p.message == "") NoPlan else Planned, awaiting: "", notice: Quiet }
@@ -68,18 +72,18 @@ pure def canReceivePlan(p: SolanaPrompt, lifetime: int, message: str, lastValid:
   and lifetime == p.lifetime and p.actor > 0 and message != "" and message != p.message and lastValid >= p.height
   and (p.phase == NoPlan or p.phase == Expired)
 pure def receivePlan(p: SolanaPrompt, lifetime: int, message: str, lastValid: int, by: int): SolanaPrompt =
-  val next = { ...p, message: message, lastValid: lastValid }
-  { ...next, phase: phaseFor(slotFor(message, p.actor, p), next), notice: Quiet }
+  val advanced = { ...p, message: message, lastValid: lastValid }
+  { ...advanced, phase: phaseFor(slotFor(message, p.actor, p), advanced), notice: Quiet }
 pure def canObserveHeight(p: SolanaPrompt, height: int, by: int): bool = by == heightReader and height > p.height
 pure def observeHeight(p: SolanaPrompt, height: int, by: int): SolanaPrompt =
-  val next = { ...p, height: height }
+  val advanced = { ...p, height: height }
   if (p.actor > 0 and (p.phase == Planned or p.phase == Submitted or p.phase == Uncertain) and height > p.lastValid)
-    { ...next, phase: Expired } else next
+    { ...advanced, phase: Expired } else advanced
 pure def canSend(p: SolanaPrompt, identity: str, stored: bool, by: int): bool = by == p.actor and p.actor > 0
   and p.phase == Planned and p.height <= p.lastValid and identity != "" and not(p.used.includes(identity))
 pure def send(p: SolanaPrompt, identity: str, stored: bool, by: int): SolanaPrompt =
   if (not(stored)) { ...p, notice: StorageBlocked }
-  else if (not(WA::mayCreate(visible(p)))) { ...p, notice: Occupied }
+  else if (not(WA::mayCreate(keyedAt(p.message, p).attempt))) { ...p, notice: Occupied }
   else { ...writeVisible({ ...WA::noAttempt, identity: identity, bytesId: p.message }, p),
     phase: Awaiting, awaiting: identity, used: p.used.append(identity), notice: Quiet }
 pure def canWalletReply(p: SolanaPrompt, identity: str, reply: WA::Reply, signature: str, by: int): bool =
@@ -142,11 +146,14 @@ pure def stepSendOnlyBeforeExpiry(before: SolanaPrompt, after: SolanaPrompt): bo
   (before.phase != Awaiting and after.phase == Awaiting) implies
     before.height <= before.lastValid and visible(before) == WA::noAttempt
 pure def stepHistoryCheckSendsNothing(before: SolanaPrompt, via: str, after: SolanaPrompt): bool =
-  via == "checkHistory" implies after.slots == before.slots and after.awaiting == ""
+  via == "checkHistory" implies after.messages == before.messages and after.awaiting == ""
+    and before.messages.every(m => keyedAt(m, after) == keyedAt(m, before))
 pure def stepOtherAccountsUntouched(before: SolanaPrompt, after: SolanaPrompt): bool =
-  before.slots.every(k => k.owner == before.actor or slotFor(k.message, k.owner, after) == k.attempt)
-pure def alwaysSlotsKeyed(p: SolanaPrompt): bool = p.slots.every(k => k.message != "" and k.owner > 0
-  and (k.attempt == WA::noAttempt or (k.attempt.bytesId == k.message and p.used.includes(k.attempt.identity))))
+  before.messages.every(m => keyedAt(m, before).owner == before.actor or keyedAt(m, before).attempt == WA::noAttempt
+    or keyedAt(m, after) == keyedAt(m, before))
+pure def alwaysSlotsKeyed(p: SolanaPrompt): bool = p.messages.every(m => m != "" and p.slots.keys().contains(m)
+  and keyedAt(m, p).owner > 0 and (keyedAt(m, p).attempt == WA::noAttempt
+    or (keyedAt(m, p).attempt.bytesId == m and p.used.includes(keyedAt(m, p).attempt.identity))))
 pure def alwaysAwaitingSaved(p: SolanaPrompt): bool = p.phase == Awaiting implies
   p.awaiting != "" and visible(p).identity == p.awaiting
 pure def alwaysExpiredPastBlockhash(p: SolanaPrompt): bool = (p.phase == Expired or p.phase == HistoryCheck) implies p.height > p.lastValid
@@ -154,8 +161,8 @@ pure def alwaysSignedOutIdle(p: SolanaPrompt): bool = p.actor == 0 implies (p.ph
 pure def sometimesVerified(p: SolanaPrompt): bool = p.phase == Verified
 pure def sometimesUncertain(p: SolanaPrompt): bool = p.phase == Uncertain and visible(p) != WA::noAttempt
 pure def sometimesHistoryFound(p: SolanaPrompt): bool = p.phase == Verified and p.height > p.lastValid
-pure def sometimesFreshPlanAfterExpiry(p: SolanaPrompt): bool = p.phase == Planned and p.slots.length() > 0
-  and p.notice == Quiet and p.slots.every(k => k.message != p.message or k.attempt == WA::noAttempt)
+pure def sometimesFreshPlanAfterExpiry(p: SolanaPrompt): bool = p.phase == Planned and p.messages.length() > 0
+  and p.notice == Quiet and not(p.messages.includes(p.message))
 pure def sometimesAccountChanged(p: SolanaPrompt): bool = p.notice == AccountChanged
 pure def sometimesCandidate(p: SolanaPrompt): bool = visible(p).candidate != ""
 pure val accountValues = Set(1, 2)

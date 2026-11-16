@@ -98,6 +98,7 @@ pure def alwaysCompleteIsExact(h: History): bool = h.phase == Complete implies
 pure def alwaysBounded(h: History): bool = h.pages >= 0 and h.pages <= maxPages and h.retries >= 0 and h.retries <= 1
   and h.lifetime >= 1
 pure def alwaysErrorHasReason(h: History): bool = (h.phase == Errored) iff (h.failure != NoFailure)
+pure def alwaysBoundaryAndTotalTogether(h: History): bool = (h.through >= 0) iff (h.total >= 0)
 pure def stepBoundaryFixedWithinAssembly(before: History, after: History): bool =
   (before.through >= 0 and after.through >= 0 and before.lifetime == after.lifetime and before.retries == after.retries)
     implies after.through == before.through and after.total == before.total
