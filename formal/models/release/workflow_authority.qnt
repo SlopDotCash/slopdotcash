@@ -2,6 +2,7 @@
 // @source scripts/inspect-value-intake.ts
 // @evidence scripts/inspect-value-intake.test.ts
 // @source .github/workflows/fee-worker-bindings.yml
+// @source .github/workflows/payment-event-reconciliation.yml
 // @source scripts/inspect-fee-worker-bindings.ts
 // @source scripts/inspect-fee-worker-operations.ts
 // @source scripts/probe-fee-solana-rpc.ts

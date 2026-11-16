@@ -3,6 +3,8 @@
 // @source contracts/solana/adapter.ts
 // @source contracts/solana/wallet-transactions.ts
 // @source backend/payments/evm-adapter.ts
+// @source scripts/reconcile-payment-events.ts
+// @evidence scripts/reconcile-payment-events.test.ts
 // @source backend/payments/solana-funding.ts
 // @source backend/payments/vault-snapshots.ts
 // Finality is separate from identity, success and exact amount/asset reconciliation.

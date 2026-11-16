@@ -551,3 +551,29 @@ Only aggregate counts and the reviewed packet digest leave the trusted runner.
 The private packet, registry capture and SQL remain in its temporary directory.
 Set the private secret and run preview only after the final packet is reviewed.
 Import only that verified packet by dispatching the same digest with `apply`.
+
+## Reviewed finalized-event reconciliation
+
+`payment-event-reconciliation.yml` can reconcile reviewed mainnet EVM receipts
+while the ordinary scanner catches up. It neither sends transactions nor moves
+the scanner cursor. A manual main-branch run pins the SHA-256 of the private
+`SLOP_PAYMENT_RECONCILIATION_PACKET` secret; `apply` defaults to false. The
+production credentials stay in the protected workflow. Public artifacts contain
+only the packet digest, source commit and aggregate verification counts.
+
+The runner reads the current immutable project revision and frozen funded monthly
+allocation, verifies the deployed factory and finalized canonical receipt, and
+checks the retained signed transaction against its exact award call. Reservation
+calls must be signed by the vault owner. A paid-event packet instead binds its
+permissionless payer, active binding version, destination and authorized wallet
+claim, and requires the matching reservation to have already been indexed.
+Historical authorized claims remain valid for payments finalized before a wallet
+replacement. A missing event kind retains the original reservation-packet format.
+
+Apply invokes the ordinary `ingestPaymentEvent` verifier and ledger. Each event's
+canonical statements and notices use one documented D1 REST batch transaction;
+only the ledger's reservation inserts and exact paid-state updates are permitted.
+The runner checks stored evidence and paid state after ingestion and exact replay.
+An uncertain request is reconciled by rerunning the same packet, never by editing
+payment rows or advancing a cursor. This implements the finalized evidence and
+replay requirements in PRD section 6 without a second settlement path.
