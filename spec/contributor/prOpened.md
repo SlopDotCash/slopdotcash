@@ -60,10 +60,12 @@ pure def canRecord(o: OpenedRun, by: int, prNode: str, at: int): bool =
   registered(o) and not(o.finalized) and by == o.actor and prNode == o.prNode and at > 0
 pure def record(o: OpenedRun, by: int, prNode: str, at: int): OpenedRun =
   if (o.events.includes(at)) { ...o, reply: ReplyExisting } else { ...o, events: o.events.append(at), reply: ReplyCreated }
-pure def alwaysEventsDistinct(o: OpenedRun): bool =
-  o.events.every(at => at > 0 and o.events.select(x => x == at).length() == 1)
+pure def alwaysEventsTimed(o: OpenedRun): bool = o.events.every(at => at > 0)
 pure def lawExactRetryAddsNothing(o: OpenedRun, by: int, prNode: str, at: int): bool =
-  record(record(o, by, prNode, at), by, prNode, at).events == record(o, by, prNode, at).events
+  o.events.includes(at) implies record(o, by, prNode, at).events == o.events
+pure def lawNewTimestampAppendedOnce(o: OpenedRun, by: int, prNode: str, at: int): bool =
+  not(o.events.includes(at)) implies record(o, by, prNode, at).events == o.events.append(at)
+    and record(record(o, by, prNode, at), by, prNode, at).events == o.events.append(at)
 pure def sometimesRetryReturnsExisting(o: OpenedRun): bool = o.reply == ReplyExisting and o.events.length() == 1
 pure def sometimesDistinctTimestampKept(o: OpenedRun): bool = o.events.length() == 2
 ```

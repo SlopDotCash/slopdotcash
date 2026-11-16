@@ -281,7 +281,7 @@ pure def canAppeal(c: Contribution, by: int): bool = by == c.contributor and c.p
   and c.appeals < 9007199254740000
 pure def appeal(c: Contribution, by: int): Contribution = { ...c, appeals: c.appeals + 1 }
 pure def canRecordRun(c: Contribution, by: int, opened: PO::OpenedRun): bool = by == slopServer and submitted(c)
-  and PO::alwaysRegisteredIdentity(opened) and PO::alwaysEventsDistinct(opened)
+  and PO::alwaysRegisteredIdentity(opened) and PO::alwaysEventsTimed(opened)
   and PO::participationProof(opened, c.contributor, c.project, c.repository, c.prNode)
 pure def recordRun(c: Contribution, by: int, opened: PO::OpenedRun): Contribution = { ...c, runRecorded: true }
 pure def alwaysCreditNeedsMerge(c: Contribution): bool = c.credited implies c.phase == Accepted
