@@ -19,6 +19,13 @@ import { resolveRewardCapMinor } from "./reward-cap.mjs";
  * last month's, which is paid out from the 4th. The amount stays shown only
  * while the vault still covers what is owed. If money was withdrawn during
  * the month and the vault no longer covers it, the page says so.
+ *
+ * A vault whose contract supports month pledges is judged by its pledges
+ * instead (operator decision, 15 November 2026): the month is funded when the
+ * owner pledged at least this month's amount on chain, summed over the
+ * project's paying vaults with pledge support. The contract then keeps that
+ * amount in the vault until the month is paid out. A vault without pledge
+ * support keeps the rule above unchanged.
  */
 
 export type MonthStart = {
@@ -28,6 +35,8 @@ export type MonthStart = {
   blockTime: string;
 };
 
+export type MonthPledge = { period: string; amount: string; open: boolean };
+
 export type VaultFreeBalance = {
   network: string;
   vault: string;
@@ -36,6 +45,9 @@ export type VaultFreeBalance = {
   blockTime: string;
   observedAt: string;
   monthStarts?: MonthStart[];
+  /** Null or absent: the vault's contract has no month pledges. */
+  openPledgedGross?: string | null;
+  pledges?: MonthPledge[];
 };
 
 /** The first month judged by its funding on the 1st. */
@@ -67,9 +79,24 @@ function isMonthStart(value: unknown): value is MonthStart {
   );
 }
 
+function isMonthPledge(value: unknown): value is MonthPledge {
+  const row = value as MonthPledge;
+  return (
+    !!row &&
+    /^\d{4}-(?:0[1-9]|1[0-2])$/u.test(row.period) &&
+    BASE_UNITS.test(row.amount) &&
+    typeof row.open === "boolean"
+  );
+}
+
 function isVault(value: unknown): value is VaultFreeBalance {
   const row = value as VaultFreeBalance;
   return (
+    (row?.openPledgedGross === undefined ||
+      row.openPledgedGross === null ||
+      BASE_UNITS.test(row.openPledgedGross)) &&
+    (row?.pledges === undefined ||
+      (Array.isArray(row.pledges) && row.pledges.every(isMonthPledge))) &&
     (row?.totalGrossWithdrawn === undefined ||
       BASE_UNITS.test(row.totalGrossWithdrawn)) &&
     (row?.monthStarts === undefined ||
@@ -151,9 +178,17 @@ function previousPeriod(period: string): string {
     .slice(0, 7);
 }
 
+/** The vault's contract supports month pledges. */
+export function hasPledgeSupport(vault: VaultFreeBalance): boolean {
+  return typeof vault.openPledgedGross === "string";
+}
+
 export type PoolFundingStatus =
-  /** The vault holds what this month promises; `owedMinor` must stay in it. */
-  | { state: "funded"; period: string; owedMinor: bigint }
+  /**
+   * The vault holds what this month promises; `owedMinor` must stay in it.
+   * `locked`: the owner pledged it on chain and the contract keeps it there.
+   */
+  | { state: "funded"; period: string; owedMinor: bigint; locked: boolean }
   /** Funded on the 1st, then money was withdrawn and it no longer covers it. */
   | { state: "withdrawn"; period: string }
   /** Not funded (no vault, short vault, not funded on the 1st, not loaded). */
@@ -183,10 +218,23 @@ export function poolFundingStatus(
       .filter((deployment) => networkPays(deployment.network))
       .map((deployment) => vaultKey(deployment.network, deployment.vault)),
   );
-  const vaults = (index.get(project.id) ?? []).filter(
-    (vault) =>
-      vault.freeBalance !== null &&
-      recorded.has(vaultKey(vault.network, vault.vault)),
+  const paying = (index.get(project.id) ?? []).filter((vault) =>
+    recorded.has(vaultKey(vault.network, vault.vault)),
+  );
+  // A vault with pledge support counts only what its owner pledged on chain.
+  const pledging = paying.filter(hasPledgeSupport);
+  const pledged = pledging.reduce(
+    (sum, vault) =>
+      sum +
+      (vault.pledges ?? [])
+        .filter((pledge) => pledge.period === period)
+        .reduce((total, pledge) => total + BigInt(pledge.amount), 0n),
+    0n,
+  );
+  if (pledging.length > 0 && pledged >= cap)
+    return { state: "funded", period, owedMinor: pledged, locked: true };
+  const vaults = paying.filter(
+    (vault) => vault.freeBalance !== null && !hasPledgeSupport(vault),
   );
   // Last month's allocation still sits in free funds until it is reserved.
   const priorPending =
@@ -198,7 +246,9 @@ export function poolFundingStatus(
   );
   const coversNow = freeNow >= owedNow;
   if (period < FUNDED_ON_FIRST_FROM)
-    return coversNow ? { state: "funded", period, owedMinor: owedNow } : points;
+    return coversNow
+      ? { state: "funded", period, owedMinor: owedNow, locked: false }
+      : points;
   let freeAtStart = 0n;
   let withdrawnSince = false;
   for (const vault of vaults) {
@@ -217,7 +267,8 @@ export function poolFundingStatus(
       withdrawnSince = true;
   }
   if (freeAtStart < cap + priorCap) return points;
-  if (coversNow) return { state: "funded", period, owedMinor: owedNow };
+  if (coversNow)
+    return { state: "funded", period, owedMinor: owedNow, locked: false };
   return withdrawnSince ? { state: "withdrawn", period } : points;
 }
 

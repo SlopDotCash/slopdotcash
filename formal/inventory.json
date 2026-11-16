@@ -378,7 +378,7 @@
     },
     {
       "path": "backend/payments/handler.ts",
-      "sha256": "8e54af53a539d04a6890ff56f7c3745a390de86c8443fee6778fff04a9168d3e",
+      "sha256": "95d0cdc5d49559dd0dae0b9f2242ce8e4af62eda69837c1846eb33d9bac39b7f",
       "models": [
         "formal/models/api/api_payment_wallet_protocol.qnt",
         "formal/models/payments/binding_consent_renewal.qnt",
@@ -397,8 +397,8 @@
         "formal/models/ui/ui_payout_consent_lifetime.qnt"
       ],
       "candidateLines": [
-        110, 215, 282, 341, 346, 393, 415, 421, 444, 466, 644, 665, 679, 803,
-        859, 897, 906, 921, 1060, 1123, 1140, 1230, 1231, 1285
+        111, 216, 295, 354, 359, 406, 428, 434, 457, 479, 657, 678, 692, 816,
+        872, 910, 919, 934, 1073, 1136, 1153, 1243, 1244, 1298
       ],
       "review": "mapped-abstraction"
     },
@@ -415,6 +415,20 @@
       "review": "mapped-abstraction"
     },
     {
+      "path": "backend/payments/month-pledge-readers.ts",
+      "sha256": "c459bc65b3ed2150ceebe3771cab56196f84ae3e67028476ed5afbdf8683c162",
+      "models": ["formal/models/rewards/monthly_month_pledge.qnt"],
+      "candidateLines": [],
+      "review": "mapped-abstraction"
+    },
+    {
+      "path": "backend/payments/month-pledges.ts",
+      "sha256": "277480ae82c30ab1ca2953f7fc3057884b7bbe062f76752e6ce3c07f15cd1300",
+      "models": ["formal/models/rewards/monthly_month_pledge.qnt"],
+      "candidateLines": [11, 18],
+      "review": "mapped-abstraction"
+    },
+    {
       "path": "backend/payments/monthly-attestation-types.ts",
       "sha256": "85a061fece0c7c8931583922701299547590be1348b8f97b46c2e664ee934f90",
       "models": [],
@@ -424,22 +438,24 @@
     },
     {
       "path": "backend/payments/monthly-attestation.ts",
-      "sha256": "daac95f9f90891383f50e92d50c942701275bb2b50702585f72174418cfa1fd3",
+      "sha256": "743508d7af8a867be213f381252bbedae53ddf04ca087d711640bfd942c3ea90",
       "models": [
         "formal/models/rewards/monthly_coordinator.qnt",
+        "formal/models/rewards/monthly_month_pledge.qnt",
         "formal/models/rewards/monthly_reserve.qnt"
       ],
-      "candidateLines": [82, 320],
+      "candidateLines": [105, 341],
       "review": "mapped-abstraction"
     },
     {
       "path": "backend/payments/monthly-publication.ts",
-      "sha256": "a591cad7a8a77df889b15b40cf8b7401f0118601834e77b89e6f4c619fef3fc7",
+      "sha256": "9679416b72a664b46164df0aace72590f76e28220c197818f7edb820d0390c05",
       "models": [
         "formal/models/rewards/monthly_coordinator.qnt",
+        "formal/models/rewards/monthly_month_pledge.qnt",
         "formal/models/rewards/monthly_reserve.qnt"
       ],
-      "candidateLines": [105, 120, 151],
+      "candidateLines": [105, 120, 150],
       "review": "mapped-abstraction"
     },
     {
@@ -451,20 +467,21 @@
     },
     {
       "path": "backend/payments/monthly.ts",
-      "sha256": "b7e29120fd8a93747e77529a6385532cb808397d7463b94f1d7c16e031691e45",
+      "sha256": "e2c22f60a2bc033cac96fb884e7c424649921ed6fe40886d9e292a76baa726a3",
       "models": [
         "formal/models/rewards/monthly_coordinator.qnt",
         "formal/models/rewards/monthly_cutoff_queue.qnt",
+        "formal/models/rewards/monthly_month_pledge.qnt",
         "formal/models/rewards/monthly_owner_completion.qnt",
         "formal/models/rewards/monthly_owner_cuts.qnt",
         "formal/models/rewards/monthly_reserve.qnt",
         "formal/models/rewards/monthly_source_conflict.qnt"
       ],
       "candidateLines": [
-        79, 121, 125, 128, 129, 142, 320, 410, 521, 550, 552, 566, 576, 585,
-        591, 609, 717, 721, 744, 749, 772, 819, 846, 855, 875, 955, 1074, 1129,
-        1177, 1272, 1274, 1305, 1307, 1310, 1429, 1451, 1460, 1473, 1479, 1523,
-        1549, 1555, 1559, 1614, 1631
+        90, 132, 136, 139, 140, 153, 331, 421, 532, 582, 584, 598, 608, 618,
+        624, 642, 761, 765, 788, 793, 816, 880, 907, 916, 936, 1016, 1135, 1190,
+        1238, 1333, 1335, 1366, 1368, 1371, 1490, 1512, 1521, 1534, 1540, 1584,
+        1610, 1616, 1620, 1675, 1692
       ],
       "review": "mapped-abstraction"
     },
@@ -491,20 +508,28 @@
     },
     {
       "path": "backend/payments/solana-funding.ts",
-      "sha256": "3cafa82ef5a4f90d52a9918fc7ab51fe98684d5eea013da2ce0ef97401296b0f",
+      "sha256": "1e9edfc9bba63fbc8a82f563993577e33f6027cd7b12f376b379565dbbbfc47d",
       "models": ["formal/models/payments/chain_evidence.qnt"],
-      "candidateLines": [87],
+      "candidateLines": [108],
+      "review": "mapped-abstraction"
+    },
+    {
+      "path": "backend/payments/solana-month-lock.ts",
+      "sha256": "6069040046c7333dcb6bc292df1c33214cc150c24d8149814595f5a234dccb90",
+      "models": ["formal/models/rewards/monthly_month_pledge.qnt"],
+      "candidateLines": [94],
       "review": "mapped-abstraction"
     },
     {
       "path": "backend/payments/vault-snapshots.ts",
-      "sha256": "83ad0679a5882f1e37876258ea7bfb51998dbf2db3dc5376d453fb5cb872ede0",
+      "sha256": "b85302f454d7371440983d041656b93051d8e51d4fba9d5d3df37063ba44f973",
       "models": [
         "formal/models/payments/chain_evidence.qnt",
         "formal/models/payments/vault_initial_snapshot.qnt",
-        "formal/models/rewards/monthly_coordinator.qnt"
+        "formal/models/rewards/monthly_coordinator.qnt",
+        "formal/models/rewards/monthly_month_pledge.qnt"
       ],
-      "candidateLines": [12, 62, 124, 136, 142, 196],
+      "candidateLines": [13, 71, 133, 145, 151, 211, 224, 260],
       "review": "mapped-abstraction"
     },
     {
@@ -723,7 +748,7 @@
     },
     {
       "path": "backend/projects/pool-funding.ts",
-      "sha256": "bcc15b08284f517a02d24105670d9aeb3f5a1f5bba30e085fb2d82662aa6dc15",
+      "sha256": "8a7e4c9dabc04d35a9dc0f250957cc48501880f9330462d2266ee5ddd6b95f6f",
       "models": ["formal/models/ui/ui_pool_funding.qnt"],
       "candidateLines": [8, 13],
       "review": "mapped-abstraction"
@@ -3416,6 +3441,16 @@
       "review": "mapped-abstraction"
     },
     {
+      "path": "migrations/0128_vault_month_pledges.sql",
+      "sha256": "fbf3241aa50a4d97a5201b311313e46763aad33886a6d9df1aca2988de4c573f",
+      "models": [
+        "formal/models/rewards/monthly_month_pledge.qnt",
+        "formal/models/ui/ui_pool_funding.qnt"
+      ],
+      "candidateLines": [6],
+      "review": "mapped-abstraction"
+    },
+    {
       "path": "package.json",
       "sha256": "d4829e85818eb386ab656a7e785502d2df48c97ee6ea159c28718561d032c86a",
       "models": ["formal/models/tooling/formal_toolchain.qnt"],
@@ -5197,17 +5232,18 @@
     },
     {
       "path": "src/EscrowFunding.tsx",
-      "sha256": "6b4544d46fd62f51826ff83c5817ff34110d98daa6b9487dcd6342dff598c867",
+      "sha256": "435497481f1f7d3ced704d52787fb3e4cef50868e9375f31e64e66dba573529f",
       "models": [
         "formal/models/ui/ui_project_authority.qnt",
-        "formal/models/ui/ui_resources.qnt"
+        "formal/models/ui/ui_resources.qnt",
+        "formal/models/ui/ui_vault_month_lock.qnt"
       ],
       "candidateLines": [
-        2, 138, 139, 140, 142, 148, 152, 163, 189, 194, 198, 199, 200, 201, 202,
-        205, 206, 210, 222, 224, 233, 242, 243, 245, 246, 247, 249, 250, 253,
-        258, 260, 261, 262, 264, 267, 269, 270, 279, 281, 286, 289, 294, 297,
-        301, 302, 339, 341, 342, 351, 353, 357, 359, 361, 364, 368, 379, 390,
-        400
+        2, 147, 148, 149, 151, 157, 161, 172, 198, 203, 207, 208, 209, 210, 211,
+        214, 215, 219, 231, 233, 242, 251, 252, 254, 255, 256, 258, 259, 262,
+        267, 269, 270, 271, 273, 276, 278, 279, 288, 290, 295, 298, 303, 306,
+        310, 311, 348, 350, 351, 352, 361, 363, 369, 371, 373, 376, 382, 396,
+        404, 415, 426, 436
       ],
       "review": "mapped-abstraction"
     },
@@ -5687,11 +5723,11 @@
     },
     {
       "path": "src/PublicPages.tsx",
-      "sha256": "9fb0f661a8b3ad25f1cf6e510ce49f6a63f6f8fbf30be690fb21790d99623548",
+      "sha256": "098b1480f03a6d88ddcb44c8c42887c22bcb99589781e2c12a0eeae7472255b0",
       "models": ["formal/models/ui/ui_record_display.qnt"],
       "candidateLines": [
-        221, 306, 317, 355, 384, 385, 387, 388, 421, 423, 434, 583, 584, 586,
-        587, 594, 641, 643, 742
+        221, 306, 317, 374, 403, 404, 406, 407, 440, 442, 453, 602, 603, 605,
+        606, 613, 660, 662, 761
       ],
       "review": "mapped-abstraction",
       "statelessReason": "Public explanatory/sponsor rendering derives from supplied registry/snapshot props; no local state/effect or mutation. Child state remains separately modeled."
@@ -5833,24 +5869,35 @@
     },
     {
       "path": "src/VaultActions.tsx",
-      "sha256": "8f7560da00ce0a4c62e64dd39ee393d3463cad193fd01af9d5834b371e471d53",
+      "sha256": "28017fe0852a5aa0dc1556a60800d4c1aab6f44fa776e0407eb3bc6157b4ed3e",
       "models": [
         "formal/models/ui/ui_owner_bounty_funds.qnt",
         "formal/models/ui/ui_owner_recovery_lifetime.qnt",
         "formal/models/ui/ui_transaction.qnt",
         "formal/models/ui/ui_vault_auto_check.qnt",
         "formal/models/ui/ui_vault_batched_deposit.qnt",
+        "formal/models/ui/ui_vault_month_lock.qnt",
         "formal/models/ui/ui_vault_prompt_ownership.qnt",
         "formal/models/ui/ui_vault_provisional_funding.qnt",
         "formal/models/ui/ui_vault_recovery.qnt"
       ],
       "candidateLines": [
-        2, 32, 41, 48, 75, 77, 139, 148, 157, 163, 173, 176, 177, 179, 180, 181,
-        182, 204, 207, 215, 217, 227, 275, 297, 359, 406, 407, 410, 419, 421,
-        423, 429, 430, 431, 436, 437, 442, 446, 447, 457, 463, 474, 475, 476,
-        483, 484, 486, 491, 495, 497, 498, 499, 508, 515, 516, 549, 557, 567,
-        572, 580, 594, 600, 601, 602, 603, 607, 609, 647, 661, 688, 704, 709,
-        712, 719, 722, 729, 730, 736, 880
+        2, 36, 45, 52, 79, 81, 144, 153, 162, 168, 178, 181, 182, 184, 185, 186,
+        187, 209, 212, 220, 222, 232, 292, 314, 376, 424, 425, 428, 437, 439,
+        441, 447, 448, 449, 454, 455, 460, 464, 465, 475, 481, 492, 493, 494,
+        501, 502, 504, 509, 513, 515, 516, 517, 526, 533, 534, 567, 575, 585,
+        590, 598, 612, 618, 619, 620, 621, 625, 627, 665, 679, 706, 722, 727,
+        730, 737, 740, 747, 748, 754, 898
+      ],
+      "review": "mapped-abstraction"
+    },
+    {
+      "path": "src/VaultMonthLock.tsx",
+      "sha256": "fb71f9c7ff6df5da42c966f361ca4e452ba9e11a72f4001c208dc2bdaa5474d9",
+      "models": ["formal/models/ui/ui_vault_month_lock.qnt"],
+      "candidateLines": [
+        1, 46, 143, 153, 156, 157, 158, 159, 162, 322, 323, 325, 338, 346, 350,
+        352, 353, 355, 381, 387, 390, 430, 543
       ],
       "review": "mapped-abstraction"
     },
@@ -6081,8 +6128,17 @@
       "review": "mapped-abstraction"
     },
     {
+      "path": "src/lib/evm-month-lock.ts",
+      "sha256": "8e85c2e4346dadd824b0f7436b0c866e10ba5aec673bc08ec451e285695715e9",
+      "models": ["formal/models/ui/ui_vault_month_lock.qnt"],
+      "candidateLines": [
+        286, 295, 371, 374, 413, 439, 448, 458, 459, 498, 504, 514, 515
+      ],
+      "review": "mapped-abstraction"
+    },
+    {
       "path": "src/lib/evm-vault-actions.ts",
-      "sha256": "07bf4893af7ac8c792e70e455bb21607adeac699cf7e0db553c91e9d360abdc4",
+      "sha256": "e07f005927f95289e682098b43d8e342f6ac1a746c2ae21d8abd646098e45249",
       "models": [
         "formal/models/contracts/evm_owner_action.qnt",
         "formal/models/ui/ui_monthly_setting_recovery.qnt",
@@ -6092,10 +6148,10 @@
         "formal/models/ui/ui_vault_provisional_funding.qnt"
       ],
       "candidateLines": [
-        22, 25, 69, 137, 143, 240, 306, 365, 366, 378, 379, 384, 396, 399, 402,
-        404, 406, 423, 428, 430, 431, 445, 452, 461, 501, 503, 504, 516, 520,
-        521, 543, 548, 549, 558, 569, 586, 594, 595, 596, 597, 598, 602, 617,
-        623, 628, 629, 631, 632, 633, 636, 647, 648, 652, 653, 654, 655, 656
+        22, 25, 69, 137, 145, 243, 309, 374, 375, 387, 388, 393, 405, 408, 411,
+        413, 415, 432, 437, 439, 440, 454, 461, 470, 510, 512, 513, 525, 529,
+        530, 552, 557, 558, 567, 578, 595, 603, 604, 605, 606, 607, 611, 626,
+        632, 637, 638, 640, 641, 642, 645, 656, 657, 661, 662, 663, 664, 665
       ],
       "review": "mapped-abstraction"
     },
@@ -6335,6 +6391,13 @@
       "review": "mapped-abstraction"
     },
     {
+      "path": "src/lib/month-lock.ts",
+      "sha256": "aef21ad28356a90513dfe059196b71a7a5270ff16d5978a4f383bd63885c0452",
+      "models": ["formal/models/ui/ui_vault_month_lock.qnt"],
+      "candidateLines": [],
+      "review": "mapped-abstraction"
+    },
+    {
       "path": "src/lib/monthly-commitment-actions.ts",
       "sha256": "8a6193d2b293c97102044c2baf65560975dbb74b12026fc720109fb0f3c628ec",
       "models": [
@@ -6522,9 +6585,9 @@
     },
     {
       "path": "src/lib/pool-funding.ts",
-      "sha256": "d1aa6899f1813799c0c5c6aa3929971b0772311d4bbeef3186cb71349db2a71e",
+      "sha256": "6fcd88156a09f2f41a2347e90c241b13f0d7751fdfff3b1d3ed7de310cc6937c",
       "models": ["formal/models/ui/ui_pool_funding.qnt"],
-      "candidateLines": [13, 18, 156, 158, 160, 172, 201, 220, 221, 230],
+      "candidateLines": [13, 18, 191, 193, 195, 207, 235, 250, 271, 272, 281],
       "review": "mapped-abstraction"
     },
     {
@@ -6941,6 +7004,13 @@
       "sha256": "0b5b88b8c1aa4cf26f3e8e45cb9a6f70534e7da06ff34b17e4723ed25b216a3d",
       "models": ["formal/models/contracts/solana_owner_action.qnt"],
       "candidateLines": [91, 146, 147, 148, 150, 151],
+      "review": "mapped-abstraction"
+    },
+    {
+      "path": "src/lib/solana-month-lock.ts",
+      "sha256": "f8a457b180fb5ce5aedaad02b44d743511c765ca05439651bbef9cfcd94bc98a",
+      "models": ["formal/models/ui/ui_vault_month_lock.qnt"],
+      "candidateLines": [73, 244, 256, 257, 258, 260, 261],
       "review": "mapped-abstraction"
     },
     {
@@ -7618,19 +7688,20 @@
     },
     {
       "path": "workers/fee-converter/solana.ts",
-      "sha256": "3898bf9e23c947848019465d63b2e8933de5f114daf490551724d704cfb5c2ce",
+      "sha256": "149e5bcc5e28493891f9f476fa332b8ebf0886f862ac40056aa2485724de1ea5",
       "models": [
         "formal/models/fees/buyback_bridge_order.qnt",
         "formal/models/fees/fee_conversion.qnt",
         "formal/models/fees/fee_lease_journal.qnt",
-        "formal/models/fees/fee_wallet_handoff.qnt"
+        "formal/models/fees/fee_wallet_handoff.qnt",
+        "formal/models/rewards/monthly_month_pledge.qnt"
       ],
       "candidateLines": [
-        22, 144, 166, 352, 380, 382, 396, 638, 695, 703, 714, 724, 860, 863,
-        866, 867, 1020, 1022, 1031, 1034, 1103, 1104, 1106, 1107, 1110, 1112,
-        1150, 1167, 1195, 1196, 1393, 1406, 1407, 1408, 1409, 1410, 1416, 1424,
-        1430, 1436, 1450, 1455, 1457, 1474, 1480, 1483, 1493, 1496, 1502, 1504,
-        1734, 1744, 1745, 1750, 1754, 1759
+        22, 145, 167, 353, 381, 383, 397, 639, 696, 704, 715, 725, 861, 864,
+        867, 868, 1013, 1015, 1024, 1027, 1096, 1097, 1099, 1100, 1103, 1105,
+        1143, 1160, 1188, 1189, 1386, 1399, 1400, 1401, 1402, 1403, 1409, 1417,
+        1423, 1429, 1443, 1448, 1450, 1467, 1473, 1476, 1486, 1489, 1495, 1497,
+        1727, 1737, 1738, 1743, 1747, 1752
       ],
       "review": "mapped-abstraction"
     },
@@ -8114,20 +8185,21 @@
     },
     {
       "path": "workers/payment-executor/solana-monthly.ts",
-      "sha256": "334719c74d00678e8a5576e98e4a7d5864ef89ff414f1e37e29fca0d72056d15",
+      "sha256": "e1fda01c94bd79c58908d65d857e91b3c6c7420a17367f1db58221f2149e9a56",
       "models": [
         "formal/models/rewards/monthly_execution_recovery.qnt",
+        "formal/models/rewards/monthly_month_pledge.qnt",
         "formal/models/rewards/monthly_reserve.qnt"
       ],
       "candidateLines": [
-        86, 87, 89, 90, 91, 93, 96, 107, 152, 197, 205, 213, 221, 272, 276, 343,
-        349, 350
+        89, 90, 92, 93, 94, 96, 99, 110, 155, 200, 208, 216, 224, 275, 279, 346,
+        351, 352
       ],
       "review": "mapped-abstraction"
     },
     {
       "path": "workers/payment-executor/solana.ts",
-      "sha256": "990de8f1bcf05b6e9b3a03b2f4f99f696a97498168109226c73088281ca351ee",
+      "sha256": "ecaad1f002172c3327d2b2fe91540191e7785d4900d80cf02178e04d60312bfd",
       "models": [
         "formal/models/payments/payment_binding.qnt",
         "formal/models/payments/solana_binding_completion.qnt",
@@ -8135,9 +8207,9 @@
         "formal/models/rewards/monthly_execution_recovery.qnt"
       ],
       "candidateLines": [
-        159, 195, 249, 325, 326, 328, 329, 331, 334, 337, 339, 347, 356, 365,
-        422, 432, 433, 434, 436, 437, 438, 439, 441, 443, 444, 451, 452, 453,
-        454, 463, 478, 531, 537, 643, 654, 664, 732, 733, 747, 760, 771
+        168, 190, 226, 279, 355, 356, 358, 359, 361, 364, 367, 369, 377, 386,
+        395, 452, 462, 463, 464, 466, 467, 468, 469, 471, 473, 474, 481, 482,
+        483, 484, 493, 508, 561, 567, 673, 684, 694, 762, 763, 777, 790, 801
       ],
       "review": "mapped-abstraction"
     },
@@ -8161,19 +8233,20 @@
     },
     {
       "path": "workers/payments/index.ts",
-      "sha256": "f601a441c6da64bf28ef6551fb2e9b9012d3d2f4adb2711fd469c99915e28486",
+      "sha256": "09a13fc413515d643221eb38bf73127a62608f3e85182115ce68133dc328777b",
       "models": [
         "formal/models/payments/payment_reopen_landing.qnt",
         "formal/models/payments/payment_unsigned_retirement.qnt",
         "formal/models/payments/solana_scan_checkpoint.qnt",
         "formal/models/payments/vault_initial_snapshot.qnt",
         "formal/models/rewards/monthly_commit_cursor.qnt",
+        "formal/models/rewards/monthly_month_pledge.qnt",
         "formal/models/rewards/monthly_reserve.qnt"
       ],
       "candidateLines": [
-        67, 103, 120, 123, 129, 130, 134, 161, 171, 175, 177, 181, 183, 194,
-        195, 197, 199, 201, 207, 210, 213, 217, 229, 230, 232, 233, 238, 288,
-        335, 346, 367, 375, 378, 409, 489, 587, 588, 647, 648
+        72, 108, 125, 128, 134, 135, 139, 166, 176, 180, 182, 186, 188, 199,
+        200, 202, 204, 206, 212, 215, 218, 222, 234, 235, 237, 238, 243, 293,
+        340, 351, 372, 380, 383, 414, 493, 591, 592, 665, 710, 711
       ],
       "review": "mapped-abstraction"
     },
@@ -14800,6 +14873,33 @@
       ]
     },
     {
+      "path": "formal/models/rewards/monthly_month_pledge.qnt",
+      "sha256": "8ee4a7f9a09af2dbbf7cf547e081ffe53be6011ef3bd310effe44f48d9a61749",
+      "sources": [
+        "backend/payments/month-pledge-readers.ts",
+        "backend/payments/month-pledges.ts",
+        "backend/payments/monthly-attestation.ts",
+        "backend/payments/monthly-publication.ts",
+        "backend/payments/monthly.ts",
+        "backend/payments/solana-month-lock.ts",
+        "backend/payments/vault-snapshots.ts",
+        "migrations/0128_vault_month_pledges.sql",
+        "workers/fee-converter/solana.ts",
+        "workers/payment-executor/solana-monthly.ts",
+        "workers/payments/index.ts"
+      ],
+      "scenarios": [
+        "noPledgeAfterTheMonthClosesTest",
+        "otherPledgeIsHeldBackTest",
+        "otherVaultPledgeGivesNoConsentTest",
+        "pledgedMonthFreezesWhilePausedAndRestrictedTest",
+        "pledgedMonthFreezesWithDefaultOffTest",
+        "retiredProjectDoesNotFreezeTest",
+        "unpledgedMonthWaitsWithDefaultOffTest",
+        "unreadPledgeWaitsUntilStoredTest"
+      ]
+    },
+    {
       "path": "formal/models/rewards/monthly_owner_completion.qnt",
       "sha256": "9923966ea2ab2aa4c330768e3986fc9807d137be5ab3f2021e440623019939be",
       "sources": [
@@ -17800,17 +17900,21 @@
     },
     {
       "path": "formal/models/ui/ui_pool_funding.qnt",
-      "sha256": "ba1cb95ffe2ea6f948c9be7431d167b69f3ed66a00b8b0d0edb9d14bebe26b9d",
+      "sha256": "74c9a73fb5dbd74a8be3bf03a2d26952762256c8255d378d203e04857699fa31",
       "sources": [
         "backend/projects/pool-funding.ts",
         "migrations/0127_vault_month_starts.sql",
+        "migrations/0128_vault_month_pledges.sql",
         "src/lib/pool-funding.ts"
       ],
       "scenarios": [
         "decemberFundedOnTheFirstTest",
         "decemberNeedsTheFirstTest",
+        "freeFundsWithoutPledgeShowNoMoneyTest",
         "loadingShowsNoMoneyTest",
         "novemberLiveRuleTest",
+        "pledgedMonthIsLockedTest",
+        "shortPledgeShowsNoMoneyTest",
         "shortVaultShowsNoMoneyTest",
         "withdrawalIsShownTest"
       ]
@@ -18812,6 +18916,28 @@
         "revertedBatchTest",
         "unclearReplyTest",
         "walletStatusIsNotProofTest"
+      ]
+    },
+    {
+      "path": "formal/models/ui/ui_vault_month_lock.qnt",
+      "sha256": "854236b90c6aba640aa702e5066f12ffa7fb17f3f973508112c9acf7c4509313",
+      "sources": [
+        "src/EscrowFunding.tsx",
+        "src/VaultActions.tsx",
+        "src/VaultMonthLock.tsx",
+        "src/lib/evm-month-lock.ts",
+        "src/lib/month-lock.ts",
+        "src/lib/solana-month-lock.ts"
+      ],
+      "scenarios": [
+        "aLockIsNeverLoweredTest",
+        "belowTheMonthlyAmountIsRefusedTest",
+        "depositAndLockTogetherTest",
+        "depositWithoutBatchIsRefusedTest",
+        "failedLockLocksNothingTest",
+        "lapsedLockIsReleasedTest",
+        "ownerLocksTheMonthTest",
+        "unsupportedVaultHasNoFormTest"
       ]
     },
     {

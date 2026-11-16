@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "meaning": "Declared lifecycle candidates. This intentionally incomplete syntactic census cannot find every implicit state, establish reachability, or prove source/model correspondence. Review the open work listed in formal/README.md as well.",
-  "inventorySha256": "8a37ae41b600e86c929c2f4d6ff029021e5bff140d21290f69ee38039ebac3db",
+  "inventorySha256": "e6e3e4b9244f5d8d2caaefdb5cb23f13c23e32167fcc15ddf4ddbda45d407ce8",
   "states": [
     {
       "path": "backend/fee-conversions/handler.ts",
@@ -50,13 +50,14 @@
     },
     {
       "path": "backend/payments/monthly.ts",
-      "line": 955,
+      "line": 1016,
       "name": "status",
       "kind": "string-union",
       "values": ["failed", "finalized", "pending"],
       "models": [
         "formal/models/rewards/monthly_coordinator.qnt",
         "formal/models/rewards/monthly_cutoff_queue.qnt",
+        "formal/models/rewards/monthly_month_pledge.qnt",
         "formal/models/rewards/monthly_owner_completion.qnt",
         "formal/models/rewards/monthly_owner_cuts.qnt",
         "formal/models/rewards/monthly_reserve.qnt",
@@ -67,13 +68,14 @@
     },
     {
       "path": "backend/payments/monthly.ts",
-      "line": 1567,
+      "line": 1628,
       "name": "chain_state",
       "kind": "string-union",
       "values": ["paid", "reserved"],
       "models": [
         "formal/models/rewards/monthly_coordinator.qnt",
         "formal/models/rewards/monthly_cutoff_queue.qnt",
+        "formal/models/rewards/monthly_month_pledge.qnt",
         "formal/models/rewards/monthly_owner_completion.qnt",
         "formal/models/rewards/monthly_owner_cuts.qnt",
         "formal/models/rewards/monthly_reserve.qnt",
@@ -2909,7 +2911,7 @@
     },
     {
       "path": "src/VaultActions.tsx",
-      "line": 423,
+      "line": 441,
       "name": "result",
       "kind": "string-union",
       "values": [
@@ -2927,6 +2929,7 @@
         "formal/models/ui/ui_transaction.qnt",
         "formal/models/ui/ui_vault_auto_check.qnt",
         "formal/models/ui/ui_vault_batched_deposit.qnt",
+        "formal/models/ui/ui_vault_month_lock.qnt",
         "formal/models/ui/ui_vault_prompt_ownership.qnt",
         "formal/models/ui/ui_vault_provisional_funding.qnt",
         "formal/models/ui/ui_vault_recovery.qnt"
@@ -2981,7 +2984,7 @@
     },
     {
       "path": "src/lib/evm-vault-actions.ts",
-      "line": 379,
+      "line": 388,
       "name": "status",
       "kind": "string-union",
       "values": [

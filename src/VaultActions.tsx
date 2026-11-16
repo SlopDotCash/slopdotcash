@@ -6,6 +6,10 @@ import {
   type EscrowDeployment,
 } from "./lib/escrow-policy.mjs";
 import {
+  assertWithdrawalOutsideLocks,
+  pledgedFundsRefusal,
+} from "./lib/evm-month-lock";
+import {
   checkVaultAction,
   checkVaultBatch,
   reviewVaultAction,
@@ -125,7 +129,8 @@ export function VaultActions({
   /**
    * What this month promises contributors and the vault must keep, with the
    * month's name. Our page refuses a withdrawal below it (operator decision,
-   * 15 November 2026); the contract itself does not.
+   * 15 November 2026); a vault without month locks does not. A vault with
+   * month locks refuses it in its contract.
    */
   promised?: { minor: string; display: string; month: string };
   projectId: string;
@@ -258,8 +263,20 @@ export function VaultActions({
             payoutPolicy,
             evidence,
           );
+      // A vault with month locks enforces them itself; the page's own guard
+      // is for vaults without them (operator decision, 15 November 2026).
+      const locksEnforced =
+        !solana &&
+        operation === "withdraw" &&
+        (await assertWithdrawalOutsideLocks(
+          deployment,
+          wallet,
+          result.freeBalance,
+          result.gross,
+        ));
       if (
         operation === "withdraw" &&
+        !locksEnforced &&
         promised &&
         result.freeBalance !== null &&
         BigInt(result.freeBalance) - BigInt(result.gross) <
@@ -396,7 +413,8 @@ export function VaultActions({
           throw new Error(
             "The wallet result is unclear. Check wallet activity and enter its transaction hash below before another attempt.",
           );
-        throw caught;
+        // An upgraded vault refuses a withdrawal of locked funds.
+        throw (!solana && pledgedFundsRefusal(caught)) || caught;
       }
     });
   const checking = useRef(false);
