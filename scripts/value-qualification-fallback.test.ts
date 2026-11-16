@@ -2,7 +2,7 @@ import { expect, test } from "bun:test";
 import { VALUE_DIMENSIONS } from "../src/lib/value-assessment";
 import { qualifyValueModels } from "./qualify-value-models";
 
-test("independent value paths each retain a rejected-call reserve and finish through fallback", async () => {
+test("independent value paths each reserve a Surplus spending denial and finish through Orbio", async () => {
   const original = globalThis.fetch;
   const requests: { provider: string; model: string }[] = [];
   globalThis.fetch = (async (input, init) => {
@@ -14,10 +14,22 @@ test("independent value paths each retain a rejected-call reserve and finish thr
     };
     const orbio = request.url.includes("orbio.so");
     requests.push({ provider: orbio ? "orbio" : "surplus", model: wire.model });
-    if (orbio)
+    // A structured spending denial with no receipt: the full bound stays reserved.
+    if (!orbio)
       return Response.json(
-        { error: { type: "insufficient_quota", code: "insufficient_quota" } },
-        { status: 402 },
+        {
+          type: "error",
+          error: {
+            type: "invalid_request_error",
+            detail: {
+              window: "month",
+              limit_micro: 100,
+              spent_micro: 100,
+              resets_at: "2026-12-01T00:00:00.000Z",
+            },
+          },
+        },
+        { status: 400 },
       );
     const assessment = {
       status: "unresolved",
@@ -45,8 +57,8 @@ test("independent value paths each retain a rejected-call reserve and finish thr
     return Response.json({
       type: "message",
       role: "assistant",
-      model: "claude-sonnet-5.5",
-      usage: { input_tokens: 1, output_tokens: 1, buyer_cost_micro: 100 },
+      model: "anthropic/claude-sonnet-5.5",
+      usage: { input_tokens: 1, output_tokens: 1, cost: 0.0001 },
       content: [{ type: "text", text: JSON.stringify(verdict) }],
       stop_reason: "end_turn",
     });
@@ -58,13 +70,14 @@ test("independent value paths each retain a rejected-call reserve and finish thr
     });
     expect(result.map((r) => r.path)).toEqual(["single", "joint"]);
     expect(
-      result.every((r) => r.provider === "surplus" && r.requests === 2),
+      result.every((r) => r.provider === "orbio" && r.requests === 2),
     ).toBe(true);
-    expect(requests.map((r) => r.provider)).toEqual([
-      "orbio",
-      "surplus",
-      "orbio",
-      "surplus",
+    // The denial skips Surplus Terra, which shares the denied budget.
+    expect(requests).toEqual([
+      { provider: "surplus", model: "claude-sonnet-5.5" },
+      { provider: "orbio", model: "anthropic/claude-sonnet-5.5" },
+      { provider: "surplus", model: "claude-sonnet-5.5" },
+      { provider: "orbio", model: "anthropic/claude-sonnet-5.5" },
     ]);
   } finally {
     globalThis.fetch = original;

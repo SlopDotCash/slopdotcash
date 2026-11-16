@@ -105,7 +105,7 @@ test("old Surplus journal identities remain readable after the active route chan
         at,
       ),
     ).toEqual({
-      provider: "orbio",
+      provider: TRIAGE_ROUTE[0].provider,
       requested: TRIAGE_ROUTE[0].model,
       reported: TRIAGE_ROUTE[0].model,
     });
