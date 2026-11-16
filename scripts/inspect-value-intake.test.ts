@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test";
+import { createHash } from "node:crypto";
 import {
   inspectValueIntake,
   intakeError,
@@ -11,6 +12,8 @@ const version = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa";
 const deployment = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb";
 const tailId = "cccccccc-cccc-cccc-cccc-cccccccccccc";
 const options = { account: "a".repeat(32), token: secret };
+const messageHash = (message: string) =>
+  createHash("sha256").update(message, "utf8").digest("hex");
 
 test("tail sanitizer emits fixed labels and numeric HTTP state only", () => {
   const result = sanitizeIntakeTail({
@@ -50,6 +53,22 @@ test("tail sanitizer emits fixed labels and numeric HTTP state only", () => {
       "publication-failed",
       "other",
     ],
+    exceptionFingerprints: [
+      {
+        name: "OtherError",
+        messageSha256: messageHash(
+          "Merge reconstruction unavailable: supervisor-timeout-137",
+        ),
+      },
+      {
+        name: "OtherError",
+        messageSha256: messageHash("Too many subrequests " + secret),
+      },
+      {
+        name: "OtherError",
+        messageSha256: messageHash("GET /repos/private returned 403"),
+      },
+    ],
   });
   expect(JSON.stringify(result)).not.toContain(secret);
   expect(intakeError("Merge reconstruction unavailable: output-read")).toBe(
@@ -72,6 +91,74 @@ test("tail sanitizer emits fixed labels and numeric HTTP state only", () => {
       categories: [secret],
     }),
   ).toBeNull();
+});
+
+test("early first-party errors remain identifiable without retaining messages, URLs or stacks", () => {
+  const tokenFailure = "installation token request failed";
+  expect(intakeError(tokenFailure)).toBe("other");
+  const result = sanitizeIntakeTail({
+    exceptions: [
+      {
+        name: "Error",
+        message: tokenFailure,
+        stack: secret,
+        cause: { body: secret },
+      },
+      {
+        name: "TypeError",
+        message: "Cannot read properties of undefined " + secret,
+      },
+      { name: secret, message: secret },
+    ],
+  });
+  expect(result).toEqual({
+    categories: ["other"],
+    exceptionFingerprints: [
+      { name: "Error", messageSha256: messageHash(tokenFailure) },
+      {
+        name: "TypeError",
+        messageSha256: messageHash(
+          "Cannot read properties of undefined " + secret,
+        ),
+      },
+      { name: "OtherError", messageSha256: messageHash(secret) },
+    ],
+  });
+  expect(JSON.stringify(result)).not.toContain(secret);
+  expect(JSON.stringify(result)).not.toContain(tokenFailure);
+  expect(sanitizeIntakeTail(result)).toEqual(result);
+});
+
+test("exception fingerprints bound message bytes/counts and reject forged projected fields", () => {
+  const result = sanitizeIntakeTail({
+    exceptions: [
+      { name: "Error", message: "x".repeat(4096) },
+      { name: "Error", message: "x".repeat(4097) },
+      { name: "Error", message: "界".repeat(2000) },
+      { name: "Error", message: { body: secret } },
+      ...Array.from({ length: 30 }, () => ({ name: secret, message: secret })),
+    ],
+  });
+  expect(result?.exceptionFingerprints).toHaveLength(20);
+  if (!result) throw Error("Missing exception fingerprint projection");
+  expect(
+    (result.exceptionFingerprints as Record<string, unknown>[]).slice(0, 4),
+  ).toEqual([
+    { name: "Error", messageSha256: messageHash("x".repeat(4096)) },
+    { name: "Error", messageSha256: null },
+    { name: "Error", messageSha256: null },
+    { name: "Error", messageSha256: null },
+  ]);
+  expect(
+    sanitizeIntakeTail({
+      exceptionFingerprints: [
+        { name: secret, messageSha256: "a".repeat(64) },
+        { name: "Error", messageSha256: secret },
+        { name: "Error", messageSha256: "a".repeat(64), message: secret },
+      ],
+    }),
+  ).toBeNull();
+  expect(JSON.stringify(result)).not.toContain(secret);
 });
 
 function fixture(
@@ -160,6 +247,12 @@ test("normal inspection binds both Workers and Pages and removes all three tails
       outcome: "exception",
       httpStatus: 409,
       categories: ["publication-failed"],
+      exceptionFingerprints: [
+        {
+          name: "OtherError",
+          messageSha256: messageHash("historical value import failure"),
+        },
+      ],
     },
   ]);
 });
