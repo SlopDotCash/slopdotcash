@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "meaning": "Declared lifecycle candidates. This intentionally incomplete syntactic census cannot find every implicit state, establish reachability, or prove source/model correspondence. Review the open work listed in formal/README.md as well.",
-  "inventorySha256": "e8b27960b11571824875f6a25347f952242922a78e72025d04c65224d1ef34ba",
+  "inventorySha256": "46e8cbe860a6a1014086ce52285dc24ee4e531b91de8c83295020c9cdfbc821e",
   "states": [
     {
       "path": "backend/fee-conversions/handler.ts",
@@ -2179,6 +2179,30 @@
         "formal/models/rewards/prior_cycle_carry.qnt"
       ],
       "lexicallyUnmentionedValues": ["under-review", "unresolved-proposals"],
+      "review": "candidate-only"
+    },
+    {
+      "path": "scripts/private-payout-packet.ts",
+      "line": 15,
+      "name": "StagingPhase",
+      "kind": "string-union",
+      "values": [
+        "chunk-stage",
+        "completion-read",
+        "credentials",
+        "manifest",
+        "source-check",
+        "trusted-context"
+      ],
+      "models": ["formal/models/points/source_import.qnt"],
+      "lexicallyUnmentionedValues": [
+        "chunk-stage",
+        "completion-read",
+        "credentials",
+        "manifest",
+        "source-check",
+        "trusted-context"
+      ],
       "review": "candidate-only"
     },
     {
