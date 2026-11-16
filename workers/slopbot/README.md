@@ -136,6 +136,14 @@ present but invalid, review falls back to label-only with no closure.
 
 ## Free reviews, budget blocks, spend
 
+Free advisory reviews are capped at 2,000 pull requests or issues per
+repository per UTC month; value assessment is not capped (operator decision,
+16 November 2026). `review-cap.ts` admits a review before any model call and
+records one row per item in `slopbot_review_month_starts`. Any later review of
+an item already admitted this month (new pushes, a moved base, retries) runs
+and adds nothing. A new item over the cap makes no model call, writes nothing
+to GitHub and is recorded as skipped with the reason `monthly-review-cap`.
+
 Surplus budget blocks are durable in `budget-blocks.ts` and resume when its
 provider window opens. A Surplus spending denial skips the other Surplus model
 and asks Orbio in the same attempt. If Orbio serves a valid result, it is used
