@@ -551,7 +551,7 @@
     },
     {
       "path": "backend/projects/cloudflare-persistence.ts",
-      "sha256": "dd0f9c2da757180a6bf2bf44f9b47f35d97fff76db639df522ca18af4ad9d200",
+      "sha256": "469508aeababf5e17fd288dde4784207dbdff8fd04c476f2e3b61db29a35dfcb",
       "models": [
         "formal/models/api/api_owner_vault_lifecycle.qnt",
         "formal/models/api/api_project_creation_completion.qnt",
@@ -621,7 +621,7 @@
     },
     {
       "path": "backend/projects/handler.ts",
-      "sha256": "c72ff9bfc0c13109d8dd0ac7d025cb05267a0d39105c627e92e58d042030ad0d",
+      "sha256": "6986560f5d31ecf2d99c5c5e8a8156682acf0c0108e7fed3bbdcd1744aecdd15",
       "models": [
         "formal/models/api/api_owner_vault_lifecycle.qnt",
         "formal/models/api/api_project_creation_completion.qnt",
@@ -648,14 +648,14 @@
       "candidateLines": [
         160, 165, 175, 179, 237, 262, 267, 294, 295, 297, 299, 348, 432, 439,
         445, 449, 450, 458, 524, 528, 859, 896, 912, 1008, 1022, 1027, 1034,
-        1035, 1038, 1041, 1059, 1061, 1063, 1074, 1092, 1099, 1110, 1142, 1143,
-        1154, 1156, 1161, 1162, 1163, 1164, 1176, 1177, 1178, 1180, 1185, 1223,
-        1282, 1332, 1366, 1384, 1452, 1534, 1545, 1554, 1558, 1578, 1620, 1626,
-        1630, 1636, 1642, 1678, 1686, 1689, 1690, 1735, 1736, 1737, 1754, 1799,
-        1800, 1808, 1828, 1830, 1834, 1845, 1855, 1870, 1876, 1886, 1923, 1942,
-        1946, 1999, 2144, 2148, 2175, 2196, 2197, 2208, 2212, 2247, 2261, 2279,
-        2296, 2328, 2337, 2481, 2507, 2656, 2713, 2753, 2764, 2765, 2878, 2886,
-        2904, 3101
+        1035, 1038, 1041, 1059, 1061, 1063, 1074, 1092, 1099, 1110, 1144, 1145,
+        1156, 1158, 1163, 1164, 1165, 1166, 1178, 1179, 1180, 1182, 1187, 1228,
+        1287, 1337, 1371, 1389, 1457, 1539, 1550, 1559, 1563, 1583, 1625, 1631,
+        1635, 1641, 1647, 1683, 1691, 1694, 1695, 1740, 1741, 1742, 1759, 1804,
+        1805, 1813, 1833, 1835, 1839, 1850, 1860, 1875, 1881, 1891, 1928, 1947,
+        1951, 2004, 2150, 2154, 2181, 2202, 2203, 2214, 2218, 2254, 2268, 2286,
+        2303, 2335, 2344, 2488, 2514, 2663, 2720, 2760, 2771, 2772, 2885, 2893,
+        2911, 3108
       ],
       "review": "mapped-abstraction"
     },
@@ -6190,14 +6190,14 @@
     },
     {
       "path": "src/lib/project-contracts.ts",
-      "sha256": "5587b7fa7c484705831a9a7dff60008b65dfea512efbc69ad97c47d62f1e3743",
+      "sha256": "d4cb5bf4cc1e342a5de43cfbaa5153d5528dd0b45b29aa300ca84922fdb71255",
       "models": [
         "formal/models/api/api_project_removal.qnt",
         "formal/models/slopbot/bot_repository_authority_scope.qnt"
       ],
       "candidateLines": [
-        11, 32, 36, 49, 169, 195, 196, 207, 208, 300, 301, 302, 318, 327, 328,
-        333, 337, 357, 366, 406, 407
+        11, 32, 36, 49, 171, 197, 198, 209, 210, 302, 303, 304, 320, 329, 330,
+        335, 339, 359, 368, 408, 409
       ],
       "review": "mapped-abstraction",
       "statelessReason": "Domain type declarations, static route constants and pure GitHub identity/path parsing or display copy. No authority lookup, revision mutation or RPC; corresponding service models own those transitions."

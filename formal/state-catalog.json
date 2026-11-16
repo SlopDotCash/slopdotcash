@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "meaning": "Declared lifecycle candidates. This intentionally incomplete syntactic census cannot find every implicit state, establish reachability, or prove source/model correspondence. Review the open work listed in formal/README.md as well.",
-  "inventorySha256": "a28cf33366897af0372e4dd22d33634d039cdd633e5a5e5ed1c45a02f4ea8a6d",
+  "inventorySha256": "0acfdf8feae2cef0faf76c30cb684f22b73df62d0b3f23bba33ad3d29eb69d5b",
   "states": [
     {
       "path": "backend/fee-conversions/handler.ts",
@@ -107,7 +107,7 @@
     },
     {
       "path": "backend/projects/handler.ts",
-      "line": 2392,
+      "line": 2399,
       "name": "mode",
       "kind": "string-union",
       "values": ["apply", "preview"],
@@ -139,7 +139,7 @@
     },
     {
       "path": "backend/projects/handler.ts",
-      "line": 2596,
+      "line": 2603,
       "name": "mode",
       "kind": "string-union",
       "values": ["apply", "preview"],
@@ -3020,7 +3020,7 @@
     },
     {
       "path": "src/lib/project-contracts.ts",
-      "line": 99,
+      "line": 101,
       "name": "RestrictionState",
       "kind": "string-union",
       "values": ["banned", "clear", "quarantined"],
@@ -3033,7 +3033,7 @@
     },
     {
       "path": "src/lib/project-contracts.ts",
-      "line": 100,
+      "line": 102,
       "name": "AppealState",
       "kind": "string-union",
       "values": ["denied", "granted", "none", "requested"],
@@ -3046,7 +3046,7 @@
     },
     {
       "path": "src/lib/project-contracts.ts",
-      "line": 102,
+      "line": 104,
       "name": "EnforcementResult",
       "kind": "string-union",
       "values": ["no_revision_needed", "revision_appended", "revision_pending"],
@@ -3063,7 +3063,7 @@
     },
     {
       "path": "src/lib/project-contracts.ts",
-      "line": 138,
+      "line": 140,
       "name": "decisionSource",
       "kind": "string-union",
       "values": [
@@ -3086,7 +3086,7 @@
     },
     {
       "path": "src/lib/project-contracts.ts",
-      "line": 178,
+      "line": 180,
       "name": "moderation",
       "kind": "string-union",
       "values": ["moderator", "not-moderator", "unconfigured"],
@@ -3103,7 +3103,7 @@
     },
     {
       "path": "src/lib/project-contracts.ts",
-      "line": 328,
+      "line": 330,
       "name": "state",
       "kind": "string-union",
       "values": ["action_required", "ready", "restricted", "retry", "waiting"],
@@ -3122,7 +3122,7 @@
     },
     {
       "path": "src/lib/project-contracts.ts",
-      "line": 333,
+      "line": 335,
       "name": "state",
       "kind": "string-union",
       "values": ["installed", "missing", "retry", "suspended"],
@@ -3135,7 +3135,7 @@
     },
     {
       "path": "src/lib/project-contracts.ts",
-      "line": 346,
+      "line": 348,
       "name": "exemptionKind",
       "kind": "string-union",
       "values": ["existing-project", "owner-approved-admission"],
@@ -3151,7 +3151,7 @@
     },
     {
       "path": "src/lib/project-contracts.ts",
-      "line": 357,
+      "line": 359,
       "name": "state",
       "kind": "string-union",
       "values": ["pledged", "verified"],
@@ -3164,7 +3164,7 @@
     },
     {
       "path": "src/lib/project-contracts.ts",
-      "line": 366,
+      "line": 368,
       "name": "state",
       "kind": "string-union",
       "values": ["committed", "pledged"],
