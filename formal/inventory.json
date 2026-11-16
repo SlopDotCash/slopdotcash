@@ -8998,7 +8998,7 @@
     },
     {
       "path": "workers/slopbot/value-import.ts",
-      "sha256": "5722004d62e43a2c5caa54bcdb22f54e738d24f85f882b69cf5342c469b69b24",
+      "sha256": "856c2b1a56f3270ab3467d2aabd2e6b47f64ad330a13dbd700d81ae99100289a",
       "models": [
         "formal/models/slopbot/bot_historical_import.qnt",
         "formal/models/slopbot/historical_subscription_intake.qnt"
@@ -9159,13 +9159,13 @@
     },
     {
       "path": "workers/slopbot/value-publication.ts",
-      "sha256": "0dc9240d4194062dea81707aa1b7e49d2f7934458abb8dac16014f3a80ff82ec",
+      "sha256": "4ecd0e95c824689a1ae71b79985981e5b2d432850112ae3878e1b967e76550d6",
       "models": [
         "formal/models/slopbot/bot_publication_transaction.qnt",
         "formal/models/slopbot/bot_value_freshness.qnt",
         "formal/models/slopbot/historical_subscription_intake.qnt"
       ],
-      "candidateLines": [117, 250, 252, 255, 257, 260, 271, 274, 276],
+      "candidateLines": [117, 255, 257, 260, 262, 265, 276, 279, 281],
       "review": "mapped-abstraction"
     },
     {
@@ -9262,7 +9262,7 @@
     },
     {
       "path": "workers/slopbot/value-work-unit-publication.ts",
-      "sha256": "68d37f5b5bd614dda1657a35eeb73d69c51c94cca21d09bf3895cd219fbc4fde",
+      "sha256": "1910b894728224389e8e92cc987ea68adb7ec156a9597836c27856ad79e08924",
       "models": [
         "formal/models/slopbot/bot_publication_transaction.qnt",
         "formal/models/slopbot/bot_value_freshness.qnt",
