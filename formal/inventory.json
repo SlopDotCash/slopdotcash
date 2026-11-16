@@ -14,19 +14,20 @@
     },
     {
       "path": ".github/workflows/deploy.yml",
-      "sha256": "1e079b108d8e469f940f0d365e84276796a37781c9c213f8ab078eb92f2603f5",
+      "sha256": "67b95d5d4c80c69f1016b691afb23f3cd35ef6e664bc4e8ca2bf85c6c98a7427",
       "models": [
         "formal/models/release/ci_browser_evidence.qnt",
         "formal/models/release/ci_browser_runtime.qnt",
         "formal/models/release/ci_coverage.qnt",
         "formal/models/release/release_proof_gate.qnt",
-        "formal/models/release/release_publication.qnt"
+        "formal/models/release/release_publication.qnt",
+        "formal/models/release/staging_release_order.qnt"
       ],
       "candidateLines": [
         36, 46, 119, 248, 286, 287, 344, 378, 434, 514, 519, 634, 640, 708, 711,
-        737, 738, 759, 771, 837, 1067, 1095, 1183, 1274, 1380, 1382, 1383, 1587,
-        1670, 1823, 1825, 1855, 1964, 1986, 2057, 2068, 2093, 2164, 2177, 2190,
-        2199, 2200, 2201
+        737, 738, 759, 771, 803, 841, 1071, 1099, 1187, 1278, 1384, 1386, 1387,
+        1591, 1674, 1827, 1829, 1859, 1968, 1990, 2061, 2072, 2097, 2168, 2181,
+        2194, 2203, 2204, 2205
       ],
       "review": "mapped-abstraction"
     },
@@ -133,7 +134,7 @@
     },
     {
       "path": ".github/workflows/reviewed-historical-points.yml",
-      "sha256": "cb961b52599d5c180d2f542ec3468c69f849361a8df0091d83f4eda8ea3287e1",
+      "sha256": "b58d09eb8b0366790bcd5090a8d4121cbc01a42e5241fd50c81d3e2e1bcc23c0",
       "models": ["formal/models/points/source_import.qnt"],
       "candidateLines": [],
       "review": "mapped-abstraction"
@@ -3515,9 +3516,11 @@
     },
     {
       "path": "scripts/check-staging-order.mjs",
-      "sha256": "d0c77a68c0451c7a73e33413d631b4a15da3006352d6912adac8b8b40be3fbe1",
+      "sha256": "8a3bae9b39d1be4c4773802628245c3df7ca7899a9293628951d8d0247059ddd",
       "models": ["formal/models/release/staging_release_order.qnt"],
-      "candidateLines": [60, 62],
+      "candidateLines": [
+        4, 8, 36, 40, 41, 56, 67, 78, 81, 82, 84, 113, 115, 143, 212, 237
+      ],
       "review": "mapped-abstraction"
     },
     {
@@ -4345,9 +4348,9 @@
     },
     {
       "path": "scripts/private-payout-packet.ts",
-      "sha256": "0598d81defc0f0753275580161b25e196351102d320e9c5b2ebf8c7868a6bec0",
+      "sha256": "904f5c2eeac392f21ba5a28ec14ae07b525a5baaa281f7bdf4161b4c2a208f1f",
       "models": ["formal/models/points/source_import.qnt"],
-      "candidateLines": [78],
+      "candidateLines": [82],
       "review": "mapped-abstraction"
     },
     {
@@ -4605,9 +4608,9 @@
     },
     {
       "path": "scripts/reviewed-historical-points.ts",
-      "sha256": "6ea9cd6f3299671854950eebbde19f0081ec60102a55e81ef6c8832546dce623",
+      "sha256": "993bba18296241979f75ae6169c1f18062c27746d2c90a11fb59a3fb55e990f8",
       "models": ["formal/models/points/source_import.qnt"],
-      "candidateLines": [55, 56, 471, 659, 960],
+      "candidateLines": [55, 56, 493, 685, 900, 901, 902, 905, 1224],
       "review": "mapped-abstraction"
     },
     {
@@ -4668,9 +4671,9 @@
     },
     {
       "path": "scripts/run-reviewed-historical-points.ts",
-      "sha256": "acc14c1c345223e51cb947e587e1bf3a3c17c466fd9b523425057ab878c9da28",
+      "sha256": "c221e909cc911d9530e45ae31551ce7c43c861fe0ac6feb3de7defcd2ea5a815",
       "models": ["formal/models/points/source_import.qnt"],
-      "candidateLines": [3, 417, 437, 513, 603],
+      "candidateLines": [3, 545, 565, 641, 731],
       "review": "mapped-abstraction"
     },
     {
@@ -4852,9 +4855,9 @@
     },
     {
       "path": "scripts/value-merge-ingestion.ts",
-      "sha256": "62734faf9f2d6bb99efd36028b74fef100cedb6032d779ef13b9a5ebd40ef29c",
+      "sha256": "c8e663c51148f4d729e5ac192d5b8bf3da868c282fc98df72087160a682f2f55",
       "models": ["formal/models/slopbot/merge_evidence_acquisition.qnt"],
-      "candidateLines": [286, 287],
+      "candidateLines": [289, 290],
       "review": "mapped-abstraction"
     },
     {
@@ -14488,14 +14491,28 @@
     },
     {
       "path": "formal/models/release/staging_release_order.qnt",
-      "sha256": "2ef20f0116e2f17c564b58b99ece196379cb42883d4ef7e4b22427dc80cec51d",
-      "sources": ["scripts/check-staging-order.mjs"],
+      "sha256": "91db17ebec6009138aaa6d46aa0f6b764675bbe05e2ea9baa5e95bf4a2f297db",
+      "sources": [
+        ".github/workflows/deploy.yml",
+        "scripts/check-staging-order.mjs"
+      ],
       "scenarios": [
         "branchForcePushRefusedTest",
+        "expiredWaitCannotResumeTest",
+        "initialSuccessDoesNotSpendRetryBudgetTest",
+        "insufficientSharedDeadlineRefusesTest",
+        "invalidDelayRefusesTest",
         "newerFailedReleaseBlocksRollbackTest",
+        "nonQuotaFailureRefusesTest",
         "nonReleaseFixtureIsNotRollbackTest",
         "qualificationDoesNotEraseEarlierReleaseTest",
-        "qualificationDoesNotHideLaterReleaseTest"
+        "qualificationDoesNotHideLaterReleaseTest",
+        "retryCannotResumeBeforeValidatedDelayTest",
+        "retryChecksAncestryAgainTest",
+        "retryRechecksEarlierExemptionsTest",
+        "retryWaitsAndStartsFreshTest",
+        "secondQuotaFailureRefusesTest",
+        "zeroDelayStillRequiresFreshHistoryTest"
       ]
     },
     {

@@ -110,10 +110,13 @@ export async function withPublicGitObjects<T>(
       return run(command.file, command.args, {
         ...command.options,
         // The complete PR 1069 graph has 162,288 objects and 4 GB of required
-        // changed blobs. Two- and ten-minute public fetches timed out. Allow
-        // thirty minutes within the release job's three-hour budget; other
-        // commands keep their existing two-minute deadline.
-        timeout: args[0] === "fetch" ? 1_800_000 : command.options.timeout,
+        // changed blobs; PR 33708 has 514,352 objects and exceeded a two-minute
+        // strict fsck deadline. Acquisition and verification both traverse
+        // the complete object graph. Allow thirty minutes for either within
+        // the release job's three-hour budget; other commands retain two minutes.
+        timeout: ["fetch", "fsck"].includes(args[0])
+          ? 1_800_000
+          : command.options.timeout,
         maxBuffer: 1024 * 1024,
       });
     };

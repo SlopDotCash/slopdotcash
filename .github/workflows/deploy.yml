@@ -800,6 +800,10 @@ jobs:
       name: slop-staging
       url: https://staging.slop.cash
     steps:
+      - name: Set staging order retry deadline
+        run: |
+          # Keep quota recovery in the first five minutes of the 20-minute job.
+          echo "STAGING_ORDER_RETRY_UNTIL=$(($(date +%s) + 300))" >> "$GITHUB_ENV"
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           ref: ${{ github.sha }}
