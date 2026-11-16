@@ -31,6 +31,7 @@ import {
 import type { ValueAssessmentResult } from "./value-review";
 import {
   historicalSubscriptionSource,
+  historicalSubscriptionWorkUnit,
   subscriptionCutoff,
   type ValueSettingsEnv,
 } from "./value-settings";
@@ -164,7 +165,14 @@ export async function importSubscriptionAssessment(
       selection.number,
       repository,
     );
-    if (!historicalSubscriptionSource(collected.pull, subscriptionCutoff(env)))
+    if (
+      !historicalSubscriptionSource(collected.pull, subscriptionCutoff(env)) &&
+      !(
+        joint &&
+        collected.pull.state === "closed" &&
+        collected.pull.merged_at === null
+      )
+    )
       throw new Error(
         "Subscription intake covers only work accepted before the API start",
       );
@@ -273,11 +281,16 @@ export async function importSubscriptionAssessment(
   if (joint) {
     if (!digests(input.supersedes) || !digests(input.legacyPredecessors))
       throw new Error("Invalid joint predecessors");
+    const prepared = await prepareWorkUnitEvidence(sources, repositories);
+    if (!historicalSubscriptionWorkUnit(prepared, subscriptionCutoff(env)))
+      throw new Error(
+        "Subscription intake covers only work accepted before the API start",
+      );
     stored = await publishWorkUnitAssessment(
       env,
       job,
       input.result as unknown as WorkUnitAssessmentResult,
-      await prepareWorkUnitEvidence(sources, repositories),
+      prepared,
       revision,
       input.supersedes,
       input.legacyPredecessors,

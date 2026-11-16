@@ -27,7 +27,7 @@ import {
   verifyMergeObjectStore,
 } from "./value-merge-objects";
 
-const MAX_BUNDLE = 25 * 1024 * 1024;
+const MAX_BUNDLE = 32 * 1024 * 1024;
 const MAX_INPUT = 8 * 1024 * 1024;
 
 export async function createValueMergeBundle(

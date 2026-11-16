@@ -1195,7 +1195,7 @@
     },
     {
       "path": "backend/slopbot/value-import.ts",
-      "sha256": "7f550424a53959cbda38adbed6cc100fbb29232031b354857e5db116a80b0f76",
+      "sha256": "73ed9315caee7c3f22a4da44d1714fc3c9d50ebdd7f09877b39870e62543f102",
       "models": [
         "formal/models/api/api_request_composition.qnt",
         "formal/models/slopbot/historical_subscription_intake.qnt"
@@ -3673,7 +3673,7 @@
     },
     {
       "path": "scripts/create-value-merge-bundle.ts",
-      "sha256": "3eac13f85a1a4cf075d9587e41bc407da93da78f799db7f4bf0b8b25fcf4200d",
+      "sha256": "b70fb5e11a3b35889942e4533a2cf6f87a7bc6734494feaa9e5e9961c6ad0faa",
       "models": ["formal/models/slopbot/merge_evidence_acquisition.qnt"],
       "candidateLines": [10, 106, 115, 117, 121],
       "review": "mapped-abstraction"
@@ -4702,9 +4702,9 @@
     },
     {
       "path": "scripts/run-october-rewards.ts",
-      "sha256": "c6105948339092ee835a21d5fd9c6b9dd09eee506732e7852a2908de5dd486a6",
+      "sha256": "725b83035217988ec4efcd23c3fe43e65fbc6af20c25ecfde12ad2cf10f47e86",
       "models": ["formal/models/rewards/october_proposal_import.qnt"],
-      "candidateLines": [3, 158, 305, 309, 321, 519, 523, 527],
+      "candidateLines": [3, 171, 324, 328, 341, 549, 553, 557],
       "review": "mapped-abstraction"
     },
     {
@@ -4908,16 +4908,16 @@
     },
     {
       "path": "scripts/value-merge-objects.ts",
-      "sha256": "6558293780060ed0a0aae28f9ccaab0b46a2b43ee5282f1f2231d83693cb6020",
+      "sha256": "7fed6586979921c41eaccb61b2700b30ec2acfece7e4aa29c2949d1d91dc75f4",
       "models": ["formal/models/slopbot/merge_evidence_acquisition.qnt"],
-      "candidateLines": [],
+      "candidateLines": [218, 219, 220, 221, 245, 246, 257],
       "review": "mapped-abstraction"
     },
     {
       "path": "scripts/value-merge-resolution.ts",
-      "sha256": "3a3863d71803daa049594e13ccff29b01f0cc004d711dda58be7c5077aa1d822",
+      "sha256": "9ab37e64df36bcc90479c078724b0c1ef74477ce251d272c7fa927756e38c297",
       "models": ["formal/models/slopbot/merge_evidence_acquisition.qnt"],
-      "candidateLines": [145, 254, 270, 316, 322, 345, 366, 368],
+      "candidateLines": [262, 263, 273, 409, 425, 477, 483, 506, 527, 529],
       "review": "mapped-abstraction"
     },
     {
@@ -6569,7 +6569,7 @@
     },
     {
       "path": "src/lib/points.ts",
-      "sha256": "ac4a1284e7fa425c2d0b1b0ccfd586155b0178f8466401598e13bd453ef13d1f",
+      "sha256": "6b5058c2388c63985022b6ed71fffedbd813a69014b454cab272aa48c416f10e",
       "models": [
         "formal/models/points/implementation_allocation.qnt",
         "formal/models/points/journal_publication.qnt",
@@ -6580,7 +6580,7 @@
         "formal/models/rewards/bucket_aggregation.qnt",
         "formal/models/ui/ui_review_pool.qnt"
       ],
-      "candidateLines": [382, 847, 1082, 1089, 1098],
+      "candidateLines": [382, 847, 1094, 1106, 1113, 1122],
       "review": "mapped-abstraction"
     },
     {
@@ -8831,12 +8831,12 @@
     },
     {
       "path": "workers/slopbot/value-import.ts",
-      "sha256": "1e08182fd274199d12bb615faf1f96740c64b57e01eda68e1056b573dd1dac63",
+      "sha256": "c7da5d6d301a18266c42f10a1f7f6543b19067085d9e1a03c5b3c803443f6fa6",
       "models": [
         "formal/models/slopbot/bot_historical_import.qnt",
         "formal/models/slopbot/historical_subscription_intake.qnt"
       ],
-      "candidateLines": [],
+      "candidateLines": [172],
       "review": "mapped-abstraction"
     },
     {
@@ -9049,12 +9049,12 @@
     },
     {
       "path": "workers/slopbot/value-settings.ts",
-      "sha256": "eb631e164028bac0fac3d03c1ec0c4957ee1344d90f142e24cac1b23574d6047",
+      "sha256": "4e946b0924217e4353ea31918a1fbf244bd5a1628124e3d8a51c90d0c4552f34",
       "models": [
         "formal/models/slopbot/bot_historical_import.qnt",
         "formal/models/slopbot/historical_subscription_intake.qnt"
       ],
-      "candidateLines": [13, 16],
+      "candidateLines": [15, 18, 42],
       "review": "mapped-abstraction"
     },
     {
@@ -9341,14 +9341,14 @@
     },
     {
       "path": "workers/vetting-sandbox/merge-job.ts",
-      "sha256": "83528d5e9fee381b6dc6552664e2ae579fa87b4e82c5c02b8cfe4f23a51f6525",
+      "sha256": "23901f6803b35225b2d77300c48b52856010154005ec10cf4e46a2a67f421aed",
       "models": ["formal/models/vetting/vetting_merge_isolation.qnt"],
-      "candidateLines": [5, 44, 76, 90],
+      "candidateLines": [5, 44, 76, 87],
       "review": "mapped-abstraction"
     },
     {
       "path": "workers/vetting-sandbox/merge.ts",
-      "sha256": "b790cfb09a42ea1d504fa749a42486f12d770a7ff130a5e8ebc36ea0ac6916f6",
+      "sha256": "fef9dc2b6564a1f9dec277e1c3996e74e3263c2af6ceb41a838a2a4986417c62",
       "models": ["formal/models/vetting/vetting_merge_isolation.qnt"],
       "candidateLines": [59, 64, 68, 92, 100, 101, 102, 104, 106, 107, 108],
       "review": "mapped-abstraction"
