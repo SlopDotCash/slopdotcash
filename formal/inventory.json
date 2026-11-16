@@ -4511,9 +4511,9 @@
     },
     {
       "path": "scripts/qualify-value-models.ts",
-      "sha256": "ac071af313784eb6be707a94e20d13f2d907cd18b9bea13928abcec2112fefe6",
+      "sha256": "9a45f574a14e93cc97cdd0dba703314b6fe6e83e27aa951b7a986aaae766c08a",
       "models": ["formal/models/slopbot/qualification_value_budget.qnt"],
-      "candidateLines": [99, 248],
+      "candidateLines": [102, 110, 257],
       "review": "mapped-abstraction"
     },
     {
@@ -8549,7 +8549,7 @@
     },
     {
       "path": "workers/slopbot/models.ts",
-      "sha256": "6d4e3e5f22d28254ff71574d403992bff2a44625b9e570f7b354459e76e5504e",
+      "sha256": "e443be718189710f6996f086b03d9f472ab1fbf34fefc1f9dff19cb03b2247fa",
       "models": [
         "formal/models/slopbot/bot_inference_reservations.qnt",
         "formal/models/slopbot/bot_producer_provenance.qnt",
@@ -8557,7 +8557,7 @@
         "formal/models/slopbot/bot_value_dispute_draft.qnt",
         "formal/models/slopbot/bot_value_precall_authority.qnt"
       ],
-      "candidateLines": [86, 90, 95, 184, 207, 208, 352, 354],
+      "candidateLines": [88, 92, 97, 191, 211, 212, 364, 366],
       "review": "mapped-abstraction"
     },
     {
@@ -15398,7 +15398,7 @@
     },
     {
       "path": "formal/models/slopbot/bot_notice_delivery.qnt",
-      "sha256": "32f0574b7eb5f1227a9206281342287fb303bf4dbbb7edb751d8e2788416ae20",
+      "sha256": "8e185cf5f1ca572ffc37552b2eb6a2e115dba23bcd76b125a96c8882229ca9d8",
       "sources": [
         "migrations/0049_slopbot_spend_alerts.sql",
         "migrations/0085_slopbot_provider_failure_notices.sql",
@@ -15454,7 +15454,7 @@
     },
     {
       "path": "formal/models/slopbot/bot_producer_provenance.qnt",
-      "sha256": "48513bcc7128bb8e5a32fbff0ad43a6938e7e4adf5148def047651c18af60bc5",
+      "sha256": "69270e7fbd5dc58700ad6dbf16e23780026bfbc1fc42dd78a9f68bd1958786ae",
       "sources": [
         "src/lib/model-identity.ts",
         "workers/slopbot/models.ts",
@@ -15464,12 +15464,15 @@
       ],
       "scenarios": [
         "allThreeFailuresExhaustRouteTest",
-        "budgetDenialStopsRouteTest",
+        "budgetDenialSkipsTerraAndReachesOrbioTest",
+        "budgetDenialThenOrbioFailureEndsRouteTest",
         "fallbackHasIndependentAdmissionTest",
-        "missingOrbioDoesNotCreateReceiptTest",
-        "orbioFailureImmediatelyReachesSurplusBackupTest",
+        "missingSurplusDoesNotCreateReceiptTest",
+        "orbioFailureIsNeverASpendingDenialTest",
         "retiredProducerHistoryStillReadsTest",
-        "subscriptionNeverClaimsApiReceiptTest"
+        "subscriptionNeverClaimsApiReceiptTest",
+        "surplusFailureReachesTerraTest",
+        "terraDenialStillReachesOrbioTest"
       ]
     },
     {
@@ -15700,7 +15703,7 @@
     },
     {
       "path": "formal/models/slopbot/bot_value_dispute_draft.qnt",
-      "sha256": "d8de734fb1e88f8ec30dd95a5b34340207ec4a3caec1f817e650d6e87a306e6b",
+      "sha256": "0a1a43f449d84ca5f1a88fccbcdff26ad3268c2a1abb7d63b6e3b94e044a938a",
       "sources": [
         "workers/slopbot/models.ts",
         "workers/slopbot/persistence.ts",
@@ -15709,7 +15712,7 @@
       ],
       "scenarios": [
         "authorityIsAnObservationNotContinuousLockTest",
-        "backupAuthorityRefusalRecordsOrbioFailureTest",
+        "backupAuthorityRefusalRecordsSurplusFailureTest",
         "completeSourceKeepsHighConfidenceTest",
         "denyDraftCanBeReturnedTest",
         "exhaustedRoutesRecordAllFailuresTest",
@@ -15720,12 +15723,14 @@
         "lostFinalUsageReplyKeepsCommittedRowWithoutVerdictTest",
         "lowConfidenceIsNotRaisedTest",
         "missingBothProvidersMakesNoCallTest",
-        "missingOrbioStartsSurplusWithoutReceiptTest",
+        "missingSurplusStartsOrbioWithoutReceiptTest",
         "multiSourceJointCapsConfidenceTest",
-        "orbioQuotaFailureImmediatelyUsesSurplusTest",
+        "orbioQuotaFailureIsNotASurplusDenialTest",
         "partialUsagePrefixSurvivesFailureTest",
         "sourceGapCapsConfidenceTest",
-        "surplusBudgetStopsFallbackTest",
+        "surplusBudgetGoesToOrbioTest",
+        "surplusBudgetThenOrbioFailureDefersTest",
+        "surplusBudgetWithoutOrbioKeyDefersTest",
         "usageCannotBeSkippedBeforeReturnTest",
         "usageFailurePreventsVerdictReturnTest",
         "wrongServedModelCannotSupplyVerdictTest"
