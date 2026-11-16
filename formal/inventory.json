@@ -14,7 +14,7 @@
     },
     {
       "path": ".github/workflows/deploy.yml",
-      "sha256": "1e079b108d8e469f940f0d365e84276796a37781c9c213f8ab078eb92f2603f5",
+      "sha256": "b63e8436f0fa263350b0b3cf4649c8943609dcd9f2201a4be0b0fdc43349b97a",
       "models": [
         "formal/models/release/ci_browser_evidence.qnt",
         "formal/models/release/ci_browser_runtime.qnt",
@@ -23,10 +23,10 @@
         "formal/models/release/release_publication.qnt"
       ],
       "candidateLines": [
-        36, 46, 119, 248, 286, 287, 344, 378, 434, 514, 519, 634, 640, 708, 711,
-        737, 738, 759, 771, 837, 1067, 1095, 1183, 1274, 1380, 1382, 1383, 1587,
-        1670, 1823, 1825, 1855, 1964, 1986, 2057, 2068, 2093, 2164, 2177, 2190,
-        2199, 2200, 2201
+        36, 46, 119, 249, 287, 288, 345, 379, 435, 515, 520, 635, 641, 709, 712,
+        738, 739, 760, 772, 838, 1068, 1096, 1188, 1279, 1385, 1387, 1388, 1592,
+        1675, 1828, 1830, 1860, 1969, 1991, 2062, 2073, 2098, 2169, 2182, 2195,
+        2204, 2205, 2206
       ],
       "review": "mapped-abstraction"
     },
@@ -3511,6 +3511,13 @@
       "candidateLines": [
         59, 392, 394, 456, 461, 474, 493, 506, 517, 534, 538, 539, 549, 553, 569
       ],
+      "review": "mapped-abstraction"
+    },
+    {
+      "path": "scripts/check-retained-release-data.ts",
+      "sha256": "7ed98af69d9cae68d33c2374dfe48ad15a33ef2d3c8c754a58215e092192880a",
+      "models": ["formal/models/release/release_publication.qnt"],
+      "candidateLines": [],
       "review": "mapped-abstraction"
     },
     {
@@ -14416,9 +14423,10 @@
     },
     {
       "path": "formal/models/release/release_publication.qnt",
-      "sha256": "a50078e839727a25e26577d584f8f475b7dc174ac222f1d6311e221605a302c4",
+      "sha256": "48113ebb3510373dee689e1668b5224548de5bb3e01c662a2e1c1485d7759d19",
       "sources": [
         ".github/workflows/deploy.yml",
+        "scripts/check-retained-release-data.ts",
         "scripts/dist-manifest.mjs",
         "scripts/prepare-publication.mjs",
         "scripts/prepare-site.mjs",

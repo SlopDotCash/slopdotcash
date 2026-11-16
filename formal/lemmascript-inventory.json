@@ -16,10 +16,10 @@
     "build outputs"
   ],
   "counts": {
-    "files": 780,
-    "functions": 12130,
+    "files": 781,
+    "functions": 12133,
     "selectedContractTargets": 188,
-    "unprovedFunctions": 11942,
+    "unprovedFunctions": 11945,
     "nonTypeScriptFiles": 57
   },
   "limits": [
@@ -2700,6 +2700,11 @@
 {"name":"<ArrowFunction@451>","kind":"ArrowFunction","line":451,"sha256":"709e0357cfd20a24d4c781213dbab209e3f90f11848c9f6f0b76e15cada25cea","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
 {"name":"checkLog","kind":"ArrowFunction","line":464,"sha256":"e0f9a65fbefb4d9455cf8c6d8db81254e3ff3ccfa9dc981e30945998aa13517c","status":"unproved","candidate":"requires-effect-or-language-boundary","syntaxFeatures":["await","library-semantics-review"]},
 {"name":"<ArrowFunction@480>","kind":"ArrowFunction","line":480,"sha256":"08ef07cd45a0fc0c8ca52b4a7b10a5cf845d1f9b237757b08e816c2bf4635a3c","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":["library-semantics-review"]}
+]},
+{"path":"scripts/check-retained-release-data.ts","sha256":"7ed98af69d9cae68d33c2374dfe48ad15a33ef2d3c8c754a58215e092192880a","language":"typescript","disposition":"callables-inventoried","functions":[
+{"name":"assertRetainedReleaseTimes","kind":"FunctionDeclaration","line":12,"sha256":"29cfc2111577e9af67b20c46665c8c0203738b107da1955fce3a871432fcfd64","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":["throw-unreachable-model"]},
+{"name":"checkRetainedReleaseData","kind":"FunctionDeclaration","line":26,"sha256":"9a248ff33eacecdcd1814e964ccea47be079c8ff86c251cfd02dbf9e48076e2a","status":"unproved","candidate":"requires-effect-or-language-boundary","syntaxFeatures":["await","runtime-effect","throw-unreachable-model"]},
+{"name":"<ArrowFunction@35>","kind":"ArrowFunction","line":35,"sha256":"fd9ceed8be5f5857736500673bec32afa62be4dcd44e2a069a03b37432953bfc","status":"unproved","candidate":"requires-effect-or-language-boundary","syntaxFeatures":["await"]}
 ]},
 {"path":"scripts/check-staging-order.mjs","sha256":"d0c77a68c0451c7a73e33413d631b4a15da3006352d6912adac8b8b40be3fbe1","language":"javascript","disposition":"callables-inventoried","functions":[
 {"name":"createdByNonReleaseWorkflow","kind":"FunctionDeclaration","line":44,"sha256":"fec7980d1379a1874c3b362ce6a147c1fafbc296adf0b96dafc156d141a9b04a","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
