@@ -26,16 +26,21 @@ HMAC-SHA256 signature of the exact received byte buffer before extracting
 the delivery ID, decoding fatal UTF-8 and parsing a non-null JSON object
 that is not an array. A corrected signed request may retry after any ingress
 refusal with the same delivery ID. Byte, signature, and strict parsing truth
-belong to the native adapter. The model passes an immutable byte identity
-between those adapter operations and writes no body or signature to storage.
+belong to the native adapter. The model passes one immutable byte record,
+its digest and the count of bytes actually read, between those adapter
+operations, so the size bound, the signature and the decoder all refer to
+the same buffer. The read stops one byte past the limit. Nothing writes the
+body or signature to storage.
 
 ```quint
+import repositoryScope as RS from "./repositoryScope"
+import installation as I from "./installation"
+type Bytes = { digest: str, length: int }
 type GithubEvent = Installation | PullRequest | Issue | PullReview | ReviewComment | IssueComment | Other
 type Ingress = AwaitingSignature | AwaitingDecode | CanClaim | InspectValue | InspectQueue | PersistReopen | SendQueue | AwaitCompletion | InstallPending | Disposed
 type Outcome = NoReply | WrongRoute | TooLarge | WrongSignature | Malformed | Duplicate | NotRegistered
   | ReopenUnavailable | Ignored | ValuationPending | Queued | Failed
 type OrdinaryReceipt = NoReceipt | PendingReceipt | ProcessedReceipt
-type Capability = Unregistered | Active | SecurityOnly | ReversalOnly
 type JobKind = NoJob | Review | Appeal | AppealCommand | HumanReopen
 type JobScope = NoScope | OrdinaryReview | SecurityReview | ReversalWork
 type ItemKind = IssueItem | PullItem
@@ -48,42 +53,49 @@ type ReopenSource = { installation: int, repository: int, kind: ItemKind, number
 type ReopenObservation = { source: ReopenSource, node: str, currentRevision: str, author: int,
   itemState: ItemState, maintainer: bool, existingDebit: bool, reversalOnly: bool }
 type Body = { event: GithubEvent, deliveryId: str, valueCandidate: bool, value: ValueSource,
-  job: JobKind, reopen: ReopenSource, publicRepo: bool, selfSender: bool, qualityReceipt: bool }
-type Request = { id: int, bytes: str, phase: Ingress, status: int, result: Outcome, body: Body,
+  job: JobKind, reopen: ReopenSource, publicRepo: bool, selfSender: bool, qualityReceipt: bool,
+  change: I::InstallEvent }
+type Request = { id: int, bytes: Bytes, phase: Ingress, status: int, result: Outcome, body: Body,
   valued: bool, scope: JobScope, completion: Outcome }
 type Webhook = { deliveryId: str, receipt: OrdinaryReceipt, firstEvent: GithubEvent, exists: bool,
   installationProcessed: bool, value: ValueSource, reopen: ReopenSource, confirmed: bool,
-  requests: List[Request], sends: int }
+  requests: List[Request], sends: int, install: I::Installation, installDelivery: int }
 pure val noValue: ValueSource = { installation: 0, repository: 0, owner: "", repo: "", pull: 0 }
 pure val noReopen: ReopenSource = { installation: 0, repository: 0, kind: IssueItem, number: 0,
   sender: 0, node: "", revision: "", occurred: 0 }
+pure val noChange: I::InstallEvent = { delivery: 0, kind: I::OtherInstallAction, sourceTime: 0, hasAccount: false,
+  validTime: false }
 pure val noBody: Body = { event: Other, deliveryId: "", valueCandidate: false, value: noValue,
-  job: NoJob, reopen: noReopen, publicRepo: false, selfSender: false, qualityReceipt: false }
-pure val noRequest: Request = { id: 0, bytes: "", phase: Disposed, status: 0, result: NoReply,
+  job: NoJob, reopen: noReopen, publicRepo: false, selfSender: false, qualityReceipt: false, change: noChange }
+pure val noBytes: Bytes = { digest: "", length: 0 }
+pure val noRequest: Request = { id: 0, bytes: noBytes, phase: Disposed, status: 0, result: NoReply,
   body: noBody, valued: false, scope: NoScope, completion: NoReply }
 pure val initial: Webhook = { deliveryId: "", receipt: NoReceipt, firstEvent: Other, exists: false,
-  installationProcessed: false, value: noValue, reopen: noReopen, confirmed: false, requests: List(), sends: 0 }
+  installationProcessed: false, value: noValue, reopen: noReopen, confirmed: false, requests: List(), sends: 0,
+  install: I::initial, installDelivery: 0 }
 pure def request(w: Webhook, requestId: int): Request = w.requests.select(r => r.id == requestId).nthOr(0, noRequest)
 pure def updateRequest(r: Request, w: Webhook): Webhook =
   { ...w, requests: w.requests.listMap(old => if (old.id == r.id) r else old) }
 pure def answer(r: Request, status: int, reply: Outcome, w: Webhook): Webhook =
   updateRequest({ ...r, phase: Disposed, status: status, result: reply }, w)
 pure def canReceive(w: Webhook, requestId: int): bool = requestId > 0 and request(w, requestId).id == 0
-pure def receive(w: Webhook, requestId: int, bytes: str, receivedBytes: int, route: bool): Webhook =
-  val bounded = receivedBytes >= 0 and receivedBytes <= 26214400 and bytes != ""
+pure def receive(w: Webhook, requestId: int, bytes: Bytes, route: bool): Webhook =
+  val bounded = bytes.length >= 0 and bytes.length <= 26214400 and bytes.digest != ""
   val accepted = route and bounded
   { ...w, requests: w.requests.append({ ...noRequest, id: requestId, bytes: bytes,
     phase: if (accepted) AwaitingSignature else Disposed, status: if (accepted) 0 else if (route) 413 else 404,
     result: if (accepted) NoReply else if (route) TooLarge else WrongRoute }) }
 pure def canAuthenticate(w: Webhook, requestId: int): bool = request(w, requestId).phase == AwaitingSignature
-pure def authenticate(w: Webhook, requestId: int, signedBytes: str, verifiedHmac: bool): Webhook =
+pure def authenticate(w: Webhook, requestId: int, signedBytes: Bytes, verifiedHmac: bool): Webhook =
   val r = request(w, requestId)
   if (verifiedHmac and signedBytes == r.bytes) updateRequest({ ...r, phase: AwaitingDecode }, w)
   else answer(r, 401, WrongSignature, w)
 pure def canDecode(w: Webhook, requestId: int): bool = request(w, requestId).phase == AwaitingDecode
-pure def decode(w: Webhook, requestId: int, decodedBytes: str, strictUtf8: bool, jsonObject: bool, body: Body): Webhook =
+pure def decode(w: Webhook, requestId: int, decodedBytes: Bytes, strictUtf8: bool, jsonObject: bool, body: Body): Webhook =
   val r = request(w, requestId)
-  if (decodedBytes == r.bytes and strictUtf8 and jsonObject and body.deliveryId != "" and
+  val changeParsed = if (body.event == Installation) body.change.delivery > 0 and body.change.sourceTime >= 0
+    else body.change == noChange
+  if (decodedBytes == r.bytes and strictUtf8 and jsonObject and body.deliveryId != "" and changeParsed and
     (w.deliveryId == "" or body.deliveryId == w.deliveryId))
     updateRequest({ ...r, body: body, phase: CanClaim }, w)
   else answer(r, 400, Malformed, w)
@@ -96,9 +108,15 @@ pure def decode(w: Webhook, requestId: int, decodedBytes: str, strictUtf8: bool,
 A processed receipt replies as duplicate before the value or queue path.
 Concurrent pending requests can both advance. Installation receipts use
 a separate completion flag and require the retained event to have the
-installation kind. The separately authorized installation owner handles
-ordered installation mutations and notices. A failed installation attempt
-can retry without running ordinary release.
+installation kind. The change applied is the one decoded from the
+authenticated bytes of this delivery, and the first claimed request fixes
+its GitHub delivery number, so a request for the same delivery ID cannot
+apply a different change. The [installation](./installation.md) change, its
+owner notices and the completion flag commit in one batch. This machine
+holds one delivery ID; the order of changes across deliveries is checked
+in the installation unit. A failed batch or an
+invalid GitHub source time leaves the flag unset, so a redelivery retries
+without running ordinary release.
 
 ```quint
 pure def canClaim(w: Webhook, requestId: int): bool =
@@ -110,14 +128,19 @@ pure def claim(w: Webhook, requestId: int): Webhook =
   val duplicate = if (installation) w.exists and (w.firstEvent != Installation or w.installationProcessed)
     else w.receipt == ProcessedReceipt
   val stored = if (w.exists) w else { ...w, exists: true, deliveryId: r.body.deliveryId,
-    firstEvent: r.body.event, receipt: PendingReceipt }
+    firstEvent: r.body.event, receipt: PendingReceipt,
+    installDelivery: if (w.installDelivery == 0) r.body.change.delivery else w.installDelivery }
   if (duplicate) answer(r, 202, Duplicate, w)
   else updateRequest({ ...r, phase: if (installation) InstallPending else InspectValue }, stored)
-pure def canFinishInstallation(w: Webhook, requestId: int): bool =
+pure def canFinishInstallation(w: Webhook, requestId: int, committed: bool): bool =
   request(w, requestId).phase == InstallPending and w.exists and w.firstEvent == Installation
+    and request(w, requestId).body.change.delivery == w.installDelivery and w.installDelivery > 0
 pure def finishInstallation(w: Webhook, requestId: int, committed: bool): Webhook =
   val r = request(w, requestId)
-  if (committed) answer(r, 202, Ignored, { ...w, installationProcessed: true })
+  val change = r.body.change
+  if (committed and I::canDeliver(w.install, change) and (change.validTime or not(change.hasAccount)))
+    answer(r, 202, Ignored, { ...w, installationProcessed: true, install: I::deliver(w.install, change) })
+  else if (committed and I::canDeliver(w.install, change)) answer(r, 500, Failed, { ...w, install: I::deliver(w.install, change) })
   else answer(r, 503, Failed, w)
 pure def releaseOrdinary(w: Webhook): Webhook =
   if (w.reopen != noReopen) w
@@ -143,28 +166,29 @@ failures. An absent job may finish as ignored or valuation pending.
 pure def validValue(v: ValueSource): bool = v.installation > 0 and v.repository > 0 and v.pull > 0
   and v.owner != "" and v.repo != ""
 pure def canInspectValue(w: Webhook, requestId: int): bool = request(w, requestId).phase == InspectValue
-pure def inspectValue(w: Webhook, requestId: int, registration: Capability, writeRegistration: Capability, lookupOk: bool): Webhook =
+pure def inspectValue(w: Webhook, requestId: int, registration: RS::RegistryObservation,
+  writeRegistration: RS::RegistryObservation, lookupOk: bool): Webhook =
   val r = request(w, requestId)
-  val wants = r.body.valueCandidate and registration == Active
+  val wants = r.body.valueCandidate and RS::slopbotScope(registration) == RS::Contributor
   val value = r.body.value
-  val conflict = wants and (writeRegistration != Active or not(validValue(value)) or (w.value != noValue and w.value != value))
+  val conflict = wants and (RS::slopbotScope(writeRegistration) != RS::Contributor or not(validValue(value)) or (w.value != noValue and w.value != value))
   if (not(lookupOk) or conflict) answer(r, 503, Failed, releaseOrdinary(w))
   else updateRequest({ ...r, phase: InspectQueue, valued: wants },
     { ...w, value: if (wants) value else w.value })
 pure def qualifiedJob(body: Body): JobKind =
   if (not(body.publicRepo) or (body.selfSender and not(body.job == Review and body.qualityReceipt))) NoJob
   else body.job
-pure def queueScope(job: JobKind, registration: Capability): JobScope =
+pure def queueScope(job: JobKind, scope: RS::Scope): JobScope =
   if (job == NoJob) NoScope
-  else if (registration == Active) OrdinaryReview
-  else if (registration == SecurityOnly) SecurityReview
-  else if (registration == ReversalOnly and (job == Appeal or job == AppealCommand or job == HumanReopen)) ReversalWork
+  else if (scope == RS::Contributor) OrdinaryReview
+  else if (scope == RS::SecurityOnly) SecurityReview
+  else if (scope == RS::ReversalOnly and (job == Appeal or job == AppealCommand or job == HumanReopen)) ReversalWork
   else NoScope
 pure def canInspectQueue(w: Webhook, requestId: int): bool = request(w, requestId).phase == InspectQueue
-pure def inspectQueue(w: Webhook, requestId: int, registration: Capability, lookupOk: bool): Webhook =
+pure def inspectQueue(w: Webhook, requestId: int, registration: RS::RegistryObservation, lookupOk: bool): Webhook =
   val r = request(w, requestId)
   val job = qualifiedJob(r.body)
-  val scope = queueScope(job, registration)
+  val scope = queueScope(job, RS::slopbotScope(registration))
   if (job == NoJob) updateRequest({ ...r, phase: AwaitCompletion,
     completion: if (r.valued) ValuationPending else Ignored }, w)
   else if (not(lookupOk)) answer(r, 503, Failed, releaseOrdinary(w))
@@ -250,14 +274,26 @@ pure val sourceReopen: ReopenSource = { installation: 1, repository: 1, kind: Pu
 pure val reviewBody: Body = { ...noBody, event: PullRequest, deliveryId: "delivery", publicRepo: true, job: Review }
 pure val valueBody: Body = { ...reviewBody, valueCandidate: true, value: sourceValue, job: NoJob }
 pure val reopenBody: Body = { ...reviewBody, job: HumanReopen, valueCandidate: true, value: sourceValue, reopen: sourceReopen }
-pure val bodyValues = Set(reviewBody, valueBody, reopenBody, { ...reviewBody, event: Installation, job: NoJob })
+pure val createdChange: I::InstallEvent = { delivery: 1, kind: I::Created, sourceTime: 1, hasAccount: true, validTime: true }
+pure val bodyValues = Set(reviewBody, valueBody, reopenBody,
+  { ...reviewBody, event: Installation, job: NoJob, change: createdChange },
+  { ...reviewBody, event: Installation, job: NoJob, change: { ...createdChange, kind: I::Suspend, validTime: false } })
 pure val evidenceValues = Set({source: sourceReopen, node: "node", currentRevision: "next", author: 1,
   itemState: OpenItem, maintainer: true, existingDebit: true, reversalOnly: false})
 pure val requestIdValues = Set(1, 2)
-pure val bytesValues = Set("body")
-pure val signedBytesValues = Set("body", "altered")
+pure val bodyBytes: Bytes = { digest: "body", length: 26214400 }
+pure val bytesValues = Set(bodyBytes, { digest: "body", length: 26214401 })
+pure val signedBytesValues = Set(bodyBytes, { digest: "altered", length: 26214400 })
 pure val decodedBytesValues = signedBytesValues
-pure val receivedBytesValues = Set(1, 26214400, 26214401)
+pure val activeRegistry: RS::RegistryObservation = { lookup: RS::CurrentPath, registeredId: 1, observedId: 1,
+  rowActive: true, manifestActive: true, retirement: RS::NotRetired, restriction: RS::Clear, flags: RS::NotFlagged }
+pure val registrationValues = Set(activeRegistry, { ...activeRegistry, rowActive: false },
+  { ...activeRegistry, retirement: RS::OwnerRetired })
+pure val writeRegistrationValues = Set(activeRegistry, { ...activeRegistry, observedId: 2 })
+pure val committedValues = Set(true, false)
+pure def alwaysInstallationFlagMatchesChange(w: Webhook): bool =
+  w.installationProcessed implies (w.firstEvent == Installation and w.install.processed.includes(w.installDelivery)
+    and w.installDelivery > 0)
 pure val weight_receive = 4
 pure val weight_authenticate = 4
 pure val weight_decode = 4
@@ -268,7 +304,9 @@ pure val weight_bindReopen = 4
 pure val weight_send = 4
 ```
 
-The model does not validate live D1 races, queue duplicate effects,
-WebCrypto or GitHub receipt truth. Strict object parsing protects the durable
-boundary. The exact nested-payload normalization and native event/command
-grammar remain adapter conformance.
+The model does not validate live D1 races, WebCrypto or GitHub receipt
+truth. The [job queue](./jobQueue.md) models duplicate copies, retries and
+dead letters after a send. Strict object parsing protects the durable
+boundary. The exact nested-payload normalization remains adapter
+conformance. Which actor may issue which `/slopbot` command belongs to the
+appeal and dispute rules, which recheck the sender on consumption.
