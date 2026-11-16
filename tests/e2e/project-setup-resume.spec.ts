@@ -89,7 +89,7 @@ test("a resumed setup check restarts after vault setup suspends and reveals the 
     });
     await suspended;
     await expect(
-      page.getByText("Loading page…", { exact: true }),
+      page.getByTitle("Loading page", { exact: true }),
     ).toBeVisible();
     const firstResponse = page.waitForResponse((response) =>
       response.url().includes("project-setup/eliza/check"),
