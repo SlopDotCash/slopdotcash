@@ -8846,6 +8846,13 @@
       "review": "mapped-abstraction"
     },
     {
+      "path": "workers/slopbot/value-commit-pages.ts",
+      "sha256": "f8caa6293a9eaad5256b9a444335d3c6946efeb1968398784816f13a0098b92d",
+      "models": ["formal/models/points/value_source_cache.qnt"],
+      "candidateLines": [38, 39, 76],
+      "review": "mapped-abstraction"
+    },
+    {
       "path": "workers/slopbot/value-comparison-counts.ts",
       "sha256": "145d51cb69053c4afbb6699110716e1ee832c828d71d446f3f5abdc5f832afb0",
       "models": ["formal/models/slopbot/bot_evidence_integrity.qnt"],
@@ -8954,12 +8961,12 @@
     },
     {
       "path": "workers/slopbot/value-import.ts",
-      "sha256": "c7da5d6d301a18266c42f10a1f7f6543b19067085d9e1a03c5b3c803443f6fa6",
+      "sha256": "5722004d62e43a2c5caa54bcdb22f54e738d24f85f882b69cf5342c469b69b24",
       "models": [
         "formal/models/slopbot/bot_historical_import.qnt",
         "formal/models/slopbot/historical_subscription_intake.qnt"
       ],
-      "candidateLines": [172],
+      "candidateLines": [176],
       "review": "mapped-abstraction"
     },
     {
@@ -9115,13 +9122,13 @@
     },
     {
       "path": "workers/slopbot/value-publication.ts",
-      "sha256": "60b01176dc2e61ce62c4865dbaa14407a6f4183aa3f478e4f49aa0ea8915a978",
+      "sha256": "0dc9240d4194062dea81707aa1b7e49d2f7934458abb8dac16014f3a80ff82ec",
       "models": [
         "formal/models/slopbot/bot_publication_transaction.qnt",
         "formal/models/slopbot/bot_value_freshness.qnt",
         "formal/models/slopbot/historical_subscription_intake.qnt"
       ],
-      "candidateLines": [116, 248, 250, 253, 255, 258, 269, 272, 274],
+      "candidateLines": [117, 250, 252, 255, 257, 260, 271, 274, 276],
       "review": "mapped-abstraction"
     },
     {
@@ -9218,7 +9225,7 @@
     },
     {
       "path": "workers/slopbot/value-work-unit-publication.ts",
-      "sha256": "b806c18a348a2d221326354851e1e1bb2b835263eaf2bf98d343c6dd66037802",
+      "sha256": "68d37f5b5bd614dda1657a35eeb73d69c51c94cca21d09bf3895cd219fbc4fde",
       "models": [
         "formal/models/slopbot/bot_publication_transaction.qnt",
         "formal/models/slopbot/bot_value_freshness.qnt",
@@ -14343,6 +14350,18 @@
       "sha256": "fc4eb45346ada970828ac4912549a7523b5c3696cd58722003bcf149b50dab5b",
       "sources": ["scripts/benchmark-points-snapshot.ts"],
       "scenarios": ["nondeterministicReplayRefusedTest", "warmupExcludedTest"]
+    },
+    {
+      "path": "formal/models/points/value_source_cache.qnt",
+      "sha256": "0bca3b7f14e34fb46cd248cab5bbf391a8d456a0fd1956e67744a01cf5db0aeb",
+      "sources": ["workers/slopbot/value-commit-pages.ts"],
+      "scenarios": [
+        "currentPublicIdentityPermitsReuseTest",
+        "incompleteCannotRetainTest",
+        "mutableCannotRetainTest",
+        "newClientNeedsRepositoryTest",
+        "privateRepositoryCannotReuseTest"
+      ]
     },
     {
       "path": "formal/models/referrals/referral_accrual.qnt",
