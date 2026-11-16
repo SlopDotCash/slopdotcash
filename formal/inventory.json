@@ -4082,11 +4082,11 @@
     },
     {
       "path": "scripts/inspect-fee-worker-operations.ts",
-      "sha256": "0789c71c514a53ffde3882f9a12a90bc572f12ccb60c58d6657cdf8208aa60c4",
+      "sha256": "858692d88fa7274117f3f98b4f0054ca812ce3e766f26964ed8b90832cde6bdc",
       "models": ["formal/models/release/workflow_authority.qnt"],
       "candidateLines": [
         40, 44, 56, 58, 79, 117, 156, 165, 170, 173, 200, 217, 224, 263, 348,
-        378, 382, 490
+        378, 382, 503
       ],
       "review": "mapped-abstraction"
     },
@@ -4417,9 +4417,9 @@
     },
     {
       "path": "scripts/private-payout-packet.ts",
-      "sha256": "904f5c2eeac392f21ba5a28ec14ae07b525a5baaa281f7bdf4161b4c2a208f1f",
+      "sha256": "76834ca65fec51044bd4c78f3061943f5672f89acd9ae34ba172c684e0edfcc8",
       "models": ["formal/models/points/source_import.qnt"],
-      "candidateLines": [82],
+      "candidateLines": [30, 127, 135, 158],
       "review": "mapped-abstraction"
     },
     {
@@ -4504,9 +4504,9 @@
     },
     {
       "path": "scripts/qualify-value-models.ts",
-      "sha256": "9ce1c7ad0c327cfb083f6693bc246d4060aff4102910c308ee565937baa73c57",
+      "sha256": "ac071af313784eb6be707a94e20d13f2d907cd18b9bea13928abcec2112fefe6",
       "models": ["formal/models/slopbot/qualification_value_budget.qnt"],
-      "candidateLines": [230],
+      "candidateLines": [99, 248],
       "review": "mapped-abstraction"
     },
     {

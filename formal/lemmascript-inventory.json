@@ -17,9 +17,9 @@
   ],
   "counts": {
     "files": 792,
-    "functions": 12308,
+    "functions": 12312,
     "selectedContractTargets": 188,
-    "unprovedFunctions": 12120,
+    "unprovedFunctions": 12124,
     "nonTypeScriptFiles": 59
   },
   "limits": [
@@ -4363,7 +4363,7 @@
 {"name":"<ArrowFunction@105>","kind":"ArrowFunction","line":105,"sha256":"d9cfb1494188399b82172cffadf0ac698dab97ec4a9a11aefbd3e6ba33137f04","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
 {"name":"<ArrowFunction@154>","kind":"ArrowFunction","line":154,"sha256":"4a15ac82b766da750530647fb908d31b314b9ab9eca68b397a69bc650c4cf7d3","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]}
 ]},
-{"path":"scripts/inspect-fee-worker-operations.ts","sha256":"0789c71c514a53ffde3882f9a12a90bc572f12ccb60c58d6657cdf8208aa60c4","language":"typescript","disposition":"callables-inventoried","functions":[
+{"path":"scripts/inspect-fee-worker-operations.ts","sha256":"858692d88fa7274117f3f98b4f0054ca812ce3e766f26964ed8b90832cde6bdc","language":"typescript","disposition":"callables-inventoried","functions":[
 {"name":"timestamp","kind":"ArrowFunction","line":48,"sha256":"aec7e9a13af65bfb5fbe50a070a71f947b9da9fe7ee8af8b05d03d0df50818c0","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
 {"name":"feeErrorCategory","kind":"FunctionDeclaration","line":61,"sha256":"00bb7f2150b171757e25c065a348e1961891b00bf62886e744bb08a5b30b854a","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":["library-semantics-review"]},
 {"name":"sanitizeFeeTail","kind":"FunctionDeclaration","line":85,"sha256":"f5bed69a158a6bfa74ddc92c1e7c102ce3bfc68a53261e199d95ed8185705632","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
@@ -4374,7 +4374,7 @@
 {"name":"<ArrowFunction@184>","kind":"ArrowFunction","line":184,"sha256":"1d3badca3aa54293f0f9958a3e68d856a4f01050389a12983348ac9ace656b09","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":["throw-unreachable-model"]},
 {"name":"<ArrowFunction@198>","kind":"ArrowFunction","line":198,"sha256":"a5016a57379ee93356b1f8031061f1b40de54ca2f11d0d48bef986307a1fce59","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
 {"name":"<ArrowFunction@206>","kind":"ArrowFunction","line":206,"sha256":"a3575e114c65f1e10a253da0f04baa086c35930e7dc90495360accbc09f4155b","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":["throw-unreachable-model"]},
-{"name":"inspectFeeOperations","kind":"FunctionDeclaration","line":233,"sha256":"6362dd64a3cc6f9627e00f3d27f1ccb4584be3d30a32bac109e9dd6ce9b56a22","status":"unproved","candidate":"requires-effect-or-language-boundary","syntaxFeatures":["await","promise-construction","runtime-effect","throw-unreachable-model"]},
+{"name":"inspectFeeOperations","kind":"FunctionDeclaration","line":233,"sha256":"4ecff80e562e22768407e5649dc8492eed288c87926b9ab42da6b24d053c8cc0","status":"unproved","candidate":"requires-effect-or-language-boundary","syntaxFeatures":["await","promise-construction","runtime-effect","throw-unreachable-model"]},
 {"name":"api","kind":"FunctionDeclaration","line":252,"sha256":"9b203d76316a619ad1d4dbab87fcedf7a9eaf80d900931608a4e5ae1771261b8","status":"unproved","candidate":"requires-effect-or-language-boundary","syntaxFeatures":["await","throw-unreachable-model"]},
 {"name":"<ArrowFunction@273>","kind":"ArrowFunction","line":273,"sha256":"06896532663e4c18e477f652ec61e0a54cb598b060ce1b4d3d987ceab4cdc63c","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
 {"name":"<ArrowFunction@286>","kind":"ArrowFunction","line":286,"sha256":"19150a322fd405593b23e040a0544b1bfbcf42a11ea45aacad562bebc15e6b18","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
@@ -4384,9 +4384,10 @@
 {"name":"<ArrowFunction@352>","kind":"ArrowFunction","line":352,"sha256":"8743ecd3bb3cbdbf1bc848e0902bac8c0662fc5e65c49d310d7f78ab78962119","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
 {"name":"<ArrowFunction@355>","kind":"ArrowFunction","line":355,"sha256":"53ad0c57c538360b6ee177de3276833ed22a9f88eb4d13c86c7688009983cb6d","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
 {"name":"<ArrowFunction@368>","kind":"ArrowFunction","line":368,"sha256":"12bcd29b210ee4a8f16b0d9c49bfedc91b5a8ffecd183ad9a917cc3a85090a9c","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
-{"name":"<Constructor@413>","kind":"Constructor","line":413,"sha256":"da6386768e6e5e215cf7ad1fbb4fc775555e92c5ee033c9c10ded54144d354f5","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
-{"name":"<ArrowFunction@437>","kind":"ArrowFunction","line":437,"sha256":"a64eb763780a6043ddc6209f810ee72b3b68c6b171ec515b93d1e008785e97bc","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
-{"name":"<ArrowFunction@451>","kind":"ArrowFunction","line":451,"sha256":"e41df6e8393ce3180824ca564f789cd8d55e1dfe198d856cc9430d70211efa38","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]}
+{"name":"<ArrowFunction@388>","kind":"ArrowFunction","line":388,"sha256":"e360190997659002045e5e0bb2072cf7560abe48f1c88a514447f53db4329f58","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
+{"name":"<Constructor@416>","kind":"Constructor","line":416,"sha256":"da6386768e6e5e215cf7ad1fbb4fc775555e92c5ee033c9c10ded54144d354f5","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
+{"name":"<ArrowFunction@441>","kind":"ArrowFunction","line":441,"sha256":"a64eb763780a6043ddc6209f810ee72b3b68c6b171ec515b93d1e008785e97bc","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
+{"name":"<ArrowFunction@462>","kind":"ArrowFunction","line":462,"sha256":"e41df6e8393ce3180824ca564f789cd8d55e1dfe198d856cc9430d70211efa38","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]}
 ]},
 {"path":"scripts/install-ci-chromium.sh","sha256":"8dea3d439d4de289f68fabab2f956e45d772ffbb75745cb93421c963981357e0","language":"shell","disposition":"outside-typescript-toolchain","functions":[
 
@@ -4903,24 +4904,27 @@
 {"name":"<ArrowFunction@248>","kind":"ArrowFunction","line":248,"sha256":"def8e16f1ba8679c0c094d3ec769beaa8b55d78c333c2af8030336ceecf30347","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":["throw-unreachable-model"]},
 {"name":"<ArrowFunction@330>","kind":"ArrowFunction","line":330,"sha256":"3012d9e790f645e17f66642e93f97a37f8cc46e84348a803a0c1e3d347651e53","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]}
 ]},
-{"path":"scripts/private-payout-packet.ts","sha256":"904f5c2eeac392f21ba5a28ec14ae07b525a5baaa281f7bdf4161b4c2a208f1f","language":"typescript","disposition":"callables-inventoried","functions":[
-{"name":"requireThat","kind":"FunctionDeclaration","line":17,"sha256":"625ca893b7d367d822e6e28bbe187aa7be41fa482b1795acddd88fc0831b68d5","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":["throw-unreachable-model"]},
-{"name":"parsePrivatePacketManifest","kind":"FunctionDeclaration","line":20,"sha256":"9c60b18082a03cc51fe947c56a5e640024390fa856bc07e1a5bfda0171843747","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":["library-semantics-review"]},
-{"name":"digest","kind":"ArrowFunction","line":24,"sha256":"694eaf7ac5d5f679e97ab84edf300c478ca0254ff111c8b004fa5e156d13e2cc","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
-{"name":"size","kind":"ArrowFunction","line":26,"sha256":"70a334d3325c8352be5a9d8c34a97357e45a968f2eb05c6484cbd692487169fc","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
-{"name":"<ArrowFunction@41>","kind":"ArrowFunction","line":41,"sha256":"f5a67c4ae514a02fd9162ef39c56e51b41cf10711e736fdcc10dec2124ab68f2","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":["library-semantics-review"]},
-{"name":"<ArrowFunction@47>","kind":"ArrowFunction","line":47,"sha256":"8e32cc14d2aac73c14b000a30ee98a616e711f05984db8179b56549beea59bf4","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
-{"name":"privatePayoutStorage","kind":"FunctionDeclaration","line":54,"sha256":"96dc6e5328e6d5a5935ac76e74ec267dae289c9108923c9989aaf4737a55b416","status":"unproved","candidate":"requires-effect-or-language-boundary","syntaxFeatures":["await"]},
-{"name":"call","kind":"FunctionDeclaration","line":64,"sha256":"a63ad69d2c5e68f20e393627b9a677307be2584abb980612d2007eb0eb603b08","status":"unproved","candidate":"requires-effect-or-language-boundary","syntaxFeatures":["await"]},
-{"name":"json","kind":"FunctionDeclaration","line":86,"sha256":"efe6a32647c2c2ca482fd589c4871bdb98354935767520267f5d0049f03170e3","status":"unproved","candidate":"requires-effect-or-language-boundary","syntaxFeatures":["await"]},
-{"name":"privateBucket","kind":"FunctionDeclaration","line":99,"sha256":"780b9ff2b73c570e76a1719c7727fed2ad5cab00c6f56202be9259e3b2ce1fcd","status":"unproved","candidate":"requires-effect-or-language-boundary","syntaxFeatures":["await"]},
-{"name":"key","kind":"ArrowFunction","line":119,"sha256":"278d49bfed7e0b6a1da02f213f0668a5fc4aad0d2f3666e7ba5bb280da5966b2","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
-{"name":"get","kind":"FunctionDeclaration","line":121,"sha256":"661db71e697ed5f6114550855f6dddcf03e3046195ed0c35335157409f25a084","status":"unproved","candidate":"requires-effect-or-language-boundary","syntaxFeatures":["await"]},
-{"name":"putExact","kind":"FunctionDeclaration","line":125,"sha256":"68ae4545066b40005a5b82fe6d727441b657a7fe8a375e6019d661210f9991a2","status":"unproved","candidate":"requires-effect-or-language-boundary","syntaxFeatures":["await"]},
-{"name":"stage","kind":"MethodDeclaration","line":146,"sha256":"6af0895b68dc887d2c571facbc64e73278673877bf243608a7e50d3c30a2ebef","status":"unproved","candidate":"requires-effect-or-language-boundary","syntaxFeatures":["await"]},
-{"name":"read","kind":"MethodDeclaration","line":172,"sha256":"51d397c627f61beff4854a46711dfdcd4c09ea29c4407f23fc0e94a50ec36e6b","status":"unproved","candidate":"requires-effect-or-language-boundary","syntaxFeatures":["await"]},
-{"name":"<ArrowFunction@203>","kind":"ArrowFunction","line":203,"sha256":"47869b241decef9503fd84b31121582641de2fed551185f7e00280ebc5286bd1","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
-{"name":"<ArrowFunction@247>","kind":"ArrowFunction","line":247,"sha256":"d5c583b77cf0babe57c98fb96ecb2594afae2a500b1f1da30474d2bfad8b15be","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]}
+{"path":"scripts/private-payout-packet.ts","sha256":"76834ca65fec51044bd4c78f3061943f5672f89acd9ae34ba172c684e0edfcc8","language":"typescript","disposition":"callables-inventoried","functions":[
+{"name":"<Constructor@22>","kind":"Constructor","line":22,"sha256":"b5f95e603b5fea3f3025219b676b5443a635f300a1581aaec0be689831a42275","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
+{"name":"privatePacketFailure","kind":"FunctionDeclaration","line":31,"sha256":"36372adf8ca0ae02f16870da10eb6bc6f03faacdba0c0e8a2adaed83e0d43d21","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
+{"name":"requireThat","kind":"FunctionDeclaration","line":56,"sha256":"625ca893b7d367d822e6e28bbe187aa7be41fa482b1795acddd88fc0831b68d5","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":["throw-unreachable-model"]},
+{"name":"parsePrivatePacketManifest","kind":"FunctionDeclaration","line":59,"sha256":"9c60b18082a03cc51fe947c56a5e640024390fa856bc07e1a5bfda0171843747","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":["library-semantics-review"]},
+{"name":"digest","kind":"ArrowFunction","line":63,"sha256":"694eaf7ac5d5f679e97ab84edf300c478ca0254ff111c8b004fa5e156d13e2cc","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
+{"name":"size","kind":"ArrowFunction","line":65,"sha256":"70a334d3325c8352be5a9d8c34a97357e45a968f2eb05c6484cbd692487169fc","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
+{"name":"<ArrowFunction@80>","kind":"ArrowFunction","line":80,"sha256":"f5a67c4ae514a02fd9162ef39c56e51b41cf10711e736fdcc10dec2124ab68f2","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":["library-semantics-review"]},
+{"name":"<ArrowFunction@86>","kind":"ArrowFunction","line":86,"sha256":"8e32cc14d2aac73c14b000a30ee98a616e711f05984db8179b56549beea59bf4","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
+{"name":"privatePayoutStorage","kind":"FunctionDeclaration","line":93,"sha256":"cea866927011a108eff8f37df4879310878d3b17fa3a12133901a1af91996cc1","status":"unproved","candidate":"requires-effect-or-language-boundary","syntaxFeatures":["await","throw-unreachable-model"]},
+{"name":"call","kind":"FunctionDeclaration","line":103,"sha256":"511cced8ecd12b6a179b424c2cd7d8c0b003d49849f82940635cd5c97ecd836a","status":"unproved","candidate":"requires-effect-or-language-boundary","syntaxFeatures":["await","throw-unreachable-model"]},
+{"name":"<ArrowFunction@129>","kind":"ArrowFunction","line":129,"sha256":"e360190997659002045e5e0bb2072cf7560abe48f1c88a514447f53db4329f58","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
+{"name":"json","kind":"FunctionDeclaration","line":141,"sha256":"1b94729631c764c0c49cca5710aaa021afb9e42de3dbff4372ed7ae3d1f15ef0","status":"unproved","candidate":"requires-effect-or-language-boundary","syntaxFeatures":["await","throw-unreachable-model"]},
+{"name":"privateBucket","kind":"FunctionDeclaration","line":164,"sha256":"a00aec424e08f5ff9fc373ae4b628cab2fb43e259019551a6048dd2c514698f9","status":"unproved","candidate":"requires-effect-or-language-boundary","syntaxFeatures":["await"]},
+{"name":"key","kind":"ArrowFunction","line":194,"sha256":"278d49bfed7e0b6a1da02f213f0668a5fc4aad0d2f3666e7ba5bb280da5966b2","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
+{"name":"get","kind":"FunctionDeclaration","line":196,"sha256":"eecb2bd249ba590167361a330c6bd8cc7a997798c5877a810934bd0e07f6d0c4","status":"unproved","candidate":"requires-effect-or-language-boundary","syntaxFeatures":["await"]},
+{"name":"putExact","kind":"FunctionDeclaration","line":200,"sha256":"2b7069ae77feca6faa926d91ea22eefacf202baeac1309b96689933a23f8eeb7","status":"unproved","candidate":"requires-effect-or-language-boundary","syntaxFeatures":["await"]},
+{"name":"stage","kind":"MethodDeclaration","line":221,"sha256":"6af0895b68dc887d2c571facbc64e73278673877bf243608a7e50d3c30a2ebef","status":"unproved","candidate":"requires-effect-or-language-boundary","syntaxFeatures":["await"]},
+{"name":"read","kind":"MethodDeclaration","line":247,"sha256":"51d397c627f61beff4854a46711dfdcd4c09ea29c4407f23fc0e94a50ec36e6b","status":"unproved","candidate":"requires-effect-or-language-boundary","syntaxFeatures":["await"]},
+{"name":"<ArrowFunction@278>","kind":"ArrowFunction","line":278,"sha256":"47869b241decef9503fd84b31121582641de2fed551185f7e00280ebc5286bd1","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
+{"name":"<ArrowFunction@324>","kind":"ArrowFunction","line":324,"sha256":"d5c583b77cf0babe57c98fb96ecb2594afae2a500b1f1da30474d2bfad8b15be","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]}
 ]},
 {"path":"scripts/production-watch.ts","sha256":"493a73f8c2d757736ce9466a3a62155954a937bea58578107f82965eae50c6de","language":"typescript","disposition":"callables-inventoried","functions":[
 {"name":"registeredVaults","kind":"FunctionDeclaration","line":27,"sha256":"502eaca1c660622a4afeab31bd0820bc4887da616d458de80916fafd8511191a","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":["throw-unreachable-model"]},
@@ -5034,28 +5038,28 @@
 {"name":"<ArrowFunction@234>","kind":"ArrowFunction","line":234,"sha256":"c5264cc9bd1c33950de7bdb54effde2caa23ed447bc778d0c32e8ef425ad2df1","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
 {"name":"<ArrowFunction@247>","kind":"ArrowFunction","line":247,"sha256":"02aadc5e21ef3c0012beacbec778a8e782a8a139532419aed7f3c795eb2daf36","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]}
 ]},
-{"path":"scripts/qualify-value-models.ts","sha256":"9ce1c7ad0c327cfb083f6693bc246d4060aff4102910c308ee565937baa73c57","language":"typescript","disposition":"callables-inventoried","functions":[
+{"path":"scripts/qualify-value-models.ts","sha256":"ac071af313784eb6be707a94e20d13f2d907cd18b9bea13928abcec2112fefe6","language":"typescript","disposition":"callables-inventoried","functions":[
 {"name":"requireThat","kind":"FunctionDeclaration","line":33,"sha256":"a7a55d076bf7bf51f8ccdad8240e992ceb1abd0d11a2e611081cb14d61b85def","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":["throw-unreachable-model"]},
-{"name":"qualificationTransport","kind":"FunctionDeclaration","line":40,"sha256":"0c79a91c92bfaddb5bbd211aa1663b03f3599c666d7b1e561f3799f823dd72c0","status":"unproved","candidate":"requires-effect-or-language-boundary","syntaxFeatures":["await","runtime-effect"]},
-{"name":"mayCall","kind":"ArrowFunction","line":49,"sha256":"9385def1e99a2b04cc484b8b2e4ae7d79b110d0171d45c4d268114db6366618c","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
-{"name":"<ArrowFunction@51>","kind":"ArrowFunction","line":51,"sha256":"907d2ce54d52794c3bb2933c2ccce4619c4d2d1a1601e317c6c47cd2bfb061a6","status":"unproved","candidate":"requires-effect-or-language-boundary","syntaxFeatures":["await","runtime-effect"]},
-{"name":"<ArrowFunction@55>","kind":"ArrowFunction","line":55,"sha256":"7a621b61228822c8df720daf282fd86dff86fca544705a98f482ac8f9b2854ba","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
-{"name":"<ArrowFunction@69>","kind":"ArrowFunction","line":69,"sha256":"91a7710ac08b54ced196b94193fd93b4e5f089dc34318e4b67c44908df2cddbd","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
-{"name":"requestCount","kind":"ArrowFunction","line":99,"sha256":"b589ed38be5427c00ee73bf677b88e4e35dbda8e77cb9c86aa6f93b5f130595d","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
-{"name":"qualifyGeneralReview","kind":"FunctionDeclaration","line":105,"sha256":"f1c87faee8451bd335789176b807198f703a89a30000a6e5380aca21e5d0ba32","status":"unproved","candidate":"requires-effect-or-language-boundary","syntaxFeatures":["await"]},
-{"name":"<ArrowFunction@135>","kind":"ArrowFunction","line":135,"sha256":"c8edca5013b2c4f4f61993ba500f0f0482e8edd8aa3c5f6f2a9646ecbd15d9bd","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
-{"name":"<ArrowFunction@141>","kind":"ArrowFunction","line":141,"sha256":"313e4ddbc4dda2b8a75dbcdbc83e407fbfa9a11c7b67adf40f92edcebc48724c","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
-{"name":"<ArrowFunction@149>","kind":"ArrowFunction","line":149,"sha256":"aed9061d64d84ca1011ff47939e9a8d0aabf24808ee01eb7afc7d438de2c4ae9","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
-{"name":"qualifyValueModels","kind":"FunctionDeclaration","line":174,"sha256":"7c9de2c4107b15c36ab5b7b260279763dc3934e0a757f43114cc09a37e6589ef","status":"unproved","candidate":"requires-effect-or-language-boundary","syntaxFeatures":["await"]},
-{"name":"budget","kind":"ArrowFunction","line":194,"sha256":"d156a02c9bd0065c127f47c34c7b155f5b64b46737b4950173140c744d3c4fcf","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
-{"name":"record","kind":"ArrowFunction","line":209,"sha256":"89f98e35d2726437cc6c5d77908916c1e99d5013a518250b72d508259a753413","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
-{"name":"<ArrowFunction@229>","kind":"ArrowFunction","line":229,"sha256":"4d9c9e6133081b4f63b004c6bac0567424cdf5a6d9d480221238ebf6fd28dfd4","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
-{"name":"<ArrowFunction@253>","kind":"ArrowFunction","line":253,"sha256":"313e4ddbc4dda2b8a75dbcdbc83e407fbfa9a11c7b67adf40f92edcebc48724c","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
-{"name":"<ArrowFunction@262>","kind":"ArrowFunction","line":262,"sha256":"313e4ddbc4dda2b8a75dbcdbc83e407fbfa9a11c7b67adf40f92edcebc48724c","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
-{"name":"<ArrowFunction@268>","kind":"ArrowFunction","line":268,"sha256":"c1d886372225fba9e5b02f23d23781cba6dfb5b451301c3ce173f670db7d35c6","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
-{"name":"<ArrowFunction@293>","kind":"ArrowFunction","line":293,"sha256":"c5ab2292b13af1d7a1b1b3e9b5e4c083e3e0f4c20de1886a6db33b4fc0f8ac6b","status":"unproved","candidate":"requires-effect-or-language-boundary","syntaxFeatures":["await"]},
-{"name":"<ArrowFunction@297>","kind":"ArrowFunction","line":297,"sha256":"f7c09f8082b5e6e32a7c9cb14842b1e6d30ad7ac394ac40fe5012b529207479f","status":"unproved","candidate":"requires-effect-or-language-boundary","syntaxFeatures":["runtime-effect"]},
-{"name":"<ArrowFunction@301>","kind":"ArrowFunction","line":301,"sha256":"1e067954845640f0e4f60ab6c118d77774fe55eaa389fb924c64a1601da1b37c","status":"unproved","candidate":"requires-effect-or-language-boundary","syntaxFeatures":["runtime-effect"]}
+{"name":"qualificationTransport","kind":"FunctionDeclaration","line":41,"sha256":"18a2869de317051838609ca7b485645ccb78198020ca37a68bc9480907b4a3b8","status":"unproved","candidate":"requires-effect-or-language-boundary","syntaxFeatures":["await","runtime-effect"]},
+{"name":"mayCall","kind":"ArrowFunction","line":50,"sha256":"9385def1e99a2b04cc484b8b2e4ae7d79b110d0171d45c4d268114db6366618c","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
+{"name":"<ArrowFunction@52>","kind":"ArrowFunction","line":52,"sha256":"75b29130907623e8322dccfb8c4162e623d14d2e4404f53c0a34dfcff4777d15","status":"unproved","candidate":"requires-effect-or-language-boundary","syntaxFeatures":["await","runtime-effect"]},
+{"name":"<ArrowFunction@56>","kind":"ArrowFunction","line":56,"sha256":"7a621b61228822c8df720daf282fd86dff86fca544705a98f482ac8f9b2854ba","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
+{"name":"<ArrowFunction@70>","kind":"ArrowFunction","line":70,"sha256":"91a7710ac08b54ced196b94193fd93b4e5f089dc34318e4b67c44908df2cddbd","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
+{"name":"requestCount","kind":"ArrowFunction","line":111,"sha256":"b589ed38be5427c00ee73bf677b88e4e35dbda8e77cb9c86aa6f93b5f130595d","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
+{"name":"qualifyGeneralReview","kind":"FunctionDeclaration","line":117,"sha256":"ed65445f93491a9916d76dc3f0b942c4ed846073a861ce36c53dd189cffff403","status":"unproved","candidate":"requires-effect-or-language-boundary","syntaxFeatures":["await"]},
+{"name":"<ArrowFunction@147>","kind":"ArrowFunction","line":147,"sha256":"c8edca5013b2c4f4f61993ba500f0f0482e8edd8aa3c5f6f2a9646ecbd15d9bd","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
+{"name":"<ArrowFunction@153>","kind":"ArrowFunction","line":153,"sha256":"313e4ddbc4dda2b8a75dbcdbc83e407fbfa9a11c7b67adf40f92edcebc48724c","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
+{"name":"<ArrowFunction@165>","kind":"ArrowFunction","line":165,"sha256":"aed9061d64d84ca1011ff47939e9a8d0aabf24808ee01eb7afc7d438de2c4ae9","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
+{"name":"qualifyValueModels","kind":"FunctionDeclaration","line":190,"sha256":"64c761849867afa2b8bac877d671e46cee8a24fc877a20f56c194329d7b72d88","status":"unproved","candidate":"requires-effect-or-language-boundary","syntaxFeatures":["await"]},
+{"name":"budget","kind":"ArrowFunction","line":212,"sha256":"b30d71b27d97cd15e533ca5ea2b5c1db8d216125101006fe1e16ec7cb26e23b7","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
+{"name":"record","kind":"ArrowFunction","line":227,"sha256":"89f98e35d2726437cc6c5d77908916c1e99d5013a518250b72d508259a753413","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
+{"name":"<ArrowFunction@247>","kind":"ArrowFunction","line":247,"sha256":"4d9c9e6133081b4f63b004c6bac0567424cdf5a6d9d480221238ebf6fd28dfd4","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
+{"name":"<ArrowFunction@271>","kind":"ArrowFunction","line":271,"sha256":"313e4ddbc4dda2b8a75dbcdbc83e407fbfa9a11c7b67adf40f92edcebc48724c","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
+{"name":"<ArrowFunction@280>","kind":"ArrowFunction","line":280,"sha256":"313e4ddbc4dda2b8a75dbcdbc83e407fbfa9a11c7b67adf40f92edcebc48724c","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
+{"name":"<ArrowFunction@286>","kind":"ArrowFunction","line":286,"sha256":"c1d886372225fba9e5b02f23d23781cba6dfb5b451301c3ce173f670db7d35c6","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},
+{"name":"<ArrowFunction@311>","kind":"ArrowFunction","line":311,"sha256":"c5ab2292b13af1d7a1b1b3e9b5e4c083e3e0f4c20de1886a6db33b4fc0f8ac6b","status":"unproved","candidate":"requires-effect-or-language-boundary","syntaxFeatures":["await"]},
+{"name":"<ArrowFunction@315>","kind":"ArrowFunction","line":315,"sha256":"f7c09f8082b5e6e32a7c9cb14842b1e6d30ad7ac394ac40fe5012b529207479f","status":"unproved","candidate":"requires-effect-or-language-boundary","syntaxFeatures":["runtime-effect"]},
+{"name":"<ArrowFunction@319>","kind":"ArrowFunction","line":319,"sha256":"1e067954845640f0e4f60ab6c118d77774fe55eaa389fb924c64a1601da1b37c","status":"unproved","candidate":"requires-effect-or-language-boundary","syntaxFeatures":["runtime-effect"]}
 ]},
 {"path":"scripts/qualify-vetting-controls.ts","sha256":"a09ad9325ebc69e22bc5df5174524259c5b337fabf28e9a011b00534d24abe4d","language":"typescript","disposition":"callables-inventoried","functions":[
 {"name":"<ArrowFunction@29>","kind":"ArrowFunction","line":29,"sha256":"93d97256afdcbfc325f6ed9c9cf021a0786dc04a75883e8caa6c994d197970a2","status":"unproved","candidate":"requires-contract-and-semantics-review","syntaxFeatures":[]},

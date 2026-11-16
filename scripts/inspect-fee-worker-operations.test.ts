@@ -315,3 +315,28 @@ test("all fixed SELECTs execute against the actual migrated fee schema", async (
     sqlite.close();
   }
 });
+
+test("tail cleanup checks provider success even on HTTP 200", async () => {
+  const io = transport();
+  const normal = io.request;
+  io.request = Object.assign(
+    async (input: RequestInfo | URL, init?: RequestInit) =>
+      init?.method === "DELETE"
+        ? Response.json({ success: false, errors: [{ message: secret }] })
+        : normal(input, init),
+    { preconnect: fetch.preconnect },
+  );
+  await expect(
+    inspectFeeOperations({
+      account: "a".repeat(32),
+      token: secret,
+      database: "b".repeat(36),
+      versionId: "c".repeat(36),
+      ...io,
+    }),
+  ).rejects.toMatchObject({
+    stage: "tail-delete",
+    message: "Fee operational inspection failed",
+    completedReads: { expectedEveryMinute: true },
+  });
+});
