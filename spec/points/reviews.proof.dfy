@@ -1,20 +1,22 @@
 // Preserve immutable reviewer identities and the positive useful-review pool.
-lemma recordReview_ensures(r: Reviews, actor: int, band: int, at: int, reviewId: int, bot: bool, selfReview: bool, useful: bool, repeated: bool)
-  ensures (inv(r) ==> canRecordReview(r, actor, band, at, reviewId, bot, selfReview, useful, repeated) ==> alwaysUsefulBands(recordReview(r, actor, band, at, reviewId, bot, selfReview, useful, repeated)))
-  ensures (inv(r) ==> canRecordReview(r, actor, band, at, reviewId, bot, selfReview, useful, repeated) ==> alwaysDistinctReviewers(recordReview(r, actor, band, at, reviewId, bot, selfReview, useful, repeated)))
-  ensures (inv(r) ==> canRecordReview(r, actor, band, at, reviewId, bot, selfReview, useful, repeated) ==> alwaysAssessmentValid(recordReview(r, actor, band, at, reviewId, bot, selfReview, useful, repeated)))
-  ensures (inv(r) ==> canRecordReview(r, actor, band, at, reviewId, bot, selfReview, useful, repeated) ==> alwaysAtMostFive(recordReview(r, actor, band, at, reviewId, bot, selfReview, useful, repeated)))
-  ensures (inv(r) ==> canRecordReview(r, actor, band, at, reviewId, bot, selfReview, useful, repeated) ==> alwaysPoolBound(recordReview(r, actor, band, at, reviewId, bot, selfReview, useful, repeated)))
+lemma recordReview_ensures(r: Reviews, evidence: ReviewEvidence)
+  ensures (inv(r) ==> canRecordReview(r, evidence) ==> alwaysAssessmentValid(recordReview(r, evidence)))
+  ensures (inv(r) ==> canRecordReview(r, evidence) ==> alwaysAtMostFive(recordReview(r, evidence)))
+  ensures (inv(r) ==> canRecordReview(r, evidence) ==> alwaysUsefulBands(recordReview(r, evidence)))
+  ensures (inv(r) ==> canRecordReview(r, evidence) ==> alwaysDistinctReviewers(recordReview(r, evidence)))
+  ensures (inv(r) ==> canRecordReview(r, evidence) ==> alwaysCreditOnlyAfterMerge(recordReview(r, evidence)))
+  ensures (inv(r) ==> canRecordReview(r, evidence) ==> alwaysPoolBound(recordReview(r, evidence)))
+  ensures (inv(r) ==> canRecordReview(r, evidence) ==> stepMergeAndAuthorFixed(r, recordReview(r, evidence)))
 {
-  if inv(r) && canRecordReview(r, actor, band, at, reviewId, bot, selfReview, useful, repeated) {
-    var after := recordReview(r, actor, band, at, reviewId, bot, selfReview, useful, repeated);
+  if inv(r) && canRecordReview(r, evidence) {
+    var after := recordReview(r, evidence);
     ReviewerUniquenessMeaning(r);
-    if exists v :: v in r.reviewers && v.actor == actor {
+    if exists v :: v in r.reviewers && v.actor == evidence.actor {
       assert |r.reviewers| == |after.reviewers|;
       assert forall i :: 0 <= i < |r.reviewers| ==> r.reviewers[i].actor == after.reviewers[i].actor;
       PreserveReviewerActors(r.reviewers, after.reviewers);
     } else {
-      AppendUniqueReviewer(r.reviewers, Reviewer(actor, band, at, reviewId));
+      AppendUniqueReviewer(r.reviewers, Reviewer(evidence.actor, evidence.band, evidence.at, evidence.reviewId));
     }
     ReviewerUniquenessMeaning(after);
     assert alwaysUsefulBands(after);

@@ -1,64 +1,285 @@
-# Appeals and penalty correction
+# Finding appeals
 
-PRD sections 5, 7 and 9 require Slopbot triage followed by human moderation
-for escalated decisions. A correction appends history and preserves funded
-awards. This specification covers one immutable debit and its appeal.
+PRD sections 5, 7 and 9 and CLAUDE.md: Slopbot triages each appeal first and
+drafts a resolution; a moderator decides escalated appeals; a maintainer's
+reopen always wins; self-approval is refused. Source
+`workers/slopbot/appeals.ts`, `review.ts` (`recordHumanSignal`,
+`triageAppeal`, `draftResolution`, `applyAppealCommand`, `finishAppeal`,
+`escalateDueAppeal`), `maintainer-holds.ts` (`dispatchDueJobs`) and
+migration `0064` (`slopbot_appeals`). Terminology follows the source and PRD
+section 7: an *upheld* appeal succeeded and reverses the debit; a *denied*
+appeal leaves the finding standing.
 
-## Story: Appeal a decision and preserve the complete decision journal
+One instance is one appeal, keyed `appeal:<item node>:<revision>`: at most
+one per item revision. The appealed finding, its debit and the project scope
+come from an `AppealSubject` that the [closure](./closure.md) decision and
+the [penalty journal](../points/penalties.md) supply. The debit is either
+zero (no debit row: not closed, not penalty eligible, or a zero-debit
+category) or exactly the published table debit of the subject's category
+under the row's table version, so escalation by debit always follows the
+table. Value disputes use the
+same phases with their own subject in [value disputes](./valueDisputes.md).
+Upheld effects on GitHub and on the debit belong to closure and the penalty
+journal, which consume this machine's outcome.
 
-### An appeal records triage, escalation and resolution separately
+## Story: The author appeals and Slopbot triages first
 
-```quint
-type AppealPhase = NotAppealed | BotTriage | Proposed | Escalated | Resolved
-type Resolution = NoResolution | Upheld | Reversed
-type Appeal = { phase: AppealPhase, resolution: Resolution, debit: int, reversal: int, privateCase: bool, ban: bool, confirmedMalice: bool, daysOpen: int, confidenceHundredths: int, rejectedProposal: bool, appendCount: int, published: bool }
-pure val initial: Appeal = { phase: NotAppealed, resolution: NoResolution, debit: 0, reversal: 0, privateCase: false, ban: false, confirmedMalice: false, daysOpen: 0, confidenceHundredths: 100, rejectedProposal: false, appendCount: 0, published: false }
-pure def canOpen(a: Appeal, debit: int): bool = a.phase == NotAppealed and debit >= 0
-pure def open(a: Appeal, debit: int, privateCase: bool, ban: bool, confirmedMalice: bool): Appeal = { ...a, phase: BotTriage, debit: debit, privateCase: privateCase, ban: ban, confirmedMalice: confirmedMalice, appendCount: a.appendCount + 1 }
-pure val debitValues = Set(0, 10, 240, 750)
-```
+### Only the author opens an appeal of a recorded finding, once per revision
 
-### High stakes, low confidence, rejection or seven days require escalation
-
-```quint
-pure def mustEscalate(a: Appeal): bool = a.privateCase or a.ban or a.confirmedMalice or a.debit >= 240 or a.confidenceHundredths < 90 or a.rejectedProposal or a.daysOpen >= 7
-pure def canPropose(a: Appeal, confidenceHundredths: int): bool = a.phase == BotTriage and confidenceHundredths >= 0 and confidenceHundredths <= 100
-pure def propose(a: Appeal, confidenceHundredths: int): Appeal = { ...a, phase: Proposed, confidenceHundredths: confidenceHundredths }
-pure val confidenceHundredthsValues = Set(50, 89, 90, 100)
-pure def canRejectProposal(a: Appeal): bool = a.phase == Proposed
-pure def rejectProposal(a: Appeal): Appeal = { ...a, rejectedProposal: true }
-pure def canAge(a: Appeal, days: int): bool = a.phase != NotAppealed and a.phase != Resolved and days >= a.daysOpen
-pure def age(a: Appeal, days: int): Appeal = { ...a, daysOpen: days }
-pure val daysValues = Set(0, 6, 7, 8)
-pure def canEscalate(a: Appeal): bool = (a.phase == Proposed or a.phase == BotTriage) and mustEscalate(a)
-pure def escalate(a: Appeal): Appeal = { ...a, phase: Escalated, appendCount: a.appendCount + 1 }
-```
-
-### Only a moderator resolves an escalated appeal
-
-The `moderator` fact is checked against the current immutable GitHub actor
-allowlist. A case party cannot derive moderator authority from its case role.
-An accepted bot proposal can resolve only a non-escalated ordinary appeal.
+`/slopbot appeal` from the author, or the author reopening their own item,
+opens the appeal of the newest finding on that revision. A retired project
+gets no review; its appeal exists only to reverse an existing debit and goes
+straight to a moderator without triage or GitHub writes. A repeated command
+keeps the first appeal.
 
 ```quint
-pure def canResolve(a: Appeal, moderator: bool, acceptedProposal: bool, resolution: Resolution): bool = resolution != NoResolution and (if (a.phase == Escalated) moderator else a.phase == Proposed and not(mustEscalate(a)) and acceptedProposal)
-pure def resolve(a: Appeal, moderator: bool, acceptedProposal: bool, resolution: Resolution): Appeal = { ...a, phase: Resolved, resolution: resolution, reversal: if (resolution == Reversed) a.debit else 0, appendCount: a.appendCount + 1 }
-pure def canPublish(a: Appeal): bool = a.phase == Resolved and not(a.published)
-pure def publish(a: Appeal): Appeal = { ...a, published: true }
-pure def canReplay(a: Appeal): bool = a.phase == Resolved
-pure def replay(a: Appeal): Appeal = a
-pure def alwaysReversalBound(a: Appeal): bool = a.reversal >= 0 and a.reversal <= a.debit and (a.resolution == Reversed implies a.reversal == a.debit)
-pure def alwaysUnresolvedHasNoReversal(a: Appeal): bool = a.phase != Resolved implies a.resolution == NoResolution and a.reversal == 0
-pure def alwaysResolvedBeforePublication(a: Appeal): bool = a.published implies a.phase == Resolved
-pure def stepAppendOnly(before: Appeal, after: Appeal): bool = after.appendCount >= before.appendCount
-pure def sometimesEscalated(a: Appeal): bool = a.phase == Escalated
-pure def sometimesReversed(a: Appeal): bool = a.phase == Resolved and a.resolution == Reversed
+import categories as F from "./categories"
+type ProjectScope = ScopeActive | ScopeSecurityOnly | ScopeRetired
+type AppealSubject = { item: str, revision: str, author: int, category: F::Category, tableVersion: int, debit: int,
+  scope: ProjectScope }
+type DraftChoice = NoDraft | DraftUphold | DraftDeny
+type Escalation = NotEscalated | MaliciousFinding | HighDebit | LowConfidence | DraftRejected | Overdue |
+  ParticipationBan | RetiredProject
+type Resolution = Unresolved | Upheld | Denied
+type ResolvedVia = NotResolved | AcceptedDraft | MaintainerReopen | ModeratorDecision
+type BanStatus = BanUnknown | NotBanned | Banned
+type Stage = DraftStage | EscalationStage | ResolutionStage
+type Entry = { stage: Stage, by: int }
+type Appeal = { opened: bool, subject: AppealSubject, appellant: int, openedAt: int, now: int, queuedAt: int,
+  draft: DraftChoice, draftConfidence: int, escalation: Escalation, notices: Set[int], ban: BanStatus,
+  resolution: Resolution, via: ResolvedVia, resolvedBy: int,
+  postedDraft: bool, postedEscalation: bool, postedResolution: bool, journal: List[Entry] }
+pure val noSubject: AppealSubject = { item: "", revision: "", author: 0, category: F::NoFinding, tableVersion: 0, debit: 0,
+  scope: ScopeActive }
+pure val initial: Appeal = { opened: false, subject: noSubject, appellant: 0, openedAt: 0, now: 0, queuedAt: 0,
+  draft: NoDraft, draftConfidence: 0, escalation: NotEscalated, notices: Set(), ban: BanUnknown,
+  resolution: Unresolved, via: NotResolved, resolvedBy: 0,
+  postedDraft: false, postedEscalation: false, postedResolution: false, journal: List() }
+pure val slopModerators: Set[int] = Set(18633264, 202660855)
+pure val resolutionSeconds = 604800
+pure val requeueSeconds = 86400
+pure def validSubject(subject: AppealSubject): bool = subject.item != "" and subject.revision != "" and
+  subject.author > 0 and subject.category != F::NoFinding and
+  (subject.debit == 0 or (F::knownTableVersion(subject.tableVersion) and
+    subject.debit == F::debitFor(subject.tableVersion, subject.category))) and
+  (subject.scope != ScopeRetired or subject.debit > 0)
+pure def lawDebitFollowsTable(subject: AppealSubject): bool =
+  validSubject(subject) implies (subject.debit == 0 or subject.debit == F::debitFor(subject.tableVersion, subject.category))
+pure def lawHighDebitOnlyForScam(subject: AppealSubject): bool =
+  (validSubject(subject) and subject.debit >= F::escalationDebit) implies subject.category == F::Scam
+pure def canOpen(a: Appeal, by: int, subject: AppealSubject): bool =
+  not(a.opened) and validSubject(subject) and by == subject.author
+pure def open(a: Appeal, by: int, subject: AppealSubject): Appeal =
+  { ...a, opened: true, subject: subject, appellant: by, openedAt: a.now }
+pure def retired(a: Appeal): bool = a.subject.scope == ScopeRetired
+pure def unresolved(a: Appeal): bool = a.opened and a.resolution == Unresolved
+pure def escalated(a: Appeal): bool = a.escalation != NotEscalated
+pure def alwaysOpenedByAuthor(a: Appeal): bool =
+  (a.opened implies a.appellant == a.subject.author and validSubject(a.subject)) and
+  (not(a.opened) implies a.draft == NoDraft and not(escalated(a)) and a.resolution == Unresolved and
+    a.queuedAt == 0 and a.openedAt == 0 and a.via == NotResolved and a.resolvedBy == 0)
+pure def stepSubjectFixed(before: Appeal, after: Appeal): bool = before.opened implies
+  after.opened and after.subject == before.subject and after.appellant == before.appellant and after.openedAt == before.openedAt
 ```
 
-Discovered by the proof. An unresolved appeal has no reversal record. Opening
-an appeal cannot retain a reversal from an impossible pre-appeal state.
+### Slopbot stores one draft, and the published criteria escalate it to a moderator
 
-The penalty table and effective dates stay in the Points domain. No outcome
-here transfers money, reduces a funded obligation or erases the source record.
-A verified maintainer reopening remains a separate GitHub decision. It restores
-protected eligibility according to the retained source evidence.
+Slopbot reviews the same revision independently with the appeal as
+untrusted data and drafts uphold or deny with a confidence. The first draft
+is kept; a budget-deferred draft records nothing. Escalation records its
+first reason and, in the same write, one moderator Inbox notice per
+moderator. A scam (confirmed-malicious) finding, a debit of at least 240
+Points, confidence below 90 hundredths and an appellant with an active
+participation ban each escalate. A private security case uses its separate
+path in the security area.
+
+```quint
+pure def canObserveTime(a: Appeal, observedAt: int): bool = observedAt >= a.now
+pure def observeTime(a: Appeal, observedAt: int): Appeal = { ...a, now: observedAt }
+pure def canObserveBan(a: Appeal, status: BanStatus): bool = unresolved(a) and status != BanUnknown
+pure def observeBan(a: Appeal, status: BanStatus): Appeal = { ...a, ban: status }
+pure def canDraft(a: Appeal, uphold: bool, confidenceHundredths: int): bool =
+  unresolved(a) and not(retired(a)) and a.draft == NoDraft and F::validConfidence(confidenceHundredths)
+pure def draft(a: Appeal, uphold: bool, confidenceHundredths: int): Appeal =
+  { ...a, draft: if (uphold) DraftUphold else DraftDeny, draftConfidence: confidenceHundredths }
+pure def criteriaReason(a: Appeal): Escalation =
+  if (a.ban == Banned) ParticipationBan
+  else if (F::confirmedMalicious(a.subject.category)) MaliciousFinding
+  else if (a.subject.debit >= F::escalationDebit) HighDebit
+  else if (a.draftConfidence < F::closeConfidence) LowConfidence
+  else NotEscalated
+pure def escalatedWith(reason: Escalation, a: Appeal): Appeal =
+  { ...a, escalation: reason, notices: slopModerators,
+    journal: a.journal.append({ stage: EscalationStage, by: 0 }) }
+pure def canEscalateByCriteria(a: Appeal): bool =
+  unresolved(a) and not(escalated(a)) and a.draft != NoDraft and a.ban != BanUnknown and criteriaReason(a) != NotEscalated
+pure def escalateByCriteria(a: Appeal): Appeal = escalatedWith(criteriaReason(a), a)
+pure def canEscalateRetired(a: Appeal): bool = unresolved(a) and retired(a) and not(escalated(a))
+pure def escalateRetired(a: Appeal): Appeal = escalatedWith(RetiredProject, a)
+pure def alwaysEscalationNotifiesModerators(a: Appeal): bool =
+  (escalated(a) iff a.notices.size() > 0) and a.notices.subseteq(slopModerators) and
+  (escalated(a) implies slopModerators.subseteq(a.notices))
+pure def alwaysRetiredHasNoDraft(a: Appeal): bool = retired(a) implies a.draft == NoDraft and not(a.postedDraft)
+pure def stepDraftOnce(before: Appeal, after: Appeal): bool = before.draft != NoDraft implies
+  after.draft == before.draft and after.draftConfidence == before.draftConfidence
+pure def stepEscalationOnce(before: Appeal, after: Appeal): bool = escalated(before) implies after.escalation == before.escalation
+pure def sometimesEscalatedByCriteria(a: Appeal): bool = a.escalation == HighDebit or a.escalation == MaliciousFinding
+pure def sometimesBanEscalated(a: Appeal): bool = a.escalation == ParticipationBan
+pure def sometimesRetiredEscalated(a: Appeal): bool = a.escalation == RetiredProject
+```
+
+## Story: The draft is accepted or rejected, and escalated appeals go to a moderator
+
+### Only the appellant or a current maintainer answers a draft; rejection escalates
+
+`/slopbot accept` applies the draft and `/slopbot reject` escalates it. Only
+the appellant or a current maintainer of the repository may answer, checked
+by the GitHub permission service for the sender. A participation ban seen at
+acceptance escalates instead of resolving. An escalated appeal ignores
+further draft answers.
+
+```quint
+type ActorRole = RoleUnavailable | CurrentMaintainer | NotMaintainer
+type AuthorityCheck = { actor: int, item: str, role: ActorRole }
+pure def mayAnswer(a: Appeal, by: int, authority: AuthorityCheck): bool = by > 0 and
+  (by == a.appellant or (authority.actor == by and authority.item == a.subject.item and authority.role == CurrentMaintainer))
+pure def answerable(a: Appeal): bool = unresolved(a) and not(escalated(a)) and a.draft != NoDraft
+pure def canReject(a: Appeal, by: int, authority: AuthorityCheck): bool = answerable(a) and mayAnswer(a, by, authority)
+pure def reject(a: Appeal, by: int, authority: AuthorityCheck): Appeal = escalatedWith(DraftRejected, a)
+pure def canEscalateBanAtAnswer(a: Appeal): bool = answerable(a) and a.ban == Banned
+pure def escalateBanAtAnswer(a: Appeal): Appeal = escalatedWith(ParticipationBan, a)
+pure def canAccept(a: Appeal, by: int, authority: AuthorityCheck): bool =
+  answerable(a) and mayAnswer(a, by, authority) and a.ban == NotBanned and criteriaReason(a) == NotEscalated
+pure def accept(a: Appeal, by: int, authority: AuthorityCheck): Appeal =
+  { ...a, resolution: if (a.draft == DraftUphold) Upheld else Denied, via: AcceptedDraft, resolvedBy: by,
+    journal: a.journal.append({ stage: ResolutionStage, by: by }) }
+pure def sometimesAcceptedDraft(a: Appeal): bool = a.via == AcceptedDraft and a.resolution == Upheld
+pure def sometimesRejectedDraft(a: Appeal): bool = a.escalation == DraftRejected
+```
+
+### Only a moderator other than the appellant decides an escalated appeal
+
+`/slopbot uphold` or `/slopbot deny` from a Slop moderator decides an
+escalated appeal. A moderator cannot decide their own appeal.
+
+```quint
+pure def canModeratorDecide(a: Appeal, by: int, uphold: bool): bool =
+  unresolved(a) and escalated(a) and slopModerators.contains(by) and by != a.appellant
+pure def moderatorDecide(a: Appeal, by: int, uphold: bool): Appeal =
+  { ...a, resolution: if (uphold) Upheld else Denied, via: ModeratorDecision, resolvedBy: by,
+    journal: a.journal.append({ stage: ResolutionStage, by: by }) }
+pure def alwaysNoSelfModeration(a: Appeal): bool = a.via == ModeratorDecision implies
+  a.resolvedBy != a.appellant and slopModerators.contains(a.resolvedBy) and escalated(a)
+pure def alwaysAcceptedOnlyUnescalatedLowStakes(a: Appeal): bool = a.via == AcceptedDraft implies
+  not(escalated(a)) and a.draft != NoDraft and a.draftConfidence >= F::closeConfidence and
+  a.subject.debit < F::escalationDebit and not(F::confirmedMalicious(a.subject.category)) and not(retired(a)) and
+  (a.resolution == Upheld iff a.draft == DraftUphold)
+pure def alwaysEscalatedResolvedOnlyByModeratorOrReopen(a: Appeal): bool =
+  (escalated(a) and a.resolution != Unresolved) implies (a.via == ModeratorDecision or a.via == MaintainerReopen)
+pure def sometimesModeratorDecided(a: Appeal): bool = a.via == ModeratorDecision
+```
+
+### A verified maintainer reopen of the revision resolves the appeal as upheld, even after escalation
+
+The maintainer's GitHub reopen is a confirmed maintainer decision bound to
+the reopened revision and always wins over Slopbot's draft and over a
+pending moderator decision.
+
+```quint
+type ReopenDecision = { item: str, revision: str, actor: int, role: ActorRole }
+pure def canMaintainerReopen(a: Appeal, decision: ReopenDecision): bool = unresolved(a) and
+  decision.item == a.subject.item and decision.revision == a.subject.revision and
+  decision.role == CurrentMaintainer and decision.actor > 0
+pure def maintainerReopen(a: Appeal, decision: ReopenDecision): Appeal =
+  { ...a, resolution: Upheld, via: MaintainerReopen, resolvedBy: decision.actor,
+    journal: a.journal.append({ stage: ResolutionStage, by: decision.actor }) }
+pure def alwaysResolutionConsistent(a: Appeal): bool =
+  ((a.resolution == Unresolved) iff (a.via == NotResolved)) and
+  (a.resolution != Unresolved implies a.opened and a.resolvedBy > 0) and
+  (a.via == MaintainerReopen implies a.resolution == Upheld) and
+  (a.resolution == Unresolved implies a.resolvedBy == 0)
+pure def stepResolutionOnce(before: Appeal, after: Appeal): bool = before.resolution != Unresolved implies
+  after.resolution == before.resolution and after.via == before.via and after.resolvedBy == before.resolvedBy
+pure def stepMaintainerReopenWins(before: Appeal, via: str, after: Appeal): bool =
+  via == "maintainerReopen" implies after.resolution == Upheld
+pure def sometimesReopenAfterEscalation(a: Appeal): bool = a.via == MaintainerReopen and escalated(a)
+```
+
+## Story: Unresolved appeals reach a moderator after seven days and stages are posted once
+
+### The scheduled dispatcher escalates an appeal still unresolved seven days after it opened
+
+Source `dispatchDueAppeals`: the five-minute cron queues each unresolved,
+unescalated appeal whose due time passed and requeues a lost message after a
+day. The queued job escalates once. A permanently unavailable repository or
+item still records the escalation and its database-only notices.
+
+```quint
+pure def due(a: Appeal): bool = unresolved(a) and not(escalated(a)) and a.now - a.openedAt >= resolutionSeconds
+pure def canDispatchDue(a: Appeal): bool = due(a) and (a.queuedAt == 0 or a.now - a.queuedAt >= requeueSeconds)
+pure def dispatchDue(a: Appeal): Appeal = { ...a, queuedAt: a.now }
+pure def canEscalateOverdue(a: Appeal): bool = due(a) and a.queuedAt > 0
+pure def escalateOverdue(a: Appeal): Appeal = escalatedWith(Overdue, a)
+pure def alwaysTimes(a: Appeal): bool = a.now >= 0 and a.openedAt >= 0 and a.openedAt <= a.now and
+  a.queuedAt >= 0 and a.queuedAt <= a.now and (a.queuedAt > 0 implies a.queuedAt - a.openedAt >= resolutionSeconds)
+pure def sometimesOverdueEscalated(a: Appeal): bool = a.escalation == Overdue
+pure val fair_dispatchDue = "weak"
+pure val fair_escalateOverdue = "weak"
+pure val fair_escalateByCriteria = "weak"
+pure val fair_escalateRetired = "weak"
+pure val fair_observeTime = "weak"
+```
+
+### Each stage comment is posted once and a resolution retry resumes its recorded writes
+
+The draft, escalation and resolution comments are posted once each and a
+retried command reconciles a write whose response was lost. A retry of a
+resolved appeal finishes the recorded decision and never applies the new
+command. A retired project gets no GitHub writes; moderators see the Inbox
+notices.
+
+```quint
+pure def canPostDraft(a: Appeal): bool = a.opened and not(retired(a)) and a.draft != NoDraft and not(a.postedDraft)
+pure def postDraft(a: Appeal): Appeal = { ...a, postedDraft: true, journal: a.journal.append({ stage: DraftStage, by: 0 }) }
+pure def canPostEscalation(a: Appeal): bool = a.opened and not(retired(a)) and escalated(a) and not(a.postedEscalation)
+pure def postEscalation(a: Appeal): Appeal = { ...a, postedEscalation: true }
+pure def canPostResolution(a: Appeal): bool = a.opened and not(retired(a)) and a.resolution != Unresolved and not(a.postedResolution)
+pure def postResolution(a: Appeal): Appeal = { ...a, postedResolution: true }
+pure def alwaysPostsFollowRecords(a: Appeal): bool =
+  (a.postedDraft implies a.draft != NoDraft) and (a.postedEscalation implies escalated(a)) and
+  (a.postedResolution implies a.resolution != Unresolved) and
+  (retired(a) implies not(a.postedDraft) and not(a.postedEscalation) and not(a.postedResolution))
+pure def stepJournalAppendOnly(before: Appeal, after: Appeal): bool =
+  after.journal.length() >= before.journal.length() and before.journal.every(e => after.journal.includes(e))
+pure def stepPostsPermanent(before: Appeal, after: Appeal): bool =
+  (before.postedDraft implies after.postedDraft) and (before.postedEscalation implies after.postedEscalation) and
+  (before.postedResolution implies after.postedResolution)
+pure def sometimesFullyPosted(a: Appeal): bool = a.postedDraft and a.postedEscalation and a.postedResolution
+pure def leadsToModeratorOrResolution(a: Appeal, later: Appeal): bool =
+  (a.opened and a.resolution == Unresolved and a.now - a.openedAt >= resolutionSeconds) implies
+    (escalated(later) or later.resolution != Unresolved)
+```
+
+### Simulation samples cover authors and others, high and low stakes, bans and moderators
+
+```quint
+pure val spamSubject: AppealSubject = { item: "pr", revision: "head", author: 5, category: F::Spam, tableVersion: 1,
+  debit: 30, scope: ScopeActive }
+pure val subjectValues = Set(spamSubject, { ...spamSubject, category: F::Scam, debit: 240 },
+  { ...spamSubject, category: F::Duplicate, debit: 0 }, { ...spamSubject, scope: ScopeRetired },
+  { ...spamSubject, scope: ScopeRetired, debit: 0 }, { ...spamSubject, category: F::NoFinding },
+  { ...spamSubject, debit: 240 }, { ...spamSubject, tableVersion: 2 })
+pure val byValues = Set(5, 6, 18633264)
+pure val authorityValues = Set({ actor: 6, item: "pr", role: CurrentMaintainer }, { actor: 6, item: "pr", role: NotMaintainer },
+  { actor: 6, item: "pr", role: RoleUnavailable }, { actor: 18633264, item: "pr", role: CurrentMaintainer })
+pure val decisionValues = Set({ item: "pr", revision: "head", actor: 6, role: CurrentMaintainer },
+  { item: "pr", revision: "older", actor: 6, role: CurrentMaintainer }, { item: "pr", revision: "head", actor: 7, role: NotMaintainer })
+pure val confidenceHundredthsValues = Set(50, 89, 90, 97)
+pure val observedAtValues = Set(0, 10, 604800, 604810, 691210)
+pure val weight_open = 6
+pure val weight_draft = 6
+pure val weight_accept = 6
+pure val weight_observeBan = 3
+pure val weight_dispatchDue = 4
+pure val weight_escalateOverdue = 4
+```
