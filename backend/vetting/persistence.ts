@@ -813,13 +813,28 @@ export class CloudflareVettingPersistence {
     );
     const currentContentSha256 = await vettedContentSha256(project.manifest);
     const repositories = project.manifest.repositories;
+    const scanned = findListedRepository(repositories, assessment.repositoryId)
+      ?.repository.id;
+    if (scanned === undefined) return null;
+    const assessments = await this.projectAssessments(project.id);
+    const latestAtPin = (repositoryId: string, pin: VettingPin) =>
+      newest(
+        assessments,
+        (candidate) =>
+          findListedRepository(repositories, candidate.repositoryId)?.repository
+            .id === repositoryId &&
+          candidate.contentSha256 === currentContentSha256 &&
+          candidate.commitSha === pin.commitSha &&
+          candidate.templateSha256 === pin.templateSha256 &&
+          // recordResult plans before its batch marks this result clean.
+          (candidate.state !== "pending" || candidate.id === assessment.id),
+      );
+    const deciding = latestAtPin(scanned, livePin ?? assessment);
+    if (deciding?.id !== assessment.id && deciding?.state !== "clean")
+      return null;
+    const assessmentIds = [assessment.id];
     if (repositories.length > 1) {
-      const scanned = findListedRepository(
-        repositories,
-        assessment.repositoryId,
-      )?.repository.id;
-      if (scanned === undefined || readPin === undefined) return null;
-      const assessments = await this.projectAssessments(project.id);
+      if (readPin === undefined) return null;
       for (const repository of repositories) {
         if (repository.id === scanned) continue;
         let pin: VettingPin;
@@ -828,27 +843,17 @@ export class CloudflareVettingPersistence {
         } catch {
           return null;
         }
-        let fresh = false;
-        for (const candidate of assessments)
-          if (
-            candidate.state === "clean" &&
-            findListedRepository(repositories, candidate.repositoryId ?? "")
-              ?.repository.id === repository.id &&
-            !(
-              candidate.result &&
-              isScanResult(candidate.result) &&
-              candidate.result.reusedAssessmentId !== null
-            ) &&
-            candidate.requestedAt >= (restriction.since ?? "") &&
-            candidate.contentSha256 === currentContentSha256 &&
-            candidate.commitSha === pin.commitSha &&
-            candidate.templateSha256 === pin.templateSha256 &&
-            (await this.assessmentCoversActiveFlags(candidate.id))
-          ) {
-            fresh = true;
-            break;
-          }
-        if (!fresh) return null;
+        const candidate = latestAtPin(repository.id, pin);
+        if (
+          candidate?.state !== "clean" ||
+          (candidate.result &&
+            isScanResult(candidate.result) &&
+            candidate.result.reusedAssessmentId !== null) ||
+          candidate.requestedAt < (restriction.since ?? "") ||
+          !(await this.assessmentCoversActiveFlags(candidate.id))
+        )
+          return null;
+        assessmentIds.push(candidate.id);
       }
     }
     return planScanReinstatement({
@@ -856,6 +861,7 @@ export class CloudflareVettingPersistence {
       restriction,
       scan: {
         assessmentId: assessment.id,
+        assessmentIds,
         requestedAt: assessment.requestedAt,
         contentSha256: assessment.contentSha256,
         keySha256,

@@ -6,7 +6,15 @@
 // pause while a confirmed malicious result stays with a moderator.
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { readdirSync, readFileSync } from "node:fs";
-import { CloudflareProjectPersistence } from "../backend/projects/cloudflare-persistence";
+import {
+  CloudflareProjectPersistence,
+  enforcementStatement,
+  type ProjectD1Database,
+} from "../backend/projects/cloudflare-persistence";
+import {
+  planScanReinstatement,
+  projectRestriction,
+} from "../backend/projects/enforcement";
 import {
   handleProjectApi,
   type ProjectApiDependencies,
@@ -33,6 +41,7 @@ import { sqliteD1 } from "../tests/sqlite-d1";
 import { localVettingEvidence } from "../tests/vetting-evidence-fixture";
 import {
   signedVettingHeaders,
+  VETTING_EVIDENCE_OBJECTS,
   vettingKeyPair,
   vettingScanResult,
 } from "../tests/vetting-fixtures";
@@ -123,10 +132,12 @@ const TEMPLATE = "b".repeat(64);
 
 let retained: Awaited<ReturnType<typeof localVettingEvidence>>;
 let sqlite: ReturnType<typeof sqliteD1>["sqlite"];
+let db: ProjectD1Database;
 let projects: CloudflareProjectPersistence;
 let vetting: CloudflareVettingPersistence;
 let flags: ProjectFlagStore;
 let beforeFlagBatch: (() => void | Promise<void>) | null = null;
+let beforeVettingBatch: (() => void | Promise<void>) | null = null;
 let keys: Awaited<ReturnType<typeof vettingKeyPair>>;
 let livePin: VettingPin;
 /** Live pins that differ for one repository, by manifest repository id. */
@@ -143,8 +154,10 @@ beforeEach(async () => {
       .sort(),
   );
   sqlite = database.sqlite;
+  db = database.db;
   projects = new CloudflareProjectPersistence(database.db);
   beforeFlagBatch = null;
+  beforeVettingBatch = null;
   flags = new ProjectFlagStore({
     prepare: (sql) => database.db.prepare(sql),
     batch: async (statements) => {
@@ -159,7 +172,15 @@ beforeEach(async () => {
   installation = "installed";
   retained = await localVettingEvidence(database.db, () => clock);
   vetting = new CloudflareVettingPersistence(
-    database.db,
+    {
+      prepare: (sql) => database.db.prepare(sql),
+      batch: async (statements) => {
+        const hook = beforeVettingBatch;
+        beforeVettingBatch = null;
+        await hook?.();
+        return database.db.batch(statements);
+      },
+    },
     async (a) => a.result !== null && retained.evidence.retained(a.result),
   );
   keys = await vettingKeyPair();
@@ -1679,6 +1700,264 @@ test("a live-pin outage while a fresh clean scan lands defers the flag reinstate
   ).toHaveLength(1);
 });
 
+/** Records a clean pause scan, then queues another investigation at its pin. */
+async function deferredReinstatementWithInvestigation() {
+  await activeProject();
+  expect((await flag("alice")).status).toBe(201);
+  clock = new Date(NOW.getTime() + 60_000);
+  expect((await flag("bob")).status).toBe(201);
+  const clean = (await vetting.pendingAssessments()).at(-1);
+  if (!clean) throw new Error("Missing pause scan");
+  pinUp = false;
+  expect((await postResult(await scanFixture(clean.id, "clean"))).status).toBe(
+    200,
+  );
+  pinUp = true;
+  const project = await projects.getProject(clean.projectId);
+  if (!project) throw new Error("Missing paused project");
+  expect(
+    await queueAutomaticScan(vettingDeps(), project, "Explicit investigation"),
+  ).toBe("queued");
+  const investigation = (await vetting.pendingAssessments()).at(-1);
+  if (!investigation) throw new Error("Missing investigation");
+  // Equal request times deliberately exercise the rowid tie-breaker.
+  expect(investigation.requestedAt).toBe(clean.requestedAt);
+  return { clean, investigation };
+}
+
+test("a newer investigation completing between planning and insertion refuses recorded-scan reinstatement", async () => {
+  const { clean, investigation } =
+    await deferredReinstatementWithInvestigation();
+  const originalClean = await vetting.getAssessment(clean.id);
+  const incomplete = await scanFixture(investigation.id, "incomplete");
+  let completedDuringInsert = false;
+  beforeVettingBatch = async () => {
+    expect((await vetting.getAssessment(investigation.id))?.state).toBe(
+      "pending",
+    );
+    expect((await postResult(incomplete)).status).toBe(200);
+    completedDuringInsert = true;
+  };
+  expect((await refresh()) as unknown).toMatchObject({ reinstated: [] });
+  expect(completedDuringInsert).toBe(true);
+  expect((await publicProject()).status).toBe(410);
+  expect(await vetting.getAssessment(clean.id)).toEqual(originalClean);
+  expect((await vetting.getAssessment(investigation.id))?.state).toBe(
+    "incomplete",
+  );
+  expect(
+    (await projects.listEnforcements()).filter(
+      (entry) => entry.action === "reinstate",
+    ),
+  ).toEqual([]);
+});
+
+test("a pending investigation permits the recorded clean reinstatement", async () => {
+  const { clean, investigation } =
+    await deferredReinstatementWithInvestigation();
+  expect((await refresh()) as unknown).toMatchObject({
+    reinstated: [clean.id],
+  });
+  expect((await vetting.getAssessment(investigation.id))?.state).toBe(
+    "pending",
+  );
+});
+
+test("a completed newer investigation refuses sequential reinstatement until a later clean scan", async () => {
+  const { clean, investigation } =
+    await deferredReinstatementWithInvestigation();
+  expect(
+    (await postResult(await scanFixture(investigation.id, "incomplete")))
+      .status,
+  ).toBe(200);
+  expect((await refresh()) as unknown).toMatchObject({ reinstated: [] });
+  expect((await publicProject()).status).toBe(410);
+  const project = await projects.getProject(clean.projectId);
+  if (!project) throw new Error("Missing paused project");
+  expect(
+    await queueAutomaticScan(vettingDeps(), project, "Later investigation"),
+  ).toBe("queued");
+  const latest = (await vetting.pendingAssessments()).at(-1);
+  if (!latest) throw new Error("Missing later scan");
+  pinUp = false;
+  expect((await postResult(await scanFixture(latest.id, "clean"))).status).toBe(
+    200,
+  );
+  pinUp = true;
+  // A later clean result supersedes the incomplete result. The earlier clean
+  // assessment remains eligible under the same terminal-assessment rule.
+  expect(
+    await vetting.reinstateFromRecordedScan(
+      clean.id,
+      livePin,
+      clock.toISOString(),
+    ),
+  ).toBe(true);
+  expect((await publicProject()).status).toBe(200);
+  expect((await vetting.getAssessment(investigation.id))?.state).toBe(
+    "incomplete",
+  );
+});
+
+test("a later investigation finishing during clean-result publication rolls back its reinstatement batch", async () => {
+  await activeProject();
+  expect((await flag("alice")).status).toBe(201);
+  clock = new Date(NOW.getTime() + 60_000);
+  expect((await flag("bob")).status).toBe(201);
+  const clean = (await vetting.pendingAssessments()).at(-1);
+  if (!clean) throw new Error("Missing pause scan");
+  // A changed captured flag set allows a second investigation at the same pin.
+  expect((await flag("carol")).status).toBe(201);
+  const project = await projects.getProject(clean.projectId);
+  if (!project) throw new Error("Missing paused project");
+  expect(
+    await queueAutomaticScan(vettingDeps(), project, "Explicit investigation"),
+  ).toBe("queued");
+  const investigation = (await vetting.pendingAssessments()).at(-1);
+  if (!investigation) throw new Error("Missing investigation");
+  expect(
+    (
+      await flagApi(
+        sessionRequest(
+          "POST",
+          "project-flags/open-registry/withdraw",
+          "carol",
+          {},
+        ),
+      )
+    ).status,
+  ).toBe(200);
+  const incomplete = await scanFixture(investigation.id, "incomplete");
+  const result = {
+    ...(await scanFixture(clean.id, "clean")),
+    artifacts: [
+      {
+        sha256: VETTING_EVIDENCE_OBJECTS[2].sha256,
+        parentSha256: null,
+        origin: "Retained synthetic artifact",
+        path: "vendor/fixture.bin",
+        type: "binary" as const,
+        state: "released" as const,
+        analysis: "static-clean" as const,
+        requestedExecution: false,
+      },
+    ],
+  };
+  beforeVettingBatch = async () => {
+    expect((await postResult(incomplete)).status).toBe(200);
+  };
+  expect((await postResult(result)).status).toBe(409);
+  expect((await vetting.getAssessment(clean.id))?.state).toBe("pending");
+  expect(
+    sqlite
+      .query("SELECT sha256 FROM vetting_artifacts WHERE assessment_id = ?")
+      .all(clean.id),
+  ).toEqual([]);
+  expect((await vetting.getAssessment(investigation.id))?.state).toBe(
+    "incomplete",
+  );
+  expect(await flags.activeFlags(clock)).toHaveLength(2);
+  expect((await publicProject()).status).toBe(410);
+  // Retrying preserves the actual clean assessment after the competing result
+  // is visible, while the flag-only quarantine remains in force.
+  expect((await postResult(result)).status).toBe(200);
+  expect(await vetting.getAssessment(clean.id)).toMatchObject({
+    state: "clean",
+    result,
+  });
+  expect(
+    sqlite
+      .query("SELECT sha256 FROM vetting_artifacts WHERE assessment_id = ?")
+      .all(clean.id),
+  ).toEqual([{ sha256: VETTING_EVIDENCE_OBJECTS[2].sha256 }]);
+  expect((await publicProject()).status).toBe(410);
+  expect(
+    (await projects.listEnforcements()).filter(
+      (entry) => entry.action === "reinstate",
+    ),
+  ).toEqual([]);
+});
+
+test.each(["later", "earlier"] as const)(
+  "a legacy NULL-repository investigation uses its own revision and %s request order",
+  async (order) => {
+    const { clean, investigation } =
+      await deferredReinstatementWithInvestigation();
+    pinUp = false;
+    expect(
+      (await postResult(await scanFixture(investigation.id, "clean"))).status,
+    ).toBe(200);
+    // Older deployed applications can insert NULL repository IDs after 0123.
+    // Preserve that row format instead of editing an immutable assessment.
+    const legacyId = `vet_${randomId().replaceAll("-", "")}`;
+    const requestedAt =
+      order === "later"
+        ? clean.requestedAt
+        : new Date(NOW.getTime() + 30_000).toISOString();
+    sqlite
+      .prepare(
+        `INSERT INTO vetting_assessments (
+          id,project_id,revision,manifest_sha256,content_sha256,commit_sha,
+          template_sha256,requested_by_github_id,requested_by_github_login,
+          requested_at,request_reason,state,repository_id,flag_ids
+        ) SELECT ?,project_id,revision,manifest_sha256,content_sha256,commit_sha,
+          template_sha256,requested_by_github_id,requested_by_github_login,
+          ?,'Legacy application investigation','pending',NULL,flag_ids
+          FROM vetting_assessments WHERE id = ?`,
+      )
+      .run(legacyId, requestedAt, investigation.id);
+    expect((await vetting.getAssessment(legacyId))?.repositoryId).toBe(
+      clean.repositoryId,
+    );
+    expect(
+      (await postResult(await scanFixture(legacyId, "incomplete"))).status,
+    ).toBe(200);
+    pinUp = true;
+    expect(
+      await vetting.reinstateFromRecordedScan(
+        clean.id,
+        livePin,
+        clock.toISOString(),
+      ),
+    ).toBe(order === "earlier");
+    expect((await vetting.getAssessment(legacyId))?.state).toBe("incomplete");
+  },
+);
+
+test.each(["commitSha", "templateSha256"] as const)(
+  "an incomplete investigation at another %s does not block the live clean pin",
+  async (field) => {
+    const { clean } = await deferredReinstatementWithInvestigation();
+    const originalPin = livePin;
+    livePin = {
+      ...livePin,
+      [field]: "c".repeat(field === "commitSha" ? 40 : 64),
+    };
+    const project = await projects.getProject(clean.projectId);
+    if (!project) throw new Error("Missing paused project");
+    expect(
+      await queueAutomaticScan(
+        vettingDeps(),
+        project,
+        "Other-pin investigation",
+      ),
+    ).toBe("queued");
+    const other = (await vetting.pendingAssessments()).at(-1);
+    if (!other) throw new Error("Missing other-pin scan");
+    expect(
+      (await postResult(await scanFixture(other.id, "incomplete"))).status,
+    ).toBe(200);
+    livePin = originalPin;
+    expect(
+      await vetting.reinstateFromRecordedScan(
+        clean.id,
+        livePin,
+        clock.toISOString(),
+      ),
+    ).toBe(true);
+  },
+);
+
 test("a cached scan from before an active contributor flag is refused so it cannot resolve that flag without a fresh scan", async () => {
   const initialAssessmentId = await activeProject();
   clock = new Date(NOW.getTime() + 30_000);
@@ -1961,6 +2240,179 @@ const secondRepositoryRow = async () => {
   if (!row) throw new Error("no pending scan of the second repository");
   return row;
 };
+
+test.each([1, 2])(
+  "a %i-repository reinstatement needs complete planned evidence during an older-app rollout",
+  async (repositories) => {
+    await activeProject();
+    if (repositories === 2) await appendSecondRepository();
+    expect((await flag("alice")).status).toBe(201);
+    clock = new Date(NOW.getTime() + 60_000);
+    expect((await flag("bob")).status).toBe(201);
+    const first = await firstRepositoryRow();
+    const assessmentIds = [first.id];
+    pinUp = false;
+    expect(
+      (await postResult(await scanFixture(first.id, "clean"))).status,
+    ).toBe(200);
+    if (repositories === 2) {
+      const second = await secondRepositoryRow();
+      assessmentIds.push(second.id);
+      expect(
+        (await postResult(await secondRepositoryFixture(second.id, "clean")))
+          .status,
+      ).toBe(200);
+    }
+    const project = await projects.getProject(first.projectId);
+    const assessment = await vetting.getAssessment(first.id);
+    if (!project || !assessment?.signingKeySha256 || !assessment.policyVersion)
+      throw new Error("Missing clean project evidence");
+    const record = planScanReinstatement({
+      project,
+      restriction: projectRestriction(
+        project.id,
+        await projects.listEnforcements(),
+      ),
+      scan: {
+        assessmentId: first.id,
+        assessmentIds,
+        requestedAt: assessment.requestedAt,
+        contentSha256: assessment.contentSha256,
+        keySha256: assessment.signingKeySha256,
+        policyVersion: assessment.policyVersion,
+      },
+      currentContentSha256: assessment.contentSha256,
+      at: clock.toISOString(),
+    });
+    if (record?.systemIssuer?.kind !== "vetting-service")
+      throw new Error("Missing reinstatement plan");
+    // Old application versions name only the issuer. A multi-repository
+    // project must wait for an application that retains the complete plan.
+    delete record.systemIssuer.assessmentIds;
+    const insert = () => enforcementStatement(db, record).run();
+    if (repositories === 2) {
+      await expect(insert()).rejects.toThrow(/scan reinstatement needs/u);
+      record.systemIssuer.assessmentIds = [first.id];
+      await expect(insert()).rejects.toThrow(/scan reinstatement needs/u);
+      record.systemIssuer.assessmentIds = assessmentIds;
+    }
+    await insert();
+    expect((await publicProject()).status).toBe(200);
+  },
+);
+
+test.each(["before planning", "before insertion"] as const)(
+  "a two-repository reinstatement refuses another repository's completed investigation %s",
+  async (completion) => {
+    await activeProject();
+    await appendSecondRepository();
+    repositoryPins.set(SECOND_REPOSITORY, {
+      commitSha: "c".repeat(40),
+      templateSha256: TEMPLATE,
+    });
+    expect((await flag("alice")).status).toBe(201);
+    clock = new Date(NOW.getTime() + 60_000);
+    expect((await flag("bob")).status).toBe(201);
+    const first = await firstRepositoryRow();
+    const second = await secondRepositoryRow();
+    pinUp = false;
+    expect(
+      (await postResult(await scanFixture(first.id, "clean"))).status,
+    ).toBe(200);
+    expect(
+      (await postResult(await secondRepositoryFixture(second.id, "clean")))
+        .status,
+    ).toBe(200);
+    pinUp = true;
+    const project = await projects.getProject(first.projectId);
+    if (!project) throw new Error("Missing paused project");
+    expect(
+      await queueAutomaticScan(
+        vettingDeps(),
+        project,
+        "Explicit investigation",
+      ),
+    ).toBe("queued");
+    const investigation = await firstRepositoryRow();
+    const incomplete = await scanFixture(investigation.id, "incomplete");
+    const finish = async () => {
+      expect((await vetting.getAssessment(investigation.id))?.state).toBe(
+        "pending",
+      );
+      expect((await postResult(incomplete)).status).toBe(200);
+    };
+    if (completion === "before planning") await finish();
+    else beforeVettingBatch = finish;
+    // Refresh tries the second repository's clean scan first. The first
+    // repository's same-live-pin investigation must prevent that restoration.
+    expect((await refresh()) as unknown).toMatchObject({ reinstated: [] });
+    expect((await publicProject()).status).toBe(410);
+    expect((await vetting.getAssessment(first.id))?.state).toBe("clean");
+    expect((await vetting.getAssessment(second.id))?.state).toBe("clean");
+    expect((await vetting.getAssessment(investigation.id))?.state).toBe(
+      "incomplete",
+    );
+    expect(
+      await queueAutomaticScan(
+        vettingDeps(),
+        project,
+        "Later clean investigation",
+      ),
+    ).toBe("queued");
+    const recovery = await firstRepositoryRow();
+    expect(
+      (await postResult(await scanFixture(recovery.id, "clean"))).status,
+    ).toBe(200);
+    expect((await publicProject()).status).toBe(200);
+  },
+);
+
+test("another repository's incomplete scan at the first repository's pin does not block its clean reinstatement", async () => {
+  await activeProject();
+  await appendSecondRepository();
+  const secondPin = { commitSha: "c".repeat(40), templateSha256: TEMPLATE };
+  repositoryPins.set(SECOND_REPOSITORY, secondPin);
+  expect((await flag("alice")).status).toBe(201);
+  clock = new Date(NOW.getTime() + 60_000);
+  expect((await flag("bob")).status).toBe(201);
+  const first = await firstRepositoryRow();
+  const second = await secondRepositoryRow();
+  pinUp = false;
+  expect((await postResult(await scanFixture(first.id, "clean"))).status).toBe(
+    200,
+  );
+  expect(
+    (await postResult(await secondRepositoryFixture(second.id, "clean")))
+      .status,
+  ).toBe(200);
+  pinUp = true;
+  // An investigation of repository two at repository one's pin must not
+  // supersede repository one's clean result. Repository two still has its
+  // own fresh clean result at its distinct live pin.
+  repositoryPins.set(SECOND_REPOSITORY, livePin);
+  const project = await projects.getProject(first.projectId);
+  if (!project) throw new Error("Missing paused project");
+  expect(
+    await queueAutomaticScan(vettingDeps(), project, "Explicit investigation"),
+  ).toBe("queued");
+  const investigation = await secondRepositoryRow();
+  expect(
+    (
+      await postResult(
+        await secondRepositoryFixture(investigation.id, "incomplete"),
+      )
+    ).status,
+  ).toBe(200);
+  repositoryPins.set(SECOND_REPOSITORY, secondPin);
+  expect(
+    await vetting.reinstateFromRecordedScan(
+      first.id,
+      livePin,
+      clock.toISOString(),
+      readLivePin,
+    ),
+  ).toBe(true);
+});
 
 test("a fresh reinstatement of a two-repository project needs a clean scan of each repository at its own live pin", async () => {
   await activeProject();
