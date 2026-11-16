@@ -507,12 +507,12 @@
     },
     {
       "path": "backend/payments/public-records.ts",
-      "sha256": "84cfe037dcf98628bbd5602a3f6a2af00d3a35a3c9cf2403266baada1d77fecd",
+      "sha256": "3d295b846ad6027a168236827c68a8c791695dc4d8aa820d03e493ec92697773",
       "models": [
         "formal/models/payments/payment_history.qnt",
         "formal/models/payments/received_totals.qnt"
       ],
-      "candidateLines": [28, 67, 85, 92, 177, 216, 217],
+      "candidateLines": [29, 89, 108, 115, 200, 239, 240],
       "review": "mapped-abstraction"
     },
     {
