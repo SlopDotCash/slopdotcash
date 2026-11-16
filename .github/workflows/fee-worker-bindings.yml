@@ -14,8 +14,13 @@ on:
         description: Exact deployed source commit whose fee runtime must match this checkout
         type: string
         default: ""
+      prior_proof_run:
+        description: Optional same-workflow failed run stopped before its Solana rotation lease
+        type: string
+        default: ""
 permissions:
   contents: read
+  actions: read
 jobs:
   inspect:
     if: github.ref == 'refs/heads/main'
@@ -53,6 +58,23 @@ jobs:
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           SLOP_SOLANA_RPC_CANDIDATE: ${{ secrets.SLOP_SOLANA_RPC_CANDIDATE }}
         run: bun --no-env-file scripts/probe-fee-solana-rpc.ts
+      - name: Retain the exact prior witness from this workflow
+        if: inputs.rotate_solana_from != '' && inputs.prior_proof_run != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PRIOR_RUN: ${{ inputs.prior_proof_run }}
+        run: |
+          set -euo pipefail
+          [[ "$PRIOR_RUN" =~ ^[1-9][0-9]*$ ]]
+          current_workflow="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" --jq '.workflow_id')"
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$PRIOR_RUN" > "$RUNNER_TEMP/prior-run.json"
+          prior_sha="$(bun -e 'const r=await Bun.file(process.argv[1]).json(); if(r.workflow_id!==Number(process.argv[2]) || r.event!=="workflow_dispatch" || r.head_branch!=="main" || r.status!=="completed" || r.conclusion!=="failure" || !/^[a-f0-9]{40}$/.test(r.head_sha))process.exit(1); console.log(r.head_sha)' "$RUNNER_TEMP/prior-run.json" "$current_workflow")"
+          gh run download "$PRIOR_RUN" --repo "$GITHUB_REPOSITORY" --name "fee-worker-bindings-$prior_sha" --dir "$RUNNER_TEMP/prior-solana-proof"
+          {
+            echo "SLOP_SOLANA_RPC_PRIOR_PROOF_DIRECTORY=$RUNNER_TEMP/prior-solana-proof"
+            echo "SLOP_SOLANA_RPC_PRIOR_SOURCE=$prior_sha"
+            echo "SLOP_SOLANA_RPC_PRIOR_RUN=$PRIOR_RUN"
+          } >> "$GITHUB_ENV"
       - name: Qualify and rotate only the Solana RPC pair
         if: inputs.rotate_solana_from != ''
         env:

@@ -43,9 +43,9 @@
     },
     {
       "path": ".github/workflows/fee-worker-bindings.yml",
-      "sha256": "bd351e95d2c6bc865ee4f9fc495c17c31a46e3abcb8889bbbd1920a2d4a7aae2",
+      "sha256": "06ba282a853c7def225039d743259ba7701287be963f0099592faf61e0456321",
       "models": ["formal/models/release/workflow_authority.qnt"],
-      "candidateLines": [44],
+      "candidateLines": [18, 49, 71],
       "review": "mapped-abstraction"
     },
     {
@@ -4705,9 +4705,9 @@
     },
     {
       "path": "scripts/rotate-fee-solana-rpc.ts",
-      "sha256": "e20d4457dbccd8f79b3a68aba78ccc3fa522510efd339900b31ad7874850f507",
+      "sha256": "d28cff44fd991d50a30baa689c65ba3d72f456e07a75bc1f88b5678b1c6f344d",
       "models": ["formal/models/release/release_publication.qnt"],
-      "candidateLines": [39, 40, 41, 42, 44, 110, 129, 218, 256, 277, 373],
+      "candidateLines": [40, 41, 42, 43, 45, 111, 153, 183, 305, 343, 364, 460],
       "review": "mapped-abstraction"
     },
     {

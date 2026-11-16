@@ -172,7 +172,8 @@ for (const failure of [
       process.env.SLOP_SOLANA_RPC_CANDIDATE="https://fixture.helius-rpc.com"; process.env.SLOP_FEE_CONVERTER_RELEASE="enabled"; process.env.RUNNER_TEMP=root;
       mock.module("esbuild",()=>({build:async()=>({metafile:{inputs:{}}})}));
       mock.module(${JSON.stringify(candidateGuard)},()=>({requireSolanaProbeCandidate:x=>x}));
-      mock.module(${JSON.stringify(qualifier)},()=>({SOLANA_PUBLIC_PAIR:["unused","https://public.rpc.solanavibestation.com"],qualifySolanaRpcPair:async(dir)=>{const fs=await import("node:fs");fs.writeFileSync(join(dir,"solana-rpc-public-pair-proof.json"),"{}");events.push("proof");}}));
+      const actualQualifier = await import(${JSON.stringify(qualifier)});
+      mock.module(${JSON.stringify(qualifier)},()=>({...actualQualifier,SOLANA_PUBLIC_PAIR:["unused","https://public.rpc.solanavibestation.com"],qualifySolanaRpcPair:async(dir)=>{const fs=await import("node:fs");fs.writeFileSync(join(dir,"solana-rpc-public-pair-proof.json"),"{}");events.push("proof");}}));
       const actual = await import(${JSON.stringify(shared)});
       mock.module(${JSON.stringify(shared)},()=>({...actual,cloudflare:()=>()=>{},workerState:async()=>({active:{id:failure==="active"&&++stateReads>1?"changed":"deployment",versions:[{version_id:beforeId,percentage:100}]},latest:{id:beforeId}}),inspectVersion:async(_,id)=>id===beforeId?before:({...before,id,number:2,resources:failure==="bindings"?{...before.resources,script:{etag:"changed-code"}}:before.resources,annotations:{"workers/tag":sha,"workers/message":actual.rotationMessage(sha,before,"solana")}}),requireLiveMain:()=>{},requireRotationBase:(state,id)=>{if(state.active.id==="changed")throw Error("Active changed");},runWrangler:args=>{events.push(args[1]);if(args[1]===failure)throw Error("fixture failure");return "Worker Version ID: "+afterId;}}));
       globalThis.fetch=async(_,init)=>{const {sql}=JSON.parse(init.body);events.push(sql.startsWith("INSERT")?"acquire":sql.startsWith("DELETE")?"release":"renew");return Response.json({success:true,result:[{success:true,meta:{changes:failure==="renew"&&sql.startsWith("UPDATE")?0:1}}]});};
@@ -258,4 +259,58 @@ test("a shallow rotation checkout fetches only its exact deployed source before 
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
+});
+
+test("a prior pre-activation witness is digest-bound and must retain its exact complete operator histories", async () => {
+  const { createHash } = await import("node:crypto");
+  const { validatePriorRotationProof } = await import(
+    "./rotate-fee-solana-rpc"
+  );
+  const pair = ["https://fixture.helius-rpc.com", SOLANA_PUBLIC_PAIR[1]];
+  const bytes = new TextEncoder().encode(
+    JSON.stringify(initialSolanaProofRecord(pair)),
+  );
+  const receipt = {
+    schemaVersion: 1,
+    phase: "qualification",
+    checkout: "a".repeat(40),
+    deployedSource: "b".repeat(40),
+    previousVersion: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+    proofSha256: createHash("sha256").update(bytes).digest("hex"),
+  };
+  expect(() =>
+    validatePriorRotationProof(receipt, bytes, pair, receipt.checkout),
+  ).toThrow("incomplete");
+  expect(() =>
+    validatePriorRotationProof(
+      { ...receipt, runId: "already-started" },
+      bytes,
+      pair,
+      receipt.checkout,
+    ),
+  ).toThrow("before activation");
+  expect(() =>
+    validatePriorRotationProof(
+      { ...receipt, candidateVersion: receipt.previousVersion },
+      bytes,
+      pair,
+      receipt.checkout,
+    ),
+  ).toThrow("before activation");
+  expect(() =>
+    validatePriorRotationProof(
+      { ...receipt, proofSha256: "f".repeat(64) },
+      bytes,
+      pair,
+      receipt.checkout,
+    ),
+  ).toThrow("digest");
+  expect(() =>
+    validatePriorRotationProof(
+      receipt,
+      bytes,
+      SOLANA_PUBLIC_PAIR,
+      receipt.checkout,
+    ),
+  ).toThrow("inconsistent");
 });

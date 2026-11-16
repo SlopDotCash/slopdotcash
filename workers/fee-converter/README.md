@@ -1106,3 +1106,13 @@ the public witness and safe phase receipt. An uncertain activation leaves
 its lease to expire and requires version readback before another attempt.
 This workflow does not submit a fee claim or payment. Subsequent scheduled
 processing uses the existing limits and journal.
+
+If main advances after qualification, `prior_proof_run` can identify a failed
+manual run of this same workflow that stopped before taking a rotation lease.
+The workflow downloads its exact named artifact through GitHub Actions,
+binds the phase receipt to that run's source SHA and proof digest, and verifies
+every retained history page and the expected two operators. Qualification
+still repeats fresh genesis, retention, blockhash-expiry, transaction-absence
+and canonical-anchor checks. Current source, active version and quiet-journal
+checks apply before the new rotation. The prior artifact grants no authority
+to activate its old version.
