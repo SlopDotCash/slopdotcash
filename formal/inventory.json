@@ -43,9 +43,9 @@
     },
     {
       "path": ".github/workflows/fee-worker-bindings.yml",
-      "sha256": "8aca0460d92dd212ff4ce662b8dd95a4005237e7ffdd6acc346b5cbb18c883f7",
+      "sha256": "5245f5ebf3ebdbc65e3b69ac1bbc5936889e4dcb6da867698180b8db19073aea",
       "models": ["formal/models/release/workflow_authority.qnt"],
-      "candidateLines": [],
+      "candidateLines": [25],
       "review": "mapped-abstraction"
     },
     {
@@ -4026,6 +4026,16 @@
       "sha256": "31f2de50f42886755d7aeadb05dcdfa9c6eae7e1c9d691d0d600e38486ee544c",
       "models": ["formal/models/release/workflow_authority.qnt"],
       "candidateLines": [],
+      "review": "mapped-abstraction"
+    },
+    {
+      "path": "scripts/inspect-fee-worker-operations.ts",
+      "sha256": "0789c71c514a53ffde3882f9a12a90bc572f12ccb60c58d6657cdf8208aa60c4",
+      "models": ["formal/models/release/workflow_authority.qnt"],
+      "candidateLines": [
+        40, 44, 56, 58, 79, 117, 156, 165, 170, 173, 200, 217, 224, 263, 348,
+        378, 382, 490
+      ],
       "review": "mapped-abstraction"
     },
     {
@@ -14552,7 +14562,7 @@
     },
     {
       "path": "formal/models/release/workflow_authority.qnt",
-      "sha256": "f0261ccf3a037d98627b30d137060e7e937d4a5f8a19eb0ba5a198711b0ff012",
+      "sha256": "ed1019ea045f3e9f01d958c01709db6d0a79c989164cd9201c71431415ee4a18",
       "sources": [
         ".github/workflows/cancel-closed-pr-runs.yml",
         ".github/workflows/fee-worker-bindings.yml",
@@ -14563,6 +14573,7 @@
         ".github/workflows/referral-root-watch.yml",
         ".github/workflows/vetting-controller.yml",
         "scripts/inspect-fee-worker-bindings.ts",
+        "scripts/inspect-fee-worker-operations.ts",
         "scripts/run-vetting-controller.ts"
       ],
       "scenarios": [

@@ -1,5 +1,7 @@
 // @source .github/workflows/fee-worker-bindings.yml
 // @source scripts/inspect-fee-worker-bindings.ts
+// @source scripts/inspect-fee-worker-operations.ts
+// @evidence scripts/inspect-fee-worker-operations.test.ts
 // @source .github/workflows/monthly-rewards.yml
 // @source .github/workflows/october-rewards.yml
 // @source .github/workflows/cancel-closed-pr-runs.yml
