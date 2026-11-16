@@ -4143,9 +4143,9 @@
     },
     {
       "path": "scripts/inspect-value-intake.ts",
-      "sha256": "13c16dfeb400c5e923354d22d43163df0a7923a8717b7f1ffd8fa753c8af9f19",
+      "sha256": "e5e388da58c3117826014eb5f5261402f8471ccd84ce166eb0ffeb3aad55cdbb",
       "models": ["formal/models/release/workflow_authority.qnt"],
-      "candidateLines": [15, 73, 74, 75, 154, 216, 222, 295],
+      "candidateLines": [16, 62, 128, 129, 130, 219, 281, 287, 360],
       "review": "mapped-abstraction"
     },
     {

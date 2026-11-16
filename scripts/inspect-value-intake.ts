@@ -1,4 +1,5 @@
 /** Protected operational diagnostics. Tail bodies are sanitized only in memory. */
+import { createHash } from "node:crypto";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 
@@ -22,6 +23,60 @@ const stages = new Set([
   "output-read",
   "output-shape",
 ]);
+const exceptionNames = new Set([
+  "Error",
+  "TypeError",
+  "RangeError",
+  "SyntaxError",
+  "ReferenceError",
+  "URIError",
+  "EvalError",
+  "DOMException",
+  "AbortError",
+  "TimeoutError",
+  "DataError",
+  "OperationError",
+  "NotSupportedError",
+  "InvalidAccessError",
+  "DataCloneError",
+  "QuotaExceededError",
+  "GitHubError",
+  "OtherError",
+]);
+type ExceptionFingerprint = { name: string; messageSha256: string | null };
+
+/** A bounded exact UTF-8 message fingerprint, never its text, stack or cause. */
+function exceptionFingerprint(value: unknown): ExceptionFingerprint | null {
+  if (!value || typeof value !== "object") return null;
+  const row = value as Record<string, unknown>;
+  const message = row.message;
+  return {
+    name:
+      typeof row.name === "string" && exceptionNames.has(row.name)
+        ? row.name
+        : "OtherError",
+    messageSha256:
+      typeof message === "string" &&
+      message.length <= 4096 &&
+      Buffer.byteLength(message, "utf8") <= 4096
+        ? createHash("sha256").update(message, "utf8").digest("hex")
+        : null,
+  };
+}
+
+/** The injectable tail transport is projected again; retain only this exact shape. */
+function isExceptionFingerprint(value: unknown): value is ExceptionFingerprint {
+  if (!value || typeof value !== "object") return false;
+  const row = value as Record<string, unknown>;
+  return (
+    Object.keys(row).sort().join() === "messageSha256,name" &&
+    typeof row.name === "string" &&
+    exceptionNames.has(row.name) &&
+    (row.messageSha256 === null ||
+      (typeof row.messageSha256 === "string" &&
+        /^[a-f0-9]{64}$/u.test(row.messageSha256)))
+  );
+}
 
 export function intakeError(input: unknown): string {
   if (typeof input !== "string") return "unspecified";
@@ -74,6 +129,13 @@ export function sanitizeIntakeTail(value: any) {
   if (Number.isInteger(status) && status >= 100 && status <= 599)
     row.httpStatus = status;
   const labels: string[] = [];
+  const fingerprints: ExceptionFingerprint[] = (
+    Array.isArray(value.exceptionFingerprints)
+      ? value.exceptionFingerprints.slice(0, 20)
+      : []
+  )
+    .filter(isExceptionFingerprint)
+    .map((entry: ExceptionFingerprint) => ({ ...entry }));
   const safeCategories =
     /^(?:unspecified|merge-(?:bundle-write|input-write|setup|supervisor-exec|supervisor-result|output-read|output-shape)|merge-supervisor-(?:exited|timeout|disk-limit|output-limit|not-executable)|publication-failed|session-failed|subrequest-limit|github-http-(?:401|403|404|429|500|502|503|504)|source-metadata-changed|rate-limit|authorization|resource-limit|timeout|source-or-assessment|rpc-connection|other)$/u;
   for (const category of Array.isArray(value.categories)
@@ -86,6 +148,8 @@ export function sanitizeIntakeTail(value: any) {
     ? value.exceptions.slice(0, 20)
     : []) {
     labels.push(intakeError(entry?.message));
+    const fingerprint = exceptionFingerprint(entry);
+    if (fingerprint && fingerprints.length < 20) fingerprints.push(fingerprint);
   }
   for (const entry of Array.isArray(value.logs)
     ? value.logs.slice(0, 50)
@@ -97,6 +161,7 @@ export function sanitizeIntakeTail(value: any) {
     }
   }
   if (labels.length) row.categories = [...new Set(labels)];
+  if (fingerprints.length) row.exceptionFingerprints = fingerprints;
   return Object.keys(row).length ? row : null;
 }
 
