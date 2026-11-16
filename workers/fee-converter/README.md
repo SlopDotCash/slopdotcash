@@ -1082,3 +1082,27 @@ without storing it in a Worker binding or artifact. No production Worker
 version, schedule or fee record is changed. The report contains booleans,
 slots, fixed method names and numeric transport codes. This bounded check does
 not establish complete recovery history or authorize RPC rotation.
+
+### Replace the live Solana RPC pair
+
+The fee-worker inspection workflow also accepts `rotate_solana_from` and
+`rotate_solana_source`, which bind the exact active Worker version and its
+source commit. The candidate comes from the existing protected
+`SLOP_SOLANA_RPC_CANDIDATE` Helius secret. Recovery uses the public Solana Vibe
+Station endpoint. The workflow shares the production publication lock.
+
+Before changing bindings, the runner proves that the deployed fee runtime,
+its complete bundled source inputs, configuration and dependency lock match
+the checked-out main revision. It verifies the full 211-block recovery
+witness for both providers, then acquires the existing Solana network lease
+only while its send and native-gas journals are quiet. An active lease or
+unresolved send refuses rotation. Each upload and activation boundary
+rechecks the version, live main and owned lease.
+
+The candidate must preserve the deployed code hash, runtime, nonsecret
+settings, other bindings and existing signer. Rotation uploads only the two
+RPC secrets and activates that exact candidate at 100%. The runner retains
+the public witness and safe phase receipt. An uncertain activation leaves
+its lease to expire and requires version readback before another attempt.
+This workflow does not submit a fee claim or payment. Subsequent scheduled
+processing uses the existing limits and journal.
