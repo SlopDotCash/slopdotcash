@@ -10,6 +10,7 @@ const ROWS = [
     total_gross_withdrawn: "0",
     block_time: "2026-11-15T11:00:00.000Z",
     observed_at: "2026-11-15T11:05:00.000Z",
+    open_pledged_gross: null,
   },
   {
     project_id: "demo",
@@ -19,6 +20,36 @@ const ROWS = [
     total_gross_withdrawn: "0",
     block_time: "2026-11-15T11:00:00.000Z",
     observed_at: "2026-11-15T11:05:00.000Z",
+    open_pledged_gross: null,
+  },
+  {
+    project_id: "locked",
+    network: "base-mainnet",
+    vault: "0xfed",
+    free_balance: "900000000",
+    total_gross_withdrawn: "0",
+    block_time: "2026-11-15T11:00:00.000Z",
+    observed_at: "2026-11-15T11:05:00.000Z",
+    open_pledged_gross: "500000000",
+  },
+];
+
+const PLEDGES = [
+  {
+    project_id: "locked",
+    network: "base-mainnet",
+    vault: "0xfed",
+    period: "2026-11",
+    amount: "250000000",
+    open: 1,
+  },
+  {
+    project_id: "locked",
+    network: "base-mainnet",
+    vault: "0xfed",
+    period: "2026-12",
+    amount: "250000000",
+    open: 1,
   },
 ];
 
@@ -34,16 +65,22 @@ const STARTS = [
   },
 ];
 let bound: unknown[] = [];
+let pledgeBound: unknown[] = [];
 
 const db = {
   prepare: (sql: string) => ({
     bind(...values: unknown[]) {
-      bound = values;
+      if (sql.includes("vault_month_pledges")) pledgeBound = values;
+      else bound = values;
       return this;
     },
     async all() {
       return {
-        results: sql.includes("vault_month_starts") ? STARTS : ROWS,
+        results: sql.includes("vault_month_starts")
+          ? STARTS
+          : sql.includes("vault_month_pledges")
+            ? PLEDGES
+            : ROWS,
       };
     },
   }),
@@ -87,12 +124,35 @@ test("production serves mainnet vault balances only", async () => {
               blockTime: "2026-11-01T00:04:00.000Z",
             },
           ],
+          openPledgedGross: null,
+          pledges: [],
+        },
+      ],
+    },
+    {
+      projectId: "locked",
+      vaults: [
+        {
+          network: "base-mainnet",
+          vault: "0xfed",
+          freeBalance: "900000000",
+          totalGrossWithdrawn: "0",
+          blockTime: "2026-11-15T11:00:00.000Z",
+          observedAt: "2026-11-15T11:05:00.000Z",
+          monthStarts: [],
+          openPledgedGross: "500000000",
+          pledges: [
+            { period: "2026-11", amount: "250000000", open: true },
+            { period: "2026-12", amount: "250000000", open: true },
+          ],
         },
       ],
     },
   ]);
   // This month and the one before.
   expect(bound).toEqual(["2026-10", "2026-11"]);
+  // Pledges from the month before on.
+  expect(pledgeBound).toEqual(["2026-10"]);
 });
 
 test("staging keeps testnet vaults", async () => {

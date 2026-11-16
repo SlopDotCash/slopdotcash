@@ -30,6 +30,8 @@ jobs:
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          PRIVATE_PACKET_TRANSPORT: bound-preview
+          PRIVATE_PACKET_ENCRYPTION_KEY: ${{ secrets.PRIVATE_PACKET_ENCRYPTION_KEY }}
           PRIVATE_PACKET_MANIFEST: ${{ secrets.HISTORICAL_POINTS_OBJECT_MANIFEST }}
           PRIVATE_PACKET_CHUNK_INDEX: ${{ inputs.chunk_index }}
           PRIVATE_PACKET_CHUNK_1: ${{ secrets.PRIVATE_PACKET_CHUNK_1 }}
