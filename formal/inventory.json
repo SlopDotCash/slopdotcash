@@ -4442,9 +4442,9 @@
     },
     {
       "path": "scripts/qualify-value-models.ts",
-      "sha256": "606f19c3a5f14979fff84074bd4e2388454f4e3ce83dd5c8c086530d791ecf88",
+      "sha256": "ac071af313784eb6be707a94e20d13f2d907cd18b9bea13928abcec2112fefe6",
       "models": ["formal/models/slopbot/qualification_value_budget.qnt"],
-      "candidateLines": [98, 247],
+      "candidateLines": [99, 248],
       "review": "mapped-abstraction"
     },
     {

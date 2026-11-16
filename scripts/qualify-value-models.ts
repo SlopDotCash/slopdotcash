@@ -36,7 +36,8 @@ function requireThat(value: unknown): asserts value {
 
 /** Only this process's synthetic qualification traffic passes this boundary.
  * The ordinary model prompt/schema remain intact; output is capped for the
- * synthetic cases. A missing cost receipt stops further calls. */
+ * synthetic cases. Missing receipts stop calls except a quota refusal whose
+ * entire preflight cost bound remains reserved. */
 export function qualificationTransport(
   fetcher: typeof fetch,
   purpose: "value" | "general-review" = "value",
