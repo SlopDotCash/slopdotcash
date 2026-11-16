@@ -1280,3 +1280,19 @@ test("accepted bot squash remains excluded without a human reward pool", () => {
     reconstructHistoricalPoints(f.packet, f.baseline, time, new Map()),
   ).toThrow();
 });
+
+test("fresh squash identity recognizes GitHub's reserved bot commit login", async () => {
+  const f = acceptedSquashFixture(true);
+  if (!f.current.mergeCommit.author.user) throw Error("Missing bot fixture");
+  f.current.mergeCommit.author.user.__typename = "User";
+  f.current.mergeCommit.author.user.login = "robot[bot]";
+  await verifyHistoricalAcceptedSquashes(f.packet, {
+    graphql: async <T>() => ({ nodes: [f.current] }) as T,
+  });
+  f.current.mergeCommit.author.user.login = "robot";
+  await expect(
+    verifyHistoricalAcceptedSquashes(f.packet, {
+      graphql: async <T>() => ({ nodes: [f.current] }) as T,
+    }),
+  ).rejects.toThrow();
+});
