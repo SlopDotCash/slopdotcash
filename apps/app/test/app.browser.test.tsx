@@ -1,46 +1,68 @@
-import { Layer, ManagedRuntime } from "effect";
-import * as KeyValueStore from "effect/persistence/KeyValueStore";
+import "../src/main.css";
+import { ManagedRuntime } from "effect";
 import { act } from "react";
-import { createRoot } from "react-dom/client";
+import { createRoot, type Root } from "react-dom/client";
 import { afterAll, afterEach, beforeAll, expect, it } from "vitest";
 import { page, userEvent } from "vitest/browser";
+import type { Machine } from "../gen/app.effect.vibe";
 import { App } from "../src/App.tsx";
-import { stored } from "../src/greeter.vibe";
+import { pathTo } from "../src/address.ts";
+import { routes } from "../src/routes.vibe";
 
-const runtime = ManagedRuntime.make(Layer.provide(stored, KeyValueStore.layerStorage(() => localStorage)));
-const root = createRoot(document.body.appendChild(document.createElement("div")));
+const opened: { root: Root; runtime: ManagedRuntime.ManagedRuntime<Machine, unknown> }[] = [];
 const environment = globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean };
 const previousActEnvironment = environment.IS_REACT_ACT_ENVIRONMENT;
 
-beforeAll(() => { environment.IS_REACT_ACT_ENVIRONMENT = true; });
-afterEach(async () => { await act(() => Promise.resolve(root.unmount())); await runtime.dispose(); localStorage.clear(); });
-afterAll(() => { environment.IS_REACT_ACT_ENVIRONMENT = previousActEnvironment; });
-
-const storedGreeter = (): unknown => JSON.parse(localStorage.getItem("greeter") ?? "null");
-
-/** Fills localStorage until it takes no more, as a browser's quota does. */
-function fill() {
-  for (let size = 1 << 22; size > 0; size >>= 1)
-    for (let i = 0; ; i++) try { localStorage.setItem(`fill${size}.${i}`, "x".repeat(size)); } catch { break; }
+/** The page loaded at `path` and `search`, as main.tsx loads it. */
+async function load(path: string, search = "") {
+  for (const { root } of opened) await act(() => Promise.resolve(root.unmount()));
+  const runtime = ManagedRuntime.make(routes);
+  const root = createRoot(document.body.appendChild(document.createElement("div")));
+  opened.push({ root, runtime });
+  await act(() => Promise.resolve(root.render(<App runtime={runtime} path={path} search={search} />)));
 }
 
-// spec/app/index.md, "Story: Say hello"
-// Greeting disables the button that was clicked, and a browser then drops its focus: the page hands it to the name,
-// so the next one is typed at once. The greeter is in the browser's own localStorage, at its quota in the end.
-it("Say hello, one name after another, until the store is full", async () => {
-  await act(() => Promise.resolve(root.render(<App runtime={runtime} />)));
-  const name = page.getByRole("textbox", { name: "Name" }), greet = page.getByRole("button", { name: "Greet" });
-  await act(() => userEvent.type(name, "Ada"));
-  await act(() => userEvent.click(greet));
-  await expect.poll(storedGreeter).toEqual({ name: "Ada", count: 1 });
-  await expect.poll(() => document.activeElement).toBe(name.element());
-  // spec/app/index.md, "Only a name that is not empty can be greeted"
-  await expect.element(greet).toBeDisabled();
-  await act(() => userEvent.keyboard("Grace{Enter}"));
-  await expect.poll(storedGreeter).toEqual({ name: "Grace", count: 2 });
+beforeAll(() => { environment.IS_REACT_ACT_ENVIRONMENT = true; document.documentElement.className = "dark"; });
+afterEach(async () => {
+  for (const { root, runtime } of opened.splice(0)) { await act(() => Promise.resolve(root.unmount())); await runtime.dispose(); }
+  document.body.replaceChildren();
+});
+afterAll(() => { environment.IS_REACT_ACT_ENVIRONMENT = previousActEnvironment; });
 
-  fill();
-  await act(() => userEvent.keyboard("Margaret{Enter}"));
-  await expect.element(page.getByRole("alert")).toBeVisible();
-  expect(storedGreeter()).toEqual({ name: "Grace", count: 2 });
+const heading = () => page.getByRole("heading", { level: 1 });
+
+// spec/app/index.md, "Story: Open a page by its address"
+// Each page is one main landmark with one heading between the header and the footer; an address that names nothing
+// offers the way back, and the header's links are reached from the keyboard in reading order.
+it("Open a page by its address, an old one included, and one that names nothing", async () => {
+  // spec/app/index.md, "A route carries exactly the identifiers its page needs"
+  await load(pathTo(["projects", "slop", "security"]));
+  await expect.element(heading()).toHaveTextContent("slop security bounty");
+  expect(document.querySelectorAll("main")).toHaveLength(1);
+
+  // spec/app/index.md, "An old address opens the page that replaced it"
+  await load("/wallet");
+  await expect.element(heading()).toHaveTextContent("Settings");
+
+  // spec/app/index.md, "The shell shows one route, opened from the address"
+  await load("/points", "?x=1");
+  await expect.element(heading()).toHaveTextContent("Settings");
+  await load("/points");
+  await expect.element(heading()).toHaveTextContent("Leaderboard");
+
+  // spec/app/index.md, "Each address names exactly one route kind, and an address that names none is unknown"
+  await load("/projects/slop/unknown-section");
+  await expect.element(heading()).toHaveTextContent("Page not found");
+  await expect.element(page.getByRole("link", { name: "See open projects" })).toHaveAttribute("href", "/");
+  await load("/projects/%E0%A4%A");
+  await expect.element(heading()).toHaveTextContent("Page not found");
+
+  await load("/how-it-works");
+  await expect.element(page.getByRole("link", { name: "How It Works" })).toHaveAttribute("aria-current", "page");
+  await userEvent.keyboard("{Tab}");
+  await expect.poll(() => document.activeElement?.getAttribute("aria-label")).toBe("Slop home");
+  await userEvent.keyboard("{Tab}");
+  await expect.poll(() => document.activeElement?.textContent).toBe("How It Works");
+  await userEvent.keyboard("{Tab}");
+  await expect.poll(() => document.activeElement?.textContent).toBe("Log in");
 });

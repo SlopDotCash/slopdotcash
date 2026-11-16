@@ -1,17 +1,23 @@
-// SPEC.md, "Conformance": spec/app/index.md against the shell of src/greeter.vibe, observed as what its store holds.
-import { Effect, Layer } from "effect";
-import * as KeyValueStore from "effect/persistence/KeyValueStore";
+// SPEC.md, "Conformance": spec/app/index.md against the shell of src/routes.vibe, observed as the route it holds.
+import { Effect } from "effect";
 import { effectDriver } from "vibestack/testing";
 import type { Options } from "../../gen/app.conformance.ts";
-import type { Event, Greeter } from "../../gen/app.ts";
-import { Greetings, load, stored } from "../../src/greeter.vibe";
+import type { Machine } from "../../gen/app.effect.vibe";
+import type { Event, Shell } from "../../gen/app.ts";
+import { current, opened, routes } from "../../src/routes.vibe";
 
-const refused = () => Effect.succeed("refused" as const);
 /** What the shell did with `input`: a refusal by the rules or the decoder is "refused", any other failure stays one. */
 const receive = (_key: string, input: unknown) =>
-  Greetings.use((g) => g.receive(input)).pipe(Effect.as("accepted" as const), Effect.catchTags({ Rejected: refused, NotAnEvent: refused }));
+  opened(input).pipe(
+    Effect.as("accepted" as const),
+    Effect.catchTags({ Rejected: () => Effect.succeed("refused" as const), NotAnEvent: () => Effect.succeed("refused" as const) }),
+  );
 
-export const driver = effectDriver<Event, Greeter, Greetings | KeyValueStore.KeyValueStore, never>(Layer.provideMerge(stored, KeyValueStore.layerMemory), { dispatch: receive, receive, observe: () => load() });
+export const driver = effectDriver<Event, Shell, Machine, unknown>(routes, {
+  dispatch: receive,
+  receive,
+  observe: current,
+});
 
-/** One greeter, so one key. */
-export const options: Options = { keys: ["greeter"] };
+/** One page, so one key. */
+export const options: Options<Shell> = { keys: ["page"] };

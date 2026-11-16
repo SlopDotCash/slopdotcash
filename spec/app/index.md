@@ -53,13 +53,12 @@ Each kind is a pattern of the canonical segments. No two patterns overlap,
 and the parser returns the one that matches.
 
 ```quint
-type NamedPage = { segment: str, named: RouteKind }
-pure val namedPages: List[NamedPage] = List(
-  { segment: "how-it-works", named: HowItWorks }, { segment: "sponsors", named: Sponsors },
-  { segment: "cycles", named: CycleArchive }, { segment: "account", named: Account }, { segment: "login", named: Login },
-  { segment: "earnings", named: Earnings }, { segment: "inbox", named: Inbox }, { segment: "admin", named: Admin },
-  { segment: "vetting-evidence", named: VettingEvidence }, { segment: "security", named: SecurityCases })
-pure def namedPage(segment: str, kind: RouteKind): bool = namedPages.includes({ segment: segment, named: kind })
+pure def namedKind(segment: str): RouteKind =
+  if (segment == "how-it-works") HowItWorks else if (segment == "sponsors") Sponsors
+  else if (segment == "cycles") CycleArchive else if (segment == "account") Account else if (segment == "login") Login
+  else if (segment == "earnings") Earnings else if (segment == "inbox") Inbox else if (segment == "admin") Admin
+  else if (segment == "vetting-evidence") VettingEvidence else if (segment == "security") SecurityCases else Unknown
+pure def namedPage(segment: str, kind: RouteKind): bool = kind != Unknown and namedKind(segment) == kind
 
 pure def matchesKnown(kind: RouteKind, segments: List[str], withX: bool): bool =
   val path = canonical(segments)
@@ -93,7 +92,7 @@ pure def parse(segments: List[str], withX: bool): Route =
   val third = path.nthOr(2, "")
   if (n == 0) page(Home)
   else if (n == 1 and first == "points") page(if (withX) Account else Points)
-  else if (n == 1) page(namedPages.foldl(Unknown, (found, entry) => if (entry.segment == first) entry.named else found))
+  else if (n == 1) page(namedKind(first))
   else if (n == 3 and first == "admin" and second == "applications") page(Admin)
   else if (n == 2 and first == "projects") (if (second == "new") page(NewProject) else { ...page(Project), projectId: second })
   else if (n == 3 and first == "projects" and third == "manage") { ...page(ManageProject), projectId: second }

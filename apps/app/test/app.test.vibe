@@ -1,29 +1,28 @@
-// The shell of src/greeter.vibe across a reload: what the conformance driver (test/drivers/app.ts) cannot see,
-// which is a greeter started again from its store, and a store holding what is not one.
-import { assert, layer } from "@effect/vitest"
-import * as KeyValueStore from "effect/persistence/KeyValueStore"
-import { Greetings, load, stored } from "../src/greeter.vibe"
+// The shell of src/routes.vibe from the addresses a browser hands it: what the conformance driver (test/drivers/app.ts)
+// cannot see, which is address.ts turning a path and a query into the opening.
+import { assert, it } from "@effect/vitest"
+import { openingOf, pathTo } from "../src/address.ts"
+import { current, opened, routes } from "../src/routes.vibe"
 
-/** The greeter a page opened now would show. */
-effect function reopened() { return Option.getOrUndefined(try Stream.runHead(Context.get(try Layer.build(stored), Greetings).changes)) }
+/** The route a page loaded at `path` with `search` shows. */
+effect function load(path: string, search: string) {
+  provide routes {
+    try opened(openingOf(path, search))
+    return try current()
+  }
+}
 
-layer(KeyValueStore.layerMemory)((it) => {
-  // spec/app/index.md, "Story: Say hello"
-  it.effect("Say hello, then open the page again", () => effect {
-    const unloaded = try load()
-    unloaded.count = 50
-    const greetings = Context.get(try Layer.build(stored), Greetings)
-    try Stream.runHead(Stream.tap(greetings.changes, (state) => sync(() => { state.count = -1 })))
-    const first = try greetings.receive({ type: "greet", name: "Ada" })
-    first.count = -1
-    try greetings.receive({ type: "greet", name: "Grace" })
-    const again = try reopened()
-    // spec/app/index.md, "Once someone has been greeted, the greeter holds a name"
-    try (try KeyValueStore.KeyValueStore).set("greeter", JSON.stringify({ name: "", count: 1 }))
-    const invalid = try reopened()
-    // spec/app/index.md, "The number of greetings is never negative"
-    try (try KeyValueStore.KeyValueStore).set("greeter", JSON.stringify({ name: "Grace", count: -1 }))
-    const negative = try reopened()
-    try Effect.try(() => assert.deepStrictEqual([again, invalid, negative], [{ name: "Grace", count: 2 }, { name: "", count: 0 }, { name: "", count: 0 }]))
-  })
+// spec/app/index.md, "Story: Open a page by its address"
+it.effect("Open a page by its address", () => effect {
+  // spec/app/index.md, "Each address names exactly one route kind, and an address that names none is unknown"
+  const profile = try load(pathTo(["contributors", "a/b c"]), "")
+  // spec/app/index.md, "The shell shows one route, opened from the address"
+  const fromX = try load("/points/", "?x=1")
+  const undecodable = try load("/projects/%E0%A4%A", "")
+  // spec/app/index.md, "An old address opens the page that replaced it"
+  const wallet = try load("//wallet", "")
+  try Effect.try(() => assert.deepStrictEqual(
+    [profile.route, fromX.route.kind, undecodable.route.kind, wallet.route.kind],
+    [{ kind: "Profile", projectId: "", cycleId: "", login: "a/b c" }, "Account", "Unknown", "Account"],
+  ))
 })
