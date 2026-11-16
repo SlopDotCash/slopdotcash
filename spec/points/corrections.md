@@ -81,7 +81,9 @@ rule: such a manifest is refused there.
 
 ```quint
 pure val octoberProjects = Set("eliza", "slopdotcash", "asi", "feed", "thenetwork")
-pure def octoberScope(c: Correction): bool = octoberProjects.contains(c.project) and P::periodOf(c.occurredAt) == P::october2026
+pure def octoberReplacementScope(project: str, occurredAt: int): bool =
+  octoberProjects.contains(project) and P::periodOf(occurredAt) == P::october2026
+pure def octoberScope(c: Correction): bool = octoberReplacementScope(c.project, c.occurredAt)
 pure def redirected(w: WorkLine): bool = w.origin > 0 and not(w.ambiguous) and (not(w.followup) or w.parentEdges)
 pure def recipientOf(w: WorkLine): int = if (redirected(w)) w.origin else w.author
 pure def linesFor(work: List[WorkLine], actor: int): int = work.foldl(0, (acc, w) => if (recipientOf(w) == actor) acc + w.lines else acc)

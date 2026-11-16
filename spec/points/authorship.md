@@ -8,7 +8,11 @@ creator, or to the original PR creator when verified retained-copy evidence
 binds the commit to that PR. A PR description reference alone is never such
 evidence. Maintainers are not excluded from implementation credit; bots and
 vendor agents are. The owner decision of 13 November 2026 weights recipients
-by additions plus deletions in their accepted commits.
+by additions plus deletions in their accepted commits. The owner decision of
+14 November 2026 redirects, for October 2026 sources of the five named
+projects only, a verified replacement PR's carried commits and its carrier's
+verified follow-up commits to the verified original contributor (the
+[correction manifest](./corrections.md) applies it to recorded history).
 
 This machine represents one immutable accepted commit of one accepted
 source, following
@@ -31,32 +35,46 @@ obligation C8.
 ```quint
 import allocation as A from "./allocation"
 import workUnits as W from "./workUnits"
+import corrections as CO from "./corrections"
 type ActorKind = User | Bot | VendorAgent
-type AttributionPhase = Gathering | Attributed | Credited | ConflictHeld | Repaired
+type AttributionPhase = Gathering | Attributed | Credited | ConflictHeld | ClaimHeld | Repaired
+type CarryBinding = NoCarry | VerifiedCarry({ original: int, followup: bool, parentEdges: bool }) | AmbiguousCarry
 type Observed = Unknown | Seen({ actor: int, kind: ActorKind, linked: bool })
 type Lines = NoLines | CompleteLines({ additions: int, deletions: int })
 type Acceptance = NotObserved | AcceptedCommit({ merge: bool, earlierSource: bool }) | Unaccepted
 type CopyBinding = NoCopy | VerifiedCopy({ actor: int, kind: ActorKind }) | DescriptionOnly
-type CommitAttribution = { phase: AttributionPhase, commitId: int, sourceId: int, primary: Observed, source: Observed,
-  copy: CopyBinding, acceptance: Acceptance, lines: Lines, recipient: int, repairedFrom: int }
-pure val initial: CommitAttribution = { phase: Gathering, commitId: 11, sourceId: 2, primary: Unknown,
-  source: Unknown, copy: NoCopy, acceptance: NotObserved, lines: NoLines, recipient: 0, repairedFrom: 0 }
+type CommitAttribution = { phase: AttributionPhase, commitId: int, sourceId: int, project: str, occurredAt: int,
+  primary: Observed, source: Observed, copy: CopyBinding, carry: CarryBinding, acceptance: Acceptance, lines: Lines,
+  recipient: int, repairedFrom: int }
+pure val initial: CommitAttribution = { phase: Gathering, commitId: 11, sourceId: 2, project: "eliza", occurredAt: 2432110,
+  primary: Unknown, source: Unknown, copy: NoCopy, carry: NoCarry, acceptance: NotObserved, lines: NoLines, recipient: 0, repairedFrom: 0 }
 pure def eligibleKind(kind: ActorKind): bool = kind == User
 pure def alwaysCommitIdentity(a: CommitAttribution): bool = a.commitId == 11 and a.sourceId == 2
+  and a.project == "eliza" and a.occurredAt == 2432110
 pure def linesValid(lines: Lines): bool = match lines { | CompleteLines(x) => x.additions >= 0 and x.deletions >= 0 | NoLines => true }
 pure def alwaysLineEvidence(a: CommitAttribution): bool = linesValid(a.lines)
 ```
 
-### Primary authorship takes precedence over retained-copy and PR-opener fallbacks
+### A verified October carry goes to the original contributor; otherwise primary authorship precedes the fallbacks
 
-The absence of an eligible recipient holds attribution.
+In scope, a carried commit, or a carrier commit whose authenticated Git
+parent edges descend from an original contributor's commit, is credited to
+the verified original contributor; an unproved carrier commit keeps the
+ordinary rule. Outside October 2026 or the five projects the carry binding
+changes nothing. An ambiguous claim holds the commit for review. The absence
+of an eligible recipient holds attribution.
 
 ```quint
 pure def primaryRecipient(o: Observed): int = match o { | Seen(x) => if (x.linked and eligibleKind(x.kind) and x.actor > 0) x.actor else 0 | Unknown => 0 }
 pure def copyRecipient(c: CopyBinding): int = match c { | VerifiedCopy(x) => if (eligibleKind(x.kind) and x.actor > 0) x.actor else 0 | _ => 0 }
 pure def sourceRecipient(o: Observed): int = match o { | Seen(x) => if (eligibleKind(x.kind) and x.actor > 0) x.actor else 0 | Unknown => 0 }
+pure def carriedRecipient(a: CommitAttribution): int = match a.carry {
+  | VerifiedCarry(x) => if (CO::octoberReplacementScope(a.project, a.occurredAt) and x.original > 0
+      and (not(x.followup) or x.parentEdges)) x.original else 0
+  | _ => 0 }
 pure def recipientFor(a: CommitAttribution): int =
-  if (primaryRecipient(a.primary) > 0) primaryRecipient(a.primary)
+  if (carriedRecipient(a) > 0) carriedRecipient(a)
+  else if (primaryRecipient(a.primary) > 0) primaryRecipient(a.primary)
   else if (copyRecipient(a.copy) > 0) copyRecipient(a.copy)
   else sourceRecipient(a.source)
 pure def isUnknown(o: Observed): bool = match o { | Unknown => true | _ => false }
@@ -89,6 +107,20 @@ pure def observeCopy(a: CommitAttribution, copy: CopyBinding): CommitAttribution
   if (isNoCopy(a.copy) or isDescriptionOnly(a.copy)) { ...a, copy: copy }
   else if (sameCopy(a.copy, copy) or isDescriptionOnly(copy)) a
   else { ...a, phase: ConflictHeld }
+pure def isNoCarry(c: CarryBinding): bool = match c { | NoCarry => true | _ => false }
+pure def isAmbiguous(c: CarryBinding): bool = match c { | AmbiguousCarry => true | _ => false }
+pure def canObserveCarry(a: CommitAttribution, carry: CarryBinding): bool = a.phase == Gathering and isNoCarry(a.carry)
+  and not(isNoCarry(carry))
+pure def observeCarry(a: CommitAttribution, carry: CarryBinding): CommitAttribution =
+  if (isAmbiguous(carry)) { ...a, carry: carry, phase: ClaimHeld } else { ...a, carry: carry }
+pure def lawCarrierNeverGainsVerifiedFollowup(a: CommitAttribution, actor: int): bool =
+  (CO::octoberReplacementScope(a.project, a.occurredAt) and actor > 0 and actor != 1
+    and primaryRecipient(a.primary) == actor) implies
+      recipientFor({ ...a, carry: VerifiedCarry({ original: 1, followup: true, parentEdges: true }) }) != actor
+pure def lawOtherScopesKeepOrdinaryRule(a: CommitAttribution, carry: CarryBinding): bool =
+  not(CO::octoberReplacementScope(a.project, a.occurredAt)) implies recipientFor({ ...a, carry: carry }) == recipientFor({ ...a, carry: NoCarry })
+pure def lawUnprovedFollowupKeepsOrdinaryRule(a: CommitAttribution, original: int): bool =
+  recipientFor({ ...a, carry: VerifiedCarry({ original: original, followup: true, parentEdges: false }) }) == recipientFor({ ...a, carry: NoCarry })
 pure def lawDescriptionIsNoEvidence(actor: int, kind: ActorKind): bool =
   copyRecipient(DescriptionOnly) == 0
 pure def lawMaintainerStillCredited(actor: int): bool =
@@ -153,6 +185,9 @@ pure def sometimesRepaired(a: CommitAttribution): bool = a.phase == Repaired
 pure def sometimesMergeHeld(a: CommitAttribution): bool = acceptedAs(a.acceptance, true, false)
 pure def sometimesCreditedElsewhere(a: CommitAttribution): bool = acceptedAs(a.acceptance, false, true)
 pure def sometimesConflictResolved(a: CommitAttribution): bool = a.phase == Credited and a.repairedFrom == 0 and sameSeen(a.primary, 2, User, true)
+pure def sometimesFollowupRedirected(a: CommitAttribution): bool = a.phase == Credited and carriedRecipient(a) > 0
+  and primaryRecipient(a.primary) > 0 and a.recipient != primaryRecipient(a.primary)
+pure def sometimesAmbiguousHeld(a: CommitAttribution): bool = a.phase == ClaimHeld
 ```
 
 ### A fresh complete re-read resolves a held conflict
@@ -211,6 +246,13 @@ pure val additionsValues = Set(0, 1, 2)
 pure val deletionsValues = Set(0, 1, 2)
 pure val copyValues = Set(VerifiedCopy({ actor: 2, kind: User }), VerifiedCopy({ actor: 1, kind: User }), DescriptionOnly)
 pure val mergeValues = Set(true, false)
+pure val carryValues = Set(VerifiedCarry({ original: 1, followup: true, parentEdges: true }),
+  VerifiedCarry({ original: 1, followup: true, parentEdges: false }), VerifiedCarry({ original: 2, followup: false, parentEdges: false }),
+  AmbiguousCarry)
+pure val originalValues = Set(0, 1, 2)
+pure val aValues = Set(initial, { ...initial, primary: Seen({ actor: 2, kind: User, linked: true }) },
+  { ...initial, project: "p", primary: Seen({ actor: 2, kind: User, linked: true }) },
+  { ...initial, occurredAt: 2432210, primary: Seen({ actor: 2, kind: User, linked: true }), copy: VerifiedCopy({ actor: 1, kind: User }) })
 pure val unitsValues = Set(W::initial,
   { ...W::initial, nextId: 2, units: List({ id: 1, project: "p", sources: Set(1), commits: Set(11), band: 0, value: 10,
     accepted: true, acceptedPeriod: 24320, superseded: false, frozen: false, supersededBy: 0 }) },
