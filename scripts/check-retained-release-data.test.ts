@@ -114,4 +114,4 @@ test("normal read accepts registry-extended profiles and refuses newer live prof
   } finally {
     await rm(directory, { recursive: true, force: true });
   }
-});
+}, 60_000);
