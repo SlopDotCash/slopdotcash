@@ -209,8 +209,11 @@ async function rpc(config: EvmRpc, method: string, params: unknown[]) {
   if (body.id !== 1) throw new EvmRpcUnavailable("RPC request failed");
   if (body.error) {
     const error = object(body.error);
+    // Providers report an empty revert either with data "0x" or with no data
+    // field at all (mainnet.base.org answers {"code":3,"message":"execution
+    // reverted"}). A revert that carries data is never empty.
     throw new EvmRpcError(
-      error.data === "0x" &&
+      (error.data === "0x" || !("data" in error)) &&
         typeof error.message === "string" &&
         /revert/i.test(error.message),
     );
@@ -1576,4 +1579,101 @@ export async function readVaultTotals(
         ? (reservedPrincipal + reservedFees + pending).toString()
         : null,
   };
+}
+
+/** Topic 0 of the vault's month pledge events (ProjectEscrow, appended 15 November 2026). */
+export const EVM_PLEDGE_EVENT_TOPICS: {
+  MonthPledged: `0x${string}`;
+  PledgeClosed: `0x${string}`;
+} = Object.freeze({
+  MonthPledged: `0x${keccakText("MonthPledged(uint32,uint128)")}`,
+  PledgeClosed: `0x${keccakText("PledgeClosed(uint32,uint128,bool)")}`,
+});
+
+/** A UTC period YYYYMM, year 2000 to 9999, as the contract accepts it. */
+function pledgePeriodWord(period: number) {
+  const month = period % 100;
+  const year = Math.floor(period / 100);
+  if (
+    !Number.isSafeInteger(period) ||
+    year < 2000 ||
+    year > 9999 ||
+    month < 1 ||
+    month > 12
+  )
+    throw new Error("Invalid pledge period");
+  return period.toString(16).padStart(64, "0");
+}
+
+/** Owner-only on an ordinary vault: pledge `amountMinor` base units of free funds to each of `count`
+ * consecutive periods from `fromPeriod` (YYYYMM, the current period to eleven months ahead). A pledge
+ * can be raised, never lowered; withdrawals and owner awards cannot use pledged funds until the period
+ * is reserved or its commit window closes. */
+export function buildPledgeMonthsCalldata(
+  fromPeriod: number,
+  count: number,
+  amountMinor: bigint,
+): `0x${string}` {
+  if (!Number.isSafeInteger(count) || count < 1 || count > 12)
+    throw new Error("A pledge covers 1 to 12 periods");
+  return `0x${selector("pledgeMonths(uint32,uint8,uint128)")}${pledgePeriodWord(fromPeriod)}${count.toString(16).padStart(64, "0")}${amountWord(amountMinor)}`;
+}
+
+/** Permissionless: close an unreserved pledge once its period's commit window has closed. */
+export function buildExpirePledgeCalldata(period: number): `0x${string}` {
+  return `0x${selector("expirePledge(uint32)")}${pledgePeriodWord(period)}`;
+}
+
+/** The vault's open pledge total and the pledge of each requested period, all read at one block
+ * (default the latest finalized block). Returns null only when the address holds no code or its
+ * implementation has no pledge support, proved by an empty revert of openPledgedGross(); any
+ * other failure throws. */
+export async function readEvmMonthPledges(input: {
+  rpcUrl: string;
+  vault: string;
+  periods: number[];
+  blockTag?: string;
+}): Promise<{
+  openPledgedGross: bigint;
+  pledges: { period: number; amount: bigint; open: boolean }[];
+} | null> {
+  if (!ADDRESS.test(input.vault)) throw new Error("Invalid vault");
+  const periodWords = input.periods.map(pledgePeriodWord);
+  const config = { rpcUrl: input.rpcUrl };
+  const tag = input.blockTag ?? "finalized";
+  // Pin a named tag to one block number so every read sees the same state.
+  const blockTag = QUANTITY.test(tag)
+    ? tag
+    : `0x${quantity(object(await rpc(config, "eth_getBlockByNumber", [tag, false])).number).toString(16)}`;
+  if ((await rpc(config, "eth_getCode", [input.vault, blockTag])) === "0x")
+    return null;
+  let open: string;
+  try {
+    open = await getter(config, input.vault, "openPledgedGross()", blockTag);
+  } catch (error) {
+    if (error instanceof EvmRpcError && error.emptyRevert) return null;
+    throw error;
+  }
+  const pledges = await Promise.all(
+    periodWords.map(async (periodWord, index) => {
+      const data = await rpc(config, "eth_call", [
+        {
+          to: input.vault,
+          data: `0x${selector("monthPledges(uint32)")}${periodWord}`,
+        },
+        blockTag,
+      ]);
+      if (typeof data !== "string" || !/^0x[0-9a-fA-F]{128}$/.test(data))
+        throw new Error("Malformed month pledge");
+      const flag = data.slice(66);
+      if (flag !== "0".repeat(64) && flag !== `${"0".repeat(63)}1`)
+        throw new Error("Malformed month pledge");
+      return {
+        period: input.periods[index],
+        amount: uint128(data.slice(2, 66)),
+        open: flag.endsWith("1"),
+      };
+    }),
+  );
+  return { openPledgedGross: uint128(open.slice(2)), pledges };
 }

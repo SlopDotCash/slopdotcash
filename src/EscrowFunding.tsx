@@ -1,5 +1,5 @@
 import { CircleAlert, Hourglass, LoaderCircle, RotateCcw } from "lucide-react";
-import { lazy, useCallback, useEffect, useState } from "react";
+import { Fragment, lazy, useCallback, useEffect, useState } from "react";
 import "./owner-review.css";
 import { readBoundedJson } from "./lib/browser-json";
 import type { VaultConnection } from "./lib/evm-vault-actions";
@@ -12,15 +12,19 @@ import {
   type VaultSnapshot,
 } from "./lib/payments/contracts";
 import {
+  hasPledgeSupport,
   loadPoolFunding,
   monthName,
   poolFundingStatus,
+  utcMonth,
+  type VaultFreeBalance,
 } from "./lib/pool-funding";
 import { useProjectMaintainer } from "./lib/project-api";
 import type { ProjectDefinition } from "./lib/projects.mjs";
 import { CANONICAL_UINT } from "./lib/record-validation.mjs";
 import { formatRewardMinor } from "./lib/reward-amount";
 import { NETWORK_NAMES } from "./lib/reward-asset.mjs";
+import { resolveRewardCapMinor } from "./lib/reward-cap.mjs";
 import { usePublicResource } from "./lib/use-public-resource";
 import { NetworkName } from "./Presentation";
 
@@ -36,6 +40,11 @@ const OwnerVaultSetup = lazy(() =>
 );
 const VaultActions = lazy(() =>
   import("./VaultActions").then((module) => ({ default: module.VaultActions })),
+);
+const VaultMonthLock = lazy(() =>
+  import("./VaultMonthLock").then((module) => ({
+    default: module.VaultMonthLock,
+  })),
 );
 
 interface VaultResponse {
@@ -344,6 +353,7 @@ export function EscrowFunding({
   const [connectedWallet, setConnectedWallet] =
     useState<VaultConnection | null>(null);
   const [revision, setRevision] = useState(0);
+  const [lockWallet, setLockWallet] = useState<VaultConnection | null>(null);
   const totals = useVaultTotals(project, revision);
   // What this month promises stays in the vault (operator decision,
   // 15 November 2026).
@@ -357,8 +367,10 @@ export function EscrowFunding({
     funding.status === "ready" ? funding.index : null,
     new Date(),
   );
+  // The page's own withdrawal guard is for vaults without month locks; a
+  // vault with them enforces its locks in its contract.
   const promised =
-    status.state === "funded"
+    status.state === "funded" && !status.locked
       ? {
           minor: status.owedMinor.toString(),
           display: formatRewardMinor(
@@ -367,6 +379,30 @@ export function EscrowFunding({
           ),
           month: monthName(status.period),
         }
+      : undefined;
+  const fundingVault = (
+    deployment: NonNullable<ProjectDefinition["escrow"]>["deployments"][number],
+  ): VaultFreeBalance | undefined =>
+    funding.status === "ready"
+      ? funding.index
+          .get(project.id)
+          ?.find(
+            (vault) =>
+              vault.network === deployment.network &&
+              (vault.vault.startsWith("0x")
+                ? vault.vault.toLowerCase() === deployment.vault.toLowerCase()
+                : vault.vault === deployment.vault),
+          )
+      : undefined;
+  const decimalsOf = (
+    deployment: NonNullable<ProjectDefinition["escrow"]>["deployments"][number],
+  ) =>
+    totals.status === "ready"
+      ? totals.vault.snapshots.find(
+          (snapshot) =>
+            snapshot.network === deployment.network &&
+            snapshot.vault.toLowerCase() === deployment.vault.toLowerCase(),
+        )?.assetDecimals
       : undefined;
   const chain = project.escrow?.chain ?? "solana";
   if (readOnly && totals.status === "none") return null;
@@ -401,16 +437,39 @@ export function EscrowFunding({
           {registrationNotice && <p role="status">{registrationNotice}</p>}
           <VaultTotalsView totals={totals} />
           {!readOnly &&
-            project.escrow?.deployments.map((deployment) => (
-              <VaultActions
-                key={`${deployment.network}:${deployment.vault}`}
-                deployment={deployment}
-                connectedWallet={connectedWallet ?? undefined}
-                projectId={project.id}
-                promised={promised}
-                onFinalized={() => setRevision((value) => value + 1)}
-              />
-            ))}
+            project.escrow?.deployments.map((deployment) => {
+              const vault = fundingVault(deployment);
+              const locks = vault !== undefined && hasPledgeSupport(vault);
+              const decimals = decimalsOf(deployment);
+              return (
+                <Fragment key={`${deployment.network}:${deployment.vault}`}>
+                  <VaultActions
+                    deployment={deployment}
+                    connectedWallet={connectedWallet ?? undefined}
+                    projectId={project.id}
+                    promised={locks ? undefined : promised}
+                    onWallet={setLockWallet}
+                    onFinalized={() => setRevision((value) => value + 1)}
+                  />
+                  {locks &&
+                  vault &&
+                  decimals !== undefined &&
+                  project.reward.kind === "monthly-pool" ? (
+                    <VaultMonthLock
+                      projectId={project.id}
+                      deployment={deployment}
+                      wallet={lockWallet}
+                      pledges={vault.pledges ?? []}
+                      decimals={decimals}
+                      monthlyMinor={BigInt(
+                        resolveRewardCapMinor(project, utcMonth(new Date())),
+                      )}
+                      onLocked={() => setRevision((value) => value + 1)}
+                    />
+                  ) : null}
+                </Fragment>
+              );
+            })}
           {!readOnly && project.reward.kind === "monthly-pool"
             ? project.escrow?.deployments.map((deployment) => (
                 <AutomaticMonthlyPayment

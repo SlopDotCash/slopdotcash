@@ -1669,6 +1669,154 @@ describe("monthly coordinator", () => {
     expect((await coordinate(afterCutoff, null)).created).toEqual([]);
   });
 
+  describe("a month pledged on chain (operator decision, 15 November 2026)", () => {
+    const pledge = (
+      period: string,
+      amount: string,
+      open = 1,
+      vaultAddress?: string,
+    ) => {
+      const fixture = project.manifest.escrow?.deployments[0];
+      if (!fixture) throw new Error("Missing fixture deployment");
+      const selected = { ...fixture, vault: vaultAddress ?? fixture.vault };
+      sqlite
+        .prepare(
+          "INSERT INTO vault_month_pledges(project_id,network,vault,period,amount,open,block_number,observed_at) VALUES(?,?,?,?,?,?,'100',?)",
+        )
+        .run(
+          project.id,
+          selected.network,
+          selected.vault,
+          period,
+          amount,
+          open,
+          afterCutoff.toISOString(),
+        );
+      sqlite
+        .prepare(
+          "UPDATE vault_snapshots SET open_pledged_gross=(SELECT CAST(COALESCE(SUM(CAST(amount AS INTEGER)),0) AS TEXT) FROM vault_month_pledges WHERE project_id=?1 AND open=1) WHERE project_id=?1",
+        )
+        .run(project.id);
+    };
+
+    test("freezes and funds the month with automatic payment off", async () => {
+      expect(await owner().setAutomatic(project.id, actor, false)).toEqual({
+        automatic: false,
+      });
+      vault("1000");
+      pledge("2082-11", "1000");
+      const report = await coordinate(afterCutoff);
+      expect(report.failures).toEqual([]);
+      expect(report.frozen).toEqual([`${project.id}/2082-11`]);
+      expect(report.created).toEqual([`${project.id}/2082-11`]);
+      expect(count("monthly_payment_obligations")).toBe(2);
+    });
+
+    test("freezes the month of a restricted project", async () => {
+      restricted = true;
+      vault("1000");
+      pledge("2082-11", "1000");
+      const report = await coordinate(afterCutoff);
+      expect(report.failures).toEqual([]);
+      expect(report.frozen).toEqual([`${project.id}/2082-11`]);
+    });
+
+    test("freezes the month of a paused project", async () => {
+      const manifest = { ...project.manifest, status: "paused" as const };
+      const text = JSON.stringify(manifest);
+      expect(
+        await new CloudflareProjectPersistence(db).appendProjectRevision(
+          {
+            projectId: project.id,
+            expectedRevision: project.revision,
+            manifest,
+            manifestText: text,
+            manifestSha256: await sha256Hex(text),
+            reason: "Paused after the owner pledged the month",
+            actor,
+            at: afterCutoff.toISOString(),
+          },
+          0,
+        ),
+      ).toBe("updated");
+      vault("1000");
+      pledge("2082-11", "1000");
+      const report = await coordinate(afterCutoff);
+      expect(report.failures).toEqual([]);
+      expect(report.frozen).toEqual([`${project.id}/2082-11`]);
+    });
+
+    test("a pledge in another vault of the project gives no consent", async () => {
+      await owner().setAutomatic(project.id, actor, false);
+      vault("1000");
+      pledge(
+        "2082-11",
+        "1000",
+        1,
+        "0x9000000000000000000000000000000000000009",
+      );
+      expect((await coordinate(afterCutoff)).waiting).toEqual([
+        { key: `${project.id}/2082-11`, reason: "automatic-off" },
+      ]);
+      expect(count("monthly_payment_runs")).toBe(0);
+    });
+
+    test("a retired project's pledged month does not freeze", async () => {
+      const manifest = {
+        ...project.manifest,
+        status: "paused" as const,
+        listingTier: "retired" as const,
+      };
+      const text = JSON.stringify(manifest);
+      expect(
+        await new CloudflareProjectPersistence(db).appendProjectRevision(
+          {
+            projectId: project.id,
+            expectedRevision: project.revision,
+            manifest,
+            manifestText: text,
+            manifestSha256: await sha256Hex(text),
+            reason: "Retired after the owner pledged the month",
+            actor,
+            at: afterCutoff.toISOString(),
+          },
+          0,
+        ),
+      ).toBe("updated");
+      vault("1000");
+      pledge("2082-11", "1000");
+      expect((await coordinate(afterCutoff)).waiting).toEqual([
+        { key: `${project.id}/2082-11`, reason: "project-restricted" },
+      ]);
+      expect(count("monthly_payment_runs")).toBe(0);
+    });
+
+    test("a pledge for another month gives no consent for this one", async () => {
+      await owner().setAutomatic(project.id, actor, false);
+      vault("2000");
+      pledge("2082-12", "1000");
+      expect((await coordinate(afterCutoff)).waiting).toEqual([
+        { key: `${project.id}/2082-11`, reason: "automatic-off" },
+      ]);
+      expect(count("monthly_payment_runs")).toBe(0);
+    });
+
+    test("another month's open pledge is held back from this month's funding", async () => {
+      vault("1500");
+      pledge("2082-12", "1000");
+      const report = await coordinate(afterCutoff);
+      expect(report.frozen).toEqual([`${project.id}/2082-11`]);
+      expect(report.waiting).toEqual([
+        { key: `${project.id}/2082-11`, reason: "underfunded" },
+      ]);
+      expect(count("monthly_payment_obligations")).toBe(0);
+      vault("2000");
+      expect((await coordinate(afterCutoff)).created).toEqual([
+        `${project.id}/2082-11`,
+      ]);
+    });
+  });
+
   test("an owner who turns the default off, a restricted project and an unserved vault are not distributed automatically", async () => {
     expect(await owner().setAutomatic(project.id, actor, false)).toEqual({
       automatic: false,
@@ -2378,6 +2526,27 @@ describe("monthly attestation input", () => {
     await rejects(prepare(), "automatic_off");
     expect(count("monthly_payment_obligations")).toBe(2);
   });
+  test("a month pledged on chain is signed with the default off or the project restricted", async () => {
+    vault("1000");
+    await coordinate(afterCutoff);
+    sqlite
+      .prepare(
+        "INSERT INTO vault_month_pledges(project_id,network,vault,period,amount,open,block_number,observed_at) VALUES(?,?,?,'2082-11','1000',1,'100',?)",
+      )
+      .run(
+        project.id,
+        deployment.network,
+        deployment.vault,
+        afterCutoff.toISOString(),
+      );
+    restricted = true;
+    sqlite
+      .prepare(
+        "INSERT INTO monthly_payment_settings(project_id,sequence,automatic,actor_id,created_at) VALUES(?,1,0,?,?)",
+      )
+      .run(project.id, OWNER, afterCutoff.toISOString());
+    expect((await prepare()).totalGrossBase).toBe("1000");
+  });
   test("omits funding-time exclusions while preserving awards funded before a later ban", async () => {
     seedParticipationBan(
       sqlite,
@@ -2546,7 +2715,8 @@ test("monthly signing preserves its first intent through retry and refuses a cha
     prepare(query: string) {
       if (
         unavailable &&
-        query.startsWith("SELECT automatic FROM monthly_payment_settings")
+        query.startsWith("SELECT") &&
+        query.includes("SELECT automatic FROM monthly_payment_settings")
       )
         throw new Error("Synthetic settings storage outage");
       return prepare(query);

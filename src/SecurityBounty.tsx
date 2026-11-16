@@ -98,6 +98,8 @@ import { formatAssetSymbol, type RewardAsset } from "./lib/reward-asset.mjs";
 import {
   formatSecurityAmount,
   isFullAwardSplit,
+  programExclusions,
+  SECURITY_DEFAULT_EXCLUSIONS,
   type SecurityBountyTerms,
   securityBountySplit,
 } from "./lib/security-bounty.mjs";
@@ -942,6 +944,24 @@ export function SecurityProgramPage({
               </Fact>
             )}
           </dl>
+          <h3 id="security-exclusions">Does not qualify</h3>
+          <ul aria-labelledby="security-exclusions">
+            {SECURITY_DEFAULT_EXCLUSIONS.map((line) => (
+              <li key={line}>{line}</li>
+            ))}
+          </ul>
+          {programExclusions(scope).length > 0 ? (
+            <>
+              <h3 id="security-program-exclusions">
+                Also does not qualify for this program
+              </h3>
+              <ul aria-labelledby="security-program-exclusions">
+                {programExclusions(scope).map((line) => (
+                  <li key={line}>{line}</li>
+                ))}
+              </ul>
+            </>
+          ) : null}
           <details className="security-reference">
             <summary>Testing</summary>
             <p>{scope.testingPermission}</p>

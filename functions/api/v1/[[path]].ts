@@ -653,6 +653,7 @@ export async function onRequest(context: PagesContext): Promise<Response> {
       adminGithubIds,
       sessionActor,
       publisher: env.SLOPBOT_VALUE_IMPORT,
+      waitUntil,
     });
   if (pathname.startsWith("/api/v1/slopbot/"))
     return handleSlopbotApi(request, db);

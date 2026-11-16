@@ -92,13 +92,22 @@ serves these public artifacts from the current D1 revision:
 
 | Path | Content |
 |---|---|
-| `/.well-known/slop/projects.json` | Repository-to-project routing for every project that publishes skills |
+| `/.well-known/slop/projects.json` | Repository-to-project routing for every active, cleared project that publishes skills, except an active monthly pool that is not funded this month (see below) |
 | `/projects/:id/terms.json` | Steward, authority and terms of the current revision |
 | `/projects/:id/skill.md` (alias `SKILL.md`) | Generated contributor skill |
 | `/projects/:id/review-skill.md` (alias `review/SKILL.md`) | Generated reviewer skill |
 | `/projects/:id/[review-]{mission,codex,claude,claude-code,manual}.md` | Workflow and per-client install guides |
 | `/projects/:id/[review-]skill-manifest.json` | Template revision, registry binding, guide renderer and archive routing |
 | `/projects/:id/downloads/<skill>.skill` and `.skill.sha256` | Deterministic skill archive and checksum |
+
+Discovery reads the cached vault rows behind `GET /api/v1/pool-funding`
+(`readPoolFundingIndex` in `pool-funding.ts`) and applies `listedThisMonth`
+from `src/lib/pool-funding.ts`, the same rule the home page and /sponsors use
+(PRD section 7, operator decision of 16 November 2026). An open security
+program or a non-monthly reward stays listed. When the funding read fails,
+discovery lists every cleared project as before; the response is `no-store`,
+so the next request reads again. The per-project artifacts above keep serving
+by direct link.
 
 ## Self-service setup
 

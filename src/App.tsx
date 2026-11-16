@@ -14,6 +14,7 @@ import {
   ShieldQuestion,
 } from "lucide-react";
 import {
+  Fragment,
   lazy,
   type ReactNode,
   Suspense,
@@ -49,10 +50,13 @@ import {
 } from "./lib/merge-activity";
 import {
   asShown,
+  listedThisMonth,
   loadPoolFunding,
   monthName,
+  NOT_LISTED_NOTICE,
   poolFundingStatus,
 } from "./lib/pool-funding";
+import { projectChains, websiteLabel, xHandle } from "./lib/project-links";
 import {
   findHistoricalProject,
   findProject,
@@ -889,15 +893,16 @@ function SecurityBounties() {
 }
 
 function HomePage() {
-  const featuredProjects = homeProjects();
-  const listedCommunityProjects = communityProjects();
   // One shared read of the daily merge activity (#1993) for every card.
   const [merge] = usePublicResource(
     true,
     loadMergeActivity,
     "Merge activity unavailable",
   );
-  // One shared read of vault balances: only money in a vault is shown.
+  // One shared read of vault balances: only money in a vault is shown, and
+  // an unfunded monthly pool is not listed this month. The list never waits
+  // for the read: until it loads, or when it fails, every project is listed
+  // as before.
   const [funding] = usePublicResource(
     true,
     loadPoolFunding,
@@ -905,6 +910,10 @@ function HomePage() {
   );
   const now = new Date();
   const fundingIndex = funding.status === "ready" ? funding.index : null;
+  const listed = (project: ProjectDefinition) =>
+    listedThisMonth(project, fundingIndex, now);
+  const featuredProjects = homeProjects().filter(listed);
+  const listedCommunityProjects = communityProjects().filter(listed);
   const shown = (project: ProjectDefinition) =>
     asShown(project, fundingIndex, now);
   const mergeLine = (project: ProjectDefinition) =>
@@ -1178,6 +1187,16 @@ function InstallPanel() {
  */
 function ProjectInstallPanel({ project }: { project: ProjectDefinition }) {
   const projectId = project.id;
+  // Discovery leaves out an unfunded monthly pool this month; that is not a
+  // clearance problem, so the owner setup link does not apply.
+  const [funding] = usePublicResource(
+    project.reward.kind === "monthly-pool",
+    loadPoolFunding,
+    "Pool funding unavailable",
+  );
+  const unlisted =
+    funding.status === "ready" &&
+    !listedThisMonth(project, funding.index, new Date());
   const [eligibility, setEligibility] = useState<
     "loading" | "ready" | "blocked" | "error"
   >("loading");
@@ -1220,6 +1239,8 @@ function ProjectInstallPanel({ project }: { project: ProjectDefinition }) {
         <p>
           {eligibility === "loading" ? (
             <Spinner label="Checking project clearance" />
+          ) : eligibility === "blocked" && unlisted ? (
+            <StatusBadge tone="warning">Not listed this month</StatusBadge>
           ) : eligibility === "blocked" ? (
             <>
               <StatusBadge tone="warning" icon={<ShieldAlert />}>
@@ -1460,6 +1481,9 @@ function ProjectRewardSummary({
             {`Funds were withdrawn from the vault during ${monthName(status.period)}; it no longer covers this month's amount.`}
           </p>
         ) : null}
+        {index !== null && !listedThisMonth(registered, index, now) ? (
+          <p className="project-reward-status">{NOT_LISTED_NOTICE}</p>
+        ) : null}
         {projectRewardSummaries(project).map((summary) => (
           <p className="project-reward-status" key={summary.kind}>
             {summary.kind === "monthly-pool" ? (
@@ -1504,6 +1528,59 @@ function ProjectRewardSummary({
   );
 }
 
+/** #2295: the vault network, website and X account, each only when present. */
+function ProjectLinks({ project }: { project: ProjectDefinition }) {
+  const chains = projectChains(project);
+  const website = project.links.website;
+  const x = project.links.x;
+  const handle = xHandle(x);
+  const parts: { key: string; node: ReactNode }[] = [];
+  if (chains.length > 0)
+    parts.push({
+      key: "chain",
+      node: `Chain: ${chains
+        .map((chain) =>
+          chain.symbol ? `${chain.name} (${chain.symbol})` : chain.name,
+        )
+        .join(", ")}`,
+    });
+  if (website)
+    parts.push({
+      key: "website",
+      node: (
+        <>
+          Website:{" "}
+          <a href={website} target="_blank" rel="noopener noreferrer">
+            {websiteLabel(website)}
+          </a>
+        </>
+      ),
+    });
+  if (x && handle)
+    parts.push({
+      key: "x",
+      node: (
+        <>
+          X:{" "}
+          <a href={x} target="_blank" rel="noopener noreferrer">
+            @{handle}
+          </a>
+        </>
+      ),
+    });
+  if (parts.length === 0) return null;
+  return (
+    <p className="project-links-line">
+      {parts.map((part, index) => (
+        <Fragment key={part.key}>
+          {index > 0 ? " · " : null}
+          {part.node}
+        </Fragment>
+      ))}
+    </p>
+  );
+}
+
 /** #1993: how promptly the project merges outside work, from the daily D1 read. */
 function ProjectMergeActivity({ project }: { project: ProjectDefinition }) {
   const active = project.status === "active";
@@ -1536,6 +1613,7 @@ function ProjectBountyIntroduction({
       <div className="shell">
         <ProjectHeader project={project} />
         <ProjectRewardSummary project={project} />
+        <ProjectLinks project={project} />
         <Link
           className="button primary-button"
           href={`/projects/${project.slug}/security`}
@@ -1572,6 +1650,7 @@ function ProjectPage({
         <div className="shell">
           <ProjectHeader project={project} />
           <ProjectRewardSummary project={project} />
+          <ProjectLinks project={project} />
           <ProjectMergeActivity project={project} />
           {project.reward.reviewBudget?.fundingState === "committed" ? (
             <p>

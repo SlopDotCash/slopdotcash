@@ -59,6 +59,8 @@ export interface SecurityBountyTerms {
     }[];
     readonly includedAssets: readonly string[];
     readonly excludedDependencies: readonly string[];
+    /** The owner's own "does not qualify" lines; absent means none. */
+    readonly excludedFindings?: readonly string[];
     readonly testingPermission: string;
     readonly severityRubric: string;
     readonly lossDefinition: string;
@@ -85,6 +87,18 @@ export interface SecurityBountyTerms {
   readonly safeHarbor: string;
 }
 
+export declare const SECURITY_DEFAULT_EXCLUSIONS: readonly string[];
+export declare const SECURITY_EXCLUSION_LIMITS: Readonly<{
+  maxLines: number;
+  minLength: number;
+  maxLength: number;
+}>;
+export declare function programExclusions(
+  scope: { readonly excludedFindings?: readonly string[] } | null | undefined,
+): readonly string[];
+export declare function securityExclusions(
+  scope: { readonly excludedFindings?: readonly string[] } | null | undefined,
+): string[];
 export declare const SECURITY_SPLIT: Readonly<{
   researcherBasisPoints: 7500;
   slopBasisPoints: 2500;

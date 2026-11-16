@@ -22,6 +22,7 @@ import { summarizeModelOutcomes } from "./lib/model-outcomes";
 import { POINTS_NOTICE } from "./lib/points";
 import {
   asShown,
+  listedThisMonth,
   loadPoolFunding,
   type PoolFundingIndex,
 } from "./lib/pool-funding";
@@ -256,6 +257,25 @@ export function HowItWorksPage() {
             <h3>What does projected mean? Is the pool funded?</h3>
             <div>
               <p>An estimate at the cap, not a balance.</p>
+            </div>
+          </article>
+          <article className="faq-answer">
+            <h3>Can the owner take this month&apos;s pool back?</h3>
+            <div>
+              <p>
+                When an owner locks a month in the project vault, that
+                month&apos;s pool is locked in the vault until it is paid out:
+                the vault contract refuses to withdraw it, and it can be paid
+                even if the owner turns automatic payment off. The owner can
+                still lower an individual contributor&apos;s amount before the
+                cutoff, with a public reason. A locked month that is never
+                reserved for payout can be released back to the owner&apos;s
+                free funds from the 4th of the second month after it, by a
+                transaction anyone can send; the project&apos;s manage page
+                offers it. Without a lock, Slop&apos;s pages refuse that
+                withdrawal but the contract does not. Slop&apos;s upgrade key
+                can still change the vault contract.
+              </p>
             </div>
           </article>
           <article className="faq-answer">
@@ -539,7 +559,9 @@ export function SponsorsPage({
           </Link>
         </div>
         <ul className="route-sponsor-grid" aria-label="Project funding pools">
-          {PROJECTS.map((project) => {
+          {PROJECTS.filter((project) =>
+            listedThisMonth(project, fundingIndex, now),
+          ).map((project) => {
             return (
               <li className="route-sponsor-card" key={project.id}>
                 <Link

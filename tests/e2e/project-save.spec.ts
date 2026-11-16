@@ -716,3 +716,103 @@ test("discarding an old project draft cancels its pending image decode", async (
     await api.dispose();
   }
 });
+
+test("project pages show website and X, and owners publish and clear them", async ({
+  page,
+}) => {
+  await page.goto("/projects/thenetwork", { waitUntil: "networkidle" });
+  const website = page.locator(".project-links-line");
+  await expect(website).toHaveText("Website: ntwrk.party");
+  await expect(website.getByRole("link")).toHaveAttribute(
+    "href",
+    "https://ntwrk.party",
+  );
+  const registered = PROJECTS.find((entry) => entry.id === "eliza");
+  if (!registered) throw new Error("Eliza is missing");
+  let current = { ...registered, contribution: { ...CONTRIBUTION } };
+  let revision = 1;
+  const writes: (typeof current)["links"][] = [];
+  const setup = {
+    projectId: "eliza",
+    name: current.name,
+    slug: current.slug,
+    revision,
+    status: "active",
+    state: "ready",
+    nextAction: { kind: "none", message: "Project is ready.", href: "/" },
+    checks: {
+      authority: { state: "verified", message: "Maintainer verified." },
+      installation: { state: "installed", message: "Slopbot installed." },
+      scan: { state: "cleared", exempt: true, message: "Existing project." },
+    },
+    funding: { mode: "none" },
+    activatedRevision: 1,
+    checkedAt: "2026-10-26T00:00:00.000Z",
+  };
+  await page.route("**/api/v1/project-session", (route) =>
+    route.fulfill({
+      json: {
+        session: { githubId: "4242", githubLogin: "example", admin: false },
+      },
+    }),
+  );
+  await page.route(/\/api\/v1\/project-setup\/eliza(?:\/check)?$/, (route) =>
+    route.fulfill({ json: { viewer: { githubId: "4242" }, setup } }),
+  );
+  await page.route("**/api/v1/projects/eliza*", async (route) => {
+    if (route.request().method() === "PUT") {
+      current = route.request().postDataJSON().manifest;
+      writes.push(current.links);
+      revision += 1;
+      await route.fulfill({
+        json: {
+          project: {
+            id: "eliza",
+            revision,
+            status: "active",
+            manifest: current,
+          },
+          changes: { presentation: ["links"], executable: [], financial: [] },
+          setup: { ...setup, revision, activatedRevision: revision },
+        },
+      });
+    } else await route.fulfill({ json: { revision, project: current } });
+  });
+  await page.goto("/projects/eliza", { waitUntil: "networkidle" });
+  await expect(
+    page.locator(".project-links-line").getByRole("link", { name: "@elizaOS" }),
+  ).toHaveAttribute("href", "https://x.com/elizaOS");
+  await page.goto("/projects/eliza/manage", { waitUntil: "networkidle" });
+  const x = page.getByLabel("X account (optional)");
+  await expect(x).toHaveValue("@elizaOS");
+  const site = page.getByLabel("Website (optional)");
+  await site.fill("http://elizaos.example");
+  const publish = page.getByRole("button", {
+    name: "Publish changes",
+    exact: true,
+  });
+  await publish.click();
+  await expect(page.getByText("Use an https:// address.")).toBeVisible();
+  expect(writes).toEqual([]);
+  await site.fill("elizaos.example");
+  await x.fill("https://twitter.com/elizaOS_ai");
+  await publish.click();
+  await expect(page.getByText("Published revision 2.")).toBeVisible();
+  await x.fill("");
+  await publish.click();
+  await expect(page.getByText("Published revision 3.")).toBeVisible();
+  const kept = {
+    repository: registered.links.repository,
+    issues: registered.links.issues,
+    discussions: registered.links.discussions,
+  };
+  expect(writes).toEqual([
+    {
+      ...kept,
+      website: "https://elizaos.example",
+      x: "https://x.com/elizaOS_ai",
+    },
+    { ...kept, website: "https://elizaos.example" },
+  ]);
+  await expectAccessible(page);
+});
