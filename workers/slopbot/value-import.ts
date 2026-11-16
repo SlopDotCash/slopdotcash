@@ -18,6 +18,10 @@ import {
   valueFileRecoveryCapture,
   verifiedValueFileClient,
 } from "./value-file-recovery";
+import type {
+  HistoricalIntakeProgress,
+  HistoricalIntakeStage,
+} from "./value-import-diagnostics";
 import { mergeInput, mergeRecipe } from "./value-merge-profile";
 import {
   isSubscriptionProvenance,
@@ -58,7 +62,20 @@ export async function importSubscriptionAssessment(
   env: ReviewEnv & ValueSettingsEnv & { SLOPBOT_PRODUCER_REVISION?: string },
   input: unknown,
   bundle?: ReadableStream<Uint8Array>,
+  observe?: (progress: HistoricalIntakeProgress) => void,
 ) {
+  let sourceCount: number | null = null;
+  const progress = (
+    stage: HistoricalIntakeStage,
+    sourceIndex: number | null = null,
+  ) => {
+    try {
+      observe?.({ stage, sourceIndex, sourceCount });
+    } catch {
+      /* Observation cannot change publication. */
+    }
+  };
+  progress("envelope");
   const revision = env.SLOPBOT_PRODUCER_REVISION;
   if (!revision || !/^[a-f0-9]{40}$/u.test(revision))
     throw new Error("Historical intake requires a deployed producer revision");
@@ -119,8 +136,11 @@ export async function importSubscriptionAssessment(
       .size !== selections.length
   )
     throw new Error("Historical source selection is repeated");
+  sourceCount = selections.length;
+  progress("installation");
   await assertValueInstallation(env.SLOPBOT_DB, Number(input.installationId));
   const commitPages = publicationCommitPages();
+  progress("github-client");
   const github = commitPages(
     await GitHubClient.forInstallation(
       env.SLOPBOT_APP_ID,
@@ -138,7 +158,8 @@ export async function importSubscriptionAssessment(
     | undefined;
   const sources: WorkUnitSource[] = [];
   const repositories: TargetRepository[] = [];
-  for (const selection of selections) {
+  for (const [index, selection] of selections.entries()) {
+    progress("source-repository", index);
     const identity = await github.get<{
       id: number;
       node_id: string;
@@ -147,6 +168,7 @@ export async function importSubscriptionAssessment(
     if (identity?.private !== false)
       throw new Error("Historical repository is unavailable");
     const [registryOwner, registryRepo] = selection.repository.split("/");
+    progress("source-registry", index);
     const project = await registeredProject(env.SLOPBOT_DB, {
       owner: registryOwner,
       repo: registryRepo,
@@ -160,9 +182,11 @@ export async function importSubscriptionAssessment(
       );
     if (!repository) throw new Error("Historical source is not registered");
     repositories.push(repository);
+    progress("source-installation", index);
     await assertValueInstallationRepositories(github, [
       { repositoryDatabaseId: identity.id, repositoryNodeId: identity.node_id },
     ]);
+    progress("source-evidence", index);
     const collected = await collectValueEvidence(
       capture.client,
       repository.id,
@@ -180,6 +204,7 @@ export async function importSubscriptionAssessment(
       throw new Error(
         "Subscription intake covers only work accepted before the API start",
       );
+    progress("source-context", index);
     const evidence = await collectValueContext(
       github,
       collected,
@@ -191,6 +216,7 @@ export async function importSubscriptionAssessment(
       evidence.mergeResolutions = [];
     }
     const [owner, repo] = repository.id.split("/");
+    progress("source-policy", index);
     sources.push({
       evidence,
       policy: await loadValuePolicy(
@@ -202,6 +228,7 @@ export async function importSubscriptionAssessment(
     });
   }
   if (bundle) {
+    progress("bundle-inputs");
     if (
       new Set(sources.map(({ evidence }) => evidence.repositoryNodeId)).size !==
       1
@@ -216,8 +243,10 @@ export async function importSubscriptionAssessment(
     >;
     if (verifier.recover) {
       const [filesBundle, mergeBundle] = bundle.tee();
+      progress("bundle-file-recovery");
       const recovered = await verifier.recover(inputs, requests, filesBundle);
       verifiedFiles = { requests, recovery: recovered };
+      progress("bundle-file-client");
       const complete = await verifiedValueFileClient(
         github,
         requests,
@@ -226,6 +255,7 @@ export async function importSubscriptionAssessment(
       verifiedFiles.internText = complete.internText;
       const fresh = valueFileRecoveryCapture(complete);
       for (const [index, selection] of selections.entries()) {
+        progress("bundle-source-recollection", index);
         const recollected = await collectValueEvidence(
           fresh.client,
           repositories[index].id,
@@ -238,25 +268,30 @@ export async function importSubscriptionAssessment(
           JSON.stringify({ ...inputs[index], commitAttribution: [] })
         )
           throw new Error("File recovery source identity changed");
+        progress("bundle-context-recollection", index);
         sources[index].evidence = await collectValueContext(
           complete,
           recollected,
           selection.contextPaths,
         );
       }
+      progress("bundle-metadata");
       for (const [path, signature] of capture.metadata)
         if (fresh.metadata.get(path) !== signature)
           throw new Error("Recovery source metadata changed");
+      progress("bundle-merge-reconstruction");
       reconstructed = await verifier.reconstruct(
         sources.map(({ evidence }) => mergeInput(evidence)),
         mergeBundle,
       );
     } else {
+      progress("bundle-merge-reconstruction");
       reconstructed = await verifier.reconstruct(inputs, bundle);
     }
     if (reconstructed.length !== sources.length)
       throw new Error("Incomplete merge reconstruction");
     for (const [index, source] of sources.entries()) {
+      progress("bundle-identity", index);
       const recipe = await mergeRecipe(source.evidence);
       const resolved = reconstructed[index];
       if (
@@ -284,11 +319,13 @@ export async function importSubscriptionAssessment(
   if (joint) {
     if (!digests(input.supersedes) || !digests(input.legacyPredecessors))
       throw new Error("Invalid joint predecessors");
+    progress("prepare-work-unit");
     const prepared = await prepareWorkUnitEvidence(sources, repositories);
     if (!historicalSubscriptionWorkUnit(prepared, subscriptionCutoff(env)))
       throw new Error(
         "Subscription intake covers only work accepted before the API start",
       );
+    progress("publish-work-unit");
     stored = await publishWorkUnitAssessment(
       env,
       job,
@@ -305,6 +342,7 @@ export async function importSubscriptionAssessment(
   } else {
     if (input.supersedes !== null && !digest(input.supersedes))
       throw new Error("Invalid single predecessor");
+    progress("publish-single");
     stored = await publishValueAssessment(
       env,
       job,
