@@ -133,7 +133,7 @@
     },
     {
       "path": ".github/workflows/reviewed-historical-points.yml",
-      "sha256": "cb961b52599d5c180d2f542ec3468c69f849361a8df0091d83f4eda8ea3287e1",
+      "sha256": "b58d09eb8b0366790bcd5090a8d4121cbc01a42e5241fd50c81d3e2e1bcc23c0",
       "models": ["formal/models/points/source_import.qnt"],
       "candidateLines": [],
       "review": "mapped-abstraction"
@@ -4605,9 +4605,9 @@
     },
     {
       "path": "scripts/reviewed-historical-points.ts",
-      "sha256": "6ea9cd6f3299671854950eebbde19f0081ec60102a55e81ef6c8832546dce623",
+      "sha256": "993bba18296241979f75ae6169c1f18062c27746d2c90a11fb59a3fb55e990f8",
       "models": ["formal/models/points/source_import.qnt"],
-      "candidateLines": [55, 56, 471, 659, 960],
+      "candidateLines": [55, 56, 493, 685, 900, 901, 902, 905, 1224],
       "review": "mapped-abstraction"
     },
     {
@@ -4668,9 +4668,9 @@
     },
     {
       "path": "scripts/run-reviewed-historical-points.ts",
-      "sha256": "acc14c1c345223e51cb947e587e1bf3a3c17c466fd9b523425057ab878c9da28",
+      "sha256": "c221e909cc911d9530e45ae31551ce7c43c861fe0ac6feb3de7defcd2ea5a815",
       "models": ["formal/models/points/source_import.qnt"],
-      "candidateLines": [3, 417, 437, 513, 603],
+      "candidateLines": [3, 545, 565, 641, 731],
       "review": "mapped-abstraction"
     },
     {
@@ -4852,9 +4852,9 @@
     },
     {
       "path": "scripts/value-merge-ingestion.ts",
-      "sha256": "62734faf9f2d6bb99efd36028b74fef100cedb6032d779ef13b9a5ebd40ef29c",
+      "sha256": "c8e663c51148f4d729e5ac192d5b8bf3da868c282fc98df72087160a682f2f55",
       "models": ["formal/models/slopbot/merge_evidence_acquisition.qnt"],
-      "candidateLines": [286, 287],
+      "candidateLines": [289, 290],
       "review": "mapped-abstraction"
     },
     {

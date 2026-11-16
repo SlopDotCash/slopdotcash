@@ -20,7 +20,7 @@ jobs:
     if: github.ref == 'refs/heads/main'
     environment: slop-production
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
@@ -34,6 +34,10 @@ jobs:
           bun-version: "1.3.14"
       - run: bun install --frozen-lockfile --ignore-scripts
       - run: bun run audit:dependencies
+      - name: Install canonical merge Git
+        run: |
+          bun --no-env-file scripts/install-value-merge-git.ts "$RUNNER_TEMP/value-merge-git"
+          printf '%s\n' "$RUNNER_TEMP/value-merge-git/bin" >> "$GITHUB_PATH"
       - run: bun --no-env-file scripts/run-reviewed-historical-points.ts
         env:
           GH_TOKEN: ${{ github.token }}
