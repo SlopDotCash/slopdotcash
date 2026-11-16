@@ -252,23 +252,19 @@ author's `/slopbot appeal` of this revision each stop any new reservation and
 any request not yet sent. A reopen by anyone else records no decision.
 
 ```quint
-type ReopenRole = ReopenByMaintainer | ReopenByAuthor | ReopenByOther
-type ReopenEvidence = { itemNode: str, revision: str, actor: int, role: ReopenRole, at: int }
-type AppealVerdict = AppealUpheld | AppealDenied
-type AppealOutcome = { itemNode: str, revision: str, verdict: AppealVerdict }
-pure def canObserveReopen(c: CloseAttempt, reopen: ReopenEvidence): bool =
+pure def canObserveReopen(c: CloseAttempt, reopen: C::ReopenEvidence): bool =
   reopen.itemNode == c.candidate.identity.itemNode and reopen.revision == c.candidate.identity.revision and
-  reopen.at > 0 and (reopen.role == ReopenByMaintainer or
-    (reopen.role == ReopenByAuthor and reopen.actor == c.candidate.identity.author))
-pure def observeReopen(c: CloseAttempt, reopen: ReopenEvidence): CloseAttempt =
-  if (reopen.role == ReopenByMaintainer) { ...c, maintainerReopened: true } else { ...c, authorAppealed: true }
+  reopen.at > 0 and (reopen.role == C::ReopenByMaintainer or
+    (reopen.role == C::ReopenByAuthor and reopen.actor == c.candidate.identity.author))
+pure def observeReopen(c: CloseAttempt, reopen: C::ReopenEvidence): CloseAttempt =
+  if (reopen.role == C::ReopenByMaintainer) { ...c, maintainerReopened: true } else { ...c, authorAppealed: true }
 pure def canObserveAuthorAppeal(c: CloseAttempt, appellant: int): bool =
   appellant == c.candidate.identity.author and appellant > 0
 pure def observeAuthorAppeal(c: CloseAttempt, appellant: int): CloseAttempt = { ...c, authorAppealed: true }
-pure def canObserveAppealOutcome(c: CloseAttempt, appealOutcome: AppealOutcome): bool =
+pure def canObserveAppealOutcome(c: CloseAttempt, appealOutcome: C::AppealOutcome): bool =
   appealOutcome.itemNode == c.candidate.identity.itemNode and appealOutcome.revision == c.candidate.identity.revision and
-  appealOutcome.verdict == AppealUpheld and not(c.appealUpheld)
-pure def observeAppealOutcome(c: CloseAttempt, appealOutcome: AppealOutcome): CloseAttempt = { ...c, appealUpheld: true }
+  appealOutcome.verdict == C::AppealUpheld and not(c.appealUpheld)
+pure def observeAppealOutcome(c: CloseAttempt, appealOutcome: C::AppealOutcome): CloseAttempt = { ...c, appealUpheld: true }
 pure def stepDisputeIsPermanent(before: CloseAttempt, after: CloseAttempt): bool =
   (before.maintainerReopened implies after.maintainerReopened) and (before.authorAppealed implies after.authorAppealed) and
   (before.appealUpheld implies after.appealUpheld)
@@ -288,7 +284,7 @@ and revision shows Slopbot's own close; a later human close or a newer head
 stays. Each item read has a larger sequence number than the last.
 
 ```quint
-type CurrentItemState = { seq: int, itemNode: str, revision: str, item: C::ItemState, closedBy: C::ClosedBy,
+type CurrentItemState = { seq: int, itemNode: str, revision: str, item: C::ItemCondition, closedBy: C::ClosedBy,
   installation: C::InstallationStatus }
 pure val unreadItem: CurrentItemState = { seq: 0, itemNode: "", revision: "", item: C::ItemUnknown,
   closedBy: C::NotClosed, installation: C::InstallationUnknown }
@@ -345,10 +341,10 @@ pure val capacityRefusalValues = Set({ repository: 7, itemNode: "pr", revision: 
 pure val closeEventValues = Set({ itemNode: "pr", revision: "head", closedBy: SlopbotApp, closedAt: 100 },
   { itemNode: "pr", revision: "head", closedBy: HumanActor, closedAt: 100 })
 pure val recipientValues = Set(18633264, 202660855, 5)
-pure val reopenValues = Set({ itemNode: "pr", revision: "head", actor: 9, role: ReopenByMaintainer, at: 50 },
-  { itemNode: "pr", revision: "head", actor: 6, role: ReopenByOther, at: 50 })
+pure val reopenValues = Set({ itemNode: "pr", revision: "head", actor: 9, role: C::ReopenByMaintainer, at: 50 },
+  { itemNode: "pr", revision: "head", actor: 6, role: C::ReopenByOther, at: 50 })
 pure val appellantValues = Set(5)
-pure val appealOutcomeValues = Set({ itemNode: "pr", revision: "head", verdict: AppealUpheld })
+pure val appealOutcomeValues = Set({ itemNode: "pr", revision: "head", verdict: C::AppealUpheld })
 pure val itemStateValues = Set({ seq: 1, itemNode: "pr", revision: "head", item: C::ItemClosed, closedBy: C::ClosedBySlopbot,
   installation: C::InstallationActive }, { seq: 2, itemNode: "pr", revision: "head", item: C::ItemClosed,
   closedBy: C::ClosedByHuman, installation: C::InstallationActive })

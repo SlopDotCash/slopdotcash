@@ -186,11 +186,11 @@ the reopened revision and always wins over Slopbot's draft and over a
 pending moderator decision.
 
 ```quint
-type ReopenDecision = { item: str, revision: str, actor: int, role: ActorRole }
-pure def canMaintainerReopen(a: Appeal, decision: ReopenDecision): bool = unresolved(a) and
+type ReopenRecord = { item: str, revision: str, actor: int, role: ActorRole }
+pure def canMaintainerReopen(a: Appeal, decision: ReopenRecord): bool = unresolved(a) and
   decision.item == a.subject.item and decision.revision == a.subject.revision and
   decision.role == CurrentMaintainer and decision.actor > 0
-pure def maintainerReopen(a: Appeal, decision: ReopenDecision): Appeal =
+pure def maintainerReopen(a: Appeal, decision: ReopenRecord): Appeal =
   { ...a, resolution: Upheld, via: MaintainerReopen, resolvedBy: decision.actor,
     journal: a.journal.append({ stage: ResolutionStage, by: decision.actor }) }
 pure def alwaysResolutionConsistent(a: Appeal): bool =
