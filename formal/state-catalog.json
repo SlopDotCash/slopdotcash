@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "meaning": "Declared lifecycle candidates. This intentionally incomplete syntactic census cannot find every implicit state, establish reachability, or prove source/model correspondence. Review the open work listed in formal/README.md as well.",
-  "inventorySha256": "25f95fb75d2deb1142e15c1a9f87ba952d609c562d78b23bbf6a8837c5b79907",
+  "inventorySha256": "d2a077f7f42f7c453e5e24c31fcfed13975df681e67538891a981e06d25ed3b1",
   "states": [
     {
       "path": "backend/fee-conversions/handler.ts",
@@ -196,13 +196,14 @@
     },
     {
       "path": "backend/projects/skill-publication.ts",
-      "line": 35,
+      "line": 39,
       "name": "revisionStatus",
       "kind": "string-union",
       "values": ["committed", "working-tree"],
       "models": [
         "formal/models/api/api_project_registry.qnt",
         "formal/models/api/project_skill_publication.qnt",
+        "formal/models/ui/ui_project_listing.qnt",
         "formal/models/vetting/vetting_admission_clearance.qnt"
       ],
       "lexicallyUnmentionedValues": ["committed", "working-tree"],
@@ -210,13 +211,14 @@
     },
     {
       "path": "backend/projects/skill-publication.ts",
-      "line": 47,
+      "line": 51,
       "name": "revisionStatus",
       "kind": "string-union",
       "values": ["committed", "working-tree"],
       "models": [
         "formal/models/api/api_project_registry.qnt",
         "formal/models/api/project_skill_publication.qnt",
+        "formal/models/ui/ui_project_listing.qnt",
         "formal/models/vetting/vetting_admission_clearance.qnt"
       ],
       "lexicallyUnmentionedValues": ["committed", "working-tree"],
@@ -2344,7 +2346,7 @@
     },
     {
       "path": "src/App.tsx",
-      "line": 465,
+      "line": 467,
       "name": "useState",
       "kind": "string-union",
       "values": ["deleting", "holding", "typing"],
@@ -2359,6 +2361,7 @@
         "formal/models/ui/ui_points_disputes.qnt",
         "formal/models/ui/ui_project_discovery.qnt",
         "formal/models/ui/ui_project_images.qnt",
+        "formal/models/ui/ui_project_listing.qnt",
         "formal/models/ui/ui_project_work.qnt",
         "formal/models/ui/ui_public_x_profile.qnt",
         "formal/models/ui/ui_setup_check_lifetime.qnt",
@@ -2369,7 +2372,7 @@
     },
     {
       "path": "src/App.tsx",
-      "line": 1162,
+      "line": 1179,
       "name": "useState",
       "kind": "string-union",
       "values": ["blocked", "error", "loading", "ready"],
@@ -2384,6 +2387,7 @@
         "formal/models/ui/ui_points_disputes.qnt",
         "formal/models/ui/ui_project_discovery.qnt",
         "formal/models/ui/ui_project_images.qnt",
+        "formal/models/ui/ui_project_listing.qnt",
         "formal/models/ui/ui_project_work.qnt",
         "formal/models/ui/ui_public_x_profile.qnt",
         "formal/models/ui/ui_setup_check_lifetime.qnt",

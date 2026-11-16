@@ -21,6 +21,7 @@ import { summarizeModelOutcomes } from "./lib/model-outcomes";
 import { POINTS_NOTICE } from "./lib/points";
 import {
   asShown,
+  listedThisMonth,
   loadPoolFunding,
   type PoolFundingIndex,
 } from "./lib/pool-funding";
@@ -620,7 +621,9 @@ export function SponsorsPage({
           </Link>
         </div>
         <ul className="route-sponsor-grid" aria-label="Project funding pools">
-          {PROJECTS.map((project) => {
+          {PROJECTS.filter((project) =>
+            listedThisMonth(project, fundingIndex, now),
+          ).map((project) => {
             return (
               <li className="route-sponsor-card" key={project.id}>
                 <Link
