@@ -10,6 +10,7 @@ import os from "node:os";
 import path from "node:path";
 import { after, describe, test } from "node:test";
 import { stripVTControlCharacters } from "node:util";
+import { gunzipSync } from "node:zlib";
 import { Miniflare } from "miniflare";
 import { cacheCredentials, collectGarbage } from "./cache.ts";
 import { LIB_FILE, isolatedCopies, parseProofFile, readVerdict, splice } from "./prove.ts";
@@ -22,11 +23,13 @@ import { canonical, check as conformanceCheck, ConformanceError, departure, repl
 import { BUILTINS, LIST_HELPERS, OPERATORS } from "./gen/print.ts";
 import { mirrorGen } from "./units.ts";
 import { conformance as checkTraces, conformanceFound } from "./conform.ts";
+import { explore, explored } from "./explore.ts";
+import { harnessFiles, search } from "./simulate.ts";
 import { acceptContracts, acceptReviews, NODE, check, checkVerifiedSource, danglingCitations, expandListHelpers, generated, init, parseSpec, pending, pendingContracts, readSpecs, replay, show, typecheckAll, type Result, type Spec } from "./spec.ts";
 
 const project = path.join(import.meta.dirname, "..");
 const harnessSkillPaths = [".codex/skills", ".cursor/skills", ".droid/skills", ".factory/skills", ".gemini/skills", ".grok/skills", ".t3/skills"];
-const scaffoldedIgnores = ["gen/", ".spec-cache/", ".studio/", "dist/", ".vibe/", ...harnessSkillPaths.map((alias) => `/${alias}`)];
+const scaffoldedIgnores = ["gen/", ".spec-cache/", ".studio/", "dist/", ".vibe/", "test/__traces__/", ...harnessSkillPaths.map((alias) => `/${alias}`)];
 const EXAMPLE = path.join(project, "vibestack/examples/order");
 const read = (file: string, from = project): string => fs.readFileSync(path.join(from, file), "utf8");
 const F = "`".repeat(3);
@@ -199,6 +202,59 @@ pure def add(a: int, b: int): int = a + b`);
     assert.doesNotMatch(model.render(""), /Number\.isSafeInteger|function exact_/);
   });
 
+  test("the explore stage finds a page that breaks a property, keeps the trace, replays it first, and drops it once fixed", { skip: !["linux-x64", "linux-arm64", "darwin-arm64"].includes(`${process.platform}-${process.arch}`) }, async () => {
+    const remember: Parameters<typeof explore>[1] = (_fingerprint, run) => run();
+    const page = (script: string) => `<!doctype html><html><head><title>Page</title></head><body><button>Go</button>${script}</body></html>`;
+    const server = 'import http from "node:http"; import fs from "node:fs";\nconst app = http.createServer((_, res) => { res.writeHead(200, { "content-type": "text/html" }); res.end(fs.readFileSync("index.html")); });\napp.listen(0, "127.0.0.1", () => console.log(`Local: http://localhost:${app.address().port}/`));\n';
+    const manifest = (scripts: Record<string, string>) => JSON.stringify({ name: "page", private: true, type: "module", packageManager: "pnpm@10.24.0", scripts });
+    assert.deepEqual(await explore(scratch({ "package.json": manifest({ start: "node server.js" }) }), remember), []);
+    const [unserved, silent] = await Promise.all([
+      explore(scratch({ "package.json": manifest({ build: "true" }), "index.html": page("") }), remember),
+      explore(scratch({ "package.json": manifest({ start: "node -e \"console.log('starting')\"" }), "index.html": page("") }), remember),
+    ]);
+    assert.deepEqual(unserved.map(([ok, stage, summary]) => [ok, stage, summary]), [[false, "explore", "index.html is a page, and package.json has no start or dev script that serves it: add one that prints the address it serves at"]]);
+    assert.deepEqual(silent.map(([ok, stage]) => [ok, stage]), [[false, "explore"]]);
+    assert.match(silent[0][2], /`pnpm run start` printed no http:\/\/localhost address before it ended/);
+    const root = scratch({ "package.json": manifest({ start: "node server.js" }), "server.js": server, "index.html": page('<script>throw new Error("broken on load")</script>') });
+    const saved = path.join(root, "test/__traces__/bombadil");
+    const broken = await explore(root, remember);
+    assert.deepEqual(broken.map(([ok, stage]) => [ok, stage]), [[false, "explore"]], broken.map((r) => r.join("\n")).join("\n"));
+    assert.match(broken[0][2], /^index\.html: the page breaks noUncaughtExceptions/);
+    assert.ok(fs.existsSync(saved));
+    const replayed = await explore(root, remember);
+    assert.deepEqual(replayed.map(([ok, stage]) => [ok, stage]), [[false, "explore"]], replayed.map((r) => r.join("\n")).join("\n"));
+    assert.match(replayed[0][2], /still breaks, in the replay of test\/__traces__\/bombadil, noUncaughtExceptions/);
+    const unavailable = await exec(process.execPath, ["--input-type=module", "-e",
+      `import { explore } from ${JSON.stringify(path.join(project, "vibestack/explore.ts"))}; process.stdout.write(JSON.stringify(await explore(process.cwd(), (_key, run) => run())));`],
+    root, { ...process.env, CHROME: process.execPath });
+    assert.equal(unavailable.status, 0, unavailable.stderr);
+    assert.match(unavailable.stdout, /is kept, to be replayed when it can be/);
+    assert.ok(fs.existsSync(saved));
+    fs.writeFileSync(path.join(root, "index.html"), page(""));
+    const fixed = await explore(root, remember);
+    assert.deepEqual(fixed[0].slice(0, 2), [true, "explore"], fixed.map((r) => r.join("\n")).join("\n"));
+    assert.match(fixed[0][2], /the replay of test\/__traces__\/bombadil (breaks nothing now|no longer applies to the page), so it was removed/);
+    assert.ok(!fs.existsSync(saved));
+    assert.ok(!fs.existsSync(path.join(root, "test")), "an exploration leaves no test/ behind for the next check to give Vitest");
+  });
+
+  test("what Bombadil prints is read as a pass, a broken property, a replay that no longer applies, or why it could not explore", () => {
+    const run = "00:00.512 Clicking <button> (x: 10.0, y: 20.0)\n00:01.020 Reloading page\n";
+    assert.deepEqual(explored(0, run, "", false), { kind: "held", actions: 2 });
+    assert.deepEqual(explored(0, "", "", true), { kind: "held", actions: 0 });
+    assert.match((explored(0, "Test finished after time limit!", "", false) as { why: string }).why, /^Bombadil took no action/);
+    const broken = explored(2, `${run}\nnoConsoleErrors was violated:\n\nas of 00:00.000, it should always be the case that …\n\nTest finished, finding 1 violation!\n`, "", false);
+    assert.deepEqual(broken.kind === "broke" && broken.properties, ["noConsoleErrors"]);
+    assert.match((broken as { report: string }).report, /Reloading page\n\nnoConsoleErrors was violated:/);
+    assert.match((explored(1, "", "Error: failed to locate chromium/chrome executable", false) as { why: string }).why, /^Bombadil found no Chromium: run `pnpm exec playwright install chromium`/);
+    assert.match((explored(1, "", "Error: failed to locate chromium/chrome executable", true) as { why: string }).why, /^Bombadil found no Chromium/);
+    assert.match((explored(1, "Test stopped after the browser stalled!", "", false) as { why: string }).why, /^the browser stalled/);
+    assert.deepEqual(explored(1, "", "Error: reproduction and original test diverged!", true).kind, "diverged");
+    for (const output of ["Error: browser disconnected", "Test stopped after the browser stalled!", "Error: could not read trace"]) {
+      assert.equal(explored(1, "", output, true).kind, "failed");
+    }
+  });
+
   test("transitions return effects and step rules inspect their order", async () => {
     const lists = oneRule("lists", "State and effects share a type", `type State = List[int]
 type Did = { state: State, out: List[int] }
@@ -302,7 +358,7 @@ pure def stepHasOneEffect(before: State, after: State, out: List[int]): bool = o
     assert.equal(again.said("always", /./)?.detail, trace!.detail, "the same harness gives the same trace");
     assert.equal(remembered.said("always", /./)?.detail, trace!.detail);
     assert.ok(!fs.existsSync(path.join(root, "gen/traces")), "a failing simulation is not run again for the same harness");
-    assert.ok(first.said("skipped", /^types, proof, tests and traces: /), first.text);
+    assert.ok(first.said("skipped", /^types, proof, tests, traces and explore: /), first.text);
     assert.match(first.next, /^always \(spec\/index\.md\) is the first ✗/);
     // The nightly profile is part of what is remembered and simulates a different, reproducible set of traces.
     const fuzzed = await exec(process.execPath, [path.join(project, "vibestack/spec.ts"), "check", "--json", "--nightly"], root);
@@ -514,6 +570,17 @@ pure def stepHasOneEffect(before: State, after: State, out: List[int]): bool = o
     assert.ok(!failed.includes("sometimes"), text);
   });
 
+  test("a deep witness is found in the short sweep before the full search", async () => {
+    const quint = "pure val initial: int = 0\npure def up(n: int): int = n + 1\npure def sometimesLate(n: int): bool = n == 38";
+    const root = oneRule("t", "Counting", quint);
+    const spec = readSpecs(root)[0];
+    const model = await gen(root, spec);
+    const result = await search({ memory: { root, fresh: true, used: new Set() }, model, files: harnessFiles(spec, [spec], model) }, "never_sometimesLate", "step", [20, 40], 180);
+    assert.equal(result.broken, true, result.again);
+    assert.match(result.again, /--max-samples 32 --max-steps 40\b/);
+    assert.equal(result.traces[0]?.at(-1)?.state, 38);
+  });
+
   test("hand-written code that changes what it is checked against is refused or flagged", async () => {
     const { said, text } = await run(copyOfProject("src/ledger.ts", (s) => s.replace(/(\/\/@ ensures)/, "//@ requires true\n$1")));
     assert.ok(said("proof", /^src-ledger\.ts: .*under 2 \/\/@ requires/), text);
@@ -550,7 +617,7 @@ pure def stepHasOneEffect(before: State, after: State, out: List[int]): bool = o
     assert.deepEqual(both.failed, ["types", "review"], both.text);
     assert.equal(both.said("types", /./)?.summary, unfit, both.text);
     assert.match(stripVTControlCharacters(both.text), /src\/wrong\.ts(?:\(1,14\):|:1:14 -) error TS2322/);
-    assert.ok(both.said("skipped", /^tests and traces: a stage above failed/), both.text);
+    assert.ok(both.said("skipped", /^tests, traces and explore: a stage above failed/), both.text);
     const untyped = copyOfProject();
     fs.rmSync(path.join(untyped, "tsconfig.json"));
     assert.ok((await run(untyped)).failed.includes("types"));
@@ -857,10 +924,14 @@ pure def lawOwn(own: int): bool = shadowOwn(own) == own`));
     assert.deepEqual([domain.echo(7), domain.echoLocal(8), domain.sum([2, 3]), domain.shadowOwn(9), domain.paramShadow(1), domain.nestedShadow(1)], [7, 8, 5, 9, 7, 8]);
   });
 
-  test("a locally chosen enum keeps its Quint type in the generated proof", async () => {
-    const root = oneRule("choice", "Choose", "type Choice = Left | Right\npure def use(c: Choice): int = if (c == Left) 1 else 2\npure def chosen(b: bool): int =\n  val c = if (b) Left else Right\n  use(c)\npure def lawChosen(b: bool): bool = chosen(b) == (if (b) 1 else 2)");
+  test("local enums and records keep their Quint types in generated code and proof", async () => {
+    const root = oneRule("choice", "Choose", "type Choice = Left | Right\ntype Pick = { side: Choice, n: int }\npure def read(p: Pick): int = if (p.side == Left) p.n else 0\npure def record(n: int, b: bool): int =\n  val p = { side: if (b) Left else Right, n: n }\n  read(p)\npure def updated(p: Pick): int =\n  val changed = p.with(\"side\", Left)\n  read(changed)\npure def choices(b: bool): List[Choice] = if (b) List(Left) else List(Right)\npure def use(c: Choice): int = if (c == Left) 1 else 2\npure def chosen(b: bool): int =\n  val c = if (b) Left else Right\n  use(c)\npure def lawChosen(b: bool): bool = chosen(b) == (if (b) 1 else 2)");
     const { failed, text } = await run(root);
     assert.deepEqual(failed, ["review"], text);
+    const compiled = await tool("tsc", ["--ignoreConfig", "--noEmit", "--target", "es2023", "--module", "nodenext", "--strict", "--skipLibCheck", path.join(root, "gen/choice.ts")], project);
+    assert.ok(compiled.ok, compiled.out);
+    const choice = await import(path.join(root, "gen/choice.ts"));
+    assert.deepEqual([choice.record(7, true), choice.record(7, false), choice.updated({ side: "Right", n: 9 }), choice.choices(true), choice.choices(false)], [7, 0, 9, ["Left"], ["Right"]]);
     const record = oneRule("recordLocal", "A local record keeps its value", "pure def value(n: int): int =\n  val box = { value: n }\n  box.value");
     await gen(record, parseSpec(record, "spec/recordLocal.md"));
     assert.equal((await import(path.join(record, "gen/recordLocal.ts"))).value(7), 7);
@@ -1260,7 +1331,7 @@ pure def lawOwn(own: int): bool = shadowOwn(own) == own`));
     assert.equal(read(".gitignore", root), scaffoldedIgnores.join("\n") + "\n");
     const skills = fs.readdirSync(path.join(project, ".claude/skills"), { withFileTypes: true })
       .filter((entry) => entry.isDirectory()).map((entry) => entry.name).sort();
-    const skillFiles = filesUnder(project, ".claude/skills");
+    const skillFiles = filesUnder(project, ".claude/skills").filter((file) => path.basename(file) !== ".DS_Store");
     assert.deepEqual(filesUnder(root, ".claude/skills"), skillFiles);
     for (const file of skillFiles) {
       assert.deepEqual(fs.readFileSync(path.join(root, file)), fs.readFileSync(path.join(project, file)), file);
@@ -1351,7 +1422,7 @@ pure def lawOwn(own: int): bool = shadowOwn(own) == own`));
     const json = (root: string, file: string) => JSON.parse(read(file, root));
     const pins: Record<string, string> = { ...json(project, "package.json").dependencies, ...json(project, "package.json").devDependencies };
     const pinned = (...names: string[]) => Object.fromEntries(names.map((n) => [n, pins[n]]));
-    const [runtime, tooling] = [["effect", "@effect/platform-node", "vibelang-runtime"], ["vibelang", "vibelang-vite", "vite", "vitest", "@effect/vitest", "@types/node"]];
+    const [runtime, tooling] = [["effect", "@effect/platform-node", "vibelang-runtime"], ["vibelang", "vibelang-vite", "vite", "vitest", "@effect/vitest", "@types/node", "@antithesishq/bombadil"]];
     // VibeLang's packages move together, and with one version of Effect: each is pinned exactly.
     for (const name of [...runtime, ...tooling].filter((n) => n !== "@types/node")) assert.match(pins[name], /^\d+\.\d+\.\d+$/, name);
     // A workspace's `catalog:` means nothing in the package `init` writes it into.
@@ -1652,12 +1723,12 @@ pure def lawOwn(own: int): bool = shadowOwn(own) == own`));
     const before = await run(root);
     assert.deepEqual(before.failed, ["review"], before.text);
     const cache = path.join(root, ".spec-cache");
-    const entries = fs.readdirSync(cache).filter((f) => f.endsWith(".json"));
+    const entries = fs.readdirSync(cache).filter((f) => f.endsWith(".json.gz"));
     assert.ok(entries.length > 0);
     for (const entry of entries) fs.writeFileSync(path.join(cache, entry), "{");
     const after = await run(root);
     assert.deepEqual(after.failed, ["review"], after.text);
-    for (const entry of fs.readdirSync(cache).filter((f) => f.endsWith(".json"))) assert.doesNotThrow(() => JSON.parse(fs.readFileSync(path.join(cache, entry), "utf8")));
+    for (const entry of fs.readdirSync(cache).filter((f) => f.endsWith(".json.gz"))) assert.doesNotThrow(() => JSON.parse(gunzipSync(fs.readFileSync(path.join(cache, entry))).toString("utf8")));
   });
 
   test("changing an imported definition invalidates model and simulation results", async () => {
@@ -1674,12 +1745,17 @@ pure def lawOwn(own: int): bool = shadowOwn(own) == own`));
     assert.match(JSON.stringify(renamed.said("always", /the law .* is false/)), /The price is one/, renamed.text);
   });
 
-  test("proof caching follows library changes and compiler failure waits for proof completion", async () => {
+  test("proof caching follows library changes, verifies nothing again for a change to the tools that leaves the Dafny alone, and compiler failure waits for proof completion", async () => {
     const root = toolchain(fixtures(["highest"], (f) => { f["package.json"] = '{"type":"module"}'; }), "quint", "lsc");
     const script = path.join(root, "vibestack/spec.ts");
     const first = await runCli(script, root, "check", "--json");
     const checked = answer(first.stdout);
     assert.ok(checked.results.some((r: Result) => r.stage === "proof" && r.ok), first.stdout + first.stderr);
+    assert.ok(fs.existsSync(path.join(root, "gen/proof/highest/verify")), "Dafny verified the unit");
+    fs.appendFileSync(path.join(root, "vibestack/review.ts"), "\n// A change to the tools that leaves the proof alone.\n");
+    const tooled = await runCli(script, root, "check", "--json");
+    assert.ok(answer(tooled.stdout).results.some((r: Result) => r.stage === "proof" && r.ok), tooled.stdout + tooled.stderr);
+    assert.ok(!["verify", "audit"].some((run) => fs.existsSync(path.join(root, "gen/proof/highest", run))), "a remembered run of Dafny is not run again");
     const remembered = () => fs.readdirSync(path.join(root, ".spec-cache")).filter((f) => f.startsWith("prove-")).join();
     const before = remembered();
     const marker = "// A distinct proof-library version for this scratch project.";
@@ -1714,6 +1790,56 @@ pure def lawOwn(own: int): bool = shadowOwn(own) == own`));
     assert.ok(result.results.some((r: Result) => r.stage === "types" && !r.ok), failed.stdout);
     assert.ok(result.results.some((r: Result) => r.stage === "proof" && r.ok), failed.stdout);
     assert.ok(!fs.existsSync(path.join(root, ".spec-cache/lock")));
+  });
+
+  test("a check remembers its results under the tools it loaded, and nothing when they changed as it loaded them", async () => {
+    const root = toolchain(scratch({}));
+    const touch = `fs.appendFileSync(${JSON.stringify(path.join(root, "vibestack/parse.ts"))}, "\\n");`;
+    const load = `const { entry, store } = await import(${JSON.stringify(path.join(root, "vibestack/cache.ts"))});`;
+    const remember = 'const at = await entry(".", "simulate", ["same"]); store({ root: ".", fresh: false, used: new Set() }, at, 1); console.log(JSON.stringify({ name: at.name, kept: fs.existsSync(at.file) }));';
+    const checked = async (...steps: string[]) => {
+      const r = await exec(process.execPath, ["--input-type=module", "--eval", ['const fs = await import("node:fs");', ...steps].join("\n")], root);
+      assert.equal(r.status, 0, r.stderr);
+      return JSON.parse(r.stdout);
+    };
+    const loaded = await checked(load, touch, remember);
+    assert.equal(loaded.kept, true, "a tool changed after a check loaded it leaves that check's results remembered");
+    assert.notEqual((await checked(load, remember)).name, loaded.name, "under the code that computed them, not the code there now");
+    assert.equal((await checked(touch, load, remember)).kept, false, "a tool changed while a check loaded it leaves nothing remembered");
+  });
+
+  test("a change to the tools or the prose that leaves the Quint alone runs no Quint again, and its results cite the rules where they now are", { skip: process.platform === "win32" }, async () => {
+    const root = toolchain(oneRule("index", "Small", "pure val initial: int = 0\npure def up(n: int): int = n + 1\npure def alwaysSmall(n: int): bool = n < 3"), "quint");
+    const log = path.join(root, "quint.log");
+    const shim = path.join(root, "node_modules/.bin/quint");
+    fs.unlinkSync(shim);
+    fs.writeFileSync(shim, `#!/bin/sh\necho "$1" >> '${log}'\nexec '${path.join(nodeModules, ".bin/quint")}' "$@"\n`, { mode: 0o755 });
+    const checked = async () => {
+      fs.rmSync(log, { force: true });
+      const { stdout } = await runCli(path.join(root, "vibestack/spec.ts"), root, "check", "--json");
+      return { broken: answer(stdout).results.find((r: Result) => r.stage === "always"), ran: fs.existsSync(log) ? read("quint.log", root).trim().split("\n") : [] };
+    };
+    const first = await checked();
+    assert.match(first.broken?.summary ?? "", /"Story \/ Small" \(spec\/index\.md:5\)/, JSON.stringify(first.broken));
+    assert.deepEqual([...new Set(first.ran)].sort(), ["run", "typecheck"]);
+    assert.deepEqual((await checked()).ran, []);
+    fs.appendFileSync(path.join(root, "vibestack/review.ts"), "\n// A change to the tools that leaves the Quint alone.\n");
+    const tooled = await checked();
+    assert.deepEqual(tooled, { broken: first.broken, ran: [] });
+    fs.writeFileSync(path.join(root, "spec/index.md"), read("spec/index.md", root).replace("### Small\n", "Prose above the rule.\n\n### Small\n"));
+    const moved = await checked();
+    assert.deepEqual(moved.ran, []);
+    assert.match(moved.broken?.summary ?? "", /"Story \/ Small" \(spec\/index\.md:7\)/, JSON.stringify(moved.broken));
+  });
+
+  test("a Quint string ends at its next quote, as Quint reads it, and a change inside one is simulated again", async () => {
+    const quint = (b: string) => `pure val b: str = if (1 == 2) "p\\" else "${b}"\npure val initial: int = 0\npure def up(n: int): int = n + 1\npure def alwaysSame(n: int): bool = b == "x // y"`;
+    const root = oneRule("index", "Same", quint("x // y"));
+    const first = await run(root);
+    assert.ok(!first.failed.includes("always"), first.text);
+    fs.writeFileSync(path.join(root, "spec/index.md"), ruleSpec(quint("x // z"), "Same"));
+    const changed = await run(root);
+    assert.equal(changed.said("always", /alwaysSame|"Story \/ Same"/)?.ok, false, changed.text);
   });
 
   test("proof and task cache identity follows verifier and compiler bytes rather than installation directories", { skip: process.platform === "win32" }, async () => {
@@ -1913,8 +2039,8 @@ pure def lawOwn(own: int): bool = shadowOwn(own) == own`));
     fs.writeFileSync(lock, `${spawnSync(process.execPath, ["-e", ""]).pid}\n`);
     const unused = path.join(root, ".spec-cache/000000000000000000000000.json");
     fs.writeFileSync(unused, "{}");
-    const recent = path.join(root, `.spec-cache/prove-${"1".repeat(24)}.json`);
-    const expired = path.join(root, `.spec-cache/prove-${"2".repeat(24)}.json`);
+    const recent = path.join(root, `.spec-cache/prove-${"1".repeat(24)}.json.gz`);
+    const expired = path.join(root, `.spec-cache/prove-${"2".repeat(24)}.json.gz`);
     fs.writeFileSync(recent, "{}");
     fs.writeFileSync(expired, "{}");
     const old = new Date(Date.now() - 31 * 24 * 60 * 60 * 1000);
@@ -1926,7 +2052,7 @@ pure def lawOwn(own: int): bool = shadowOwn(own) == own`));
     assert.ok(!fs.existsSync(expired), "an unused entry past retention is deleted");
     assert.ok(fs.existsSync(recent), "a recent entry from another branch remains reusable");
     assert.ok(fs.readdirSync(path.dirname(lock)).length > 0, "the entries it used are kept");
-    const newer = path.join(root, `.spec-cache/prove-${"3".repeat(24)}.json`);
+    const newer = path.join(root, `.spec-cache/prove-${"3".repeat(24)}.json.gz`);
     fs.writeFileSync(newer, "{}");
     const file = fs.openSync(recent, "r+");
     fs.ftruncateSync(file, 256 * 2 ** 20);
@@ -1983,6 +2109,7 @@ pure def lawOwn(own: int): bool = shadowOwn(own) == own`));
     fs.mkdirSync(installed, { recursive: true });
     const unpacked = await exec("tar", ["-xzf", archive, "--strip-components", "1", "-C", installed], copy);
     assert.equal(unpacked.status, 0, unpacked.stdout + unpacked.stderr);
+    assert.deepEqual(fs.readdirSync(installed, { recursive: true, encoding: "utf8" }).filter((file) => file.split(path.sep).includes("examples")), [], "an application's toolchain carries no example to check");
     fs.mkdirSync(path.join(installed, "node_modules"));
     for (const entry of fs.readdirSync(nodeModules).filter((name) => name !== ".bin"))
       fs.symlinkSync(path.join(nodeModules, entry), path.join(installed, "node_modules", entry), fs.statSync(path.join(nodeModules, entry)).isDirectory() ? "dir" : "file");
@@ -2011,6 +2138,18 @@ pure def lawOwn(own: int): bool = shadowOwn(own) == own`));
     assert.ok(proof?.ok, checked.stdout + checked.stderr);
     assert.match(proof.summary, /all 1 obligations proved/);
   });
+
+  // The examples are the tools' own subjects: checked here, where the tools test themselves, and never by an application
+  // built on them, whose check reaches only its own packages and whose installed toolchain carries no example.
+  for (const name of fs.readdirSync(path.join(project, "vibestack/examples")).sort())
+    test(`the ${name} example installs from its own lock file and passes its check, its page explored where it has one`, async () => {
+      const example = path.join(project, "vibestack/examples", name);
+      const pnpm = process.platform === "win32" ? "pnpm.cmd" : "pnpm";
+      const installed = await exec(pnpm, ["install", "--frozen-lockfile", "--ignore-workspace"], example);
+      assert.equal(installed.status, 0, installed.stdout + installed.stderr);
+      const checked = await exec(pnpm, ["check"], example);
+      assert.equal(checked.status, 0, `${checked.stdout}${checked.stderr}`.trim().split("\n").slice(-80).join("\n"));
+    });
 
   test("the command line checks, generates and watches a project directory from its parent", async () => {
     const script = path.join(project, "vibestack/spec.ts");
@@ -2524,7 +2663,7 @@ assert.deepEqual(await Promise.all([undefined, "1", "2", "7", "{"].map((before) 
 
 test("a trace integer of 16 or more digits that Quint wrote as a BigNumber decodes to the same integer", () => {
   const n = (x: number | string) => ({ "#bigint": String(x) });
-  // Written by quint 0.33.1 for the 10^15 wei gas ceiling of spec/operations/escrowQualification.md.
+  // What quint 0.33.1 writes for the integer 10^15.
   assert.equal(bigNumberInteger({ s: n(1), e: n(15), c: [n(10)] }), 10n ** 15n);
   assert.equal(bigNumberInteger({ s: n(-1), e: n(19), c: [n(123456), n(78901234560000)] }), -12345678901234560000n);
   assert.equal(bigNumberInteger({ s: n(1), e: n(29), c: [n(10), n(0), n(1)] }), 10n ** 29n + 1n);

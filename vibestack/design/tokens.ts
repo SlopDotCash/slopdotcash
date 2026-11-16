@@ -73,7 +73,8 @@ const contrastPairs: [ColorName, ColorName][] = [
   ...colorNames.filter((name) => name.endsWith("-foreground")).map((name): [ColorName, ColorName] => [name, name.slice(0, -11) as ColorName]),
   ...(["muted-foreground", "primary", "destructive", "ok", "warn", "info"] as const).flatMap((name): [ColorName, ColorName][] => [[name, "background"], [name, "card"]]),
 ]
-/** What must be seen without being read (WCAG 1.4.11): a field's outline and the focus ring, on the page and on a card. */
+
+/** WCAG 1.4.11: the edge of a control on what it sits on. */
 const boundaryPairs = (["input", "ring"] as const).flatMap((name): [ColorName, ColorName][] => [[name, "background"], [name, "card"]])
 
 /** Every pair below WCAG AA, in both themes: 4.5:1 for text, 3:1 for a boundary. */

@@ -69,6 +69,16 @@ pure def canTick(e: Escrow, timestamp: int): bool = timestamp > e.now
 pure def tick(e: Escrow, timestamp: int): Escrow = { ...e, now: timestamp }
 ```
 
+### Block time is positive
+
+Awards record `block.timestamp` as their commitment time and bindings as
+their activation time; both must be positive, and a live chain's timestamp
+is never zero.
+
+```quint
+pure def alwaysClockStarted(e: Escrow): bool = e.now > 0
+```
+
 ### Upgrade control moves only to an accepting recipient that holds no service key
 
 `proposeUpgradeAuthority` names a nonzero recipient that is neither the fee

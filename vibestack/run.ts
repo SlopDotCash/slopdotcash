@@ -1,5 +1,5 @@
 // Shared bounded execution for the Quint, TypeScript, test and proof stages.
-import { execFile } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import fs from "node:fs";
 import { availableParallelism } from "node:os";
@@ -69,6 +69,23 @@ export async function exec(exe: string, args: string[], cwd: string, env?: NodeJ
   }
 }
 
+/** The process groups `startGroup` started that are still running: an interrupted check ends them before it ends itself. */
+const groups = new Set<(name: NodeJS.Signals) => void>();
+for (const name of ["SIGINT", "SIGTERM"] as const) process.once(name, () => { for (const signal of groups) signal("SIGKILL"); process.kill(process.pid, name); });
+
+/** A shell command in a process group of its own, so that stopping it stops what it started too; `stop` waits until it has closed. */
+export function startGroup(command: string, cwd: string, env?: NodeJS.ProcessEnv) {
+  const child = spawn(command, { cwd, env, shell: true, detached: !WINDOWS, stdio: ["pipe", "pipe", "pipe"] });
+  const closed = new Promise<void>((resolve) => child.on("close", () => resolve()));
+  const signal = (name: NodeJS.Signals) => {
+    try { if (!WINDOWS && child.pid) process.kill(-child.pid, name); else child.kill(name); } catch { /* already exited */ }
+  };
+  groups.add(signal);
+  void closed.then(() => groups.delete(signal));
+  const stop = async () => { signal("SIGTERM"); const timer = setTimeout(() => signal("SIGKILL"), 5000); await closed; clearTimeout(timer); };
+  return { child, closed, stop };
+}
+
 /** What the proof stage needs installed. */
 export const NEEDS_DAFNY = "the proof stage needs Dafny 4.11 on the PATH";
 
@@ -79,4 +96,50 @@ export async function run(cmd: string, args: string[], cwd: string, input?: stri
     throw new Error(`${cmd} could not be run (${exe}): ${e.message}${cmd === "dafny" ? `; ${NEEDS_DAFNY}` : "; run pnpm install"}`);
   });
   return { ok: r.status === 0 && !r.stopped, out: `${r.stdout}${r.stderr}${r.stopped ? `\n${r.stopped}\n` : ""}`, status: r.status, stderr: r.stderr };
+}
+
+/** The solver selected by Dafny's installation, pinned for every proof and recorded in its cache key. */
+let selected: Promise<{ path: string; version: string }> | undefined;
+export function solver(): Promise<{ path: string; version: string }> {
+  return selected ??= (async () => {
+    const extensions = process.platform === "win32" ? [".exe", ".cmd", ""] : [""];
+    const onPath = (name: string) => (process.env.PATH ?? "").split(path.delimiter).filter(Boolean)
+      .flatMap((dir) => extensions.map((ext) => path.join(dir, name + ext))).find((file) => {
+        try { return fs.statSync(file).isFile(); } catch { return false; }
+      });
+    const candidates: string[] = [];
+    const dafny = onPath("dafny");
+    if (dafny) {
+      const real = fs.realpathSync(dafny);
+      for (const dir of [path.dirname(real), path.join(path.dirname(real), "..", "libexec")]) {
+        const bundled = path.join(dir, "z3", "bin");
+        if (!fs.existsSync(bundled)) continue;
+        const preferred = (name: string) => name.includes("4.12.1") ? 0 : name.includes("4.8.5") ? 1 : 2;
+        candidates.push(...fs.readdirSync(bundled).filter((name) => /^z3(-\d+(\.\d+)*)?(\.exe)?$/.test(name))
+          .sort((a, b) => preferred(a) - preferred(b) || a.localeCompare(b)).map((name) => path.join(bundled, name)));
+      }
+    }
+    const executable = onPath("z3");
+    if (executable) candidates.push(executable);
+    for (const candidate of candidates) {
+      try {
+        const result = await exec(candidate, ["--version"], path.dirname(candidate));
+        const version = result.status === 0 && result.stdout.match(/Z3 version (\d+\.\d+\.\d+)/)?.[1];
+        if (version) return { path: fs.realpathSync(candidate), version };
+      } catch { /* try the next solver supplied by this installation */ }
+    }
+    throw new Error("the proof stage needs the Z3 solver bundled with Dafny or on the PATH");
+  })().catch((e) => { selected = undefined; throw e; });
+}
+
+/** The version of Dafny on the PATH, read once it is read without a problem, or why it could not be read. */
+let dafny: Promise<{ version?: string; problem?: string }> | undefined;
+export function dafnyVersion(): Promise<{ version?: string; problem?: string }> {
+  return (dafny ??= exec("dafny", ["--version"], process.cwd()).then((r) => {
+    const version = r.status === 0 ? r.stdout.match(/\d+\.\d+\.\d+/)?.[0] : undefined;
+    const problem = !version ? `Dafny could not be run (${`${r.stdout}${r.stderr}`.trim().split("\n")[0] || "it printed no version"})`
+      : !version.startsWith("4.11.") ? `this is Dafny ${version}, and LemmaScript targets Dafny 4.11.x` : undefined;
+    return { version, problem: r.stopped ?? (problem && `${problem}: ${NEEDS_DAFNY} (see README, "Getting started")`) };
+  }, (e: Error) => ({ problem: `Dafny could not be run (${e.message}): ${NEEDS_DAFNY} (see README, "Getting started")` }))
+    .then((r) => { if (r.problem) dafny = undefined; return r; }));
 }

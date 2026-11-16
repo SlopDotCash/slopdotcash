@@ -67,8 +67,8 @@ would call true or false.
   [Effect](https://effect.website), interfaces in React on shared design
   tokens, journeys in Vitest against real services. Lint rules hold every
   package to it.
-- **Agents follow one procedure.** [AGENTS.md](../AGENTS.md) and the skills in
-  [`.claude/skills/`](../.claude/skills/) tell any agent what to write where,
+- **Agents follow one procedure.** [AGENTS.md](AGENTS.md) and the skills in
+  [`.claude/skills/`](.claude/skills/) tell any agent what to write where,
   and `pnpm check` tells it what is still wrong, ending with a `next:` line.
 - **You sign off.** Every changed rule is shown with its sentence and its
   Quint side by side; nothing is done until you accept it.
@@ -83,7 +83,7 @@ would call true or false.
 | Proof | Dafny on the generated core, and [LemmaScript](https://github.com/midspiral/LemmaScript) `//@` contracts on hand-written logic | `proof`, with each exception recorded in `spec/lock.json` |
 | Shell | HTTP, storage, queues and every other effect, in VibeLang on Effect 4 | `types`: the `vibelang` compiler over `src/`, tests and `gen/` |
 | Interface | React with Vite, Tailwind CSS v4, shadcn/ui on Radix, tokens from `packages/design-system`, components in `packages/ui` with generated stories | `types`, ESLint and Stylelint rules for tokens, Storybook and browser tests |
-| Tests | Whole journeys in Vitest with `@effect/vitest` and Playwright, citing the rule each step serves; conformance runs of the real app against the spec | `tests`, `traces` |
+| Tests | Whole journeys in Vitest with `@effect/vitest` and Playwright, citing the rule each step serves; conformance runs of the real app against the spec; [Bombadil](https://github.com/antithesishq/bombadil) exploring each served page against `test/bombadil.ts` | `tests`, `traces`, `explore` |
 | Workspace | Node 26, pnpm workspaces, Turborepo; ESLint boundaries, Knip, Madge and jscpd | `pnpm verify`, CI on every push |
 
 ```mermaid
@@ -101,7 +101,7 @@ flowchart LR
 ```
 
 What is generated from what, which test is for what, and what a green check
-means are in [CONTRIBUTING.md](../CONTRIBUTING.md#architecture).
+means are in [CONTRIBUTING.md](CONTRIBUTING.md#architecture).
 
 ## Getting started
 
@@ -120,7 +120,7 @@ means are in [CONTRIBUTING.md](../CONTRIBUTING.md#architecture).
 
 3. In `spec/index.md`, say what the product is for. In `spec/app/index.md`,
    the requirements of the application in `apps/app`, replace the hello
-   world story ([apps/app](../apps/app/README.md)) with your first: who it is
+   world story ([apps/app](apps/app/README.md)) with your first: who it is
    for, what they need to do, and why. Write it in Studio or in the Markdown
    file.
 4. Ask your coding agent to sync. It writes the rules and Quint, builds the
@@ -128,9 +128,9 @@ means are in [CONTRIBUTING.md](../CONTRIBUTING.md#architecture).
    what needs your review.
 5. Read what it reports, run the app, and sign off with `pnpm accept`.
 
-Agents start with [AGENTS.md](../AGENTS.md), which Claude Code reads through the
+Agents start with [AGENTS.md](AGENTS.md), which Claude Code reads through the
 relative `CLAUDE.md` symlink. Skills and their bundled references
-live in [`.claude/skills/`](../.claude/skills/). `pnpm install` and
+live in [`.claude/skills/`](.claude/skills/). `pnpm install` and
 `spec init` create missing project-relative links in `.agents/skills/` and
 under `.codex`, `.cursor`, `.grok`, `.gemini`, `.factory`, `.t3` and `.droid`.
 Git tracks the shared `.agents/skills/` links and ignores the harness aliases
@@ -179,13 +179,13 @@ A `##` heading is a story, a `###` heading is a rule, and a `quint` block
 under a rule states its formal meaning. Write the prose; the agent writes
 the rules and their Quint. `spec/index.md` introduces the product and links
 to each area; `spec/<name>/` holds the requirements of the package
-`apps/<name>` or `packages/<name>` ([one spec tree](../SPEC.md#one-spec-tree)).
+`apps/<name>` or `packages/<name>` ([one spec tree](SPEC.md#one-spec-tree)).
 `pnpm new <name>` writes `spec/<name>/index.md` with a scaffold to replace.
-The format is in the [spec reference](../SPEC.md#writing-a-spec).
+The format is in the [spec reference](SPEC.md#writing-a-spec).
 
 ### 2. Sync and check
 
-Ask the agent to sync: it follows the [`sync` skill](../.claude/skills/sync/SKILL.md).
+Ask the agent to sync: it follows the [`sync` skill](.claude/skills/sync/SKILL.md).
 
 ```mermaid
 flowchart LR
@@ -214,15 +214,15 @@ in place of `machine()`, over a `KeyValueStore` layer (`layerFileSystem`,
 `layerStorage` or `layerMemory`). A React component reads and drives a
 `Machine` with `useMachine` from `gen/<name>.react.ts`. If the spec uses a
 sender parameter named `by`, authenticate that sender in your shell and pass
-it separately ([`shell` skill](../.claude/skills/shell/SKILL.md)).
+it separately ([`shell` skill](.claude/skills/shell/SKILL.md)).
 
 | Write | In | Following |
 |---|---|---|
-| HTTP, storage and other I/O | `src/*.vibe` | the [`shell` skill](../.claude/skills/shell/SKILL.md) |
-| The interface: components that read the state and send events through hooks over `Machine` | `src/*.tsx`, on `@repo/ui` and the design tokens | the [`design` skill](../.claude/skills/design/SKILL.md) |
-| Logic Quint cannot express, such as a loop | `src/*.ts` with `//@` contracts | the [`prove` skill](../.claude/skills/prove/SKILL.md) |
-| Whole-journey tests | `test/*.test.{vibe,tsx}` | [AGENTS.md, "Tests"](../AGENTS.md#tests) |
-| A driver, when the shell keeps the machine's state itself, through which `check` compares the application with the spec | `test/drivers/<name>.ts` | [SPEC.md, "Conformance"](../SPEC.md#conformance) |
+| HTTP, storage and other I/O | `src/*.vibe` | the [`shell` skill](.claude/skills/shell/SKILL.md) |
+| The interface: components that read the state and send events through hooks over `Machine` | `src/*.tsx`, on `@repo/ui` and the design tokens | the [`design` skill](.claude/skills/design/SKILL.md) |
+| Logic Quint cannot express, such as a loop | `src/*.ts` with `//@` contracts | the [`prove` skill](.claude/skills/prove/SKILL.md) |
+| Whole-journey tests | `test/*.test.{vibe,tsx}` | [AGENTS.md, "Tests"](AGENTS.md#tests) |
+| A driver, when the shell keeps the machine's state itself, through which `check` compares the application with the spec | `test/drivers/<name>.ts` | [SPEC.md, "Conformance"](SPEC.md#conformance) |
 
 Keep pure logic in the spec wherever Quint can express it. When the spec
 changes, the `types` stage points at the code that must follow. Never edit
@@ -238,7 +238,7 @@ pnpm accept
 ```
 
 `accept` checks afresh and records what `review` lists in `spec/lock.json`,
-[all or nothing](../SPEC.md#review). Commit the ledger with the spec.
+[all or nothing](SPEC.md#review). Commit the ledger with the spec.
 
 ## Set up a new project
 
@@ -283,8 +283,8 @@ pnpm check
 | `CLAUDE.md` | relative symlink to `AGENTS.md`. A standalone `@AGENTS.md` import is converted to the link. Custom Claude instructions are preserved and import `AGENTS.md` |
 | an empty `spec/index.md` | |
 | `tsconfig.json` | for the VibeLang compiler: `src`, `test`, `gen/*.ts` and `gen/*.vibe`, emitting to `dist/`, with the compiler's declarations in `.vibe/declarations` |
-| `vitest.config.ts` | the one Vitest configuration, `project()` from `vibestack/testing/vitest.ts` ([AGENTS.md, "Tests"](../AGENTS.md#tests)) |
-| `.gitignore` | `gen/`, `.spec-cache/`, `.studio/`, `dist/`, `.vibe/` and the generated harness skill paths |
+| `vitest.config.ts` | the one Vitest configuration, `project()` from `vibestack/testing/vitest.ts` ([AGENTS.md, "Tests"](AGENTS.md#tests)) |
+| `.gitignore` | `gen/`, `.spec-cache/`, `.studio/`, `dist/`, `.vibe/`, `test/__traces__/` and the generated harness skill paths |
 | `package.json` | scripts `dev`, `check`, `gen`, `accept`, `build` (`vibelang`) and `test` (`vitest run`); the VibeLang toolchain it lacks, at its pins, with the `@effect/platform-node-shared` override that keeps one Effect; `packageManager` (`pnpm@10.24.0`), `engines.node` (`>=26`, the Node `spec` refuses to run below) and `"type": "module"` if unset |
 
 It preserves project-authored content, scripts, and dependencies.
@@ -293,7 +293,7 @@ configuration when `test/` first appears, and a driver to fill in when
 `src/` first keeps a machine's state.
 
 `spec` works on `spec/**/*.md`, and optionally `src/`, the package's
-[tests](../AGENTS.md#tests) and a `tsconfig.json`, in the directory it is run from. Without a `tsconfig.json`, a package containing `src/` or `test/` fails the
+[tests](AGENTS.md#tests) and a `tsconfig.json`, in the directory it is run from. Without a `tsconfig.json`, a package containing `src/` or `test/` fails the
 types stage; a spec-only package reports that there is no code to typecheck. To hand the generated code to another package, compile `gen/*.ts`
 with `tsc`; it has no dependencies. `gen/*.effect.vibe` needs the VibeLang
 toolchain.
@@ -307,18 +307,17 @@ current one. Installed as a package, use `pnpm exec spec <command> [<dir>]`.
 |---|---|
 | `pnpm dev` | Starts Studio on this project and every workspace package's `dev` script, together |
 | `pnpm studio [<dir>]` | Opens Studio alone, on one project |
-| `pnpm check [<dir>] [--json]` | Checks spec, source and tests; ends with a `next:` line ([JSON shape](../CONTRIBUTING.md#changing-the-tools)) |
+| `pnpm check [<dir>] [--json]` | Checks spec, source and tests, and explores each page; ends with a `next:` line ([JSON shape](CONTRIBUTING.md#changing-the-tools)) |
 | `pnpm quick` | Types, lint and tests of what changed |
 | `pnpm verify` | Everything CI runs: build, types, tests, browser tests, checks, lint, Knip, Madge, jscpd and the selftest, for every workspace package |
 | `pnpm gen [<dir>]` | Generates `gen/` only |
 | `node vibestack/spec.ts watch [<dir>]` | Rechecks when a spec, source file or test changes |
-| `pnpm accept [<dir>]` | The user's sign-off: checks afresh and records what `review` lists, [all or nothing](../SPEC.md#review) |
+| `pnpm accept [<dir>]` | The user's sign-off: checks afresh and records what `review` lists, [all or nothing](SPEC.md#review) |
 | `pnpm accept unproved` | Records the listed obligations as simulated only. The user's decision |
-| `pnpm new [<path>]` | Fills an empty root index or creates a child [starter spec](../SPEC.md#writing-a-spec) |
+| `pnpm new [<path>]` | Fills an empty root index or creates a child [starter spec](SPEC.md#writing-a-spec) |
 | `node vibestack/spec.ts init [<dir>]` | Sets up an existing project ([above](#using-it-from-another-package)) |
 | `pnpm demo` | Runs the order example's scripted checkout session |
-| `pnpm examples` | Installs and checks every example, outside CI |
-| `pnpm selftest` | Breaks the pipeline one way at a time and checks each break is caught |
+| `pnpm selftest` | Breaks the pipeline one way at a time and checks each break is caught, then installs and checks every example |
 | `pnpm build` | Compiles the tools into `dist/`, the packaged `spec` command |
 
 | Exit code | Means |
@@ -329,7 +328,7 @@ current one. Installed as a package, use `pnpm exec spec <command> [<dir>]`.
 
 CI runs `pnpm verify` on each pull request and push with the same fixed
 profile as local checks, and a fresh nightly run with a larger fixed profile
-([CI](../CONTRIBUTING.md#ci)).
+([CI](CONTRIBUTING.md#ci)).
 
 ## Examples
 
@@ -338,10 +337,10 @@ workspace.
 
 | Project | What it covers | Open in Studio |
 |---|---|---|
-| [Order checkout](examples/order/README.md) | Guards, payments, cancellation and a proved event ledger | `pnpm studio vibestack/examples/order` |
-| [Team dashboard](examples/dashboard/README.md) | Shared spreadsheets, chat notifications and a project registry | `pnpm studio vibestack/examples/dashboard` |
-| [Shared to-do list](examples/fullstack/README.md) | HTTP server, browser client and two tabs over an unreliable network | `pnpm studio vibestack/examples/fullstack` |
-| [Assistant](examples/assistant/README.md) | Trusted senders, bounded turns, late replies, confirmation before payment and a secret card | `pnpm studio vibestack/examples/assistant` |
+| [Order checkout](vibestack/examples/order/README.md) | Guards, payments, cancellation and a proved event ledger | `pnpm studio vibestack/examples/order` |
+| [Team dashboard](vibestack/examples/dashboard/README.md) | Shared spreadsheets, chat notifications and a project registry | `pnpm studio vibestack/examples/dashboard` |
+| [Shared to-do list](vibestack/examples/fullstack/README.md) | HTTP server, browser client and two tabs over an unreliable network | `pnpm studio vibestack/examples/fullstack` |
+| [Assistant](vibestack/examples/assistant/README.md) | Trusted senders, bounded turns, late replies, confirmation before payment and a secret card | `pnpm studio vibestack/examples/assistant` |
 
 ## Repository
 
@@ -354,12 +353,12 @@ workspace.
 | `vibestack/` | The tools: generator, simulator, prover, Studio, testing and design helpers |
 | `.claude/skills/` | What agents read before each kind of work, with bundled references |
 | `.agents/skills/` | Relative links to the same skills for Codex discovery |
-| [AGENTS.md](../AGENTS.md), [SPEC.md](../SPEC.md), [CONTRIBUTING.md](../CONTRIBUTING.md#architecture) | The procedure, the spec reference, and the map |
+| [AGENTS.md](AGENTS.md), [SPEC.md](SPEC.md), [CONTRIBUTING.md](CONTRIBUTING.md#architecture) | The procedure, the spec reference, and the map |
 
 ## Contributing
 
-See [CONTRIBUTING.md](../CONTRIBUTING.md).
+See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## License
 
-[MIT](../LICENSE)
+[MIT](LICENSE)

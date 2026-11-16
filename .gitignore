@@ -30,3 +30,5 @@ build/
 # Screenshots and traces Vitest keeps of a failed browser test.
 .vitest/
 test/__traces__/
+# A failed exploration's trace, replayed by the next check (SPEC.md, "Exploring the page").
+**/test/__traces__/bombadil/
