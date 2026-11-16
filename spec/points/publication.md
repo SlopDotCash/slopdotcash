@@ -8,13 +8,17 @@ The [Points journal](./journal.md) supplies the authoritative records. The
 publication service observes verified snapshots of that journal and has no
 permission to write it. Each snapshot record binds its immutable identity and
 a digest of its complete canonical bytes. Actual digest verification, object
-publication and atomic compare-and-publish need storage conformance.
+publication and atomic compare-and-publish need storage conformance. A
+candidate is staged only from a [source census](./census.md) that is ready
+for publication while no [historical import](./historicalImport.md) holds
+publication; both are observed from their machines at staging.
 
 ## Story: Keep published history stable when imports race or fail
 
 ### A publisher stages a candidate without changing what readers see
 
 ```quint
+import census as C from "./census"
 type PublishedRecord = { id: int, digest: str }
 type PublicationPhase = Idle | Staged | Rejected | Interrupted | Published
 type Publication = { phase: PublicationPhase, canonical: List[PublishedRecord], visible: List[PublishedRecord], staged: List[PublishedRecord],
@@ -25,8 +29,9 @@ pure val secondRecord: PublishedRecord = { id: 2, digest: "second" }
 pure val thirdRecord: PublishedRecord = { id: 3, digest: "third" }
 pure val absentRecord: PublishedRecord = { id: 0, digest: "" }
 pure val initial: Publication = { phase: Idle, canonical: List(firstRecord), visible: List(firstRecord), staged: List(), revision: 1, preparedAt: 0 }
-pure def canStage(p: Publication): bool = p.phase != Staged
-pure def stage(p: Publication, candidate: List[PublishedRecord]): Publication =
+pure def canStage(p: Publication, censusPhase: C::CensusPhase, historicalHold: bool): bool =
+  p.phase != Staged and censusPhase == C::ReadyForPublication and not(historicalHold)
+pure def stage(p: Publication, candidate: List[PublishedRecord], censusPhase: C::CensusPhase, historicalHold: bool): Publication =
   { ...p, phase: Staged, staged: candidate, preparedAt: p.revision }
 ```
 
@@ -95,8 +100,10 @@ pure def lawRejectChanged(digest: str): bool = digest != firstRecord.digest impl
   not(admissiblePublication(initial, List({ id: firstRecord.id, digest: digest }, secondRecord)))
 pure def lawStalePrepared(recordId: int): bool = recordId == secondRecord.id implies
   not(canPublish(publishConcurrent(stage(observeCanonical(initial, List(firstRecord, secondRecord), true),
-    List(firstRecord)), List(firstRecord, secondRecord))))
+    List(firstRecord), C::ReadyForPublication, false), List(firstRecord, secondRecord))))
 pure def lawRejectUncommitted(recordId: int): bool = recordId == secondRecord.id implies
   not(admissiblePublication(initial, List(firstRecord, secondRecord)))
 pure val recordIdValues = Set(1, 2, 3)
+pure val historicalHoldValues = Set(false, true)
+pure val weight_stage = 4
 ```
