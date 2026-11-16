@@ -225,20 +225,20 @@ failure that leaves the assessment pending.
 
 ```quint
 type BehaviorAnalysis = BehaviorClean | Suspicious | MaliciousBehavior
-type ArtifactRun = { artifacts: int, run: SB::Sandbox, analysis: BehaviorAnalysis }
+type ArtifactRun = { artifacts: int, sandbox: SB::Sandbox, analysis: BehaviorAnalysis }
 pure def canRunIsolated(s: Scan, artifactRun: ArtifactRun): bool =
-  s.phase == Reviewing and s.deterministic and SB::completed(artifactRun.run) and
+  s.phase == Reviewing and s.deterministic and SB::completed(artifactRun.sandbox) and
   artifactRun.artifacts > 0 and artifactRun.artifacts <= s.uncoveredExecutable
 pure def runIsolated(s: Scan, artifactRun: ArtifactRun): Scan =
-  if (artifactRun.run.result != SB::Executed) s
+  if (artifactRun.sandbox.result != SB::Executed) s
   else if (artifactRun.analysis == BehaviorClean) { ...s, uncoveredExecutable: s.uncoveredExecutable - artifactRun.artifacts }
   else { ...s, uncoveredExecutable: s.uncoveredExecutable - artifactRun.artifacts, blocked: s.blocked + artifactRun.artifacts }
 pure val sandboxDone: SB::Sandbox = { ...SB::initial, phase: SB::Destroyed, result: SB::Executed }
-pure val artifactRunValues = Set({ artifacts: 1, run: sandboxDone, analysis: BehaviorClean },
-  { artifacts: 1, run: sandboxDone, analysis: Suspicious },
-  { artifacts: 1, run: { ...sandboxDone, result: SB::LimitReached, coverageGap: true }, analysis: BehaviorClean },
-  { artifacts: 1, run: { ...sandboxDone, phase: SB::CleanupFailed }, analysis: BehaviorClean },
-  { artifacts: 1, run: { ...sandboxDone, result: SB::IsolationFailed }, analysis: BehaviorClean })
+pure val artifactRunValues = Set({ artifacts: 1, sandbox: sandboxDone, analysis: BehaviorClean },
+  { artifacts: 1, sandbox: sandboxDone, analysis: Suspicious },
+  { artifacts: 1, sandbox: { ...sandboxDone, result: SB::LimitReached, coverageGap: true }, analysis: BehaviorClean },
+  { artifacts: 1, sandbox: { ...sandboxDone, phase: SB::CleanupFailed }, analysis: BehaviorClean },
+  { artifacts: 1, sandbox: { ...sandboxDone, result: SB::IsolationFailed }, analysis: BehaviorClean })
 ```
 
 ### The primary review decides and an ambiguous or high-risk finding needs the specialist
