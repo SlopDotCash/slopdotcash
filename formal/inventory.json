@@ -4865,9 +4865,9 @@
     },
     {
       "path": "scripts/value-merge-resolution.ts",
-      "sha256": "9ab37e64df36bcc90479c078724b0c1ef74477ce251d272c7fa927756e38c297",
+      "sha256": "77a29ff69411bb91b6742016aedcdeca7180ae7470d8df499e83bfc0611c8746",
       "models": ["formal/models/slopbot/merge_evidence_acquisition.qnt"],
-      "candidateLines": [262, 263, 273, 409, 425, 477, 483, 506, 527, 529],
+      "candidateLines": [262, 263, 273, 415, 431, 483, 489, 512, 533, 535],
       "review": "mapped-abstraction"
     },
     {
