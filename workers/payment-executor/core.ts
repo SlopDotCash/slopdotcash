@@ -2159,11 +2159,18 @@ async function cancelObsoleteStoredBinding(
     "0x"
   )
     throw new Error("Cancellation requires a plain signer account");
-  const sent = await rpc(deployment, "eth_sendRawTransaction", [
-    cancellation.rawTransaction,
-  ]);
-  if (sent !== cancellation.transactionId)
-    throw new Error("Cancellation hash mismatch");
+  try {
+    const sent = await rpc(deployment, "eth_sendRawTransaction", [
+      cancellation.rawTransaction,
+    ]);
+    if (sent !== cancellation.transactionId)
+      throw new Error("Cancellation hash mismatch");
+  } catch (error) {
+    // A later run offers the same retained bytes again. As in broadcast(), a
+    // send error is accepted only when the node already holds this exact hash.
+    if (!(await observedEvmTransaction(deployment, cancellation.transactionId)))
+      throw error;
+  }
   return { settled: false, transactionId: cancellation.transactionId };
 }
 
