@@ -298,9 +298,9 @@ pure def alwaysTargetsReservedFresh(b: Backup): bool = b.targets.every(t => t.ke
   and generationOf(b, t.generation).id == t.generation)
   and b.generations.every(g => g.id > 0 and generationOf(b, g.id) == g)
 pure def stepFrozenRefusesNewWork(before: Backup, after: Backup): bool =
-  before.generations.every(g => g.state != GenerationOpen implies
-    (after.targets.every(t => t.generation == g.id implies before.targets.includes(t) or (targetOf(before, t.key).key == t.key
-      and t.published == targetOf(before, t.key).published)) and generationOf(after, g.id).state != GenerationOpen))
+  after.targets.every(t => generationOf(before, t.generation).state != GenerationOpen implies
+    (targetOf(before, t.key).key == t.key and (t.published implies targetOf(before, t.key).published)))
+  and before.generations.every(g => g.state != GenerationOpen implies generationOf(after, g.id).state != GenerationOpen)
 pure def stepTargetsNeverRemoved(before: Backup, after: Backup): bool = after.targets.length() >= before.targets.length()
   and before.targets.every(t => targetOf(after, t.key).key == t.key and targetOf(after, t.key).generation == t.generation
     and (t.written implies targetOf(after, t.key).written) and (t.marker implies targetOf(after, t.key).marker)
