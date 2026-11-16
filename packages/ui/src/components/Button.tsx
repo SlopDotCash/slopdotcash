@@ -7,7 +7,7 @@ import { StatusIcon } from "./Status.tsx";
 
 /** The look of a button by variant and size, for an element that acts as one without being a `Button`. */
 export const buttonVariants = cva(
-  [focusRing, inactive, "inline-flex items-center justify-center gap-2 rounded-md text-sm font-medium whitespace-nowrap transition-colors duration-fast motion-reduce:transition-none"],
+  [focusRing, inactive, "inline-flex items-center justify-center gap-2 rounded-md text-sm font-medium whitespace-nowrap transition-colors duration-fast ease-standard motion-reduce:transition-none"],
   {
     variants: {
       variant: {

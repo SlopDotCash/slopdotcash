@@ -15,7 +15,7 @@ export type SelectProps = ComponentProps<"select"> & {
 export function Select({ invalid = false, className, ...props }: SelectProps) {
   return (
     <div className={cn("relative", className)}>
-      <select aria-invalid={invalid || undefined} className={cn(fieldClass, "h-12 appearance-none pr-10")} {...props} />
+      <select aria-invalid={invalid || undefined} className={cn(fieldClass, "h-13 appearance-none pr-10")} {...props} />
       <ChevronDown aria-hidden className="pointer-events-none absolute top-1/2 right-3 size-4 -translate-y-1/2 text-muted-foreground" />
     </div>
   );
