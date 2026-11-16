@@ -137,6 +137,22 @@ export interface HistoricalPointsPacket {
       }[];
     };
     earlierSources: CorrectionSource[];
+    /** Complete native commit membership already accepted before this promotion. */
+    earlierAcceptanceProof?: {
+      commits: { sha: string; sourceId: string }[];
+      sourceBaseSha: string;
+      objects: { sha: string; raw: string }[];
+      contextSources: {
+        id: string;
+        number: number;
+        headSha: string;
+        baseSha: string;
+        mergedAt: string;
+        mergeSha: string;
+        /** Explicit owner review of prior acceptance, never an inferred expiry. */
+        historicalAwardRevisionId?: string;
+      }[];
+    };
     acceptedSquashes?: HistoricalAcceptedSquash[];
     acceptedPromotion?: {
       headCommit: string;
@@ -585,6 +601,7 @@ export function reconstructHistoricalPoints(
   const retiringSources = new Set(
     (packet.duplicateRetirements ?? []).map((item) => item.sourceId),
   );
+  const latestBaseline = latestPoints(baseline);
   const rewardedAwards = [...latestPoints(result).values()].map(
     (row) => row.award,
   );
@@ -611,9 +628,11 @@ export function reconstructHistoricalPoints(
       "Invalid duplicate source identity",
     );
     for (const item of [source, ...earlier.values()]) {
-      const audited = packet.sourceAudit.sources.find(
-        (row) => row.id === item.sourceId,
-      );
+      const audited =
+        packet.sourceAudit.sources.find((row) => row.id === item.sourceId) ??
+        retirement.earlierAcceptanceProof?.contextSources.find(
+          (row) => row.id === item.sourceId,
+        );
       check(
         item.complete &&
           item.commitCount === item.commits.length &&
@@ -739,7 +758,7 @@ export function reconstructHistoricalPoints(
       squashes.size === (retirement.acceptedSquashes?.length ?? 0),
       "Repeated accepted squash source",
     );
-    if (squashes.size) {
+    if (squashes.size || retirement.earlierAcceptanceProof) {
       const promotion = retirement.acceptedPromotion;
       check(
         promotion &&
@@ -806,6 +825,181 @@ export function reconstructHistoricalPoints(
         "Accepted squash parent changed",
       );
     }
+    const acceptedProof = retirement.earlierAcceptanceProof;
+    const acceptedCommits = new Map(
+      acceptedProof?.commits.map((item) => [item.sha, item.sourceId]),
+    );
+    if (acceptedProof) {
+      check(
+        acceptedCommits.size === acceptedProof.commits.length &&
+          acceptedProof.commits.length > 0 &&
+          new Set(acceptedProof.objects.map((item) => item.sha)).size ===
+            acceptedProof.objects.length &&
+          new Set(acceptedProof.contextSources.map((item) => item.id)).size ===
+            acceptedProof.contextSources.length &&
+          acceptedProof.contextSources.length === earlier.size &&
+          acceptedProof.contextSources.every((item) => earlier.has(item.id)),
+        "Earlier acceptance repeats or omits source identity",
+      );
+      const objects = new Map(
+        acceptedProof.objects.map((item) => [
+          item.sha,
+          retainedCommit(item.raw, item.sha),
+        ]),
+      );
+      const requiredObjects = new Set<string>();
+      const rewardedSourceIds = new Set(
+        rewardedAwards
+          .filter(
+            (award) =>
+              award.projectId === packet.projectId &&
+              award.category === "merged-pull-request" &&
+              award.amount > 0,
+          )
+          .map((award) => award.sourceId),
+      );
+      for (const item of [source, ...earlier.values()]) {
+        requiredObjects.add(item.headSha);
+        for (const commit of item.commits) {
+          requiredObjects.add(commit.sha);
+          const retained = objects.get(commit.sha);
+          check(
+            retained &&
+              commit.parentCount === retained.parents.length &&
+              JSON.stringify(commit.parentShas) ===
+                JSON.stringify(retained.parents),
+            "Earlier acceptance commit parents differ",
+          );
+        }
+        const head = objects.get(item.headSha);
+        check(head, "Earlier acceptance head is unavailable");
+        const context =
+          item === source
+            ? undefined
+            : acceptedProof.contextSources.find(
+                (row) => row.id === item.sourceId,
+              );
+        const baseSha =
+          item === source ? acceptedProof.sourceBaseSha : context?.baseSha;
+        check(
+          baseSha && /^[a-f0-9]{40}$/u.test(baseSha),
+          "Earlier acceptance base is unavailable",
+        );
+        const base = objects.get(baseSha);
+        check(base, "Earlier acceptance base object is missing");
+        requiredObjects.add(baseSha);
+        const memberIds = new Set(item.commits.map((commit) => commit.sha));
+        const reachable = new Set<string>();
+        const pending = [item.headSha];
+        while (pending.length) {
+          const sha = pending.pop();
+          if (!sha || reachable.has(sha) || !memberIds.has(sha)) continue;
+          reachable.add(sha);
+          pending.push(...(objects.get(sha)?.parents ?? []));
+        }
+        // Complete head-minus-base membership is independently re-collected
+        // through GitHub's immutable range by the normal publication runner.
+        check(
+          reachable.size === memberIds.size,
+          "Earlier acceptance has disconnected source commits",
+        );
+        if (item === source) continue;
+        check(
+          context &&
+            context.headSha === item.headSha &&
+            context.mergedAt === item.occurredAt &&
+            Number.isSafeInteger(context.number) &&
+            context.number > 0 &&
+            item.sourceUrl ===
+              `https://github.com/${packet.sourceAudit.repository}/pull/${context.number}` &&
+            /^[a-f0-9]{40}$/u.test(context.mergeSha),
+          "Earlier acceptance source identity differs",
+        );
+        const audited = packet.sourceAudit.sources.find(
+          (row) => row.id === item.sourceId,
+        );
+        check(
+          !audited ||
+            (audited.number === context.number &&
+              audited.headSha === context.headSha &&
+              audited.mergedAt === context.mergedAt),
+          "Earlier acceptance conflicts with current audit",
+        );
+        requiredObjects.add(context.mergeSha);
+        const merge = objects.get(context.mergeSha);
+        check(
+          merge &&
+            (context.mergeSha === item.headSha ||
+              (merge.parents.length === 2 &&
+                merge.parents[1] === item.headSha) ||
+              merge.tree === head.tree),
+          "Earlier acceptance merge does not retain its head",
+        );
+        const historical =
+          context.historicalAwardRevisionId === undefined
+            ? undefined
+            : baseline.revisions.find(
+                (row) => row.id === context.historicalAwardRevisionId,
+              );
+        check(
+          context.historicalAwardRevisionId === undefined ||
+            (historical &&
+              historical.award.projectId === packet.projectId &&
+              historical.award.sourceId === item.sourceId &&
+              historical.award.sourceUrl === item.sourceUrl &&
+              historical.award.occurredAt === item.occurredAt &&
+              historical.award.category === "merged-pull-request" &&
+              historical.award.amount > 0 &&
+              historical.award.occurredAt < "2026-10-01T00:00:00.000Z" &&
+              historical.recordedAt < packet.reviewedAt &&
+              latestBaseline.get(historical.award.key)?.award.amount === 0 &&
+              !latestBaseline.get(historical.award.key)?.decision &&
+              !latestBaseline.get(historical.award.key)?.penalty),
+          "Earlier historical award reference is invalid",
+        );
+        check(
+          rewardedSourceIds.has(item.sourceId) ||
+            (historical &&
+              historical.award.projectId === packet.projectId &&
+              historical.award.sourceId === item.sourceId &&
+              historical.award.sourceUrl === item.sourceUrl &&
+              historical.award.occurredAt === item.occurredAt &&
+              historical.award.category === "merged-pull-request" &&
+              historical.award.amount > 0 &&
+              historical.award.occurredAt < "2026-10-01T00:00:00.000Z" &&
+              historical.recordedAt < packet.reviewedAt &&
+              latestBaseline.get(historical.award.key)?.award.amount === 0 &&
+              !latestBaseline.get(historical.award.key)?.decision &&
+              !latestBaseline.get(historical.award.key)?.penalty) ||
+            (item.author?.kind === "Bot" &&
+              item.commits.every((commit) => commit.author?.kind === "Bot")),
+          "Earlier acceptance has no retained reward or bot exclusion",
+        );
+      }
+      check(
+        requiredObjects.size === objects.size &&
+          [...requiredObjects].every((sha) => objects.has(sha)),
+        "Earlier acceptance has missing or extra Git objects",
+      );
+      for (const [sha, sourceId] of acceptedCommits) {
+        const commit = source.commits.find((item) => item.sha === sha);
+        const owner = earlier.get(sourceId);
+        const retained = owner?.commits.find((item) => item.sha === sha);
+        check(
+          commit &&
+            owner &&
+            retained &&
+            !retiringSources.has(sourceId) &&
+            commit.firstAcceptedSourceId === sourceId &&
+            retained.firstAcceptedSourceId === sourceId &&
+            commit.author?.id === retained.author?.id &&
+            commit.author?.kind === retained.author?.kind &&
+            JSON.stringify(commit.parentShas) ===
+              JSON.stringify(retained.parentShas),
+          "Earlier acceptance does not cover the exact native commit",
+        );
+      }
+    }
     const usedSquashes = new Set<string>();
     const expected: string[] = [];
     for (const commit of source.commits) {
@@ -817,6 +1011,7 @@ export function reconstructHistoricalPoints(
           commit.parentShas.every((parent) => /^[a-f0-9]{40}$/u.test(parent)),
         "Duplicate commit identity is incomplete",
       );
+      if (acceptedCommits.has(commit.sha)) continue;
       if (commit.parentCount > 1) {
         const resolutionFiles =
           commit.mergeResolution &&
@@ -984,7 +1179,7 @@ export function reconstructHistoricalPoints(
       }
     }
     check(
-      expected.length > 0 &&
+      (expected.length > 0 || acceptedCommits.size > 0) &&
         usedSquashes.size === squashes.size &&
         retirement.coverage.length === expected.length &&
         retirement.coverage.every((row) =>
@@ -1000,6 +1195,12 @@ export function reconstructHistoricalPoints(
         evidence.sourceSha256 === hash(source) &&
         evidence.coverageSha256 === hash(retirement.coverage) &&
         evidence.earlierSourcesSha256 === hash(retirement.earlierSources) &&
+        (acceptedProof === undefined ||
+          (evidence.earlierAcceptanceProofSha256 === hash(acceptedProof) &&
+            (!acceptedProof.contextSources.some(
+              (row) => row.historicalAwardRevisionId,
+            ) ||
+              evidence.historicalPriorAcceptanceReviewed === true))) &&
         (retirement.acceptedSquashes === undefined ||
           evidence.acceptedSquashesSha256 ===
             hash(retirement.acceptedSquashes)) &&

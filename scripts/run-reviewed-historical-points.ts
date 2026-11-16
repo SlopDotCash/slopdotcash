@@ -141,7 +141,76 @@ export async function verifyHistoricalAcceptedSquashes(
   github: Pick<GitHubClient, "graphql" | "get">,
 ): Promise<void> {
   for (const retirement of packet.duplicateRetirements ?? []) {
-    if (!retirement.acceptedSquashes?.length) continue;
+    const proof = retirement.earlierAcceptanceProof;
+    if (!proof) continue;
+    const root = `/repos/${packet.sourceAudit.repository}`;
+    const repository = await github.get<{ node_id: string }>(root);
+    if (repository?.node_id !== retirement.source.repositoryNodeId)
+      throw Error("Earlier acceptance repository changed");
+    for (const source of retirement.earlierSources) {
+      const audit = packet.sourceAudit.sources.find(
+        (row) => row.id === source.sourceId,
+      );
+      const context = proof.contextSources.find(
+        (row) => row.id === source.sourceId,
+      );
+      const number = audit?.number ?? context?.number;
+      if (!number) throw Error("Earlier acceptance source is unavailable");
+      const path = `${root}/pulls/${number}`;
+      const pull = await github.get<Pull>(path);
+      const baseSha = context?.baseSha;
+      if (
+        !pull ||
+        pull.node_id !== source.sourceId ||
+        pull.head.sha !== source.headSha ||
+        pull.base.sha !== baseSha ||
+        pull.commits !== source.commitCount ||
+        !pull.merged_at ||
+        new Date(pull.merged_at).toISOString() !== source.occurredAt ||
+        (context && pull.merge_commit_sha !== context.mergeSha) ||
+        pull.user.node_id !== source.author?.id ||
+        pull.user.type !== source.author?.kind
+      )
+        throw Error("Earlier acceptance source changed");
+      const commits = await pullCommits(github, root, path, pull, {
+        requireImmutableRange: true,
+      });
+      const bySha = new Map(commits.map((commit) => [commit.sha, commit]));
+      if (
+        bySha.size !== source.commits.length ||
+        source.commits.some((commit) => {
+          const current = bySha.get(commit.sha);
+          return (
+            !current ||
+            JSON.stringify(current.parents.map((parent) => parent.sha)) !==
+              JSON.stringify(commit.parentShas) ||
+            current.author?.node_id !== commit.author?.id ||
+            current.author?.type !== commit.author?.kind
+          );
+        })
+      )
+        throw Error("Earlier acceptance source omits or substitutes a commit");
+      const current = await github.get<Pull>(path);
+      if (
+        !current ||
+        current.node_id !== pull.node_id ||
+        current.user.node_id !== pull.user.node_id ||
+        current.user.type !== pull.user.type ||
+        current.head.sha !== pull.head.sha ||
+        current.base.sha !== pull.base.sha ||
+        current.commits !== pull.commits ||
+        current.merged_at !== pull.merged_at ||
+        current.merge_commit_sha !== pull.merge_commit_sha
+      )
+        throw Error("Earlier acceptance changed during collection");
+    }
+  }
+  for (const retirement of packet.duplicateRetirements ?? []) {
+    if (
+      !retirement.acceptedSquashes?.length &&
+      !retirement.earlierAcceptanceProof
+    )
+      continue;
     const promotion = retirement.acceptedPromotion;
     const data = await github.graphql<{
       node: {
@@ -167,7 +236,11 @@ export async function verifyHistoricalAcceptedSquashes(
       throw Error("Accepted promotion source changed");
   }
   for (const retirement of packet.duplicateRetirements ?? []) {
-    if (!retirement.acceptedSquashes?.length) continue;
+    if (
+      !retirement.acceptedSquashes?.length &&
+      !retirement.earlierAcceptanceProof
+    )
+      continue;
     const root = `/repos/${packet.sourceAudit.repository}`;
     const audited = packet.sourceAudit.sources.find(
       (source) => source.id === retirement.sourceId,
@@ -184,7 +257,11 @@ export async function verifyHistoricalAcceptedSquashes(
       pull.merge_commit_sha !== retirement.acceptedPromotion?.mergeSha ||
       !pull.merged_at ||
       new Date(pull.merged_at).toISOString() !== retirement.source.occurredAt ||
-      pull.commits !== retirement.source.commitCount
+      pull.commits !== retirement.source.commitCount ||
+      (retirement.earlierAcceptanceProof &&
+        (pull.base.sha !== retirement.earlierAcceptanceProof.sourceBaseSha ||
+          pull.user.node_id !== retirement.source.author?.id ||
+          pull.user.type !== retirement.source.author?.kind))
     )
       throw Error("Accepted promotion membership changed");
     const observed = await pullCommits(github, root, path, pull, {
@@ -207,7 +284,10 @@ export async function verifyHistoricalAcceptedSquashes(
         (commit) =>
           JSON.stringify(
             commits.get(commit.sha)?.parents.map((parent) => parent.sha),
-          ) !== JSON.stringify(commit.parentShas),
+          ) !== JSON.stringify(commit.parentShas) ||
+          (retirement.earlierAcceptanceProof !== undefined &&
+            (commits.get(commit.sha)?.author?.node_id !== commit.author?.id ||
+              commits.get(commit.sha)?.author?.type !== commit.author?.kind)),
       )
     )
       throw Error("Accepted promotion source omits or substitutes a commit");

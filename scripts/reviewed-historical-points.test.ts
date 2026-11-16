@@ -1646,3 +1646,369 @@ test("fresh squash promotion verifies all 416 immutable-range commits after a ca
   });
   expect(compares).toBe(5);
 });
+
+function earlierAcceptanceFixture() {
+  const f = duplicateRetirementFixture();
+  const source = f.retirement.source;
+  const earlier = f.retirement.earlierSources[0];
+  const baseRaw = `tree ${"f".repeat(40)}\nauthor Human <human@example.test> 1 +0000\ncommitter Human <human@example.test> 1 +0000\n\nbase\n`;
+  const baseSha = createHash("sha1")
+    .update(`commit ${Buffer.byteLength(baseRaw)}\0`)
+    .update(baseRaw)
+    .digest("hex");
+  const raw = `tree ${"f".repeat(40)}\nparent ${baseSha}\nauthor Human <human@example.test> 1 +0000\ncommitter Human <human@example.test> 1 +0000\n\nwork\n`;
+  const sha = createHash("sha1")
+    .update(`commit ${Buffer.byteLength(raw)}\0`)
+    .update(raw)
+    .digest("hex");
+  for (const item of [source, earlier]) {
+    item.headSha = sha;
+    item.commits[0].sha = sha;
+    item.commits[0].parentShas = [baseSha];
+  }
+  f.packet.sourceAudit.sources.forEach((item) => {
+    item.headSha = sha;
+  });
+  const mergeRaw = `tree ${"f".repeat(40)}\nparent ${baseSha}\nparent ${sha}\nauthor Human <human@example.test> 2 +0000\ncommitter Human <human@example.test> 2 +0000\n\naccept\n`;
+  const mergeSha = createHash("sha1")
+    .update(`commit ${Buffer.byteLength(mergeRaw)}\0`)
+    .update(mergeRaw)
+    .digest("hex");
+  f.retirement.acceptedPromotion = {
+    headCommit: raw,
+    mergeCommit: mergeRaw,
+    mergeSha,
+  };
+  f.retirement.coverage = [];
+  f.retirement.earlierAcceptanceProof = {
+    commits: [{ sha, sourceId: earlier.sourceId }],
+    sourceBaseSha: baseSha,
+    objects: [
+      { sha, raw },
+      { sha: baseSha, raw: baseRaw },
+    ],
+    contextSources: [
+      {
+        id: earlier.sourceId,
+        number: 2,
+        headSha: sha,
+        baseSha,
+        mergedAt: earlier.occurredAt ?? "",
+        mergeSha: sha,
+      },
+    ],
+  };
+  const dossier = JSON.parse(f.retirement.evidence);
+  Object.assign(dossier, {
+    sourceSha256: hash(source),
+    earlierSourcesSha256: hash(f.retirement.earlierSources),
+    coverageSha256: hash([]),
+    earlierAcceptanceProofSha256: hash(f.retirement.earlierAcceptanceProof),
+    acceptedPromotionSha256: hash(f.retirement.acceptedPromotion),
+  });
+  f.retirement.evidence = JSON.stringify(dossier);
+  f.retirement.evidenceSha256 = sha256Hex(f.retirement.evidence);
+  const original = f.baseline.revisions[0].award;
+  f.expected = appendPointAwards(
+    f.baseline,
+    [{ ...original, amount: 0 }],
+    hash(f.retirement),
+    "slop-score-v2",
+    time,
+    new Map([
+      [
+        original.key,
+        {
+          sourceId: `owner_duplicate_${f.retirement.evidenceSha256}`,
+          effectiveAt: time,
+          reason:
+            "Owner-reviewed duplicate accepted work already rewarded by earlier sources.",
+        },
+      ],
+    ]),
+  );
+  f.packet.candidateDigest = hash(f.expected);
+  return f;
+}
+
+test("earlier accepted native commit retires only its repeated promotion", () => {
+  const f = earlierAcceptanceFixture();
+  expect(
+    reconstructHistoricalPoints(f.packet, f.baseline, time, new Map()),
+  ).toEqual(f.expected);
+});
+for (const change of [
+  "missing-object",
+  "extra-object",
+  "parents",
+  "actor",
+  "source",
+  "historical-award",
+]) {
+  test(`earlier accepted proof refuses ${change}`, () => {
+    const f = earlierAcceptanceFixture();
+    const proof = f.retirement.earlierAcceptanceProof;
+    if (!proof) throw Error("fixture proof");
+    if (change === "missing-object") proof.objects = [];
+    if (change === "extra-object")
+      proof.objects.push({ sha: "c".repeat(40), raw: proof.objects[0].raw });
+    if (change === "parents")
+      f.retirement.source.commits[0].parentShas = ["c".repeat(40)];
+    if (change === "actor")
+      f.retirement.source.commits[0].author = {
+        id: "other",
+        login: "other",
+        kind: "User",
+      };
+    if (change === "source") proof.commits[0].sourceId = "PR_foreign";
+    if (change === "historical-award") {
+      proof.contextSources[0].historicalAwardRevisionId = "f".repeat(64);
+      f.retirement.earlierSources[0].sourceId = "PR_unrewarded";
+    }
+    expect(() =>
+      reconstructHistoricalPoints(f.packet, f.baseline, time, new Map()),
+    ).toThrow();
+  });
+}
+
+test("earlier acceptance rejects a changed declared source base", () => {
+  const f = earlierAcceptanceFixture();
+  const proof = f.retirement.earlierAcceptanceProof;
+  if (!proof) throw Error("fixture proof");
+  // The source head still contains its accepted parent, so hiding that parent
+  // from the declared base must fail exact head-minus-base membership.
+  proof.sourceBaseSha = f.retirement.source.headSha;
+  expect(() =>
+    reconstructHistoricalPoints(f.packet, f.baseline, time, new Map()),
+  ).toThrow();
+});
+test("earlier acceptance refuses context metadata that differs from the audit", () => {
+  const f = earlierAcceptanceFixture();
+  const proof = f.retirement.earlierAcceptanceProof;
+  if (!proof) throw Error("fixture proof");
+  proof.contextSources[0].number = 99;
+  expect(() =>
+    reconstructHistoricalPoints(f.packet, f.baseline, time, new Map()),
+  ).toThrow();
+});
+
+for (const fault of [
+  "omitted-source",
+  "omitted-context",
+  "source-author",
+  "base-change",
+]) {
+  test(`fresh earlier acceptance refuses ${fault}`, async () => {
+    const f = earlierAcceptanceFixture();
+    const source = f.retirement.source;
+    const earlier = f.retirement.earlierSources[0];
+    const proof = f.retirement.earlierAcceptanceProof;
+    if (!proof) throw Error("fixture proof");
+    const correctSourceCount = source.commitCount;
+    const correctContextCount = earlier.commitCount;
+    if (fault === "omitted-source") {
+      source.commits = [];
+      source.commitCount = 0;
+    }
+    if (fault === "omitted-context") {
+      earlier.commits = [];
+      earlier.commitCount = 0;
+    }
+    await expect(
+      verifyHistoricalAcceptedSquashes(f.packet, {
+        graphql: async <T>() =>
+          ({
+            node: {
+              id: source.sourceId,
+              headRefOid: source.headSha,
+              mergedAt: source.occurredAt,
+              repository: { id: source.repositoryNodeId },
+              mergeCommit: { oid: f.retirement.acceptedPromotion?.mergeSha },
+            },
+          }) as T,
+        get: async <T>(path: string) => {
+          if (path === "/repos/feedforagents/feed")
+            return { node_id: source.repositoryNodeId } as T;
+          const isEarlier = path.includes("/pulls/2");
+          const item = isEarlier ? earlier : source;
+          if (path.includes("/commits?") || path.includes("/compare/")) {
+            const entries = [
+              {
+                sha: source.headSha,
+                parents: [{ sha: proof.sourceBaseSha }],
+                author: { node_id: actor.id, login: actor.login, type: "User" },
+              },
+            ];
+            return (
+              path.includes("/compare/")
+                ? { total_commits: 1, commits: entries }
+                : entries
+            ) as T;
+          }
+          return {
+            node_id: item.sourceId,
+            head: { sha: item.headSha },
+            base: {
+              sha:
+                fault === "base-change" ? "c".repeat(40) : proof.sourceBaseSha,
+            },
+            commits: isEarlier ? correctContextCount : correctSourceCount,
+            merged_at: item.occurredAt,
+            merge_commit_sha: isEarlier
+              ? proof.contextSources[0].mergeSha
+              : f.retirement.acceptedPromotion?.mergeSha,
+            user: {
+              node_id: fault === "source-author" ? "wrong" : actor.id,
+              login: actor.login,
+              type: "User",
+            },
+          } as T;
+        },
+      }),
+    ).rejects.toThrow();
+  });
+}
+
+function historicalAcceptanceFixture() {
+  const f = earlierAcceptanceFixture();
+  const proof = f.retirement.earlierAcceptanceProof;
+  if (!proof) throw Error("fixture proof");
+  const earlier = f.retirement.earlierSources[0];
+  const previous = [...latestPoints(f.baseline).values()].find(
+    (row) => row.award.sourceId === earlier.sourceId,
+  );
+  if (!previous) throw Error("fixture previous");
+  earlier.occurredAt = "2026-09-17T00:00:00.000Z";
+  proof.contextSources[0].mergedAt = earlier.occurredAt;
+  // Keep this context outside the October audit while retaining its raw identity.
+  f.packet.sourceAudit.sources = f.packet.sourceAudit.sources.filter(
+    (row) => row.id !== earlier.sourceId,
+  );
+  const history = structuredClone(f.baseline);
+  history.revisions = history.revisions.filter(
+    (row) => row.award.sourceId !== earlier.sourceId,
+  );
+  const positive = { ...previous.award, occurredAt: earlier.occurredAt };
+  let baseline = appendPointAwards(
+    history,
+    [positive],
+    "a".repeat(64),
+    "slop-score-v2",
+    "2026-11-15T01:00:00.000Z",
+  );
+  const awarded = latestPoints(baseline).get(positive.key);
+  if (!awarded) throw Error("fixture awarded");
+  proof.contextSources[0].historicalAwardRevisionId = awarded.id;
+  baseline = appendPointAwards(
+    baseline,
+    [{ ...positive, amount: 0 }],
+    "c".repeat(64),
+    "slop-score-v2",
+    time,
+  );
+  f.baseline = baseline;
+  f.packet.baselineDigest = hash(baseline);
+  f.packet.baselineRevisionCount = baseline.revisions.length;
+  f.packet.corrections.baseline = createPointsCorrectionBaseline(baseline);
+  f.packet.corrections.candidates = f.packet.corrections.candidates.filter(
+    (row) => row.sourceId !== earlier.sourceId,
+  );
+  const dossier = JSON.parse(f.retirement.evidence);
+  Object.assign(dossier, {
+    earlierSourcesSha256: hash(f.retirement.earlierSources),
+    earlierAcceptanceProofSha256: hash(proof),
+    historicalPriorAcceptanceReviewed: true,
+  });
+  f.retirement.evidence = JSON.stringify(dossier);
+  f.retirement.evidenceSha256 = sha256Hex(f.retirement.evidence);
+  const original = baseline.revisions[0].award;
+  f.expected = appendPointAwards(
+    baseline,
+    [{ ...original, amount: 0 }],
+    hash(f.retirement),
+    "slop-score-v2",
+    "2026-11-15T01:00:01.000Z",
+    new Map([
+      [
+        original.key,
+        {
+          sourceId: `owner_duplicate_${f.retirement.evidenceSha256}`,
+          effectiveAt: "2026-11-15T01:00:01.000Z",
+          reason:
+            "Owner-reviewed duplicate accepted work already rewarded by earlier sources.",
+        },
+      ],
+    ]),
+  );
+  f.packet.reviewedAt = "2026-11-15T01:00:01.000Z";
+  f.packet.candidateDigest = hash(f.expected);
+  return f;
+}
+test("explicit historical prior-acceptance review preserves a pre-October zeroed award", () => {
+  const f = historicalAcceptanceFixture();
+  expect(
+    reconstructHistoricalPoints(
+      f.packet,
+      f.baseline,
+      f.packet.reviewedAt,
+      new Map(),
+    ),
+  ).toEqual(f.expected);
+});
+for (const fault of ["same-period", "adverse-decision", "missing-review"]) {
+  test(`historical prior-acceptance review refuses ${fault}`, () => {
+    const f = historicalAcceptanceFixture();
+    const proof = f.retirement.earlierAcceptanceProof;
+    if (!proof) throw Error("fixture proof");
+    const prior = latestPoints(f.baseline).get(
+      f.baseline.revisions.at(-1)?.award.key ?? "",
+    );
+    if (!prior) throw Error("fixture prior");
+    if (fault === "same-period")
+      f.retirement.earlierSources[0].occurredAt = "2026-10-01T00:00:00.000Z";
+    if (fault === "adverse-decision") {
+      const changed = { ...prior.award, provisional: !prior.award.provisional };
+      const decisions =
+        fault === "adverse-decision"
+          ? new Map([
+              [
+                changed.key,
+                {
+                  sourceId: "adverse",
+                  effectiveAt: time,
+                  reason: "revoked",
+                  delta: 0,
+                },
+              ],
+            ])
+          : undefined;
+      f.baseline = appendPointAwards(
+        f.baseline,
+        [changed],
+        "e".repeat(64),
+        "slop-score-v2",
+        time,
+        decisions,
+      );
+      f.packet.baselineDigest = hash(f.baseline);
+      f.packet.baselineRevisionCount = f.baseline.revisions.length;
+      f.packet.corrections.baseline = createPointsCorrectionBaseline(
+        f.baseline,
+      );
+    }
+    if (fault === "missing-review") {
+      const dossier = JSON.parse(f.retirement.evidence);
+      delete dossier.historicalPriorAcceptanceReviewed;
+      f.retirement.evidence = JSON.stringify(dossier);
+      f.retirement.evidenceSha256 = sha256Hex(f.retirement.evidence);
+    }
+    expect(() =>
+      reconstructHistoricalPoints(
+        f.packet,
+        f.baseline,
+        f.packet.reviewedAt,
+        new Map(),
+      ),
+    ).toThrow();
+  });
+}
