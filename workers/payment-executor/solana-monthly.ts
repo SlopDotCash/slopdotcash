@@ -3,9 +3,10 @@ import { sha256 } from "@noble/hashes/sha2.js";
 import { bytesToHex, hexToBytes } from "@noble/hashes/utils.js";
 import type { MonthlyAuthorization } from "../../backend/payments/monthly-attestation-types";
 import {
+  MONTH_PLEDGE_DISCRIMINATOR,
+  MONTH_PLEDGE_SIZE,
   OBLIGATION_DISCRIMINATOR,
   OBLIGATION_SIZE,
-  PROJECT_SIZE,
   type SolanaEscrowConfig,
   solanaAccount,
   solanaAllocationProof,
@@ -15,6 +16,7 @@ import {
   solanaBase58,
   solanaDigest,
   solanaMonthlyMessage,
+  solanaMonthPledgeAddress,
   solanaPubkey,
   solanaRpc,
   solanaUint,
@@ -40,6 +42,7 @@ import {
   type PublicSolanaExecutorEnvironment,
   preflightSolanaDeployment,
   readSolanaAccount,
+  readSolanaProject,
   solanaTransactionStatus,
   verifiedSignerSignature,
 } from "./solana";
@@ -340,10 +343,9 @@ export async function submitSolanaMonthly(
         alreadyCommitted: false,
         notAdmitted: true,
       };
-    const state = await readSolanaAccount(
+    const state = await readSolanaProject(
       config,
       config.projectPda,
-      PROJECT_SIZE,
       discriminator("Project"),
     );
     if (!state) throw new Error("Project missing");
@@ -362,6 +364,20 @@ export async function submitSolanaMonthly(
     [48, 65535, 16, 65535, 112, signed.length, 65535].forEach((v, i) => {
       view.setUint16(2 + i * 2, v, true);
     });
+    // An owner's pledge for this month lets the program reserve it with the
+    // monthly switch off. Before the program upgrade, or without a pledge,
+    // the account is absent and the instruction is unchanged.
+    const pledgeAddress = solanaMonthPledgeAddress(
+      config.programId,
+      config.projectPda,
+      Number(plan.request.period.replace("-", "")),
+    );
+    const pledge = await readSolanaAccount(
+      config,
+      pledgeAddress,
+      MONTH_PLEDGE_SIZE,
+      MONTH_PLEDGE_DISCRIMINATOR,
+    );
     return submit(env, config, `${journal}:root`, [
       {
         program: "Ed25519SigVerify111111111111111111111111111",
@@ -377,6 +393,7 @@ export async function submitSolanaMonthly(
           monthMeta,
           { key: "Sysvar1nstructions1111111111111111111111111", write: false },
           system,
+          ...(pledge ? [{ key: pledgeAddress, write: true }] : []),
         ],
         data: instructionData(
           "commit_monthly",

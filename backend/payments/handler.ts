@@ -60,6 +60,7 @@ import {
   FundingVaultNotFoundError,
   handleSolanaFunding,
 } from "./solana-funding";
+import { handleSolanaMonthLock } from "./solana-month-lock";
 import { projectVaultSnapshots } from "./vault-snapshots";
 import { registerPaymentWallet } from "./wallet-registration";
 
@@ -224,6 +225,18 @@ export async function handlePaymentsApi(
       if (!resolve) return json(503, { error: "funding_unavailable" });
       return await handleSolanaFunding(request, (network, vault) =>
         resolve(fundingRoute[1], network, vault),
+      );
+    }
+
+    const monthLockRoute =
+      /^\/projects\/([a-z0-9][a-z0-9-]*)\/solana-month-lock$/.exec(path);
+    if (monthLockRoute && request.method === "POST") {
+      const resolve = deps.solanaFundingConfig;
+      if (!resolve) return json(503, { error: "funding_unavailable" });
+      return await handleSolanaMonthLock(
+        request,
+        (network, vault) => resolve(monthLockRoute[1], network, vault),
+        deps.now?.() ?? new Date(),
       );
     }
 

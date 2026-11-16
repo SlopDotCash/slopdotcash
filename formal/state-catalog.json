@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "meaning": "Declared lifecycle candidates. This intentionally incomplete syntactic census cannot find every implicit state, establish reachability, or prove source/model correspondence. Review the open work listed in formal/README.md as well.",
-  "inventorySha256": "15502fe146914ff07ee4ddc23dc8d1c49e14bd2a1e9147dce1150eefb0ea2abd",
+  "inventorySha256": "384d079207ad27a1b1ab35ceef41d35c2cf2d93887d63d398f01b74c22c9f0e9",
   "states": [
     {
       "path": "backend/fee-conversions/handler.ts",
@@ -50,13 +50,14 @@
     },
     {
       "path": "backend/payments/monthly.ts",
-      "line": 955,
+      "line": 1016,
       "name": "status",
       "kind": "string-union",
       "values": ["failed", "finalized", "pending"],
       "models": [
         "formal/models/rewards/monthly_coordinator.qnt",
         "formal/models/rewards/monthly_cutoff_queue.qnt",
+        "formal/models/rewards/monthly_month_pledge.qnt",
         "formal/models/rewards/monthly_owner_completion.qnt",
         "formal/models/rewards/monthly_owner_cuts.qnt",
         "formal/models/rewards/monthly_reserve.qnt",
@@ -67,13 +68,14 @@
     },
     {
       "path": "backend/payments/monthly.ts",
-      "line": 1567,
+      "line": 1628,
       "name": "chain_state",
       "kind": "string-union",
       "values": ["paid", "reserved"],
       "models": [
         "formal/models/rewards/monthly_coordinator.qnt",
         "formal/models/rewards/monthly_cutoff_queue.qnt",
+        "formal/models/rewards/monthly_month_pledge.qnt",
         "formal/models/rewards/monthly_owner_completion.qnt",
         "formal/models/rewards/monthly_owner_cuts.qnt",
         "formal/models/rewards/monthly_reserve.qnt",
@@ -2193,7 +2195,7 @@
     },
     {
       "path": "scripts/value-file-recovery.ts",
-      "line": 118,
+      "line": 108,
       "name": "mode",
       "kind": "string-union",
       "values": ["100644", "100755"],
@@ -2909,7 +2911,7 @@
     },
     {
       "path": "src/VaultActions.tsx",
-      "line": 423,
+      "line": 441,
       "name": "result",
       "kind": "string-union",
       "values": [
@@ -2927,6 +2929,7 @@
         "formal/models/ui/ui_transaction.qnt",
         "formal/models/ui/ui_vault_auto_check.qnt",
         "formal/models/ui/ui_vault_batched_deposit.qnt",
+        "formal/models/ui/ui_vault_month_lock.qnt",
         "formal/models/ui/ui_vault_prompt_ownership.qnt",
         "formal/models/ui/ui_vault_provisional_funding.qnt",
         "formal/models/ui/ui_vault_recovery.qnt"
@@ -2981,7 +2984,7 @@
     },
     {
       "path": "src/lib/evm-vault-actions.ts",
-      "line": 379,
+      "line": 388,
       "name": "status",
       "kind": "string-union",
       "values": [
@@ -4193,7 +4196,7 @@
     },
     {
       "path": "workers/slopbot/value-publication.ts",
-      "line": 60,
+      "line": 65,
       "name": "result",
       "kind": "string-union",
       "values": ["policySha", "sourceDigest"],
