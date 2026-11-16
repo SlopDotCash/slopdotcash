@@ -8154,9 +8154,9 @@
     },
     {
       "path": "workers/payment-executor/release-mainnets.mjs",
-      "sha256": "929e2402d029288f105117d024219ae128204f805ee69c7a4e2314285a06396d",
+      "sha256": "6bddee9f5a80aebec4cd5e96bbf910e99876d3ca71b93b41d26cc1b18fe5ad3a",
       "models": ["formal/models/payments/deployment_plan.qnt"],
-      "candidateLines": [3, 15, 26, 36, 68, 94, 120, 171, 185, 220],
+      "candidateLines": [3, 15, 26, 30, 53, 85, 111, 137, 194, 208, 243],
       "review": "mapped-abstraction"
     },
     {
