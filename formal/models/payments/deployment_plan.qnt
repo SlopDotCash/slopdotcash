@@ -1,5 +1,6 @@
 // @source workers/payment-executor/release-plan.mjs
 // @source workers/payment-executor/release-mainnets.mjs
+// @source workers/payment-executor/deployment-pin-bindings.ts
 // @source workers/payment-executor/mainnet-execution.mjs
 // @source workers/payment-executor/configure.mjs
 // @source workers/payment-executor/signer-stacks.mjs
@@ -9,6 +10,8 @@
 // Pure preparation is distinct from operator-authorized service publication.
 // A disabled network with retained obligations receives stop code; a disabled
 // network with no existing service is not provisioned solely by configuration.
+// The pins flag abstracts the validated registry pins. Byte framing preserves
+// their exact contents and refuses incomplete frames before the attester uses them.
 module deployment_plan {
   var s: { phase: str, executionEnabled: bool, pins: bool, existing: bool,
     secrets: bool, privateSurface: bool, authorized: bool,
