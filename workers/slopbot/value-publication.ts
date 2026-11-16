@@ -20,6 +20,10 @@ import {
   type ValueMergeRecipe,
 } from "./value-merge-profile";
 import {
+  NATIVE_MERGE_CONTEXT,
+  nativeMergeCarrierMatches,
+} from "./value-native-merge";
+import {
   NO_CHANGE_PROMOTION_CONTEXT,
   noChangePromotionMatches,
 } from "./value-no-change-promotion";
@@ -30,6 +34,7 @@ import {
   registeredValuePublication,
 } from "./value-publication-fence";
 import { type ValueAssessmentResult, valueSourceDigest } from "./value-review";
+import type { WorkUnitSource } from "./value-work-unit-types";
 
 export type ValueClient = EvidenceClient & Pick<GitHubClient, "fileText">;
 type ValueResult = ValueAssessmentResult;
@@ -51,7 +56,7 @@ export async function loadValuePolicy(
 
 /** Re-read full source after inference. Head equality alone misses edited
  * discussions, added reviews and changed accepted-range evidence.
- * A joint caller may defer only the verified promotion marker; its complete
+ * A joint caller may defer verified promotion or native-ancestor context; its complete
  * freshly collected group must still pass original-source verification.
  */
 export async function verifyCurrentValueSource(
@@ -61,6 +66,7 @@ export async function verifyCurrentValueSource(
   repositories: readonly TargetRepository[],
   mergeRecipe?: ValueMergeRecipe,
   verificationScope: "standalone" | "joint" = "standalone",
+  jointSources: readonly WorkUnitSource[] = [],
 ) {
   const repository = findRepository(repositories, evidence.repository);
   if (!repository)
@@ -103,11 +109,15 @@ export async function verifyCurrentValueSource(
     current.mergeResolutions = [];
   const deferredPromotion =
     verificationScope === "joint" && noChangePromotionMatches(current);
+  const deferredNative =
+    verificationScope === "joint" &&
+    (await nativeMergeCarrierMatches(current, jointSources));
   if (
     current.pull.state !== "closed" ||
     current.limitations.some(
       (limitation) =>
-        !deferredPromotion || limitation !== NO_CHANGE_PROMOTION_CONTEXT,
+        !(deferredPromotion && limitation === NO_CHANGE_PROMOTION_CONTEXT) &&
+        !(deferredNative && limitation === NATIVE_MERGE_CONTEXT),
     )
   )
     throw new Error(
