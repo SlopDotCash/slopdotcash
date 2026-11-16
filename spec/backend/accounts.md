@@ -397,7 +397,8 @@ pure def senderMember(s: Accounts, by: int): Member = memberByActor(s, senderAct
 pure def withEmail(s: Accounts, m: Member, e: E::Enrollment): List[Member] = replaceMember(s.members, { ...m, email: e })
 pure def syncMail(e: E::Enrollment, i: N::Inbox): N::Inbox =
   if (N::canObserveEnrollment(i, N::accountService, e)) N::observeEnrollment(i, N::accountService, e) else i
-pure def mailView(e: E::Enrollment): { destination: E::Destination, preference: E::Preference, pilot: int } =
+type MailView = { destination: E::Destination, preference: E::Preference, pilot: int }
+pure def mailView(e: E::Enrollment): MailView =
   { destination: e.destination, preference: e.preference, pilot: e.pilotVersion }
 pure def canRequestEmail(s: Accounts, by: int, requestKey: int, address: str, addressKey: str, activity: bool, security: bool): bool =
   val m = senderMember(s, by)
