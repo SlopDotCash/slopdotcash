@@ -297,7 +297,7 @@
     },
     {
       "path": "backend/notifications/events.ts",
-      "sha256": "d4334ce219f2489015dfedf889bf9366935d7bb2b4efd41e8e90593d524bed02",
+      "sha256": "f970d20172aa94131f47251dae8328b0c7f1b4cd00e7b2e93110a2f81e3b1b93",
       "models": [
         "formal/models/api/api_inbox.qnt",
         "formal/models/api/api_mail_delivery.qnt",
@@ -308,9 +308,9 @@
         "formal/models/rewards/monthly_owner_cuts.qnt"
       ],
       "candidateLines": [
-        15, 29, 107, 115, 116, 142, 145, 154, 160, 173, 228, 257, 265, 274, 283,
-        290, 304, 310, 324, 346, 354, 375, 408, 424, 432, 466, 496, 512, 527,
-        559, 585, 614, 678, 695
+        15, 29, 130, 138, 139, 165, 168, 177, 183, 196, 251, 280, 288, 297, 306,
+        313, 327, 333, 347, 369, 376, 397, 429, 445, 453, 487, 517, 533, 548,
+        580, 606, 635, 699, 716
       ],
       "review": "mapped-abstraction"
     },
@@ -8043,13 +8043,13 @@
     },
     {
       "path": "workers/notify/activity.ts",
-      "sha256": "58e062d7cfe9a2019956e4c8f6ef2fce041e4d3ad1edbfc40dc54e7f6bc65512",
+      "sha256": "a8973013b64c26cf23a77dc39578b66e35d353f1ab20c780fc1b6a5ecc00bf13",
       "models": [
         "formal/models/api/api_mail_delivery.qnt",
         "formal/models/api/notification_attempt_ownership.qnt",
         "formal/models/api/notification_delivery.qnt"
       ],
-      "candidateLines": [303, 305, 324, 330, 344],
+      "candidateLines": [301, 303, 322, 328, 342],
       "review": "mapped-abstraction"
     },
     {
