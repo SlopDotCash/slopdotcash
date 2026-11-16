@@ -957,8 +957,13 @@ export function reconstructHistoricalPoints(
               !latestBaseline.get(historical.award.key)?.penalty),
           "Earlier historical award reference is invalid",
         );
+        // Unmapped commits use the complete per-path coverage checks below,
+        // including any canonical joint-unit reward that absorbed this source.
         check(
-          rewardedSourceIds.has(item.sourceId) ||
+          !acceptedProof.commits.some(
+            (commit) => commit.sourceId === item.sourceId,
+          ) ||
+            rewardedSourceIds.has(item.sourceId) ||
             (historical &&
               historical.award.projectId === packet.projectId &&
               historical.award.sourceId === item.sourceId &&

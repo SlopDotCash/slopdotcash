@@ -2012,3 +2012,143 @@ for (const fault of ["same-period", "adverse-decision", "missing-review"]) {
     ).toThrow();
   });
 }
+
+test("earlier native proof preserves separate canonical joint-claim coverage", () => {
+  const f = earlierAcceptanceFixture();
+  const proof = f.retirement.earlierAcceptanceProof;
+  if (!proof) throw Error("fixture proof");
+  const prior = f.retirement.earlierSources[0];
+  const parent = f.retirement.source.headSha;
+  const raw = `tree ${"f".repeat(40)}\nparent ${parent}\nauthor Human <human@example.test> 3 +0000\ncommitter Human <human@example.test> 3 +0000\n\nabsorbed work\n`;
+  const sha = createHash("sha1")
+    .update(`commit ${Buffer.byteLength(raw)}\0`)
+    .update(raw)
+    .digest("hex");
+  const context = structuredClone(prior);
+  context.sourceId = "PR_absorbed";
+  context.sourceUrl = "https://github.com/feedforagents/feed/pull/3";
+  context.headSha = sha;
+  context.occurredAt = "2026-10-13T00:00:00.000Z";
+  context.commits[0] = {
+    ...context.commits[0],
+    sha,
+    parentShas: [parent],
+    firstAcceptedSourceId: context.sourceId,
+    files: [{ path: "absorbed.ts", additions: 1, deletions: 0 }],
+  };
+  f.retirement.earlierSources.push(context);
+  f.retirement.source.commits.push(structuredClone(context.commits[0]));
+  f.retirement.source.commitCount = 2;
+  f.retirement.source.headSha = sha;
+  proof.objects.push({ sha, raw });
+  proof.contextSources.push({
+    id: context.sourceId,
+    number: 3,
+    headSha: sha,
+    baseSha: parent,
+    mergedAt: context.occurredAt,
+    mergeSha: sha,
+  });
+  const auditedSource = f.packet.sourceAudit.sources.find(
+    (item) => item.id === f.retirement.sourceId,
+  );
+  if (!auditedSource) throw Error("fixture source");
+  auditedSource.headSha = sha;
+  f.packet.sourceAudit.sources.push({
+    id: context.sourceId,
+    number: 3,
+    headSha: sha,
+    mergedAt: context.occurredAt,
+  });
+  const mergeRaw = `tree ${"f".repeat(40)}\nparent ${parent}\nparent ${sha}\nauthor Human <human@example.test> 4 +0000\ncommitter Human <human@example.test> 4 +0000\n\naccept\n`;
+  f.retirement.acceptedPromotion = {
+    headCommit: raw,
+    mergeCommit: mergeRaw,
+    mergeSha: createHash("sha1")
+      .update(`commit ${Buffer.byteLength(mergeRaw)}\0`)
+      .update(mergeRaw)
+      .digest("hex"),
+  };
+  const claimId = "d".repeat(64);
+  const record = {
+    projectId: "feed",
+    sources: [context, prior].map((item) => ({
+      pullRequestNodeId: item.sourceId,
+      repositoryNodeId: item.repositoryNodeId,
+      headSha: item.headSha,
+      occurredAt: item.occurredAt,
+    })),
+    claims: [
+      {
+        id: claimId,
+        repositoryNodeId: "R_feed",
+        commitSha: sha,
+        path: "absorbed.ts",
+        creditPullRequestId: context.sourceId,
+      },
+      { id: "e".repeat(64), creditPullRequestId: prior.sourceId },
+    ],
+    units: [
+      {
+        workUnitId: "earlier",
+        claimIds: [claimId, "e".repeat(64)],
+        assessment: { status: "assessed", tier: "small" },
+      },
+    ],
+  };
+  f.retirement.coverage = [
+    {
+      commitSha: sha,
+      path: "absorbed.ts",
+      sourceId: context.sourceId,
+      rewardedUnit: {
+        recordDigest: hash(record),
+        recordJson: JSON.stringify(record),
+        claimId,
+        workUnitId: "earlier",
+        awardSourceId: prior.sourceId,
+      },
+    },
+  ];
+  const bind = () => {
+    const dossier = JSON.parse(f.retirement.evidence);
+    Object.assign(dossier, {
+      sourceSha256: hash(f.retirement.source),
+      earlierSourcesSha256: hash(f.retirement.earlierSources),
+      coverageSha256: hash(f.retirement.coverage),
+      earlierAcceptanceProofSha256: hash(proof),
+      acceptedPromotionSha256: hash(f.retirement.acceptedPromotion),
+    });
+    f.retirement.evidence = JSON.stringify(dossier);
+    f.retirement.evidenceSha256 = sha256Hex(f.retirement.evidence);
+    const award = f.baseline.revisions[0].award;
+    f.expected = appendPointAwards(
+      f.baseline,
+      [{ ...award, amount: 0 }],
+      hash(f.retirement),
+      "slop-score-v2",
+      time,
+      new Map([
+        [
+          award.key,
+          {
+            sourceId: `owner_duplicate_${f.retirement.evidenceSha256}`,
+            effectiveAt: time,
+            reason:
+              "Owner-reviewed duplicate accepted work already rewarded by earlier sources.",
+          },
+        ],
+      ]),
+    );
+    f.packet.candidateDigest = hash(f.expected);
+  };
+  bind();
+  expect(
+    reconstructHistoricalPoints(f.packet, f.baseline, time, new Map()),
+  ).toEqual(f.expected);
+  f.retirement.coverage = [];
+  bind();
+  expect(() =>
+    reconstructHistoricalPoints(f.packet, f.baseline, time, new Map()),
+  ).toThrow("Duplicate claim coverage is missing or repeated");
+});
