@@ -7,11 +7,13 @@
 // @source scripts/verify-staging-deployment.mjs
 // @source scripts/release-notify.mjs
 // @source scripts/release-robinhood-rpc.ts
+// @source scripts/rotate-fee-solana-rpc.ts
 // @source scripts/qualify-solana-rpc-pair.ts
 // @source scripts/check-retained-release-data.ts
 // @evidence scripts/check-retained-release-data.test.ts
 // @evidence scripts/pages-secret-inventory.test.ts
 // @evidence scripts/release-robinhood-rpc.test.ts
+// @evidence scripts/rotate-fee-solana-rpc.test.ts
 // @evidence scripts/qualify-solana-rpc-pair.test.ts
 // Source advancement before service writes supersedes; advancement afterward
 // is an explicit partial-publication failure, never a verified release.
