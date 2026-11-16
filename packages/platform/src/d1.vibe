@@ -1,0 +1,74 @@
+import type { D1Database, D1Result, SqlValue } from "./bindings.ts"
+
+export interface Statement {
+  readonly text: string
+  readonly params: ReadonlyArray<SqlValue>
+}
+
+export interface Outcome {
+  readonly rows: ReadonlyArray<Record<string, unknown>>
+  readonly changes: number
+}
+
+export error DatabaseFailure { operation: string; message: string }
+export error ConstraintViolation { message: string }
+export error RowMismatch { text: string; issue: string }
+
+export type D1Error = DatabaseFailure | ConstraintViolation
+
+function isStatement(value: SqlValue | Statement): value is Statement {
+  return typeof value === "object" && value !== null
+}
+
+export function sql(strings: TemplateStringsArray, ...values: ReadonlyArray<SqlValue | Statement>): Statement {
+  let text = strings[0] ?? ""
+  const params: SqlValue[] = []
+  values.forEach((value, index) => {
+    if (isStatement(value)) {
+      text += value.text
+      params.push(...value.params)
+    } else {
+      text += "?"
+      params.push(value)
+    }
+    text += strings[index + 1] ?? ""
+  })
+  return { text, params }
+}
+
+function failure(operation: string, cause: unknown): D1Error {
+  const message = cause instanceof Error ? cause.message : String(cause)
+  return /constraint failed/u.test(message) ? new ConstraintViolation({ message }) : new DatabaseFailure({ operation, message })
+}
+
+function outcome(result: D1Result): Outcome {
+  return { rows: result.results, changes: result.meta.changes }
+}
+
+export service D1 {
+  all(statement: Statement): ReadonlyArray<Record<string, unknown>>!D1Error
+  run(statement: Statement): number!D1Error
+  batch(statements: ReadonlyArray<Statement>): ReadonlyArray<Outcome>!D1Error
+}
+
+export function d1(database: D1Database) {
+  const prepare = (statement: Statement) => database.prepare(statement.text).bind(...statement.params)
+  return Layer.succeed(D1, {
+    all: (statement) => Effect.map(tryPromise({ try: () => prepare(statement).all(), catch: (cause) => failure("all", cause) }), (result) => result.results),
+    run: (statement) => Effect.map(tryPromise({ try: () => prepare(statement).run(), catch: (cause) => failure("run", cause) }), (result) => result.meta.changes),
+    batch: (statements) => Effect.map(tryPromise({ try: () => database.batch(statements.map(prepare)), catch: (cause) => failure("batch", cause) }), (results) => results.map(outcome)),
+  })
+}
+
+export effect function decoded<S extends Schema.Constraint>(schema: S, found: ReadonlyArray<Record<string, unknown>>, text: string) {
+  return Schema.decodeUnknownEffect(Schema.Array(schema))(found) catch effect (error) => { throw new RowMismatch({ text, issue: error.message }) }
+}
+
+export effect function rows<S extends Schema.Constraint>(schema: S, statement: Statement) {
+  return try decoded(schema, try (try D1).all(statement), statement.text)
+}
+
+export effect function first<S extends Schema.Constraint>(schema: S, statement: Statement) {
+  const found = try rows(schema, statement)
+  return found[0]
+}

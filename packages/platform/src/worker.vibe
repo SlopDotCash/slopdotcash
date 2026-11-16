@@ -1,0 +1,46 @@
+import type { MessageBatch, QueueMessage, ScheduledController } from "./bindings.ts"
+
+export type Routes<S> = HttpRouter.HttpRouter | HttpRouter.Request<"Requires", S> | HttpRouter.Request<"Error", unknown>
+
+export interface WorkerApp<Env extends object, S, LE, A, RE, SE, QE> {
+  readonly services: (env: Env) => Layer.Layer<S, LE>
+  readonly routes: Layer.Layer<A, RE, Routes<S>>
+  readonly scheduled?: (controller: ScheduledController) => void!SE!S
+  readonly queue?: (message: QueueMessage) => void!QE!S
+}
+
+export function worker<Env extends object, S, LE, A, RE, SE, QE>(app: WorkerApp<Env, S, LE, A, RE, SE, QE>) {
+  const started = new WeakMap<Env, ReturnType<typeof start>>()
+  function start(env: Env) {
+    const services = app.services(env)
+    const runtime = ManagedRuntime.make(services)
+    const web = HttpRouter.toWebHandler(Layer.provideMerge(app.routes as Layer.Layer<A, RE, HttpRouter.HttpRouter>, services), { memoMap: runtime.memoMap, disableLogger: true })
+    return { runtime, handler: web.handler as (request: globalThis.Request) => Promise<globalThis.Response> }
+  }
+  function running(env: Env) {
+    const found = started.get(env)
+    if (found !== undefined) return found
+    const made = start(env)
+    started.set(env, made)
+    return made
+  }
+  return {
+    fetch: (request: globalThis.Request, env: Env) => running(env).handler(request),
+    scheduled: (controller: ScheduledController, env: Env) => {
+      const job = app.scheduled
+      return job === undefined ? Promise.resolve() : running(env).runtime.runPromise(job(controller))
+    },
+    queue: (batch: MessageBatch, env: Env) => {
+      const handle = app.queue
+      return handle === undefined ? Promise.resolve() : running(env).runtime.runPromise(settle(batch, handle))
+    },
+  }
+}
+
+effect function settle<SE, S>(batch: MessageBatch, handle: (message: QueueMessage) => void!SE!S) {
+  for (const message of batch.messages) {
+    const outcome = try exit(handle(message))
+    if (Exit.isSuccess(outcome)) message.ack()
+    else message.retry()
+  }
+}

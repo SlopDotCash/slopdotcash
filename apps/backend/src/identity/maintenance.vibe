@@ -1,0 +1,16 @@
+// spec/backend/accounts.md, "Sign-out revokes only the caller's session and expiry uses the trusted clock"
+import { D1, sql } from "@repo/platform/d1"
+import { isoAt } from "../clock.vibe"
+
+export effect function purgeExpired() {
+  const millis = try Clock.currentTimeMillis
+  const now = try isoAt(millis)
+  try (try D1).batch([
+    sql`DELETE FROM identity_oauth_flows WHERE expires_at <= ${now}`,
+    sql`DELETE FROM identity_assertions WHERE expires_at <= ${now}`,
+    sql`DELETE FROM points_x_flows WHERE expires_at <= ${now}`,
+    sql`DELETE FROM points_telegram_flows WHERE expires_at <= ${now}`,
+    sql`DELETE FROM points_sessions WHERE expires_at <= ${now}`,
+    sql`DELETE FROM identity_rate_limits WHERE expires_at <= ${Math.floor(millis / 1000)}`,
+  ])
+}

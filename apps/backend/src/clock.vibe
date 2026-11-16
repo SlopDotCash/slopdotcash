@@ -1,0 +1,9 @@
+import { isoFromMillis } from "./times.ts"
+
+export effect function isoAt(millis: number) {
+  return try orDie(Effect.try(() => isoFromMillis(millis)))
+}
+
+export effect function isoNow() {
+  return try isoAt(try Clock.currentTimeMillis)
+}

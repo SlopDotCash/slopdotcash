@@ -72,8 +72,19 @@ export default {
         "tailwindcss"
       ]
     },
+    "packages/platform": {
+      "entry": [
+        "test/**/*.test.vibe",
+        "test/worker/main.vibe"
+      ],
+      "project": [
+        "src/**/*.{ts,vibe}",
+        "test/**/*.{ts,vibe}"
+      ]
+    },
     "apps/*": {
       "entry": [
+        "src/worker.vibe",
         "test/**/*.test.{ts,tsx,vibe}",
         "test/drivers/*.ts",
         "src/**/*.{schema,contract}.{ts,vibe}"

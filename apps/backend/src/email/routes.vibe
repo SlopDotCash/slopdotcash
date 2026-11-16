@@ -1,0 +1,73 @@
+// spec/backend/accounts.md, "Email enrollment and consent use the existing email rules under live session checks"; spec/backend/email.md, "Only the authenticated owner can create a pending verification"; spec/backend/email.md, "Verification is account-bound, single-use, and unexpired"
+import { randomToken } from "@repo/platform/crypto"
+import { Refused, answered, body, json } from "@repo/platform/http"
+import { Conflict } from "@repo/platform/stored"
+import { type Enrollment, type Event, Rejected } from "../../gen/backend__email.effect.vibe"
+import { Notify } from "../notify.vibe"
+import { sessionActor } from "../session.vibe"
+import { send, stored } from "./store.vibe"
+
+const verificationLifetimeMillis = 24 * 60 * 60 * 1000
+const bodyLimitKib = 4
+
+schema EnrollRequest { address: string }
+schema VerifyRequest { token: string }
+schema ConsentRequest { security: boolean; activity: boolean }
+
+function view(e: Enrollment) {
+  return { verifiedAddress: e.verifiedAddress, pendingAddress: e.pendingAddress, securityConsent: e.securityConsent, activityConsent: e.activityConsent }
+}
+
+function isAddress(address: string) {
+  return address.length <= 254 && /^[^\s@]+@[^\s@]+$/u.test(address)
+}
+
+effect function sent(actor: string, event: Event) {
+  return send(actor, event, Number(actor)) catch effect (error) => match (error) {
+    when Rejected: throw new Refused({ status: 409, code: "not_allowed_now" });
+    when Conflict: throw new Refused({ status: 409, code: "changed_concurrently" });
+    default: throw error;
+  }
+}
+
+effect function current() {
+  return try answered(effect {
+    return json(view((try stored(try sessionActor())).enrollment))
+  })
+}
+
+effect function enroll() {
+  return try answered(effect {
+    const actor = try sessionActor()
+    const { address } = try body(EnrollRequest, bodyLimitKib)
+    if (!isAddress(address)) throw new Refused({ status: 400, code: "invalid_address" })
+    const token = try randomToken()
+    const expiresAt = (try Clock.currentTimeMillis) + verificationLifetimeMillis
+    const next = try sent(actor, { type: "enroll", address, digest: token, expiresAt })
+    const mail = try (try Notify).verification({ githubId: actor, email: address, token, expiresAt })
+    return json({ ...view(next), mail }, 202)
+  })
+}
+
+effect function verify() {
+  return try answered(effect {
+    const actor = try sessionActor()
+    const { token } = try body(VerifyRequest, bodyLimitKib)
+    return json(view(try sent(actor, { type: "verify", digest: token })))
+  })
+}
+
+effect function consent() {
+  return try answered(effect {
+    const actor = try sessionActor()
+    const { security, activity } = try body(ConsentRequest, bodyLimitKib)
+    return json(view(try sent(actor, { type: "setConsent", security, activity })))
+  })
+}
+
+export const EmailRoutes = Layer.mergeAll(
+  HttpRouter.add("GET", "/api/v1/notifications/email", current()),
+  HttpRouter.add("POST", "/api/v1/notifications/email/verification", enroll()),
+  HttpRouter.add("POST", "/api/v1/notifications/email/verify", verify()),
+  HttpRouter.add("POST", "/api/v1/notifications/email/consent", consent()),
+)

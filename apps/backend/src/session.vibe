@@ -1,0 +1,25 @@
+// spec/backend/accounts.md, "A session belongs to one immutable account and has its own expiry"; spec/backend/accounts.md, "Sign-out revokes only the caller's session and expiry uses the trusted clock"
+import { sha256Hex } from "@repo/platform/crypto"
+import { first, sql } from "@repo/platform/d1"
+import { Refused } from "@repo/platform/http"
+import { isoNow } from "./clock.vibe"
+
+module verified {
+  import { tokenLengthAllowed as allowed } from "./sessionToken.ts"
+  /** @throws {never} */
+  export function tokenLengthAllowed(length: number): boolean { return allowed(length) }
+}
+import { tokenLengthAllowed } from verified
+
+const sessionCookie = "__Host-slop_points"
+
+schema SessionMember { github_id: string }
+
+export effect function sessionActor() {
+  const request = try HttpServerRequest.HttpServerRequest
+  const token = request.cookies[sessionCookie] ?? ""
+  if (!tokenLengthAllowed(token.length) || !/^[A-Za-z0-9_-]+$/u.test(token)) throw new Refused({ status: 401, code: "sign_in_required" })
+  const member = try first(SessionMember, sql`SELECT m.github_id FROM points_members m JOIN points_sessions s ON s.actor_id = m.actor_id WHERE s.token_hash = ${try sha256Hex(token)} AND s.expires_at > ${try isoNow()} AND m.closed_at IS NULL`)
+  if (member === undefined) throw new Refused({ status: 401, code: "sign_in_required" })
+  return member.github_id
+}

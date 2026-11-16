@@ -1,0 +1,120 @@
+import { assert, layer } from "@effect/vitest"
+import type { D1Database } from "@repo/platform/bindings"
+import { sha256Hex, webCrypto } from "@repo/platform/crypto"
+import { type Applied, type ScheduledOutcome, bundle, database, migrate, scheduled, startWorker } from "@repo/platform/testing"
+import { Response } from "miniflare"
+import { migrations } from "./migrations.ts"
+
+const origin = "https://slop.test"
+const token = "t".repeat(48)
+const expiredToken = "e".repeat(48)
+
+interface Answer { readonly status: number; readonly body: Record<string, unknown> }
+
+service Backend {
+  readonly db: D1Database
+  readonly applied: ReadonlyArray<Applied>
+  readonly mail: ReadonlyArray<Record<string, unknown>>
+  request(path: string, init?: { readonly method?: string; readonly body?: string; readonly type?: string; readonly cookie?: boolean }): Answer!!
+  scheduled(cron: string): ScheduledOutcome!!
+}
+
+const Started = Layer.effect(Backend, effect {
+  const mail: Record<string, unknown>[] = []
+  const script = try promise(() => bundle(new URL("..", import.meta.url).pathname))
+  const mf = try acquireRelease(sync(() => startWorker({
+    script,
+    d1: { SLOP_DB: "slop-private" },
+    r2: ["PRIVATE_TRACES"],
+    services: {
+      SLOP_NOTIFY: async (request) => {
+        mail.push({ url: request.url, ...(await request.json()) as Record<string, unknown> })
+        return new Response(null, { status: 202 })
+      },
+    },
+  })), (started) => promise(() => started.dispose()))
+  const db = try promise(() => database(mf, "SLOP_DB"))
+  const applied = try promise(() => migrate(mf, "SLOP_DB", migrations))
+  return {
+    db,
+    applied,
+    mail,
+    request: (path, init = {}) => promise(async () => {
+      const response = await mf.dispatchFetch(`${origin}${path}`, {
+        method: init.method ?? (init.body === undefined ? "GET" : "POST"),
+        headers: {
+          ...init.body === undefined ? {} : { "content-type": init.type ?? "application/json" },
+          ...init.cookie === false ? {} : { cookie: `__Host-slop_points=${token}` },
+        },
+        body: init.body,
+      })
+      return { status: response.status, body: (await response.json()) as Record<string, unknown> }
+    }),
+    scheduled: (cron) => promise(() => scheduled(mf, cron)),
+  }
+})
+
+effect function run(statement: string, ...params: ReadonlyArray<string | number>) {
+  const { db } = try Backend
+  return try promise(() => db.prepare(statement).bind(...params).all())
+}
+
+effect function signIn(actor: string, githubId: string, sessionToken: string, expiresAt: string) {
+  try run("INSERT INTO points_members (actor_id, github_id, login, joined_at, public, welcome) VALUES (?, ?, ?, ?, 1, 5)", actor, githubId, `member-${githubId}`, "2026-11-01T00:00:00.000Z")
+  try run("INSERT INTO points_sessions (token_hash, actor_id, expires_at) VALUES (?, ?, ?)", try sha256Hex(sessionToken), actor, expiresAt)
+}
+
+const post = (path: string, body: unknown) => effect { return try (try Backend).request(path, { body: JSON.stringify(body) }) }
+
+layer(Layer.merge(Started, webCrypto), { excludeTestServices: true, timeout: "180 seconds" })((it) => {
+  it.effect('Verify a notification address and choose consent over HTTP (spec/backend/email.md, "Story: Verify a notification address and choose consent"; spec/backend/accounts.md, "Email enrollment and consent use the existing email rules under live session checks")', () => effect {
+    const backend = try Backend
+    try Effect.try(() => assert.deepStrictEqual(backend.applied.filter((migration) => migration.error !== undefined), []))
+    try Effect.try(() => assert.strictEqual(backend.applied.length, 136))
+    try signIn("actor-1", "1", token, "2099-01-01T00:00:00.000Z")
+
+    const anonymous = try backend.request("/api/v1/notifications/email", { cookie: false })
+    const empty = try backend.request("/api/v1/notifications/email")
+    const notJson = try backend.request("/api/v1/notifications/email/verification", { body: "{}", type: "text/plain" })
+    const tooLarge = try post("/api/v1/notifications/email/verification", { address: "x".repeat(5000) })
+    const extraKey = try post("/api/v1/notifications/email/verification", { address: "ada@example.com", digest: "mine" })
+    const badAddress = try post("/api/v1/notifications/email/verification", { address: "nobody" })
+    const enrolled = try post("/api/v1/notifications/email/verification", { address: "ada@example.com" })
+    const sentToken = String(backend.mail[0]?.token)
+    const wrong = try post("/api/v1/notifications/email/verify", { token: "not-the-token" })
+    const raced = try.all [post("/api/v1/notifications/email/verify", { token: sentToken }), post("/api/v1/notifications/email/verify", { token: sentToken })]
+    const consent = try post("/api/v1/notifications/email/consent", { security: true, activity: true })
+    const stored = try run("SELECT d.email, p.enabled, p.security_enabled, p.destination_version = d.destination_version AS bound FROM notification_email_destinations d JOIN notification_email_preferences p ON p.github_id = d.github_id WHERE d.github_id = ?", "1")
+
+    try Effect.try(() => assert.deepStrictEqual({
+      anonymous: [anonymous.status, anonymous.body.error],
+      empty: [empty.status, empty.body],
+      refused: [notJson.status, tooLarge.status, extraKey.status, badAddress.status],
+      enrolled: [enrolled.status, enrolled.body.pendingAddress, enrolled.body.mail],
+      mail: [backend.mail.length, backend.mail[0]?.url, backend.mail[0]?.email, sentToken.length],
+      wrong: [wrong.status, wrong.body.error],
+      raced: raced.map((answer) => answer.status).sort(),
+      consent: [consent.status, consent.body],
+      stored: stored.results,
+    }, {
+      anonymous: [401, "sign_in_required"],
+      empty: [200, { verifiedAddress: "", pendingAddress: "", securityConsent: false, activityConsent: false }],
+      refused: [415, 413, 400, 400],
+      enrolled: [202, "ada@example.com", "accepted"],
+      mail: [1, "https://notify.internal/v1/email-verifications", "ada@example.com", 64],
+      wrong: [409, "not_allowed_now"],
+      raced: [200, 409],
+      consent: [200, { verifiedAddress: "ada@example.com", pendingAddress: "", securityConsent: true, activityConsent: true }],
+      stored: [{ email: "ada@example.com", enabled: 1, security_enabled: 1, bound: 1 }],
+    }))
+  })
+
+  it.effect('Expired sessions end at the scheduled maintenance (spec/backend/accounts.md, "Sign-out revokes only the caller\'s session and expiry uses the trusted clock")', () => effect {
+    const backend = try Backend
+    try signIn("actor-2", "2", expiredToken, "2020-01-01T00:00:00.000Z")
+    try backend.scheduled("17 * * * *")
+    const sessions = try run("SELECT actor_id FROM points_sessions ORDER BY actor_id")
+    const live = try backend.request("/api/v1/notifications/email")
+    try Effect.try(() => assert.deepStrictEqual([sessions.results, live.status], [[{ actor_id: "actor-1" }], 200]))
+  })
+})

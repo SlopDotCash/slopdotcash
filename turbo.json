@@ -183,14 +183,19 @@
         "@repo/app#build",
         "@repo/app#typecheck",
         "@repo/app#test",
-        "@repo/app#test:browser"
+        "@repo/app#test:browser",
+        "@repo/backend#build",
+        "@repo/backend#typecheck",
+        "@repo/backend#test"
       ],
       "cache": false
     },
     "//#lint:js": {
       "dependsOn": [
         "@repo/design-system#build",
-        "@repo/app#typecheck"
+        "@repo/app#typecheck",
+        "@repo/platform#typecheck",
+        "@repo/backend#typecheck"
       ],
       "inputs": [
         "apps/**",

@@ -1,0 +1,23 @@
+import * as Hex from "effect/encoding/Hex"
+
+export const webCrypto = Experimental.Crypto.layerWebCrypto
+
+export function utf8(text: string): Uint8Array {
+  return new TextEncoder().encode(text)
+}
+
+export effect function sha256Hex(data: string | Uint8Array) {
+  const crypto = try Experimental.Crypto.Crypto
+  const digest = try orDie(crypto.digest("SHA-256", typeof data === "string" ? utf8(data) : data))
+  return Hex.encode(digest)
+}
+
+export effect function randomId() {
+  const crypto = try Experimental.Crypto.Crypto
+  return try orDie(crypto.randomUUIDv4())
+}
+
+export effect function randomToken(bytes = 32) {
+  const crypto = try Experimental.Crypto.Crypto
+  return Hex.encode(try orDie(crypto.randomBytes(bytes)))
+}

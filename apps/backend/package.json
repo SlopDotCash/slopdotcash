@@ -1,0 +1,26 @@
+{
+  "name": "@repo/backend",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "vite build",
+    "typecheck": "vibelang --noEmit -p .",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@repo/platform": "workspace:*",
+    "effect": "4.1.1",
+    "vibelang-runtime": "0.0.13"
+  },
+  "devDependencies": {
+    "@effect/vitest": "4.1.1",
+    "@types/node": "catalog:",
+    "miniflare": "5.20261113.0-beta",
+    "typescript": "catalog:",
+    "vibelang": "0.0.13",
+    "vibestack": "workspace:*",
+    "vite": "catalog:",
+    "vitest": "catalog:"
+  }
+}

@@ -1,0 +1,27 @@
+// spec/backend/email.md, "Only the authenticated owner can create a pending verification"
+import type { Fetcher } from "@repo/platform/bindings"
+import { outboundVia } from "@repo/platform/http"
+
+export interface VerificationMail {
+  readonly githubId: string
+  readonly email: string
+  readonly token: string
+  readonly expiresAt: number
+}
+
+export service Notify {
+  verification(mail: VerificationMail): ("accepted" | "unknown")!!
+}
+
+export function notifyVia(fetcher: Fetcher) {
+  return Layer.provide(Layer.effect(Notify, effect {
+    const client = try HttpClient.HttpClient
+    return {
+      verification: (mail) => effect {
+        const request = HttpClientRequest.bodyJsonUnsafe(HttpClientRequest.post("https://notify.internal/v1/email-verifications"), mail)
+        const response = client.execute(request) catch () => undefined
+        return response?.status === 202 ? "accepted" : "unknown"
+      },
+    }
+  }), outboundVia(fetcher))
+}

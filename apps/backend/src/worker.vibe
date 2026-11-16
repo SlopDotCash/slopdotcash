@@ -1,0 +1,20 @@
+// spec/backend/accounts.md, "Email enrollment and consent use the existing email rules under live session checks"; spec/backend/accounts.md, "Sign-out revokes only the caller's session and expiry uses the trusted clock"
+import type { D1Database, Fetcher, R2Bucket } from "@repo/platform/bindings"
+import { webCrypto } from "@repo/platform/crypto"
+import { d1 } from "@repo/platform/d1"
+import { worker } from "@repo/platform/worker"
+import { EmailRoutes } from "./email/routes.vibe"
+import { purgeExpired } from "./identity/maintenance.vibe"
+import { notifyVia } from "./notify.vibe"
+
+export interface Env {
+  readonly SLOP_DB: D1Database
+  readonly PRIVATE_TRACES: R2Bucket
+  readonly SLOP_NOTIFY: Fetcher
+}
+
+export default worker({
+  services: (env: Env) => Layer.mergeAll(d1(env.SLOP_DB), webCrypto, notifyVia(env.SLOP_NOTIFY)),
+  routes: EmailRoutes,
+  scheduled: () => purgeExpired(),
+})

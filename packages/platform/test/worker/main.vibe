@@ -1,0 +1,88 @@
+// spec/contributor/evidence.md, "Only contributor-inspected exact bytes can enter an authorized bounded upload"; spec/backend/listing.md, "Current administrators append placement changes against the current revision"; spec/slopbot/webhookDelivery.md, "Current registration determines valuation and queue scope"
+import type { D1Database, QueueMessage, R2Bucket } from "../../src/bindings.ts"
+import { sha256Hex, webCrypto } from "../../src/crypto.vibe"
+import { D1, d1, first, sql } from "../../src/d1.vibe"
+import { Refused, answered, json, outbound } from "../../src/http.vibe"
+import { type Bucket, bucket } from "../../src/r2.vibe"
+import { update } from "../../src/stored.vibe"
+import { worker } from "../../src/worker.vibe"
+
+interface Env {
+  readonly DB: D1Database
+  readonly OBJECTS: R2Bucket
+}
+
+service Objects: Bucket {}
+
+schema Counter { value: number }
+
+effect function key() {
+  return (try HttpRouter.params).key ?? ""
+}
+
+effect function put() {
+  return try answered(effect {
+    const request = try HttpServerRequest.HttpServerRequest
+    const bytes = new Uint8Array(try orDie(request.arrayBuffer))
+    const once = new URL(request.url, "https://platform.test").searchParams.get("once") === "1"
+    const objects = try Objects
+    const stored = objects.put(try key(), bytes, { sha256: try sha256Hex(bytes), contentType: "application/octet-stream", once }) catch effect (error) => {
+      throw error._tag === "AlreadyStored" ? new Refused({ status: 409, code: "already_stored" }) : error
+    }
+    return json(stored, 201)
+  })
+}
+
+effect function get() {
+  const found = try (try Objects).get(try key())
+  return found === undefined ? json({ error: "not_found" }, 404) : HttpServerResponse.uint8Array(found.bytes, { headers: { "x-sha256": found.object.sha256 ?? "" } })
+}
+
+effect function head() {
+  return json((try (try Objects).head(try key())) ?? null)
+}
+
+effect function zen() {
+  const response = try orDie(HttpClient.get("https://api.github.com/zen"))
+  return json({ status: response.status, text: try orDie(response.text) })
+}
+
+const counter = (id: string) => ({
+  name: `counter ${id}`,
+  version: sql`SELECT value AS version FROM counters WHERE id = ${id}`,
+  reads: [sql`SELECT value FROM counters WHERE id = ${id}`],
+  decode: (rows: ReadonlyArray<ReadonlyArray<Record<string, unknown>>>) => sync(() => Number(rows[0]?.[0]?.value ?? 0)),
+})
+
+effect function increment(interfere: boolean) {
+  return try answered(effect {
+    const id = try key()
+    const db = try D1
+    const next = update(counter(id), (value) => effect {
+      if (interfere) try db.run(sql`UPDATE counters SET value = value + 100 WHERE id = ${id}`)
+      return { value: value + 1, writes: [sql`UPDATE counters SET value = ${value + 1} WHERE id = ${id}`] }
+    }) catch effect (error) => { throw error._tag === "Conflict" ? new Refused({ status: 409, code: "conflict" }) : error }
+    const stored = try first(Counter, sql`SELECT value FROM counters WHERE id = ${id}`)
+    return json({ next, stored: stored?.value })
+  })
+}
+
+effect function job(message: QueueMessage) {
+  const body = message.body as { key: string; text: string }
+  if (body.text === "fail") return try die(new Error("refused job"))
+  const bytes = new TextEncoder().encode(body.text)
+  try orDie((try Objects).put(body.key, bytes, { sha256: try sha256Hex(bytes), contentType: "text/plain" }))
+}
+
+export default worker({
+  services: (env: Env) => Layer.mergeAll(d1(env.DB), webCrypto, outbound, Layer.succeed(Objects, bucket(env.OBJECTS))),
+  routes: Layer.mergeAll(
+    HttpRouter.add("PUT", "/objects/:key", put()),
+    HttpRouter.add("GET", "/objects/:key", get()),
+    HttpRouter.add("GET", "/heads/:key", head()),
+    HttpRouter.add("GET", "/zen", zen()),
+    HttpRouter.add("POST", "/counters/:key", increment(false)),
+    HttpRouter.add("POST", "/interfered/:key", increment(true)),
+  ),
+  queue: job,
+})

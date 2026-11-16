@@ -1,0 +1,41 @@
+import type { Fetcher } from "./bindings.ts"
+import { fetchVia } from "./fetcher.ts"
+
+export error Refused { status: number; code: string }
+
+export const fixedHeaders = { "cache-control": "no-store", "x-content-type-options": "nosniff" }
+
+export function json(body: unknown, status = 200) {
+  return HttpServerResponse.jsonUnsafe(body, { status, headers: fixedHeaders })
+}
+
+export const outbound = FetchHttpClient.layer
+
+export function outboundVia(fetcher: Fetcher) {
+  const fetch = fetchVia(fetcher)
+  return Layer.provide(Layer.effect(HttpClient.HttpClient, effect {
+    return HttpClient.transform(try HttpClient.HttpClient, (response) => provideService(response, FetchHttpClient.Fetch, fetch))
+  }), FetchHttpClient.layer)
+}
+
+export effect function jsonBody(limitKib: number) {
+  const request = try HttpServerRequest.HttpServerRequest
+  if (!(request.headers["content-type"] ?? "").startsWith("application/json")) throw new Refused({ status: 415, code: "json_required" })
+  return provideService(request.json, HttpServerRequest.MaxBodySize, ByteSize.kibibytes(limitKib)) catch effect (error) => {
+    throw error.reason._tag === "RequestParseError" && error.reason.reason === "BodyTooLarge"
+      ? new Refused({ status: 413, code: "body_too_large" })
+      : new Refused({ status: 400, code: "invalid_json" })
+  }
+}
+
+export effect function body<S extends Schema.Constraint>(schema: S, limitKib: number) {
+  const input = try jsonBody(limitKib)
+  return Schema.decodeUnknownEffect(schema)(input, { onExcessProperty: "error" }) catch effect () => { throw new Refused({ status: 400, code: "invalid_body" }) }
+}
+
+export effect function answered<E, R>(handler: HttpServerResponse.HttpServerResponse!(E | Refused)!R) {
+  return handler catch effect (error) => match (error) {
+    when Refused: json({ error: error.code }, error.status);
+    default: throw error;
+  }
+}

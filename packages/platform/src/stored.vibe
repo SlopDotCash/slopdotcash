@@ -1,0 +1,48 @@
+import { D1, type D1Error, DatabaseFailure, type Statement, sql } from "./d1.vibe"
+
+export type Rows = ReadonlyArray<Record<string, unknown>>
+
+export interface Aggregate<S, LE, LR> {
+  readonly name: string
+  readonly version: Statement
+  readonly reads: ReadonlyArray<Statement>
+  readonly decode: (rows: ReadonlyArray<Rows>) => S!LE!LR
+}
+
+export interface Decision<A> {
+  readonly value: A
+  readonly writes: ReadonlyArray<Statement>
+}
+
+export error Conflict { aggregate: string; attempts: number }
+
+const staleMarker = "stale aggregate version"
+
+function guarded(version: Statement, observed: string): Statement {
+  return sql`SELECT CASE WHEN (${version}) IS ${observed} THEN 1 ELSE json(${staleMarker}) END AS fresh`
+}
+
+function isStale(error: D1Error): boolean {
+  return error instanceof DatabaseFailure && error.message.includes("malformed JSON")
+}
+
+export effect function load<S, LE, LR>(aggregate: Aggregate<S, LE, LR>) {
+  const [head, ...rest] = try (try D1).batch([aggregate.version, ...aggregate.reads])
+  const version = String(head?.rows[0]?.version ?? "")
+  return { version, state: try aggregate.decode(rest.map((outcome) => outcome.rows)) }
+}
+
+export effect function update<S, LE, LR, A, DE, DR>(aggregate: Aggregate<S, LE, LR>, decide: (state: S) => Decision<A>!DE!DR, attempts = 3) {
+  const db = try D1
+  for (let attempt = 1; attempt <= attempts; attempt++) {
+    const { version, state } = try load(aggregate)
+    const { value, writes } = try decide(state)
+    if (writes.length === 0) return value
+    const committed = db.batch([guarded(aggregate.version, version), ...writes]) catch effect (error) => {
+      if (isStale(error)) return false
+      throw error
+    }
+    if (committed !== false) return value
+  }
+  throw new Conflict({ aggregate: aggregate.name, attempts })
+}

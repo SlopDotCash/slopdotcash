@@ -1,0 +1,59 @@
+import * as Hex from "effect/encoding/Hex"
+import type { R2Bucket, R2Object } from "./bindings.ts"
+
+export error StorageFailure { operation: string; key: string; message: string }
+export error AlreadyStored { key: string }
+
+export interface StoredObject {
+  readonly key: string
+  readonly size: number
+  readonly sha256: string | undefined
+  readonly contentType: string | undefined
+}
+
+export interface Bucket {
+  put(key: string, bytes: Uint8Array, options: { readonly sha256: string; readonly contentType: string; readonly once?: boolean }): StoredObject!(StorageFailure | AlreadyStored)
+  get(key: string): ({ readonly object: StoredObject; readonly bytes: Uint8Array } | undefined)!StorageFailure
+  head(key: string): (StoredObject | undefined)!StorageFailure
+}
+
+function described(object: R2Object): StoredObject {
+  const sha256 = object.checksums.sha256
+  return {
+    key: object.key,
+    size: object.size,
+    sha256: sha256 === undefined ? undefined : Hex.encode(new Uint8Array(sha256)),
+    contentType: object.httpMetadata?.contentType,
+  }
+}
+
+function failed(operation: string, key: string) {
+  return (cause: unknown) => new StorageFailure({ operation, key, message: cause instanceof Error ? cause.message : String(cause) })
+}
+
+export function bucket(binding: R2Bucket): Bucket {
+  return {
+    put: (key, bytes, options) => effect {
+      const written = try tryPromise({
+        try: () => binding.put(key, bytes, {
+          sha256: options.sha256,
+          httpMetadata: { contentType: options.contentType },
+          ...(options.once === true ? { onlyIf: { etagDoesNotMatch: "*" } } : {}),
+        }),
+        catch: failed("put", key),
+      })
+      if (written === null) throw new AlreadyStored({ key })
+      return described(written)
+    },
+    get: (key) => effect {
+      const found = try tryPromise({ try: () => binding.get(key), catch: failed("get", key) })
+      if (found === null) return undefined
+      const bytes = try tryPromise({ try: () => found.arrayBuffer(), catch: failed("get", key) })
+      return { object: described(found), bytes: new Uint8Array(bytes) }
+    },
+    head: (key) => effect {
+      const found = try tryPromise({ try: () => binding.head(key), catch: failed("head", key) })
+      return found === null ? undefined : described(found)
+    },
+  }
+}

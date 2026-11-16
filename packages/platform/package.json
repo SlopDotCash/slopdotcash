@@ -1,0 +1,37 @@
+{
+  "name": "@repo/platform",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "sideEffects": false,
+  "exports": {
+    "./bindings": "./src/bindings.ts",
+    "./d1": "./src/d1.vibe",
+    "./r2": "./src/r2.vibe",
+    "./crypto": "./src/crypto.vibe",
+    "./http": "./src/http.vibe",
+    "./stored": "./src/stored.vibe",
+    "./worker": "./src/worker.vibe",
+    "./testing": "./src/testing.ts",
+    "./vite": "./src/vite.ts"
+  },
+  "scripts": {
+    "typecheck": "vibelang --noEmit -p .",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "effect": "4.1.1",
+    "vibelang-runtime": "0.0.13"
+  },
+  "devDependencies": {
+    "@effect/vitest": "4.1.1",
+    "@types/node": "catalog:",
+    "miniflare": "5.20261113.0-beta",
+    "typescript": "catalog:",
+    "vibelang": "0.0.13",
+    "vibelang-vite": "0.0.13",
+    "vibestack": "workspace:*",
+    "vite": "catalog:",
+    "vitest": "catalog:"
+  }
+}

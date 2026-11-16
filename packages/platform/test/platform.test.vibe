@@ -1,0 +1,102 @@
+import { assert, layer } from "@effect/vitest"
+import { Response } from "miniflare"
+import type { D1Database, R2Bucket } from "../src/bindings.ts"
+import { type QueueOutcome, bundle, database, queue, startWorker, storage } from "../src/testing.ts"
+
+interface Answer { readonly status: number; readonly body: unknown }
+
+service Platform {
+  readonly db: D1Database
+  readonly objects: R2Bucket
+  readonly outbound: ReadonlyArray<string>
+  request(path: string, init?: { readonly method?: string; readonly body?: Uint8Array }): Answer!!
+  queue(bodies: ReadonlyArray<unknown>): QueueOutcome!!
+}
+
+const Started = Layer.effect(Platform, effect {
+  const outbound: string[] = []
+  const script = try promise(() => bundle(new URL("..", import.meta.url).pathname))
+  const mf = try acquireRelease(sync(() => startWorker({
+    script,
+    d1: { DB: "platform" },
+    r2: ["OBJECTS"],
+    outbound: (request) => {
+      outbound.push(`${request.method} ${request.url} ${request.headers.get("accept") ?? ""}`)
+      return new Response("Keep it logically awesome.", { status: 200 })
+    },
+  })), (started) => promise(() => started.dispose()))
+  const db = try promise(() => database(mf, "DB"))
+  try promise(() => db.exec("CREATE TABLE counters (id TEXT PRIMARY KEY, value INTEGER NOT NULL)"))
+  return {
+    db,
+    objects: try promise(() => storage(mf, "OBJECTS")),
+    outbound,
+    request: (path, init = {}) => promise(async () => {
+      const response = await mf.dispatchFetch(`https://platform.test${path}`, { method: init.method ?? "GET", body: init.body })
+      const type = response.headers.get("content-type") ?? ""
+      return { status: response.status, body: type.startsWith("application/json") ? await response.json() : { bytes: await response.text(), sha256: response.headers.get("x-sha256") } }
+    }),
+    queue: (bodies) => promise(() => queue(mf, "jobs", bodies)),
+  }
+})
+
+const evidence = new TextEncoder().encode("exact trace bytes")
+
+layer(Started, { excludeTestServices: true, timeout: "180 seconds" })((it) => {
+  it.effect('Exact bytes are stored once under their digest in R2 (spec/contributor/evidence.md, "Only contributor-inspected exact bytes can enter an authorized bounded upload")', () => effect {
+    const platform = try Platform
+    const stored = try platform.request("/objects/trace-1?once=1", { method: "PUT", body: evidence })
+    const again = try platform.request("/objects/trace-1?once=1", { method: "PUT", body: evidence })
+    const read = try platform.request("/objects/trace-1")
+    const head = try platform.request("/heads/trace-1")
+    const missing = try platform.request("/objects/none")
+    const direct = try promise(() => platform.objects.head("trace-1"))
+    try Effect.try(() => assert.deepStrictEqual({
+      stored: stored.status, again: [again.status, again.body], read: read.body, head: head.body, missing: missing.status, size: direct?.size,
+    }, {
+      stored: 201,
+      again: [409, { error: "already_stored" }],
+      read: { bytes: "exact trace bytes", sha256: (stored.body as { sha256: string }).sha256 },
+      head: stored.body,
+      missing: 404,
+      size: evidence.length,
+    }))
+    try Effect.try(() => assert.match((stored.body as { sha256: string }).sha256, /^[0-9a-f]{64}$/u))
+  })
+
+  it.effect('A stale aggregate version never commits (spec/backend/listing.md, "Current administrators append placement changes against the current revision")', () => effect {
+    const platform = try Platform
+    try promise(() => platform.db.prepare("INSERT INTO counters (id, value) VALUES ('c', 0)").all())
+    const first = try platform.request("/counters/c", { method: "POST" })
+    const raced = try.all [platform.request("/counters/c", { method: "POST" }), platform.request("/counters/c", { method: "POST" })]
+    const interfered = try platform.request("/interfered/c", { method: "POST" })
+    try Effect.try(() => assert.deepStrictEqual({
+      first: first.body,
+      raced: raced.map((answer) => (answer.body as { next: number }).next).sort(),
+      interfered: [interfered.status, interfered.body],
+    }, {
+      first: { next: 1, stored: 1 },
+      raced: [2, 3],
+      interfered: [409, { error: "conflict" }],
+    }))
+  })
+
+  it.effect('Outbound requests and queued jobs reach only their boundary (spec/slopbot/webhookDelivery.md, "Current registration determines valuation and queue scope")', () => effect {
+    const platform = try Platform
+    const zen = try platform.request("/zen")
+    const settled = try platform.queue([{ key: "queued-1", text: "from the queue" }, { key: "queued-2", text: "fail" }])
+    const queued = try promise(() => platform.objects.get("queued-1"))
+    const text = queued === null ? undefined : new TextDecoder().decode(try promise(() => queued.arrayBuffer()))
+    try Effect.try(() => assert.deepStrictEqual({
+      zen: zen.body,
+      outbound: platform.outbound.map((line) => line.split(" ").slice(0, 2).join(" ")),
+      queue: [settled.outcome, settled.explicitAcks, settled.retryMessages.map((message) => message.msgId)],
+      text,
+    }, {
+      zen: { status: 200, text: "Keep it logically awesome." },
+      outbound: ["GET https://api.github.com/zen"],
+      queue: ["ok", ["message-0"], ["message-1"]],
+      text: "from the queue",
+    }))
+  })
+})
