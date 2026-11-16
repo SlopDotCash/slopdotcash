@@ -4424,9 +4424,9 @@
     },
     {
       "path": "scripts/probe-fee-solana-rpc.ts",
-      "sha256": "b4dcc5a5199625332e8c5f6596a12e1e52f56f1df03ff9da44387434ab1fef29",
+      "sha256": "2c2e6429854809485f65b7812c8b3f38092fc0567c62c6f36fc1270f3c59f969",
       "models": ["formal/models/release/workflow_authority.qnt"],
-      "candidateLines": [1, 33, 35, 41, 50, 55, 56, 57, 236],
+      "candidateLines": [1, 58, 60, 66, 75, 80, 81, 82, 210, 301, 304],
       "review": "mapped-abstraction"
     },
     {

@@ -8,6 +8,31 @@ const previewName = "slop-fee-rpc-read-probe";
 const recovery = "https://public.rpc.solanavibestation.com";
 const mint = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v";
 const genesis = "5eykt4UsFv8P8NJdTREpY1vzqKqZKvdpKuc147dw2N9d";
+type ProbeOperation =
+  | "candidate"
+  | "subdomain-read"
+  | "session-create"
+  | "session-exchange"
+  | "preview-upload"
+  | "preview-invoke";
+export class ProbeFailure extends Error {
+  constructor(
+    readonly operation: ProbeOperation,
+    readonly httpStatus: number | null = null,
+    readonly cloudflareCode: number | null = null,
+  ) {
+    super("Solana RPC preview refused");
+  }
+}
+export function safeProbeFailure(error: unknown) {
+  return error instanceof ProbeFailure
+    ? {
+        operation: error.operation,
+        httpStatus: error.httpStatus,
+        cloudflareCode: error.cloudflareCode,
+      }
+    : { operation: "unknown", httpStatus: null, cloudflareCode: null };
+}
 
 export function requireSolanaProbeCandidate(value: string): string {
   const url = new URL(value);
@@ -152,45 +177,82 @@ export async function probeFeeSolanaRpc(input: {
 }) {
   if (!/^[a-f0-9]{32}$/.test(input.account) || !input.token)
     throw Error("Missing preview credentials");
-  const candidate = requireSolanaProbeCandidate(input.candidate);
+  let candidate: string;
+  try {
+    candidate = requireSolanaProbeCandidate(input.candidate);
+  } catch {
+    throw new ProbeFailure("candidate");
+  }
   const request = input.request ?? fetch;
   const base = `https://api.cloudflare.com/client/v4/accounts/${input.account}`;
   const headers = { authorization: `Bearer ${input.token}` };
-  async function api(path: string, init: RequestInit = {}) {
-    const response = await request(base + path, {
-      ...init,
-      headers: { ...headers, ...init.headers },
-      redirect: "error",
-      signal: AbortSignal.timeout(30000),
-    });
-    const body = (await response.json()) as any;
-    if (!response.ok || body?.success !== true)
-      throw Error("Cloudflare preview request refused");
+  async function api(
+    path: string,
+    operation: ProbeOperation,
+    init: RequestInit = {},
+  ) {
+    let response: Response;
+    try {
+      response = await request(base + path, {
+        ...init,
+        headers: { ...headers, ...init.headers },
+        redirect: "error",
+        signal: AbortSignal.timeout(30000),
+      });
+    } catch {
+      throw new ProbeFailure(operation);
+    }
+    const body = (await response.json().catch(() => null)) as any;
+    if (!response.ok || body?.success !== true) {
+      const code = body?.errors?.[0]?.code;
+      throw new ProbeFailure(
+        operation,
+        response.status,
+        Number.isSafeInteger(code) ? code : null,
+      );
+    }
     return body.result;
   }
-  const subdomain = (await api("/workers/subdomain"))?.subdomain;
+  const subdomain = (await api("/workers/subdomain", "subdomain-read"))
+    ?.subdomain;
   if (typeof subdomain !== "string" || !/^[a-z0-9-]+$/.test(subdomain))
-    throw Error("Invalid existing Workers subdomain");
-  const session = await api("/workers/subdomain/edge-preview");
+    throw new ProbeFailure("subdomain-read");
+  const session = await api(
+    `/workers/scripts/${previewName}/subdomain/edge-preview`,
+    "session-create",
+  );
   let token = session?.token;
+  let previewHost = `${previewName}.${subdomain}.workers.dev`;
   if (session?.exchange_url) {
     const exchange = new URL(session.exchange_url);
     if (
       exchange.protocol !== "https:" ||
-      !exchange.hostname.endsWith(".workers.dev") ||
+      !(
+        exchange.hostname.endsWith(".workers.dev") ||
+        exchange.hostname.endsWith(".cloudflareworkers.com")
+      ) ||
       exchange.username ||
       exchange.password
     )
-      throw Error("Invalid preview exchange endpoint");
-    const response = await request(exchange.href, {
-      redirect: "error",
-      signal: AbortSignal.timeout(30000),
-    });
-    if (!response.ok) throw Error("Preview token exchange refused");
-    token = ((await response.json()) as any)?.token;
+      throw new ProbeFailure("session-exchange");
+    const suffix = exchange.hostname.slice(exchange.hostname.indexOf("."));
+    previewHost = previewName + suffix;
+    // Wrangler permits the original session token when token re-encoding is unavailable.
+    try {
+      const response = await request(exchange.href, {
+        redirect: "error",
+        signal: AbortSignal.timeout(30000),
+      });
+      const body = response.ok
+        ? ((await response.json().catch(() => null)) as any)
+        : null;
+      if (typeof body?.token === "string" && body.token) token = body.token;
+    } catch {
+      /* Retain the original authenticated session token. */
+    }
   }
   if (typeof token !== "string" || !token)
-    throw Error("Preview token unavailable");
+    throw new ProbeFailure("session-create");
   const form = new FormData();
   form.set(
     "metadata",
@@ -210,16 +272,20 @@ export async function probeFeeSolanaRpc(input: {
     "wrangler-session-config",
     JSON.stringify({ workers_dev: true, minimal_mode: true }),
   );
-  const preview = await api(`/workers/scripts/${previewName}/edge-preview`, {
-    method: "POST",
-    headers: { "cf-preview-upload-config-token": token },
-    body: form,
-  });
-  if (typeof preview?.preview_token !== "string" || !preview.preview_token)
-    throw Error("Preview binding unavailable");
-  const response = await request(
-    `https://${previewName}.${subdomain}.workers.dev/probe`,
+  const preview = await api(
+    `/workers/scripts/${previewName}/edge-preview`,
+    "preview-upload",
     {
+      method: "POST",
+      headers: { "cf-preview-upload-config-token": token },
+      body: form,
+    },
+  );
+  if (typeof preview?.preview_token !== "string" || !preview.preview_token)
+    throw new ProbeFailure("preview-upload");
+  let response: Response;
+  try {
+    response = await request(`https://${previewHost}/probe`, {
       method: "POST",
       redirect: "error",
       headers: {
@@ -228,9 +294,11 @@ export async function probeFeeSolanaRpc(input: {
       },
       body: JSON.stringify({ candidate }),
       signal: AbortSignal.timeout(180000),
-    },
-  );
-  if (!response.ok) throw Error("Remote read-only RPC probe refused");
+    });
+  } catch {
+    throw new ProbeFailure("preview-invoke");
+  }
+  if (!response.ok) throw new ProbeFailure("preview-invoke", response.status);
   return {
     ...safeSolanaProbeResult(await response.json()),
     workerSha256: createHash("sha256").update(solanaProbeWorker).digest("hex"),
@@ -298,9 +366,13 @@ if (import.meta.main) {
       { mode: 0o600 },
     );
     console.log(JSON.stringify(output));
-  } catch {
+  } catch (error) {
     console.error(
-      JSON.stringify({ error: "fee_solana_rpc_probe_refused", stage }),
+      JSON.stringify({
+        error: "fee_solana_rpc_probe_refused",
+        stage,
+        ...safeProbeFailure(error),
+      }),
     );
     process.exitCode = 1;
   }

@@ -3,6 +3,7 @@ import { runInNewContext } from "node:vm";
 import {
   probeFeeSolanaRpc,
   requireSolanaProbeCandidate,
+  safeProbeFailure,
   safeSolanaProbeResult,
   solanaProbeWorker,
 } from "./probe-fee-solana-rpc";
@@ -126,7 +127,11 @@ test("preview transport never deploys or attaches a persistent binding", async (
       calls.push({ url, method: init.method ?? "GET" });
       if (url.endsWith("/workers/subdomain"))
         return envelope({ subdomain: "fixture" });
-      if (url.endsWith("/workers/subdomain/edge-preview"))
+      if (
+        url.endsWith(
+          "/workers/scripts/slop-fee-rpc-read-probe/subdomain/edge-preview",
+        )
+      )
         return envelope({ token: "PRIVATE_PREVIEW_SESSION" });
       if (url.endsWith("/edge-preview")) {
         const form = init.body as FormData;
@@ -216,4 +221,137 @@ test("remote refusal retains status only and never marks the candidate ready", a
       ),
   ).toBe(true);
   expect(JSON.stringify(safe)).not.toContain("PRIVATE_PROVIDER_RESPONSE");
+});
+
+test("probe transport refusal returns only operation and numeric API codes", async () => {
+  const secret = "private-endpoint-and-response";
+  const request = Object.assign(
+    async () =>
+      Response.json(
+        { success: false, errors: [{ code: 10000, message: secret }] },
+        { status: 403 },
+      ),
+    { preconnect: fetch.preconnect },
+  );
+  let caught;
+  try {
+    await probeFeeSolanaRpc({
+      account: "a".repeat(32),
+      token: secret,
+      candidate,
+      request,
+    });
+  } catch (error) {
+    caught = error;
+  }
+  expect(safeProbeFailure(caught)).toEqual({
+    operation: "subdomain-read",
+    httpStatus: 403,
+    cloudflareCode: 10000,
+  });
+  expect(JSON.stringify(safeProbeFailure(caught))).not.toContain(secret);
+});
+
+test("probe transport errors never return external messages", async () => {
+  const request = Object.assign(
+    async () => {
+      throw Error(candidate);
+    },
+    { preconnect: fetch.preconnect },
+  );
+  let caught;
+  try {
+    await probeFeeSolanaRpc({
+      account: "a".repeat(32),
+      token: "token",
+      candidate,
+      request,
+    });
+  } catch (error) {
+    caught = error;
+  }
+  expect(safeProbeFailure(caught)).toEqual({
+    operation: "subdomain-read",
+    httpStatus: null,
+    cloudflareCode: null,
+  });
+  expect(safeProbeFailure(Error(candidate))).toEqual({
+    operation: "unknown",
+    httpStatus: null,
+    cloudflareCode: null,
+  });
+});
+
+test("current Wrangler session path derives preview host and preserves fallback token", async () => {
+  const calls: string[] = [];
+  const request = Object.assign(
+    async (input: RequestInfo | URL, init: RequestInit = {}) => {
+      const url = String(input);
+      calls.push(url);
+      if (url.endsWith("/workers/subdomain"))
+        return envelope({ subdomain: "fallback" });
+      if (url.endsWith("/subdomain/edge-preview"))
+        return envelope({
+          token: "ORIGINAL_TOKEN",
+          exchange_url:
+            "https://exchange.preview.cloudflareworkers.com/exchange",
+        });
+      if (url.includes("/exchange"))
+        return new Response("PRIVATE_BODY", { status: 400 });
+      if (url.endsWith("/edge-preview")) {
+        expect((init.headers as any)["cf-preview-upload-config-token"]).toBe(
+          "ORIGINAL_TOKEN",
+        );
+        return envelope({ preview_token: "PREVIEW_TOKEN" });
+      }
+      expect(url).toBe(
+        "https://slop-fee-rpc-read-probe.preview.cloudflareworkers.com/probe",
+      );
+      return Response.json(result());
+    },
+    { preconnect: fetch.preconnect },
+  );
+  await probeFeeSolanaRpc({
+    account: "a".repeat(32),
+    token: "CF",
+    candidate,
+    request,
+  });
+  expect(calls[1]).toContain(
+    "/workers/scripts/slop-fee-rpc-read-probe/subdomain/edge-preview",
+  );
+});
+
+test("untrusted exchange host refuses before credential-bearing preview invocation", async () => {
+  const calls: string[] = [];
+  const request = Object.assign(
+    async (input: RequestInfo | URL) => {
+      const url = String(input);
+      calls.push(url);
+      return url.endsWith("/workers/subdomain")
+        ? envelope({ subdomain: "fallback" })
+        : envelope({
+            token: "SECRET",
+            exchange_url: "https://untrusted.invalid/exchange",
+          });
+    },
+    { preconnect: fetch.preconnect },
+  );
+  let caught;
+  try {
+    await probeFeeSolanaRpc({
+      account: "a".repeat(32),
+      token: "CF",
+      candidate,
+      request,
+    });
+  } catch (error) {
+    caught = error;
+  }
+  expect(safeProbeFailure(caught)).toEqual({
+    operation: "session-exchange",
+    httpStatus: null,
+    cloudflareCode: null,
+  });
+  expect(calls).toHaveLength(2);
 });
