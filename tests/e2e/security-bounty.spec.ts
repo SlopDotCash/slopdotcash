@@ -3213,17 +3213,14 @@ test("admin placement and explicit bounty type drive generic project pages @regi
       )
       .evaluateAll((sections) => sections.map((section) => section.id)),
   ).toEqual(["security-bounties", "projects", "leaderboard"]);
-  const featured = page.locator('[aria-labelledby="featured-projects"]');
-  await expect(featured.locator(".project-card")).toHaveCount(1);
-  await expect(featured).toContainText("$10k");
-  await expect(featured).toContainText("Pledged");
-  await expect(featured).not.toContainText("Points only");
+  // The bounty is listed once, in its own section, never again as a project.
+  const projects = page.locator("#projects");
+  await expect(projects.locator(`a[href="/projects/${id}"]`)).toHaveCount(0);
   await expect(section).toContainText("$10k");
   await expect(section).not.toContainText("7,500 USDC");
   await expect(
     page.getByRole("link", { name: "Your private reports", exact: true }),
   ).toHaveCount(0);
-  await expect(page.locator("#community-projects")).toHaveCount(0);
   const link = section.getByRole("link").filter({
     has: page.getByRole("heading", {
       name: "Security test program",
@@ -3296,33 +3293,27 @@ test("admin placement and explicit bounty type drive generic project pages @regi
   ).toBeVisible();
   expect(await (await intakeRead).finished()).toBeNull();
 
-  // Clearing Featured moves the same bounty to Community without changing its offer.
-  shown = { ...project, listingTier: "community" };
-  await page.goto("/", { waitUntil: "networkidle" });
-  await expect(featured).toHaveCount(0);
-  const community = page.locator(".community-projects");
-  const row = community.locator(`a[href="/projects/${id}"]`);
-  await expect(row).toBeVisible();
-  await expect(row).toContainText("$10k / Critical");
-  await expect(row).toContainText("Pledged");
-  await expect(row).not.toContainText("Points only");
-
-  // A separate open bounty names the existing offer while ordinary routing stays intact.
-  shown = {
-    ...project,
-    listingTier: "featured",
-    securityBounty: { ...project.securityBounty, rewardMode: "separate" },
-  };
-  await page.reload({ waitUntil: "networkidle" });
-  await expect(featured).toContainText("$10k");
-  await expect(featured).toContainText("/ Critical");
-  await expect(featured).toContainText("Pledged");
-  await expect(featured).not.toContainText("Points only");
-  shown = { ...shown, listingTier: "community" };
-  await page.reload({ waitUntil: "networkidle" });
-  await expect(row).toContainText("$10k / Critical");
-  await expect(row).toContainText("Pledged");
-  await expect(row).not.toContainText("Points only");
+  // Placement never lists the bounty a second time, and a separate open bounty
+  // keeps its own section card.
+  for (const next of [
+    { ...project, listingTier: "community" },
+    {
+      ...project,
+      listingTier: "featured",
+      securityBounty: { ...project.securityBounty, rewardMode: "separate" },
+    },
+    {
+      ...project,
+      listingTier: "community",
+      securityBounty: { ...project.securityBounty, rewardMode: "separate" },
+    },
+  ]) {
+    shown = next;
+    await page.goto("/", { waitUntil: "networkidle" });
+    await expect(section).toContainText("$10k");
+    await expect(section).toContainText("Pledged");
+    await expect(projects.locator(`a[href="/projects/${id}"]`)).toHaveCount(0);
+  }
   await expect(section.locator(".project-card")).toHaveAttribute(
     "href",
     `/projects/${id}/security`,
@@ -3339,7 +3330,7 @@ test("admin placement and explicit bounty type drive generic project pages @regi
   const ordinarySnapshot = page.waitForResponse(
     (response) => new URL(response.url()).pathname === "/data/leaderboard.json",
   );
-  await row.click();
+  await page.goto(`/projects/${id}`);
   const snapshotResponse = await ordinarySnapshot;
   await snapshotResponse.finished();
   const snapshot = (await snapshotResponse.json()) as {
