@@ -35,6 +35,7 @@ Coverage is for the defined bounded static scan, not a guarantee of safety or a 
 Return only JSON: {"verdict":"no-findings"|"findings"|"malicious-suspected","confidence":number from 0 to 1,"coverage":{${SCAN_THREATS.map((area) => `"${area}":"complete"|"partial"|"missing"`).join(",")}},"findings":[{"severity":"info"|"low"|"medium"|"high"|"critical","summary":string,"evidenceIds":[supplied item ids]}]}. Use no-findings only when findings is empty. Return all five coverage areas.`;
 
 export type ScannerProfile = {
+  /** Durable role keys retained for compatibility; `model` names the exact model. */
   reviewer: "astra" | "opus";
   transport: "openai-responses" | "anthropic-messages";
   /** Explicit operator-reviewed endpoint and version. No implicit provider/model selection. */
@@ -108,7 +109,7 @@ export type ScannerEvidence = {
  * snake_case error type or digit-only token counts) can appear, so the
  * category is safe to log beside a retry.
  */
-export type ReviewFailureCategory =
+type ReviewFailureCategory =
   | `provider-http-${number}`
   | `provider-http-${number}-${string}`
   | "timeout"
@@ -128,6 +129,20 @@ const STOP_REASONS = new Set([
   "stop_sequence",
 ]);
 const INCOMPLETE_REASONS = new Set(["max_output_tokens", "content_filter"]);
+/** The provider declined to review the supplied content (Messages and Responses). */
+const DECLINED: ReadonlySet<string> = new Set([
+  "stop-refusal",
+  "incomplete-content_filter",
+]);
+/**
+ * True when a failed review, single or batched (`batch-<n>-of-<count>:` or
+ * `synthesis:` prefix), ended because the provider declined the content.
+ * The same pinned content is declined again on every pass, so the scanner
+ * records the scan as incomplete instead of retrying it.
+ */
+export const reviewDeclined = (failure: string | undefined): boolean =>
+  failure !== undefined &&
+  DECLINED.has(failure.slice(failure.indexOf(":") + 1));
 class ReviewFailure extends Error {
   constructor(readonly category: ReviewFailureCategory) {
     super(category);
@@ -183,9 +198,9 @@ function prepare(input: string, expected: string): EvidenceBundle {
   };
 }
 /**
- * The only approved profile of each transport (owner decision D16): Surplus
- * Intelligence `claude-opus-5.5` as the primary reviewer and Surplus
- * `gpt-6.1-sol` as the specialist, both reached with the operator's
+ * The approved profiles (owner model decision, 11 November 2026): Surplus
+ * Intelligence `claude-sonnet-5.5` as the primary reviewer and Surplus
+ * `gpt-6.1-terra` as the specialist, both reached with the operator's
  * `SURPLUS_API_KEY`. The key is never sent to any other endpoint, and no
  * other provider, endpoint, model or reviewer class is accepted.
  */
@@ -196,12 +211,12 @@ export const PINNED_SCANNER_PROFILES: Record<
   "anthropic-messages": {
     reviewer: "opus",
     endpoint: "https://api.surplusintelligence.ai/anthropic/v1/messages",
-    model: "claude-opus-5.5",
+    model: "claude-sonnet-5.5",
   },
   "openai-responses": {
     reviewer: "astra",
     endpoint: "https://api.surplusintelligence.ai/v1/responses",
-    model: "gpt-6.1-sol",
+    model: "gpt-6.1-terra",
   },
 };
 /** "surplus" for the pinned profile of its transport; null for anything else. */
@@ -223,7 +238,7 @@ function providerOf(profile: ScannerProfile): "surplus" | null {
 export function validateProfile(profile: ScannerProfile) {
   if (providerOf(profile) === null)
     throw new Error(
-      "Unapproved scanner profile: only Surplus claude-opus-5.5 (Anthropic Messages) and Surplus gpt-6.1-sol (Responses) are approved",
+      "Unapproved scanner profile: only Surplus claude-sonnet-5.5 (Anthropic Messages) and Surplus gpt-6.1-terra (Responses) are approved",
     );
   text(profile.apiKey, 4096);
   if (
@@ -247,7 +262,7 @@ export function validateProfile(profile: ScannerProfile) {
  * states. The message itself is never kept, so no provider or source text can
  * reach the category.
  */
-export function providerErrorDetail(body: string): string | null {
+function providerErrorDetail(body: string): string | null {
   let parsed: unknown;
   try {
     parsed = JSON.parse(body);

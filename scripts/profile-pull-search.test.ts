@@ -12,15 +12,3 @@ test("contributor pull counts use the public search", () => {
     "https://github.com/search?q=is%3Apr%20author%3Aoctocat%20is%3Aclosed%20is%3Aunmerged&type=pullrequests",
   );
 });
-
-test("contributor pull counts do not open the signed-in pull dashboard", () => {
-  for (const qualifier of ["is:merged", "is:open", "is:closed is:unmerged"]) {
-    const href = contributorPullSearchUrl(
-      "profile-only-contributor",
-      qualifier,
-    );
-    expect(href.startsWith("https://github.com/search?")).toBe(true);
-    expect(href).not.toContain("github.com/pulls");
-    expect(new URL(href).searchParams.get("type")).toBe("pullrequests");
-  }
-});

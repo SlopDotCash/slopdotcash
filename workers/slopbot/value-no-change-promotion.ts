@@ -1,16 +1,12 @@
-import type { EvidenceClient, ValueEvidence } from "./value-evidence";
+import type {
+  EvidenceClient,
+  NoChangePromotionProof,
+  ValueEvidence,
+} from "./value-evidence-types";
 import { readValueTreeRootProof } from "./value-tree";
 
 export const NO_CHANGE_PROMOTION_CONTEXT =
   "Unchanged branch promotion requires complete original accepted sources";
-
-export interface NoChangePromotionProof {
-  schemaVersion: "slop-no-change-promotion:v1";
-  baseSha: string;
-  headSha: string;
-  mergeSha: string;
-  treeSha: string;
-}
 
 type PromotionSource = Pick<ValueEvidence, "pull" | "mergeCommitEvidence">;
 

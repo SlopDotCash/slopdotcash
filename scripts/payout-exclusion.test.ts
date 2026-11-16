@@ -182,7 +182,7 @@ test("an excluded owner keeps the score, receives nothing, and the other share i
       getProject: (id) => persistence.getProject(id),
       restricted: async () => false,
       networks: () => ["base-sepolia"],
-      verifyAuthority: async () => {},
+      verifyAuthority: async () => true,
       schedule: () => null,
       now: () => new Date(AFTER_NOVEMBER),
     });
@@ -199,11 +199,12 @@ test("an excluded owner keeps the score, receives nothing, and the other share i
       status: 400,
       code: "invalid_allocation",
     });
-    // Other private changes keep working.
+    // Other changes keep working. This one is a cut, so it needs a reason.
     const view = await service.changeAllocation("asi", "2026-11", actor, {
       githubUserId: "42",
       grossBase: "900000000",
       expectedSequence: 0,
+      reason: "Lowered after the owner reviewed this month's work.",
     });
     expect(view.proposal?.allocations.map((row) => row.grossBase)).toEqual([
       "900000000",

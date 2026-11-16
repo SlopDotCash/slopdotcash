@@ -1,3 +1,5 @@
+import type { WorkUnitEvidence } from "./value-work-unit-types";
+
 /** Owner decision, 25 October 2026: ongoing API assessment starts in November.
  * September and October use the subscription assessment/import path only.
  * Selecting alerts-only is still explicit; this date never enables a call.
@@ -16,6 +18,40 @@ export function historicalSubscriptionSource(
   if (pull.state !== "closed") return false;
   const occurred = Date.parse(pull.merged_at ?? pull.closed_at ?? "");
   return Number.isFinite(occurred) && occurred < start;
+}
+
+/** A later closed, unmerged source may provide context for earlier accepted
+ * work. Canonical claim preparation must prove that it owns, carries, and
+ * accepts none of the work being assessed.
+ */
+export function historicalSubscriptionWorkUnit(
+  evidence: WorkUnitEvidence,
+  start: number,
+) {
+  if (
+    evidence.sources.every(({ evidence: source }) =>
+      historicalSubscriptionSource(source.pull, start),
+    )
+  )
+    return true;
+  if (evidence.limitations.length || evidence.claims.length === 0) return false;
+  return evidence.sources.every(({ evidence: source }) => {
+    const pull = source.pull;
+    if (historicalSubscriptionSource(pull, start)) return true;
+    if (
+      pull.state !== "closed" ||
+      pull.merged_at !== null ||
+      !Number.isFinite(Date.parse(pull.closed_at ?? "")) ||
+      source.indirectAcceptance
+    )
+      return false;
+    return evidence.claims.every(
+      (claim) =>
+        claim.creditPullRequestId !== pull.node_id &&
+        !claim.carrierPullRequestIds.includes(pull.node_id) &&
+        claim.retainedCopy?.acceptancePullRequestId !== pull.node_id,
+    );
+  });
 }
 
 /** The consumer's configured start, or the fixed start when it refuses all

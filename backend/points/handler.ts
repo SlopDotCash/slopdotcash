@@ -1,8 +1,5 @@
 import { sha256Hex } from "../../src/lib/async-sha256.mjs";
-import {
-  type DeploymentTier,
-  deploymentOrigins,
-} from "../../src/lib/deployment";
+import { deploymentOrigins } from "../../src/lib/deployment";
 import { POINTS_RULE } from "../../src/lib/points";
 import type { GithubActor } from "../../src/lib/project-contracts";
 import { randomToken } from "../../workers/identity/crypto";
@@ -16,27 +13,10 @@ import {
   readJsonObject,
 } from "../http";
 import { consumeIdentityAssertion } from "../identity-assertion";
-import {
-  handlePointsDisputes,
-  type PointsDisputeDependencies,
-} from "./disputes";
-import { handleX, type XConfiguration } from "./x";
+import type { PointsDependencies } from "./dependencies";
+import { handlePointsDisputes } from "./disputes";
+import { handleX } from "./x";
 
-export interface PointsDependencies {
-  tier?: DeploymentTier;
-  db: D1Database;
-  rateLimitSecret: string;
-  identity: { fetch(request: Request): Promise<Response> };
-  now?: () => Date;
-  /** Trusted deployment origins; never request-supplied. */
-  allowedOrigins?: readonly string[];
-  x?: XConfiguration;
-  xFetch?: (input: string, init: RequestInit) => Promise<Response>;
-  disputes?: Pick<
-    PointsDisputeDependencies,
-    "moderators" | "process" | "waitUntil"
-  >;
-}
 const SESSION_COOKIE = "__Host-slop_points";
 function json(status: number, body: unknown, cookie?: string) {
   return jsonResponse(status, body, {
@@ -76,6 +56,7 @@ type Member = {
   public: number;
   welcome: number;
   social_points?: number;
+  referral_code?: string | null;
 };
 /**
  * Welcome and X-connection points ended on 24 October 2026 (PRD section 11).
@@ -87,6 +68,9 @@ type Member = {
 const PARTICIPATION_POINTS_END = "2026-10-24T00:00:00.000Z";
 const WELCOME_SQL = `CASE WHEN m.joined_at < '${PARTICIPATION_POINTS_END}' THEN m.welcome ELSE 0 END`;
 const X_AWARD_SQL = `a.actor_id=m.actor_id AND a.awarded_at < '${PARTICIPATION_POINTS_END}'`;
+/** The member's referral link name in use (PRD section 11, "Referral program"). */
+const REFERRAL_CODE_SQL =
+  "(SELECT code FROM referral_codes c WHERE c.github_id=m.github_id AND c.retired_at IS NULL) referral_code";
 function publicMember(m: Member) {
   return {
     actor: { id: m.actor_id, login: m.login },
@@ -94,6 +78,7 @@ function publicMember(m: Member) {
     public: m.public === 1,
     welcome: m.joined_at < PARTICIPATION_POINTS_END ? m.welcome : 0,
     socialPoints: m.social_points ?? 0,
+    referralCode: m.referral_code ?? null,
   };
 }
 /** Dedicated points routes never construct the trace persistence adapter. */
@@ -267,7 +252,7 @@ export async function handlePointsApi(
         throw new Error("Points transaction failed");
       const member = await deps.db
         .prepare(
-          `SELECT m.*,COALESCE((SELECT points FROM points_x_awards a WHERE ${X_AWARD_SQL}),0) social_points FROM points_members m WHERE actor_id=?`,
+          `SELECT m.*,COALESCE((SELECT points FROM points_x_awards a WHERE ${X_AWARD_SQL}),0) social_points,${REFERRAL_CODE_SQL} FROM points_members m WHERE actor_id=?`,
         )
         .bind(actor)
         .first<Member>();
@@ -290,7 +275,7 @@ export async function handlePointsApi(
       const hash = await sha256Hex(token);
       const member = await deps.db
         .prepare(
-          `SELECT m.*,COALESCE((SELECT points FROM points_x_awards a WHERE ${X_AWARD_SQL}),0) social_points FROM points_members m JOIN points_sessions s ON s.actor_id=m.actor_id WHERE s.token_hash=? AND s.expires_at>?`,
+          `SELECT m.*,COALESCE((SELECT points FROM points_x_awards a WHERE ${X_AWARD_SQL}),0) social_points,${REFERRAL_CODE_SQL} FROM points_members m JOIN points_sessions s ON s.actor_id=m.actor_id WHERE s.token_hash=? AND s.expires_at>?`,
         )
         .bind(hash, now)
         .first<Member>();

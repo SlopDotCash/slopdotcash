@@ -15,6 +15,7 @@ import {
 } from "./evm-vault-actions";
 import { apiRequest } from "./project-api";
 import { sendSolanaWalletTransaction } from "./solana-vault-actions";
+import { assertUnsignedSolanaWire } from "./solana-wire";
 
 export type ReadyMonthlyRelease = Extract<
   MonthlyReleaseResult,
@@ -93,18 +94,11 @@ function solanaReleaseMessage(
     signatureHex,
   );
   const msg = message(deployment.owner, prepared.blockhash, instructions);
-  const wire = Uint8Array.from(atob(prepared.transaction), (c) =>
-    c.charCodeAt(0),
+  assertUnsignedSolanaWire(
+    prepared.transaction,
+    msg,
+    "The prepared transaction differs from the reviewed release.",
   );
-  if (
-    wire.length !== 65 + msg.length ||
-    wire[0] !== 1 ||
-    wire.slice(1, 65).some((b) => b !== 0) ||
-    msg.some((b, i) => b !== wire[i + 65])
-  )
-    throw new Error(
-      "The prepared transaction differs from the reviewed release.",
-    );
   return msg;
 }
 export async function sendMonthlyRelease(

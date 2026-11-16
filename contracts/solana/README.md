@@ -8,10 +8,12 @@ ordinary and bounty projects for the same digest (owner decision D13, 24
 October 2026). `initialize` is permissionless: the signing owner pays and owns
 the project. Classic SPL mints retain their existing behavior. Token-2022 mints
 must have disabled mint and freeze authorities and may contain only
-`MetadataPointer` and `TokenMetadata`; token accounts may contain only
-`ImmutableOwner`, or no extensions. Unknown extensions, transfer fees, transfer
-hooks and rebasing behavior remain unsupported (PRD section 6, owner decision
-26 October 2026). The program and TypeScript adapter both check this subset.
+`MetadataPointer` and `TokenMetadata`. Metadata must be self-hosted, both
+metadata authorities must be disabled, and the mint account cannot exceed 1,024
+bytes. Token accounts may contain only `ImmutableOwner`, or no extensions.
+Unknown extensions, transfer fees, transfer hooks and rebasing behavior remain
+unsupported (PRD section 6, owner decision 26 October 2026). The program and
+TypeScript adapter both check this subset.
 Every transfer uses the mint's own token program and decimals with
 `transfer_checked`, so the vault receives the exact amount sent.
 
@@ -287,15 +289,18 @@ source_digest]` marker.
    an admitted award's source by hand and strand its reserve. Anyone, including
    the owner, can clear the gate by committing the remaining awards. Time and
    owner opt-out never remove the gate or release funds. Later monthly admissions,
-   funded payments and withdrawals of free funds remain available. If part of a
-   month can never settle (an attester fault), the owner calls
-   `release_monthly_reserve(period, expected_unsettled, released)` after an
-   Ed25519 check of the project's identity authority signature over
-   `"slop-monthly-release-v1"`, the program, project, period, root, total,
-   unsettled and released gross, and network. The signature binds the exact
-   unsettled gross (`total - committed`). The released gross returns to free
-   balance and is added to `committed` and `released`; committed awards do not
-   change. See `docs/escrow-unsettleable-month-release.md`.
+   funded payments and withdrawals of free funds remain available. If the
+   complete retained allocation has the wrong authenticated total and no leaf
+   has settled, the owner calls
+   `release_monthly_reserve(period, expected_unsettled, released)` with
+   `released == expected_unsettled == total` after an Ed25519 check of the
+   project's identity authority signature over `"slop-monthly-release-v1"`, the
+   program, project, period, root, total, unsettled and released gross, and
+   network. Partial or partly settled allocations refuse aggregate release.
+   This prevents the same gross also being consumed by `release_monthly_award`.
+   The released gross returns to free balance and is added to `committed` and
+   `released`; committed awards do not change. See
+   `docs/escrow-unsettleable-month-release.md`.
 4. An award that can never commit is returned to free balance by anyone with
    `release_monthly_award(period, source_digest, actor_id, gross, index, count,
 proof)`, passing the source's `origin`, its `monthly-source` marker and the
@@ -338,7 +343,101 @@ entire transaction, including fees and accounting. Frozen destinations do not bl
 other awards. `paid`, reserve, principal paid and fee counters are on-chain. Paid
 records remain permanently allocated to prevent account recreation replay.
 
+## Month pledges
+
+Operator decision of 15 November 2026. Until a month is committed, its money is free
+balance the owner could withdraw. A month pledge locks it in the vault on chain. The owner
+calls `pledge_month(period, amount)` for a UTC period (`YYYYMM`): the current period or
+one of the next 11. One `MonthPledge` PDA per project and period
+(`["pledge", project, period u32 LE]`, 54 bytes) records the amount and whether it is
+open; `Project.pledged_open` is the sum of open pledges. Clients pledge several periods
+in one transaction, one instruction each; twelve fit in one legacy transaction.
+The owner pays the account's rent (about 0.0013 SOL) and gets it back with
+`close_month_pledge` once the pledge has closed.
+
+- A pledge must fit: free balance stays at or above `pledged_open` after it, otherwise
+  `InsufficientFreeBalance`. A pledge can be raised, never lowered (`PledgeTooLow`); an
+  equal amount changes nothing. A past period, one more than 11 months ahead, or a
+  period whose pledge already closed is refused with `PledgePeriodClosed`. A bounty
+  project cannot pledge (`WrongPurpose`). No `month` account is checked: a period's
+  window opens 72 hours after it ends, so the current or a later period cannot be
+  committed yet.
+- `withdraw`, `withdraw_native` and the owner's hand `commit` must leave free balance at
+  or above `pledged_open`, otherwise `PledgedFunds`. Deposits, payments, fee claims and
+  monthly award commits are unchanged.
+- `commit_monthly` takes an optional last account, `month_pledge`, the period's pledge
+  PDA. An open pledge is the owner's consent to that period: the month records even when
+  monthly commitments are off. With them off the limit is the pledge alone, whatever the
+  cap says; with them on it is the larger of the monthly cap and the pledge
+  (`MonthlyCapExceeded` above it). So `set_monthly_commitment(_, false)` or a lowered cap
+  after pledging stops only unpledged months, and turning monthly off never lets a month
+  take more than its pledge. A month never takes funds another period's open pledge holds (`PledgedFunds`).
+  On success the pledge closes and leaves `pledged_open`; any amount above the recorded
+  total is free again. `MonthPledged { project, period, amount }` and
+  `PledgeClosed { project, period, amount, reserved }` are emitted.
+- The program is built with Anchor's `allow-missing-optionals`, so a caller that predates
+  pledges may leave `month_pledge` off entirely (or pass the program ID). Such a commit
+  still counts every open pledge, the period's own included. Anyone can then close that
+  period's pledge at once with `expire_pledge`, which reports `reserved: true`.
+- `expire_pledge(period)` is permissionless. It closes an open pledge whose period was
+  never committed once the period's window has closed (00:00 UTC on the 4th of the
+  second month after it), so pledged funds return to the owner if the executor misses
+  the whole window. Before that, or on a closed pledge, it fails `PledgeNotLapsed`.
+- `close_month_pledge(period)` is the owner's. It deletes a pledge that has already
+  closed (committed or lapsed) and returns its rent to the owner; an open pledge fails
+  `PledgeOpen`. A closed pledge's period is always before the current one (its window
+  opened after the period ended), so `pledge_month` can never reopen it. A closed period
+  with no account reads amount 0 and closed, the same as a period never pledged.
+
+`adapter.ts` reads pledges with `readSolanaMonthPledges` (the open total and each
+requested period from one finalized `getMultipleAccounts`; `null` for a Project of the
+332-byte layout) and builds `pledge_month`, `expire_pledge` and `close_month_pledge`
+instructions. `month-pledge.ts` plans and simulates the owner's unsigned transactions
+(`prepareSolanaPledgeMonths`, `prepareSolanaExpirePledge`, `prepareSolanaClosePledge`,
+`solanaPledgeMonthsMessage`); it never signs or sends.
+
+Upgrading a live deployment, in this order:
+
+1. Release the site and executor that pass `month_pledge` to `commit_monthly` and read
+   both Project sizes (SlopDotCash/slopdotcash#2828) first, and confirm it is live. The
+   new program accepts a commit without the account, but such a commit counts the
+   period's own pledge against it, so the executor must name the pledge before any owner
+   can pledge.
+2. Upgrade the program.
+3. Right after the upgrade, run `migrate_project` on every live ordinary vault (Eliza,
+   Teeny's brain, Hyperliquid Source and pumpfun-source on 15 November 2026). The new
+   program cannot read a 332-byte Project, so every instruction on an unmigrated vault
+   fails (deposits, withdrawals, payments and `commit_monthly`) until it is migrated.
+   `config-plan.mjs migrate` plans one unsigned transaction per unmigrated project; any
+   payer signs it, and it only adds rent and a zero `pledged_open`. A migrated project
+   behaves exactly as before until its owner pledges.
+
+What stays: the program is upgradeable by its upgrade authority, which can replace these
+rules, so a pledge holds funds against the vault owner, not against that key. The owner
+can still lower contributors' amounts before the allocation is frozen; a pledge stops
+withdrawal, not cuts. A pledged month that is never committed lapses when its window
+closes.
+
 ## Local build and end-to-end tests
+
+Validator workflows require a local Docker or Podman engine and the reviewed
+Agave 2.1.21 image. From the repository root, prepare its exact digest:
+
+```sh
+validator_image="$(node --input-type=module -e 'import { SOLANA_TEST_IMAGE } from "./scripts/local-solana-validator.mjs"; console.log(SOLANA_TEST_IMAGE)')"
+docker pull --platform linux/amd64 "$validator_image"
+```
+
+For Podman, use `podman pull` and set `SLOP_SOLANA_CONTAINER_RUNTIME=podman`
+when running the workflow. Keep the connection local. The shared launcher
+checks the actual image/binary and publishes only its RPC and WebSocket ports
+on `127.0.0.1`; it does not fall back to a host validator or pull an image.
+On macOS, the selected temporary directory and declared fixture files must
+already be shared with the engine's VM. The launcher mounts those inputs read
+only and does not change VM sharing. Native Solana CLI and Anchor tools are
+still needed for program preparation and client commands. Per-instance
+receipts distinguish ready, stopped and unconfirmed cleanup; retain a failed
+receipt before retrying. See [the lifecycle model](../../formal/models/contracts/solana_container_lifecycle.qnt).
 
 Run `npm run build` here to build the actual SBF binary and its IDL.
 Run `npm run test:e2e` to load that binary into an isolated local validator and
@@ -515,19 +614,21 @@ the current upgrade authority after it checks the deployed program bytes and
 that no Config exists. `config-plan.mjs projects` lists every Project account
 and marks which ones the Config pins and which still need migration.
 `config-plan.mjs migrate` builds one unsigned `migrate_project` transaction per
-316-byte project for the input's `payer`. No mode reads keys or sends a
+316- or 332-byte project for the input's `payer`. No mode reads keys or sends a
 transaction.
 
 ### Project account layout
 
-The `Project` account is 332 bytes. The D13 revision removed `service_fees` and
+The `Project` account is 340 bytes. The D13 revision removed `service_fees` and
 appended `purpose`, `monthly_cap` and `monthly_enabled`, and the purpose is a
 project PDA seed. The red-team revision of 24 October 2026 appended
 `accrued_fees` and `monthly_outstanding` (u64 each). A 316-byte project from the
 build before it cannot be read until anyone calls the permissionless
 `migrate_project`, which grows it to 332 bytes, takes any added rent from the
 payer and starts the new fields at zero (that build sent fees out at once).
-The same revision appended `released`, `frozen_at` and `expired` to
+The month pledge revision of 15 November 2026 appended `pledged_open` (u64);
+`migrate_project` also grows a 332-byte project to 340 bytes.
+The 24 October revision appended `released`, `frozen_at` and `expired` to
 `MonthlyAllocation` (now 109 bytes).
 The `expired` field remains for layout compatibility; this build removes
 `expire_month`. New funded months never expire. Before an in-place upgrade,
@@ -553,6 +654,9 @@ reads keys or sends a transaction. Its output omits the RPC URL. The checked-in
 IDL is generated from the program; regenerate it after instruction layout changes.
 
 `bootstrap-linux.sh` installs the pinned Linux x86_64 GitHub Actions toolchain.
+It checks the Agave archive's recorded SHA-256 before extraction and accepts only
+HTTPS downloads and redirects. The digest pins the bytes observed from the
+upstream release; it does not prove an independent build or producer signature.
 It is not a mainnet deployment path. The separate Node SDK package is used only
 for local integration and unsigned operator tools. Its upstream dependency audit
 has unresolved advisories; lifecycle scripts are disabled and the bigint code

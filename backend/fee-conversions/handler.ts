@@ -10,7 +10,7 @@ import {
 } from "../../workers/fee-converter/config";
 import { apiErrorResponse, fail, json, requireActor } from "../http";
 
-export interface FeeConversionsDependencies {
+interface FeeConversionsDependencies {
   db: {
     prepare(query: string): {
       bind(...values: (string | number)[]): {
@@ -116,6 +116,65 @@ interface FeeConversionRoute {
   status: "usdc" | "not_converted";
 }
 
+interface ClaimRow {
+  id: string;
+  network: string;
+  mode: string;
+  fee_wallet: string;
+  token: string;
+  amount_in: string;
+  amount_out: string | null;
+  tx_id: string | null;
+  landed_tx_id: string | null;
+  state: string;
+  reason: string | null;
+  created_at: string;
+  submitted_at: string | null;
+  finalized_at: string | null;
+  project_id: string | null;
+  vault: string | null;
+}
+
+interface SettledClaimRow extends ClaimRow {
+  amount_out: string;
+}
+
+/** Finalized receipt amounts can differ from the earlier claim estimate. */
+function claimTotals(rows: SettledClaimRow[]) {
+  const totals = new Map<
+    string,
+    {
+      network: string;
+      feeWallet: string;
+      token: string;
+      claims: number;
+      amount: bigint;
+    }
+  >();
+  for (const row of rows) {
+    const key = JSON.stringify([row.network, row.fee_wallet, row.token]);
+    const total = totals.get(key) ?? {
+      network: row.network,
+      feeWallet: row.fee_wallet,
+      token: row.token,
+      claims: 0,
+      amount: 0n,
+    };
+    total.claims += 1;
+    total.amount += BigInt(row.amount_out);
+    totals.set(key, total);
+  }
+  return [...totals.entries()]
+    .sort(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0))
+    .map(([, total]) => ({
+      network: total.network,
+      feeWallet: total.feeWallet,
+      token: total.token,
+      claims: total.claims,
+      amountClaimed: total.amount.toString(),
+    }));
+}
+
 /** The conversion target of every network, including explicit unconverted retention. */
 function conversionRoutes(): FeeConversionRoute[] {
   return NETWORKS.map((network) => {
@@ -127,6 +186,116 @@ function conversionRoutes(): FeeConversionRoute[] {
     };
   });
 }
+
+interface BuybackRow {
+  id: string;
+  kind: string;
+  network: string;
+  mode: string;
+  token: string;
+  target_token: string;
+  amount_in: string;
+  amount_out: string | null;
+  min_amount_out: string | null;
+  tx_id: string | null;
+  landed_tx_id: string | null;
+  state: string;
+  reason: string | null;
+  created_at: string;
+  finalized_at: string | null;
+  order_id: string | null;
+  outcome: string | null;
+}
+
+/**
+ * The SLOP buyback ledger (PRD section 6): the latest bridge orders, purchases
+ * and burns with each deposit's proven outcome, and exact live totals per
+ * network and leg. `inTransit` is a finalized deposit with no proven outcome.
+ */
+function buybackReport(rows: BuybackRow[], settled: BuybackRow[]) {
+  const totals = new Map<
+    string,
+    {
+      network: string;
+      kind: string;
+      token: string;
+      n: number;
+      in: bigint;
+      out: bigint;
+      inTransit: bigint;
+      refunded: bigint;
+    }
+  >();
+  for (const row of settled) {
+    const key = `${row.network}:${row.kind}:${row.token}`;
+    const total = totals.get(key) ?? {
+      network: row.network,
+      kind: row.kind,
+      token: row.token,
+      n: 0,
+      in: 0n,
+      out: 0n,
+      inTransit: 0n,
+      refunded: 0n,
+    };
+    total.n += 1;
+    total.in += BigInt(row.amount_in);
+    total.out += BigInt(row.amount_out ?? "0");
+    if (row.kind === "bridge" && row.outcome === null)
+      total.inTransit += BigInt(row.amount_in);
+    if (row.outcome === "refunded") total.refunded += BigInt(row.amount_in);
+    totals.set(key, total);
+  }
+  return {
+    recent: rows.map((row) => ({
+      id: row.id,
+      kind: row.kind,
+      network: row.network,
+      mode: row.mode,
+      token: row.token,
+      targetToken: row.target_token,
+      amountIn: row.amount_in,
+      amountOut: row.amount_out,
+      minAmountOut: row.min_amount_out,
+      txId: row.tx_id,
+      landedTxId: row.landed_tx_id,
+      state: row.state,
+      reason: row.reason,
+      createdAt: row.created_at,
+      finalizedAt: row.finalized_at,
+      orderId: row.order_id,
+      // `arrived`, `refunded`, or null while a deposit is in transit.
+      outcome: row.outcome,
+    })),
+    totals: [...totals.values()]
+      .sort((a, b) =>
+        a.network + a.kind + a.token < b.network + b.kind + b.token ? -1 : 1,
+      )
+      .map((total) => ({
+        network: total.network,
+        kind: total.kind,
+        token: total.token,
+        sends: total.n,
+        amountIn: total.in.toString(),
+        amountOut: total.out.toString(),
+        inTransit: total.inTransit.toString(),
+        refunded: total.refunded.toString(),
+      })),
+  };
+}
+
+const BUYBACK_SELECT = `SELECT c.id, c.kind, c.network, c.mode, c.token, c.target_token,
+         c.amount_in, c.amount_out, c.min_amount_out, c.tx_id, c.landed_tx_id, c.state,
+         c.reason, c.created_at, c.finalized_at,
+         json_extract(c.quote, '$.orderId') AS order_id, o.outcome
+    FROM fee_conversions c LEFT JOIN fee_bridge_outcomes o ON o.bridge_id = c.id
+   WHERE c.kind IN ('bridge', 'buyback', 'burn')`;
+
+const CLAIM_SELECT = `SELECT id, network, mode, fee_wallet, token, amount_in, amount_out,
+         tx_id, landed_tx_id, state, reason, created_at, submitted_at, finalized_at,
+         json_extract(quote, '$.projectId') AS project_id,
+         json_extract(quote, '$.vault') AS vault
+    FROM fee_conversions WHERE kind = 'claim'`;
 
 /** Returns null when the request is not for this route. */
 export async function handleFeeConversionsApi(
@@ -140,7 +309,16 @@ export async function handleFeeConversionsApi(
     const actor = await requireActor(request, deps);
     if (!deps.adminGithubIds.has(actor.githubId))
       fail(403, "forbidden", "Admin access is required");
-    const [recent, settled, states] = await Promise.all([
+    const [
+      recent,
+      settled,
+      states,
+      buybackRecent,
+      buybackSettled,
+      claims,
+      settledClaims,
+      claimStates,
+    ] = await Promise.all([
       deps.db
         .prepare(
           `SELECT id, network, mode, token, target_token, amount_in, route, quote_amount_out,
@@ -164,6 +342,37 @@ export async function handleFeeConversionsApi(
           `SELECT network, mode, state, COUNT(*) AS count FROM fee_conversions
             WHERE created_at >= ? AND kind = 'conversion'
             GROUP BY network, mode, state ORDER BY network, mode, state`,
+        )
+        .bind(new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString())
+        .all<{
+          network: string;
+          mode: string;
+          state: string;
+          count: number;
+        }>(),
+      deps.db
+        .prepare(
+          `${BUYBACK_SELECT} ORDER BY c.created_at DESC, c.rowid DESC LIMIT ?`,
+        )
+        .bind(RECENT_LIMIT)
+        .all<BuybackRow>(),
+      deps.db
+        .prepare(`${BUYBACK_SELECT} AND c.mode = ? AND c.state = 'finalized'`)
+        .bind("live")
+        .all<BuybackRow>(),
+      deps.db
+        .prepare(`${CLAIM_SELECT} ORDER BY created_at DESC, rowid DESC LIMIT ?`)
+        .bind(RECENT_LIMIT)
+        .all<ClaimRow>(),
+      deps.db
+        .prepare(`${CLAIM_SELECT} AND mode = ? AND state = 'finalized'`)
+        .bind("live")
+        .all<SettledClaimRow>(),
+      deps.db
+        .prepare(
+          `SELECT network, mode, state, COUNT(*) AS count FROM fee_conversions
+             WHERE kind = 'claim' AND created_at >= ?
+             GROUP BY network, mode, state ORDER BY network, mode, state`,
         )
         .bind(new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString())
         .all<{ network: string; mode: string; state: string; count: number }>(),
@@ -198,6 +407,29 @@ export async function handleFeeConversionsApi(
       routes: conversionRoutes(),
       totals: totalsPerToken(settled.results),
       last24Hours: states.results,
+      buyback: buybackReport(buybackRecent.results, buybackSettled.results),
+      claims: {
+        recent: claims.results.map((row) => ({
+          id: row.id,
+          network: row.network,
+          mode: row.mode,
+          feeWallet: row.fee_wallet,
+          token: row.token,
+          estimatedAmount: row.amount_in,
+          amountClaimed: row.amount_out,
+          txId: row.tx_id,
+          landedTxId: row.landed_tx_id,
+          state: row.state,
+          reason: row.reason,
+          createdAt: row.created_at,
+          submittedAt: row.submitted_at,
+          finalizedAt: row.finalized_at,
+          projectId: row.project_id,
+          vault: row.vault,
+        })),
+        totals: claimTotals(settledClaims.results),
+        last24Hours: claimStates.results,
+      },
     });
   } catch (caught) {
     return apiErrorResponse(caught, { label: "fee conversions API failure" });

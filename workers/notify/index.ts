@@ -7,7 +7,7 @@ import {
   type SlopbotBinding,
   slopbotRepositoryAccess,
 } from "../../backend/projects/repository-access";
-import type { SecurityD1Database } from "../../backend/security/handler";
+import type { SecurityD1Database } from "../../backend/security/case-store";
 import { readBoundedJson } from "../../src/lib/browser-json";
 import { deploymentTier } from "../../src/lib/deployment";
 import { githubIdSet } from "../../src/lib/github-ids";

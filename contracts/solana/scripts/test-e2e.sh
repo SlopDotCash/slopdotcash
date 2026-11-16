@@ -12,29 +12,70 @@ dynamic_ports="$((rpc_port + 2))-$((rpc_port + 31))"
 export ANCHOR_PROVIDER_URL="http://127.0.0.1:$rpc_port"
 export ANCHOR_WALLET="$PWD/.local/payer.json"
 validator_pid=""
-trap 'if [[ -n "$validator_pid" ]]; then kill "$validator_pid" 2>/dev/null || true; fi' EXIT
+validator_receipt=""
+receipt_state() {
+  node -e 'try { process.stdout.write(JSON.parse(require("node:fs").readFileSync(process.argv[1], "utf8")).state ?? ""); } catch {}' "$validator_receipt"
+}
+stop_validator() {
+  if [[ -z "$validator_pid" ]]; then return 0; fi
+  local status=0
+  kill -TERM "$validator_pid" 2>/dev/null || true
+  wait "$validator_pid" 2>/dev/null || status=$?
+  validator_pid=""
+  if [[ "$(receipt_state)" != "stopped" ]]; then
+    printf '%s\n' "The owned validator did not confirm cleanup: $validator_receipt" >&2
+    return 1
+  fi
+  if [[ "$status" != 0 && "$status" != 143 ]]; then return "$status"; fi
+}
+cleanup() {
+  local status=$?
+  trap - EXIT
+  if ! stop_validator; then
+    printf '%s\n' 'Validator cleanup failed.' >&2
+    if [[ "$status" == 0 ]]; then status=1; fi
+  fi
+  exit "$status"
+}
+trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+trap 'exit 129' HUP
 # The program loads as upgradeable with the local payer as upgrade authority, so
 # ProgramData exists and the payer can sign initialize_config, as on mainnet with the owner-controlled upgrade authority retained.
 start_validator() {
   local program_arguments
   program_arguments=$(node integration/program-genesis.mjs)
   read -ra program_accounts <<<"$program_arguments"
-  solana-test-validator --reset --quiet --ledger .local/ledger --rpc-port "$rpc_port" --faucet-port "$faucet_port" --dynamic-port-range "$dynamic_ports" "${program_accounts[@]}" "$@" >.local/validator.log 2>&1 &
+  local arguments=("${program_accounts[@]}" "$@")
+  local mounts=()
+  local index path
+  for ((index=0; index<${#arguments[@]}; index++)); do
+    if [[ "${arguments[index]}" == "--account" ]]; then
+      path="${arguments[index+2]}"
+      if [[ "$path" != /* ]]; then path="$PWD/$path"; fi
+      arguments[index+2]="$path"
+      mounts+=(--readonly-mount "$path")
+      index=$((index + 2))
+    fi
+  done
+  # A new receipt per stage cannot reuse the first validator's stopped state.
+  validator_receipt=$(mktemp "$PWD/.local/validator-receipt.XXXXXX")
+  SLOP_SOLANA_CONTAINER_RECEIPT="$validator_receipt" node ../../scripts/local-solana-validator.mjs "${mounts[@]}" -- --reset --quiet --ledger "$PWD/.local/ledger" --rpc-port "$rpc_port" --faucet-port "$faucet_port" --dynamic-port-range "$dynamic_ports" "${arguments[@]}" >.local/validator.log 2>&1 &
   validator_pid=$!
-  for attempt in $(seq 1 40); do
+  for attempt in $(seq 1 120); do
     if ! kill -0 "$validator_pid" 2>/dev/null; then
       cat .local/validator.log >&2
-      exit 1
+      return 1
     fi
-    if solana --url "$ANCHOR_PROVIDER_URL" cluster-version >/dev/null 2>&1; then break; fi
+    if [[ "$(receipt_state)" == "ready" ]]; then break; fi
     sleep 1
   done
-  solana --url "$ANCHOR_PROVIDER_URL" airdrop 100 --keypair "$ANCHOR_WALLET" >/dev/null
-}
-stop_validator() {
-  kill "$validator_pid"
-  wait "$validator_pid" 2>/dev/null || true
-  validator_pid=""
+  if [[ "$(receipt_state)" != "ready" ]]; then
+    cat .local/validator.log >&2
+    return 1
+  fi
+  node scripts/airdrop-local.mjs
 }
 # CI qualifies the exact retained production artifact. Local runs without one
 # keep building their program as before. IDL extraction does not replace it.
@@ -50,13 +91,15 @@ start_validator
 bash scripts/run-test-stage.sh production-delay node --test --test-force-exit --test-isolation=none integration/production-delay.e2e.mjs
 stop_validator
 # Reuse the same production build for the funded lifecycle suite. The validator also
-# preloads a Project of the earlier 316-byte layout for the migrate_project check, and
+# preloads Projects of the earlier 316- and 332-byte layouts for the migrate_project checks,
+# month pledges a live validator cannot create (the recordable month and a lapsed one), and
 # states no live validator reaches: a funded month past its admission window, an earlier month
 # that already committed sources, and a vault holding less than its counters owe.
 read -ra legacy_accounts <<<"$(node integration/legacy-project.mjs)"
 read -ra monthly_accounts <<<"$(node integration/monthly-preload.mjs)"
 read -ra token_accounts <<<"$(node integration/token-2022-preload.mjs)"
-start_validator "${legacy_accounts[@]}" "${monthly_accounts[@]}" "${token_accounts[@]}"
+read -ra pledge_accounts <<<"$(node integration/pledge-preload.mjs)"
+start_validator "${legacy_accounts[@]}" "${monthly_accounts[@]}" "${token_accounts[@]}" "${pledge_accounts[@]}"
 bun build adapter.ts --target=node --outfile=.local/adapter.mjs
 bun build monthly-reserve.ts --target=node --outfile=.local/monthly-reserve.mjs
 bun build ../../workers/payment-executor/monthly-release.ts --target=node --outfile=.local/monthly-release-service.mjs
@@ -74,4 +117,4 @@ bun build ../../backend/payments/dispatch.ts --target=node --outfile=.local/disp
 bash scripts/run-test-stage.sh lifecycle node --test --test-force-exit \
   --test-reporter=tap --test-reporter=spec \
   --test-reporter-destination=stdout --test-reporter-destination=stderr \
-  --test-isolation=none --test-concurrency=1 integration/escrow.e2e.mjs integration/executor.e2e.mjs integration/owner-plan.e2e.mjs integration/owner-instructions.e2e.mjs integration/token-2022.e2e.mjs integration/native.e2e.mjs
+  --test-isolation=none --test-concurrency=1 integration/escrow.e2e.mjs integration/executor.e2e.mjs integration/owner-plan.e2e.mjs integration/owner-instructions.e2e.mjs integration/token-2022.e2e.mjs integration/native.e2e.mjs integration/pledge.e2e.mjs

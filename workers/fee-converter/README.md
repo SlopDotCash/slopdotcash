@@ -206,6 +206,15 @@ networks are still attempted. After those attempts, the scheduled promise
 rejects so the cron failure remains visible; it does not publish a successful
 `fee_converter_run` event with missing networks.
 
+The main-only `fee-worker-bindings.yml` diagnostic also reads the active cron,
+three fixed fee-journal queries, and a 90-second tail of that exact fee Worker
+version. Its artifact retains allowlisted event names, error categories and
+aggregate native-gas amounts. Raw messages and RPC URLs are discarded in memory.
+The active version and source tag must remain unchanged throughout inspection.
+A checkout/source mismatch is reported explicitly. The diagnostic creates and
+removes only its temporary tail subscriber, and changes no Worker settings or
+fee-journal records. A quiet tail records no observed events.
+
 ## Routes per network
 
 | Network                | Target                    | Route                    | Why                                                                                                                                                                                                                                                              |
@@ -264,6 +273,15 @@ verify those routes. Any of them can replace KyberSwap behind
 
 ## States
 
+The authenticated admin `GET /api/v1/admin/fee-conversions` includes a `claims`
+report with the latest 100 claim attempts, all finalized live claim totals by
+network, fee wallet and asset, and state counts for the last 24 hours. The
+report exposes the recorded project, vault, transaction and finalized receipt
+amount. The earlier estimate remains separate because fees can accrue before
+the claim lands. Signed transaction bytes and complete stored quotes stay in
+D1. The existing conversion and buyback reports keep their own records and
+totals.
+
 | State       | Meaning                                                                                                                                                                                           |
 | ----------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `quoted`    | Dry run: a quote that passed every check. Live: a quote not yet signed; closed as `failed` after one hour if the run ended.                                                                       |
@@ -297,13 +315,16 @@ at most one `submitted` or `unknown` row per network and token. Reconciliation
 decides each unresolved row:
 
 - **EVM.** A finalized receipt with verified token movement settles the row.
-  A swap can fail when its nonce was consumed or its router deadline passed.
-  A claim with missing hash lookups stays pending even when its nonce was
-  consumed: the missing claim could be the transaction that consumed it.
+  A swap can fail after its router deadline when its nonce is still unused.
+  A send with missing hash lookups stays pending when its nonce was consumed:
+  that send could itself be the transaction that consumed the nonce.
   Only the node's "not found" answer counts as no receipt or transaction.
   A failed lookup logs `fee_conversion_reconcile_error` and leaves the row
   open. A valid unsent claim uses the recorded bytes after a fresh deployment
   check.
+  A retained send for another configured fee wallet stays open and blocks a
+  new send for that token. Recover it under its original wallet configuration;
+  changing the configuration does not change its recorded recipient or nonce.
 - **Solana.** A finalized signature with a verified receipt settles the row.
   A swap with no status fails after its recorded `lastValidBlockHeight`.
   A claim with no status remains pending after expiry, because expiry does not
@@ -668,13 +689,269 @@ the Worker no sweep power.
    dashboard. Unresolved sends are reconciled again when the Worker runs in
    any mode other than `off`.
 
+## SLOP buyback
+
+Owner decision of 10 November 2026 (PRD section 6, "SLOP buyback and burn";
+[design and review](../../docs/slop-buyback.md)). Half of all fee income buys
+SLOP (`0xfeb4…67ae` on Robinhood Chain); half of the SLOP acquired is sent to
+the burn address and the rest stays in the Robinhood Chain fee wallet. The
+buyback is `live` in the production configuration from
+`2026-11-12T00:00:00.000Z` (operator decision of 12 November 2026) and `off`
+on staging. Off reads no buyback value and leaves every network exactly as
+described above.
+
+The buyback runs inside each network's existing lease, after that network's
+reconciliation, claims and conversions, and only on a recovery scan. It uses
+the same journal, nonce floor, pending-token guard, native-gas budget and
+same-nonce replacement path. Its sends have three kinds (migration `0121`):
+
+| Kind      | Network                | Send                                                                                                                       |
+| --------- | ---------------------- | -------------------------------------------------------------------------------------------------------------------------- |
+| `bridge`  | Base, Ethereum, Solana | One deBridge DLN order: USDC in, Paxos USDG out to the Robinhood Chain fee wallet. On EVM, its exact approval comes first. |
+| `buyback` | Robinhood Chain        | The KyberSwap swap of one input asset into SLOP, output to the fee wallet. Its exact approval comes first.                 |
+| `burn`    | Robinhood Chain        | `transfer(0x…dEaD, amount)` on the SLOP token.                                                                             |
+
+### What one recovery scan adds
+
+Source network (Base, Ethereum, Solana), after its conversions:
+
+1. For each finalized deposit without an outcome, read the refund status. A
+   proven refund is recorded once in `fee_bridge_outcomes` and releases the
+   deposit's share.
+2. Compute the entitlement: the floor of `BUYBACK_SHARE_BPS` of cumulative
+   verified USDC fee income since `BUYBACK_START_AT`, less every bridge amount
+   already committed. Income is finalized conversions into USDC, finalized USDC
+   fee claims, and completed direct-award fees paid in USDC to this wallet.
+   Committed means signed and not proven failed or refunded.
+3. Bound the amount by the wallet's USDC balance and the bridge value caps.
+   Below `BUYBACK_MIN_BRIDGE_MICRO` the share waits (`pending`).
+4. Ask the DLN API for one order and check it (below). Refuse it when its
+   native cost is above `BUYBACK_MAX_BRIDGE_NATIVE_FEE` or its total cost is
+   above `BUYBACK_MAX_BRIDGE_COST_BPS` of the amount (`skipped`).
+5. `dry_run`: record the decision as `quoted`. `live`: sign, journal, then
+   broadcast the exact approval, or the order once the allowance is final.
+
+Robinhood Chain:
+
+1. Reconcile open sends as on every network. With the buyback active, claim
+   accrued vault fees (the existing claim path, valued in USDG). The claim
+   signs only in the buyback's own mode.
+2. For each finalized deposit without an outcome, on any network, read
+   `DlnDestination.takeOrders(orderId)` at the finalized block. `Fulfilled` or
+   `SentUnlock` records the arrival once and credits exactly the order's take
+   amount. `SentCancel` logs `fee_bridge_cancelling`. An order still open after
+   `BUYBACK_UNFILLED_ALERT_SECONDS` logs `fee_bridge_unfilled` on each scan.
+3. For USDG, each project asset and each allowlisted asset: the entitlement
+   is every proven arrival of that asset in full, plus the buyback share of
+   fee income received in it, less every purchase already committed. Quote the
+   swap into SLOP, scale it to the value caps, and apply the minimum value,
+   gas multiple, price-impact and slippage limits. The rest of a Robinhood fee
+   stays unconverted.
+4. Burn: `BUYBACK_BURN_BPS` of all SLOP acquired (finalized purchases, plus
+   the buyback share of fees received in SLOP), rounded down, less every burn
+   already committed, bounded by the wallet's SLOP balance. A paused token or
+   a failed transfer simulation waits (`pending`).
+
+### Checks before a bridge order is signed
+
+The DLN API only proposes an order. Nothing it returns is signed unless:
+
+- **EVM.** The target is the pinned `DlnSource` (`0xeF4f…EB66`). The calldata
+  decodes as `createSaltedOrder` with the exact USDC and amount, USDG and
+  chain 4663 as the take side, the Robinhood fee wallet as receiver and order
+  authority, the source fee wallet as patch authority and cancellation
+  beneficiary, an empty or pinned reserved taker, and no external call,
+  affiliate fee, referral or permit. The calldata re-encodes to the same
+  bytes. The value equals the contract's own `globalFixedNativeFee()`. An
+  `eth_call` of those bytes returns the proposed order id. The approval is for
+  the exact order amount to that contract.
+- **Solana.** The message is only Compute Budget instructions (bounded
+  priority fee) and one `create_order_with_nonce` call to the pinned DLN
+  program, with the fee wallet as the only signer and no lookup table. Its
+  arguments decode to the same intent, with nothing after them. Its twelve
+  accounts equal the addresses the Worker derives itself, including the order
+  state and escrow that are program addresses of the order id. A simulation
+  must debit exactly the order amount of USDC. The Worker stamps its own
+  recent blockhash, so the expiry height is recorded.
+
+A finalized deposit is accepted only when the receipt shows the journaled
+bytes created the recorded order and debited exactly the recorded amount.
+
+### Purchase and burn checks
+
+A purchase uses the swap path described under [Checks before an EVM swap is
+signed](#checks-before-an-evm-swap-is-signed), with SLOP as the output token:
+pinned router, exact input, fee wallet as receiver, no fee receivers, signed
+minimum at or above the recorded minimum, and a simulation at or above the
+signed minimum. A burn is the exact `transfer` calldata to the burn address;
+its receipt must show exactly that amount leaving the wallet for that address.
+
+### Buyback configuration
+
+Every value is required once `BUYBACK_MODE` is not `off`; the code has no
+fallback. The owner confirmed the checked-in limits on 10 November 2026 (PRD section 6);
+`BUYBACK_START_AT` was set at activation on 12 November 2026.
+
+| Var                              | Checked-in value               | Meaning                                                                                          |
+| -------------------------------- | ------------------------------ | ------------------------------------------------------------------------------------------------ |
+| `BUYBACK_MODE`                   | `live` (staging `off`)         | `off`, `dry_run` or `live`. Live needs `FEE_CONVERTER_MODE = "live"` and Robinhood enabled.      |
+| `BUYBACK_START_AT`               | `2026-11-12T00:00:00.000Z`     | UTC instant from which fee income counts.                                                        |
+| `BUYBACK_SHARE_BPS`              | `5000`                         | Share of fee income that funds the buyback.                                                      |
+| `BUYBACK_BURN_BPS`               | `5000`                         | Share of acquired SLOP that is burned.                                                           |
+| `BUYBACK_MIN_BRIDGE_MICRO`       | `500000000`                    | Minimum order (500 USDC).                                                                        |
+| `BUYBACK_MAX_BRIDGE_COST_BPS`    | `150`                          | Spread, native cost and network fee as a share of the order.                                     |
+| `BUYBACK_MAX_BRIDGE_NATIVE_FEE`  | Base, Ethereum, Solana set     | EVM: the fixed protocol fee in wei. Solana: the order's whole SOL debit in lamports.             |
+| `BUYBACK_SOLANA_BRIDGE_NATIVE`   | `0.05` SOL / `0.1` SOL per day | Native limits of Solana orders, separate from `FEE_CONVERTER_NATIVE_BUDGETS` (purpose `bridge`). |
+| `BUYBACK_MIN_BUY_MICRO`          | `25000000`                     | Minimum purchase value.                                                                          |
+| `BUYBACK_MIN_BURN_MICRO`         | `5000000`                      | Minimum burn value.                                                                              |
+| `BUYBACK_MAX_SLIPPAGE_BPS`       | `100`                          | Purchase minimum within 1% of its quote.                                                         |
+| `BUYBACK_MAX_PRICE_IMPACT_BPS`   | `300`                          | Purchase price-impact cap. The SLOP pools charge about 1%.                                       |
+| `BUYBACK_RUN_CAP_MICRO`          | `1000000000`                   | Value per run, per network and leg.                                                              |
+| `BUYBACK_DAILY_CAP_MICRO`        | `5000000000`                   | Value per rolling 24 hours, per network and leg.                                                 |
+| `BUYBACK_UNFILLED_ALERT_SECONDS` | `3600`                         | Age at which an unfilled order is reported.                                                      |
+
+EVM bridge orders use the existing native-gas budget for their gas. Their
+fixed protocol fee is transaction value, bounded by
+`BUYBACK_MAX_BRIDGE_NATIVE_FEE` and counted in the cost limit. A Solana order
+pays order-account rent and the network fee from the wallet's SOL; the local
+validator run measured 0.0202 SOL for a first order. Those reservations carry
+purpose `bridge` and their own daily total, so a bridge neither borrows from
+nor exhausts the fee-conversion budget.
+
+### Turn on the buyback
+
+Status, 12 November 2026: the production configuration selects `live` from
+`2026-11-12T00:00:00.000Z` by operator decision at the confirmed limits.
+This mode does not establish a deployed or qualified live trade.
+Steps 4 and 5 were not run, because no fee income existed to quote or spend.
+On 15 November 2026 UTC, the normal production tick verified a finalized-state
+read on the installed Robinhood Chain endpoint. The deployed settings and
+fee-wallet balances covering the native ceilings for one cycle were also
+verified. The first real order must still be verified as step 5 describes.
+Publish a burn only after its finalized receipt. Follow the steps below for
+any later activation, including staging.
+
+When eligible fee income is absent, keep the first-order qualification
+pending. Read-only prospective quotes can check route availability and limits,
+but do not seed the production fee journal or spend unrelated deposits to
+make a qualification pass. Reconcile the deployed configuration, production
+journal and finalized wallet state before choosing the first order. See the
+[qualification evidence](../../docs/slop-buyback.md#production-readiness-check-15-november-2026-utc)
+for the current evidence and its limits.
+
+1. Confirm every limit above and the activation instant with the owner, and
+   record the confirmation in the activating pull request.
+2. Set `RPC_URL_ROBINHOOD` to an endpoint that serves contract state at the
+   finalized block. The public RPC answers
+   `historical state … is not available` for such reads; fill status, claim
+   and approval receipts then stay unverified and nothing is credited.
+   For a deployed live buyback, inspect the private `fee_converter_run`
+   summary from a normal recovery tick on the expected Worker version.
+   Its Robinhood `buyback.finalizedRpc` observation verifies the configured
+   endpoint's chain ID and a DLN Destination contract read at the reported
+   finalized block. Confirm the block number and hash with a separate
+   trusted Robinhood Chain RPC at or below its finalized head. An unavailable
+   observation leaves readiness unproven and has no effect on processing.
+3. Install `FEE_WALLET_KEY_ROBINHOOD` and fund gas on every enabled network.
+   On Base and Ethereum each order also pays the 0.001 ETH fixed fee.
+4. Land `BUYBACK_MODE = "dry_run"` with `BUYBACK_START_AT`. Watch the admin
+   report: `quoted` bridge, purchase and burn decisions, their amounts and
+   skip reasons.
+5. Land `BUYBACK_MODE = "live"` with a low `BUYBACK_RUN_CAP_MICRO` for the
+   first order. Verify on the explorers: the order's receiver and take amount,
+   the fill, the USDG credit, the SLOP credit, and the burn transfer.
+6. Raise the caps to the confirmed values by a reviewed change.
+7. To stop: land `BUYBACK_MODE = "off"`. Open sends are still reconciled while
+   the converter runs. A deposit in transit keeps its share committed.
+
+### Restore the deployed Robinhood RPC
+
+If a normal recovery tick reports `buyback.finalizedRpc.status = "unavailable"`,
+the operator can replace the endpoint under the same live approval and limits.
+First publish the reviewed main source through the normal workflow. Confirm the
+candidate serves finalized and historical contract state on chain 4663,
+supports current-state fee estimation and receipt recovery, and provides
+`eth_sendRawTransaction` for production. The endpoint checks are read-only.
+
+1. In the `slop-production` GitHub environment, set
+   `SLOP_ROBINHOOD_RPC_REPLACEMENT` to the reviewed HTTPS URL. Keep it private.
+2. Dispatch the `slop.cash` workflow on `main` with
+   `rotate_robinhood_rpc_from` set to the exact currently active Worker
+   version UUID. The run requires that same version to be the latest upload.
+   The run checks the bound D1 journal for unresolved live sends, in-transit
+   bridge deposits and Robinhood signed gas reservations. It compares the
+   candidate's finalized contract probe to an independent chain block, then
+   uploads and verifies the same Worker as the immediate successor, with just
+   that secret replaced. Pages,
+   other services and the cron are outside this dispatch. The source, active
+   version and journal checks are point-in-time. Leave manual fee-converter
+   uploads, settings changes and deployments idle during this dispatch. A
+   scheduled run can still create work. Cloudflare reports secret binding
+   names and types. Preservation of their values relies on inheritance from
+   the checked latest upload.
+3. Retain the old and new UUIDs from the run. Observe an ordinary recovery tick
+   on the new version and compare its finalized block with an independent
+   endpoint. The next scheduled run can resume the approved live policy.
+   A successful probe leaves the first funded cycle pending.
+4. If promotion is ambiguous, read the active version before acting. For a
+   reviewed rollback, select the recorded old immutable version at 100%.
+   That version retains the former RPC binding. D1 contents are shared and
+   must be reconciled independently. Normal releases refuse an inactive latest
+   upload with a different rotation marker so they cannot silently inherit a
+   failed or rolled-back replacement. Resolve that upload explicitly before
+   resuming publication.
+
+### An order nobody fills
+
+A deposited order stays in transit until it is filled or refunded. The Worker
+never cancels one. If `fee_bridge_unfilled` persists, the owner can cancel
+the order from the Robinhood Chain fee wallet through deBridge (the order
+authority is that wallet). The refund can only go to the source fee wallet,
+which the order pins as its cancellation beneficiary. The next source scan
+records the proven refund and bridges that share again.
+
+### Buyback tests
+
+```bash
+bun test ./workers/fee-converter/buyback.test.ts
+```
+
+Policy, journal constraints, configuration and both order validators, the
+latter against real captured deBridge proposals.
+
+```bash
+bun run test:fee-converter:buyback
+```
+
+```bash
+bun run test:fee-converter:buyback:solana
+```
+
+The first runs the whole cycle on Anvil forks of Base, Ethereum and Robinhood
+Chain against the deployed USDC, DlnSource, DlnDestination, KyberSwap router,
+Uniswap v4 SLOP pools and SLOP token: exact approvals, orders, a fill by the
+impersonated deBridge taker, purchases, and burns of exactly half. It then
+cancels a second Base order from the fee wallet through the real
+`DlnDestination`, has the real `DlnSource` pay the refund (a stub at
+deBridge's CallProxy address stands in for the cross-chain message; this part
+needs `forge`), and checks that the share is released once and bridged again.
+
+The second
+signs a Solana order against the cloned DLN program on the local validator.
+Both use throwaway keys, seed fee income, call the live deBridge and KyberSwap
+APIs read-only, and use harness gas budgets and slippage as their headers
+explain. Neither proves a live fill or qualifies a deployment.
+
 ## Admin view
 
 `GET /api/v1/admin/fee-conversions` (admin GitHub session) returns the 100 most
 recent records, exact per-token totals of finalized live conversions as
 decimal base-unit strings, state counts for the last 24 hours, and each
-network's target with status `usdc` or `not_converted`. It never
-returns signed transaction bytes. There is no public page.
+network's target with status `usdc` or `not_converted`. Its `buyback`
+object lists the latest bridge orders, purchases and burns with each deposit's
+outcome (`arrived`, `refunded`, or null while in transit) and exact live
+totals per network and leg. It never returns signed transaction bytes. There
+is no public page.
 
 ## Tests
 
@@ -739,7 +1016,9 @@ approval signatures, persisted bytes, database reopen, finality before a fresh
 swap, matching token proceeds, lost-send recovery and refusal after a claim
 loses its network lease. It is not live Kyber, Circle or production evidence.
 
-The Solana check uses a local `solana-test-validator` (default port 28899).
+The Solana check uses the reviewed Agave 2.1.21 container through the shared
+local launcher (default RPC port 28899). Prepare the pinned image and local
+engine as described in the [Solana test setup](../../contracts/solana/README.md#local-build-and-end-to-end-tests).
 It captures real Jupiter V2 quote and unsigned swap responses, resolves their
 lookup tables at finalized commitment, and clones the route's public programs
 and accounts. The default input is classic SPL JUP.
@@ -756,7 +1035,10 @@ and normalizes fixture rent epochs; lookup addresses and authority stay intact.
 Generated throwaway wallets
 exercise a real local receipt, the normal native budget, signing journal,
 finalized conversion, restart reconciliation and duplicate refusal.
-These checks require `anvil` and `solana-test-validator` on `PATH`. Public
+The EVM checks require `anvil` on `PATH`; the Solana check requires the prepared
+local container engine and image. Its selected `TMPDIR` must be accessible to
+that engine. Cleanup preserves both a primary workflow failure and any cleanup
+failure. Public
 mainnet access is read-only; every signed transaction is sent only to the
 local validator. Local results do not qualify a production deployment.
 
@@ -764,3 +1046,73 @@ The registry discovery includes ordinary `escrow.deployments` and private
 bounty `securityBounty.settlement.deployments`. Both supply fee assets and
 vaults. A bounty-only project does not need an ordinary vault or reward token
 entry for its fees to be claimed and converted.
+
+### Bind the public Solana recovery pair
+
+The main release workflow accepts `rotate_solana_rpc_from`, the exact active
+fee-worker version UUID. Run it only after that same main revision has been
+published normally. It keeps Solana disabled, verifies the existing Solana
+fee key binding and a quiet Solana fee journal, and replays the reviewed
+211-block public recovery witness with 15-second requests.
+
+It then uploads a version-bound pair of endpoint secrets. `RPC_URL_SOLANA`
+uses `https://api.mainnet-beta.solana.com` and `SOLANA_RECOVERY_RPC_URL` uses
+`https://public.rpc.solanavibestation.com`. Other secret bindings are inherited.
+The old Worker version retains its prior bindings. Code, runtime, nonsecret
+settings and every other binding must match before the candidate can receive
+100% traffic. The same pinned active version and journal are checked again
+before promotion. Normal releases preserve both RPC rotation lineages and
+refuse an unpromoted candidate with a different lineage.
+
+The uploaded witness artifact contains public blocks and a synthetic absent
+identifier. It contains no signed transaction or credential. Successful
+binding changes do not activate Solana processing. Activation remains a
+separate reviewed network-list change after key, gas, vault and runtime
+readiness checks.
+
+
+### Diagnose Solana RPC access from Cloudflare
+
+The manual fee-worker inspection accepts `probe_solana_rpc`. It reads the
+existing `SLOP_SOLANA_RPC_CANDIDATE` secret as an HTTPS Helius URL and compares
+bounded read access with the public Solana Vibe Station recovery endpoint.
+The helper uploads an ephemeral, unbound remote preview containing only fixed
+read calls. It sends the candidate URL in the authenticated preview request,
+without storing it in a Worker binding or artifact. No production Worker
+version, schedule or fee record is changed. The report contains booleans,
+slots, fixed method names and numeric transport codes. This bounded check does
+not establish complete recovery history or authorize RPC rotation.
+
+### Replace the live Solana RPC pair
+
+The fee-worker inspection workflow also accepts `rotate_solana_from` and
+`rotate_solana_source`, which bind the exact active Worker version and its
+source commit. The candidate comes from the existing protected
+`SLOP_SOLANA_RPC_CANDIDATE` Helius secret. Recovery uses the public Solana Vibe
+Station endpoint. The workflow shares the production publication lock.
+
+Before changing bindings, the runner proves that the deployed fee runtime,
+its complete bundled source inputs, configuration and dependency lock match
+the checked-out main revision. It verifies the full 211-block recovery
+witness for both providers, then acquires the existing Solana network lease
+only while its send and native-gas journals are quiet. An active lease or
+unresolved send refuses rotation. Each upload and activation boundary
+rechecks the version, live main and owned lease.
+
+The candidate must preserve the deployed code hash, runtime, nonsecret
+settings, other bindings and existing signer. Rotation uploads only the two
+RPC secrets and activates that exact candidate at 100%. The runner retains
+the public witness and safe phase receipt. An uncertain activation leaves
+its lease to expire and requires version readback before another attempt.
+This workflow does not submit a fee claim or payment. Subsequent scheduled
+processing uses the existing limits and journal.
+
+If main advances after qualification, `prior_proof_run` can identify a failed
+manual run of this same workflow that stopped before taking a rotation lease.
+The workflow downloads its exact named artifact through GitHub Actions,
+binds the phase receipt to that run's source SHA and proof digest, and verifies
+every retained history page and the expected two operators. Qualification
+still repeats fresh genesis, retention, blockhash-expiry, transaction-absence
+and canonical-anchor checks. Current source, active version and quiet-journal
+checks apply before the new rotation. The prior artifact grants no authority
+to activate its old version.

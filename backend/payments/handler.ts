@@ -31,10 +31,12 @@ import {
 import { isWalletAddress, isWalletChain } from "../../src/lib/wallets";
 import type { D1TransactionalDatabase as D1Database } from "../d1";
 import {
+  apiErrorResponse,
   cookieValue,
   isSameOriginJsonWrite,
   json,
   readJsonObject,
+  requireActor,
 } from "../http";
 import { sessionGithubActor } from "../points/handler";
 import { cachedPublicResponse, type EdgeCache } from "../projects/edge-cache";
@@ -43,6 +45,7 @@ import {
   type MonthlyCommitmentInput,
   type MonthlyOwnerService,
   MonthlyPaymentError,
+  monthlyCuts,
   monthlyPaymentSettingSequence,
 } from "./monthly";
 import { readMonthlyAuthorization } from "./monthly-publication";
@@ -53,7 +56,11 @@ import {
   verifyPaymentWalletSignature,
 } from "./possession";
 import { publicReceivedTotals, publicVaultPayments } from "./public-records";
-import { handleSolanaFunding } from "./solana-funding";
+import {
+  FundingVaultNotFoundError,
+  handleSolanaFunding,
+} from "./solana-funding";
+import { handleSolanaMonthLock } from "./solana-month-lock";
 import { projectVaultSnapshots } from "./vault-snapshots";
 import { registerPaymentWallet } from "./wallet-registration";
 
@@ -85,7 +92,7 @@ function isMonthlyCommitmentInput(
   );
 }
 
-export interface PaymentsDependencies {
+interface PaymentsDependencies {
   tier?: DeploymentTier;
   /** The owner's private monthly allocations; absent where they are not served. */
   monthly?: MonthlyOwnerService;
@@ -161,6 +168,31 @@ async function directTransfers(
     .first<{ items: string }>();
   return JSON.parse(row?.items ?? "[]") as DirectTransfer[];
 }
+/**
+ * The public history cursor: only `after` and `through`, and `after` only with
+ * `through`. A non-canonical number becomes NaN, which the reader rejects with
+ * a RangeError. Returns null for a refused query.
+ */
+function pageCursor(
+  request: Request,
+): { after: number; through: number | null } | null {
+  const query = new URL(request.url).searchParams;
+  const cursor = (key: string) => {
+    const raw = query.get(key);
+    return raw !== null && /^(?:0|[1-9]\d*)$/u.test(raw)
+      ? Number(raw)
+      : Number.NaN;
+  };
+  if (
+    [...query.keys()].some((key) => !["after", "through"].includes(key)) ||
+    (query.has("after") && !query.has("through"))
+  )
+    return null;
+  return {
+    after: query.has("after") ? cursor("after") : 0,
+    through: query.has("through") ? cursor("through") : null,
+  };
+}
 export async function handlePaymentsApi(
   request: Request,
   deps: PaymentsDependencies,
@@ -193,6 +225,18 @@ export async function handlePaymentsApi(
       if (!resolve) return json(503, { error: "funding_unavailable" });
       return await handleSolanaFunding(request, (network, vault) =>
         resolve(fundingRoute[1], network, vault),
+      );
+    }
+
+    const monthLockRoute =
+      /^\/projects\/([a-z0-9][a-z0-9-]*)\/solana-month-lock$/.exec(path);
+    if (monthLockRoute && request.method === "POST") {
+      const resolve = deps.solanaFundingConfig;
+      if (!resolve) return json(503, { error: "funding_unavailable" });
+      return await handleSolanaMonthLock(
+        request,
+        (network, vault) => resolve(monthLockRoute[1], network, vault),
+        deps.now?.() ?? new Date(),
       );
     }
 
@@ -281,6 +325,21 @@ export async function handlePaymentsApi(
             publishedAt: saved.published_at,
           })
         : json(404, { error: "monthly_authorization_unavailable" });
+    }
+    // Owner cuts are public (PRD section 6, operator decision of
+    // 15 November 2026): each current cut below a proposed amount, with the
+    // owner's reason. Other allocation changes stay private.
+    const cutsRoute =
+      /^\/projects\/([a-z0-9][a-z0-9-]*)\/monthly\/(\d{4}-(?:0[1-9]|1[0-2]))\/cuts$/.exec(
+        path,
+      );
+    if (cutsRoute && request.method === "GET") {
+      const [, projectId, period] = cutsRoute;
+      return json(200, {
+        projectId,
+        period,
+        cuts: await monthlyCuts(deps.db, projectId, period),
+      });
     }
     const totalsRoute = /^\/projects\/([a-z0-9][a-z0-9-]*)\/totals$/.exec(path);
     if (totalsRoute && request.method === "GET") {
@@ -432,20 +491,8 @@ export async function handlePaymentsApi(
       );
     if (directRoute && request.method === "GET") {
       if (request.headers.get("x-slop-direct-history") === "paged") {
-        const query = new URL(request.url).searchParams;
-        const cursor = (key: string) => {
-          const raw = query.get(key);
-          return raw !== null && /^(?:0|[1-9]\d*)$/u.test(raw)
-            ? Number(raw)
-            : Number.NaN;
-        };
-        if (
-          [...query.keys()].some(
-            (key) => !["after", "through"].includes(key),
-          ) ||
-          (query.has("after") && !query.has("through"))
-        )
-          return json(400, { error: "invalid_payment_cursor" });
+        const page = pageCursor(request);
+        if (!page) return json(400, { error: "invalid_payment_cursor" });
         try {
           return json(
             200,
@@ -453,8 +500,8 @@ export async function handlePaymentsApi(
               deps.db,
               directRoute[2] ? "github_user_id" : "project_id",
               directRoute[2] ?? directRoute[1],
-              query.has("after") ? cursor("after") : 0,
-              query.has("through") ? cursor("through") : null,
+              page.after,
+              page.through,
             ),
           );
         } catch (error) {
@@ -486,18 +533,8 @@ export async function handlePaymentsApi(
       // A private or closed membership is excluded by the projection itself,
       // so its actor read is an ordinary empty page. A distinct refusal would
       // reveal that the GitHub ID has a private Slop membership.
-      const query = new URL(request.url).searchParams;
-      const cursor = (key: string) => {
-        const raw = query.get(key);
-        return raw !== null && /^(?:0|[1-9]\d*)$/u.test(raw)
-          ? Number(raw)
-          : Number.NaN;
-      };
-      if (
-        [...query.keys()].some((key) => !["after", "through"].includes(key)) ||
-        (query.has("after") && !query.has("through"))
-      )
-        return json(400, { error: "invalid_payment_cursor" });
+      const page = pageCursor(request);
+      if (!page) return json(400, { error: "invalid_payment_cursor" });
       try {
         return json(
           200,
@@ -508,8 +545,8 @@ export async function handlePaymentsApi(
               : kind === "actors"
                 ? { githubUserId: value }
                 : null,
-            query.has("after") ? cursor("after") : 0,
-            query.has("through") ? cursor("through") : null,
+            page.after,
+            page.through,
             // Production excludes testnet networks, mirroring the /totals,
             // /vault, and /received deployment-tier rules. Staging keeps them
             // because it pays in testnet stablecoins.
@@ -531,6 +568,13 @@ export async function handlePaymentsApi(
           ? "session_expired"
           : "not_signed_in",
       });
+    // Bind optional UI account snapshots before any authenticated read or
+    // mutation. The header narrows this session; it never selects an actor.
+    try {
+      await requireActor(request, { sessionActor: async () => member });
+    } catch (caught) {
+      return apiErrorResponse(caught, { label: "payments account refusal" });
+    }
     const solanaCommitmentRoute =
       /^\/projects\/([a-z0-9][a-z0-9-]*)\/monthly\/(\d{4}-(?:0[1-9]|1[0-2]))\/solana-commitment$/.exec(
         path,
@@ -731,7 +775,8 @@ export async function handlePaymentsApi(
             if (
               typeof body?.githubUserId !== "string" ||
               typeof body.grossBase !== "string" ||
-              !sequence(body.expectedSequence)
+              !sequence(body.expectedSequence) ||
+              (body.reason !== undefined && typeof body.reason !== "string")
             )
               return json(400, { error: "invalid_allocation" });
             return json(
@@ -740,6 +785,9 @@ export async function handlePaymentsApi(
                 githubUserId: body.githubUserId,
                 grossBase: body.grossBase,
                 expectedSequence: body.expectedSequence,
+                ...(typeof body.reason === "string"
+                  ? { reason: body.reason }
+                  : {}),
               }),
             );
           }
@@ -877,9 +925,13 @@ export async function handlePaymentsApi(
             body.claimId,
             member.githubId,
           ),
+        // A hold the dispatcher parked under an uncertain attempt on another
+        // claim stays held until recovery reconciles that attempt (the same
+        // guard as workers/security-payments). Releasing it here only lets the
+        // next dispatch park it again and repeat the held notices.
         deps.db
           .prepare(
-            "INSERT INTO payment_outbox(obligation_id,state,updated_at) SELECT o.id,'ready',? FROM payment_obligations o JOIN effective_payment_wallet_claims w ON w.github_user_id=o.github_user_id AND w.chain=o.chain JOIN payment_wallet_authorizations a ON a.claim_id=w.id WHERE w.id=? AND w.github_user_id=? AND o.state='reserved' ON CONFLICT(obligation_id) DO UPDATE SET state='ready',updated_at=excluded.updated_at WHERE payment_outbox.state='held'",
+            "INSERT INTO payment_outbox(obligation_id,state,updated_at) SELECT o.id,'ready',? FROM payment_obligations o JOIN effective_payment_wallet_claims w ON w.github_user_id=o.github_user_id AND w.chain=o.chain JOIN payment_wallet_authorizations a ON a.claim_id=w.id WHERE w.id=? AND w.github_user_id=? AND o.state='reserved' AND NOT EXISTS(SELECT 1 FROM payment_attempts attempt WHERE attempt.obligation_id=o.id AND attempt.state IN ('prepared','unknown','submitted') AND attempt.claim_id<>w.id) ON CONFLICT(obligation_id) DO UPDATE SET state='ready',updated_at=excluded.updated_at WHERE payment_outbox.state='held'",
           )
           .bind(now, body.claimId, member.githubId),
       ]);
@@ -1082,12 +1134,26 @@ export async function handlePaymentsApi(
         return json(503, { error: "identity_attester_unavailable" });
       const bindingQuery =
         "SELECT o.id obligationId,o.network,o.vault,o.github_user_id githubUserId,w.id claimId,w.record_sha256 claimDigest,w.wallet_address destination,t.id idempotencyKey FROM payment_obligations o JOIN effective_payment_wallet_claims w ON w.github_user_id=o.github_user_id AND w.chain=o.chain JOIN payment_wallet_authorizations a ON a.claim_id=w.id JOIN payment_attempts t ON t.obligation_id=o.id AND t.claim_id=w.id WHERE o.id=? AND o.github_user_id=? AND o.chain='solana' AND o.state='reserved' AND w.source='d1_registry' AND t.state IN ('prepared','unknown','submitted') ORDER BY t.created_at LIMIT 1";
+      const bindingPayment = async (db: D1Database) => {
+        if (!complete) {
+          // Mainnet has no hosted payment dispatcher. Admit only this actor's
+          // current authorized destination, under the dispatcher's same ready
+          // outbox fence, before asking the attester for a binding transaction.
+          await db
+            .prepare(
+              "INSERT INTO payment_attempts(id,obligation_id,claim_id,created_at,state) SELECT ?,o.id,w.id,?,'prepared' FROM payment_obligations o JOIN effective_payment_wallet_claims w ON w.github_user_id=o.github_user_id AND w.chain=o.chain JOIN payment_wallet_authorizations a ON a.claim_id=w.id JOIN payment_outbox b ON b.obligation_id=o.id WHERE o.id=? AND o.github_user_id=? AND o.chain='solana' AND o.state='reserved' AND w.source='d1_registry' AND b.state='ready' AND NOT EXISTS(SELECT 1 FROM payment_attempts t WHERE t.obligation_id=o.id AND t.state IN ('prepared','unknown','submitted'))",
+            )
+            .bind(crypto.randomUUID(), now, body.obligationId, member.githubId)
+            .run();
+        }
+        return db
+          .prepare(bindingQuery)
+          .bind(body.obligationId, member.githubId)
+          .first<Record<string, string>>();
+      };
       let attester = deps.solanaAttester;
       let privateBinding = false;
-      let payment = await deps.db
-        .prepare(bindingQuery)
-        .bind(body.obligationId, member.githubId)
-        .first<Record<string, string>>();
+      let payment = await bindingPayment(deps.db);
       if (!payment && deps.securityPayments) {
         const owned = await deps.db
           .prepare(
@@ -1102,10 +1168,7 @@ export async function handlePaymentsApi(
             )
             .bind(owned.case_id, member.githubId, now)
             .run();
-          payment = await deps.securityPayments.db
-            .prepare(bindingQuery)
-            .bind(body.obligationId, member.githubId)
-            .first<Record<string, string>>();
+          payment = await bindingPayment(deps.securityPayments.db);
           attester = deps.securityPayments.solanaAttester;
           privateBinding = true;
         }
@@ -1267,7 +1330,12 @@ export async function handlePaymentsApi(
       return json(200, account);
     }
     return json(404, { error: "not_found" });
-  } catch {
+  } catch (error) {
+    if (error instanceof FundingVaultNotFoundError)
+      return json(404, {
+        error: "funding_vault_not_found",
+        message: "This project has no such vault on a served network.",
+      });
     console.error("payments API failure");
     return json(503, { error: "payments_unavailable" });
   }

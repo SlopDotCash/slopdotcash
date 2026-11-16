@@ -27,18 +27,14 @@ import {
 import { assertProjectDefinition } from "../../src/lib/project-schema.mjs";
 import { fixtureProject } from "../../tests/fixture-overlay.mjs";
 import { sqliteD1 } from "../../tests/sqlite-d1";
+import type { JournalStore } from "../../workers/payment-executor/binding-shared";
 import { paymentStack } from "../../workers/payment-executor/configure.mjs";
-import {
-  createEvmExecutor,
-  type JournalStore,
-} from "../../workers/payment-executor/core";
+import { createEvmExecutor } from "../../workers/payment-executor/core";
 import attesterWorker, {
   PaymentSignerJournal,
 } from "../../workers/payment-executor/index";
-import {
-  type PaymentDeployment,
-  readDeploymentVaultTotals,
-} from "../../workers/payments";
+import { readDeploymentVaultTotals } from "../../workers/payments";
+import type { PaymentDeployment } from "../../workers/payments/deployment-types";
 import { readMonthlySchedule } from "../../workers/payments/registry-database.mjs";
 import { type DispatchPayment, dispatchPayment } from "../payments/dispatch";
 import { evmPaymentAdapter } from "../payments/evm-adapter";
@@ -716,6 +712,15 @@ try {
   assert.equal(
     (await securitySettlementView(database, caseId))?.state,
     "needs-wallet",
+  );
+  assert.equal(
+    sqlite
+      .query<{ n: number }, [string]>(
+        "SELECT count(*) n FROM vault_month_starts WHERE vault=?",
+      )
+      .get(vault)?.n,
+    0,
+    "Private bounty vaults do not record ordinary monthly funding evidence",
   );
   assert.equal(
     sqlite

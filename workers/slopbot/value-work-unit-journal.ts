@@ -19,14 +19,17 @@ import {
   valueResultProducerIdentity,
 } from "./value-producer";
 import {
-  prepareWorkUnitEvidence,
-  type WorkUnitEvidence,
-} from "./value-work-unit";
+  VALUE_PUBLICATION_FENCE_SQL,
+  type ValuePublicationFence,
+  valuePublicationFenceValues,
+} from "./value-publication-fence";
+import { prepareWorkUnitEvidence } from "./value-work-unit";
 import {
   validateWorkUnitAssessment,
   type WorkUnitAssessment,
   type WorkUnitAssessmentResult,
 } from "./value-work-unit-review";
+import type { WorkUnitEvidence } from "./value-work-unit-types";
 
 export interface WorkUnitRecord {
   schemaVersion: "slop-work-unit-record:v1";
@@ -218,6 +221,7 @@ export async function appendWorkUnitRecord(
   db: D1Database,
   prepared: Awaited<ReturnType<typeof prepareWorkUnitRecord>>,
   installationId: number | null = null,
+  fence?: ValuePublicationFence,
 ): Promise<StoredValueRecord> {
   const { record, recordJson, recordDigest, assessmentKey } = prepared;
   if (
@@ -226,6 +230,11 @@ export async function appendWorkUnitRecord(
     (await workUnitAssessmentKey(record)) !== assessmentKey
   )
     throw new Error("Joint value journal bytes do not match their digest");
+  if (
+    installationId !== null &&
+    (!fence || fence.projectId !== record.projectId)
+  )
+    throw new Error("Joint value publication requires its live registry fence");
   await db
     .prepare(
       `INSERT INTO slopbot_work_unit_journal
@@ -233,7 +242,8 @@ export async function appendWorkUnitRecord(
     SELECT ?, ?, ?, ?, ?, ?
     WHERE NOT EXISTS (SELECT 1 FROM slopbot_work_unit_journal WHERE assessment_key = ?)
       AND (? IS NULL OR EXISTS (SELECT 1 FROM slopbot_installations
-        WHERE installation_id = ? AND removed_at IS NULL AND suspended_at IS NULL))`,
+        WHERE installation_id = ? AND removed_at IS NULL AND suspended_at IS NULL))
+      AND ${VALUE_PUBLICATION_FENCE_SQL}`,
     )
     .bind(
       recordDigest,
@@ -245,6 +255,7 @@ export async function appendWorkUnitRecord(
       assessmentKey,
       installationId,
       installationId,
+      ...valuePublicationFenceValues(fence),
     )
     .run();
   const stored = await db

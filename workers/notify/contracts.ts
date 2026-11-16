@@ -64,7 +64,7 @@ export function validFailureNotice(
     Number.isSafeInteger(v.callId) &&
     Number(v.callId) > 0 &&
     typeof v.model === "string" &&
-    /^[A-Za-z0-9][A-Za-z0-9._-]{0,95}$/u.test(v.model) &&
+    /^[A-Za-z0-9][A-Za-z0-9._/-]{0,95}$/u.test(v.model) &&
     (v.kind === "budget-exhausted" || v.kind === "request-failed") &&
     typeof v.occurredAt === "string" &&
     Number.isFinite(Date.parse(v.occurredAt)) &&

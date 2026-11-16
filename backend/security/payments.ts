@@ -248,9 +248,9 @@ type SettlementRow = {
 const settlementSelect = (
   placeholders: string,
 ) => `SELECT s.*,o.state,o.paid_transaction,q.state queue_state,
-      (SELECT state FROM security_payment_attempts a WHERE a.obligation_id=s.obligation_id ORDER BY created_at DESC LIMIT 1) attempt_state,
+      (SELECT state FROM security_payment_attempts a WHERE a.obligation_id=s.obligation_id ORDER BY created_at DESC, rowid DESC LIMIT 1) attempt_state,
       (SELECT transaction_id FROM security_payment_attempts a WHERE a.obligation_id=s.obligation_id
-       ORDER BY created_at DESC LIMIT 1) submitted_transaction
+       AND a.transaction_id IS NOT NULL ORDER BY created_at DESC, rowid DESC LIMIT 1) submitted_transaction
     FROM security_settlements s LEFT JOIN security_payment_obligations o ON o.id=s.obligation_id
     LEFT JOIN security_payment_outbox q ON q.obligation_id=s.obligation_id WHERE s.case_id IN (${placeholders})`;
 
@@ -293,9 +293,14 @@ function settlementView(row: SettlementRow) {
         ? "paid"
         : row.state === null
           ? "awaiting-owner-commitment"
-          : ["unknown", "prepared"].includes(row.attempt_state ?? "")
-            ? "uncertain"
-            : (row.queue_state ?? "needs-wallet"),
+          : // A held queue is parked until recovery, whatever the last
+            // attempt's outcome; naming it uncertain would tell the
+            // reporter a retry is still in flight.
+            row.queue_state === "held"
+            ? "held"
+            : ["unknown", "prepared"].includes(row.attempt_state ?? "")
+              ? "uncertain"
+              : (row.queue_state ?? "needs-wallet"),
     obligationId: row.obligation_id,
     network: deployment.network,
     asset: deployment.asset,

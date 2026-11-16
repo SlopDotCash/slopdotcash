@@ -18,10 +18,20 @@ import {
 } from "../../src/lib/leaderboard";
 import { createProjectView } from "../../src/lib/project-view";
 import { PROJECTS } from "../../src/lib/projects.mjs";
-import { archivedPaidCycleIndex } from "../fixtures";
+import {
+  archivedPaidCycleIndex,
+  cycleIndexFixture,
+  snapshotFixture,
+} from "../fixtures";
 import { CONTRIBUTION } from "../project-application-manifest";
 import { enlargeText } from "../text-size";
-import { expect, expectAccessible, test } from "./fixtures";
+import {
+  expect,
+  expectAccessible,
+  servePublicProjectReads,
+  test,
+} from "./fixtures";
+import { adminProjectRecord } from "./project-maintainer-fixture";
 
 const deployment = deploymentOrigins(
   deploymentTier(process.env.VITE_SLOP_ENVIRONMENT),
@@ -88,6 +98,7 @@ test("project setup shares one sign-in read with its owner inventory", async ({
 }) => {
   let reads = 0;
   let inventoryReads = 0;
+  const readsBefore: Record<string, number> = {};
   await page.route("**/api/v1/project-session", (route) => {
     reads++;
     return route.fulfill({
@@ -96,11 +107,13 @@ test("project setup shares one sign-in read with its owner inventory", async ({
       },
     });
   });
-  await page.route("**/api/v1/project-setup", (route) =>
-    route.fulfill({ json: { projects: [], applications: [] } }),
-  );
+  await page.route("**/api/v1/project-setup", (route) => {
+    readsBefore.setup = reads;
+    return route.fulfill({ json: { projects: [], applications: [] } });
+  });
   await page.route("**/api/v1/project-github/owned-repositories", (route) => {
     inventoryReads++;
+    readsBefore.inventory = reads;
     return route.fulfill({ json: { repositories: [] } });
   });
   await page.goto("/projects/new", { waitUntil: "networkidle" });
@@ -123,7 +136,10 @@ test("project setup shares one sign-in read with its owner inventory", async ({
     body: String(reads),
     contentType: "text/plain",
   });
-  expect(reads).toBe(1);
+  // The setup page and its owner inventory share one sign-in read. The saved
+  // applications are private, so their reply is followed by one actor check.
+  expect(readsBefore).toEqual({ setup: 1, inventory: 1 });
+  expect(reads).toBe(2);
   expect(inventoryReads).toBe(1);
   await expectAccessible(page);
 });
@@ -404,7 +420,7 @@ test("token amounts keep asset precision when publishing an unrelated project ed
     }),
   );
   await page.route(/\/api\/v1\/project-setup\/eliza(?:\/check)?$/, (route) =>
-    route.fulfill({ json: { setup } }),
+    route.fulfill({ json: { viewer: { githubId: "4242" }, setup } }),
   );
   await page.route("**/api/v1/projects/eliza*", (route) => {
     if (route.request().method() !== "PUT")
@@ -509,7 +525,11 @@ test("discovers projects and one points-ranked homepage leaderboard", async ({
     ).toHaveCount(0);
   }
   const elizaCard = page.locator('a.project-card[href="/projects/eliza"]');
-  await expect(elizaCard.getByText("$1k", { exact: true })).toBeVisible();
+  // The frozen project has a pledge and no verified vault funding.
+  await expect(
+    elizaCard.getByText("Points only", { exact: true }),
+  ).toBeVisible();
+  await expect(elizaCard.getByText("$1k", { exact: true })).toHaveCount(0);
   // The external prize is a community listing that also earns points.
   await expect(
     community.locator('a.project-row[href="/projects/delta-star"]'),
@@ -627,6 +647,19 @@ test("never presents Delta Star's external prize as platform money", async ({
     .first()
     .click();
   await expect(page).toHaveURL(/\/cycles\/delta-star\/\d{4}-\d{2}$/u);
+});
+
+test("public project summaries read the migrated Pages database", {
+  tag: ["@pages", "@pages-only"],
+}, async ({ request }) => {
+  for (const [path, schema] of [
+    ["merge-activity", "slop-merge-activity-v1"],
+    ["pool-funding", "slop-pool-funding-v1"],
+  ]) {
+    const response = await request.get(`/api/v1/${path}`);
+    expect(response.status()).toBe(200);
+    expect(await response.json()).toMatchObject({ schema, projects: [] });
+  }
 });
 
 test("renders contributor and cycle records from validated public data", {
@@ -918,7 +951,7 @@ test("publishes criteria changes directly and stops a stale maintainer draft", a
     return route.fulfill({ json: { revision, project } });
   });
   await page.route(/\/api\/v1\/project-setup\/eliza(?:\/check)?$/, (route) =>
-    route.fulfill({ json: { setup } }),
+    route.fulfill({ json: { viewer: { githubId: "4242" }, setup } }),
   );
   await page.route("**/api/v1/project-session", (route) =>
     route.fulfill({
@@ -1336,31 +1369,7 @@ test("an admin leaves an unset reward asset unchanged until choosing it", async 
   await page.route("**/api/v1/admin/projects", (route) =>
     route.fulfill({
       json: {
-        projects: [
-          {
-            id: project.id,
-            status: project.status,
-            revision: 1,
-            manifest,
-            manifestSha256: "a".repeat(64),
-            createdAt: "2026-10-22T00:00:00.000Z",
-            updatedAt: "2026-10-22T00:00:00.000Z",
-            sourceApplicationId: null,
-            enforcement: {
-              state: "clear",
-              appeal: "none",
-              projectAppeal: "none",
-              since: null,
-              restrictedBy: [],
-              nextSequence: 1,
-              revisionPending: false,
-              moderation: "unconfigured",
-              decisionRequired: false,
-              bannedMaintainers: [],
-              records: [],
-            },
-          },
-        ],
+        projects: [adminProjectRecord(project, { manifest })],
       },
     }),
   );
@@ -1546,6 +1555,8 @@ test("serves byte-consistent bootstrap and read-only site artifacts", {
     discoverySkillResponse,
     identityResponse,
     privateTraceContractResponse,
+    pointsRulesResponse,
+    scoringRulesResponse,
     llmsResponse,
   ] = await Promise.all([
     request.get("/SKILL.md"),
@@ -1553,6 +1564,8 @@ test("serves byte-consistent bootstrap and read-only site artifacts", {
     request.get("/.well-known/agent-skills/slop/SKILL.md"),
     request.get("/protocol/identity-v1.json"),
     request.get("/protocol/private-trace-v1.md"),
+    request.get("/protocol/points-v1.md"),
+    request.get("/protocol/scoring-v2.md"),
     request.get("/llms.txt"),
   ]);
   for (const response of [
@@ -1561,6 +1574,8 @@ test("serves byte-consistent bootstrap and read-only site artifacts", {
     discoverySkillResponse,
     identityResponse,
     privateTraceContractResponse,
+    pointsRulesResponse,
+    scoringRulesResponse,
     llmsResponse,
   ]) {
     expect(response.status()).toBe(200);
@@ -1592,6 +1607,16 @@ test("serves byte-consistent bootstrap and read-only site artifacts", {
     identityVersion: "slop-identity-v1",
     paymentMode: "disabled",
   });
+  const privateTraceContract = await privateTraceContractResponse.text();
+  expect(privateTraceContract).toContain("Retention is permanent");
+  expect(privateTraceContract).toContain("No website or API");
+  expect(privateTraceContract).not.toContain("## Cloudflare provisioning");
+  for (const response of [pointsRulesResponse, scoringRulesResponse]) {
+    const rules = await response.text();
+    expect(rules).toContain("Every accepted merge receives at least 10 Points");
+    expect(rules).toContain("## Historical scoring and source integrity");
+    expect(rules).toContain("## Historical protocol record");
+  }
   expect(llmsResponse.headers()["content-type"]).toContain("text/plain");
   const bootstrap = await bootstrapResponse.body();
   const bootstrapDigest = createHash("sha256").update(bootstrap).digest("hex");
@@ -1784,6 +1809,25 @@ for (const route of [
           "href",
           `/projects/${project.participation.successorProjectId}`,
         );
+      } else if (project.participation?.state !== "permission-required") {
+        const start = page.locator("#start");
+        await expect(
+          start.getByRole("heading", { name: "Project paused", exact: true }),
+        ).toBeVisible();
+        await expect(
+          start.getByText(
+            "Do not install this project's skill or start work.",
+            {
+              exact: true,
+            },
+          ),
+        ).toBeVisible();
+        await expect(
+          start.getByRole("link", {
+            name: "Project owner: review setup",
+            exact: true,
+          }),
+        ).toHaveAttribute("href", `/projects/${project.slug}/manage`);
       }
 
       await test.info().attach(`${project.id}-paused-project`, {
@@ -1831,6 +1875,7 @@ test("opens the sponsors page directly and through keyboard navigation", async (
   page,
   diagnostics,
 }, testInfo) => {
+  await servePublicProjectReads(page);
   // Returning from the home page cancels any background Points shards.
   diagnostics.allow(
     /^(?:net::ERR_ABORTED|NS_BINDING_ABORTED) GET http:\/\/[^ ]+\/data\/points(?:\/[0-9a-f])?\.json$/u,
@@ -1884,7 +1929,17 @@ test("opens the sponsors page directly and through keyboard navigation", async (
   await page.keyboard.press("Enter");
   await expect(page).toHaveURL(fundingUrl);
   await page.waitForLoadState("networkidle");
-  await page.goBack({ waitUntil: "networkidle" });
+  // Finish the remounted Sponsors page's funding read before leaving for Home.
+  const [fundingResponse] = await Promise.all([
+    page.waitForResponse(
+      (response) =>
+        new URL(response.url()).pathname === "/api/v1/pool-funding" &&
+        response.request().method() === "GET",
+    ),
+    page.goBack({ waitUntil: "networkidle" }),
+  ]);
+  expect(fundingResponse.ok()).toBe(true);
+  expect(await fundingResponse.finished()).toBeNull();
   await expect(page).toHaveURL(/\/sponsors$/u);
 
   await expect(pools).toBeVisible();
@@ -1993,6 +2048,34 @@ test("lands direct and lazy cross-route hash links on their section", async ({
   }
 });
 
+test("how it works answers the referral and buyback questions", async ({
+  page,
+}) => {
+  await page.goto("/how-it-works#faq");
+  const faq = page.locator("#faq");
+  const referral = faq.locator("article", {
+    has: page.getByRole("heading", { name: "Is there a referral program?" }),
+  });
+  await expect(referral).toContainText("slop.cash/r/");
+  await expect(referral).toContainText("paid its contributors");
+  await expect(
+    referral.getByRole("link", { name: "Referral terms" }),
+  ).toHaveAttribute("href", "https://record.slop.cash/referrals");
+  const buyback = faq.locator("article", {
+    has: page.getByRole("heading", { name: "Does Slop buy back SLOP?" }),
+  });
+  await expect(buyback).toContainText("configured live since 12 November 2026");
+  await expect(buyback).toContainText("eligible fee income");
+  await expect(buyback).toContainText("once minimum order sizes are met");
+  await expect(buyback).toContainText(
+    "The first verified bridge fill, purchase and burn are still pending",
+  );
+  await expect(buyback).not.toContainText("starts with the first fee");
+  await expect(
+    buyback.getByRole("link", { name: "How the buyback works" }),
+  ).toHaveAttribute("href", "https://record.slop.cash/buyback");
+});
+
 test("refuses retired and unknown paths and recovers to projects", async ({
   page,
 }) => {
@@ -2026,6 +2109,161 @@ test("refuses retired and unknown paths and recovers to projects", async ({
     );
     await expect(page.locator('meta[name="robots"]')).toHaveCount(0);
   }
+});
+
+test("cycle filters drop unavailable selections while retaining a published month", async ({
+  page,
+}) => {
+  const index = archivedPaidCycleIndex();
+  await page.route("**/data/cycles/index.json?**", (route) =>
+    route.fulfill({ json: index }),
+  );
+  await page.goto(
+    `/cycles?project=absent-project&month=${index.cycles[0].cycleId}&state=banana`,
+    { waitUntil: "networkidle" },
+  );
+  await expect(page.locator(".cycle-record")).toHaveCount(1);
+  await expect(page.getByLabel("Month", { exact: true })).toHaveValue(
+    index.cycles[0].cycleId,
+  );
+  await expect(
+    page.getByText("No cycles match these filters.", { exact: false }),
+  ).toHaveCount(0);
+  await expect(page).toHaveURL(
+    new RegExp(`/cycles\\?month=${index.cycles[0].cycleId}$`, "u"),
+  );
+  await page.getByLabel("Month", { exact: true }).selectOption("");
+  await expect(page).toHaveURL(/\/cycles$/u);
+  await expect(page.locator(".cycle-record")).toHaveCount(1);
+});
+
+test("a retired project's recorded cycle opens without the live leaderboard", async ({
+  page,
+  diagnostics,
+}) => {
+  const index = archivedPaidCycleIndex();
+  const cycle = index.cycles[0];
+  const project = PROJECTS.find((entry) => entry.id === cycle.projectId);
+  if (!project) throw new Error("Missing archived project fixture");
+  await page.route("**/data/fixture-project-registry.json", (route) =>
+    route.fulfill({
+      json: {
+        schemaVersion: "1",
+        projects: PROJECTS.map((entry) =>
+          entry.id === project.id
+            ? { ...entry, status: "paused", listingTier: "retired" }
+            : entry,
+        ),
+      },
+    }),
+  );
+  await page.route("**/data/cycles/index.json?**", (route) =>
+    route.fulfill({ json: index }),
+  );
+  let leaderboardReads = 0;
+  diagnostics.allowResponse(503, "GET", "/data/leaderboard.json");
+  await page.route("**/data/leaderboard.json?**", (route) => {
+    leaderboardReads += 1;
+    return route.fulfill({ status: 503, body: "Unavailable live leaderboard" });
+  });
+  await page.goto("/cycles", { waitUntil: "networkidle" });
+  await page
+    .locator(`a[href="/cycles/${cycle.projectId}/${cycle.cycleId}"]`)
+    .click();
+  await expect(
+    page.getByRole("heading", {
+      name: `${project.name} · July 2026`,
+      exact: true,
+    }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("table", {
+      name: "Archived cycle contributors and current award amounts",
+    }),
+  ).toBeVisible();
+  await expect(page.locator('link[rel="canonical"]')).toHaveAttribute(
+    "href",
+    `https://slop.cash/cycles/${cycle.projectId}/${cycle.cycleId}`,
+  );
+  const breadcrumb = page.locator(".breadcrumb").getByRole("link");
+  await expect(breadcrumb).toHaveAttribute(
+    "href",
+    `/cycles?project=${cycle.projectId}`,
+  );
+  await breadcrumb.click();
+  await expect(page.locator(".cycle-record")).toHaveCount(1);
+  await expect(page.getByLabel("Project", { exact: true })).toHaveValue(
+    cycle.projectId,
+  );
+  expect(leaderboardReads).toBe(0);
+});
+
+test("an unavailable cycle index refuses a live substitute and retries the record", async ({
+  page,
+  diagnostics,
+}) => {
+  const index = archivedPaidCycleIndex();
+  const cycle = index.cycles[0];
+  let unavailable = true;
+  let leaderboardReads = 0;
+  diagnostics.allowResponse(503, "GET", "/data/cycles/index.json?attempt=0");
+  await page.route("**/data/cycles/index.json?**", (route) =>
+    unavailable
+      ? route.fulfill({ status: 503, body: "Unavailable cycle index" })
+      : route.fulfill({ json: index }),
+  );
+  await page.route("**/data/leaderboard.json?**", (route) => {
+    leaderboardReads += 1;
+    return route.fulfill({
+      status: 503,
+      body: "Unexpected leaderboard request",
+    });
+  });
+  await page.goto(`/cycles/${cycle.projectId}/${cycle.cycleId}`, {
+    waitUntil: "networkidle",
+  });
+  await expect(page.getByRole("alert")).toBeVisible();
+  await expect(
+    page.getByRole("table", {
+      name: "Archived cycle contributors and current award amounts",
+    }),
+  ).toHaveCount(0);
+  expect(leaderboardReads).toBe(0);
+  unavailable = false;
+  await page.getByRole("button", { name: "Retry", exact: true }).click();
+  await expect(
+    page.getByRole("table", {
+      name: "Archived cycle contributors and current award amounts",
+    }),
+  ).toBeVisible();
+  expect(leaderboardReads).toBe(0);
+});
+
+test("a cycle published during the live fallback still shows its frozen record", async ({
+  page,
+}) => {
+  const index = archivedPaidCycleIndex();
+  const cycle = index.cycles[0];
+  let indexReads = 0;
+  await page.route("**/data/cycles/index.json?**", (route) => {
+    indexReads += 1;
+    return route.fulfill({
+      json: indexReads === 1 ? cycleIndexFixture() : index,
+    });
+  });
+  await page.route("**/data/leaderboard.json?**", (route) =>
+    route.fulfill({ json: snapshotFixture() }),
+  );
+  await page.goto(`/cycles/${cycle.projectId}/${cycle.cycleId}`, {
+    waitUntil: "networkidle",
+  });
+  await expect(
+    page.getByRole("table", {
+      name: "Archived cycle contributors and current award amounts",
+    }),
+  ).toBeVisible();
+  await expect(page.locator(".project-leader-row")).toHaveCount(0);
+  expect(indexReads).toBeGreaterThanOrEqual(2);
 });
 
 test("a missing cycle becomes noindex once its data resolves", async ({

@@ -10,12 +10,13 @@ import {
   createPaymentProjectView,
 } from "../project-view";
 import {
+  activeReviewBudgetCap,
   additiveReviewBudgetWeights,
   allocateReviewBudgetMinor,
   ensureCompleteCycle,
 } from "../reward-cycle";
 import { sha256Hex as digest } from "../sha256";
-import { ordinaryFee } from "./contracts";
+import { combineAwards } from "../verified-money";
 
 interface EscrowIdentity {
   nodeId: string;
@@ -81,16 +82,10 @@ export function buildEscrowCycle(
   if (view.reward.kind !== "monthly-pool")
     throw new Error("Expected monthly pool");
   const cap = BigInt(view.reward.capMinor);
-  const reviewPolicy = project.reward.reviewBudget;
-  const reviewCap =
-    reviewPolicy?.fundingState === "committed" &&
-    reviewPolicy.paymentMode === "enabled" &&
-    Date.parse(reviewPolicy.effectiveAt) <= Date.parse(view.cycle.from)
-      ? BigInt(reviewPolicy.committedMinor) <
-        BigInt(reviewPolicy.monthlyCapMinor)
-        ? BigInt(reviewPolicy.committedMinor)
-        : BigInt(reviewPolicy.monthlyCapMinor)
-      : 0n;
+  const reviewCap = activeReviewBudgetCap(
+    project.reward.reviewBudget,
+    view.cycle.from,
+  );
   if (cap < 0n || cap + reviewCap > MAX_BASE_UNITS)
     throw new Error("Gross cap exceeds supported range");
   const reviewAllocations = allocateReviewBudgetMinor(
@@ -138,16 +133,21 @@ export function buildEscrowCycle(
       identities.length
   )
     throw new Error("Actor identity coverage differs from proposal");
+  const combined = combineAwards(
+    view.leaders.map((leader) => allocations.get(leader.actor.id) ?? 0n),
+    view.leaders.map((leader) => reviewAllocations.get(leader.actor.id) ?? 0n),
+    cap,
+    reviewCap,
+  );
+  if (!combined.ok)
+    throw new Error("Award allocations exceed their monthly caps");
   const awards = view.leaders
-    .map((leader) => {
+    .map((leader, index) => {
       const identity = identities.find(
         (actor) => actor.nodeId === leader.actor.id,
       );
       if (!identity) throw new Error("Missing numeric GitHub identity");
-      const gross =
-        (allocations.get(leader.actor.id) ?? 0n) +
-        (reviewAllocations.get(leader.actor.id) ?? 0n);
-      const fee = ordinaryFee(gross);
+      const { gross, fee, net } = combined.awards[index];
       return {
         githubUserId: identity.githubUserId,
         githubNodeId: leader.actor.id,
@@ -159,7 +159,7 @@ export function buildEscrowCycle(
         ),
         grossMicro: gross.toString(),
         feeMicro: fee.toString(),
-        netMicro: (gross - fee).toString(),
+        netMicro: net.toString(),
         evidenceEventIds: [...leader.evidenceEventIds].sort(),
       };
     })

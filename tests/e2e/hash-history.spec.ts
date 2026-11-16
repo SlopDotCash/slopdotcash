@@ -66,9 +66,16 @@ for (const pendingDestination of [false, true]) {
           scrollY - (document.documentElement.scrollHeight - innerHeight),
         ),
       );
-    // Firefox caps a single wheel gesture. Repeat the real input until the
-    // same bottom-of-page reading position is reached in each browser.
-    while ((await distanceFromBottom()) >= 2) await scrollPage(page, 100_000);
+    // Use at most one viewport per gesture. A huge synthetic wheel delta can
+    // keep the browser's native scroll animation active through Back and undo
+    // the next gesture, even after its reported offset reaches the bottom.
+    const viewport = page.viewportSize();
+    if (!viewport) throw new Error("The browser test needs a viewport");
+    while ((await distanceFromBottom()) >= 2)
+      await scrollPage(
+        page,
+        Math.min(viewport.height, await distanceFromBottom()),
+      );
     await expect
       .poll(() =>
         page.evaluate(() =>
@@ -79,6 +86,11 @@ for (const pendingDestination of [false, true]) {
         ),
       )
       .toBeLessThan(2);
+    const destinationLink = page.locator('a[href="/earnings"]').last();
+    // Reaching the link can scroll a narrow page. Record the position from
+    // which the reader actually leaves, before testing history restoration.
+    await destinationLink.scrollIntoViewIfNeeded();
+    await afterPaint(page);
     const readingPosition = await page.evaluate(() => window.scrollY);
     const anchorPosition = await page
       .locator("#payments")
@@ -101,7 +113,7 @@ for (const pendingDestination of [false, true]) {
       });
     }
     try {
-      await page.locator('a[href="/earnings"]').last().click();
+      await destinationLink.click();
       await expect(page).toHaveURL(/\/earnings$/u);
       if (pendingDestination)
         await expect(

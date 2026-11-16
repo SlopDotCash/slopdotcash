@@ -95,7 +95,7 @@ export function validIsoTimestamp(value: unknown): value is string {
   return new Date(milliseconds).toISOString() === canonical;
 }
 
-export async function readJsonObject(
+export async function readStrictJsonObject(
   request: Request,
 ): Promise<Record<string, unknown>> {
   const bytes = await readLimitedBody(request, MAX_JSON_BYTES);
@@ -162,5 +162,3 @@ export async function readLimitedBody(
     throw error;
   }
 }
-
-export { sha256Hex } from "../../src/lib/async-sha256.mjs";

@@ -1,19 +1,10 @@
-import assert from "node:assert/strict";
-import { spawnSync } from "node:child_process";
-import { mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
-import { convertV4MiniflareOptions, Miniflare } from "miniflare";
-import { unstable_splitSqlQuery as splitSqlQuery } from "wrangler";
-import { childEnvironment } from "../scripts/child-environment.mjs";
+import { resolve } from "node:path";
+import { startHandlerWorker } from "./miniflare-d1.mjs";
 
 /** Real project API and native D1; fixture maintainer authority, no provider. */
 export async function projectImageApiFixture(project, options = {}) {
-  const folder = await mkdtemp(join(tmpdir(), "slop-project-image-"));
-  let runtime;
+  let worker;
   try {
-    const entry = join(folder, "worker.ts");
-    const output = join(folder, "worker.mjs");
     const repository = project.repositories[0];
     const actor = { githubId: "4242", githubLogin: "image-fixture-owner" };
     const facts = {
@@ -28,9 +19,12 @@ export async function projectImageApiFixture(project, options = {}) {
         type: project.steward.github.type,
       },
     };
-    await writeFile(
-      entry,
-      `
+    worker = await startHandlerWorker({
+      d1: "project-image",
+      outbound() {
+        throw new Error("No external request allowed");
+      },
+      entrySource: `
 import {handleProjectApi} from ${JSON.stringify(resolve("backend/projects/handler.ts"))};
 import {CloudflareProjectPersistence} from ${JSON.stringify(resolve("backend/projects/cloudflare-persistence.ts"))};
 ${options.incompleteAssessments ? `import {handleNotificationsApi} from ${JSON.stringify(resolve("backend/notifications/handler.ts"))};` : ""}
@@ -56,42 +50,8 @@ export default {async fetch(request,env) {
  });
  return response ?? new Response(null,{status:404});
 }};`,
-    );
-    const build = spawnSync(
-      "bun",
-      [
-        "--no-env-file",
-        "build",
-        entry,
-        "--target=browser",
-        "--outfile",
-        output,
-      ],
-      { encoding: "utf8", env: childEnvironment(), timeout: 30_000 },
-    );
-    assert.equal(build.status, 0, build.stderr);
-    runtime = new Miniflare(
-      convertV4MiniflareOptions({
-        host: "127.0.0.1",
-        port: 0,
-        modules: true,
-        compatibilityDate: "2026-09-14",
-        script: await readFile(output, "utf8"),
-        d1Databases: { DB: "project-image" },
-        outboundService() {
-          throw new Error("No external request allowed");
-        },
-      }),
-    );
-    const db = await runtime.getD1Database("DB");
-    for (const name of (await readdir("migrations"))
-      .filter((name) => name.endsWith(".sql"))
-      .sort())
-      await db.batch(
-        splitSqlQuery(await readFile(`migrations/${name}`, "utf8")).map((sql) =>
-          db.prepare(sql),
-        ),
-      );
+    });
+    const { runtime, db } = worker;
     const text = JSON.stringify(project);
     const hash = await crypto.subtle.digest(
       "SHA-256",
@@ -144,14 +104,10 @@ export default {async fetch(request,env) {
           .first();
         return { revision: row.revision, project: JSON.parse(row.manifest) };
       },
-      async dispose() {
-        await runtime.dispose();
-        await rm(folder, { recursive: true, force: true });
-      },
+      dispose: worker.dispose,
     };
   } catch (error) {
-    await runtime?.dispose();
-    await rm(folder, { recursive: true, force: true });
+    await worker?.dispose();
     throw error;
   }
 }

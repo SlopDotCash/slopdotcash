@@ -1,0 +1,5330 @@
+/** Trusted, read-only historical evidence collection (PRD section 7).
+ * A month can be collected and resumed independently. No candidate becomes
+ * complete until the entire repository ownership census is available.
+ * This script never applies a correction or reads protected financial state.
+ */
+import { createHash, randomUUID } from "node:crypto";
+import {
+  link,
+  mkdir,
+  readFile,
+  rename,
+  unlink,
+  writeFile,
+} from "node:fs/promises";
+import { resolve } from "node:path";
+import {
+  implementationCreditActors,
+  isCreditEligibleCommitAuthor,
+} from "../src/lib/commit-credit";
+import {
+  commitCreditOwners,
+  type MergedPullRequestOutcome,
+  repositoryIdFromUrl,
+} from "../src/lib/leaderboard";
+import {
+  assertPointsJournal,
+  latestPoints,
+  type PointRevision,
+  type PointsJournal,
+  pointKey,
+} from "../src/lib/points";
+import {
+  type CorrectionActor,
+  type CorrectionClaim,
+  type CorrectionCommit,
+  type CorrectionSource,
+  correctionClaimCommit,
+  createPointsCorrectionBaseline,
+  isOriginalContributorContext,
+  isOriginalContributorFollowup,
+  isOriginalContributorRepair,
+  type OriginalContributorBinding,
+  type OriginalContributorFollowup,
+  type OriginalContributorRepair,
+  originalContributorClaimScope,
+  originalContributorPrecedesFollowups,
+  originalContributorSource,
+  type PointsImplementationCorrectionCandidate,
+  type PointsImplementationCorrectionManifest,
+  referencesOriginalContributorSource,
+} from "../src/lib/points-implementation-corrections";
+import { assertProjectRegistry } from "../src/lib/project-schema.mjs";
+import {
+  collectTargetRepositories,
+  type TargetRepository,
+} from "../src/lib/repositories.mjs";
+import { GitHubClient } from "../workers/slopbot/github";
+import { sameRepositoryCommitHints } from "../workers/slopbot/value-commit-hints";
+import {
+  collectValueEvidence,
+  collectValueReferenceEvidence,
+  valueReferenceTimelineRequest,
+} from "../workers/slopbot/value-evidence";
+import type {
+  Pull,
+  ValueEvidence,
+} from "../workers/slopbot/value-evidence-types";
+import { mergeRecipe } from "../workers/slopbot/value-merge-profile";
+import { mergeResolutionLineCounts } from "../workers/slopbot/value-merge-resolution";
+import {
+  NATIVE_MERGE_CONTEXT,
+  nativeMergeCarrierMatches,
+} from "../workers/slopbot/value-native-merge";
+import {
+  valueAdditionCount,
+  valueDeletionCount,
+} from "../workers/slopbot/value-patch";
+import { isConfirmedMissingPublicReference } from "../workers/slopbot/value-reference-query";
+import { retainedCopyBindings } from "../workers/slopbot/value-retained-copy";
+import {
+  acknowledgementTime,
+  retainedAcknowledgements,
+} from "../workers/slopbot/value-retained-reference";
+import { valueSourceDigest } from "../workers/slopbot/value-review";
+import type { WorkUnitSource } from "../workers/slopbot/value-work-unit-types";
+import {
+  collectSearchReferences,
+  commitStatisticsFailure,
+  completeOutcomeCommits,
+  executeNodeBatch,
+  GitHubGraphqlClient,
+  type GraphqlExecutor,
+  GraphqlUpstreamError,
+  narrowedPageSize,
+  type OutcomeCommitIdentity,
+  OutcomeCommitLineLoader,
+  parseActor,
+  parseSearchReference,
+  resolveGitHubToken,
+} from "./generate-leaderboard";
+import { loadPublishedPoints } from "./generate-points";
+import {
+  historicalDiscussionHasRateLimit,
+  historicalDiscussionQuery,
+  validateHistoricalDiscussion,
+} from "./historical-discussion-evidence";
+import { assertCorrectionRegistry } from "./points-correction-registry";
+import { retainedCommitCreditSources } from "./retained-commit-credit";
+import { fetchProjectRegistry } from "./sync-project-registry.mjs";
+import { loadValueInputs, ValueFeedUnavailableError } from "./value-ingestion";
+import { hydrateValueMergeSource } from "./value-merge-ingestion";
+
+const RULE = "historical-implementation-allocation-v1" as const;
+const digest = (value: string | Uint8Array) =>
+  createHash("sha256").update(value).digest("hex");
+const encode = (value: unknown) => JSON.stringify(value);
+const canonicalTime = (value: string) => new Date(value).toISOString();
+function requireThat(value: unknown, message: string): asserts value {
+  if (!value) throw new Error(message);
+}
+
+export interface CorrectionPool {
+  candidate: PointsImplementationCorrectionCandidate;
+  totalPoints: number;
+  predecessors: PointRevision[];
+}
+
+/** Inventory every current positive pool, retaining zero-valued predecessors.
+ * Own-PR and grouped keys are intentionally distinct, matching the allocator.
+ */
+export function inventoryCorrectionPools(
+  journal: PointsJournal,
+  projects: readonly string[],
+): CorrectionPool[] {
+  assertPointsJournal(journal);
+  const selected = new Set(projects);
+  const groups = new Map<string, PointRevision[]>();
+  for (const revision of latestPoints(journal).values()) {
+    const award = revision.award;
+    if (
+      !selected.has(award.projectId) ||
+      award.category !== "merged-pull-request"
+    )
+      continue;
+    const own =
+      award.key ===
+      pointKey(award.projectId, award.actor.id, award.category, award.sourceId);
+    const key = encode([
+      award.projectId,
+      award.sourceId,
+      own ? null : award.workUnitId,
+    ]);
+    const rows = groups.get(key) ?? [];
+    rows.push(revision);
+    groups.set(key, rows);
+  }
+  const result: CorrectionPool[] = [];
+  for (const [key, rows] of groups) {
+    rows.sort((a, b) => a.award.key.localeCompare(b.award.key));
+    const totalPoints = rows.reduce((n, row) => n + row.award.amount, 0);
+    if (totalPoints <= 0) continue;
+    requireThat(
+      Number.isSafeInteger(totalPoints),
+      "Recorded pool total overflows",
+    );
+    const first = rows[0].award;
+    requireThat(
+      rows.every(
+        ({ award }) =>
+          award.sourceUrl === first.sourceUrl &&
+          award.occurredAt === first.occurredAt &&
+          award.workUnitId === first.workUnitId,
+      ),
+      "Recorded pool identities disagree",
+    );
+    const own =
+      first.key ===
+      pointKey(first.projectId, first.actor.id, first.category, first.sourceId);
+    result.push({
+      totalPoints,
+      predecessors: rows,
+      candidate: {
+        id: `correction_${digest(key)}`,
+        kind: own ? "pull-request" : "work-unit",
+        projectId: first.projectId,
+        sourceId: first.sourceId,
+        sourceUrl: first.sourceUrl,
+        occurredAt: first.occurredAt,
+        workUnitId: first.workUnitId,
+        sourceIds: [first.sourceId],
+        expectedPredecessors: rows.map((row) => ({
+          key: row.award.key,
+          revisionId: row.id,
+        })),
+        proof: { status: "held" },
+      },
+    });
+  }
+  return result.sort((a, b) => a.candidate.id.localeCompare(b.candidate.id));
+}
+
+export function censusMonths(
+  createdAt: string,
+  through: string,
+): { month: string; from: string; to: string }[] {
+  const end = Math.floor(Date.parse(through) / 1000) * 1000;
+  let start = Date.parse(createdAt);
+  requireThat(
+    Number.isFinite(start) && Number.isFinite(end) && start < end,
+    "Invalid census interval",
+  );
+  start = Math.floor(start / 1000) * 1000;
+  const months = [];
+  while (start < end) {
+    const date = new Date(start);
+    const next = Date.UTC(date.getUTCFullYear(), date.getUTCMonth() + 1, 1);
+    const to = Math.min(end, next);
+    months.push({
+      month: date.toISOString().slice(0, 7),
+      from: new Date(start).toISOString(),
+      to: new Date(to).toISOString(),
+    });
+    start = to;
+  }
+  return months;
+}
+
+/** A budget checkpoint is explicit and safely resumable, never a partial pass. */
+export class CollectionBudgetExhausted extends Error {
+  constructor(
+    readonly kind: "quota" | "request-budget",
+    readonly newRequests: number,
+    readonly reportedGraphqlCost: number,
+    readonly retryAtMs?: number,
+    readonly savedRequests = 0,
+  ) {
+    super(
+      kind === "quota"
+        ? "GitHub API quota exhausted; wait for quota recovery and rerun the same baseline-bound campaign"
+        : "Request budget reached; rerun the same baseline-bound campaign",
+    );
+  }
+}
+
+interface GithubQuotaPayload {
+  message?: unknown;
+  errors?: unknown[];
+  data?: { rateLimit?: { cost: number; resetAt?: unknown } };
+}
+
+type CollectionInterruption = {
+  kind: CollectionBudgetExhausted["kind"];
+  retryAtMs?: number;
+};
+
+function collectionStop(error: unknown): CollectionBudgetExhausted | null {
+  const seen = new Set<Error>();
+  while (error instanceof Error && !seen.has(error)) {
+    if (error instanceof CollectionBudgetExhausted) return error;
+    seen.add(error);
+    error = error.cause;
+  }
+  return null;
+}
+
+function githubQuotaStop(
+  response: Response,
+  graphql: boolean,
+  payload: GithubQuotaPayload | undefined,
+  now: number,
+): { retryAtMs?: number } | null {
+  const retryAfter = response.headers.get("retry-after");
+  const retrySeconds =
+    retryAfter && /^\d+$/u.test(retryAfter) ? Number(retryAfter) : NaN;
+  const retryAt = now + retrySeconds * 1_000;
+  const validRetryAfter = Number.isSafeInteger(retryAt);
+  const primary =
+    (response.status === 403 || response.status === 429) &&
+    response.headers.get("x-ratelimit-remaining") === "0";
+  const secondary =
+    response.status === 403 &&
+    (validRetryAfter ||
+      (typeof payload?.message === "string" &&
+        /secondary rate limit|abuse detection/iu.test(payload.message)));
+  const graphqlLimited =
+    response.status === 200 &&
+    graphql &&
+    Array.isArray(payload?.errors) &&
+    payload.errors.some(
+      (error) =>
+        typeof error === "object" &&
+        error !== null &&
+        "type" in error &&
+        error.type === "RATE_LIMITED",
+    );
+  if (!primary && !graphqlLimited && response.status !== 429 && !secondary)
+    return null;
+  const reset = response.headers.get("x-ratelimit-reset");
+  const headerReset =
+    (primary || graphqlLimited) && reset && /^\d+$/u.test(reset)
+      ? Number(reset) * 1_000
+      : NaN;
+  const graphReset =
+    graphqlLimited && typeof payload?.data?.rateLimit?.resetAt === "string"
+      ? Date.parse(payload.data.rateLimit.resetAt)
+      : NaN;
+  const future = (time: number) =>
+    Number.isSafeInteger(time + 2_000) && time >= now;
+  if (primary && !future(headerReset)) return {};
+  const times = [retryAt, headerReset, graphReset].filter(future);
+  if (times.length) return { retryAtMs: Math.max(...times) + 2_000 };
+  if (response.status === 429 || graphqlLimited || secondary)
+    return { retryAtMs: now + 60_000 };
+  return {};
+}
+
+interface CachedResponse {
+  status: number;
+  headers: Record<string, string>;
+  bodyDigest: string;
+}
+
+async function readJson<T>(path: string): Promise<T | null> {
+  try {
+    return JSON.parse(await readFile(path, "utf8")) as T;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
+    throw error;
+  }
+}
+async function atomicJson(path: string, value: unknown) {
+  await mkdir(resolve(path, ".."), { recursive: true });
+  const temporary = `${path}.tmp`;
+  await writeFile(temporary, `${encode(value)}\n`);
+  await rename(temporary, path);
+}
+/** Publish only a complete immutable file. An interrupted temporary write is
+ * never visible at the digest path and cannot poison a resumed campaign.
+ */
+export async function immutableBytes(path: string, bytes: Uint8Array) {
+  await mkdir(resolve(path, ".."), { recursive: true });
+  const temporary = `${path}.${randomUUID()}.tmp`;
+  let failure: { error: unknown } | undefined;
+  try {
+    await writeFile(temporary, bytes, { flag: "wx" });
+    try {
+      // link is an atomic create-if-absent operation on the same filesystem.
+      // rename would overwrite an existing immutable digest path.
+      await link(temporary, path);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+      requireThat(
+        digest(await readFile(path)) === digest(bytes),
+        "Immutable cache bytes changed",
+      );
+    }
+  } catch (error) {
+    failure = { error };
+  }
+  try {
+    await unlink(temporary);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT" && !failure)
+      failure = { error };
+  }
+  if (failure) throw failure.error;
+}
+
+/** Exact successful responses are frozen within one baseline-bound campaign.
+ * Credentials and request headers are never persisted. Failed responses remain
+ * raw evidence, but never become cache hits. Reuse does not spend live quota.
+ */
+export class CorrectionEvidenceCache {
+  requests = 0;
+  allowRequests = true;
+  cacheHits = 0;
+  reportedGraphqlCost = 0;
+  private interruption: CollectionInterruption | null = null;
+  private readonly inFlight = new Set<Promise<Response>>();
+  private readonly savedRequests = new Set<string>();
+  constructor(
+    readonly directory: string,
+    readonly transport: typeof fetch,
+    readonly requestBudget = 2000,
+    readonly now = Date.now,
+  ) {}
+  get stop(): CollectionBudgetExhausted | null {
+    return this.interruption ? this.stopError(this.interruption) : null;
+  }
+  private stopError(interruption: CollectionInterruption) {
+    return new CollectionBudgetExhausted(
+      interruption.kind,
+      this.requests,
+      this.reportedGraphqlCost,
+      interruption.retryAtMs,
+      this.savedRequests.size,
+    );
+  }
+  assertUninterrupted(): void {
+    const stop = this.stop;
+    if (stop) throw stop;
+  }
+  async settleReads(): Promise<void> {
+    await Promise.allSettled(this.inFlight);
+  }
+  async hasSuccessfulRequest(url: string, method = "GET", body = "") {
+    this.assertUninterrupted();
+    return (
+      (await readJson<CachedResponse>(
+        this.requestPath(this.requestKey(url, method, body)),
+      )) !== null
+    );
+  }
+  private requestKey(url: string, method: string, body: string) {
+    return digest(encode({ url, method, body }));
+  }
+  private requestPath(key: string) {
+    return resolve(this.directory, "requests", `${key}.json`);
+  }
+  private interrupt(
+    kind: CollectionBudgetExhausted["kind"],
+    retryAtMs?: number,
+  ): never {
+    const existing = this.interruption;
+    let interruption = existing ?? { kind, retryAtMs };
+    if (kind === "request-budget") {
+      interruption = { kind };
+    } else if (existing?.kind === "quota") {
+      interruption = {
+        kind,
+        retryAtMs:
+          retryAtMs === undefined || existing.retryAtMs === undefined
+            ? undefined
+            : Math.max(retryAtMs, existing.retryAtMs),
+      };
+    }
+    this.interruption = interruption;
+    throw this.stopError(interruption);
+  }
+  readonly fetch: typeof fetch = Object.assign(
+    (input: RequestInfo | URL, init?: RequestInit) => {
+      const read = this.fetchEvidence(input, init);
+      this.inFlight.add(read);
+      const remove = () => {
+        this.inFlight.delete(read);
+      };
+      void read.then(remove, remove);
+      return read;
+    },
+    { preconnect: globalThis.fetch.preconnect },
+  );
+  private async fetchEvidence(
+    input: RequestInfo | URL,
+    init: RequestInit = {},
+  ) {
+    this.assertUninterrupted();
+    const request = input instanceof Request ? input : null;
+    const url = new URL(request?.url ?? String(input));
+    const method = (init.method ?? request?.method ?? "GET").toUpperCase();
+    const body = typeof init.body === "string" ? init.body : "";
+    requireThat(
+      !url.username && !url.password && !url.hash,
+      "Credential-bearing URL refused",
+    );
+    const github = url.origin === "https://api.github.com";
+    const feed =
+      url.origin === "https://slopbot.slop.cash" ||
+      url.origin === "https://slop.cash";
+    requireThat(
+      (github &&
+        (method === "GET" ||
+          (method === "POST" &&
+            url.pathname === "/graphql" &&
+            !/\bmutation\b/u.test(JSON.parse(body).query)))) ||
+        (feed && method === "GET"),
+      "Only canonical read-only source requests are permitted",
+    );
+    const key = this.requestKey(url.href, method, body);
+    const path = this.requestPath(key);
+    const cached = await readJson<CachedResponse>(path);
+    if (cached) {
+      const bytes = await readFile(
+        resolve(this.directory, "objects", cached.bodyDigest),
+      );
+      requireThat(
+        digest(bytes) === cached.bodyDigest,
+        "Cached response digest mismatch",
+      );
+      this.cacheHits += 1;
+      return new Response(bytes, {
+        status: cached.status,
+        headers: cached.headers,
+      });
+    }
+    requireThat(
+      this.allowRequests,
+      "Cached census is missing raw request evidence",
+    );
+    this.assertUninterrupted();
+    if (this.requests >= this.requestBudget) this.interrupt("request-budget");
+    const attempt = ++this.requests;
+    const response = await this.transport(input, init);
+    const bytes = new Uint8Array(await response.arrayBuffer());
+    const bodyDigest = digest(bytes);
+    const headers = Object.fromEntries(
+      [
+        "content-type",
+        "x-github-request-id",
+        "x-ratelimit-limit",
+        "x-ratelimit-remaining",
+        "x-ratelimit-reset",
+        "retry-after",
+      ].flatMap((name) => {
+        const value = response.headers.get(name);
+        return value === null ? [] : [[name, value]];
+      }),
+    );
+    let parsed: GithubQuotaPayload | undefined;
+    try {
+      parsed = JSON.parse(new TextDecoder().decode(bytes));
+    } catch {
+      /* Retain non-JSON failures exactly. */
+    }
+    this.reportedGraphqlCost += parsed?.data?.rateLimit?.cost ?? 0;
+    await immutableBytes(resolve(this.directory, "objects", bodyDigest), bytes);
+    await immutableBytes(
+      resolve(
+        this.directory,
+        "attempts",
+        `${this.now()}-${attempt}-${key}-${randomUUID()}.json`,
+      ),
+      new TextEncoder().encode(
+        encode({
+          url: url.href,
+          method,
+          body,
+          status: response.status,
+          headers,
+          bodyDigest,
+        }),
+      ),
+    );
+    if (github) {
+      const quota = githubQuotaStop(
+        response,
+        url.pathname === "/graphql",
+        parsed,
+        this.now(),
+      );
+      if (quota) this.interrupt("quota", quota.retryAtMs);
+    }
+    const validJson = typeof parsed === "object" && parsed !== null;
+    const completeGraphql =
+      url.pathname !== "/graphql" ||
+      (typeof parsed?.data === "object" && parsed.data !== null);
+    const graphqlRequest =
+      method === "POST" && url.pathname === "/graphql"
+        ? JSON.parse(body)
+        : null;
+    const recoverableStatistics = graphqlRequest
+      ? commitStatisticsFailure(
+          graphqlRequest.query,
+          parsed,
+          graphqlRequest.variables ?? {},
+        )
+      : null;
+    if (
+      response.ok &&
+      validJson &&
+      completeGraphql &&
+      (!parsed?.errors ||
+        recoverableStatistics ||
+        (graphqlRequest &&
+          isConfirmedMissingPublicReference(
+            graphqlRequest.query,
+            graphqlRequest.variables ?? {},
+            parsed,
+          ))) &&
+      (graphqlRequest?.query !== historicalDiscussionQuery ||
+        historicalDiscussionHasRateLimit(parsed?.data))
+    ) {
+      await atomicJson(path, {
+        status: response.status,
+        headers,
+        bodyDigest,
+      });
+      this.savedRequests.add(key);
+    }
+    return new Response(bytes, {
+      status: response.status,
+      headers: response.headers,
+    });
+  }
+}
+
+/** Keep cached rate snapshots outside the live client's budget accounting. */
+function cachedExecutor(
+  client: GitHubGraphqlClient,
+  cache: CorrectionEvidenceCache,
+): GraphqlExecutor {
+  const requestPath = (query: string, variables: Record<string, unknown>) => {
+    const body = encode({ query, variables });
+    const key = digest(
+      encode({ url: "https://api.github.com/graphql", method: "POST", body }),
+    );
+    return resolve(cache.directory, "requests", `${key}.json`);
+  };
+  const hasNodePartition = async (
+    query: string,
+    variables: Record<string, unknown>,
+  ): Promise<boolean> => {
+    if (await readJson<CachedResponse>(requestPath(query, variables)))
+      return true;
+    const ids = variables.ids;
+    if (!Array.isArray(ids) || ids.length < 2) return false;
+    const middle = Math.ceil(ids.length / 2);
+    return (
+      (await hasNodePartition(query, {
+        ...variables,
+        ids: ids.slice(0, middle),
+      })) &&
+      (await hasNodePartition(query, { ...variables, ids: ids.slice(middle) }))
+    );
+  };
+  const execute = async (
+    query: string,
+    variables: Record<string, unknown> = {},
+  ) => {
+    let candidateVariables = variables as Parameters<
+      typeof narrowedPageSize
+    >[0];
+    let cached: CachedResponse | null;
+    for (;;) {
+      cached = await readJson<CachedResponse>(
+        requestPath(query, candidateVariables),
+      );
+      if (cached) break;
+      // Canonical live retries can halve pageSize after a gateway failure.
+      // Reuse only those exact request variants; the caller still validates
+      // every cursor, total and final census digest from the retained bytes.
+      const narrower = narrowedPageSize(candidateVariables);
+      if (!narrower) {
+        const splitNodeBatch =
+          Array.isArray(variables.ids) && variables.ids.length > 1;
+        if (
+          !cache.allowRequests ||
+          (splitNodeBatch && (await hasNodePartition(query, variables)))
+        ) {
+          // The live node loader can recover a failed batch by requesting its
+          // halves. Let that same loader reconstruct cached halves in order.
+          // A missing leaf remains an integrity failure, with no live read.
+          if (splitNodeBatch)
+            throw new GraphqlUpstreamError(
+              "Cached node batch requires reconstruction from retained smaller batches",
+              503,
+            );
+          throw new Error("Cached census is missing raw request evidence");
+        }
+        return client.execute(
+          query,
+          variables as Parameters<typeof client.execute>[1],
+        );
+      }
+      candidateVariables = narrower;
+    }
+    const bytes = await readFile(
+      resolve(cache.directory, "objects", cached.bodyDigest),
+    );
+    requireThat(
+      digest(bytes) === cached.bodyDigest,
+      "Cached GraphQL response digest mismatch",
+    );
+    const value = JSON.parse(bytes.toString());
+    const statisticsFailure = commitStatisticsFailure(
+      query,
+      value,
+      candidateVariables,
+    );
+    requireThat(
+      value.data &&
+        (!value.errors ||
+          statisticsFailure ||
+          isConfirmedMissingPublicReference(
+            query,
+            candidateVariables,
+            value,
+          )) &&
+        (query !== historicalDiscussionQuery ||
+          historicalDiscussionHasRateLimit(value.data)),
+      "Cached GraphQL response is incomplete",
+    );
+    cache.cacheHits += 1;
+    if (statisticsFailure) throw statisticsFailure;
+    return value.data;
+  };
+  return {
+    execute,
+    compareCommitPage: client.compareCommitPage.bind(client),
+    getRateLimit: client.getRateLimit.bind(client),
+    getRequestCount: client.getRequestCount.bind(client),
+    ensureBudget: client.ensureBudget.bind(client),
+  };
+}
+
+const ACTOR = `fragment CorrectionActor on Actor { __typename login avatarUrl url ... on User { id } ... on Bot { id } ... on Mannequin { id } ... on Organization { id } }`;
+const METADATA = `query CorrectionMetadata($ids:[ID!]!){nodes(ids:$ids){__typename ... on PullRequest {id number title url body createdAt updatedAt mergedAt state author{...CorrectionActor} additions deletions baseRefName baseRefOid headRefOid repository{id nameWithOwner isPrivate} mergeCommit{oid} commits(first:100){totalCount pageInfo{hasNextPage endCursor} nodes{commit{id oid parents{totalCount} author{user{...CorrectionActor}}}}}}} rateLimit{cost limit remaining resetAt}} ${ACTOR}`;
+const PREFLIGHT = `query CorrectionRepository($owner:String!,$name:String!){repository(owner:$owner,name:$name){id nameWithOwner isPrivate createdAt} rateLimit{cost limit remaining resetAt}}`;
+
+interface RepositoryMetadata {
+  id: string;
+  nameWithOwner: string;
+  isPrivate: boolean;
+  createdAt: string;
+}
+interface SourceMetadata {
+  id: string;
+  state: string;
+  mergedAt: string;
+  url: string;
+  repository: RepositoryMetadata;
+  mergeCommit: { oid: string } | null;
+}
+
+interface SourceRead {
+  outcome: MergedPullRequestOutcome;
+  repositoryNodeId: string;
+}
+
+/** REST aggregate counters do not depend on the separate file-pagination cap. */
+async function recoverHistoricalCommitStatistics(
+  github: Pick<GitHubClient, "get">,
+  repository: TargetRepository,
+  repositoryNodeId: string,
+  expected: OutcomeCommitIdentity,
+) {
+  requireThat(
+    repository.expectedNodeId === null ||
+      repository.expectedNodeId === repositoryNodeId,
+    "Commit statistics repository identity changed",
+  );
+  const name = `${repository.owner}/${repository.name}`;
+  const path = `/repos/${name}/commits/${expected.oid}`;
+  const value = await github.get<Record<string, unknown>>(path);
+  requireThat(
+    value &&
+      value.node_id === expected.id &&
+      value.sha === expected.oid &&
+      value.url === `https://api.github.com${path}` &&
+      value.html_url === `https://github.com/${name}/commit/${expected.oid}`,
+    "REST commit identity changed",
+  );
+  const parents = value.parents;
+  requireThat(
+    Array.isArray(parents) &&
+      parents.length === expected.parentCount &&
+      parents.every(
+        (parent) =>
+          parent &&
+          typeof parent === "object" &&
+          typeof parent.sha === "string" &&
+          /^[a-f0-9]{40}$/u.test(parent.sha),
+      ) &&
+      new Set(parents.map((parent) => parent.sha)).size === parents.length,
+    "REST commit parents do not match the census",
+  );
+  const author =
+    value.author === null
+      ? null
+      : (() => {
+          requireThat(
+            value.author &&
+              typeof value.author === "object" &&
+              !Array.isArray(value.author),
+            "REST commit author is invalid",
+          );
+          const actor = value.author as Record<string, unknown>;
+          return parseActor(
+            {
+              __typename: actor.type,
+              id: actor.node_id,
+              login: actor.login,
+              avatarUrl: actor.avatar_url,
+              url: actor.html_url,
+            },
+            "REST commit author",
+          );
+        })();
+  requireThat(
+    !author ||
+      !expected.author ||
+      (author.id === expected.author.id &&
+        author.kind === expected.author.kind),
+    "REST commit author differs from the census",
+  );
+  requireThat(
+    value.stats &&
+      typeof value.stats === "object" &&
+      !Array.isArray(value.stats),
+    "REST commit statistics are unavailable",
+  );
+  const stats = value.stats as Record<string, unknown>;
+  requireThat(
+    [stats.additions, stats.deletions, stats.total].every(
+      (count) =>
+        typeof count === "number" && Number.isSafeInteger(count) && count >= 0,
+    ) && Number(stats.additions) + Number(stats.deletions) === stats.total,
+    "REST commit statistics do not reconcile",
+  );
+  return {
+    additions: Number(stats.additions),
+    deletions: Number(stats.deletions),
+    author,
+  };
+}
+
+function historicalCommitLineLoader(
+  client: GraphqlExecutor,
+  repository: TargetRepository,
+  github: Pick<GitHubClient, "get">,
+) {
+  return new OutcomeCommitLineLoader(client, (repositoryNodeId, expected) =>
+    recoverHistoricalCommitStatistics(
+      github,
+      repository,
+      repositoryNodeId,
+      expected,
+    ),
+  );
+}
+
+async function readSources(
+  client: GraphqlExecutor,
+  sources: readonly PointsImplementationCorrectionCandidate[],
+  repository: TargetRepository,
+  github: Pick<GitHubClient, "get">,
+): Promise<{ complete: Map<string, SourceRead>; held: Map<string, string> }> {
+  const complete = new Map<string, SourceRead>(),
+    held = new Map<string, string>();
+  const loader = historicalCommitLineLoader(client, repository, github);
+  for (let offset = 0; offset < sources.length; offset += 20) {
+    const batch = [
+      ...new Map(
+        sources.slice(offset, offset + 20).map((s) => [s.sourceId, s]),
+      ).values(),
+    ];
+    const data = await client.execute(METADATA, {
+      ids: batch.map((s) => s.sourceId),
+    });
+    requireThat(
+      Array.isArray(data.nodes) && data.nodes.length === batch.length,
+      "Metadata source count changed",
+    );
+    const staged: {
+      candidate: PointsImplementationCorrectionCandidate;
+      outcome: MergedPullRequestOutcome;
+      identities: NonNullable<
+        Awaited<ReturnType<typeof completeOutcomeCommits>>
+      >;
+      repositoryNodeId: string;
+    }[] = [];
+    for (const [index, candidate] of batch.entries()) {
+      const node = data.nodes[index] as unknown as SourceMetadata | null;
+      if (!node) {
+        held.set(candidate.sourceId, "source-unavailable");
+        continue;
+      }
+      requireThat(
+        node.id === candidate.sourceId,
+        "Metadata source identity changed",
+      );
+      const live = node.repository;
+      requireThat(
+        live?.isPrivate === false &&
+          live.nameWithOwner.toLowerCase() ===
+            `${repository.owner}/${repository.name}`.toLowerCase() &&
+          typeof live.id === "string" &&
+          (repository.expectedNodeId === null ||
+            live.id === repository.expectedNodeId),
+        "Repository identity changed",
+      );
+      if (
+        node.state !== "MERGED" ||
+        canonicalTime(node.mergedAt) !== candidate.occurredAt ||
+        node.url !== candidate.sourceUrl
+      ) {
+        held.set(
+          candidate.sourceId,
+          "accepted-source-no-longer-matches-recorded-pool",
+        );
+        continue;
+      }
+      const reference = parseSearchReference(
+        node,
+        `data.nodes[${index}]`,
+        "PullRequest",
+        true,
+      );
+      requireThat(reference.outcome, "Merged source outcome missing");
+      const identities = await completeOutcomeCommits(
+        client,
+        reference,
+        repository,
+      );
+      requireThat(identities !== null, "Complete commit evidence missing");
+      staged.push({
+        candidate,
+        outcome: reference.outcome,
+        identities,
+        repositoryNodeId: live.id,
+      });
+    }
+    if (!staged.length) continue;
+    requireThat(
+      staged.every((s) => s.repositoryNodeId === staged[0].repositoryNodeId),
+      "Batch spans repository identities",
+    );
+    const lines = await loader.hydrate(
+      staged[0].repositoryNodeId,
+      staged.flatMap((s) => s.identities),
+    );
+    let cursor = 0;
+    for (const item of staged) {
+      item.outcome.commits = lines.slice(
+        cursor,
+        cursor + item.identities.length,
+      );
+      cursor += item.identities.length;
+      complete.set(item.candidate.sourceId, {
+        outcome: item.outcome,
+        repositoryNodeId: item.repositoryNodeId,
+      });
+    }
+  }
+  return { complete, held };
+}
+
+function actor(
+  value: { id: string; login: string; kind: string } | null,
+): CorrectionActor | null {
+  return value ? { id: value.id, login: value.login, kind: value.kind } : null;
+}
+function ordinarySource(
+  read: SourceRead,
+  owners: ReadonlyMap<string, string>,
+): CorrectionSource & { occurredAt: string } {
+  const outcome = read.outcome;
+  requireThat(
+    outcome.headRefOid && outcome.commits,
+    "Complete source outcome missing",
+  );
+  const repository = repositoryIdFromUrl(outcome.url);
+  return {
+    repository,
+    repositoryNodeId: read.repositoryNodeId,
+    sourceId: outcome.id,
+    sourceUrl: outcome.url,
+    headSha: outcome.headRefOid,
+    occurredAt: canonicalTime(outcome.mergedAt),
+    author: actor(outcome.author),
+    complete: true,
+    commitCount: outcome.commits.length,
+    commits: outcome.commits.map((commit) => ({
+      sha: commit.oid,
+      parentCount: commit.parentCount ?? -1,
+      author: actor(commit.author),
+      additions: commit.additions ?? null,
+      deletions: commit.deletions ?? null,
+      firstAcceptedSourceId:
+        owners.get(`${repository.toLowerCase()}\0${commit.oid}`) ?? null,
+    })),
+  };
+}
+function richSource(
+  evidence: ValueEvidence,
+  owners: ReadonlyMap<string, string>,
+): CorrectionSource {
+  requireThat(
+    evidence.limitations.length === 0 &&
+      evidence.commits.length === evidence.pull.commits,
+    "Full retained source evidence unavailable",
+  );
+  const result: CorrectionSource = {
+    repository: evidence.repository,
+    repositoryNodeId: evidence.repositoryNodeId,
+    sourceId: evidence.pull.node_id,
+    sourceUrl: evidence.pull.html_url,
+    headSha: evidence.pull.head.sha,
+    occurredAt: evidence.pull.merged_at
+      ? canonicalTime(evidence.pull.merged_at)
+      : null,
+    author: {
+      id: evidence.pull.user.node_id,
+      login: evidence.pull.user.login,
+      kind: evidence.pull.user.type,
+    },
+    complete: true,
+    commitCount: evidence.commits.length,
+    commits: evidence.commits.map((commit) => {
+      if (commit.parents.length > 1) {
+        const resolutions = evidence.mergeResolutions?.filter(
+          (item) => item.commitSha === commit.sha,
+        );
+        const resolution =
+          resolutions?.length === 1 ? resolutions[0] : undefined;
+        const files = resolution
+          ? mergeResolutionLineCounts(resolution, commit)
+          : null;
+        return {
+          sha: commit.sha,
+          parentCount: commit.parents.length,
+          author: commit.author
+            ? {
+                id: commit.author.node_id,
+                login: commit.author.login,
+                kind: commit.author.type,
+              }
+            : null,
+          additions: null,
+          deletions: null,
+          ...(files?.length
+            ? {
+                files,
+                mergeResolution: resolution,
+                parentShas: commit.parents.map((parent) => parent.sha),
+              }
+            : {}),
+          firstAcceptedSourceId: evidence.pull.merged_at
+            ? (owners.get(
+                `${evidence.repository.toLowerCase()}\0${commit.sha}`,
+              ) ?? null)
+            : null,
+        };
+      }
+      if (evidence.pull.merged_at)
+        requireThat(
+          owners.has(`${evidence.repository.toLowerCase()}\0${commit.sha}`),
+          "Grouped source is outside the complete ownership census",
+        );
+      const changes = evidence.commitAttribution.filter(
+        (entry) => entry.sha === commit.sha,
+      );
+      requireThat(
+        changes.length === 1 &&
+          changes[0].limitations.length === 0 &&
+          changes[0].files,
+        "Complete commit files unavailable",
+      );
+      const files = changes[0].files.map((file) => ({
+        path: file.filename,
+        additions: valueAdditionCount(file),
+        deletions: valueDeletionCount(file),
+      }));
+      requireThat(
+        files.every(
+          (file) =>
+            Number.isSafeInteger(file.additions) &&
+            file.additions >= 0 &&
+            Number.isSafeInteger(file.deletions) &&
+            file.deletions >= 0,
+        ),
+        "Invalid accepted file line counts",
+      );
+      return {
+        sha: commit.sha,
+        parentCount: commit.parents.length,
+        author: commit.author
+          ? {
+              id: commit.author.node_id,
+              login: commit.author.login,
+              kind: commit.author.type,
+            }
+          : null,
+        additions: files.reduce((n, f) => n + f.additions, 0),
+        deletions: files.reduce((n, f) => n + f.deletions, 0),
+        files,
+        firstAcceptedSourceId: evidence.pull.merged_at
+          ? (owners.get(
+              `${evidence.repository.toLowerCase()}\0${commit.sha}`,
+            ) ?? null)
+          : null,
+      };
+    }),
+  };
+  return result;
+}
+
+function soleOriginalPrimary(
+  source: CorrectionSource,
+): CorrectionActor | undefined {
+  const ordinary = source.commits.filter((commit) => commit.parentCount <= 1);
+  const actors = implementationCreditActors(
+    source.author,
+    ordinary.map((commit) => commit.author),
+  );
+  return ordinary.length > 0 && actors.length === 1 && verifiedHuman(actors[0])
+    ? actors[0]
+    : undefined;
+}
+
+export async function bindRetained(
+  sources: readonly WorkUnitSource[],
+  owners: ReadonlyMap<string, string>,
+  acceptedSubset = false,
+): Promise<CorrectionSource[]> {
+  // Joint acceptance validates the exact carrier before resolving its context-only deferral.
+  const verifiedSources = await Promise.all(
+    sources.map(async (source) => {
+      const native =
+        acceptedSubset &&
+        (await nativeMergeCarrierMatches(source.evidence, sources));
+      return native
+        ? {
+            ...source,
+            evidence: {
+              ...source.evidence,
+              limitations: source.evidence.limitations.filter(
+                (limitation) => limitation !== NATIVE_MERGE_CONTEXT,
+              ),
+            },
+          }
+        : source;
+    }),
+  );
+  const retained = await retainedCopyBindings(verifiedSources, {
+    ordinaryCommitsOnly: true,
+    acceptedSubset,
+  });
+  requireThat(
+    retained.limitations.length === 0,
+    "Retained-copy evidence is incomplete or ambiguous",
+  );
+  const converted = verifiedSources.map((source) =>
+    richSource(source.evidence, owners),
+  );
+  for (const accepted of verifiedSources.filter(
+    (source) => source.evidence.pull.merged_at,
+  )) {
+    // Each credited commit still requires a complete accepted-path binding.
+    const canonical = await retainedCommitCreditSources(
+      accepted,
+      verifiedSources,
+      {
+        acceptedSubset,
+      },
+    );
+    for (const [sha, binding] of canonical) {
+      const target = converted
+        .find((s) => s.sourceId === accepted.evidence.pull.node_id)
+        ?.commits.find((c) => c.sha === sha);
+      requireThat(target, "Retained binding target disappeared");
+      const paths = [...retained.bindings.values()].filter(
+        (b) =>
+          b.integration.evidence.pull.node_id ===
+            accepted.evidence.pull.node_id && b.acceptedCommitSha === sha,
+      );
+      target.retainedCopy = {
+        originalSourceId: binding.originalPullRequestId,
+        originalCommitSha: binding.originalCommitSha,
+        boundPaths: paths.map((p) => p.path).sort(),
+        bindingDigest: digest(
+          encode(
+            paths.map((p) => ({
+              original: p.original.evidence,
+              originalCommitSha: p.originalCommitSha,
+              accepted: p.integration.evidence,
+              acceptedCommitSha: p.acceptedCommitSha,
+              path: p.path,
+              preexistingCommitShas: p.preexistingCommitShas,
+            })),
+          ),
+        ),
+      };
+    }
+  }
+  return converted;
+}
+
+interface HistoricalOrdinaryProof {
+  sources: CorrectionSource[];
+  originalContributor?: OriginalContributorBinding;
+  originalContributorParts?: OriginalContributorBinding[];
+  independentClaimIds?: string[];
+}
+
+function firstAcceptedOrdinary(source: CorrectionSource) {
+  return source.commits.filter(
+    (commit) =>
+      commit.parentCount <= 1 &&
+      commit.firstAcceptedSourceId === source.sourceId,
+  );
+}
+
+/** Zero-delta branch synchronization keeps the original work's native identity. */
+async function nativeOriginalWithSyncMerges(
+  github: Pick<GitHubClient, "get">,
+  original: MergedPullRequestOutcome,
+  maintainer: CorrectionActor,
+  owners: ReadonlyMap<string, string>,
+): Promise<boolean> {
+  const repository = repositoryIdFromUrl(original.url);
+  const evidence = await collectValueEvidence(
+    github,
+    repository,
+    original.number,
+  );
+  if (
+    evidence.pull.node_id !== original.id ||
+    evidence.pull.user.node_id !== original.author?.id ||
+    evidence.pull.user.type !== original.author?.kind ||
+    evidence.pull.head.sha !== original.headRefOid ||
+    evidence.pull.updated_at !== original.updatedAt ||
+    evidence.pull.merged_at !== original.mergedAt ||
+    evidence.commits.length !== original.commits?.length ||
+    evidence.commits.some((commit, index) => {
+      const observed = original.commits?.[index];
+      return (
+        commit.sha !== observed?.oid ||
+        commit.parents.length !== observed.parentCount ||
+        commit.author?.node_id !== observed.author?.id ||
+        commit.author?.type !== observed.author?.kind
+      );
+    })
+  )
+    return false;
+  const identity = await github.get<{
+    id: number;
+    node_id: string;
+    private: boolean;
+    full_name: string;
+  }>(`/repos/${repository}`);
+  if (identity?.private !== false) return false;
+  const hydrated = await hydrateValueMergeSource(
+    { evidence, policy: { sha: evidence.pull.base.sha, text: "" } },
+    await mergeRecipe(evidence),
+    identity,
+  );
+  return nativeSyncOriginal(
+    hydrated.evidence,
+    original.author,
+    maintainer,
+    owners,
+  );
+}
+
+/** Verify a complete source whose only merge work is zero-delta synchronization. */
+export function nativeSyncOriginal(
+  evidence: ValueEvidence,
+  expectedOrigin: CorrectionActor | null,
+  maintainer: CorrectionActor,
+  owners: ReadonlyMap<string, string>,
+): boolean {
+  if (
+    !verifiedHuman(expectedOrigin) ||
+    !verifiedHuman(maintainer) ||
+    evidence.pull.user.node_id !== expectedOrigin.id ||
+    evidence.pull.user.type !== expectedOrigin.kind
+  )
+    return false;
+  const source = richSource(evidence, owners);
+  const origin = source.author;
+  if (!verifiedHuman(origin)) return false;
+  const commits = new Map(
+    evidence.commits.map((commit) => [commit.sha, commit]),
+  );
+  const originShas = new Set<string>();
+  const repairs: string[] = [];
+  for (const commit of source.commits) {
+    if (commit.parentCount > 1) {
+      const raw = commits.get(commit.sha);
+      const resolutions = evidence.mergeResolutions?.filter(
+        (resolution) => resolution.commitSha === commit.sha,
+      );
+      if (!raw || resolutions?.length !== 1) return false;
+      const changes = mergeResolutionLineCounts(resolutions[0], raw);
+      if (changes === null || changes.length > 0) return false;
+      continue;
+    }
+    if (commit.firstAcceptedSourceId !== source.sourceId) return false;
+    const actors = implementationCreditActors(origin, [commit.author]);
+    if (actors.length !== 1) return false;
+    if (actors[0].id === origin.id) originShas.add(commit.sha);
+    else if (actors[0].id === maintainer.id) repairs.push(commit.sha);
+    else return false;
+  }
+  if (!originShas.size) return false;
+  const ancestors = (head: string) => {
+    const found = new Set<string>();
+    const pending = [head];
+    for (const sha of pending) {
+      if (found.has(sha)) continue;
+      found.add(sha);
+      pending.push(
+        ...(commits.get(sha)?.parents.map((parent) => parent.sha) ?? []),
+      );
+    }
+    return found;
+  };
+  const reachable = ancestors(source.headSha);
+  return (
+    source.commits.every((commit) => reachable.has(commit.sha)) &&
+    repairs.every((sha) =>
+      [...originShas].some((originSha) => ancestors(sha).has(originSha)),
+    )
+  );
+}
+
+/** A broad later integration must not make an earlier accepted native PR look
+ * like copied work just because the integration PR was opened first. Keep the
+ * larger pool held. Release only the smaller source after exact native ancestry
+ * and its original author followed by carrier-authored commits are verified. */
+export async function nativeOriginalBeforePromotion(
+  github: Pick<GitHubClient, "get">,
+  larger: MergedPullRequestOutcome,
+  original: MergedPullRequestOutcome,
+  owners: ReadonlyMap<string, string>,
+): Promise<boolean> {
+  const repository = repositoryIdFromUrl(larger.url);
+  const originalUrl = new URL(original.url);
+  if (
+    originalUrl.hostname !== "github.com" ||
+    originalUrl.pathname.split("/").slice(1, 3).join("/").toLowerCase() !==
+      repository.toLowerCase()
+  )
+    return false;
+  const commits = original.commits;
+  const largerShas = new Set(larger.commits?.map((commit) => commit.oid));
+  if (
+    !verifiedHuman(larger.author) ||
+    !verifiedHuman(original.author) ||
+    larger.author.id === original.author.id ||
+    Date.parse(original.mergedAt) > Date.parse(larger.mergedAt) ||
+    !Number.isFinite(Date.parse(original.mergedAt)) ||
+    !Number.isFinite(Date.parse(larger.mergedAt)) ||
+    larger.baseRefName === original.baseRefName ||
+    !commits?.length ||
+    !larger.commits ||
+    commits.length >= larger.commits.length ||
+    !original.headRefOid ||
+    !larger.headRefOid ||
+    commits.some(
+      (commit) =>
+        (commit.parentCount !== 1 && commit.parentCount !== 2) ||
+        !largerShas.has(commit.oid) ||
+        owners.get(`${repository.toLowerCase()}\0${commit.oid}`) !==
+          original.id,
+    )
+  )
+    return false;
+  const [large, small] = await Promise.all(
+    [larger, original].map((outcome) =>
+      github.get<Pull & { created_at: string }>(
+        `/repos/${repository}/pulls/${outcome.number}`,
+      ),
+    ),
+  );
+  for (const [index, outcome] of [larger, original].entries()) {
+    const pull = [large, small][index];
+    if (
+      !pull ||
+      pull.node_id !== outcome.id ||
+      pull.html_url !== outcome.url ||
+      pull.number !== outcome.number ||
+      pull.state !== "closed" ||
+      pull.merged_at !== outcome.mergedAt ||
+      pull.head.sha !== outcome.headRefOid ||
+      pull.base.ref !== outcome.baseRefName ||
+      pull.user.node_id !== outcome.author?.id ||
+      pull.updated_at !== outcome.updatedAt ||
+      pull.commits !== outcome.commits?.length ||
+      !pull.merge_commit_sha
+    )
+      return false;
+  }
+  if (!large || !small?.merge_commit_sha) return false;
+  const merge = await github.get<{ sha: string; parents: { sha: string }[] }>(
+    `/repos/${repository}/git/commits/${small.merge_commit_sha}`,
+  );
+  if (
+    merge?.sha !== small.merge_commit_sha ||
+    merge.parents.length !== 2 ||
+    merge.parents[1].sha !== original.headRefOid ||
+    merge.parents[0].sha === merge.parents[1].sha
+  )
+    return false;
+  const ancestry = await github.get<{
+    status: string;
+    behind_by: number;
+    base_commit: { sha: string };
+    merge_base_commit: { sha: string };
+  }>(
+    `/repos/${repository}/compare/${small.merge_commit_sha}...${larger.headRefOid}?per_page=100&page=1`,
+  );
+  if (
+    !ancestry ||
+    !["ahead", "identical"].includes(ancestry.status) ||
+    ancestry.behind_by !== 0 ||
+    ancestry.base_commit?.sha !== small.merge_commit_sha ||
+    ancestry.merge_base_commit?.sha !== small.merge_commit_sha
+  )
+    return false;
+  if (commits.some((commit) => commit.parentCount === 2))
+    return nativeOriginalWithSyncMerges(
+      github,
+      original,
+      larger.author,
+      owners,
+    );
+  const native = new Map<
+    string,
+    {
+      sha: string;
+      parents: { sha: string }[];
+      author: { node_id: string } | null;
+    }
+  >();
+  for (const commit of commits) {
+    const value = await github.get<{
+      sha: string;
+      parents: { sha: string }[];
+      author: { node_id: string } | null;
+    }>(`/repos/${repository}/commits/${commit.oid}?per_page=100&page=1`);
+    if (
+      !value ||
+      value.sha !== commit.oid ||
+      value.parents.length !== 1 ||
+      value.author?.node_id !== commit.author?.id ||
+      ![original.author.id, larger.author.id].includes(
+        value.author?.node_id ?? "",
+      )
+    )
+      return false;
+    native.set(value.sha, value);
+  }
+  let current = original.headRefOid;
+  const visited = new Set<string>();
+  let originalSeen = false;
+  while (native.has(current)) {
+    if (visited.has(current)) return false;
+    visited.add(current);
+    const commit = native.get(current);
+    if (!commit) return false;
+    if (commit.author?.node_id === original.author.id) originalSeen = true;
+    // Walking backward, every carrier follow-up must descend an original
+    // anchor. An earlier carrier commit would precede the initiator instead.
+    else if (originalSeen) return false;
+    current = commit.parents[0].sha;
+  }
+  return originalSeen && visited.size === native.size;
+}
+
+export async function mirroredOctoberSources(
+  github: Pick<GitHubClient, "get">,
+  outcomes: readonly MergedPullRequestOutcome[],
+  owners: ReadonlyMap<string, string>,
+) {
+  const byId = new Map(outcomes.map((outcome) => [outcome.id, outcome]));
+  const held = new Set<string>();
+  const nativePairs = new Map<string, Promise<boolean>>();
+  for (const donor of outcomes) {
+    if (!donor.mergedAt?.startsWith("2026-10-") || !verifiedHuman(donor.author))
+      continue;
+    const repository = repositoryIdFromUrl(donor.url).toLowerCase();
+    for (const commit of donor.commits ?? []) {
+      if (commit.parentCount !== 1 || commit.author?.id !== donor.author.id)
+        continue;
+      const ownerId = owners.get(`${repository}\0${commit.oid}`);
+      const carrier = ownerId ? byId.get(ownerId) : undefined;
+      if (
+        carrier &&
+        carrier.number > donor.number &&
+        carrier.mergedAt !== null &&
+        carrier.mergedAt <= donor.mergedAt &&
+        carrier.author?.id !== donor.author.id
+      ) {
+        // GitHub can mark a submitted PR merged after a replacement accepts its
+        // exact commits. Reconcile the two pools together before credit changes.
+        held.add(donor.id);
+        const pair = `${donor.id}\0${carrier.id}`;
+        let nativeOriginal = nativePairs.get(pair);
+        if (!nativeOriginal) {
+          nativeOriginal = nativeOriginalBeforePromotion(
+            github,
+            donor,
+            carrier,
+            owners,
+          ).catch(() => false);
+          nativePairs.set(pair, nativeOriginal);
+        }
+        if (!(await nativeOriginal)) held.add(carrier.id);
+      }
+    }
+  }
+  return held;
+}
+
+function verifiedHuman(
+  value: CorrectionActor | null,
+): value is CorrectionActor {
+  return value?.kind === "User" && isCreditEligibleCommitAuthor(value);
+}
+
+function matchRetainedAcceptedSource(
+  plain: CorrectionSource,
+  accepted: CorrectionSource | undefined,
+) {
+  requireThat(
+    accepted?.headSha === plain.headSha &&
+      accepted.occurredAt === plain.occurredAt &&
+      accepted.repositoryNodeId === plain.repositoryNodeId,
+    "Retained accepted source identity changed",
+  );
+  requireThat(
+    accepted.commits.length === plain.commits.length &&
+      accepted.commits.every((commit, index) => {
+        const expected = plain.commits[index];
+        return (
+          commit.sha === expected.sha &&
+          commit.parentCount === expected.parentCount &&
+          (commit.parentCount > 1 ||
+            (commit.additions === expected.additions &&
+              commit.deletions === expected.deletions))
+        );
+      }),
+    "Retained accepted commit lines differ from the canonical census",
+  );
+  return accepted;
+}
+
+async function authenticateOriginalFollowupParents(
+  github: Pick<GitHubClient, "get">,
+  source: CorrectionSource,
+  evidence: ValueEvidence,
+): Promise<void> {
+  for (const [index, commit] of evidence.commits.entries()) {
+    const parentShas = commit.parents.map(({ sha }) => sha);
+    requireThat(
+      /^[a-f0-9]{40}$/u.test(commit.sha) &&
+        parentShas.every((parent) => /^[a-f0-9]{40}$/u.test(parent)) &&
+        new Set(parentShas).size === parentShas.length &&
+        !parentShas.includes(commit.sha),
+      "October original Git parent evidence is malformed",
+    );
+    const immutable = await github.get<{
+      sha: string;
+      parents: { sha: string }[];
+    }>(`/repos/${source.repository}/git/commits/${commit.sha}`);
+    requireThat(
+      immutable?.sha === commit.sha &&
+        Array.isArray(immutable.parents) &&
+        encode(immutable.parents.map((parent) => parent?.sha)) ===
+          encode(parentShas),
+      "October original Git parent evidence is unavailable or inconsistent",
+    );
+    source.commits[index].parentShas = parentShas;
+  }
+}
+
+type NativeComparison = {
+  status: string;
+  ahead_by: number;
+  behind_by: number;
+  total_commits: number;
+  base_commit: { sha: string };
+  merge_base_commit: { sha: string };
+  commits: { sha: string; parents: { sha: string }[] }[];
+};
+
+async function nativeComparison(
+  github: Pick<GitHubClient, "get">,
+  repository: string,
+  base: string,
+  head: string,
+  page = 1,
+): Promise<NativeComparison> {
+  const result = await github.get<NativeComparison>(
+    `/repos/${repository}/compare/${base}...${head}?per_page=100&page=${page}`,
+  );
+  requireThat(
+    result?.base_commit?.sha === base &&
+      /^[a-f0-9]{40}$/u.test(result.merge_base_commit?.sha ?? "") &&
+      Number.isSafeInteger(result.ahead_by) &&
+      result.ahead_by >= 0 &&
+      Number.isSafeInteger(result.behind_by) &&
+      result.behind_by >= 0 &&
+      Number.isSafeInteger(result.total_commits) &&
+      result.total_commits >= 0 &&
+      Array.isArray(result.commits),
+    "October exact source comparison is incomplete",
+  );
+  return result;
+}
+
+async function authenticateNativeAcceptedRange(
+  github: Pick<GitHubClient, "get">,
+  source: CorrectionSource,
+  evidence: ValueEvidence,
+  merge: { sha: string; parents: { sha: string }[] },
+  requiredShas: readonly string[],
+) {
+  const comparison = (base: string, head: string, page = 1) =>
+    nativeComparison(github, source.repository, base, head, page);
+  const expected = new Map(
+    evidence.commits.map((commit) => [commit.sha, commit]),
+  );
+  const acceptedRange: NativeComparison[] = [];
+  const observed = new Set<string>();
+  let acceptedCount: number | null = null;
+  for (
+    let page = 1;
+    page <= Math.ceil((acceptedCount ?? expected.size + 1) / 100);
+    page++
+  ) {
+    const range = await comparison(merge.parents[0].sha, merge.sha, page);
+    requireThat(
+      range.status === "ahead" &&
+        range.behind_by === 0 &&
+        range.merge_base_commit.sha === merge.parents[0].sha &&
+        range.total_commits > 0 &&
+        range.total_commits <= expected.size + 1 &&
+        (acceptedCount === null || range.total_commits === acceptedCount) &&
+        range.ahead_by === range.total_commits &&
+        range.commits.length ===
+          Math.min(100, range.total_commits - (page - 1) * 100),
+      "October exact accepted range differs from the complete census",
+    );
+    acceptedCount = range.total_commits;
+    for (const commit of range.commits) {
+      const canonical =
+        commit.sha === merge.sha ? merge : expected.get(commit.sha);
+      requireThat(
+        canonical &&
+          !observed.has(commit.sha) &&
+          Array.isArray(commit.parents) &&
+          encode(commit.parents.map(({ sha }) => sha)) ===
+            encode(canonical.parents.map(({ sha }) => sha)),
+        "October exact accepted range has an unknown or repeated Git object",
+      );
+      observed.add(commit.sha);
+    }
+    acceptedRange.push(range);
+  }
+  requireThat(
+    observed.size === acceptedCount &&
+      observed.has(merge.sha) &&
+      requiredShas.every((sha) => observed.has(sha)) &&
+      source.commits.every(
+        (commit) =>
+          !correctionClaimCommit(commit) ||
+          commit.firstAcceptedSourceId !== source.sourceId ||
+          observed.has(commit.sha),
+      ),
+    "October exact accepted range is incomplete",
+  );
+  await authenticateOriginalFollowupParents(github, source, evidence);
+  // GitHub's PR list can retain commits that reached the base while the PR was
+  // open. Authenticate every omitted object and prove its frontier already
+  // belongs to the native first parent. The complete PR census stays retained.
+  const omitted = new Map(
+    source.commits
+      .filter((commit) => !observed.has(commit.sha))
+      .map((commit) => [commit.sha, commit]),
+  );
+  const nonHeads = new Set(
+    [...omitted.values()].flatMap((commit) =>
+      (commit.parentShas ?? []).filter((parent) => omitted.has(parent)),
+    ),
+  );
+  const retainedBaseRanges: NativeComparison[] = [];
+  const inherited = new Set<string>();
+  for (const commit of omitted.values()) {
+    if (nonHeads.has(commit.sha)) continue;
+    const baseRange = await comparison(commit.sha, merge.parents[0].sha);
+    requireThat(
+      ["ahead", "identical"].includes(baseRange.status) &&
+        baseRange.behind_by === 0 &&
+        baseRange.merge_base_commit.sha === commit.sha,
+      "October omitted PR commit is not in the native accepted base",
+    );
+    retainedBaseRanges.push(baseRange);
+    const pending = [commit.sha];
+    for (const id of pending) {
+      if (inherited.has(id)) continue;
+      inherited.add(id);
+      pending.push(
+        ...(omitted.get(id)?.parentShas ?? []).filter((parent) =>
+          omitted.has(parent),
+        ),
+      );
+    }
+  }
+  requireThat(
+    inherited.size === omitted.size,
+    "October omitted PR ancestry is incomplete",
+  );
+  return { acceptedRange, retainedBaseRanges };
+}
+
+/** Re-read a complete GitHub body-edit history without replacing the current body. */
+async function historicalRepairBody(
+  github: Pick<GitHubClient, "get"> & Partial<Pick<GitHubClient, "graphql">>,
+  original: WorkUnitSource,
+  integration: WorkUnitSource,
+): Promise<
+  OriginalContributorRepair["reference"]["historicalBodyEdit"] | undefined
+> {
+  if (!github.graphql) return undefined;
+  const evidence = integration.evidence;
+  const pull = evidence.pull;
+  const [owner, name] = evidence.repository.split("/");
+  type Edit = {
+    id: string;
+    createdAt: string;
+    editedAt: string;
+    updatedAt: string;
+    deletedAt: string | null;
+    diff: string | null;
+    editor: { id: string; __typename: string } | null;
+  };
+  const data = await github.graphql<{
+    repository: {
+      id: string;
+      pullRequest: {
+        id: string;
+        body: string;
+        headRefOid: string;
+        mergedAt: string | null;
+        updatedAt: string;
+        lastEditedAt: string | null;
+        userContentEdits: {
+          totalCount: number;
+          nodes: Edit[];
+          pageInfo: { hasNextPage: boolean };
+        };
+      };
+    };
+  }>(
+    "query SlopHistoricalRepairBody($owner:String!,$name:String!,$number:Int!){repository(owner:$owner,name:$name){id pullRequest(number:$number){id body headRefOid mergedAt updatedAt lastEditedAt userContentEdits(first:100){totalCount nodes{id createdAt editedAt updatedAt deletedAt diff editor{__typename ... on User{id}}} pageInfo{hasNextPage}}}} rateLimit{cost limit remaining resetAt}}",
+    { owner, name, number: pull.number },
+  );
+  const current = data.repository?.pullRequest;
+  const history = current?.userContentEdits;
+  if (
+    data.repository?.id !== evidence.repositoryNodeId ||
+    current?.id !== pull.node_id ||
+    current.body !== pull.body ||
+    current.headRefOid !== pull.head.sha ||
+    current.mergedAt !== pull.merged_at ||
+    current.updatedAt !== pull.updated_at ||
+    !history ||
+    history.pageInfo?.hasNextPage !== false ||
+    !Array.isArray(history.nodes) ||
+    history.nodes.some(
+      (edit) => !edit || typeof edit.id !== "string" || !edit.id,
+    ) ||
+    !Number.isSafeInteger(history.totalCount) ||
+    history.totalCount !== history.nodes.length ||
+    new Set(history.nodes.map((edit) => edit.id)).size !==
+      history.nodes.length ||
+    !history.nodes.some(
+      (edit) =>
+        edit.diff === current.body &&
+        edit.editedAt === current.lastEditedAt &&
+        edit.deletedAt === null,
+    )
+  )
+    return undefined;
+  const edits = history.nodes
+    .filter(
+      (edit) =>
+        typeof edit.id === "string" &&
+        edit.id.length > 0 &&
+        edit.deletedAt === null &&
+        edit.editor?.__typename === "User" &&
+        edit.editor.id === pull.merged_by?.node_id &&
+        edit.createdAt === edit.editedAt &&
+        edit.updatedAt === edit.editedAt &&
+        Number.isFinite(Date.parse(edit.editedAt)) &&
+        Date.parse(edit.editedAt) <= Date.parse(pull.merged_at ?? "") &&
+        typeof edit.diff === "string" &&
+        sameRepositoryCommitHints(evidence.repository, edit.diff).includes(
+          pull.head.sha,
+        ) &&
+        referencesOriginalContributorSource(
+          edit.diff,
+          evidence.repository,
+          original.evidence.pull.number,
+        ),
+    )
+    .sort(
+      (a, b) =>
+        Date.parse(b.editedAt) - Date.parse(a.editedAt) ||
+        a.id.localeCompare(b.id),
+    );
+  if (!edits.length) return undefined;
+  const head = await github.get<{ sha: string; committer: { date: string } }>(
+    `/repos/${evidence.repository}/git/commits/${pull.head.sha}`,
+  );
+  if (
+    head?.sha !== pull.head.sha ||
+    !Number.isFinite(Date.parse(head.committer?.date))
+  )
+    return undefined;
+  const edit = edits.find(
+    (entry) => Date.parse(head.committer.date) <= Date.parse(entry.editedAt),
+  );
+  if (!edit || typeof edit.diff !== "string" || !edit.editor) return undefined;
+  return {
+    id: edit.id,
+    createdAt: edit.createdAt,
+    editedAt: edit.editedAt,
+    updatedAt: edit.updatedAt,
+    deletedAt: null,
+    diff: edit.diff,
+    editor: { id: edit.editor.id, type: edit.editor.__typename },
+    headCommit: { sha: head.sha, committedAt: head.committer.date },
+  };
+}
+
+/** Bind third-party repairs only to statements by the accepting merger. */
+async function acknowledgedOriginalRepairs(
+  github: Pick<GitHubClient, "get"> & Partial<Pick<GitHubClient, "graphql">>,
+  original: WorkUnitSource,
+  integration: WorkUnitSource,
+  originalSource: CorrectionSource,
+  accepted: CorrectionSource,
+  claims: readonly CorrectionClaim[],
+): Promise<OriginalContributorRepair[]> {
+  const author = original.evidence.pull.user.node_id;
+  const commits = accepted.commits.filter(
+    (commit) =>
+      claims.some((claim) => claim.commitSha === commit.sha) &&
+      (commit.author === null ||
+        (commit.author.id !== author &&
+          commit.author.id !== accepted.author?.id)),
+  );
+  if (!commits.length) return [];
+  const repairs: OriginalContributorRepair[] = [];
+  const parents = new Map(
+    [...accepted.commits, ...originalSource.commits].map((commit) => [
+      commit.sha,
+      commit.parentShas ?? [],
+    ]),
+  );
+  const headContains = (head: string, commitSha: string) => {
+    const pending = [head];
+    const visited = new Set<string>();
+    for (const current of pending) {
+      if (current === commitSha) return true;
+      if (visited.has(current)) continue;
+      visited.add(current);
+      pending.push(...(parents.get(current) ?? []));
+    }
+    return false;
+  };
+  const sourceDigests = {
+    [originalSource.sourceId]: await valueSourceDigest(
+      original.evidence,
+      original.policy,
+    ),
+    [accepted.sourceId]: await valueSourceDigest(
+      integration.evidence,
+      integration.policy,
+    ),
+  };
+  const pairedPulls = commits.some((commit) => commit.author === null)
+    ? await Promise.all(
+        [original, integration].map((source) =>
+          github.get<Pull & { created_at: string }>(
+            `/repos/${source.evidence.repository}/pulls/${source.evidence.pull.number}`,
+          ),
+        ),
+      )
+    : [];
+  const currentPair =
+    pairedPulls.length === 2 &&
+    pairedPulls.every((pull, index) => {
+      const expected = [original, integration][index].evidence.pull;
+      return (
+        pull !== null &&
+        pull.node_id === expected.node_id &&
+        pull.number === expected.number &&
+        pull.html_url === expected.html_url &&
+        pull.head.sha === expected.head.sha &&
+        pull.state === expected.state &&
+        pull.merged_at === expected.merged_at &&
+        pull.merge_commit_sha === expected.merge_commit_sha &&
+        pull.updated_at === expected.updated_at &&
+        pull.user.node_id === expected.user.node_id &&
+        pull.merged_by?.node_id === expected.merged_by?.node_id &&
+        pull.merged_by?.type === expected.merged_by?.type &&
+        Number.isFinite(Date.parse(pull.created_at))
+      );
+    });
+  const freshComments = new Map<string, Promise<boolean>>();
+  const unchangedComment = (comment: ValueEvidence["comments"][number]) => {
+    const id = /#issuecomment-([1-9]\d*)$/u.exec(comment.html_url)?.[1];
+    if (!id) return Promise.resolve(false);
+    let read = freshComments.get(comment.html_url);
+    if (!read) {
+      read = github
+        .get<ValueEvidence["comments"][number]>(
+          `/repos/${accepted.repository}/issues/comments/${id}`,
+        )
+        .then(
+          (current) =>
+            current !== null &&
+            current.node_id === comment.node_id &&
+            current.html_url === comment.html_url &&
+            current.body === comment.body &&
+            current.created_at === comment.created_at &&
+            current.updated_at === comment.updated_at &&
+            current.user?.node_id === comment.user?.node_id &&
+            current.user?.type === comment.user?.type,
+        );
+      freshComments.set(comment.html_url, read);
+    }
+    return read;
+  };
+  for (const commit of commits) {
+    if (commit.author === null) {
+      if (!currentPair || !pairedPulls[0] || !pairedPulls[1]) continue;
+      // An authenticated acceptance pair proves the repair relationship, not
+      // the identity of an unlinked Git author. Keep that author null.
+      for (const originalComment of original.evidence.comments) {
+        for (const acceptedComment of integration.evidence.comments) {
+          const reference = {
+            sourceDigests,
+            pull: pairedPulls[1],
+            acceptingPull: pairedPulls[1],
+            acknowledgement: acceptedComment,
+            originalAcknowledgement: {
+              pull: pairedPulls[0],
+              comment: originalComment,
+            },
+            headSha: accepted.headSha,
+          };
+          const repair: OriginalContributorRepair = {
+            sourceId: accepted.sourceId,
+            commitSha: commit.sha,
+            authorNodeId: null,
+            reference: { ...reference, digest: digest(encode(reference)) },
+          };
+          if (
+            isOriginalContributorRepair(
+              repair,
+              originalSource,
+              accepted,
+              commit,
+            ) &&
+            headContains(accepted.headSha, commit.sha) &&
+            (await unchangedComment(originalComment)) &&
+            (await unchangedComment(acceptedComment))
+          ) {
+            repairs.push(repair);
+            break;
+          }
+        }
+        if (repairs.some((repair) => repair.commitSha === commit.sha)) break;
+      }
+      continue;
+    }
+    for (const source of [original, integration]) {
+      const pull = source.evidence.pull;
+      const acknowledgements = retainedAcknowledgements(source.evidence);
+      const bodyHints = sameRepositoryCommitHints(
+        source.evidence.repository,
+        pull.body ?? "",
+      );
+      const bodyHeadHint = bodyHints.includes(pull.head.sha)
+        ? pull.head.sha
+        : source === original
+          ? bodyHints.find((hint) => pull.head.sha.startsWith(hint))
+          : undefined;
+      const matching = acknowledgements.find(
+        (record) =>
+          record.user?.node_id ===
+            integration.evidence.pull.merged_by?.node_id &&
+          record.user?.type === "User" &&
+          Number.isFinite(Date.parse(acknowledgementTime(record))) &&
+          (!("updated_at" in record) ||
+            record.updated_at === acknowledgementTime(record)) &&
+          sameRepositoryCommitHints(
+            source.evidence.repository,
+            record.body,
+          ).includes(pull.head.sha) &&
+          (source === original ||
+            referencesOriginalContributorSource(
+              record.body,
+              source.evidence.repository,
+              original.evidence.pull.number,
+            )),
+      );
+      let reference:
+        | Omit<OriginalContributorRepair["reference"], "digest">
+        | undefined;
+      if (
+        matching &&
+        Number.isFinite(Date.parse(acknowledgementTime(matching)))
+      ) {
+        reference = {
+          sourceDigests,
+          pull,
+          acceptingPull: integration.evidence.pull,
+          acknowledgement: matching,
+          headSha: pull.head.sha,
+        };
+      } else if (
+        bodyHeadHint !== undefined &&
+        (source === original ||
+          referencesOriginalContributorSource(
+            pull.body ?? "",
+            source.evidence.repository,
+            original.evidence.pull.number,
+          ))
+      ) {
+        const [owner, name] = source.evidence.repository.split("/");
+        if (!github.graphql) continue;
+        const data = await github.graphql<{
+          repository: {
+            pullRequest: {
+              id: string;
+              body: string;
+              headRefOid: string;
+              mergedAt: string;
+              updatedAt: string;
+              lastEditedAt: string | null;
+              editor: { id: string; __typename: string } | null;
+              author: { id: string; __typename: string };
+            };
+          };
+        }>(
+          "query SlopOriginalRepairBody($owner:String!,$name:String!,$number:Int!){repository(owner:$owner,name:$name){pullRequest(number:$number){id body headRefOid mergedAt updatedAt lastEditedAt editor{__typename ... on User{id}} author{__typename ... on User{id}}}} rateLimit{cost limit remaining resetAt}}",
+          { owner, name, number: pull.number },
+        );
+        const body = data.repository?.pullRequest;
+        if (
+          body?.id === pull.node_id &&
+          body.body === pull.body &&
+          body.headRefOid === pull.head.sha &&
+          body.mergedAt === pull.merged_at &&
+          body.updatedAt === pull.updated_at
+        ) {
+          let resolvedHead: OriginalContributorRepair["reference"]["resolvedHead"];
+          if (bodyHeadHint !== pull.head.sha) {
+            const resolved = await github.get<{ sha: string }>(
+              `/repos/${source.evidence.repository}/commits/${bodyHeadHint}`,
+            );
+            if (resolved?.sha !== pull.head.sha) continue;
+            resolvedHead = { hint: bodyHeadHint, commitSha: resolved.sha };
+          }
+          reference = {
+            sourceDigests,
+            pull,
+            acceptingPull: integration.evidence.pull,
+            headSha: pull.head.sha,
+            ...(resolvedHead ? { resolvedHead } : {}),
+            bodyEdit: {
+              ...body,
+              editor: body.editor
+                ? { id: body.editor.id, type: body.editor.__typename }
+                : null,
+              author: { id: body.author.id, type: body.author.__typename },
+            },
+          };
+        }
+      }
+      if (
+        reference?.bodyEdit &&
+        Date.parse(reference.bodyEdit.lastEditedAt ?? "") >
+          Date.parse(integration.evidence.pull.merged_at ?? "")
+      ) {
+        const historicalBodyEdit = await historicalRepairBody(
+          github,
+          original,
+          integration,
+        );
+        if (historicalBodyEdit)
+          reference = { ...reference, historicalBodyEdit };
+      }
+      if (!reference || !headContains(reference.headSha, commit.sha)) continue;
+      const repair: OriginalContributorRepair = {
+        sourceId: pull.node_id,
+        commitSha: commit.sha,
+        authorNodeId: commit.author?.id ?? "",
+        reference: { ...reference, digest: digest(encode(reference)) },
+      };
+      if (
+        isOriginalContributorRepair(repair, originalSource, accepted, commit)
+      ) {
+        repairs.push(repair);
+        break;
+      }
+    }
+  }
+  return repairs;
+}
+
+/** An identical Git object needs no textual acknowledgement of a rewrite.
+ * Authenticate the native merge range and its parent order before retaining
+ * the complete evidence in the cache and its digest in the correction proof.
+ */
+async function exactOctoberOriginalContributorProof(
+  github: Pick<GitHubClient, "get"> & Partial<Pick<GitHubClient, "graphql">>,
+  accepted: CorrectionSource,
+  originalSource: CorrectionSource,
+  integration: WorkUnitSource,
+  original: WorkUnitSource,
+  allowMergedOriginal = false,
+  scopedClaims?: readonly CorrectionClaim[],
+  reviewedOriginal?: OriginalContributorBinding["reviewedOriginal"],
+): Promise<HistoricalOrdinaryProof | null> {
+  // Scoped units start at their first retained contributor commit. A later
+  // original head can already include maintainer repairs to that same work.
+  const retainedOriginal = originalSource.commits.find((commit) => {
+    const nativeAcceptance = accepted.commits.some(
+      (copy) =>
+        copy.sha === commit.sha &&
+        copy.firstAcceptedSourceId === accepted.sourceId &&
+        copy.author?.id === commit.author?.id,
+    );
+    if (!scopedClaims)
+      return commit.sha === originalSource.headSha && nativeAcceptance;
+    return (
+      nativeAcceptance &&
+      commit.parentCount <= 1 &&
+      implementationCreditActors(originalSource.author, [commit.author])[0]
+        ?.id === originalSource.author?.id &&
+      scopedClaims.some(
+        (claim) =>
+          claim.commitSha === commit.sha &&
+          claim.sourceId === accepted.sourceId,
+      )
+    );
+  });
+  const anchor =
+    retainedOriginal ??
+    (scopedClaims
+      ? originalSource.commits.find(
+          (commit) =>
+            commit.sha === originalSource.headSha &&
+            commit.parentCount === 2 &&
+            verifiedHuman(commit.author) &&
+            (commit.author.id === originalSource.author?.id ||
+              commit.author.id === accepted.author?.id) &&
+            accepted.commits.some(
+              (copy) =>
+                copy.sha === commit.sha &&
+                copy.firstAcceptedSourceId === accepted.sourceId &&
+                copy.author?.id === commit.author?.id,
+            ),
+        )
+      : undefined);
+  if (
+    !anchor ||
+    (anchor.parentCount !== 1 && !(scopedClaims && anchor.parentCount === 2)) ||
+    (anchor.parentCount === 2 && !verifiedHuman(anchor.author)) ||
+    (anchor.author?.id !== originalSource.author?.id &&
+      !(
+        scopedClaims &&
+        (implementationCreditActors(originalSource.author, [anchor.author])[0]
+          ?.id === originalSource.author?.id ||
+          anchor.author?.id === accepted.author?.id)
+      )) ||
+    !accepted.commits.some(
+      (commit) =>
+        (commit.parentCount <= 1 ||
+          (scopedClaims && commit.parentCount === 2)) &&
+        commit.firstAcceptedSourceId === accepted.sourceId &&
+        commit.sha === anchor.sha &&
+        commit.author?.id === anchor.author?.id,
+    )
+  )
+    return null;
+  const originalPull = original.evidence.pull;
+  const acceptedPull = integration.evidence.pull;
+  const references = (source: ValueEvidence, target: Pull) =>
+    source.relatedPullRequests.some(
+      (reference) =>
+        reference.id === target.node_id &&
+        reference.number === target.number &&
+        reference.url === target.html_url &&
+        reference.repository.toLowerCase() ===
+          accepted.repository.toLowerCase(),
+    );
+  requireThat(
+    accepted.occurredAt?.startsWith("2026-10-") &&
+      (originalSource.occurredAt === null ||
+        (allowMergedOriginal &&
+          originalSource.occurredAt >= accepted.occurredAt &&
+          (scopedClaims !== undefined ||
+            originalSource.commits.every(
+              (commit) =>
+                (commit.parentCount <= 1 ||
+                  (scopedClaims && commit.parentCount === 2)) &&
+                commit.firstAcceptedSourceId === accepted.sourceId &&
+                accepted.commits.some(
+                  (copy) =>
+                    copy.sha === commit.sha &&
+                    copy.author?.id === commit.author?.id &&
+                    copy.author?.kind === commit.author?.kind,
+                ),
+            )))) &&
+      original.evidence.repositoryDatabaseId ===
+        integration.evidence.repositoryDatabaseId &&
+      (scopedClaims !== undefined ||
+        references(integration.evidence, originalPull) ||
+        references(original.evidence, acceptedPull)),
+    "October exact source lacks a same-repository resolved PR reference",
+  );
+  const pulls = await Promise.all(
+    [originalPull, acceptedPull].map((pull) =>
+      github.get<Pull & { created_at: string }>(
+        `/repos/${accepted.repository}/pulls/${pull.number}`,
+      ),
+    ),
+  );
+  for (const [index, expected] of [originalPull, acceptedPull].entries()) {
+    const current = pulls[index];
+    requireThat(
+      current?.node_id === expected.node_id &&
+        current.number === expected.number &&
+        current.html_url === expected.html_url &&
+        current.state === expected.state &&
+        current.head.sha === expected.head.sha &&
+        current.merge_commit_sha === expected.merge_commit_sha &&
+        current.merged_at === expected.merged_at &&
+        current.updated_at === expected.updated_at &&
+        current.user.node_id === expected.user.node_id &&
+        current.merged_by?.node_id === expected.merged_by?.node_id &&
+        current.merged_by?.type === expected.merged_by?.type &&
+        Number.isFinite(Date.parse(current.created_at)),
+      "October exact source changed during collection",
+    );
+  }
+  requireThat(
+    Date.parse(pulls[0]?.created_at ?? "") <
+      Date.parse(
+        scopedClaims
+          ? (pulls[1]?.merged_at ?? "")
+          : (pulls[1]?.created_at ?? ""),
+      ),
+    "October exact original must precede acceptance",
+  );
+  const mergeSha = acceptedPull.merge_commit_sha;
+  const merge = await github.get<{
+    sha: string;
+    parents: { sha: string }[];
+  }>(`/repos/${accepted.repository}/git/commits/${mergeSha}`);
+  requireThat(
+    merge &&
+      /^[a-f0-9]{40}$/u.test(mergeSha ?? "") &&
+      merge.sha === mergeSha &&
+      Array.isArray(merge.parents) &&
+      merge.parents.length === 2 &&
+      merge.parents.every(({ sha }) => /^[a-f0-9]{40}$/u.test(sha)) &&
+      merge.parents[0].sha !== merge.parents[1].sha &&
+      merge.parents[1].sha === accepted.headSha &&
+      integration.evidence.mergeCommitEvidence?.sha === merge.sha &&
+      encode(
+        integration.evidence.mergeCommitEvidence.parents.map(({ sha }) => sha),
+      ) === encode(merge.parents.map(({ sha }) => sha)),
+    "October exact source lacks a pinned native merge",
+  );
+  const comparison = (base: string, head: string, page = 1) =>
+    nativeComparison(github, accepted.repository, base, head, page);
+  const firstParent = await comparison(anchor.sha, merge.parents[0].sha);
+  const secondParent = await comparison(anchor.sha, merge.parents[1].sha);
+  const isAncestor = (result: NativeComparison) =>
+    ["ahead", "identical"].includes(result.status) &&
+    result.behind_by === 0 &&
+    result.merge_base_commit.sha === anchor.sha;
+  requireThat(
+    !isAncestor(firstParent) &&
+      ["behind", "diverged"].includes(firstParent.status) &&
+      firstParent.behind_by > 0 &&
+      isAncestor(secondParent),
+    "October exact original was not newly accepted through the PR head",
+  );
+  const { acceptedRange, retainedBaseRanges } =
+    await authenticateNativeAcceptedRange(
+      github,
+      accepted,
+      integration.evidence,
+      merge,
+      [anchor.sha, ...(scopedClaims ?? []).map((claim) => claim.commitSha)],
+    );
+  if (scopedClaims && !reviewedOriginal)
+    await authenticateOriginalFollowupParents(
+      github,
+      originalSource,
+      original.evidence,
+    );
+  const repairs = scopedClaims
+    ? await acknowledgedOriginalRepairs(
+        github,
+        original,
+        integration,
+        originalSource,
+        accepted,
+        scopedClaims,
+      )
+    : [];
+  const resolutionAcceptance = scopedClaims?.some((claim) => {
+    const commit = accepted.commits.find(
+      (item) => item.sha === claim.commitSha,
+    );
+    return (
+      commit?.author === null &&
+      commit.parentCount > 1 &&
+      correctionClaimCommit(commit)
+    );
+  })
+    ? {
+        pull: acceptedPull,
+        sourceDigest: await valueSourceDigest(
+          integration.evidence,
+          integration.policy,
+        ),
+      }
+    : undefined;
+  requireThat(
+    scopedClaims
+      ? originalContributorClaimScope(
+          originalSource,
+          accepted,
+          scopedClaims,
+          [],
+          anchor.sha,
+          repairs,
+          [],
+          anchor.sha,
+          resolutionAcceptance,
+        )
+      : originalContributorPrecedesFollowups(
+          { ...accepted, author: originalSource.author },
+          accepted.author,
+        ),
+    "October exact accepted source has an unverified contributor or follow-up",
+  );
+  const files = accepted.commits.find(
+    (commit) => commit.sha === anchor.sha,
+  )?.files;
+  const boundPaths =
+    scopedClaims && anchor.parentCount === 2
+      ? [...new Set(scopedClaims.map((claim) => claim.path))].sort()
+      : files?.map((file) => file.path).sort();
+  requireThat(
+    boundPaths?.length,
+    "October exact original lacks complete file evidence",
+  );
+  return {
+    sources: [accepted, originalSource],
+    originalContributor: {
+      exactAcceptance: true,
+      ...(resolutionAcceptance ? { resolutionAcceptance } : {}),
+      ...(scopedClaims
+        ? {
+            claimIds: scopedClaims.map((claim) => claim.id),
+            ...(repairs.length ? { repairs } : {}),
+          }
+        : {}),
+      originalSourceId: originalSource.sourceId,
+      originalCommitSha: anchor.sha,
+      acceptedCommitSha: anchor.sha,
+      boundPaths,
+      ...(reviewedOriginal ? { reviewedOriginal } : {}),
+      bindingDigest: digest(
+        encode({
+          original: await valueSourceDigest(original.evidence, original.policy),
+          accepted: await valueSourceDigest(
+            integration.evidence,
+            integration.policy,
+          ),
+          ...(scopedClaims ? { claims: scopedClaims, repairs } : {}),
+          ...(resolutionAcceptance ? { resolutionAcceptance } : {}),
+          ...(reviewedOriginal ? { reviewedOriginal } : {}),
+          pulls,
+          merge,
+          firstParent,
+          secondParent,
+          acceptedRange,
+          ...(retainedBaseRanges.length ? { retainedBaseRanges } : {}),
+        }),
+      ),
+    },
+  };
+}
+
+async function reviewedOriginalCommit(
+  github: Pick<GitHubClient, "get"> & Partial<Pick<GitHubClient, "graphql">>,
+  original: WorkUnitSource,
+  currentSource: CorrectionSource,
+  accepted: CorrectionSource,
+  integration: WorkUnitSource,
+  claims: readonly CorrectionClaim[],
+): Promise<OriginalContributorBinding["reviewedOriginal"] | undefined> {
+  const selectedShas = new Set(
+    claims
+      .filter((claim) => claim.sourceId === accepted.sourceId)
+      .map((claim) => claim.commitSha),
+  );
+  if (original.evidence.commits.some((commit) => selectedShas.has(commit.sha)))
+    return undefined;
+  const native = new Map(
+    integration.evidence.commits.map((commit) => [commit.sha, commit]),
+  );
+  const references: {
+    head: string;
+    review?: ValueEvidence["reviews"][number];
+    bodyReference?: NonNullable<
+      OriginalContributorBinding["reviewedOriginal"]
+    >["bodyReference"];
+  }[] = [...original.evidence.reviews]
+    .sort(
+      (left, right) =>
+        Date.parse(left.submitted_at ?? "") -
+          Date.parse(right.submitted_at ?? "") || left.id - right.id,
+    )
+    .filter(
+      (review) =>
+        review.user?.type === "User" &&
+        review.submitted_at !== null &&
+        accepted.occurredAt !== null &&
+        Date.parse(review.submitted_at) < Date.parse(accepted.occurredAt) &&
+        selectedShas.has(review.commit_id ?? ""),
+    )
+    .map((review) => ({ head: review.commit_id as string, review }));
+  const metadata = original.evidence.repairBodyEdit;
+  if (
+    metadata &&
+    github.graphql &&
+    accepted.occurredAt !== null &&
+    Date.parse(metadata.lastEditedAt ?? "") < Date.parse(accepted.occurredAt)
+  ) {
+    const actor =
+      metadata.lastEditedAt === null ? metadata.author : metadata.editor;
+    if (
+      actor?.type === "User" &&
+      actor.id === original.evidence.pull.merged_by?.node_id
+    ) {
+      const [owner, name] = original.evidence.repository.split("/");
+      const data = await github.graphql<{
+        repository: {
+          id: string;
+          pullRequest: {
+            id: string;
+            body: string;
+            headRefOid: string;
+            mergedAt: string;
+            updatedAt: string;
+            lastEditedAt: string | null;
+            editor: { id: string; __typename: string } | null;
+            author: { id: string; __typename: string };
+          };
+        };
+      }>(
+        "query SlopOriginalBody($owner:String!,$name:String!,$number:Int!){repository(owner:$owner,name:$name){id pullRequest(number:$number){id body headRefOid mergedAt updatedAt lastEditedAt editor{__typename ... on User{id}} author{__typename ... on User{id}}}} rateLimit{cost limit remaining resetAt}}",
+        { owner, name, number: original.evidence.pull.number },
+      );
+      const current = data.repository?.pullRequest;
+      requireThat(
+        data.repository?.id === original.evidence.repositoryNodeId &&
+          current?.id === metadata.id &&
+          current.body === metadata.body &&
+          current.headRefOid === metadata.headRefOid &&
+          current.mergedAt === metadata.mergedAt &&
+          current.updatedAt === metadata.updatedAt &&
+          current.lastEditedAt === metadata.lastEditedAt &&
+          current.author.id === metadata.author.id &&
+          current.author.__typename === metadata.author.type &&
+          current.editor?.id === metadata.editor?.id &&
+          current.editor?.__typename === metadata.editor?.type,
+        "Historical original body changed during collection",
+      );
+      const currentPull = await github.get<Pull & { created_at: string }>(
+        `/repos/${original.evidence.repository}/pulls/${original.evidence.pull.number}`,
+      );
+      requireThat(
+        currentPull?.node_id === original.evidence.pull.node_id &&
+          Number.isFinite(Date.parse(currentPull.created_at)) &&
+          Date.parse(currentPull.created_at) <=
+            Date.parse(metadata.lastEditedAt ?? ""),
+        "Historical original body predates its PR",
+      );
+      for (const head of sameRepositoryCommitHints(
+        original.evidence.repository,
+        metadata.body,
+      ))
+        if (selectedShas.has(head))
+          references.push({
+            head,
+            bodyReference: {
+              kind: "pre-merge-body",
+              pull: original.evidence.pull,
+              metadata,
+              headSha: head,
+              headCommittedAt: "",
+              createdAt: currentPull.created_at,
+            },
+          });
+    }
+  }
+  for (const reference of references) {
+    const commits: CorrectionCommit[] = [];
+    const seen = new Set<string>();
+    let current: string | null = reference.head;
+    while (current && !seen.has(current)) {
+      seen.add(current);
+      const commit = accepted.commits.find((item) => item.sha === current);
+      const retained = native.get(current);
+      if (
+        !commit ||
+        !retained ||
+        commit.parentCount !== 1 ||
+        commit.author?.kind !== "User" ||
+        commit.author.id !== currentSource.author?.id ||
+        commit.firstAcceptedSourceId !== accepted.sourceId ||
+        !commit.files?.length
+      )
+        break;
+      commits.unshift({
+        ...commit,
+        parentShas: retained.parents.map((parent) => parent.sha),
+      });
+      if ([...selectedShas].every((sha) => seen.has(sha))) break;
+      current = retained.parents[0]?.sha;
+    }
+    if (
+      ![...selectedShas].every((sha) =>
+        commits.some((commit) => commit.sha === sha),
+      )
+    )
+      continue;
+    if (reference.review) {
+      const currentReview = await github.get<ValueEvidence["reviews"][number]>(
+        `/repos/${accepted.repository}/pulls/${original.evidence.pull.number}/reviews/${reference.review.id}`,
+      );
+      requireThat(
+        matchesRetainedProjection(currentReview, reference.review),
+        "Historical original review changed during collection",
+      );
+    }
+    for (const commit of commits) {
+      const currentCommit = await github.get<{
+        sha: string;
+        parents: { sha: string }[];
+        author: { node_id: string; type: string } | null;
+        commit?: { committer?: { date?: string } };
+      }>(`/repos/${accepted.repository}/commits/${commit.sha}`);
+      requireThat(
+        currentCommit !== null &&
+          currentCommit.sha === commit.sha &&
+          encode(currentCommit.parents.map((parent) => parent.sha)) ===
+            encode(commit.parentShas) &&
+          currentCommit.author?.type === "User" &&
+          currentCommit.author.node_id === commit.author?.id,
+        "Historical original commit identity changed during collection",
+      );
+      if (reference.bodyReference && commit.sha === reference.head)
+        reference.bodyReference.headCommittedAt =
+          currentCommit.commit?.committer?.date ?? "";
+      if (reference.bodyReference)
+        requireThat(
+          Number.isFinite(
+            Date.parse(currentCommit.commit?.committer?.date ?? ""),
+          ) &&
+            Date.parse(currentCommit.commit?.committer?.date ?? "") <=
+              Date.parse(reference.bodyReference.metadata.lastEditedAt ?? ""),
+          "Historical original commit postdates the authenticated body",
+        );
+    }
+    const retained = {
+      sourceDigest: await valueSourceDigest(original.evidence, original.policy),
+      currentSourceDigest: digest(encode(currentSource)),
+      ...(reference.review
+        ? { review: reference.review }
+        : { bodyReference: reference.bodyReference }),
+      commits,
+    };
+    return { ...retained, digest: digest(encode(retained)) };
+  }
+  return undefined;
+}
+
+/** Bind exact copied claims without treating unrelated carrier work as theirs. */
+async function copiedOriginalContributorUnitProof(
+  github: Pick<GitHubClient, "get"> & Partial<Pick<GitHubClient, "graphql">>,
+  accepted: CorrectionSource,
+  original: WorkUnitSource,
+  integration: WorkUnitSource,
+  owners: ReadonlyMap<string, string>,
+  claims: readonly CorrectionClaim[],
+): Promise<HistoricalOrdinaryProof | null> {
+  if (original.evidence.pull.merged_at !== null) return null;
+  const rawSource = richSource(original.evidence, owners);
+  const primary = soleOriginalPrimary(rawSource);
+  const originatingActor =
+    primary?.id !== rawSource.author?.id ? primary : undefined;
+  const source = originalContributorSource(rawSource, originatingActor);
+  if (
+    claims.some(
+      (claim) =>
+        source.commits.some((commit) => commit.sha === claim.commitSha) ||
+        original.evidence.reviews.some(
+          (review) => review.commit_id === claim.commitSha,
+        ),
+    )
+  )
+    return null;
+  if (!originalContributorPrecedesFollowups(source, accepted.author))
+    return null;
+  const retained = await retainedCopyBindings([integration, original], {
+    ordinaryCommitsOnly: true,
+    acceptedSubset: true,
+  });
+  requireThat(!retained.limitations.length, "Copied unit source is incomplete");
+  const copiedClaims: NonNullable<OriginalContributorBinding["copiedClaims"]> =
+    [];
+  for (const claim of claims) {
+    const matches = [...retained.bindings.values()].filter(
+      (binding) =>
+        binding.original === original &&
+        binding.integration === integration &&
+        binding.acceptedCommitSha === claim.commitSha &&
+        binding.path === claim.path,
+    );
+    if (!matches.length) continue;
+    requireThat(
+      matches.length === 1,
+      "Copied unit has ambiguous original claims",
+    );
+    const binding = matches[0];
+    copiedClaims.push({
+      claimId: claim.id,
+      originalCommitSha: binding.originalCommitSha,
+      acceptedCommitSha: binding.acceptedCommitSha,
+      path: binding.path,
+      bindingDigest: digest(encode(binding)),
+    });
+  }
+  if (
+    !copiedClaims.some(
+      (claim) => claim.originalCommitSha !== claim.acceptedCommitSha,
+    )
+  )
+    return null;
+  const merge = integration.evidence.mergeCommitEvidence;
+  requireThat(
+    merge && merge.parents.length === 2,
+    "Copied unit lacks native acceptance",
+  );
+  await authenticateNativeAcceptedRange(
+    github,
+    accepted,
+    integration.evidence,
+    merge,
+    claims.map((claim) => claim.commitSha),
+  );
+  await authenticateOriginalFollowupParents(github, source, original.evidence);
+  const repairs = await acknowledgedOriginalRepairs(
+    github,
+    original,
+    integration,
+    source,
+    accepted,
+    claims,
+  );
+  const anchor = copiedClaims.find((candidate) =>
+    originalContributorClaimScope(
+      source,
+      accepted,
+      claims,
+      [],
+      candidate.originalCommitSha,
+      repairs,
+      copiedClaims,
+      candidate.acceptedCommitSha,
+    ),
+  );
+  requireThat(anchor, "Copied unit has an unrelated selected follow-up");
+  const originalPull = await github.get<Pull>(
+    `/repos/${source.repository}/pulls/${original.evidence.pull.number}`,
+  );
+  const acceptedPull = await github.get<Pull>(
+    `/repos/${accepted.repository}/pulls/${integration.evidence.pull.number}`,
+  );
+  requireThat(
+    originalPull?.node_id === source.sourceId &&
+      originalPull.number === original.evidence.pull.number &&
+      originalPull.html_url === source.sourceUrl &&
+      originalPull.state === "closed" &&
+      originalPull.merged_at === null &&
+      originalPull.user.node_id === original.evidence.pull.user.node_id &&
+      originalPull.head.sha === source.headSha &&
+      originalPull.updated_at === original.evidence.pull.updated_at &&
+      acceptedPull?.node_id === accepted.sourceId &&
+      acceptedPull.number === integration.evidence.pull.number &&
+      acceptedPull.html_url === accepted.sourceUrl &&
+      acceptedPull.user.node_id === integration.evidence.pull.user.node_id &&
+      acceptedPull.merged_at === integration.evidence.pull.merged_at &&
+      acceptedPull.head.sha === accepted.headSha &&
+      acceptedPull.merge_commit_sha === merge.sha &&
+      acceptedPull.updated_at === integration.evidence.pull.updated_at,
+    "Copied unit source changed during verification",
+  );
+  return {
+    sources: [accepted, rawSource],
+    originalContributor: {
+      ...(originatingActor ? { originatingActor } : {}),
+      originalSourceId: source.sourceId,
+      originalCommitSha: anchor.originalCommitSha,
+      acceptedCommitSha: anchor.acceptedCommitSha,
+      boundPaths:
+        accepted.commits
+          .find((commit) => commit.sha === anchor.acceptedCommitSha)
+          ?.files?.map((file) => file.path) ?? [],
+      claimIds: claims.map((claim) => claim.id),
+      copiedClaims,
+      ...(repairs.length ? { repairs } : {}),
+      bindingDigest: digest(
+        encode({
+          original: await valueSourceDigest(original.evidence, original.policy),
+          accepted: await valueSourceDigest(
+            integration.evidence,
+            integration.policy,
+          ),
+          claims,
+          copiedClaims,
+          repairs,
+          originalPull,
+          acceptedPull,
+        }),
+      ),
+    },
+  };
+}
+
+/** Bind a reviewed single-origin unit inside a multi-origin native merge. */
+async function singleOriginalContributorUnitProof(
+  github: Pick<GitHubClient, "get"> & Partial<Pick<GitHubClient, "graphql">>,
+  accepted: CorrectionSource,
+  original: WorkUnitSource,
+  integration: WorkUnitSource,
+  owners: ReadonlyMap<string, string>,
+  claims: readonly CorrectionClaim[],
+  followups: readonly WorkUnitSource[] = [],
+  contextSources: readonly WorkUnitSource[] = [],
+): Promise<HistoricalOrdinaryProof> {
+  // Resolve a native carrier deferral only against this complete supplied group.
+  // Keep the raw sources for their digest and fresh GitHub identity checks below.
+  const verified = await bindRetained(
+    [
+      ...new Map(
+        [original, integration, ...followups, ...contextSources].map(
+          (source) => [source.evidence.pull.node_id, source],
+        ),
+      ).values(),
+    ],
+    owners,
+    true,
+  );
+  const rawSource = verified.find(
+    (source) => source.sourceId === original.evidence.pull.node_id,
+  );
+  const integrationSource = verified.find(
+    (source) => source.sourceId === integration.evidence.pull.node_id,
+  );
+  requireThat(rawSource && integrationSource, "Native unit source is missing");
+  const primary = soleOriginalPrimary(rawSource);
+  const originatingActor =
+    primary?.id !== rawSource.author?.id ? primary : undefined;
+  const currentSource = originalContributorSource(rawSource, originatingActor);
+  const canonical = matchRetainedAcceptedSource(accepted, integrationSource);
+  const reviewedOriginal = await reviewedOriginalCommit(
+    github,
+    original,
+    currentSource,
+    canonical,
+    integration,
+    claims,
+  );
+  if (reviewedOriginal) {
+    await authenticateOriginalFollowupParents(
+      github,
+      currentSource,
+      original.evidence,
+    );
+    reviewedOriginal.currentSourceDigest = digest(encode(currentSource));
+    const { digest: _digest, ...payload } = reviewedOriginal;
+    reviewedOriginal.digest = digest(encode(payload));
+  }
+  const source = reviewedOriginal
+    ? {
+        ...currentSource,
+        headSha: reviewedOriginal.commits.at(-1)?.sha ?? currentSource.headSha,
+        commitCount: reviewedOriginal.commits.length,
+        commits: reviewedOriginal.commits,
+      }
+    : currentSource;
+  const exact = await exactOctoberOriginalContributorProof(
+    github,
+    canonical,
+    source,
+    integration,
+    original,
+    true,
+    claims.filter((claim) => claim.sourceId === accepted.sourceId),
+    reviewedOriginal,
+  );
+  const proof =
+    exact ??
+    (await copiedOriginalContributorUnitProof(
+      github,
+      canonical,
+      original,
+      integration,
+      owners,
+      claims.filter((claim) => claim.sourceId === accepted.sourceId),
+    ));
+  requireThat(proof, "Reviewed unit lacks verified original acceptance");
+  if (originatingActor && proof.originalContributor) {
+    proof.originalContributor.originatingActor = originatingActor;
+    proof.sources = proof.sources.map((item) =>
+      item.sourceId === rawSource.sourceId
+        ? { ...item, author: rawSource.author }
+        : item,
+    );
+  }
+  if (reviewedOriginal)
+    proof.sources = proof.sources.map((item) =>
+      item.sourceId === currentSource.sourceId ? rawSource : item,
+    );
+  if (!followups.length) {
+    requireThat(
+      claims.every((claim) => claim.sourceId === accepted.sourceId),
+      "Reviewed unit lacks complete follow-up sources",
+    );
+    return proof;
+  }
+  const authenticated = proof.sources.find(
+    (item) => item.sourceId === accepted.sourceId,
+  );
+  requireThat(
+    authenticated && proof.originalContributor && verifiedHuman(source.author),
+    "Native accepted proof disappeared",
+  );
+  const followupSources: CorrectionSource[] = [];
+  const bindings: OriginalContributorFollowup[] = [];
+  const nativeAcceptance: unknown[] = [];
+  for (const followup of followups) {
+    const converted = verified.find(
+      (source) => source.sourceId === followup.evidence.pull.node_id,
+    );
+    requireThat(converted, "Native follow-up source is missing");
+    bindings.push(
+      await originalContributorFollowupProof(
+        github,
+        authenticated,
+        converted,
+        followup.evidence,
+        followup.policy,
+        claims.filter((claim) => claim.sourceId === converted.sourceId),
+        (evidence) => nativeAcceptance.push(evidence),
+        {
+          anchorSha: proof.originalContributor.originalCommitSha,
+          origin: source.author,
+        },
+      ),
+    );
+    followupSources.push(converted);
+  }
+  requireThat(
+    originalContributorClaimScope(
+      source,
+      authenticated,
+      claims,
+      followupSources.map((followup, index) => ({
+        source: followup,
+        binding: bindings[index],
+      })),
+      proof.originalContributor.originalCommitSha,
+      proof.originalContributor.repairs,
+      [],
+      proof.originalContributor.acceptedCommitSha,
+      proof.originalContributor.resolutionAcceptance,
+    ),
+    "Reviewed native unit has an unverified selected follow-up",
+  );
+  return {
+    sources: [...proof.sources, ...followupSources],
+    originalContributor: {
+      ...proof.originalContributor,
+      claimIds: claims.map((claim) => claim.id),
+      followups: bindings,
+      bindingDigest: digest(
+        encode({
+          original: proof.originalContributor.bindingDigest,
+          claims,
+          followups: bindings,
+          nativeAcceptance,
+          followupSourceDigests: await Promise.all(
+            followups.map((followup) =>
+              valueSourceDigest(followup.evidence, followup.policy),
+            ),
+          ),
+        }),
+      ),
+    },
+  };
+}
+
+/** Resolve reviewed revisions while retaining the complete current PR. */
+export async function octoberOriginalContributorUnitProof(
+  github: Pick<GitHubClient, "get"> & Partial<Pick<GitHubClient, "graphql">>,
+  accepted: CorrectionSource,
+  original: WorkUnitSource,
+  integration: WorkUnitSource,
+  owners: ReadonlyMap<string, string>,
+  claims: readonly CorrectionClaim[],
+  followups: readonly WorkUnitSource[] = [],
+  contextSources: readonly WorkUnitSource[] = [],
+): Promise<HistoricalOrdinaryProof> {
+  const evidence = [integration, ...followups];
+  if (
+    original.evidence.pull.merged_at !== null &&
+    !evidence.some(
+      (source) =>
+        source.evidence.pull.node_id === original.evidence.pull.node_id,
+    )
+  )
+    evidence.push(original);
+  const commits = new Map<string, ValueEvidence["commits"][number]>();
+  for (const source of evidence) {
+    for (const commit of source.evidence.commits) {
+      const previous = commits.get(commit.sha);
+      requireThat(
+        !previous || encode(previous) === encode(commit),
+        "Reviewed revision has conflicting native commit evidence",
+      );
+      commits.set(commit.sha, commit);
+    }
+  }
+  const ancestry = new Map<string, boolean>();
+  const reaches = async (head: string, ancestor: string): Promise<boolean> => {
+    const key = `${ancestor}\0${head}`;
+    const cached = ancestry.get(key);
+    if (cached !== undefined) return cached;
+    const pending = [head];
+    const seen = new Set<string>();
+    for (const sha of pending) {
+      if (sha === ancestor) {
+        ancestry.set(key, true);
+        return true;
+      }
+      if (seen.has(sha)) continue;
+      seen.add(sha);
+      pending.push(
+        ...(commits.get(sha)?.parents.map((parent) => parent.sha) ?? []),
+      );
+    }
+    const comparison = await nativeComparison(
+      github,
+      accepted.repository,
+      ancestor,
+      head,
+    );
+    const result =
+      ["ahead", "identical"].includes(comparison.status) &&
+      comparison.behind_by === 0 &&
+      comparison.merge_base_commit.sha === ancestor;
+    ancestry.set(key, result);
+    return result;
+  };
+  const anchors: string[] = [];
+  for (const review of [...original.evidence.reviews].sort(
+    (left, right) =>
+      Date.parse(left.submitted_at ?? "") -
+        Date.parse(right.submitted_at ?? "") || left.id - right.id,
+  )) {
+    if (
+      review.user?.type !== "User" ||
+      original.evidence.commits.some(
+        (commit) => commit.sha === review.commit_id,
+      ) ||
+      !claims.some((claim) => claim.commitSha === review.commit_id)
+    )
+      continue;
+    let current = review.commit_id;
+    const seen = new Set<string>();
+    const chain: string[] = [];
+    while (current && !seen.has(current)) {
+      seen.add(current);
+      const commit = commits.get(current);
+      if (
+        commit?.parents.length !== 1 ||
+        commit.author?.type !== "User" ||
+        commit.author.node_id !== original.evidence.pull.user.node_id
+      )
+        break;
+      if (claims.some((claim) => claim.commitSha === current))
+        chain.unshift(current);
+      current = commit.parents[0].sha;
+    }
+    if (chain.length && !anchors.includes(chain[0])) anchors.push(chain[0]);
+  }
+  const bodyMetadata = original.evidence.repairBodyEdit;
+  if (
+    bodyMetadata &&
+    Date.parse(bodyMetadata.lastEditedAt ?? "") <
+      Date.parse(accepted.occurredAt ?? "")
+  ) {
+    for (const head of sameRepositoryCommitHints(
+      original.evidence.repository,
+      bodyMetadata.body,
+    )) {
+      if (
+        original.evidence.commits.some((commit) => commit.sha === head) ||
+        !claims.some((claim) => claim.commitSha === head)
+      )
+        continue;
+      let current: string | undefined = head;
+      const seen = new Set<string>();
+      const chain: string[] = [];
+      while (current && !seen.has(current)) {
+        seen.add(current);
+        const commit = commits.get(current);
+        if (commit?.parents.length !== 1 || commit.author?.type !== "User")
+          break;
+        if (claims.some((claim) => claim.commitSha === current))
+          chain.unshift(current);
+        current = commit.parents[0].sha;
+      }
+      if (chain.length && !anchors.includes(chain[0])) anchors.push(chain[0]);
+    }
+  }
+  const partitions: CorrectionClaim[][] = [];
+  const assigned = new Set<string>();
+  for (const anchor of anchors) {
+    const selected: CorrectionClaim[] = [];
+    for (const claim of claims)
+      if (!assigned.has(claim.id) && (await reaches(claim.commitSha, anchor)))
+        selected.push(claim);
+    if (!selected.length) continue;
+    partitions.push(selected);
+    for (const claim of selected) assigned.add(claim.id);
+  }
+  const remaining = claims.filter((claim) => !assigned.has(claim.id));
+  if (remaining.length) partitions.push(remaining);
+  if (partitions.length <= 1)
+    return singleOriginalContributorUnitProof(
+      github,
+      accepted,
+      original,
+      integration,
+      owners,
+      claims,
+      followups,
+      contextSources,
+    );
+  const sources = new Map<string, CorrectionSource>();
+  const parts: OriginalContributorBinding[] = [];
+  for (const selected of partitions) {
+    const acceptedEvidence = evidence
+      .filter((source) =>
+        selected.some(
+          (claim) => claim.sourceId === source.evidence.pull.node_id,
+        ),
+      )
+      .sort(
+        (left, right) =>
+          Date.parse(left.evidence.pull.merged_at ?? "") -
+          Date.parse(right.evidence.pull.merged_at ?? ""),
+      );
+    const first = acceptedEvidence[0];
+    requireThat(first, "Reviewed revision lacks its first acceptance");
+    const firstSource = richSource(first.evidence, owners);
+    const later: WorkUnitSource[] = [];
+    for (const source of evidence) {
+      if (source === first) continue;
+      if (
+        selected.some(
+          (claim) => claim.sourceId === source.evidence.pull.node_id,
+        )
+      ) {
+        later.push(source);
+        continue;
+      }
+      if (
+        source.evidence.pull.node_id === original.evidence.pull.node_id &&
+        source.evidence.pull.merged_at !== null &&
+        !selected.some(
+          (claim) => claim.commitSha === source.evidence.pull.head.sha,
+        ) &&
+        (await reaches(source.evidence.pull.head.sha, selected[0].commitSha))
+      )
+        later.push(source);
+    }
+    const proof = await singleOriginalContributorUnitProof(
+      github,
+      firstSource,
+      original,
+      first,
+      owners,
+      selected,
+      later,
+      contextSources,
+    );
+    requireThat(
+      proof.originalContributor,
+      "Reviewed revision lacks a native binding",
+    );
+    parts.push({
+      ...proof.originalContributor,
+      acceptedSourceId: firstSource.sourceId,
+    });
+    for (const source of proof.sources) sources.set(source.sourceId, source);
+  }
+  return { sources: [...sources.values()], originalContributorParts: parts };
+}
+
+/** Preserve one unit across independently verified originating PRs. */
+export async function octoberOriginalContributorPartsProof(
+  github: Pick<GitHubClient, "get"> & Partial<Pick<GitHubClient, "graphql">>,
+  sourceEvidence: readonly WorkUnitSource[],
+  owners: ReadonlyMap<string, string>,
+  claims: readonly CorrectionClaim[],
+  originatingClaims: ReadonlyMap<string, readonly string[]>,
+  completionSourceId: string,
+): Promise<HistoricalOrdinaryProof> {
+  requireThat(
+    originatingClaims.size >= 2,
+    "Native unit needs multiple originals",
+  );
+  const originals = [...originatingClaims.keys()].map((id) => {
+    const source = sourceEvidence.find(
+      (item) => item.evidence.pull.node_id === id,
+    );
+    requireThat(
+      source && source.evidence.pull.user.type === "User",
+      "Native unit original identity is unavailable",
+    );
+    return source;
+  });
+  const sources = await bindRetained(sourceEvidence, owners, true);
+  for (const source of sources) {
+    const evidence = sourceEvidence.find(
+      (item) => item.evidence.pull.node_id === source.sourceId,
+    );
+    requireThat(evidence, "Native original source disappeared");
+    for (const commit of source.commits) {
+      const original = evidence.evidence.commits.find(
+        (item) => item.sha === commit.sha,
+      );
+      requireThat(original, "Native original commit disappeared");
+      commit.parentShas = original.parents.map((parent) => parent.sha);
+    }
+  }
+  const graph = new Map<string, string[]>();
+  for (const source of sources)
+    for (const commit of source.commits) {
+      const parents = commit.parentShas;
+      requireThat(parents, "Native original partition lacks parent edges");
+      const previous = graph.get(commit.sha);
+      requireThat(
+        !previous || encode(previous) === encode(parents),
+        "Native original partition has inconsistent parent edges",
+      );
+      graph.set(commit.sha, parents);
+    }
+  const reaches = (head: string, ancestor: string) => {
+    const pending = [head];
+    const seen = new Set<string>();
+    for (const sha of pending) {
+      if (sha === ancestor) return true;
+      if (seen.has(sha)) continue;
+      seen.add(sha);
+      pending.push(...(graph.get(sha) ?? []));
+    }
+    return false;
+  };
+  const partition = new Map<string, CorrectionClaim[]>();
+  const assigned = new Set<string>();
+  for (const [id, claimIds] of originatingClaims) {
+    const ownClaims = claims.filter((claim) => claimIds.includes(claim.id));
+    requireThat(
+      ownClaims.length === claimIds.length &&
+        ownClaims.length > 0 &&
+        ownClaims.every((claim) => !assigned.has(claim.id)),
+      "Native original claims overlap or are unavailable",
+    );
+    for (const claim of ownClaims) assigned.add(claim.id);
+    partition.set(id, ownClaims);
+  }
+  const independentClaimIds: string[] = [];
+  for (const claim of claims) {
+    if (assigned.has(claim.id)) continue;
+    const matching = [...partition]
+      .filter(([, originalClaims]) =>
+        originalClaims.some((original) =>
+          reaches(claim.commitSha, original.commitSha),
+        ),
+      )
+      .sort(
+        ([leftId, leftClaims], [rightId, rightClaims]) =>
+          Number(rightClaims.some((original) => original.path === claim.path)) -
+            Number(
+              leftClaims.some((original) => original.path === claim.path),
+            ) || leftId.localeCompare(rightId),
+      );
+    if (!matching.length) {
+      independentClaimIds.push(claim.id);
+      continue;
+    }
+    const strongest = matching.filter(([, originalClaims]) =>
+      originalClaims.some((original) => original.path === claim.path),
+    );
+    const candidates = strongest.length ? strongest : matching;
+    const candidateSources = candidates.map(([id]) =>
+      sources.find((source) => source.sourceId === id),
+    );
+    const recipients = new Set(
+      candidateSources.map((source) => source?.author?.id),
+    );
+    // A maintainer may open originals that carry other people's commits; the
+    // unit proof credits each part to its sole commit author, so compare both.
+    const originators = new Set(
+      candidateSources.map(
+        (source) =>
+          source && (soleOriginalPrimary(source) ?? source.author)?.id,
+      ),
+    );
+    requireThat(
+      recipients.size === 1 && originators.size === 1,
+      "Native follow-up has multiple originating contributors",
+    );
+    candidates[0][1].push(claim);
+  }
+  const authenticated = new Map<string, CorrectionSource>();
+  const parts: OriginalContributorBinding[] = [];
+  for (const original of originals) {
+    const originId = original.evidence.pull.user.node_id;
+    const selected = partition.get(original.evidence.pull.node_id);
+    requireThat(selected?.length, "Native original partition disappeared");
+    const accepted = sources
+      .filter((source) =>
+        selected.some((claim) => claim.sourceId === source.sourceId),
+      )
+      .sort(
+        (left, right) =>
+          (left.occurredAt ?? "").localeCompare(right.occurredAt ?? "") ||
+          left.sourceId.localeCompare(right.sourceId),
+      )[0];
+    const integration = sourceEvidence.find(
+      (source) => source.evidence.pull.node_id === accepted?.sourceId,
+    );
+    requireThat(
+      accepted && integration && accepted.author?.id !== originId,
+      "Native original partition lacks an accepted carrier",
+    );
+    const followups = sourceEvidence.filter(
+      (source) =>
+        source.evidence.pull.node_id !== accepted.sourceId &&
+        (selected.some(
+          (claim) => claim.sourceId === source.evidence.pull.node_id,
+        ) ||
+          (source.evidence.pull.node_id === completionSourceId &&
+            source.evidence.pull.node_id !== original.evidence.pull.node_id &&
+            (source.evidence.pull.user.node_id === originId ||
+              source.evidence.pull.user.node_id === accepted.author?.id) &&
+            source.evidence.pull.merged_at !== null &&
+            originatingClaims
+              .get(original.evidence.pull.node_id)
+              ?.some((claimId) => {
+                const claim = claims.find((item) => item.id === claimId);
+                return (
+                  claim &&
+                  reaches(source.evidence.pull.head.sha, claim.commitSha)
+                );
+              }) &&
+            Date.parse(source.evidence.pull.merged_at) >=
+              Date.parse(accepted.occurredAt ?? ""))),
+    );
+    const proof = await octoberOriginalContributorUnitProof(
+      github,
+      accepted,
+      original,
+      integration,
+      owners,
+      selected,
+      followups,
+      sourceEvidence,
+    );
+    if (proof.originalContributorParts) {
+      parts.push(...proof.originalContributorParts);
+    } else {
+      requireThat(
+        proof.originalContributor,
+        "Native original partition proof is missing",
+      );
+      parts.push({
+        ...proof.originalContributor,
+        acceptedSourceId: accepted.sourceId,
+      });
+    }
+    for (const source of proof.sources)
+      authenticated.set(source.sourceId, source);
+  }
+  return {
+    sources: sources.map(
+      (source) => authenticated.get(source.sourceId) ?? source,
+    ),
+    originalContributorParts: parts,
+    ...(independentClaimIds.length ? { independentClaimIds } : {}),
+  };
+}
+
+export async function octoberOriginalContributorProof(
+  github: Pick<GitHubClient, "get"> & Partial<Pick<GitHubClient, "graphql">>,
+  plain: CorrectionSource,
+  sources: readonly WorkUnitSource[],
+  owners: ReadonlyMap<string, string>,
+  allowMergedOriginal = false,
+): Promise<HistoricalOrdinaryProof> {
+  requireThat(
+    sources.length === 2,
+    "October replacement needs one original PR",
+  );
+  const [integration, original] = sources;
+  const originalSource = richSource(original.evidence, owners);
+  const originalActor = originalSource.author;
+  const carrier = plain.author;
+  const originalCommits = originalSource.commits.filter(
+    (c) => c.parentCount <= 1,
+  );
+  requireThat(
+    original.evidence.pull.state === "closed" &&
+      (originalSource.occurredAt === null ||
+        (allowMergedOriginal &&
+          plain.occurredAt !== null &&
+          originalSource.occurredAt >= plain.occurredAt)) &&
+      originalSource.repositoryNodeId === plain.repositoryNodeId &&
+      originalSource.repository.toLowerCase() ===
+        plain.repository.toLowerCase() &&
+      verifiedHuman(originalActor) &&
+      verifiedHuman(carrier) &&
+      originalActor.id !== carrier.id &&
+      originalSource.commits.some(
+        (commit) => commit.sha === originalSource.headSha,
+      ) &&
+      new Set(originalSource.commits.map((commit) => commit.sha)).size ===
+        originalSource.commits.length,
+    "October replacement does not have a sole verified original contributor",
+  );
+  if (originalCommits.some((commit) => commit.author?.id === carrier.id))
+    await authenticateOriginalFollowupParents(
+      github,
+      originalSource,
+      original.evidence,
+    );
+  requireThat(
+    originalContributorPrecedesFollowups(originalSource, carrier),
+    "October replacement does not have a verified original contributor preceding every carrier follow-up",
+  );
+  const accepted = matchRetainedAcceptedSource(
+    plain,
+    richSource(integration.evidence, owners),
+  );
+  requireThat(
+    accepted.author?.id === carrier.id &&
+      accepted.author?.kind === carrier.kind &&
+      accepted.commits.every(
+        (commit, index) =>
+          !commit.author ||
+          (commit.author.id === plain.commits[index].author?.id &&
+            commit.author.kind === plain.commits[index].author?.kind),
+      ),
+    "Retained accepted commit author differs from the canonical census",
+  );
+  const exact = await exactOctoberOriginalContributorProof(
+    github,
+    accepted,
+    originalSource,
+    integration,
+    original,
+    allowMergedOriginal,
+  );
+  if (exact) return exact;
+  requireThat(
+    originalSource.occurredAt === null,
+    "Merged original requires exact first acceptance proof",
+  );
+  // The rich original proof captures merge parents but does not fetch merger
+  // line totals. A shared SHA can carry its already verified census totals.
+  const canonicalCommits = new Map(
+    plain.commits.map((commit) => [commit.sha, commit]),
+  );
+  for (const commit of originalSource.commits) {
+    const canonical = canonicalCommits.get(commit.sha);
+    if (!canonical || commit.parentCount <= 1) continue;
+    requireThat(
+      canonical.parentCount === commit.parentCount &&
+        canonical.author?.id === commit.author?.id &&
+        canonical.author?.kind === commit.author?.kind,
+      "Shared October merge disagrees with the canonical census",
+    );
+    commit.additions = canonical.additions;
+    commit.deletions = canonical.deletions;
+  }
+  const retained = await retainedCopyBindings(sources, {
+    ordinaryCommitsOnly: true,
+    octoberOriginalCredit: true,
+  });
+  requireThat(
+    retained.limitations.length === 0,
+    "October retained-copy evidence is incomplete or ambiguous",
+  );
+  const ordinary = firstAcceptedOrdinary(plain);
+  const acceptedWithFiles = new Map(
+    accepted.commits.map((commit) => [commit.sha, commit]),
+  );
+  const candidates = ordinary.toSorted((a, b) => a.sha.localeCompare(b.sha));
+  for (const commit of candidates) {
+    if (
+      (commit.author !== null &&
+        (!verifiedHuman(commit.author) ||
+          commit.author.id !== originalActor.id)) ||
+      ordinary.some(
+        (other) =>
+          other !== commit &&
+          (!verifiedHuman(other.author) ||
+            (other.author.id !== originalActor.id &&
+              other.author.id !== carrier.id)),
+      )
+    )
+      continue;
+    const files = acceptedWithFiles.get(commit.sha)?.files;
+    const bindings = [...retained.bindings.values()].filter(
+      (binding) =>
+        binding.integration === integration &&
+        binding.original === original &&
+        binding.acceptedCommitSha === commit.sha,
+    );
+    const originalCommitSha = bindings[0]?.originalCommitSha;
+    const boundPaths = bindings.map((binding) => binding.path).sort();
+    if (
+      !originalCommitSha ||
+      !files?.length ||
+      bindings.some(
+        (binding) => binding.originalCommitSha !== originalCommitSha,
+      ) ||
+      bindings.length !== files.length ||
+      !files.every((file) => boundPaths.includes(file.path))
+    )
+      continue;
+    return {
+      sources: [
+        {
+          ...plain,
+          commits: plain.commits.map((other) =>
+            other === commit ? { ...commit, files } : other,
+          ),
+        },
+        originalSource,
+      ],
+      originalContributor: {
+        originalSourceId: originalSource.sourceId,
+        originalCommitSha,
+        acceptedCommitSha: commit.sha,
+        boundPaths,
+        bindingDigest: digest(
+          encode(
+            bindings.map((binding) => ({
+              original: binding.original.evidence,
+              originalCommitSha: binding.originalCommitSha,
+              accepted: binding.integration.evidence,
+              acceptedCommitSha: binding.acceptedCommitSha,
+              path: binding.path,
+              preexistingCommitShas: binding.preexistingCommitShas,
+            })),
+          ),
+        ),
+      },
+    };
+  }
+  throw new Error(
+    "October replacement lacks an exact first-accepted original commit binding",
+  );
+}
+
+/** A later merge marker must not hide the carrier's first acceptance. */
+export function isMergedOriginalContributor(
+  accepted: CorrectionSource | undefined,
+  donor: CorrectionSource | undefined,
+): boolean {
+  return !!(
+    accepted &&
+    donor &&
+    verifiedHuman(accepted.author) &&
+    verifiedHuman(donor.author) &&
+    accepted.author.id !== donor.author.id &&
+    accepted.occurredAt !== null &&
+    donor.occurredAt !== null &&
+    donor.occurredAt >= accepted.occurredAt &&
+    donor.commits.length > 0 &&
+    donor.commits.every(
+      (commit) =>
+        commit.parentCount <= 1 &&
+        commit.firstAcceptedSourceId === accepted.sourceId &&
+        accepted.commits.some(
+          (copy) =>
+            copy.sha === commit.sha &&
+            copy.author?.id === commit.author?.id &&
+            copy.author?.kind === commit.author?.kind,
+        ),
+    )
+  );
+}
+
+/** Restore reported merge counters from the complete immutable ownership census. */
+export function restoreCanonicalMergeCounts(
+  sources: readonly CorrectionSource[],
+  outcomes: ReadonlyMap<string, MergedPullRequestOutcome>,
+): void {
+  for (const source of sources) {
+    const outcome = outcomes.get(source.sourceId);
+    for (const commit of source.commits) {
+      if (commit.parentCount <= 1) continue;
+      const canonical = outcome?.commits?.find(
+        (item) => item.oid === commit.sha,
+      );
+      if (!canonical) continue;
+      requireThat(
+        canonical.parentCount === commit.parentCount &&
+          (canonical.author?.id ?? null) === (commit.author?.id ?? null) &&
+          (canonical.author?.kind ?? null) === (commit.author?.kind ?? null) &&
+          (commit.additions === null ||
+            commit.additions === canonical.additions) &&
+          (commit.deletions === null ||
+            commit.deletions === canonical.deletions),
+        "Canonical merge identity or counters disagree",
+      );
+      commit.additions = canonical.additions ?? null;
+      commit.deletions = canonical.deletions ?? null;
+    }
+  }
+}
+
+/** Resolve semantic origin claims to their authenticated first acceptance. */
+export function firstAcceptedCorrectionClaims(
+  claims: readonly CorrectionClaim[],
+  sources: readonly CorrectionSource[],
+): CorrectionClaim[] {
+  return claims.map((claim) => {
+    const origin = sources.find((source) => source.sourceId === claim.sourceId);
+    const originalCommit = origin?.commits.find(
+      (commit) => commit.sha === claim.commitSha,
+    );
+    requireThat(
+      origin && originalCommit,
+      "Grouped claim origin lacks the exact commit",
+    );
+    requireThat(
+      originalCommit.files?.some((file) => file.path === claim.path),
+      "Grouped claim origin lacks the exact path",
+    );
+    const carriers = sources.filter(
+      (source) =>
+        source.repositoryNodeId === origin.repositoryNodeId &&
+        originalCommit.firstAcceptedSourceId === source.sourceId &&
+        source.commits.some(
+          (commit) =>
+            commit.sha === claim.commitSha &&
+            commit.author?.id === originalCommit.author?.id &&
+            commit.author?.kind === originalCommit.author?.kind &&
+            correctionClaimCommit(commit) &&
+            commit.firstAcceptedSourceId === source.sourceId &&
+            commit.files?.some((file) => file.path === claim.path),
+        ),
+    );
+    requireThat(
+      carriers.length === 1,
+      "Grouped claim has no unique first acceptance",
+    );
+    return { ...claim, sourceId: carriers[0].sourceId };
+  });
+}
+
+/** Compare every retained field against the complete provider representation. */
+function matchesRetainedProjection(
+  actual: unknown,
+  expected: unknown,
+): boolean {
+  if (Array.isArray(expected))
+    return (
+      Array.isArray(actual) &&
+      actual.length === expected.length &&
+      expected.every((value, index) =>
+        matchesRetainedProjection(actual[index], value),
+      )
+    );
+  if (expected !== null && typeof expected === "object")
+    return (
+      actual !== null &&
+      typeof actual === "object" &&
+      !Array.isArray(actual) &&
+      Object.entries(expected).every(
+        ([key, value]) =>
+          Object.hasOwn(actual, key) &&
+          matchesRetainedProjection(
+            (actual as Record<string, unknown>)[key],
+            value,
+          ),
+      )
+    );
+  return actual === expected;
+}
+
+/** Retain authenticated ancestry for accepted same-carrier follow-up sources. */
+export async function originalContributorFollowupProof(
+  github: Pick<GitHubClient, "get">,
+  accepted: CorrectionSource,
+  source: CorrectionSource,
+  evidence: ValueEvidence,
+  policy: { sha: string; text: string },
+  claims?: readonly CorrectionClaim[],
+  retainNativeAcceptance?: (evidence: {
+    merge: { sha: string; parents: { sha: string }[] };
+    acceptedRange: NativeComparison[];
+    retainedBaseRanges: NativeComparison[];
+  }) => void,
+  scoped?: { anchorSha: string; origin: CorrectionActor },
+): Promise<OriginalContributorFollowup> {
+  const reference = evidence.relatedPullRequests.find(
+    (target) =>
+      target.id === accepted.sourceId &&
+      target.url === accepted.sourceUrl &&
+      target.repository.toLowerCase() === accepted.repository.toLowerCase(),
+  );
+  const acknowledgement = reference
+    ? retainedAcknowledgements(evidence).find(
+        (record) =>
+          record.user?.type === "User" &&
+          record.user.node_id === accepted.author?.id &&
+          referencesOriginalContributorSource(
+            record.body,
+            reference.repository,
+            reference.number,
+          ),
+      )
+    : undefined;
+  if (
+    claims === undefined &&
+    reference &&
+    (referencesOriginalContributorSource(
+      evidence.pull.body ?? "",
+      reference.repository,
+      reference.number,
+    ) ||
+      acknowledgement)
+  ) {
+    const current = await github.get<Pull>(
+      `/repos/${source.repository}/pulls/${evidence.pull.number}`,
+    );
+    requireThat(
+      current && matchesRetainedProjection(current, evidence.pull),
+      "Accepted follow-up statement changed during collection",
+    );
+    if (acknowledgement) {
+      const isComment = "created_at" in acknowledgement;
+      const path = isComment
+        ? `/repos/${source.repository}/issues/comments/${acknowledgement.html_url.split("issuecomment-")[1]}`
+        : `/repos/${source.repository}/pulls/${evidence.pull.number}/reviews/${acknowledgement.id}`;
+      const currentRecord = await github.get<Record<string, unknown>>(path);
+      requireThat(
+        matchesRetainedProjection(currentRecord, acknowledgement),
+        "Accepted follow-up acknowledgement changed during collection",
+      );
+    }
+    const retained = {
+      sourceDigest: await valueSourceDigest(evidence, policy),
+      pull: current,
+      target: reference,
+      ...(acknowledgement ? { acknowledgement } : {}),
+    };
+    const binding = {
+      sourceId: source.sourceId,
+      ancestorSha: accepted.headSha,
+      commits: [],
+      reference: { ...retained, digest: digest(encode(retained)) },
+    };
+    requireThat(
+      isOriginalContributorFollowup(source, accepted, binding),
+      "Invalid accepted follow-up statement",
+    );
+    return binding;
+  }
+  if (claims) {
+    const current = await github.get<Pull>(
+      `/repos/${source.repository}/pulls/${evidence.pull.number}`,
+    );
+    requireThat(
+      current && matchesRetainedProjection(current, evidence.pull),
+      "Selected native follow-up changed during collection",
+    );
+    const merge = evidence.mergeCommitEvidence;
+    requireThat(
+      merge &&
+        merge.sha === evidence.pull.merge_commit_sha &&
+        merge.parents.length === 2 &&
+        merge.parents[1].sha === source.headSha,
+      "Selected follow-up lacks a pinned native merge",
+    );
+    const currentMerge = await github.get<{
+      sha: string;
+      parents: { sha: string }[];
+    }>(`/repos/${source.repository}/git/commits/${merge.sha}`);
+    requireThat(
+      currentMerge?.sha === merge.sha &&
+        Array.isArray(currentMerge.parents) &&
+        encode(currentMerge.parents.map((parent) => parent.sha)) ===
+          encode(merge.parents.map((parent) => parent.sha)),
+      "Selected follow-up native merge changed",
+    );
+    const acceptance = await authenticateNativeAcceptedRange(
+      github,
+      source,
+      evidence,
+      merge,
+      claims.map((claim) => claim.commitSha),
+    );
+    retainNativeAcceptance?.({ merge: currentMerge, ...acceptance });
+  } else {
+    await authenticateOriginalFollowupParents(github, source, evidence);
+  }
+  const ancestorSha = scoped?.anchorSha ?? accepted.headSha;
+  const commits: OriginalContributorFollowup["commits"] = [];
+  let total = 0;
+  for (let page = 1; page === 1 || commits.length < total; page++) {
+    const result = await github.get<{
+      status: string;
+      ahead_by: number;
+      behind_by: number;
+      total_commits: number;
+      merge_base_commit: { sha: string };
+      commits: { sha: string; parents: { sha: string }[] }[];
+    }>(
+      `/repos/${source.repository}/compare/${ancestorSha}...${source.headSha}?per_page=100&page=${page}`,
+    );
+    requireThat(
+      result &&
+        result.status === "ahead" &&
+        result.behind_by === 0 &&
+        result.merge_base_commit?.sha === ancestorSha &&
+        Number.isSafeInteger(result.total_commits) &&
+        result.total_commits > 0 &&
+        result.ahead_by === result.total_commits &&
+        (page === 1 || result.total_commits === total) &&
+        result.commits.length ===
+          Math.min(100, result.total_commits - (page - 1) * 100),
+      "Follow-up does not descend from the complete accepted source",
+    );
+    total = result.total_commits;
+    commits.push(
+      ...result.commits.map((commit) => ({
+        sha: commit.sha,
+        parentShas: commit.parents.map((parent) => parent.sha),
+      })),
+    );
+  }
+  for (const commit of commits) {
+    const immutable = await github.get<{
+      sha: string;
+      parents: { sha: string }[];
+    }>(`/repos/${source.repository}/git/commits/${commit.sha}`);
+    requireThat(
+      immutable?.sha === commit.sha &&
+        Array.isArray(immutable.parents) &&
+        encode(immutable.parents.map((parent) => parent.sha)) ===
+          encode(commit.parentShas),
+      "Follow-up comparison parent graph disagrees with immutable Git objects",
+    );
+  }
+  const binding = {
+    sourceId: source.sourceId,
+    ancestorSha,
+    commits,
+  };
+  requireThat(
+    isOriginalContributorFollowup(source, accepted, binding, claims, scoped),
+    "Invalid accepted follow-up source",
+  );
+  return binding;
+}
+
+/** Combine a verified ordinary replacement with its complete grouped path scope. */
+export function groupedOriginalContributorProof(
+  accepted: CorrectionSource,
+  original: HistoricalOrdinaryProof,
+  claims: readonly CorrectionClaim[],
+  contextSources: readonly CorrectionSource[] = [],
+  followups: readonly OriginalContributorFollowup[] = [],
+): HistoricalOrdinaryProof {
+  const originalAccepted = original.sources.find(
+    (source) => source.sourceId === accepted.sourceId,
+  );
+  matchRetainedAcceptedSource(accepted, originalAccepted);
+  requireThat(
+    originalAccepted &&
+      original.sources.length === 2 &&
+      original.originalContributor &&
+      originalAccepted.sourceId === accepted.sourceId &&
+      originalAccepted.sourceUrl === accepted.sourceUrl &&
+      originalAccepted.author?.id === accepted.author?.id &&
+      originalAccepted.author?.kind === accepted.author?.kind &&
+      originalAccepted.commits.every(
+        (commit, index) =>
+          commit.author?.id === accepted.commits[index].author?.id &&
+          commit.author?.kind === accepted.commits[index].author?.kind &&
+          commit.firstAcceptedSourceId ===
+            accepted.commits[index].firstAcceptedSourceId,
+      ) &&
+      contextSources.every(
+        (source) =>
+          isOriginalContributorContext(source, accepted) ||
+          isOriginalContributorFollowup(
+            source,
+            accepted,
+            followups.find((item) => item.sourceId === source.sourceId),
+          ),
+      ),
+    "Grouped original credit requires one accepted replacement",
+  );
+  const acceptedSources = [
+    accepted,
+    ...contextSources.filter((source) =>
+      followups.some((item) => item.sourceId === source.sourceId),
+    ),
+  ];
+  requireThat(
+    followups.length === acceptedSources.length - 1 &&
+      new Set(followups.map((item) => item.sourceId)).size ===
+        followups.length &&
+      claims.every((claim) =>
+        acceptedSources.some((source) => source.sourceId === claim.sourceId),
+      ),
+    "Grouped original credit requires one accepted replacement with complete follow-up scope",
+  );
+  requireThat(
+    claims.length > 0 &&
+      new Set(claims.map((claim) => claim.id)).size === claims.length &&
+      claims.every((claim) =>
+        acceptedSources.some(
+          (source) =>
+            source.sourceId === claim.sourceId &&
+            source.commits.some(
+              (commit) =>
+                commit.sha === claim.commitSha &&
+                correctionClaimCommit(commit) &&
+                commit.firstAcceptedSourceId === source.sourceId &&
+                commit.files?.some((file) => file.path === claim.path),
+            ),
+        ),
+      ) &&
+      acceptedSources.every((source) =>
+        source.commits.every(
+          (commit) =>
+            commit.parentCount > 1 ||
+            commit.firstAcceptedSourceId !== source.sourceId ||
+            (commit.files !== undefined && commit.files.length > 0),
+        ),
+      ),
+    "Grouped original credit does not cover the canonical selected claims",
+  );
+  const originals = new Map(
+    originalAccepted.commits.map((commit) => [commit.sha, commit]),
+  );
+  return {
+    sources: [
+      {
+        ...accepted,
+        commits: accepted.commits.map((commit) => ({
+          ...commit,
+          ...(commit.parentCount > 1
+            ? {
+                additions: originals.get(commit.sha)?.additions ?? null,
+                deletions: originals.get(commit.sha)?.deletions ?? null,
+              }
+            : {}),
+          ...(originals.get(commit.sha)?.parentShas
+            ? { parentShas: originals.get(commit.sha)?.parentShas }
+            : {}),
+        })),
+      },
+      ...original.sources.filter(
+        (source) => source.sourceId !== accepted.sourceId,
+      ),
+      ...contextSources,
+    ],
+    originalContributor: {
+      ...original.originalContributor,
+      ...(followups.length ? { followups: [...followups] } : {}),
+    },
+  };
+}
+
+async function ordinaryRetainedProof(
+  github: GitHubClient,
+  read: SourceRead,
+  owners: ReadonlyMap<string, string>,
+  discussion: {
+    cache: CorrectionEvidenceCache;
+    executor: GraphqlExecutor;
+    allowNew: boolean;
+  },
+  octoberOriginalCredit: boolean,
+): Promise<HistoricalOrdinaryProof> {
+  const plain = ordinarySource(read, owners);
+  const ordinary = firstAcceptedOrdinary(plain);
+  const hasUnlinked = ordinary.some(
+    (commit) => !isCreditEligibleCommitAuthor(commit.author),
+  );
+  const otherAuthors = new Set(
+    ordinary.flatMap(({ author }) =>
+      octoberOriginalCredit &&
+      verifiedHuman(author) &&
+      author.id !== plain.author?.id
+        ? [author.id]
+        : [],
+    ),
+  );
+  if (!hasUnlinked && !otherAuthors.size) return { sources: [plain] };
+  let readDiscussion: Parameters<typeof collectValueReferenceEvidence>[3];
+  {
+    const { cache, executor, allowNew } = discussion;
+    const number = read.outcome.number;
+    const repository = plain.repository;
+    const [owner, name] = repository.split("/");
+    const variables = { owner, name, number };
+    const graphqlUrl = "https://api.github.com/graphql";
+    const graphRequest = encode({
+      query: historicalDiscussionQuery,
+      variables,
+    });
+    const root = `https://api.github.com/repos/${repository}`;
+    const pull = `${root}/pulls/${number}`;
+    const suffix = "?per_page=100&page=1";
+    const hasEnvelope = await cache.hasSuccessfulRequest(
+      graphqlUrl,
+      "POST",
+      graphRequest,
+    );
+    const oldAnchors =
+      !hasEnvelope && allowNew
+        ? await Promise.all([
+            cache.hasSuccessfulRequest(pull),
+            cache.hasSuccessfulRequest(`${pull}/reviews${suffix}`),
+            cache.hasSuccessfulRequest(
+              `${root}/issues/${number}/comments${suffix}`,
+            ),
+            cache.hasSuccessfulRequest(`${pull}/comments${suffix}`),
+            cache.hasSuccessfulRequest(
+              graphqlUrl,
+              "POST",
+              encode(valueReferenceTimelineRequest(repository, number, null)),
+            ),
+          ])
+        : [];
+    if (hasEnvelope || (allowNew && !oldAnchors.some(Boolean))) {
+      readDiscussion = async (restPull) => {
+        let envelope: unknown;
+        try {
+          envelope = await executor.execute(
+            historicalDiscussionQuery,
+            variables,
+          );
+        } catch (error) {
+          cache.assertUninterrupted();
+          if (hasEnvelope) throw error;
+          if (
+            !(await cache.hasSuccessfulRequest(
+              graphqlUrl,
+              "POST",
+              graphRequest,
+            ))
+          )
+            return null;
+          // The live client can stop after recording a complete response and
+          // charging its cost. Use exactly that observation in this pass too.
+          envelope = await executor.execute(
+            historicalDiscussionQuery,
+            variables,
+          );
+        }
+        cache.assertUninterrupted();
+        if (!historicalDiscussionHasRateLimit(envelope)) return null;
+        return validateHistoricalDiscussion(
+          envelope,
+          {
+            id: plain.sourceId,
+            number,
+            repository,
+            repositoryNodeId: plain.repositoryNodeId,
+            url: plain.sourceUrl,
+            headSha: plain.headSha,
+            mergedAt: plain.occurredAt,
+          },
+          restPull,
+        );
+      };
+    }
+  }
+  const references = await collectValueReferenceEvidence(
+    github,
+    plain.repository,
+    read.outcome.number,
+    readDiscussion,
+  );
+  requireThat(
+    references.pull.node_id === plain.sourceId &&
+      references.pull.head.sha === plain.headSha &&
+      canonicalTime(references.pull.merged_at ?? "") === plain.occurredAt &&
+      references.limitations.length === 0,
+    "Retained-source discovery is incomplete or stale",
+  );
+  const originals: Pull[] = [];
+  for (const reference of references.references) {
+    if (
+      reference.repository.toLowerCase() !== plain.repository.toLowerCase() ||
+      reference.number >= read.outcome.number
+    )
+      continue;
+    const pull = await github.get<Pull>(
+      `/repos/${plain.repository}/pulls/${reference.number}`,
+    );
+    requireThat(
+      pull?.node_id === reference.id &&
+        pull.html_url === reference.url &&
+        pull.number === reference.number,
+      "Retained original identity unavailable",
+    );
+    if (pull.state === "closed" && pull.merged_at === null)
+      originals.push(pull);
+  }
+  if (!originals.length) return { sources: [plain] };
+  const sources: WorkUnitSource[] = [];
+  for (const expected of [references.pull, ...originals]) {
+    const evidence = await collectValueEvidence(
+      github,
+      plain.repository,
+      expected.number,
+    );
+    requireThat(
+      evidence.pull.node_id === expected.node_id &&
+        evidence.pull.head.sha === expected.head.sha &&
+        evidence.pull.updated_at === expected.updated_at,
+      "Retained source changed during evidence collection",
+    );
+    sources.push({
+      evidence,
+      policy: { sha: evidence.pull.base.sha, text: "" },
+    });
+  }
+  const acceptedEvidence = sources[0].evidence;
+  const pathInventory = (evidence: ValueEvidence) => [
+    ...evidence.files.flatMap((file) => [
+      file.filename,
+      ...(file.previous_filename ? [file.previous_filename] : []),
+    ]),
+    ...evidence.commitAttribution.flatMap((entry) =>
+      (entry.files ?? []).flatMap((file) => [
+        file.filename,
+        ...(file.previous_filename ? [file.previous_filename] : []),
+      ]),
+    ),
+    ...(evidence.mergeResolutions ?? []).flatMap(
+      (resolution) => resolution.paths,
+    ),
+  ];
+  const completePathInventory = (evidence: ValueEvidence) =>
+    evidence.commits.length === evidence.pull.commits &&
+    new Set(evidence.commits.map((commit) => commit.sha)).size ===
+      evidence.commits.length &&
+    evidence.files.length === evidence.pull.changed_files &&
+    new Set(evidence.files.map((file) => file.filename)).size ===
+      evidence.files.length &&
+    evidence.commits.every((commit) => {
+      if (commit.parents.length > 1) {
+        const resolutions = evidence.mergeResolutions?.filter(
+          (item) => item.commitSha === commit.sha,
+        );
+        return (
+          resolutions?.length === 1 &&
+          mergeResolutionLineCounts(resolutions[0], commit) !== null
+        );
+      }
+      const entries = evidence.commitAttribution.filter(
+        (entry) => entry.sha === commit.sha,
+      );
+      const entry = entries[0];
+      return (
+        entries.length === 1 &&
+        entry.changedPaths !== null &&
+        entry.files?.length === entry.changedPaths.length &&
+        new Set(entry.changedPaths).size === entry.files.length &&
+        entry.files.every((file) => entry.changedPaths?.includes(file.filename))
+      );
+    });
+  const acceptedPaths = new Set(pathInventory(acceptedEvidence));
+  const acceptedShas = new Set(
+    acceptedEvidence.commits.map((commit) => commit.sha),
+  );
+  const relevant: WorkUnitSource[] = [];
+  for (let source of sources.slice(1)) {
+    let evidence = source.evidence;
+    const overlaps = () =>
+      evidence.commits.some((commit) => acceptedShas.has(commit.sha)) ||
+      pathInventory(evidence).some((path) => acceptedPaths.has(path));
+    // A reference can describe a dependency. A branch-sync merge still needs
+    // its canonical resolution paths before disjointness is established.
+    if (
+      !overlaps() &&
+      evidence.commits.some((commit) => commit.parents.length > 1)
+    ) {
+      const repository = await github.get<{
+        id: number;
+        node_id: string;
+        private: boolean;
+        full_name: string;
+      }>(`/repos/${plain.repository}`);
+      requireThat(repository, "Retained repository identity unavailable");
+      source = await hydrateValueMergeSource(
+        source,
+        await mergeRecipe(evidence),
+        repository,
+      );
+      evidence = source.evidence;
+    }
+    if (
+      !completePathInventory(evidence) ||
+      !completePathInventory(acceptedEvidence) ||
+      overlaps()
+    )
+      relevant.push(source);
+  }
+  const possibleOriginals = octoberOriginalCredit
+    ? relevant.filter(
+        ({ evidence: { pull } }) =>
+          pull.user.node_id !== plain.author?.id &&
+          (hasUnlinked || otherAuthors.has(pull.user.node_id)),
+      )
+    : [];
+  requireThat(
+    possibleOriginals.length <= 1,
+    "October replacement names competing original PRs",
+  );
+  const selected = possibleOriginals.length
+    ? possibleOriginals
+    : hasUnlinked
+      ? relevant
+      : [];
+  if (!selected.length) return { sources: [plain] };
+  sources.splice(1, sources.length - 1, ...selected);
+  if (possibleOriginals.length)
+    return octoberOriginalContributorProof(github, plain, sources, owners);
+  const converted = await bindRetained(sources, owners);
+  const accepted = matchRetainedAcceptedSource(
+    plain,
+    converted.find((source) => source.sourceId === plain.sourceId),
+  );
+  // References are inputs to ambiguity checks. Only actual retained bindings
+  // extend the correction proof beyond the canonical accepted commit census.
+  const commits = plain.commits.map((commit, index) => {
+    const { author, files, retainedCopy } = accepted.commits[index];
+    // A null observation cannot erase an independently resolved author.
+    if (author || retainedCopy)
+      requireThat(
+        author?.id === commit.author?.id &&
+          author?.kind === commit.author?.kind,
+        "Retained accepted commit author differs from the canonical census",
+      );
+    return retainedCopy ? { ...commit, files, retainedCopy } : commit;
+  });
+  const originalIds = new Set(
+    commits.flatMap((commit) =>
+      commit.retainedCopy ? [commit.retainedCopy.originalSourceId] : [],
+    ),
+  );
+  if (!originalIds.size) return { sources: [plain] };
+
+  const boundSources = converted.filter((source) =>
+    originalIds.has(source.sourceId),
+  );
+  requireThat(
+    boundSources.length === originalIds.size &&
+      boundSources.every((source) =>
+        source.commits.some((commit) => commit.sha === source.headSha),
+      ),
+    "Retained original commit census does not reach the source head",
+  );
+  return { sources: [{ ...plain, commits }, ...boundSources] };
+}
+
+export interface CollectionOptions {
+  projects: string[];
+  directory: string;
+  month?: string;
+  sampleSourceIds?: string[];
+  candidateMonth?: string;
+  octoberOriginalCredit?: boolean;
+  before?: string;
+  requestBudget?: number;
+  resumeForSeconds?: number;
+  graphqlDiscussions?: boolean;
+}
+export interface CollectionDependencies {
+  journal?: PointsJournal;
+  token?: string;
+  transport?: typeof fetch;
+  now?: Date;
+  quotaNow?: () => number;
+  registry?: Awaited<ReturnType<typeof fetchProjectRegistry>>;
+}
+interface RepositoryPlan {
+  repository: TargetRepository;
+  nodeId: string;
+  createdAt: string;
+  months: ReturnType<typeof censusMonths>;
+}
+interface Campaign {
+  schemaVersion: "1";
+  baseline: ReturnType<typeof createPointsCorrectionBaseline>;
+  through: string;
+  before: string;
+  initialSearchPageSize?: number;
+  octoberOriginalCredit?: boolean;
+  projects: string[];
+  registryDigest: string;
+  repositories: RepositoryPlan[];
+}
+interface CensusPart {
+  repositoryNodeId: string;
+  from: string;
+  to: string;
+  outcomes: MergedPullRequestOutcome[];
+  digest: string;
+}
+
+export async function collectImplementationCorrections(
+  options: CollectionOptions,
+  dependencies: CollectionDependencies = {},
+) {
+  return collectPass(options, dependencies);
+}
+
+async function collectPass(
+  options: CollectionOptions,
+  dependencies: CollectionDependencies,
+  priorUsage?: { requests: number; reportedGraphqlCost: number },
+) {
+  const cache = new CorrectionEvidenceCache(
+    resolve(options.directory),
+    dependencies.transport ?? fetch,
+    options.requestBudget,
+    dependencies.quotaNow,
+  );
+  try {
+    return await collectWithEvidenceCache(
+      options,
+      dependencies,
+      cache,
+      priorUsage,
+    );
+  } catch (error) {
+    const stop = collectionStop(error);
+    // A Promise.all rejection can leave sibling source reads in progress.
+    // The next pass may replay their evidence only after those reads settle.
+    await cache.settleReads();
+    throw stop ? (cache.stop ?? stop) : error;
+  }
+}
+
+/** All public candidates are emitted, including held, unchanged and unselected
+ * pools. A bounded sample can collect facts, but cannot assert ownership.
+ */
+async function collectWithEvidenceCache(
+  options: CollectionOptions,
+  dependencies: CollectionDependencies,
+  cache: CorrectionEvidenceCache,
+  priorUsage = { requests: 0, reportedGraphqlCost: 0 },
+) {
+  requireThat(
+    options.projects.length > 0 &&
+      new Set(options.projects).size === options.projects.length,
+    "Select distinct project IDs",
+  );
+  requireThat(
+    !options.before || canonicalTime(options.before) === options.before,
+    "Use a canonical UTC --before instant",
+  );
+  requireThat(
+    !options.month || /^\d{4}-(?:0[1-9]|1[0-2])$/u.test(options.month),
+    "Invalid census month",
+  );
+  requireThat(
+    !options.candidateMonth ||
+      /^\d{4}-(?:0[1-9]|1[0-2])$/u.test(options.candidateMonth),
+    "Invalid candidate month",
+  );
+  requireThat(
+    !options.sampleSourceIds ||
+      (options.sampleSourceIds.length <= 50 &&
+        new Set(options.sampleSourceIds).size ===
+          options.sampleSourceIds.length),
+    "Sample must contain at most 50 distinct source IDs",
+  );
+  const currentJournal = dependencies.journal ?? (await loadPublishedPoints());
+  requireThat(currentJournal, "Published baseline journal unavailable");
+  assertPointsJournal(currentJournal);
+  const { directory } = cache;
+  let campaign = await readJson<Campaign>(resolve(directory, "campaign.json"));
+  let journal = currentJournal;
+  if (campaign) {
+    const saved = await readJson<PointsJournal>(
+      resolve(directory, "baseline-journal.json"),
+    );
+    requireThat(
+      saved &&
+        encode(createPointsCorrectionBaseline(saved)) ===
+          encode(campaign.baseline),
+      "Frozen baseline journal is unavailable or changed",
+    );
+    requireThat(
+      currentJournal.revisions.length >= campaign.baseline.revisionCount &&
+        digest(
+          encode(
+            currentJournal.revisions
+              .slice(0, campaign.baseline.revisionCount)
+              .map((r) => r.id),
+          ),
+        ) === campaign.baseline.revisionIdsDigest,
+      "Current journal no longer contains the campaign baseline prefix",
+    );
+    journal = saved;
+  }
+  const pools = inventoryCorrectionPools(journal, options.projects);
+  const registry = dependencies.registry ?? (await fetchProjectRegistry());
+  const repositories = collectTargetRepositories(
+    assertProjectRegistry(registry.projects),
+  ).filter((r) => options.projects.includes(r.projectId));
+  requireThat(
+    options.projects.every((id) =>
+      repositories.some((r) => r.projectId === id),
+    ),
+    "Only active canonical-registry projects may be collected",
+  );
+  const baseline = createPointsCorrectionBaseline(journal);
+  const token = dependencies.token ?? (await resolveGitHubToken());
+  // The cache is outside the live client's accounting, so replaying old raw
+  // observations cannot reset the current quota to an older, larger balance.
+  const client = new GitHubGraphqlClient(token, cache.fetch);
+  const executor = cachedExecutor(client, cache);
+  const github = GitHubClient.forToken(token, cache.fetch);
+  const registryDigest = digest(encode(registry));
+  const through =
+    campaign?.through ??
+    new Date(
+      Math.floor((dependencies.now ?? new Date()).getTime() / 1000) * 1000,
+    ).toISOString();
+  requireThat(
+    canonicalTime(through) === through &&
+      (!campaign ||
+        (campaign.schemaVersion === "1" && campaign.through === through)),
+    "Campaign schema or collection time is invalid",
+  );
+  const octoberOriginalCredit = options.octoberOriginalCredit === true;
+  if (campaign) {
+    requireThat(
+      (campaign.octoberOriginalCredit ?? false) === octoberOriginalCredit,
+      "October original credit policy differs from the frozen campaign",
+    );
+    requireThat(
+      typeof campaign.before === "string" &&
+        canonicalTime(campaign.before) === campaign.before,
+      "Campaign cutoff is missing or invalid; use a new campaign directory",
+    );
+    requireThat(
+      options.before === undefined || options.before === campaign.before,
+      "Explicit resume cutoff differs from the frozen campaign",
+    );
+    requireThat(
+      encode(campaign.baseline) === encode(baseline) &&
+        encode(campaign.projects) === encode(options.projects),
+      "Campaign baseline or selected projects changed; use a new campaign directory",
+    );
+    assertCorrectionRegistry(
+      campaign.registryDigest,
+      campaign.through,
+      campaign.projects,
+      registry,
+    );
+  }
+  const plans: RepositoryPlan[] = [];
+  // Rebuild the frozen scope under the current collector, including when a
+  // reviewed main ancestor produced the checkpoint. Never replace its original
+  // repository observation with a live read during resume.
+  cache.allowRequests = campaign === null;
+  try {
+    for (const repository of repositories) {
+      const data = await executor.execute(PREFLIGHT, {
+        owner: repository.owner,
+        name: repository.name,
+      });
+      const live = data.repository as unknown as RepositoryMetadata;
+      requireThat(
+        live?.isPrivate === false &&
+          live.nameWithOwner.toLowerCase() ===
+            `${repository.owner}/${repository.name}`.toLowerCase() &&
+          typeof live.id === "string" &&
+          typeof live.createdAt === "string" &&
+          Number.isFinite(Date.parse(live.createdAt)) &&
+          Date.parse(live.createdAt) <= Date.parse(through) &&
+          (repository.expectedNodeId === null ||
+            live.id === repository.expectedNodeId),
+        "Canonical public repository identity unavailable",
+      );
+      plans.push({
+        repository,
+        nodeId: live.id,
+        createdAt: live.createdAt,
+        months: censusMonths(live.createdAt, through),
+      });
+    }
+  } finally {
+    cache.allowRequests = true;
+  }
+  if (campaign) {
+    requireThat(
+      encode(campaign.repositories) === encode(plans),
+      "Campaign repository scope or monthly partition differs from its raw evidence",
+    );
+  } else {
+    campaign = {
+      schemaVersion: "1",
+      baseline,
+      through,
+      initialSearchPageSize: 50,
+      ...(octoberOriginalCredit ? { octoberOriginalCredit } : {}),
+      before:
+        options.before ??
+        new Date(Date.parse(through) - 35 * 24 * 60 * 60 * 1000).toISOString(),
+      projects: options.projects,
+      registryDigest,
+      repositories: plans,
+    };
+    await atomicJson(resolve(directory, "baseline-journal.json"), journal);
+    await atomicJson(resolve(directory, "campaign.json"), campaign);
+  }
+  // Fieldless campaigns predate this optimization and keep their exact
+  // original request shape for raw-cache reconstruction.
+  const initialSearchPageSize = campaign.initialSearchPageSize ?? 100;
+  requireThat(
+    initialSearchPageSize === 50 || initialSearchPageSize === 100,
+    "Invalid frozen historical search page size",
+  );
+  const limitations = new Map<string, string>();
+  const allOutcomes: MergedPullRequestOutcome[] = [];
+  const missingMonths: string[] = [];
+  const partDigests: string[] = [];
+  for (const plan of campaign.repositories) {
+    const loader = historicalCommitLineLoader(
+      executor,
+      plan.repository,
+      github,
+    );
+    for (const interval of plan.months) {
+      const partPath = resolve(
+        directory,
+        "census",
+        digest(plan.repository.id),
+        `${interval.month}.json`,
+      );
+      let part = await readJson<CensusPart>(partPath);
+      if (
+        part ||
+        options.month === interval.month ||
+        (!options.month && !options.sampleSourceIds)
+      ) {
+        cache.allowRequests = part === null;
+        let references: Awaited<ReturnType<typeof collectSearchReferences>>;
+        try {
+          references = await collectSearchReferences(
+            executor,
+            plan.repository,
+            new Date(interval.from),
+            new Date(interval.to),
+            "merged",
+            "is:pr is:merged",
+            "PullRequest",
+            { searchSliceCount: 0 },
+            loader,
+            plan.nodeId,
+            initialSearchPageSize,
+          );
+        } finally {
+          cache.allowRequests = true;
+        }
+        const outcomes = references.map((reference) => {
+          requireThat(
+            reference.outcome && reference.outcome.commits !== null,
+            "Census member lacks complete commit evidence",
+          );
+          return reference.outcome;
+        });
+        const payload = {
+          repositoryNodeId: plan.nodeId,
+          from: interval.from,
+          to: interval.to,
+          outcomes,
+        };
+        if (part) {
+          requireThat(
+            part.digest === digest(encode(payload)),
+            "Cached census differs from reconstructed raw evidence",
+          );
+          // Keep the loader's shared commit records, as a fresh pass does, so
+          // a later month's verified author link still repairs this month.
+          part = { ...part, outcomes };
+        } else {
+          part = { ...payload, digest: digest(encode(payload)) };
+          await atomicJson(partPath, part);
+        }
+      }
+      if (!part) {
+        missingMonths.push(`${plan.repository.id}:${interval.month}`);
+        continue;
+      }
+      const payload = {
+        repositoryNodeId: part.repositoryNodeId,
+        from: part.from,
+        to: part.to,
+        outcomes: part.outcomes,
+      };
+      requireThat(
+        part.repositoryNodeId === plan.nodeId &&
+          part.from === interval.from &&
+          part.to === interval.to &&
+          digest(encode(payload)) === part.digest,
+        "Census checkpoint identity or digest changed",
+      );
+      partDigests.push(part.digest);
+      allOutcomes.push(...part.outcomes);
+    }
+  }
+  requireThat(
+    new Set(allOutcomes.map((o) => o.id)).size === allOutcomes.length,
+    "Monthly census repeats a source",
+  );
+  const ownershipComplete = missingMonths.length === 0;
+  const owners = ownershipComplete
+    ? commitCreditOwners(allOutcomes)
+    : new Map<string, string>();
+  const mirroredOctober =
+    octoberOriginalCredit && ownershipComplete
+      ? await mirroredOctoberSources(github, allOutcomes, owners)
+      : new Set<string>();
+  cache.assertUninterrupted();
+  const censusDigest = digest(
+    encode({
+      repositories: campaign.repositories.map((r) => ({
+        id: r.repository.id,
+        nodeId: r.nodeId,
+      })),
+      through: campaign.through,
+      partDigests,
+    }),
+  );
+  const selectedMonth =
+    options.candidateMonth ??
+    options.month ??
+    (octoberOriginalCredit ? "2026-10" : undefined);
+  const selected = pools.filter(
+    ({ candidate }) =>
+      candidate.occurredAt < campaign.before &&
+      (!options.sampleSourceIds ||
+        options.sampleSourceIds.includes(candidate.sourceId)) &&
+      (!selectedMonth || candidate.occurredAt.startsWith(selectedMonth)),
+  );
+  if (options.sampleSourceIds)
+    requireThat(
+      options.sampleSourceIds.every((id) =>
+        pools.some((p) => p.candidate.sourceId === id),
+      ),
+      "Sample contains a source outside the positive pool inventory",
+    );
+  const outcomesById = new Map(
+    allOutcomes.map((outcome) => [outcome.id, outcome]),
+  );
+  const reads = new Map<string, SourceRead>();
+  for (const plan of campaign.repositories) {
+    const targets = selected
+      .map((p) => p.candidate)
+      .filter(
+        (c) =>
+          repositoryIdFromUrl(c.sourceUrl).toLowerCase() ===
+          plan.repository.id.toLowerCase(),
+      );
+    if (ownershipComplete) {
+      // The canonical census already parsed every accepted PR and hydrated its
+      // complete immutable commit list. Reuse those raw-verified observations
+      // rather than repeating the same metadata and statistics requests.
+      for (const candidate of targets) {
+        const outcome = outcomesById.get(candidate.sourceId);
+        if (!outcome) {
+          limitations.set(candidate.sourceId, "source-unavailable");
+          continue;
+        }
+        if (
+          outcome.url !== candidate.sourceUrl ||
+          canonicalTime(outcome.mergedAt) !== candidate.occurredAt
+        ) {
+          limitations.set(
+            candidate.sourceId,
+            "accepted-source-no-longer-matches-recorded-pool",
+          );
+          continue;
+        }
+        requireThat(
+          outcome.id === candidate.sourceId &&
+            repositoryIdFromUrl(outcome.url).toLowerCase() ===
+              plan.repository.id.toLowerCase() &&
+            typeof outcome.headRefOid === "string" &&
+            /^[a-f0-9]{40}$/u.test(outcome.headRefOid) &&
+            outcome.commits !== null,
+          "Complete census source identity or commit evidence is invalid",
+        );
+        if (outcome.commits.length === 0) {
+          limitations.set(
+            candidate.sourceId,
+            "accepted-source-commit-list-empty",
+          );
+          continue;
+        }
+        // GitHub's complete PR commit listing can put the head before ancestors.
+        requireThat(
+          outcome.commits.some((commit) => commit.oid === outcome.headRefOid) &&
+            new Set(outcome.commits.map((commit) => commit.oid)).size ===
+              outcome.commits.length &&
+            outcome.commits.every(
+              (commit) =>
+                /^[a-f0-9]{40}$/u.test(commit.oid) &&
+                Number.isSafeInteger(commit.parentCount) &&
+                Number(commit.parentCount) >= 0 &&
+                Number.isSafeInteger(commit.additions) &&
+                Number(commit.additions) >= 0 &&
+                Number.isSafeInteger(commit.deletions) &&
+                Number(commit.deletions) >= 0,
+            ),
+          "Complete census source identity or commit evidence is invalid",
+        );
+        reads.set(candidate.sourceId, {
+          outcome,
+          repositoryNodeId: plan.nodeId,
+        });
+      }
+      continue;
+    }
+    const loaded = await readSources(
+      executor,
+      targets,
+      plan.repository,
+      github,
+    );
+    for (const [id, value] of loaded.complete) {
+      requireThat(
+        value.repositoryNodeId === plan.nodeId,
+        "Source repository differs from census",
+      );
+      reads.set(id, value);
+    }
+    for (const [id, value] of loaded.held) limitations.set(id, value);
+  }
+  for (const pool of selected) {
+    const candidate = pool.candidate;
+    const read = reads.get(candidate.sourceId);
+    if (!ownershipComplete) {
+      limitations.set(candidate.id, "repository-ownership-census-incomplete");
+      continue;
+    }
+    if (!read) {
+      limitations.set(
+        candidate.id,
+        limitations.get(candidate.sourceId) ?? "source-unavailable",
+      );
+      continue;
+    }
+    if (candidate.kind === "work-unit") continue;
+    if (
+      candidate.occurredAt.startsWith("2026-10-") &&
+      mirroredOctober.has(candidate.sourceId)
+    ) {
+      limitations.set(
+        candidate.id,
+        "October replacement shares accepted commits with a merged donor PR",
+      );
+      continue;
+    }
+    try {
+      const proof = await ordinaryRetainedProof(
+        github,
+        read,
+        owners,
+        { cache, executor, allowNew: options.graphqlDiscussions === true },
+        octoberOriginalCredit && candidate.occurredAt.startsWith("2026-10-"),
+      );
+      candidate.sourceIds = proof.sources.map((s) => s.sourceId).sort();
+      candidate.proof = { status: "complete", censusDigest, ...proof };
+    } catch (error) {
+      cache.assertUninterrupted();
+      limitations.set(
+        candidate.id,
+        error instanceof Error
+          ? error.message
+          : "retained-source-evidence-unavailable",
+      );
+    }
+  }
+  const grouped = ownershipComplete
+    ? selected.filter(
+        (p) =>
+          p.candidate.kind === "work-unit" && reads.has(p.candidate.sourceId),
+      )
+    : [];
+  if (grouped.length) {
+    // Attribution is resolved below from the complete owner map. Disabling the
+    // helper's separate attribution loop avoids a second whole-history pass.
+    let input: Awaited<ReturnType<typeof loadValueInputs>> | null = null;
+    try {
+      input = await loadValueInputs(
+        {
+          get: github.get.bind(github),
+          fileText: github.fileText.bind(github),
+          graphql: ((
+            query: string,
+            variables: Record<string, unknown> = {},
+          ) => {
+            const typedVariables = variables as NonNullable<
+              Parameters<GraphqlExecutor["execute"]>[1]
+            >;
+            const { ids, ...remaining } = typedVariables;
+            return Array.isArray(ids)
+              ? executeNodeBatch(executor, query, ids, remaining)
+              : executor.execute(query, typedVariables);
+          }) as GitHubClient["graphql"],
+        },
+        [
+          ...new Map(
+            grouped.map((p) => [
+              p.candidate.sourceId,
+              (() => {
+                const source = reads.get(p.candidate.sourceId);
+                requireThat(source, "Grouped source disappeared");
+                return source.outcome;
+              })(),
+            ]),
+          ).values(),
+        ] as Parameters<typeof loadValueInputs>[1],
+        cache.fetch,
+        undefined,
+        [],
+      );
+    } catch (error) {
+      cache.assertUninterrupted();
+      if (!(error instanceof ValueFeedUnavailableError)) throw error;
+      for (const pool of grouped)
+        limitations.set(pool.candidate.id, "grouped-history-feed-unavailable");
+    }
+    for (const pool of grouped) {
+      const candidate = pool.candidate;
+      if (candidate.kind !== "work-unit") continue;
+      if (input === null) continue;
+      const decision = input.jointValueDecisions.get(candidate.sourceId);
+      const knownHeld = input.heldWorkUnits.find((unit) =>
+        unit.sourceNodeIds.includes(candidate.sourceId),
+      );
+      if (knownHeld) candidate.sourceIds = [...knownHeld.sourceNodeIds].sort();
+      if (decision?.status !== "assessed") {
+        limitations.set(candidate.id, "grouped-retained-decision-unavailable");
+        continue;
+      }
+      candidate.sourceIds = decision.evidence.sources
+        .map((s) => s.evidence.pull.node_id)
+        .sort();
+      const unit = decision.record.units.find(
+        (u) => u.workUnitId === candidate.workUnitId,
+      );
+      if (
+        !unit ||
+        !pool.predecessors.every(
+          (row) => row.decision?.sourceId === `value:${decision.latestDigest}`,
+        )
+      ) {
+        limitations.set(
+          candidate.id,
+          "grouped-decision-does-not-match-recorded-pool",
+        );
+        continue;
+      }
+      try {
+        requireThat(
+          decision.latestDigest !== null,
+          "Grouped decision digest unavailable",
+        );
+        // The assessed record already bounds claims to its reviewed accepted subset.
+        let sources = await bindRetained(
+          decision.evidence.sources,
+          owners,
+          true,
+        );
+        restoreCanonicalMergeCounts(sources, outcomesById);
+        const selectedClaims = decision.evidence.claims.filter((claim) =>
+          unit.claimIds.includes(claim.id),
+        );
+        requireThat(
+          selectedClaims.length === unit.claimIds.length,
+          "Grouped claim scope is incomplete",
+        );
+        const claims = firstAcceptedCorrectionClaims(
+          selectedClaims.map((claim) => ({
+            id: claim.id,
+            sourceId:
+              claim.retainedCopy?.acceptancePullRequestId ??
+              claim.creditPullRequestId,
+            commitSha: claim.retainedCopy?.acceptedCommitSha ?? claim.commitSha,
+            path: claim.path,
+          })),
+          sources,
+        );
+        let originalContributor: HistoricalOrdinaryProof["originalContributor"];
+        let originalContributorParts: OriginalContributorBinding[] | undefined;
+        let independentClaimIds: string[] | undefined;
+        const claimedSources = sources
+          .filter((source) =>
+            claims.some((claim) => claim.sourceId === source.sourceId),
+          )
+          .sort(
+            (a, b) =>
+              (a.occurredAt ?? "").localeCompare(b.occurredAt ?? "") ||
+              a.sourceId.localeCompare(b.sourceId),
+          );
+        const accepted = claimedSources[0];
+        const donors = sources.filter((source) =>
+          isMergedOriginalContributor(accepted, source),
+        );
+        const mergedDonor = donors.length === 1 ? donors[0] : undefined;
+        const closedOriginals = sources.filter(
+          (source) =>
+            source.occurredAt === null &&
+            source.author?.id !== accepted?.author?.id,
+        );
+        const closedOriginal =
+          closedOriginals.length === 1 ? closedOriginals[0] : undefined;
+        const origin = mergedDonor ?? closedOriginal;
+        const followupSources = claimedSources.slice(1);
+        const candidateSources = new Set(
+          claimedSources.map((source) => source.sourceId),
+        );
+        const originalCandidate =
+          accepted &&
+          (sources.length === 1 || origin) &&
+          sources.every(
+            (source) =>
+              candidateSources.has(source.sourceId) ||
+              source.sourceId === origin?.sourceId ||
+              isOriginalContributorContext(source, accepted),
+          );
+        if (
+          octoberOriginalCredit &&
+          candidate.occurredAt.startsWith("2026-10-") &&
+          originalCandidate &&
+          accepted &&
+          (candidateSources.has(candidate.sourceId) ||
+            candidate.sourceId === mergedDonor?.sourceId)
+        ) {
+          const acceptedOutcome = outcomesById.get(accepted.sourceId);
+          const read =
+            reads.get(accepted.sourceId) ??
+            (acceptedOutcome
+              ? {
+                  outcome: acceptedOutcome,
+                  repositoryNodeId: accepted.repositoryNodeId,
+                }
+              : undefined);
+          requireThat(
+            read,
+            "Grouped accepted source disappeared from the complete census",
+          );
+          requireThat(accepted, "Grouped accepted source disappeared");
+          const original =
+            origin && (mergedDonor || followupSources.length > 0)
+              ? await octoberOriginalContributorProof(
+                  github,
+                  accepted,
+                  [
+                    ...decision.evidence.sources.filter(
+                      (s) => s.evidence.pull.node_id === accepted.sourceId,
+                    ),
+                    ...decision.evidence.sources.filter(
+                      (s) => s.evidence.pull.node_id === origin.sourceId,
+                    ),
+                  ],
+                  owners,
+                  Boolean(mergedDonor),
+                )
+              : await ordinaryRetainedProof(
+                  github,
+                  read,
+                  owners,
+                  {
+                    cache,
+                    executor,
+                    allowNew: options.graphqlDiscussions === true,
+                  },
+                  true,
+                );
+          if (original.originalContributor) {
+            const followups: OriginalContributorFollowup[] = [];
+            for (const followup of followupSources) {
+              const retained = decision.evidence.sources.find(
+                (source) => source.evidence.pull.node_id === followup.sourceId,
+              );
+              requireThat(retained, "Accepted follow-up evidence disappeared");
+              followups.push(
+                await originalContributorFollowupProof(
+                  github,
+                  accepted,
+                  followup,
+                  retained.evidence,
+                  retained.policy,
+                ),
+              );
+            }
+            const groupedOriginal = groupedOriginalContributorProof(
+              accepted,
+              original,
+              claims,
+              sources.filter(
+                (source) =>
+                  !original.sources.some(
+                    (item) => item.sourceId === source.sourceId,
+                  ),
+              ),
+              followups,
+            );
+            sources = groupedOriginal.sources;
+            originalContributor = groupedOriginal.originalContributor;
+            if (
+              originalContributor &&
+              accepted.sourceId !== candidate.sourceId
+            ) {
+              originalContributor = {
+                ...originalContributor,
+                acceptedSourceId: accepted.sourceId,
+              };
+            }
+          }
+        }
+        if (
+          !originalContributor &&
+          octoberOriginalCredit &&
+          accepted &&
+          candidate.occurredAt.startsWith("2026-10-") &&
+          claimedSources.length > 0
+        ) {
+          const originalIds = new Set(
+            selectedClaims.map((claim) => claim.creditPullRequestId),
+          );
+          for (const claimed of claimedSources)
+            originalIds.delete(claimed.sourceId);
+          if (originalIds.size === 1) {
+            const originalId = [...originalIds][0];
+            const original = decision.evidence.sources.find(
+              (source) => source.evidence.pull.node_id === originalId,
+            );
+            const integration = decision.evidence.sources.find(
+              (source) => source.evidence.pull.node_id === accepted.sourceId,
+            );
+            requireThat(
+              original && integration,
+              "Original unit evidence disappeared",
+            );
+            const verifiedOriginal = sources.find(
+              (source) => source.sourceId === originalId,
+            );
+            requireThat(
+              verifiedOriginal,
+              "Verified original source disappeared",
+            );
+            const primary = soleOriginalPrimary(verifiedOriginal);
+            const alreadyCreditedToOriginal =
+              primary !== undefined &&
+              claims.every((claim) => {
+                const source = sources.find(
+                  (source) => source.sourceId === claim.sourceId,
+                );
+                const commit = source?.commits.find(
+                  (commit) => commit.sha === claim.commitSha,
+                );
+                return (
+                  commit !== undefined &&
+                  verifiedHuman(commit.author) &&
+                  commit.author.id === primary.id
+                );
+              });
+            if (
+              !alreadyCreditedToOriginal &&
+              original.evidence.pull.user.type === "User" &&
+              (primary?.id ?? original.evidence.pull.user.node_id) !==
+                accepted.author?.id
+            ) {
+              const proof = await octoberOriginalContributorUnitProof(
+                github,
+                accepted,
+                original,
+                integration,
+                owners,
+                claims,
+                decision.evidence.sources.filter((source) =>
+                  followupSources.some(
+                    (followup) =>
+                      followup.sourceId === source.evidence.pull.node_id,
+                  ),
+                ),
+                decision.evidence.sources,
+              );
+              const authenticated = new Map(
+                proof.sources.map((source) => [source.sourceId, source]),
+              );
+              sources = sources.map(
+                (source) => authenticated.get(source.sourceId) ?? source,
+              );
+              originalContributor = proof.originalContributor;
+              originalContributorParts = proof.originalContributorParts;
+              if (
+                originalContributor &&
+                accepted.sourceId !== candidate.sourceId
+              )
+                originalContributor = {
+                  ...originalContributor,
+                  acceptedSourceId: accepted.sourceId,
+                };
+            }
+          }
+        }
+        if (
+          !originalContributor &&
+          !originalContributorParts &&
+          octoberOriginalCredit &&
+          candidate.occurredAt.startsWith("2026-10-")
+        ) {
+          const originatingClaims = new Map<string, string[]>();
+          for (const claim of selectedClaims) {
+            const original = sources.find(
+              (source) => source.sourceId === claim.creditPullRequestId,
+            );
+            const acceptedClaim = claims.find((item) => item.id === claim.id);
+            const carrier = sources.find(
+              (source) => source.sourceId === acceptedClaim?.sourceId,
+            );
+            if (!carrier) continue;
+            let verifiedOriginal = original;
+            if (
+              !verifiedOriginal ||
+              verifiedOriginal.author?.id === carrier.author?.id
+            ) {
+              const retainedOriginals = sources.filter(
+                (source) =>
+                  source.sourceId !== carrier.sourceId &&
+                  verifiedHuman(source.author) &&
+                  source.author.id !== carrier.author?.id &&
+                  source.commits.some(
+                    (commit) =>
+                      commit.sha === claim.commitSha &&
+                      (commit.author === null ||
+                        commit.author.id === source.author?.id),
+                  ),
+              );
+              if (retainedOriginals.length === 1)
+                verifiedOriginal = retainedOriginals[0];
+            }
+            if (
+              !verifiedOriginal ||
+              verifiedOriginal.author?.id === carrier.author?.id ||
+              !verifiedOriginal.commits.some(
+                (commit) => commit.sha === claim.commitSha,
+              )
+            )
+              continue;
+            const ids = originatingClaims.get(verifiedOriginal.sourceId) ?? [];
+            ids.push(claim.id);
+            originatingClaims.set(verifiedOriginal.sourceId, ids);
+          }
+          if (originatingClaims.size >= 2) {
+            const proof = await octoberOriginalContributorPartsProof(
+              github,
+              decision.evidence.sources,
+              owners,
+              claims,
+              originatingClaims,
+              candidate.sourceId,
+            );
+            sources = proof.sources;
+            restoreCanonicalMergeCounts(sources, outcomesById);
+            originalContributorParts = proof.originalContributorParts;
+            independentClaimIds = proof.independentClaimIds;
+          }
+        }
+        candidate.sourceIds = sources.map((s) => s.sourceId).sort();
+        candidate.proof = {
+          status: "complete",
+          censusDigest,
+          sources,
+          decisionDigest: decision.latestDigest,
+          expectedClaimIds: [...unit.claimIds],
+          claims,
+          ...(originalContributor ? { originalContributor } : {}),
+          ...(originalContributorParts ? { originalContributorParts } : {}),
+          ...(independentClaimIds?.length ? { independentClaimIds } : {}),
+        };
+      } catch (error) {
+        cache.assertUninterrupted();
+        limitations.set(
+          candidate.id,
+          error instanceof Error ? error.message : "grouped-proof-incomplete",
+        );
+      }
+    }
+  }
+  for (const pool of pools)
+    if (
+      pool.candidate.proof.status === "held" &&
+      !limitations.has(pool.candidate.id)
+    )
+      limitations.set(
+        pool.candidate.id,
+        limitations.get(pool.candidate.sourceId) ??
+          (selected.includes(pool)
+            ? "evidence-unresolved"
+            : "outside-reviewed-candidate-scope"),
+      );
+  const manifest: PointsImplementationCorrectionManifest = {
+    schemaVersion: "1",
+    rule: RULE,
+    generatedAt: campaign.through,
+    baseline,
+    candidates: pools.map((p) => p.candidate),
+  };
+  const receipt = {
+    schemaVersion: "slop-implementation-correction-collection-v1",
+    through: campaign.through,
+    before: campaign.before,
+    projects: campaign.projects,
+    registryDigest: campaign.registryDigest,
+    censusDigest,
+    ownershipComplete,
+    initialSearchPageSize,
+    missingMonths,
+    totalPositivePools: pools.length,
+    selectedPools: selected.length,
+    completeProofs: pools.filter((p) => p.candidate.proof.status === "complete")
+      .length,
+    heldProofs: pools.filter((p) => p.candidate.proof.status === "held").length,
+    sourceFactsCollected: reads.size,
+    requests: priorUsage.requests + cache.requests,
+    cacheHits: cache.cacheHits,
+    reportedGraphqlCost:
+      priorUsage.reportedGraphqlCost + cache.reportedGraphqlCost,
+    limitations: [...limitations].map(([id, reason]) => ({ id, reason })),
+    manifestDigest: digest(encode(manifest)),
+  };
+  // Optional discovery helpers may catch errors; an interrupted pass cannot publish.
+  cache.assertUninterrupted();
+  await atomicJson(resolve(directory, "manifest.json"), manifest);
+  await atomicJson(resolve(directory, "collection-receipt.json"), receipt);
+  return { manifest, receipt };
+}
+
+/** Opt-in command runner; each pass rebuilds the campaign from retained evidence. */
+export async function collectWithQuotaResume(
+  options: CollectionOptions,
+  dependencies: CollectionDependencies = {},
+  runtime: {
+    now: () => number;
+    wait: (ms: number) => Promise<unknown>;
+  } = { now: Date.now, wait: (ms) => Bun.sleep(ms) },
+) {
+  if (options.resumeForSeconds === undefined)
+    return collectImplementationCorrections(options, dependencies);
+  const started = runtime.now();
+  const deadline = started + options.resumeForSeconds * 1_000;
+  const scopedDependencies = {
+    ...dependencies,
+    now: dependencies.now ?? new Date(started),
+    quotaNow: runtime.now,
+  };
+  let remaining = options.requestBudget ?? 2000;
+  const usage = { requests: 0, reportedGraphqlCost: 0 };
+  let consecutiveQuotaRefusals = 0;
+  for (;;) {
+    try {
+      return await collectPass(
+        { ...options, requestBudget: remaining },
+        scopedDependencies,
+        usage,
+      );
+    } catch (error) {
+      if (!(error instanceof CollectionBudgetExhausted)) throw error;
+      usage.requests += error.newRequests;
+      usage.reportedGraphqlCost += error.reportedGraphqlCost;
+      const deferred = new CollectionBudgetExhausted(
+        error.kind,
+        usage.requests,
+        usage.reportedGraphqlCost,
+        error.retryAtMs,
+      );
+      if (error.kind !== "quota" || error.retryAtMs === undefined)
+        throw deferred;
+      remaining -= error.newRequests;
+      consecutiveQuotaRefusals =
+        error.savedRequests === 0 ? consecutiveQuotaRefusals + 1 : 0;
+      const now = runtime.now();
+      const next = Math.max(now + 2_000, error.retryAtMs);
+      if (remaining <= 0 || consecutiveQuotaRefusals >= 3 || next >= deadline)
+        throw deferred;
+      console.warn(
+        `Historical evidence checkpoint saved after ${usage.requests} requests; resuming after GitHub quota at ${new Date(next).toISOString()}`,
+      );
+      await runtime.wait(next - now);
+      if (runtime.now() >= deadline) throw deferred;
+    }
+  }
+}
+
+export function parseCollectionArguments(
+  args: readonly string[],
+): CollectionOptions {
+  const result: CollectionOptions = { projects: [], directory: "" };
+  for (let i = 0; i < args.length; i++) {
+    const argument = args[i],
+      value = args[++i];
+    requireThat(value, `Missing value for ${argument}`);
+    if (argument === "--project") result.projects.push(value);
+    else if (argument === "--output") result.directory = value;
+    else if (argument === "--month") result.month = value;
+    else if (argument === "--candidate-month") result.candidateMonth = value;
+    else if (argument === "--october-original-credit") {
+      requireThat(
+        value === "true" || value === "false",
+        "Invalid October original credit flag",
+      );
+      result.octoberOriginalCredit = value === "true";
+    } else if (argument === "--before") {
+      requireThat(
+        canonicalTime(value) === value,
+        "Use a canonical UTC --before instant",
+      );
+      result.before = value;
+    } else if (argument === "--sample")
+      result.sampleSourceIds = value.split(",");
+    else if (argument === "--request-budget") {
+      result.requestBudget = Number(value);
+      requireThat(
+        Number.isSafeInteger(result.requestBudget) && result.requestBudget > 0,
+        "Invalid request budget",
+      );
+    } else if (argument === "--graphql-discussions") {
+      requireThat(
+        value === "true" || value === "false",
+        "Invalid GraphQL discussion option",
+      );
+      result.graphqlDiscussions = value === "true";
+    } else if (argument === "--resume-for-seconds") {
+      result.resumeForSeconds = Number(value);
+      requireThat(
+        Number.isSafeInteger(result.resumeForSeconds) &&
+          result.resumeForSeconds > 0 &&
+          result.resumeForSeconds <= 18_000,
+        "Invalid quota resume duration (maximum five hours)",
+      );
+    } else throw new Error(`Unknown argument: ${argument}`);
+  }
+  requireThat(
+    result.projects.length && result.directory,
+    "Use --project <registered-id> --output <campaign-directory>",
+  );
+  requireThat(
+    !result.month || /^\d{4}-(?:0[1-9]|1[0-2])$/u.test(result.month),
+    "Invalid census month",
+  );
+  requireThat(
+    !result.candidateMonth ||
+      /^\d{4}-(?:0[1-9]|1[0-2])$/u.test(result.candidateMonth),
+    "Invalid candidate month",
+  );
+  return result;
+}
+
+if (import.meta.main) {
+  const options = parseCollectionArguments(process.argv.slice(2));
+  try {
+    const result = await collectWithQuotaResume(options);
+    const { limitations, missingMonths, ...summary } = result.receipt;
+    console.log(
+      JSON.stringify({
+        ...summary,
+        missingMonthCount: missingMonths.length,
+        limitationCount: limitations.length,
+      }),
+    );
+  } catch (error) {
+    if (
+      options.resumeForSeconds === undefined ||
+      !(error instanceof CollectionBudgetExhausted)
+    )
+      throw error;
+    console.error(
+      `${error.message} (${error.newRequests} requests, ${error.reportedGraphqlCost} reported GraphQL points in this invocation)`,
+    );
+    process.exitCode = 75;
+  }
+}

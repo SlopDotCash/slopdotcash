@@ -3,7 +3,6 @@
  * This prepares authorization bytes only. It does not reserve or pay funds.
  */
 import {
-  type EvmMonthlyReservation,
   evmAllocationRoot,
   evmMonthlyDigest,
 } from "../../contracts/evm/adapter";
@@ -14,7 +13,6 @@ import {
 import { bytesToHex } from "../../src/lib/byte-encoding";
 import {
   ESCROW_NETWORKS,
-  type EscrowDeployment,
   isBaseUnits,
   maxBaseUnitsForChain,
 } from "../../src/lib/escrow-policy.mjs";
@@ -34,29 +32,13 @@ import { assertProjectDefinition } from "../../src/lib/project-schema.mjs";
 import { sha256Hex } from "../../src/lib/sha256";
 import type { D1TransactionalDatabase } from "../d1";
 import { chainAwards, holdsAward } from "./chain-awards";
+import { monthPledged, pledgeKeepsMonth } from "./month-pledges";
 import { automaticMonthlyPayment, MonthlyPaymentError } from "./monthly";
+import type {
+  MonthlyAttestationPlan,
+  MonthlyAttestationRequest,
+} from "./monthly-attestation-types";
 
-export interface MonthlyAttestationRequest {
-  projectId: string;
-  period: string;
-  network: EscrowDeployment["network"];
-  snapshotSha256: string;
-}
-export interface MonthlyAttestationPlan {
-  request: MonthlyAttestationRequest;
-  deployment: EscrowDeployment;
-  allocationRoot: string;
-  /** EIP-712 digest on EVM; domain-separated message on Solana. Hex without 0x. */
-  messageHex: string;
-  family: "evm" | "solana";
-  totalGrossBase: string;
-  /** EVM V2: one remaining-source execution attempt for the frozen allocation. */
-  evmReservation?: EvmMonthlyReservation;
-  /** Solana only: Unix seconds of the finalized slot at which the attester saw
-   * no `origin` or `monthly-source` account for any included source. */
-  frozenAt?: string;
-  entries: { githubUserId: string; grossMicro: string; sourceDigest: string }[];
-}
 function reject(code: string, message: string): never {
   throw new MonthlyPaymentError(409, code, message);
 }
@@ -98,17 +80,37 @@ export async function prepareMonthlyAttestation(
       "This month is outside its commitment window.",
     );
   const project = await deps.getProject(request.projectId);
-  if (project?.manifest.status !== "active" || (await deps.restricted(project)))
+  if (!project)
     reject("project_restricted", "The project cannot create new commitments.");
   const deployment = project.manifest.escrow?.deployments.find(
     (d) => d.network === request.network,
   );
+  // A month pledged on chain in the vault that pays it is the owner's
+  // consent to reserve it, whatever the automatic default says, and while
+  // the project is paused or restricted; never for a retired project
+  // (operator decision, 15 November 2026). The contract still checks the
+  // pledge and the cap.
+  const pledged = pledgeKeepsMonth(
+    !!deployment &&
+      (await monthPledged(deps.db, {
+        projectId: project.id,
+        network: deployment.network,
+        vault: deployment.vault,
+        period,
+      })),
+    project.manifest,
+  );
+  if (
+    !pledged &&
+    (project.manifest.status !== "active" || (await deps.restricted(project)))
+  )
+    reject("project_restricted", "The project cannot create new commitments.");
   if (!deployment || !deps.networks.includes(request.network))
     reject(
       "vault_not_served",
       "The project's vault is not served by this attester.",
     );
-  if (!(await automaticMonthlyPayment(deps.db, project.id)))
+  if (!pledged && !(await automaticMonthlyPayment(deps.db, project.id)))
     reject(
       "automatic_off",
       "The owner disabled automatic monthly commitments.",

@@ -1,21 +1,16 @@
 import assert from "node:assert/strict";
-import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
-import { convertV4MiniflareOptions, Miniflare } from "miniflare";
-import { unstable_splitSqlQuery as splitSqlQuery } from "wrangler";
+import { resolve } from "node:path";
 import { assertProjectRegistry } from "../../src/lib/project-schema.mjs";
+import { startHandlerWorker } from "../../tests/miniflare-d1.mjs";
 import { applicationManifest } from "../../tests/project-application-manifest.ts";
 
 // Exercise the real Inbox reads and native D1's bind limit. Closed programs
 // retain historical case access; no offer, report, model or delivery is live.
-const directory = await mkdtemp(join(tmpdir(), "slop-inbox-projects-"));
 const actor = { githubId: "900000002", githubLogin: "fixture-maintainer" };
 const other = { githubId: "900000003", githubLogin: "fixture-other" };
 const at = "2026-10-29T00:00:00.000Z";
-let runtime;
+let worker;
 try {
   const projects = Array.from({ length: 100 }, (_, index) => {
     const id = `inbox-${index}`;
@@ -78,47 +73,20 @@ try {
     return project;
   });
   assert.equal(assertProjectRegistry(projects).length, 100);
-  const entry = join(directory, "worker.ts");
-  const output = join(directory, "worker.mjs");
-  await writeFile(
-    entry,
-    `import { handleSecurityApi } from ${JSON.stringify(resolve("backend/security/handler.ts"))};
+  worker = await startHandlerWorker({
+    d1: "inbox-projects",
+    outbound() {
+      throw new Error("Unexpected outbound request");
+    },
+    entrySource: `import { handleSecurityApi } from ${JSON.stringify(resolve("backend/security/handler.ts"))};
 export default { fetch(request, env) { return handleSecurityApi(request, {
   db: env.DB, now: () => new Date(${JSON.stringify(at)}), randomId: () => "unused",
   sessionActor: async () => !request.headers.has("x-fixture-actor") ? null : request.headers.get("x-fixture-actor") === "other" ? ${JSON.stringify(other)} : ${JSON.stringify(actor)},
   reportingRead: async () => { throw new Error("Unexpected provider read"); },
   reportStorage: {}
 }); } };`,
-  );
-  const build = spawnSync(
-    "bun",
-    ["--no-env-file", "build", entry, "--target=browser", "--outfile", output],
-    { encoding: "utf8" },
-  );
-  assert.equal(build.status, 0, build.stderr);
-  runtime = new Miniflare(
-    convertV4MiniflareOptions({
-      host: "127.0.0.1",
-      port: 0,
-      modules: true,
-      compatibilityDate: "2026-09-14",
-      script: await readFile(output, "utf8"),
-      d1Databases: { DB: "inbox-projects" },
-      outboundService() {
-        throw new Error("Unexpected outbound request");
-      },
-    }),
-  );
-  const db = await runtime.getD1Database("DB");
-  for (const name of (await readdir("migrations"))
-    .filter((name) => name.endsWith(".sql"))
-    .sort()) {
-    await db.batch(
-      splitSqlQuery(await readFile(`migrations/${name}`, "utf8")).map((sql) =>
-        db.prepare(sql),
-      ),
-    );
-  }
+  });
+  const { runtime, db } = worker;
   for (const project of projects) {
     const manifest = JSON.stringify(project);
     const digest = createHash("sha256").update(manifest).digest("hex");
@@ -207,6 +175,5 @@ export default { fetch(request, env) { return handleSecurityApi(request, {
     }),
   );
 } finally {
-  await runtime?.dispose();
-  await rm(directory, { recursive: true, force: true });
+  await worker?.dispose();
 }

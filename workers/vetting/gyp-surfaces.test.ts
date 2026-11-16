@@ -14,6 +14,18 @@ function inspected(files: { path: string; text: string }[]) {
   });
 }
 
+function expectSourceOnly(
+  inspection: ReturnType<typeof inspected>,
+  path: string,
+) {
+  const inventory = JSON.parse(new TextDecoder().decode(inspection.inventory));
+  expect(
+    inventory.classifications.find(
+      (entry: { path: string }) => entry.path === path,
+    )?.surfaces,
+  ).toEqual(["source"]);
+}
+
 test("node-gyp definitions are install scripts, including a benign npm install hook", () => {
   // PRD section 8: the scan checks install and build scripts. node-gyp loads
   // binding.gyp during `node-gyp rebuild` and runs its actions. An npm
@@ -149,7 +161,8 @@ test("GYP includes do not adopt files outside the repository or ordinary prose",
     { path: "payload.txt", text: `${PAYLOAD}\n` },
     { path: "notes.txt", text: `${PAYLOAD}\n` },
   ]);
-  expect(inspection.findings).toEqual([]);
+  expectSourceOnly(inspection, "payload.txt");
+  expectSourceOnly(inspection, "notes.txt");
   expect(inspection.downloads).toEqual([]);
   expect(inspection.coverage.installScripts).toEqual({
     state: "partial",
@@ -240,12 +253,8 @@ test("a hash inside a quoted GYP include path is part of the path", () => {
       severity: "high",
     }),
   );
-  expect(inspection.findings.map((finding) => finding.path)).not.toContain(
-    "path",
-  );
-  expect(inspection.findings.map((finding) => finding.path)).not.toContain(
-    "dir/path",
-  );
+  expectSourceOnly(inspection, "path");
+  expectSourceOnly(inspection, "dir/path");
 });
 
 test("comments around a GYP includes list cannot hide its entries", () => {
@@ -288,7 +297,7 @@ test("comments around a GYP includes list cannot hide its entries", () => {
   );
 });
 
-test("a GYP include named only inside a Python comment is not scanned", () => {
+test("a GYP include named only inside a Python comment is not install content", () => {
   const inspection = scanGyp(
     `{\n  'includes': [\n    'evil.txt', # 'decoy.txt'\n  ],\n}\n`,
     ["evil.txt", "decoy.txt"],
@@ -300,9 +309,7 @@ test("a GYP include named only inside a Python comment is not scanned", () => {
       severity: "high",
     }),
   );
-  expect(inspection.findings.map((finding) => finding.path)).not.toContain(
-    "decoy.txt",
-  );
+  expectSourceOnly(inspection, "decoy.txt");
 });
 
 test("adjacent GYP include strings divided by a comment are one path", () => {
@@ -381,9 +388,7 @@ test("an escaped quote does not turn the rest of a GYP include into a comment", 
       severity: "high",
     }),
   );
-  expect(inspection.findings.map((finding) => finding.path)).not.toContain(
-    "#bar.txt",
-  );
+  expectSourceOnly(inspection, "#bar.txt");
 });
 
 test("a backslash newline inside a GYP include keeps a following hash in the path", () => {
@@ -439,7 +444,7 @@ test("a GYP include that leaves the repository is a visibility gap", () => {
     state: "partial",
     items: 1,
   });
-  expect(inspection.findings).toEqual([]);
+  expectSourceOnly(inspection, "a.inc");
 });
 
 function expectResolvedInclude(gyp: string, path: string) {
@@ -462,7 +467,7 @@ function expectResolvedInclude(gyp: string, path: string) {
 
 function expectUnresolvedInclude(gyp: string, paths: string[]) {
   const inspection = scanGyp(gyp, paths);
-  expect(inspection.findings).toEqual([]);
+  for (const path of paths) expectSourceOnly(inspection, path);
   expect(inspection.coverage.installScripts).toEqual({
     state: "partial",
     items: 1,
@@ -592,9 +597,7 @@ test("a non-literal GYP includes value is a visibility gap", () => {
       severity: "high",
     }),
   );
-  expect(mixed.findings.map((finding) => finding.path)).not.toContain(
-    "included_files",
-  );
+  expectSourceOnly(mixed, "included_files");
   expect(mixed.coverage.installScripts).toEqual({
     state: "partial",
     items: 2,

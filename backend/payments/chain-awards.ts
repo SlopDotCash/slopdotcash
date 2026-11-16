@@ -6,7 +6,7 @@ import { acceptsPayoutFee } from "../../src/lib/payments/contracts";
 import type { D1TransactionalDatabase as D1Database } from "../d1";
 
 /** A finalized chain obligation recorded for a monthly award's source. */
-export interface ChainAward {
+interface ChainAward {
   githubUserId: string;
   grossBase: string;
   feeBase: string;

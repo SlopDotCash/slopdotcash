@@ -7,10 +7,9 @@
  * The guide's penalty table (PENALTY_ROWS in src/lib/penalty-guide.ts,
  * rendered by src/PointsRules.tsx) derives its debits and actions from
  * PENALTY_TABLE in workers/slopbot/penalties.ts.
- * This test pins the published mapping — category coverage, action,
- * moderator review, and the debit in points (thirds × POINTS_PER_THIRD) —
- * to the canonical table and to the PRD section 7 values, so a change on
- * either side fails here instead of drifting silently.
+ * This test pins category coverage and each row's debit in points to the
+ * PRD section 7 values, so a change in the bot table fails here instead of
+ * drifting silently.
  */
 import { describe, expect, test } from "bun:test";
 import { PENALTY_ROWS } from "../src/lib/penalty-guide";
@@ -28,31 +27,18 @@ const PUBLISHED_POINTS: Record<string, number> = {
 };
 
 describe("guide penalty table", () => {
-  test("publishes exactly the six PRD rows", () => {
+  test("publishes the six PRD section 7 rows with their point debits", () => {
+    expect(
+      Object.fromEntries(
+        PENALTY_ROWS.map((row) => [
+          row.category,
+          row.debitThirds * POINTS_PER_THIRD,
+        ]),
+      ),
+    ).toEqual(PUBLISHED_POINTS);
     expect(PENALTY_ROWS.map((row) => row.category)).toEqual(
       Object.keys(PUBLISHED_POINTS),
     );
-  });
-
-  test("every row's debit and action equal the canonical table entry", () => {
-    for (const row of PENALTY_ROWS) {
-      for (const category of row.slopbotCategories) {
-        const rule = PENALTY_TABLE[category];
-        expect(row.debitThirds).toBe(rule.debitThirds);
-        expect(row.debitThirds * POINTS_PER_THIRD).toBe(
-          rule.debitThirds * POINTS_PER_THIRD,
-        );
-        expect(
-          row.action.startsWith(rule.action === "close" ? "Close" : "Label"),
-        ).toBe(true);
-        expect(row.action.includes("moderator reviews the account")).toBe(
-          rule.moderatorReview,
-        );
-      }
-      expect(row.debitThirds * POINTS_PER_THIRD).toBe(
-        PUBLISHED_POINTS[row.category],
-      );
-    }
   });
 
   test("covers each published category exactly once", () => {

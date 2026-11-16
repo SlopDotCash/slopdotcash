@@ -14,7 +14,7 @@ import { VAULT_SNAPSHOT_MAX_AGE_MS } from "./payments";
  * commitment is newer than the snapshot (`?` = the snapshot time).
  * Bind order: project id, snapshot time.
  */
-export const OUTSTANDING_RESERVATIONS = `SELECT r.gross_minor,c.terms FROM security_award_reservations r JOIN security_cases c ON c.id=r.case_id WHERE r.project_id = ? AND NOT EXISTS (SELECT 1 FROM security_settlements s JOIN security_payment_obligations o ON o.id = s.obligation_id WHERE s.case_id = r.case_id AND o.created_at <= ?)`;
+const OUTSTANDING_RESERVATIONS = `SELECT r.gross_minor,c.terms FROM security_award_reservations r JOIN security_cases c ON c.id=r.case_id WHERE r.project_id = ? AND NOT EXISTS (SELECT 1 FROM security_settlements s JOIN security_payment_obligations o ON o.id = s.obligation_id WHERE s.case_id = r.case_id AND o.created_at <= ?)`;
 
 /**
  * The program's money that an owner can still reserve (owner decision D10,

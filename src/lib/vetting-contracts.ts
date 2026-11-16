@@ -50,6 +50,40 @@ export type AssessmentSummary = {
   artifacts: number;
   heldArtifacts: number;
   findingsLocation?: "repository" | "template" | "both" | "unknown";
+  /** Present for a bounded scan result; absent for a historical result. */
+  scan?: ScanClearanceFacts;
+};
+
+/** One model review's recorded outcome, without its text. */
+export type ScanReviewOutcome = {
+  status: "completed" | "unavailable" | "failed" | "not-started";
+  verdict: "no-findings" | "findings" | "malicious-suspected" | null;
+  risk: "low" | "ambiguous" | "high" | null;
+};
+
+/**
+ * Owner-safe facts of one bounded scan (`slop-vetting-result-v2`), read from
+ * the recorded result's enumerated fields only (issue #1991): never from a
+ * finding summary, model output, prompt or source content. Setup status and
+ * the admin view derive the same generic reasons from them.
+ */
+export type ScanClearanceFacts = {
+  /** Deterministic checks that flagged content, by threat name. */
+  flaggedChecks: string[];
+  /** Deterministic checks that did not run. */
+  checksNotRun: string[];
+  /** Surfaces the scan did not read completely. */
+  incompleteSurfaces: { surface: string; state: "partial" | "unsupported" }[];
+  /** The scanner's own coverage notes, recorded with the result. */
+  visibilityGaps: string[];
+  /** Open high or critical findings per category; counts only. */
+  openFindings: { category: string; count: number }[];
+  review: {
+    primary: ScanReviewOutcome;
+    specialist: ScanReviewOutcome | null;
+    /** The result was ambiguous or high risk, so only a specialist could clear it. */
+    escalated: boolean;
+  };
 };
 
 /**
@@ -87,19 +121,38 @@ export type AdmissionExemption = {
  * "stale" applies to current-pin reinstatement; "unverified" means required
  * retained evidence or the remedial live pin cannot be verified. A project
  * registered before the gate is grandfathered: "cleared" with no assessment.
+ *
+ * A project with more than one repository clears only when every repository
+ * clears on its own (PRD section 8). Otherwise its clearance is the first
+ * repository, in manifest order, that does not clear, and `repository` names
+ * it. A project with one repository never carries `repository`.
  */
 export type VettingClearance =
-  | { state: "unscanned" }
-  | { state: "unverified"; reason: string }
-  | { state: "queued"; assessment: AssessmentSummary }
-  | { state: "quarantined"; assessment: AssessmentSummary }
-  | { state: "stale"; assessment: AssessmentSummary; live: VettingPin }
+  | { state: "unscanned"; repository?: string }
+  | { state: "unverified"; reason: string; repository?: string }
+  | { state: "queued"; assessment: AssessmentSummary; repository?: string }
+  | {
+      state: "quarantined";
+      assessment: AssessmentSummary;
+      repository?: string;
+    }
+  | {
+      state: "stale";
+      assessment: AssessmentSummary;
+      live: VettingPin;
+      repository?: string;
+    }
   | {
       state: "cleared";
       assessment: AssessmentSummary;
       /** Admission eligibility; the assessment still describes its original revision. */
       basis?: "admission";
       reviewedMaliciousAssessmentIds?: string[];
+      /**
+       * A fresh reinstatement of a project with more than one repository:
+       * the clean scan of each repository, in manifest order.
+       */
+      repositoryAssessments?: AssessmentSummary[];
     }
   | { state: "cleared"; assessment: null; grandfathered: true }
   | {

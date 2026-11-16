@@ -10,6 +10,7 @@
  */
 
 import { ESCROW_NETWORKS } from "../../src/lib/escrow-policy.mjs";
+import { cappedReferralAccrual } from "../verified-policy";
 import {
   CLAIM_CHAIN,
   type PosterConfig,
@@ -225,10 +226,6 @@ export function eligibleAsset(
   return { symbol: asset.symbol };
 }
 
-function min(...values: bigint[]): bigint {
-  return values.reduce((a, b) => (a < b ? a : b));
-}
-
 interface Totals {
   pool: bigint;
   perProject: Map<string, bigint>;
@@ -370,10 +367,10 @@ export async function judge(
       config.projectCapBase -
       (totals.perProject.get(candidate.projectId) ?? 0n);
     const poolRemaining = config.poolBase - totals.pool;
-    const accrued = min(
+    const accrued = cappedReferralAccrual(
       computed,
-      projectRemaining > 0n ? projectRemaining : 0n,
-      poolRemaining > 0n ? poolRemaining : 0n,
+      projectRemaining,
+      poolRemaining,
     );
     const outcome: Outcome =
       accrued === computed

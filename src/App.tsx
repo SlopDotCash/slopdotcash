@@ -7,6 +7,7 @@ import {
   Plus,
 } from "lucide-react";
 import {
+  Fragment,
   lazy,
   type ReactNode,
   Suspense,
@@ -18,15 +19,16 @@ import { EscrowFunding } from "./EscrowFunding";
 import { HomeStandings } from "./HomeStandings";
 import { Link, useHashScroll } from "./Link";
 import {
+  hasProjectCardBounty,
   projectRewardSummaries,
   securityBountyAmountLabel,
 } from "./lib/project-reward-summary";
 import type { SecurityBountyTerms } from "./lib/security-bounty.mjs";
+import { ProjectWork } from "./ProjectWork";
 import "./public-records.css";
 import { SlopMark, Wordmark } from "./Logo";
 import { browserDeployment } from "./lib/browser-deployment";
 import { CONTACT_EMAIL, CONTACT_MAILTO } from "./lib/contact";
-import { copyText } from "./lib/copy-text";
 import { setRouteHead } from "./lib/document-head";
 import { GithubIcon } from "./lib/github-icon";
 import {
@@ -35,14 +37,32 @@ import {
   homeProjects,
 } from "./lib/home-projects";
 import {
+  loadMergeActivity,
+  mergeActivityCardLine,
+  mergeActivityLine,
+} from "./lib/merge-activity";
+import {
+  asShown,
+  listedThisMonth,
+  loadPoolFunding,
+  monthName,
+  NOT_LISTED_NOTICE,
+  poolFundingStatus,
+} from "./lib/pool-funding";
+import { projectChains, websiteLabel, xHandle } from "./lib/project-links";
+import {
+  findHistoricalProject,
   findProject,
   PROJECTS,
   type ProjectDefinition,
 } from "./lib/projects.mjs";
+import { formatRewardCapDisplay } from "./lib/reward-amount";
 import { pageTitle, STATIC_PAGE_TITLES } from "./lib/site-routes";
 import { SOURCE_REPOSITORY } from "./lib/source-repository";
+import { useCopyFeedback } from "./lib/use-copy-feedback";
 import { useCycleIndex } from "./lib/use-cycle-index";
 import { useDirectTransfers } from "./lib/use-direct-transfers";
+import { usePublicResource } from "./lib/use-public-resource";
 import { type DataState, useSnapshot } from "./lib/use-snapshot";
 import {
   AccountPage,
@@ -349,7 +369,9 @@ function routeHead(route: Route): { title: string; path: string | null } {
     };
   }
   if ("projectId" in route) {
-    const project = findProject(route.projectId);
+    const project =
+      findProject(route.projectId) ??
+      (route.kind === "cycle" ? findHistoricalProject(route.projectId) : null);
     if (!project) return notFound;
     if (route.kind === "cycle") {
       return {
@@ -497,21 +519,20 @@ function HeroHeading() {
 function monthlyPoolCapLabel(project: ProjectDefinition): string {
   const reward = project.reward;
   const minor = BigInt(reward.monthlyCapMinor);
-  if (project.rewardAsset?.kind === "native") return reward.monthlyCapDisplay;
+  const cap = formatRewardCapDisplay(
+    reward.monthlyCapDisplay,
+    project.rewardAsset,
+  );
+  if (project.rewardAsset?.kind === "native") return cap;
   if (project.rewardAsset?.kind === "token")
-    return reward.monthlyCapDisplay
-      .replace(/^[\d,]+(?=\s)/u, (digits) =>
-        new Intl.NumberFormat("en-US", {
-          notation: "compact",
-          maximumFractionDigits: 2,
-        })
-          .format(BigInt(digits.replaceAll(",", "")))
-          .toLowerCase(),
-      )
-      .replace(
-        /\s+(\$?\S+)$/u,
-        (_, symbol: string) => ` $${symbol.replace(/^\$/u, "")}`,
-      );
+    return cap.replace(/^[\d,]+(?=\s)/u, (digits) =>
+      new Intl.NumberFormat("en-US", {
+        notation: "compact",
+        maximumFractionDigits: 2,
+      })
+        .format(BigInt(digits.replaceAll(",", "")))
+        .toLowerCase(),
+    );
   if (minor % 1_000_000n !== 0n) return reward.monthlyCapDisplay;
   return new Intl.NumberFormat("en-US", {
     style: "currency",
@@ -606,8 +627,14 @@ function bountyFundingLabel(terms: SecurityBountyTerms): string {
   return terms.funding.state === "pledged" ? "Pledged" : "Funding verified";
 }
 
-function ProjectCard({ project }: { project: ProjectDefinition }) {
-  const bounty = hasBountyOverview(project)
+function ProjectCard({
+  project,
+  merge,
+}: {
+  project: ProjectDefinition;
+  merge?: string | null;
+}) {
+  const bounty = hasProjectCardBounty(project)
     ? project.securityBounty
     : undefined;
   const amount = bounty
@@ -656,13 +683,24 @@ function ProjectCard({ project }: { project: ProjectDefinition }) {
             + {reviewBudgetLabel(project.reward.reviewBudget)}
           </small>
         ) : null}
+        {merge ? (
+          <small className="project-money-state project-merge-activity">
+            {merge}
+          </small>
+        ) : null}
       </div>
     </Link>
   );
 }
 
-function ProjectRow({ project }: { project: ProjectDefinition }) {
-  const bounty = hasBountyOverview(project)
+function ProjectRow({
+  project,
+  merge,
+}: {
+  project: ProjectDefinition;
+  merge?: string | null;
+}) {
+  const bounty = hasProjectCardBounty(project)
     ? project.securityBounty
     : undefined;
   const amount = bounty
@@ -679,6 +717,9 @@ function ProjectRow({ project }: { project: ProjectDefinition }) {
         <span className="project-row-name">
           <strong>{project.name}</strong>
           <small>{project.description}</small>
+          {merge ? (
+            <small className="project-merge-activity">{merge}</small>
+          ) : null}
         </span>
         <span className="project-row-amount">{amount}</span>
         <ChevronRight aria-hidden="true" />
@@ -689,7 +730,13 @@ function ProjectRow({ project }: { project: ProjectDefinition }) {
 
 const COMMUNITY_PAGE_SIZE = 10;
 
-function CommunityProjects({ projects }: { projects: ProjectDefinition[] }) {
+function CommunityProjects({
+  projects,
+  mergeLine,
+}: {
+  projects: ProjectDefinition[];
+  mergeLine: (project: ProjectDefinition) => string | null;
+}) {
   const [page, setPage] = useState(0);
   if (projects.length === 0) return null;
   const pages = Math.ceil(projects.length / COMMUNITY_PAGE_SIZE);
@@ -706,7 +753,11 @@ function CommunityProjects({ projects }: { projects: ProjectDefinition[] }) {
       <h3 id="community-projects">Community</h3>
       <ul className="project-rows">
         {visible.map((project) => (
-          <ProjectRow key={project.id} project={project} />
+          <ProjectRow
+            key={project.id}
+            project={project}
+            merge={mergeLine(project)}
+          />
         ))}
       </ul>
       {pages > 1 ? (
@@ -759,6 +810,9 @@ function SecurityBounties() {
         <h2 className="home-section-title" id="home-security-title">
           Security bounties
         </h2>
+        <Link className="button primary-button" href="/projects/new">
+          <Plus aria-hidden="true" /> Add a bounty
+        </Link>
       </div>
       {programs.length === 0 ? (
         <p className="project-tier-note">
@@ -814,8 +868,33 @@ function SecurityBounties() {
 }
 
 function HomePage() {
-  const featuredProjects = homeProjects();
-  const listedCommunityProjects = communityProjects();
+  // One shared read of the daily merge activity (#1993) for every card.
+  const [merge] = usePublicResource(
+    true,
+    loadMergeActivity,
+    "Merge activity unavailable",
+  );
+  // One shared read of vault balances: only money in a vault is shown, and
+  // an unfunded monthly pool is not listed this month. The list never waits
+  // for the read: until it loads, or when it fails, every project is listed
+  // as before.
+  const [funding] = usePublicResource(
+    true,
+    loadPoolFunding,
+    "Pool funding unavailable",
+  );
+  const now = new Date();
+  const fundingIndex = funding.status === "ready" ? funding.index : null;
+  const listed = (project: ProjectDefinition) =>
+    listedThisMonth(project, fundingIndex, now);
+  const featuredProjects = homeProjects().filter(listed);
+  const listedCommunityProjects = communityProjects().filter(listed);
+  const shown = (project: ProjectDefinition) =>
+    asShown(project, fundingIndex, now);
+  const mergeLine = (project: ProjectDefinition) =>
+    project.status === "active" && merge.status === "ready"
+      ? mergeActivityCardLine(merge.index.get(project.id), now)
+      : null;
   return (
     <main>
       <section className="hero shell">
@@ -823,6 +902,7 @@ function HomePage() {
         <InstallPanel />
       </section>
 
+      <SecurityBounties />
       <section className="section shell home-projects-section" id="projects">
         <div className="home-section-heading">
           <h2 className="home-section-title">Projects</h2>
@@ -842,16 +922,22 @@ function HomePage() {
                 <h3 id="featured-projects">Featured</h3>
                 <div className="project-grid">
                   {featuredProjects.map((project) => (
-                    <ProjectCard key={project.id} project={project} />
+                    <ProjectCard
+                      key={project.id}
+                      project={shown(project)}
+                      merge={mergeLine(project)}
+                    />
                   ))}
                 </div>
               </section>
             ) : null}
-            <CommunityProjects projects={listedCommunityProjects} />
+            <CommunityProjects
+              projects={listedCommunityProjects.map(shown)}
+              mergeLine={mergeLine}
+            />
           </>
         )}
       </section>
-      <SecurityBounties />
       <section
         className="section shell home-leaderboard-section"
         id="leaderboard"
@@ -931,21 +1017,7 @@ function AgentPromptBox({
   prompt: string;
   openIn?: boolean;
 }) {
-  const [copy, setCopy] = useState<"copied" | "error" | "idle">("idle");
-  useEffect(() => {
-    if (copy !== "copied") return;
-    const timer = window.setTimeout(() => setCopy("idle"), 1_600);
-    return () => window.clearTimeout(timer);
-  }, [copy]);
-  const copyPrompt = async () => {
-    try {
-      await copyText(prompt);
-      setCopy("copied");
-    } catch {
-      // error-policy:J4 Clipboard denial remains visibly distinct and selectable text stays available.
-      setCopy("error");
-    }
-  };
+  const { feedback: copy, copy: copyPrompt } = useCopyFeedback(prompt, 1_600);
   const box = (
     <div className="command-box agent-prompt-box">
       <output aria-label="Agent prompt" className="agent-prompt-copy">
@@ -964,7 +1036,7 @@ function AgentPromptBox({
         aria-label={
           copy === "copied"
             ? "Copied agent prompt"
-            : copy === "error"
+            : copy === "failed"
               ? "Copy unavailable; select agent prompt"
               : "Copy agent prompt"
         }
@@ -973,15 +1045,15 @@ function AgentPromptBox({
             ? "button primary-button agent-prompt-copied"
             : "button primary-button"
         }
-        data-copy={copy}
-        onClick={() => void copyPrompt()}
+        data-copy={copy === "failed" ? "error" : copy}
+        onClick={copyPrompt}
         type="button"
       >
         {copy === "copied" ? <Check /> : <Clipboard />}
         <span className="agent-prompt-copy-label">
           {copy === "copied"
             ? "Copied"
-            : copy === "error"
+            : copy === "failed"
               ? "Select text"
               : "Copy"}
         </span>
@@ -1093,6 +1165,16 @@ function InstallPanel() {
  */
 function ProjectInstallPanel({ project }: { project: ProjectDefinition }) {
   const projectId = project.id;
+  // Discovery leaves out an unfunded monthly pool this month; that is not a
+  // clearance problem, so the owner setup link does not apply.
+  const [funding] = usePublicResource(
+    project.reward.kind === "monthly-pool",
+    loadPoolFunding,
+    "Pool funding unavailable",
+  );
+  const unlisted =
+    funding.status === "ready" &&
+    !listedThisMonth(project, funding.index, new Date());
   const [eligibility, setEligibility] = useState<
     "loading" | "ready" | "blocked" | "error"
   >("loading");
@@ -1136,9 +1218,11 @@ function ProjectInstallPanel({ project }: { project: ProjectDefinition }) {
           {eligibility === "loading"
             ? "Checking project clearance…"
             : eligibility === "blocked"
-              ? "This project is not cleared for agents. The prompt below picks only cleared projects."
+              ? unlisted
+                ? "This project is not listed this month. The prompt below picks only listed projects."
+                : "This project is not cleared for agents. The prompt below picks only cleared projects."
               : "Project clearance could not be checked. The prompt below picks only cleared projects."}
-          {eligibility === "blocked" ? (
+          {eligibility === "blocked" && !unlisted ? (
             <>
               {" "}
               <Link href={`/projects/${project.slug}/manage`}>
@@ -1193,6 +1277,9 @@ function ProjectPaymentHistory({
     right.localeCompare(left),
   );
   const historyLimited = directMonths.length > 3 || cycles.length > 3;
+  // Loading is not an empty history: wait for direct payments before saying
+  // that nothing has closed.
+  const directLoading = directState.status === "loading" && !externalPrize;
   if (
     cycles.length === 0 &&
     directMonths.length === 0 &&
@@ -1216,6 +1303,7 @@ function ProjectPaymentHistory({
           </button>
         </p>
       ) : null}
+      {directLoading ? <p role="status">Loading direct payments…</p> : null}
       {(showHistory ? directMonths : directMonths.slice(0, 3)).map(
         ([month, { amount, count, paidOn }]) => (
           <p className="money-summary" key={month}>
@@ -1233,7 +1321,9 @@ function ProjectPaymentHistory({
         ),
       )}
       {cycles.length === 0 ? (
-        <EmptyState text="No cycles have closed yet." />
+        directLoading ? null : (
+          <EmptyState text="No cycles have closed yet." />
+        )
       ) : (
         <div className="plain-table-wrap">
           <table className="plain-table">
@@ -1353,10 +1443,31 @@ function ProjectHeader({ project }: { project: ProjectDefinition }) {
 }
 
 /** Shared copy for every registry reward model; no project-specific descriptions. */
-function ProjectRewardSummary({ project }: { project: ProjectDefinition }) {
+function ProjectRewardSummary({
+  project: registered,
+}: {
+  project: ProjectDefinition;
+}) {
+  const [funding] = usePublicResource(
+    registered.reward.kind === "monthly-pool",
+    loadPoolFunding,
+    "Pool funding unavailable",
+  );
+  const index = funding.status === "ready" ? funding.index : null;
+  const now = new Date();
+  const project = asShown(registered, index, now);
+  const status = poolFundingStatus(registered, index, now);
   return (
     <div className="project-overview">
       <div className="project-state-summary">
+        {status.state === "withdrawn" ? (
+          <p className="project-reward-status">
+            {`Funds were withdrawn from the vault during ${monthName(status.period)}; it no longer covers this month's amount.`}
+          </p>
+        ) : null}
+        {index !== null && !listedThisMonth(registered, index, now) ? (
+          <p className="project-reward-status">{NOT_LISTED_NOTICE}</p>
+        ) : null}
         {projectRewardSummaries(project).map((summary) => (
           <p className="project-reward-status" key={summary.kind}>
             {summary.kind === "monthly-pool" ? (
@@ -1366,7 +1477,7 @@ function ProjectRewardSummary({ project }: { project: ProjectDefinition }) {
                   <>
                     {" "}
                     <ExternalLinkAnchor href={summary.token.url}>
-                      ${summary.token.symbol}
+                      {summary.token.symbol}
                     </ExternalLinkAnchor>
                   </>
                 ) : null}
@@ -1402,6 +1513,77 @@ function ProjectRewardSummary({ project }: { project: ProjectDefinition }) {
   );
 }
 
+/** #2295: the vault network, website and X account, each only when present. */
+function ProjectLinks({ project }: { project: ProjectDefinition }) {
+  const chains = projectChains(project);
+  const website = project.links.website;
+  const x = project.links.x;
+  const handle = xHandle(x);
+  const parts: { key: string; node: ReactNode }[] = [];
+  if (chains.length > 0)
+    parts.push({
+      key: "chain",
+      node: `Chain: ${chains
+        .map((chain) =>
+          chain.symbol ? `${chain.name} (${chain.symbol})` : chain.name,
+        )
+        .join(", ")}`,
+    });
+  if (website)
+    parts.push({
+      key: "website",
+      node: (
+        <>
+          Website:{" "}
+          <a href={website} target="_blank" rel="noopener noreferrer">
+            {websiteLabel(website)}
+          </a>
+        </>
+      ),
+    });
+  if (x && handle)
+    parts.push({
+      key: "x",
+      node: (
+        <>
+          X:{" "}
+          <a href={x} target="_blank" rel="noopener noreferrer">
+            @{handle}
+          </a>
+        </>
+      ),
+    });
+  if (parts.length === 0) return null;
+  return (
+    <p className="project-links-line">
+      {parts.map((part, index) => (
+        <Fragment key={part.key}>
+          {index > 0 ? " · " : null}
+          {part.node}
+        </Fragment>
+      ))}
+    </p>
+  );
+}
+
+/** #1993: how promptly the project merges outside work, from the daily D1 read. */
+function ProjectMergeActivity({ project }: { project: ProjectDefinition }) {
+  const active = project.status === "active";
+  const [state] = usePublicResource(
+    active,
+    loadMergeActivity,
+    "Merge activity unavailable",
+  );
+  if (!active || state.status === "loading") return null;
+  if (state.status === "error")
+    return (
+      <p className="project-merge-activity">Merge activity unavailable.</p>
+    );
+  // A repository not read yet shows nothing rather than an empty claim.
+  const line = mergeActivityLine(state.index.get(project.id), new Date());
+  return line ? <p className="project-merge-activity">{line}</p> : null;
+}
+
 function ProjectBountyIntroduction({
   project,
 }: {
@@ -1416,6 +1598,7 @@ function ProjectBountyIntroduction({
       <div className="shell">
         <ProjectHeader project={project} />
         <ProjectRewardSummary project={project} />
+        <ProjectLinks project={project} />
         <Link
           className="button primary-button"
           href={`/projects/${project.slug}/security`}
@@ -1452,6 +1635,8 @@ function ProjectPage({
         <div className="shell">
           <ProjectHeader project={project} />
           <ProjectRewardSummary project={project} />
+          <ProjectLinks project={project} />
+          <ProjectMergeActivity project={project} />
           {project.reward.reviewBudget ? (
             <p>{reviewBudgetLabel(project.reward.reviewBudget)}</p>
           ) : null}
@@ -1459,6 +1644,12 @@ function ProjectPage({
         </div>
       </section>
       <div className="shell">
+        <ProjectWork
+          project={project}
+          state={state}
+          retry={retry}
+          notice={!view?.leaders.length}
+        />
         <ProjectFundsAndAwards
           key={`funding:${project.id}`}
           project={project}
@@ -1475,6 +1666,7 @@ function ProjectPage({
               projectId={project.id}
               scoreState={state}
               retryScore={retry}
+              showDataNotice
               compact
             />
           </div>
@@ -1522,10 +1714,26 @@ function AppContent({ route }: { route: Route }) {
   const blocked = Boolean(registryError) && !registryIndependent;
   const project =
     route.kind === "project" ? findProject(route.projectId) : undefined;
+  const [archive, retryArchive] = useCycleIndex(
+    route.kind === "cycle-archive" || route.kind === "cycle",
+  );
+  const cycleProjectId =
+    route.kind === "cycle"
+      ? (findProject(route.projectId)?.id ?? route.projectId)
+      : null;
+  const cycleNeedsSnapshot =
+    route.kind === "cycle" &&
+    archive.status === "ready" &&
+    !archive.cycleIndex.cycles.some(
+      (cycle) =>
+        cycle.projectId === cycleProjectId && cycle.cycleId === route.cycleId,
+    );
   const needsSnapshot =
-    !blocked && snapshot && !(project && hasBountyOverview(project));
+    !blocked &&
+    snapshot &&
+    !(project && hasBountyOverview(project)) &&
+    (route.kind !== "cycle" || cycleNeedsSnapshot);
   const [state, retry] = useSnapshot(needsSnapshot);
-  const [archive, retryArchive] = useCycleIndex(route.kind === "cycle-archive");
   let content: ReactNode;
   if (blocked)
     content = (
@@ -1605,16 +1813,22 @@ function AppContent({ route }: { route: Route }) {
         state={state}
       />
     );
-  else if (route.kind === "cycle")
-    content = withProject(route, (project) => (
+  else if (route.kind === "cycle") {
+    const cycleProject =
+      findProject(route.projectId) ?? findHistoricalProject(route.projectId);
+    content = cycleProject ? (
       <CyclePage
+        archive={archive}
         cycleId={route.cycleId}
-        project={project}
+        project={cycleProject}
         retry={retry}
+        retryArchive={retryArchive}
         state={state}
       />
-    ));
-  else content = <NotFound />;
+    ) : (
+      <NotFound title="Project not found" />
+    );
+  } else content = <NotFound />;
   return (
     <>
       <Header />

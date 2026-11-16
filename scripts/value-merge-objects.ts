@@ -1,5 +1,11 @@
 /** Complete object closure for the fixed Git merge operation, without checkout. */
+
 import { execFileSync } from "node:child_process";
+import { createHash } from "node:crypto";
+import {
+  type ValueFileRequest,
+  validValueFileRequest,
+} from "../workers/slopbot/value-file-recovery";
 import type { ValueMergeInput } from "../workers/slopbot/value-merge-profile";
 
 const OID = /^[a-f0-9]{40}$/u;
@@ -7,18 +13,12 @@ const MAX_OUTPUT = 8 * 1024 * 1024;
 const MAX_EXPANDED = 256 * 1024 * 1024;
 const ordered = (values: Iterable<string>) => [...new Set(values)].sort();
 
-export interface MergeObjectClosure {
+interface MergeObjectClosure {
   commits: string[];
   trees: string[];
   blobs: string[];
   snapshots: string[];
   expandedBytes: number;
-}
-
-interface TreeEntry {
-  mode: string;
-  type: string;
-  sha: string;
 }
 
 function gitReader(repository: string) {
@@ -45,13 +45,41 @@ function gitReader(repository: string) {
       throw new Error("Required Git merge objects are unavailable");
     }
   };
-  return (args: string[], input?: string) => {
+  const text = (args: string[], input?: string) => {
     const bytes = git(args, input);
     const result = bytes.toString("utf8");
     if (!Buffer.from(result, "utf8").equals(bytes))
       throw new Error("Git merge metadata is not UTF-8");
     return result;
   };
+  return { git, text };
+}
+
+function* treeEntries(bytes: Buffer) {
+  let cursor = 0;
+  while (cursor < bytes.length) {
+    const space = bytes.indexOf(32, cursor);
+    const nul = bytes.indexOf(0, space + 1);
+    if (space < cursor || nul < space || nul + 21 > bytes.length)
+      throw new Error("Incomplete Git snapshot entry");
+    const mode = bytes.subarray(cursor, space).toString("ascii");
+    const nameBytes = bytes.subarray(space + 1, nul);
+    const name = new TextDecoder("utf-8", { fatal: true }).decode(nameBytes);
+    if (
+      !["40000", "100644", "100755", "120000", "160000"].includes(mode) ||
+      !name ||
+      name.includes("/") ||
+      name === "." ||
+      name === ".."
+    )
+      throw new Error("Invalid Git snapshot entry");
+    yield {
+      mode,
+      name,
+      sha: bytes.subarray(nul + 1, nul + 21).toString("hex"),
+    };
+    cursor = nul + 21;
+  }
 }
 
 /** Caller supplies server-derived inputs. Missing graph, tree, changed-file or
@@ -59,8 +87,9 @@ function gitReader(repository: string) {
 export function requiredMergeObjects(
   inputs: readonly ValueMergeInput[],
   repository: string,
+  fileRequests: readonly ValueFileRequest[] = [],
 ): MergeObjectClosure {
-  const text = gitReader(repository);
+  const { git, text } = gitReader(repository);
   if (
     !inputs.length ||
     text(["rev-parse", "--is-shallow-repository"]).trim() !== "false"
@@ -96,6 +125,18 @@ export function requiredMergeObjects(
             commit.parents[right].sha,
           ]);
     }
+  }
+  for (const request of fileRequests) {
+    if (
+      !validValueFileRequest(request) ||
+      !inputs.some(
+        (input) =>
+          input.repository === request.repository &&
+          input.repositoryNodeId === request.repositoryNodeId,
+      )
+    )
+      throw new Error("Invalid recovered file repository");
+    addRoot(request.ref);
   }
   for (const row of text(["rev-list", "--parents", ...ordered(roots), "--"])
     .trim()
@@ -143,36 +184,115 @@ export function requiredMergeObjects(
       for (let right = left + 1; right < bases.length; right++)
         mergePairs.push([bases[left], bases[right]]);
   }
-  const entries = new Map<string, Map<string, TreeEntry>>();
-  for (const ref of snapshots) {
-    const root = text(["rev-parse", `${ref}^{tree}`]).trim();
-    if (!OID.test(root)) throw new Error("Git snapshot tree is unavailable");
-    trees.add(root);
-    const paths = new Map<string, TreeEntry>();
-    const rows = text(["ls-tree", "-r", "-t", "-z", "--full-tree", ref]).split(
-      "\0",
-    );
-    if (rows.pop() !== "") throw new Error("Incomplete Git snapshot listing");
-    for (const row of rows) {
-      const match =
-        /^([0-7]{6}) (blob|tree|commit) ([a-f0-9]{40})\t([\s\S]+)$/u.exec(row);
-      if (!match || paths.has(match[4]))
-        throw new Error("Invalid Git snapshot listing");
-      const [, mode, type, sha, path] = match;
-      paths.set(path, { mode, type, sha });
-      if (type === "tree") trees.add(sha);
-      if (
-        type === "blob" &&
-        [".gitattributes", ".gitmodules"].includes(path.split("/").at(-1) ?? "")
-      )
-        blobs.add(sha);
-    }
-    entries.set(ref, paths);
+  const selectedPaths = new Map<string, Set<string>>();
+  const regularPaths = new Map<string, Set<string>>();
+  for (const input of inputs) {
+    const paths = selectedPaths.get(input.pull.head.sha) ?? new Set<string>();
+    for (const file of input.files) paths.add(file.filename);
+    selectedPaths.set(input.pull.head.sha, paths);
   }
-  for (const input of inputs)
-    for (const file of input.files) {
-      const entry = entries.get(input.pull.head.sha)?.get(file.filename);
-      if (entry?.type === "blob") blobs.add(entry.sha);
+  for (const request of fileRequests) {
+    const paths = regularPaths.get(request.ref) ?? new Set<string>();
+    paths.add(request.path);
+    regularPaths.set(request.ref, paths);
+  }
+  const rootTrees = text([
+    "log",
+    "--no-walk=unsorted",
+    "--format=%H %T",
+    ...snapshots,
+    "--",
+  ])
+    .trim()
+    .split("\n");
+  const rootsByCommit = new Map<string, string>();
+  for (const row of rootTrees) {
+    const match = /^([a-f0-9]{40}) ([a-f0-9]{40})$/u.exec(row);
+    if (!match || !snapshots.has(match[1]) || rootsByCommit.has(match[1]))
+      throw new Error("Git snapshot tree is unavailable");
+    rootsByCommit.set(match[1], match[2]);
+  }
+  if (rootsByCommit.size !== snapshots.size)
+    throw new Error("Git snapshot tree is unavailable");
+  const treeBytes = new Map<string, Buffer>();
+  let pending = new Set(rootsByCommit.values());
+  while (pending.size) {
+    const batch = [...pending].filter((sha) => !treeBytes.has(sha));
+    pending = new Set();
+    if (!batch.length) break;
+    // Git's batch framing includes the exact object size. Retain raw tree
+    // bytes once; repeated snapshots share their immutable child objects.
+    const bytes = git(["cat-file", "--batch"], `${batch.join("\n")}\n`);
+    let cursor = 0;
+    for (const sha of batch) {
+      const newline = bytes.indexOf(10, cursor);
+      const header = bytes.subarray(cursor, newline).toString("ascii");
+      const match = /^([a-f0-9]{40}) tree (\d+)$/u.exec(header);
+      if (newline < 0 || !match || match[1] !== sha)
+        throw new Error("Git snapshot tree is unavailable");
+      const size = Number(match[2]);
+      const start = newline + 1;
+      const end = start + size;
+      if (
+        !Number.isSafeInteger(size) ||
+        end >= bytes.length ||
+        bytes[end] !== 10
+      )
+        throw new Error("Incomplete Git snapshot tree");
+      const body = Buffer.from(bytes.subarray(start, end));
+      if (
+        createHash("sha1")
+          .update(`tree ${size}\0`)
+          .update(body)
+          .digest("hex") !== sha
+      )
+        throw new Error("Git snapshot tree hash differs");
+      treeBytes.set(sha, body);
+      trees.add(sha);
+      const names = new Set<string>();
+      for (const entry of treeEntries(body)) {
+        if (names.has(entry.name))
+          throw new Error("Invalid Git snapshot listing");
+        names.add(entry.name);
+        if (entry.mode === "40000") pending.add(entry.sha);
+        else if (
+          [".gitattributes", ".gitmodules"].includes(entry.name) &&
+          entry.mode !== "160000"
+        )
+          blobs.add(entry.sha);
+      }
+      cursor = end + 1;
+    }
+    if (cursor !== bytes.length)
+      throw new Error("Unexpected Git tree batch bytes");
+  }
+  const findPath = (ref: string, path: string) => {
+    let tree = rootsByCommit.get(ref);
+    const parts = path.split("/");
+    for (let index = 0; index < parts.length; index++) {
+      const body = tree ? treeBytes.get(tree) : undefined;
+      if (!body) throw new Error("Incomplete Git snapshot tree");
+      const entry = [...treeEntries(body)].find(
+        (item) => item.name === parts[index],
+      );
+      if (!entry) return null;
+      if (index === parts.length - 1) return entry;
+      if (entry.mode !== "40000") return null;
+      tree = entry.sha;
+    }
+    return null;
+  };
+  for (const [ref, paths] of selectedPaths)
+    for (const path of paths) {
+      const entry = findPath(ref, path);
+      if (entry && !["40000", "160000"].includes(entry.mode))
+        blobs.add(entry.sha);
+    }
+  for (const [ref, paths] of regularPaths)
+    for (const path of paths) {
+      const entry = findPath(ref, path);
+      if (entry && ["100644", "100755"].includes(entry.mode))
+        blobs.add(entry.sha);
     }
   const addChangedObject = (mode: string, sha: string) => {
     if (mode === "000000" && sha === "0".repeat(40)) return;
@@ -181,27 +301,24 @@ export function requiredMergeObjects(
       throw new Error("Unsupported changed Git object");
     blobs.add(sha);
   };
-  for (const [before, after] of edges.values()) {
-    const options = [
-      "--raw",
-      "--no-abbrev",
-      "--no-renames",
-      "--no-ext-diff",
-      "--no-textconv",
-      "-z",
-    ];
+  const changedEdges = [...edges.values()];
+  for (let offset = 0; offset < changedEdges.length; offset += 64) {
+    const batch = changedEdges.slice(offset, offset + 64);
     const rows = text(
-      before
-        ? ["diff", ...options, before, after, "--"]
-        : [
-            "diff-tree",
-            "--root",
-            "--no-commit-id",
-            "-r",
-            ...options,
-            after,
-            "--",
-          ],
+      [
+        "diff-tree",
+        "--stdin",
+        "--root",
+        "--no-commit-id",
+        "-r",
+        "--raw",
+        "--no-abbrev",
+        "--no-renames",
+        "--no-ext-diff",
+        "--no-textconv",
+        "-z",
+      ],
+      `${batch.map(([before, after]) => (before ? `${before} ${after}` : after)).join("\n")}\n`,
     ).split("\0");
     if (rows.pop() !== "" || rows.length % 2)
       throw new Error("Incomplete Git change listing");
@@ -271,8 +388,9 @@ export function requiredMergeObjects(
 export function verifyMergeObjectStore(
   inputs: readonly ValueMergeInput[],
   repository: string,
+  fileRequests: readonly ValueFileRequest[] = [],
 ): MergeObjectClosure {
-  const text = gitReader(repository);
+  const { text } = gitReader(repository);
   text(["fsck", "--full", "--strict", "--no-reflogs", "--no-dangling"]);
   let bytes = 0;
   for (const value of text([
@@ -292,5 +410,5 @@ export function verifyMergeObjectStore(
     )
       throw new Error("Expanded object limit");
   }
-  return requiredMergeObjects(inputs, repository);
+  return requiredMergeObjects(inputs, repository, fileRequests);
 }

@@ -30,6 +30,13 @@ export interface NetworkDefinition {
    * Never substitute another stablecoin or a token named "USDC".
    */
   usdc: string | null;
+  /**
+   * The stablecoin that prices value and gas on a network without a
+   * conversion target, and null elsewhere. Robinhood Chain uses Paxos USDG.
+   * It is a pricing reference and the asset a buyback bridge delivers; a
+   * received fee is never converted to it.
+   */
+  stable: string | null;
   defaultRpcUrl: string;
   /** KyberSwap Aggregator chain slug; null for Solana. */
   kyberChain: string | null;
@@ -51,6 +58,7 @@ export const NETWORK_DEFINITIONS: Readonly<Record<Network, NetworkDefinition>> =
       chainId: 8453,
       escrowNetworks: ["base-mainnet"],
       usdc: "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913",
+      stable: null,
       defaultRpcUrl: "https://mainnet.base.org",
       kyberChain: "base",
       router: "0x6131b5fae19ea4f9d964eac0408e4408b66337b5",
@@ -60,6 +68,7 @@ export const NETWORK_DEFINITIONS: Readonly<Record<Network, NetworkDefinition>> =
       chainId: 1,
       escrowNetworks: ["ethereum"],
       usdc: "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48",
+      stable: null,
       defaultRpcUrl: "https://ethereum-rpc.publicnode.com",
       kyberChain: "ethereum",
       router: "0x6131b5fae19ea4f9d964eac0408e4408b66337b5",
@@ -70,6 +79,8 @@ export const NETWORK_DEFINITIONS: Readonly<Record<Network, NetworkDefinition>> =
       escrowNetworks: ["robinhood-mainnet"],
       // Owner decision: retain received assets without conversion on chain 4663.
       usdc: null,
+      // Paxos USDG (docs.paxos.com/guides/stablecoin/usdg/mainnet), 6 decimals.
+      stable: "0x5fc5360d0400a0fd4f2af552add042d716f1d168",
       defaultRpcUrl: "https://rpc.mainnet.chain.robinhood.com",
       kyberChain: "robinhood",
       router: "0x6131b5fae19ea4f9d964eac0408e4408b66337b5",
@@ -79,6 +90,7 @@ export const NETWORK_DEFINITIONS: Readonly<Record<Network, NetworkDefinition>> =
       chainId: null,
       escrowNetworks: ["solana-mainnet"],
       usdc: "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+      stable: null,
       defaultRpcUrl: "https://api.mainnet-beta.solana.com",
       kyberChain: null,
       router: null,

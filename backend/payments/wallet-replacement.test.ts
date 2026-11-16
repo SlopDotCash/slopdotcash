@@ -1,4 +1,8 @@
 import { expect, test } from "bun:test";
+import { execFileSync } from "node:child_process";
+import { mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
 import { privateKeyToAccount } from "viem/accounts";
 import { sha256Hex } from "../../src/lib/async-sha256.mjs";
 import {
@@ -7,10 +11,8 @@ import {
 } from "../../src/lib/contributor-allocation";
 import type { PaymentsAccount } from "../../src/lib/payments/contracts";
 import { sqliteD1 } from "../../tests/sqlite-d1";
-import {
-  type JournalStore,
-  retireUnsignedAttempt,
-} from "../../workers/payment-executor/core";
+import type { JournalStore } from "../../workers/payment-executor/binding-shared";
+import { retireUnsignedAttempt } from "../../workers/payment-executor/core";
 import type { D1TransactionalDatabase } from "../d1";
 import { dispatchPayment } from "./dispatch";
 import { handlePaymentsApi } from "./handler";
@@ -36,14 +38,21 @@ async function fixture() {
       "node",
       new Date(Date.now() + 86400000).toISOString(),
     );
-  async function call(path: string, body?: unknown) {
+  async function call(
+    path: string,
+    body?: unknown,
+    options: { token?: string; expectedActor?: string } = {},
+  ) {
     const response = await handlePaymentsApi(
       new Request(`https://slop.cash/api/v1/payments/${path}`, {
         method: body ? "POST" : "GET",
         headers: {
-          cookie: `__Host-slop_points=${"a".repeat(43)}`,
+          cookie: `__Host-slop_points=${options.token ?? "a".repeat(43)}`,
           origin: "https://slop.cash",
           "content-type": "application/json",
+          ...(options.expectedActor === undefined
+            ? {}
+            : { "x-slop-expected-github-id": options.expectedActor }),
         },
         ...(body ? { body: JSON.stringify(body) } : {}),
       }),
@@ -56,6 +65,7 @@ async function fixture() {
         challengeId: string;
         message: string;
         wallets: PaymentsAccount["wallets"];
+        error?: string;
       },
     };
   }
@@ -106,6 +116,210 @@ async function fixture() {
     },
   };
 }
+
+test("wallet account binding refuses a switched session before claims, challenges or authorization", async () => {
+  const f = await fixture();
+  try {
+    const token = "b".repeat(43);
+    f.sqlite
+      .query(
+        "INSERT INTO points_members(actor_id,github_id,login,joined_at,public) VALUES('node-b','456','bob',?,0)",
+      )
+      .run(now.toISOString());
+    f.sqlite
+      .query("INSERT INTO points_sessions VALUES(?,?,?)")
+      .run(
+        await sha256Hex(token),
+        "node-b",
+        new Date(now.getTime() + 86400000).toISOString(),
+      );
+    const counts = () => ({
+      claims: f.sqlite.query("SELECT COUNT(*) n FROM wallet_claims").get(),
+      challenges: f.sqlite
+        .query("SELECT COUNT(*) n FROM payment_wallet_challenges")
+        .get(),
+      authorizations: f.sqlite
+        .query("SELECT COUNT(*) n FROM payment_wallet_authorizations")
+        .get(),
+    });
+    const before = counts();
+    const refused = await f.call(
+      "wallets/register",
+      { chain: "base", address: first.address.toLowerCase() },
+      { token, expectedActor: "123" },
+    );
+    expect(refused.status).toBe(403);
+    expect(refused.body.error).toBe("actor_changed");
+    expect(counts()).toEqual(before);
+    // Absence remains compatible; it still means the authenticated B, never A.
+    const registered = await f.call(
+      "wallets/register",
+      { chain: "base", address: first.address.toLowerCase() },
+      { token },
+    );
+    expect(registered.status).toBe(200);
+    const claimId = registered.body.claimId;
+    expect(
+      f.sqlite
+        .query("SELECT github_user_id FROM wallet_claims WHERE id=?")
+        .get(claimId),
+    ).toEqual({ github_user_id: "456" });
+    const afterRegistration = counts();
+    for (const [path, body] of [
+      ["me", undefined],
+      ["wallets/challenge", { claimId }],
+    ] as const) {
+      const response = await f.call(path, body, {
+        token,
+        expectedActor: "123",
+      });
+      expect(response.status).toBe(403);
+      expect(response.body.error).toBe("actor_changed");
+    }
+    expect(counts()).toEqual(afterRegistration);
+    const challenge = await f.call(
+      "wallets/challenge",
+      { claimId },
+      { token, expectedActor: "456" },
+    );
+    expect(challenge.status).toBe(200);
+    const authorization = {
+      claimId,
+      challengeId: challenge.body.challengeId,
+      signature: await first.signMessage({ message: challenge.body.message }),
+    };
+    const rejectedAuthorization = await f.call(
+      "wallets/authorize",
+      authorization,
+      { token, expectedActor: "123" },
+    );
+    expect(rejectedAuthorization.status).toBe(403);
+    expect(rejectedAuthorization.body.error).toBe("actor_changed");
+    expect(
+      f.sqlite
+        .query("SELECT consumed_at FROM payment_wallet_challenges WHERE id=?")
+        .get(authorization.challengeId),
+    ).toEqual({ consumed_at: null });
+    expect(
+      (
+        await f.call("wallets/authorize", authorization, {
+          token,
+          expectedActor: "456",
+        })
+      ).status,
+    ).toBe(200);
+    const malformed = await f.call("me", undefined, {
+      token,
+      expectedActor: "invalid",
+    });
+    expect(malformed.status).toBe(400);
+    expect(malformed.body.error).toBe("invalid_expected_actor");
+  } finally {
+    f.sqlite.close();
+  }
+});
+
+test("generated Quint wallet histories match real registration, authorization and dispatch", async () => {
+  const directory = mkdtempSync(join(tmpdir(), "slop-wallet-model-"));
+  try {
+    execFileSync(
+      "node",
+      [
+        resolve("node_modules/@informalsystems/quint/dist/src/cli.js"),
+        "run",
+        "formal/models/payments/effective_wallet_history.qnt",
+        "--backend=typescript",
+        "--seed=20261107",
+        "--max-samples=25",
+        "--max-steps=12",
+        "--n-traces=25",
+        `--out-itf=${join(directory, "wallet-{seq}.json")}`,
+      ],
+      { stdio: "pipe" },
+    );
+    const wallets = [first, second, third];
+    const paths = readdirSync(directory);
+    expect(paths).toHaveLength(25);
+    for (const [traceIndex, file] of paths.entries()) {
+      const trace = JSON.parse(
+        readFileSync(join(directory, file), "utf8"),
+        (_key, value) =>
+          value && typeof value === "object" && "#bigint" in value
+            ? Number(value["#bigint"])
+            : value,
+      ) as {
+        states: { s: { head: number; authorized: { "#set": number[] } } }[];
+      };
+      const f = await fixture();
+      const claims: string[] = [];
+      let previousHead = 0;
+      let previousAuthorized: number[] = [];
+      try {
+        for (const { s } of trace.states) {
+          const authorized = s.authorized["#set"];
+          if (s.head !== previousHead) {
+            expect(s.head).toBe(previousHead + 1);
+            claims.push(await f.register(wallets[s.head - 1]));
+          }
+          const newlyAuthorized = authorized.filter(
+            (id) => !previousAuthorized.includes(id),
+          );
+          for (const id of newlyAuthorized) {
+            expect(id).toBe(s.head);
+            expect(
+              (
+                await f.call(
+                  "wallets/authorize",
+                  await f.consent(claims[id - 1], wallets[id - 1]),
+                )
+              ).status,
+            ).toBe(200);
+          }
+          const effective = authorized.length
+            ? Math.max(...authorized)
+            : s.head;
+          const actual = await f.current();
+          expect(actual).toHaveLength(effective > 0 ? 1 : 0);
+          if (effective > 0) {
+            expect(actual[0].claimId).toBe(claims[effective - 1]);
+            expect(actual[0].authorized).toBe(authorized.length > 0);
+          }
+          previousHead = s.head;
+          previousAuthorized = authorized;
+        }
+        const id = `quint-wallet-${traceIndex}`;
+        f.award(id);
+        let destination: string | undefined;
+        const result = await dispatchPayment(
+          f.database,
+          {
+            async submit(input) {
+              destination = input.destination;
+              return { transactionId: `quint-submission-${traceIndex}` };
+            },
+          },
+          id,
+          now,
+        );
+        expect(result).toBe(
+          previousAuthorized.length ? "submitted" : "unavailable",
+        );
+        if (previousAuthorized.length)
+          expect(destination).toBe(
+            wallets[Math.max(...previousAuthorized) - 1].address.toLowerCase(),
+          );
+        else expect(destination).toBeUndefined();
+        expect(
+          f.sqlite.query("SELECT count(*) n FROM wallet_claims").get(),
+        ).toEqual({ n: previousHead });
+      } finally {
+        f.sqlite.close();
+      }
+    }
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
 
 test("unsigned replacements preserve the authorized wallet and dispatch, then valid signature switches once", async () => {
   const f = await fixture();
@@ -407,6 +621,49 @@ test("unsigned registration cannot retire an old attempt, but a signed descendan
       retired: false,
       transactionId: "0x1234",
     });
+  } finally {
+    f.sqlite.close();
+  }
+});
+
+test("authorizing a replacement keeps a hold parked under another claim's uncertain attempt", async () => {
+  const f = await fixture();
+  const states = () =>
+    Object.fromEntries(
+      (
+        f.sqlite
+          .query("SELECT obligation_id id,state FROM payment_outbox ORDER BY 1")
+          .all() as { id: string; state: string }[]
+      ).map((row) => [row.id, row.state]),
+    );
+  try {
+    const a = await f.register(first);
+    expect(
+      (await f.call("wallets/authorize", await f.consent(a, first))).status,
+    ).toBe(200);
+    f.award("uncertain");
+    f.award("free");
+    f.sqlite
+      .query(
+        "INSERT INTO payment_attempts(id,obligation_id,claim_id,created_at,state) VALUES('attempt','uncertain',?,?,'unknown')",
+      )
+      .run(a, now.toISOString());
+    f.sqlite.query("UPDATE payment_outbox SET state='held'").run();
+    const b = await f.register(second);
+    expect(
+      (await f.call("wallets/authorize", await f.consent(b, second))).status,
+    ).toBe(200);
+    // The unrelated hold is released. The hold under claim a's uncertain
+    // attempt waits for recovery instead of flickering back through ready.
+    expect(states()).toEqual({ free: "ready", uncertain: "held" });
+    f.sqlite
+      .query("UPDATE payment_attempts SET state='failed' WHERE id='attempt'")
+      .run();
+    const c = await f.register(third);
+    expect(
+      (await f.call("wallets/authorize", await f.consent(c, third))).status,
+    ).toBe(200);
+    expect(states()).toEqual({ free: "ready", uncertain: "ready" });
   } finally {
     f.sqlite.close();
   }

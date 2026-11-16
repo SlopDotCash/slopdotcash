@@ -4,6 +4,8 @@
     "/",
     "/api/v1/*",
     "/projects/*",
+    "/referral",
+    "/referral/*",
     "/contributors/*",
     "/cycles/*",
     "/.well-known/slop/*"

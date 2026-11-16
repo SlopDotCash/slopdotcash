@@ -1,3 +1,5 @@
+import { positiveBudgetFits } from "../verified-budget";
+
 /** Native fees use exact integer wei. D1 counters stay within exact JS integers. */
 export interface ReferralGasLimits {
   perTransactionWei: string;
@@ -22,7 +24,7 @@ export function gasInteger(value: string): number {
 export function validateGasLimits(limits: ReferralGasLimits) {
   const perTransaction = gasInteger(limits.perTransactionWei);
   const perDay = gasInteger(limits.perDayWei);
-  if (perTransaction <= 0 || perDay < perTransaction)
+  if (!positiveBudgetFits(BigInt(perTransaction), BigInt(perDay)))
     throw new Error(
       "Referral daily native budget must cover one positive transaction limit",
     );

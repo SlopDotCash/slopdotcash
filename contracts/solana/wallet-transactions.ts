@@ -1,6 +1,7 @@
 /** Exact unsigned wallet transactions shared by funding and award commitment. */
 import { ed25519 } from "@noble/curves/ed25519.js";
 import { decodeBase58Bytes } from "../../src/lib/base58";
+import { decodeBase64, encodeBase64 } from "../../src/lib/byte-encoding";
 import {
   type SolanaEscrowConfig,
   type SolanaProgramConfig,
@@ -12,9 +13,6 @@ import {
 import { bytes, concat, type Instruction, message } from "./transactions";
 
 export class SolanaWalletActionError extends Error {}
-const encode = (value: Uint8Array) => btoa(String.fromCharCode(...value));
-const decode = (value: string) =>
-  Uint8Array.from(atob(value), (c) => c.charCodeAt(0));
 function object(value: unknown): Record<string, unknown> {
   if (!value || typeof value !== "object" || Array.isArray(value))
     throw new SolanaWalletActionError("Invalid chain response");
@@ -41,10 +39,10 @@ export async function prepareSolanaWalletTransaction(
       "The chain did not return a valid transaction lifetime.",
     );
   const msg = message(wallet, latest.blockhash, instructions);
-  const wire = encode(concat(Uint8Array.of(1), new Uint8Array(64), msg));
+  const wire = encodeBase64(concat(Uint8Array.of(1), new Uint8Array(64), msg));
   const feeResult = object(
     await solanaRpc(config, "getFeeForMessage", [
-      encode(msg),
+      encodeBase64(msg),
       { commitment: "finalized" },
     ]),
   );
@@ -339,7 +337,7 @@ async function checkTransaction(
     throw new SolanaWalletActionError(
       "The finalized transaction could not be verified.",
     );
-  const wire = decode(tx.transaction[0]);
+  const wire = decodeBase64(tx.transaction[0]);
   const expected = concat(Uint8Array.of(1), signature, msg);
   const meta = object(tx.meta);
   let accountKeys: string[];

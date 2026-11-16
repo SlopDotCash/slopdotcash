@@ -622,7 +622,7 @@ function acceptableRepositoryContinuation(first: URL, next: URL): boolean {
 }
 
 /** The slopdotcash GitHub App (owner decision D10: App 5257625). */
-type AppCredentials = {
+export type AppCredentials = {
   fetch: Fetch;
   apiOrigin: string;
   appId: string;
@@ -690,6 +690,18 @@ export function githubInstallationCheck(
 export function githubAppAdvisoryToken(
   options: AppCredentials,
 ): (repository: string) => Promise<string | null> {
+  return githubAppRepositoryToken(options, { repository_advisories: "read" });
+}
+
+/**
+ * A short-lived installation token of the slopdotcash App, narrowed to one
+ * repository and to the given read permissions. Null when the App is not
+ * installed or GitHub refuses.
+ */
+export function githubAppRepositoryToken(
+  options: AppCredentials,
+  permissions: Record<string, "read">,
+): (repository: string) => Promise<string | null> {
   return async (repository) => {
     const installation = await repositoryInstallation(options, repository);
     if (installation.state !== "yes") return null;
@@ -704,7 +716,7 @@ export function githubAppAdvisoryToken(
           },
           body: JSON.stringify({
             repositories: [repository.split("/")[1]],
-            permissions: { repository_advisories: "read" },
+            permissions,
           }),
           redirect: "manual",
           signal: AbortSignal.timeout(10_000),

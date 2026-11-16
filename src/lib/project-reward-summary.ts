@@ -1,12 +1,14 @@
 import { formatBaseUnits } from "./base-units.mjs";
+import { evmExplorerOrigin } from "./payments/contracts";
 import type { ProjectDefinition } from "./projects.mjs";
+import { formatAssetSymbol } from "./reward-asset.mjs";
 import type {
   SecurityBountyTerms,
   SecurityProgramStatus,
 } from "./security-bounty.mjs";
 
 /** Display variants derive only from the registry's reward policy. */
-export type ProjectRewardSummary =
+type ProjectRewardSummary =
   | {
       kind: "monthly-pool";
       amount: string;
@@ -38,7 +40,23 @@ export function securityBountyAmountLabel(
     formatBaseUnits(bounty.amount.grossMinor, bounty.amount.decimals),
   );
   if (!bounty.amount.asset) return `$${amount}`;
-  return `${amount} ${bounty.amount.asset.symbol}`;
+  return `${amount} ${formatAssetSymbol(bounty.amount.asset.symbol, bounty.amount.asset.kind)}`;
+}
+
+/** Card copy may name a separate paid offer without changing ordinary work. */
+export function hasProjectCardBounty(project: {
+  reward: Pick<ProjectDefinition["reward"], "kind" | "monthlyCapMinor">;
+  securityBounty?: Pick<SecurityBountyTerms, "rewardMode" | "status">;
+}): boolean {
+  const bounty = project.securityBounty;
+  return (
+    bounty !== undefined &&
+    (bounty.rewardMode === "bounty-only" ||
+      (bounty.rewardMode === "separate" &&
+        bounty.status === "open" &&
+        project.reward.kind === "monthly-pool" &&
+        BigInt(project.reward.monthlyCapMinor) === 0n))
+  );
 }
 
 export function projectRewardSummaries(
@@ -65,27 +83,17 @@ export function projectRewardSummaries(
             kind: "monthly-pool",
             amount: compactWhole(amount),
             token: {
-              symbol: asset.symbol.replace(/^\$/u, ""),
+              symbol: formatAssetSymbol(asset.symbol, asset.kind),
               url:
                 asset.kind === "native"
                   ? asset.network === "solana"
                     ? "https://solscan.io/"
-                    : asset.network === "base"
-                      ? "https://basescan.org/"
-                      : asset.network === "robinhood"
-                        ? "https://robinhoodchain.blockscout.com/"
-                        : "https://etherscan.io/"
+                    : `${evmExplorerOrigin(asset.network)}/`
                   : asset.network === "solana"
                     ? asset.address.endsWith("pump")
                       ? `https://pump.fun/coin/${asset.address}`
                       : `https://solscan.io/token/${asset.address}`
-                    : `https://${
-                        asset.network === "base"
-                          ? "basescan.org"
-                          : asset.network === "robinhood"
-                            ? "robinhoodchain.blockscout.com"
-                            : "etherscan.io"
-                      }/token/${asset.address}`,
+                    : `${evmExplorerOrigin(asset.network)}/token/${asset.address}`,
             },
           }
         : { kind: "monthly-pool", amount: `$${amount}` },

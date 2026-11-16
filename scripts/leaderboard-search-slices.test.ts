@@ -2,6 +2,7 @@ import { expect, test } from "bun:test";
 import { TARGET_REPOSITORIES } from "../src/lib/repositories.mjs";
 import {
   collectSearchReferences,
+  GitHubGraphqlClient,
   SEARCH_SAFE_RESULT_LIMIT,
 } from "./generate-leaderboard";
 
@@ -91,4 +92,59 @@ test("more results than Search returns within one second still refuse the snapsh
       { searchSliceCount: 0 },
     ),
   ).rejects.toThrow("minimum-size range");
+});
+
+test("a repeated Search cursor refuses the crawl before another billed request", async () => {
+  let requests = 0;
+  const server = Bun.serve({
+    hostname: "127.0.0.1",
+    port: 0,
+    fetch: async (request) => {
+      const body = await request.json();
+      expect(body.query).toContain("search(");
+      requests++;
+      if (requests > 2)
+        return Response.json(
+          { message: "Unexpected third request" },
+          { status: 400 },
+        );
+      return Response.json({
+        data: {
+          search: {
+            issueCount: 3,
+            pageInfo: { hasNextPage: true, endCursor: "stalled" },
+            nodes: [{ __typename: "Issue", id: "I_1" }],
+          },
+          rateLimit: {
+            cost: 1,
+            limit: 5000,
+            remaining: 5000 - requests,
+            resetAt: "2027-01-01T00:00:00.000Z",
+          },
+        },
+      });
+    },
+  });
+  try {
+    const client = new GitHubGraphqlClient("fixture-only", (_url, init) =>
+      fetch(server.url, init),
+    );
+    await expect(
+      collectSearchReferences(
+        client,
+        repository,
+        new Date("2026-11-06T22:00:00Z"),
+        new Date("2026-11-06T23:00:00Z"),
+        "closed",
+        "is:issue is:closed",
+        "Issue",
+        { searchSliceCount: 0 },
+      ),
+    ).rejects.toThrow("cursor did not advance");
+    expect(requests).toBe(2);
+    expect(client.getRequestCount()).toBe(2);
+    expect(client.getRateLimit().consumedDuringRun).toBe(2);
+  } finally {
+    server.stop(true);
+  }
 });

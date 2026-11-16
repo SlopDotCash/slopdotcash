@@ -11,12 +11,17 @@
  */
 
 import { sha256Hex } from "../../src/lib/async-sha256.mjs";
+import { decodeBase64 } from "../../src/lib/byte-encoding";
 import type {
   GithubActor,
   ProjectRecord,
   ProjectSetupStatus,
   WebSession,
 } from "../../src/lib/project-contracts";
+import {
+  findListedRepository,
+  repositoryIdentity,
+} from "../../src/lib/project-repositories.mjs";
 import type { ProjectDefinition } from "../../src/lib/projects.mjs";
 import {
   JOURNAL_SCHEMA,
@@ -33,9 +38,9 @@ import {
   exactKeys,
   fail,
   isSameOriginJsonWrite,
-  json as jsonResponse,
   PROJECT_ID,
   pathParts,
+  requireActor,
 } from "../http";
 import type { ProjectPersistence } from "../projects/contracts";
 import { type EdgeCache, purgeProjectCache } from "../projects/edge-cache";
@@ -45,15 +50,20 @@ import {
   publicRestrictionOf,
 } from "../projects/enforcement";
 import {
-  manifestMatchesRepository,
+  type AccessCheck,
+  listedRepositoryMatches,
   type RepositoryAccessReader,
-  readRepositoryAccess,
+  readListedRepositoryAccess,
   type ScanRequester,
   setupAuthority,
 } from "../projects/setup";
-import { isRecord, readJsonObject, readLimitedBody } from "../trace/validation";
+import {
+  isRecord,
+  readLimitedBody,
+  readStrictJsonObject,
+} from "../trace/validation";
 import type { VettingEvidence } from "./evidence";
-import type { ProjectFlagStore } from "./flags";
+import { json, type ProjectFlagStore } from "./flags";
 import {
   type CloudflareVettingPersistence,
   summarize,
@@ -82,7 +92,11 @@ export type VettingApiDependencies = {
   sandbox?: { fetch(request: Request): Promise<Response> };
   projects: Pick<
     ProjectPersistence,
-    "getProject" | "listProjects" | "enforcementGeneration" | "listEnforcements"
+    | "getProject"
+    | "listProjects"
+    | "projectCreator"
+    | "enforcementGeneration"
+    | "listEnforcements"
   >;
   /** Contributor flags, shown to administrators beside each project. */
   flags?: Pick<ProjectFlagStore, "activeFlags">;
@@ -93,11 +107,15 @@ export type VettingApiDependencies = {
   /** Configured administrators and project moderators; never inferred from scan content. */
   operatorGithubIds?: readonly string[];
   /**
-   * Reads the live pin of a project: its integration-branch head on GitHub
-   * and the deployed skill template digest. Throws when either is unreadable
-   * or the project has more than one repository.
+   * Reads the live pin of one project repository (default: the first): its
+   * integration-branch head on GitHub and the deployed skill template
+   * digest. Throws when either is unreadable or the manifest does not list
+   * the repository.
    */
-  livePin: (manifest: ProjectDefinition) => Promise<VettingPin>;
+  livePin: (
+    manifest: ProjectDefinition,
+    repositoryId?: string,
+  ) => Promise<VettingPin>;
   /** Resolves the site session; null when signed out. */
   session: (request: Request) => Promise<WebSession | null>;
   now: () => Date;
@@ -106,15 +124,11 @@ export type VettingApiDependencies = {
   refreshSetup?: (projectId: string) => Promise<ProjectSetupStatus | null>;
 };
 
-function json(status: number, body: Record<string, unknown>): Response {
-  return jsonResponse(status, body, { cacheControl: "no-store" });
-}
-
 function base64Bytes(value: string): Uint8Array | null {
   const normal = value.trim().replaceAll("-", "+").replaceAll("_", "/");
   if (!/^[A-Za-z0-9+/]+={0,2}$/u.test(normal)) return null;
   try {
-    return Uint8Array.from(atob(normal), (char) => char.charCodeAt(0));
+    return decodeBase64(normal);
   } catch {
     return null;
   }
@@ -225,6 +239,7 @@ async function requireAdmin(
 ): Promise<WebSession> {
   const session = await deps.session(request);
   if (session === null) fail(401, "unauthorized", "Sign in with GitHub");
+  await requireActor(request, { sessionActor: async () => session });
   if (!session.admin) fail(403, "forbidden", "Admin access is required");
   return session;
 }
@@ -255,11 +270,23 @@ async function adminOverview(
       name: project.manifest.name,
       status: project.status,
       revision: project.revision,
+      // A project with more than one repository names each one, so an
+      // administrator can scan or exempt one repository.
+      ...(project.manifest.repositories.length > 1
+        ? {
+            repositories: project.manifest.repositories.map((entry) => ({
+              id: entry.id,
+              githubId:
+                repositoryIdentity(project.manifest, entry.id)?.githubId ??
+                null,
+            })),
+          }
+        : {}),
       clearance: await deps.vetting.manifestClearance(
         project.id,
         project.manifest,
         project.revision,
-        () => deps.livePin(project.manifest),
+        (repositoryId) => deps.livePin(project.manifest, repositoryId),
       ),
     })),
   );
@@ -338,15 +365,20 @@ async function grantExemption(
   deps: VettingApiDependencies,
 ): Promise<Response> {
   const session = await requireAdmin(request, deps);
-  const body = await readJsonObject(request);
-  exactKeys(body, [
-    "projectId",
-    "revision",
-    "reason",
-    "decisionReference",
-    "confirmation",
-  ]);
+  const body = await readStrictJsonObject(request);
+  exactKeys(
+    body,
+    ["projectId", "revision", "reason", "decisionReference", "confirmation"],
+    ["repository"],
+  );
   const reason = exemptionReason(body);
+  if (
+    body.repository !== undefined &&
+    (typeof body.repository !== "string" ||
+      body.repository.length < 3 ||
+      body.repository.length > 201)
+  )
+    fail(400, "invalid_request", "Invalid repository");
   if (
     typeof body.projectId !== "string" ||
     !PROJECT_ID.test(body.projectId) ||
@@ -366,7 +398,19 @@ async function grantExemption(
       "stale_revision",
       "The project changed. Review its current revision.",
     );
-  if (project.manifest.repositories.length !== 1)
+  // An exemption covers one immutable repository (default: the first).
+  const repositoryId =
+    typeof body.repository === "string"
+      ? listedRepository(project.manifest, body.repository)
+      : project.manifest.repositories[0].id;
+  if (repositoryId === null)
+    fail(
+      422,
+      "repository_not_listed",
+      "The project's current revision does not list this repository",
+    );
+  const identity = repositoryIdentity(project.manifest, repositoryId);
+  if (identity === null)
     fail(
       409,
       "unsupported_repository",
@@ -376,40 +420,67 @@ async function grantExemption(
     githubId: session.githubId,
     githubLogin: session.githubLogin,
   };
-  const checked = await readRepositoryAccess(
-    deps.repositoryAccess,
-    project.manifest,
-    actor,
-  );
-  const authority = setupAuthority(
-    checked,
-    actor,
-    project.manifest.repositories[0].id,
-  );
-  if (authority.state === "retry")
-    fail(503, "github_unavailable", authority.message);
-  if (authority.state !== "verified")
+  // The administrator approves admission; the registered maintainer's live
+  // repository authority is a separate fact. Never impersonate that maintainer
+  // as the approving actor (PRD section 8, owner decision 11 November 2026).
+  const creator = await deps.projects.projectCreator(project.id);
+  const maintainers: GithubActor[] = creator ? [creator] : [];
+  const steward = project.manifest.steward.github;
+  if (
+    steward.type === "User" &&
+    !maintainers.some(
+      (entry) =>
+        entry.githubId === steward.actorId &&
+        entry.githubLogin.toLowerCase() === steward.login.toLowerCase(),
+    )
+  )
+    maintainers.push({ githubId: steward.actorId, githubLogin: steward.login });
+  let verified = false;
+  let unavailable: string | undefined;
+  for (const maintainer of maintainers) {
+    const checked = (await readListedRepositoryAccess(
+      deps.repositoryAccess,
+      project.manifest,
+      repositoryId,
+      maintainer,
+    )) as AccessCheck;
+    const authority = setupAuthority(checked, maintainer, repositoryId);
+    if (authority.state === "retry") {
+      unavailable = authority.message;
+      continue;
+    }
+    if (authority.state !== "verified") continue;
+    if (
+      checked.state !== "read" ||
+      checked.access.installation !== "installed" ||
+      !checked.access.repository
+    ) {
+      unavailable = "Current immutable repository identity is unavailable.";
+      continue;
+    }
+    if (
+      !listedRepositoryMatches(
+        project.manifest,
+        repositoryId,
+        checked.access.repository,
+      )
+    )
+      fail(
+        409,
+        "repository_mismatch",
+        "The repository identity no longer matches the registered project.",
+      );
+    verified = true;
+    break;
+  }
+  if (!verified) {
+    if (unavailable) fail(503, "github_unavailable", unavailable);
     fail(
       403,
       "forbidden",
-      "The approving administrator needs current repository authority.",
+      "The registered project creator or individual steward needs current repository write or maintain authority.",
     );
-  if (
-    checked.state !== "read" ||
-    checked.access.installation !== "installed" ||
-    !checked.access.repository
-  )
-    fail(
-      503,
-      "github_unavailable",
-      "Current immutable repository identity is unavailable.",
-    );
-  if (!manifestMatchesRepository(project.manifest, checked.access.repository))
-    fail(
-      409,
-      "repository_mismatch",
-      "The repository identity no longer matches the registered project.",
-    );
+  }
   const generation = await deps.projects.enforcementGeneration();
   if (
     publicRestrictionOf(project, await deps.projects.listEnforcements())
@@ -430,8 +501,8 @@ async function grantExemption(
   const existing = (await deps.vetting.listAdmissionExemptions()).find(
     (x) =>
       x.projectId === project.id &&
-      x.repositoryId === project.manifest.authority.repositoryId &&
-      x.repositoryNodeId === project.manifest.authority.repositoryNodeId &&
+      x.repositoryId === identity.githubId &&
+      x.repositoryNodeId === identity.nodeId &&
       x.stewardId === project.manifest.steward.github.actorId &&
       x.stewardNodeId === project.manifest.steward.github.nodeId &&
       !x.revokedAt,
@@ -444,7 +515,7 @@ async function grantExemption(
         project.id,
         project.manifest,
         project.revision,
-        () => deps.livePin(project.manifest),
+        (repositoryId) => deps.livePin(project.manifest, repositoryId),
       ),
     });
   const id = `vex_${deps.randomId().replaceAll("-", "")}`;
@@ -453,8 +524,8 @@ async function grantExemption(
     projectId: project.id,
     revision: project.revision,
     manifestSha256: project.manifestSha256,
-    repositoryId: project.manifest.authority.repositoryId,
-    repositoryNodeId: project.manifest.authority.repositoryNodeId,
+    repositoryId: identity.githubId,
+    repositoryNodeId: identity.nodeId,
     stewardId: project.manifest.steward.github.actorId,
     stewardNodeId: project.manifest.steward.github.nodeId,
     actor,
@@ -477,7 +548,7 @@ async function grantExemption(
       project.id,
       project.manifest,
       project.revision,
-      () => deps.livePin(project.manifest),
+      (repositoryId) => deps.livePin(project.manifest, repositoryId),
     ),
   });
 }
@@ -487,7 +558,7 @@ async function revokeExemption(
   id: string,
 ): Promise<Response> {
   const session = await requireAdmin(request, deps);
-  const body = await readJsonObject(request);
+  const body = await readStrictJsonObject(request);
   exactKeys(body, ["reason", "decisionReference", "confirmation"]);
   const reason = exemptionReason(body);
   if (!/^vex_[A-Za-z0-9_-]{4,76}$/u.test(id))
@@ -513,10 +584,24 @@ async function requestAssessment(
   deps: VettingApiDependencies,
 ): Promise<Response> {
   const session = await requireAdmin(request, deps);
-  const body = await readJsonObject(request);
+  const body = await readStrictJsonObject(request);
   const keys = Object.keys(body).sort().join(",");
-  if (keys !== "projectId,reason,revision")
-    fail(400, "invalid_request", "Send projectId, revision and reason");
+  if (
+    keys !== "projectId,reason,revision" &&
+    keys !== "projectId,reason,repository,revision"
+  )
+    fail(
+      400,
+      "invalid_request",
+      "Send projectId, revision and reason, and optionally repository",
+    );
+  if (
+    body.repository !== undefined &&
+    (typeof body.repository !== "string" ||
+      body.repository.length < 3 ||
+      body.repository.length > 201)
+  )
+    fail(400, "invalid_request", "Invalid repository");
   if (typeof body.projectId !== "string" || !PROJECT_ID.test(body.projectId))
     fail(400, "invalid_request", "Invalid projectId");
   if (!Number.isSafeInteger(body.revision) || (body.revision as number) < 1)
@@ -536,40 +621,57 @@ async function requestAssessment(
   // remains evidence for its original revision when routine changes follow.
   if (project.revision !== body.revision)
     fail(409, "stale_revision", "Scan the project's current revision");
-  const queued = await queueAssessment(
+  let repositoryIds = project.manifest.repositories.map((entry) => entry.id);
+  if (typeof body.repository === "string") {
+    const listed = listedRepository(project.manifest, body.repository);
+    if (listed === null)
+      fail(
+        422,
+        "repository_not_listed",
+        "The project's current revision does not list this repository",
+      );
+    repositoryIds = [listed];
+  }
+  const queued = await queueRepositories(
     deps,
     project,
     { githubId: session.githubId, githubLogin: session.githubLogin },
     reason,
+    repositoryIds,
   );
-  if (queued === "conflict")
+  if (queued.length === 0)
     fail(409, "assessment_queued", "This revision already has a queued scan");
-  return json(201, { assessment: adminAssessment(queued) });
+  return json(201, {
+    assessment: adminAssessment(queued[0]),
+    // A project with more than one repository queues one scan per repository.
+    ...(project.manifest.repositories.length > 1
+      ? { assessments: queued.map(adminAssessment) }
+      : {}),
+  });
 }
 
 /**
- * Queues one scan of a project's current revision at its live pin. The
- * queue assigns the exact commit and template digest (VET-07); a template retry
- * keeps the stored source assignment. The service cannot choose them, and a
- * result for any other commit is refused. Returns
- * "conflict" when this pin and active flag set already have a queued scan. Throws
- * `pin_unavailable` when the live pin cannot be read.
+ * The manifest id of a listed repository; else null. An exact id match on
+ * any entry wins over an alias of another entry.
  */
-async function queueAssessment(
-  deps: Pick<VettingApiDependencies, "livePin" | "now" | "randomId"> & {
-    vetting: Pick<
-      CloudflareVettingPersistence,
-      "createAssessment" | "getAssessment"
-    >;
-  },
+function listedRepository(
+  manifest: ProjectDefinition,
+  repositoryId: string,
+): string | null {
+  return (
+    findListedRepository(manifest.repositories, repositoryId)?.repository.id ??
+    null
+  );
+}
+
+/** Throws `pin_unavailable` when a repository's live pin cannot be read. */
+async function readRepositoryPin(
+  deps: Pick<VettingApiDependencies, "livePin">,
   project: ProjectRecord,
-  requestedBy: GithubActor,
-  reason: string,
-  templateRetry?: VettingAssessment,
-) {
-  let pin: VettingPin;
+  repositoryId: string,
+): Promise<VettingPin> {
   try {
-    pin = await deps.livePin(project.manifest);
+    return await deps.livePin(project.manifest, repositoryId);
   } catch (error) {
     fail(
       503,
@@ -577,6 +679,89 @@ async function queueAssessment(
       `Slop could not read the integration-branch head or the skill template digest, so a scan cannot be queued. ${error instanceof Error ? error.message : ""}`.trim(),
     );
   }
+}
+
+type QueueDependencies = Pick<
+  VettingApiDependencies,
+  "livePin" | "now" | "randomId"
+> & {
+  vetting: Pick<
+    CloudflareVettingPersistence,
+    "createAssessment" | "getAssessment"
+  >;
+};
+
+/**
+ * Queues one scan of each named repository of the project's current
+ * revision, one row per repository (PRD section 8). Every live pin is read
+ * before any row is written, so an unreadable pin queues nothing. Returns
+ * the rows created; a repository whose pin and flag set already have a
+ * queued scan is skipped.
+ */
+async function queueRepositories(
+  deps: QueueDependencies,
+  project: ProjectRecord,
+  requestedBy: GithubActor,
+  reason: string,
+  repositoryIds: readonly string[] = project.manifest.repositories.map(
+    (entry) => entry.id,
+  ),
+): Promise<VettingAssessment[]> {
+  const pins: VettingPin[] = [];
+  for (const repositoryId of repositoryIds)
+    pins.push(await readRepositoryPin(deps, project, repositoryId));
+  const created: VettingAssessment[] = [];
+  for (const [index, repositoryId] of repositoryIds.entries()) {
+    const queued = await insertAssessment(
+      deps,
+      project,
+      requestedBy,
+      reason,
+      repositoryId,
+      pins[index],
+    );
+    if (queued !== "conflict") created.push(queued);
+  }
+  return created;
+}
+
+/**
+ * Queues one scan of one repository of a project's current revision at its
+ * live pin. The queue assigns the exact commit and template digest (VET-07);
+ * a template retry keeps the stored source assignment and repository. The
+ * service cannot choose them, and a result for any other repository or
+ * commit is refused. Returns "conflict" when this repository, pin and active
+ * flag set already have a queued scan. Throws `pin_unavailable` when the
+ * live pin cannot be read.
+ */
+async function queueAssessment(
+  deps: QueueDependencies,
+  project: ProjectRecord,
+  requestedBy: GithubActor,
+  reason: string,
+  repositoryId: string,
+  templateRetry?: VettingAssessment,
+) {
+  return insertAssessment(
+    deps,
+    project,
+    requestedBy,
+    reason,
+    repositoryId,
+    await readRepositoryPin(deps, project, repositoryId),
+    templateRetry,
+  );
+}
+
+async function insertAssessment(
+  deps: QueueDependencies,
+  project: ProjectRecord,
+  requestedBy: GithubActor,
+  reason: string,
+  repositoryId: string,
+  pin: VettingPin,
+  templateRetry?: VettingAssessment,
+) {
   const assessment = {
     id: `vet_${deps.randomId().replaceAll("-", "").toLowerCase()}`,
     projectId: project.id,
@@ -589,6 +774,7 @@ async function queueAssessment(
       (await vettedContentSha256(project.manifest)),
     commitSha: templateRetry?.commitSha ?? pin.commitSha,
     templateSha256: pin.templateSha256,
+    repositoryId: templateRetry?.repositoryId ?? repositoryId,
     requestedBy,
     requestedAt: deps.now().toISOString(),
     requestReason: reason.slice(0, 1000),
@@ -633,12 +819,14 @@ export async function queueAutomaticScan(
   if (!(await vettingServiceAvailable(deps.resultPublicKeys)))
     return "unavailable";
   try {
-    return (await queueAssessment(
-      deps,
-      project,
-      stewardActor(project.manifest),
-      reason,
-    )) === "conflict"
+    return (
+      await queueRepositories(
+        deps,
+        project,
+        stewardActor(project.manifest),
+        reason,
+      )
+    ).length === 0
       ? "already_queued"
       : "queued";
   } catch {
@@ -653,10 +841,10 @@ export async function queueAutomaticScan(
 export function vettingScanRequester(input: {
   vetting: Pick<
     CloudflareVettingPersistence,
-    "createAssessment" | "getAssessment"
+    "createAssessment" | "getAssessment" | "repositoryClearances"
   >;
   serviceAvailable: () => Promise<boolean>;
-  livePin: (manifest: ProjectDefinition) => Promise<VettingPin>;
+  livePin: VettingApiDependencies["livePin"];
   now: () => Date;
   randomId: () => string;
 }): ScanRequester {
@@ -666,9 +854,15 @@ export function vettingScanRequester(input: {
         state: "unavailable",
         message: "The scan service is unavailable. Check again later.",
       };
-    let queued: Awaited<ReturnType<typeof queueAssessment>>;
+    let queued: VettingAssessment[];
     try {
-      queued = await queueAssessment(input, project, actor, reason);
+      queued = await queueRepositories(
+        input,
+        project,
+        actor,
+        reason,
+        await repositoriesToScan(input, project),
+      );
     } catch (error) {
       if ((error as Partial<ApiError> | null)?.code !== "pin_unavailable")
         throw error;
@@ -678,8 +872,39 @@ export function vettingScanRequester(input: {
           "Slop could not read the repository or skill template. Check again later.",
       };
     }
-    return { state: queued === "conflict" ? "already_queued" : "queued" };
+    return { state: queued.length === 0 ? "already_queued" : "queued" };
   };
+}
+
+/**
+ * The repositories an owner's scan request queues. A project with one
+ * repository queues it, as setup asks only when it is not cleared. A project
+ * with more than one repository queues each repository that is neither
+ * cleared, banned nor already queued; another repository's admission stays.
+ */
+async function repositoriesToScan(
+  input: {
+    vetting: Pick<CloudflareVettingPersistence, "repositoryClearances">;
+    livePin: VettingApiDependencies["livePin"];
+  },
+  project: ProjectRecord,
+): Promise<string[]> {
+  const ids = project.manifest.repositories.map((entry) => entry.id);
+  if (ids.length <= 1) return ids;
+  const clearances = await input.vetting.repositoryClearances(
+    project.id,
+    project.manifest,
+    project.revision,
+    (repositoryId) => input.livePin(project.manifest, repositoryId),
+  );
+  return clearances
+    .filter(
+      ({ clearance }) =>
+        clearance.state !== "cleared" &&
+        clearance.state !== "banned" &&
+        clearance.state !== "queued",
+    )
+    .map(({ repositoryId }) => repositoryId);
 }
 
 /** Automatic scans one signed refresh may queue. */
@@ -707,45 +932,68 @@ async function refreshQueue(
   const queued: string[] = [];
   const reinstated: string[] = [];
   const skipped: { projectId: string; reason: string }[] = [];
-  for (const project of projects) {
+  nextProject: for (const project of projects) {
     if (queued.length >= MAX_AUTOMATIC_SCANS) break;
     const restriction = projectRestriction(project.id, records);
     const flagPaused = pausedByFlagsOnly(restriction);
     if (restriction.state !== "clear" && !flagPaused) continue;
     if (!flagPaused && project.manifest.listingTier === "retired") continue;
-    let reason: string | null = null;
-    let templateRetry: VettingAssessment | undefined;
+    const repositoryIds = project.manifest.repositories.map(
+      (entry) => entry.id,
+    );
+    // Each repository has its own live pin and its own scans (PRD section 8).
+    const plans: {
+      repositoryId: string;
+      reason: string;
+      templateRetry?: VettingAssessment;
+    }[] = [];
     if (flagPaused) {
       // A fresh scan must cover the live pin and every active flag. New
       // evidence queues another scan even when the source did not change.
       const since = restriction.since ?? "";
-      let live: VettingPin;
-      try {
-        live = await deps.livePin(project.manifest);
-      } catch {
-        skipped.push({ projectId: project.id, reason: "pin_unavailable" });
-        continue;
-      }
+      const live = new Map<string, VettingPin>();
+      for (const repositoryId of repositoryIds)
+        try {
+          live.set(
+            repositoryId,
+            await deps.livePin(project.manifest, repositoryId),
+          );
+        } catch {
+          skipped.push({ projectId: project.id, reason: "pin_unavailable" });
+          continue nextProject;
+        }
       const assessments = await deps.vetting.projectAssessments(project.id);
-      const fresh: VettingAssessment[] = [];
-      for (const assessment of assessments)
+      const fresh: { assessment: VettingAssessment; live: VettingPin }[] = [];
+      for (const assessment of assessments) {
+        const pin = live.get(
+          listedRepository(project.manifest, assessment.repositoryId) ?? "",
+        );
         if (
+          pin !== undefined &&
           assessment.revision === project.revision &&
           assessment.requestedAt >= since &&
-          assessment.commitSha === live.commitSha &&
-          assessment.templateSha256 === live.templateSha256 &&
+          assessment.commitSha === pin.commitSha &&
+          assessment.templateSha256 === pin.templateSha256 &&
           (await deps.vetting.assessmentCoversActiveFlags(assessment.id))
         )
-          fresh.push(assessment);
+          fresh.push({ assessment, live: pin });
+      }
       // A fresh clean scan whose reinstatement could not be written when it
       // landed, such as during a live-pin outage, reinstates now.
-      const clean = fresh.filter((assessment) => assessment.state === "clean");
-      for (const assessment of clean.reverse())
+      const clean = fresh.filter(
+        ({ assessment }) => assessment.state === "clean",
+      );
+      for (const { assessment, live: pin } of clean.reverse())
         if (
           await deps.vetting.reinstateFromRecordedScan(
             assessment.id,
-            live,
+            pin,
             deps.now().toISOString(),
+            async (repositoryId) => {
+              const read = live.get(repositoryId);
+              if (read === undefined) throw new Error("No live pin");
+              return read;
+            },
           )
         ) {
           reinstated.push(assessment.id);
@@ -756,73 +1004,117 @@ async function refreshQueue(
           );
           break;
         }
-      if (fresh.length === 0)
-        reason =
-          "Automatic fresh scan after two contributor flags paused the project";
+      for (const repositoryId of repositoryIds)
+        if (
+          !fresh.some(
+            ({ assessment }) =>
+              listedRepository(project.manifest, assessment.repositoryId) ===
+              repositoryId,
+          )
+        )
+          plans.push({
+            repositoryId,
+            reason:
+              "Automatic fresh scan after two contributor flags paused the project",
+          });
     } else {
-      const clearance = await deps.vetting.manifestClearance(
+      // Each repository follows its own admission (PRD section 8): a
+      // repository that was never admitted is queued, and a pending
+      // assignment is recovered, whatever the other repositories' states.
+      const clearances = await deps.vetting.repositoryClearances(
         project.id,
         project.manifest,
         project.revision,
-        () => deps.livePin(project.manifest),
+        (repositoryId) => deps.livePin(project.manifest, repositoryId),
       );
-      if (clearance.state === "unscanned")
-        reason = "Automatic scan of new project content";
-      else if (
-        clearance.state === "queued" ||
-        (clearance.state === "cleared" && clearance.assessment === null)
-      ) {
-        // Exempt projects can still have explicitly requested investigations.
-        // Recover only an existing pending assignment; never create a normal
-        // scan requirement for an exempt project or rescan completed admission.
-        const pending =
+      if (clearances.some(({ clearance }) => clearance.state === "banned"))
+        continue;
+      const pending: VettingAssessment[] = [];
+      let assessments: VettingAssessment[] | null = null;
+      for (const { repositoryId, clearance } of clearances) {
+        if (clearance.state === "unscanned" || clearance.state === "stale") {
+          plans.push({
+            repositoryId,
+            reason: "Automatic scan of new project content",
+          });
+          continue;
+        }
+        // Exempt repositories can still have explicitly requested
+        // investigations. Recover only an existing pending assignment; never
+        // create a normal scan requirement for an exempt repository or
+        // rescan completed admission.
+        if (
+          clearance.state !== "queued" &&
+          !(clearance.state === "cleared" && clearance.assessment === null)
+        )
+          continue;
+        assessments ??= await deps.vetting.projectAssessments(project.id);
+        const latest =
           clearance.state === "queued"
             ? await deps.vetting.getAssessment(clearance.assessment.id)
-            : (await deps.vetting.projectAssessments(project.id)).at(-1);
+            : assessments
+                .filter(
+                  (assessment) =>
+                    repositoryIds.length === 1 ||
+                    listedRepository(
+                      project.manifest,
+                      assessment.repositoryId,
+                    ) === repositoryId,
+                )
+                .at(-1);
         if (
-          !pending ||
-          pending.projectId !== project.id ||
-          pending.state !== "pending"
+          !latest ||
+          latest.projectId !== project.id ||
+          latest.state !== "pending"
         ) {
           if (clearance.state === "queued")
             skipped.push({ projectId: project.id, reason: "queue_changed" });
           continue;
         }
+        pending.push(latest);
+      }
+      for (const assignment of pending) {
         let live: VettingPin;
         try {
-          live = await deps.livePin(project.manifest);
+          live = await deps.livePin(project.manifest, assignment.repositoryId);
         } catch {
           skipped.push({ projectId: project.id, reason: "pin_unavailable" });
-          continue;
+          continue nextProject;
         }
         // The template endpoint serves the current bundle only. A pending
         // assignment to an older bundle cannot be acquired after a release.
         // Preserve that row and queue the replacement; completed admission
         // above remains valid and never reaches this branch.
-        if (pending.templateSha256 !== live.templateSha256) {
-          templateRetry = pending;
-          reason = TEMPLATE_REPLACEMENT_REASON;
-        }
+        if (assignment.templateSha256 !== live.templateSha256)
+          plans.push({
+            repositoryId: assignment.repositoryId,
+            reason: TEMPLATE_REPLACEMENT_REASON,
+            templateRetry: assignment,
+          });
       }
     }
-    if (reason === null) continue;
-    try {
-      const assessment = await queueAssessment(
-        deps,
-        project,
-        stewardActor(project.manifest),
-        reason,
-        templateRetry,
-      );
-      if (assessment !== "conflict") queued.push(assessment.id);
-    } catch (error) {
-      skipped.push({
-        projectId: project.id,
-        reason:
-          typeof error === "object" && error !== null && "code" in error
-            ? String((error as ApiError).code)
-            : "queue_failed",
-      });
+    for (const plan of plans) {
+      // The cap counts queued rows, and one project can queue several.
+      if (queued.length >= MAX_AUTOMATIC_SCANS) break;
+      try {
+        const assessment = await queueAssessment(
+          deps,
+          project,
+          stewardActor(project.manifest),
+          plan.reason,
+          plan.repositoryId,
+          plan.templateRetry,
+        );
+        if (assessment !== "conflict") queued.push(assessment.id);
+      } catch (error) {
+        skipped.push({
+          projectId: project.id,
+          reason:
+            typeof error === "object" && error !== null && "code" in error
+              ? String((error as ApiError).code)
+              : "queue_failed",
+        });
+      }
     }
   }
   return json(200, { queued, reinstated, skipped });
@@ -852,6 +1144,8 @@ async function serviceQueue(
       projectId: assessment.projectId,
       revision: assessment.revision,
       manifestSha256: assessment.manifestSha256,
+      // The manifest repository id to acquire; one scan covers one repository.
+      repository: assessment.repositoryId,
       commitSha: assessment.commitSha,
       templateSha256: assessment.templateSha256,
       manifestUrl: `${origin}/api/v1/project-revisions/${assessment.projectId}/${assessment.revision}`,
@@ -898,8 +1192,11 @@ async function serviceResult(
     fail(409, "already_recorded", "This assessment already has a result");
   const project = await deps.projects.getProject(assessment.projectId);
   if (project === null) fail(404, "not_found", "Project not found");
-  const repository = project.manifest.repositories[0]?.id ?? "";
-  if (result.assessed.repository.toLowerCase() !== repository.toLowerCase())
+  // The queue assigned one repository of the revision to this scan.
+  if (
+    result.assessed.repository.toLowerCase() !==
+    assessment.repositoryId.toLowerCase()
+  )
     fail(422, "revision_mismatch", "The result scanned another repository");
   if (
     result.assessed.commitSha !== assessment.commitSha ||
@@ -949,7 +1246,9 @@ async function serviceResult(
     );
   const livePin =
     result.disposition === "clean"
-      ? await deps.livePin(project.manifest).catch(() => null)
+      ? await deps
+          .livePin(project.manifest, assessment.repositoryId)
+          .catch(() => null)
       : undefined;
   const resultText = JSON.stringify(result);
   const recorded = await deps.vetting.recordResult({
@@ -959,6 +1258,7 @@ async function serviceResult(
     signingKeySha256: keySha256,
     operatorGithubIds: deps.operatorGithubIds,
     livePin,
+    readPin: (repositoryId) => deps.livePin(project.manifest, repositoryId),
     at: deps.now().toISOString(),
   });
   if (recorded === "conflict") {
@@ -1038,7 +1338,12 @@ async function serviceReuse(
     project.id,
     await deps.projects.listEnforcements(),
   );
-  const candidates = await deps.vetting.projectAssessments(project.id);
+  // A cached scan stands in only for a scan of the same repository.
+  const candidates = (await deps.vetting.projectAssessments(project.id)).filter(
+    (cached) =>
+      cached.repositoryId.toLowerCase() ===
+      assessment.repositoryId.toLowerCase(),
+  );
   for (const cached of candidates.reverse()) {
     const prior = cached.result;
     if (!prior || !isScanResult(prior)) continue;
@@ -1051,7 +1356,7 @@ async function serviceReuse(
       policyVersion: value.policyVersion,
       assessed: {
         ...prior.assessed,
-        repository: project.manifest.repositories[0]?.id ?? "",
+        repository: assessment.repositoryId,
         commitSha: assessment.commitSha,
         templateSha256: assessment.templateSha256,
       },

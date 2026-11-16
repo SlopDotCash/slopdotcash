@@ -699,7 +699,7 @@ export function assertRunReceiptMarker(value: unknown): ProjectRunReceipt {
 }
 
 /** Builds the exact marker object from a validated receipt. */
-export function runReceiptMarker(receipt: ProjectRunReceipt): RunReceiptMarker {
+function runReceiptMarker(receipt: ProjectRunReceipt): RunReceiptMarker {
   const project = findHistoricalProject(receipt.projectId);
   if (!project) throw new TypeError("receipt project is not registered");
   return {

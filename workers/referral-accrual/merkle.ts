@@ -17,7 +17,7 @@ export interface Leaf {
   cumulativeBase: bigint;
 }
 
-export interface MerkleTree {
+interface MerkleTree {
   root: `0x${string}`;
   leaves: (Leaf & { hash: `0x${string}`; proof: `0x${string}`[] })[];
 }

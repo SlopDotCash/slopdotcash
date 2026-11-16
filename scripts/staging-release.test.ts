@@ -71,7 +71,48 @@ function fixture() {
   const callsPath = join(root, "calls");
   const creatorsPath = join(root, "creators.json");
   writeFileSync(creatorsPath, "{}");
-  const stub = `const fs=require('node:fs');\nif(process.env.FAIL_HISTORY)process.exit(1);\nconst path=process.argv.at(-1);\nconst creators=JSON.parse(fs.readFileSync(process.env.CREATORS_PATH,'utf8'));\nconst status=/^repos\\/SlopDotCash\\/slopdotcash\\/deployments\\/(\\d+)\\/statuses\\?per_page=100$/.exec(path);\nif(status){const c=creators[status[1]];if(!c)process.exit(3);process.stdout.write(JSON.stringify([{log_url:'https://github.com/SlopDotCash/slopdotcash/actions/runs/'+status[1]+'/job/1'}]));process.exit(0);}\nconst run=/^repos\\/SlopDotCash\\/slopdotcash\\/actions\\/runs\\/(\\d+)$/.exec(path);\nif(run){const c=creators[run[1]];if(!c)process.exit(3);process.stdout.write(JSON.stringify(c));process.exit(0);}\nif(!/^repos\\/SlopDotCash\\/slopdotcash\\/deployments\\?environment=slop-staging&per_page=100&page=\\d+$/.test(path))process.exit(2);\nfs.appendFileSync(process.env.HISTORY_CALLS,path+'\\n');\nconst pages=JSON.parse(fs.readFileSync(process.env.HISTORY_PATH,'utf8'));\nprocess.stdout.write(JSON.stringify(pages[Number(path.split('page=').pop())-1]??[]));\n`;
+  const requestsPath = join(root, "requests");
+  const stub = String.raw`const fs = require('node:fs');
+if (process.env.FAIL_HISTORY) process.exit(1);
+if (!process.argv.includes('--include')) process.exit(2);
+const path = process.argv.at(-1);
+const requestedAt = Date.now();
+fs.appendFileSync(process.env.REST_CALLS, JSON.stringify({ path, requestedAt }) + '\n');
+const request = fs.readFileSync(process.env.REST_CALLS, 'utf8').trim().split('\n').length;
+function response(status, body, headers = {}) {
+  process.stdout.write('HTTP/2.0 ' + status + '\r\nContent-Type: application/json\r\n' +
+    Object.entries(headers).map(([name, value]) => name + ': ' + value + '\r\n').join('') +
+    '\r\n' + JSON.stringify(body));
+  process.exit(status === 200 ? 0 : 1);
+}
+const quota = JSON.parse(process.env.QUOTA_FIXTURE || '{}');
+if (quota.requests?.includes(request)) {
+  if (quota.forceOrigin) {
+    require('node:child_process').execFileSync('git', ['-C', process.env.FIXTURE_ORIGIN, 'branch', '-f', 'development', quota.forceOrigin]);
+  }
+  if (quota.nextPages) fs.writeFileSync(process.env.HISTORY_PATH, JSON.stringify(quota.nextPages));
+  const headers = { ...quota.headers };
+  if (quota.resetInSeconds !== undefined) {
+    headers['X-Ratelimit-Reset'] = String(Math.floor(requestedAt / 1000) + quota.resetInSeconds);
+  }
+  response(quota.http, {message:'API rate limit exceeded for installation synthetic'}, headers);
+}
+const creators = JSON.parse(fs.readFileSync(process.env.CREATORS_PATH, 'utf8'));
+const status = /^repos\/SlopDotCash\/slopdotcash\/deployments\/(\d+)\/statuses\?per_page=100$/.exec(path);
+if (status) {
+  if (!creators[status[1]]) response(404, {});
+  response(200, [{log_url:'https://github.com/SlopDotCash/slopdotcash/actions/runs/' + status[1] + '/job/1'}]);
+}
+const run = /^repos\/SlopDotCash\/slopdotcash\/actions\/runs\/(\d+)$/.exec(path);
+if (run) {
+  if (!creators[run[1]]) response(404, {});
+  response(200, creators[run[1]]);
+}
+if (!/^repos\/SlopDotCash\/slopdotcash\/deployments\?environment=slop-staging&per_page=100&page=\d+$/.test(path)) process.exit(2);
+fs.appendFileSync(process.env.HISTORY_CALLS, path+'\n');
+const pages = JSON.parse(fs.readFileSync(process.env.HISTORY_PATH,'utf8'));
+response(200, pages[Number(path.split('page=').pop())-1] ?? []);
+`;
   if (process.platform === "win32") {
     // execFileSync needs a native executable on Windows. The pinned test
     // runtime executes the local `api` script for `gh api <path>`.
@@ -94,6 +135,7 @@ function fixture() {
     creators: Record<number, { head_sha: string; path: string }> = {},
   ) => {
     writeFileSync(historyPath, JSON.stringify(pages));
+    writeFileSync(requestsPath, "");
     writeFileSync(creatorsPath, JSON.stringify(creators));
     return spawnSync(
       process.execPath,
@@ -109,12 +151,24 @@ function fixture() {
           GITHUB_SHA: revisions[1],
           HISTORY_PATH: historyPath,
           HISTORY_CALLS: callsPath,
+          REST_CALLS: requestsPath,
+          FIXTURE_ORIGIN: remote,
+          STAGING_ORDER_RETRY_UNTIL: String(
+            Math.floor(Date.now() / 1000) + 120,
+          ),
           CREATORS_PATH: creatorsPath,
           ...extra,
         },
       },
     );
   };
+  const requestRecords = () =>
+    readFileSync(requestsPath, "utf8")
+      .trim()
+      .split("\n")
+      .filter(Boolean)
+      .map((line) => JSON.parse(line) as { path: string; requestedAt: number });
+
   return {
     git,
     remote,
@@ -124,6 +178,8 @@ function fixture() {
     deployment,
     run,
     callsPath,
+    requests: () => requestRecords().map(({ path }) => path),
+    requestTimes: () => requestRecords().map(({ requestedAt }) => requestedAt),
   };
 }
 
@@ -219,6 +275,132 @@ test("unavailable, malformed or unknown deployment provenance fails closed", () 
     f.run([[{ ...f.deployment(f.revisions[0]), environment: "production" }]])
       .status,
   ).not.toBe(0);
+});
+
+test("installation HTTP 403 waits for reset before a fresh history read", () => {
+  const f = fixture();
+  const result = f.run([[f.deployment(f.revisions[1])]], {
+    QUOTA_FIXTURE: JSON.stringify({
+      requests: [1],
+      http: 403,
+      headers: { "X-Ratelimit-Remaining": "0" },
+      resetInSeconds: 1,
+    }),
+  });
+  expect(result.status).toBe(0);
+  const [refusedAt, replayedAt] = f.requestTimes();
+  const resetWithMargin = (Math.floor(refusedAt / 1_000) + 2) * 1_000;
+  expect(replayedAt).toBeGreaterThanOrEqual(resetWithMargin);
+  expect(result.stdout).toContain("retrying the full order check");
+  expect(f.requests()).toHaveLength(2);
+  expect(f.requests()[0]).toBe(f.requests()[1]);
+});
+
+test("a force push during quota recovery still refuses the abandoned candidate", () => {
+  const f = fixture();
+  const result = f.run([[f.deployment(f.revisions[1])]], {
+    QUOTA_FIXTURE: JSON.stringify({
+      requests: [1],
+      http: 429,
+      headers: { "Retry-After": "0" },
+      forceOrigin: f.divergent,
+    }),
+  });
+  expect(result.status).not.toBe(0);
+  expect(result.stdout).toContain("retrying the full order check");
+  expect(result.stdout).not.toContain("Staging order verified");
+  expect(f.requests()).toHaveLength(1);
+});
+
+test.each([2, 3])(
+  "quota at creator request %s discards earlier observations and checks fresh provenance",
+  (request) => {
+    const f = fixture();
+    const result = f.run(
+      [[f.deployment(f.revisions[2], 7), f.deployment(f.revisions[1])]],
+      {
+        QUOTA_FIXTURE: JSON.stringify({
+          requests: [request],
+          http: 429,
+          headers: { "Retry-After": "0" },
+          nextPages: [
+            [{ ...f.deployment(f.revisions[1]), production_environment: true }],
+          ],
+        }),
+      },
+      {
+        7: {
+          head_sha: f.revisions[2],
+          path: ".github/workflows/vetting-controller.yml",
+        },
+      },
+    );
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain("Unknown staging deployment provenance");
+    expect(f.requests()).toHaveLength(request + 1);
+    expect(f.requests().at(-1)).toBe(f.requests()[0]);
+  },
+);
+
+test.each([
+  { http: 401, headers: { "Retry-After": "0" } },
+  { http: 403, headers: {} },
+  {
+    http: 403,
+    headers: { "X-Ratelimit-Remaining": "0", "X-Ratelimit-Reset": "invalid" },
+  },
+  { http: 403, headers: { "X-Ratelimit-Remaining": "0" }, resetInSeconds: -10 },
+])("nonretryable or unverified GitHub refusal does not retry (%j)", (quota) => {
+  const f = fixture();
+  const result = f.run([[f.deployment(f.revisions[1])]], {
+    QUOTA_FIXTURE: JSON.stringify({ requests: [1], ...quota }),
+  });
+  expect(result.status).not.toBe(0);
+  expect(result.stderr).toContain(`HTTP ${quota.http}`);
+  expect(result.stdout).not.toContain("retrying the full order check");
+  expect(f.requests()).toHaveLength(1);
+});
+
+test.each([
+  { seconds: "180", jobHeadroomSeconds: 300 },
+  { seconds: "60", jobHeadroomSeconds: 30 },
+])(
+  "quota reset beyond shared retry or job headroom budget is refused (%j)",
+  ({ seconds, jobHeadroomSeconds }) => {
+    const f = fixture();
+    const result = f.run([[f.deployment(f.revisions[1])]], {
+      STAGING_ORDER_RETRY_UNTIL: String(
+        Math.floor(Date.now() / 1000) + jobHeadroomSeconds,
+      ),
+      QUOTA_FIXTURE: JSON.stringify({
+        requests: [1],
+        http: 403,
+        resetInSeconds: 1,
+        headers: { "X-Ratelimit-Remaining": "0", "Retry-After": seconds },
+      }),
+    });
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toMatch(
+      /outside the staging order retry budget \(retry at epoch seconds \d+\)/u,
+    );
+    expect(f.requests()).toHaveLength(1);
+  },
+);
+
+test("a second quota refusal does not retry again", () => {
+  const f = fixture();
+  const result = f.run([[f.deployment(f.revisions[1])]], {
+    QUOTA_FIXTURE: JSON.stringify({
+      requests: [1, 2],
+      http: 429,
+      headers: { "Retry-After": "0" },
+    }),
+  });
+  expect(result.status).not.toBe(0);
+  expect(result.stderr).toContain(
+    "GitHub staging deployment history quota exhausted",
+  );
+  expect(f.requests()).toHaveLength(2);
 });
 
 test("history beyond the bound fails rather than trusting an incomplete scan", () => {

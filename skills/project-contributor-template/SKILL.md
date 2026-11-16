@@ -66,6 +66,12 @@ the current head. Choosing by hand, never take assigned, claimed, draft,
 under-review, security-sensitive, human-gated or epic items. Re-read live
 GitHub before acting and again before submitting; Slop creates no claim.
 
+Discovery runs for one GitHub identity share a local lock. If the command
+reports an active run, let that run finish before retrying. A persistent
+transition guard or an unpublished child identity requires the operator to
+stop all affected local discovery processes before manual recovery. Elapsed
+time alone is not a reason to remove that lock.
+
 Choose work inside `approvedScope` and `supportedTasks`: a reproduced defect,
 or a change a maintainer asked for. Do not choose coverage-only tests,
 preference refactors, unapproved features, placeholders or mock-only proof.

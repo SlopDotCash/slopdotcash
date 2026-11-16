@@ -11,6 +11,7 @@ import type {
   ProjectSetupStatus,
 } from "./project-contracts";
 import type { ProjectDefinition } from "./projects.mjs";
+import { isRecord } from "./record-validation.mjs";
 
 export type {
   AdminProject,
@@ -129,15 +130,33 @@ export async function projectApiRequest<T>(
 
 /** Resolves null when the visitor is not signed in. */
 export async function currentProjectSession(): Promise<ProjectSession | null> {
-  return (
-    await projectApiRequest<{ session: ProjectSession | null }>(
-      "GET",
-      "project-session",
-    )
-  ).session;
+  const body = await projectApiRequest<unknown>("GET", "project-session");
+  const session = isRecord(body) ? body.session : undefined;
+  if (session === null) return null;
+  if (
+    !isRecord(session) ||
+    typeof session.githubId !== "string" ||
+    !/^[1-9][0-9]*$/u.test(session.githubId) ||
+    typeof session.githubLogin !== "string" ||
+    !/^[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?$/u.test(
+      session.githubLogin,
+    ) ||
+    (session.admin !== undefined && typeof session.admin !== "boolean")
+  ) {
+    throw new ProjectApiError(
+      200,
+      "invalid_response",
+      "The server returned an invalid project session. Retry sign-in.",
+    );
+  }
+  return {
+    githubId: session.githubId,
+    githubLogin: session.githubLogin,
+    admin: session.admin === true,
+  };
 }
 
-export type ProjectSummary = {
+type ProjectSummary = {
   id: string;
   slug: string;
   name: string;
@@ -156,46 +175,92 @@ export function createProject(
   referrer: string | null,
   monthlyAmount: string | null,
   bountyAmount: string | null = null,
+  expectedActorGithubId?: string,
 ): Promise<{
   project: { id: string; revision: number; referrer: unknown };
   setup: ProjectSetupStatus;
 }> {
-  return projectApiRequest("POST", "projects", {
-    manifest,
-    ...(referrer === null ? {} : { referrer }),
-    ...(monthlyAmount === null ? {} : { monthlyAmount }),
-    ...(bountyAmount === null ? {} : { bountyAmount }),
-  });
+  return projectApiRequest(
+    "POST",
+    "projects",
+    {
+      manifest,
+      ...(referrer === null ? {} : { referrer }),
+      ...(monthlyAmount === null ? {} : { monthlyAmount }),
+      ...(bountyAmount === null ? {} : { bountyAmount }),
+    },
+    { expectedActorGithubId },
+  );
 }
 
 /** Runs the setup checks; a passing project activates as part of the check. */
 export function checkProjectSetup(
   projectId: string,
   requestScan = false,
+  expectedActorGithubId?: string,
 ): Promise<{ setup: ProjectSetupStatus }> {
   return projectApiRequest(
     "POST",
     `project-setup/${encodeURIComponent(projectId)}/check`,
     requestScan ? { requestScan: true } : {},
+    { expectedActorGithubId },
   );
 }
 
 /** The signed-in account's projects and its stored applications. */
-export function listProjectSetup(): Promise<{
+export function listProjectSetup(expectedActorGithubId?: string): Promise<{
   projects: ProjectSummary[];
   applications: ProjectApplication[];
 }> {
-  return projectApiRequest("GET", "project-setup");
+  return projectApiRequest("GET", "project-setup", undefined, {
+    expectedActorGithubId,
+  });
 }
 
 /** Publishes an application stored before self-service setup. */
 export function publishStoredApplication(
   applicationId: string,
+  expectedActorGithubId?: string,
 ): Promise<{ project: { id: string }; setup: ProjectSetupStatus }> {
   return projectApiRequest(
     "POST",
     `project-applications/${encodeURIComponent(applicationId)}/publish`,
     {},
+    { expectedActorGithubId },
+  );
+}
+
+/** Withdraws a pending application without publishing its project or update. */
+export function cancelProjectApplication(
+  applicationId: string,
+  expectedActorGithubId?: string,
+): Promise<{ application: ProjectApplication }> {
+  return projectApiRequest(
+    "POST",
+    `project-applications/${encodeURIComponent(applicationId)}/cancel`,
+    {},
+    { expectedActorGithubId },
+  );
+}
+
+/** Removes the current listing while preserving its immutable history. */
+export function removeProject(
+  projectId: string,
+  expectedRevision: number,
+  expectedActorGithubId?: string,
+): Promise<{
+  project: {
+    id: string;
+    revision: number;
+    status: string;
+    manifest: ProjectDefinition;
+  };
+}> {
+  return projectApiRequest(
+    "POST",
+    `projects/${encodeURIComponent(projectId)}/remove`,
+    { expectedRevision },
+    { expectedActorGithubId },
   );
 }
 
@@ -222,14 +287,20 @@ export function publishProjectRevision(
   note: string,
   monthlyAmount: string | null,
   bountyAmount: string | null = null,
+  expectedActorGithubId?: string,
 ): Promise<RevisionResult> {
-  return projectApiRequest("PUT", `projects/${encodeURIComponent(projectId)}`, {
-    manifest,
-    expectedRevision,
-    ...(note.trim() ? { reason: note.trim() } : {}),
-    ...(monthlyAmount === null ? {} : { monthlyAmount }),
-    ...(bountyAmount === null ? {} : { bountyAmount }),
-  });
+  return projectApiRequest(
+    "PUT",
+    `projects/${encodeURIComponent(projectId)}`,
+    {
+      manifest,
+      expectedRevision,
+      ...(note.trim() ? { reason: note.trim() } : {}),
+      ...(monthlyAmount === null ? {} : { monthlyAmount }),
+      ...(bountyAmount === null ? {} : { bountyAmount }),
+    },
+    { expectedActorGithubId },
+  );
 }
 
 export type ProjectSessionState =
@@ -238,33 +309,73 @@ export type ProjectSessionState =
   | { status: "error"; message: string }
   | { status: "signed-in"; session: ProjectSession };
 
-/** Reads the site session on mount and when the caller needs fresh identity. */
+let sessionChangeRevision = 0;
+const sessionChangeListeners = new Set<() => void>();
+
+/** Publish only a completed, explicit session change in this browser tab. */
+export function notifyProjectSessionChanged(): void {
+  sessionChangeRevision += 1;
+  for (const listener of sessionChangeListeners) listener();
+}
+
+export function subscribeProjectSessionChange(
+  listener: () => void,
+): () => void {
+  sessionChangeListeners.add(listener);
+  return () => {
+    sessionChangeListeners.delete(listener);
+  };
+}
+
+/** Revalidate on mount, caller revision, explicit signout and tab return. */
 export function useProjectSession(
   revision: number | string = 0,
   enabled = true,
 ): ProjectSessionState {
   const [snapshot, setSnapshot] = useState<{
     revision: number | string;
+    sessionRevision: number;
     state: ProjectSessionState;
-  }>({ revision, state: { status: "checking" } });
+  }>({
+    revision,
+    sessionRevision: sessionChangeRevision,
+    state: { status: "checking" },
+  });
   useEffect(() => {
     if (!enabled) return;
     let active = true;
-    currentProjectSession().then(
-      (session) => {
-        if (!active) return;
-        setSnapshot({
-          revision,
-          state:
-            session === null
-              ? { status: "signed-out" }
-              : { status: "signed-in", session },
-        });
-      },
-      (error: unknown) => {
-        if (active)
+    let generation = 0;
+    const refresh = () => {
+      const current = ++generation;
+      const sessionRevision = sessionChangeRevision;
+      setSnapshot({ revision, sessionRevision, state: { status: "checking" } });
+      currentProjectSession().then(
+        (session) => {
+          if (
+            !active ||
+            current !== generation ||
+            sessionRevision !== sessionChangeRevision
+          )
+            return;
           setSnapshot({
             revision,
+            sessionRevision,
+            state:
+              session === null
+                ? { status: "signed-out" }
+                : { status: "signed-in", session },
+          });
+        },
+        (error: unknown) => {
+          if (
+            !active ||
+            current !== generation ||
+            sessionRevision !== sessionChangeRevision
+          )
+            return;
+          setSnapshot({
+            revision,
+            sessionRevision,
             state: {
               status: "error",
               message:
@@ -273,14 +384,33 @@ export function useProjectSession(
                   : "Something went wrong.",
             },
           });
-      },
-    );
+        },
+      );
+    };
+    const visible = () => {
+      if (document.visibilityState === "visible") refresh();
+    };
+    const restored = (event: PageTransitionEvent) => {
+      if (event.persisted) refresh();
+    };
+    const unsubscribe = subscribeProjectSessionChange(refresh);
+    refresh();
+    window.addEventListener("focus", refresh);
+    document.addEventListener("visibilitychange", visible);
+    window.addEventListener("pageshow", restored);
     return () => {
       active = false;
+      generation += 1;
+      unsubscribe();
+      window.removeEventListener("focus", refresh);
+      document.removeEventListener("visibilitychange", visible);
+      window.removeEventListener("pageshow", restored);
     };
   }, [revision, enabled]);
   // Never show the old actor while a requested identity check is pending.
-  return enabled && snapshot.revision === revision
+  return enabled &&
+    snapshot.revision === revision &&
+    snapshot.sessionRevision === sessionChangeRevision
     ? snapshot.state
     : { status: "checking" };
 }
@@ -297,26 +427,49 @@ export function useProjectMaintainer(projectId: string) {
   // The identity whose maintainer check has answered, allowed or not, so a
   // signed-in visitor sees "checking" rather than a refusal while it runs.
   const [settled, setSettled] = useState<string | null>(null);
-  const identity =
-    session.status === "signed-in"
-      ? `${projectId}:${session.session.githubId}`
-      : null;
+  const actorId =
+    session.status === "signed-in" ? session.session.githubId : null;
+  const identity = actorId === null ? null : `${projectId}:${actorId}`;
   useEffect(() => {
     let active = true;
     setVerified(null);
     setSettled(null);
     setFailure(null);
-    if (identity) {
-      void projectApiRequest(
-        "GET",
-        `project-setup/${encodeURIComponent(projectId)}`,
-      ).then(
-        () => {
+    if (identity && actorId) {
+      void (async () => {
+        let problem: unknown;
+        try {
+          const result = await projectApiRequest<{
+            viewer: { githubId: string };
+          }>(
+            "GET",
+            `project-setup/${encodeURIComponent(projectId)}`,
+            undefined,
+            { expectedActorGithubId: actorId },
+          );
+          if (result?.viewer?.githubId !== actorId)
+            problem = new ProjectApiError(
+              409,
+              "actor_changed",
+              "Your account changed. Retry the access check.",
+            );
+        } catch (error) {
+          problem = error;
+        }
+        if (!active) return;
+        try {
+          const current = await currentProjectSession();
           if (!active) return;
+          if (current?.githubId !== actorId)
+            throw new ProjectApiError(
+              409,
+              "actor_changed",
+              "Your account changed. Retry the access check.",
+            );
+          if (problem !== undefined) throw problem;
           setVerified(identity);
           setSettled(identity);
-        },
-        (error: unknown) => {
+        } catch (error) {
           if (!active) return;
           setVerified(null);
           setSettled(identity);
@@ -328,13 +481,13 @@ export function useProjectMaintainer(projectId: string) {
                   ? error.message
                   : "Project access could not be checked. Retry.",
             });
-        },
-      );
+        }
+      })();
     }
     return () => {
       active = false;
     };
-  }, [projectId, identity]);
+  }, [projectId, actorId, identity]);
   return {
     allowed: identity !== null && verified === identity,
     checking:

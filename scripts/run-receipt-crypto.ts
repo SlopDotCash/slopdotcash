@@ -32,7 +32,7 @@ function publicKeyFromReceipt(receipt: ProjectRunReceipt): KeyObject {
   }
 }
 
-export function deviceKeyId(publicKeyDer: Uint8Array): string {
+function deviceKeyId(publicKeyDer: Uint8Array): string {
   return createHash("sha256").update(publicKeyDer).digest("hex");
 }
 

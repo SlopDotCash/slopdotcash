@@ -3,8 +3,8 @@
  * supply recipients and amounts. This route cannot choose or submit a release.
  */
 import type { EscrowDeployment } from "../../src/lib/escrow-policy.mjs";
-import type { MonthlyAuthorization } from "../../workers/payment-executor/monthly";
 import type { D1TransactionalDatabase } from "../d1";
+import type { MonthlyAuthorization } from "./monthly-attestation-types";
 
 export interface MonthlyReleaseRequest {
   projectId: string;

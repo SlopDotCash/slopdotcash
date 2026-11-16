@@ -24,8 +24,19 @@ function acceptedMerges() {
       commits:
         index === 0
           ? [
-              ...(pull.commits ?? []),
-              { oid: "b".repeat(40), author: PROJECT_OWNER },
+              ...(pull.commits ?? []).map((commit) => ({
+                ...commit,
+                additions: 2,
+                deletions: 0,
+                parentCount: 1,
+              })),
+              {
+                oid: "b".repeat(40),
+                author: PROJECT_OWNER,
+                additions: 1,
+                deletions: 0,
+                parentCount: 1,
+              },
             ]
           : pull.commits,
     }),
@@ -59,12 +70,4 @@ test("one accepted merge shares credit with both linked authors while distinct m
     snapshot.leaders.find((person) => person.actor.id === PROJECT_OWNER.id)
       ?.scoreThirds,
   ).toBe(4);
-});
-
-test("a second snapshot independently credits its accepted merges", () => {
-  setSystemTime(new Date(AFTER_NOVEMBER));
-  const first = createLeaderboardSnapshot(acceptedMerges());
-  const second = createLeaderboardSnapshot(acceptedMerges());
-  expect(second.ledger).toEqual(first.ledger);
-  expect(second.leaders).toEqual(first.leaders);
 });

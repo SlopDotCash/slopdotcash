@@ -13,6 +13,7 @@ import {
   EVM_ESCROW_EVENT_TOPICS,
   evmVaultKey,
   readEvmMonthlyCommitment,
+  readVaultTotals,
   verifyEvmDeployment,
   verifyEvmFactory,
 } from "../../contracts/evm/adapter";
@@ -31,6 +32,7 @@ import {
   CONTRIBUTION,
 } from "../project-application-manifest";
 import { enlargeText } from "../text-size";
+import { selectAwardMonth } from "./award-month";
 import {
   escapeRegExp,
   expect,
@@ -39,7 +41,21 @@ import {
   serveProjectCycleIndex,
   test,
 } from "./fixtures";
+import {
+  holdProjectSessionUntilUnmount,
+  leaveEditorWithHeldSession,
+  releaseHeldEditorSession,
+} from "./project-draft-fixture";
 import { serveProjectMaintainer } from "./project-maintainer-fixture";
+import {
+  holdVaultCreationReview,
+  holdVaultWalletPreflight,
+  leaveWithVaultPreflight,
+  releaseVaultCreationReview,
+  releaseVaultPreflight,
+  waitForVaultCreationReview,
+  waitForVaultPreflight,
+} from "./vault-request-fixture";
 
 test.skip(
   process.env.SLOP_E2E_VAULT_ACTIONS !== "1",
@@ -265,6 +281,9 @@ test("depositor funds a real vault, recovers a submitted transaction and owner w
   let account = donor;
   let wrongNetwork = true;
   let rejected = false;
+  let holdRejectedSend = false;
+  let releaseRejectedSend: (() => void) | undefined;
+  let heldRejectedSendStarted = false;
   let ambiguous = false;
   let forceFailedTransaction = false;
   const sends: string[] = [];
@@ -275,7 +294,15 @@ test("depositor funds a real vault, recovers a submitted transaction and owner w
       if (method === "eth_accounts" || method === "eth_requestAccounts")
         return [account];
       if (method === "eth_sendTransaction") {
-        if (rejected) return { fixtureError: "rejected" };
+        if (rejected) {
+          if (holdRejectedSend) {
+            heldRejectedSendStarted = true;
+            await new Promise<void>((resolve) => {
+              releaseRejectedSend = resolve;
+            });
+          }
+          return { fixtureError: "rejected" };
+        }
         const requestParams = forceFailedTransaction
           ? [{ ...(params[0] as Record<string, unknown>), gas: "0x7000" }]
           : params;
@@ -306,8 +333,16 @@ test("depositor funds a real vault, recovers a submitted transaction and owner w
               ) => Promise<unknown>;
             }
           ).vaultWalletRequest(method, params);
-          if ((value as { fixtureError?: string })?.fixtureError === "rejected")
+          if (
+            (value as { fixtureError?: string })?.fixtureError === "rejected"
+          ) {
+            // A timer observes the reply after the application's promise catch.
+            setTimeout(() => {
+              const state = window as unknown as { rejectedReplies?: number };
+              state.rejectedReplies = (state.rejectedReplies ?? 0) + 1;
+            }, 0);
             throw Object.assign(new Error("User rejected"), { code: 4001 });
+          }
           if ((value as { fixtureError?: string })?.fixtureError === "unknown")
             throw new Error("Transport interrupted after send");
           return value;
@@ -391,6 +426,35 @@ test("depositor funds a real vault, recovers a submitted transaction and owner w
     path: info.outputPath("deposit-review.png"),
     fullPage: true,
   });
+  // A final identity reply at committed departure must not open a new wallet
+  // request or create its pending record. Real Anvil review calls ran above.
+  const pendingKey = `slop:vault-action:v1:${deployment.network}:${deployment.vault}:${deployment.asset}`;
+  await holdVaultWalletPreflight(page, ".vault-actions");
+  await page.evaluate(() => {
+    const current = window.location.href;
+    window.history.replaceState(window.history.state, "", "/how-it-works");
+    window.history.pushState({}, "", current);
+  });
+  await actions
+    .getByRole("button", { name: "Approve exact token amount in wallet" })
+    .click();
+  try {
+    await leaveWithVaultPreflight(page);
+    expect(sends).toEqual([]);
+    expect(
+      await page.evaluate((key) => sessionStorage.getItem(key), pendingKey),
+    ).toBeNull();
+  } finally {
+    await releaseVaultPreflight(page);
+  }
+  await page.goto("/projects/eliza/manage", { waitUntil: "networkidle" });
+  await actions
+    .getByRole("button", { name: "Connect MetaMask", exact: true })
+    .click();
+  await actions.getByLabel("Token amount", { exact: true }).fill("10");
+  await actions
+    .getByRole("button", { name: "Review deposit", exact: true })
+    .click();
   rejected = true;
   await actions
     .getByRole("button", { name: "Approve exact token amount in wallet" })
@@ -402,16 +466,28 @@ test("depositor funds a real vault, recovers a submitted transaction and owner w
     .getByRole("button", { name: "Approve exact token amount in wallet" })
     .click();
   await expect.poll(() => sends.length).toBe(1);
-  await rpc("anvil_mine", ["0x40"]);
-  await actions
-    .getByRole("button", { name: "Check transaction", exact: true })
-    .click();
+  // The approval is included but not finalized: no block is mined here. The
+  // view checks it without a click and opens the deposit review itself.
+  const approval = await rpc("eth_getTransactionReceipt", [sends[0]]);
+  const finalizedAtApproval = await rpc("eth_getBlockByNumber", [
+    "finalized",
+    false,
+  ]);
+  expect(BigInt(approval.blockNumber)).toBeGreaterThan(
+    BigInt(finalizedAtApproval.number),
+  );
   await expect(actions.getByRole("status")).toContainText(
     "no funds have been deposited yet",
   );
-  await actions
-    .getByRole("button", { name: "Review deposit", exact: true })
-    .click();
+  await expect(
+    actions.getByRole("button", { name: "Check transaction", exact: true }),
+  ).toHaveCount(0);
+  await expect(
+    actions.getByRole("region", { name: "Review vault action" }),
+  ).toContainText("no refund right");
+  await expect(actions.getByLabel("Token amount", { exact: true })).toHaveValue(
+    "10",
+  );
   ambiguous = true;
   await actions
     .getByRole("button", { name: "Confirm deposit in wallet", exact: true })
@@ -447,9 +523,12 @@ test("depositor funds a real vault, recovers a submitted transaction and owner w
   await actions
     .getByRole("button", { name: "Check transaction", exact: true })
     .click();
+  // Included but not final: received, not yet counted.
   await expect(actions.getByRole("status")).toContainText(
-    "Waiting for finalized",
+    "Deposit received in a Base Sepolia (test) block",
   );
+  await expect(actions.getByRole("status")).toContainText(sends[1]);
+  await expect(actions.getByText("Deposit verified")).toHaveCount(0);
   await rpc("anvil_mine", ["0x40"]);
   await actions
     .getByRole("button", { name: "Check transaction", exact: true })
@@ -517,10 +596,20 @@ test("depositor funds a real vault, recovers a submitted transaction and owner w
   await expect(confirmWithdrawal).toBeFocused();
   await page.keyboard.press("Enter");
   await expect.poll(() => sends.length).toBe(3);
+  // A transfer of funds still needs finality: the automatic check keeps the
+  // request pending until the block is final, then verifies it without a click.
+  await page.waitForTimeout(4_000);
+  await expect(actions).toContainText("Withdrawal awaiting verification");
+  await expect(actions.getByRole("status")).toContainText("Withdrawal sent");
+  // An automatic check that fails says why without a click, keeps the saved
+  // request, and withdraws the message once a later check works again.
+  wrongNetwork = true;
+  await expect(actions.getByRole("alert")).toContainText("Switch your wallet");
+  await expect(actions).toContainText("Withdrawal awaiting verification");
+  wrongNetwork = false;
+  await expect(actions.getByRole("alert")).toHaveCount(0);
+  await expect(actions).toContainText("Withdrawal awaiting verification");
   await rpc("anvil_mine", ["0x40"]);
-  await actions
-    .getByRole("button", { name: "Check transaction", exact: true })
-    .click();
   await expect(actions.getByRole("status")).toContainText(
     "Withdrawal verified",
   );
@@ -551,9 +640,6 @@ test("depositor funds a real vault, recovers a submitted transaction and owner w
     .click();
   await expect.poll(() => sends.length).toBe(4);
   await rpc("anvil_mine", ["0x40"]);
-  await actions
-    .getByRole("button", { name: "Check transaction", exact: true })
-    .click();
   await expect(actions.getByRole("status")).toContainText(
     "The transaction failed.",
   );
@@ -595,6 +681,7 @@ test("depositor funds a real vault, recovers a submitted transaction and owner w
               period: "2026-09",
               manifestSha256: commitment.manifestSha256,
               automatic: true,
+              canManage: true,
               cutoffAt: null,
               deployment,
               asset: null,
@@ -649,6 +736,7 @@ test("depositor funds a real vault, recovers a submitted transaction and owner w
   );
   await page.getByRole("link", { name: "Overview", exact: true }).click();
   await page.getByRole("button", { name: "Review monthly awards" }).click();
+  await selectAwardMonth(page, "2026-09");
   await expect(
     page.getByRole("navigation", { name: "Contribution month" }),
   ).toContainText("September 2026");
@@ -694,8 +782,38 @@ test("depositor funds a real vault, recovers a submitted transaction and owner w
     .click();
   await expect(ownerActions.getByRole("alert")).toContainText("You declined");
   expect(sends).toHaveLength(4);
+  // A wallet can reply after the user leaves this component and starts again.
+  // The rejected first prompt must not clear the newer real Anvil submission.
+  const rejectedRepliesBeforeHold = await page.evaluate(
+    () =>
+      (window as unknown as { rejectedReplies?: number }).rejectedReplies ?? 0,
+  );
+  holdRejectedSend = true;
+  await ownerActions
+    .getByRole("button", { name: "Authorize this award in wallet" })
+    .click();
+  await expect.poll(() => heldRejectedSendStarted).toBe(true);
+  await page.getByRole("link", { name: "Slop home", exact: true }).click();
+  await expect(ownerActions).toHaveCount(0);
+  await page.goBack();
+  await expect(ownerActions).toBeVisible();
+  await ownerActions
+    .getByText("Wallet confirms nothing was sent", { exact: true })
+    .click();
+  await ownerActions
+    .getByRole("button", {
+      name: "I checked my wallet; this request was not sent",
+    })
+    .click();
   rejected = false;
+  holdRejectedSend = false;
   ambiguous = true;
+  await ownerActions
+    .getByRole("button", { name: "Connect MetaMask", exact: true })
+    .click();
+  await ownerActions
+    .getByRole("button", { name: "Verify award and funding" })
+    .click();
   await ownerActions
     .getByRole("button", { name: "Authorize this award in wallet" })
     .click();
@@ -703,6 +821,25 @@ test("depositor funds a real vault, recovers a submitted transaction and owner w
     "wallet result is unclear",
   );
   expect(sends).toHaveLength(5);
+  const commitmentKey =
+    "slop:award-commitment:v2:eliza:2026-09:base-sepolia:1234";
+  const retainedRetry = await page.evaluate(
+    (key) => sessionStorage.getItem(key),
+    commitmentKey,
+  );
+  expect(retainedRetry).not.toBeNull();
+  releaseRejectedSend?.();
+  await expect
+    .poll(() =>
+      page.evaluate(
+        () =>
+          (window as unknown as { rejectedReplies?: number }).rejectedReplies,
+      ),
+    )
+    .toBeGreaterThan(rejectedRepliesBeforeHold);
+  expect(
+    await page.evaluate((key) => sessionStorage.getItem(key), commitmentKey),
+  ).toBe(retainedRetry);
   reviewAvailable = false;
   const unavailableReview = diagnostics.allowResponse(
     503,
@@ -711,6 +848,7 @@ test("depositor funds a real vault, recovers a submitted transaction and owner w
   );
   await page.reload();
   await page.getByRole("button", { name: "Review monthly awards" }).click();
+  await selectAwardMonth(page, "2026-09");
   await expect(page.getByRole("alert")).toHaveText(
     "Review temporarily unavailable",
   );
@@ -883,6 +1021,7 @@ test("owner turns automatic monthly payment on by default, then opts out", async
         period: new URL(route.request().url()).pathname.split("/").at(-1),
         manifestSha256: "a".repeat(64),
         automatic: false,
+        canManage: true,
         cutoffAt: null,
         deployment,
         asset: null,
@@ -983,13 +1122,59 @@ test("owner turns automatic monthly payment on by default, then opts out", async
       .locator(".vault-contract-details")
       .getByText(owner, { exact: true }),
   ).toBeVisible();
-  await monthly.getByLabel("Transaction hash from your wallet").fill(sends[0]);
+  const recoveryHash = monthly.getByLabel("Transaction hash from your wallet");
+  const unrelatedHash = `0x${"d".repeat(64)}`;
+  await recoveryHash.fill(unrelatedHash);
   await monthly
     .getByRole("button", { name: "Check transaction", exact: true })
     .click();
   await expect(monthly.getByRole("status")).toContainText(
     "Waiting for finalized",
   );
+  await expect(recoveryHash).toBeEditable();
+  await expect(recoveryHash).toHaveValue(unrelatedHash);
+  await expect(turnOn).toHaveCount(0);
+  expect(sends).toHaveLength(1);
+  await page.screenshot({
+    path: info.outputPath("monthly-entered-hash-pending.png"),
+    fullPage: true,
+  });
+  await page.reload({ waitUntil: "networkidle" });
+  await monthly
+    .getByRole("button", { name: "Connect MetaMask", exact: true })
+    .click();
+  await expect(recoveryHash).toBeEditable();
+  await expect(recoveryHash).toHaveValue(unrelatedHash);
+  const restoreRecoveryText = await enlargeText(monthly);
+  expect(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth <= window.innerWidth,
+    ),
+  ).toBe(true);
+  await recoveryHash.focus();
+  await page.keyboard.press("ControlOrMeta+A");
+  await page.keyboard.type(sends[0]);
+  await page.keyboard.press("Tab");
+  await expect(
+    monthly.getByRole("button", { name: "Check transaction", exact: true }),
+  ).toBeFocused();
+  await page.screenshot({
+    path: info.outputPath("monthly-recovery-200-percent-text.png"),
+    fullPage: true,
+  });
+  await page.keyboard.press("Enter");
+  await restoreRecoveryText();
+  await expect(monthly.getByRole("status")).toContainText(
+    "Waiting for finalized",
+  );
+  await expect(recoveryHash).toBeEditable();
+  await page.reload({ waitUntil: "networkidle" });
+  await monthly
+    .getByRole("button", { name: "Connect MetaMask", exact: true })
+    .click();
+  await expect(recoveryHash).toHaveValue(sends[0]);
+  await expect(turnOn).toHaveCount(0);
+  expect(sends).toHaveLength(1);
   await rpc("anvil_mine", ["0x40"]);
   await monthly
     .getByRole("button", { name: "Check transaction", exact: true })
@@ -1017,6 +1202,23 @@ test("owner turns automatic monthly payment on by default, then opts out", async
     })
     .click();
   await expect.poll(() => sends.length).toBe(2);
+  await expect(recoveryHash).toHaveCount(0);
+  await expect(
+    monthly.getByRole("link", {
+      name: "View submitted transaction",
+      exact: true,
+    }),
+  ).toHaveAttribute("href", new RegExp(sends[1]));
+  await page.reload({ waitUntil: "networkidle" });
+  await monthly
+    .getByRole("button", { name: "Connect MetaMask", exact: true })
+    .click();
+  await expect(recoveryHash).toHaveCount(0);
+  await page.screenshot({
+    path: info.outputPath("monthly-wallet-returned-hash-fixed.png"),
+    fullPage: true,
+  });
+  expect(sends).toHaveLength(2);
   await rpc("anvil_mine", ["0x40"]);
   await monthly
     .getByRole("button", { name: "Check transaction", exact: true })
@@ -1045,6 +1247,7 @@ test("owner creates, registers and funds a vault through the real API", async ({
   const apiPort = anvilPort + 2;
   const origin = `http://127.0.0.1:${apiPort}`;
   const temporary = mkdtempSync(join(tmpdir(), "slop-vault-setup-"));
+  let releaseSetupRejection = () => {};
   if (!project.escrow) throw new Error("Missing project vault policy");
   const target = {
     ...project,
@@ -1252,12 +1455,22 @@ test("owner creates, registers and funds a vault through the real API", async ({
     ).toBe(1);
     const sends: string[] = [];
     let unknownSend = true;
+    let rejectNextSetupSend = false;
+    let setupRejectionStarted = false;
     await page.exposeFunction(
       "setupWalletRequest",
       async (method: string, params: unknown[]) => {
         if (method === "eth_accounts" || method === "eth_requestAccounts")
           return [donor];
         if (method === "eth_sendTransaction") {
+          if (rejectNextSetupSend) {
+            rejectNextSetupSend = false;
+            setupRejectionStarted = true;
+            await new Promise<void>((resolve) => {
+              releaseSetupRejection = resolve;
+            });
+            return { fixtureError: "rejected" };
+          }
           const hash = await rpc(method, params);
           sends.push(hash);
           if (unknownSend) return { unknown: true };
@@ -1284,6 +1497,18 @@ test("owner creates, registers and funds a vault through the real API", async ({
                 setupWalletRequest(m: string, p: unknown[]): Promise<unknown>;
               }
             ).setupWalletRequest(method, params);
+            if (
+              (result as { fixtureError?: string })?.fixtureError === "rejected"
+            ) {
+              setTimeout(() => {
+                const state = window as unknown as {
+                  setupRejectedReplies?: number;
+                };
+                state.setupRejectedReplies =
+                  (state.setupRejectedReplies ?? 0) + 1;
+              }, 0);
+              throw Object.assign(new Error("User rejected"), { code: 4001 });
+            }
             if ((result as { unknown?: boolean })?.unknown)
               throw new Error("Transport interrupted after send");
             return result;
@@ -1378,11 +1603,87 @@ test("owner creates, registers and funds a vault through the real API", async ({
       path: info.outputPath("owner-vault-create-review.png"),
       fullPage: true,
     });
+    const setupKey = `slop:vault-setup:v1:${project.id}`;
+    const setupPath = `/api/v1/project-vaults/${project.id}`;
+    await holdVaultCreationReview(page, `${origin}${setupPath}`);
+    await setup.getByRole("button", { name: "Create vault in wallet" }).click();
+    const heldReview = await waitForVaultCreationReview(page);
+    expect(heldReview.captured).toBe(1);
+    expect(heldReview.status).toBe(200);
+    expect(heldReview.bodyBytes).toBeGreaterThan(0);
+    try {
+      await page.getByRole("link", { name: "Slop home", exact: true }).click();
+      await expect(setup).toHaveCount(0);
+    } finally {
+      await releaseVaultCreationReview(page);
+    }
+    await page.waitForFunction(() => {
+      const state = (
+        window as typeof window & {
+          heldVaultCreationReview: { captured: number; released: boolean };
+        }
+      ).heldVaultCreationReview;
+      return state.captured === 1 && state.released;
+    });
+    await page.evaluate(
+      () =>
+        new Promise<void>((resolve) =>
+          requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
+        ),
+    );
+    expect(sends).toHaveLength(0);
+    expect(
+      await page.evaluate((key) => sessionStorage.getItem(key), setupKey),
+    ).toBeNull();
+    await page.goBack();
+    await setup.getByRole("button", { name: "Connect MetaMask" }).click();
+    if (!automatic) await monthlySetting.selectOption("off");
+    await reviewButton.click();
+    await expect(
+      setup.getByRole("button", { name: "Create vault in wallet" }),
+    ).toBeEnabled();
+    // A confirmed rejection may clear only its own marker, even after a new
+    // component has recovered that marker and started another real request.
+    rejectNextSetupSend = true;
+    await setup.getByRole("button", { name: "Create vault in wallet" }).click();
+    await expect.poll(() => setupRejectionStarted).toBe(true);
+    await page.getByRole("link", { name: "Slop home", exact: true }).click();
+    await expect(setup).toHaveCount(0);
+    await page.goBack();
+    await setup
+      .getByText("Wallet confirms nothing was sent", { exact: true })
+      .click();
+    await setup
+      .getByRole("button", {
+        name: "I checked my wallet; this request was not sent",
+      })
+      .click();
+    await setup.getByRole("button", { name: "Connect MetaMask" }).click();
+    if (!automatic) await monthlySetting.selectOption("off");
+    await reviewButton.click();
     await setup.getByRole("button", { name: "Create vault in wallet" }).click();
     await expect(setup.getByRole("alert")).toContainText(
       "Transport interrupted",
     );
     expect(sends).toHaveLength(1);
+    const retainedSetupRetry = await page.evaluate(
+      (key) => sessionStorage.getItem(key),
+      setupKey,
+    );
+    expect(retainedSetupRetry).not.toBeNull();
+    releaseSetupRejection();
+    await expect
+      .poll(() =>
+        page.evaluate(
+          () =>
+            (window as unknown as { setupRejectedReplies?: number })
+              .setupRejectedReplies ?? 0,
+        ),
+      )
+      .toBe(1);
+    expect(
+      await page.evaluate((key) => sessionStorage.getItem(key), setupKey),
+    ).toBe(retainedSetupRetry);
     await page.reload({ waitUntil: "networkidle" });
     // The original tab keeps the interrupted request and offers no second send.
     await expect(setup.getByLabel("Creation transaction hash")).toHaveValue("");
@@ -1473,7 +1774,7 @@ test("owner creates, registers and funds a vault through the real API", async ({
       await page.request.get(`${origin}/__fixture`)
     ).json();
     expect(afterEdit.project.revision).toBe(2);
-    await expect(setup.getByText("1,000 TEST", { exact: true })).toBeVisible();
+    await expect(setup.getByText("1,000 $TEST", { exact: true })).toBeVisible();
     expectedRecoveryRejection = true;
     await setup
       .getByLabel("Creation transaction hash")
@@ -1487,22 +1788,32 @@ test("owner creates, registers and funds a vault through the real API", async ({
       setup.getByRole("button", { name: "Create vault in wallet" }),
     ).toHaveCount(0);
     expectedRecoveryRejection = false;
+    const registeredRevision = recoveryPage.waitForResponse((response) => {
+      return (
+        response.request().method() === "GET" &&
+        response.url() === `${origin}/api/v1/projects/${project.id}?reload=1`
+      );
+    });
+    const registeredSetup = recoveryPage.waitForResponse((response) => {
+      return (
+        response.request().method() === "POST" &&
+        response.url() === `${origin}/api/v1/project-setup/${project.id}/check`
+      );
+    });
     await setup.getByLabel("Creation transaction hash").fill(sends[0]);
     await setup
       .getByRole("button", { name: "Check vault registration" })
       .click();
     await expect(setup.getByRole("status")).toContainText("not finalized");
     await rpc("anvil_mine", ["0x40"]);
-    await setup
-      .getByRole("button", { name: "Check vault registration" })
-      .click();
-    await expect(setup).toHaveCount(0);
+    // The saved creation is checked without a click once its block is final.
+    await expect(setup).toHaveCount(0, { timeout: 30_000 });
     await expect(
       recoveryPage
         .getByRole("status")
         .filter({ hasText: "Creation used a monthly cap" }),
     ).toHaveText(
-      "Creation used a monthly cap of 1,000 TEST. The project now uses 2,000 TEST. Use the automatic payment controls below to apply the new cap.",
+      "Creation used a monthly cap of 1,000 $TEST. The project now uses 2,000 $TEST. Use the automatic payment controls below to apply the new cap.",
     );
     await recoveryPage
       .locator("summary")
@@ -1511,10 +1822,37 @@ test("owner creates, registers and funds a vault through the real API", async ({
     await expect(
       recoveryPage.getByRole("textbox", { name: /^Monthly amount/u }),
     ).toHaveValue("2000");
+    const [revisionResponse, setupResponse] = await Promise.all([
+      registeredRevision,
+      registeredSetup,
+    ]);
+    expect(revisionResponse.status()).toBe(200);
+    expect(await revisionResponse.json()).toMatchObject({
+      revision: 3,
+      vetting: { state: "cleared" },
+    });
+    expect(setupResponse.status()).toBe(200);
+    expect(setupResponse.request().postDataJSON()).toEqual({});
+    expect(await setupResponse.json()).toMatchObject({
+      setup: {
+        projectId: project.id,
+        revision: 3,
+        checks: {
+          authority: { state: "verified" },
+          installation: { state: "installed" },
+          scan: {
+            state: "cleared",
+            exempt: true,
+            exemptionKind: "existing-project",
+          },
+        },
+      },
+    });
     const state = await (await page.request.get(`${origin}/__fixture`)).json();
     expect(state.project.revision).toBe(3);
-    // Settings refresh the registered revision and read its retained clearance once.
-    expect(state.scanReads).toBe(afterEdit.scanReads + 1);
+    // The revision read and authenticated setup check each read retained
+    // clearance once. The empty check body requests no new scan.
+    expect(state.scanReads).toBe(afterEdit.scanReads + 2);
     expect(state.revisions.n).toBe(3);
     expect(state.project.manifest.reward.monthlyCapMinor).toBe("2000000000");
     const created = state.project.manifest.escrow.deployments[0];
@@ -1602,20 +1940,14 @@ test("owner creates, registers and funds a vault through the real API", async ({
       .click();
     await funding.getByRole("button", { name: /Approve/ }).click();
     await expect.poll(() => sends.length).toBe(2);
-    await rpc("anvil_mine", ["0x40"]);
-    await funding.getByRole("button", { name: /Check/ }).click();
     await expect(funding.getByRole("status")).toContainText(
       "no funds have been deposited yet",
     );
-    await funding
-      .getByRole("button", { name: "Review deposit", exact: true })
-      .click();
     await funding
       .getByRole("button", { name: "Confirm deposit in wallet" })
       .click();
     await expect.poll(() => sends.length).toBe(3);
     await rpc("anvil_mine", ["0x40"]);
-    await funding.getByRole("button", { name: /Check/ }).click();
     await expect(funding).toContainText("finalized");
     expect(
       BigInt(
@@ -1665,6 +1997,8 @@ test("owner creates, registers and funds a vault through the real API", async ({
       fullPage: true,
     });
   } finally {
+    await releaseVaultCreationReview(page);
+    releaseSetupRejection();
     server.kill("SIGTERM");
     rmSync(temporary, { recursive: true, force: true });
     await info.attach("vault-setup-api.log", {
@@ -1674,7 +2008,295 @@ test("owner creates, registers and funds a vault through the real API", async ({
   }
 });
 
-test("owner funds a separate bounty vault with private balances and no monthly reward", async ({
+test("owner funds a new vault before its creation is finalized", async ({
+  page,
+}, info) => {
+  test.setTimeout(180_000);
+  // A wallet no other test uses: the factory keys a vault by owner, project,
+  // token and purpose, so this owner has no vault yet.
+  const early = mnemonicToAccount(
+    "test test test test test test test test test test test junk",
+    { addressIndex: 5 },
+  );
+  const earlyOwner = early.address.toLowerCase();
+  await rpc("eth_sendTransaction", [
+    {
+      from: owner,
+      to: deployment.asset,
+      gas: "0x100000",
+      data: encodeFunctionData({
+        abi,
+        functionName: "mint",
+        args: [early.address, 100_000_000n],
+      }),
+    },
+  ]);
+  await rpc("anvil_mine", ["0x40"]);
+  const apiPort = anvilPort + 2;
+  const origin = `http://127.0.0.1:${apiPort}`;
+  const temporary = mkdtempSync(join(tmpdir(), "slop-vault-early-"));
+  if (!project.escrow || !deployment.evmUpgrade)
+    throw new Error("Missing project vault policy");
+  const target = {
+    ...project,
+    skill: {
+      ...project.skill,
+      publishAtRoot: false,
+      sourcePath: "skills/project-contributor-template",
+    },
+    reviewSkill: {
+      id: `review-${project.id}-contributions`,
+      sourcePath: "skills/project-reviewer-template",
+    },
+    contribution: CONTRIBUTION,
+    escrow: { ...project.escrow, deployments: [] },
+  };
+  const factory = {
+    network: deployment.network,
+    sourceCommit: deployment.sourceCommit,
+    codeSha256: deployment.codeSha256,
+    factory: deployment.factory,
+    factoryCodeSha256: deployment.factoryCodeSha256,
+    registrar: deployment.registrar,
+    identityAuthority: deployment.identityAuthority,
+    feeRecipient: deployment.feeRecipient,
+    bindingDelaySeconds: deployment.bindingDelaySeconds,
+    evmUpgrade: deployment.evmUpgrade,
+  };
+  const fixturePath = join(temporary, "projects.json");
+  writeFileSync(fixturePath, JSON.stringify({ project: target, factory }));
+  let output = "";
+  const server = spawn(
+    "bun",
+    [
+      "scripts/vault-setup-browser-server.ts",
+      fixturePath,
+      String(apiPort),
+      rpcUrl,
+    ],
+    { cwd: root, stdio: ["ignore", "pipe", "pipe"], env: process.env },
+  );
+  server.stdout?.on("data", (s) => {
+    output += String(s);
+  });
+  server.stderr?.on("data", (s) => {
+    output += String(s);
+  });
+  try {
+    await expect
+      .poll(() => output, { timeout: 30_000 })
+      .toContain("Vault setup API ready");
+    const fixture = async () =>
+      (await page.request.get(`${origin}/__fixture`)).json();
+    const initial = await fixture();
+    const headers = {
+      origin,
+      cookie: `__Host-slop_points=${initial.token}`,
+      "content-type": "application/json",
+    };
+    const api = async (path: string, data: unknown) => {
+      const response = await page.request.post(`${origin}/api/v1/${path}`, {
+        headers,
+        data,
+      });
+      const body = await response.json();
+      expect(response.ok(), JSON.stringify(body)).toBe(true);
+      return body;
+    };
+    const claim = await api("payments/wallets/register", {
+      chain: "base",
+      address: earlyOwner,
+    });
+    const challenge = await api("payments/wallets/challenge", {
+      claimId: claim.claimId,
+    });
+    await api("payments/wallets/authorize", {
+      claimId: claim.claimId,
+      challengeId: challenge.challengeId,
+      signature: await early.signMessage({ message: challenge.message }),
+    });
+    const sends: string[] = [];
+    await page.exposeFunction(
+      "earlyWalletRequest",
+      async (method: string, params: unknown[]) => {
+        if (method === "eth_accounts" || method === "eth_requestAccounts")
+          return [earlyOwner];
+        const result = await rpc(method, params);
+        if (method === "eth_sendTransaction") sends.push(result);
+        return result;
+      },
+    );
+    await page.addInitScript((token) => {
+      // biome-ignore lint/suspicious/noDocumentCookie: Set the same site-session cookie used by the local registry harness.
+      document.cookie = `__Host-slop_points=${token}; Path=/; Secure; SameSite=Strict`;
+      Object.assign(window, {
+        ethereum: {
+          isMetaMask: true,
+          request: ({
+            method,
+            params = [],
+          }: {
+            method: string;
+            params?: unknown[];
+          }) =>
+            (
+              window as unknown as {
+                earlyWalletRequest(m: string, p: unknown[]): Promise<unknown>;
+              }
+            ).earlyWalletRequest(method, params),
+        },
+      });
+    }, initial.token);
+    const failedRequests: string[] = [];
+    page.on("response", (r) => {
+      if (r.url().startsWith(origin) && r.status() >= 400)
+        failedRequests.push(`${r.status()} ${r.url()}`);
+    });
+    await page.goto(`${origin}/projects/${project.slug}/manage`, {
+      waitUntil: "networkidle",
+    });
+    const setup = page.getByRole("region", { name: "Set up project vault" });
+    await setup.getByRole("button", { name: "Connect MetaMask" }).click();
+    const reviewButton = setup.getByRole("button", {
+      name: "Review vault creation",
+      exact: true,
+    });
+    await expect(reviewButton).toBeEnabled();
+    await reviewButton.click();
+    await setup.getByRole("button", { name: "Create vault in wallet" }).click();
+    await expect.poll(() => sends.length).toBe(1);
+    // The creation is mined but far from final. Without a click, the funding
+    // form opens for the vault the server verified at its creation block.
+    const funding = setup.getByRole("region", { name: /Fund or withdraw/ });
+    await expect(funding).toBeVisible({ timeout: 20_000 });
+    await expect(setup.getByRole("status").first()).toContainText(
+      "its creation is not finalized yet. You can fund it below now.",
+    );
+    // Nothing is registered: no revision, no deployment, no payment record.
+    const unregistered = await fixture();
+    expect(unregistered.revisions.n).toBe(1);
+    expect(unregistered.paymentPins).toEqual([]);
+    expect(unregistered.project.manifest.escrow.deployments).toEqual([]);
+    // The setup wallet carries over; only a deposit is offered.
+    await expect(
+      funding.getByRole("radio", { name: "Deposit tokens" }),
+    ).toBeChecked();
+    await expect(
+      funding.getByRole("radio", { name: "Withdraw free funds" }),
+    ).toHaveCount(0);
+    await funding.getByLabel("Token amount").fill("10");
+    await funding
+      .getByRole("button", { name: "Review deposit", exact: true })
+      .click();
+    await funding.getByRole("button", { name: /Approve/ }).click();
+    await expect.poll(() => sends.length).toBe(2);
+    await expect(funding.getByRole("status")).toContainText(
+      "no funds have been deposited yet",
+    );
+    await funding
+      .getByRole("button", { name: "Confirm deposit in wallet" })
+      .click();
+    await expect.poll(() => sends.length).toBe(3);
+    await expect(funding.getByRole("status")).toContainText(
+      "Deposit received in a Base Sepolia (test) block",
+      { timeout: 20_000 },
+    );
+    const actionKey = await page.evaluate(
+      () =>
+        Object.keys(sessionStorage).find((key) =>
+          key.startsWith("slop:vault-action:v1:"),
+        ) ?? "",
+    );
+    const vault = actionKey.split(":")[4];
+    expect(vault).toMatch(/^0x[0-9a-f]{40}$/u);
+    const vaultBalance = async (block: string) =>
+      BigInt(
+        await rpc("eth_call", [
+          {
+            to: deployment.asset,
+            data: encodeFunctionData({
+              abi,
+              functionName: "balanceOf",
+              args: [vault as `0x${string}`],
+            }),
+          },
+          block,
+        ]),
+      );
+    // The tokens are in the vault at the latest block and nothing counts yet.
+    expect(await vaultBalance("latest")).toBe(10_000_000n);
+    expect((await fixture()).revisions.n).toBe(1);
+    await expectAccessible(page);
+    await page.screenshot({
+      path: info.outputPath("owner-vault-funded-before-finality.png"),
+      fullPage: true,
+    });
+    // A reload mid-flow keeps both saved requests. The form returns without a
+    // click and the pending deposit needs only its wallet again.
+    await page.reload({ waitUntil: "networkidle" });
+    await expect(funding).toBeVisible({ timeout: 20_000 });
+    await expect(funding).toContainText("Deposit awaiting verification");
+    await funding.getByRole("button", { name: "Connect MetaMask" }).click();
+    await expect(funding.getByRole("status")).toContainText(
+      "Deposit received in a Base Sepolia (test) block",
+      { timeout: 20_000 },
+    );
+    expect(sends).toHaveLength(3);
+    // Finality arrives. With no further click the vault registers, the page
+    // switches to the registered vault and the deposit is verified.
+    await rpc("anvil_mine", ["0x40"]);
+    await expect(setup).toHaveCount(0, { timeout: 60_000 });
+    await expect
+      .poll(
+        () => page.evaluate((key) => sessionStorage.getItem(key), actionKey),
+        { timeout: 60_000 },
+      )
+      .toBeNull();
+    const registeredFunding = page.getByRole("region", {
+      name: /Fund or withdraw/,
+    });
+    await expect(registeredFunding).toBeVisible();
+    await expect(registeredFunding.getByRole("alert")).toHaveCount(0);
+    await expect(registeredFunding).not.toContainText("awaiting verification");
+    const state = await fixture();
+    expect(state.revisions.n).toBe(2);
+    const created = state.project.manifest.escrow.deployments[0];
+    expect(created.vault).toBe(vault);
+    expect(created.owner).toBe(earlyOwner);
+    expect(created.deploymentTransaction).toBe(sends[0]);
+    expect(state.paymentPins).toHaveLength(1);
+    expect(await vaultBalance("finalized")).toBe(10_000_000n);
+    // The vault's own finalized counters, the only ones the server counts.
+    const totals = await readVaultTotals({
+      rpcUrl,
+      network: "base-sepolia",
+      vault,
+      chainId: 84532n,
+    });
+    expect(totals.totalDeposited).toBe("10000000");
+    expect(totals.freeBalance).toBe("10000000");
+    // The funding wallet carried over: the owner's choices show with no click.
+    await expect(
+      registeredFunding.getByRole("radio", { name: "Withdraw free funds" }),
+    ).toBeVisible();
+    expect(sends).toHaveLength(3);
+    expect(failedRequests).toEqual([]);
+    await expectAccessible(page);
+    await page.screenshot({
+      path: info.outputPath("owner-vault-registered-after-early-deposit.png"),
+      fullPage: true,
+    });
+  } finally {
+    server.kill("SIGTERM");
+    rmSync(temporary, { recursive: true, force: true });
+    await info.attach("vault-setup-api.log", {
+      body: output,
+      contentType: "text/plain",
+    });
+  }
+});
+
+test("owner registers a separate bounty vault through the API and funds it privately", async ({
   diagnostics,
   page,
 }, info) => {
@@ -1901,32 +2523,41 @@ test("owner funds a separate bounty vault with private balances and no monthly r
       name: "Set up bounty vault",
       exact: true,
     });
-    await setup.getByRole("button", { name: "Connect MetaMask" }).click();
+    // New bounty-vault creation is not offered by the current owner UI. The
+    // retained setup API still admits existing vaults used by private funding.
+    await expect(setup).toHaveCount(0);
     await expect(
-      setup.getByRole("combobox", { name: /^Automatic monthly payment/ }),
+      page.getByRole("combobox", { name: /^Automatic monthly payment/ }),
     ).toHaveCount(0);
-    const reviewButton = setup.getByRole("button", {
-      name: "Review vault creation",
+    const input = {
+      expectedRevision: 1,
+      claimId: claim.claimId,
+      network: "base-sepolia",
+      automatic: false,
+      payoutPolicy: "security-bounty",
+    };
+    const reviewed = await api(`project-vaults/${id}`, {
+      ...input,
+      step: "review",
     });
-    await expect(reviewButton).toBeEnabled();
-    await reviewButton.focus();
-    await expect(reviewButton).toBeFocused();
-    await page.keyboard.press("Enter");
-    await expect(setup).toContainText(
-      "Security bounty: 75% researcher, 25% Slop",
+    expect(reviewed.review.family).toBe("evm");
+    expect(reviewed.review.payoutPolicy).toBe("security-bounty");
+    expect(reviewed.review.cap).toBe("0");
+    expect(reviewed.review.automatic).toBe(false);
+    expect(reviewed.review.transaction.from.toLowerCase()).toBe(donor);
+    sends.push(
+      await rpc("eth_sendTransaction", [
+        { ...reviewed.review.transaction, gas: "0x600000" },
+      ]),
     );
-    await page.screenshot({
-      path: info.outputPath("bounty-vault-review.png"),
-      fullPage: true,
+    await rpc("anvil_mine", ["0x40"]);
+    await api(`project-vaults/${id}`, {
+      ...input,
+      step: "register",
+      transactionId: sends[0],
     });
-    await setup.getByRole("button", { name: "Create vault in wallet" }).click();
-    await expect.poll(() => sends.length).toBe(1);
     await page.reload({ waitUntil: "networkidle" });
     await openProjectSecuritySettings(page);
-    await rpc("anvil_mine", ["0x40"]);
-    await setup
-      .getByRole("button", { name: "Check vault registration" })
-      .click();
     await expect(setup).toHaveCount(0);
     const state = await (await page.request.get(`${origin}/__fixture`)).json();
     const created =
@@ -1953,17 +2584,11 @@ test("owner funds a separate bounty vault with private balances and no monthly r
       .click();
     await funding.getByRole("button", { name: /Approve/ }).click();
     await expect.poll(() => sends.length).toBe(2);
-    await rpc("anvil_mine", ["0x40"]);
-    await funding.getByRole("button", { name: /Check/ }).click();
-    await funding
-      .getByRole("button", { name: "Review deposit", exact: true })
-      .click();
     await funding
       .getByRole("button", { name: "Confirm deposit in wallet" })
       .click();
     await expect.poll(() => sends.length).toBe(3);
     await rpc("anvil_mine", ["0x40"]);
-    await funding.getByRole("button", { name: /Check/ }).click();
     await expect(funding).toContainText("finalized");
     const scan = await page.request.post(`${origin}/__fixture`, {
       data: { scanSecurity: true },
@@ -2012,6 +2637,76 @@ test("owner funds a separate bounty vault with private balances and no monthly r
     await expect(bountyFunds.getByRole("alert")).toHaveCount(0);
     await expect(funding.getByLabel("Deposit tokens")).toBeVisible();
     await expect(funding.getByRole("status")).toContainText("finalized");
+    // A capability refresh can finish while the final wallet identity check
+    // waits. The old click must use the newly committed deposit restriction.
+    await funding.getByLabel("Deposit tokens").check();
+    await funding.getByLabel("Token amount").fill("1");
+    await funding
+      .getByRole("button", { name: "Review deposit", exact: true })
+      .click();
+    const sentBeforeRestriction = sends.length;
+    const bountyPendingKey = `slop:vault-action:v1:${created.network}:${created.vault}:${created.asset}`;
+    await holdVaultWalletPreflight(page);
+    await funding
+      .getByRole("button", { name: "Approve exact token amount in wallet" })
+      .click();
+    try {
+      await waitForVaultPreflight(page);
+      await page.request.post(`${origin}/__fixture`, {
+        data: { privateReadUnavailable: true },
+      });
+      const restricted = page.waitForResponse(
+        (response) =>
+          response.url() === privateUrl && response.status() === 503,
+      );
+      await page.getByRole("button", { name: "Refresh bounty funds" }).click();
+      await restricted;
+      await expect(funding.getByLabel("Deposit tokens")).toHaveCount(0);
+      await releaseVaultPreflight(page);
+      expect(sends).toHaveLength(sentBeforeRestriction);
+      expect(
+        await page.evaluate(
+          (key) => sessionStorage.getItem(key),
+          bountyPendingKey,
+        ),
+      ).toBeNull();
+      await expect(funding.getByRole("alert")).toContainText(
+        "New deposits are currently unavailable",
+      );
+    } finally {
+      await releaseVaultPreflight(page);
+    }
+    await page.request.post(`${origin}/__fixture`, {
+      data: { privateReadUnavailable: false },
+    });
+    await page.getByRole("button", { name: "Refresh bounty funds" }).click();
+    await expect(
+      bountyFunds.getByRole("alert").filter({
+        hasText: "Private balance read is unavailable.",
+      }),
+    ).toHaveCount(0);
+    // A balance refresh clears its own failure, not the prior wallet refusal.
+    await expect(funding.getByRole("alert")).toHaveText(
+      "New deposits are currently unavailable.",
+    );
+    await expect(funding.getByLabel("Deposit tokens")).toBeVisible();
+    await funding.getByLabel("Deposit tokens").check();
+    await funding
+      .getByRole("button", { name: "Review deposit", exact: true })
+      .click();
+    await expect(
+      funding.getByRole("button", {
+        name: "Approve exact token amount in wallet",
+      }),
+    ).toBeEnabled();
+    await expect(funding.getByRole("alert")).toHaveCount(0);
+    expect(sends).toHaveLength(sentBeforeRestriction);
+    expect(
+      await page.evaluate(
+        (key) => sessionStorage.getItem(key),
+        bountyPendingKey,
+      ),
+    ).toBeNull();
     await page.getByLabel("Status", { exact: true }).selectOption("open");
     await page.getByRole("button", { name: "Review bounty terms" }).click();
     await page.getByRole("button", { name: "Publish bounty terms" }).click();
@@ -2026,8 +2721,8 @@ test("owner funds a separate bounty vault with private balances and no monthly r
       await page.request.get(`${origin}/api/v1/projects/${id}`)
     ).text();
     expect(publicProject).not.toMatch(/availableMinor|freeMinor|snapshotAt/);
-    expect(failed).toEqual([`503 ${privateUrl}`]);
-    expect(expectedPrivateErrors).toBe(1);
+    expect(failed).toEqual([`503 ${privateUrl}`, `503 ${privateUrl}`]);
+    expect(expectedPrivateErrors).toBe(2);
     expect(
       await page.evaluate(
         () => document.documentElement.scrollWidth <= innerWidth,
@@ -2038,6 +2733,26 @@ test("owner funds a separate bounty vault with private balances and no monthly r
       path: info.outputPath("bounty-vault-funded-open.png"),
       fullPage: true,
     });
+    // The old private read must not start after its owner view has gone.
+    let departedPrivateReads = 0;
+    await page.route(privateUrl, (route) => {
+      departedPrivateReads += 1;
+      return route.fallback();
+    });
+    await holdProjectSessionUntilUnmount(page, '[aria-label="Bounty funds"]');
+    await page.evaluate(() => {
+      const current = window.location.href;
+      window.history.replaceState(window.history.state, "", "/how-it-works");
+      window.history.pushState({}, "", current);
+    });
+    try {
+      await page.getByRole("button", { name: "Refresh bounty funds" }).click();
+      await leaveEditorWithHeldSession(page);
+      expect(departedPrivateReads).toBe(0);
+    } finally {
+      await releaseHeldEditorSession(page);
+      await page.unroute(privateUrl);
+    }
     await page.goto(`${origin}/projects/${project.slug}/manage`, {
       waitUntil: "networkidle",
     });
@@ -2078,8 +2793,54 @@ test("owner funds a separate bounty vault with private balances and no monthly r
     await expect(bountyFunds).toContainText(
       "Available for new awards: 10 USDC",
     );
-    expect(failed).toEqual([`503 ${privateUrl}`, `403 ${privateUrl}`]);
-    expect(expectedPrivateErrors).toBe(2);
+    expect(failed).toEqual([
+      `503 ${privateUrl}`,
+      `503 ${privateUrl}`,
+      `403 ${privateUrl}`,
+    ]);
+    expect(expectedPrivateErrors).toBe(3);
+    let releasePrivateRead = () => {},
+      privateReadStarted = () => {};
+    const privateReadWaiting = new Promise<void>((resolve) => {
+      privateReadStarted = resolve;
+    });
+    const privateReadRelease = new Promise<void>((resolve) => {
+      releasePrivateRead = resolve;
+    });
+    await page.route(privateUrl, async (route) => {
+      const response = await route.fetch();
+      privateReadStarted();
+      await privateReadRelease;
+      await route.fulfill({ response });
+    });
+    await page.getByRole("button", { name: "Refresh bounty funds" }).click();
+    await privateReadWaiting;
+    try {
+      // The private read was accepted for A. Change the next real UI session
+      // observation to B without a focus/navigation event before delivery.
+      await page.route("**/api/v1/project-session", (route) =>
+        route.fulfill({
+          json: {
+            session: {
+              githubId: "900000999",
+              githubLogin: "other-owner",
+              admin: false,
+            },
+          },
+        }),
+      );
+    } finally {
+      releasePrivateRead();
+    }
+    await expect(bountyFunds.getByRole("alert")).toContainText(
+      "account changed",
+    );
+    await expect(bountyFunds).not.toContainText(
+      "Available for new awards: 10 USDC",
+    );
+    await expect(funding).toHaveCount(0);
+    await page.unroute(privateUrl);
+    await page.unroute("**/api/v1/project-session");
   } finally {
     server.kill("SIGTERM");
     rmSync(temporary, { recursive: true, force: true });
@@ -2088,4 +2849,217 @@ test("owner funds a separate bounty vault with private balances and no monthly r
       contentType: "text/plain",
     });
   }
+});
+
+test("depositor approves and deposits with one wallet request when the wallet batches atomically", async ({
+  page,
+}) => {
+  // The fixture stands in for a wallet's atomic batch (EIP-5792): Anvil runs
+  // the calls in order from the same account, so the vault sees the depositor
+  // as sender. A real wallet's atomic execution is not exercised here.
+  let atomic: "supported" | "ready" = "ready";
+  let refuse: number | null = null;
+  let lastBatch:
+    | {
+        from: string;
+        chainId: string;
+        atomicRequired: boolean;
+        calls: { to: string; data: string; value: string }[];
+      }
+    | undefined;
+  const batches = new Map<string, string[]>();
+  const sends: string[] = [];
+  await page.exposeFunction(
+    "vaultWalletRequest",
+    async (method: string, params: unknown[]) => {
+      if (method === "eth_accounts" || method === "eth_requestAccounts")
+        return [donor];
+      if (method === "wallet_getCapabilities")
+        return { "0x14a34": { atomic: { status: atomic } } };
+      if (method === "wallet_sendCalls") {
+        if (refuse !== null) return { fixtureError: refuse };
+        lastBatch = params[0] as NonNullable<typeof lastBatch>;
+        const hashes: string[] = [];
+        for (const call of lastBatch.calls)
+          hashes.push(
+            await rpc("eth_sendTransaction", [
+              { from: lastBatch.from, ...call, gas: "0x100000" },
+            ]),
+          );
+        sends.push(...hashes);
+        const id = `0x${batches.size.toString(16).padStart(64, "b")}`;
+        batches.set(id, hashes);
+        return { id };
+      }
+      if (method === "wallet_getCallsStatus") {
+        const hashes = batches.get(String(params[0]));
+        if (!hashes) return { fixtureError: 5730 };
+        const receipt = await rpc("eth_getTransactionReceipt", [hashes.at(-1)]);
+        return {
+          version: "2.0.0",
+          id: params[0],
+          chainId: "0x14a34",
+          status: receipt ? 200 : 100,
+          atomic: true,
+          receipts: receipt ? [receipt] : [],
+        };
+      }
+      if (method === "eth_sendTransaction") {
+        const hash = await rpc(method, params);
+        sends.push(hash);
+        return hash;
+      }
+      return rpc(method, params);
+    },
+  );
+  await page.addInitScript(() => {
+    Object.assign(window, {
+      ethereum: {
+        isMetaMask: true,
+        request: async ({
+          method,
+          params = [],
+        }: {
+          method: string;
+          params?: unknown[];
+        }) => {
+          const value = await (
+            window as unknown as {
+              vaultWalletRequest: (
+                method: string,
+                params: unknown[],
+              ) => Promise<unknown>;
+            }
+          ).vaultWalletRequest(method, params);
+          const code = (value as { fixtureError?: number } | null)
+            ?.fixtureError;
+          if (typeof code === "number")
+            throw Object.assign(new Error("Wallet refused"), { code });
+          return value;
+        },
+      },
+    });
+  });
+  await page.route(
+    /\/(?:api\/v1\/projects|data\/fixture-project-registry\.json)$/,
+    (route) =>
+      route.fulfill({
+        json: {
+          schemaVersion: "1",
+          projects: PROJECTS.map((entry) =>
+            entry.id === project.id ? project : entry,
+          ),
+        },
+      }),
+  );
+  await serveProjectCycleIndex(page, [project.id]);
+  await serveProjectMaintainer(page, () => project);
+  await page.route("**/api/v1/payments/projects/eliza/vault", (route) =>
+    route.fulfill({
+      json: {
+        projectId: "eliza",
+        snapshots: [],
+        staleAfterMs: 60000,
+        servedAt: new Date().toISOString(),
+      },
+    }),
+  );
+  const tokenRead = async (
+    functionName: "balanceOf" | "allowance",
+    args: `0x${string}`[],
+  ) =>
+    BigInt(
+      await rpc("eth_call", [
+        {
+          to: deployment.asset,
+          data: encodeFunctionData({
+            abi: parseAbi([
+              "function balanceOf(address) view returns (uint256)",
+              "function allowance(address,address) view returns (uint256)",
+            ]),
+            functionName,
+            args: args as never,
+          }),
+        },
+        "latest",
+      ]),
+    );
+  const vault = deployment.vault as `0x${string}`;
+  const pendingKey = `slop:vault-action:v1:${deployment.network}:${deployment.vault}:${deployment.asset}`;
+  const saved = () =>
+    page.evaluate((key) => sessionStorage.getItem(key), pendingKey);
+  await page.goto("/projects/eliza/manage", { waitUntil: "networkidle" });
+  const actions = page.getByRole("region", {
+    name: "Fund or withdraw · Base Sepolia (test)",
+  });
+  const reviewDeposit = actions.getByRole("button", {
+    name: "Review deposit",
+    exact: true,
+  });
+  const separate = actions.getByRole("button", {
+    name: "Approve exact token amount in wallet",
+  });
+  const together = actions.getByRole("button", {
+    name: "Approve and deposit in wallet",
+    exact: true,
+  });
+  await actions
+    .getByRole("button", { name: "Connect MetaMask", exact: true })
+    .click();
+  await actions.getByLabel("Token amount", { exact: true }).fill("3");
+  // A wallet that would first have to upgrade the account is not asked to.
+  await reviewDeposit.click();
+  await expect(separate).toBeVisible();
+  await expect(together).toHaveCount(0);
+  atomic = "supported";
+  await reviewDeposit.click();
+  await expect(together).toBeVisible();
+  await expect(separate).toHaveCount(0);
+  await expectAccessible(page);
+  // A wallet that refuses the batch sent nothing: the two requests return.
+  refuse = 5760;
+  await together.click();
+  await expect(actions.getByRole("alert")).toContainText(
+    "could not send this as one request",
+  );
+  await expect(separate).toBeVisible();
+  expect(sends).toEqual([]);
+  expect(await saved()).toBeNull();
+  refuse = 4001;
+  await reviewDeposit.click();
+  await together.click();
+  await expect(actions.getByRole("alert")).toContainText("You declined");
+  expect(sends).toEqual([]);
+  expect(await saved()).toBeNull();
+  refuse = null;
+  const before = await tokenRead("balanceOf", [vault]);
+  await reviewDeposit.click();
+  await together.click();
+  await expect.poll(() => sends.length).toBe(2);
+  expect(lastBatch?.atomicRequired).toBe(true);
+  expect(lastBatch?.chainId).toBe("0x14a34");
+  expect(lastBatch?.calls.map((call) => call.to.toLowerCase())).toEqual([
+    deployment.asset.toLowerCase(),
+    deployment.vault.toLowerCase(),
+  ]);
+  // The wallet reports the batch confirmed, but its block is not final: the
+  // automatic check names the transaction and keeps the deposit pending.
+  await expect(actions).toContainText("Deposit awaiting verification");
+  await expect(actions.getByRole("status")).toContainText("Deposit received");
+  await expect(
+    actions.getByRole("link", { name: "View submitted transaction" }),
+  ).toBeVisible();
+  await expect(actions.getByText("Deposit verified")).toHaveCount(0);
+  expect(JSON.parse((await saved()) ?? "{}")).toMatchObject({
+    step: "batch",
+    hash: sends[1],
+    hashSource: "wallet",
+  });
+  await rpc("anvil_mine", ["0x40"]);
+  await expect(actions.getByRole("status")).toContainText("Deposit verified");
+  expect(await saved()).toBeNull();
+  expect(await tokenRead("balanceOf", [vault])).toBe(before + 3_000_000n);
+  expect(await tokenRead("allowance", [donor as `0x${string}`, vault])).toBe(
+    0n,
+  );
 });

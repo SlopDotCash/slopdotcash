@@ -40,15 +40,18 @@ async function createPaused(
 ) {
   const text = JSON.stringify(manifest);
   expect(
-    await persistence.createProject({
-      manifest,
-      manifestText: text,
-      manifestSha256: sha(text),
-      reason: "Created through self-service setup",
-      actor: ACTOR,
-      at: T,
-      referrer: null,
-    }),
+    await persistence.createProject(
+      {
+        manifest,
+        manifestText: text,
+        manifestSha256: sha(text),
+        reason: "Created through self-service setup",
+        actor: ACTOR,
+        at: T,
+        referrer: null,
+      },
+      await persistence.enforcementGeneration(),
+    ),
   ).toBe("created");
 }
 
@@ -215,5 +218,9 @@ test("a repository path acquired by another project before commit refuses the wh
         )
         .get("slopdotcash/asi") as { project_id: string }
     ).project_id,
-  }).toEqual({ result: "conflict", revision: 1, aliasOwner: other.id });
+  }).toEqual({
+    result: "repository_conflict",
+    revision: 1,
+    aliasOwner: other.id,
+  });
 });
