@@ -24,7 +24,6 @@ export type RadioGroupProps = Omit<ComponentProps<typeof RadioGroupPrimitive.Roo
 
 /**
  * One choice among a few, all visible; arrow keys move between them.
- * @model spec/ui/controls.md
  */
 export function RadioGroup({ legend, options, error, hint, disabled = false, className, ...props }: RadioGroupProps) {
   const { id, control, messages } = useDescription(error, hint);

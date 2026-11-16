@@ -10,7 +10,6 @@ export type SelectProps = ComponentProps<"select"> & {
 
 /**
  * A choice from a list, as the browser's own `select` of `option`s. Name it with a `Field`, a `Label` or `aria-label`.
- * @model spec/ui/controls.md
  */
 export function Select({ invalid = false, className, ...props }: SelectProps) {
   return (

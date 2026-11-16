@@ -21,7 +21,6 @@ export type SegmentedControlProps = Omit<ComponentProps<typeof ToggleGroupPrimit
 
 /**
  * One of a few views of the same content, such as a period: exactly one is always chosen.
- * @model spec/ui/controls.md
  */
 export function SegmentedControl({ options, value, onValueChange, disabled = false, className, ...props }: SegmentedControlProps) {
   return (

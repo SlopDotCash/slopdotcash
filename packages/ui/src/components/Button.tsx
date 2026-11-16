@@ -35,7 +35,6 @@ export type ButtonProps = ComponentProps<"button"> &
 
 /**
  * An action a person can take. Give one without text, such as an icon, an `aria-label`.
- * @model spec/ui/controls.md
  */
 export function Button({ variant, size, loading = false, asChild = false, type = "button", disabled = false, className, children, ...props }: ButtonProps) {
   const Comp = asChild ? Slot : "button";

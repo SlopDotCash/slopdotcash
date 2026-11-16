@@ -26,7 +26,6 @@ export type FileFieldProps = Omit<ComponentProps<"input">, "type" | "children" |
 
 /**
  * A file picker with the chosen file's preview and a remove action. Name it with a `Field`, a `Label` or `aria-label`.
- * @model spec/ui/controls.md
  */
 export function FileField({ onFiles, file, preview, onRemove, chooseLabel = "Choose file", removeLabel = "Remove", loading = false, invalid = false, disabled = false, className, ...props }: FileFieldProps) {
   return (

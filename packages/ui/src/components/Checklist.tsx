@@ -22,7 +22,6 @@ export type ChecklistProps = Omit<ComponentProps<"ul">, "children"> & {
 
 /**
  * Independent checks, each with what it found and whether it is ready.
- * @model spec/ui/status.md
  * @design design.md#design-system
  */
 // spec/ui/status.md, "Setup checks never look ready unless they are"

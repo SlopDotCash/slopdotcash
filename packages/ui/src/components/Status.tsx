@@ -36,7 +36,6 @@ export type StatusProps = Omit<ComponentProps<"span">, "children"> & {
 
 /**
  * A state as an icon and a word in its tone's color; the word is its accessible name.
- * @model spec/ui/status.md
  * @design design.md#design-system
  */
 // spec/ui/status.md, "A presentation is a tone, an icon and a word"

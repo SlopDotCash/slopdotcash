@@ -46,7 +46,6 @@ export type FieldProps = Omit<ComponentProps<"div">, "children"> & {
 
 /**
  * A labelled control with its error and hint beside it, announced with the control.
- * @model spec/ui/controls.md
  */
 export function Field({ label, error, hint, className, children, ...props }: FieldProps) {
   const { id, control, messages } = useDescription(error, hint);

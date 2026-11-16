@@ -15,7 +15,6 @@ export const fieldClass = cn(
 
 /**
  * A single-line text field. Name it with a `Field`, a `Label` or `aria-label`.
- * @model spec/ui/controls.md
  */
 export function Input({ invalid = false, className, ...props }: InputProps) {
   return <input aria-invalid={invalid || undefined} className={cn(fieldClass, "h-12", className)} {...props} />;

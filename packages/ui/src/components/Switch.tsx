@@ -11,7 +11,6 @@ export type SwitchProps = Omit<ComponentProps<typeof SwitchPrimitive.Root>, "chi
 
 /**
  * A setting that is on or off and takes effect at once. Name it with a `Label` or `aria-label`.
- * @model spec/ui/controls.md
  */
 export function Switch({ loading = false, disabled = false, className, ...props }: SwitchProps) {
   return (

@@ -19,7 +19,6 @@ export type AlertProps = ComponentProps<"div"> &
 
 /**
  * A message about what just happened, announced as its owning spec decides.
- * @model spec/ui/status.md
  */
 export function Alert({ variant, announcement = variant === "warn" || variant === "destructive" ? "Assertive" : "Polite", action, className, children, ...props }: AlertProps) {
   return (

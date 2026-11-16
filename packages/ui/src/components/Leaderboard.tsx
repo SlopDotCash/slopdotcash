@@ -23,7 +23,6 @@ export type LeaderboardProps = Omit<TableProps, "children"> & {
 
 /**
  * Points standings. Ranks are shown as given, so equal totals read as equal ranks.
- * @model spec/frontend/projections.md
  */
 export function Leaderboard({ rows, headings = { rank: "Rank", actor: "Contributor", points: "Points", share: "Share" }, ...props }: LeaderboardProps) {
   const shares = rows.some((row) => row.share !== undefined);

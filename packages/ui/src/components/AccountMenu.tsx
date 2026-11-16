@@ -32,7 +32,6 @@ const item =
  * ends the account's private views. Escape and a click outside close it; the page behind stays readable while it is open.
  * spec/frontend/navigation.md, "Navigation gates private destinations on a signed-in account";
  * spec/frontend/presentation.md, "Settings keeps wallet and email controls expanded without account navigation tabs".
- * @model spec/ui/controls.md
  */
 export function AccountMenu({ login, avatarUrl, points, children, onSignOut, loading = false, signOutLabel = "Sign out" }: AccountMenuProps) {
   return (
