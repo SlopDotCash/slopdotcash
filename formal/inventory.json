@@ -4604,9 +4604,9 @@
     },
     {
       "path": "scripts/reviewed-historical-points.ts",
-      "sha256": "798e72dec5fc9634bd293c34bacca85d569738c5adf0b8b27f15406440e39d0d",
+      "sha256": "e62dd7fb8e3821aab56f328788a62b63e5abe0c3ad189821f055cbea5a3fd5b9",
       "models": ["formal/models/points/source_import.qnt"],
-      "candidateLines": [423, 609, 821],
+      "candidateLines": [423, 611, 823],
       "review": "mapped-abstraction"
     },
     {
