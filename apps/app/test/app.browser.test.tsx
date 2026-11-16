@@ -69,6 +69,7 @@ it("Open a page by its address, an old one included, and one that names nothing"
   await expect.element(page.getByRole("link", { name: "How It Works" })).toHaveAttribute("aria-current", "page");
   await userEvent.keyboard("{Tab}");
   await expect.poll(() => document.activeElement?.getAttribute("aria-label")).toBe("Slop home");
+  expect(getComputedStyle(document.activeElement!).boxShadow).not.toBe("none");
   await userEvent.keyboard("{Tab}");
   await expect.poll(() => document.activeElement?.textContent).toBe("How It Works");
   await userEvent.keyboard("{Tab}");

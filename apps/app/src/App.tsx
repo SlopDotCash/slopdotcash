@@ -1,5 +1,5 @@
 // spec/app/index.md, "Story: Open a page by its address"
-import { Alert, Button, ExternalLink, Logo, NavTab, NavTabs, NotFound, PageHeader, SiteFooter, SiteHeader } from "@repo/ui";
+import { Alert, Button, cn, ExternalLink, focusRing, Logo, NavTab, NavTabs, NotFound, PageHeader, SiteFooter, SiteHeader } from "@repo/ui";
 import type { ManagedRuntime } from "effect";
 import { useEffect } from "react";
 import type { Machine } from "../gen/app.effect.vibe";
@@ -65,7 +65,7 @@ export function App({ runtime, path, search, hash, hostname }: AppProps) {
   return (
     <div className="flex min-h-dvh flex-col">
       <SiteHeader
-        brand={<a href="/" aria-label="Slop home" className="rounded-sm"><Logo wordmark label={domainOf(hostname)} /></a>}
+        brand={<a href="/" aria-label="Slop home" className={cn(focusRing, "rounded-sm")}><Logo wordmark label={domainOf(hostname)} /></a>}
         nav={<NavTabs label="Main"><NavTab href="/how-it-works" current={route.kind === "HowItWorks"}>How It Works</NavTab></NavTabs>}
         account={<Button asChild variant="outline" size="sm"><a href="/login">Log in</a></Button>}
       />
