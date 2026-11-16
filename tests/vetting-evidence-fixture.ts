@@ -3,6 +3,7 @@
  * terms are the fixed source policy; the recorded owner and reader IDs are
  * exported for synthetic sessions.
  */
+import { type ChildProcess, spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import type { ProjectD1Database } from "../backend/projects/cloudflare-persistence";
 import type { R2Bucket } from "../backend/trace/cloudflare-persistence";
@@ -30,23 +31,16 @@ export const EVIDENCE_READER_GITHUB_ID = (() => {
   return others[0];
 })();
 
-/** Stop only this fixture child, escalating when its shutdown does not finish. */
+/** Stop only this fixture process, independently of inherited pipe closure. */
 export async function stopVettingEvidence(
-  child: Pick<
-    ReturnType<typeof Bun.spawn>,
-    "pid" | "stdin" | "kill" | "exited"
-  >,
+  child: ChildProcess,
   graceMs = 4000,
   ownsProcessGroup = false,
 ) {
-  try {
-    if (child.stdin && typeof child.stdin !== "number") child.stdin.end();
-  } catch {
-    /* A prior shutdown may already have closed stdin. */
-  }
   let signalError: unknown;
   const signal = (name: "SIGTERM" | "SIGKILL") => {
     if (!ownsProcessGroup) return child.kill(name);
+    if (!child.pid) return;
     try {
       process.kill(-child.pid, name);
     } catch (error) {
@@ -54,12 +48,29 @@ export async function stopVettingEvidence(
         signalError = error;
     }
   };
+  let onExit: (code: number | null) => void = () => {};
+  let onError: (error: Error) => void = () => {};
+  const exited = new Promise<number | null>((resolve, reject) => {
+    onExit = resolve;
+    onError = reject;
+    // `exit` reports the process termination without waiting for inherited
+    // stdout handles. `close` and Bun's exited promise may wait for those.
+    child.once("exit", onExit);
+    child.once("error", onError);
+    if (child.exitCode !== null || child.signalCode !== null)
+      resolve(child.exitCode);
+  });
+  try {
+    child.stdin?.end();
+  } catch {
+    /* A prior shutdown may already have closed stdin. */
+  }
   const terminate = setTimeout(() => signal("SIGTERM"), graceMs);
   const force = setTimeout(() => signal("SIGKILL"), graceMs + 1000);
   let deadline: ReturnType<typeof setTimeout> | undefined;
   try {
     const result = await Promise.race([
-      child.exited,
+      exited,
       new Promise<never>((_, reject) => {
         deadline = setTimeout(
           () => reject(new Error("Local R2 shutdown timed out")),
@@ -73,6 +84,13 @@ export async function stopVettingEvidence(
     clearTimeout(terminate);
     clearTimeout(force);
     clearTimeout(deadline);
+    // A parent that exits first must not leave its owned descendants running.
+    if (ownsProcessGroup) signal("SIGKILL");
+    child.removeListener("exit", onExit);
+    child.removeListener("error", onError);
+    child.stdin?.destroy();
+    child.stdout?.destroy();
+    child.stderr?.destroy();
   }
 }
 
@@ -80,50 +98,53 @@ export async function localVettingEvidence(
   db: ProjectD1Database,
   now: () => Date,
 ) {
-  const child = Bun.spawn(
-    [
-      "node",
-      fileURLToPath(new URL("./vetting-evidence-r2.mjs", import.meta.url)),
-    ],
+  const child = spawn(
+    "node",
+    [fileURLToPath(new URL("./vetting-evidence-r2.mjs", import.meta.url))],
     {
-      stdin: "pipe",
-      stdout: "pipe",
-      stderr: "inherit",
+      stdio: ["pipe", "pipe", "inherit"],
       detached: process.platform !== "win32",
     },
   );
   let startupTimer: ReturnType<typeof setTimeout> | undefined;
   let origin: string;
-  const reader = child.stdout.getReader();
+  let line = "";
+  let onData: (chunk: Buffer) => void = () => {};
+  let onEnd: () => void = () => {};
+  let onError: (error: Error) => void = () => {};
   try {
-    origin = await Promise.race([
-      (async () => {
-        let line = "";
-        while (!line.includes("\n")) {
-          const chunk = await reader.read();
-          if (chunk.done) throw new Error("Local R2 startup failed");
-          line += new TextDecoder().decode(chunk.value);
-          if (line.length > 256)
-            throw new Error("Invalid local R2 startup line");
-        }
-        return line.trim();
-      })(),
-      new Promise<never>((_, reject) => {
-        startupTimer = setTimeout(
-          () => reject(new Error("Local R2 startup timed out")),
-          15000,
-        );
-      }),
-    ]);
+    origin = await new Promise<string>((resolve, reject) => {
+      onData = (chunk) => {
+        line += chunk.toString("utf8");
+        if (line.length > 256)
+          reject(new Error("Invalid local R2 startup line"));
+        else if (line.includes("\n")) resolve(line.trim());
+      };
+      onEnd = () => reject(new Error("Local R2 startup failed"));
+      onError = reject;
+      child.stdout.on("data", onData);
+      child.stdout.once("end", onEnd);
+      child.once("error", onError);
+      child.once("exit", onEnd);
+      startupTimer = setTimeout(
+        () => reject(new Error("Local R2 startup timed out")),
+        15000,
+      );
+    });
     const parsed = new URL(origin);
     if (parsed.protocol !== "http:" || parsed.hostname !== "127.0.0.1")
       throw new Error("Invalid local R2 origin");
   } catch (error) {
-    await stopVettingEvidence(child, 4000, process.platform !== "win32");
+    if (child.pid)
+      await stopVettingEvidence(child, 4000, process.platform !== "win32");
     throw error;
   } finally {
     clearTimeout(startupTimer);
-    reader.releaseLock();
+    child.stdout.removeListener("data", onData);
+    child.stdout.removeListener("end", onEnd);
+    child.removeListener("error", onError);
+    child.removeListener("exit", onEnd);
+    child.stdout.resume();
   }
   async function dispose() {
     if (

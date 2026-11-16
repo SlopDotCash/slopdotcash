@@ -1,34 +1,58 @@
 import { expect, test } from "bun:test";
+import { type ChildProcess, spawn } from "node:child_process";
+import { once } from "node:events";
 import { stopVettingEvidence } from "../tests/vetting-evidence-fixture";
 
+function ready(child: ChildProcess): Promise<string> {
+  return new Promise((resolve, reject) => {
+    if (!child.stdout) return reject(new Error("Missing fixture stdout"));
+    child.stdout.once("data", (chunk) => resolve(String(chunk).trim()));
+    child.once("error", reject);
+  });
+}
+
+function running(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+  } catch {
+    return false;
+  }
+  return true;
+}
+
+async function stopped(pid: number) {
+  for (let i = 0; i < 20; i++) {
+    if (!running(pid)) return true;
+    await Bun.sleep(20);
+  }
+  // An orphaned Linux zombie has no running code or inherited pipe handle.
+  if (process.platform === "linux") {
+    const { readFileSync } = await import("node:fs");
+    const stat = readFileSync(`/proc/${pid}/stat`, "utf8");
+    return /^[ZX] /.test(stat.slice(stat.lastIndexOf(")") + 2));
+  }
+  return false;
+}
+
 test("fixture shutdown terminates a child that ignores EOF and SIGTERM", async () => {
-  const child = Bun.spawn(
+  const child = spawn(
+    process.execPath,
     [
-      process.execPath,
       "-e",
       `process.on('SIGTERM',()=>{});process.stdin.resume();process.stdin.on('end',()=>{});setInterval(()=>{},1000);console.log('ready');`,
     ],
-    { stdin: "pipe", stdout: "pipe", stderr: "pipe" },
+    { stdio: "pipe" },
   );
-  const reader = child.stdout.getReader();
-  try {
-    const ready = await reader.read();
-    expect(new TextDecoder().decode(ready.value)).toContain("ready");
-  } finally {
-    reader.releaseLock();
-  }
+  expect(await ready(child)).toBe("ready");
   const started = Date.now();
-  const result = await stopVettingEvidence(child, 20);
-  expect(result).not.toBe(0);
+  expect(await stopVettingEvidence(child, 20)).toBeNull();
   expect(Date.now() - started).toBeLessThan(2500);
   expect(child.signalCode).toBe("SIGKILL");
 }, 5000);
 
 test("fixture shutdown preserves a clean exit without waiting for escalation", async () => {
-  const child = Bun.spawn([process.execPath, "-e", `process.stdin.resume();`], {
-    stdin: "pipe",
-    stdout: "pipe",
-    stderr: "pipe",
+  const child = spawn(process.execPath, ["-e", `process.stdin.resume();`], {
+    stdio: "pipe",
   });
   expect(await stopVettingEvidence(child, 1000)).toBe(0);
   expect(await stopVettingEvidence(child, 1000)).toBe(0);
@@ -36,73 +60,61 @@ test("fixture shutdown preserves a clean exit without waiting for escalation", a
 
 test("fixture shutdown always settles when termination cannot reap a child", async () => {
   const signals: (string | number | undefined)[] = [];
-  const child = {
+  const child = new (
+    await import("node:events")
+  ).EventEmitter() as ChildProcess;
+  Object.assign(child, {
     pid: 0,
-    stdin: { end() {} },
+    exitCode: null,
+    signalCode: null,
+    stdin: { end() {}, destroy() {} },
     kill(signal?: string | number) {
       signals.push(signal);
       return true;
     },
-    exited: new Promise<number>(() => {}),
-  };
-  await expect(stopVettingEvidence(child as never, 0)).rejects.toThrow(
+  });
+  await expect(stopVettingEvidence(child, 0)).rejects.toThrow(
     "shutdown timed out",
   );
   expect(signals).toEqual(["SIGTERM", "SIGKILL"]);
 }, 3000);
 
-test.skipIf(process.platform === "win32")(
-  "fixture process group stops inherited-pipe descendants and preserves unrelated children",
-  async () => {
-    const unrelated = Bun.spawn(
-      [process.execPath, "-e", "setInterval(()=>{},1000)"],
-      { stdin: "ignore", stdout: "ignore", stderr: "ignore" },
-    );
-    const script = `const {spawn}=require('node:child_process');const child=spawn(process.execPath,['-e',"process.on('SIGTERM',()=>{});setInterval(()=>{},1000)"],{stdio:['ignore','inherit','inherit']});process.on('SIGTERM',()=>{});process.stdin.resume();process.stdin.on('end',()=>{});console.log(child.pid);setInterval(()=>{},1000);`;
-    const owned = Bun.spawn([process.execPath, "-e", script], {
-      detached: true,
-      stdin: "pipe",
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const reader = owned.stdout.getReader();
-    let descendant = 0;
-    try {
+for (const parentExits of [false, true]) {
+  test.skipIf(process.platform === "win32")(
+    `fixture group stops inherited-pipe descendants when parent ${parentExits ? "already exited" : "ignores TERM"}`,
+    async () => {
+      const unrelated = spawn(
+        process.execPath,
+        ["-e", "setInterval(()=>{},1000)"],
+        { stdio: "ignore" },
+      );
+      const script = `const {spawn}=require('node:child_process');const child=spawn(process.execPath,['-e',"process.on('SIGTERM',()=>{});setInterval(()=>{},1000)"],{stdio:['ignore','inherit','inherit']});console.log(child.pid);${parentExits ? "child.unref();process.exit(0);" : "process.on('SIGTERM',()=>{});process.stdin.resume();process.stdin.on('end',()=>{});setInterval(()=>{},1000);"}`;
+      const owned = spawn(process.execPath, ["-e", script], {
+        detached: true,
+        stdio: "pipe",
+      });
+      const exited = once(owned, "exit");
+      let descendant = 0;
       try {
-        const ready = await reader.read();
-        descendant = Number(new TextDecoder().decode(ready.value).trim());
+        descendant = Number(await ready(owned));
+        expect(descendant).toBeGreaterThan(0);
+        if (parentExits) await exited;
+        expect(await stopVettingEvidence(owned, 20, true)).toBe(
+          parentExits ? 0 : null,
+        );
+        expect(await stopped(descendant)).toBe(true);
+        expect(unrelated.exitCode).toBeNull();
+        expect(unrelated.signalCode).toBeNull();
+        expect(unrelated.pid && running(unrelated.pid)).toBe(true);
       } finally {
-        reader.releaseLock();
-      }
-      expect(descendant).toBeGreaterThan(0);
-      await stopVettingEvidence(owned, 20, true);
-      expect(owned.signalCode).toBe("SIGKILL");
-      let alive = true;
-      for (let i = 0; i < 20; i++) {
         try {
-          process.kill(descendant, 0);
-        } catch {
-          alive = false;
-          break;
-        }
-        await Bun.sleep(20);
+          if (owned.pid) process.kill(-owned.pid, "SIGKILL");
+        } catch {}
+        const unrelatedExit = once(unrelated, "exit");
+        unrelated.kill("SIGKILL");
+        await unrelatedExit;
       }
-      // An orphaned Linux zombie has no running code or inherited pipe handle.
-      if (alive && process.platform === "linux") {
-        const { readFileSync } = await import("node:fs");
-        const stat = readFileSync(`/proc/${descendant}/stat`, "utf8");
-        alive = !/^[ZX] /.test(stat.slice(stat.lastIndexOf(")") + 2));
-      }
-      expect(alive).toBe(false);
-      expect(unrelated.signalCode).toBeNull();
-      process.kill(unrelated.pid, 0);
-    } finally {
-      try {
-        process.kill(-owned.pid, "SIGKILL");
-      } catch {}
-      unrelated.kill("SIGKILL");
-      await unrelated.exited;
-    }
-  },
-  5000,
-);
+    },
+    5000,
+  );
+}
