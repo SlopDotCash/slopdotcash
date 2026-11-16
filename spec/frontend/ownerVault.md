@@ -28,8 +28,8 @@ adapter (`-1`) or the page's timer (`-2`). Each flow's saved request is a
 
 The owner reviews the creation against the current project revision, or a
 deposit or withdrawal against the registered vault. Sending creates the
-flow's slot first; an occupied slot or a storage failure asks nothing of the
-wallet.
+flow's slot first; an occupied slot, including one another account left in
+this browser, or a storage failure asks nothing of the wallet.
 
 ```quint
 import walletAttempt as WA from "./walletAttempt"
@@ -91,9 +91,8 @@ pure def canSend(v: OwnerVault, target: Target, identity: str, stored: bool, by:
   v.owner > 0 and by == v.owner and flowOf(v, target).phase == Reviewed and identity != "" and not(v.used.includes(identity))
 pure def send(v: OwnerVault, target: Target, identity: str, stored: bool, by: int): OwnerVault =
   val flow = flowOf(v, target)
-  val free = WA::mayCreate(flow.slot) or flow.slotOwner != v.owner
   if (not(stored)) { ...v, notice: StorageBlocked }
-  else if (not(free)) { ...v, notice: Occupied }
+  else if (not(WA::mayCreate(flow.slot))) { ...v, notice: Occupied }
   else withFlow(target, { ...flow, phase: Awaiting, awaiting: identity, slotOwner: v.owner, sentLifetime: v.lifetime,
     slot: { ...WA::noAttempt, identity: identity, bytesId: if (target == Creation) "creation" else "transfer" } },
     { ...v, notice: Quiet, used: v.used.append(identity) })
@@ -203,7 +202,13 @@ pure def flowSaved(flow: Flow): bool =
   and (flow.phase == Sent implies (flow.slot.hash != "" or flow.slot.candidate != ""))
   and flow.autoAsks >= 0 and flow.autoAsks <= autoAskLimit and flow.refusals >= 0
 pure def alwaysLiveRequestsAreSaved(v: OwnerVault): bool = flowSaved(v.creation) and flowSaved(v.transfer)
-pure def alwaysTransfersNeedRegistration(v: OwnerVault): bool = v.transfer.phase != Idle implies v.creation.phase == Done
+pure def alwaysTransfersNeedRegistration(v: OwnerVault): bool =
+  (v.transfer.phase != Idle or v.transfer.slot != WA::noAttempt) implies v.creation.phase == Done
+pure def flowOwned(flow: Flow, v: OwnerVault): bool = (flow.slot != WA::noAttempt implies flow.slotOwner > 0)
+  and ((flow.phase == Awaiting or flow.phase == Sent or flow.phase == Unclear) implies flow.slotOwner == v.owner and v.owner > 0)
+  and (flow.phase == Awaiting implies flow.sentLifetime == v.lifetime)
+  and flow.sentLifetime >= 0 and flow.sentLifetime <= v.lifetime
+pure def alwaysAttemptsBelongToTheirAccount(v: OwnerVault): bool = flowOwned(v.creation, v) and flowOwned(v.transfer, v)
 pure def alwaysSignedOutIsIdle(v: OwnerVault): bool = v.owner == 0 implies
   (v.creation.phase == Idle or v.creation.phase == Done) and (v.transfer.phase == Idle or v.transfer.phase == Done)
     and not(v.editing)

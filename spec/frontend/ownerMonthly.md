@@ -213,6 +213,7 @@ pure def recheckAuthority(v: OwnerMonthly, lifetime: int, manages: bool, by: int
 pure def flowSaved(flow: Flow): bool =
   (flow.phase == Awaiting implies flow.slot.identity == flow.awaiting and flow.awaiting != "")
   and ((flow.phase == Sent or flow.phase == Unclear) implies flow.slot != WA::noAttempt)
+  and (flow.slot != WA::noAttempt implies flow.slotOwner > 0)
 pure def alwaysAttemptsSaved(v: OwnerMonthly): bool = flowSaved(v.commitment) and flowSaved(v.setting) and flowSaved(v.release)
 pure def ownFlow(flow: Flow, account: int): bool =
   (flow.phase == Awaiting or flow.phase == Sent or flow.phase == Unclear) implies flow.slotOwner == account
@@ -245,7 +246,7 @@ pure def sometimesCommitmentRecoveredAfterSignOut(v: OwnerMonthly): bool = v.own
 pure val accountValues = Set(1, 2)
 pure val byValues = Set(1, 2, server, adapter, clock)
 pure val lifetimeValues = Set(1, 2)
-pure val requestValues = Set(1, 2, 3)
+pure val requestValues = Set(1, 2)
 pure val nowValues = Set(100000, 180000, 200000)
 pure val monthValues = Set({ sequence: 0, automatic: true, cutoffAt: 190000, latestCutAt: 0, frozen: false },
   { sequence: 1, automatic: true, cutoffAt: 190000, latestCutAt: 0, frozen: false },
@@ -261,8 +262,8 @@ pure val weight_save = 12
 pure val weight_saveReply = 16
 pure val weight_finalize = 10
 pure val weight_finalizeReply = 16
-pure val weight_review = 6
-pure val weight_send = 8
-pure val weight_walletReply = 12
-pure val weight_check = 8
+pure val weight_review = 3
+pure val weight_send = 4
+pure val weight_walletReply = 6
+pure val weight_check = 4
 ```
