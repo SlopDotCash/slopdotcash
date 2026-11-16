@@ -1,8 +1,10 @@
 /** Fresh native D1 authority reads: PRD5/9/11. No model or public API calls. */
 import { expect, test } from "bun:test";
 import { createHash } from "node:crypto";
-import { enforcementStatement } from "../../backend/projects/cloudflare-persistence";
-import { CloudflareProjectPersistence } from "../../backend/projects/cloudflare-persistence";
+import {
+  CloudflareProjectPersistence,
+  enforcementStatement,
+} from "../../backend/projects/cloudflare-persistence";
 import type { ProjectEnforcement } from "../../src/lib/project-contracts";
 import { assertProjectDefinition } from "../../src/lib/project-schema.mjs";
 import { fixtureProject } from "../../tests/fixture-overlay.mjs";
