@@ -685,6 +685,7 @@
       "sha256": "af79786b4b5096cbdfd3fb999a92bd05295b23c061f8a6650d7256099b98ce49",
       "models": [
         "formal/models/api/api_project_enforcement.qnt",
+        "formal/models/api/api_project_removal.qnt",
         "formal/models/vetting/vetting_flag_reinstatement.qnt",
         "formal/models/vetting/vetting_reinstatement_repositories.qnt",
         "formal/models/vetting/vetting_reinstatement_terminal.qnt"
@@ -710,7 +711,7 @@
     },
     {
       "path": "backend/projects/handler.ts",
-      "sha256": "d7b50e2db234ce8a2d6c3814ccef1b534c7ee79e30bc051ecb255fde73c8bf79",
+      "sha256": "0d8c22c01369ded76c39cf59add2094fb3dea999cf161a05479d216fd9a41afb",
       "models": [
         "formal/models/api/api_owner_vault_lifecycle.qnt",
         "formal/models/api/api_project_creation_completion.qnt",
@@ -744,10 +745,10 @@
         1166, 1172, 1181, 1183, 1188, 1189, 1190, 1191, 1203, 1204, 1205, 1208,
         1213, 1252, 1311, 1361, 1395, 1413, 1481, 1563, 1574, 1577, 1578, 1588,
         1592, 1612, 1654, 1660, 1664, 1682, 1688, 1724, 1732, 1735, 1736, 1786,
-        1787, 1788, 1808, 1853, 1854, 1862, 1882, 1884, 1888, 1899, 1909, 1924,
-        1930, 1940, 1977, 1996, 2000, 2051, 2196, 2200, 2227, 2248, 2249, 2263,
-        2266, 2271, 2272, 2318, 2332, 2350, 2367, 2399, 2408, 2552, 2578, 2729,
-        2749, 2795, 2835, 2846, 2847, 2960, 2968, 2986, 3183
+        1787, 1788, 1808, 1853, 1854, 1866, 1887, 1889, 1893, 1904, 1914, 1929,
+        1935, 1945, 1982, 2001, 2005, 2056, 2204, 2208, 2235, 2256, 2257, 2271,
+        2274, 2279, 2280, 2326, 2340, 2358, 2375, 2407, 2411, 2421, 2430, 2574,
+        2600, 2751, 2771, 2817, 2857, 2868, 2869, 2982, 2990, 3008, 3205
       ],
       "review": "mapped-abstraction"
     },
@@ -837,6 +838,7 @@
       "sha256": "b2d69694a9ffd3ba13fe8baf423b50ac6f709441d857fa4b89679cd60fc4218c",
       "models": [
         "formal/models/api/api_project_enforcement.qnt",
+        "formal/models/api/api_project_removal.qnt",
         "formal/models/vetting/vetting_flag_reinstatement.qnt"
       ],
       "candidateLines": [
@@ -10350,11 +10352,13 @@
     },
     {
       "path": "formal/models/api/api_project_removal.qnt",
-      "sha256": "a034e2d1692d2fd57844f53e811717c832bdc32dcaf6a65e1d1df5961e215415",
+      "sha256": "b001eae33eb16d90c0fca8b4b0f91a3db1261fcfb25c952c39c7e48a9c43a53b",
       "sources": [
         "backend/projects/cloudflare-persistence.ts",
         "backend/projects/contracts.ts",
+        "backend/projects/enforcement.ts",
         "backend/projects/handler.ts",
+        "backend/projects/verified-enforcement.ts",
         "migrations/0121_project_application_cancellation.sql",
         "src/lib/project-contracts.ts"
       ],
@@ -10371,8 +10375,12 @@
         "nonMaintainerCannotRemoveTest",
         "preparedUpdateCannotRestoreRemovedProjectTest",
         "publicationWinsCancellationRaceTest",
+        "removalBeforeRestrictionSurvivesReinstatementTest",
         "removalRetainsHistoryAndObligationsTest",
         "removedProjectRejectsPreparedSetupTest",
+        "restrictionDuringRemovalRefusesItTest",
+        "restrictionRetirementIsNoRemovalTest",
+        "staleRemovalDuringRestrictionIsRefusedTest",
         "staleUpdateCanStillBeCancelledTest",
         "unavailableAuthorityDoesNotRemoveTest"
       ]
