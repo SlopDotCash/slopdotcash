@@ -1,0 +1,48 @@
+name: Reconcile reviewed payment events
+on:
+  workflow_dispatch:
+    inputs:
+      packet_sha256:
+        description: Exact SHA-256 of the private reviewed receipt packet
+        type: string
+        required: true
+      apply:
+        description: Index the verified receipts through the canonical payment ledger
+        type: boolean
+        default: false
+permissions:
+  contents: read
+jobs:
+  reconcile:
+    if: github.ref == 'refs/heads/main'
+    environment: slop-production
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    concurrency:
+      group: slop-reviewed-payment-reconciliation
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
+        with:
+          bun-version: "1.3.14"
+      - run: bun install --frozen-lockfile --ignore-scripts
+      - name: Verify and reconcile the reviewed receipt packet
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          PAYMENT_RPC_URLS: ${{ secrets.PAYMENT_RPC_URLS }}
+          SLOP_PAYMENT_RECONCILIATION_PACKET: ${{ secrets.SLOP_PAYMENT_RECONCILIATION_PACKET }}
+          SLOP_PAYMENT_RECONCILIATION_SHA256: ${{ inputs.packet_sha256 }}
+          SLOP_PAYMENT_RECONCILIATION_APPLY: ${{ inputs.apply }}
+        run: bun --no-env-file scripts/reconcile-payment-events.ts
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: always()
+        with:
+          name: payment-event-reconciliation-${{ github.run_id }}
+          path: ${{ runner.temp }}/payment-event-reconciliation.json
+          if-no-files-found: warn
+          retention-days: 30
