@@ -312,13 +312,13 @@ pure val earlyReceipt: AdvisoryRead = { status: Found, facts: earlyCopy, current
   currentContacts: true, competingCase: false, writeCommitted: true, privateReport: true, githubState: Triage }
 pure val advisoryReadValues = Set(earlyReceipt, { ...earlyReceipt, currentContacts: false }, { ...earlyReceipt, facts: lateCopy },
   { ...earlyReceipt, status: NotFound }, { ...earlyReceipt, competingCase: true })
-pure val weight_holdLateCopy = 45
-pure val weight_claimSend = 22
-pure val weight_recordClaimRead = 35
-pure val weight_startPost = 60
-pure val weight_recordPostResult = 70
-pure val weight_recordCreated = 64
-pure val weight_reconcile = 35
-pure val weight_readReceipt = 50
-pure val weight_loseReceiptReply = 60
+pure val weight_holdLateCopy = 3
+pure val weight_claimSend = 2
+pure val weight_recordClaimRead = 3
+pure val weight_startPost = 4
+pure val weight_recordPostResult = 4
+pure val weight_recordCreated = 4
+pure val weight_reconcile = 3
+pure val weight_readReceipt = 3
+pure val weight_loseReceiptReply = 4
 ```
