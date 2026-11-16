@@ -8055,11 +8055,11 @@
     },
     {
       "path": "workers/payment-executor/bootstrap-workflow.mjs",
-      "sha256": "173f6a7e13de315e5b956bc0e4f563799bace9b1f9f5c500010f6c6600a431a3",
+      "sha256": "b51b2304724b242f90981a404b1dcd868d2c47bce3b96daff1b83b506ab35896",
       "models": ["formal/models/payments/inactive_attester.qnt"],
       "candidateLines": [
-        3, 37, 56, 73, 76, 80, 83, 95, 97, 113, 171, 183, 186, 204, 218, 220,
-        226, 228, 243, 269, 288, 299, 302, 332, 336, 337, 344
+        3, 37, 56, 74, 77, 92, 96, 106, 108, 124, 182, 194, 197, 215, 229, 231,
+        237, 239, 254, 280, 299, 310, 313, 343, 347, 348, 355
       ],
       "review": "mapped-abstraction"
     },
@@ -8154,9 +8154,11 @@
     },
     {
       "path": "workers/payment-executor/release-mainnets.mjs",
-      "sha256": "6bddee9f5a80aebec4cd5e96bbf910e99876d3ca71b93b41d26cc1b18fe5ad3a",
+      "sha256": "2f0a7dbf361080bc50d66d9293f4233bed3efefc9dfe738facdafb699b2bece6",
       "models": ["formal/models/payments/deployment_plan.qnt"],
-      "candidateLines": [3, 15, 26, 30, 53, 85, 111, 137, 194, 208, 243],
+      "candidateLines": [
+        3, 5, 15, 26, 30, 53, 85, 111, 137, 181, 225, 230, 284, 319
+      ],
       "review": "mapped-abstraction"
     },
     {
