@@ -390,3 +390,82 @@ test("RPC method diagnostic returns only an enumerated exact client prefix", () 
   ]);
   expect(JSON.stringify(result)).not.toContain(secret);
 });
+
+test("diagnostic parser failures and public addresses remain narrowly classified", () => {
+  expect(feeErrorCategory("Unexpected token < in JSON at position 0")).toBe(
+    "response-json",
+  );
+  expect(feeErrorCategory("Jupiter quote: invalid route")).toBe(
+    "quote-provider",
+  );
+  expect(feeErrorCategory("Invalid RPC object")).toBe("rpc-shape");
+  expect(feeErrorCategory("Not a supported token program account")).toBe(
+    "unsupported-token-account",
+  );
+  expect(feeErrorCategory("Token account data is unavailable")).toBe(
+    "unsupported-token-account",
+  );
+  expect(
+    feeErrorCategory("Cannot read properties of undefined (reading 'value')"),
+  ).toBe("rpc-shape");
+  expect(
+    feeErrorCategory("Bridge quote differs from the requested order"),
+  ).toBe("bridge-verification");
+  expect(feeErrorCategory("Jupiter quote: HTTP 429")).toBe("rpc-rate-limit");
+  expect(feeErrorCategory("Jupiter quote: HTTP 401")).toBe("authentication");
+  const address = "9EyxVhhnCJH4QL5bDsRyukrkHFyitFMuf45UDdLxm4BY";
+  const safe = sanitizeFeeTail({
+    scriptName: "slop-fee-converter",
+    logs: [
+      {
+        message: [
+          {
+            event: "fee_conversion_error",
+            network: "solana",
+            token: address,
+            error: "Unexpected token < in JSON at position 0",
+          },
+          {
+            event: "fee_claim_error",
+            network: "solana",
+            vault: "https://private.invalid/key",
+            token: secret,
+            error: secret,
+          },
+          {
+            event: "fee_buyback_error",
+            network: "solana",
+            leg: "bridge",
+            token: address,
+            error: "Unexpected token < in JSON at position 0",
+          },
+          {
+            event: "fee_buyback_error",
+            network: "unrecognized",
+            leg: secret,
+            token: address,
+            error: "sensitive arbitrary text",
+          },
+        ],
+      },
+    ],
+  });
+  expect(safe?.records[0]).toEqual({
+    event: "fee_conversion_error",
+    network: "solana",
+    token: address,
+    errorCategory: "response-json",
+  });
+  expect(JSON.stringify(safe)).not.toContain("private.invalid");
+  expect(safe?.records[2]).toEqual({
+    event: "fee_buyback_error",
+    network: "solana",
+    leg: "bridge",
+    token: address,
+    errorCategory: "response-json",
+  });
+  expect(safe?.records[3]).toEqual({
+    event: "fee_buyback_error",
+    errorCategory: "other",
+  });
+});
