@@ -514,11 +514,11 @@ pure val awardValues = Set(awardFact(1, List(2), false)).union(Set(awardFact(1, 
   .union(Set(awardFact(2, List(7), false))).union(Set(awardFact(2, List(7), true))).union(Set(awardFact(2, List(6), false)))
 pure val weight_observeClock = 6
 pure val weight_propose = 6
-pure val weight_observeRevision = 4
-pure val weight_adjust = 8
+pure val weight_observeRevision = 2
+pure val weight_adjust = 6
 pure val weight_cut = 8
 pure val weight_observeSettings = 2
-pure val weight_finalize = 6
+pure val weight_finalize = 8
 pure val weight_autoFreeze = 3
 pure val weight_noteUnderfunded = 4
 pure val weight_createObligations = 6
