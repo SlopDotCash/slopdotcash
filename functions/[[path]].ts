@@ -5,8 +5,10 @@ import {
 } from "../backend/pages";
 import { CloudflareProjectPersistence } from "../backend/projects/cloudflare-persistence";
 import { githubApiOrigin } from "../backend/projects/github-lookup";
+import { readPoolFundingIndex } from "../backend/projects/pool-funding";
 import { handleProjectArtifactRequest } from "../backend/projects/skill-publication";
 import { referralRedirect } from "../backend/referrals/codes";
+import { deploymentTier } from "../src/lib/deployment";
 import { onRequest as socialMetadata } from "./index";
 
 export async function onRequest(
@@ -25,6 +27,7 @@ export async function onRequest(
       { ...env, SLOP_DB: env.SLOP_DB },
       request,
     );
+    const db = env.SLOP_DB;
     const artifact = await handleProjectArtifactRequest(request, {
       getProject: (id) => persistence.getProject(id),
       listProjects: () => persistence.listProjects(),
@@ -37,6 +40,12 @@ export async function onRequest(
           project.revision,
           (repositoryId) =>
             livePin(project.manifest, repositoryId, templateSha256),
+        ),
+      poolFunding: () =>
+        readPoolFundingIndex(
+          db,
+          deploymentTier(env.SLOP_ENVIRONMENT),
+          new Date(),
         ),
     });
     if (artifact !== null) return artifact;
