@@ -105,7 +105,9 @@ expects and continues only when the two are identical byte for byte. The
 wallet's signature must be over those exact bytes and recover or verify to
 the connected wallet, for the server's current intent, before anything is
 posted. A wallet account change invalidates prepared bytes and any signature
-over them; the dialog prepares again for the new account.
+over them, and discards a post still in flight; the dialog asks again
+whether to replace a different saved wallet, then prepares for the new
+account.
 
 ```quint
 pure def canPrepare(c: Consent, by: int): bool = by == c.actor and c.actor > 0 and c.phase == Connected
@@ -128,8 +130,10 @@ pure def signReply(c: Consent, request: int, signedMessage: str, signature: SG::
 pure def canChangeWalletAccount(c: Consent, walletAddress: str, by: int): bool = by == adapter and walletAddress != ""
   and walletAddress != c.walletAccount and c.walletAccount != "" and c.request < 9007199254740991
 pure def changeWalletAccount(c: Consent, walletAddress: str, by: int): Consent =
-  if (c.phase == Prepared or c.phase == Preparing or c.phase == Signing or c.phase == Signed)
-    { ...c, walletAccount: walletAddress, phase: Connected, request: c.request + 1, preparedFor: "", prepared: "", intent: 0, signature: noSignature }
+  val connected = if (c.savedWallet != "" and c.savedWallet != walletAddress) Replacing else Connected
+  if (c.phase == Prepared or c.phase == Preparing or c.phase == Signing or c.phase == Signed or c.phase == Posting)
+    { ...c, walletAccount: walletAddress, phase: connected, request: c.request + 1, preparedFor: "", prepared: "", intent: 0, signature: noSignature }
+  else if (c.phase == Connected or c.phase == Replacing) { ...c, walletAccount: walletAddress, phase: connected }
   else { ...c, walletAccount: walletAddress }
 ```
 

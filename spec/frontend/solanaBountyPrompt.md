@@ -63,8 +63,8 @@ pure def phaseFor(attempt: WA::Attempt, p: SolanaPrompt): Phase =
 pure def canSignIn(p: SolanaPrompt, account: int, by: int): bool = account > 0 and by == account and account != p.actor
   and p.lifetime < 9007199254740991
 pure def signIn(p: SolanaPrompt, account: int, by: int): SolanaPrompt =
-  val advanced = { ...p, actor: account, lifetime: p.lifetime + 1, awaiting: "", notice: Quiet }
-  { ...advanced, phase: phaseFor(slotFor(p.message, account, p), advanced) }
+  val advanced = { ...p, actor: account, lifetime: p.lifetime + 1, awaiting: "" }
+  { ...advanced, phase: phaseFor(slotFor(p.message, account, p), advanced), notice: Quiet }
 pure def canSignOut(p: SolanaPrompt, by: int): bool = p.actor > 0 and by == p.actor
 pure def signOut(p: SolanaPrompt, by: int): SolanaPrompt =
   { ...p, actor: 0, lifetime: p.lifetime + 1, phase: if (p.message == "") NoPlan else Planned, awaiting: "", notice: Quiet }
