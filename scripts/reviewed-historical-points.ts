@@ -611,6 +611,7 @@ export function reconstructHistoricalPoints(
   const rewardedAwards = [...latestPoints(result).values()].map(
     (row) => row.award,
   );
+  const validatedRetirements = new Map<string, string>();
   for (const retirement of packet.duplicateRetirements ?? []) {
     const unitKey = JSON.stringify([
       retirement.sourceId,
@@ -1003,6 +1004,10 @@ export function reconstructHistoricalPoints(
             (commit) => commit.sourceId === item.sourceId,
           ) ||
             rewardedSourceIds.has(item.sourceId) ||
+            (item.occurredAt !== null &&
+              source.occurredAt !== null &&
+              item.occurredAt < source.occurredAt &&
+              validatedRetirements.get(item.sourceId) === hash(item)) ||
             botFollowups !== undefined ||
             (historical &&
               historical.award.projectId === packet.projectId &&
@@ -1034,7 +1039,11 @@ export function reconstructHistoricalPoints(
           commit &&
             owner &&
             retained &&
-            !retiringSources.has(sourceId) &&
+            (!retiringSources.has(sourceId) ||
+              (owner.occurredAt !== null &&
+                source.occurredAt !== null &&
+                owner.occurredAt < source.occurredAt &&
+                validatedRetirements.get(sourceId) === hash(owner))) &&
             commit.firstAcceptedSourceId === sourceId &&
             retained.firstAcceptedSourceId === sourceId &&
             commit.author?.id === retained.author?.id &&
@@ -1304,6 +1313,7 @@ export function reconstructHistoricalPoints(
         ),
       "Duplicate pool changed after owner review",
     );
+    validatedRetirements.set(source.sourceId, hash(source));
     result = appendPointAwards(
       result,
       rows.map(({ award }) => ({ ...award, amount: 0 })),

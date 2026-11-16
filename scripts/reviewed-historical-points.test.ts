@@ -2495,3 +2495,197 @@ test("joint retirement completion uses canonical code-unit identity ordering", (
     reconstructHistoricalPoints(f.packet, f.baseline, time, new Map()),
   ).toEqual(f.expected);
 });
+
+for (const fault of [
+  "none",
+  "reversed",
+  "changed-source",
+  "invalid-earlier",
+  "same-time",
+  "missing-earlier",
+  "cycle",
+] as const) {
+  test(`earlier validated retirement dependency ${fault}`, () => {
+    const f = earlierAcceptanceFixture(),
+      first = f.retirement;
+    const originalProof = first.earlierAcceptanceProof;
+    if (!originalProof || !first.acceptedPromotion)
+      throw Error("fixture proof");
+    const mergeRaw = first.acceptedPromotion.mergeCommit,
+      mergeSha = first.acceptedPromotion.mergeSha;
+    const parents: [string, string] = [
+      originalProof.sourceBaseSha,
+      first.source.headSha,
+    ];
+    const emptyMerge = {
+      sha: mergeSha,
+      parentCount: 2,
+      parentShas: parents,
+      author: actor,
+      additions: null,
+      deletions: null,
+      firstAcceptedSourceId: first.sourceId,
+      files: [],
+      mergeResolution: {
+        commitSha: mergeSha,
+        parents,
+        gitVersion: "git version 2.56.0" as const,
+        automaticTree: "f".repeat(40),
+        resolvedTree: "f".repeat(40),
+        hadConflicts: false,
+        patch: "",
+        patchSha256: sha256Hex(""),
+        paths: [],
+      },
+    };
+    first.source.commits.push(emptyMerge);
+    first.source.commitCount++;
+    first.source.headSha = mergeSha;
+    originalProof.objects.push({ sha: mergeSha, raw: mergeRaw });
+    first.acceptedPromotion.headCommit = mergeRaw;
+    const acceptanceRaw = `tree ${"f".repeat(40)}\nparent ${originalProof.sourceBaseSha}\nparent ${mergeSha}\nauthor Human <human@example.test> 4 +0000\ncommitter Human <human@example.test> 4 +0000\n\naccept promotion\n`;
+    first.acceptedPromotion.mergeCommit = acceptanceRaw;
+    first.acceptedPromotion.mergeSha = createHash("sha1")
+      .update(`commit ${Buffer.byteLength(acceptanceRaw)}\0`)
+      .update(acceptanceRaw)
+      .digest("hex");
+    const bind = (retirement: typeof first) => {
+      const d = JSON.parse(retirement.evidence);
+      Object.assign(d, {
+        sourceId: retirement.sourceId,
+        workUnitId: retirement.workUnitId,
+        sourceSha256: hash(retirement.source),
+        earlierSourcesSha256: hash(retirement.earlierSources),
+        coverageSha256: hash(retirement.coverage),
+        earlierAcceptanceProofSha256: hash(retirement.earlierAcceptanceProof),
+        acceptedPromotionSha256: hash(retirement.acceptedPromotion),
+      });
+      retirement.evidence = JSON.stringify(d);
+      retirement.evidenceSha256 = sha256Hex(retirement.evidence);
+    };
+    const audit = f.packet.sourceAudit.sources.find(
+      (r) => r.id === first.sourceId,
+    );
+    if (!audit) throw Error("fixture audit");
+    audit.headSha = mergeSha;
+    const later = structuredClone(first);
+    later.sourceId = "PR_later";
+    later.workUnitId = "later";
+    later.source = {
+      ...structuredClone(first.source),
+      sourceId: later.sourceId,
+      sourceUrl: "https://github.com/feedforagents/feed/pull/3",
+      occurredAt:
+        fault === "same-time"
+          ? first.source.occurredAt
+          : "2026-10-16T00:00:00.000Z",
+      commits: [structuredClone(emptyMerge)],
+      commitCount: 1,
+    };
+    later.earlierSources = [structuredClone(first.source)];
+    later.coverage = [];
+    const proof = later.earlierAcceptanceProof;
+    if (!proof) throw Error("fixture later");
+    proof.commits = [{ sha: mergeSha, sourceId: first.sourceId }];
+    proof.contextSources = [
+      {
+        id: first.sourceId,
+        number: 1,
+        headSha: mergeSha,
+        baseSha: originalProof.sourceBaseSha,
+        mergedAt: first.source.occurredAt as string,
+        mergeSha,
+      },
+    ];
+    if (fault === "changed-source")
+      later.earlierSources[0].commits[0].additions = 999;
+    if (fault === "invalid-earlier") {
+      const resolution = first.source.commits[1].mergeResolution;
+      if (!resolution) throw Error("fixture resolution");
+      resolution.patch = "unverified";
+    }
+    bind(first);
+    bind(later);
+    const originalAward = f.baseline.revisions[0].award;
+    const laterAward = {
+      ...originalAward,
+      key: pointKey("feed", actor.id, "merged-pull-request", later.sourceId),
+      sourceId: later.sourceId,
+      sourceUrl: later.source.sourceUrl,
+      occurredAt: later.source.occurredAt as string,
+      workUnitId: later.workUnitId,
+    };
+    f.baseline = appendPointAwards(
+      f.baseline,
+      [laterAward],
+      "c".repeat(64),
+      "slop-score-v2",
+      time,
+    );
+    const lr = latestPoints(f.baseline).get(laterAward.key);
+    if (!lr) throw Error("fixture row");
+    later.expectedPredecessors = [{ key: laterAward.key, revisionId: lr.id }];
+    f.packet.baselineDigest = hash(f.baseline);
+    f.packet.baselineRevisionCount = f.baseline.revisions.length;
+    f.packet.corrections.baseline = createPointsCorrectionBaseline(f.baseline);
+    f.packet.sourceAudit.sources.push({
+      id: later.sourceId,
+      number: 3,
+      headSha: mergeSha,
+      mergedAt: later.source.occurredAt as string,
+    });
+    const priorCandidate = f.packet.corrections.candidates[0];
+    f.packet.corrections.candidates.push({
+      ...structuredClone(priorCandidate),
+      id: "later",
+      sourceId: later.sourceId,
+      sourceUrl: later.source.sourceUrl,
+      occurredAt: laterAward.occurredAt,
+      workUnitId: later.workUnitId,
+      sourceIds: [later.sourceId],
+      expectedPredecessors: later.expectedPredecessors,
+      proof: { status: "held" },
+    });
+    let expected = f.baseline;
+    for (const r of [first, later]) {
+      const award = r === first ? originalAward : laterAward;
+      expected = appendPointAwards(
+        expected,
+        [{ ...award, amount: 0 }],
+        hash(r),
+        "slop-score-v2",
+        time,
+        new Map([
+          [
+            award.key,
+            {
+              sourceId: `owner_duplicate_${r.evidenceSha256}`,
+              effectiveAt: time,
+              reason:
+                "Owner-reviewed duplicate accepted work already rewarded by earlier sources.",
+            },
+          ],
+        ]),
+      );
+    }
+    f.packet.candidateDigest = hash(expected);
+    if (fault === "cycle") {
+      originalProof.commits[0].sourceId = later.sourceId;
+      bind(first);
+    }
+    f.packet.duplicateRetirements =
+      fault === "missing-earlier"
+        ? [later]
+        : fault === "reversed"
+          ? [later, first]
+          : [first, later];
+    if (fault === "none")
+      expect(
+        reconstructHistoricalPoints(f.packet, f.baseline, time, new Map()),
+      ).toEqual(expected);
+    else
+      expect(() =>
+        reconstructHistoricalPoints(f.packet, f.baseline, time, new Map()),
+      ).toThrow();
+  });
+}
