@@ -88,8 +88,20 @@ pure def finish(r: RequestRow, conclusion: RequestResult, http: int, s: Snapshot
 pure def immutableRevision(s: Snapshots, number: int): Revision = s.history.select(r => r.number == number).nthOr(0, noRevision)
 pure def policy(revision: Revision, purpose: Purpose): int = if (purpose == Ordinary) revision.ordinaryPolicy else revision.privatePolicy
 pure def registered(r: Registration): bool = r.revision > 0
+pure val evmNetworks = List("Base", "Ethereum", "Robinhood Chain", "Base Sepolia", "Ethereum Sepolia", "Robinhood Chain Testnet")
+pure val solanaNetworks = List("Solana", "Solana Devnet", "Solana Testnet")
+pure def approvedNetwork(identity: Identity): bool =
+  if (identity.chain == Evm) evmNetworks.includes(identity.network)
+  else if (identity.chain == SolanaMain) identity.network == "Solana"
+  else solanaNetworks.includes(identity.network) and identity.network != "Solana"
 pure def validIdentity(identity: Identity): bool = identity.network != "" and identity.vault != ""
   and identity.readVault != "" and identity.asset != "" and identity.rules != "" and identity.decimals >= 0
+  and identity.decimals <= 36 and approvedNetwork(identity)
+pure def otherPurpose(purpose: Purpose): Purpose = if (purpose == Ordinary) PrivateBounty else Ordinary
+pure def compatibleAcrossPurposes(s: Snapshots, purpose: Purpose, identity: Identity): bool =
+  val counterpart = deployment(s, otherPurpose(purpose)).registration
+  not(registered(counterpart)) or (counterpart.identity.network == identity.network
+    and counterpart.identity.asset == identity.asset and counterpart.identity.decimals == identity.decimals)
 pure def nextRevision(revision: Revision, s: Snapshots): Snapshots = { ...s, revision: revision, history: s.history.append(revision) }
 pure def canAppendRegistryRevision(s: Snapshots, ordinaryPolicy: int, privatePolicy: int, authorized: bool): bool =
   authorized and ordinaryPolicy > 0 and privatePolicy > 0
@@ -117,7 +129,8 @@ pure def checkCreation(s: Snapshots, requestId: int, creation: Creation): Snapsh
   else if (creation.transaction != r.tx or creation.reviewed != r.expected or creation.purpose != r.purpose
     or creation.status == UnverifiedCreation) finish(r, RegistrationRefused, 409, s)
   else if (creation.status == PendingCreation) finish(r, CreationPending, 200, s)
-  else if (not(validIdentity(creation.identity)) or creation.identity.network != r.network)
+  else if (not(validIdentity(creation.identity)) or creation.identity.network != r.network
+    or not(compatibleAcrossPurposes(s, r.purpose, creation.identity)))
     finish(r, RegistrationRefused, 409, s)
   else if (creation.status == IncludedCreation) finish(r, CreationPending, 200, s)
   else updateRequest({ ...r, phase: ReadyAppend, registration: { ...noRegistration, tx: r.tx, identity: creation.identity } }, s)
@@ -127,7 +140,8 @@ pure def commitRegistration(s: Snapshots, requestId: int, saved: bool): Snapshot
   val revision = { ...s.revision, number: s.revision.number + 1 }
   val admitted = { ...r.registration, revision: revision.number }
   val attached = setDeployment(r.purpose, { ...noDeployment, registration: admitted }, nextRevision(revision, s))
-  if (not(saved) or r.capture != s.revision.number or registered(deployment(s, r.purpose).registration))
+  if (not(saved) or r.capture != s.revision.number or registered(deployment(s, r.purpose).registration)
+    or not(compatibleAcrossPurposes(s, r.purpose, r.registration.identity)))
     finish(r, RegistrationConflict, 409, s)
   else updateRequest({ ...r, phase: firstReadPhase(admitted.identity), registration: admitted }, attached)
 ```
@@ -257,6 +271,13 @@ pure def stepRegistrationIsImmutable(before: Snapshots, after: Snapshots): bool 
     and (registered(before.privateBounty.registration) implies before.privateBounty.registration == after.privateBounty.registration)
 pure def stepWritePreservesRegistry(before: Snapshots, via: str, after: Snapshots): bool = via == "write" implies
   (before.revision == after.revision and before.history == after.history)
+pure def alwaysSameAssetAcrossPurposes(s: Snapshots): bool =
+  (registered(s.ordinary.registration) and registered(s.privateBounty.registration)) implies
+    s.ordinary.registration.identity.network == s.privateBounty.registration.identity.network
+      and s.ordinary.registration.identity.asset == s.privateBounty.registration.identity.asset
+pure def alwaysRegisteredIdentityApproved(s: Snapshots): bool =
+  (registered(s.ordinary.registration) implies validIdentity(s.ordinary.registration.identity))
+    and (registered(s.privateBounty.registration) implies validIdentity(s.privateBounty.registration.identity))
 pure def sometimesStored(s: Snapshots): bool = s.ordinary.observation.exists or s.privateBounty.observation.exists
 pure def sometimesRegisteredWithoutObservation(s: Snapshots): bool = registered(s.ordinary.registration)
   and not(s.ordinary.observation.exists) and s.requests.some(r => r.result == ObservationUnavailable)
@@ -292,6 +313,36 @@ pure val weight_checkGenesis = 5
 pure val weight_readTotals = 12
 pure val weight_readPrior = 12
 pure val weight_write = 12
+```
+
+## Story: Public vault totals show the last finalized value, never a fabricated zero
+
+### A failed refresh keeps the last totals marked stale
+
+Public pages read only the cached row. No row means no totals yet. A row
+older than 30 minutes is shown as stale with its last values and observed
+time. A null legacy balance is shown as not reported, never as zero.
+
+```quint
+type Freshness = NoTotals | FreshTotals | StaleTotals
+type ShownBalance = { reported: bool, amount: M::Amount }
+type PublicTotals = { freshness: Freshness, observedAt: int, deposits: M::Amount, free: ShownBalance, principal: ShownBalance }
+pure val staleAfterSeconds = 1800
+pure def shown(b: Balance): ShownBalance = { reported: b.present, amount: b.amount }
+pure def publicTotals(observation: Observation, now: int, refreshFailed: bool): PublicTotals =
+  if (not(observation.exists)) { freshness: NoTotals, observedAt: 0, deposits: M::zero,
+    free: { reported: false, amount: M::zero }, principal: { reported: false, amount: M::zero } }
+  else { freshness: if (refreshFailed or now - observation.observedAt > staleAfterSeconds) StaleTotals else FreshTotals,
+    observedAt: observation.observedAt, deposits: observation.counters.deposits,
+    free: shown(observation.balances.free), principal: shown(observation.balances.principal) }
+pure def lawFailureKeepsLastValue(observation: Observation, now: int): bool = observation.exists implies
+  (publicTotals(observation, now, true).freshness == StaleTotals
+    and publicTotals(observation, now, true).deposits == observation.counters.deposits
+    and publicTotals(observation, now, true).free == shown(observation.balances.free))
+pure def lawNullIsNotZero(observation: Observation, now: int, refreshFailed: bool): bool =
+  (observation.exists and not(observation.balances.free.present)) implies not(publicTotals(observation, now, refreshFailed).free.reported)
+pure val nowValues = Set(1, 1800, 1802)
+pure val refreshFailedValues = Set(true, false)
 ```
 
 RPC truth, the encoding of compatible current policy, authenticated authority,

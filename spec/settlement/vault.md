@@ -1,6 +1,6 @@
-# Project vault conservation
+# Project vault reservations
 
-PRD sections 2 and 6 govern one asset and one network per vault. This model uses arbitrary-length amounts from the exact-amount library. A list of distinct obligations retains concurrent reserves while cumulative amounts preserve conservation across every operation. External chain observations must be finalized and authenticated by the future chain adapter. Source models include `escrow_balances`, `vault_creation`, `token_admission`, `vault_setup_resolution` and `monthly_reserve`.
+PRD sections 2 and 6 govern one asset and one network per vault. This is the gross reservation-identity view of a vault that the [atomic obligation settlement](./composition.md) composes with one payment and its dispatch: free gross, reserved gross per obligation, paid gross and withdrawn gross. It does not split amounts into principal and fees and has no monthly pool; [escrow accounting](./escrow.md) owns the exact contract counters, the 2% payout and withdrawal fees, accrued and claimed fees, the monthly pool reserve and its release. This model uses arbitrary-length amounts from the exact-amount library. A list of distinct obligations retains concurrent reserves while cumulative amounts preserve conservation across every operation. External chain observations must be finalized and authenticated by the future chain adapter. Source models include `escrow_balances`, `vault_creation`, `token_admission` and `vault_setup_resolution`. Composition obligation: the vault's gross buckets must equal escrow's `free`, `reserved`, `paid` and `grossWithdrawn` for the same vault.
 
 ## Story: Deposit and preserve obligations
 
@@ -75,7 +75,7 @@ pure def payReserved(v: Vault, amount: M::Amount, vault: str, asset: str, actor:
 
 ### Only the fixed refund destination receives free funds
 
-The displayed deposit consent identifies the refund destination before signature. Withdrawal fees remain part of the withdrawn gross amount and the split is verified in payment evidence.
+The displayed deposit consent identifies the refund destination before signature. The refunded amount is the gross withdrawal; the owner receives the gross less `ceil(gross / 50)` and the fee accrues in [escrow accounting](./escrow.md), which owns that split.
 
 ```quint
 pure def canRefund(v: Vault, amount: M::Amount, destination: str, receipt: int, finalizedHeight: int, by: str): bool =

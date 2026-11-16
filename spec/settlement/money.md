@@ -163,6 +163,20 @@ pure def lawOrdinaryConservation(scalarGross: int): bool = scalarGross >= 0 impl
 pure def lawPrivateConservation(scalarGross: int): bool = (scalarGross >= 0 and scalarGross % 4 == 0) implies privateResearcher(scalarGross) + privateSponsor(scalarGross) == scalarGross
 ```
 
+### Contract amounts stay inside the unsigned integer range of their network
+
+EVM escrow counters and amounts are `uint128`; Solana program amounts are
+`u64`. D1 stores the same base units. An amount above the network maximum
+cannot be represented on chain and is refused before any obligation, cap,
+allocation or deposit uses it.
+
+```quint
+pure val maxU64: Amount = List(615, 551, 709, 73, 744, 446, 18)
+pure val maxU128: Amount = List(455, 211, 768, 431, 607, 374, 463, 463, 938, 920, 366, 282, 340)
+pure def withinMaximum(a: Amount, maximum: Amount): bool = validAmount(a) and compareAmounts(a, maximum) <= 0
+pure def lawRangeIsValid(a: Amount, maximum: Amount): bool = withinMaximum(a, maximum) implies validAmount(a)
+```
+
 ## Story: Admit the exact supported token behavior
 
 ### Token-2022 admission permits only immutable metadata and immutable token ownership
