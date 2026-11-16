@@ -743,9 +743,9 @@
     },
     {
       "path": "backend/projects/merge-activity.ts",
-      "sha256": "a7ea9dade75ccc28aa82a05bd8471bb226d6d401fa030e1373f67bb06daede5f",
+      "sha256": "108bed3fa102252aeb5b9193f184e00eaccd5e5d92193d3d399e87e7985255fe",
       "models": ["formal/models/api/api_merge_activity.qnt"],
-      "candidateLines": [30, 167, 274, 354, 359, 389, 392],
+      "candidateLines": [30, 167, 285, 341, 373, 378, 408, 411],
       "review": "mapped-abstraction"
     },
     {
@@ -868,9 +868,9 @@
     },
     {
       "path": "backend/referrals/codes.ts",
-      "sha256": "0667fd65eb51fb72acbe4801e94af5f918233c7aeb3a388fdc9520531c565a6e",
+      "sha256": "9dddd642750886db94702b363d9daa720add2b3348424ffe0ffc9ca53d36b833",
       "models": ["formal/models/referrals/referral_code.qnt"],
-      "candidateLines": [143, 151, 159, 217, 220, 246, 247, 255],
+      "candidateLines": [145, 153, 161, 201, 225, 228, 268, 269, 278],
       "review": "mapped-abstraction"
     },
     {
@@ -2127,7 +2127,7 @@
     },
     {
       "path": "functions/[[path]].ts",
-      "sha256": "a38c540f4d1a7c95d22f2cf08d623dc1a0dc394c38439b0829f0cb88143ddbf3",
+      "sha256": "b97369976ca02b5a98a72967d5e5d4a04a862a97bc937e77232d9b2331444897",
       "models": ["formal/models/api/project_skill_publication.qnt"],
       "candidateLines": [],
       "review": "mapped-abstraction",
@@ -9806,7 +9806,7 @@
     },
     {
       "path": "formal/models/api/api_merge_activity.qnt",
-      "sha256": "e76a3d68cda5a9320abab1bdbc453b240fb69c46a06bba0ffa4169780989553d",
+      "sha256": "f36ab822536b67e6412eea6bc8e6061c683a59c169abc32e8102bb9ffd36c196",
       "sources": [
         "backend/projects/merge-activity.ts",
         "migrations/0125_repository_merge_activity.sql",
@@ -9815,7 +9815,9 @@
       "scenarios": [
         "failureKeepsValuesTest",
         "freshRowIsNotDueTest",
-        "neverReadIsNotPublishedTest"
+        "neverReadIsNotPublishedTest",
+        "transferredPathIsDroppedTest",
+        "unlistedPathIsNotReadTest"
       ]
     },
     {
@@ -14294,7 +14296,7 @@
     },
     {
       "path": "formal/models/referrals/referral_code.qnt",
-      "sha256": "05e51c5359091dcda9fd35574b36a63ac7b496872578d9044929b2788586add7",
+      "sha256": "3d8be140589de02a39e0532b1faa734874af40febf28fd5d98736448badcf667",
       "sources": [
         "backend/referrals/codes.ts",
         "migrations/0124_referral_codes.sql",
@@ -14302,10 +14304,13 @@
       ],
       "scenarios": [
         "anotherGithubLoginRefusedTest",
+        "convertedAccountLinkForwardsWithoutReferrerTest",
+        "goneAccountLinkForwardsWithoutReferrerTest",
         "limitRefusesANewNameTest",
         "limitStillAllowsAReturnTest",
         "otherAccountCannotTakeAReplacedNameTest",
         "refusedNameChangesNothingTest",
+        "renamedAccountLinkNamesItsCurrentLoginTest",
         "replacedNameStaysWithItsAccountTest",
         "reservedNameRefusedTest",
         "teamAccountRefusedTest"
