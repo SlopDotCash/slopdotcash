@@ -7,7 +7,7 @@ import { current, opened, routes } from "../src/routes.vibe"
 /** The route a page loaded at `path` with `search` shows. */
 effect function load(path: string, search: string) {
   provide routes {
-    try opened(openingOf(path, search))
+    try opened(try Effect.try(() => openingOf(path, search)))
     return try current()
   }
 }
@@ -15,7 +15,7 @@ effect function load(path: string, search: string) {
 // spec/app/index.md, "Story: Open a page by its address"
 it.effect("Open a page by its address", () => effect {
   // spec/app/index.md, "Each address names exactly one route kind, and an address that names none is unknown"
-  const profile = try load(pathTo(["contributors", "a/b c"]), "")
+  const profile = try load(try Effect.try(() => pathTo(["contributors", "a/b c"])), "")
   // spec/app/index.md, "The shell shows one route, opened from the address"
   const fromX = try load("/points/", "?x=1")
   const undecodable = try load("/projects/%E0%A4%A", "")
