@@ -134,9 +134,9 @@
     },
     {
       "path": ".github/workflows/reviewed-historical-points.yml",
-      "sha256": "b58d09eb8b0366790bcd5090a8d4121cbc01a42e5241fd50c81d3e2e1bcc23c0",
+      "sha256": "0e3fa5606e76c5d3b2fbd8aa160e6216d991674be7ea59aefe235678e63c20cb",
       "models": ["formal/models/points/source_import.qnt"],
-      "candidateLines": [],
+      "candidateLines": [39],
       "review": "mapped-abstraction"
     },
     {
@@ -4444,9 +4444,9 @@
     },
     {
       "path": "scripts/qualify-value-models.ts",
-      "sha256": "9ce1c7ad0c327cfb083f6693bc246d4060aff4102910c308ee565937baa73c57",
+      "sha256": "ac071af313784eb6be707a94e20d13f2d907cd18b9bea13928abcec2112fefe6",
       "models": ["formal/models/slopbot/qualification_value_budget.qnt"],
-      "candidateLines": [230],
+      "candidateLines": [99, 248],
       "review": "mapped-abstraction"
     },
     {
