@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "meaning": "Declared lifecycle candidates. This intentionally incomplete syntactic census cannot find every implicit state, establish reachability, or prove source/model correspondence. Review the open work listed in formal/README.md as well.",
-  "inventorySha256": "303173cf24fd833235e21b3ff00718a3b2b0e99bd88f126b5408b22701020b5a",
+  "inventorySha256": "25f95fb75d2deb1142e15c1a9f87ba952d609c562d78b23bbf6a8837c5b79907",
   "states": [
     {
       "path": "backend/fee-conversions/handler.ts",
@@ -2344,7 +2344,7 @@
     },
     {
       "path": "src/App.tsx",
-      "line": 463,
+      "line": 465,
       "name": "useState",
       "kind": "string-union",
       "values": ["deleting", "holding", "typing"],
@@ -2369,7 +2369,7 @@
     },
     {
       "path": "src/App.tsx",
-      "line": 1160,
+      "line": 1162,
       "name": "useState",
       "kind": "string-union",
       "values": ["blocked", "error", "loading", "ready"],
@@ -2597,7 +2597,7 @@
     },
     {
       "path": "src/ProjectProposalPage.tsx",
-      "line": 855,
+      "line": 869,
       "name": "state",
       "kind": "string-union",
       "values": ["done", "error", "idle", "loading"],
@@ -2621,7 +2621,7 @@
     },
     {
       "path": "src/ProjectProposalPage.tsx",
-      "line": 1324,
+      "line": 1346,
       "name": "status",
       "kind": "string-union",
       "values": ["idle", "submitting"],
@@ -2645,7 +2645,7 @@
     },
     {
       "path": "src/ProjectProposalPage.tsx",
-      "line": 2160,
+      "line": 2205,
       "name": "state",
       "kind": "string-union",
       "values": ["idle", "publishing"],
@@ -2669,7 +2669,7 @@
     },
     {
       "path": "src/ProjectProposalPage.tsx",
-      "line": 2165,
+      "line": 2210,
       "name": "state",
       "kind": "string-union",
       "values": ["idle", "removed", "removing"],
@@ -2693,7 +2693,7 @@
     },
     {
       "path": "src/ProjectProposalPage.tsx",
-      "line": 2172,
+      "line": 2217,
       "name": "state",
       "kind": "string-union",
       "values": ["idle", "loading"],
@@ -4063,7 +4063,7 @@
     },
     {
       "path": "workers/slopbot/models.ts",
-      "line": 46,
+      "line": 48,
       "name": "outcome",
       "kind": "string-union",
       "values": ["failed", "ok"],
@@ -4132,7 +4132,7 @@
     },
     {
       "path": "workers/slopbot/review.ts",
-      "line": 2817,
+      "line": 2831,
       "name": "verdict",
       "kind": "string-union",
       "values": ["category", "confidence"],
@@ -4143,6 +4143,7 @@
         "formal/models/slopbot/bot_close_recovery_claim.qnt",
         "formal/models/slopbot/bot_moderation.qnt",
         "formal/models/slopbot/bot_penalty_once.qnt",
+        "formal/models/slopbot/bot_review_monthly_cap.qnt",
         "formal/models/slopbot/bot_value_dispute_draft.qnt",
         "formal/models/slopbot/bot_value_dispute_read.qnt"
       ],
@@ -4151,7 +4152,7 @@
     },
     {
       "path": "workers/slopbot/review.ts",
-      "line": 2891,
+      "line": 2905,
       "name": "stage",
       "kind": "string-union",
       "values": ["draft", "escalation", "resolution"],
@@ -4162,6 +4163,7 @@
         "formal/models/slopbot/bot_close_recovery_claim.qnt",
         "formal/models/slopbot/bot_moderation.qnt",
         "formal/models/slopbot/bot_penalty_once.qnt",
+        "formal/models/slopbot/bot_review_monthly_cap.qnt",
         "formal/models/slopbot/bot_value_dispute_draft.qnt",
         "formal/models/slopbot/bot_value_dispute_read.qnt"
       ],
@@ -4170,7 +4172,7 @@
     },
     {
       "path": "workers/slopbot/review.ts",
-      "line": 2954,
+      "line": 2968,
       "name": "stage",
       "kind": "string-union",
       "values": ["draft", "escalation", "resolution"],
@@ -4181,6 +4183,7 @@
         "formal/models/slopbot/bot_close_recovery_claim.qnt",
         "formal/models/slopbot/bot_moderation.qnt",
         "formal/models/slopbot/bot_penalty_once.qnt",
+        "formal/models/slopbot/bot_review_monthly_cap.qnt",
         "formal/models/slopbot/bot_value_dispute_draft.qnt",
         "formal/models/slopbot/bot_value_dispute_read.qnt"
       ],
