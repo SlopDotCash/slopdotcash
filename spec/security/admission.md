@@ -134,30 +134,30 @@ assessment, which then waits for the template recovery below.
 ```quint
 type FetchOutcome = Fetched | FetchUnavailable | FetchMissing | FetchMoved | FetchPathRefused | FetchIdentityMismatch
   | FetchStaleTemplate
-type Fetch = { outcome: FetchOutcome, commit: int, verifiedLocally: bool, entries: int, inventoryDigest: int }
-pure def refusalOf(outcome: FetchOutcome): Refusal =
-  if (outcome == FetchMissing) RepositoryMissing else if (outcome == FetchMoved) RepositoryMoved
-  else if (outcome == FetchIdentityMismatch) IdentityMismatch else PathRefused
+type Fetch = { fetched: FetchOutcome, commit: int, verifiedLocally: bool, entries: int, inventoryDigest: int }
+pure def refusalOf(fetched: FetchOutcome): Refusal =
+  if (fetched == FetchMissing) RepositoryMissing else if (fetched == FetchMoved) RepositoryMoved
+  else if (fetched == FetchIdentityMismatch) IdentityMismatch else PathRefused
 pure def canAcquire(s: Scan, fetch: Fetch): bool =
   s.phase == Acquiring and
-  (fetch.outcome != Fetched or
+  (fetch.fetched != Fetched or
     (fetch.commit == s.assignment.commit and fetch.verifiedLocally and fetch.entries >= 0 and fetch.inventoryDigest > 0))
 pure def acquire(s: Scan, fetch: Fetch): Scan =
-  if (fetch.outcome == Fetched) { ...s, phase: Reviewing, inventory: fetch.entries, inventoryDigest: fetch.inventoryDigest }
-  else if (fetch.outcome == FetchUnavailable) { ...s, phase: Queued }
-  else if (fetch.outcome == FetchStaleTemplate) { ...s, phase: Queued, staleTemplate: true }
-  else { ...s, phase: Evidence, disposition: DIncomplete, refusal: refusalOf(fetch.outcome) }
+  if (fetch.fetched == Fetched) { ...s, phase: Reviewing, inventory: fetch.entries, inventoryDigest: fetch.inventoryDigest }
+  else if (fetch.fetched == FetchUnavailable) { ...s, phase: Queued }
+  else if (fetch.fetched == FetchStaleTemplate) { ...s, phase: Queued, staleTemplate: true }
+  else { ...s, phase: Evidence, disposition: DIncomplete, refusal: refusalOf(fetch.fetched) }
 pure val fetchValues = Set(
-  { outcome: Fetched, commit: 1, verifiedLocally: true, entries: 2, inventoryDigest: 7 },
-  { outcome: Fetched, commit: 1, verifiedLocally: true, entries: 1000000, inventoryDigest: 8 },
-  { outcome: Fetched, commit: 2, verifiedLocally: true, entries: 2, inventoryDigest: 7 },
-  { outcome: Fetched, commit: 1, verifiedLocally: false, entries: 2, inventoryDigest: 7 },
-  { outcome: FetchUnavailable, commit: 0, verifiedLocally: false, entries: 0, inventoryDigest: 0 },
-  { outcome: FetchMissing, commit: 0, verifiedLocally: false, entries: 0, inventoryDigest: 0 },
-  { outcome: FetchMoved, commit: 0, verifiedLocally: false, entries: 0, inventoryDigest: 0 },
-  { outcome: FetchIdentityMismatch, commit: 0, verifiedLocally: false, entries: 0, inventoryDigest: 0 },
-  { outcome: FetchStaleTemplate, commit: 0, verifiedLocally: false, entries: 0, inventoryDigest: 0 },
-  { outcome: FetchPathRefused, commit: 1, verifiedLocally: true, entries: 0, inventoryDigest: 0 })
+  { fetched: Fetched, commit: 1, verifiedLocally: true, entries: 2, inventoryDigest: 7 },
+  { fetched: Fetched, commit: 1, verifiedLocally: true, entries: 1000000, inventoryDigest: 8 },
+  { fetched: Fetched, commit: 2, verifiedLocally: true, entries: 2, inventoryDigest: 7 },
+  { fetched: Fetched, commit: 1, verifiedLocally: false, entries: 2, inventoryDigest: 7 },
+  { fetched: FetchUnavailable, commit: 0, verifiedLocally: false, entries: 0, inventoryDigest: 0 },
+  { fetched: FetchMissing, commit: 0, verifiedLocally: false, entries: 0, inventoryDigest: 0 },
+  { fetched: FetchMoved, commit: 0, verifiedLocally: false, entries: 0, inventoryDigest: 0 },
+  { fetched: FetchIdentityMismatch, commit: 0, verifiedLocally: false, entries: 0, inventoryDigest: 0 },
+  { fetched: FetchStaleTemplate, commit: 0, verifiedLocally: false, entries: 0, inventoryDigest: 0 },
+  { fetched: FetchPathRefused, commit: 1, verifiedLocally: true, entries: 0, inventoryDigest: 0 })
 pure def alwaysRefusalIsIncompleteWithoutReview(s: Scan): bool =
   s.refusal != NoRefusal implies s.disposition == DIncomplete and s.primary == NotRun and s.reviewed == 0 and
     s.inventory == 0 and not(s.synthesis) and not(s.reused)

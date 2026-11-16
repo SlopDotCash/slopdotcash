@@ -17,21 +17,21 @@ mismatch: it records the failure and keeps the prior identity, enabled state
 and verification time. Times are milliseconds.
 
 ```quint
-type Listing = Active | Paused | Unfunded | Retired
-type ReadKind = Verified | AppNotInstalled | Unavailable
-type Failure = NoFailure | ReadFailed | IdentityMismatch
-type Target = { revision: int, repository: int, repositoryId: int, listing: Listing }
+type ProjectListing = Active | Paused | Unfunded | Retired
+type ReadKind = Verified | AppNotInstalled | ReadUnavailable
+type ReadFailure = NoFailure | ReadFailed | IdentityMismatch
+type Target = { revision: int, repository: int, repositoryId: int, listing: ProjectListing }
 type Read = { kind: ReadKind, repositoryId: int, enabled: bool }
-type Observation = { revision: int, repository: int, repositoryId: int, enabled: bool, verifiedAt: int, attemptedAt: int, failure: Failure }
-type Readiness = { observations: List[Observation] }
+type ReadinessObservation = { revision: int, repository: int, repositoryId: int, enabled: bool, verifiedAt: int, attemptedAt: int, failure: ReadFailure }
+type Readiness = { observations: List[ReadinessObservation] }
 pure val initial: Readiness = { observations: List() }
 pure val maxAgeMs = 3600000
-pure def sameKey(o: Observation, revision: int, repository: int): bool = o.revision == revision and o.repository == repository
-pure val noObservation: Observation = { revision: 0, repository: 0, repositoryId: 0, enabled: false, verifiedAt: 0, attemptedAt: 0, failure: NoFailure }
+pure def sameKey(o: ReadinessObservation, revision: int, repository: int): bool = o.revision == revision and o.repository == repository
+pure val noObservation: ReadinessObservation = { revision: 0, repository: 0, repositoryId: 0, enabled: false, verifiedAt: 0, attemptedAt: 0, failure: NoFailure }
 pure def newerThanStored(r: Readiness, revision: int, repository: int, attemptedAt: int): bool =
   r.observations.every(o => not(sameKey(o, revision, repository)) or attemptedAt > o.attemptedAt)
 pure def observed(r: Readiness, revision: int, repository: int): bool = r.observations.some(o => sameKey(o, revision, repository))
-pure def written(prior: Observation, target: Target, read: Read, attemptedAt: int): Observation =
+pure def written(prior: ReadinessObservation, target: Target, read: Read, attemptedAt: int): ReadinessObservation =
   val identity = if (prior.repositoryId > 0) prior.repositoryId else target.repositoryId
   val verified = read.kind == Verified and read.repositoryId > 0 and (identity == 0 or read.repositoryId == identity)
   val mismatch = read.kind == Verified and not(verified)
@@ -50,10 +50,10 @@ pure def refresh(r: Readiness, target: Target, read: Read, attemptedAt: int): Re
   else { observations: r.observations.append(written(noObservation, target, read, attemptedAt)) }
 pure def lawRetiredSkipped(r: Readiness, target: Target, read: Read, attemptedAt: int): bool =
   target.listing == Retired implies not(canRefresh(r, target, read, attemptedAt))
-pure def lawIdentityMismatchKeepsPrior(prior: Observation, target: Target, read: Read, attemptedAt: int): bool =
+pure def lawIdentityMismatchKeepsPrior(prior: ReadinessObservation, target: Target, read: Read, attemptedAt: int): bool =
   written(prior, target, read, attemptedAt).failure == IdentityMismatch implies
     written(prior, target, read, attemptedAt).enabled == prior.enabled and written(prior, target, read, attemptedAt).verifiedAt == prior.verifiedAt
-pure def lawFailedReadKeepsPrior(prior: Observation, target: Target, read: Read, attemptedAt: int): bool =
+pure def lawFailedReadKeepsPrior(prior: ReadinessObservation, target: Target, read: Read, attemptedAt: int): bool =
   read.kind != Verified implies written(prior, target, read, attemptedAt).enabled == prior.enabled
     and written(prior, target, read, attemptedAt).verifiedAt == prior.verifiedAt
 pure def stepAttemptsOnlyAdvance(before: Readiness, after: Readiness): bool =
@@ -69,7 +69,7 @@ pure val readValues = Set(
   { kind: Verified, repositoryId: 11, enabled: true },
   { kind: Verified, repositoryId: 12, enabled: false },
   { kind: AppNotInstalled, repositoryId: 0, enabled: false },
-  { kind: Unavailable, repositoryId: 0, enabled: false })
+  { kind: ReadUnavailable, repositoryId: 0, enabled: false })
 pure val attemptedAtValues = Set(1000, 2000, 3601000, 5000000)
 ```
 
@@ -80,11 +80,11 @@ or once its age reaches one hour. A future verification time establishes no
 readiness.
 
 ```quint
-pure def fresh(o: Observation, nowMs: int): bool =
+pure def fresh(o: ReadinessObservation, nowMs: int): bool =
   o.verifiedAt > 0 and o.failure == NoFailure and nowMs >= o.verifiedAt and nowMs - o.verifiedAt < maxAgeMs
 pure def readyFor(r: Readiness, revision: int, repository: int, nowMs: int): bool =
   r.observations.some(o => sameKey(o, revision, repository) and o.enabled and fresh(o, nowMs))
-pure def lawStaleNeverReady(o: Observation, nowMs: int): bool = nowMs - o.verifiedAt >= maxAgeMs implies not(fresh(o, nowMs))
+pure def lawStaleNeverReady(o: ReadinessObservation, nowMs: int): bool = nowMs - o.verifiedAt >= maxAgeMs implies not(fresh(o, nowMs))
 pure def sometimesReady(r: Readiness): bool = readyFor(r, 1, 1, 3601000)
 pure def sometimesMismatchKeptEnabled(r: Readiness): bool =
   r.observations.some(o => o.failure == IdentityMismatch and o.enabled and o.verifiedAt > 0)
