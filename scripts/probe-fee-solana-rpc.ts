@@ -68,13 +68,18 @@ export default {
     for (const [provider, endpoint] of [["candidate",candidate],["recovery",recovery]]) {
       const row = {provider, reads:[]};
       async function rpc(method, params) {
+        let httpStatus = null;
         try {
-          const response = await fetch(endpoint, {method:"POST",redirect:"error",headers:{"content-type":"application/json"},body:JSON.stringify({jsonrpc:"2.0",id:1,method,params}),signal:AbortSignal.timeout(15000)});
+          const response = await fetch(endpoint, {method:"POST",redirect:"manual",headers:{"content-type":"application/json"},body:JSON.stringify({jsonrpc:"2.0",id:1,method,params}),signal:AbortSignal.timeout(15000)});
+          httpStatus = response.status;
           const body = await response.json().catch(() => null);
           const ok = response.ok && body?.jsonrpc === "2.0" && body.id === 1 && !body.error && body.result !== undefined;
-          row.reads.push({method,ok,httpStatus:response.status,rpcCode:Number.isSafeInteger(body?.error?.code)?body.error.code:null});
+          row.reads.push({method,ok,httpStatus,rpcCode:Number.isSafeInteger(body?.error?.code)?body.error.code:null,errorCategory:ok?null:(!body?"invalid-json":(response.status>=300&&response.status<400?"redirect":"rpc-refused"))});
           return ok ? body.result : undefined;
-        } catch { row.reads.push({method,ok:false,httpStatus:null,rpcCode:null}); }
+        } catch (error) {
+          const category = ["TypeError","SyntaxError","AbortError","TimeoutError"].includes(error?.name) ? error.name : "request-error";
+          row.reads.push({method,ok:false,httpStatus,rpcCode:null,errorCategory:category});
+        }
       }
       const chain = await rpc("getGenesisHash", []);
       const slot = await rpc("getSlot", [{commitment:"finalized"}]);
@@ -105,6 +110,7 @@ interface ProbeRead {
   ok: boolean;
   httpStatus: number | null;
   rpcCode: number | null;
+  errorCategory: string | null;
 }
 interface ProbeRow {
   provider: "candidate" | "recovery";
@@ -162,6 +168,18 @@ export function safeSolanaProbeResult(value: any): {
                 ? read.httpStatus
                 : null,
             rpcCode: Number.isSafeInteger(read.rpcCode) ? read.rpcCode : null,
+            errorCategory: [
+              "invalid-json",
+              "redirect",
+              "rpc-refused",
+              "TypeError",
+              "SyntaxError",
+              "AbortError",
+              "TimeoutError",
+              "request-error",
+            ].includes(read.errorCategory)
+              ? read.errorCategory
+              : null,
           };
         }),
       };
