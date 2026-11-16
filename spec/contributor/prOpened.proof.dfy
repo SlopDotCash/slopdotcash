@@ -14,7 +14,13 @@ lemma record_ensures(o: OpenedRun, by_: int, prNode: string, at: int)
     {
       ProofLib.FilterAppend((x: int) => (x == e), o.events, at);
       if e == at {
+        assert forall i :: 0 <= i < |o.events| ==> o.events[i] != at;
         ProofLib.FilterNone((x: int) => (x == e), o.events);
+        assert |Std.Collections.Seq.Filter((x: int) => (x == e), o.events)| == 0;
+      } else {
+        assert e in o.events;
+        assert alwaysEventsDistinct(o);
+        assert e > 0 && |Std.Collections.Seq.Filter((x: int) => (x == e), o.events)| == 1;
       }
     }
   }
