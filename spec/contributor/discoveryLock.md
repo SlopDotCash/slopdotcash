@@ -61,7 +61,9 @@ pure def refuseAcquire(s: DiscoveryLock): DiscoveryLock = { ...s, guard: NoGuard
 pure def canContend(s: DiscoveryLock, owner: int): bool = owner > 0 and owner != s.owner and owner != s.candidate
   and (s.guard != NoGuard or s.parentLive or commandActive(s)) and s.contentions < 9007199254740000
 pure def contend(s: DiscoveryLock, owner: int): DiscoveryLock = { ...s, contentions: s.contentions + 1 }
-pure def alwaysClearScanHolds(s: DiscoveryLock): bool = (s.observedClear and s.guard == AcquireGuard) implies not(commandActive(s))
+pure def alwaysClearScanHolds(s: DiscoveryLock): bool = ((s.observedClear and s.guard == AcquireGuard) implies not(commandActive(s)))
+  and ((s.observedClear and s.guard == AcquireGuard and not(s.stalePending)) implies not(s.parentLive))
+  and (s.guard == AcquireGuard implies s.candidate > 0 and not(s.aggregate))
 pure def stepContentionChangesNothing(before: DiscoveryLock, via: str, after: DiscoveryLock): bool =
   (via == "contend" or via == "refuseAcquire") implies after.owner == before.owner and after.parentLive == before.parentLive
     and after.commandLease == before.commandLease and after.generation == before.generation
@@ -91,7 +93,8 @@ pure def finishStaleCleanup(s: DiscoveryLock, cleanup: StaleCleanup): DiscoveryL
   else { ...s, guard: NoGuard, stalePending: false, staleRemnants: s.staleRemnants + 1, aggregate: true,
     primary: AggregateCleanupFailure }
 pure def alwaysStaleCleanupGuarded(s: DiscoveryLock): bool = (s.stalePending implies s.guard == AcquireGuard and s.owner != 0
-  and s.owner == s.candidate and not(commandActive(s)))
+  and s.owner == s.candidate and not(commandActive(s)) and s.observedClear)
+  and ((s.guard == StartupGuard and s.phase != HelperChecking) implies not(s.aggregate))
   and (s.aggregate implies s.owner != 0 and s.primary == AggregateCleanupFailure)
   and s.staleRemnants >= 0 and s.contentions >= 0 and s.takeovers >= 0 and s.releaseFailures >= 0
 pure def sometimesStaleTakeover(s: DiscoveryLock): bool = s.takeovers > 0 and s.guard == NoGuard and s.parentLive

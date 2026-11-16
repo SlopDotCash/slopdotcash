@@ -62,8 +62,9 @@ pure def startRead(h: Health, by: Renewer, withToken: bool): Health =
   { ...h, read: if (withToken) TokenRead else AnonymousRead, tokenRejected: false }
 pure def canRejectToken(h: Health, by: Renewer): bool = renewerAllowed(by) and h.read == TokenRead
 pure def rejectToken(h: Health, by: Renewer): Health = { ...h, read: AnonymousRead, tokenRejected: true }
+pure def unauthorized(answer: GitHubAnswer): bool = match answer { | Unusable(u) => u.reason == Unauthorized | _ => false }
 pure def canRenew(h: Health, answer: GitHubAnswer, readAt: int, by: Renewer): bool = renewerAllowed(by) and h.read != NoRead
-  and readAt > 0 and readAt <= h.clock and not(h.read == TokenRead and answer == Unusable({ reason: Unauthorized }))
+  and readAt > 0 and readAt <= h.clock and not(h.read == TokenRead and unauthorized(answer))
 pure def renew(h: Health, answer: GitHubAnswer, readAt: int, by: Renewer): Health = match answer {
   | ReportingEnabled => written(true, readAt, { ...h, read: NoRead })
   | ReportingDisabled => written(false, readAt, { ...h, read: NoRead })

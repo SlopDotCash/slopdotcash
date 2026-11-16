@@ -101,9 +101,11 @@ pure def alwaysRecordMatchesVersion(p: TermsPreflight): bool =
   and (p.recordVersion == 0 or p.recordVersion == 1 or p.recordVersion == 2)
 pure def alwaysPending(p: TermsPreflight): bool = 0 <= p.pending and p.pending <= 3
   and (p.phase != VerifyingDocuments implies p.pending == 0)
-  and (p.phase == VerifyingDocuments implies p.revision > 0)
+  and (p.phase == VerifyingDocuments implies p.revision > 0 and p.fromCache + p.fromNetwork + p.pending <= 3
+    and (p.documentsRequired iff p.fromCache + p.fromNetwork + p.pending > 0))
+  and (p.phase == ReadingTerms implies p.fromCache == 0 and p.fromNetwork == 0)
   and (p.recordVersion == 2 implies p.fromCache + p.fromNetwork <= 3 and (p.documentsRequired iff p.fromCache + p.fromNetwork > 0))
-  and p.refusals >= 0
+  and p.refusals >= 0 and p.fromCache >= 0 and p.fromNetwork >= 0
 pure def sometimesAcknowledged(p: TermsPreflight): bool = p.recordVersion == 2 and p.fromCache > 0
 pure def sometimesRefusedWithoutRecord(p: TermsPreflight): bool = p.phase == Refused and p.recordVersion == 0
 pure def sometimesPlainAfterRefusal(p: TermsPreflight): bool = p.recordVersion == 1 and p.refusals > 0

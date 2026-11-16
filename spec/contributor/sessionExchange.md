@@ -112,7 +112,8 @@ pure def canPurgeExpired(e: Exchange, by: int): bool = by == identityWorker and 
   and e.now >= e.flowExpires and not(e.flow == AssertionIssued and e.now < e.assertionExpires)
 pure def purgeExpired(e: Exchange, by: int): Exchange = { ...e, flow: FlowPurged }
 pure def alwaysFailedFlowUnissued(e: Exchange): bool =
-  e.flow == CallbackFailed implies e.assertionIssuedAt == 0 and not(e.assertionConsumed) and not(e.minted)
+  (e.flow == FlowPending or e.flow == CallbackProcessing or e.flow == CallbackComplete or e.flow == CallbackFailed)
+    implies e.assertionIssuedAt == 0 and not(e.assertionConsumed) and not(e.minted)
 pure def stepAssertionOnlyFromLiveFlow(before: Exchange, after: Exchange): bool =
   (before.flow != AssertionIssued and after.flow == AssertionIssued) implies
     before.flow == CallbackComplete and before.now < before.flowExpires
