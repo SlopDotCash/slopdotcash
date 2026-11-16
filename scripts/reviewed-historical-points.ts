@@ -1140,6 +1140,7 @@ export function reconstructHistoricalPoints(
           "Earlier source does not cover the exact duplicate claim",
         );
         const unit = matches[0].rewardedUnit;
+        let excludedBotUnit = false;
         if (unit) {
           check(
             !retiringSources.has(unit.awardSourceId),
@@ -1186,7 +1187,20 @@ export function reconstructHistoricalPoints(
                 b: { occurredAt: string; pullRequestNodeId: string },
               ) =>
                 Date.parse(a.occurredAt) - Date.parse(b.occurredAt) ||
-                a.pullRequestNodeId.localeCompare(b.pullRequestNodeId),
+                (a.pullRequestNodeId < b.pullRequestNodeId
+                  ? -1
+                  : a.pullRequestNodeId > b.pullRequestNodeId
+                    ? 1
+                    : 0),
+            );
+          excludedBotUnit =
+            unitClaims.length > 0 &&
+            unitClaims.length === group?.claimIds.length &&
+            new Set(group.claimIds).size === group.claimIds.length &&
+            unitClaims.every(
+              (item: { implementationActorNodeIds?: string[] }) =>
+                Array.isArray(item.implementationActorNodeIds) &&
+                item.implementationActorNodeIds.length === 0,
             );
           check(
             record.projectId === packet.projectId &&
@@ -1208,8 +1222,9 @@ export function reconstructHistoricalPoints(
           );
         }
         check(
-          (squash?.author?.kind === "Bot" &&
-            squash.commit.author?.kind === "Bot") ||
+          excludedBotUnit ||
+            (squash?.author?.kind === "Bot" &&
+              squash.commit.author?.kind === "Bot") ||
             rewardedAwards.some(
               (award) =>
                 award.projectId === packet.projectId &&

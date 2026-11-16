@@ -2301,3 +2301,197 @@ for (const fault of [
       ).toThrow("Earlier bot follow-up review is invalid");
   });
 }
+
+test("canonical excluded bot unit retains no duplicate human award", async () => {
+  const f = duplicateRetirementFixture(),
+    r = f.retirement;
+  const record = {
+    projectId: "feed",
+    sources: [
+      {
+        pullRequestNodeId: r.earlierSources[0].sourceId,
+        repositoryNodeId: "R_feed",
+        headSha: r.earlierSources[0].headSha,
+        occurredAt: r.earlierSources[0].occurredAt,
+      },
+    ],
+    claims: [
+      {
+        id: "d".repeat(64),
+        repositoryNodeId: "R_feed",
+        commitSha: r.source.commits[0].sha,
+        path: "work.ts",
+        creditPullRequestId: r.earlierSources[0].sourceId,
+        implementationActorNodeIds: [] as string[],
+      },
+    ],
+    units: [
+      {
+        workUnitId: "earlier",
+        claimIds: ["d".repeat(64)],
+        assessment: { status: "assessed", tier: "micro" },
+      },
+    ],
+  };
+  f.baseline = appendPointAwards(
+    f.baseline,
+    [{ ...f.baseline.revisions[1].award, amount: 0 }],
+    "c".repeat(64),
+    "slop-score-v2",
+    time,
+  );
+  f.packet.baselineDigest = hash(f.baseline);
+  f.packet.baselineRevisionCount = f.baseline.revisions.length;
+  f.packet.corrections.baseline = createPointsCorrectionBaseline(f.baseline);
+  const currentRows = latestPoints(f.baseline);
+  for (const candidate of f.packet.corrections.candidates)
+    candidate.expectedPredecessors = candidate.expectedPredecessors.map(
+      (row) => ({
+        key: row.key,
+        revisionId: currentRows.get(row.key)?.id ?? row.revisionId,
+      }),
+    );
+  const bind = () => {
+    r.coverage[0].rewardedUnit = {
+      recordDigest: hash(record),
+      recordJson: JSON.stringify(record),
+      claimId: "d".repeat(64),
+      workUnitId: "earlier",
+      awardSourceId: r.earlierSources[0].sourceId,
+    };
+    const dossier = JSON.parse(r.evidence);
+    dossier.coverageSha256 = hash(r.coverage);
+    r.evidence = JSON.stringify(dossier);
+    r.evidenceSha256 = sha256Hex(r.evidence);
+    const award = f.baseline.revisions[0].award;
+    f.expected = appendPointAwards(
+      f.baseline,
+      [{ ...award, amount: 0 }],
+      hash(r),
+      "slop-score-v2",
+      time,
+      new Map([
+        [
+          award.key,
+          {
+            sourceId: `owner_duplicate_${r.evidenceSha256}`,
+            effectiveAt: time,
+            reason:
+              "Owner-reviewed duplicate accepted work already rewarded by earlier sources.",
+          },
+        ],
+      ]),
+    );
+    f.packet.candidateDigest = hash(f.expected);
+  };
+  bind();
+  expect(
+    reconstructHistoricalPoints(f.packet, f.baseline, time, new Map()),
+  ).toEqual(f.expected);
+  await expect(
+    verifyHistoricalValueRecords(f.packet, async () => []),
+  ).rejects.toThrow("Duplicate coverage record is missing or changed");
+  record.claims[0].implementationActorNodeIds = [actor.id];
+  bind();
+  expect(() =>
+    reconstructHistoricalPoints(f.packet, f.baseline, time, new Map()),
+  ).toThrow("Duplicate claim lacks a retained rewarded pool");
+  record.claims[0].implementationActorNodeIds = [];
+  record.units[0].claimIds.push("e".repeat(64));
+  bind();
+  expect(() =>
+    reconstructHistoricalPoints(f.packet, f.baseline, time, new Map()),
+  ).toThrow("Duplicate claim lacks a retained rewarded pool");
+});
+
+test("joint retirement completion uses canonical code-unit identity ordering", () => {
+  const f = duplicateRetirementFixture(),
+    r = f.retirement;
+  const owner = r.earlierSources[0];
+  const higherId = "PR_z_";
+  const lowerId = "PR_z3";
+  // Underscore sorts before digits under localeCompare and after them by code unit.
+  const record = {
+    projectId: "feed",
+    sources: [
+      {
+        pullRequestNodeId: owner.sourceId,
+        repositoryNodeId: "R_feed",
+        headSha: owner.headSha,
+        occurredAt: owner.occurredAt,
+      },
+      { pullRequestNodeId: lowerId, occurredAt: owner.occurredAt },
+      { pullRequestNodeId: higherId, occurredAt: owner.occurredAt },
+    ],
+    claims: [
+      {
+        id: "d".repeat(64),
+        repositoryNodeId: "R_feed",
+        commitSha: r.source.commits[0].sha,
+        path: "work.ts",
+        creditPullRequestId: owner.sourceId,
+      },
+      { id: "e".repeat(64), creditPullRequestId: lowerId },
+      { id: "f".repeat(64), creditPullRequestId: higherId },
+    ],
+    units: [
+      {
+        workUnitId: "earlier",
+        claimIds: ["d".repeat(64), "e".repeat(64), "f".repeat(64)],
+        assessment: { status: "assessed", tier: "small" },
+      },
+    ],
+  };
+  const previous = f.baseline.revisions[1].award;
+  f.baseline = appendPointAwards(
+    f.baseline,
+    [
+      {
+        ...previous,
+        key: pointKey("feed", actor.id, "merged-pull-request", higherId),
+        sourceId: higherId,
+        sourceUrl: "https://github.com/feedforagents/feed/pull/4",
+      },
+    ],
+    "c".repeat(64),
+    "slop-score-v2",
+    time,
+  );
+  f.packet.baselineDigest = hash(f.baseline);
+  f.packet.baselineRevisionCount = f.baseline.revisions.length;
+  f.packet.corrections.baseline = createPointsCorrectionBaseline(f.baseline);
+  r.coverage[0].rewardedUnit = {
+    recordDigest: hash(record),
+    recordJson: JSON.stringify(record),
+    claimId: "d".repeat(64),
+    workUnitId: "earlier",
+    awardSourceId: higherId,
+  };
+  const dossier = JSON.parse(r.evidence);
+  dossier.coverageSha256 = hash(r.coverage);
+  r.evidence = JSON.stringify(dossier);
+  r.evidenceSha256 = sha256Hex(r.evidence);
+  const award = f.baseline.revisions[0].award;
+  f.expected = appendPointAwards(
+    f.baseline,
+    [{ ...award, amount: 0 }],
+    hash(r),
+    "slop-score-v2",
+    time,
+    new Map([
+      [
+        award.key,
+        {
+          sourceId: `owner_duplicate_${r.evidenceSha256}`,
+          effectiveAt: time,
+          reason:
+            "Owner-reviewed duplicate accepted work already rewarded by earlier sources.",
+        },
+      ],
+    ]),
+  );
+  f.packet.candidateDigest = hash(f.expected);
+  expect(
+    reconstructHistoricalPoints(f.packet, f.baseline, time, new Map()),
+  ).toEqual(f.expected);
+});
