@@ -1,5 +1,6 @@
 /** Owner-reviewed historical award changes, reconstructed with canonical Points APIs. */
 
+import { createHash } from "node:crypto";
 import { gunzipSync } from "node:zlib";
 import { compareActors, githubUserIdFromNodeId } from "../src/lib/github-actor";
 import {
@@ -19,6 +20,7 @@ import {
 } from "../src/lib/points";
 import {
   applyPointsImplementationCorrections,
+  type CorrectionCommit,
   type CorrectionSource,
   type PointsImplementationCorrectionManifest,
 } from "../src/lib/points-implementation-corrections";
@@ -28,6 +30,46 @@ import { allocateWeightedRows } from "../src/lib/weighted-allocation";
 import type { Pull } from "../workers/slopbot/value-evidence-types";
 import { mergeResolutionLineCounts } from "../workers/slopbot/value-merge-resolution";
 import { pointProtectionQuery } from "./points-protection-sql";
+
+/** An earlier PR's accepted squash is kept separately from its submitted history. */
+export interface HistoricalAcceptedSquash {
+  sourceId: string;
+  sourceUrl: string;
+  repositoryNodeId: string;
+  headSha: string;
+  occurredAt: string;
+  author: CorrectionSource["author"];
+  commit: CorrectionCommit;
+  headCommit: string;
+  acceptedCommit: string;
+}
+
+function retainedCommit(raw: string, sha: string) {
+  check(
+    typeof raw === "string" && Buffer.byteLength(raw) <= 1024 * 1024,
+    "Invalid retained squash commit",
+  );
+  const bytes = Buffer.from(raw);
+  check(
+    createHash("sha1")
+      .update(`commit ${bytes.length}\0`)
+      .update(bytes)
+      .digest("hex") === sha,
+    "Retained squash commit hash changed",
+  );
+  const headers = raw.slice(0, raw.indexOf("\n\n")).split("\n");
+  const tree = /^tree ([a-f0-9]{40})$/u.exec(headers[0])?.[1];
+  const parents = headers
+    .filter((line) => line.startsWith("parent "))
+    .map((line) => line.slice(7));
+  check(
+    tree &&
+      parents.every((parent) => /^[a-f0-9]{40}$/u.test(parent)) &&
+      new Set(parents).size === parents.length,
+    "Invalid retained squash parents",
+  );
+  return { tree, parents };
+}
 
 export interface HistoricalPointsPacket {
   schemaVersion: "1";
@@ -95,6 +137,7 @@ export interface HistoricalPointsPacket {
       }[];
     };
     earlierSources: CorrectionSource[];
+    acceptedSquashes?: HistoricalAcceptedSquash[];
     coverage: {
       commitSha: string;
       path: string;
@@ -682,6 +725,64 @@ export function reconstructHistoricalPoints(
         );
       }
     }
+    const squashes = new Map(
+      (retirement.acceptedSquashes ?? []).map((item) => [item.sourceId, item]),
+    );
+    check(
+      squashes.size === (retirement.acceptedSquashes?.length ?? 0),
+      "Repeated accepted squash source",
+    );
+    for (const squash of squashes.values()) {
+      const audited = packet.sourceAudit.sources.find(
+        (item) => item.id === squash.sourceId,
+      );
+      check(
+        !earlier.has(squash.sourceId) &&
+          squash.sourceId !== source.sourceId &&
+          squash.repositoryNodeId === source.repositoryNodeId &&
+          audited?.headSha === squash.headSha &&
+          audited.mergedAt === squash.occurredAt &&
+          squash.sourceUrl ===
+            `https://github.com/${packet.sourceAudit.repository}/pull/${audited.number}` &&
+          source.occurredAt !== null &&
+          squash.occurredAt < source.occurredAt &&
+          squash.author !== null &&
+          typeof squash.author.id === "string" &&
+          ["User", "Bot"].includes(squash.author.kind) &&
+          (squash.commit.author === null ||
+            (typeof squash.commit.author.id === "string" &&
+              ["User", "Bot"].includes(squash.commit.author.kind))) &&
+          squash.commit.firstAcceptedSourceId === squash.sourceId &&
+          squash.commit.parentCount === 1 &&
+          squash.commit.parentShas?.length === 1 &&
+          squash.commit.files?.length &&
+          new Set(squash.commit.files.map((file) => file.path)).size ===
+            squash.commit.files.length &&
+          squash.commit.files.every(
+            (file) =>
+              Number.isSafeInteger(file.additions) &&
+              file.additions >= 0 &&
+              Number.isSafeInteger(file.deletions) &&
+              file.deletions >= 0,
+          ) &&
+          squash.commit.additions ===
+            squash.commit.files.reduce(
+              (sum, file) => sum + file.additions,
+              0,
+            ) &&
+          squash.commit.deletions ===
+            squash.commit.files.reduce((sum, file) => sum + file.deletions, 0),
+        "Incomplete accepted squash source",
+      );
+      retainedCommit(squash.headCommit, squash.headSha);
+      const accepted = retainedCommit(squash.acceptedCommit, squash.commit.sha);
+      check(
+        JSON.stringify(accepted.parents) ===
+          JSON.stringify(squash.commit.parentShas),
+        "Accepted squash parent changed",
+      );
+    }
+    const usedSquashes = new Set<string>();
     const expected: string[] = [];
     for (const commit of source.commits) {
       check(
@@ -736,8 +837,14 @@ export function reconstructHistoricalPoints(
           matches.length === 1,
           "Duplicate claim coverage is missing or repeated",
         );
-        const owner = earlier.get(matches[0].sourceId);
-        const retained = owner?.commits.find((item) => item.sha === commit.sha);
+        const squash = squashes.get(matches[0].sourceId);
+        const owner = earlier.get(matches[0].sourceId) ?? squash;
+        const retained =
+          squash?.commit ??
+          earlier
+            .get(matches[0].sourceId)
+            ?.commits.find((item) => item.sha === commit.sha);
+        if (squash) usedSquashes.add(squash.sourceId);
         const retainedFile = retained?.files?.find(
           (item) => item.path === file.path,
         );
@@ -746,7 +853,15 @@ export function reconstructHistoricalPoints(
             !retiringSources.has(owner.sourceId) &&
             retained &&
             retained.parentCount === commit.parentCount &&
-            commit.firstAcceptedSourceId === owner.sourceId &&
+            retained.sha === commit.sha &&
+            (!squash ||
+              (JSON.stringify(squash.commit.files) ===
+                JSON.stringify(commit.files) &&
+                squash.commit.additions === commit.additions &&
+                squash.commit.deletions === commit.deletions)) &&
+            (squash
+              ? commit.firstAcceptedSourceId === source.sourceId
+              : commit.firstAcceptedSourceId === owner.sourceId) &&
             retained.firstAcceptedSourceId === owner.sourceId &&
             JSON.stringify(retained.parentShas) ===
               JSON.stringify(commit.parentShas) &&
@@ -828,22 +943,25 @@ export function reconstructHistoricalPoints(
           );
         }
         check(
-          rewardedAwards.some(
-            (award) =>
-              award.projectId === packet.projectId &&
-              award.category === "merged-pull-request" &&
-              award.amount > 0 &&
-              (unit
-                ? award.sourceId === unit.awardSourceId &&
-                  award.workUnitId === unit.workUnitId
-                : award.sourceId === owner.sourceId),
-          ),
+          (squash?.author?.kind === "Bot" &&
+            squash.commit.author?.kind === "Bot") ||
+            rewardedAwards.some(
+              (award) =>
+                award.projectId === packet.projectId &&
+                award.category === "merged-pull-request" &&
+                award.amount > 0 &&
+                (unit
+                  ? award.sourceId === unit.awardSourceId &&
+                    award.workUnitId === unit.workUnitId
+                  : award.sourceId === owner.sourceId),
+            ),
           "Duplicate claim lacks a retained rewarded pool",
         );
       }
     }
     check(
       expected.length > 0 &&
+        usedSquashes.size === squashes.size &&
         retirement.coverage.length === expected.length &&
         retirement.coverage.every((row) =>
           expected.includes(`${row.commitSha}\0${row.path}`),
@@ -858,6 +976,9 @@ export function reconstructHistoricalPoints(
         evidence.sourceSha256 === hash(source) &&
         evidence.coverageSha256 === hash(retirement.coverage) &&
         evidence.earlierSourcesSha256 === hash(retirement.earlierSources) &&
+        (retirement.acceptedSquashes === undefined ||
+          evidence.acceptedSquashesSha256 ===
+            hash(retirement.acceptedSquashes)) &&
         (unchanged === undefined ||
           evidence.unchangedPromotionSha256 === hash(unchanged)),
       "Duplicate retirement dossier changed",

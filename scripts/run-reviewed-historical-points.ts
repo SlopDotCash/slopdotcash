@@ -21,6 +21,7 @@ import { privatePayoutStorage } from "./private-payout-packet";
 import {
   decodeHistoricalPacket,
   decodeHistoricalPacketBytes,
+  type HistoricalAcceptedSquash,
   type HistoricalPointsPacket,
   historicalProtectionQuery,
   reconstructHistoricalPoints,
@@ -130,6 +131,80 @@ export async function verifyHistoricalCensus(
     JSON.stringify(ordered(packet.sourceAudit.sources))
   )
     throw Error("Reviewed historical census changed");
+}
+
+/** Recheck GitHub's exact accepted squash relation before using retained bytes. */
+export async function verifyHistoricalAcceptedSquashes(
+  packet: HistoricalPointsPacket,
+  github: Pick<GitHubClient, "graphql">,
+): Promise<void> {
+  const sources = new Map<string, HistoricalAcceptedSquash>();
+  for (const retirement of packet.duplicateRetirements ?? []) {
+    for (const source of retirement.acceptedSquashes ?? []) {
+      const prior = sources.get(source.sourceId);
+      if (prior && JSON.stringify(prior) !== JSON.stringify(source))
+        throw Error("Conflicting accepted squash identity");
+      sources.set(source.sourceId, source);
+    }
+  }
+  const rows = [...sources.values()];
+  for (let offset = 0; offset < rows.length; offset += 50) {
+    const batch = rows.slice(offset, offset + 50);
+    const data = await github.graphql<{
+      nodes: ({
+        id: string;
+        number: number;
+        url: string;
+        merged: boolean;
+        mergedAt: string;
+        headRefOid: string;
+        repository: { id: string; nameWithOwner: string };
+        author: { id: string; login: string; __typename: string } | null;
+        mergeCommit: {
+          oid: string;
+          author: {
+            user: { id: string; login: string; __typename: string } | null;
+          };
+          parents: {
+            nodes: { oid: string }[];
+            pageInfo: { hasNextPage: boolean };
+          };
+        } | null;
+      } | null)[];
+    }>(
+      "query HistoricalAcceptedSquashes($ids:[ID!]!){nodes(ids:$ids){...on PullRequest{id number url merged mergedAt headRefOid repository{id nameWithOwner} author{__typename login ...on User{id} ...on Bot{id}} mergeCommit{oid author{user{__typename id login}} parents(first:10){nodes{oid} pageInfo{hasNextPage}}}}}}",
+      { ids: batch.map((source) => source.sourceId) },
+    );
+    if (!Array.isArray(data.nodes) || data.nodes.length !== batch.length)
+      throw Error("Accepted squash source unavailable");
+    for (const [index, source] of batch.entries()) {
+      const current = data.nodes[index];
+      if (
+        !current ||
+        current.id !== source.sourceId ||
+        !current.merged ||
+        current.headRefOid !== source.headSha ||
+        new Date(current.mergedAt).toISOString() !== source.occurredAt ||
+        current.url !== source.sourceUrl ||
+        current.repository.id !== source.repositoryNodeId ||
+        current.repository.nameWithOwner.toLowerCase() !==
+          packet.sourceAudit.repository.toLowerCase() ||
+        current.author?.id !== source.author?.id ||
+        current.author?.__typename !== source.author?.kind ||
+        current.mergeCommit?.oid !== source.commit.sha ||
+        current.mergeCommit.author.user?.id !== source.commit.author?.id ||
+        (current.mergeCommit.author.user?.login.endsWith("[bot]")
+          ? "Bot"
+          : current.mergeCommit.author.user?.__typename) !==
+          source.commit.author?.kind ||
+        current.mergeCommit.parents.pageInfo.hasNextPage ||
+        JSON.stringify(
+          current.mergeCommit.parents.nodes.map((parent) => parent.oid),
+        ) !== JSON.stringify(source.commit.parentShas)
+      )
+        throw Error("Accepted squash source changed");
+    }
+  }
 }
 
 /** D1 protection is rechecked by the canonical batch SQL at commit time. */
@@ -379,6 +454,7 @@ async function main() {
   await currentOwnerVerifier()(policy, packet.reviewerGithubId);
   const github = GitHubClient.forToken(await resolveGitHubToken());
   await verifyHistoricalCensus(packet, github);
+  await verifyHistoricalAcceptedSquashes(packet, github);
   await verifyHistoricalProtection(packet, query);
   await verifyHistoricalValueRecords(packet, query);
   const baseline = await loadPublishedPoints();

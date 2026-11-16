@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test";
+import { createHash } from "node:crypto";
 import { gzipSync } from "node:zlib";
 import {
   appendPointAwards,
@@ -23,6 +24,7 @@ import {
 } from "./reviewed-historical-points";
 import {
   historicalPointsSql,
+  verifyHistoricalAcceptedSquashes,
   verifyHistoricalCensus,
   verifyHistoricalProtection,
   verifyHistoricalValueRecords,
@@ -1010,4 +1012,271 @@ test("owner-reviewed multiple origins use canonical weighted remainder without c
   expect(
     reconstructHistoricalPoints(f.packet, f.baseline, time, new Map()),
   ).toEqual(expected);
+});
+
+function acceptedSquashFixture(bot = false) {
+  const f = duplicateRetirementFixture();
+  const retirement = f.retirement,
+    earlier = retirement.earlierSources[0];
+  const rawHead = `tree ${"2".repeat(40)}\nparent ${"a".repeat(40)}\nauthor Origin <origin@example.com> 1 +0000\ncommitter Origin <origin@example.com> 1 +0000\n\nOriginal head\n`;
+  const rawAccepted = `tree ${"3".repeat(40)}\nparent ${"b".repeat(40)}\nauthor Origin <origin@example.com> 1 +0000\ncommitter Maintainer <maintainer@example.com> 2 +0000\n\nAccepted squash\n`;
+  const oid = (raw: string) =>
+    createHash("sha1")
+      .update(`commit ${Buffer.byteLength(raw)}\0`)
+      .update(raw)
+      .digest("hex");
+  const sourceCommit = retirement.source.commits[0];
+  sourceCommit.sha = oid(rawAccepted);
+  sourceCommit.parentShas = ["b".repeat(40)];
+  sourceCommit.firstAcceptedSourceId = retirement.sourceId;
+  if (bot) sourceCommit.author = { id: "BOT", login: "robot", kind: "Bot" };
+  const squash = {
+    sourceId: earlier.sourceId,
+    sourceUrl: earlier.sourceUrl,
+    repositoryNodeId: earlier.repositoryNodeId,
+    headSha: oid(rawHead),
+    occurredAt: earlier.occurredAt ?? "",
+    author: bot ? sourceCommit.author : earlier.author,
+    commit: {
+      ...structuredClone(sourceCommit),
+      firstAcceptedSourceId: earlier.sourceId,
+    },
+    headCommit: rawHead,
+    acceptedCommit: rawAccepted,
+  };
+  retirement.earlierSources = [];
+  retirement.acceptedSquashes = [squash];
+  retirement.coverage[0].commitSha = sourceCommit.sha;
+  f.packet.sourceAudit.sources[1].headSha = squash.headSha;
+  const bind = () => {
+    retirement.evidence = JSON.stringify({
+      sourceId: retirement.sourceId,
+      workUnitId: retirement.workUnitId,
+      sourceSha256: hash(retirement.source),
+      earlierSourcesSha256: hash(retirement.earlierSources),
+      coverageSha256: hash(retirement.coverage),
+      acceptedSquashesSha256: hash(retirement.acceptedSquashes),
+    });
+    retirement.evidenceSha256 = sha256Hex(retirement.evidence);
+    const row = [...latestPoints(f.baseline).values()].find(
+      (r) => r.award.sourceId === retirement.sourceId,
+    );
+    if (!row) throw Error("Missing original fixture row");
+    f.expected = appendPointAwards(
+      f.baseline,
+      [{ ...row.award, amount: 0 }],
+      hash(retirement),
+      "slop-score-v2",
+      time,
+      new Map([
+        [
+          row.award.key,
+          {
+            sourceId: `owner_duplicate_${retirement.evidenceSha256}`,
+            effectiveAt: time,
+            reason:
+              "Owner-reviewed duplicate accepted work already rewarded by earlier sources.",
+          },
+        ],
+      ]),
+    );
+    f.packet.candidateDigest = hash(f.expected);
+  };
+  bind();
+  const current = {
+    id: squash.sourceId,
+    number: 2,
+    url: squash.sourceUrl,
+    merged: true,
+    mergedAt: squash.occurredAt,
+    headRefOid: squash.headSha,
+    repository: {
+      id: squash.repositoryNodeId,
+      nameWithOwner: "feedforagents/feed",
+    },
+    author: {
+      id: squash.author?.id,
+      login: squash.author?.login,
+      __typename: squash.author?.kind,
+    },
+    mergeCommit: {
+      oid: squash.commit.sha,
+      author: {
+        user: squash.commit.author
+          ? {
+              id: squash.commit.author.id,
+              login: squash.commit.author.login,
+              __typename: squash.commit.author.kind,
+            }
+          : null,
+      },
+      parents: {
+        nodes: (squash.commit.parentShas ?? []).map((oid) => ({ oid })),
+        pageInfo: { hasNextPage: false },
+      },
+    },
+  };
+  return { ...f, squash, bind, current };
+}
+
+test("accepted squash retirement preserves an earlier human pool on a different base", async () => {
+  const f = acceptedSquashFixture();
+  await verifyHistoricalAcceptedSquashes(f.packet, {
+    graphql: async <T>() => ({ nodes: [f.current] }) as T,
+  });
+  expect(
+    reconstructHistoricalPoints(f.packet, f.baseline, time, new Map()),
+  ).toEqual(f.expected);
+});
+
+for (const fault of [
+  "raw-head",
+  "raw-accepted",
+  "parent",
+  "path",
+  "author",
+  "duplicate-coverage",
+  "wrong-repository",
+  "wrong-head",
+  "late-acceptance",
+  "unrewarded",
+] as const)
+  test(`accepted squash retirement refuses ${fault}`, () => {
+    const f = acceptedSquashFixture();
+    if (fault === "raw-head") f.squash.headCommit += "changed";
+    if (fault === "raw-accepted") f.squash.acceptedCommit += "changed";
+    if (fault === "parent") f.squash.commit.parentShas = ["c".repeat(40)];
+    if (fault === "path" && f.squash.commit.files?.[0])
+      f.squash.commit.files[0].path = "foreign.ts";
+    if (fault === "author")
+      f.squash.commit.author = { id: "OTHER", login: "other", kind: "User" };
+    if (fault === "duplicate-coverage")
+      f.retirement.coverage.push({ ...f.retirement.coverage[0] });
+    if (fault === "wrong-repository") f.squash.repositoryNodeId = "R_other";
+    if (fault === "wrong-head") f.squash.headSha = "c".repeat(40);
+    if (fault === "late-acceptance")
+      f.squash.occurredAt = f.retirement.source.occurredAt ?? "";
+    if (fault === "unrewarded") {
+      const row = [...latestPoints(f.baseline).values()].find(
+        (r) => r.award.sourceId === f.squash.sourceId,
+      );
+      if (!row) throw Error("Missing prior fixture row");
+      f.baseline = appendPointAwards(
+        f.baseline,
+        [{ ...row.award, amount: 0 }],
+        "f".repeat(64),
+        "slop-score-v2",
+        time,
+      );
+      f.packet.baselineDigest = hash(f.baseline);
+      f.packet.baselineRevisionCount = f.baseline.revisions.length;
+      f.packet.corrections.baseline = createPointsCorrectionBaseline(
+        f.baseline,
+      );
+    }
+    f.bind();
+    expect(() =>
+      reconstructHistoricalPoints(f.packet, f.baseline, time, new Map()),
+    ).toThrow();
+  });
+
+for (const fault of [
+  "merge-sha",
+  "source-id",
+  "repository",
+  "head",
+  "date",
+  "parent",
+  "author",
+  "commit-author",
+  "commit-author-kind",
+  "missing",
+] as const)
+  test(`fresh accepted squash authority refuses ${fault}`, async () => {
+    const f = acceptedSquashFixture(),
+      current = structuredClone(f.current);
+    if (fault === "merge-sha") current.mergeCommit.oid = "c".repeat(40);
+    if (fault === "source-id") current.id = "OTHER";
+    if (fault === "repository") current.repository.id = "R_other";
+    if (fault === "head") current.headRefOid = "c".repeat(40);
+    if (fault === "date")
+      current.mergedAt = f.retirement.source.occurredAt ?? "";
+    if (fault === "parent")
+      current.mergeCommit.parents.nodes[0].oid = "c".repeat(40);
+    if (fault === "author") current.author.id = "OTHER";
+    if (fault === "commit-author" && current.mergeCommit.author.user)
+      current.mergeCommit.author.user.id = "OTHER";
+    if (fault === "commit-author-kind" && current.mergeCommit.author.user)
+      current.mergeCommit.author.user.__typename = "Bot";
+    await expect(
+      verifyHistoricalAcceptedSquashes(f.packet, {
+        graphql: async <T>() =>
+          ({ nodes: [fault === "missing" ? null : current] }) as T,
+      }),
+    ).rejects.toThrow();
+  });
+
+for (const fault of [
+  "null-original",
+  "unknown-kind",
+  "wrong-kind",
+  "file-count",
+  "empty-files",
+  "missing-coverage",
+  "duplicate-source",
+] as const)
+  test(`accepted squash structural refusal ${fault}`, () => {
+    const f = acceptedSquashFixture();
+    if (fault === "null-original") f.squash.author = null;
+    if (fault === "unknown-kind" && f.squash.author)
+      f.squash.author.kind = "Organization";
+    if (fault === "wrong-kind" && f.squash.commit.author)
+      f.squash.commit.author.kind = "Bot";
+    if (fault === "file-count") f.squash.commit.additions = 2;
+    if (fault === "empty-files") f.squash.commit.files = [];
+    if (fault === "missing-coverage") f.retirement.coverage = [];
+    if (fault === "duplicate-source")
+      f.retirement.acceptedSquashes?.push(structuredClone(f.squash));
+    f.bind();
+    expect(() =>
+      reconstructHistoricalPoints(f.packet, f.baseline, time, new Map()),
+    ).toThrow();
+  });
+
+test("accepted bot squash remains excluded without a human reward pool", () => {
+  const f = acceptedSquashFixture(true);
+  const row = [...latestPoints(f.baseline).values()].find(
+    (r) => r.award.sourceId === f.squash.sourceId,
+  );
+  if (!row) throw Error("Missing prior fixture row");
+  Object.assign(
+    f.baseline,
+    appendPointAwards(
+      f.baseline,
+      [{ ...row.award, amount: 0 }],
+      "f".repeat(64),
+      "slop-score-v2",
+      time,
+    ),
+  );
+  f.packet.baselineDigest = hash(f.baseline);
+  f.packet.baselineRevisionCount = f.baseline.revisions.length;
+  f.packet.corrections.baseline = createPointsCorrectionBaseline(f.baseline);
+  const priorCandidate = f.packet.corrections.candidates.find(
+    (candidate) => candidate.sourceId === f.squash.sourceId,
+  );
+  const priorRow = latestPoints(f.baseline).get(row.award.key);
+  if (!priorCandidate || !priorRow) throw Error("Missing prior fixture");
+  priorCandidate.expectedPredecessors = [
+    { key: row.award.key, revisionId: priorRow.id },
+  ];
+  f.bind();
+  expect(
+    hash(reconstructHistoricalPoints(f.packet, f.baseline, time, new Map())),
+  ).toEqual(f.packet.candidateDigest);
+  f.squash.author = actor;
+  f.bind();
+  expect(() =>
+    reconstructHistoricalPoints(f.packet, f.baseline, time, new Map()),
+  ).toThrow();
 });
