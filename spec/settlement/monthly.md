@@ -2,12 +2,13 @@
 
 PRD sections 6 and 7 fix the calendar UTC month, starting with 2026-11, and a
 cutoff 72 hours after the month ends. One instance is one project's month:
-its proposal, private owner adjustments, freeze, funding-time exclusions and
-obligations. Source anchors are development `backend/payments/README.md`
+its proposal, owner changes and public cuts, freeze, funding-time exclusions
+and obligations. Source anchors are development `backend/payments/README.md`
 ("Monthly allocations" steps 1–5), `backend/payments/monthly.ts`,
 `scripts/prepare-monthly-rewards.ts`, `src/lib/payments/monthly-allocation.ts`
-and migrations `0062`, `0071` (`monthly_reward_bases`,
+and migrations `0062`, `0071`, `0126` (`monthly_reward_bases`,
 `monthly_reward_base_rows`, `monthly_allocation_changes`,
+`monthly_allocation_cut_reasons`,
 `monthly_payment_settings`, `monthly_payment_runs`,
 `monthly_payment_obligations`, `monthly_payment_exclusions`). Legacy models
 `monthly_coordinator`, `monthly_cutoff_queue`, `monthly_allocation`,
@@ -46,10 +47,15 @@ type ObligationState = Created | Reserved | Paid | Conflicted
 type SourceKey = { project: str, period: int, actor: int }
 type Obligation = { actor: int, amount: M::Amount, source: SourceKey, progress: ObligationState }
 type BanExclusion = { actor: int, ban: int }
+type Change = { actor: int, by: int, amount: M::Amount, sequence: int, at: int, cut: bool }
+type Cut = { actor: int, by: int, proposed: M::Amount, amount: M::Amount, reasonLength: int, at: int, sequence: int }
+type CutNotice = { project: str, period: int, actor: int, sequence: int }
 type Monthly = { project: str, period: int, phase: MonthlyPhase, skip: SkipReason, now: int, automatic: bool, settingsSequence: int,
   eligibility: Eligibility, revision: RevisionFact, currentRevision: RevisionFact, cap: M::Amount, snapshotDigest: str,
   exclusions: List[X::Exclusion], shares: List[A::Share], total: M::Amount, sequence: int, trigger: Trigger, frozenSequence: int, frozenBy: int,
-  obligations: List[Obligation], banned: List[BanExclusion], underfundedNotice: bool, coordinatorRetries: int }
+  obligations: List[Obligation], banned: List[BanExclusion], underfundedNotice: bool, coordinatorRetries: int,
+  proposedShares: List[A::Share], changes: List[Change], cuts: List[Cut], publicCuts: List[Cut], notices: List[CutNotice],
+  latestCutAt: int, frozenAt: int }
 pure val noRevision: RevisionFact = { number: 0, effectivePeriod: 0, monthlyAmount: M::zero, maximum: M::zero, rewardStartAt: 0,
   vault: "", asset: "", feePolicy: "", exclusions: List() }
 pure val noEligibility: Eligibility = { revision: 0, active: false, verifiedPool: false, paused: false, restricted: false,
@@ -58,11 +64,15 @@ pure val initial: Monthly = { project: "eliza", period: 0, phase: Unopened, skip
   settingsSequence: 0, eligibility: noEligibility, revision: noRevision, currentRevision: noRevision, cap: M::zero,
   snapshotDigest: "", exclusions: List(), shares: List(), total: M::zero, sequence: 0, trigger: NoTrigger, frozenSequence: 0,
   frozenBy: 0, obligations: List(), banned: List(),
-  underfundedNotice: false, coordinatorRetries: 0 }
+  underfundedNotice: false, coordinatorRetries: 0, proposedShares: List(), changes: List(), cuts: List(), publicCuts: List(),
+  notices: List(), latestCutAt: 0, frozenAt: 0 }
 pure val firstAutomaticPeriod = 202611
 pure val cutoffSeconds = 259200
 pure val proposalWindowSeconds = 259200
 pure val freshnessSeconds = 1800
+pure val cutNoticeSeconds = 86400
+pure val cutReasonMin = 20
+pure val cutReasonMax = 500
 pure def hasActor(shares: List[A::Share], actor: int): bool = shares.some(s => s.actor == actor)
 pure def amountFor(shares: List[A::Share], actor: int): M::Amount =
   shares.foldl(M::zero, (total, share) => M::addAmounts(total, if (share.actor == actor) share.amount else M::zero))
@@ -87,10 +97,6 @@ pure def observeEligibility(m: Monthly, eligibility: Eligibility): Monthly = { .
 pure def canObserveRevision(m: Monthly, revision: RevisionFact): bool =
   m.phase != Unopened and revision.number > 0 and revision.number >= m.currentRevision.number and revision != m.currentRevision
 pure def observeRevision(m: Monthly, revision: RevisionFact): Monthly = { ...m, currentRevision: revision }
-pure def canObserveSettings(m: Monthly, automatic: bool, settingsSequence: int): bool =
-  m.phase != Unopened and settingsSequence > m.settingsSequence
-pure def observeSettings(m: Monthly, automatic: bool, settingsSequence: int): Monthly =
-  { ...m, automatic: automatic, settingsSequence: settingsSequence }
 ```
 
 ### The trusted workflow proposes in the first three days for an active, funded, verified project
@@ -125,7 +131,7 @@ pure def propose(m: Monthly, snapshot: X::WorkSnapshot, exclusions: List[X::Excl
   val weights = X::rewardWeights(snapshot, exclusions)
   val shares = if (weights.length() == 0) List() else A::allocateAmounts(revision.monthlyAmount, weights)
   { ...m, phase: Proposed, revision: revision, cap: revision.monthlyAmount, snapshotDigest: snapshot.digest,
-    exclusions: exclusions, shares: shares, total: if (weights.length() == 0) M::zero else revision.monthlyAmount }
+    exclusions: exclusions, shares: shares, proposedShares: shares, total: if (weights.length() == 0) M::zero else revision.monthlyAmount }
 ```
 
 ### A month that is not proposed in its window gets no proposal
@@ -144,18 +150,21 @@ pure def canCloseProposalWindow(m: Monthly): bool = m.phase == Collecting and m.
 pure def closeProposalWindow(m: Monthly): Monthly = { ...m, phase: NoProposal, skip: skipReason(m) }
 ```
 
-## Story: Owners adjust privately before the freeze
+## Story: Owners change amounts before the freeze, and cuts are public
 
 ### Only a current owner, steward or repository administrator changes another recipient's amount
 
 Each change replaces one existing recipient's amount and carries the
 sequence it read, so a concurrent change refuses. Write or maintain
 permission can read the month but not change it. A banned account cannot
-change allocations. Nobody changes their own allocation. A payout-excluded
-actor cannot receive a positive amount. The total never exceeds the month's
-pool and every amount fits the vault network's integer range. While the
-automatic default is on, nothing changes after the cutoff. The change
-journal is private.
+change allocations; the ban is read again at the write, so a concurrent ban
+refuses the whole write. A change under a stale project revision refuses.
+Nobody changes their own allocation. A payout-excluded actor cannot receive
+a positive amount. The total never exceeds the month's pool and every amount
+fits the vault network's integer range. While the automatic default is on,
+nothing changes after the cutoff. A change at or above the contributor's
+proposed amount is private: it is kept in the change journal for disputes
+and reconciliation and needs no reason.
 
 ```quint
 pure def manages(fact: AuthorityFact, m: Monthly): bool =
@@ -163,22 +172,76 @@ pure def manages(fact: AuthorityFact, m: Monthly): bool =
     and fact.revision == m.eligibility.revision and fact.actor > 0
 pure def replaceShare(shares: List[A::Share], actor: int, amount: M::Amount): List[A::Share] =
   shares.listMap(s => if (s.actor == actor) { ...s, amount: amount } else s)
-pure def canAdjust(m: Monthly, actor: int, amount: M::Amount, expectedSequence: int, fact: AuthorityFact): bool =
+pure def belowProposal(m: Monthly, actor: int, amount: M::Amount): bool =
+  m.proposedShares.some(p => p.actor == actor and M::compareAmounts(amount, p.amount) < 0)
+pure def changeAllowed(m: Monthly, actor: int, amount: M::Amount, expectedSequence: int, fact: AuthorityFact): bool =
   m.phase == Proposed and manages(fact, m) and expectedSequence == m.sequence and actor != fact.actor
     and hasActor(m.shares, actor) and M::validAmount(amount) and M::withinMaximum(amount, m.revision.maximum)
     and not(M::positiveAmount(amount) and X::excludedIn(m.exclusions, actor, m.period))
     and M::compareAmounts(A::allocatedTotal(replaceShare(m.shares, actor, amount)), m.cap) <= 0
     and not(m.automatic and m.now >= cutoff(m))
+pure def canAdjust(m: Monthly, actor: int, amount: M::Amount, expectedSequence: int, fact: AuthorityFact): bool =
+  changeAllowed(m, actor, amount, expectedSequence, fact) and not(belowProposal(m, actor, amount))
 pure def adjust(m: Monthly, actor: int, amount: M::Amount, expectedSequence: int, fact: AuthorityFact): Monthly =
   val shares = replaceShare(m.shares, actor, amount)
-  { ...m, shares: shares, total: A::allocatedTotal(shares), sequence: m.sequence + 1 }
+  { ...m, shares: shares, total: A::allocatedTotal(shares), sequence: m.sequence + 1,
+    changes: m.changes.append({ actor: actor, by: fact.actor, amount: amount, sequence: m.sequence + 1, at: m.now, cut: false }),
+    publicCuts: m.publicCuts.select(c => c.actor != actor) }
+```
+
+### A change below the proposed amount is a public cut with a reason and one Inbox notice
+
+The operator decision of 15 November 2026 makes a cut public. The cut needs
+a reason of 20 to 500 characters after trimming. In the same write it
+appends the change, a retained cut record (acting account, proposed amount,
+new amount, reason and time) and one Inbox notice for the contributor, keyed
+by the month, the contributor and the change sequence. The public cut list
+holds each contributor whose latest change is a cut, with that cut; a later
+change back to or above the proposal removes the contributor from the list,
+but every cut record stays. With the automatic default on, a cut is refused
+in the last 24 hours before the cutoff (`cut_notice_window`), so the
+contributor always has 24 hours of notice before the month can lock.
+
+```quint
+pure def proposedFor(m: Monthly, actor: int): M::Amount = amountFor(m.proposedShares, actor)
+pure def cutWindowOpen(m: Monthly): bool = not(m.automatic and m.now >= cutoff(m) - cutNoticeSeconds)
+pure def canCut(m: Monthly, actor: int, amount: M::Amount, reasonLength: int, expectedSequence: int, fact: AuthorityFact): bool =
+  changeAllowed(m, actor, amount, expectedSequence, fact) and belowProposal(m, actor, amount)
+    and reasonLength >= cutReasonMin and reasonLength <= cutReasonMax and cutWindowOpen(m) and m.now > 0
+pure def cut(m: Monthly, actor: int, amount: M::Amount, reasonLength: int, expectedSequence: int, fact: AuthorityFact): Monthly =
+  val shares = replaceShare(m.shares, actor, amount)
+  val record = { actor: actor, by: fact.actor, proposed: proposedFor(m, actor), amount: amount, reasonLength: reasonLength,
+    at: m.now, sequence: m.sequence + 1 }
+  { ...m, shares: shares, total: A::allocatedTotal(shares), sequence: m.sequence + 1,
+    changes: m.changes.append({ actor: actor, by: fact.actor, amount: amount, sequence: m.sequence + 1, at: m.now, cut: true }),
+    cuts: m.cuts.append(record), publicCuts: m.publicCuts.select(c => c.actor != actor).append(record),
+    notices: m.notices.append({ project: m.project, period: m.period, actor: actor, sequence: m.sequence + 1 }),
+    latestCutAt: m.now }
+```
+
+### Turning the automatic default on never locks a cut with less than 24 hours of notice
+
+The month observes each new `{automatic, sequence}` pair of the project
+setting. Turning the default off is always accepted. Turning it on is
+refused while an unfrozen month has a cut whose 24-hour notice ends after
+the cutoff and has not yet ended; the owner can turn it on, or finalize,
+once that notice ends.
+
+```quint
+pure def cutNoticeOutlastsCutoff(m: Monthly): bool = m.phase == Proposed and m.latestCutAt > 0
+  and m.latestCutAt + cutNoticeSeconds > cutoff(m) and m.now < m.latestCutAt + cutNoticeSeconds
+pure def canObserveSettings(m: Monthly, automatic: bool, settingsSequence: int): bool =
+  m.phase != Unopened and settingsSequence > m.settingsSequence and not(automatic and cutNoticeOutlastsCutoff(m))
+pure def observeSettings(m: Monthly, automatic: bool, settingsSequence: int): Monthly =
+  { ...m, automatic: automatic, settingsSequence: settingsSequence }
 ```
 
 ## Story: Freeze exactly one execution snapshot
 
 ### The owner may finalize early; the coordinator freezes at the cutoff unless the default is off
 
-The owner path needs the same authority and current sequence. The automatic
+The owner path needs the same authority and current sequence, and is
+refused until 24 hours after the latest cut (`cut_notice_pending`). The automatic
 path needs the cutoff, the automatic default, a month from 2026-11 on, and a
 project that is not paused or restricted and whose vault network is served.
 Either path writes the single run record with its trigger and the sequence
@@ -191,14 +254,16 @@ persistent outage violates that assumption and is surfaced operationally.
 ```quint
 pure def financialTermsSame(proposed: RevisionFact, observed: RevisionFact): bool =
   proposed.vault == observed.vault and proposed.asset == observed.asset and proposed.feePolicy == observed.feePolicy
+pure def cutNoticeElapsed(m: Monthly): bool = m.latestCutAt == 0 or m.now >= m.latestCutAt + cutNoticeSeconds
 pure def canFinalize(m: Monthly, expectedSequence: int, fact: AuthorityFact): bool =
   m.phase == Proposed and manages(fact, m) and expectedSequence == m.sequence and financialTermsSame(m.revision, m.currentRevision)
+    and cutNoticeElapsed(m)
 pure def finalize(m: Monthly, expectedSequence: int, fact: AuthorityFact): Monthly =
-  { ...m, phase: Frozen, trigger: OwnerTrigger, frozenSequence: m.sequence, frozenBy: fact.actor }
+  { ...m, phase: Frozen, trigger: OwnerTrigger, frozenSequence: m.sequence, frozenBy: fact.actor, frozenAt: m.now }
 pure def automaticMayFreeze(m: Monthly): bool = m.automatic and m.now >= cutoff(m) and m.period >= firstAutomaticPeriod
   and not(m.eligibility.paused) and not(m.eligibility.restricted) and m.eligibility.networkServed
 pure def canAutoFreeze(m: Monthly): bool = m.phase == Proposed and automaticMayFreeze(m) and financialTermsSame(m.revision, m.currentRevision)
-pure def autoFreeze(m: Monthly): Monthly = { ...m, phase: Frozen, trigger: AutomaticTrigger, frozenSequence: m.sequence }
+pure def autoFreeze(m: Monthly): Monthly = { ...m, phase: Frozen, trigger: AutomaticTrigger, frozenSequence: m.sequence, frozenAt: m.now }
 pure val fair_autoFreeze = "weak"
 pure def leadsToCutoffFrozen(m: Monthly, later: Monthly): bool =
   canAutoFreeze(m) implies (later.phase != Proposed or not(canAutoFreeze(later)))
@@ -297,6 +362,43 @@ pure def alwaysCapFromRevision(m: Monthly): bool = proposedPhase(m.phase) implie
   m.cap == m.revision.monthlyAmount and M::positiveAmount(m.cap) and m.revision.effectivePeriod <= m.period
 pure def alwaysUnproposedEmpty(m: Monthly): bool = not(proposedPhase(m.phase)) implies
   m.shares.length() == 0 and M::equalAmounts(m.total, M::zero) and m.obligations.length() == 0 and m.sequence == 0
+    and m.proposedShares.length() == 0 and m.changes.length() == 0 and m.cuts.length() == 0 and m.latestCutAt == 0
+```
+
+### Every cut keeps its reason bounds, its change and exactly one Inbox notice
+
+```quint
+pure def alwaysCutsRecorded(m: Monthly): bool = m.latestCutAt <= m.now and ((m.latestCutAt == 0) == (m.cuts.length() == 0))
+  and m.cuts.every(c => c.reasonLength >= cutReasonMin and c.reasonLength <= cutReasonMax and M::compareAmounts(c.amount, c.proposed) < 0
+    and c.at > 0 and c.at <= m.latestCutAt and c.sequence > 0 and c.sequence <= m.sequence
+    and m.changes.some(x => x.sequence == c.sequence and x.actor == c.actor and x.cut and x.amount == c.amount))
+  and m.notices.length() == m.cuts.length()
+  and m.cuts.every(c => m.notices.includes({ project: m.project, period: m.period, actor: c.actor, sequence: c.sequence }))
+  and m.changes.every(x => x.sequence > 0 and x.sequence <= m.sequence and m.changes.select(o => o.sequence == x.sequence).length() == 1)
+```
+
+### The public cut list is exactly each contributor's latest change when that change is a cut
+
+```quint
+pure def alwaysPublicCutsCurrent(m: Monthly): bool =
+  m.publicCuts.every(c => m.cuts.includes(c) and m.publicCuts.select(o => o.actor == c.actor).length() == 1
+    and m.shares.some(s => s.actor == c.actor and s.amount == c.amount)
+    and m.changes.every(x => x.actor == c.actor implies x.sequence <= c.sequence))
+  and m.shares.every(s => belowProposal(m, s.actor, s.amount) implies m.publicCuts.some(c => c.actor == s.actor))
+```
+
+### A month with a cut freezes no earlier than 24 hours after the latest cut
+
+Owner finalization waits for the notice directly. The automatic freeze
+happens at the cutoff, which is at least 24 hours after any cut made while
+the default was on, and a default turned on after a later cut waits for that
+cut's notice to end.
+
+```quint
+pure def alwaysAutomaticHonoursCutNotice(m: Monthly): bool = (m.phase == Proposed and m.automatic and m.latestCutAt > 0) implies
+  (m.latestCutAt + cutNoticeSeconds <= cutoff(m) or m.now >= m.latestCutAt + cutNoticeSeconds)
+pure def alwaysFreezeAfterCutNotice(m: Monthly): bool = (frozenPhase(m.phase) and m.latestCutAt > 0) implies
+  m.frozenAt >= m.latestCutAt + cutNoticeSeconds
 ```
 
 ### Obligations follow the frozen shares exactly, excluding only banned accounts
@@ -337,12 +439,21 @@ pure def stepObligationsMonotone(before: Monthly, after: Monthly): bool =
       and ((o.progress == Conflicted) == (n.progress == Conflicted) or o.progress == Created)))
     and before.banned.every(b => after.banned.includes(b))
 pure def stepSequenceCounts(before: Monthly, via: str, after: Monthly): bool =
-  if (via == "adjust") after.sequence == before.sequence + 1 else after.sequence == before.sequence
+  if (via == "adjust" or via == "cut") after.sequence == before.sequence + 1 else after.sequence == before.sequence
+pure def stepChangesAndCutsRetained(before: Monthly, after: Monthly): bool =
+  before.changes.every(x => after.changes.includes(x)) and before.cuts.every(c => after.cuts.includes(c))
+    and before.notices.every(n => after.notices.includes(n)) and after.latestCutAt >= before.latestCutAt
+pure def stepProposalWrittenOnce(before: Monthly, after: Monthly): bool = proposedPhase(before.phase) implies
+  after.proposedShares == before.proposedShares and after.snapshotDigest == before.snapshotDigest
+    and after.revision == before.revision and after.exclusions == before.exclusions and after.cap == before.cap
 pure def stepUnderfundedNoticeOnce(before: Monthly, after: Monthly): bool = before.underfundedNotice implies after.underfundedNotice
 pure def stepPeriodFixed(before: Monthly, after: Monthly): bool = before.phase != Unopened implies after.period == before.period and after.project == before.project
 ```
 
-### Proposals, adjustments, freezes, exclusions and payments are reachable
+### Proposals, changes, cuts, freezes, exclusions and payments are reachable
+
+In the samples November 2026 ends at 1796083200, its cuts close at
+1796256000 while the default is on, and its cutoff is 1796342400.
 
 ```quint
 pure def sometimesWalletlessReserve(m: Monthly): bool = m.phase == Funded and m.obligations.some(o => o.progress == Reserved)
@@ -362,17 +473,16 @@ pure def sometimesUnfunded(m: Monthly): bool = m.phase == NoProposal and m.skip 
 pure def sometimesPolicyChangedBlocksFreeze(m: Monthly): bool = m.phase == Proposed and m.now >= cutoff(m) and m.automatic
   and not(financialTermsSame(m.revision, m.currentRevision))
 pure def sometimesEarlierMonthNotAutomatic(m: Monthly): bool = m.period < firstAutomaticPeriod and m.phase == Proposed and m.now >= cutoff(m)
-```
-
-### Simulation samples
-
-These input sets bound simulation only. The generated guards accept every
-value allowed by their declared types and product rules. November 2026 ends
-at 1796083200; its cutoff is 1796342400.
-
-```quint
+pure def sometimesAdjusted(m: Monthly): bool = m.changes.some(x => not(x.cut))
+pure def sometimesCutPublic(m: Monthly): bool = m.phase == Proposed and m.publicCuts.length() > 0
+pure def sometimesCutWithdrawn(m: Monthly): bool = m.cuts.length() > 0 and m.publicCuts.length() == 0
+pure def sometimesCutThenOwnerFinalized(m: Monthly): bool = m.trigger == OwnerTrigger and m.latestCutAt > 0
+pure def sometimesOptedOutFrozenByOwner(m: Monthly): bool = m.trigger == OwnerTrigger and not(m.automatic)
+pure def sometimesLateCutThenAutomaticFreeze(m: Monthly): bool = m.trigger == AutomaticTrigger
+  and m.latestCutAt + cutNoticeSeconds > cutoff(m)
 pure val periodValues = Set(202611, 202610)
-pure val nowValues = Set(1793491300, 1796083300, 1796342400, 1796342600, 1796343000)
+pure val nowValues = Set(1793491300, 1796083300, 1796200000, 1796260000, 1796342400, 1796342600, 1796343000, 1796346400)
+pure val reasonLengthValues = Set(0, 20, 500, 501)
 pure val eligible: Eligibility = { revision: 1, active: true, verifiedPool: true, paused: false, restricted: false,
   retired: false, vaultRegistered: true, networkServed: true, receiptPolicyActive: true, monthlyPoolReward: true }
 pure val eligibilityValues = Set(eligible, { ...eligible, paused: true }, { ...eligible, revision: 2 })
@@ -388,7 +498,7 @@ pure val snapshotValues = Set(snapshotSample, { ...snapshotSample, rows: List() 
   { ...snapshotSample, period: 202610 }, { ...snapshotSample, period: 202610, rows: List({ actor: 1, acceptedWork: List(10), participation: 0, recognition: 0 }) })
 pure val exclusionsValues = Set(List(), List({ actor: 3, relationship: X::RelatedParty, fromPeriod: 202610, untilPeriod: 0 }))
 pure val actorValues = Set(1, 2, 3)
-pure val amountValues = Set(List(0), List(2), List(5))
+pure val amountValues = Set(List(0), List(2), List(5), List(6))
 pure val expectedSequenceValues = Set(0, 1)
 pure val factValues = Set({ actor: 9, role: ProjectOwner, banned: false, revision: 1 }, { actor: 2, role: Steward, banned: false, revision: 1 },
   { actor: 9, role: Writer, banned: false, revision: 1 }, { actor: 9, role: ProjectOwner, banned: true, revision: 1 })
@@ -407,6 +517,8 @@ pure val weight_observeClock = 6
 pure val weight_propose = 6
 pure val weight_observeRevision = 4
 pure val weight_adjust = 4
+pure val weight_cut = 5
+pure val weight_observeSettings = 3
 pure val weight_createObligations = 6
 pure val weight_recordReserved = 6
 pure val weight_recordPaid = 6
