@@ -1,3 +1,8 @@
+// @source scripts/reviewed-historical-points.ts
+// @source scripts/run-reviewed-historical-points.ts
+// @source scripts/private-payout-packet.ts
+// @source .github/workflows/private-payout-packet.yml
+// @source .github/workflows/reviewed-historical-points.yml
 // @source scripts/prepare-points-import.ts
 // @source scripts/prepare-payments-import.ts
 // @source scripts/check-direct-payment-disclosures.ts

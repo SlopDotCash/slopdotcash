@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "meaning": "Declared lifecycle candidates. This intentionally incomplete syntactic census cannot find every implicit state, establish reachability, or prove source/model correspondence. Review the open work listed in formal/README.md as well.",
-  "inventorySha256": "68368a8d069df15cc56de146c17450bbb51f5e93f1ccf241feb6609c584681a1",
+  "inventorySha256": "762e2eea127f0d103450b36ae50d8336c8e809d1ed2c02964c774e1533173392",
   "states": [
     {
       "path": "backend/fee-conversions/handler.ts",
@@ -50,7 +50,7 @@
     },
     {
       "path": "backend/payments/monthly.ts",
-      "line": 965,
+      "line": 955,
       "name": "status",
       "kind": "string-union",
       "values": ["failed", "finalized", "pending"],
@@ -67,7 +67,7 @@
     },
     {
       "path": "backend/payments/monthly.ts",
-      "line": 1577,
+      "line": 1567,
       "name": "chain_state",
       "kind": "string-union",
       "values": ["paid", "reserved"],
@@ -2041,7 +2041,7 @@
     },
     {
       "path": "scripts/generate-leaderboard.ts",
-      "line": 460,
+      "line": 474,
       "name": "phase",
       "kind": "string-union",
       "values": [
@@ -2076,7 +2076,7 @@
     },
     {
       "path": "scripts/generate-leaderboard.ts",
-      "line": 3635,
+      "line": 3649,
       "name": "expectedState",
       "kind": "string-union",
       "values": ["closed", "merged"],
@@ -2095,7 +2095,7 @@
     },
     {
       "path": "scripts/generate-leaderboard.ts",
-      "line": 4239,
+      "line": 4253,
       "name": "status",
       "kind": "string-union",
       "values": ["complete", "suppressed-limit"],
@@ -2140,7 +2140,7 @@
     },
     {
       "path": "scripts/prepare-implementation-corrections.ts",
-      "line": 266,
+      "line": 267,
       "name": "CorrectionPhase",
       "kind": "string-union",
       "values": [
@@ -2182,6 +2182,30 @@
       "review": "candidate-only"
     },
     {
+      "path": "scripts/private-payout-packet.ts",
+      "line": 15,
+      "name": "StagingPhase",
+      "kind": "string-union",
+      "values": [
+        "chunk-stage",
+        "completion-read",
+        "credentials",
+        "manifest",
+        "source-check",
+        "trusted-context"
+      ],
+      "models": ["formal/models/points/source_import.qnt"],
+      "lexicallyUnmentionedValues": [
+        "chunk-stage",
+        "completion-read",
+        "credentials",
+        "manifest",
+        "source-check",
+        "trusted-context"
+      ],
+      "review": "candidate-only"
+    },
+    {
       "path": "scripts/profile-issue-census.ts",
       "line": 24,
       "name": "state",
@@ -2192,8 +2216,44 @@
       "review": "candidate-only"
     },
     {
+      "path": "scripts/run-october-rewards.ts",
+      "line": 42,
+      "name": "ValidationStage",
+      "kind": "string-union",
+      "values": [
+        "current owner authority",
+        "current project registry",
+        "current recipient eligibility",
+        "enforcement consistency",
+        "enforcement generation",
+        "enforcement records",
+        "existing proposal readback",
+        "financial protection",
+        "private Points checkpoint",
+        "proposal compilation",
+        "published Points validation",
+        "reviewed packet"
+      ],
+      "models": ["formal/models/rewards/october_proposal_import.qnt"],
+      "lexicallyUnmentionedValues": [
+        "current owner authority",
+        "current project registry",
+        "current recipient eligibility",
+        "enforcement consistency",
+        "enforcement generation",
+        "enforcement records",
+        "existing proposal readback",
+        "financial protection",
+        "private Points checkpoint",
+        "proposal compilation",
+        "published Points validation",
+        "reviewed packet"
+      ],
+      "review": "candidate-only"
+    },
+    {
       "path": "scripts/value-file-recovery.ts",
-      "line": 118,
+      "line": 108,
       "name": "mode",
       "kind": "string-union",
       "values": ["100644", "100755"],
@@ -3181,7 +3241,7 @@
     },
     {
       "path": "src/lib/points-implementation-corrections.ts",
-      "line": 198,
+      "line": 345,
       "name": "status",
       "kind": "string-union",
       "values": ["already-applied", "applied", "held", "retained", "unchanged"],
@@ -3732,6 +3792,22 @@
       "review": "candidate-only"
     },
     {
+      "path": "workers/identity/index.ts",
+      "line": 215,
+      "name": "OAuthStage",
+      "kind": "string-union",
+      "values": ["token", "user"],
+      "models": [
+        "formal/models/api/api_identity_admission.qnt",
+        "formal/models/api/github_identity_exchange.qnt",
+        "formal/models/api/identity_intake_renewal.qnt",
+        "formal/models/api/identity_rate_gate.qnt",
+        "formal/models/api/identity_scheduled_maintenance.qnt"
+      ],
+      "lexicallyUnmentionedValues": ["user"],
+      "review": "candidate-only"
+    },
+    {
       "path": "workers/notify/verified-delivery.ts",
       "line": 60,
       "name": "activityDeliveryDecision",
@@ -4128,7 +4204,7 @@
     },
     {
       "path": "workers/slopbot/value-file-recovery.ts",
-      "line": 24,
+      "line": 25,
       "name": "mode",
       "kind": "string-union",
       "values": ["100644", "100755"],
@@ -4193,7 +4269,7 @@
     },
     {
       "path": "workers/slopbot/value-publication.ts",
-      "line": 60,
+      "line": 65,
       "name": "result",
       "kind": "string-union",
       "values": ["policySha", "sourceDigest"],

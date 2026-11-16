@@ -10,7 +10,12 @@ import { findProject } from "../../src/lib/projects.mjs";
 import { TARGET_REPOSITORIES } from "../../src/lib/repositories.mjs";
 import { archivedPaidCycleIndex, snapshotFixture } from "../fixtures";
 import { enlargeText } from "../text-size";
-import { expect, expectAccessible, test } from "./fixtures";
+import {
+  expect,
+  expectAccessible,
+  servePublicProjectReads,
+  test,
+} from "./fixtures";
 
 async function profileRecords(
   page: Page,
@@ -779,6 +784,7 @@ async function serveProfileSite(page: Page) {
           ),
         }),
   );
+  await servePublicProjectReads(page);
   return site;
 }
 

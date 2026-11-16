@@ -55,7 +55,7 @@ export class MergeVerifier
         new TransformStream<Uint8Array, Uint8Array>({
           transform(chunk, controller) {
             bytes += chunk.byteLength;
-            if (bytes > 25 * 1024 * 1024) throw new Error("Merge bundle limit");
+            if (bytes > 32 * 1024 * 1024) throw new Error("Merge bundle limit");
             hash.update(chunk);
             controller.enqueue(chunk);
           },

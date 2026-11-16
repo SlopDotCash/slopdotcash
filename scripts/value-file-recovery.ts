@@ -93,25 +93,15 @@ export function recoverValueFiles(
       )
         throw new Error("Recovery blob changed");
       expanded += bytes.length;
-      try {
-        const text = new TextDecoder("utf-8", {
-          fatal: true,
-          ignoreBOM: true,
-        }).decode(bytes);
-        blob = text.includes("\0")
-          ? null
-          : {
-              sha: file.sha,
-              sha256: createHash("sha256").update(bytes).digest("hex"),
-              size,
-              gzipBase64: gzipSync(bytes).toString("base64"),
-            };
-      } catch {
-        blob = null;
-      }
+      blob = {
+        sha: file.sha,
+        sha256: createHash("sha256").update(bytes).digest("hex"),
+        size,
+        gzipBase64: gzipSync(bytes).toString("base64"),
+      };
       blobs.set(file.sha, blob);
     }
-    // Absent, nonregular and binary paths remain unavailable to text recovery.
+    // Only immutable regular files enter recovery. Consumers validate their format.
     entries.push({
       ...request,
       treeSha: tree.sha,

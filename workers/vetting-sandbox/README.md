@@ -149,7 +149,7 @@ Both build paths use Git 2.56's supported `NO_RUST` option; they do not require
 an unprovisioned Cargo toolchain. The consumer build includes HTTPS support;
 the offline sandbox build omits it.
 
-The merge operation accepts at most 25 MiB of bundle bytes. Its trusted input
+The merge operation accepts at most 32 MiB of bundle bytes. Its trusted input
 and complete result each have an 8 MiB bound. It retains the unprivileged,
 no-network process, 20-second CPU, 30-second wall, 32-process, 64-descriptor
 and 128 MiB Node heap limits. Its per-file limit is 128 MiB to admit the fixed

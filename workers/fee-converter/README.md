@@ -206,6 +206,15 @@ networks are still attempted. After those attempts, the scheduled promise
 rejects so the cron failure remains visible; it does not publish a successful
 `fee_converter_run` event with missing networks.
 
+The main-only `fee-worker-bindings.yml` diagnostic also reads the active cron,
+three fixed fee-journal queries, and a 90-second tail of that exact fee Worker
+version. Its artifact retains allowlisted event names, error categories and
+aggregate native-gas amounts. Raw messages and RPC URLs are discarded in memory.
+The active version and source tag must remain unchanged throughout inspection.
+A checkout/source mismatch is reported explicitly. The diagnostic creates and
+removes only its temporary tail subscriber, and changes no Worker settings or
+fee-journal records. A quiet tail records no observed events.
+
 ## Routes per network
 
 | Network                | Target                    | Route                    | Why                                                                                                                                                                                                                                                              |
@@ -263,6 +272,15 @@ verify those routes. Any of them can replace KyberSwap behind
   the full transaction ceiling is reserved before the signature.
 
 ## States
+
+The authenticated admin `GET /api/v1/admin/fee-conversions` includes a `claims`
+report with the latest 100 claim attempts, all finalized live claim totals by
+network, fee wallet and asset, and state counts for the last 24 hours. The
+report exposes the recorded project, vault, transaction and finalized receipt
+amount. The earlier estimate remains separate because fees can accrue before
+the claim lands. Signed transaction bytes and complete stored quotes stay in
+D1. The existing conversion and buyback reports keep their own records and
+totals.
 
 | State       | Meaning                                                                                                                                                                                           |
 | ----------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |

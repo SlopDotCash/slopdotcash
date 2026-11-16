@@ -29,6 +29,8 @@ import { consumeBuckets, sumBuckets } from "./verified-aggregation";
 export const POINTS_RULE = "slop-points-v1";
 export const OCTOBER_ORIGINAL_CONTRIBUTOR_DECISION =
   "The verified original contributor receives the full October 2026 replacement PR implementation Points. The pool value and occurrence date are preserved.";
+export const OCTOBER_DUPLICATE_RETIREMENT_DECISION =
+  "Owner-reviewed duplicate accepted work already rewarded by earlier sources.";
 export const POINTS_NOTICE =
   "Points have no cash value and cannot be transferred or redeemed.";
 export interface PointAward {
@@ -544,7 +546,8 @@ function appendPointAward(
  * Keys of positive retained-history awards (substantive reviews and
  * evaluator awards) whose latest revision was appended by the retained
  * batch: the batch rule with a digest that no snapshot recorded in the
- * coverage. The retained files are the only source for these awards.
+ * coverage and no authoritative value decision. Reviewed historical value
+ * awards can be recorded without adding snapshot coverage.
  */
 export function retainedBatchOwnedKeys(journal: PointsJournal): Set<string> {
   const coverage = new Set(journal.coverage.map((c) => c.digest));
@@ -556,6 +559,7 @@ export function retainedBatchOwnedKeys(journal: PointsJournal): Set<string> {
       (award.category === "substantive-review" ||
         award.category === "evaluated-contribution") &&
       revision.sourceRule === "slop-score-v2" &&
+      !revision.decision?.sourceId.startsWith("value:") &&
       !coverage.has(revision.sourceDigest)
     )
       keys.add(award.key);
@@ -820,7 +824,8 @@ export function applyPointsSnapshot(
         ({ award, decision }) =>
           award.category === "merged-pull-request" &&
           award.occurredAt.startsWith("2026-10-") &&
-          decision?.reason === OCTOBER_ORIGINAL_CONTRIBUTOR_DECISION,
+          (decision?.reason === OCTOBER_ORIGINAL_CONTRIBUTOR_DECISION ||
+            decision?.reason === OCTOBER_DUPLICATE_RETIREMENT_DECISION),
       )
       .map(({ award }) => `${award.projectId}\0${award.sourceId}`),
   );
@@ -974,6 +979,7 @@ export function applyPointsSnapshot(
   awards.push(...allocationAwards);
   const decisions = new Map<string, PointDecision>(allocationDecisions);
   const parentDecisions = new Map<string, PointDecision>();
+  const jointDecisionsByRecord = new Map<string, PointDecision>();
   for (const event of snapshot.ledger) {
     if (
       event.actor.kind !== "User" ||
@@ -989,6 +995,16 @@ export function applyPointsSnapshot(
     };
     decisions.set(awardForScore(event).key, decision);
     parentDecisions.set(event.source.url.split("#")[0], decision);
+    if (
+      event.category === "merged-pull-request" &&
+      event.workUnitId &&
+      event.scoreDecisionSourceId.startsWith("value:") &&
+      (event.scoreThirds ?? event.points) > 0
+    )
+      jointDecisionsByRecord.set(
+        `${event.repository}\0${event.scoreDecisionSourceId}`,
+        decision,
+      );
   }
   const keys = new Set(awards.map((a) => a.key));
   // Merges the snapshot scores by their own record, such as the minimum for a
@@ -1063,6 +1079,7 @@ export function applyPointsSnapshot(
         ? sourceUrl.pathname.match(/^\/([^/]+)\/([^/]+)\/pull\/([1-9][0-9]*)$/u)
         : null;
     let invalidatedJointDecision: PointDecision | undefined;
+    let absorbedJointDecision: PointDecision | undefined;
     if (snapshot.valueAssessmentCoverage && match) {
       const repository = findRegisteredRepositoryById(
         `${match[1]}/${match[2]}`,
@@ -1070,6 +1087,18 @@ export function applyPointsSnapshot(
       const coverage = coverageByPullRequest.get(
         `${repository?.id}\0${Number(match[3])}`,
       );
+      // A joint unit can finish in another PR. Its assessed source coverage
+      // still binds removal of this source's superseded ordinary award.
+      if (
+        a.category === "merged-pull-request" &&
+        a.key === pointKey(a.projectId, a.actor.id, a.category, a.sourceId) &&
+        coverage?.pullRequestId === a.sourceId &&
+        coverage.status === "assessed" &&
+        coverage.recordDigest
+      )
+        absorbedJointDecision = jointDecisionsByRecord.get(
+          `${repository?.id}\0value:${coverage.recordDigest}`,
+        );
       // The exact completion source can invalidate its prior joint decision
       // even when it no longer has an eligible actor for a replacement award.
       if (
@@ -1119,6 +1148,7 @@ export function applyPointsSnapshot(
       awards.push({ ...a, amount: 0 });
       const decision =
         invalidatedJointDecision ??
+        absorbedJointDecision ??
         parentDecisions.get(a.sourceUrl.split("#")[0]);
       if (decision)
         decisions.set(a.key, {

@@ -403,3 +403,236 @@ test("an incomplete sibling cannot supply an already-accepted base edge", async 
     await nativeMergeCarrierMatches(source.evidence, [source, carrier, bridge]),
   ).toBe(false);
 });
+
+async function octopus() {
+  const f = fixture();
+  const internalSha = "6".repeat(40);
+  const siblings = Array.from({ length: 7 }, (_, index) => {
+    const entry = commit((index + 10).toString(16).padStart(40, "0"));
+    entry.parents = [{ sha: base }];
+    return entry;
+  });
+  const internal = commit(internalSha);
+  internal.parents = [
+    { sha: base },
+    { sha: siblings[0].sha },
+    { sha: head },
+    ...siblings.slice(1).map(({ sha }) => ({ sha })),
+  ];
+  f.two.parents = [{ sha: internalSha }];
+  f.carrier.evidence.commits = [f.one, ...siblings, internal, f.two];
+  f.carrier.evidence.pull.commits = f.carrier.evidence.commits.length;
+  for (const entry of siblings)
+    f.carrier.evidence.commitAttribution.push({
+      sha: entry.sha,
+      actorNodeIds: [actor.node_id],
+      changedPaths: [],
+      files: [],
+      limitations: [],
+    });
+  f.source.evidence.pull.merge_commit_sha = internalSha;
+  const sourceMerge = f.source.evidence.mergeCommitEvidence;
+  if (!sourceMerge) throw Error("Missing source merge");
+  f.source.evidence.mergeCommitEvidence = {
+    ...structuredClone(sourceMerge),
+    sha: internalSha,
+    parents: internal.parents,
+  };
+  f.values.set(
+    `/repos/${repository.id}/commits/${internalSha}/pulls?per_page=100`,
+    [f.carrier.evidence.pull],
+  );
+  f.values.set(`/repos/${repository.id}/pulls/2`, f.carrier.evidence.pull);
+  f.values.set(
+    `/repos/${repository.id}/compare/${head}...${later}?per_page=100&page=1`,
+    {
+      status: "ahead",
+      merge_base_commit: { sha: head },
+      total_commits: siblings.length + 2,
+      commits: [...siblings, internal, f.two],
+    },
+  );
+  const proof = await collectNativeMergeAcceptance(
+    f.client,
+    repository.id,
+    f.source.evidence,
+  );
+  if (!proof) throw Error("Missing octopus proof");
+  f.source.evidence.nativeMergeAcceptance = proof;
+  f.source.evidence.limitations = [NATIVE_MERGE_CONTEXT];
+  return { ...f, proof, internal };
+}
+
+test("an internal nine-parent integration binds the final carrier and any incoming parent", async () => {
+  const { source, carrier, proof, internal } = await octopus();
+  expect(internal.parents).toHaveLength(9);
+  expect(internal.parents[2].sha).toBe(head);
+  expect(proof.ancestry.map(({ sha }) => sha)).toEqual([later, internal.sha]);
+  expect(proof.trees[1].commitSha).toBe(merged);
+  expect(
+    await nativeMergeCarrierMatches(source.evidence, [source, carrier]),
+  ).toBe(true);
+  expect(
+    (await prepareWorkUnitEvidence([source, carrier], [repository]))
+      .limitations,
+  ).toEqual([]);
+});
+
+test("ordinary source collection retains the nine-parent carrier proof", async () => {
+  const f = await octopus();
+  const root = `/repos/${repository.id}`;
+  f.values.set(root, { id: 42, node_id: repository.expectedNodeId });
+  f.values.set(`${root}/pulls/1`, f.source.evidence.pull);
+  f.values.set(
+    `${root}/pulls/1/files?per_page=100&page=1`,
+    f.source.evidence.files,
+  );
+  f.values.set(
+    `${root}/pulls/1/commits?per_page=100&page=1`,
+    f.source.evidence.commits,
+  );
+  f.values.set(`${root}/commits/${head}?per_page=100&page=1`, {
+    ...f.one,
+    stats: { additions: 1, deletions: 0, total: 1 },
+    files: f.source.evidence.files,
+  });
+  f.values.set(
+    `${root}/commits/${f.internal.sha}?per_page=100&page=1`,
+    f.source.evidence.mergeCommitEvidence,
+  );
+  for (const path of [
+    "pulls/1/reviews",
+    "pulls/1/comments",
+    "issues/1/comments",
+  ])
+    f.values.set(`${root}/${path}?per_page=100&page=1`, []);
+  const evidence = await collectValueEvidence(
+    {
+      ...f.client,
+      async graphql<T>(): Promise<T> {
+        return {
+          repository: {
+            pullRequest: {
+              id: f.source.evidence.pull.node_id,
+              timelineItems: {
+                nodes: [],
+                pageInfo: { hasNextPage: false, endCursor: null },
+              },
+            },
+          },
+        } as T;
+      },
+    },
+    repository.id,
+    1,
+    repository,
+  );
+  expect(evidence.limitations).toEqual([NATIVE_MERGE_CONTEXT]);
+  expect(evidence.nativeMergeAcceptance?.carrier?.mergeSha).toBe(merged);
+  expect(
+    await nativeMergeCarrierMatches(evidence, [
+      { ...f.source, evidence },
+      f.carrier,
+    ]),
+  ).toBe(true);
+});
+
+for (const mutation of [
+  "missing-parent",
+  "unrelated-parent",
+  "cycle",
+  "late",
+  "carrier",
+  "tree",
+] as const) {
+  test(`nine-parent integration refuses ${mutation}`, async () => {
+    const { source, carrier, proof, internal } = await octopus();
+    const sourceMerge = source.evidence.mergeCommitEvidence;
+    if (!sourceMerge || !proof.carrier) throw Error("Missing octopus identity");
+    if (mutation === "missing-parent") {
+      carrier.evidence.commits.splice(1, 1);
+      carrier.evidence.pull.commits--;
+    }
+    if (mutation === "unrelated-parent") {
+      internal.parents[1].sha = "9".repeat(40);
+      sourceMerge.parents[1].sha = "9".repeat(40);
+      const integration = proof.ancestry.find(
+        (entry) => entry.sha === internal.sha,
+      );
+      if (!integration) throw Error("Missing integration witness");
+      integration.parents[1].sha = "9".repeat(40);
+    }
+    if (mutation === "cycle")
+      carrier.evidence.commits[1].parents = [{ sha: internal.sha }];
+    if (mutation === "late")
+      internal.commit.committer.date = "2099-01-01T00:00:00Z";
+    if (mutation === "carrier") proof.carrier.pullRequestId = "PR_wrong";
+    if (mutation === "tree") proof.trees[1].commitSha = internal.sha;
+    expect(
+      await nativeMergeCarrierMatches(source.evidence, [source, carrier]),
+    ).toBe(false);
+  });
+}
+
+test("a saturated comparison still verifies unchanged selected paths through full trees", async () => {
+  const f = fixture();
+  const key = `/repos/${repository.id}/compare/${head}...${merged}?per_page=1`;
+  const comparison = f.values.get(key) as { files: FileChange[] };
+  comparison.files = Array.from({ length: 300 }, (_, i) => ({
+    ...comparison.files[0],
+    filename: `unrelated-${i}.ts`,
+  }));
+  const proof = await collectNativeMergeAcceptance(
+    f.client,
+    repository.id,
+    f.source.evidence,
+  );
+  expect(proof?.retainedFiles.map((file) => file.sourcePath)).toEqual([
+    "fix.ts",
+  ]);
+  if (!proof) throw Error("Missing stable-path proof");
+  f.source.evidence.nativeMergeAcceptance = proof;
+  f.source.evidence.limitations = [NATIVE_MERGE_CONTEXT];
+  expect(
+    await nativeMergeCarrierMatches(f.source.evidence, [f.source, f.carrier]),
+  ).toBe(true);
+});
+for (const fault of ["rename", "missing-tree", "blob-mismatch"] as const) {
+  test(`saturated retention refuses ${fault}`, async () => {
+    const f = fixture();
+    const key = `/repos/${repository.id}/compare/${head}...${merged}?per_page=1`;
+    const comparison = f.values.get(key) as { files: FileChange[] };
+    comparison.files = Array.from({ length: 300 }, (_, i) => ({
+      ...comparison.files[0],
+      filename: `unrelated-${i}.ts`,
+    }));
+    if (fault === "rename")
+      comparison.files[0] = {
+        ...comparison.files[0],
+        filename: "moved.ts",
+        previous_filename: "fix.ts",
+        status: "renamed",
+      };
+    if (fault === "missing-tree") {
+      const commit = f.values.get(
+        `/repos/${repository.id}/git/commits/${merged}`,
+      ) as { tree: { sha: string } };
+      f.values.delete(
+        `/repos/${repository.id}/git/trees/${commit.tree.sha}?recursive=1`,
+      );
+    }
+    if (fault === "blob-mismatch") {
+      const file = f.values.get(
+        `/repos/${repository.id}/contents/fix.ts?ref=${merged}`,
+      ) as { sha: string };
+      file.sha = "f".repeat(40);
+    }
+    expect(
+      await collectNativeMergeAcceptance(
+        f.client,
+        repository.id,
+        f.source.evidence,
+      ),
+    ).toBeNull();
+  });
+}

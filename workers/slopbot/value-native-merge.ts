@@ -3,6 +3,7 @@ import type {
   Commit,
   EvidenceClient,
   NativeMergeAcceptance,
+  Pull,
   ValueEvidence,
 } from "./value-evidence-types";
 import { collectIndirectValueRetention } from "./value-indirect-retention";
@@ -30,13 +31,51 @@ export async function collectNativeMergeAcceptance(
     !pull.merged_at ||
     !merge ||
     merge.sha !== pull.merge_commit_sha ||
-    merge.parents.length !== 2 ||
-    merge.parents[0].sha === merge.parents[1].sha ||
-    merge.parents.some((parent) => parent.sha === pull.head.sha) ||
+    merge.parents.length < 2 ||
+    new Set(merge.parents.map((parent) => parent.sha)).size !==
+      merge.parents.length ||
+    (merge.parents.length === 2 &&
+      merge.parents.some((parent) => parent.sha === pull.head.sha)) ||
     ![pull.head.sha, merge.sha, ...merge.parents.map((p) => p.sha)].every(oid)
   )
     return null;
-  const tip = merge.parents[1].sha;
+  let carrier: NativeMergeAcceptance["carrier"];
+  if (merge.parents.length > 2) {
+    const listed = await client.get<Pick<Pull, "number" | "merged_at">[]>(
+      `/repos/${repository}/commits/${merge.sha}/pulls?per_page=100`,
+    );
+    if (!Array.isArray(listed) || listed.length >= 100) return null;
+    const candidates: Pull[] = [];
+    for (const entry of listed) {
+      if (entry.number === pull.number || !entry.merged_at) continue;
+      const candidate = await client.get<Pull>(
+        `/repos/${repository}/pulls/${entry.number}`,
+      );
+      if (
+        candidate?.number === entry.number &&
+        candidate.node_id !== pull.node_id &&
+        candidate.html_url ===
+          `https://github.com/${repository}/pull/${entry.number}` &&
+        candidate.merged_at &&
+        Number.isFinite(Date.parse(candidate.merged_at)) &&
+        Date.parse(candidate.merged_at) <= Date.parse(pull.merged_at) &&
+        oid(candidate.head.sha) &&
+        oid(candidate.merge_commit_sha)
+      )
+        candidates.push(candidate);
+    }
+    if (candidates.length !== 1) return null;
+    const accepted = candidates[0];
+    if (!accepted.merge_commit_sha || !accepted.merged_at) return null;
+    carrier = {
+      pullRequestId: accepted.node_id,
+      headSha: accepted.head.sha,
+      mergeSha: accepted.merge_commit_sha,
+      mergedAt: accepted.merged_at,
+    };
+  }
+  const tip = carrier?.headSha ?? merge.parents[1].sha;
+  const acceptedSha = carrier?.mergeSha ?? merge.sha;
   const commits = new Map<string, Commit>();
   let expected: number | undefined;
   for (let page = 1; ; page++) {
@@ -94,8 +133,21 @@ export async function collectNativeMergeAcceptance(
   if (!acyclic(commits)) return null;
   // A complete path suffices to prove ancestry. Keep every parent of each
   // visited commit so the carrier can independently check all those edges.
-  const path = findPath(commits, tip, pull.head.sha);
+  const path = carrier
+    ? joinPath(commits, tip, merge.sha, pull.head.sha)
+    : findPath(commits, tip, pull.head.sha);
   if (!path) return null;
+  if (carrier) {
+    const integration = commits.get(merge.sha);
+    if (
+      !integration ||
+      JSON.stringify(integration.parents) !== JSON.stringify(merge.parents) ||
+      !Number.isFinite(Date.parse(integration.commit.committer.date)) ||
+      Date.parse(integration.commit.committer.date) >
+        Date.parse(carrier.mergedAt)
+    )
+      return null;
+  }
   const cache = new Map<string, Promise<unknown>>();
   const cached: EvidenceClient = {
     async get<T>(url: string): Promise<T | null> {
@@ -108,7 +160,7 @@ export async function collectNativeMergeAcceptance(
   };
   const trees = await Promise.all([
     readValueTreeProof(cached, repository, pull.head.sha),
-    readValueTreeProof(cached, repository, merge.sha),
+    readValueTreeProof(cached, repository, acceptedSha),
   ]);
   const [headTree, mergeTree] = trees;
   if (!headTree || !mergeTree) return null;
@@ -118,7 +170,7 @@ export async function collectNativeMergeAcceptance(
       cached,
       repository,
       pull.head.sha,
-      merge.sha,
+      acceptedSha,
       source.files.slice(at, at + 16),
     );
     if (!files) return null;
@@ -131,6 +183,7 @@ export async function collectNativeMergeAcceptance(
     mergeSha: merge.sha,
     parentSha: merge.parents[0].sha,
     integratedHeadSha: tip,
+    ...(carrier ? { carrier } : {}),
     ancestry: path,
     trees: [
       {
@@ -139,13 +192,24 @@ export async function collectNativeMergeAcceptance(
         entries: [...headTree.entries.values()],
       },
       {
-        commitSha: merge.sha,
+        commitSha: acceptedSha,
         treeSha: mergeTree.treeSha,
         entries: [...mergeTree.entries.values()],
       },
     ],
     retainedFiles,
   };
+}
+
+function joinPath(
+  commits: ReadonlyMap<string, Commit>,
+  tip: string,
+  integration: string,
+  head: string,
+): Commit[] | null {
+  const before = findPath(commits, tip, integration);
+  const after = findPath(commits, integration, head);
+  return before && after ? [...before, ...after] : null;
 }
 
 function findPath(
@@ -189,13 +253,17 @@ export async function nativeMergeCarrierMatches(
   if (
     proof?.schemaVersion !== 1 ||
     !merge ||
-    merge.parents.length !== 2 ||
+    (proof.carrier ? merge.parents.length <= 2 : merge.parents.length !== 2) ||
+    new Set(merge.parents.map((parent) => parent.sha)).size !==
+      merge.parents.length ||
+    !merge.parents.every((parent) => oid(parent.sha)) ||
     source.pull.merged_at === null ||
     proof.headSha !== source.pull.head.sha ||
     proof.mergeSha !== source.pull.merge_commit_sha ||
     proof.mergeSha !== merge.sha ||
     proof.parentSha !== merge.parents[0].sha ||
-    proof.integratedHeadSha !== merge.parents[1].sha ||
+    proof.integratedHeadSha !==
+      (proof.carrier?.headSha ?? merge.parents[1].sha) ||
     !proof.ancestry.length ||
     proof.ancestry[0].sha !== proof.integratedHeadSha ||
     new Set(proof.ancestry.map((commit) => commit.sha)).size !==
@@ -213,7 +281,7 @@ export async function nativeMergeCarrierMatches(
   if (
     proof.trees.length !== 2 ||
     proof.trees[0].commitSha !== proof.headSha ||
-    proof.trees[1].commitSha !== proof.mergeSha
+    proof.trees[1].commitSha !== (proof.carrier?.mergeSha ?? proof.mergeSha)
   )
     return false;
   const trees = await Promise.all(
@@ -297,9 +365,17 @@ export async function nativeMergeCarrierMatches(
       Date.parse(evidence.pull.merged_at) <=
         Date.parse(source.pull.merged_at ?? "") &&
       evidence.pull.head.sha === proof.integratedHeadSha &&
-      evidence.pull.merge_commit_sha === proof.mergeSha &&
-      accepted?.sha === proof.mergeSha &&
-      JSON.stringify(accepted) === JSON.stringify(merge) &&
+      (proof.carrier
+        ? evidence.pull.node_id === proof.carrier.pullRequestId &&
+          evidence.pull.merged_at === proof.carrier.mergedAt &&
+          evidence.pull.merge_commit_sha === proof.carrier.mergeSha &&
+          accepted?.sha === proof.carrier.mergeSha &&
+          accepted.parents.length === 2 &&
+          accepted.parents[0].sha === evidence.pull.base.sha &&
+          accepted.parents[1].sha === evidence.pull.head.sha
+        : evidence.pull.merge_commit_sha === proof.mergeSha &&
+          accepted?.sha === proof.mergeSha &&
+          JSON.stringify(accepted) === JSON.stringify(merge)) &&
       evidence.commits.length === evidence.pull.commits &&
       evidence.commits.some((commit) => commit.sha === evidence.pull.head.sha)
     );
@@ -310,6 +386,26 @@ export async function nativeMergeCarrierMatches(
     );
     if (commits.size !== evidence.commits.length) return false;
     if (!acyclic(commits)) return false;
+    if (proof.carrier) {
+      const integration = commits.get(merge.sha);
+      const acceptedAt = Date.parse(proof.carrier.mergedAt);
+      if (
+        !integration ||
+        JSON.stringify(integration.parents) !== JSON.stringify(merge.parents) ||
+        !proof.ancestry.some((commit) => commit.sha === merge.sha) ||
+        merge.parents.some(
+          (parent) =>
+            parent.sha !== evidence.pull.base.sha && !commits.has(parent.sha),
+        ) ||
+        !Number.isFinite(acceptedAt) ||
+        [...commits.values()].some(
+          (commit) =>
+            !Number.isFinite(Date.parse(commit.commit.committer.date)) ||
+            Date.parse(commit.commit.committer.date) > acceptedAt,
+        )
+      )
+        return false;
+    }
     for (const [index, commit] of proof.ancestry.entries()) {
       const next = proof.ancestry[index + 1]?.sha ?? proof.headSha;
       if (

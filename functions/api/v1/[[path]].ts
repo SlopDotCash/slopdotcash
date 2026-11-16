@@ -547,7 +547,7 @@ export async function onRequest(context: PagesContext): Promise<Response> {
           verifyProjectAuthority(
             project.manifest,
             actor,
-            env.SLOP_GITHUB_READ_TOKEN,
+            repositoryAccess,
             level,
           ),
         // The cutoff display and the owner's cutoff lock. A malformed value
@@ -653,6 +653,7 @@ export async function onRequest(context: PagesContext): Promise<Response> {
       adminGithubIds,
       sessionActor,
       publisher: env.SLOPBOT_VALUE_IMPORT,
+      waitUntil,
     });
   if (pathname.startsWith("/api/v1/slopbot/"))
     return handleSlopbotApi(request, db);

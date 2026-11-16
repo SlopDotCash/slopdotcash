@@ -2783,7 +2783,14 @@ test("resumed months keep a later month's verified author link like an uninterru
 });
 
 function relatedHistoricalFixture(
-  original: "empty" | "bound" | "ambiguous" | "wrong-head",
+  original:
+    | "empty"
+    | "bound"
+    | "ambiguous"
+    | "wrong-head"
+    | "disjoint"
+    | "incomplete-disjoint"
+    | "renamed-overlap",
   mixed?: "linked" | "binding-mismatch" | "linked-mismatch",
 ) {
   const f = valueFixture({ textOnly: true, direct: true });
@@ -2875,7 +2882,13 @@ function relatedHistoricalFixture(
           ? { sha: linkedSha }
           : f.pull.head,
     changed_files:
-      number === 1 && original === "empty" ? 0 : number === 2 && mixed ? 2 : 1,
+      number === 1 && original === "empty"
+        ? 0
+        : number === 1 && original === "incomplete-disjoint"
+          ? 2
+          : number === 2 && mixed
+            ? 2
+            : 1,
     commits:
       number === 1 && original === "empty" ? 0 : number === 2 && mixed ? 2 : 1,
   });
@@ -2986,6 +2999,18 @@ function relatedHistoricalFixture(
         ]);
       if (original === "empty" && /\/pulls\/1\/(commits|files)\?/u.test(full))
         return Response.json([]);
+      if (
+        ["disjoint", "incomplete-disjoint", "renamed-overlap"].includes(
+          original,
+        ) &&
+        full.includes(`/commits/${"e".repeat(40)}?`)
+      )
+        return Response.json({
+          sha: "e".repeat(40),
+          parents: [{ sha: f.pull.base.sha }],
+          stats: { additions: 1, deletions: 0, total: 1 },
+          files: [{ ...f.files[0], filename: "adjacent.ts" }],
+        });
       const remapped = full
         .replace(path, `/repos/${valueRepository.id}`)
         .replace(/\/(pulls|issues)\/2(?=\/|$)/u, "/$1/1");
@@ -3019,6 +3044,27 @@ function relatedHistoricalFixture(
           stats: { additions: 2, deletions: 0, total: 2 },
           files: [linkedFile],
         });
+      if (
+        ["disjoint", "incomplete-disjoint", "renamed-overlap"].includes(
+          original,
+        ) &&
+        full.includes("/pulls/1/files?") &&
+        Array.isArray(evidence)
+      )
+        evidence.forEach((file) => {
+          file.filename = "adjacent.ts";
+          if (original === "renamed-overlap") file.previous_filename = "fix.ts";
+        });
+      if (
+        ["disjoint", "incomplete-disjoint", "renamed-overlap"].includes(
+          original,
+        ) &&
+        full.includes("/pulls/1/commits?") &&
+        Array.isArray(evidence)
+      )
+        evidence.forEach((commit) => {
+          commit.sha = "e".repeat(40);
+        });
       return Response.json(evidence);
     },
     { preconnect: fetch.preconnect },
@@ -3049,6 +3095,65 @@ async function collectRelatedHistoricalSource(
   );
   return { journal, result, calls: network.calls };
 }
+
+test.each(["disjoint", "incomplete-disjoint", "renamed-overlap"] as const)(
+  "October reference path completeness and renames remain conservative (%s)",
+  async (scenario) => {
+    const network = relatedHistoricalFixture(scenario);
+    const inOctober = Object.assign(
+      async (input: RequestInfo | URL, init?: RequestInit) => {
+        const translated = init?.body
+          ? {
+              ...init,
+              body: String(init.body).replaceAll("2026-10", "2026-01"),
+            }
+          : init;
+        const response = await network.call(input, translated);
+        return new Response(
+          (await response.text())
+            .replaceAll("2026-01", "2026-10")
+            .replaceAll("2026-02", "2026-11"),
+          { status: response.status, headers: response.headers },
+        );
+      },
+      { preconnect: fetch.preconnect },
+    );
+    const journal = baseline([
+      {
+        ...award(),
+        sourceUrl: network.url,
+        occurredAt: "2026-10-15T00:00:00.000Z",
+      },
+    ]);
+    const result = await collectImplementationCorrections(
+      {
+        projects: ["asi"],
+        directory: await directory(),
+        month: "2026-10",
+        before: "2026-10-31T00:00:00.000Z",
+        octoberOriginalCredit: true,
+      },
+      {
+        journal,
+        registry: registry(),
+        token: "fixture-token",
+        transport: inOctober,
+        now: new Date("2026-10-31T23:59:59Z"),
+      },
+    );
+    if (scenario !== "disjoint") {
+      expect(result.receipt.completeProofs).toBe(0);
+      expect(result.manifest.candidates[0].proof.status).toBe("held");
+      return;
+    }
+    expect(result.receipt.completeProofs).toBe(1);
+    expect(result.manifest.candidates[0].sourceIds).toEqual(["PR_source"]);
+    expect(result.manifest.candidates[0].proof).toMatchObject({
+      status: "complete",
+      sources: [{ sourceId: "PR_source", commits: [{ author: null }] }],
+    });
+  },
+);
 
 test("an unrelated zero-commit reference does not poison the complete historical manifest", async () => {
   const { journal, result, calls } =
@@ -3169,7 +3274,7 @@ test("conflicting author evidence holds a historical retained source", async () 
   }
 });
 
-test("the grouped collector binds the reviewed accepted subset without weakening ordinary attribution", async () => {
+test("grouped attribution restores cached actor batch halves through the normal loader adapter", async () => {
   const original = makeOriginal();
   const accepted = structuredClone(original);
   const path = "elizaOS/asi";
@@ -3274,10 +3379,53 @@ test("the grouped collector binds the reviewed accepted subset without weakening
   >["jointValueDecisions"] extends Map<string, infer T>
     ? T
     : never;
-  const loader = spyOn(valueIngestion, "loadValueInputs").mockResolvedValue({
-    jointValueDecisions: new Map([["PR_source", decision]]),
-    heldWorkUnits: [],
-  } as unknown as Awaited<ReturnType<typeof valueIngestion.loadValueInputs>>);
+  const received: string[][] = [];
+  const loader = spyOn(valueIngestion, "loadValueInputs").mockImplementation(
+    async (github) => {
+      const actors = await github.graphql<{ nodes: { id: string }[] }>(
+        "query FixtureValueActors($ids:[ID!]!){nodes(ids:$ids){id}}",
+        { ids: ["U_actor_one", "U_actor_two"] },
+      );
+      expect(actors.nodes.map((actor) => actor.id)).toEqual([
+        "U_actor_one",
+        "U_actor_two",
+      ]);
+      return {
+        jointValueDecisions: new Map([["PR_source", decision]]),
+        heldWorkUnits: [],
+      } as unknown as Awaited<
+        ReturnType<typeof valueIngestion.loadValueInputs>
+      >;
+    },
+  );
+  const baseTransport = transport(sha, {
+    ...fixture(),
+    number: 2,
+    url: accepted.evidence.pull.html_url,
+  }).call;
+  const actorTransport = Object.assign(
+    async (input: RequestInfo | URL, init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body));
+      if (!String(body.query).includes("FixtureValueActors"))
+        return baseTransport(input, init);
+      const ids = body.variables.ids as string[];
+      received.push(ids);
+      if (ids.length > 1)
+        return new Response("gateway failure", { status: 502 });
+      return Response.json({
+        data: {
+          nodes: ids.map((id) => ({ id })),
+          rateLimit: {
+            cost: 1,
+            limit: 5000,
+            remaining: 4900,
+            resetAt: "2026-02-01T00:00:00Z",
+          },
+        },
+      });
+    },
+    { preconnect: fetch.preconnect },
+  );
   try {
     const source = {
       ...award(30, true),
@@ -3300,25 +3448,35 @@ test("the grouped collector binds the reviewed accepted subset without weakening
         ],
       ]),
     );
-    const result = await collectImplementationCorrections(
-      {
-        projects: ["asi"],
-        directory: await directory(),
-        month: "2026-01",
-        before: "2026-01-31T00:00:00.000Z",
-      },
-      {
-        journal,
-        registry: registry(),
-        token: "fixture-token",
-        transport: transport(sha, {
-          ...fixture(),
-          number: 2,
-          url: accepted.evidence.pull.html_url,
-        }).call,
-        now: new Date("2026-01-31T23:59:59Z"),
-      },
-    );
+    const dir = await directory();
+    const options = {
+      projects: ["asi"],
+      directory: dir,
+      month: "2026-01",
+      before: "2026-01-31T00:00:00.000Z",
+    };
+    const deps = {
+      journal,
+      registry: registry(),
+      token: "fixture-token",
+      transport: actorTransport,
+      now: new Date("2026-01-31T23:59:59Z"),
+    };
+    const result = await collectImplementationCorrections(options, deps);
+    expect(received.at(0)).toEqual(["U_actor_one", "U_actor_two"]);
+    expect(received.slice(-2)).toEqual([["U_actor_one"], ["U_actor_two"]]);
+    const liveCalls = received.length;
+    const replay = await collectImplementationCorrections(options, {
+      ...deps,
+      transport: Object.assign(
+        async () => {
+          throw Error("No replay network reads");
+        },
+        { preconnect: fetch.preconnect },
+      ),
+    });
+    expect(replay.receipt.manifestDigest).toBe(result.receipt.manifestDigest);
+    expect(received).toHaveLength(liveCalls);
     expect(
       result.receipt.limitations.filter(
         (item) => item.reason !== "outside-reviewed-candidate-scope",
@@ -3336,6 +3494,194 @@ test("the grouped collector binds the reviewed accepted subset without weakening
     loader.mockRestore();
   }
 });
+
+for (const linkedAuthor of ["original", "conflicting"] as const) {
+  test(`October grouped work preserves verified original credit with ${linkedAuthor} author evidence`, async () => {
+    const original = makeOriginal();
+    const accepted = structuredClone(original);
+    const repo = "elizaOS/asi";
+    const originActor = { node_id: "U_origin", login: "origin", type: "User" };
+    const carrier = { node_id: actor.id, login: actor.login, type: "User" };
+    for (const source of [original, accepted]) {
+      Object.assign(source.evidence, {
+        repository: repo,
+        repositoryNodeId: "R_kgDOT23CXA",
+        repositoryPolicy: {
+          id: repo,
+          projectId: "asi",
+          integrationBranch: "main",
+          expectedNodeId: "R_kgDOT23CXA",
+        },
+      });
+      source.evidence.pull.user = carrier;
+      source.evidence.pull.base.ref = "main";
+      source.evidence.commits[0].sha = sha;
+      source.evidence.commits[0].author = originActor;
+      source.evidence.commitAttribution[0].sha = sha;
+      source.evidence.commitAttribution[0].actorNodeIds = [originActor.node_id];
+      source.evidence.pull.head.sha = sha;
+    }
+    original.evidence.pull.node_id = "PR_original";
+    original.evidence.pull.number = 1;
+    original.evidence.pull.html_url = `https://github.com/${repo}/pull/1`;
+    original.evidence.pull.merged_at = null;
+    original.evidence.pull.closed_at = "2026-10-14T00:00:00Z";
+    original.evidence.pull.merge_commit_sha = null;
+    original.evidence.pull.merged_by = null;
+    original.evidence.mergeCommitEvidence = null;
+    accepted.evidence.pull.node_id = "PR_source";
+    accepted.evidence.pull.number = 2;
+    accepted.evidence.pull.html_url = `https://github.com/${repo}/pull/2`;
+    accepted.evidence.pull.merged_at = "2026-10-15T00:00:00Z";
+    accepted.evidence.pull.merged_by = carrier;
+    if (linkedAuthor === "conflicting") {
+      accepted.evidence.commits[0].author = {
+        node_id: "U_other",
+        login: "other",
+        type: "User",
+      };
+      accepted.evidence.commitAttribution[0].actorNodeIds = ["U_other"];
+    }
+    const evidence = await prepareWorkUnitEvidence(
+      [original, accepted],
+      [
+        {
+          ...valueRepository,
+          id: repo,
+          projectId: "asi",
+          expectedNodeId: "R_kgDOT23CXA",
+        },
+      ],
+    );
+    expect(evidence.limitations).toEqual([]);
+    for (const claim of evidence.claims) {
+      claim.creditPullRequestId = original.evidence.pull.node_id;
+      claim.retainedCopy = {
+        acceptancePullRequestId: accepted.evidence.pull.node_id,
+        acceptedCommitSha: claim.commitSha,
+        preexistingCommitShas: [],
+      };
+    }
+
+    const digest = "d".repeat(64);
+    const workUnitId = `wu_${"b".repeat(64)}`;
+    const decision = {
+      status: "assessed",
+      latestDigest: digest,
+      evidence,
+      record: {
+        units: [{ workUnitId, claimIds: evidence.claims.map((c) => c.id) }],
+      },
+    };
+    const loader = spyOn(valueIngestion, "loadValueInputs").mockResolvedValue({
+      jointValueDecisions: new Map([["PR_source", decision]]),
+      heldWorkUnits: [],
+    } as never);
+    const node = fixture(sha);
+    node.commits.nodes[0].commit.oid = sha;
+    Object.assign(node, {
+      number: 2,
+      url: accepted.evidence.pull.html_url,
+      createdAt: "2026-10-01T00:00:00Z",
+      updatedAt: "2026-10-15T00:00:00Z",
+      mergedAt: "2026-10-15T00:00:00Z",
+    });
+    node.commits.nodes[0].commit.author.user = {
+      ...node.author,
+      id: linkedAuthor === "original" ? originActor.node_id : "U_other",
+      login: linkedAuthor === "original" ? originActor.login : "other",
+    };
+    const source = {
+      ...award(30, true),
+      sourceUrl: node.url,
+      occurredAt: "2026-10-15T00:00:00.000Z",
+    };
+    const journal = appendPointAwards(
+      emptyPointsJournal("2026-10-31T00:00:00.000Z"),
+      [source],
+      "f".repeat(64),
+      "slop-score-v2",
+      "2026-10-31T00:00:00.000Z",
+      new Map([
+        [
+          source.key,
+          {
+            sourceId: `value:${digest}`,
+            effectiveAt: source.occurredAt,
+            reason: "Retained assessed work unit",
+          },
+        ],
+      ]),
+    );
+    try {
+      const result = await collectImplementationCorrections(
+        {
+          projects: ["asi"],
+          directory: await directory(),
+          candidateMonth: "2026-10",
+          before: "2026-11-01T00:00:00.000Z",
+          octoberOriginalCredit: true,
+        },
+        {
+          journal,
+          registry: registry(),
+          token: "fixture-token",
+          transport: Object.assign(
+            async (input: RequestInfo | URL, init?: RequestInit) => {
+              const request = JSON.parse(String(init?.body));
+
+              if (
+                request.query.includes("LeaderboardSearchReferences") &&
+                !request.variables.searchQuery.includes("merged:2026-10")
+              )
+                return Response.json({
+                  data: {
+                    search: {
+                      issueCount: 0,
+                      pageInfo: { hasNextPage: false, endCursor: null },
+                      nodes: [],
+                    },
+                    rateLimit: {
+                      cost: 1,
+                      limit: 5000,
+                      remaining: 4900,
+                      resetAt: "2026-11-02T01:00:00Z",
+                    },
+                  },
+                });
+              return transport(sha, node).call(input, init);
+            },
+            { preconnect: fetch.preconnect },
+          ),
+          now: new Date("2026-11-02T00:00:00Z"),
+        },
+      );
+      const proof = result.manifest.candidates[0].proof;
+      if (linkedAuthor === "conflicting") {
+        expect(proof.status).toBe("held");
+        return;
+      }
+      expect(result.receipt.completeProofs).toBe(1);
+      expect(proof.status).toBe("complete");
+      if (proof.status !== "complete") throw Error("Missing proof");
+      expect(proof.originalContributor).toBeUndefined();
+      const applied = applyPointsImplementationCorrections(
+        journal,
+        result.manifest,
+        [{ candidateId: result.manifest.candidates[0].id, eligible: true }],
+        result.manifest.generatedAt,
+        new Map(),
+      );
+      expect(
+        [...latestPoints(applied.journal).values()].find(
+          (row) => row.award.actor.id === originActor.node_id,
+        )?.award.amount,
+      ).toBe(30);
+    } finally {
+      loader.mockRestore();
+    }
+  });
+}
 
 const head = "1".repeat(40),
   later = "4".repeat(40),

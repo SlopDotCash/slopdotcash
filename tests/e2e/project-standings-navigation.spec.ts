@@ -11,7 +11,12 @@ import {
 import { PROJECTS } from "../../src/lib/projects.mjs";
 import { sha256Hex } from "../../src/lib/sha256";
 import { cycleIndexFixture } from "../fixtures";
-import { expect, expectAccessible, test } from "./fixtures";
+import {
+  expect,
+  expectAccessible,
+  servePublicProjectReads,
+  test,
+} from "./fixtures";
 
 const site = deploymentOrigins(
   deploymentTier(process.env.VITE_SLOP_ENVIRONMENT),
@@ -51,6 +56,7 @@ async function fixtures(page: Page, paymentRead = () => {}) {
       ),
     }),
   );
+  await servePublicProjectReads(page);
   await page.route("**/.well-known/slop/projects.json", (route) =>
     route.fulfill({ json: { schemaVersion: "1", projects: [] } }),
   );
