@@ -30,6 +30,36 @@ export const EVIDENCE_READER_GITHUB_ID = (() => {
   return others[0];
 })();
 
+/** Stop only this fixture child, escalating when its shutdown does not finish. */
+export async function stopVettingEvidence(
+  child: Pick<ReturnType<typeof Bun.spawn>, "stdin" | "kill" | "exited">,
+  graceMs = 4000,
+) {
+  try {
+    if (child.stdin && typeof child.stdin !== "number") child.stdin.end();
+  } catch {
+    /* A prior shutdown may already have closed stdin. */
+  }
+  const terminate = setTimeout(() => child.kill("SIGTERM"), graceMs);
+  const force = setTimeout(() => child.kill("SIGKILL"), graceMs + 1000);
+  let deadline: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      child.exited,
+      new Promise<never>((_, reject) => {
+        deadline = setTimeout(
+          () => reject(new Error("Local R2 shutdown timed out")),
+          graceMs + 2000,
+        );
+      }),
+    ]);
+  } finally {
+    clearTimeout(terminate);
+    clearTimeout(force);
+    clearTimeout(deadline);
+  }
+}
+
 export async function localVettingEvidence(
   db: ProjectD1Database,
   now: () => Date,
@@ -43,8 +73,8 @@ export async function localVettingEvidence(
   );
   let startupTimer: ReturnType<typeof setTimeout> | undefined;
   let origin: string;
+  const reader = child.stdout.getReader();
   try {
-    const reader = child.stdout.getReader();
     origin = await Promise.race([
       (async () => {
         let line = "";
@@ -64,26 +94,19 @@ export async function localVettingEvidence(
         );
       }),
     ]);
-    reader.releaseLock();
     const parsed = new URL(origin);
     if (parsed.protocol !== "http:" || parsed.hostname !== "127.0.0.1")
       throw new Error("Invalid local R2 origin");
   } catch (error) {
-    child.kill();
-    await child.exited;
+    await stopVettingEvidence(child);
     throw error;
   } finally {
     clearTimeout(startupTimer);
+    reader.releaseLock();
   }
   async function dispose() {
-    child.stdin.end();
-    const timer = setTimeout(() => child.kill(), 4000);
-    try {
-      if ((await child.exited) !== 0)
-        throw new Error("Local R2 shutdown failed");
-    } finally {
-      clearTimeout(timer);
-    }
+    if ((await stopVettingEvidence(child)) !== 0)
+      throw new Error("Local R2 shutdown failed");
   }
   // Use asynchronous HTTP to real workerd R2. Miniflare's synchronous RPC
   // property getters can fail under Bun before object metadata is returned.
