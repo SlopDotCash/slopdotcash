@@ -5,6 +5,7 @@
 import { describe, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
 import { readdirSync } from "node:fs";
+import { SECURITY_DEFAULT_EXCLUSIONS } from "../../src/lib/security-bounty.mjs";
 import { seedParticipationBan } from "../../tests/participation-ban.fixture";
 import { sqliteD1 } from "../../tests/sqlite-d1";
 import securityPaymentsWorker from "../../workers/security-payments";
@@ -1601,7 +1602,12 @@ test("report analysis and appeal triage keep the scope recorded at receipt", asy
     )
     .run(changed, digest, PROJECT);
   const id = await env.receive(REPORTER, "2026-10-19T09:10:00.000Z");
-  expect(env.analyzed[0].scope).toEqual(OPEN_PROGRAM.scope);
+  // Terms published before owner lines existed receive the default list only.
+  const receiptScope = {
+    ...OPEN_PROGRAM.scope,
+    doesNotQualify: [...SECURITY_DEFAULT_EXCLUSIONS],
+  };
+  expect(env.analyzed[0].scope).toEqual(receiptScope);
   expect((await env.decide(id, "receipt-time-scope")).status).toBe(200);
   expect(
     (
@@ -1621,7 +1627,7 @@ test("report analysis and appeal triage keep the scope recorded at receipt", asy
     ).status,
   ).toBe(200);
   expect(env.appealInputs).toHaveLength(1);
-  expect(env.appealInputs[0].scope).toEqual(OPEN_PROGRAM.scope);
+  expect(env.appealInputs[0].scope).toEqual(receiptScope);
   await env.receive(OTHER, "2026-10-19T08:59:00.000Z");
   expect(env.analyzed[1].scope).toBeNull();
   env.sqlite.close();
