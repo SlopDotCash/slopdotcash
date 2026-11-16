@@ -9,7 +9,10 @@
  */
 import type { APIRequestContext, Locator, Page, Route } from "@playwright/test";
 import { HISTORICAL_PROJECTS } from "../../src/lib/projects.mjs";
-import type { SecurityBountyTerms } from "../../src/lib/security-bounty.mjs";
+import {
+  SECURITY_DEFAULT_EXCLUSIONS,
+  type SecurityBountyTerms,
+} from "../../src/lib/security-bounty.mjs";
 import {
   E2E_SECURITY_ACCOUNTS,
   fixtureRepository,
@@ -1093,6 +1096,11 @@ test("a reporter confirms a legacy linked report with GitHub @registry", async (
   await expectAccessible(page);
 });
 
+const OWNER_EXCLUSIONS = [
+  "Price feed staleness within the documented heartbeat",
+  "Rounding dust below one cent",
+];
+
 test("owners publish and control bounty programs with verified funding @registry", async ({
   browser,
   diagnostics,
@@ -1128,6 +1136,7 @@ test("owners publish and control bounty programs with verified funding @registry
       Disclosure: "Contact the maintainer before disclosure.",
       "Researcher protection":
         "Good-faith testing within these rules is authorized.",
+      "Also does not qualify": `  ${OWNER_EXCLUSIONS.join("\n\n")}\n`,
     };
     for (const group of [
       "Scope and testing",
@@ -1150,6 +1159,7 @@ test("owners publish and control bounty programs with verified funding @registry
     expect(stored.manifest.securityBounty).toMatchObject({
       status: "paused",
       fundingPolicy: "after-approval",
+      scope: { excludedFindings: OWNER_EXCLUSIONS },
     });
     // A historical prefunded offer still needs verified available funds.
     const unsupported = await api(
@@ -1265,7 +1275,29 @@ test("owners publish and control bounty programs with verified funding @registry
     // The refusal is the same when the vault has available funds.
     await expectOutsiderRefused(request, id, repository);
     await page.reload({ waitUntil: "networkidle" });
+    // The published page lists Slop's lines, then the owner's.
+    const scope = page.getByRole("region", { name: "Scope", exact: true });
+    await expect(
+      scope
+        .getByRole("list", { name: "Does not qualify", exact: true })
+        .getByRole("listitem"),
+    ).toHaveText([...SECURITY_DEFAULT_EXCLUSIONS]);
+    await expect(
+      scope
+        .getByRole("list", {
+          name: "Also does not qualify for this program",
+          exact: true,
+        })
+        .getByRole("listitem"),
+    ).toHaveText(OWNER_EXCLUSIONS);
     await openProjectSecuritySettings(page);
+    await page
+      .locator("summary")
+      .filter({ hasText: "Scope and testing" })
+      .click();
+    await expect(
+      page.getByLabel("Also does not qualify", { exact: true }),
+    ).toHaveValue(OWNER_EXCLUSIONS.join("\n"));
     await page.getByLabel("Status", { exact: true }).selectOption("open");
     await expectAccessible(page);
     await page.screenshot({
