@@ -7,10 +7,10 @@ the queue assigns it until the API records its single immutable result
 `incomplete`, `clean` or `malicious`, never again). The scanner pipeline
 (`workers/vetting/run.ts`, `acquire.ts`, `review-plan.ts`, `publication.ts`,
 `publication-journal.ts`) and the signed result intake
-(`backend/vetting/handler.ts`, `scan-result.ts`) are its two halves. Counts
-are exact manifest cardinalities; the shell retains every chunk's digest,
-source path and source range, because a count alone is not evidence of
-coverage. There is no repository, entry, file, object or run size refusal.
+(`backend/vetting/handler.ts`, `scan-result.ts`) are its two halves, and the
+[scheduled controller](./scanController.md) dispatches the scanner. Counts are
+exact manifest cardinalities; the shell retains every chunk's digest, source
+path and source range, because a count alone is not evidence of coverage. There is no repository, entry, file, object or run size refusal.
 
 The enforcement machine ([Project restrictions](./enforcement.md)) reads only
 the outcome of a recorded assessment (`outcomeOf` below) and the
