@@ -18,10 +18,13 @@ current link, constructed from the current origin and saved code. Failed
 clipboard access allows manual selection without changing the saved name.
 
 ```quint
+import referrals as RF from "../settlement/referrals"
 type SaveNotice = Quiet | Saving | InvalidDraft | Saved | SaveFailed
 type Answer = Stored({ code: str }) | EmptyAnswer | FailedAnswer
-type Settings = { actor: str, lifetime: int, sequence: int, savedCode: str, draft: str, pending: int, notice: SaveNotice }
-pure val initial: Settings = { actor: "", lifetime: 0, sequence: 0, savedCode: "", draft: "", pending: 0, notice: Quiet }
+type Settings = { actor: str, lifetime: int, sequence: int, savedCode: str, draft: str, pending: int, notice: SaveNotice,
+  programEnabled: bool, programMode: RF::ReferralMode, claimShown: bool }
+pure val initial: Settings = { actor: "", lifetime: 0, sequence: 0, savedCode: "", draft: "", pending: 0, notice: Quiet,
+  programEnabled: false, programMode: RF::Off, claimShown: false }
 pure val actorValues = Set("alice-id", "bob-id")
 pure val codeValues = Set("", "Alpha", "Bravo")
 pure val textValues = Set("", "Alpha", "Bravo", "_bad")
@@ -30,8 +33,8 @@ pure val lifetimeValues = Set(1, 2, 3)
 pure val requestValues = Set(1, 2, 3)
 pure def canMount(s: Settings, actor: str): bool = actor != "" and s.lifetime < 9007199254740991
 pure def mount(s: Settings, actor: str, code: str): Settings = { ...s, actor: actor, lifetime: s.lifetime + 1,
-  savedCode: code, draft: code, pending: 0, notice: Quiet }
-pure def signOut(s: Settings): Settings = { ...s, actor: "", savedCode: "", draft: "", pending: 0, notice: Quiet }
+  savedCode: code, draft: code, pending: 0, notice: Quiet, claimShown: false }
+pure def signOut(s: Settings): Settings = { ...s, actor: "", savedCode: "", draft: "", pending: 0, notice: Quiet, claimShown: false }
 pure def canEdit(s: Settings): bool = s.actor != "" and s.pending == 0
 pure def edit(s: Settings, text: str): Settings = { ...s, draft: text, notice: if (s.notice == Saved) Quiet else s.notice }
 ```
@@ -73,4 +76,27 @@ pure def stepRequestOrder(before: Settings, after: Settings): bool = before.sequ
 pure def sometimesSaving(s: Settings): bool = s.pending > 0
 pure def sometimesSaved(s: Settings): bool = s.notice == Saved
 pure def sometimesFailedPreservesLink(s: Settings): bool = s.notice == SaveFailed and s.savedCode != ""
+```
+
+## Story: Keep the referral claim surface absent while referrals are deferred
+
+### The claim surface renders only for an enabled program whose posting is activated
+
+The owner deferred referrals from launch on 27 October 2026: the accrual
+mode stays off and the program flag false. The claim surface of
+`src/ReferralClaims.tsx` renders only when the server reports the program
+enabled and the [referral program](../settlement/referrals.md) has reached
+its activated posting mode; otherwise it is absent, with no disabled control
+or placeholder. A new account or a sign-out hides it until the program is
+observed again. Modelling the claim lifetime (its lock, storage failure and
+late result, retained as `ui_referral_claim_lifetime`) is deferred until the
+owner approves reactivation.
+
+```quint
+pure def observeProgram(s: Settings, programOn: bool, mode: RF::ReferralMode): Settings =
+  { ...s, programEnabled: programOn, programMode: mode, claimShown: s.actor != "" and programOn and mode == RF::Posting }
+pure def alwaysClaimOnlyWhenActivated(s: Settings): bool =
+  s.claimShown implies s.actor != "" and s.programEnabled and s.programMode == RF::Posting
+pure def sometimesClaimAbsentWhileDeferred(s: Settings): bool = s.actor != "" and not(s.claimShown) and s.programMode == RF::Off
+pure def sometimesClaimShown(s: Settings): bool = s.claimShown
 ```
