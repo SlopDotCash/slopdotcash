@@ -21,15 +21,32 @@ export const mainnetWranglerProvider = (args, env = process.env) =>
     timeout: 120_000,
     env,
   });
-const run = async (provider, args) => {
+const run = async (provider, network, args) => {
   const result = await provider(args);
-  if (result.status !== 0) throw new Error(`Attester ${args[0]} failed`);
-  return result.stdout;
+  if (result.status === 0) return result.stdout;
+
+  // Report structured subprocess metadata without exposing Wrangler output.
+  const details = [];
+  if (Number.isInteger(result.status)) details.push(`exit ${result.status}`);
+  if (result.signal === "SIGTERM" || result.signal === "SIGKILL")
+    details.push(result.signal);
+  const spawnError = result.error?.code;
+  if (["ETIMEDOUT", "ENOBUFS", "ENOENT", "EACCES"].includes(spawnError))
+    details.push(spawnError);
+  const apiCode = /\[code: ([0-9]{1,6})\]/u.exec(result.stderr ?? "")?.[1];
+  if (apiCode) details.push(`Cloudflare code ${apiCode}`);
+  const context = details.length ? ` (${details.join(", ")})` : "";
+  throw new Error(`${network} attester ${args[0]} failed${context}`);
 };
 
 async function readSecretInventory(provider, path, network) {
   for (let attempt = 0; attempt < 3; attempt++) {
-    const output = await run(provider, ["secret", "list", "--config", path]);
+    const output = await run(provider, network, [
+      "secret",
+      "list",
+      "--config",
+      path,
+    ]);
     try {
       return JSON.parse(output);
     } catch {
@@ -155,7 +172,7 @@ export async function publishMainnetRelease({ directory, sha, provider }) {
     const path = join(directory, `${entry.name}.json`);
     if (digest(await readFile(path)) !== entry.configSha256)
       throw new Error("Prepared attester configuration changed");
-    await run(provider, [
+    await run(provider, entry.network, [
       "deploy",
       "--config",
       path,
@@ -163,10 +180,16 @@ export async function publishMainnetRelease({ directory, sha, provider }) {
       `--message=slop.cash release ${sha}`,
     ]);
     const versions = JSON.parse(
-      await run(provider, ["versions", "list", "--name", entry.name, "--json"]),
+      await run(provider, entry.network, [
+        "versions",
+        "list",
+        "--name",
+        entry.name,
+        "--json",
+      ]),
     );
     const deployment = JSON.parse(
-      await run(provider, [
+      await run(provider, entry.network, [
         "deployments",
         "status",
         "--name",

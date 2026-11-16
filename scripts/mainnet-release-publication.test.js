@@ -381,6 +381,43 @@ test("an existing empty-pin service is untouched and grants no unverified Pages 
   });
 });
 
+test("a failed attester deployment reports safe provider details and blocks Pages bindings", async () => {
+  await fixture(async ({ directory, path }) => {
+    await prepareMainnetRelease({
+      directory,
+      account,
+      sha,
+      registry: [],
+      provider: async (args) => ({
+        status: 1,
+        stdout: "",
+        stderr: `A request to the Cloudflare API (/accounts/${account}/workers/scripts/${args[3]}/deployments) failed. [code: 10007]`,
+      }),
+    });
+    const commands = [];
+    await expect(
+      publishMainnetRelease({
+        directory,
+        sha,
+        provider: async (args) => {
+          commands.push(args[0]);
+          return {
+            status: 1,
+            stdout: "private command output",
+            stderr: "private provider details [code: 10021]",
+          };
+        },
+      }),
+    ).rejects.toThrow(
+      /^base-mainnet attester deploy failed \(exit 1, Cloudflare code 10021\)$/u,
+    );
+    expect(commands).toEqual(["deploy"]);
+    await expect(
+      assembleMainnetBindings({ directory, sha, path }),
+    ).rejects.toThrow("not verified");
+  });
+});
+
 test("pinned Base release requires the exact signer inventory and retains canonical vault pins", async () => {
   const project = await pinnedProject();
   await fixture(async ({ directory }) => {
