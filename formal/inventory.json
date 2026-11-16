@@ -190,14 +190,15 @@
     },
     {
       "path": "backend/fee-conversions/handler.ts",
-      "sha256": "2859209cc701cab415fa88b8ea151ee74aa8cc871c4299457a8e6bdd4d2e28cf",
+      "sha256": "928822aac2fb5bc0258370000a4cc79a0f18eb70d179611c95a2508f2fe14875",
       "models": [
         "formal/models/fees/buyback_market.qnt",
         "formal/models/fees/fee_conversion.qnt",
         "formal/models/ui/ui_admin_resource_identity.qnt"
       ],
       "candidateLines": [
-        46, 71, 116, 126, 143, 154, 203, 229, 253, 263, 269, 271, 277, 287, 312
+        46, 71, 116, 129, 142, 185, 202, 213, 262, 288, 295, 326, 336, 342, 344,
+        350, 360, 368, 373, 375, 378, 401, 422
       ],
       "review": "mapped-abstraction"
     },
@@ -378,7 +379,7 @@
     },
     {
       "path": "backend/payments/handler.ts",
-      "sha256": "95d0cdc5d49559dd0dae0b9f2242ce8e4af62eda69837c1846eb33d9bac39b7f",
+      "sha256": "9506b0c028bbc28780b7c2e5b0502599014c32b1cf0797ebd8b78ebca9fbcf68",
       "models": [
         "formal/models/api/api_payment_wallet_protocol.qnt",
         "formal/models/payments/binding_consent_renewal.qnt",
@@ -398,7 +399,7 @@
       ],
       "candidateLines": [
         111, 216, 295, 354, 359, 406, 428, 434, 457, 479, 657, 678, 692, 816,
-        872, 910, 919, 934, 1073, 1136, 1153, 1243, 1244, 1298
+        872, 910, 919, 934, 1073, 1136, 1144, 1167, 1254, 1255, 1309
       ],
       "review": "mapped-abstraction"
     },
@@ -3607,7 +3608,7 @@
     },
     {
       "path": "scripts/collect-implementation-corrections.ts",
-      "sha256": "1c1666c960882f001bf916bdedc973d058136e7e32717f563b712446eac9bf10",
+      "sha256": "2e5bc186d7cd7585ad21491a5f154d0ce717bd6e0f3a15d45a80db67595ef536",
       "models": [
         "formal/models/points/historical_discussion_evidence.qnt",
         "formal/models/points/historical_implementation_allocation.qnt"
@@ -3617,7 +3618,7 @@
         348, 445, 491, 512, 537, 583, 590, 706, 717, 882, 1288, 1289, 1292,
         1363, 1386, 1395, 1559, 1615, 1674, 1680, 1681, 1684, 1845, 1847, 1851,
         1884, 2223, 2269, 2274, 2691, 2948, 2950, 2957, 2968, 3171, 3173, 3177,
-        3328, 3732, 3743, 4033, 4708, 4778, 4970, 5111, 5132, 5161, 5163
+        3336, 3740, 3751, 4041, 4716, 4786, 4978, 5119, 5140, 5169, 5171
       ],
       "review": "mapped-abstraction"
     },
@@ -4394,9 +4395,9 @@
     },
     {
       "path": "scripts/private-payout-packet.ts",
-      "sha256": "0598d81defc0f0753275580161b25e196351102d320e9c5b2ebf8c7868a6bec0",
+      "sha256": "904f5c2eeac392f21ba5a28ec14ae07b525a5baaa281f7bdf4161b4c2a208f1f",
       "models": ["formal/models/points/source_import.qnt"],
-      "candidateLines": [78],
+      "candidateLines": [82],
       "review": "mapped-abstraction"
     },
     {
@@ -7853,7 +7854,7 @@
     },
     {
       "path": "workers/identity/index.ts",
-      "sha256": "1221b4adf6c396188ace25761ac2a0e8b8906dfedd7e36e819626eff1199bd48",
+      "sha256": "601b8719ce23ce10d3c39a4f5bf3433b2bfa6c170ed43c4dd84e0dd763577717",
       "models": [
         "formal/models/api/api_identity_admission.qnt",
         "formal/models/api/github_identity_exchange.qnt",
@@ -7862,8 +7863,9 @@
         "formal/models/api/identity_scheduled_maintenance.qnt"
       ],
       "candidateLines": [
-        28, 54, 60, 90, 92, 94, 100, 120, 125, 139, 144, 303, 344, 348, 350,
-        359, 362, 370, 376, 380, 406, 418, 421, 427, 437, 438, 439, 504
+        28, 54, 60, 90, 92, 94, 100, 120, 125, 139, 144, 296, 307, 320, 332,
+        342, 355, 379, 420, 424, 426, 435, 438, 446, 452, 456, 482, 494, 497,
+        503, 513, 514, 515, 580
       ],
       "review": "mapped-abstraction"
     },
@@ -10566,7 +10568,7 @@
     },
     {
       "path": "formal/models/api/github_identity_exchange.qnt",
-      "sha256": "b52e1b5464c5f0997f9e53faecaa6d532b479defee910554064d3240978cddc2",
+      "sha256": "e76c5652480b32db7fe36b19d4de5743619a09d5b05dd3cd81ee27a81b0d0497",
       "sources": ["workers/identity/handler.ts", "workers/identity/index.ts"],
       "scenarios": [
         "absentOrNonStringTokenReturnsNullTest",

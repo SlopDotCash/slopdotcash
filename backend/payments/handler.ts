@@ -1134,12 +1134,26 @@ export async function handlePaymentsApi(
         return json(503, { error: "identity_attester_unavailable" });
       const bindingQuery =
         "SELECT o.id obligationId,o.network,o.vault,o.github_user_id githubUserId,w.id claimId,w.record_sha256 claimDigest,w.wallet_address destination,t.id idempotencyKey FROM payment_obligations o JOIN effective_payment_wallet_claims w ON w.github_user_id=o.github_user_id AND w.chain=o.chain JOIN payment_wallet_authorizations a ON a.claim_id=w.id JOIN payment_attempts t ON t.obligation_id=o.id AND t.claim_id=w.id WHERE o.id=? AND o.github_user_id=? AND o.chain='solana' AND o.state='reserved' AND w.source='d1_registry' AND t.state IN ('prepared','unknown','submitted') ORDER BY t.created_at LIMIT 1";
+      const bindingPayment = async (db: D1Database) => {
+        if (!complete) {
+          // Mainnet has no hosted payment dispatcher. Admit only this actor's
+          // current authorized destination, under the dispatcher's same ready
+          // outbox fence, before asking the attester for a binding transaction.
+          await db
+            .prepare(
+              "INSERT INTO payment_attempts(id,obligation_id,claim_id,created_at,state) SELECT ?,o.id,w.id,?,'prepared' FROM payment_obligations o JOIN effective_payment_wallet_claims w ON w.github_user_id=o.github_user_id AND w.chain=o.chain JOIN payment_wallet_authorizations a ON a.claim_id=w.id JOIN payment_outbox b ON b.obligation_id=o.id WHERE o.id=? AND o.github_user_id=? AND o.chain='solana' AND o.state='reserved' AND w.source='d1_registry' AND b.state='ready' AND NOT EXISTS(SELECT 1 FROM payment_attempts t WHERE t.obligation_id=o.id AND t.state IN ('prepared','unknown','submitted'))",
+            )
+            .bind(crypto.randomUUID(), now, body.obligationId, member.githubId)
+            .run();
+        }
+        return db
+          .prepare(bindingQuery)
+          .bind(body.obligationId, member.githubId)
+          .first<Record<string, string>>();
+      };
       let attester = deps.solanaAttester;
       let privateBinding = false;
-      let payment = await deps.db
-        .prepare(bindingQuery)
-        .bind(body.obligationId, member.githubId)
-        .first<Record<string, string>>();
+      let payment = await bindingPayment(deps.db);
       if (!payment && deps.securityPayments) {
         const owned = await deps.db
           .prepare(
@@ -1154,10 +1168,7 @@ export async function handlePaymentsApi(
             )
             .bind(owned.case_id, member.githubId, now)
             .run();
-          payment = await deps.securityPayments.db
-            .prepare(bindingQuery)
-            .bind(body.obligationId, member.githubId)
-            .first<Record<string, string>>();
+          payment = await bindingPayment(deps.securityPayments.db);
           attester = deps.securityPayments.solanaAttester;
           privateBinding = true;
         }

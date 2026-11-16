@@ -1424,6 +1424,142 @@ test("the native collector partitions two original PRs by one contributor", asyn
   ).rejects.toThrow("accepted carrier");
 });
 
+async function maintainerOpenedOriginals(secondAuthor: typeof origin) {
+  const input = await snapshot();
+  const maintainer = {
+    node_id: "MDQ6VXNlcjQ1",
+    login: "maintainer",
+    type: "User",
+  };
+  const second = clone(input.sources[1]);
+  second.evidence.pull = {
+    ...second.evidence.pull,
+    node_id: "PR_second_original",
+    number: 4,
+    html_url: `https://github.com/${repository}/pull/4`,
+    head: { sha: sha("d") },
+  };
+  // One maintainer opened both original PRs; their commits keep their authors.
+  input.original.pull.user = maintainer;
+  second.evidence.pull.user = maintainer;
+  second.evidence.commits[0].sha = sha("d");
+  second.evidence.commits[0].parents = [{ sha: sha("a") }];
+  second.evidence.commits[0].author = secondAuthor;
+  second.evidence.commitAttribution[0].sha = sha("d");
+  second.evidence.commitAttribution[0].actorNodeIds = [secondAuthor.node_id];
+  const accepted = input.sources[0].evidence;
+  accepted.commits.push(clone(second.evidence.commits[0]));
+  accepted.pull.commits++;
+  accepted.commitAttribution.push(clone(second.evidence.commitAttribution[0]));
+  // History a (first original) <- d (second original) <- b (carrier follow-up).
+  accepted.commits[1].parents = [{ sha: sha("d") }];
+  input.owners.set(
+    `${repository.toLowerCase()}\0${sha("d")}`,
+    accepted.pull.node_id,
+  );
+  for (const [path, pull] of [
+    [`${root}/pulls/1`, input.original.pull],
+    [`${root}/pulls/4`, second.evidence.pull],
+  ] as const)
+    input.responses.set(path, {
+      ...clone(pull),
+      created_at: "2026-10-01T00:00:00Z",
+    });
+  for (const commit of accepted.commits)
+    input.responses.set(`${root}/git/commits/${commit.sha}`, clone(commit));
+  for (const [end, status, behind] of [
+    [sha("f"), "diverged", 1],
+    [sha("b"), "ahead", 0],
+  ] as const)
+    input.responses.set(
+      `${root}/compare/${sha("d")}...${end}?per_page=100&page=1`,
+      {
+        status,
+        base_commit: { sha: sha("d") },
+        merge_base_commit: { sha: status === "ahead" ? sha("d") : sha("0") },
+        ahead_by: 0,
+        behind_by: behind,
+        total_commits: 0,
+        commits: [],
+      },
+    );
+  const range = input.responses.get(
+    `${root}/compare/${sha("f")}...${sha("c")}?per_page=100&page=1`,
+  ) as { commits: unknown[]; total_commits: number; ahead_by: number };
+  range.commits.splice(
+    0,
+    range.commits.length,
+    ...clone(accepted.commits),
+    clone(accepted.mergeCommitEvidence),
+  );
+  range.total_commits = range.ahead_by = range.commits.length;
+  // The carrier's follow-up adds a new path, so neither original owns it.
+  const repair = {
+    id: "claim_new_file",
+    sourceId: accepted.pull.node_id,
+    commitSha: sha("b"),
+    path: "new-test.ts",
+  };
+  accepted.commitAttribution[1].files?.push({
+    ...clone(accepted.commitAttribution[1].files[0]),
+    filename: repair.path,
+  });
+  accepted.commitAttribution[1].changedPaths?.push(repair.path);
+  const claims = [
+    {
+      id: "claim_first",
+      sourceId: accepted.pull.node_id,
+      commitSha: sha("a"),
+      path: "fix.ts",
+    },
+    {
+      id: "claim_second",
+      sourceId: accepted.pull.node_id,
+      commitSha: sha("d"),
+      path: "fix.ts",
+    },
+    repair,
+  ];
+  return {
+    repair,
+    prove: () =>
+      octoberOriginalContributorPartsProof(
+        input.github,
+        [...input.sources, second],
+        input.owners,
+        claims,
+        new Map([
+          [input.original.pull.node_id, ["claim_first"]],
+          [second.evidence.pull.node_id, ["claim_second"]],
+        ]),
+        accepted.pull.node_id,
+      ),
+  };
+}
+
+test("the native collector holds a follow-up shared by two contributors whose originals one maintainer opened", async () => {
+  const same = await maintainerOpenedOriginals(origin);
+  const proof = await same.prove();
+  expect(
+    proof.originalContributorParts?.map((part) => ({
+      origin: part.originatingActor?.id,
+      claims: part.claimIds,
+    })),
+  ).toEqual([
+    { origin: origin.node_id, claims: ["claim_first", same.repair.id] },
+    { origin: origin.node_id, claims: ["claim_second"] },
+  ]);
+  const otherOrigin = {
+    ...origin,
+    node_id: "MDQ6VXNlcjQ0",
+    login: "other-origin",
+  };
+  const different = await maintainerOpenedOriginals(otherOrigin);
+  await expect(different.prove()).rejects.toThrow(
+    "multiple originating contributors",
+  );
+});
+
 async function repairSnapshot() {
   const input = await snapshot();
   const repairAuthor = {
