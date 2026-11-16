@@ -5020,10 +5020,10 @@
     },
     {
       "path": "scripts/vault-setup-browser-server.ts",
-      "sha256": "ae2ea1e385dcf7a01d5984abc6d57fb255b068cdc62fc703a2b643afc699d45a",
+      "sha256": "314b6e0176f9184056014738fedb6bc74fbedd903e39563faf3e8766538358d4",
       "models": ["formal/models/tooling/dev_server_lifecycle.qnt"],
       "candidateLines": [
-        50, 55, 59, 75, 79, 136, 161, 264, 289, 304, 307, 310, 317
+        52, 57, 61, 77, 81, 138, 163, 266, 291, 314, 317, 320, 327
       ],
       "review": "mapped-abstraction"
     },
