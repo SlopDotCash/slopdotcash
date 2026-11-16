@@ -3956,7 +3956,7 @@
     },
     {
       "path": "scripts/generate-points.ts",
-      "sha256": "811d28039e65358d56284f39d50eeb0408fe13ea1b9b573d2ab7721ae22fc984",
+      "sha256": "17caa9c66e88d0729cb547830eff2ca67926d2d95c71c55a824e227622e5ba87",
       "models": [
         "formal/models/points/historical_implementation_allocation.qnt",
         "formal/models/points/journal_publication.qnt",
@@ -3966,7 +3966,7 @@
       ],
       "candidateLines": [
         2, 36, 63, 100, 122, 125, 138, 145, 154, 162, 170, 246, 278, 284, 287,
-        291, 292, 293, 294, 383, 658, 665, 666, 668, 673, 677, 681
+        291, 292, 293, 294, 384, 659, 666, 667, 669, 674, 678, 682
       ],
       "review": "mapped-abstraction"
     },
@@ -6514,7 +6514,7 @@
     },
     {
       "path": "src/lib/points.ts",
-      "sha256": "6b5058c2388c63985022b6ed71fffedbd813a69014b454cab272aa48c416f10e",
+      "sha256": "0823dc2dcd68f86eba221b43fd285d980c6ff9ee4ef25a0192285df4394f8515",
       "models": [
         "formal/models/points/implementation_allocation.qnt",
         "formal/models/points/journal_publication.qnt",
@@ -6525,7 +6525,7 @@
         "formal/models/rewards/bucket_aggregation.qnt",
         "formal/models/ui/ui_review_pool.qnt"
       ],
-      "candidateLines": [382, 847, 1094, 1106, 1113, 1122],
+      "candidateLines": [382, 849, 1096, 1108, 1115, 1124],
       "review": "mapped-abstraction"
     },
     {
@@ -14050,7 +14050,7 @@
     },
     {
       "path": "formal/models/points/points_retained_provenance.qnt",
-      "sha256": "a574746913009b1e731197da85417a99d3fe0b627c71a3816b1e24b0fa87f90f",
+      "sha256": "965de444eb9e34d0ecbb2d00ce1701ed9924ddac23228d36db0834ed8256bec0",
       "sources": [
         "scripts/generate-points.ts",
         "src/lib/points.ts",
@@ -14062,6 +14062,7 @@
         "historicalOmittedTest",
         "recoverIncidentTest",
         "recoveryReplayTest",
+        "reviewedValueOmissionTest",
         "sameAmountAdoptionThenRevocationTest",
         "snapshotAdoptionThenRevocationTest",
         "unrelatedZeroNeverRecoveredTest"
