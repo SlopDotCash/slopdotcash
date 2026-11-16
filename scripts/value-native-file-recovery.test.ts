@@ -8,6 +8,7 @@ import { collectValueEvidence } from "../workers/slopbot/value-evidence";
 import type { EvidenceClient } from "../workers/slopbot/value-evidence-types";
 import {
   hydrateValueMergeSource,
+  memoizeCommitChangePages,
   recoverValueSourceFiles,
 } from "./value-merge-ingestion";
 
@@ -148,22 +149,101 @@ test("native public objects recover complete text and binary through the normal 
     expect(recovered.evidence.pull).toEqual(x.evidence.pull);
   }));
 
-test("native file recovery rejects a changed live source", async () =>
+test("native recovery reuses exact commit pages and rechecks live PR evidence", async () =>
   example(async (x) => {
-    x.source.pull.title = "changed";
-    await expect(
+    const policy = { sha: x.source.pull.base.sha, text: "fixture" };
+    const recover = (evidence: typeof x.evidence, client: EvidenceClient) =>
       recoverValueSourceFiles(
-        {
-          evidence: x.evidence,
-          policy: { sha: x.source.pull.base.sha, text: "fixture" },
-        },
-        x.client,
+        { evidence, policy },
+        client,
         x.repository,
         x.directory,
         repository,
-      ),
-    ).rejects.toThrow("Source changed");
+      );
+    const commitPage = /\/commits\/[a-f0-9]{40}\?per_page=100&page=/u;
+    const beforeLive = x.source.calls.length;
+    const live = await recover(x.evidence, x.client);
+    const liveReads = x.source.calls.slice(beforeLive);
+    const client = memoizeCommitChangePages(
+      x.client,
+      repository.id,
+      x.repository,
+    );
+    const initial = await collectValueEvidence(
+      client,
+      repository.id,
+      1,
+      repository,
+    );
+    expect(initial).toEqual({
+      ...x.evidence,
+      collectedAt: initial.collectedAt,
+    });
+
+    const beforeRecovery = x.source.calls.length;
+    const recovered = await recover(initial, client);
+    expect(recovered).toEqual({
+      ...live,
+      evidence: {
+        ...live.evidence,
+        collectedAt: recovered.evidence.collectedAt,
+      },
+    });
+    const recoveryReads = x.source.calls.slice(beforeRecovery);
+    expect(
+      liveReads.filter((path) => commitPage.test(path)).length,
+    ).toBeGreaterThan(0);
+    expect(recoveryReads).toEqual(
+      liveReads.filter((path) => !commitPage.test(path)),
+    );
+
+    x.source.pull.title = "changed";
+    await expect(recover(initial, client)).rejects.toThrow("Source changed");
   }));
+
+test("missing, invalid and failed commit pages are read again", async () => {
+  const root = `/repos/${repository.id}`;
+  const identity = { id: 42, node_id: "R_binary", private: false };
+  const sha = "a".repeat(40);
+  const path = `${root}/commits/${sha}?per_page=100&page=1`;
+  const valid = {
+    sha,
+    html_url: `https://github.com/${repository.id}/commit/${sha}`,
+    parents: [],
+    stats: { additions: 0, deletions: 0, total: 0 },
+    files: [],
+  };
+  let reads = 0;
+  const failures = [
+    null,
+    { ...valid, sha: "b".repeat(40) },
+    { ...valid, files: [null] },
+  ];
+  const client = memoizeCommitChangePages(
+    {
+      async get<T>(request: string): Promise<T | null> {
+        if (request === root) return identity as T;
+        if (request !== path) throw new Error("Unexpected request");
+        reads += 1;
+        if (reads === 1) throw new Error("Unavailable");
+        return (reads <= 4 ? failures[reads - 2] : valid) as T | null;
+      },
+    },
+    repository.id,
+    identity,
+  );
+  await client.get(root);
+  await expect(client.get(path)).rejects.toThrow("Unavailable");
+  for (const response of failures)
+    expect(await client.get<object>(path)).toEqual(response);
+  expect(await client.get<typeof valid>(path)).toEqual(valid);
+  const replay = await client.get<typeof valid>(path);
+  expect(replay).toEqual(valid);
+  if (!replay) throw new Error("Missing replay");
+  replay.stats.total = 99;
+  expect(await client.get<typeof valid>(path)).toEqual(valid);
+  expect(reads).toBe(5);
+});
 
 test("native file recovery rejects a foreign or private repository", async () =>
   example(async (x) => {

@@ -4859,7 +4859,7 @@
     },
     {
       "path": "scripts/value-ingestion.ts",
-      "sha256": "8d48090a1f840347aa8e7f6b8f8e1fffc8f678519569ba77768eb1dc1a9266ee",
+      "sha256": "cf1dce641eb4c0ee0f839a8614544b8b7dc00b3a81d6c0e96fe88b2a827a7f18",
       "models": [
         "formal/models/points/implementation_credit.qnt",
         "formal/models/points/implementation_credit_gate.qnt",
@@ -4867,16 +4867,16 @@
         "formal/models/slopbot/value_ingestion.qnt"
       ],
       "candidateLines": [
-        66, 77, 124, 125, 126, 127, 129, 130, 197, 198, 199, 201, 202, 739, 759,
-        881, 917, 956, 980
+        68, 79, 126, 127, 128, 129, 131, 132, 199, 200, 201, 203, 204, 745, 765,
+        887, 923, 962, 986
       ],
       "review": "mapped-abstraction"
     },
     {
       "path": "scripts/value-merge-ingestion.ts",
-      "sha256": "c8e663c51148f4d729e5ac192d5b8bf3da868c282fc98df72087160a682f2f55",
+      "sha256": "b1ddf3279baa7e98988fb26b358f80da4ad02d8b64858874928053dbb05468e9",
       "models": ["formal/models/slopbot/merge_evidence_acquisition.qnt"],
-      "candidateLines": [289, 290],
+      "candidateLines": [73, 74, 382, 383],
       "review": "mapped-abstraction"
     },
     {

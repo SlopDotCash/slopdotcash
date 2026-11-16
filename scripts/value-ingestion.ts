@@ -35,6 +35,7 @@ import {
   collectValueReferenceEvidence,
 } from "../workers/slopbot/value-evidence";
 import type {
+  EvidenceClient,
   Pull,
   RelatedPullRequest,
 } from "../workers/slopbot/value-evidence-types";
@@ -53,6 +54,7 @@ import {
 import { fetchProjectRegistry } from "./sync-project-registry.mjs";
 import {
   hydrateValueMergeSource,
+  memoizeCommitChangePages,
   type PublicMergeRepository,
 } from "./value-merge-ingestion";
 
@@ -563,7 +565,10 @@ export async function loadValueInputs(
     recipe?: ValueMergeRecipe,
   ) {
     const { repository, identity } = await repositoryIdentity(repositoryId);
-    const hydrate = async (raw: WorkUnitSource) => {
+    const hydrate = async (
+      raw: WorkUnitSource,
+      client: EvidenceClient = github,
+    ) => {
       const collected = {
         ...raw,
         evidence: await collectValueContext(github, raw.evidence, contextPaths),
@@ -572,7 +577,7 @@ export async function loadValueInputs(
         collected,
         recipe,
         identity,
-        github,
+        client,
         repository,
       );
     };
@@ -588,7 +593,8 @@ export async function loadValueInputs(
         throw new Error("Joint source identity changed between records");
       return hydrate(cached);
     }
-    const evidence = await collectValueEvidence(github, repository.id, number);
+    const client = memoizeCommitChangePages(github, repository.id, identity);
+    const evidence = await collectValueEvidence(client, repository.id, number);
     const outcome = census.get(id);
     if (
       evidence.repositoryNodeId !== identity.node_id ||
@@ -617,7 +623,7 @@ export async function loadValueInputs(
     };
     const collected = { evidence, policy };
     sourceCache.set(id, collected);
-    return hydrate(collected);
+    return hydrate(collected, client);
   }
 
   async function legacy(collected: WorkUnitSource) {
