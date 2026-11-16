@@ -3491,9 +3491,9 @@
     },
     {
       "path": "scripts/check-payout-readiness.ts",
-      "sha256": "c297c168fcd28959844343156482caa7f10aeb6de83a7d72c9aa912398238685",
+      "sha256": "f4476f139314e51bda5665b07e55c88cd742079f8be8688178dc99e7175dba8c",
       "models": ["formal/models/payments/payout_readiness.qnt"],
-      "candidateLines": [4, 45, 47, 49, 173, 253, 261, 262, 266, 268, 269],
+      "candidateLines": [4, 46, 48, 50, 176, 256, 264, 265, 269, 271, 272],
       "review": "mapped-abstraction"
     },
     {

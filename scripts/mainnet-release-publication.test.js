@@ -17,6 +17,7 @@ import {
   readRegistryDatabase,
 } from "../workers/payments/registry-database.mjs";
 import { bashCommand } from "./bash-command";
+import { payoutReadiness } from "./check-payout-readiness";
 
 const sha = "a".repeat(40);
 const account = "b".repeat(32);
@@ -345,6 +346,17 @@ test("production config hashes all canonical pins through the per-binding size l
     expect(readDeploymentPinBinding(config.vars, "PAYMENT_DEPLOYMENTS")).toBe(
       canonical.config.vars.PAYMENT_DEPLOYMENTS,
     );
+    const readiness = payoutReadiness({
+      registry,
+      registryDatabaseId: (await readRegistryDatabase()).database_id,
+      configs: [config],
+    });
+    expect(
+      readiness.find((entry) => entry.network === "base-mainnet"),
+    ).toMatchObject({
+      deployments: registry.length,
+      attester: "configured",
+    });
     expect(
       prepared.services.find((entry) => entry.network === "base-mainnet")
         .configSha256,
