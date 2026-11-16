@@ -117,7 +117,8 @@ jobs:
     concurrency:
       # Let trusted branch preparation finish. Newer runs replace only the
       # pending revision; only superseded pull requests cancel a running check.
-      group: slop-quality-${{ github.event.pull_request.number || github.ref }}-${{ github.event_name }}
+      # Manual retained-data production can prepare beside live collection.
+      group: slop-quality-${{ github.event.pull_request.number || github.ref }}-${{ github.event_name }}${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.use_published_data == true && '-retained' || '' }}
       cancel-in-progress: ${{ github.event_name == 'pull_request' }}
     # The public elizaOS ledger can contain several thousand accepted outcomes.
     # Complete commit attribution and value-history reads can span quota resets.
@@ -1106,6 +1107,10 @@ jobs:
             printf 'superseded=true\n' >> "$GITHUB_OUTPUT"
             exit 0
           fi
+
+      - name: Refuse older retained production data
+        if: steps.release-input.outputs.superseded != 'true' && inputs.use_published_data == true && (inputs.rotate_robinhood_rpc_from || '') == '' && (inputs.rotate_solana_rpc_from || '') == ''
+        run: bun scripts/check-retained-release-data.ts dist
 
       - name: Require scoped Cloudflare credentials
         if: steps.release-input.outputs.superseded != 'true'

@@ -14,7 +14,7 @@
     },
     {
       "path": ".github/workflows/deploy.yml",
-      "sha256": "67b95d5d4c80c69f1016b691afb23f3cd35ef6e664bc4e8ca2bf85c6c98a7427",
+      "sha256": "bc6215d9399de3ecbf3dc24600e0eed051a525e3a84902273148ecc5c396bb10",
       "models": [
         "formal/models/release/ci_browser_evidence.qnt",
         "formal/models/release/ci_browser_runtime.qnt",
@@ -24,10 +24,10 @@
         "formal/models/release/staging_release_order.qnt"
       ],
       "candidateLines": [
-        36, 46, 119, 248, 286, 287, 344, 378, 434, 514, 519, 634, 640, 708, 711,
-        737, 738, 759, 771, 803, 841, 1071, 1099, 1187, 1278, 1384, 1386, 1387,
-        1591, 1674, 1827, 1829, 1859, 1968, 1990, 2061, 2072, 2097, 2168, 2181,
-        2194, 2203, 2204, 2205
+        36, 46, 119, 249, 287, 288, 345, 379, 435, 515, 520, 635, 641, 709, 712,
+        738, 739, 760, 772, 804, 842, 1072, 1100, 1192, 1283, 1389, 1391, 1392,
+        1596, 1679, 1832, 1834, 1864, 1973, 1995, 2066, 2077, 2102, 2173, 2186,
+        2199, 2208, 2209, 2210
       ],
       "review": "mapped-abstraction"
     },
@@ -3512,6 +3512,13 @@
       "candidateLines": [
         59, 392, 394, 456, 461, 474, 493, 506, 517, 534, 538, 539, 549, 553, 569
       ],
+      "review": "mapped-abstraction"
+    },
+    {
+      "path": "scripts/check-retained-release-data.ts",
+      "sha256": "7530ec4fc152e572f4a8404a44b9e346259e98cad0d5420c5b57d35a1a612575",
+      "models": ["formal/models/release/release_publication.qnt"],
+      "candidateLines": [],
       "review": "mapped-abstraction"
     },
     {
@@ -14421,9 +14428,10 @@
     },
     {
       "path": "formal/models/release/release_publication.qnt",
-      "sha256": "a50078e839727a25e26577d584f8f475b7dc174ac222f1d6311e221605a302c4",
+      "sha256": "48113ebb3510373dee689e1668b5224548de5bb3e01c662a2e1c1485d7759d19",
       "sources": [
         ".github/workflows/deploy.yml",
+        "scripts/check-retained-release-data.ts",
         "scripts/dist-manifest.mjs",
         "scripts/prepare-publication.mjs",
         "scripts/prepare-site.mjs",
