@@ -14,11 +14,12 @@ package's types, tests and traces (SPEC.md, "One spec tree").
 | `spec/app/index.md` | the route kinds of development's `ROUTES`, the parser from an address to one of them, the legacy addresses, and the laws that each address names exactly one kind | `model`, `always`, `sometimes`, `replay`, `proof` |
 | `src/routes.vibe` | the VibeLang shell: the route in memory (`machine()`), opened from an untrusted event | `types`, `traces`, `tests` |
 | `src/address.ts`, `address.contract.ts` | the address as the opening event, and the contract that a path made from segments opens those segments | the property test `pnpm test` derives from the contract |
-| `src/App.tsx` | React over the generated `useMachine`: the header, the page the route names and the footer | `types`, lint, `test:browser` |
+| `src/App.tsx` | React over the generated `useMachine`: the header, the page the route names and the footer; an empty busy `main` until the opening, dispatched in the first render's effects, has been applied, so the home page it starts on never shows first | `types`, lint, `test:browser` |
+| `src/head.ts` | each route's document title and canonical link, or `noindex` for a missing page, as development's `routeHead`; a project's pages name it by its id until the registry read arrives | `test:browser` |
 | `test/drivers/app.ts` | the conformance driver: the shell against the spec, by journeys, malformed inputs and random walks | `traces` |
-| `test/traces/app.jsonl` | a trace recorded from the shell, replayed against the spec | `traces` |
+| `test/traces/app.jsonl` | a trace of openings through the shell's generated machine, replayed against the spec | `traces` |
 | `test/app.test.vibe` | what the driver cannot see: paths and queries turned into openings | `tests` |
-| `test/app.browser.test.tsx` | what only a browser shows: each page's one heading, the unknown page and keyboard order | `pnpm test:browser` |
+| `test/app.browser.test.tsx` | what only a browser shows: each page's one heading and head, the unknown page, the served domain and keyboard order | `pnpm test:browser` |
 
 | Command | Does |
 |---|---|
