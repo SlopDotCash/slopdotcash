@@ -4143,9 +4143,9 @@
     },
     {
       "path": "scripts/inspect-value-intake.ts",
-      "sha256": "e5e388da58c3117826014eb5f5261402f8471ccd84ce166eb0ffeb3aad55cdbb",
+      "sha256": "ad36e272cc02d0b00a58cd59a55d1c2a80866ea0e5dccbcc9c91921b663a0bf5",
       "models": ["formal/models/release/workflow_authority.qnt"],
-      "candidateLines": [16, 62, 128, 129, 130, 219, 281, 287, 360],
+      "candidateLines": [20, 66, 132, 133, 134, 247, 309, 315, 388],
       "review": "mapped-abstraction"
     },
     {
@@ -8737,12 +8737,12 @@
     },
     {
       "path": "workers/slopbot/registry.ts",
-      "sha256": "4f643a1c6c632dd6bcc5353d714d3b437b77d85dece7a914f2fdb8e6954eed34",
+      "sha256": "7c4d3a42c1255cf51f7d6bf50e6f14b5aa8b46d3f6d9dab26b1d4ff29c4fe2ab",
       "models": [
         "formal/models/slopbot/bot_value_freshness.qnt",
         "formal/models/slopbot/bot_value_precall_authority.qnt"
       ],
-      "candidateLines": [113, 117, 142, 151, 171, 172, 173, 178],
+      "candidateLines": [111, 127, 141, 188, 189, 190],
       "review": "mapped-abstraction"
     },
     {
@@ -8999,8 +8999,15 @@
       "review": "mapped-abstraction"
     },
     {
+      "path": "workers/slopbot/value-import-diagnostics.ts",
+      "sha256": "6f1d12a768600a1dc983712615462e87859d771df82c59366c7f25149f65ea41",
+      "models": ["formal/models/slopbot/bot_historical_import.qnt"],
+      "candidateLines": [136],
+      "review": "mapped-abstraction"
+    },
+    {
       "path": "workers/slopbot/value-import-service.ts",
-      "sha256": "0cdbc30a6a25717a38498ef522e69b15c7e9260864c9425df689fcd444f8bcb9",
+      "sha256": "74323860304da2081dacb0c299403994a86f17d01303773d1933fd361a4b0b3b",
       "models": [
         "formal/models/slopbot/bot_historical_import.qnt",
         "formal/models/slopbot/historical_subscription_intake.qnt"
@@ -9010,12 +9017,12 @@
     },
     {
       "path": "workers/slopbot/value-import.ts",
-      "sha256": "5722004d62e43a2c5caa54bcdb22f54e738d24f85f882b69cf5342c469b69b24",
+      "sha256": "ef49bb7ca1f9d2043330a1827fdd721ab92ce4c1791585a1d67035faf9e8dcd1",
       "models": [
         "formal/models/slopbot/bot_historical_import.qnt",
         "formal/models/slopbot/historical_subscription_intake.qnt"
       ],
-      "candidateLines": [176],
+      "candidateLines": [200],
       "review": "mapped-abstraction"
     },
     {
@@ -15442,8 +15449,9 @@
     },
     {
       "path": "formal/models/slopbot/bot_historical_import.qnt",
-      "sha256": "c3a7daa943c8f17026e5f5ae36b9301023bf3580db44defd26143d2dddef731a",
+      "sha256": "47bbd2b340d5467810db24bd213a1065e2d03abc38625e949ccae5c2a8513f5a",
       "sources": [
+        "workers/slopbot/value-import-diagnostics.ts",
         "workers/slopbot/value-import-service.ts",
         "workers/slopbot/value-import.ts",
         "workers/slopbot/value-merge-resolution.ts",
@@ -15956,7 +15964,7 @@
     },
     {
       "path": "formal/models/slopbot/bot_value_freshness.qnt",
-      "sha256": "80a9bcd0f87d911ecd21b0347b70f8b06d0a720553395ca77fef9f9c1aca1bca",
+      "sha256": "02bf126aab57fab5fbb97836a934cf7f716d4c0120d4b846c6036c9b976a6fbe",
       "sources": [
         "workers/slopbot/registry.ts",
         "workers/slopbot/value-consumer.ts",
