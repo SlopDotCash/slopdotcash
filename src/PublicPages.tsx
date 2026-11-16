@@ -16,11 +16,20 @@ import { Link } from "./Link";
 import { ContributionPointTiers, PenaltyPointTable } from "./PointsRules";
 import "./public-records.css";
 import { browserDeployment } from "./lib/browser-deployment";
+import { loadMergeActivity, mergeActivityCardLine } from "./lib/merge-activity";
 import { summarizeModelOutcomes } from "./lib/model-outcomes";
 import { POINTS_NOTICE } from "./lib/points";
+import {
+  asShown,
+  listedThisMonth,
+  loadPoolFunding,
+  type PoolFundingIndex,
+} from "./lib/pool-funding";
 import { PROJECTS, type ProjectDefinition } from "./lib/projects.mjs";
+import { formatRewardCapDisplay } from "./lib/reward-amount";
 import { NETWORK_NAMES } from "./lib/reward-asset.mjs";
 import { SOURCE_REPOSITORY } from "./lib/source-repository";
+import { usePublicResource } from "./lib/use-public-resource";
 import type { DataState } from "./lib/use-snapshot";
 import {
   summarizeWhoBuilds,
@@ -31,7 +40,6 @@ import {
 import {
   DataNotice,
   ExternalLinkAnchor,
-  monthlyPoolLabel,
   NetworkName,
   PaymentLifecycle,
   RoutePageHeader,
@@ -171,10 +179,12 @@ export function HowItWorksPage() {
       <section className="custody-proof money-states">
         <h2 id="payments">Payment stages</h2>
         <p>
-          After each UTC month ends, the owner has 72 hours to adjust awards.
-          When payments are enabled, the vault then pays funded awards
-          automatically unless the owner turned this off. Awards without a
-          wallet remain reserved.
+          After each UTC month ends, the owner has 72 hours to adjust awards. A
+          cut below the proposed amount needs a public reason, and the
+          contributor gets 24 hours of notice before the month locks. When
+          payments are enabled, the vault then pays funded awards automatically
+          unless the owner turned this off. Awards without a wallet remain
+          reserved.
         </p>
         <PaymentLifecycle />
       </section>
@@ -321,6 +331,25 @@ export function HowItWorksPage() {
             </div>
           </article>
           <article className="faq-answer">
+            <h3>Can the owner take this month&apos;s pool back?</h3>
+            <div>
+              <p>
+                When an owner locks a month in the project vault, that
+                month&apos;s pool is locked in the vault until it is paid out:
+                the vault contract refuses to withdraw it, and it can be paid
+                even if the owner turns automatic payment off. The owner can
+                still lower an individual contributor&apos;s amount before the
+                cutoff, with a public reason. A locked month that is never
+                reserved for payout can be released back to the owner&apos;s
+                free funds from the 4th of the second month after it, by a
+                transaction anyone can send; the project&apos;s manage page
+                offers it. Without a lock, Slop&apos;s pages refuse that
+                withdrawal but the contract does not. Slop&apos;s upgrade key
+                can still change the vault contract.
+              </p>
+            </div>
+          </article>
+          <article className="faq-answer">
             <h3>Is there a referral program?</h3>
             <div>
               <p>
@@ -357,12 +386,18 @@ export function HowItWorksPage() {
   );
 }
 
-function sponsorPoolLabel(project: ProjectDefinition): string {
-  const { reward } = project;
+/** Only money in a vault is shown (operator decision, 15 November 2026). */
+function sponsorPoolLabel(
+  registered: ProjectDefinition,
+  index: PoolFundingIndex | null,
+): string {
+  const { reward } = registered;
   if (reward.kind === "external-prize-share" && reward.externalOpportunity) {
     return `external prize share · ${reward.externalOpportunity.name}`;
   }
-  return monthlyPoolLabel(reward, project.rewardAsset);
+  const project = asShown(registered, index, new Date());
+  if (project.reward.monthlyCapMinor === "0") return "points only";
+  return `${formatRewardCapDisplay(project.reward.monthlyCapDisplay, project.rewardAsset)} monthly · in the vault`;
 }
 
 function WhoBuildsOnSlop({
@@ -571,12 +606,25 @@ export function SponsorsPage({
   state: DataState;
   retry: () => void;
 }) {
+  const [funding] = usePublicResource(
+    true,
+    loadPoolFunding,
+    "Pool funding unavailable",
+  );
+  const fundingIndex = funding.status === "ready" ? funding.index : null;
   const hasReviewBudget = PROJECTS.some(
     (project) => project.reward.reviewBudget,
   );
   const hasExternalPrize = PROJECTS.some(
     (project) => project.reward.kind === "external-prize-share",
   );
+  // One shared read of the daily merge activity (#1993) for every card.
+  const [merge] = usePublicResource(
+    true,
+    loadMergeActivity,
+    "Merge activity unavailable",
+  );
+  const now = new Date();
   return (
     <main className="shell evidence-page route-sponsors">
       <RoutePageHeader
@@ -592,7 +640,9 @@ export function SponsorsPage({
           </Link>
         </div>
         <ul className="route-sponsor-grid" aria-label="Project funding pools">
-          {PROJECTS.map((project) => {
+          {PROJECTS.filter((project) =>
+            listedThisMonth(project, fundingIndex, now),
+          ).map((project) => {
             return (
               <li className="route-sponsor-card" key={project.id}>
                 <Link
@@ -602,7 +652,7 @@ export function SponsorsPage({
                   <strong>{project.name}</strong>
                   <ArrowRight aria-hidden="true" />
                 </Link>
-                <p>{sponsorPoolLabel(project)}</p>
+                <p>{sponsorPoolLabel(project, fundingIndex)}</p>
                 {project.reward.chain ? (
                   <NetworkName chain={project.reward.chain}>
                     {NETWORK_NAMES[project.reward.chain]}
@@ -612,6 +662,17 @@ export function SponsorsPage({
                   project={project}
                   className="route-sponsor-status"
                 />
+                {project.status === "active" && merge.status === "ready"
+                  ? (() => {
+                      const line = mergeActivityCardLine(
+                        merge.index.get(project.id),
+                        now,
+                      );
+                      return line ? (
+                        <small className="project-merge-activity">{line}</small>
+                      ) : null;
+                    })()
+                  : null}
                 {hasReviewBudget ? (
                   project.reward.reviewBudget ? (
                     <small>

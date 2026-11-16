@@ -32,6 +32,8 @@ import {
   type ProjectApiDependencies,
   refreshProjectSetup,
 } from "../../../backend/projects/handler";
+import { handleMergeActivityApi } from "../../../backend/projects/merge-activity";
+import { handlePoolFundingApi } from "../../../backend/projects/pool-funding";
 import { slopbotRepositoryAccess } from "../../../backend/projects/repository-access";
 import {
   flaggerAuthority,
@@ -485,6 +487,10 @@ export async function onRequest(context: PagesContext): Promise<Response> {
   if (referralCode !== null) return referralCode;
   const referralsResponse = await handleReferralsApi(request, { db });
   if (referralsResponse !== null) return referralsResponse;
+  const mergeActivity = await handleMergeActivityApi(request, { db });
+  if (mergeActivity !== null) return mergeActivity;
+  const poolFunding = await handlePoolFundingApi(request, { db, tier });
+  if (poolFunding !== null) return poolFunding;
   const feeConversionsResponse = await handleFeeConversionsApi(request, {
     db,
     adminGithubIds,
@@ -541,7 +547,7 @@ export async function onRequest(context: PagesContext): Promise<Response> {
           verifyProjectAuthority(
             project.manifest,
             actor,
-            env.SLOP_GITHUB_READ_TOKEN,
+            repositoryAccess,
             level,
           ),
         // The cutoff display and the owner's cutoff lock. A malformed value
@@ -647,6 +653,7 @@ export async function onRequest(context: PagesContext): Promise<Response> {
       adminGithubIds,
       sessionActor,
       publisher: env.SLOPBOT_VALUE_IMPORT,
+      waitUntil,
     });
   if (pathname.startsWith("/api/v1/slopbot/"))
     return handleSlopbotApi(request, db);

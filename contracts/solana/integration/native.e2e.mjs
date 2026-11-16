@@ -127,6 +127,11 @@ test("native SOL vault creates, accepts real SOL, reserves, pays, withdraws and 
     b.writeBigUInt64LE(BigInt(n));
     return b;
   };
+  const u32le = (n) => {
+    const b = Buffer.alloc(4);
+    b.writeUInt32LE(n);
+    return b;
+  };
   const nativeInfo = await connection.getAccountInfo(vault, "finalized");
   const rent = await connection.getMinimumBalanceForRentExemption(0);
   assert(nativeInfo.owner.equals(program.programId));
@@ -340,6 +345,7 @@ test("native SOL vault creates, accepts real SOL, reserves, pays, withdraws and 
         month,
         instructions: SYSVAR_INSTRUCTIONS_PUBKEY,
         systemProgram: SystemProgram.programId,
+        monthPledge: null,
       })
       .preInstructions([
         Ed25519Program.createInstructionWithPrivateKey({
@@ -441,10 +447,41 @@ test("native SOL vault creates, accepts real SOL, reserves, pays, withdraws and 
   );
   assert.equal(execution.state, "submitted");
   await connection.confirmTransaction(execution.transactionId, "finalized");
+  // A month pledge holds native funds too: withdraw_native cannot go below it.
+  const nowDate = new Date(
+    (await connection.getBlockTime(await connection.getSlot("confirmed"))) *
+      1000,
+  );
+  const current = nowDate.getUTCFullYear() * 100 + nowDate.getUTCMonth() + 1;
+  const pledge = pda(seed("pledge"), key(project), u32le(current));
+  await finalized(
+    program.methods
+      .pledgeMonth(current, bn(8))
+      .accountsStrict({
+        owner: owner.publicKey,
+        project,
+        monthPledge: pledge,
+        systemProgram: SystemProgram.programId,
+      })
+      .rpc(),
+  );
+  await assert.rejects(
+    () =>
+      program.methods
+        .withdrawNative(bn(800000000))
+        .accountsStrict({
+          owner: owner.publicKey,
+          project,
+          vault,
+          destination: owner.publicKey,
+        })
+        .rpc(),
+    /PledgedFunds/,
+  );
   const withdraw = await prepareSolanaFunding(config, {
     operation: "withdraw",
     wallet: owner.publicKey.toBase58(),
-    gross: "800000000",
+    gross: "799999992",
   });
   const withdrawn = await sendWire(withdraw.transaction);
   assert.equal(
@@ -457,16 +494,16 @@ test("native SOL vault creates, accepts real SOL, reserves, pays, withdraws and 
     .rpc();
   await connection.confirmTransaction(finalClaim, "finalized");
   const totals = await readVaultTotals(config);
-  assert.equal(totals.freeBalance, "0");
+  assert.equal(totals.freeBalance, "8");
   assert.equal(totals.reserved, "0");
   assert.equal(totals.accruedFees, "0");
   assert.equal(totals.totalPaid, "196000000");
   assert.equal(totals.totalPayoutFees, "4000000");
-  assert.equal(totals.totalGrossWithdrawn, "800000000");
+  assert.equal(totals.totalGrossWithdrawn, "799999992");
   assert.equal(totals.totalWithdrawalFees, "16000000");
   assert.equal(
     await connection.getBalance(vault, "finalized"),
-    rent + 7,
-    "rent and unsolicited funds never leave through rewards, refunds or fees",
+    rent + 7 + 8,
+    "rent, the pledged lamports and unsolicited funds never leave through rewards, refunds or fees",
   );
 });

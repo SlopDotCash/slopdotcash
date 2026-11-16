@@ -485,9 +485,9 @@ test("inference without atomic reservation storage refuses before a provider cal
   }
 });
 
-/** README "Free reviews, budget blocks, spend": a provider spending denial
- * stops the route, and the item waits and resumes. The denial is free, so it
- * is not one of the paid attempts.
+/** README "Free reviews, budget blocks, spend": with no Orbio key, a Surplus
+ * spending denial ends the route, and the item waits and resumes. The denial
+ * is free, so it is not one of the paid attempts.
  */
 test("a provider spending denial waits as a budget block and uses no paid attempt", async () => {
   const { db, sqlite } = sqliteD1(MIGRATIONS);
@@ -573,6 +573,108 @@ test("a provider spending denial waits as a budget block and uses no paid attemp
       expect(paid.blockReason).not.toBe("attempts");
     }
     expect(await attempt()).toEqual({ requests: 0, blockReason: "attempts" });
+  } finally {
+    server.stop(true);
+    sqlite.close();
+  }
+});
+
+/** README "Free reviews, budget blocks, spend": a Surplus spending denial
+ * moves the same attempt to the Orbio backstop. An Orbio verdict is used
+ * normally. An attempt that called Orbio is paid even when Orbio fails and the
+ * request then waits as a budget block, so those attempts stay bounded.
+ */
+test("a Surplus denial followed by an Orbio call is a paid attempt", async () => {
+  const { db, sqlite } = sqliteD1(MIGRATIONS);
+  const seen: string[] = [];
+  let orbioServes = false;
+  const server = Bun.serve({
+    hostname: "127.0.0.1",
+    port: 0,
+    async fetch(request) {
+      const input = (await request.json()) as { model: string };
+      seen.push(input.model);
+      if (!new URL(request.url).pathname.startsWith("/orbio/"))
+        return Response.json(
+          {
+            type: "error",
+            error: {
+              type: "invalid_request_error",
+              detail: {
+                window: "month",
+                limit_micro: 100,
+                spent_micro: 100,
+                resets_at: "2026-12-01T00:00:00.000Z",
+              },
+            },
+            usage: { buyer_cost_micro: 0 },
+          },
+          { status: 400 },
+        );
+      return Response.json({
+        id: `local-${seen.length}`,
+        type: "message",
+        role: "assistant",
+        model: input.model,
+        content: [
+          {
+            type: "text",
+            text: orbioServes ? '{"accepted":true}' : "invalid JSON",
+          },
+        ],
+        stop_reason: "end_turn",
+        stop_sequence: null,
+        usage: { input_tokens: 10, output_tokens: 10, cost: 0.001 },
+      });
+    },
+  });
+  const env = {
+    SURPLUS_API_KEY: "local-only",
+    SURPLUS_BASE_URL: `http://127.0.0.1:${server.port}`,
+    ORBIO_API_KEY: "orbio-local",
+    ORBIO_BASE_URL: `http://127.0.0.1:${server.port}/orbio`,
+  };
+  const attempt = async (digest: string) => {
+    const before = seen.length;
+    const result = await runValueInference(
+      env,
+      prompt,
+      output(digest),
+      async () => true,
+      {
+        db,
+        installationId: 1,
+        attemptId: `value:${crypto.randomUUID()}`,
+        maximumMicroUsd: null,
+        approvedMonthlyMicroUsd: null,
+      },
+    );
+    return { models: seen.slice(before), result };
+  };
+  try {
+    for (let i = 0; i < VALUE_INFERENCE_ATTEMPT_LIMIT; i++) {
+      const { models, result } = await attempt("e".repeat(64));
+      // Surplus Terra shares the denied budget and is skipped.
+      expect(models).toEqual([
+        "claude-sonnet-5.5",
+        "anthropic/claude-sonnet-5.5",
+      ]);
+      expect(result.blockReason).toBe("budget");
+      expect(result.verdict).toBeNull();
+    }
+    expect(await attempt("e".repeat(64))).toMatchObject({
+      models: [],
+      result: { blockReason: "attempts" },
+    });
+    orbioServes = true;
+    const served = await attempt("f".repeat(64));
+    expect(served.models).toEqual([
+      "claude-sonnet-5.5",
+      "anthropic/claude-sonnet-5.5",
+    ]);
+    expect(served.result.blockReason).toBeNull();
+    expect(served.result.verdict).toEqual({ accepted: true });
+    expect(served.result.servedBy?.provider).toBe("orbio");
   } finally {
     server.stop(true);
     sqlite.close();

@@ -6,11 +6,18 @@ import {
 import { GitHubClient } from "./github";
 import { registeredProject } from "./registry";
 import type { ReviewEnv } from "./review";
+import { publicationCommitPages } from "./value-commit-pages";
 import {
   collectValueContext,
   validValueContextSelections,
 } from "./value-context";
 import { collectValueEvidence, findRepository } from "./value-evidence";
+import {
+  type ValueFileRecovery,
+  type ValueFileRequest,
+  valueFileRecoveryCapture,
+  verifiedValueFileClient,
+} from "./value-file-recovery";
 import { mergeInput, mergeRecipe } from "./value-merge-profile";
 import {
   isSubscriptionProvenance,
@@ -25,6 +32,7 @@ import {
 import type { ValueAssessmentResult } from "./value-review";
 import {
   historicalSubscriptionSource,
+  historicalSubscriptionWorkUnit,
   subscriptionCutoff,
   type ValueSettingsEnv,
 } from "./value-settings";
@@ -112,11 +120,22 @@ export async function importSubscriptionAssessment(
   )
     throw new Error("Historical source selection is repeated");
   await assertValueInstallation(env.SLOPBOT_DB, Number(input.installationId));
-  const github = await GitHubClient.forInstallation(
-    env.SLOPBOT_APP_ID,
-    env.SLOPBOT_APP_PRIVATE_KEY,
-    Number(input.installationId),
+  const commitPages = publicationCommitPages();
+  const github = commitPages(
+    await GitHubClient.forInstallation(
+      env.SLOPBOT_APP_ID,
+      env.SLOPBOT_APP_PRIVATE_KEY,
+      Number(input.installationId),
+    ),
   );
+  const capture = valueFileRecoveryCapture(github);
+  let verifiedFiles:
+    | {
+        requests: ValueFileRequest[];
+        recovery: ValueFileRecovery;
+        internText?: (text: string) => string;
+      }
+    | undefined;
   const sources: WorkUnitSource[] = [];
   const repositories: TargetRepository[] = [];
   for (const selection of selections) {
@@ -145,12 +164,19 @@ export async function importSubscriptionAssessment(
       { repositoryDatabaseId: identity.id, repositoryNodeId: identity.node_id },
     ]);
     const collected = await collectValueEvidence(
-      github,
+      capture.client,
       repository.id,
       selection.number,
       repository,
     );
-    if (!historicalSubscriptionSource(collected.pull, subscriptionCutoff(env)))
+    if (
+      !historicalSubscriptionSource(collected.pull, subscriptionCutoff(env)) &&
+      !(
+        joint &&
+        collected.pull.state === "closed" &&
+        collected.pull.merged_at === null
+      )
+    )
       throw new Error(
         "Subscription intake covers only work accepted before the API start",
       );
@@ -183,10 +209,51 @@ export async function importSubscriptionAssessment(
       throw new Error("A Git bundle must bind one public repository");
     const verifier = env.VALUE_MERGE_VERIFIER;
     if (!verifier) throw new Error("Merge reconstruction is unavailable");
-    const reconstructed = await verifier.reconstruct(
-      sources.map(({ evidence }) => mergeInput(evidence)),
-      bundle,
-    );
+    const inputs = sources.map(({ evidence }) => mergeInput(evidence));
+    const requests = capture.requests(sources.map(({ evidence }) => evidence));
+    let reconstructed: Awaited<
+      ReturnType<NonNullable<typeof verifier>["reconstruct"]>
+    >;
+    if (verifier.recover) {
+      const [filesBundle, mergeBundle] = bundle.tee();
+      const recovered = await verifier.recover(inputs, requests, filesBundle);
+      verifiedFiles = { requests, recovery: recovered };
+      const complete = await verifiedValueFileClient(
+        github,
+        requests,
+        recovered,
+      );
+      verifiedFiles.internText = complete.internText;
+      const fresh = valueFileRecoveryCapture(complete);
+      for (const [index, selection] of selections.entries()) {
+        const recollected = await collectValueEvidence(
+          fresh.client,
+          repositories[index].id,
+          selection.number,
+          repositories[index],
+        );
+        const currentInput = mergeInput(recollected);
+        if (
+          JSON.stringify({ ...currentInput, commitAttribution: [] }) !==
+          JSON.stringify({ ...inputs[index], commitAttribution: [] })
+        )
+          throw new Error("File recovery source identity changed");
+        sources[index].evidence = await collectValueContext(
+          complete,
+          recollected,
+          selection.contextPaths,
+        );
+      }
+      for (const [path, signature] of capture.metadata)
+        if (fresh.metadata.get(path) !== signature)
+          throw new Error("Recovery source metadata changed");
+      reconstructed = await verifier.reconstruct(
+        sources.map(({ evidence }) => mergeInput(evidence)),
+        mergeBundle,
+      );
+    } else {
+      reconstructed = await verifier.reconstruct(inputs, bundle);
+    }
     if (reconstructed.length !== sources.length)
       throw new Error("Incomplete merge reconstruction");
     for (const [index, source] of sources.entries()) {
@@ -218,15 +285,23 @@ export async function importSubscriptionAssessment(
   if (joint) {
     if (!digests(input.supersedes) || !digests(input.legacyPredecessors))
       throw new Error("Invalid joint predecessors");
+    const prepared = await prepareWorkUnitEvidence(sources, repositories);
+    if (!historicalSubscriptionWorkUnit(prepared, subscriptionCutoff(env)))
+      throw new Error(
+        "Subscription intake covers only work accepted before the API start",
+      );
     stored = await publishWorkUnitAssessment(
       env,
       job,
       input.result as unknown as WorkUnitAssessmentResult,
-      await prepareWorkUnitEvidence(sources, repositories),
+      prepared,
       revision,
       input.supersedes,
       input.legacyPredecessors,
       input.revisionReason as string | null,
+      undefined,
+      verifiedFiles,
+      commitPages,
     );
   } else {
     if (input.supersedes !== null && !digest(input.supersedes))
@@ -239,6 +314,8 @@ export async function importSubscriptionAssessment(
       revision,
       input.supersedes,
       input.revisionReason as string | null,
+      undefined,
+      commitPages,
     );
   }
   return { recordDigest: stored.record_digest, sequence: stored.sequence };

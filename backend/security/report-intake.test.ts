@@ -8,6 +8,7 @@ import {
   REWARD_ASSET_NETWORKS,
   rewardAssetChoice,
 } from "../../src/lib/reward-asset.mjs";
+import { SECURITY_DEFAULT_EXCLUSIONS } from "../../src/lib/security-bounty.mjs";
 import { applicationManifest } from "../../tests/project-application-manifest";
 import { MIGRATIONS, sqliteD1 } from "../../tests/sqlite-d1";
 import type { D1QueryStatement } from "../d1";
@@ -90,6 +91,15 @@ function required<T>(value: T | null | undefined): T {
   return value;
 }
 
+const PROGRAM_EXCLUSION = "Rounding dust below one cent in the fixture vault";
+/** What a model call receives: the receipt-time scope and every exclusion. */
+const MODEL_SCOPE = {
+  includedAssets: ["Synthetic local vault"],
+  severityRubric: "Critical means loss of covered funds.",
+  lossDefinition: "Unauthorized loss of covered assets.",
+  doesNotQualify: [...SECURITY_DEFAULT_EXCLUSIONS, PROGRAM_EXCLUSION],
+};
+
 function program() {
   return {
     status: "open",
@@ -118,6 +128,7 @@ function program() {
       includedAssets: ["Synthetic local vault"],
       severityRubric: "Critical means loss of covered funds.",
       lossDefinition: "Unauthorized loss of covered assets.",
+      excludedFindings: [PROGRAM_EXCLUSION],
     },
     settlement: {
       chain: "base",
@@ -1075,7 +1086,7 @@ describe("durable private report controls", () => {
     });
     expect(t.analyzed).toHaveLength(1);
     expect(t.analyzed[0].report.description).toBe(REPORT.description);
-    expect(t.analyzed[0].scope).toEqual(program().scope);
+    expect(t.analyzed[0].scope).toEqual(MODEL_SCOPE);
     expect(t.notices(REPORTER)).toHaveLength(1);
     expect(t.notices(OWNER)).toHaveLength(1);
     const read = await t.call(
@@ -1085,6 +1096,7 @@ describe("durable private report controls", () => {
     );
     expect(read.body.report).toEqual(REPORT);
     expect(t.screenedDescriptions).toEqual([REPORT.description]);
+    expect(t.screened[0]?.scope).toEqual(MODEL_SCOPE);
     expect(
       t.sqlite.query("SELECT * FROM security_intake_access_log").all(),
     ).toHaveLength(1);
@@ -1461,7 +1473,7 @@ describe("durable private report controls", () => {
     expect(t.analyzed.at(-1)?.report.description).toBe(
       revisedReport.description,
     );
-    expect(t.analyzed.at(-1)?.scope).toEqual(program().scope);
+    expect(t.analyzed.at(-1)?.scope).toEqual(MODEL_SCOPE);
     expect(
       (await readStoredReportByCase(t.deps, submission.caseId, 1))?.description,
     ).toBe(REPORT.description);
@@ -1570,7 +1582,7 @@ describe("durable private report controls", () => {
     expect(appealed.status).toBe(200);
     expect(appealInputs).toHaveLength(1);
     expect(appealInputs[0].analysisSummary).toBeNull();
-    expect(appealInputs[0].scope).toEqual(program().scope);
+    expect(appealInputs[0].scope).toEqual(MODEL_SCOPE);
     expect(
       t.sqlite
         .query("SELECT state FROM security_appeal_triages WHERE case_id=?")

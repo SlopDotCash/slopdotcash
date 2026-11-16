@@ -32,6 +32,7 @@ import {
   REWARD_ASSET_NETWORK_IDS,
 } from "./reward-asset.mjs";
 import { assertSecurityBountyTerms } from "./security-bounty.mjs";
+import { assertReadyLabelSettings } from "./slopbot-ready.mjs";
 
 /**
  * The canonical generic templates every generated project skill renders from
@@ -1265,9 +1266,20 @@ function validateProjectDefinition(
     validateContribution(project.contribution);
   if (project.slopbot !== undefined) {
     const slopbot = record(project.slopbot, "project.slopbot");
-    exactKeys(slopbot, ["automaticClosure"], "project.slopbot");
+    exactKeys(
+      slopbot,
+      slopbot.readyLabel === undefined
+        ? ["automaticClosure"]
+        : ["automaticClosure", "readyLabel"],
+      "project.slopbot",
+    );
     if (typeof slopbot.automaticClosure !== "boolean")
       throw new TypeError("project.slopbot.automaticClosure must be a boolean");
+    if (slopbot.readyLabel !== undefined)
+      assertReadyLabelSettings(
+        slopbot.readyLabel,
+        "project.slopbot.readyLabel",
+      );
   }
   if (
     !(allowLegacyMissingListingTier && !("listingTier" in project)) &&

@@ -6,7 +6,17 @@
  * joint path must do the same instead of failing the whole leaderboard.
  */
 import { afterAll, beforeAll, expect, setSystemTime, test } from "bun:test";
-import { createLeaderboardSnapshot } from "../src/lib/leaderboard";
+import {
+  assertLeaderboardSnapshot,
+  createLeaderboardSnapshot,
+} from "../src/lib/leaderboard";
+import {
+  appendPointAwards,
+  applyPointsSnapshot,
+  awardForScore,
+  latestPoints,
+  type PointsJournal,
+} from "../src/lib/points";
 import {
   AFTER_NOVEMBER,
   GENERATED_AT,
@@ -29,6 +39,7 @@ function snapshotWithJointUnits(
     historicalCarrier?: boolean;
     missingCommit?: boolean;
     renamedHumanFile?: boolean;
+    completionInOtherPR?: boolean;
   } = {},
 ) {
   const input = penaltyScoreInput([], GENERATED_AT);
@@ -168,7 +179,38 @@ function snapshotWithJointUnits(
       ],
     },
   };
-  input.jointValueDecisions = new Map([[pull.id, decision as never]]);
+  if (options.completionInOtherPR) {
+    const completion = input.mergedPullRequests.find(
+      (record) => record.id === "PR_owner",
+    );
+    if (!completion) throw new Error("completion fixture missing");
+    const source = structuredClone(decision.evidence.sources[0]);
+    source.evidence.pull = {
+      ...source.evidence.pull,
+      node_id: completion.id,
+      number: completion.number,
+      title: completion.title,
+      html_url: completion.url,
+      head: { sha: completion.headRefOid },
+      updated_at: completion.updatedAt,
+      merged_at: completion.mergedAt,
+      closed_at: completion.closedAt,
+    };
+    decision.evidence.sources.push(source);
+    decision.record.sources.push({
+      pullRequestNodeId: completion.id,
+      headSha: completion.headRefOid,
+    });
+    decision.evidence.claims[1].creditPullRequestId = completion.id;
+    decision.evidence.claims[1].carrierPullRequestIds = [completion.id];
+    decision.record.units[0].workUnitId = `wu_${"c".repeat(64)}`;
+  }
+  input.jointValueDecisions = new Map(
+    decision.record.sources.map((source) => [
+      source.pullRequestNodeId,
+      decision as never,
+    ]),
+  );
   const retainedValueEvidence = JSON.stringify(decision);
   const snapshot = createLeaderboardSnapshot(input);
   expect(JSON.stringify(decision)).toBe(retainedValueEvidence);
@@ -257,4 +299,82 @@ test("a historical claim with a missing source commit cannot reuse its carrier a
       (item) => item.pullRequestId === "PR_november",
     ),
   ).toMatchObject({ status: "incomplete", recordDigest: null });
+});
+
+test("a source absorbed into another PR's joint unit retains the value decision on its zero award", () => {
+  const before = createLeaderboardSnapshot(penaltyScoreInput([], GENERATED_AT));
+  const original = before.ledger.find(
+    (event) => event.source.id === "PR_november",
+  );
+  if (!original) throw new Error("original award missing");
+  const empty: PointsJournal = {
+    schemaVersion: "1",
+    ruleVersion: "slop-points-v1",
+    generatedAt: GENERATED_AT,
+    coverage: [],
+    revisions: [],
+  };
+  const journal = appendPointAwards(
+    empty,
+    [awardForScore(original)],
+    "a".repeat(64),
+    before.ruleVersion,
+    GENERATED_AT,
+  );
+  const snapshot = snapshotWithJointUnits([PROJECT_OWNER.id], [90, 10], {
+    completionInOtherPR: true,
+  });
+  assertLeaderboardSnapshot(snapshot);
+  const result = applyPointsSnapshot(
+    journal,
+    snapshot,
+    "b".repeat(64),
+    GENERATED_AT,
+  );
+  const removed = latestPoints(result).get(awardForScore(original).key);
+  expect(removed?.award.amount).toBe(0);
+  expect(removed?.decision?.sourceId).toBe(`value:${"d".repeat(64)}`);
+  expect(removed?.decision?.reason).toContain("superseded");
+  expect(
+    [...latestPoints(result).values()]
+      .filter((row) => row.award.workUnitId === `wu_${"c".repeat(64)}`)
+      .reduce((sum, row) => sum + row.award.amount, 0),
+  ).toBe(240);
+  expect(
+    applyPointsSnapshot(result, snapshot, "c".repeat(64), GENERATED_AT)
+      .revisions,
+  ).toEqual(result.revisions);
+  for (const status of ["missing", "stale", "incomplete"] as const) {
+    const held = structuredClone(snapshot);
+    const coverage = held.valueAssessmentCoverage?.find(
+      (row) => row.pullRequestId === original.source.id,
+    );
+    if (!coverage) throw new Error("source coverage missing");
+    coverage.status = status;
+    coverage.recordDigest = null;
+    const retained = applyPointsSnapshot(
+      journal,
+      held,
+      "e".repeat(64),
+      GENERATED_AT,
+    );
+    expect(latestPoints(retained).get(awardForScore(original).key)).toEqual(
+      latestPoints(journal).get(awardForScore(original).key),
+    );
+  }
+  const unrelated = structuredClone(snapshot);
+  const coverage = unrelated.valueAssessmentCoverage?.find(
+    (row) => row.pullRequestId === original.source.id,
+  );
+  if (!coverage) throw new Error("source coverage missing");
+  coverage.recordDigest = "f".repeat(64);
+  const withoutBinding = applyPointsSnapshot(
+    journal,
+    unrelated,
+    "e".repeat(64),
+    GENERATED_AT,
+  );
+  expect(
+    latestPoints(withoutBinding).get(awardForScore(original).key)?.decision,
+  ).toBeUndefined();
 });
