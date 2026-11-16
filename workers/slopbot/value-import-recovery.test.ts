@@ -26,7 +26,12 @@ import { prepareWorkUnitEvidence } from "./value-work-unit";
 
 /** Synthetic transport exercises canonical import and final recollection, with
  * an unresolved fixture verdict. It makes no model-backed value assertion. */
-for (const variant of ["unchanged", "changed", "repository activity"] as const)
+for (const variant of [
+  "unchanged",
+  "changed",
+  "repository activity",
+  "later unclaimed context",
+] as const)
   test(`subscription import ${variant === "changed" ? "refuses changed metadata" : variant === "repository activity" ? "ignores repository and milestone counters that move between reads" : "rechecks recovered files through normal journal publication"}`, async () => {
     const changed = variant === "changed";
     const source = fixture({ direct: true, textOnly: true });
@@ -43,6 +48,7 @@ for (const variant of ["unchanged", "changed", "repository activity"] as const)
     ]);
     source.files[0].additions = 100000;
     delete source.files[0].patch;
+    const laterContext = variant === "later unclaimed context";
     let collections = 0;
     let recoveryCompleted = false;
     const client = {
@@ -55,6 +61,22 @@ for (const variant of ["unchanged", "changed", "repository activity"] as const)
             ],
           } as T;
         if (path.endsWith("/pulls/1")) collections++;
+        if (laterContext && /\/(?:pulls|issues)\/2(?:\/|$)/u.test(path)) {
+          const mapped = path.replace(/\/(pulls|issues)\/2/u, "/$1/1");
+          const value = await source.client.get<T>(mapped);
+          if (mapped.endsWith("/pulls/1") && value) {
+            Object.assign(value, {
+              node_id: "PR_later_context",
+              number: 2,
+              html_url: `https://github.com/${repository.id}/pull/2`,
+              merged_at: null,
+              closed_at: "2026-11-01T07:20:21Z",
+              updated_at: "2026-11-01T07:20:21Z",
+              merge_commit_sha: null,
+            });
+          }
+          return value;
+        }
         const value = await source.client.get<T>(path);
         if (value && path.includes("/commits/") && !path.includes("/git/"))
           (value as unknown as { stats: unknown }).stats = {
@@ -99,6 +121,17 @@ for (const variant of ["unchanged", "changed", "repository activity"] as const)
         return value;
       },
     };
+    const githubClient = {
+      ...client,
+      async graphql<T>(_query: string, variables: { number?: number }) {
+        const result = await source.client.graphql<{
+          repository: { pullRequest: { id: string } };
+        }>();
+        if (laterContext && variables?.number === 2)
+          result.repository.pullRequest.id = "PR_later_context";
+        return result as T;
+      },
+    };
     const blobSha = createHash("sha1")
       .update(`blob ${bytes.length}\0`)
       .update(bytes)
@@ -133,7 +166,7 @@ for (const variant of ["unchanged", "changed", "repository activity"] as const)
       path: "fix.ts",
     }));
     const verified = await verifiedValueFileClient(
-      client,
+      githubClient,
       requests,
       makeRecovery(requests),
     );
@@ -166,10 +199,24 @@ for (const variant of ["unchanged", "changed", "repository activity"] as const)
       repositories[0],
     );
     evidence.mergeResolutions = [];
-    const joint = await prepareWorkUnitEvidence(
-      [{ evidence, policy, mergeRecipe: await mergeRecipe(evidence) }],
-      repositories,
-    );
+    const preparedSources = [
+      { evidence, policy, mergeRecipe: await mergeRecipe(evidence) },
+    ];
+    if (laterContext) {
+      const context = await collectValueEvidence(
+        verified,
+        repository.id,
+        2,
+        repositories[0],
+      );
+      context.mergeResolutions = [];
+      preparedSources.push({
+        evidence: context,
+        policy,
+        mergeRecipe: await mergeRecipe(context),
+      });
+    }
+    const joint = await prepareWorkUnitEvidence(preparedSources, repositories);
     expect(joint.limitations).toEqual([]);
     const result = {
       sourceDigest: joint.sourceDigest,
@@ -230,7 +277,7 @@ for (const variant of ["unchanged", "changed", "repository activity"] as const)
     );
     const original = GitHubClient.forInstallation;
     GitHubClient.forInstallation = async () =>
-      client as unknown as GitHubClient;
+      githubClient as unknown as GitHubClient;
     let recoveryCalls = 0,
       mergeCalls = 0;
     try {
@@ -267,13 +314,11 @@ for (const variant of ["unchanged", "changed", "repository activity"] as const)
         {
           mode: "work-unit",
           installationId: 1,
-          sources: [
-            {
-              repository: repository.id,
-              pullRequestNumber: 1,
-              contextPaths: [],
-            },
-          ],
+          sources: [1, ...(laterContext ? [2] : [])].map((number) => ({
+            repository: repository.id,
+            pullRequestNumber: number,
+            contextPaths: [],
+          })),
           result,
           supersedes: [],
           legacyPredecessors: [],
