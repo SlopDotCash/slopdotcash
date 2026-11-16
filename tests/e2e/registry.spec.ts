@@ -2690,7 +2690,7 @@ test.describe("private evidence console", () => {
     ).toBeVisible();
     // The retention boundary is the tooltip of each run's retention note.
     await expect(
-      page.getByTitle(/Access expiry is enforced here\./u),
+      page.getByText(/Access expiry is enforced here\./u),
     ).not.toHaveCount(0);
     await page
       .getByRole("button", {

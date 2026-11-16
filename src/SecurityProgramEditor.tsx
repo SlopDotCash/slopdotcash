@@ -608,9 +608,11 @@ export function SecurityProgramEditor({
                   }
                 >
                   {status}
-                </StatusBadge>{" "}
-                <StatusBadge>Future reports only</StatusBadge>
+                </StatusBadge>
               </h3>
+              <p>
+                <StatusBadge>Future reports only</StatusBadge>
+              </p>
               <SecurityOffer
                 amountPreview={preview ?? undefined}
                 project={{

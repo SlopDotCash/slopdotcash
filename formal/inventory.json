@@ -5778,7 +5778,7 @@
     },
     {
       "path": "src/SecurityProgramEditor.tsx",
-      "sha256": "139c574fca86ae5bc542fc04d5560375cc05628ca8e268de9200148cf0355212",
+      "sha256": "04c1c7c983cd8214ac009cab44eb80b5e512f572392ae83b5e61ac76761e0bf9",
       "models": [
         "formal/models/ui/ui_project_setup.qnt",
         "formal/models/ui/ui_security_settings_lifetime.qnt"
@@ -5786,7 +5786,7 @@
       "candidateLines": [
         1, 69, 77, 140, 141, 143, 150, 160, 161, 166, 171, 178, 190, 228, 239,
         240, 288, 315, 352, 397, 399, 400, 402, 405, 408, 409, 603, 605, 610,
-        617
+        619
       ],
       "review": "mapped-abstraction"
     },

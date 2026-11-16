@@ -1691,11 +1691,13 @@ test("a saved application change publishes after a retry and reports its setup",
     change.getByRole("button", { name: "Retry", exact: true }),
   ).toHaveCount(0);
   const manage = change.getByRole("link", {
-    name: "Manage Open Protein",
+    name: "Open Protein",
     exact: true,
   });
   await expect(manage).toHaveAttribute("href", "/projects/open-protein/manage");
-  await expect(manage).toHaveText("Scanning");
+  await expect(change.locator(".project-setup-status h2")).toHaveText(
+    /^Setup\s*Scanning$/u,
+  );
   expect(publishes).toEqual([
     { url: "/api/v1/project-applications/app-open-protein/publish", body: {} },
     { url: "/api/v1/project-applications/app-open-protein/publish", body: {} },
