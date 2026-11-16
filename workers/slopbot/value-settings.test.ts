@@ -1,10 +1,12 @@
 import { describe, expect, test } from "bun:test";
 import {
   historicalSubscriptionSource,
+  historicalSubscriptionWorkUnit,
   subscriptionCutoff,
   VALUE_API_START_AT,
   valueSettings,
 } from "./value-settings";
+import type { WorkUnitEvidence } from "./value-work-unit-types";
 
 const start = Date.parse(VALUE_API_START_AT);
 const closed = (merged_at: string | null, closed_at: string | null) => ({
@@ -14,6 +16,75 @@ const closed = (merged_at: string | null, closed_at: string | null) => ({
 });
 
 describe("subscription intake window", () => {
+  const withContext = (): WorkUnitEvidence =>
+    ({
+      sources: [
+        {
+          evidence: {
+            pull: {
+              ...closed("2026-10-31T23:00:00Z", "2026-10-31T23:00:00Z"),
+              node_id: "accepted",
+            },
+          },
+        },
+        {
+          evidence: {
+            pull: {
+              ...closed(null, "2026-11-01T07:20:21Z"),
+              node_id: "context",
+            },
+          },
+        },
+      ],
+      claims: [
+        {
+          creditPullRequestId: "accepted",
+          carrierPullRequestIds: ["accepted"],
+        },
+      ],
+      limitations: [],
+    }) as unknown as WorkUnitEvidence;
+
+  test("keeps an unclaimed later closed source as complete historical context", () => {
+    const evidence = withContext();
+    const before = JSON.stringify(evidence);
+    expect(historicalSubscriptionWorkUnit(evidence, start)).toBe(true);
+    expect(JSON.stringify(evidence)).toBe(before);
+  });
+
+  for (const fault of [
+    "owner",
+    "carrier",
+    "accepted-copy",
+    "merged",
+    "open",
+    "undated",
+    "indirect",
+    "incomplete",
+    "no-claims",
+  ] as const)
+    test(`later context refuses ${fault}`, () => {
+      const evidence = withContext();
+      const context = evidence.sources[1].evidence;
+      if (fault === "owner") evidence.claims[0].creditPullRequestId = "context";
+      if (fault === "carrier")
+        evidence.claims[0].carrierPullRequestIds.push("context");
+      if (fault === "accepted-copy")
+        evidence.claims[0].retainedCopy = {
+          acceptancePullRequestId: "context",
+          acceptedCommitSha: "a".repeat(40),
+          preexistingCommitShas: [],
+        };
+      if (fault === "merged") context.pull.merged_at = context.pull.closed_at;
+      if (fault === "open") context.pull.state = "open";
+      if (fault === "undated") context.pull.closed_at = null;
+      if (fault === "indirect") context.indirectAcceptance = {} as never;
+      if (fault === "incomplete")
+        evidence.limitations.push("Source incomplete");
+      if (fault === "no-claims") evidence.claims = [];
+      expect(historicalSubscriptionWorkUnit(evidence, start)).toBe(false);
+    });
+
   test("accepts work merged or closed before the API start", () => {
     expect(
       historicalSubscriptionSource(
