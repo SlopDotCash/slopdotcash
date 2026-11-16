@@ -6,6 +6,7 @@ import {
 import { GitHubClient } from "./github";
 import { registeredProject } from "./registry";
 import type { ReviewEnv } from "./review";
+import { publicationCommitPages } from "./value-commit-pages";
 import {
   collectValueContext,
   validValueContextSelections,
@@ -119,10 +120,13 @@ export async function importSubscriptionAssessment(
   )
     throw new Error("Historical source selection is repeated");
   await assertValueInstallation(env.SLOPBOT_DB, Number(input.installationId));
-  const github = await GitHubClient.forInstallation(
-    env.SLOPBOT_APP_ID,
-    env.SLOPBOT_APP_PRIVATE_KEY,
-    Number(input.installationId),
+  const commitPages = publicationCommitPages();
+  const github = commitPages(
+    await GitHubClient.forInstallation(
+      env.SLOPBOT_APP_ID,
+      env.SLOPBOT_APP_PRIVATE_KEY,
+      Number(input.installationId),
+    ),
   );
   const capture = valueFileRecoveryCapture(github);
   let verifiedFiles:
@@ -297,6 +301,7 @@ export async function importSubscriptionAssessment(
       input.revisionReason as string | null,
       undefined,
       verifiedFiles,
+      commitPages,
     );
   } else {
     if (input.supersedes !== null && !digest(input.supersedes))
@@ -309,6 +314,8 @@ export async function importSubscriptionAssessment(
       revision,
       input.supersedes,
       input.revisionReason as string | null,
+      undefined,
+      commitPages,
     );
   }
   return { recordDigest: stored.record_digest, sequence: stored.sequence };

@@ -47,7 +47,7 @@ const month = PublicKey.findProgramAddressSync(
 )[0];
 
 function project() {
-  const data = Buffer.concat([projectData(), Buffer.alloc(16)]);
+  const data = Buffer.concat([projectData(), Buffer.alloc(24)]);
   // Its own owner, so no owner listing of the legacy project includes it.
   expiredOwner.publicKey.toBuffer().copy(data, 8);
   expiredProjectId.copy(data, 40);
@@ -205,7 +205,7 @@ export const shortProject = Keypair.fromSeed(
   sha256Seed("slop-e2e-short-vault-project"),
 ).publicKey;
 function shortVaultProject() {
-  const data = Buffer.concat([projectData(), Buffer.alloc(16)]);
+  const data = Buffer.concat([projectData(), Buffer.alloc(24)]);
   Keypair.fromSeed(sha256Seed("slop-e2e-short-vault-owner"))
     .publicKey.toBuffer()
     .copy(data, 8);

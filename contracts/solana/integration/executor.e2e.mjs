@@ -1478,6 +1478,7 @@ test("the scanner indexes a committed monthly leaf and advances its cursor", {
       month,
       instructions: SYSVAR_INSTRUCTIONS_PUBKEY,
       systemProgram: SystemProgram.programId,
+      monthPledge: null,
     })
     .preInstructions([
       Ed25519Program.createInstructionWithPrivateKey({

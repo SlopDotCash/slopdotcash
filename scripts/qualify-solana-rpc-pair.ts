@@ -44,12 +44,16 @@ type ProofRecord = {
   proof: ExpiryProof | null;
 };
 
-export function initialSolanaProofRecord(): ProofRecord {
+export function initialSolanaProofRecord(
+  endpoints: readonly string[] = SOLANA_PUBLIC_PAIR,
+): ProofRecord {
+  if (endpoints.length !== 2 || new Set(endpoints.map(operator)).size !== 2)
+    throw Error("Solana qualification requires two independent operators");
   return {
     schemaVersion: 1,
     pages: [],
     proof: null,
-    coverage: SOLANA_PUBLIC_PAIR.map((endpoint) => ({
+    coverage: endpoints.map((endpoint) => ({
       txId: witness.txId,
       operator: operator(endpoint),
       blockhash: witness.blockhash,
@@ -73,7 +77,10 @@ export function initialSolanaProofRecord(): ProofRecord {
 }
 
 /** Reconstruct every retained cursor from its exact original witness pages. */
-export function validateRetainedSolanaProof(value: unknown): ProofRecord {
+export function validateRetainedSolanaProof(
+  value: unknown,
+  endpoints: readonly string[] = SOLANA_PUBLIC_PAIR,
+): ProofRecord {
   const saved = value as ProofRecord;
   const refuse = (): never => {
     throw Error("Retained Solana witness is inconsistent");
@@ -85,7 +92,7 @@ export function validateRetainedSolanaProof(value: unknown): ProofRecord {
     !Array.isArray(saved.pages)
   )
     refuse();
-  const reconstructed = initialSolanaProofRecord();
+  const reconstructed = initialSolanaProofRecord(endpoints);
   for (const page of saved.pages) {
     const cursor = reconstructed.coverage.find(
       (entry) => entry.operator === page?.operator,
@@ -144,15 +151,21 @@ export function validateRetainedSolanaProof(value: unknown): ProofRecord {
   return saved;
 }
 
-export async function qualifySolanaRpcPair(directory: string) {
+export async function qualifySolanaRpcPair(
+  directory: string,
+  endpoints: readonly string[] = SOLANA_PUBLIC_PAIR,
+) {
   const path = join(directory, "solana-rpc-public-pair-proof.json");
   let saved: ProofRecord;
   try {
-    saved = validateRetainedSolanaProof(JSON.parse(readFileSync(path, "utf8")));
+    saved = validateRetainedSolanaProof(
+      JSON.parse(readFileSync(path, "utf8")),
+      endpoints,
+    );
     saved.proof = null;
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
-    saved = initialSolanaProofRecord();
+    saved = initialSolanaProofRecord(endpoints);
   }
   const coverage = new Map(
     saved.coverage.map((value) => [value.operator, value]),
@@ -191,7 +204,7 @@ export async function qualifySolanaRpcPair(directory: string) {
     },
   };
   let lastRequest = 0;
-  const providers = SOLANA_PUBLIC_PAIR.map((endpoint) => ({
+  const providers = endpoints.map((endpoint) => ({
     operator: operator(endpoint),
     async rpc<T>(method: string, params: unknown[]): Promise<T> {
       await Bun.sleep(Math.max(0, 3000 - (Date.now() - lastRequest)));
