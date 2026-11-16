@@ -1,7 +1,7 @@
 // What only a browser shows of spec/ui/index.md: the heights controls are laid out at, what moves under reduced
 // motion, and the ring keyboard focus draws, on the design tokens in Chromium.
-// The theme and fonts, as every story has them.
-import "../.storybook/preview.ts";
+import "@repo/design-system/fonts";
+import "@repo/design-system/theme.css";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterAll, afterEach, beforeAll, expect, it } from "vitest";
