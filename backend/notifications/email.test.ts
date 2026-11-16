@@ -793,6 +793,58 @@ test("project notices recheck the current steward before activity mail", async (
   h.sqlite.close();
 });
 
+test("an Organization steward's payout exception mails the project's lister", async () => {
+  const h = setup();
+  const current = await h.call("GET");
+  expect(
+    (
+      await h.call("POST", {
+        enabled: true,
+        destinationVersion: current.body.destinationVersion,
+      })
+    ).status,
+  ).toBe(200);
+  // A self-service project listed by account 101 (the mail account), with a
+  // GitHub Organization as its steward.
+  const at = h.now().toISOString();
+  const value = applicationManifest("org-steward", "example/org-steward");
+  value.steward = {
+    ...(value.steward as Record<string, unknown>),
+    kind: "organization",
+    github: {
+      actorId: "909",
+      nodeId: "O_909",
+      login: "example",
+      type: "Organization",
+      profileUrl: "https://github.com/example",
+    },
+  };
+  const manifest = JSON.stringify(value);
+  h.sqlite
+    .query(
+      "INSERT INTO project_revisions(project_id,revision,manifest,manifest_sha256,reason,actor_github_id,actor_github_login,created_at) VALUES ('org-steward',1,?,?,'Fixture','101','lister',?)",
+    )
+    .run(manifest, "a".repeat(64), at);
+  h.sqlite
+    .query(
+      "INSERT INTO projects(id,status,revision,manifest,manifest_sha256,created_at,updated_at) VALUES ('org-steward','paused',1,?,?,?,?)",
+    )
+    .run(manifest, "a".repeat(64), at, at);
+  h.sqlite
+    .query(
+      "INSERT INTO notifications(event_key,recipient_github_id,kind,subject,action_path,source_at,created_at) VALUES ('monthly-underfunded:org-steward:2026-11','101','payout_exception','org-steward','/projects/org-steward/funding',?,?)",
+    )
+    .run(at, at);
+  await dispatchActivityMail(h.mail);
+  expect(h.sent).toHaveLength(1);
+  expect(
+    (h.rows() as unknown as { event_key: string; state: string }[]).map(
+      (row) => [row.event_key, row.state],
+    ),
+  ).toEqual([["monthly-underfunded:org-steward:2026-11", "provider-accepted"]]);
+  h.sqlite.close();
+});
+
 test("vetting ban mail rechecks affected contributors and current staff after an ownership change", async () => {
   for (const staffRemoved of [false, true]) {
     const h = setup();
