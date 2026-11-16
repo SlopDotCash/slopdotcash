@@ -32,19 +32,33 @@ export const EVIDENCE_READER_GITHUB_ID = (() => {
 
 /** Stop only this fixture child, escalating when its shutdown does not finish. */
 export async function stopVettingEvidence(
-  child: Pick<ReturnType<typeof Bun.spawn>, "stdin" | "kill" | "exited">,
+  child: Pick<
+    ReturnType<typeof Bun.spawn>,
+    "pid" | "stdin" | "kill" | "exited"
+  >,
   graceMs = 4000,
+  ownsProcessGroup = false,
 ) {
   try {
     if (child.stdin && typeof child.stdin !== "number") child.stdin.end();
   } catch {
     /* A prior shutdown may already have closed stdin. */
   }
-  const terminate = setTimeout(() => child.kill("SIGTERM"), graceMs);
-  const force = setTimeout(() => child.kill("SIGKILL"), graceMs + 1000);
+  let signalError: unknown;
+  const signal = (name: "SIGTERM" | "SIGKILL") => {
+    if (!ownsProcessGroup) return child.kill(name);
+    try {
+      process.kill(-child.pid, name);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ESRCH")
+        signalError = error;
+    }
+  };
+  const terminate = setTimeout(() => signal("SIGTERM"), graceMs);
+  const force = setTimeout(() => signal("SIGKILL"), graceMs + 1000);
   let deadline: ReturnType<typeof setTimeout> | undefined;
   try {
-    return await Promise.race([
+    const result = await Promise.race([
       child.exited,
       new Promise<never>((_, reject) => {
         deadline = setTimeout(
@@ -53,6 +67,8 @@ export async function stopVettingEvidence(
         );
       }),
     ]);
+    if (signalError) throw signalError;
+    return result;
   } finally {
     clearTimeout(terminate);
     clearTimeout(force);
@@ -69,7 +85,12 @@ export async function localVettingEvidence(
       "node",
       fileURLToPath(new URL("./vetting-evidence-r2.mjs", import.meta.url)),
     ],
-    { stdin: "pipe", stdout: "pipe", stderr: "inherit" },
+    {
+      stdin: "pipe",
+      stdout: "pipe",
+      stderr: "inherit",
+      detached: process.platform !== "win32",
+    },
   );
   let startupTimer: ReturnType<typeof setTimeout> | undefined;
   let origin: string;
@@ -98,14 +119,17 @@ export async function localVettingEvidence(
     if (parsed.protocol !== "http:" || parsed.hostname !== "127.0.0.1")
       throw new Error("Invalid local R2 origin");
   } catch (error) {
-    await stopVettingEvidence(child);
+    await stopVettingEvidence(child, 4000, process.platform !== "win32");
     throw error;
   } finally {
     clearTimeout(startupTimer);
     reader.releaseLock();
   }
   async function dispose() {
-    if ((await stopVettingEvidence(child)) !== 0)
+    if (
+      (await stopVettingEvidence(child, 4000, process.platform !== "win32")) !==
+      0
+    )
       throw new Error("Local R2 shutdown failed");
   }
   // Use asynchronous HTTP to real workerd R2. Miniflare's synchronous RPC
