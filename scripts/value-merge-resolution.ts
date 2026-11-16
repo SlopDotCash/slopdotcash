@@ -363,9 +363,11 @@ async function collectWithWorkspace(
         observed.push(path);
         // Read prefixes from the hunk lines only: with three parents the
         // "--- a/" and "+++ b/" header lines also start with "---"/"+++".
+        // Line 0 is the path itself, which may also start like a hunk header.
         const lines = section.split("\n");
-        const hunk = lines.findIndex((line) =>
-          line.startsWith(`${"@".repeat(parents.length + 1)} `),
+        const hunk = lines.findIndex(
+          (line, index) =>
+            index > 0 && line.startsWith(`${"@".repeat(parents.length + 1)} `),
         );
         const prefixes = (hunk < 0 ? [] : lines.slice(hunk + 1)).map((line) =>
           line.slice(0, parents.length),
