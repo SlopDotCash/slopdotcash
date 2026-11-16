@@ -64,7 +64,9 @@ pure def readTerms(p: TermsPreflight, terms: Terms): TermsPreflight =
 pure def alwaysAcknowledgementBindsCurrentProof(p: TermsPreflight): bool =
   ((p.recordVersion == 2 and p.binding.authorityVerified) implies
     p.binding.proofRevision == p.acknowledgedRevision and p.binding.activatedAt == p.binding.proofVerifiedAt)
-  and (p.recordVersion == 1 implies p.acknowledgedRevision == 0)
+  and (p.recordVersion == 1 implies p.acknowledgedRevision == 0) and p.acknowledgedRevision >= 0
+  and ((p.phase == VerifyingDocuments and p.binding.authorityVerified) implies
+    p.binding.proofRevision == p.revision and p.binding.activatedAt == p.binding.proofVerifiedAt)
 pure def stepRefusalWritesNoRecord(before: TermsPreflight, after: TermsPreflight): bool =
   (after.phase == Refused and before.phase != Refused) implies after.recordVersion == 0 and after.acknowledgedRevision == 0
 ```

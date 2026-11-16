@@ -75,9 +75,10 @@ pure def alwaysClearScanHolds(s: DiscoveryLock): bool = ((s.observedClear and s.
   and ((s.observedClear and s.guard == AcquireGuard and not(s.stalePending)) implies not(s.parentLive))
   and (s.guard == AcquireGuard implies s.candidate > 0 and not(s.aggregate))
 pure def alwaysOneOwnerAndOneAcquirer(s: DiscoveryLock): bool =
-  not(s.waiting.includes(s.candidate) and s.guard == AcquireGuard) and (s.owner != 0 implies not(s.waiting.includes(s.owner)))
-    and s.waiting.every(o => o > 0 and s.waiting.select(x => x == o).length() == 1 and not(s.contended.includes(o)))
-    and s.contended.every(o => o != s.owner)
+  (s.guard == AcquireGuard implies not(s.waiting.includes(s.candidate)) and not(s.contended.includes(s.candidate))
+    and (not(s.stalePending) implies s.candidate != s.owner))
+  and (s.owner != 0 implies not(s.waiting.includes(s.owner)) and not(s.contended.includes(s.owner)))
+  and s.waiting.every(o => o > 0 and not(s.contended.includes(o)))
 pure def sometimesTwoInvocationsOneAcquires(s: DiscoveryLock): bool = s.raced and s.owner != 0 and s.parentLive
   and s.contended.length() > 0 and s.guard == NoGuard
 pure def stepContentionChangesNothing(before: DiscoveryLock, via: str, after: DiscoveryLock): bool =

@@ -146,7 +146,7 @@ pure def reportRisk(c: Contribution, by: int): Contribution =
 pure def alwaysWorkFollowsClearInspection(c: Contribution): bool =
   ((c.phase == Working or c.phase == Tested or submitted(c)) implies c.inspection == InspectClear)
   and (c.stop == RiskFound implies c.riskReported) and (c.riskReported implies not(active(c)) and not(submitted(c)))
-  and (c.riskReported implies c.riskAtScan >= 0 and c.cleanScan <= c.riskAtScan)
+  and (c.riskReported implies c.riskAtScan >= 0 and c.cleanScan <= c.riskAtScan) and c.cleanScan >= 0
 pure def stepStoppedDoesNotProgress(before: Contribution, after: Contribution): bool =
   before.phase == Stopped implies (after.phase == Stopped or after.phase == Browsing)
 pure def stepRiskLiftedOnlyByFreshScan(before: Contribution, via: str, after: Contribution): bool =

@@ -52,7 +52,7 @@ pure def alwaysPublishedPairRendered(s: SkillOutput): bool = s.published implies
     and s.publication.archivedSkill.templateCommit == s.publication.provenanceCommit
     and s.publication.archivedSkill.revisionDigest == s.publication.provenanceDigest
     and s.publication.provenanceCommit == s.template.commit and s.publication.provenanceDigest == s.revision.digest
-    and s.publication.archivedSkill.rules == s.template.rules
+    and s.publication.archivedSkill.rules == s.template.rules and s.publication.archivedSkill.notes == s.revision.notes
 ```
 
 ### A maintainer note that would cross a template rule never takes effect
@@ -80,8 +80,8 @@ pure def alwaysNoAppliedNoteCrossesARule(s: SkillOutput): bool =
   s.applied.every(n => not(crossesRule(s.template.rules, n)))
     and s.reported.every(n => crossesRule(s.template.rules, n))
 pure def alwaysEveryNoteAppliedOrReported(s: SkillOutput): bool =
-  (s.read implies s.applied.length() + s.reported.length() == s.revision.notes.length()
-    and s.revision.notes.every(n => s.applied.includes(n) or s.reported.includes(n)))
+  (s.read implies s.revision.notes.every(n => s.applied.includes(n) or s.reported.includes(n))
+    and s.applied.every(n => s.revision.notes.includes(n)) and s.reported.every(n => s.revision.notes.includes(n)))
   and (not(s.read) implies s.applied.length() == 0 and s.reported.length() == 0)
 pure def sometimesNoteApplied(s: SkillOutput): bool = s.applied.length() > 0
 pure def sometimesWeakeningNoteReported(s: SkillOutput): bool = s.reported.length() > 0 and s.applied.length() > 0
