@@ -61,6 +61,8 @@ const queries = {
 export function feeErrorCategory(value: unknown): string {
   if (typeof value !== "string") return "unspecified";
   const message = value.toLowerCase();
+  if (/\bblocked\b|access denied|not allowed|not permitted/.test(message))
+    return "rpc-blocked";
   if (/401|403|unauthorized|forbidden|authentication/.test(message))
     return "authentication";
   if (/below the minimum/.test(message)) return "below-minimum";
@@ -76,9 +78,20 @@ export function feeErrorCategory(value: unknown): string {
     return "deployment-verification";
   if (/native|lamport|insufficient|budget|ceiling/.test(message))
     return "native-budget";
-  if (/locked|lease/.test(message)) return "lease";
-  if (/rpc|fetch|connect|http|network/.test(message)) return "rpc-unavailable";
+  if (/\b(?:locked|lease)\b/.test(message)) return "lease";
+  if (/^solana |rpc|fetch|connect|http|network/.test(message))
+    return "rpc-unavailable";
   return "other";
+}
+
+/** Preserve only a known method from the fee client's fixed error prefix. */
+export function feeRpcMethod(value: unknown): string | undefined {
+  if (typeof value !== "string") return;
+  const match =
+    /^Solana (getAccountInfo|getMultipleAccounts|getBalance|getTokenAccountsByOwner|getGenesisHash|getLatestBlockhash|getBlockHeight|getFeeForMessage|simulateTransaction|getSignatureStatuses|getSignaturesForAddress|getTransaction|getBlock|sendTransaction):/.exec(
+      value,
+    );
+  return match?.[1];
 }
 
 /** Only enumerated labels and numeric counts from this Worker's events survive. */
@@ -98,8 +111,12 @@ export function sanitizeFeeTail(value: any) {
       if (!events.has(event?.event)) continue;
       const row: Record<string, unknown> = { event: event.event };
       if (networks.has(event.network)) row.network = event.network;
-      if (event.reason !== undefined || event.error !== undefined)
-        row.errorCategory = feeErrorCategory(event.reason ?? event.error);
+      if (event.reason !== undefined || event.error !== undefined) {
+        const reason = event.reason ?? event.error;
+        row.errorCategory = feeErrorCategory(reason);
+        const method = feeRpcMethod(reason);
+        if (method) row.rpcMethod = method;
+      }
       if (event.event === "fee_converter_run") {
         row.trigger =
           event.trigger === "recovery"
