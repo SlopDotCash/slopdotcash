@@ -171,6 +171,49 @@
       "args": []
     },
     {
+      "name": "close_month_pledge",
+      "discriminator": [146, 123, 254, 246, 152, 119, 200, 238],
+      "accounts": [
+        {
+          "name": "owner",
+          "docs": ["Receives the pledge account's rent."],
+          "writable": true,
+          "signer": true,
+          "relations": ["project"]
+        },
+        {
+          "name": "project",
+          "relations": ["month_pledge"]
+        },
+        {
+          "name": "month_pledge",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [112, 108, 101, 100, 103, 101]
+              },
+              {
+                "kind": "account",
+                "path": "project"
+              },
+              {
+                "kind": "arg",
+                "path": "period"
+              }
+            ]
+          }
+        }
+      ],
+      "args": [
+        {
+          "name": "_period",
+          "type": "u32"
+        }
+      ]
+    },
+    {
       "name": "commit",
       "discriminator": [223, 140, 142, 165, 229, 208, 156, 74],
       "accounts": [
@@ -380,7 +423,8 @@
         },
         {
           "name": "project",
-          "writable": true
+          "writable": true,
+          "relations": ["month_pledge"]
         },
         {
           "name": "vault",
@@ -425,6 +469,31 @@
         {
           "name": "system_program",
           "address": "11111111111111111111111111111111"
+        },
+        {
+          "name": "month_pledge",
+          "docs": [
+            "The period's pledge when one exists; pass the program ID when none does. An open",
+            "pledge lets the period commit with monthly commitments off and closes on success."
+          ],
+          "writable": true,
+          "optional": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [112, 108, 101, 100, 103, 101]
+              },
+              {
+                "kind": "account",
+                "path": "project"
+              },
+              {
+                "kind": "arg",
+                "path": "period"
+              }
+            ]
+          }
         }
       ],
       "args": [
@@ -763,6 +832,62 @@
         }
       ],
       "args": []
+    },
+    {
+      "name": "expire_pledge",
+      "discriminator": [80, 69, 86, 148, 155, 117, 107, 169],
+      "accounts": [
+        {
+          "name": "project",
+          "writable": true,
+          "relations": ["month_pledge"]
+        },
+        {
+          "name": "month_pledge",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [112, 108, 101, 100, 103, 101]
+              },
+              {
+                "kind": "account",
+                "path": "project"
+              },
+              {
+                "kind": "arg",
+                "path": "period"
+              }
+            ]
+          }
+        },
+        {
+          "name": "month",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [109, 111, 110, 116, 104]
+              },
+              {
+                "kind": "account",
+                "path": "project"
+              },
+              {
+                "kind": "arg",
+                "path": "period"
+              }
+            ]
+          }
+        }
+      ],
+      "args": [
+        {
+          "name": "period",
+          "type": "u32"
+        }
+      ]
     },
     {
       "name": "initialize",
@@ -1197,6 +1322,59 @@
       "args": [
         {
           "name": "expected_version",
+          "type": "u64"
+        }
+      ]
+    },
+    {
+      "name": "pledge_month",
+      "discriminator": [243, 42, 21, 227, 19, 210, 31, 58],
+      "accounts": [
+        {
+          "name": "owner",
+          "writable": true,
+          "signer": true,
+          "relations": ["project"]
+        },
+        {
+          "name": "project",
+          "writable": true
+        },
+        {
+          "name": "month_pledge",
+          "docs": [
+            "One per project and period; it records the latest pledged amount."
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [112, 108, 101, 100, 103, 101]
+              },
+              {
+                "kind": "account",
+                "path": "project"
+              },
+              {
+                "kind": "arg",
+                "path": "period"
+              }
+            ]
+          }
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "period",
+          "type": "u32"
+        },
+        {
+          "name": "amount",
           "type": "u64"
         }
       ]
@@ -1646,6 +1824,10 @@
       "discriminator": [155, 12, 170, 224, 30, 250, 204, 130]
     },
     {
+      "name": "MonthPledge",
+      "discriminator": [171, 216, 142, 2, 102, 5, 6, 73]
+    },
+    {
       "name": "MonthlyAllocation",
       "discriminator": [17, 112, 193, 144, 43, 214, 252, 107]
     },
@@ -1708,6 +1890,10 @@
       "discriminator": [22, 104, 110, 222, 38, 157, 14, 62]
     },
     {
+      "name": "MonthPledged",
+      "discriminator": [101, 4, 147, 46, 104, 182, 29, 216]
+    },
+    {
       "name": "MonthlyAwardReleased",
       "discriminator": [88, 216, 156, 225, 0, 33, 175, 167]
     },
@@ -1722,6 +1908,10 @@
     {
       "name": "MonthlyReserveReleased",
       "discriminator": [12, 20, 98, 159, 120, 252, 137, 169]
+    },
+    {
+      "name": "PledgeClosed",
+      "discriminator": [235, 62, 222, 214, 90, 57, 181, 100]
     },
     {
       "name": "ProjectMigrated",
@@ -1905,7 +2095,7 @@
     {
       "code": 6033,
       "name": "NotLegacyProject",
-      "msg": "Account is not a Project of the 316-byte layout"
+      "msg": "Account is not a Project of an earlier layout"
     },
     {
       "code": 6034,
@@ -1926,6 +2116,31 @@
       "code": 6037,
       "name": "UnsupportedTokenExtension",
       "msg": "Token extension or authority is outside the approved metadata-only policy"
+    },
+    {
+      "code": 6038,
+      "name": "PledgeTooLow",
+      "msg": "A pledge can be raised, never lowered"
+    },
+    {
+      "code": 6039,
+      "name": "PledgeNotLapsed",
+      "msg": "The pledge is not open or its period's window has not closed"
+    },
+    {
+      "code": 6040,
+      "name": "PledgedFunds",
+      "msg": "Free balance would fall below the open month pledges"
+    },
+    {
+      "code": 6041,
+      "name": "PledgePeriodClosed",
+      "msg": "The period is past, more than 11 months ahead, or its pledge has closed"
+    },
+    {
+      "code": 6042,
+      "name": "PledgeOpen",
+      "msg": "The pledge is still open"
     }
   ],
   "types": [
@@ -2220,6 +2435,58 @@
       }
     },
     {
+      "name": "MonthPledge",
+      "docs": [
+        "The owner's pledge of free funds to one period. It stays open until the period is",
+        "committed or its monthly window closes; the account is never closed."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "project",
+            "type": "pubkey"
+          },
+          {
+            "name": "period",
+            "type": "u32"
+          },
+          {
+            "name": "amount",
+            "type": "u64"
+          },
+          {
+            "name": "open",
+            "type": "bool"
+          },
+          {
+            "name": "bump",
+            "type": "u8"
+          }
+        ]
+      }
+    },
+    {
+      "name": "MonthPledged",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "project",
+            "type": "pubkey"
+          },
+          {
+            "name": "period",
+            "type": "u32"
+          },
+          {
+            "name": "amount",
+            "type": "u64"
+          }
+        ]
+      }
+    },
+    {
       "name": "MonthlyAllocation",
       "docs": [
         "One period's recorded allocation root and the gross committed from it so far."
@@ -2439,6 +2706,33 @@
       }
     },
     {
+      "name": "PledgeClosed",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "project",
+            "type": "pubkey"
+          },
+          {
+            "name": "period",
+            "type": "u32"
+          },
+          {
+            "name": "amount",
+            "type": "u64"
+          },
+          {
+            "name": "reserved",
+            "docs": [
+              "True when the period was committed; false when the pledge lapsed."
+            ],
+            "type": "bool"
+          }
+        ]
+      }
+    },
+    {
       "name": "Project",
       "type": {
         "kind": "struct",
@@ -2551,6 +2845,14 @@
             "docs": [
               "Gross of admitted monthly allocations not yet committed or released. While it is",
               "positive the owner cannot commit by hand."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "pledged_open",
+            "docs": [
+              "Sum of open month pledges. Withdrawals and hand commits keep free balance at or",
+              "above it."
             ],
             "type": "u64"
           }

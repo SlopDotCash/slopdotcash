@@ -32,6 +32,7 @@ const outcomes = new Set([
   "exception",
   "unknown",
 ]);
+const buybackLegs = new Set(["bridge", "arrival", "refund", "burn"]);
 const states = new Set([
   "ran",
   "locked",
@@ -61,12 +62,39 @@ const queries = {
 export function feeErrorCategory(value: unknown): string {
   if (typeof value !== "string") return "unspecified";
   const message = value.toLowerCase();
+  if (
+    /^unexpected (?:token|end)|json (?:parse|parsing)|is not valid json|unparseable response/.test(
+      message,
+    )
+  )
+    return "response-json";
+  if (
+    /^invalid rpc (?:object|string|list)|^cannot read properties of (?:undefined|null)|^undefined is not an object/.test(
+      message,
+    )
+  )
+    return "rpc-shape";
+  if (
+    /not a supported token program account|truncated (?:mint|token)|classic (?:mint|token).*mismatch|unsupported token-2022|duplicate token-2022|^token account (?:data is unavailable|is malformed)|^duplicate fee token account|^fee token holding differs/.test(
+      message,
+    )
+  )
+    return "unsupported-token-account";
+  if (/\bblocked\b|access denied|not allowed|not permitted/.test(message))
+    return "rpc-blocked";
   if (/401|403|unauthorized|forbidden|authentication/.test(message))
     return "authentication";
   if (/below the minimum/.test(message)) return "below-minimum";
   if (/gas-cost multiple/.test(message)) return "below-gas-multiple";
   if (/429|rate.?limit/.test(message)) return "rpc-rate-limit";
   if (/timeout|timed out|abort/.test(message)) return "timeout";
+  if (/^jupiter /.test(message)) return "quote-provider";
+  if (
+    /^bridge (?:row lacks|quote differs)|^signed bridge order differs|^dln (?:order|proposal|response)|^robinhood chain order status is unavailable/.test(
+      message,
+    )
+  )
+    return "bridge-verification";
   if (/recovery|full.history|independent/.test(message))
     return "recovery-proof";
   if (/key|signer|seed/.test(message)) return "signer-configuration";
@@ -76,9 +104,20 @@ export function feeErrorCategory(value: unknown): string {
     return "deployment-verification";
   if (/native|lamport|insufficient|budget|ceiling/.test(message))
     return "native-budget";
-  if (/locked|lease/.test(message)) return "lease";
-  if (/rpc|fetch|connect|http|network/.test(message)) return "rpc-unavailable";
+  if (/\b(?:locked|lease)\b/.test(message)) return "lease";
+  if (/^solana |rpc|fetch|connect|http|network/.test(message))
+    return "rpc-unavailable";
   return "other";
+}
+
+/** Preserve only a known method from the fee client's fixed error prefix. */
+export function feeRpcMethod(value: unknown): string | undefined {
+  if (typeof value !== "string") return;
+  const match =
+    /^Solana (getAccountInfo|getMultipleAccounts|getBalance|getTokenAccountsByOwner|getGenesisHash|getLatestBlockhash|getBlockHeight|getFeeForMessage|simulateTransaction|getSignatureStatuses|getSignaturesForAddress|getTransaction|getBlock|sendTransaction):/.exec(
+      value,
+    );
+  return match?.[1];
 }
 
 /** Only enumerated labels and numeric counts from this Worker's events survive. */
@@ -98,8 +137,28 @@ export function sanitizeFeeTail(value: any) {
       if (!events.has(event?.event)) continue;
       const row: Record<string, unknown> = { event: event.event };
       if (networks.has(event.network)) row.network = event.network;
-      if (event.reason !== undefined || event.error !== undefined)
-        row.errorCategory = feeErrorCategory(event.reason ?? event.error);
+      if (event.event === "fee_buyback_error" && buybackLegs.has(event.leg))
+        row.leg = event.leg;
+      if (
+        event.event === "fee_buyback_error" &&
+        typeof event.leg === "string" &&
+        /^buyback 0x[a-fA-F0-9]{40}$/u.test(event.leg)
+      )
+        row.leg = "buyback";
+      const publicAddress = (value: unknown) =>
+        networks.has(event.network) &&
+        typeof value === "string" &&
+        (event.network === "solana"
+          ? /^[1-9A-HJ-NP-Za-km-z]{32,44}$/u.test(value)
+          : /^0x[a-fA-F0-9]{40}$/u.test(value));
+      if (publicAddress(event.token)) row.token = event.token;
+      if (publicAddress(event.vault)) row.vault = event.vault;
+      if (event.reason !== undefined || event.error !== undefined) {
+        const reason = event.reason ?? event.error;
+        row.errorCategory = feeErrorCategory(reason);
+        const method = feeRpcMethod(reason);
+        if (method) row.rpcMethod = method;
+      }
       if (event.event === "fee_converter_run") {
         row.trigger =
           event.trigger === "recovery"

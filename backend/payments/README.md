@@ -373,6 +373,19 @@ Points history. Replaying an identical batch remains valid.
    allocations cannot change after the cutoff. Either path writes the single
    `monthly_payment_runs` row of that month; a frozen month accepts no
    further change.
+   A month the owner pledged on chain in the vault that pays it
+   (`vault_month_pledges`, migration 0128; operator decision, 15 November
+   2026) freezes at the cutoff whatever the automatic default says, and
+   while the project is paused or restricted, but not once it is retired.
+   A pledge in another vault of the project gives no consent. The attester,
+   publication and dispatcher accept it the same way
+   (`backend/payments/month-pledges.ts`). The contract checks the pledge
+   again. The Solana executor passes the month's `month_pledge` account to
+   `commit_monthly` when it exists. Every stored open pledge is read again
+   on each refresh, so a lapsed one stays listed until a release
+   (`expirePledge` / `expire_pledge`) closes it; the manage page offers that
+   release, and `POST /projects/:id/solana-month-lock` plans Solana locks and
+   releases for the browser to check and the wallet to sign.
    A banned account cannot change allocations or automatic-payment settings,
    or finalize a month. Each write checks the account ban again to refuse a
    concurrent ban. Reading awards and preparing an existing funded obligation
@@ -380,7 +393,8 @@ Points history. Replaying an identical batch remains valid.
 4. **Obligations.** The coordinator creates one `monthly_payment_obligations`
    row per positive award once, only when the vault's finalized free balance
    (a `vault_snapshots` row newer than 30 minutes) covers the month together
-   with every earlier obligation of the same vault that is still unreserved.
+   with every earlier obligation of the same vault that is still unreserved,
+   less every other month's open pledge, which the contract keeps apart.
    An underfunded month waits for a deposit and creates nothing. The steward
    gets one Inbox payout exception for that month (key
    `monthly-underfunded:PROJECT:YYYY-MM`), however often the coordinator
