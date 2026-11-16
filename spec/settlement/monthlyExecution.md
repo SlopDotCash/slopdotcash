@@ -47,6 +47,7 @@ pure val projectValues = Set(1)
 pure val periodValues = Set(202611, 202612)
 pure val networkValues = Set(1, 2)
 pure val vaultValues = Set(1)
+pure val byValues = Set("scheduler", "other")
 ```
 
 ### Each run attempts the least recently attempted rows first

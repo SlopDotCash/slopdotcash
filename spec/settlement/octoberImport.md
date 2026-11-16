@@ -129,6 +129,7 @@ pure val packetSample: Packet = { digest: "d1", entries: List(
   { project: 2, pool: List(6), weights: List({ actor: 1, weight: List(1), eligible: false }, { actor: 3, weight: List(2), eligible: true }) }) }
 pure val packetValues = Set(packetSample, { ...packetSample, digest: "d2" })
 pure val digestValues = Set("d1", "d2", "")
+pure val byValues = Set("workflow", "owner", "monthly", "other")
 pure val headIsMainValues = Set(true, false)
 pure val projectValues = Set(1, 2)
 pure val factsValues = Set(
