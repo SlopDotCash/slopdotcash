@@ -43,9 +43,9 @@
     },
     {
       "path": ".github/workflows/fee-worker-bindings.yml",
-      "sha256": "745a3656fde57869296a6a28a8c7bb2dc447c55dbaefa865214f6a156e12cf62",
+      "sha256": "bd351e95d2c6bc865ee4f9fc495c17c31a46e3abcb8889bbbd1920a2d4a7aae2",
       "models": ["formal/models/release/workflow_authority.qnt"],
-      "candidateLines": [30],
+      "candidateLines": [44],
       "review": "mapped-abstraction"
     },
     {
@@ -4518,7 +4518,7 @@
     },
     {
       "path": "scripts/qualify-solana-rpc-pair.ts",
-      "sha256": "c116743e5ed785c1b03b6ed6381d1b6da0057acd3458ae56ffdebc8a20708d7f",
+      "sha256": "a65a4a5425036115070c839bd112695521a88f909bbb31312fb04f2955cbc8d5",
       "models": ["formal/models/release/release_publication.qnt"],
       "candidateLines": [],
       "review": "mapped-abstraction"
@@ -4633,7 +4633,7 @@
     },
     {
       "path": "scripts/release-robinhood-rpc.ts",
-      "sha256": "76d2cdae7f3ef8a8b4358f0c54a01b0aeb5a2f46b270406396652f7ad1eaefc5",
+      "sha256": "6f25fafdc7514e10cbea5a1dfb465412dd9fc44ff73288677b94266e1d97b0fe",
       "models": ["formal/models/release/release_publication.qnt"],
       "candidateLines": [
         80, 83, 86, 93, 99, 100, 101, 102, 103, 257, 261, 281, 283, 288, 289,
@@ -4701,6 +4701,13 @@
       "sha256": "993bba18296241979f75ae6169c1f18062c27746d2c90a11fb59a3fb55e990f8",
       "models": ["formal/models/points/source_import.qnt"],
       "candidateLines": [55, 56, 493, 685, 900, 901, 902, 905, 1224],
+      "review": "mapped-abstraction"
+    },
+    {
+      "path": "scripts/rotate-fee-solana-rpc.ts",
+      "sha256": "e20d4457dbccd8f79b3a68aba78ccc3fa522510efd339900b31ad7874850f507",
+      "models": ["formal/models/release/release_publication.qnt"],
+      "candidateLines": [39, 40, 41, 42, 44, 110, 129, 218, 256, 277, 373],
       "review": "mapped-abstraction"
     },
     {
@@ -14605,7 +14612,7 @@
     },
     {
       "path": "formal/models/release/release_publication.qnt",
-      "sha256": "48113ebb3510373dee689e1668b5224548de5bb3e01c662a2e1c1485d7759d19",
+      "sha256": "4c8cf61648d267e4d1b32f3d8a76a369f281f3fb89defa6c7fd15fb5ccd9885e",
       "sources": [
         ".github/workflows/deploy.yml",
         "scripts/check-retained-release-data.ts",
@@ -14615,6 +14622,7 @@
         "scripts/qualify-solana-rpc-pair.ts",
         "scripts/release-notify.mjs",
         "scripts/release-robinhood-rpc.ts",
+        "scripts/rotate-fee-solana-rpc.ts",
         "scripts/select-pages-deployment.mjs",
         "scripts/verify-staging-deployment.mjs",
         "src/lib/verified-selection.ts"
