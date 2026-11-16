@@ -241,6 +241,8 @@ Operator decision, 16 November 2026: use Surplus Intelligence first and Orbio as
 
 Slopbot assesses PR size and value and credits useful reviews under section 7. Maintainers decide merges. Preserve repository opt-outs and exemptions.
 
+Operator decision, 16 November 2026: a project owner may turn on the `slopbot:ready` label in project settings; absent settings mean off, and each change is an immutable revision. While it is on, Slopbot labels an open pull request and adds one line to its review comment only when all of these hold at the exact head commit: GitHub reports the branch mergeable with every check passing; Slopbot's own review of that commit has no finding and no coverage limitation; the required number of approvals (default one) on that commit come from distinct accounts with write access, other than the author, and no such account has an open change request; the change is under the owner's size cap; and it touches no protected path. The protected set covers `.github/` and CI configuration, dependency manifests and lockfiles, contracts and payment code, skill, agent and policy files, the Slop project manifest, `SECURITY.md`, binary files, deleted files and large deletions; an owner can add paths but never remove these. Slopbot removes the label on a new push or as soon as a condition stops holding. The label is the only effect: a human merges, Slopbot never merges, and Points and scoring do not change. It needs no new GitHub App permission.
+
 ### Closure eligibility and consent
 
 Automatic closure requires all of the following:
