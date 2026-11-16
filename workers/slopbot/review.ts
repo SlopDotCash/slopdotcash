@@ -101,6 +101,7 @@ import {
   confirmReopen,
   reopenSource,
 } from "./reopen-source";
+import { admitMonthlyReview, MONTHLY_REVIEW_CAP_REASON } from "./review-cap";
 import { route } from "./routing";
 import {
   affectedValueActor,
@@ -1429,6 +1430,15 @@ async function runReview(
       skipReason: routing.reason,
     });
     return routing.reason;
+  }
+  // Free advisory reviews are capped per repository and UTC month (operator
+  // decision, 16 November 2026). Over the cap: no model call and no label,
+  // comment or close; the skip is recorded and a later month starts fresh.
+  if (!(await admitMonthlyReview(db, job.repositoryId, reviewKey))) {
+    await store.finishReview(db, reviewKey, claimToken, "skipped", {
+      skipReason: MONTHLY_REVIEW_CAP_REASON,
+    });
+    return MONTHLY_REVIEW_CAP_REASON;
   }
 
   let verdict = context.limitations.length ? null : prefilter(context);

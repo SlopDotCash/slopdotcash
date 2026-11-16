@@ -233,7 +233,7 @@ The separate reviewer skill is advisory. It checks correctness, tests, security,
 
 ### Review and scoring
 
-Slopbot is required, always free, and limited to registered repositories. Never charge a project vault for bot review.
+Slopbot is required, always free, and limited to registered repositories. Never charge a project vault for bot review. Free advisory reviews are capped at 2,000 per repository per UTC calendar month, and value assessment is not capped (operator decision, 16 November 2026).
 
 Apply effective repository security, scope, ignore, and rejection rules before review. Review exact source against approved base-branch rules. Run untrusted code only in approved isolation without secrets or posting credentials.
 

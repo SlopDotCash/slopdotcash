@@ -3455,6 +3455,13 @@
       "review": "mapped-abstraction"
     },
     {
+      "path": "migrations/0129_slopbot_review_month_starts.sql",
+      "sha256": "f53ee37a126dd08624360ae8017ae2ef8423fafbe2e532ef91214be6fd03cde7",
+      "models": ["formal/models/slopbot/bot_review_monthly_cap.qnt"],
+      "candidateLines": [4],
+      "review": "mapped-abstraction"
+    },
+    {
       "path": "package.json",
       "sha256": "d4829e85818eb386ab656a7e785502d2df48c97ee6ea159c28718561d032c86a",
       "models": ["formal/models/tooling/formal_toolchain.qnt"],
@@ -8662,8 +8669,15 @@
       "review": "mapped-abstraction"
     },
     {
+      "path": "workers/slopbot/review-cap.ts",
+      "sha256": "0dabdae5a99e09f97357eb604eb75748cab6423a72a0d72486151cb46dc60ec3",
+      "models": ["formal/models/slopbot/bot_review_monthly_cap.qnt"],
+      "candidateLines": [20, 32],
+      "review": "mapped-abstraction"
+    },
+    {
       "path": "workers/slopbot/review.ts",
-      "sha256": "ac03ebad5b2a566bf93d9821f571ed572b3f4016ae068cb2b571bee16d28a248",
+      "sha256": "ed280aedc23a95b67766edc2057b0b9089ee41ce393d0839bc79c518c0a19ee0",
       "models": [
         "formal/models/slopbot/bot_author_admission.qnt",
         "formal/models/slopbot/bot_close_capacity.qnt",
@@ -8671,17 +8685,18 @@
         "formal/models/slopbot/bot_close_recovery_claim.qnt",
         "formal/models/slopbot/bot_moderation.qnt",
         "formal/models/slopbot/bot_penalty_once.qnt",
+        "formal/models/slopbot/bot_review_monthly_cap.qnt",
         "formal/models/slopbot/bot_value_dispute_draft.qnt",
         "formal/models/slopbot/bot_value_dispute_read.qnt"
       ],
       "candidateLines": [
-        3, 154, 268, 283, 292, 302, 305, 497, 651, 798, 827, 837, 972, 977, 982,
-        984, 987, 989, 990, 1001, 1004, 1006, 1063, 1064, 1066, 1067, 1083,
-        1089, 1140, 1162, 1163, 1171, 1176, 1277, 1279, 1299, 1318, 1395, 1400,
-        1471, 1586, 1593, 1594, 1629, 1646, 1649, 1650, 1812, 1817, 1879, 1892,
-        1897, 1904, 1905, 1909, 1910, 1918, 1934, 1991, 2138, 2198, 2204, 2215,
-        2241, 2271, 2296, 2304, 2327, 2332, 2408, 2409, 2459, 2494, 2545, 2690,
-        2947, 3022, 3188, 3199, 3207, 3305, 3306, 3346, 3396, 3410, 3426
+        3, 155, 269, 284, 293, 303, 306, 498, 652, 799, 828, 838, 973, 978, 983,
+        985, 988, 990, 991, 1002, 1005, 1007, 1064, 1065, 1067, 1068, 1084,
+        1090, 1141, 1163, 1164, 1172, 1177, 1278, 1280, 1300, 1319, 1396, 1401,
+        1481, 1596, 1603, 1604, 1639, 1656, 1659, 1660, 1822, 1827, 1889, 1902,
+        1907, 1914, 1915, 1919, 1920, 1928, 1944, 2001, 2148, 2208, 2214, 2225,
+        2251, 2281, 2306, 2314, 2337, 2342, 2418, 2419, 2469, 2504, 2555, 2700,
+        2957, 3032, 3198, 3209, 3217, 3315, 3316, 3356, 3406, 3420, 3436
       ],
       "review": "mapped-abstraction"
     },
@@ -15596,6 +15611,21 @@
         "failedCallIsRetryTest",
         "skippedBeforeInferenceIsNewTest",
         "takeoverFencesOldWorkerTest"
+      ]
+    },
+    {
+      "path": "formal/models/slopbot/bot_review_monthly_cap.qnt",
+      "sha256": "0d4744cb5abb683654ddf27ee590a71ca5e60bf96e18b857089c8e9ebf12a8cd",
+      "sources": [
+        "migrations/0129_slopbot_review_month_starts.sql",
+        "workers/slopbot/review-cap.ts",
+        "workers/slopbot/review.ts"
+      ],
+      "scenarios": [
+        "capRefusesNextReviewTest",
+        "otherRepositoryAndNewMonthAreUnaffectedTest",
+        "retryOfStartedReviewIsNotCountedTwiceTest",
+        "valueAssessmentIgnoresReviewCapTest"
       ]
     },
     {
