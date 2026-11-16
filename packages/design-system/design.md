@@ -17,7 +17,8 @@ not force.
   hashes and commands, with tabular numbers.
 - **Shape.** One `radius` of 8px; `rounded-sm` (4px), `-md` (6px), `-lg` (8px) and `-xl` (12px) derive from
   it, and `rounded-full` is the pill and the avatar. One `panel` shadow, for what floats.
-- **Controls.** A button is 48px high, 40px small; a text field or select is 52px.
+- **Controls.** A button is 48px high, 40px small; a text field or select is 52px. Every control can be hit
+  in a 44px square, however small it is drawn.
 - **Motion.** `fast` for hover and press, `base` for most changes, `slow` for entering and leaving. Reduced
   motion removes all of it.
 - **Width.** `sm`, `md` and `lg` are the phone, the narrow column and the two-column layout.
@@ -27,9 +28,9 @@ own published colors. They are literal colors in `@repo/ui`, each with its reaso
 they are another party's identity, not a role of this palette. Agent client marks (`AgentMark`) are masks in
 the color of the text around them, and need none.
 
-Name a value by its token (`bg-primary`, `var(--primary)`), never by its value. Where a literal color
-is unavoidable, such as a chart series or third-party markup, say why on the line above:
-`// eslint-disable-next-line design-system/no-literal-colors -- chart series`.
+Name a value by its token (`bg-primary`, `var(--primary)`), never by its value. A literal color is only
+another party's mark, in the component that draws it, with the mark named on the line above:
+`// eslint-disable-next-line design-system/no-literal-colors -- Base "The Square" blue`.
 
 ## Where it came from
 
@@ -44,8 +45,11 @@ in oklch: `bg` #0f0e0c is `background` oklch(0.164 0.004 84.6), `surface` #1a181
 `motion.fast` and `ease` are `fast` and `standard`. `faint` #77716a (oklch(0.552 0.013 71.8)), `accentHover`
 #ff7a42 (oklch(0.726 0.177 42)), `accentPressed` #d9480f (oklch(0.6 0.19 37.9)), `lineStrong` and the
 translucent `line` and `inputBorder` have no token: the token schema of `vibestack/design` holds a fixed set
-of colors and one radius. A hex or TypeScript export for the identity Worker and the social image renderer
-waits until those are ported.
+of colors and one radius. This is an open gap, not a decision: development's button hover (`accentHover`),
+pressed state and raised, faint disabled look are not ported, and buttons still darken the accent on hover
+and fade to half opacity while inactive, until that schema takes more colors and `size` and `radius`
+groups. A hex or TypeScript export for the identity Worker and the social image renderer waits until those
+are ported.
 
 ## Changing it
 

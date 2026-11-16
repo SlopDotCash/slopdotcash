@@ -1,8 +1,9 @@
 import type { ReactNode } from "react";
-import { ArrowRight, CircleAlert } from "lucide-react";
+import { ArrowRight } from "lucide-react";
 import { cn } from "../lib/cn.ts";
 import { Button } from "./Button.tsx";
 import { PageHeader } from "./PageHeader.tsx";
+import { StatusIcon } from "./Status.tsx";
 
 export type NotFoundProps = {
   /** What was not found. */
@@ -20,7 +21,7 @@ export type NotFoundProps = {
 export function NotFound({ title = "Page not found", children, as: Element = "main", home = { href: "/", label: "See open projects" }, className }: NotFoundProps) {
   return (
     <Element className={cn("flex flex-col items-start gap-4", className)}>
-      <PageHeader title={title} icon={<CircleAlert className="size-6 text-muted-foreground" />} />
+      <PageHeader title={title} icon={<StatusIcon icon="Alert" className="size-6 text-muted-foreground" />} />
       {children}
       <Button asChild>
         <a href={home.href}>

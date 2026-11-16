@@ -1,5 +1,5 @@
 import type { ComponentProps, ReactNode } from "react";
-import { cn, focusRing } from "../lib/cn.ts";
+import { cn, focusRing, target } from "../lib/cn.ts";
 import { Avatar } from "./Avatar.tsx";
 
 export type IdentityProps = Omit<ComponentProps<"div">, "children"> & {
@@ -24,7 +24,7 @@ export function Identity({ login, href, avatarUrl, detail, size = "md", classNam
       <div className="flex min-w-0 flex-col">
         <Name className={cn("truncate", size === "lg" ? "text-2xl font-semibold" : "font-medium")}>
           {href ? (
-            <a href={href} className={cn(focusRing, "rounded-sm hover:underline")}>
+            <a href={href} className={cn(focusRing, target, "rounded-sm hover:underline")}>
               {login}
             </a>
           ) : (

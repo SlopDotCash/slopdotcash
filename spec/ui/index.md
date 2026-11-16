@@ -14,8 +14,9 @@ uses and the few interaction machines a component drives itself.
 
 Colors, type, shape and motion are the design tokens of `@repo/design-system`,
 whose roles and contrast requirements are [the design system](../designSystem/).
-Read states look different from one another as
-[Status presentation](./status.md) requires.
+Read states look different from one another by `lawReadStatesAreDistinguishable`
+of [Status presentation](./status.md#read-states-show-loading-emptiness-staleness-and-failure-differently),
+and `DataState` renders each through `readPresentation`.
 
 ## Story: One look for every control
 
@@ -26,61 +27,73 @@ Read states look different from one another as
 
 An application takes each control from `@repo/ui` and never draws its own.
 Every exported component has a `.meta.tsx`, so `stories gen` gives it stories
-and the browser project checks each story with axe.
+and the browser project checks each story with axe. `ViewSwitch` chooses a
+view of content already shown and takes effect at once, so it is a
+`SegmentedControl`; `OneOf` answers a form's question, so it is a
+`RadioGroup`. `packages/ui/test/inventory.test.ts` holds the inventory to
+this map.
 
 ```quint
-type ControlKind = Action | Text | LongText | Choice | OneOf | Toggle | Check | FileChoice | Paging | Reveal | CopyText | Confirm
+type ControlKind = Action | Text | LongText | Choice | OneOf | ViewSwitch | Toggle | Check | FileChoice | Paging | Reveal | CopyText | Confirm
 pure def primitive(kind: ControlKind): str =
   if (kind == Action) "Button" else if (kind == Text) "Input" else if (kind == LongText) "Textarea"
-  else if (kind == Choice) "Select" else if (kind == OneOf) "RadioGroup" else if (kind == Toggle) "Switch"
-  else if (kind == Check) "Checkbox" else if (kind == FileChoice) "FileField" else if (kind == Paging) "Pagination"
-  else if (kind == Reveal) "Disclosure" else if (kind == CopyText) "CopyButton" else "ConfirmDialog"
+  else if (kind == Choice) "Select" else if (kind == OneOf) "RadioGroup" else if (kind == ViewSwitch) "SegmentedControl"
+  else if (kind == Toggle) "Switch" else if (kind == Check) "Checkbox" else if (kind == FileChoice) "FileField"
+  else if (kind == Paging) "Pagination" else if (kind == Reveal) "Disclosure" else if (kind == CopyText) "CopyButton"
+  else "ConfirmDialog"
 pure def lawOnePrimitivePerKind(kind: ControlKind, other: ControlKind): bool =
   kind != other implies primitive(kind) != primitive(other)
 ```
 
-### Controls are 40px or 48px high, and fields 52px
+### A shown control stands still under reduced motion, and keyboard focus shows its ring
 
-A small button is the least target, above the 24px of WCAG 2.5.8.
-
-```quint
-type ControlSize = Small | Regular | Field
-pure val leastTargetPx = 40
-pure def heightPx(control: ControlSize): int = if (control == Small) 40 else if (control == Regular) 48 else 52
-pure def lawEveryControlIsReachable(control: ControlSize): bool = heightPx(control) >= leastTargetPx
-```
-
-### Under reduced motion nothing spins, pulses or slides
-
-A spinner, a skeleton, an unknown progress bar and every transition stand
-still when the person asks the system for reduced motion.
+A control is shown to a person who may ask the system for reduced motion,
+and is focused by the keyboard or by the pointer. Under reduced motion no
+control transitions or animates. Keyboard focus shows the `ring` token and no
+outline of the browser's own; pointer focus shows it only in a field that
+takes typing, where the caret's place matters. `controls.browser.test.tsx`
+shows each primitive in these states in Chromium and compares its computed
+style with `moves` and `showsRing`.
 
 ```quint
 type Motion = FullMotion | ReducedMotion
-type Movement = Spin | Pulse | Slide
-pure def moves(motion: Motion, movement: Movement): bool = motion == FullMotion
-pure def lawReducedMotionStandsStill(movement: Movement): bool = not(moves(ReducedMotion, movement))
+type Focus = Unfocused | PointerFocus | KeyboardFocus
+type Shown = { kind: ControlKind, motion: Motion, focus: Focus }
+
+pure val initial: Shown = { kind: Action, motion: FullMotion, focus: Unfocused }
+pure def show(s: Shown, kind: ControlKind): Shown = { kind: kind, motion: s.motion, focus: Unfocused }
+pure def prefer(s: Shown, motion: Motion): Shown = { ...s, motion: motion }
+pure def reach(s: Shown, focus: Focus): Shown = { ...s, focus: focus }
+
+pure def takesTyping(kind: ControlKind): bool = kind == Text or kind == LongText
+pure def moves(s: Shown): bool = s.motion == FullMotion
+pure def showsRing(s: Shown): bool = s.focus == KeyboardFocus or (s.focus == PointerFocus and takesTyping(s.kind))
+pure def sometimesStillWithRing(s: Shown): bool = s.motion == ReducedMotion and s.focus == KeyboardFocus and s.kind == Toggle
+pure def sometimesPointerRingInField(s: Shown): bool = s.focus == PointerFocus and showsRing(s)
 ```
 
-### Keyboard focus always shows the ring
+A spinner, a skeleton and a progress bar of unknown length stand still under
+reduced motion too.
 
-Every focusable control shows the `ring` token under keyboard focus and no
-outline of the browser's own.
+### Buttons are 48px high, 40px small, fields 52px, and every control can be hit in a 44px square
+
+A control drawn smaller than 44px, such as a small button, a checkbox, a
+switch or the close button of a dialog, keeps an invisible 44px square
+centered on it. A link inside running text keeps the height of its line, as
+WCAG 2.5.8 excepts inline targets: `ExternalLink` is that link, and a row of
+links such as the footer's gives each its square. The browser test measures
+each primitive's hit area.
 
 ```quint
-type Focus = Unfocused | PointerFocus | KeyboardFocus
-pure def showsRing(focus: Focus): bool = focus == KeyboardFocus
-pure def lawKeyboardFocusIsVisible(focus: Focus): bool = focus == KeyboardFocus implies showsRing(focus)
+type ControlSize = Small | Regular | Field
+pure val targetPx = 44
+pure def heightPx(control: ControlSize): int = if (control == Small) 40 else if (control == Regular) 48 else 52
 ```
 
 ### Colors are tokens, except another party's mark
 
 A component names a color by its token. A literal color is allowed only for
-another party's published identity, a network or the Slop mark, with its
-reason on the line above.
-
-```quint
-type ColorSource = RoleToken | PartyMark | Unexplained
-pure def colorAllowed(source: ColorSource): bool = source != Unexplained
-pure def lawOnlyMarksAreLiteral(source: ColorSource): bool = colorAllowed(source) iff source != Unexplained
-```
+another party's published identity, a network or the Slop mark, in the
+component that draws that mark (`Logo`, `NetworkMark`), with the reason on
+the line above naming the mark. `inventory.test.ts` refuses any other
+literal.

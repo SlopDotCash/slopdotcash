@@ -1,5 +1,5 @@
 import type { ComponentProps, ReactNode } from "react";
-import { childFocusRing, cn } from "../lib/cn.ts";
+import { childFocusRing, childTarget, cn } from "../lib/cn.ts";
 
 export type SiteFooterProps = ComponentProps<"footer"> & {
   /** The links of the community: repository, documentation, X and the like. */
@@ -18,7 +18,7 @@ export function SiteFooter({ label = "Community", brand, compact = false, classN
     <footer className={cn("border-t border-border text-sm text-muted-foreground", className)} {...props}>
       <div className={cn("mx-auto flex max-w-(--breakpoint-lg) flex-wrap items-center gap-x-6 gap-y-3 px-4", compact ? "py-3" : "py-8")}>
         {brand}
-        <nav aria-label={label} className={cn(childFocusRing, "flex flex-wrap gap-x-4 gap-y-2 *:rounded-sm *:hover:text-foreground")}>
+        <nav aria-label={label} className={cn(childFocusRing, childTarget, "flex flex-wrap gap-x-4 gap-y-2 *:rounded-sm *:hover:text-foreground")}>
           {children}
         </nav>
       </div>

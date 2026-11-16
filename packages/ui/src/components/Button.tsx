@@ -1,13 +1,13 @@
 import type { ComponentProps } from "react";
 import { Slot, Slottable } from "@radix-ui/react-slot";
 import { cva, type VariantProps } from "class-variance-authority";
-import { cn, focusRing, inactive } from "../lib/cn.ts";
+import { cn, focusRing, inactive, target } from "../lib/cn.ts";
 import { controlState } from "../lib/control.ts";
 import { StatusIcon } from "./Status.tsx";
 
 /** The look of a button by variant and size, for an element that acts as one without being a `Button`. */
 export const buttonVariants = cva(
-  [focusRing, inactive, "inline-flex items-center justify-center gap-2 rounded-md text-sm font-medium whitespace-nowrap transition-colors duration-fast ease-standard motion-reduce:transition-none"],
+  [focusRing, inactive, target, "inline-flex items-center justify-center gap-2 rounded-md text-sm font-medium whitespace-nowrap transition-colors duration-fast ease-standard motion-reduce:transition-none"],
   {
     variants: {
       variant: {
