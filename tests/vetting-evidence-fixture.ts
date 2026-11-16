@@ -3,8 +3,12 @@
  * terms are the fixed source policy; the recorded owner and reader IDs are
  * exported for synthetic sessions.
  */
-import { type ChildProcess, spawn } from "node:child_process";
+import { type ChildProcess, execFile, spawn } from "node:child_process";
+import { mkdtemp, readFile, readdir, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { promisify } from "node:util";
 import type { ProjectD1Database } from "../backend/projects/cloudflare-persistence";
 import type { R2Bucket } from "../backend/trace/cloudflare-persistence";
 import {
@@ -31,23 +35,82 @@ export const EVIDENCE_READER_GITHUB_ID = (() => {
   return others[0];
 })();
 
+async function processGroupStopped(pid: number) {
+  if (process.platform !== "linux") {
+    const { stdout } = await promisify(execFile)(
+      "ps",
+      ["-axo", "pgid=,stat="],
+      { timeout: 2000 },
+    );
+    return !stdout.split("\n").some((line) => {
+      const [group, state] = line.trim().split(/\s+/u);
+      return Number(group) === pid && !/^[ZX]/u.test(state ?? "");
+    });
+  }
+  for (const entry of await readdir("/proc")) {
+    if (!/^\d+$/u.test(entry)) continue;
+    let stat: string;
+    try {
+      stat = await readFile(`/proc/${entry}/stat`, "utf8");
+    } catch (error) {
+      if (
+        ["ENOENT", "ESRCH"].includes(
+          (error as NodeJS.ErrnoException).code ?? "",
+        )
+      )
+        continue;
+      throw error;
+    }
+    const [state, , group] = stat.slice(stat.lastIndexOf(")") + 2).split(" ");
+    if (Number(group) === pid && state !== "Z" && state !== "X") return false;
+  }
+  return true;
+}
+
 /** Stop only this fixture process, independently of inherited pipe closure. */
 export async function stopVettingEvidence(
   child: ChildProcess,
   graceMs = 4000,
   ownsProcessGroup = false,
+  completionPath?: string,
 ) {
   let signalError: unknown;
+  let forced = false;
   const signal = (name: "SIGTERM" | "SIGKILL") => {
     if (!ownsProcessGroup) return child.kill(name);
     if (!child.pid) return;
     try {
       process.kill(-child.pid, name);
+      if (name === "SIGKILL") forced = true;
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "ESRCH")
         signalError = error;
     }
   };
+  let completionTimer: ReturnType<typeof setTimeout> | undefined;
+  let stopped = false;
+  const completed = new Promise<number>((resolve, reject) => {
+    if (!completionPath || !ownsProcessGroup || !child.pid) return;
+    const pid = child.pid;
+    const inspect = async () => {
+      try {
+        const marker = JSON.parse(await readFile(completionPath, "utf8"));
+        if (marker.pid !== pid || marker.completed !== true)
+          throw new Error("Invalid local R2 shutdown acknowledgement");
+        if (!forced && (await processGroupStopped(pid))) {
+          resolve(0);
+          return;
+        }
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+          reject(error);
+          return;
+        }
+      }
+      if (!stopped) completionTimer = setTimeout(inspect, 25);
+    };
+    void inspect();
+  });
   let onExit: (code: number | null) => void = () => {};
   let onError: (error: Error) => void = () => {};
   const exited = new Promise<number | null>((resolve, reject) => {
@@ -71,6 +134,7 @@ export async function stopVettingEvidence(
   try {
     const result = await Promise.race([
       exited,
+      completed,
       new Promise<never>((_, reject) => {
         deadline = setTimeout(
           () => reject(new Error("Local R2 shutdown timed out")),
@@ -81,6 +145,8 @@ export async function stopVettingEvidence(
     if (signalError) throw signalError;
     return result;
   } finally {
+    stopped = true;
+    clearTimeout(completionTimer);
     clearTimeout(terminate);
     clearTimeout(force);
     clearTimeout(deadline);
@@ -98,9 +164,14 @@ export async function localVettingEvidence(
   db: ProjectD1Database,
   now: () => Date,
 ) {
+  const directory = await mkdtemp(join(tmpdir(), "slop-r2-shutdown-"));
+  const completionPath = join(directory, "completed.json");
   const child = spawn(
     "node",
-    [fileURLToPath(new URL("./vetting-evidence-r2.mjs", import.meta.url))],
+    [
+      fileURLToPath(new URL("./vetting-evidence-r2.mjs", import.meta.url)),
+      completionPath,
+    ],
     {
       stdio: ["pipe", "pipe", "inherit"],
       detached: process.platform !== "win32",
@@ -135,8 +206,17 @@ export async function localVettingEvidence(
     if (parsed.protocol !== "http:" || parsed.hostname !== "127.0.0.1")
       throw new Error("Invalid local R2 origin");
   } catch (error) {
-    if (child.pid)
-      await stopVettingEvidence(child, 4000, process.platform !== "win32");
+    try {
+      if (child.pid)
+        await stopVettingEvidence(
+          child,
+          4000,
+          process.platform !== "win32",
+          completionPath,
+        );
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
     throw error;
   } finally {
     clearTimeout(startupTimer);
@@ -147,11 +227,19 @@ export async function localVettingEvidence(
     child.stdout.resume();
   }
   async function dispose() {
-    if (
-      (await stopVettingEvidence(child, 4000, process.platform !== "win32")) !==
-      0
-    )
-      throw new Error("Local R2 shutdown failed");
+    try {
+      if (
+        (await stopVettingEvidence(
+          child,
+          4000,
+          process.platform !== "win32",
+          completionPath,
+        )) !== 0
+      )
+        throw new Error("Local R2 shutdown failed");
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
   }
   // Use asynchronous HTTP to real workerd R2. Miniflare's synchronous RPC
   // property getters can fail under Bun before object metadata is returned.

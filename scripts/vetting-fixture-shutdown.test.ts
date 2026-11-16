@@ -1,5 +1,9 @@
 import { expect, test } from "bun:test";
 import { type ChildProcess, spawn } from "node:child_process";
+import { EventEmitter } from "node:events";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { once } from "node:events";
 import { stopVettingEvidence } from "../tests/vetting-evidence-fixture";
 
@@ -118,3 +122,76 @@ for (const parentExits of [false, true]) {
     5000,
   );
 }
+
+test.skipIf(process.platform === "win32")(
+  "a completed runtime with no exit notification verifies its exact acknowledgement and dead process group",
+  async () => {
+    const directory = await mkdtemp(join(tmpdir(), "r2-ack-test-"));
+    const path = join(directory, "done.json");
+    const child = spawn(process.execPath, ["-e", "process.exit(0)"], {
+      detached: true,
+      stdio: "ignore",
+    });
+    const pid = child.pid;
+    if (!pid) throw new Error("Missing child pid");
+    await once(child, "exit");
+    await writeFile(path, JSON.stringify({ pid, completed: true }));
+    const missingNotification = Object.assign(new EventEmitter(), {
+      pid,
+      exitCode: null,
+      signalCode: null,
+    });
+    try {
+      expect(
+        await stopVettingEvidence(
+          missingNotification as ChildProcess,
+          1000,
+          true,
+          path,
+        ),
+      ).toBe(0);
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  },
+);
+
+test.skipIf(process.platform === "win32")(
+  "a shutdown acknowledgement cannot pass while its process group is alive",
+  async () => {
+    const directory = await mkdtemp(join(tmpdir(), "r2-live-ack-test-"));
+    const path = join(directory, "done.json");
+    const child = spawn(
+      process.execPath,
+      [
+        "-e",
+        "process.on('SIGTERM',()=>{});setInterval(()=>{},1000);console.log('ready');",
+      ],
+      { detached: true, stdio: "pipe" },
+    );
+    await ready(child);
+    const pid = child.pid;
+    if (!pid) throw new Error("Missing child pid");
+    await writeFile(path, JSON.stringify({ pid, completed: true }));
+    const missingNotification = Object.assign(new EventEmitter(), {
+      pid,
+      exitCode: null,
+      signalCode: null,
+    });
+    const exited = once(child, "exit");
+    try {
+      await expect(
+        stopVettingEvidence(missingNotification as ChildProcess, 0, true, path),
+      ).rejects.toThrow("shutdown timed out");
+      await exited;
+    } finally {
+      try {
+        process.kill(-pid, "SIGKILL");
+      } catch {}
+      child.stdout?.destroy();
+      child.stderr?.destroy();
+      await rm(directory, { recursive: true, force: true });
+    }
+  },
+  5000,
+);
