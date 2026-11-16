@@ -9,6 +9,7 @@ import {
   readMonthlySchedule,
   readRegistryDatabase,
 } from "../payments/registry-database.mjs";
+import { frameDeploymentPinBindings } from "./deployment-pin-bindings.ts";
 import { MAINNET_EXECUTION } from "./mainnet-execution.mjs";
 import { mainnetReleasePlan } from "./release-plan.mjs";
 
@@ -81,7 +82,11 @@ export async function prepareMainnetRelease({
   const services = [];
   for (const entry of entries) {
     const path = join(directory, `${entry.config.name}.json`);
-    const bytes = `${JSON.stringify(entry.config, null, 2)}\n`;
+    const config = {
+      ...entry.config,
+      vars: frameDeploymentPinBindings(entry.config.vars),
+    };
+    const bytes = `${JSON.stringify(config, null, 2)}\n`;
     await writeFile(path, bytes);
     let release = true;
     if (entry.enabled && entry.pinCount) {

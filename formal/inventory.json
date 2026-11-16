@@ -8099,6 +8099,13 @@
       "review": "mapped-abstraction"
     },
     {
+      "path": "workers/payment-executor/deployment-pin-bindings.ts",
+      "sha256": "1da7a1850589ba8b173e2fd190040dc150d014c6686b8b1c7eb3a4d854a5884b",
+      "models": ["formal/models/payments/deployment_plan.qnt"],
+      "candidateLines": [],
+      "review": "mapped-abstraction"
+    },
+    {
       "path": "workers/payment-executor/entrypoint.ts",
       "sha256": "331682fd24f4da18573910de610f8752b475c97556224feee0228991a3dd6c57",
       "models": [
@@ -8111,16 +8118,16 @@
     },
     {
       "path": "workers/payment-executor/index.ts",
-      "sha256": "04013b3bdfb9fb7f81222bf2aad1b7ac853594c5981d66794278fe4b13ab881a",
+      "sha256": "da7ef9cf45e794b09d66d7819271961db068afbaa04ea33097311c4418f6e6fe",
       "models": [
         "formal/models/payments/binding_cancellation.qnt",
         "formal/models/payments/solana_binding_completion.qnt",
         "formal/models/payments/stored_binding_broadcast_authority.qnt"
       ],
       "candidateLines": [
-        111, 117, 132, 143, 151, 159, 160, 169, 178, 179, 182, 199, 204, 213,
-        232, 240, 269, 288, 305, 320, 331, 335, 363, 394, 398, 475, 480, 481,
-        483, 485, 489, 512, 532, 549, 559, 599, 605, 680, 684, 827
+        112, 119, 136, 147, 155, 163, 164, 173, 182, 183, 186, 203, 208, 217,
+        236, 244, 273, 292, 309, 324, 335, 339, 367, 398, 402, 479, 484, 485,
+        487, 489, 493, 516, 536, 553, 563, 603, 609, 684, 688, 831
       ],
       "review": "mapped-abstraction"
     },
@@ -8154,10 +8161,10 @@
     },
     {
       "path": "workers/payment-executor/release-mainnets.mjs",
-      "sha256": "2f0a7dbf361080bc50d66d9293f4233bed3efefc9dfe738facdafb699b2bece6",
+      "sha256": "7fbf08b41bad27ffe56c6d233fd822bf21cc08a85128d2562f08c7cac3fac188",
       "models": ["formal/models/payments/deployment_plan.qnt"],
       "candidateLines": [
-        3, 5, 15, 26, 30, 53, 85, 111, 137, 181, 225, 230, 284, 319
+        3, 5, 16, 27, 31, 54, 90, 116, 142, 186, 230, 235, 289, 324
       ],
       "review": "mapped-abstraction"
     },
@@ -12873,12 +12880,13 @@
     },
     {
       "path": "formal/models/payments/deployment_plan.qnt",
-      "sha256": "26ad93d8bc7510662aa17555a5305bada7b543c23a9590a0d754b0e0f477c8a1",
+      "sha256": "bba363d191227962859362dbfe3c264dbf59d396791f804b22773e345c60623a",
       "sources": [
         "scripts/prepare-payment-deployments.ts",
         "scripts/release-referral.ts",
         "scripts/worker-release.mjs",
         "workers/payment-executor/configure.mjs",
+        "workers/payment-executor/deployment-pin-bindings.ts",
         "workers/payment-executor/mainnet-execution.mjs",
         "workers/payment-executor/release-mainnets.mjs",
         "workers/payment-executor/release-plan.mjs",
