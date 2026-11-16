@@ -147,6 +147,13 @@
       "review": "mapped-abstraction"
     },
     {
+      "path": ".github/workflows/value-intake-diagnostic.yml",
+      "sha256": "b5304e54f13028e741e2a5b77a22ecab3363be5f3a18b6aac31fce9b4cdba4b6",
+      "models": ["formal/models/release/workflow_authority.qnt"],
+      "candidateLines": [],
+      "review": "mapped-abstraction"
+    },
+    {
       "path": ".github/workflows/vetting-controller.yml",
       "sha256": "afac582e8220fe6e508caad2039285c33cd7fda0cfc45f811097c038c7941721",
       "models": ["formal/models/release/workflow_authority.qnt"],
@@ -4102,6 +4109,13 @@
         41, 45, 57, 59, 93, 107, 176, 215, 224, 229, 232, 259, 276, 283, 322,
         407, 437, 441, 562
       ],
+      "review": "mapped-abstraction"
+    },
+    {
+      "path": "scripts/inspect-value-intake.ts",
+      "sha256": "13c16dfeb400c5e923354d22d43163df0a7923a8717b7f1ffd8fa753c8af9f19",
+      "models": ["formal/models/release/workflow_authority.qnt"],
+      "candidateLines": [15, 73, 74, 75, 154, 216, 222, 295],
       "review": "mapped-abstraction"
     },
     {
@@ -14747,7 +14761,7 @@
     },
     {
       "path": "formal/models/release/workflow_authority.qnt",
-      "sha256": "702f56c49fbad971ef04402f11e7a0f8aff23863a17c7f492b1c18db825d3886",
+      "sha256": "df62f5c3a3f2b8deeae7f9c72ed71b0592f3a68f7761cf4041c0bddadbc877e9",
       "sources": [
         ".github/workflows/cancel-closed-pr-runs.yml",
         ".github/workflows/fee-worker-bindings.yml",
@@ -14756,9 +14770,11 @@
         ".github/workflows/private-intake-watch.yml",
         ".github/workflows/production-watch.yml",
         ".github/workflows/referral-root-watch.yml",
+        ".github/workflows/value-intake-diagnostic.yml",
         ".github/workflows/vetting-controller.yml",
         "scripts/inspect-fee-worker-bindings.ts",
         "scripts/inspect-fee-worker-operations.ts",
+        "scripts/inspect-value-intake.ts",
         "scripts/probe-fee-solana-rpc.ts",
         "scripts/run-vetting-controller.ts"
       ],

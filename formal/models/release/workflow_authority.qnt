@@ -1,3 +1,6 @@
+// @source .github/workflows/value-intake-diagnostic.yml
+// @source scripts/inspect-value-intake.ts
+// @evidence scripts/inspect-value-intake.test.ts
 // @source .github/workflows/fee-worker-bindings.yml
 // @source scripts/inspect-fee-worker-bindings.ts
 // @source scripts/inspect-fee-worker-operations.ts
