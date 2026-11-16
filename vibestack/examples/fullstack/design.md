@@ -5,6 +5,9 @@ A warm orange accent on quiet, warm neutrals. Color carries meaning; position an
 - **Surfaces.** `background` is the page. `muted` and `secondary` are quiet fills, `accent` the hover fill.
 - **Text.** `foreground` by default, `muted-foreground` for a to-do that is done. Every `x-foreground` is
   the text color on `x`, and each pair meets WCAG AA in both themes.
+- **Edges.** `border` divides and may be faint. `input` is the edge of a control (a field, a checkbox, an
+  outlined button): it and the focus `ring` stand at least 3:1 off `background` and `card` in both themes
+  (WCAG 1.4.11).
 - **Meaning.** `primary` is the one accent: adding a to-do, a ticked box, the focus `ring`. `ok` is the
   tab's connection, filled when online and a ring when offline; `warn` counts refused edits. An edit the
   server has not answered yet shows its to-do at half strength.

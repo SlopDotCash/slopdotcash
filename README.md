@@ -33,6 +33,10 @@ pnpm install --frozen-lockfile
 pnpm check
 ```
 
+`pnpm install` also creates any missing project-relative skill links in
+`.agents/skills/` and the other agent harness directories; `CLAUDE.md` is a
+symlink to `AGENTS.md`.
+
 Read [AGENTS.md](AGENTS.md), [SPEC.md](SPEC.md), and the relevant skills before
 editing the spec. The full [Vibestack guide](vibestack/README.md) explains the
 framework and its examples. All commands below run from the repository root.
@@ -45,7 +49,7 @@ framework and its examples. All commands below run from the repository root.
 | `pnpm gen` | Generate the core and machine adapters from the spec |
 | `pnpm dev` | Open Studio and the retained template application |
 | `pnpm studio` | Open Studio for specification editing and review |
-| `pnpm verify` | Run the complete template engineering gate |
+| `pnpm verify` | Run the complete template engineering gate, including Knip, Madge and jscpd |
 | `pnpm accept` | Record the user's reviewed specification after every required check passes |
 
 The tools own `gen/`, `.spec-cache/`, `.studio/` and `spec/lock.json`.

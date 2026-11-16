@@ -66,9 +66,10 @@ const contrast = (one: string, other: string) => {
   return (light + 0.05) / (dark + 0.05)
 }
 
-/** Text color on surface: each `x-foreground` on `x`, and every color used as text on the page and on a card. */
+/** Text color on surface: each `x-foreground` on `x`, every color used as text on the page and on a card, and `muted-foreground` on each quiet fill. */
 const contrastPairs: [ColorName, ColorName][] = [
-  ["foreground", "background"], ["foreground", "muted"], ["muted-foreground", "popover"],
+  ["foreground", "background"], ["foreground", "muted"],
+  ...(["popover", "muted", "secondary", "accent"] as const).map((surface): [ColorName, ColorName] => ["muted-foreground", surface]),
   ...colorNames.filter((name) => name.endsWith("-foreground")).map((name): [ColorName, ColorName] => [name, name.slice(0, -11) as ColorName]),
   ...(["muted-foreground", "primary", "destructive", "ok", "warn", "info"] as const).flatMap((name): [ColorName, ColorName][] => [[name, "background"], [name, "card"]]),
 ]
@@ -78,10 +79,11 @@ const boundaryPairs = (["input", "ring"] as const).flatMap((name): [ColorName, C
 /** Every pair below WCAG AA, in both themes: 4.5:1 for text, 3:1 for a boundary. */
 export const contrastIssues = (tokens: Tokens) =>
   (["light", "dark"] as const).flatMap((theme) =>
-    ([[contrastPairs, 4.5], [boundaryPairs, 3]] as const).flatMap(([pairs, least]) => pairs.flatMap(([text, surface]) => {
-      const ratio = contrast(tokens.color[theme][text], tokens.color[theme][surface])
-      return ratio < least ? [`color.${theme}.${text} on ${surface}: contrast ${ratio.toFixed(2)} is below ${least}`] : []
-    })))
+    ([[contrastPairs, 4.5], [boundaryPairs, 3]] as const).flatMap(([pairs, least]) =>
+      pairs.flatMap(([color, surface]) => {
+        const ratio = contrast(tokens.color[theme][color], tokens.color[theme][surface])
+        return ratio < least ? [`color.${theme}.${color} on ${surface}: contrast ${ratio.toFixed(2)} is below ${least}`] : []
+      })))
 
 /** Validates changes (shape, existing path, value, AA contrast); returns the new tokens and a before/after diff, or throws. */
 export function applyChanges(tokens: Tokens, input: unknown): { tokens: Tokens; diff: string } {
