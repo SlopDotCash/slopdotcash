@@ -421,6 +421,9 @@ pure def alwaysAtMostOneSend(s: Scan): bool =
   ((s.phase == Sent or s.phase == PublicationRejected) implies s.sends == 1) and
   ((s.phase == Publishing or s.phase == IntentRecorded or not(publicationPhase(s.phase))) implies s.sends == 0) and
   ((s.phase == IntentRecorded or s.sends > 0 or s.phase == PublicationUnknown or s.phase == Recorded) implies s.digest > 0)
+pure def alwaysDigestOnlyAfterIntent(s: Scan): bool =
+  (s.phase == Queued or s.phase == Acquiring or s.phase == Reviewing or s.phase == Evidence or s.phase == Publishing or
+    s.phase == Superseded) implies s.digest == 0
 pure def alwaysRecordedOnlyWhenRecorded(s: Scan): bool = (s.recorded != NoDisposition) iff (s.phase == Recorded)
 pure def alwaysRecordedMatchesDisposition(s: Scan): bool =
   s.phase == Recorded implies s.recorded == s.disposition and s.acceptedDigest == s.digest and s.digest > 0
