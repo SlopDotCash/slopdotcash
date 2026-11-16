@@ -2,7 +2,8 @@
 
 import { createHash } from "node:crypto";
 import { gunzipSync } from "node:zlib";
-import { compareActors, githubUserIdFromNodeId } from "../src/lib/github-actor";
+import { githubUserIdFromNodeId } from "../src/lib/github-actor";
+import { shareImplementationPoints } from "../src/lib/implementation-allocation";
 import {
   assertLeaderboardSnapshot,
   type LeaderboardSnapshot,
@@ -26,7 +27,6 @@ import {
 } from "../src/lib/points-implementation-corrections";
 import { sha256Hex } from "../src/lib/sha256";
 import { VALUE_TIERS } from "../src/lib/value-assessment";
-import { allocateWeightedRows } from "../src/lib/weighted-allocation";
 import type { Pull } from "../workers/slopbot/value-evidence-types";
 import { mergeResolutionLineCounts } from "../workers/slopbot/value-merge-resolution";
 import { pointProtectionQuery } from "./points-protection-sql";
@@ -515,12 +515,14 @@ export function reconstructHistoricalPoints(
       "Invalid recipient pool total",
     );
     const template = rows[0].award;
-    const replacements = allocateWeightedRows(
-      total,
-      correction.recipients,
-      (row) => BigInt(row.weight),
-      (left, right) => compareActors(left.actor, right.actor),
-    ).map(({ row, amount }) => ({
+    const shares = shareImplementationPoints(
+      Number(total),
+      correction.recipients.map((row) => row.actor.id),
+      new Map(
+        correction.recipients.map((row) => [row.actor.id, BigInt(row.weight)]),
+      ),
+    );
+    const replacements = correction.recipients.map((row, index) => ({
       ...template,
       key: pointKey(
         packet.projectId,
@@ -530,7 +532,7 @@ export function reconstructHistoricalPoints(
         candidate.kind === "work-unit" ? correction.workUnitId : undefined,
       ),
       actor: row.actor,
-      amount: Number(amount),
+      amount: shares[index],
     }));
     const awards = [
       ...replacements,

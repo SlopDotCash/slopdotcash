@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
 import { createHash } from "node:crypto";
 import { gzipSync } from "node:zlib";
+import { shareImplementationPoints } from "../src/lib/implementation-allocation";
 import {
   appendPointAwards,
   emptyPointsJournal,
@@ -1295,4 +1296,76 @@ test("fresh squash identity recognizes GitHub's reserved bot commit login", asyn
       graphql: async <T>() => ({ nodes: [f.current] }) as T,
     }),
   ).rejects.toThrow();
+});
+
+test("owner-reviewed origins with a tied remainder break it by actor ID like the automatic split", () => {
+  const f = recipientExceptionFixture();
+  const c = f.packet.recipientCorrections[0];
+  const prior = f.baseline.revisions[0].award;
+  // 30 Points at 1:3 leave both recipients a remainder of one half. Login order
+  // (alpha before zeta) is the reverse of immutable actor ID order.
+  const alpha = { id: btoa("04:User43"), login: "alpha-origin" };
+  const zeta = { id: btoa("04:User44"), login: "zeta-origin" };
+  expect(zeta.id < alpha.id).toBe(true);
+  c.recipients = [
+    { actor: alpha, githubId: "43", weight: "1" },
+    { actor: zeta, githubId: "44", weight: "3" },
+  ];
+  const dossier = JSON.parse(c.evidence);
+  dossier.recipients = [
+    { githubId: "43", weight: "1" },
+    { githubId: "44", weight: "3" },
+  ];
+  c.evidence = JSON.stringify(dossier);
+  c.evidenceSha256 = sha256Hex(c.evidence);
+  const automatic = shareImplementationPoints(
+    prior.amount,
+    [alpha.id, zeta.id],
+    new Map([
+      [alpha.id, 1n],
+      [zeta.id, 3n],
+    ]),
+  );
+  expect(automatic).toEqual([7, 23]);
+  const awards = [
+    ...[alpha, zeta].map((recipient, index) => ({
+      ...prior,
+      key: pointKey(
+        "feed",
+        recipient.id,
+        "merged-pull-request",
+        prior.sourceId,
+      ),
+      actor: recipient,
+      amount: automatic[index],
+    })),
+    { ...prior, amount: 0 },
+  ];
+  c.expectedAfter = awards.map((a) => ({
+    key: a.key,
+    actorId: a.actor.id,
+    amount: a.amount,
+    occurredAt: a.occurredAt,
+  }));
+  const expected = appendPointAwards(
+    f.baseline,
+    awards,
+    hash(c),
+    "slop-score-v2",
+    time,
+    new Map(
+      awards.map((a) => [
+        a.key,
+        {
+          sourceId: `owner_october_${c.evidenceSha256}`,
+          effectiveAt: time,
+          reason: OCTOBER_ORIGINAL_CONTRIBUTOR_DECISION,
+        },
+      ]),
+    ),
+  );
+  f.packet.candidateDigest = hash(expected);
+  expect(
+    reconstructHistoricalPoints(f.packet, f.baseline, time, new Map()),
+  ).toEqual(expected);
 });
