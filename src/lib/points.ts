@@ -546,7 +546,8 @@ function appendPointAward(
  * Keys of positive retained-history awards (substantive reviews and
  * evaluator awards) whose latest revision was appended by the retained
  * batch: the batch rule with a digest that no snapshot recorded in the
- * coverage. The retained files are the only source for these awards.
+ * coverage and no authoritative value decision. Reviewed historical value
+ * awards can be recorded without adding snapshot coverage.
  */
 export function retainedBatchOwnedKeys(journal: PointsJournal): Set<string> {
   const coverage = new Set(journal.coverage.map((c) => c.digest));
@@ -558,6 +559,7 @@ export function retainedBatchOwnedKeys(journal: PointsJournal): Set<string> {
       (award.category === "substantive-review" ||
         award.category === "evaluated-contribution") &&
       revision.sourceRule === "slop-score-v2" &&
+      !revision.decision?.sourceId.startsWith("value:") &&
       !coverage.has(revision.sourceDigest)
     )
       keys.add(award.key);
