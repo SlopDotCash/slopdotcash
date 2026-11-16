@@ -1,8 +1,6 @@
 import {
-  ArrowLeft,
   ArrowRight,
   Check,
-  ChevronRight,
   Clipboard,
   ExternalLink,
   Lock,
@@ -39,8 +37,8 @@ import { CONTACT_EMAIL, CONTACT_MAILTO } from "./lib/contact";
 import { setRouteHead } from "./lib/document-head";
 import { GithubIcon } from "./lib/github-icon";
 import {
-  communityProjects,
   hasBountyOverview,
+  homeProjectOrder,
   homeProjects,
 } from "./lib/home-projects";
 import {
@@ -666,10 +664,10 @@ function ProjectCard({
     ? securityBountyAmountLabel(bounty)
     : project.reward.kind === "monthly-pool"
       ? monthlyPoolCapLabel(project)
-      : compactPrizeLabel(
-          project.reward.externalOpportunity?.advertisedAmountDisplay ??
-            "External",
-        );
+      : // An external prize is someone else's money: the card leads with
+        // points, and the project page names the prize (operator decision,
+        // 16 November 2026).
+        "Points";
   return (
     <Link className="project-card" href={`/projects/${project.slug}`}>
       <div className="project-card-heading">
@@ -687,8 +685,9 @@ function ProjectCard({
                 ? "/ Critical"
                 : "/ Finding"}
             </span>
-          ) : monthlyPoolPointsOnly(project.reward) ||
-            project.reward.kind === "external-prize-share" ? (
+          ) : project.reward.kind === "external-prize-share" ? (
+            <span> + external prize</span>
+          ) : monthlyPoolPointsOnly(project.reward) ? (
             <span> + points</span>
           ) : (
             <span>/mo</span>
@@ -698,9 +697,7 @@ function ProjectCard({
           <BountyFundingState terms={bounty} />
         ) : monthlyPoolPointsOnly(project.reward) ? (
           <small className="project-money-state">Points only</small>
-        ) : project.reward.kind === "monthly-pool" ? null : (
-          <small className="project-money-state">External prize</small>
-        )}
+        ) : null}
         {project.reward.reviewBudget?.fundingState === "committed" ? (
           <small className="project-review-budget">
             +{formatMicroUsdc(project.reward.reviewBudget.committedMinor)}{" "}
@@ -714,102 +711,6 @@ function ProjectCard({
         ) : null}
       </div>
     </Link>
-  );
-}
-
-function ProjectRow({
-  project,
-  merge,
-}: {
-  project: ProjectDefinition;
-  merge?: string | null;
-}) {
-  const bounty = hasProjectCardBounty(project)
-    ? project.securityBounty
-    : undefined;
-  const amount = bounty
-    ? `${securityBountyAmountLabel(bounty)} / ${bounty.eligibility === "critical-loss-of-funds" ? "Critical" : "Finding"} · ${bountyFundingLabel(bounty)}`
-    : monthlyPoolPointsOnly(project.reward)
-      ? "Points only"
-      : project.reward.kind === "monthly-pool"
-        ? `${monthlyPoolCapLabel(project)}/mo`
-        : `${project.reward.externalOpportunity?.advertisedAmountDisplay ?? "External prize"} + points`;
-  return (
-    <li>
-      <Link className="project-row" href={`/projects/${project.slug}`}>
-        <ProjectImage lazy project={project} />
-        <span className="project-row-name">
-          <strong>{project.name}</strong>
-          <small>{project.description}</small>
-          {merge ? (
-            <small className="project-merge-activity">{merge}</small>
-          ) : null}
-        </span>
-        <span className="project-row-amount">{amount}</span>
-        <ChevronRight aria-hidden="true" />
-      </Link>
-    </li>
-  );
-}
-
-const COMMUNITY_PAGE_SIZE = 10;
-
-function CommunityProjects({
-  projects,
-  mergeLine,
-}: {
-  projects: ProjectDefinition[];
-  mergeLine: (project: ProjectDefinition) => string | null;
-}) {
-  const [page, setPage] = useState(0);
-  if (projects.length === 0) return null;
-  const pages = Math.ceil(projects.length / COMMUNITY_PAGE_SIZE);
-  const current = Math.min(page, pages - 1);
-  const visible = projects.slice(
-    current * COMMUNITY_PAGE_SIZE,
-    (current + 1) * COMMUNITY_PAGE_SIZE,
-  );
-  return (
-    <section
-      className="project-tier community-projects"
-      aria-labelledby="community-projects"
-    >
-      <h3 id="community-projects">Community</h3>
-      <ul className="project-rows">
-        {visible.map((project) => (
-          <ProjectRow
-            key={project.id}
-            project={project}
-            merge={mergeLine(project)}
-          />
-        ))}
-      </ul>
-      {pages > 1 ? (
-        <nav aria-label="Community project pages" className="pagination">
-          <button
-            aria-label="Previous page"
-            className="button secondary-button icon-button"
-            disabled={current === 0}
-            onClick={() => setPage(current - 1)}
-            type="button"
-          >
-            <ArrowLeft aria-hidden="true" />
-          </button>
-          <span>
-            {current + 1} / {pages}
-          </span>
-          <button
-            aria-label="Next page"
-            className="button secondary-button icon-button"
-            disabled={current === pages - 1}
-            onClick={() => setPage(current + 1)}
-            type="button"
-          >
-            <ArrowRight aria-hidden="true" />
-          </button>
-        </nav>
-      ) : null}
-    </section>
   );
 }
 
@@ -912,10 +813,11 @@ function HomePage() {
   const fundingIndex = funding.status === "ready" ? funding.index : null;
   const listed = (project: ProjectDefinition) =>
     listedThisMonth(project, fundingIndex, now);
-  const featuredProjects = homeProjects().filter(listed);
-  const listedCommunityProjects = communityProjects().filter(listed);
-  const shown = (project: ProjectDefinition) =>
-    asShown(project, fundingIndex, now);
+  const listedProjects = homeProjectOrder(
+    homeProjects()
+      .filter(listed)
+      .map((project) => asShown(project, fundingIndex, now)),
+  );
   const mergeLine = (project: ProjectDefinition) =>
     project.status === "active" && merge.status === "ready"
       ? mergeActivityCardLine(merge.index.get(project.id), now)
@@ -935,32 +837,18 @@ function HomePage() {
             <Plus aria-hidden="true" /> Add a project
           </Link>
         </div>
-        {featuredProjects.length + listedCommunityProjects.length === 0 ? (
+        {listedProjects.length === 0 ? (
           <p className="project-tier-note">No projects yet.</p>
         ) : (
-          <>
-            {featuredProjects.length > 0 ? (
-              <section
-                className="project-tier"
-                aria-labelledby="featured-projects"
-              >
-                <h3 id="featured-projects">Featured</h3>
-                <div className="project-grid">
-                  {featuredProjects.map((project) => (
-                    <ProjectCard
-                      key={project.id}
-                      project={shown(project)}
-                      merge={mergeLine(project)}
-                    />
-                  ))}
-                </div>
-              </section>
-            ) : null}
-            <CommunityProjects
-              projects={listedCommunityProjects.map(shown)}
-              mergeLine={mergeLine}
-            />
-          </>
+          <div className="project-grid">
+            {listedProjects.map((project) => (
+              <ProjectCard
+                key={project.id}
+                project={project}
+                merge={mergeLine(project)}
+              />
+            ))}
+          </div>
         )}
       </section>
       <section

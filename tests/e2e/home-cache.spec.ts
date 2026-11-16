@@ -41,11 +41,11 @@ test("renders bundled projects with data stalled and GitHub blocked", async ({
   await page.route(/https:\/\/[^/]*github[^/]*\//, (route) => route.abort());
   try {
     await page.goto("/", { waitUntil: "domcontentloaded" });
-    const expected = homeProjects().filter(
-      (project) => project.listingTier === "featured",
-    );
+    const expected = homeProjects();
     expect(expected.length).toBeGreaterThan(0);
-    await expect(page.locator(".project-card")).toHaveCount(expected.length);
+    await expect(page.locator("#projects .project-card")).toHaveCount(
+      expected.length,
+    );
     for (const project of expected) {
       await expect(
         page.getByRole("heading", { name: project.name, exact: true }),
@@ -155,11 +155,11 @@ test("a failed registry read keeps the last good projects with a stale label", a
   await expect(notice.getByRole("button", { name: "Try again" })).toBeVisible();
   expect(published).toEqual([200]);
   // The last good list is shown, never an outage page or an empty list.
-  const expected = homeProjects().filter(
-    (project) => project.listingTier === "featured",
-  );
+  const expected = homeProjects();
   expect(expected.length).toBeGreaterThan(0);
-  await expect(page.locator(".project-card")).toHaveCount(expected.length);
+  await expect(page.locator("#projects .project-card")).toHaveCount(
+    expected.length,
+  );
   await expect(
     page.getByRole("heading", { name: "Projects are unavailable" }),
   ).toHaveCount(0);
