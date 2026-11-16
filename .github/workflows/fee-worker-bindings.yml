@@ -1,6 +1,11 @@
 name: Inspect production fee-worker bindings
 on:
   workflow_dispatch:
+    inputs:
+      probe_solana_rpc:
+        description: Read-only Cloudflare-egress check of the staged Helius candidate and public recovery RPC
+        type: boolean
+        default: false
 permissions:
   contents: read
 jobs:
@@ -27,6 +32,13 @@ jobs:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
         run: bun --no-env-file scripts/inspect-fee-worker-operations.ts
+      - name: Probe Solana RPCs from an unbound remote preview
+        if: inputs.probe_solana_rpc == true
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          SLOP_SOLANA_RPC_CANDIDATE: ${{ secrets.SLOP_SOLANA_RPC_CANDIDATE }}
+        run: bun --no-env-file scripts/probe-fee-solana-rpc.ts
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         if: always()
         with:
@@ -34,5 +46,6 @@ jobs:
           path: |
             ${{ runner.temp }}/fee-worker-bindings.json
             ${{ runner.temp }}/fee-worker-operations.json
+            ${{ runner.temp }}/fee-solana-rpc-probe.json
           if-no-files-found: error
           retention-days: 30
