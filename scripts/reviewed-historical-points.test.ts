@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test";
+import { createHash } from "node:crypto";
 import { gzipSync } from "node:zlib";
 import { shareImplementationPoints } from "../src/lib/implementation-allocation";
 import {
@@ -24,6 +25,7 @@ import {
 } from "./reviewed-historical-points";
 import {
   historicalPointsSql,
+  verifyHistoricalAcceptedSquashes,
   verifyHistoricalCensus,
   verifyHistoricalProtection,
   verifyHistoricalValueRecords,
@@ -1013,6 +1015,416 @@ test("owner-reviewed multiple origins use canonical weighted remainder without c
   ).toEqual(expected);
 });
 
+function promotionRestClient(
+  f: ReturnType<typeof acceptedSquashFixture>,
+  observed = f.promotion.commits.nodes.map((row) => ({
+    sha: row.commit.oid,
+    parents: row.commit.parents.nodes.map((parent) => ({ sha: parent.oid })),
+  })),
+) {
+  const pull = {
+    node_id: f.retirement.sourceId,
+    head: { sha: f.retirement.source.headSha },
+    base: { sha: "c".repeat(40) },
+    commits: f.retirement.source.commitCount,
+    merge_commit_sha: f.retirement.acceptedPromotion?.mergeSha,
+    merged_at: f.retirement.source.occurredAt,
+  };
+  return async <T>(path: string): Promise<T> => {
+    if (path.includes("/compare/"))
+      return { total_commits: pull.commits, commits: observed } as T;
+    if (path.includes("/commits?"))
+      return (path.includes("page=1") ? observed : []) as T;
+    if (path.includes("/pulls/")) return pull as T;
+    return { node_id: f.retirement.source.repositoryNodeId } as T;
+  };
+}
+
+function acceptedSquashFixture(bot = false) {
+  const f = duplicateRetirementFixture();
+  const retirement = f.retirement,
+    earlier = retirement.earlierSources[0];
+  const rawHead = `tree ${"2".repeat(40)}\nparent ${"a".repeat(40)}\nauthor Origin <origin@example.com> 1 +0000\ncommitter Origin <origin@example.com> 1 +0000\n\nOriginal head\n`;
+  const rawAccepted = `tree ${"3".repeat(40)}\nparent ${"b".repeat(40)}\nauthor Origin <origin@example.com> 1 +0000\ncommitter Maintainer <maintainer@example.com> 2 +0000\n\nAccepted squash\n`;
+  const oid = (raw: string) =>
+    createHash("sha1")
+      .update(`commit ${Buffer.byteLength(raw)}\0`)
+      .update(raw)
+      .digest("hex");
+  const sourceCommit = retirement.source.commits[0];
+  sourceCommit.sha = oid(rawAccepted);
+  sourceCommit.parentShas = ["b".repeat(40)];
+  sourceCommit.firstAcceptedSourceId = retirement.sourceId;
+  if (bot) sourceCommit.author = { id: "BOT", login: "robot", kind: "Bot" };
+  const squash = {
+    sourceId: earlier.sourceId,
+    sourceUrl: earlier.sourceUrl,
+    repositoryNodeId: earlier.repositoryNodeId,
+    headSha: oid(rawHead),
+    occurredAt: earlier.occurredAt ?? "",
+    author: bot ? sourceCommit.author : earlier.author,
+    commit: {
+      ...structuredClone(sourceCommit),
+      firstAcceptedSourceId: earlier.sourceId,
+    },
+    headCommit: rawHead,
+    acceptedCommit: rawAccepted,
+  };
+  retirement.earlierSources = [];
+  retirement.acceptedSquashes = [squash];
+  retirement.coverage[0].commitSha = sourceCommit.sha;
+  f.packet.sourceAudit.sources[1].headSha = squash.headSha;
+  const promotionHead = `tree ${"2".repeat(40)}\nparent ${sourceCommit.sha}\nparent ${"c".repeat(40)}\nauthor Owner <owner@example.com> 3 +0000\ncommitter Owner <owner@example.com> 3 +0000\n\nPromotion head\n`;
+  retirement.source.headSha = oid(promotionHead);
+  retirement.source.commits.push({
+    sha: retirement.source.headSha,
+    parentCount: 2,
+    parentShas: [sourceCommit.sha, "c".repeat(40)],
+    author: actor,
+    additions: null,
+    deletions: null,
+    firstAcceptedSourceId: retirement.sourceId,
+    files: [],
+    mergeResolution: {
+      commitSha: retirement.source.headSha,
+      parents: [sourceCommit.sha, "c".repeat(40)],
+      gitVersion: "git version 2.56.0",
+      automaticTree: "2".repeat(40),
+      resolvedTree: "2".repeat(40),
+      hadConflicts: false,
+      patch: "",
+      patchSha256: sha256Hex(""),
+      paths: [],
+    },
+  });
+  retirement.source.commitCount++;
+  f.packet.sourceAudit.sources[0].headSha = retirement.source.headSha;
+  const acceptedPromotionRaw = `tree ${"2".repeat(40)}\nparent ${"c".repeat(40)}\nparent ${retirement.source.headSha}\nauthor Owner <owner@example.com> 4 +0000\ncommitter Owner <owner@example.com> 4 +0000\n\nAccepted promotion\n`;
+  retirement.acceptedPromotion = {
+    headCommit: promotionHead,
+    mergeCommit: acceptedPromotionRaw,
+    mergeSha: oid(acceptedPromotionRaw),
+  };
+  const bind = () => {
+    retirement.evidence = JSON.stringify({
+      sourceId: retirement.sourceId,
+      workUnitId: retirement.workUnitId,
+      sourceSha256: hash(retirement.source),
+      earlierSourcesSha256: hash(retirement.earlierSources),
+      coverageSha256: hash(retirement.coverage),
+      acceptedSquashesSha256: hash(retirement.acceptedSquashes),
+      acceptedPromotionSha256: retirement.acceptedPromotion
+        ? hash(retirement.acceptedPromotion)
+        : null,
+    });
+    retirement.evidenceSha256 = sha256Hex(retirement.evidence);
+    const row = [...latestPoints(f.baseline).values()].find(
+      (r) => r.award.sourceId === retirement.sourceId,
+    );
+    if (!row) throw Error("Missing original fixture row");
+    f.expected = appendPointAwards(
+      f.baseline,
+      [{ ...row.award, amount: 0 }],
+      hash(retirement),
+      "slop-score-v2",
+      time,
+      new Map([
+        [
+          row.award.key,
+          {
+            sourceId: `owner_duplicate_${retirement.evidenceSha256}`,
+            effectiveAt: time,
+            reason:
+              "Owner-reviewed duplicate accepted work already rewarded by earlier sources.",
+          },
+        ],
+      ]),
+    );
+    f.packet.candidateDigest = hash(f.expected);
+  };
+  bind();
+  const current = {
+    id: squash.sourceId,
+    number: 2,
+    url: squash.sourceUrl,
+    merged: true,
+    mergedAt: squash.occurredAt,
+    headRefOid: squash.headSha,
+    repository: {
+      id: squash.repositoryNodeId,
+      nameWithOwner: "feedforagents/feed",
+    },
+    author: {
+      id: squash.author?.id,
+      login: squash.author?.login,
+      __typename: squash.author?.kind,
+    },
+    mergeCommit: {
+      oid: squash.commit.sha,
+      author: {
+        user: squash.commit.author
+          ? {
+              id: squash.commit.author.id,
+              login: squash.commit.author.login,
+              __typename: squash.commit.author.kind,
+            }
+          : null,
+      },
+      parents: {
+        nodes: (squash.commit.parentShas ?? []).map((oid) => ({ oid })),
+        pageInfo: { hasNextPage: false },
+      },
+    },
+  };
+  const promotion = {
+    id: retirement.sourceId,
+    headRefOid: retirement.source.headSha,
+    mergedAt: retirement.source.occurredAt,
+    repository: { id: retirement.source.repositoryNodeId },
+    mergeCommit: { oid: retirement.acceptedPromotion.mergeSha },
+    commits: {
+      totalCount: retirement.source.commits.length,
+      nodes: retirement.source.commits.map((commit) => ({
+        commit: {
+          oid: commit.sha,
+          parents: {
+            totalCount: commit.parentCount,
+            nodes: (commit.parentShas ?? []).map((oid) => ({ oid })),
+            pageInfo: { hasNextPage: false },
+          },
+        },
+      })),
+      pageInfo: { hasNextPage: false, endCursor: null },
+    },
+  };
+  return { ...f, squash, bind, current, promotion };
+}
+
+test("accepted squash retirement preserves an earlier human pool on a different base", async () => {
+  const f = acceptedSquashFixture();
+  await verifyHistoricalAcceptedSquashes(f.packet, {
+    get: promotionRestClient(f),
+    graphql: async <T>() =>
+      ({
+        nodes: [f.current],
+        node: {
+          id: f.retirement.sourceId,
+          headRefOid: f.retirement.source.headSha,
+          mergedAt: f.retirement.source.occurredAt,
+          repository: { id: f.retirement.source.repositoryNodeId },
+          mergeCommit: { oid: f.retirement.acceptedPromotion?.mergeSha },
+          commits: f.promotion.commits,
+        },
+      }) as T,
+  });
+  expect(
+    reconstructHistoricalPoints(f.packet, f.baseline, time, new Map()),
+  ).toEqual(f.expected);
+});
+
+for (const fault of [
+  "raw-head",
+  "raw-accepted",
+  "parent",
+  "path",
+  "author",
+  "duplicate-coverage",
+  "wrong-repository",
+  "wrong-head",
+  "late-acceptance",
+  "unrewarded",
+] as const)
+  test(`accepted squash retirement refuses ${fault}`, () => {
+    const f = acceptedSquashFixture();
+    if (fault === "raw-head") f.squash.headCommit += "changed";
+    if (fault === "raw-accepted") f.squash.acceptedCommit += "changed";
+    if (fault === "parent") f.squash.commit.parentShas = ["c".repeat(40)];
+    if (fault === "path" && f.squash.commit.files?.[0])
+      f.squash.commit.files[0].path = "foreign.ts";
+    if (fault === "author")
+      f.squash.commit.author = { id: "OTHER", login: "other", kind: "User" };
+    if (fault === "duplicate-coverage")
+      f.retirement.coverage.push({ ...f.retirement.coverage[0] });
+    if (fault === "wrong-repository") f.squash.repositoryNodeId = "R_other";
+    if (fault === "wrong-head") f.squash.headSha = "c".repeat(40);
+    if (fault === "late-acceptance")
+      f.squash.occurredAt = f.retirement.source.occurredAt ?? "";
+    if (fault === "unrewarded") {
+      const row = [...latestPoints(f.baseline).values()].find(
+        (r) => r.award.sourceId === f.squash.sourceId,
+      );
+      if (!row) throw Error("Missing prior fixture row");
+      f.baseline = appendPointAwards(
+        f.baseline,
+        [{ ...row.award, amount: 0 }],
+        "f".repeat(64),
+        "slop-score-v2",
+        time,
+      );
+      f.packet.baselineDigest = hash(f.baseline);
+      f.packet.baselineRevisionCount = f.baseline.revisions.length;
+      f.packet.corrections.baseline = createPointsCorrectionBaseline(
+        f.baseline,
+      );
+    }
+    f.bind();
+    expect(() =>
+      reconstructHistoricalPoints(f.packet, f.baseline, time, new Map()),
+    ).toThrow();
+  });
+
+for (const fault of [
+  "merge-sha",
+  "source-id",
+  "repository",
+  "head",
+  "date",
+  "parent",
+  "author",
+  "commit-author",
+  "commit-author-kind",
+  "missing",
+] as const)
+  test(`fresh accepted squash authority refuses ${fault}`, async () => {
+    const f = acceptedSquashFixture(),
+      current = structuredClone(f.current);
+    if (fault === "merge-sha") current.mergeCommit.oid = "c".repeat(40);
+    if (fault === "source-id") current.id = "OTHER";
+    if (fault === "repository") current.repository.id = "R_other";
+    if (fault === "head") current.headRefOid = "c".repeat(40);
+    if (fault === "date")
+      current.mergedAt = f.retirement.source.occurredAt ?? "";
+    if (fault === "parent")
+      current.mergeCommit.parents.nodes[0].oid = "c".repeat(40);
+    if (fault === "author") current.author.id = "OTHER";
+    if (fault === "commit-author" && current.mergeCommit.author.user)
+      current.mergeCommit.author.user.id = "OTHER";
+    if (fault === "commit-author-kind" && current.mergeCommit.author.user)
+      current.mergeCommit.author.user.__typename = "Bot";
+    await expect(
+      verifyHistoricalAcceptedSquashes(f.packet, {
+        get: promotionRestClient(f),
+        graphql: async <T>() =>
+          ({
+            nodes: [fault === "missing" ? null : current],
+            node: {
+              id: f.retirement.sourceId,
+              headRefOid: f.retirement.source.headSha,
+              mergedAt: f.retirement.source.occurredAt,
+              repository: { id: f.retirement.source.repositoryNodeId },
+              mergeCommit: { oid: f.retirement.acceptedPromotion?.mergeSha },
+              commits: f.promotion.commits,
+            },
+          }) as T,
+      }),
+    ).rejects.toThrow();
+  });
+
+for (const fault of [
+  "null-original",
+  "unknown-kind",
+  "wrong-kind",
+  "file-count",
+  "empty-files",
+  "missing-coverage",
+  "duplicate-source",
+] as const)
+  test(`accepted squash structural refusal ${fault}`, () => {
+    const f = acceptedSquashFixture();
+    if (fault === "null-original") f.squash.author = null;
+    if (fault === "unknown-kind" && f.squash.author)
+      f.squash.author.kind = "Organization";
+    if (fault === "wrong-kind" && f.squash.commit.author)
+      f.squash.commit.author.kind = "Bot";
+    if (fault === "file-count") f.squash.commit.additions = 2;
+    if (fault === "empty-files") f.squash.commit.files = [];
+    if (fault === "missing-coverage") f.retirement.coverage = [];
+    if (fault === "duplicate-source")
+      f.retirement.acceptedSquashes?.push(structuredClone(f.squash));
+    f.bind();
+    expect(() =>
+      reconstructHistoricalPoints(f.packet, f.baseline, time, new Map()),
+    ).toThrow();
+  });
+
+test("accepted bot squash remains excluded without a human reward pool", () => {
+  const f = acceptedSquashFixture(true);
+  const row = [...latestPoints(f.baseline).values()].find(
+    (r) => r.award.sourceId === f.squash.sourceId,
+  );
+  if (!row) throw Error("Missing prior fixture row");
+  Object.assign(
+    f.baseline,
+    appendPointAwards(
+      f.baseline,
+      [{ ...row.award, amount: 0 }],
+      "f".repeat(64),
+      "slop-score-v2",
+      time,
+    ),
+  );
+  f.packet.baselineDigest = hash(f.baseline);
+  f.packet.baselineRevisionCount = f.baseline.revisions.length;
+  f.packet.corrections.baseline = createPointsCorrectionBaseline(f.baseline);
+  const priorCandidate = f.packet.corrections.candidates.find(
+    (candidate) => candidate.sourceId === f.squash.sourceId,
+  );
+  const priorRow = latestPoints(f.baseline).get(row.award.key);
+  if (!priorCandidate || !priorRow) throw Error("Missing prior fixture");
+  priorCandidate.expectedPredecessors = [
+    { key: row.award.key, revisionId: priorRow.id },
+  ];
+  f.bind();
+  expect(
+    hash(reconstructHistoricalPoints(f.packet, f.baseline, time, new Map())),
+  ).toEqual(f.packet.candidateDigest);
+  f.squash.author = actor;
+  f.bind();
+  expect(() =>
+    reconstructHistoricalPoints(f.packet, f.baseline, time, new Map()),
+  ).toThrow();
+});
+
+test("fresh squash identity recognizes GitHub's reserved bot commit login", async () => {
+  const f = acceptedSquashFixture(true);
+  if (!f.current.mergeCommit.author.user) throw Error("Missing bot fixture");
+  f.current.mergeCommit.author.user.__typename = "User";
+  f.current.mergeCommit.author.user.login = "robot[bot]";
+  await verifyHistoricalAcceptedSquashes(f.packet, {
+    get: promotionRestClient(f),
+    graphql: async <T>() =>
+      ({
+        nodes: [f.current],
+        node: {
+          id: f.retirement.sourceId,
+          headRefOid: f.retirement.source.headSha,
+          mergedAt: f.retirement.source.occurredAt,
+          repository: { id: f.retirement.source.repositoryNodeId },
+          mergeCommit: { oid: f.retirement.acceptedPromotion?.mergeSha },
+          commits: f.promotion.commits,
+        },
+      }) as T,
+  });
+  f.current.mergeCommit.author.user.login = "robot";
+  await expect(
+    verifyHistoricalAcceptedSquashes(f.packet, {
+      get: promotionRestClient(f),
+      graphql: async <T>() =>
+        ({
+          nodes: [f.current],
+          node: {
+            id: f.retirement.sourceId,
+            headRefOid: f.retirement.source.headSha,
+            mergedAt: f.retirement.source.occurredAt,
+            repository: { id: f.retirement.source.repositoryNodeId },
+            mergeCommit: { oid: f.retirement.acceptedPromotion?.mergeSha },
+            commits: f.promotion.commits,
+          },
+        }) as T,
+    }),
+  ).rejects.toThrow();
+});
+
 test("owner-reviewed origins with a tied remainder break it by actor ID like the automatic split", () => {
   const f = recipientExceptionFixture();
   const c = f.packet.recipientCorrections[0];
@@ -1083,4 +1495,154 @@ test("owner-reviewed origins with a tied remainder break it by actor ID like the
   expect(
     reconstructHistoricalPoints(f.packet, f.baseline, time, new Map()),
   ).toEqual(expected);
+});
+
+for (const fault of ["missing", "changed-tree", "changed-parent"] as const)
+  test(`accepted squash promotion refuses ${fault}`, () => {
+    const f = acceptedSquashFixture();
+    const proof = f.retirement.acceptedPromotion;
+    if (!proof) throw Error("Missing fixture");
+    if (fault === "missing") delete f.retirement.acceptedPromotion;
+    if (fault === "changed-tree")
+      proof.mergeCommit = proof.mergeCommit.replace(
+        `tree ${"2".repeat(40)}`,
+        `tree ${"5".repeat(40)}`,
+      );
+    if (fault === "changed-parent")
+      proof.mergeCommit = proof.mergeCommit.replace(
+        `parent ${f.retirement.source.headSha}`,
+        `parent ${"5".repeat(40)}`,
+      );
+    if (fault !== "missing")
+      proof.mergeSha = createHash("sha1")
+        .update(`commit ${Buffer.byteLength(proof.mergeCommit)}\0`)
+        .update(proof.mergeCommit)
+        .digest("hex");
+    f.bind();
+    expect(() =>
+      reconstructHistoricalPoints(f.packet, f.baseline, time, new Map()),
+    ).toThrow();
+  });
+
+test("fresh accepted squash promotion refuses a changed final merge", async () => {
+  const f = acceptedSquashFixture();
+  await expect(
+    verifyHistoricalAcceptedSquashes(f.packet, {
+      get: promotionRestClient(f),
+      graphql: async <T>() =>
+        ({
+          node: {
+            id: f.retirement.sourceId,
+            headRefOid: f.retirement.source.headSha,
+            mergedAt: f.retirement.source.occurredAt,
+            repository: { id: f.retirement.source.repositoryNodeId },
+            mergeCommit: { oid: "f".repeat(40) },
+          },
+        }) as T,
+    }),
+  ).rejects.toThrow();
+});
+
+for (const fault of [
+  "omitted",
+  "substituted",
+  "wrong-parent",
+  "duplicate",
+  "count",
+  "head",
+  "merge",
+] as const)
+  test(`fresh promotion membership refuses ${fault}`, async () => {
+    const f = acceptedSquashFixture();
+    const observed = f.promotion.commits.nodes.map((row) => ({
+      sha: row.commit.oid,
+      parents: row.commit.parents.nodes.map((parent) => ({ sha: parent.oid })),
+    }));
+    if (fault === "omitted") observed.pop();
+    if (fault === "substituted") observed[0].sha = "f".repeat(40);
+    if (fault === "wrong-parent") observed[0].parents[0].sha = "f".repeat(40);
+    if (fault === "duplicate") observed[1] = observed[0];
+    const get = promotionRestClient(f, observed);
+    await expect(
+      verifyHistoricalAcceptedSquashes(f.packet, {
+        graphql: async <T>() =>
+          ({ node: f.promotion, nodes: [f.current] }) as T,
+        get: async <T>(path: string) => {
+          const value = await get<{
+            commits: number;
+            head: { sha: string };
+            merge_commit_sha: string;
+          }>(path);
+          if (path.includes("/pulls/") && !path.includes("/commits")) {
+            if (fault === "count") value.commits++;
+            if (fault === "head") value.head.sha = "f".repeat(40);
+            if (fault === "merge") value.merge_commit_sha = "f".repeat(40);
+          }
+          return value as T;
+        },
+      }),
+    ).rejects.toThrow();
+  });
+
+test("fresh promotion membership uses the immutable range beyond GitHub's listing cap", async () => {
+  const f = acceptedSquashFixture();
+  let compared = false;
+  const get = promotionRestClient(f);
+  await verifyHistoricalAcceptedSquashes(f.packet, {
+    graphql: async <T>() => ({ node: f.promotion, nodes: [f.current] }) as T,
+    get: async <T>(path: string) => {
+      if (path.includes("/compare/")) compared = true;
+      return get<T>(path);
+    },
+  });
+  expect(compared).toBe(true);
+});
+
+test("fresh squash promotion verifies all 416 immutable-range commits after a capped listing", async () => {
+  const f = acceptedSquashFixture();
+  const extra = Array.from({ length: 414 }, (_, i) => ({
+    sha: (1000 + i).toString(16).padStart(40, "0"),
+    parentCount: 1,
+    parentShas: ["c".repeat(40)],
+    author: actor,
+    additions: 1,
+    deletions: 0,
+    firstAcceptedSourceId: f.retirement.sourceId,
+    files: [{ path: `extra-${i}.ts`, additions: 1, deletions: 0 }],
+  }));
+  f.retirement.source.commits.push(...extra);
+  f.retirement.source.commitCount = 416;
+  const all = f.retirement.source.commits.map((c) => ({
+    sha: c.sha,
+    parents: (c.parentShas ?? []).map((sha) => ({ sha })),
+  }));
+  let compares = 0;
+  await verifyHistoricalAcceptedSquashes(f.packet, {
+    graphql: async <T>() => ({ node: f.promotion, nodes: [f.current] }) as T,
+    get: async <T>(path: string) => {
+      const page = Number(
+        new URL(`https://api.github.com${path}`).searchParams.get("page"),
+      );
+      if (path.includes("/compare/")) {
+        compares++;
+        return {
+          total_commits: 416,
+          commits: all.slice((page - 1) * 100, page * 100),
+        } as T;
+      }
+      if (path.includes("/commits?"))
+        return all.slice((page - 1) * 100, Math.min(page * 100, 250)) as T;
+      if (path.includes("/pulls/"))
+        return {
+          node_id: f.retirement.sourceId,
+          head: { sha: f.retirement.source.headSha },
+          base: { sha: "c".repeat(40) },
+          commits: 416,
+          merge_commit_sha: f.retirement.acceptedPromotion?.mergeSha,
+          merged_at: f.retirement.source.occurredAt,
+        } as T;
+      return { node_id: f.retirement.source.repositoryNodeId } as T;
+    },
+  });
+  expect(compares).toBe(5);
 });
