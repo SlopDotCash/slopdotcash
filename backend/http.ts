@@ -33,7 +33,7 @@ export const JSON_HEADERS = {
   "x-content-type-options": "nosniff",
 };
 
-export type JsonOptions = {
+type JsonOptions = {
   /** Defaults to `private, no-store`. */
   cacheControl?: string;
   /** Contract and policy headers that extend or replace the defaults. */
@@ -88,6 +88,18 @@ export async function readJsonObject(
     : null;
 }
 
+/** A bounded JSON object body; anything else refuses the request with 400. */
+export async function requireJsonObject(
+  request: Request,
+  maximum: number,
+  label: string,
+): Promise<Record<string, unknown>> {
+  const value = await readJsonObject(request, maximum, label);
+  if (value === null)
+    fail(400, "invalid_request", "Request body must be a JSON object");
+  return value;
+}
+
 /**
  * Splits values into `IN (...)` batches. D1 allows 100 bound parameters per
  * statement, so callers keep a margin.
@@ -99,7 +111,7 @@ export function chunked<T>(values: readonly T[], size = 90): T[][] {
   return out;
 }
 
-export type ApiErrorOptions = {
+type ApiErrorOptions = {
   /** Fixed log label; never request content, identifiers or secrets. */
   label: string;
   /** The API's own response builder, so its headers stay unchanged. */

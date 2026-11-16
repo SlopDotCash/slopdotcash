@@ -2,31 +2,21 @@
 import { ed25519 } from "@noble/curves/ed25519.js";
 import { hexToBytes } from "@noble/hashes/utils.js";
 import { recoverAddress } from "viem";
-import {
-  type MonthlyAttestationPlan,
-  type MonthlyAttestationRequest,
-  prepareMonthlyAttestation,
-} from "../../backend/payments/monthly-attestation";
+import { prepareMonthlyAttestation } from "../../backend/payments/monthly-attestation";
+import type {
+  MonthlyAttestationPlan,
+  MonthlyAttestationRequest,
+  MonthlyAuthorization,
+} from "../../backend/payments/monthly-attestation-types";
+import type { MonthlyAllocationEntry } from "../../contracts/evm/adapter";
 import {
   type EvmMonthlyReservation,
   evmMonthlyReserveDigest,
-  type MonthlyAllocationEntry,
-} from "../../contracts/evm/adapter";
+} from "../../contracts/evm/monthly-reserve";
 import { decodeBase58Bytes } from "../../src/lib/base58";
 import { ESCROW_NETWORKS } from "../../src/lib/escrow-policy.mjs";
-import type { JournalStore } from "./core";
+import type { JournalStore } from "./binding-shared";
 
-export interface MonthlyAuthorization {
-  plan: MonthlyAttestationPlan;
-  /** Hex-encoded signature, without 0x. Public authorization; no private key. */
-  signatureHex: string;
-  /** Original independently signed V1 evidence. A pending legacy transaction
-   * can still win admission after V2 publication; retain it for reconciliation. */
-  legacyAuthorization?: {
-    plan: MonthlyAttestationPlan;
-    signatureHex: string;
-  };
-}
 interface Intent {
   snapshotSha256: string;
   messageHex: string;

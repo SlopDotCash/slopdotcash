@@ -102,6 +102,19 @@ test("manifest cannot fetch outside the fixed part namespace or exceed existing 
   ).toThrow();
 });
 
+test("a snapshot over the former 32 MiB bound still publishes byte-for-byte", async () => {
+  const large = new Uint8Array(33 * 1024 * 1024).fill(0x20);
+  large.set(new TextEncoder().encode('{"size":"large"}'));
+  const { root, parts: largeParts } = encodeLeaderboardParts(large);
+  const byPath = new Map(largeParts.map((part) => [part.path, part.bytes]));
+  const restored = await readLeaderboardBytes(root, async (path: string) => {
+    const bytes = byPath.get(path);
+    if (!bytes) throw new Error("Missing test part");
+    return bytes;
+  });
+  expect(Buffer.compare(large, restored)).toBe(0);
+});
+
 test("publication and local consumers preserve original digest and support rebuilding a sharded snapshot", async () => {
   const dir = await mkdtemp(join(tmpdir(), "slop-leaderboard-parts-"));
   const path = join(dir, "data/leaderboard.json");

@@ -12,7 +12,8 @@ import {
   readRecord,
   exactKeys as sharedExactKeys,
 } from "./record-validation.mjs";
-import { assertRewardAsset } from "./reward-asset.mjs";
+import { assertRewardAsset, formatAssetSymbol } from "./reward-asset.mjs";
+import { securityBountyShares } from "./verified-security-split.ts";
 
 /**
  * Public terms of a private security bounty program (PRD SEC-01, SEC-05,
@@ -47,6 +48,43 @@ export function isFullAwardSplit(split) {
       SECURITY_FULL_AWARD_SPLIT.researcherBasisPoints &&
     split?.slopBasisPoints === SECURITY_FULL_AWARD_SPLIT.slopBasisPoints
   );
+}
+
+/**
+ * Findings that never qualify for any Slop security program (operator
+ * decision, 16 November 2026). The program page lists them, and private
+ * screening and analysis receive them with each program's own lines.
+ */
+export const SECURITY_DEFAULT_EXCLUSIONS = Object.freeze([
+  "No runnable proof against the published source revision (theory, scanner output, best-practice notes)",
+  "Known issues, public issues, and risks the project documents as accepted or by design (for example owner, admin or upgrade powers)",
+  "Attacks that need a compromised owner, admin, attester or other privileged key, or the reporter's own stolen keys or accounts",
+  "Front end, website, DNS, email, phishing and social engineering",
+  "Denial of service by traffic volume, spam, or gas griefing with no loss of funds",
+  "Testnets, old revisions, and code outside the scoped commit",
+  "Third-party dependencies outside the listed scope",
+  "Duplicates: only the first qualifying reporter is considered",
+  "Findings made by testing live systems or touching other people's funds",
+  "Reports the reporter cannot reproduce or explain, including unverified AI output",
+]);
+/** Bounds of a program owner's own "does not qualify" lines. */
+export const SECURITY_EXCLUSION_LIMITS = Object.freeze({
+  maxLines: 20,
+  minLength: 3,
+  maxLength: 300,
+});
+
+/**
+ * The program owner's extra lines. Terms published before the field existed
+ * have none.
+ */
+export function programExclusions(scope) {
+  return scope?.excludedFindings ?? [];
+}
+
+/** The Slop-wide lines followed by the program owner's own lines. */
+export function securityExclusions(scope) {
+  return [...SECURITY_DEFAULT_EXCLUSIONS, ...programExclusions(scope)];
 }
 
 const CURRENCIES = Object.freeze({
@@ -124,8 +162,14 @@ export function securityBountySplit(grossMinor, split = SECURITY_SPLIT) {
   if (!isBaseUnits(grossMinor) || grossMinor === "0")
     throw new TypeError("gross amount must be positive integer minor units");
   const gross = BigInt(grossMinor);
-  if (isFullAwardSplit(split))
-    return { grossMinor, researcherMinor: grossMinor, slopMinor: "0" };
+  if (isFullAwardSplit(split)) {
+    const shares = securityBountyShares(gross, true);
+    return {
+      grossMinor,
+      researcherMinor: shares.researcher.toString(),
+      slopMinor: shares.slop.toString(),
+    };
+  }
   if (
     split?.researcherBasisPoints !== SECURITY_SPLIT.researcherBasisPoints ||
     split?.slopBasisPoints !== SECURITY_SPLIT.slopBasisPoints
@@ -135,10 +179,11 @@ export function securityBountySplit(grossMinor, split = SECURITY_SPLIT) {
     throw new RangeError(
       "gross amount must be divisible by four minor units so the 75/25 split is exact",
     );
+  const shares = securityBountyShares(gross, false);
   return {
     grossMinor,
-    researcherMinor: ((gross * 3n) / 4n).toString(),
-    slopMinor: (gross / 4n).toString(),
+    researcherMinor: shares.researcher.toString(),
+    slopMinor: shares.slop.toString(),
   };
 }
 
@@ -147,7 +192,7 @@ export function formatSecurityAmount(minorUnits, amount) {
   const number = formatBaseUnits(minorUnits, amount.decimals);
   return amount.currency === "USD" && !amount.asset
     ? `$${number}`
-    : `${number} ${amount.asset?.symbol ?? amount.currency}`;
+    : `${number} ${formatAssetSymbol(amount.asset?.symbol ?? amount.currency, amount.asset?.kind)}`;
 }
 
 function validateApprovers(value) {
@@ -292,6 +337,7 @@ export function assertSecurityBountyTerms(value, { repositories, reward }) {
     [
       "deployments",
       "excludedDependencies",
+      ...(scope.excludedFindings === undefined ? [] : ["excludedFindings"]),
       "includedAssets",
       "lossDefinition",
       "severityRubric",
@@ -331,6 +377,25 @@ export function assertSecurityBountyTerms(value, { repositories, reward }) {
     50,
     (entry, field) => text(entry, field, 200, 2),
   );
+  if (scope.excludedFindings !== undefined) {
+    const findings = list(
+      scope.excludedFindings,
+      "scope.excludedFindings",
+      0,
+      SECURITY_EXCLUSION_LIMITS.maxLines,
+      (entry, field) =>
+        text(
+          entry,
+          field,
+          SECURITY_EXCLUSION_LIMITS.maxLength,
+          SECURITY_EXCLUSION_LIMITS.minLength,
+          /^[^\r\n]+$/u,
+        ),
+    );
+    const keys = findings.map((entry) => entry.toLowerCase());
+    if (new Set(keys).size !== keys.length)
+      fail("scope.excludedFindings", "contains duplicates");
+  }
   text(scope.testingPermission, "scope.testingPermission", 2000, 12);
   text(scope.severityRubric, "scope.severityRubric", 2000, 12);
   text(scope.lossDefinition, "scope.lossDefinition", 2000, 12);

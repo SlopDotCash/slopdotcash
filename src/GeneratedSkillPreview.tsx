@@ -2,6 +2,7 @@ import { CircleAlert } from "lucide-react";
 import { useEffect, useState } from "react";
 import contributorTemplate from "../skills/project-contributor-template/SKILL.md?raw";
 import reviewerTemplate from "../skills/project-reviewer-template/SKILL.md?raw";
+import { bytesToHex } from "./lib/byte-encoding";
 import { errorMessage } from "./lib/errors";
 import {
   renderProjectSkill,
@@ -48,9 +49,7 @@ export function GeneratedSkillPreview({
         if (active)
           setDigestState({
             source: manifestText,
-            digest: Array.from(new Uint8Array(digest), (byte) =>
-              byte.toString(16).padStart(2, "0"),
-            ).join(""),
+            digest: bytesToHex(new Uint8Array(digest)),
           });
       })
       .catch(() => {

@@ -149,12 +149,6 @@ export function reportNeedsAction(submission: Submission): boolean {
     : !["receipt-verified", "abandoned"].includes(submission.state);
 }
 
-export function privateReportHref(submission: Submission): string {
-  const query = new URLSearchParams({ submission: submission.id });
-  if (submission.caseId) query.set("case", submission.caseId);
-  return `/security?${query}`;
-}
-
 export const GRANT_ERRORS: Record<string, string> = {
   grant_identity_mismatch:
     "GitHub authorized a different account than the one signed in to Slop. Nothing was sent.",

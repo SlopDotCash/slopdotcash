@@ -2,6 +2,7 @@
 import { execFile, execFileSync } from "node:child_process";
 import { writeFile } from "node:fs/promises";
 import { promisify } from "node:util";
+import { repositoriesCountedFor } from "../src/lib/project-repositories.mjs";
 import { findProject } from "../src/lib/projects.mjs";
 
 const execFileAsync = promisify(execFile);
@@ -46,7 +47,7 @@ const coverage: {
   scanned: number;
   complete: boolean;
 }[] = [];
-for (const repo of project.repositories) {
+for (const repo of repositoriesCountedFor(project, monthStart.getTime())) {
   const [owner, name] = repo.id.split("/");
   let cursor: string | null = null,
     previousCreation = -Infinity;

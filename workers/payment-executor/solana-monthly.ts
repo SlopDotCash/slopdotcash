@@ -1,10 +1,12 @@
 import { ed25519 } from "@noble/curves/ed25519.js";
 import { sha256 } from "@noble/hashes/sha2.js";
 import { bytesToHex, hexToBytes } from "@noble/hashes/utils.js";
+import type { MonthlyAuthorization } from "../../backend/payments/monthly-attestation-types";
 import {
+  MONTH_PLEDGE_DISCRIMINATOR,
+  MONTH_PLEDGE_SIZE,
   OBLIGATION_DISCRIMINATOR,
   OBLIGATION_SIZE,
-  PROJECT_SIZE,
   type SolanaEscrowConfig,
   solanaAccount,
   solanaAllocationProof,
@@ -14,6 +16,7 @@ import {
   solanaBase58,
   solanaDigest,
   solanaMonthlyMessage,
+  solanaMonthPledgeAddress,
   solanaPubkey,
   solanaRpc,
   solanaUint,
@@ -29,17 +32,19 @@ import {
   pda,
   SYSTEM,
 } from "../../contracts/solana/transactions";
+import { encodeBase64 } from "../../src/lib/byte-encoding";
 import {
   acceptsPayoutFee,
   ordinaryFee,
 } from "../../src/lib/payments/contracts";
-import type { MonthlyAuthorization } from "./monthly";
 import {
   broadcastSolanaTransaction,
   type PublicSolanaExecutorEnvironment,
   preflightSolanaDeployment,
   readSolanaAccount,
+  readSolanaProject,
   solanaTransactionStatus,
+  verifiedSignerSignature,
 } from "./solana";
 
 const discriminator = (name: string) =>
@@ -128,20 +133,13 @@ async function submit(
     if (retired && !existing) throw new Error("Monthly attempt disappeared");
     if (existing)
       await store.put(`${key}:retired:${existing.generation}`, existing);
-    const signature = await env.SOLANA_SIGNER.signMessage(msg);
-    if (
-      signature.length !== 64 ||
-      !ed25519.verify(signature, msg, bytes(env.SOLANA_SIGNER.address), {
-        zip215: false,
-      })
-    )
-      throw new Error("Invalid signer response");
+    const signature = await verifiedSignerSignature(env.SOLANA_SIGNER, msg);
     const raw = concat(Uint8Array.of(1), signature, msg);
     if (raw.length > 1232) throw new Error("Monthly transaction too large");
     const candidate: Attempt = {
       fingerprint,
       transactionId: solanaBase58(signature),
-      raw: btoa(String.fromCharCode(...raw)),
+      raw: encodeBase64(raw),
       lastValidBlockHeight: latest.value.lastValidBlockHeight,
       generation: (existing?.generation ?? 0) + 1,
     };
@@ -345,10 +343,9 @@ export async function submitSolanaMonthly(
         alreadyCommitted: false,
         notAdmitted: true,
       };
-    const state = await readSolanaAccount(
+    const state = await readSolanaProject(
       config,
       config.projectPda,
-      PROJECT_SIZE,
       discriminator("Project"),
     );
     if (!state) throw new Error("Project missing");
@@ -367,6 +364,20 @@ export async function submitSolanaMonthly(
     [48, 65535, 16, 65535, 112, signed.length, 65535].forEach((v, i) => {
       view.setUint16(2 + i * 2, v, true);
     });
+    // An owner's pledge for this month lets the program reserve it with the
+    // monthly switch off. Before the program upgrade, or without a pledge,
+    // the account is absent and the instruction is unchanged.
+    const pledgeAddress = solanaMonthPledgeAddress(
+      config.programId,
+      config.projectPda,
+      Number(plan.request.period.replace("-", "")),
+    );
+    const pledge = await readSolanaAccount(
+      config,
+      pledgeAddress,
+      MONTH_PLEDGE_SIZE,
+      MONTH_PLEDGE_DISCRIMINATOR,
+    );
     return submit(env, config, `${journal}:root`, [
       {
         program: "Ed25519SigVerify111111111111111111111111111",
@@ -382,6 +393,7 @@ export async function submitSolanaMonthly(
           monthMeta,
           { key: "Sysvar1nstructions1111111111111111111111111", write: false },
           system,
+          ...(pledge ? [{ key: pledgeAddress, write: true }] : []),
         ],
         data: instructionData(
           "commit_monthly",

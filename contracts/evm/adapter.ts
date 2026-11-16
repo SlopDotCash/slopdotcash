@@ -105,7 +105,7 @@ export type EvmFactoryConfig = EvmRpc &
 
 /** Amount fields keep their historical `*Micro` names; they carry token base units of any decimals as
  * decimal strings up to uint128. */
-export interface FinalizedEscrowEvent {
+interface FinalizedEscrowEvent {
   transactionId: string;
   eventIndex: number;
   blockId: string;
@@ -124,7 +124,7 @@ const toHex = (bytes: Uint8Array) =>
 const keccakText = (text: string) =>
   toHex(keccak_256(new TextEncoder().encode(text)));
 /** Topic 0 of every ProjectEscrow v4 and EscrowFactory event, from its canonical signature. */
-export const EVM_ESCROW_EVENT_SIGNATURES = Object.freeze({
+const EVM_ESCROW_EVENT_SIGNATURES = Object.freeze({
   Deposited: "Deposited(address,uint128)",
   AwardCommitted: "AwardCommitted(bytes32,uint64,uint128,uint128,bytes32)",
   DestinationBound: "DestinationBound(uint64,address,uint64,bytes32,uint64)",
@@ -209,8 +209,11 @@ async function rpc(config: EvmRpc, method: string, params: unknown[]) {
   if (body.id !== 1) throw new EvmRpcUnavailable("RPC request failed");
   if (body.error) {
     const error = object(body.error);
+    // Providers report an empty revert either with data "0x" or with no data
+    // field at all (mainnet.base.org answers {"code":3,"message":"execution
+    // reverted"}). A revert that carries data is never empty.
     throw new EvmRpcError(
-      error.data === "0x" &&
+      (error.data === "0x" || !("data" in error)) &&
         typeof error.message === "string" &&
         /revert/i.test(error.message),
     );
@@ -241,16 +244,6 @@ export class EvmRpcUnavailable extends EvmRpcError {
     super(false, message, options);
   }
 }
-export {
-  buildCommitMonthlyLeafCalldata,
-  buildReserveMonthlyCalldata,
-  EvmMonthlyAlreadyAdmitted,
-  type EvmMonthlyReservation,
-  evmMonthlyReserveDigest,
-  evmMonthlySumTree,
-  prepareEvmMonthlyReservation,
-  readEvmMonthlyReserve,
-} from "./monthly-reserve";
 export { rpc as evmRpc };
 
 /** Explicit wallet-consent action: read the actor's current version only from a verified vault. */
@@ -271,7 +264,7 @@ export async function readEvmBindingVersion(
 }
 
 /** The reviewed factory rotates the identity authority only after this notice period. */
-export const EVM_AUTHORITY_ROTATION_DELAY = 0n;
+const EVM_AUTHORITY_ROTATION_DELAY = 0n;
 function codeSha256(code: unknown) {
   if (typeof code !== "string" || !/^0x(?:[0-9a-fA-F]{2})+$/.test(code))
     throw new Error("Escrow runtime code unavailable");
@@ -313,7 +306,7 @@ const addressWord = (value: string) =>
   `0x${value.slice(2).toLowerCase().padStart(64, "0")}`;
 
 /** The ProjectEscrow v5 purpose for a payout policy: 0 ordinary awards, 1 private bounties. */
-export function evmVaultPurpose(policy: PayoutPolicy = "ordinary") {
+function evmVaultPurpose(policy: PayoutPolicy = "ordinary") {
   return policy === "security-bounty" ? 1n : 0n;
 }
 /** EscrowFactory.vaultKey: keccak256(abi.encode(owner, projectId, token, purpose)), also the CREATE2 salt. */
@@ -974,7 +967,7 @@ export function buildBindCalldata(
   const signature = input.walletSignature.slice(2).toLowerCase();
   return `0xac11944e${word(input.githubUserId)}${input.destination.slice(2).toLowerCase().padStart(64, "0")}${word(input.expectedVersion)}${hash(input.claimDigest).slice(2)}${word(input.expiresAt)}${"c0".padStart(64, "0")}${"41".padStart(64, "0")}${signature.padEnd(192, "0")}`;
 }
-export interface EvmAuthorityRotation {
+interface EvmAuthorityRotation {
   factory: string;
   identityAuthority: string;
   /** Null when no rotation is proposed. */
@@ -1054,7 +1047,7 @@ export function buildWithdrawCalldata(grossMicro: string | bigint) {
   return `0x${selector("withdrawUnused(uint128)")}${amountWord(grossMicro)}`;
 }
 /** The owner's monthly commitment setting: a uint128 cap and the on/off flag. */
-export interface EvmMonthlyCommitment {
+interface EvmMonthlyCommitment {
   cap: string;
   enabled: boolean;
 }
@@ -1258,13 +1251,26 @@ export async function prepareEvmVaultCreation(
   return { existingVault: null, transaction };
 }
 export class EvmVaultCreationFailed extends Error {}
+/**
+ * The creation is in a block that is not final and does not verify against
+ * this configuration there. Nothing is refused before finality: the block can
+ * still change, and another reviewed configuration may match.
+ */
+export class EvmVaultCreationUnsettled extends Error {}
 
-/** Exact finalized creation, not a user-supplied deployment assertion. */
+/**
+ * Exact creation, not a user-supplied deployment assertion. A finalized
+ * creation answers `finalized`. With `acceptIncluded`, a successful creation in
+ * a canonical block that is not final yet answers `included` after the same
+ * checks at its own block; that answer is provisional and never a registration.
+ * An unmined creation answers null.
+ */
 export async function verifyEvmVaultCreation(
   config: EvmFactoryConfig,
   input: EvmVaultCreation,
   transactionId: string,
-) {
+  { acceptIncluded = false }: { acceptIncluded?: boolean } = {},
+): Promise<{ vault: string; evidence: "finalized" | "included" } | null> {
   const transactionHash = hash(transactionId);
   // Read independent facts together and check them in the original order, so
   // the first failed check keeps its refusal.
@@ -1277,7 +1283,49 @@ export async function verifyEvmVaultCreation(
   if (!receiptValue) return null;
   const receipt = object(receiptValue);
   const finalized = object(settled(finalizedRead));
-  if (quantity(receipt.blockNumber) > quantity(finalized.number)) return null;
+  const final = quantity(receipt.blockNumber) <= quantity(finalized.number);
+  if (!final) {
+    if (!acceptIncluded) return null;
+    try {
+      return {
+        vault: await creationVaultAt(
+          config,
+          input,
+          transactionHash,
+          receipt,
+          transaction,
+          false,
+        ),
+        evidence: "included",
+      };
+    } catch (error) {
+      // An unread chain is still a retry. Any other mismatch may be a block
+      // that is being replaced; only a finalized creation can be refused.
+      if (error instanceof EvmRpcUnavailable) throw error;
+      throw new EvmVaultCreationUnsettled("The creation is not finalized.");
+    }
+  }
+  return {
+    vault: await creationVaultAt(
+      config,
+      input,
+      transactionHash,
+      receipt,
+      transaction,
+      true,
+    ),
+    evidence: "finalized",
+  };
+}
+/** The creation checks at the receipt's block, and at the finalized block when final. */
+async function creationVaultAt(
+  config: EvmFactoryConfig,
+  input: EvmVaultCreation,
+  transactionHash: string,
+  receipt: RpcObject,
+  transaction: PromiseSettledResult<unknown>,
+  final: boolean,
+) {
   const [canonicalBlock, vaultRead] = await Promise.allSettled([
     rpc(config, "eth_getBlockByNumber", [receipt.blockNumber, false]),
     creationVault(config, input, String(receipt.blockNumber)),
@@ -1327,9 +1375,12 @@ export async function verifyEvmVaultCreation(
     verifyEvmDeployment(created, receipt.blockNumber, {
       expectedProjectId: input.projectId,
     }),
-    verifyEvmDeployment(created, "finalized", {
-      expectedProjectId: input.projectId,
-    }),
+    // A creation that is not final has no finalized state to read yet.
+    final
+      ? verifyEvmDeployment(created, "finalized", {
+          expectedProjectId: input.projectId,
+        })
+      : null,
   ]);
   settled(atCreation);
   settled(atFinalized);
@@ -1421,8 +1472,7 @@ export function buildCommitMonthlyCalldata(
   return `0x${selector("commitMonthly(uint32,(uint64,uint128,bytes32)[],bytes)")}${periodNumber(period).toString(16).padStart(64, "0")}${0x60n.toString(16).padStart(64, "0")}${bytesOffset.toString(16).padStart(64, "0")}${count.toString(16).padStart(64, "0")}${tail}${65n.toString(16).padStart(64, "0")}${attestation.slice(2).toLowerCase().padEnd(192, "0")}`;
 }
 
-export type { VaultTotals } from "../vault-totals";
-export type EvmVaultTotalsConfig = EvmRpc & {
+type EvmVaultTotalsConfig = EvmRpc & {
   /** The registry network key, echoed in the result. */
   network: string;
   vault: string;
@@ -1436,13 +1486,15 @@ export type EvmVaultTotalsConfig = EvmRpc & {
  */
 export async function readVaultTotals(
   config: EvmVaultTotalsConfig,
+  /** "latest" only shows a form for a vault that is not final yet; it never counts funds. */
+  evidence: "finalized" | "latest" = "finalized",
 ): Promise<VaultTotals> {
   const { vault } = config;
   if (!ADDRESS.test(vault)) throw new Error("Invalid vault");
   if (quantity(await rpc(config, "eth_chainId", [])) !== config.chainId)
     throw new Error("Wrong chain");
   const block = object(
-    await rpc(config, "eth_getBlockByNumber", ["finalized", false]),
+    await rpc(config, "eth_getBlockByNumber", [evidence, false]),
   );
   const blockNumber = quantity(block.number);
   const blockTag = `0x${blockNumber.toString(16)}`;
@@ -1527,4 +1579,101 @@ export async function readVaultTotals(
         ? (reservedPrincipal + reservedFees + pending).toString()
         : null,
   };
+}
+
+/** Topic 0 of the vault's month pledge events (ProjectEscrow, appended 15 November 2026). */
+export const EVM_PLEDGE_EVENT_TOPICS: {
+  MonthPledged: `0x${string}`;
+  PledgeClosed: `0x${string}`;
+} = Object.freeze({
+  MonthPledged: `0x${keccakText("MonthPledged(uint32,uint128)")}`,
+  PledgeClosed: `0x${keccakText("PledgeClosed(uint32,uint128,bool)")}`,
+});
+
+/** A UTC period YYYYMM, year 2000 to 9999, as the contract accepts it. */
+function pledgePeriodWord(period: number) {
+  const month = period % 100;
+  const year = Math.floor(period / 100);
+  if (
+    !Number.isSafeInteger(period) ||
+    year < 2000 ||
+    year > 9999 ||
+    month < 1 ||
+    month > 12
+  )
+    throw new Error("Invalid pledge period");
+  return period.toString(16).padStart(64, "0");
+}
+
+/** Owner-only on an ordinary vault: pledge `amountMinor` base units of free funds to each of `count`
+ * consecutive periods from `fromPeriod` (YYYYMM, the current period to eleven months ahead). A pledge
+ * can be raised, never lowered; withdrawals and owner awards cannot use pledged funds until the period
+ * is reserved or its commit window closes. */
+export function buildPledgeMonthsCalldata(
+  fromPeriod: number,
+  count: number,
+  amountMinor: bigint,
+): `0x${string}` {
+  if (!Number.isSafeInteger(count) || count < 1 || count > 12)
+    throw new Error("A pledge covers 1 to 12 periods");
+  return `0x${selector("pledgeMonths(uint32,uint8,uint128)")}${pledgePeriodWord(fromPeriod)}${count.toString(16).padStart(64, "0")}${amountWord(amountMinor)}`;
+}
+
+/** Permissionless: close an unreserved pledge once its period's commit window has closed. */
+export function buildExpirePledgeCalldata(period: number): `0x${string}` {
+  return `0x${selector("expirePledge(uint32)")}${pledgePeriodWord(period)}`;
+}
+
+/** The vault's open pledge total and the pledge of each requested period, all read at one block
+ * (default the latest finalized block). Returns null only when the address holds no code or its
+ * implementation has no pledge support, proved by an empty revert of openPledgedGross(); any
+ * other failure throws. */
+export async function readEvmMonthPledges(input: {
+  rpcUrl: string;
+  vault: string;
+  periods: number[];
+  blockTag?: string;
+}): Promise<{
+  openPledgedGross: bigint;
+  pledges: { period: number; amount: bigint; open: boolean }[];
+} | null> {
+  if (!ADDRESS.test(input.vault)) throw new Error("Invalid vault");
+  const periodWords = input.periods.map(pledgePeriodWord);
+  const config = { rpcUrl: input.rpcUrl };
+  const tag = input.blockTag ?? "finalized";
+  // Pin a named tag to one block number so every read sees the same state.
+  const blockTag = QUANTITY.test(tag)
+    ? tag
+    : `0x${quantity(object(await rpc(config, "eth_getBlockByNumber", [tag, false])).number).toString(16)}`;
+  if ((await rpc(config, "eth_getCode", [input.vault, blockTag])) === "0x")
+    return null;
+  let open: string;
+  try {
+    open = await getter(config, input.vault, "openPledgedGross()", blockTag);
+  } catch (error) {
+    if (error instanceof EvmRpcError && error.emptyRevert) return null;
+    throw error;
+  }
+  const pledges = await Promise.all(
+    periodWords.map(async (periodWord, index) => {
+      const data = await rpc(config, "eth_call", [
+        {
+          to: input.vault,
+          data: `0x${selector("monthPledges(uint32)")}${periodWord}`,
+        },
+        blockTag,
+      ]);
+      if (typeof data !== "string" || !/^0x[0-9a-fA-F]{128}$/.test(data))
+        throw new Error("Malformed month pledge");
+      const flag = data.slice(66);
+      if (flag !== "0".repeat(64) && flag !== `${"0".repeat(63)}1`)
+        throw new Error("Malformed month pledge");
+      return {
+        period: input.periods[index],
+        amount: uint128(data.slice(2, 66)),
+        open: flag.endsWith("1"),
+      };
+    }),
+  );
+  return { openPledgedGross: uint128(open.slice(2)), pledges };
 }

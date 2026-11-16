@@ -8,7 +8,19 @@
  */
 
 import { CircleAlert, ExternalLink, History, ShieldCheck } from "lucide-react";
-import { type FormEvent, Fragment, useId, useState } from "react";
+import {
+  type FormEvent,
+  Fragment,
+  useId,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from "react";
+import {
+  checkedAdminActionFailure,
+  isAdminActionAccessLoss,
+  requireAdminActionActor,
+} from "./lib/admin-request";
 import { errorMessage } from "./lib/errors";
 import {
   type AdminProject,
@@ -89,11 +101,30 @@ function stateLabel(state: AdminProject["enforcement"]["state"]): string {
       : "Banned";
 }
 
+type EnforcementRequest = {
+  action: EnforcementAction;
+  reason: string;
+  evidenceReference: string;
+  expectedRevision: number;
+  expectedSequence: number;
+  responsibleAccounts?: { githubId?: string; githubLogin: string }[];
+};
+
+type ReviewedEnforcement = {
+  preview: EnforcementPreview;
+  request: EnforcementRequest;
+  sourceKey: string;
+};
+
 export function ProjectEnforcementPanel({
   project,
+  actorId,
+  onAccessLost,
   onDone,
 }: {
   project: AdminProject;
+  actorId: string;
+  onAccessLost: () => void;
   onDone: (note: string) => void;
 }) {
   const enforcement = project.enforcement;
@@ -102,11 +133,19 @@ export function ProjectEnforcementPanel({
   const [reason, setReason] = useState("");
   const [evidence, setEvidence] = useState("");
   const [responsible, setResponsible] = useState("");
-  const [preview, setPreview] = useState<EnforcementPreview | null>(null);
+  const [review, setReview] = useState<ReviewedEnforcement | null>(null);
   const [busy, setBusy] = useState<"preview" | "apply" | null>(null);
   const [error, setError] = useState<string | null>(null);
   const headingId = useId();
-  const request = () => ({
+  const mounted = useRef(true);
+  const inFlight = useRef(false);
+  useLayoutEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+    };
+  }, []);
+  const request = (): EnforcementRequest => ({
     action,
     reason: reason.trim(),
     evidenceReference: evidence.trim(),
@@ -115,52 +154,129 @@ export function ProjectEnforcementPanel({
     ...((action === "ban" && enforcement.decisionRequired) ||
     action === "reinstate_accounts"
       ? {
-          responsibleAccounts:
-            (action === "reinstate_accounts"
-              ? preview?.accountReinstatements
-              : preview?.maintainerBans) ??
-            responsible
-              .split(/[\s,]+/u)
-              .filter(Boolean)
-              .map((githubLogin) => ({ githubLogin })),
+          responsibleAccounts: responsible
+            .split(/[\s,]+/u)
+            .filter(Boolean)
+            .map((githubLogin) => ({ githubLogin })),
         }
       : {}),
   });
+  const requestKey = JSON.stringify({
+    actorId,
+    projectId: project.id,
+    request: request(),
+  });
+  const currentRequestKey = useRef(requestKey);
+  useLayoutEffect(() => {
+    currentRequestKey.current = requestKey;
+  }, [requestKey]);
+  const preview = review?.sourceKey === requestKey ? review.preview : null;
   const path = (mode: "enforcement" | "enforcement-preview") =>
     `admin/projects/${encodeURIComponent(project.id)}/${mode}`;
-  const showPreview = (event: FormEvent) => {
+  const showPreview = async (event: FormEvent) => {
     event.preventDefault();
+    if (!mounted.current || inFlight.current) return;
+    const submitted = request();
+    const sourceKey = JSON.stringify({
+      actorId,
+      projectId: project.id,
+      request: submitted,
+    });
+    inFlight.current = true;
     setBusy("preview");
     setError(null);
-    projectApiRequest<{ preview: EnforcementPreview }>(
-      "POST",
-      path("enforcement-preview"),
-      request(),
-    ).then(
-      (body) => {
-        setBusy(null);
-        setPreview(body.preview);
-      },
-      (caught: unknown) => {
-        setBusy(null);
-        setError(errorMessage(caught));
-      },
-    );
+    try {
+      await requireAdminActionActor(actorId);
+      if (!mounted.current) return;
+      if (currentRequestKey.current !== sourceKey) {
+        setError("The request changed. Preview the current action again.");
+        return;
+      }
+      const body = await projectApiRequest<{ preview: EnforcementPreview }>(
+        "POST",
+        path("enforcement-preview"),
+        submitted,
+        { expectedActorGithubId: actorId },
+      );
+      if (!mounted.current) return;
+      await requireAdminActionActor(actorId);
+      if (!mounted.current) return;
+      if (currentRequestKey.current !== sourceKey) {
+        setError("The request changed. Preview the current action again.");
+        return;
+      }
+      if (
+        body.preview.projectId !== project.id ||
+        body.preview.action !== submitted.action ||
+        body.preview.sequence !== submitted.expectedSequence ||
+        body.preview.revision.before !== submitted.expectedRevision
+      )
+        throw new Error(
+          "The preview did not match this request. Preview again.",
+        );
+      setReview({
+        preview: body.preview,
+        sourceKey,
+        request:
+          submitted.responsibleAccounts === undefined
+            ? submitted
+            : {
+                ...submitted,
+                responsibleAccounts:
+                  submitted.action === "reinstate_accounts"
+                    ? (body.preview.accountReinstatements ?? [])
+                    : body.preview.maintainerBans,
+              },
+      });
+    } catch (caught) {
+      if (!mounted.current) return;
+      const failure = await checkedAdminActionFailure(caught, actorId);
+      if (!mounted.current) return;
+      if (isAdminActionAccessLoss(failure)) onAccessLost();
+      else if (currentRequestKey.current === sourceKey)
+        setError(errorMessage(failure));
+    } finally {
+      inFlight.current = false;
+      if (mounted.current) setBusy(null);
+    }
   };
-  const confirm = () => {
+  const confirm = async () => {
+    if (!mounted.current || inFlight.current || !preview || !review) return;
+    const submitted = review;
+    inFlight.current = true;
     setBusy("apply");
     setError(null);
-    projectApiRequest("POST", path("enforcement"), request()).then(
-      () =>
-        onDone(
-          `${actionLabel(action, (preview?.maintainerBans.length ?? 0) > 0)} recorded for ${project.manifest.name}.`,
-        ),
-      (caught: unknown) => {
-        setBusy(null);
-        setPreview(null);
-        setError(errorMessage(caught));
-      },
-    );
+    try {
+      await requireAdminActionActor(actorId);
+      if (!mounted.current) return;
+      if (currentRequestKey.current !== submitted.sourceKey) {
+        setReview(null);
+        setError("The request changed. Preview the current action again.");
+        return;
+      }
+      await projectApiRequest("POST", path("enforcement"), submitted.request, {
+        expectedActorGithubId: actorId,
+      });
+      if (!mounted.current) return;
+      await requireAdminActionActor(actorId);
+      if (!mounted.current || currentRequestKey.current !== submitted.sourceKey)
+        return;
+      onDone(
+        `${actionLabel(submitted.preview.action, submitted.preview.maintainerBans.length > 0)} recorded for ${submitted.preview.projectName}.`,
+      );
+    } catch (caught) {
+      if (!mounted.current) return;
+      const failure = await checkedAdminActionFailure(caught, actorId);
+      if (!mounted.current) return;
+      if (isAdminActionAccessLoss(failure)) onAccessLost();
+      else if (currentRequestKey.current === submitted.sourceKey) {
+        setReview(null);
+        setError(errorMessage(failure));
+      }
+    } finally {
+      inFlight.current = false;
+      if (mounted.current) setBusy(null);
+    }
   };
   return (
     <section aria-labelledby={headingId} className="admin-enforcement">
@@ -450,7 +566,7 @@ export function ProjectEnforcementPanel({
                 <button
                   className="button ghost-button"
                   disabled={busy !== null}
-                  onClick={() => setPreview(null)}
+                  onClick={() => setReview(null)}
                   type="button"
                 >
                   Cancel

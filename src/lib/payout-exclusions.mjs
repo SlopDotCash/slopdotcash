@@ -74,19 +74,15 @@ export function validatePayoutExclusions(value, field) {
       throw new TypeError(
         `${path} must cover at least one UTC month, from fromCycle until untilCycle`,
       );
-    const known = identities.get(entry.nodeId);
-    if (known && known.actorId !== entry.actorId)
-      throw new TypeError(`${path} disagrees about one GitHub identity`);
-    for (const other of known?.entries ?? [])
+    // Both GitHub node-ID encodings name the same immutable account.
+    const known = identities.get(entry.actorId) ?? [];
+    for (const other of known)
       if (
         (other.untilCycle === null || entry.fromCycle < other.untilCycle) &&
         (entry.untilCycle === null || other.fromCycle < entry.untilCycle)
       )
         throw new TypeError(`${path} overlaps another exclusion of the actor`);
-    identities.set(entry.nodeId, {
-      actorId: entry.actorId,
-      entries: [...(known?.entries ?? []), entry],
-    });
+    identities.set(entry.actorId, [...known, entry]);
   });
   return value;
 }

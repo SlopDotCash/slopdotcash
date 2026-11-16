@@ -297,7 +297,7 @@ export function contributorPullSearchUrl(
 }
 
 /** Canonical repository behind a census repository name, if it resolves. */
-export function profileCanonicalRepository(repository: string): string | null {
+function profileCanonicalRepository(repository: string): string | null {
   // A transferred repository's old and current names resolve to the same one.
   return findHistoricalRepositoryIdentity(repository)?.toLowerCase() ?? null;
 }

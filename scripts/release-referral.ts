@@ -4,6 +4,7 @@ import {
   parseConfig,
   type ReferralAccrualEnv,
 } from "../workers/referral-accrual/config";
+import { assertActiveVersionTagged } from "./worker-release.mjs";
 
 interface ReleaseConfig {
   name: string;
@@ -95,17 +96,10 @@ execFileSync(
 );
 const status = read(["deployments", "status", "--name", config.name, "--json"]);
 const versions = read(["versions", "list", "--name", config.name, "--json"]);
-const active = status?.versions;
-if (
-  !Array.isArray(active) ||
-  active.length !== 1 ||
-  active[0].percentage !== 100 ||
-  !Array.isArray(versions) ||
-  !versions.some(
-    (version) =>
-      version.id === active[0].version_id &&
-      version.annotations?.["workers/tag"] === sha,
-  )
-)
-  throw new Error("Referral release is not bound to the workflow commit");
+assertActiveVersionTagged({
+  deployment: status,
+  versions,
+  sha: sha as string,
+  message: "Referral release is not bound to the workflow commit",
+});
 console.log(`Verified ${config.name} at ${sha}; mode ${settings.mode}`);

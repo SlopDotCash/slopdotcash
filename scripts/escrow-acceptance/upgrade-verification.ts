@@ -8,17 +8,16 @@ import {
   INITIALIZABLE_SLOT,
   createdVaults as readCreatedVaults,
   sha256Hex,
-  type VaultStorage,
   vaultStorage,
 } from "../../contracts/evm/integration/upgrade";
 import { ESCROW_NETWORKS } from "../../src/lib/escrow-policy.mjs";
 import { type EvmChain, FACTORY, VAULT } from "./evm";
-import type { StepRecord } from "./shared";
 import {
   reconcileUpgradePayments,
   upgradeVaultConfig,
 } from "./upgrade-payments";
-export const UPGRADE_SCHEMA = "slop-escrow-upgrade-qualification:v1";
+import type { Qualification, VaultRecord } from "./upgrade-qualification";
+
 const hex = (value: bigint) => `0x${value.toString(16)}`;
 const same = (a: string, b: string) => a.toLowerCase() === b.toLowerCase();
 const PROXY = parseAbi([
@@ -31,64 +30,6 @@ const upgradeData = (implementation: string) =>
     functionName: "upgradeToAndCall",
     args: [implementation as Hex, "0x"],
   });
-export interface VaultRecord extends VaultStorage {
-  vault: string;
-  observedAtBlock: string;
-  implementation: string;
-  codeSha256: string;
-}
-export interface PlannedTransaction {
-  key: string;
-  to: string;
-  data: string;
-  signer: "upgrade-authority";
-  purpose: string;
-}
-export interface Qualification {
-  schema: typeof UPGRADE_SCHEMA;
-  network: string;
-  mode: "public-testnet" | "local";
-  rpcHost: string;
-  chainId: string;
-  sourceCommit: string;
-  factory: string;
-  plannedAt: string;
-  plannedAtBlock: string;
-  factoryDeploymentBlock: string;
-  notice: string;
-  roles: Record<string, string>;
-  before: {
-    factoryCodeSha256: string;
-    factoryImplementation: string;
-    factoryImplementationCodeSha256: string;
-    vaultImplementation: string;
-    vaultImplementationCodeSha256: string;
-    factorySlots: string[];
-    factoryInitialized: string;
-    vaults: VaultRecord[];
-  };
-  review: {
-    salt: string;
-    create2Deployer: string;
-    vaultImplementation: string;
-    vaultImplementationCodeSha256: string;
-    factoryImplementation: string;
-    factoryImplementationCodeSha256: string;
-  };
-  transactions: PlannedTransaction[];
-  steps: Record<string, StepRecord>;
-  stragglers: string[];
-  verification: Record<string, unknown> | null;
-  status:
-    | "planned"
-    | "executing"
-    | "waiting"
-    | "executed"
-    | "passed"
-    | "failed";
-  /** One entry per command run: a refused or failed attempt stays on record. */
-  history: { command: string; at: string; status: string; error?: string }[];
-}
 
 export function upgradeReader(chain: EvmChain, factory: string, page: bigint) {
   const rpc = (method: string, params: unknown[]) => chain.rpc(method, params);

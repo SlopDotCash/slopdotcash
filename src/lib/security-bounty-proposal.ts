@@ -2,6 +2,7 @@ import type { GithubActor } from "./project-contracts";
 import type { FundingChoice } from "./project-proposal";
 import { parseAssetAmount } from "./project-schema.mjs";
 import {
+  formatAssetSymbol,
   REWARD_ASSET_NETWORKS,
   type RewardAssetChoice,
   rewardAssetChoice,
@@ -22,7 +23,7 @@ export const PRIVATE_BOUNTY_TESTING =
   "Use local tests with synthetic data and funds. Do not exploit live systems or access other users' data.";
 export const PRIVATE_BOUNTY_DISCLOSURE =
   "Keep reports private until the owner approves disclosure.";
-export type BountyAmountDraft = Omit<SecurityBountyAmount, "asset"> & {
+type BountyAmountDraft = Omit<SecurityBountyAmount, "asset"> & {
   asset: RewardAssetChoice;
 };
 
@@ -55,7 +56,7 @@ export function bountyAmountPreview(
 ): { gross: string; researcher: string; slop: string } {
   if (amount.grossMinor === "0")
     return {
-      gross: `${rawAmount} ${amount.currency}`,
+      gross: `${rawAmount} ${formatAssetSymbol(amount.currency, amount.asset?.kind)}`,
       researcher: isFullAwardSplit(split) ? "100%" : "75%",
       slop: isFullAwardSplit(split) ? "0%" : "25%",
     };

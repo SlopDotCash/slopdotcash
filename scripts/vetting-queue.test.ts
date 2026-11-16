@@ -56,6 +56,7 @@ let commitSha: string;
 let repositoryPath: string;
 let vetting: CloudflareVettingPersistence;
 let projects: CloudflareProjectPersistence;
+let sqliteHandle: ReturnType<typeof sqliteD1>;
 let server: ReturnType<typeof Bun.serve>;
 let connection: QueueConnection;
 let mode: "normal" | "manifest" | "template" | "identity" = "normal";
@@ -91,11 +92,12 @@ beforeAll(async () => {
     "Harmless fixture",
   );
   commitSha = git("rev-parse", "HEAD");
-  const { db, sqlite } = sqliteD1(
+  sqliteHandle = sqliteD1(
     (await readdir(new URL("../migrations", import.meta.url)))
       .filter((name) => name.endsWith(".sql"))
       .sort(),
   );
+  const { db, sqlite } = sqliteHandle;
   retained = await localVettingEvidence(db, () => now);
   projects = new CloudflareProjectPersistence(db);
   vetting = new CloudflareVettingPersistence(db);
@@ -202,6 +204,13 @@ beforeAll(async () => {
           full_name: "example/fixture",
           private: false,
         });
+      if (path === "/repos/example/second")
+        return Response.json({
+          id: mode === "identity" ? 123456789 : 223456789,
+          node_id: mode === "identity" ? "R_example" : "R_second",
+          full_name: "example/second",
+          private: false,
+        });
       if (path === "/skill-templates/index.json")
         return Response.json({
           schemaVersion: "1",
@@ -233,7 +242,11 @@ beforeAll(async () => {
     fetch: ((request: string | URL | Request, init?: RequestInit) => {
       const url = new URL(String(request));
       expect(init?.method).toBe("GET");
-      expect(init?.redirect).toBe("error");
+      // Only the repository identity read asks for a redirect response, to
+      // refuse a moved repository; every other read refuses redirects outright.
+      expect(init?.redirect).toBe(
+        url.pathname.startsWith("/repos/") ? "manual" : "error",
+      );
       return fetch(
         `http://localhost:${server.port}${url.pathname}${url.search}`,
         init,
@@ -410,7 +423,12 @@ test("a recorded repository rename acquires through the current GitHub name", as
       requested.push(path);
       // GitHub answers the former name with a redirect, which acquisition refuses.
       if (path.startsWith("/repos/example/fixture"))
-        throw new TypeError("fetch failed: unexpected redirect");
+        return new Response(null, {
+          status: 301,
+          headers: {
+            location: "https://api.github.com/repositories/123456789",
+          },
+        });
       if (path === "/repos/example/renamed")
         return Response.json({
           id: 123456789,
@@ -477,4 +495,133 @@ test("an unrecorded repository rename is still refused", async () => {
   ).catch((error: unknown) => error);
   expect((failure as Error).name).toBe("AcquisitionRefusal");
   expect(await readdir(root)).toEqual(before);
+});
+
+test("a repository GitHub redirects is refused as moved, not retried", async () => {
+  mode = "normal";
+  const moved: QueueConnection = {
+    ...connection,
+    fetch: (async (input, init) => {
+      if (new URL(String(input)).pathname === "/repos/example/fixture")
+        return new Response(null, {
+          status: 301,
+          headers: {
+            location: "https://api.github.com/repositories/123456789",
+          },
+        });
+      return connection.fetch!(input, init);
+    }) as typeof fetch,
+  };
+  const before = await readdir(root);
+  const failure = await acquireQueuedAssessment(
+    moved,
+    assessmentId,
+    root,
+  ).catch((error: unknown) => error);
+  expect((failure as Error).name).toBe("AcquisitionRefusal");
+  expect((failure as { reason?: string }).reason).toBe(
+    "Repository moved on GitHub",
+  );
+  expect(await readdir(root)).toEqual(before);
+});
+
+test("an appended repository is acquired by its own path and checked against its own identity", async () => {
+  mode = "normal";
+  // Revision 2 of a two-repository project, queued for the second repository.
+  const firstText = await projects.getRevisionText("queue-fixture", 1);
+  if (firstText === null) throw new Error("missing fixture revision");
+  const first = JSON.parse(firstText.manifestText);
+  const pair = applicationManifest("queue-pair", "example/pair-primary", {
+    rewardAsset: first.rewardAsset,
+  });
+  (pair.repositories as object[]).push({
+    id: "example/second",
+    displayName: "example/second",
+    githubUrl: "https://github.com/example/second",
+    description: "The second repository of the project.",
+    integrationBranch: "main",
+    githubId: "223456789",
+    nodeId: "R_second",
+    countsFrom: "2026-11-01T00:00:00.000Z",
+  });
+  const pairText = JSON.stringify(pair);
+  const pairSha256 = digest(pairText);
+  const { sqlite } = sqliteHandle;
+  sqlite
+    .prepare(
+      "INSERT INTO project_revisions (project_id,revision,manifest,manifest_sha256,reason,created_at) VALUES ('queue-pair',1,?,?,'Fixture approval',?)",
+    )
+    .run(pairText, pairSha256, now.toISOString());
+  sqlite
+    .prepare(
+      "INSERT INTO projects (id,status,revision,manifest,manifest_sha256,created_at,updated_at) VALUES ('queue-pair','paused',1,?,?,?,?)",
+    )
+    .run(pairText, pairSha256, now.toISOString(), now.toISOString());
+  const secondId = `vet_${"b".repeat(32)}`;
+  expect(
+    await vetting.createAssessment({
+      id: secondId,
+      projectId: "queue-pair",
+      revision: 1,
+      manifestSha256: pairSha256,
+      contentSha256: pairSha256,
+      commitSha,
+      templateSha256,
+      repositoryId: "example/second",
+      requestedBy: { githubId: "1", githubLogin: "fixture" },
+      requestedAt: now.toISOString(),
+      requestReason: "Fixture acquisition",
+    }),
+  ).toBe("created");
+  const queued = (await readPendingAssessments(connection)).find(
+    (item) => item.assessmentId === secondId,
+  );
+  expect(queued?.repository).toBe("example/second");
+  const remotes: string[] = [];
+  const tracked: QueueConnection = {
+    ...connection,
+    testGitRemote: (path) => {
+      remotes.push(path);
+      return `file://${repositoryPath}`;
+    },
+  };
+  const acquired = await acquireQueuedAssessment(tracked, secondId, root);
+  const bundle = JSON.parse(
+    await readFile(join(acquired.directory, "queued-inputs.json"), "utf8"),
+  );
+  expect(bundle.repository).toBe("example/second");
+  expect(bundle.repositoryIdentity).toEqual({
+    id: "223456789",
+    nodeId: "R_second",
+    fullName: "example/second",
+  });
+  // The retained assessment binding keeps its historical shape.
+  expect(Object.keys(bundle.assessment).sort()).toEqual([
+    "assessmentId",
+    "commitSha",
+    "manifestSha256",
+    "projectId",
+    "revision",
+    "templateSha256",
+  ]);
+  expect(remotes).toEqual(["example/second"]);
+  await rm(acquired.directory, { recursive: true, force: true });
+
+  // The first repository's identity never stands in for the second's.
+  mode = "identity";
+  const before = await readdir(root);
+  const failure = await acquireQueuedAssessment(
+    connection,
+    secondId,
+    root,
+  ).catch((error: unknown) => error);
+  expect((failure as Error).name).toBe("AcquisitionRefusal");
+  expect((failure as { reason?: string }).reason).toBe(
+    "Immutable repository identity mismatch",
+  );
+  expect((failure as { repository?: string }).repository).toBe(
+    "example/second",
+  );
+  expect(await readdir(root)).toEqual(before);
+  mode = "normal";
 });

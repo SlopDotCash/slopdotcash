@@ -56,6 +56,7 @@ export async function devPrivateStorage(directory: string): Promise<{
     if (!response.ok) throw new Error("Local private storage is unavailable");
     return {
       size: Number(response.headers.get("x-r2-size")),
+      etag: response.headers.get("x-r2-etag") ?? undefined,
       customMetadata: JSON.parse(
         Buffer.from(
           response.headers.get("x-r2-metadata") ?? "",

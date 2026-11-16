@@ -5,6 +5,7 @@ import type { ReviewEnv } from "./review";
 import { readValueDecision } from "./value-consumption";
 import { collectValueEvidence, findRepository } from "./value-evidence";
 import { collectValueGroup } from "./value-group-collection";
+import { nativeMergeDeferralOnly } from "./value-native-merge";
 import { noChangePromotionDeferralOnly } from "./value-no-change-promotion";
 import {
   claimValueRequest,
@@ -69,7 +70,13 @@ export async function consumeValueRequest(
   const finishBlocked = (reason: string | null) =>
     reason === "attempts"
       ? finish("attempts-exhausted", true)
-      : finish(reason === "budget" ? "budget" : "authority");
+      : finish(
+          reason === "attempts-pending"
+            ? "retry"
+            : reason === "budget"
+              ? "budget"
+              : "authority",
+        );
   try {
     const project = await registeredProject(db, job);
     // A paused, retired or unregistered project parks the request without a
@@ -83,7 +90,7 @@ export async function consumeValueRequest(
       !settings ||
       !revision ||
       !/^[a-f0-9]{40}$/.test(revision) ||
-      !env.SURPLUS_API_KEY
+      (!env.ORBIO_API_KEY && !env.SURPLUS_API_KEY)
     )
       return await finish("budget");
     const { monthly, maximum, start } = settings;
@@ -144,9 +151,13 @@ export async function consumeValueRequest(
       job.number,
       repository,
     );
-    // A proven no-change promotion carries only its joint deferral as a
-    // limitation; joint preparation drops it, so do not refuse it here.
-    if (evidence.limitations.length && !noChangePromotionDeferralOnly(evidence))
+    // Native ancestor and unchanged-promotion proofs defer to complete joint
+    // source verification before their sole collection limitation is dropped.
+    if (
+      evidence.limitations.length &&
+      !noChangePromotionDeferralOnly(evidence) &&
+      !nativeMergeDeferralOnly(evidence)
+    )
       return await finish("source-incomplete");
     const policy = await loadValuePolicy(
       github,
@@ -189,7 +200,17 @@ export async function consumeValueRequest(
         github,
         sources.map((s) => s.evidence),
       );
-      return true;
+      // A project restriction or installation suspension can commit while
+      // the remote membership response is pending. Re-read local authority
+      // before the final lease checks, just as before the remote request.
+      for (const { evidence: source } of sources)
+        if (!(await registeredSource(source))) return false;
+      await assertValueInstallation(db, job.installationId);
+      // The remote and local authority reads can also outlive both leases.
+      return (
+        (await ownsValueRequest(db, claim)) &&
+        (await ownsValueSources(db, claim, scopes))
+      );
     };
     const decisions = await Promise.all(
       sources.map((s) =>
@@ -211,7 +232,8 @@ export async function consumeValueRequest(
       sources.length > 1 ||
       previousGroups.some(Boolean) ||
       sources.some((source) => source.evidence.indirectAcceptance) ||
-      sources.some((source) => source.evidence.noChangePromotion)
+      sources.some((source) => source.evidence.noChangePromotion) ||
+      sources.some((source) => source.evidence.nativeMergeAcceptance)
     ) {
       const joint = await prepareWorkUnitEvidence(sources, repositories);
       if (joint.limitations.length) return await finish("source-incomplete");
@@ -277,6 +299,7 @@ export async function consumeValueRequest(
         supersedes.length || legacyPredecessors.length
           ? "Source group changed; automatic provisional reassessment"
           : null,
+        claim,
       );
       return await finish("published", true);
     }
@@ -303,6 +326,7 @@ export async function consumeValueRequest(
       current.latestDigest
         ? "Source changed; automatic provisional reassessment"
         : null,
+      claim,
     );
     return await finish("published", true);
   } catch (error) {

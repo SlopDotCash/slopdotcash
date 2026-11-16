@@ -27,6 +27,7 @@ import {
 } from "../src/lib/escrow-policy.mjs";
 import { assertProjectRegistry } from "../src/lib/project-schema.mjs";
 import { HISTORICAL_PROJECTS } from "../src/lib/projects.mjs";
+import { readDeploymentPinBinding } from "../workers/payment-executor/deployment-pin-bindings";
 import { mainnetExecutionEnabled } from "../workers/payment-executor/mainnet-execution.mjs";
 import { parsePaymentNetworks } from "../workers/payments/deployments";
 import { readRegistryDatabase } from "../workers/payments/registry-database.mjs";
@@ -80,7 +81,9 @@ export interface ReadinessInput {
 
 function signerNetworks(config: StackConfig, role: "attester" | "relayer") {
   if (config.vars?.SIGNER_ROLE !== role) return new Map<string, unknown[]>();
-  const pinned = JSON.parse(String(config.vars.PAYMENT_DEPLOYMENTS ?? "[]"));
+  const pinned = JSON.parse(
+    readDeploymentPinBinding(config.vars, "PAYMENT_DEPLOYMENTS") ?? "[]",
+  );
   if (!Array.isArray(pinned))
     throw new TypeError("Signer PAYMENT_DEPLOYMENTS must be an array");
   const byNetwork = new Map<string, unknown[]>();
@@ -249,14 +252,22 @@ export async function probeRpc(
         BigInt(policy.chainId ?? -1)
       )
         return "wrong-chain";
-      return (await call(url, "eth_getBlockByNumber", ["finalized", false]))
+      const head = (await call(url, "eth_getBlockByNumber", [
+        "finalized",
+        false,
+      ])) as { number?: unknown; hash?: unknown } | null;
+      return head &&
+        typeof head.number === "string" &&
+        /^0x(?:0|[1-9a-f][0-9a-f]*)$/iu.test(head.number) &&
+        typeof head.hash === "string" &&
+        /^0x[0-9a-f]{64}$/iu.test(head.hash)
         ? "finalized"
         : "no-finalized-head";
     }
     if ((await call(url, "getGenesisHash", [])) !== policy.genesisHash)
       return "wrong-chain";
     const slot = await call(url, "getSlot", [{ commitment: "finalized" }]);
-    return typeof slot === "number" && slot > 0
+    return typeof slot === "number" && Number.isSafeInteger(slot) && slot > 0
       ? "finalized"
       : "no-finalized-head";
   } catch {

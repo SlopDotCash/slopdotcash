@@ -1,4 +1,5 @@
 import { readRecord as asObject } from "../src/lib/record-validation.mjs";
+import { firstMaximumIndex } from "../src/lib/verified-selection.ts";
 /**
  * Selects the newly created successful Cloudflare Pages production deployment
  * whose clean commit metadata exactly matches the verified workflow revision.
@@ -91,9 +92,9 @@ export function selectSuccessfulProductionDeployment(
     ];
   });
 
-  return matches.sort(
-    (left, right) => right.createdOnEpoch - left.createdOnEpoch,
-  )[0];
+  return matches.length === 0
+    ? undefined
+    : matches[firstMaximumIndex(matches.map((match) => match.createdOnEpoch))];
 }
 
 function runCli() {

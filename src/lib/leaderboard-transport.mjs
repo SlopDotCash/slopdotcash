@@ -1,7 +1,9 @@
 import { sha256 } from "@noble/hashes/sha2.js";
 import { bytesToHex } from "@noble/hashes/utils.js";
 
-export const MAX_LEADERBOARD_BYTES = 32 * 1024 * 1024;
+// Logical snapshot bound. The 35-day ledger passed 32 MiB on 6 November 2026
+// and every release refused it; this bound limits memory, not Pages files.
+export const MAX_LEADERBOARD_BYTES = 64 * 1024 * 1024;
 export const MAX_LEADERBOARD_PART_BYTES = 8 * 1024 * 1024;
 export const MAX_LEADERBOARD_FILE_BYTES = 25 * 1024 * 1024;
 const FORMAT = "slop-leaderboard-parts-v1";

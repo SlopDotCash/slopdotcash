@@ -21,7 +21,7 @@ mean the code is free of all malware.
 
 | Surface | What it reads |
 | --- | --- |
-| `source` | Code and configuration files of the executable inventory |
+| `source` | Every ordinary acquired text blob, including files with unknown names or suffixes; compressed payloads retain their artifact classification |
 | `manifests` | `package.json`, `pyproject.toml`, `Cargo.toml`, `go.mod` and similar |
 | `dependencies` | Lockfiles; each lock digest is recorded |
 | `installScripts` | Package lifecycle hooks, pnpm file hooks (`.pnpmfile.cjs`, `.pnpmfile.js`), `setup.py`, `build.rs`, `Makefile.PL`, `Build.PL`, `extconf.rb`, `build.zig`, `build.zig.zon`, Makefiles and `GNUmakefile`, container and CI build recipes (`Dockerfile`, `Dockerfile.<suffix>`, `<name>.Dockerfile`, `Containerfile`, `Jenkinsfile`), other build systems (`CMakeLists.txt`, `<name>.cmake`, `meson.build`, `Earthfile`, `SConstruct`, `SConscript`, `wscript`, `Makefile.am`, `Makefile.in`, `GNUmakefile.in`, `configure.ac`, `build.sbt`, `<name>.sbt`, `BUILD.bazel`, `MODULE.bazel`, `WORKSPACE`, `<name>.bzl`, `build.boot`, `build`, `wscript_build`, `docker-bake.hcl`, `docker-bake.override.hcl`, MSBuild projects and imports such as `<name>.csproj`, `<name>.fsproj`, `<name>.vbproj`, `<name>.vcxproj`, `<name>.proj`, `<name>.props` and `<name>.targets`, node-gyp `binding.gyp`, `<name>.gyp`, `<name>.gypi`, and repository files named by a GYP `includes` entry), `Vagrantfile`, `Rakefile`, `Brewfile`, `Procfile`, `tox.ini`, `tox.toml`, `.husky`, `.devcontainer`, `.vscode` tasks, install and bootstrap scripts, and previously unclassified files whose first two bytes are `#!` (an interpreter script such as `configure`) |
@@ -33,6 +33,23 @@ same bytes are classified the same way whether they sit in a `Makefile`, a
 `Dockerfile`, a `Containerfile` or a `Jenkinsfile`. Dedicated `tox.ini` and
 `tox.toml` files are also install surfaces. This name-based classification does
 not parse tox tables from shared manifests.
+
+Rake task files (`.rake`), `Rakefile.rb`, Bundler's `Gemfile` variants and
+`gems.rb`, and Make fragments (`.mk`, `.make`) are install surfaces too.
+Lockfiles are not executable Gemfile variants. Arbitrarily named files loaded
+by these build systems still receive full source review: classification does
+not depend on interpreting Ruby or Make expressions. Previously unrecognized
+text remains in full model review even under generated or vendor directories.
+Unknown undecodable bytes retain their digest as quarantined binary artifacts
+and make source coverage incomplete; an extension never proves they are safe.
+Unknown-format compressed payloads remain quarantined under the existing gzip
+policy even when their decoded bytes are UTF-8; this fallback does not release
+them or claim that the model reviewed those payloads.
+
+This covers the acquired bytes, not a complete runtime dependency graph.
+Existing GYP and shell-helper resolvers retain their explicit missing-input
+gaps. The reviewer must also preserve concrete missing or unresolved local
+executable inputs found in the source; external code is not inferred reviewed.
 
 CMake evaluates a file named by `include()` during configure, so that file is
 install content even when its name carries no recipe extension. Only a literal
@@ -68,6 +85,23 @@ or run (`.npmrc`, `.yarnrc`, `.yarnrc.yml`, `.pnpmfile.cjs`, `bunfig.toml`) is
 also an `installScripts` surface, at any depth. Each can make the package
 manager execute code, for example through `node-options` in `.npmrc`.
 
+Lifecycle command text and known shell install files also follow literal local
+file invocations. Referenced files become install content, so their literal
+download URLs remain unretrieved artifacts. Shell helpers and named package
+scripts are followed with
+their invoking working directory; repeated references and cycles are
+deduplicated. Straight-line literal `cd` changes resolve locally. Missing,
+escaping or dynamic paths, substitutions, grouped commands, conditional
+directory changes, unsupported control flow, `eval` and unresolved dispatcher
+options keep install coverage
+partial. Sourced helpers are read, but their effect on the invoking directory
+is left unresolved. Quoted here-document bodies are data, not commands. This
+is literal shell-command coverage,
+not a complete language call graph: no target code, substitution or variable
+is evaluated. Non-shell helper files are reviewed as install content without
+treating their language's strings as shell commands. Unrelated source and
+fixture URLs do not become install artifacts.
+
 Each surface is checked for the five threats: `wallet-drainer`,
 `credential-theft`, `secret-exfiltration`, `unsafe-execution` and
 `prompt-injection`. The deterministic rules in `bounded-scan.ts` are
@@ -87,7 +121,14 @@ The flow for one queued assessment:
    carries acquisition gaps (submodules, links, LFS) into the scan.
 2. `inspectRepository` sorts files into surfaces and runs every deterministic
    check over the whole of every file, whatever its size. It is pure and
-   deterministic. A text file over 256 KiB is reviewed in consecutive parts.
+   deterministic. Complete gzip streams are decoded before classification;
+   every input byte, member and checksum must validate. Their payloads receive
+   the ordinary source checks, while unknown or native payloads remain held.
+   Every member's optional header text is also checked for instructions;
+   its original bytes and offsets remain in the inventory.
+   Retain the original compressed bytes and any named derived artifact with
+   their digest lineage; gzip header names never choose an extraction path.
+   A text file over 256 KiB is reviewed in consecutive parts.
    Content that does not decode or was not acquired is a visibility gap,
    never a silent skip. When the inventory exceeds one review call (1 MiB or
    1,024 items), bulk content (dependency locks, data JSON, generated
@@ -104,7 +145,9 @@ The flow for one queued assessment:
    risk-signal content first, then source grouped by directory, then tests,
    docs and locks. Identical bytes are reviewed once. One synthesis call
    (`slop-scan-synthesis-1`) then reads the deterministic pre-pass and every
-   batch result. The combined review is complete only if every call
+   batch result. Its pre-pass also maps byte-identical aliases to the source
+   digest and batch that reviewed them, including aliases supplied beside
+   that source. The combined review is complete only if every call
    completed; its coverage is the weakest of any call. Risk is read from the
    review itself: any suspected malice or high finding is `high`; any other
    finding or partial coverage is `ambiguous`; otherwise `low`. No score
@@ -190,7 +233,10 @@ or spend provider tokens as a deployment fallback.
 A service failure publishes nothing: an unavailable source or a failed
 primary or specialist review leaves the assessment pending, and the next pass
 retries it. Repository size is never a refusal. A policy refusal of the bound
-assignment, such as an invalid tree path or a repository identity mismatch,
+assignment, such as an invalid tree path, a repository identity mismatch or a
+registered repository that GitHub reports missing (404: deleted, hidden or
+private) or redirects (3xx: renamed or transferred before a revision records
+the current path; a rate limit or outage still retries),
 instead publishes an incomplete result and notifies each owner once. It
 records the fixed refusal reason. Every
 surface is unsupported, every threat check is not run, and the configured
@@ -202,7 +248,13 @@ published even when the evidence upload fails, because the intake needs
 retained evidence only for a clean result: the quarantine is recorded and the
 models are not called again on every pass. A published attempt is journaled, so a
 later pass never sends it again; an uncertain or rejected attempt waits for
-an operator. The pass removes the acquired bytes after each assessment. It
+an operator. The pass removes the acquired bytes after each assessment. An
+error that escapes one assessment (for example a refused journal reservation)
+is reported for that assessment alone, as `retry` at step `assessment` with
+the error name and never its message; the assessment stays pending and the
+pass continues with the next queued assessment (each repository of a project is
+queued as its own assessment), so one repository cannot hold
+back every project queued behind it. It
 never executes repository content on its host, never confirms malice and never releases
 a quarantined artifact.
 
@@ -221,9 +273,10 @@ SURPLUS_API_KEY=... SLOP_VETTING_SIGNING_JWK='{"kty":"OKP","crv":"Ed25519","x":"
 
 The configuration file names `origin`, `policyVersion`, `workDirectory`,
 `journalDirectory`, and the `primary` and `specialist` profiles without
-keys. Owner decision D16 pins the primary to the Surplus Anthropic Messages
-endpoint with `claude-opus-5.5` and the specialist to the Surplus OpenAI
-Responses endpoint with `gpt-6.1-sol`. Both use `SURPLUS_API_KEY`. The
+keys. Owner decision D16 pins the transports. The 11 November 2026 model decision
+pins the primary to the Surplus Anthropic Messages
+endpoint with `claude-sonnet-5.5` and the specialist to the Surplus OpenAI
+Responses endpoint with `gpt-6.1-terra`. Both use `SURPLUS_API_KEY`. The
 service refuses to start, and a scan pass refuses to contact the queue or a
 provider, when either profile names another endpoint, model or reviewer, so
 the key never reaches any other endpoint. The output lists safe assessment
@@ -349,6 +402,40 @@ on the next pass (`retry` at step `review-batches`); it is never published
 partial. The scheduled controller runs on an ephemeral runner and sets no
 cache, so it completes each review in one pass.
 
+A failed review is a `retry` at step `primary-review` or `specialist-review`
+whose `reason` names one fixed failure category: `provider-http-<status>`,
+`timeout`, `network`, `response-unreadable`, `truncated`, `model-mismatch`,
+`stop-<reason>` or `incomplete-<reason>` (allowlisted provider stop reasons,
+otherwise `other`), `invalid-response` or `invalid-review`. An HTTP failure
+whose error body (read up to 16 KiB) states an oversized input appends
+`-input-too-long`, with the stated token counts when given (for example
+`provider-http-400-input-too-long-213456-over-200000`); otherwise it appends
+the provider's error type when that is a plain snake_case word (for example
+`-invalid_request_error`). The error message itself is never kept. A batched
+review prefixes `batch-<n>-of-<count>:` (the failing call in plan order) or
+`synthesis:`. The category never carries provider text, so the controller's
+pass report can print it.
+
+One failed call fails a batched review of hundreds, so a batch or synthesis
+call is tried up to three times when a fresh call can clear its failure:
+`invalid-review`, `invalid-response`, `truncated`, `network`,
+`response-unreadable`, `provider-http-429` and `provider-http-5xx` (with or
+without an error type). Timeouts,
+model mismatches and stop reasons are not retried. Each retry waits 2 s times
+its attempt number, counts against a cache's `maxCallsPerPass`, and adds its
+usage and cost to the call it retried; the pass records `attempts`.
+
+A review the provider declines (`stop-refusal` or
+`incomplete-content_filter`, in a single call, any batch or the synthesis)
+is the one failed review that is not a service failure: the same pinned
+content is declined again on every pass, and a batched review would spend
+its whole call budget each time. The scan publishes once as incomplete,
+with that review recorded as `failed` against the assessed inventory and
+no further model call (no specialist after a declined primary review). The
+pass report shows `published` with the declined review's category as
+`reason`. Like every incomplete result it does not establish clearance;
+an administrator can queue a fresh scan.
+
 Estimated primary-review input at 3 bytes per token (real tokenizers report
 fewer), measured on the real acquisitions of 28 October 2026:
 
@@ -405,7 +492,7 @@ only in the disposable Cloudflare sandbox described below.
 | Item | Requirement or decision |
 | --- | --- |
 | Scanner service deployment | `run.ts` is the service source; this source does not deploy it. It needs a private host, its Ed25519 key, the public key in `VETTING_RESULT_PUBLIC_KEYS`, `SURPLUS_API_KEY` and the in-source evidence policy (`EVIDENCE_POLICY` in `evidence.ts`). |
-| Provider and model | Owner decision D16: Surplus `claude-opus-5.5` is the primary model and Surplus `gpt-6.1-sol` is the specialist, only for ambiguous or high-risk results. Scanner profiles accept only these two Surplus endpoint and model pairs (`PINNED_SCANNER_PROFILES` in `scanners.ts`) and fail closed on any other. The operator names both in the configuration file; the source has no default. |
+| Provider and model | Model decision of 11 November 2026: Surplus `claude-sonnet-5.5` is the primary model and Surplus `gpt-6.1-terra` is the specialist, only for ambiguous or high-risk results. Scanner profiles accept only these two Surplus endpoint and model pairs (`PINNED_SCANNER_PROFILES` in `scanners.ts`) and fail closed on any other. The operator names both in the configuration file; the source has no default. |
 | Isolated runner | Owner decision D16: Cloudflare Sandboxes/Containers, one disposable sandbox per risky artifact, with `enableInternet: false` set explicitly and no secrets. `workers/vetting-sandbox` implements it; see [Private artifact execution](#private-artifact-execution). |
 | Specialist authority | Owner decision D3: moderators confirm malice and release quarantined artifacts. A model label alone cannot; a signed malicious result restricts the project until a moderator decides. |
 | Live acceptance | Prove the clean, incomplete, malicious, flag and reinstatement paths on staging with the real services (PRD section 11). |

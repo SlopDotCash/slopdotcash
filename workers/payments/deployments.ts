@@ -6,7 +6,7 @@ import {
   type EscrowDeployment,
   paymentDeploymentRecord,
 } from "../../src/lib/escrow-policy.mjs";
-import type { PaymentDeployment } from "./index";
+import type { PaymentDeployment } from "./deployment-types";
 
 export type PaymentNetwork = EscrowDeployment["network"];
 

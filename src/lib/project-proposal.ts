@@ -17,7 +17,11 @@ import {
   monthlyAmountDisplay,
   parseAssetAmount,
 } from "./project-schema.mjs";
-import { REWARD_ASSET_NETWORKS, rewardAssetChoice } from "./reward-asset.mjs";
+import {
+  formatAssetSymbol,
+  REWARD_ASSET_NETWORKS,
+  rewardAssetChoice,
+} from "./reward-asset.mjs";
 
 export function safeProposalHttpsUrl(value: string): boolean {
   if (value.length === 0 || value.length > 500) return false;
@@ -132,15 +136,15 @@ export function monthlyPoolValue(
 
 /**
  * A monthly amount in the reward asset, from its integer base units, without
- * floating point and without a dollar sign: the asset is the unit (PRD
- * section 6, "never present tokens as dollars").
+ * floating point. A dollar prefix belongs to a project ticker, not the
+ * numeric amount (PRD section 6, "never present tokens as dollars").
  */
 export function formatMonthlyAmount(
   minor: string,
   decimals: number,
   symbol: string,
 ): string {
-  return `${formatBaseUnits(minor, decimals)} ${symbol}`;
+  return `${formatBaseUnits(minor, decimals)} ${formatAssetSymbol(symbol)}`;
 }
 
 /** The one optional funding choice of project setup. */

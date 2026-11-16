@@ -28,7 +28,7 @@ await writeFile(
   config,
   `import base from "./vite.config.ts";
 import { mergeConfig } from "vite";
-export default (env) => mergeConfig(base(env), { server: { fs: { allow: ${JSON.stringify([await realpath(workspace), await realpath(join(workspace, "node_modules"))])} } } });
+export default (env) => mergeConfig(base(env), { cacheDir: ${JSON.stringify(join(workspace, ".vite-local-signin"))}, server: { fs: { allow: ${JSON.stringify([await realpath(workspace), await realpath(join(workspace, "node_modules"))])} } } });
 `,
 );
 const listener = createServer();
@@ -82,7 +82,11 @@ try {
       "utf8",
     ),
   );
-  browser = await chromium.launch();
+  browser = await chromium.launch(
+    process.env.SLOP_E2E_CHROMIUM_EXECUTABLE_PATH
+      ? { executablePath: process.env.SLOP_E2E_CHROMIUM_EXECUTABLE_PATH }
+      : {},
+  );
   for (const width of [1440, 320]) {
     for (const [name, start, destination] of [
       ["inline-account", "/account#profile", "/account#profile"],

@@ -78,7 +78,7 @@ export async function verifyUnsafeDestinationReport(
   }
 }
 
-export async function applyUnsafeDestinationHold(input: {
+async function applyUnsafeDestinationHold(input: {
   proposal: unknown;
   report: unknown;
   reason: string;

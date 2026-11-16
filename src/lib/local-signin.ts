@@ -7,7 +7,7 @@
  */
 const KEY = "slop-local-signin";
 
-export type SavedFlow = { flow: unknown; reopen: boolean; search: string };
+type SavedFlow = { flow: unknown; reopen: boolean; search: string };
 
 export function saveLocalFlow(flow: unknown, reopen: boolean): void {
   try {

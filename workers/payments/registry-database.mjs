@@ -7,7 +7,7 @@ import { readFile } from "node:fs/promises";
  * database has its own empty `projects` table, so binding it in its place
  * would find no vaults. A missing or repeated binding stops the caller.
  */
-export function parseRegistryDatabase(toml) {
+function parseRegistryDatabase(toml) {
   const found = [];
   let block;
   for (const raw of toml.split("\n")) {
@@ -51,7 +51,7 @@ export async function readRegistryDatabase(file = "wrangler.toml") {
  * value, so the owner API and the coordinator use one cutoff. A missing or
  * repeated value stops the caller; the Worker validates its shape.
  */
-export function parseMonthlySchedule(toml) {
+function parseMonthlySchedule(toml) {
   const found = [];
   let inVars = false;
   for (const raw of toml.split("\n")) {

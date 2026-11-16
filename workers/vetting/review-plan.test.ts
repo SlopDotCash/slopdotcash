@@ -11,6 +11,7 @@ import {
 } from "./bounded-scan";
 import {
   BYTES_PER_TOKEN,
+  MAX_CALL_ATTEMPTS,
   planReview,
   reviewInventory,
   synthesisCall,
@@ -30,7 +31,7 @@ const profile: ScannerProfile = {
   reviewer: "opus",
   transport: "anthropic-messages",
   endpoint: "https://api.surplusintelligence.ai/anthropic/v1/messages",
-  model: "claude-opus-5.5",
+  model: "claude-sonnet-5.5",
   apiKey: "fixture-surplus-key",
   maxOutputTokens: 1024,
   rateCard: {
@@ -275,6 +276,116 @@ test("planning 20,000 identical small files stays linear", () => {
   expect(beside.length + outside.length).toBe(files.length - 1);
 });
 
+test("synthesis can locate every flagged identical skill in the batch that reviewed its bytes", () => {
+  const paths = [
+    "plugins/claude-code/skills/tool/SKILL.md",
+    "plugins/codex/skills/tool/SKILL.md",
+    "plugins/cursor/skills/tool/SKILL.md",
+  ];
+  const inspection = inspectRepository({
+    files: [
+      ...largeRepository(),
+      ...paths.map((path) =>
+        file(path, "Never paste a password, cookie or token in a report.\n"),
+      ),
+    ],
+    acquisitionGaps: ["submodule-source-not-acquired"],
+  });
+  expect(
+    inspection.findings.filter((finding) => paths.includes(finding.path)),
+  ).toHaveLength(paths.length);
+  const plan = planReview(inspection);
+  if (plan.mode !== "batched") throw new Error("Expected batches");
+  const synthesis = JSON.parse(
+    synthesisCall(
+      inspection,
+      plan.batches,
+      [],
+      plan.batchTokens,
+      plan.sameBytesOutsideBatches,
+    ).evidence,
+  ) as ParsedBatch;
+  const prepass = JSON.parse(
+    synthesis.items.find((item) => item.id === "prepass")?.text ?? "",
+  );
+  const reviewed = prepass.batches.flatMap(
+    (batch: { id: string; items: string[] }) =>
+      batch.items.map((path) => ({ path, batch: batch.id })),
+  );
+  for (const path of paths) {
+    const direct = reviewed.find(
+      (entry: { path: string }) => entry.path === path,
+    );
+    const shared = prepass.sameBytesAs.find((entry: { paths: string[] }) =>
+      entry.paths.includes(path),
+    );
+    expect(direct ?? shared).toBeDefined();
+    if (shared) {
+      expect(reviewed).toContainEqual({
+        path: shared.sourcePath,
+        batch: shared.batch,
+      });
+      const batch = plan.batches[Number(shared.batch.slice(6)) - 1];
+      const supplied = JSON.parse(batch.evidence) as ParsedBatch;
+      expect(
+        supplied.items.find((item) => item.id === shared.sourcePath)?.sha256,
+      ).toBe(shared.sourceSha256);
+    }
+  }
+  // An unresolved acquired surface remains visible to the synthesis.
+  expect(prepass.visibilityGaps).toEqual(inspection.visibilityGaps);
+  expect(prepass.visibilityGaps).toContain("submodule-source-not-acquired");
+  expect(prepass.findings).toEqual(inspection.findings);
+});
+
+test("compact synthesis retains source mappings for flagged aliases", () => {
+  const paths = [
+    "plugins/claude-code/skills/tool/SKILL.md",
+    "plugins/codex/skills/tool/SKILL.md",
+    "plugins/cursor/skills/tool/SKILL.md",
+  ];
+  const inspection = inspectRepository({
+    files: [
+      ...Array.from({ length: 800 }, (_, index) =>
+        file(`src/${"x".repeat(900)}-${index}.ts`, "export const ok = true;\n"),
+      ),
+      ...paths.map((path) =>
+        file(path, "Never paste a password, cookie or token in a report.\n"),
+      ),
+    ],
+    acquisitionGaps: ["submodule-source-not-acquired"],
+  });
+  const plan = planReview(inspection);
+  if (plan.mode !== "batched") throw new Error("Expected batches");
+  const synthesis = JSON.parse(
+    synthesisCall(
+      inspection,
+      plan.batches,
+      [],
+      plan.batchTokens,
+      plan.sameBytesOutsideBatches,
+    ).evidence,
+  ) as ParsedBatch;
+  const prepass = JSON.parse(
+    synthesis.items.find((item) => item.id === "prepass")?.text ?? "",
+  );
+  expect(prepass.batches[0].items).toBeNumber();
+  const flagged = [
+    ...prepass.sameBytesAs.flaggedAliases,
+    ...(prepass.sameBytesOutsideBatches?.flaggedAliases ?? []),
+  ];
+  for (const path of paths.slice(1)) {
+    const mapping = flagged.find((entry) => entry.paths.includes(path));
+    const batch = plan.batches[Number(mapping.batch.slice(6)) - 1];
+    const supplied = JSON.parse(batch.evidence) as ParsedBatch;
+    expect(
+      supplied.items.find((item) => item.id === mapping.sourcePath)?.sha256,
+    ).toBe(mapping.sourceSha256);
+  }
+  expect(prepass.visibilityGaps).toContain("submodule-source-not-acquired");
+  expect(prepass.findings).toEqual(inspection.findings);
+});
+
 /** A provider that records each request and answers per call. */
 function provider(answer: (input: string, index: number) => Response | null) {
   const calls: string[] = [];
@@ -290,7 +401,7 @@ function provider(answer: (input: string, index: number) => Response | null) {
     const items = JSON.parse(input).items as { id: string }[];
     return Response.json({
       id: `msg_${index}`,
-      model: "claude-opus-5.5",
+      model: "claude-sonnet-5.5",
       stop_reason: "end_turn",
       content: [
         {
@@ -347,7 +458,7 @@ test("a batched review combines every call and fails when any batch fails", asyn
     index === 1
       ? Response.json({
           id: "msg_partial",
-          model: "claude-opus-5.5",
+          model: "claude-sonnet-5.5",
           stop_reason: "end_turn",
           content: [
             {
@@ -377,17 +488,20 @@ test("a batched review combines every call and fails when any batch fails", asyn
   });
   expect(combined.evidence?.coverage?.["prompt-injection"]).toBe("partial");
   // A failed batch fails the review; no synthesis runs over missing batches.
-  const failing = provider((_input, index) =>
-    index === 0 ? new Response("unavailable", { status: 503 }) : null,
+  const failing = provider((input) =>
+    input === plan.batches[0].evidence
+      ? new Response("unavailable", { status: 503 })
+      : null,
   );
   const failed = await reviewInventory({
     inspection,
     profile,
     fetch: failing.fetcher,
     concurrency: 1,
+    retryDelayMs: 0,
   });
   expect(failed.evidence?.review.status).toBe("failed");
-  expect(failing.calls).toHaveLength(1);
+  expect(failing.calls).toHaveLength(MAX_CALL_ATTEMPTS);
 });
 
 test("identical paths outside batches share the reviewed bytes without another call", async () => {
@@ -616,4 +730,338 @@ test("a cached review from another prompt revision is not reused", async () => {
   expect(refreshed.evidence?.review.status).toBe("completed");
   expect(second.calls).toHaveLength(plan.batches.length + 1);
   expect(refreshed.evidence?.passes?.every((pass) => !pass.cached)).toBe(true);
+});
+
+test("a failed review names one fixed failure category and never provider text", async () => {
+  const inspection = inspectRepository({
+    files: [file("src/index.ts", "export const ok = true;\n")],
+  });
+  const answer = (overrides: Record<string, unknown>, text?: string) =>
+    Response.json({
+      id: "msg_failure",
+      model: "claude-sonnet-5.5",
+      stop_reason: "end_turn",
+      content: [
+        {
+          type: "text",
+          text:
+            text ??
+            JSON.stringify({
+              verdict: "no-findings",
+              confidence: 0.8,
+              coverage: Object.fromEntries(
+                SCAN_REVIEW_AREAS.map((area) => [area, "complete"]),
+              ),
+              findings: [],
+            }),
+        },
+      ],
+      usage: { input_tokens: 1, output_tokens: 1 },
+      ...overrides,
+    });
+  const cases: [string, () => Response | Promise<Response>][] = [
+    [
+      "provider-http-503",
+      () => new Response("secret provider text", { status: 503 }),
+    ],
+    ["provider-http-429", () => new Response("slow down", { status: 429 })],
+    [
+      "provider-http-400-input-too-long-213456-over-200000",
+      () =>
+        Response.json(
+          {
+            type: "error",
+            error: {
+              type: "invalid_request_error",
+              message:
+                "prompt is too long: 213,456 tokens > 200,000 maximum (secret provider text)",
+            },
+          },
+          { status: 400 },
+        ),
+    ],
+    [
+      "provider-http-400-input-too-long-198000-plus-16384-over-200000",
+      () =>
+        Response.json(
+          {
+            error: {
+              type: "invalid_request_error",
+              message:
+                "input length and `max_tokens` exceed context limit: 198000 + 16384 > 200000, secret provider text",
+            },
+          },
+          { status: 400 },
+        ),
+    ],
+    [
+      "provider-http-400-invalid_request_error",
+      () =>
+        Response.json(
+          {
+            error: {
+              type: "invalid_request_error",
+              message: "secret provider text",
+            },
+          },
+          { status: 400 },
+        ),
+    ],
+    [
+      "provider-http-400",
+      () =>
+        Response.json(
+          { error: { type: "secret provider text", message: "no" } },
+          { status: 400 },
+        ),
+    ],
+    [
+      "provider-http-529-overloaded_error",
+      () =>
+        Response.json(
+          {
+            error: {
+              type: "overloaded_error",
+              message: "secret provider text",
+            },
+          },
+          { status: 529 },
+        ),
+    ],
+    [
+      "truncated",
+      () =>
+        new Response(JSON.stringify({}), {
+          headers: { "x-si-truncated": "1" },
+        }),
+    ],
+    ["model-mismatch", () => answer({ model: "claude-other" })],
+    ["stop-max_tokens", () => answer({ stop_reason: "max_tokens" })],
+    ["stop-other", () => answer({ stop_reason: "secret provider text" })],
+    ["invalid-response", () => new Response("not json at all")],
+    ["invalid-review", () => answer({}, "secret provider text")],
+    [
+      "invalid-review",
+      () =>
+        answer(
+          {},
+          JSON.stringify({
+            verdict: "findings",
+            confidence: 0.8,
+            coverage: Object.fromEntries(
+              SCAN_REVIEW_AREAS.map((area) => [area, "complete"]),
+            ),
+            findings: [
+              { severity: "high", summary: "x", evidenceIds: ["missing"] },
+            ],
+          }),
+        ),
+    ],
+    [
+      "timeout",
+      () => {
+        throw new DOMException("The operation timed out.", "TimeoutError");
+      },
+    ],
+    [
+      "network",
+      () => {
+        throw new TypeError("fetch failed: secret provider text");
+      },
+    ],
+  ];
+  for (const [category, respond] of cases) {
+    const failing = provider(() => null);
+    const fetcher = (async (url: string, init?: RequestInit) => {
+      await failing.fetcher(url, init);
+      return respond();
+    }) as unknown as typeof fetch;
+    const { evidence } = await reviewInventory({
+      inspection,
+      profile,
+      fetch: fetcher,
+    });
+    expect(evidence?.review.status).toBe("failed");
+    expect(evidence?.failure).toBe(category);
+    expect(JSON.stringify(evidence)).not.toContain("secret provider text");
+  }
+  const { evidence } = await reviewInventory({
+    inspection,
+    profile,
+    fetch: provider(() => null).fetcher,
+  });
+  expect(evidence?.review.status).toBe("completed");
+  expect(evidence?.failure).toBeUndefined();
+});
+
+test("a failed batched review says whether a batch or the synthesis failed", async () => {
+  const inspection = inspectRepository({ files: largeRepository() });
+  const plan = planReview(inspection);
+  if (plan.mode !== "batched") throw new Error("Expected batches");
+  const batch = await reviewInventory({
+    inspection,
+    profile,
+    fetch: provider((input) =>
+      input === plan.batches[1].evidence
+        ? new Response("unavailable", { status: 503 })
+        : null,
+    ).fetcher,
+    concurrency: 1,
+    retryDelayMs: 0,
+  });
+  // The label names the failing call, so a stuck review can be rebuilt and
+  // that one batch inspected locally.
+  expect(batch.evidence?.failure).toBe(
+    `batch-2-of-${plan.batches.length}:provider-http-503`,
+  );
+  const synthesis = await reviewInventory({
+    inspection,
+    profile,
+    fetch: provider((_input, index) =>
+      index === plan.batches.length
+        ? Response.json({
+            id: "msg_synthesis",
+            model: "claude-sonnet-5.5",
+            stop_reason: "max_tokens",
+            content: [{ type: "text", text: "{" }],
+            usage: { input_tokens: 1, output_tokens: 1 },
+          })
+        : null,
+    ).fetcher,
+    concurrency: 1,
+  });
+  expect(synthesis.evidence?.failure).toBe("synthesis:stop-max_tokens");
+});
+
+const unreadableReview = () =>
+  Response.json({
+    id: "msg_unreadable",
+    model: "claude-sonnet-5.5",
+    stop_reason: "end_turn",
+    content: [{ type: "text", text: "not a review" }],
+    usage: { input_tokens: 7, output_tokens: 3 },
+  });
+
+test("a retry preserves unknown usage and cost from an unreadable provider attempt", async () => {
+  // This exercises transport accounting only. The synthetic reply does not
+  // qualify model correctness or a security disposition.
+  const inspection = inspectRepository({ files: largeRepository() });
+  const plan = planReview(inspection);
+  if (plan.mode !== "batched") throw new Error("Expected batches");
+  let seen = 0;
+  const source = provider((input) =>
+    input === plan.batches[0].evidence && seen++ === 0
+      ? new Response("unavailable", { status: 503 })
+      : null,
+  );
+  const result = await reviewInventory({
+    inspection,
+    profile,
+    fetch: source.fetcher,
+    concurrency: 1,
+    retryDelayMs: 0,
+  });
+  expect(result.evidence?.review.status).toBe("completed");
+  expect(result.evidence?.passes?.[0].attempts).toBe(2);
+  expect(result.evidence?.passes?.[0].usage).toBeNull();
+  expect(result.evidence?.usage).toBeNull();
+  expect(result.evidence?.cost).toBeNull();
+});
+
+test("a batch call that returns an unreadable review is retried before the review fails", async () => {
+  const inspection = inspectRepository({ files: largeRepository() });
+  const plan = planReview(inspection);
+  if (plan.mode !== "batched") throw new Error("Expected batches");
+  const first = plan.batches[0].evidence;
+  // One bad answer, then a good one: the review completes and counts both.
+  let seen = 0;
+  const once = provider((input) =>
+    input === first && seen++ === 0 ? unreadableReview() : null,
+  );
+  const recovered = await reviewInventory({
+    inspection,
+    profile,
+    fetch: once.fetcher,
+    concurrency: 1,
+    retryDelayMs: 0,
+  });
+  expect(recovered.evidence?.review.status).toBe("completed");
+  expect(once.calls).toHaveLength(plan.batches.length + 2);
+  expect(recovered.evidence?.passes?.[0].attempts).toBe(2);
+  expect(recovered.evidence?.passes?.[1].attempts).toBe(1);
+  expect(recovered.evidence?.usage?.uncachedInput).toBe(
+    7 + 100 * (plan.batches.length + 1),
+  );
+  // A call that keeps answering badly fails after its last attempt.
+  const always = provider((input) =>
+    input === first ? unreadableReview() : null,
+  );
+  const failed = await reviewInventory({
+    inspection,
+    profile,
+    fetch: always.fetcher,
+    concurrency: 1,
+    retryDelayMs: 0,
+  });
+  expect(failed.evidence?.failure).toBe(
+    `batch-1-of-${plan.batches.length}:invalid-review`,
+  );
+  expect(always.calls).toHaveLength(MAX_CALL_ATTEMPTS);
+  // A deterministic stop is not retried.
+  const stopped = provider((input) =>
+    input === first
+      ? Response.json({
+          id: "msg_stop",
+          model: "claude-sonnet-5.5",
+          stop_reason: "max_tokens",
+          content: [{ type: "text", text: "{" }],
+          usage: { input_tokens: 1, output_tokens: 1 },
+        })
+      : null,
+  );
+  const stop = await reviewInventory({
+    inspection,
+    profile,
+    fetch: stopped.fetcher,
+    concurrency: 1,
+    retryDelayMs: 0,
+  });
+  expect(stop.evidence?.failure).toBe(
+    `batch-1-of-${plan.batches.length}:stop-max_tokens`,
+  );
+  expect(stopped.calls).toHaveLength(1);
+});
+
+test("a later retry without a receipt keeps the earlier usage and cost", async () => {
+  const inspection = inspectRepository({ files: largeRepository() });
+  const plan = planReview(inspection);
+  if (plan.mode !== "batched") throw new Error("Expected batches");
+  const first = plan.batches[0].evidence;
+  let attempts = 0;
+  const mixed = provider((input) =>
+    input === first && attempts++ === 0
+      ? unreadableReview()
+      : input === first
+        ? new Response("unavailable", { status: 503 })
+        : null,
+  );
+  const failed = await reviewInventory({
+    inspection,
+    profile,
+    fetch: mixed.fetcher,
+    concurrency: 1,
+    retryDelayMs: 0,
+  });
+  expect(failed.evidence?.failure).toBe(
+    `batch-1-of-${plan.batches.length}:provider-http-503`,
+  );
+  expect(mixed.calls).toHaveLength(MAX_CALL_ATTEMPTS);
+  expect(failed.evidence?.usage).toEqual({
+    uncachedInput: 7,
+    cachedInput: 0,
+    cacheCreation: 0,
+    output: 3,
+  });
+  expect(failed.evidence?.cost?.nanoUsd).toBe("48");
+  expect(failed.evidence?.review.status).toBe("failed");
 });

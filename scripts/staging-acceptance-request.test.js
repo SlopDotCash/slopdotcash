@@ -146,9 +146,13 @@ async function nativeBodyProbe(failure) {
     const origin = "http://127.0.0.1:" + server.address().port;
     const started = Date.now();
     try {
-      const result = await stagingAcceptanceRequest(origin, {}, {
-        retryDelayMs: 0, timeoutMs: 1000, attemptTimeoutMs: 200,
-      });
+      // Only transport-fault cases need an accelerated deadline. The JSON
+      // semantics case uses the production deadlines so a slow first delivery
+      // does not accidentally become a transport-retry test.
+      const timing = failure === "invalid-json"
+        ? { retryDelayMs: 0 }
+        : { retryDelayMs: 0, timeoutMs: 1000, attemptTimeoutMs: 200 };
+      const result = await stagingAcceptanceRequest(origin, {}, timing);
       const body = await result.json();
       console.log(JSON.stringify({
         status: result.status, body, calls,

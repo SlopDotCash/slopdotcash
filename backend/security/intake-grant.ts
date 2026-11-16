@@ -140,10 +140,6 @@ export function clearGrantCookie(): string {
   return cookie(GRANT_COOKIE, "", 0, "Strict");
 }
 
-function clearFlowCookie(): string {
-  return cookie(FLOW_COOKIE, "", 0, "Lax");
-}
-
 function callbackUrl(request: Request): string {
   return `${new URL(request.url).origin}/api/v1/security-submissions/authorize/callback`;
 }
@@ -186,7 +182,7 @@ export async function beginAuthorization(
   };
 }
 
-export type GrantFailure =
+type GrantFailure =
   | "grant_flow_missing"
   | "grant_state_mismatch"
   | "grant_exchange_failed"
@@ -198,6 +194,10 @@ export type GrantFailure =
  * identity binding comes from the flow cookie that the signed-in session
  * created; when a session does arrive, it must name the same account too.
  * The token is checked against `/user` before any cookie holds it.
+ * A callback never mutates the flow cookie: a newer authorization may have
+ * replaced it after this request began. Its encrypted verifier expires after
+ * ten minutes. Code replay protection comes from the provider's one-use code,
+ * not from deleting a browser cookie after an asynchronous callback.
  */
 export async function completeAuthorization(
   request: Request,
@@ -219,7 +219,6 @@ export async function completeAuthorization(
     sealed === null
       ? null
       : await open(config.grantKey, "slop-intake-flow:v1", sealed);
-  const clear = [clearFlowCookie()];
   if (
     flow === null ||
     flow.v !== 1 ||
@@ -235,7 +234,7 @@ export async function completeAuthorization(
       ok: false,
       submissionId: null,
       code: "grant_flow_missing",
-      cookies: clear,
+      cookies: [],
     };
   const submissionId = flow.s;
   const state = url.searchParams.get("state") ?? "";
@@ -248,7 +247,7 @@ export async function completeAuthorization(
       ok: false,
       submissionId,
       code: "grant_state_mismatch",
-      cookies: clear,
+      cookies: [],
     };
   let token = await config.oauth.exchange(code, flow.p, callbackUrl(request));
   if (token === null)
@@ -256,7 +255,7 @@ export async function completeAuthorization(
       ok: false,
       submissionId,
       code: "grant_exchange_failed",
-      cookies: clear,
+      cookies: [],
     };
   try {
     const user = await config.advisories.currentUser(
@@ -267,7 +266,7 @@ export async function completeAuthorization(
         ok: false,
         submissionId,
         code: "grant_exchange_failed",
-        cookies: clear,
+        cookies: [],
       };
     if (
       user.id !== flow.g ||
@@ -277,7 +276,7 @@ export async function completeAuthorization(
         ok: false,
         submissionId,
         code: "grant_identity_mismatch",
-        cookies: clear,
+        cookies: [],
       };
     const grant = await seal(
       config.grantKey,
@@ -293,7 +292,7 @@ export async function completeAuthorization(
     return {
       ok: true,
       submissionId,
-      cookies: [...clear, cookie(GRANT_COOKIE, grant, GRANT_SECONDS, "Strict")],
+      cookies: [cookie(GRANT_COOKIE, grant, GRANT_SECONDS, "Strict")],
     };
   } finally {
     token = "";

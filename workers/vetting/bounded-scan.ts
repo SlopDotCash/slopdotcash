@@ -31,12 +31,15 @@ import {
 } from "../../backend/vetting/scan-result";
 import { sha256Hex as sha256 } from "../../src/lib/sha256";
 import { resolveSymlinkTarget, type TreeEntry } from "./acquire";
-import type { QueuedAssessment } from "./queue";
+import type { QueuedAssessment } from "./assembly-manifest";
+import { expandGzipInputs } from "./gzip-inputs";
+import { localInstallHelpers } from "./local-install-helpers";
 import {
   SCAN_PROMPT_REVISION,
   SCAN_REVIEW_AREAS,
   type ScannerEvidence,
 } from "./scanners";
+import { textPartEnds } from "./verified-text-parts";
 
 export const INVENTORY_SCHEMA = "slop-scan-inventory-v2";
 /**
@@ -52,6 +55,9 @@ export const MAX_TEXT_FILE_BYTES = 256 * 1024;
 export type ScanInputFile = {
   path: string;
   bytes: Uint8Array;
+  /** Trusted derived inputs retain the decoded name and exact archive lineage. */
+  logicalPath?: string;
+  parentArtifactSha256?: string;
   symlink?: {
     gitSha: string;
     sha256: string;
@@ -163,6 +169,9 @@ const INSTALL_FILES = new Set([
   "jenkinsfile",
   "vagrantfile",
   "rakefile",
+  "rakefile.rb",
+  "gemfile",
+  "gems.rb",
   "brewfile",
   "procfile",
   "cmakelists.txt",
@@ -205,7 +214,7 @@ const INSTALL_FILES = new Set([
 const MSBUILD_EXTENSIONS = "csproj|fsproj|vbproj|vcxproj|proj|props|targets";
 const GYP_EXTENSION = "gyp|gypi";
 const BUILD_RECIPE = new RegExp(
-  String.raw`(?:^|\/)(?:dockerfile|containerfile|jenkinsfile)(?:\.[^/]+)?$|\.(?:dockerfile|cmake|sbt|bzl|bazel|m4|hcl|ninja|${MSBUILD_EXTENSIONS}|${GYP_EXTENSION})$`,
+  String.raw`(?:^|\/)(?:dockerfile|containerfile|jenkinsfile)(?:\.[^/]+)?$|\.(?:dockerfile|cmake|sbt|bzl|bazel|m4|hcl|ninja|rake|mk|make|${MSBUILD_EXTENSIONS}|${GYP_EXTENSION})$`,
   "u",
 );
 const MSBUILD_RECIPE = new RegExp(
@@ -254,11 +263,19 @@ function basename(path: string): string {
   return path.slice(path.lastIndexOf("/") + 1).toLowerCase();
 }
 
-/** The surfaces one path belongs to; empty for non-executable content. */
+/** Match a complete directory component at the root or in a nested package. */
+function inDirectory(path: string, directory: string): boolean {
+  return path.startsWith(`${directory}/`) || path.includes(`/${directory}/`);
+}
+
+/** The review surfaces assigned to a repository path. */
 export function surfacesOf(path: string): ScanSurface[] {
   const lower = path.toLowerCase();
   const name = basename(path);
   const surfaces = new Set<ScanSurface>();
+  const rubyManifest =
+    !name.endsWith(".lock") &&
+    /^(?:gemfile(?:\..+)?|.+\.gemfile|gems\.rb)$/u.test(name);
   if (
     LOCKFILES.has(name) ||
     /^requirements[^/]*\.txt$/u.test(name) ||
@@ -267,27 +284,28 @@ export function surfacesOf(path: string): ScanSurface[] {
     /(?:^|\/)requirements\/[^/]*\.txt$/u.test(lower)
   )
     surfaces.add("dependencies");
-  if (MANIFESTS.has(name) || name.endsWith(".gemspec"))
+  if (MANIFESTS.has(name) || name.endsWith(".gemspec") || rubyManifest)
     surfaces.add("manifests");
   if (
+    name.endsWith(".md") ||
     AGENT_INSTRUCTIONS.has(name) ||
-    lower.startsWith(".cursor/") ||
-    lower.startsWith(".claude/") ||
-    lower.startsWith(".github/instructions/") ||
-    lower.startsWith(".github/chatmodes/") ||
-    lower.startsWith(".junie/") ||
-    lower.startsWith(".idx/") ||
-    lower.startsWith(".windsurf/") ||
-    lower.includes("/.cursor/rules/")
+    inDirectory(lower, ".cursor") ||
+    inDirectory(lower, ".claude") ||
+    inDirectory(lower, ".github/instructions") ||
+    inDirectory(lower, ".github/chatmodes") ||
+    inDirectory(lower, ".junie") ||
+    inDirectory(lower, ".idx") ||
+    inDirectory(lower, ".windsurf")
   )
     surfaces.add("agentInstructions");
   if (
     INSTALL_FILES.has(name) ||
+    rubyManifest ||
     PACKAGE_MANAGER_CONFIGS.has(name) ||
     BUILD_RECIPE.test(lower) ||
-    lower.startsWith(".husky/") ||
-    lower.startsWith(".devcontainer/") ||
-    lower.startsWith(".vscode/") ||
+    inDirectory(lower, ".husky") ||
+    inDirectory(lower, ".devcontainer") ||
+    inDirectory(lower, ".vscode") ||
     /(?:^|\/)(?:install|setup|bootstrap)[^/]*\.(?:sh|ps1|bat|cmd|py|js|mjs)$/u.test(
       lower,
     )
@@ -383,7 +401,7 @@ const RULES: Rule[] = [
     threat: "unsafe-execution",
     severity: "high",
     pattern: new RegExp(
-      String.raw`\b(?:curl|wget)\b(?:[^\n|]|\\[ \t]*\r?\n)*\|\s*(?:${SUDO_COMMAND}\s+)?(?:${ENV_COMMAND}\s+)?${SHELL_COMMAND}|(?:^|[\s;|&()'"])(?:${ENV_COMMAND}\s+)?${SHELL_COMMAND}\s+-c\s+["']?\$\(\s*(?:curl|wget)\b|(?:^|[\s;|&()'"])eval\s+["']?(?:\$\(|\x60)\s*(?:curl|wget)\b|\b(?:iwr|irm|Invoke-WebRequest|Invoke-RestMethod)\b[^\n]*\|\s*(?:iex|Invoke-Expression)\b|\.DownloadString\s*\([^\n]*\)\s*\|\s*(?:iex|Invoke-Expression)\b|(?:iex|Invoke-Expression)\s*\(+\s*(?:New-Object\s+(?:System\.)?Net\.WebClient|iwr|irm|Invoke-WebRequest|Invoke-RestMethod)|\b(?:powershell|pwsh)[^\n]*-(?:e|enc|encodedcommand)\s`,
+      String.raw`\b(?:curl|wget)\b[^\n|]*(?:\\[ \t]*\r?\n[^\n|]*)*\|\s*(?:${SUDO_COMMAND}\s+)?(?:${ENV_COMMAND}\s+)?${SHELL_COMMAND}|(?:^|[\s;|&()'"])(?:${ENV_COMMAND}\s+)?${SHELL_COMMAND}\s+-c\s+["']?\$\(\s*(?:curl|wget)\b|(?:^|[\s;|&()'"])eval\s+["']?(?:\$\(|\x60)\s*(?:curl|wget)\b|\b(?:iwr|irm|Invoke-WebRequest|Invoke-RestMethod)\b[^\n]*\|\s*(?:iex|Invoke-Expression)\b|\.DownloadString\s*\([^\n]*\)\s*\|\s*(?:iex|Invoke-Expression)\b|(?:iex|Invoke-Expression)\s*\(+\s*(?:New-Object\s+(?:System\.)?Net\.WebClient|iwr|irm|Invoke-WebRequest|Invoke-RestMethod)|\b(?:powershell|pwsh)[^\n]*-(?:e|enc|encodedcommand)\s`,
       "iu",
     ),
     summary: "Runs a remote download in a shell",
@@ -475,7 +493,7 @@ const RULES: Rule[] = [
     // decoder to known stream arguments: extra operands can read local files
     // and help/version flags do not decode the download.
     pattern: new RegExp(
-      String.raw`\b(?:curl|wget)\b(?:[^\n|]|\\[ \t]*\r?\n)*\|\s*(?:${commandToken("base64")}\s+(?:-d|-D|--decode|-di|-id)|${commandToken("xxd")}\s+(?:-r(?:\s+-p)?|-p\s+-r)|${commandToken("uudecode")}\s+-o\s+/dev/stdout|${commandToken("openssl")}\s+(?:base64\s+-d|enc\s+(?:-d\s+-(?:a|base64)|-(?:a|base64)\s+-d)))\s*\|\s*(?:${SUDO_COMMAND}\s+)?(?:${ENV_COMMAND}\s+)?(?:${SHELL_COMMAND}(?:\s+-)?|${INTERPRETER_PIPE_TARGET})(?=\s*(?:$|[|;&<>()]))`,
+      String.raw`\b(?:curl|wget)\b[^\n|]*(?:\\[ \t]*\r?\n[^\n|]*)*\|\s*(?:${commandToken("base64")}\s+(?:-d|-D|--decode|-di|-id)|${commandToken("xxd")}\s+(?:-r(?:\s+-p)?|-p\s+-r)|${commandToken("uudecode")}\s+-o\s+/dev/stdout|${commandToken("openssl")}\s+(?:base64\s+-d|enc\s+(?:-d\s+-(?:a|base64)|-(?:a|base64)\s+-d)))\s*\|\s*(?:${SUDO_COMMAND}\s+)?(?:${ENV_COMMAND}\s+)?(?:${SHELL_COMMAND}(?:\s+-)?|${INTERPRETER_PIPE_TARGET})(?=\s*(?:$|[|;&<>()]))`,
       "iu",
     ),
     summary: "Runs a decoded remote download in a shell or interpreter",
@@ -539,6 +557,10 @@ const RULE_POLICY_SHA256 = sha256(
     xmlAttributeCharacterReferences: "decimal-hex-and-predefined-entities",
     xmlElementCharacterReferences:
       "msbuild-element-text-except-exec-comments-and-cdata",
+    compressedInputs:
+      "complete-gzip-stream-crc-and-members-derived-payload-and-header-v2",
+    localInstallHelpers: "literal-shell-working-directory-closure-v1",
+    sourceClassification: "all-acquired-text-unknown-bytes-incomplete-v1",
     rules: RULES.map(({ pattern, ...rule }) => ({
       ...rule,
       pattern: { source: pattern.source, flags: pattern.flags },
@@ -848,13 +870,20 @@ function checkText(
   surfaces: ScanSurface[],
   evidenceText = text,
   origin?: (index: number) => number,
+  nonMatches?: Set<RegExp>,
 ): ScanFinding[] {
   const findings: ScanFinding[] = [];
   for (const rule of RULES) {
     if (rule.surfaces && !rule.surfaces.some((s) => surfaces.includes(s)))
       continue;
     const match = rule.pattern.exec(text);
-    if (match === null) continue;
+    if (match === null) {
+      // The caller already paid for this full scan of the text; recording
+      // the proven non-match lets a later pass over the same text skip
+      // re-scanning a pattern that cannot match it.
+      nonMatches?.add(rule.pattern);
+      continue;
+    }
     const at = origin?.(match.index) ?? match.index;
     findings.push({
       severity: rule.severity,
@@ -912,7 +941,7 @@ const OBFUSCATION =
  * obfuscation signal in bulk content sends the model every match in context
  * (`signalExcerpt`).
  */
-export function bulkClass(
+function bulkClass(
   path: string,
   surfaces: ScanSurface[],
 ): "lockfile" | "data" | "generated" | "vendored" | null {
@@ -930,9 +959,9 @@ export function bulkClass(
     lower.endsWith(".json") &&
     !CONFIG_JSON.test(lower) &&
     !lower.includes("/.vscode/") &&
-    !lower.startsWith(".vscode/") &&
-    !lower.startsWith(".claude/") &&
-    !lower.startsWith(".cursor/") &&
+    !inDirectory(lower, ".vscode") &&
+    !inDirectory(lower, ".claude") &&
+    !inDirectory(lower, ".cursor") &&
     !lower.startsWith(".github/")
   )
     return "data";
@@ -945,17 +974,26 @@ const SIGNAL_CONTEXT = 1536;
  * bulk file, with character offsets; null when there is none. The
  * deterministic checks still read the whole file.
  */
-export function signalExcerpt(path: string, text: string): string | null {
+function signalExcerpt(
+  path: string,
+  text: string,
+  nonMatches?: ReadonlySet<RegExp>,
+): string | null {
   const matches: [number, number][] = [];
   for (const pattern of [
     OBFUSCATION,
     DOWNLOAD,
     ...RULES.map((rule) => rule.pattern),
-  ])
+  ]) {
+    // A pattern the deterministic pass already proved cannot match this
+    // exact text contributes no window; re-scanning it would repeat the
+    // most expensive part of that pass for an empty result.
+    if (nonMatches?.has(pattern)) continue;
     for (const match of text.matchAll(
       new RegExp(pattern.source, `g${pattern.flags.replace("g", "")}`),
     ))
       matches.push([match.index, Math.min(match[0].length, 4096)]);
+  }
   if (matches.length === 0) return null;
   matches.sort((a, b) => a[0] - b[0]);
   const windows: [number, number][] = [];
@@ -981,14 +1019,7 @@ export function textParts(text: string, size = MAX_TEXT_FILE_BYTES): string[] {
   if (bytes.length <= size) return [text];
   const parts: string[] = [];
   let start = 0;
-  while (start < bytes.length) {
-    let end = Math.min(start + size, bytes.length);
-    if (end < bytes.length) {
-      const newline = bytes.lastIndexOf(10, end - 1);
-      if (newline > start) end = newline + 1;
-      // Never split inside a UTF-8 sequence.
-      while (end > start + 1 && (bytes[end] & 0xc0) === 0x80) end -= 1;
-    }
+  for (const end of textPartEnds(bytes, size)) {
     parts.push(bytes.subarray(start, end).toString("utf8"));
     start = end;
   }
@@ -1015,6 +1046,8 @@ export type RepositoryInspection = {
   checks: VettingScanResult["checks"];
   findings: ScanFinding[];
   artifacts: VettingArtifact[];
+  /** Decoded artifact bytes that the controller must retain when named. */
+  derivedFiles?: ScanInputFile[];
   dependencyLocks: { path: string; sha256: string }[];
   visibilityGaps: string[];
   /** Download URLs install-time content references. */
@@ -1626,17 +1659,25 @@ export function inspectRepository(input: {
   /** Source the acquisition could not read; each keeps the scan incomplete. */
   acquisitionGaps?: string[];
 }): RepositoryInspection {
-  const files = [...input.files].sort((a, b) =>
+  const expanded = expandGzipInputs(
+    input.files,
+    (path) =>
+      surfacesOf(path).length > 0 ||
+      EXECUTABLE_BINARIES.test(path) ||
+      ARCHIVES.test(path),
+  );
+  const files = expanded.files.sort((a, b) =>
     a.path < b.path ? -1 : a.path > b.path ? 1 : 0,
   );
   const counts = Object.fromEntries(
     SCAN_SURFACES.map((surface) => [surface, 0]),
   ) as Record<ScanSurface, number>;
+  counts.downloads = expanded.archives.length;
   const partial = new Set<ScanSurface>();
-  const gaps: string[] = [...(input.acquisitionGaps ?? [])];
+  const gaps: string[] = [...(input.acquisitionGaps ?? []), ...expanded.gaps];
   if (gaps.length > 0) partial.add("source");
   const findings: ScanFinding[] = [];
-  const artifacts: VettingArtifact[] = [];
+  const artifacts: VettingArtifact[] = [...expanded.archives];
   const dependencyLocks: { path: string; sha256: string }[] = [];
   type Candidate = {
     path: string;
@@ -1645,6 +1686,10 @@ export function inspectRepository(input: {
     text: string;
     surfaces: ScanSurface[];
     flagged: boolean;
+    /** Unknown text is never assumed to be generated or vendored source. */
+    fullTextRequired: boolean;
+    /** Rule patterns the deterministic pass proved cannot match `text`. */
+    nonMatches?: ReadonlySet<RegExp>;
   };
   const candidates: Candidate[] = [];
   const classifications: { path: string; surfaces: ScanSurface[] }[] = [];
@@ -1656,17 +1701,52 @@ export function inspectRepository(input: {
     gaps.push(...gyp.unacquired);
   }
   const cmakeIncludes = cmakeIncludedPaths(files);
+  const texts = new Map(files.map((file) => [file.path, decode(file.bytes)]));
+  const helpers = localInstallHelpers(
+    files.map((file) => ({
+      path: file.path,
+      text: texts.get(file.path) ?? null,
+    })),
+    files.flatMap((file) => {
+      const text = texts.get(file.path);
+      if (text === null || text === undefined) return [];
+      const surfaces = surfacesOf(file.logicalPath ?? file.path);
+      const directory = file.path.includes("/")
+        ? file.path.slice(0, file.path.lastIndexOf("/"))
+        : "";
+      const commands = installHookCommands(file.path, text);
+      if (
+        (surfaces.includes("installScripts") ||
+          (surfaces.length === 0 && declaresInterpreter(file.bytes)) ||
+          gypIncludes.has(file.path) ||
+          cmakeIncludes.has(file.path)) &&
+        (/\.(?:sh|bash|zsh)$/iu.test(file.logicalPath ?? file.path) ||
+          /^#![^\n]*\b(?:ba|da|k|z)?sh(?:\s|$)/u.test(text))
+      )
+        commands.push(text);
+      return commands.map((text) => ({ path: file.path, text, directory }));
+    }),
+  );
+  if (helpers.unacquired.length > 0) {
+    partial.add("installScripts");
+    gaps.push(...helpers.unacquired);
+  }
   for (const file of files) {
-    const surfaces = surfacesOf(file.path);
+    const surfaces = surfacesOf(file.logicalPath ?? file.path);
     // Previously unclassified interpreter scripts still need review, even
     // when their name has no recognized extension (for example, configure).
     if (surfaces.length === 0 && declaresInterpreter(file.bytes))
       surfaces.push("installScripts", "source");
     // Both build systems execute included files during configuration.
-    if (gypIncludes.has(file.path) || cmakeIncludes.has(file.path)) {
+    if (
+      gypIncludes.has(file.path) ||
+      cmakeIncludes.has(file.path) ||
+      helpers.included.has(file.path)
+    ) {
       if (!surfaces.includes("installScripts")) surfaces.push("installScripts");
       if (!surfaces.includes("source")) surfaces.push("source");
     }
+    const unclassified = surfaces.length === 0;
     if (surfaces.length > 0)
       classifications.push({ path: file.path, surfaces: [...surfaces].sort() });
     const digest = sha256(file.bytes);
@@ -1679,8 +1759,8 @@ export function inspectRepository(input: {
       // quarantined until a specialist or isolated analysis releases it.
       artifacts.push({
         sha256: digest,
-        parentSha256: null,
-        origin: "repository",
+        parentSha256: file.parentArtifactSha256 ?? null,
+        origin: file.parentArtifactSha256 ? "archive" : "repository",
         path: file.path.slice(0, 500),
         type: ARCHIVES.test(file.path)
           ? "archive"
@@ -1696,20 +1776,42 @@ export function inspectRepository(input: {
       counts.downloads += 1;
       continue;
     }
-    const text = decode(file.bytes);
+    const text = texts.get(file.path) ?? null;
     // Ant imports may use any filename. Its project root identifies the
     // executable build document without parsing XML or resolving entities.
     if (text !== null && /<project(?=[\t\n\r />])/u.test(text)) {
       if (!surfaces.includes("installScripts")) surfaces.push("installScripts");
       if (!surfaces.includes("source")) surfaces.push("source");
     }
-    if (surfaces.length === 0) continue;
+    // An extension is a hint, not proof that acquired bytes cannot execute.
+    // Keep native/archive handling above. Every other acquired file enters
+    // source review; unreadable bytes below remain an explicit coverage gap.
+    if (unclassified) {
+      if (!surfaces.includes("source")) surfaces.push("source");
+      classifications.push({ path: file.path, surfaces: [...surfaces].sort() });
+    }
     for (const surface of surfaces) counts[surface] += 1;
     if (surfaces.includes("dependencies"))
       dependencyLocks.push({ path: file.path.slice(0, 500), sha256: digest });
     if (text === null) {
       for (const surface of surfaces) partial.add(surface);
       gaps.push(`Undecodable executable content at ${file.path}`);
+      if (unclassified) {
+        // Unknown binary bytes are evidence too. Keep their digest and
+        // quarantine rather than reusing the same path-only visibility gap
+        // when an opaque input changes.
+        artifacts.push({
+          sha256: digest,
+          parentSha256: file.parentArtifactSha256 ?? null,
+          origin: file.parentArtifactSha256 ? "archive" : "repository",
+          path: file.path.slice(0, 500),
+          type: "binary",
+          state: "quarantined",
+          analysis: "pending",
+          requestedExecution: false,
+        });
+        counts.downloads += 1;
+      }
       continue;
     }
     // Every deterministic check reads the whole file, whatever its size.
@@ -1723,12 +1825,14 @@ export function inspectRepository(input: {
         ? xmlAttributeRuleText(text, msbuild)
         : undefined;
     const ruleText = attributes?.text ?? text;
+    const provenNonMatches = new Set<RegExp>();
     const found = checkText(
       file.path,
       ruleText,
       surfaces,
       text,
       attributes?.origin,
+      provenNonMatches,
     );
     findings.push(...found);
     const hooks = installHookCommands(file.path, text);
@@ -1749,6 +1853,10 @@ export function inspectRepository(input: {
       text,
       surfaces,
       flagged: found.length > 0 || hooks.length > 0,
+      fullTextRequired: unclassified,
+      // The recorded non-matches were proven against `ruleText`; they are
+      // only valid for the excerpt pass when that is the text it reads.
+      ...(ruleText === text ? { nonMatches: provenNonMatches } : {}),
     });
   }
   // A large text file is reviewed in consecutive parts; none is skipped.
@@ -1763,7 +1871,7 @@ export function inspectRepository(input: {
   // Keep original link bytes and the resolved path in the reviewed/reused
   // identity, even when two targets happen to contain identical content.
   // The absolute ID namespace cannot collide with a repository path.
-  const links = files.flatMap((file) => {
+  const links = input.files.flatMap((file) => {
     if (!file.symlink) return [];
     return textParts(JSON.stringify({ path: file.path, ...file.symlink })).map(
       (text, index, parts) => ({
@@ -1788,9 +1896,13 @@ export function inspectRepository(input: {
   if (envelope(items)) {
     items = [...links];
     for (const candidate of candidates) {
-      const kind = bulkClass(candidate.path, candidate.surfaces);
+      const kind = candidate.fullTextRequired
+        ? null
+        : bulkClass(candidate.path, candidate.surfaces);
       const excerpt =
-        kind === null ? null : signalExcerpt(candidate.path, candidate.text);
+        kind === null
+          ? null
+          : signalExcerpt(candidate.path, candidate.text, candidate.nonMatches);
       // Signals too dense to excerpt in one item keep the whole file reviewed.
       if (
         kind === null ||
@@ -1879,6 +1991,7 @@ export function inspectRepository(input: {
     ) as VettingScanResult["checks"],
     findings,
     artifacts,
+    derivedFiles: expanded.derivedFiles,
     dependencyLocks,
     visibilityGaps: gaps,
     downloads: [...downloads].sort(),
@@ -1923,7 +2036,7 @@ export function executionInventory(inspection: RepositoryInspection) {
  * itself, with no score threshold: any suspected malice or high finding is
  * high risk, any other finding or incomplete coverage is ambiguous.
  */
-export function scanReview(evidence: ScannerEvidence): ScanReview {
+function scanReview(evidence: ScannerEvidence): ScanReview {
   const completed = evidence.review.status === "completed";
   const risk = !completed
     ? null
@@ -2068,6 +2181,22 @@ export function composeScanResult(input: {
       scanner.review.inputManifestSha256 !== inspection.inventorySha256
     )
       throw new Error("A review read another inventory");
+  // The intake parser accepts at most 50 visibility gaps
+  // (parseVettingScanResult), so reserve room for the truncation notes
+  // before slicing: appending them after the slice emits 51-53 entries
+  // that no intake can record, and the assessment stays pending while
+  // every scan pass aborts on the same unpublishable result.
+  const truncationNotes = [
+    ...(inspection.dependencyLocks.length > 200
+      ? ["More than 200 dependency locks"]
+      : []),
+    ...(inspection.findings.length > 200
+      ? ["More than 200 scan findings"]
+      : []),
+    ...(inspection.artifacts.length > 500
+      ? ["More than 500 scan artifacts"]
+      : []),
+  ];
   const report = new TextEncoder().encode(
     JSON.stringify({
       schemaVersion: input.sourceInventorySha256
@@ -2113,12 +2242,15 @@ export function composeScanResult(input: {
     coverage: inspection.coverage,
     checks: inspection.checks,
     visibilityGaps: [
-      ...new Set([
-        ...inspection.visibilityGaps,
-        ...input.primary.visibilityGaps,
-        ...(input.specialist?.visibilityGaps ?? []),
-      ]),
-    ].slice(0, 50),
+      ...[
+        ...new Set([
+          ...inspection.visibilityGaps,
+          ...input.primary.visibilityGaps,
+          ...(input.specialist?.visibilityGaps ?? []),
+        ]),
+      ].slice(0, 50 - truncationNotes.length),
+      ...truncationNotes,
+    ],
     execution: input.execution ?? null,
     reusedAssessmentId: null,
     primaryReview: scanReview(input.primary),
@@ -2129,12 +2261,6 @@ export function composeScanResult(input: {
       .map(({ path: _path, ...finding }) => finding),
     confirmation: null,
   };
-  if (inspection.dependencyLocks.length > 200)
-    result.visibilityGaps.push("More than 200 dependency locks");
-  if (inspection.findings.length > 200)
-    result.visibilityGaps.push("More than 200 scan findings");
-  if (inspection.artifacts.length > 500)
-    result.visibilityGaps.push("More than 500 scan artifacts");
   result.disposition = "clean";
   if (scanProblems(result).length > 0) result.disposition = "incomplete";
   return {

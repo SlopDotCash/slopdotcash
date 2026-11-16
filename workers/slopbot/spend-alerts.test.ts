@@ -23,6 +23,9 @@ function harness(rejectMail = false) {
     "0084_slopbot_attempt_accounting.sql",
     "0085_slopbot_provider_failure_notices.sql",
     "0104_slopbot_value_inference_attempts.sql",
+    "0118_slopbot_zero_call_reconciliation.sql",
+    "0120_slopbot_value_attempt_completion.sql",
+    "0122_orbio_provider_failure_notices.sql",
   ]);
   const mail: string[] = [];
   const notify = {
@@ -44,14 +47,23 @@ function harness(rejectMail = false) {
     provider: number | null,
     outcome = "ok",
     failure: string | null = null,
+    gateway = "surplus",
   ) =>
     sqlite
       .prepare(`
     INSERT INTO slopbot_costs(review_key,installation_id,call_kind,route_step,provider,requested_model,outcome,
     input_tokens,cache_write_tokens,cache_read_tokens,output_tokens,price_version,cost_micro_usd,billed_micro_usdc,reconciliation,created_at,provider_cost_micro_usd,failure)
-    VALUES ('review',1,'triage',0,'surplus','model',?,0,0,0,0,'price',?,0,'estimated',?,?,?)
+    VALUES ('review',1,'triage',0,?,?,?,0,0,0,0,'price',?,0,'estimated',?,?,?)
   `)
-      .run(outcome, estimated, `${month}-01T00:00:00.000Z`, provider, failure);
+      .run(
+        gateway,
+        gateway === "orbio" ? "anthropic/claude-sonnet-5.5" : "model",
+        outcome,
+        estimated,
+        `${month}-01T00:00:00.000Z`,
+        provider,
+        failure,
+      );
   return { sqlite, db, mail, notify, add };
 }
 
@@ -339,6 +351,61 @@ test("alerts-only route retains unknown fallback costs without a reserve or dupl
   }
 });
 
+test("an authority refusal after reservation settles with zero calls and releases capped capacity", async () => {
+  const h = harness();
+  const output = {
+    sourceDigest: "b".repeat(64),
+    name: "zero_call_budget",
+    schema: { type: "object" },
+    validate: () => ({ accepted: true }),
+  };
+  const prompt = { system: "Zero-call fixture", policy: "None", item: "None" };
+  // No provider is reachable: any request would fail the test.
+  const env = {
+    SURPLUS_API_KEY: "local-only",
+    SURPLUS_BASE_URL: "http://127.0.0.1:9",
+  };
+  try {
+    for (const failure of [null, new Error("registry unavailable")]) {
+      const id = `value:${crypto.randomUUID()}`;
+      // Authority holds for the pre-reservation check, then changes before
+      // the route's first request.
+      let checks = 0;
+      const mayCall = async () => {
+        checks++;
+        if (checks === 1) return true;
+        if (failure) throw failure;
+        return false;
+      };
+      const run = runValueInference(env, prompt, output, mayCall, {
+        db: h.db,
+        installationId: 1,
+        attemptId: id,
+        maximumMicroUsd: 600,
+        approvedMonthlyMicroUsd: 1000,
+      });
+      if (failure) await expect(run).rejects.toThrow("registry unavailable");
+      else expect((await run).blockReason).toBe("authority");
+      expect(
+        h.sqlite
+          .query(
+            "SELECT call_count,recorded_micro_usd FROM slopbot_value_budget_reconciliations WHERE attempt_id = ?",
+          )
+          .get(id),
+      ).toEqual({ call_count: 0, recorded_micro_usd: 0 });
+    }
+    expect(
+      h.sqlite.query("SELECT count(*) AS n FROM slopbot_costs").get(),
+    ).toEqual({ n: 0 });
+    // Both settled holds are free again: one more 600 reservation fits.
+    expect(
+      await reserveValueBudget(h.db, `value:${crypto.randomUUID()}`, 600, 1000),
+    ).toBe(true);
+  } finally {
+    h.sqlite.close();
+  }
+});
+
 test("attempt migration preserves populated children; known alerts-only costs reconcile above old estimates", async () => {
   // Migrate existing capped and alerts-only rows in a transaction with active
   // foreign keys, including both kinds of retained child record.
@@ -452,7 +519,7 @@ test("provider failure mail includes safe causes and retains ambiguous delivery 
 
     const legacyNotice = {
       callId: 1,
-      model: "claude-opus-5.5",
+      model: "claude-sonnet-5.5",
       kind: "request-failed",
       occurredAt: "2026-11-01T00:00:00.000Z",
     };
@@ -495,6 +562,32 @@ test("provider failure mail includes safe causes and retains ambiguous delivery 
       { outcome: "accepted" },
       { outcome: "ambiguous" },
     ]);
+  } finally {
+    h.sqlite.close();
+  }
+});
+
+test("Orbio failure queues one private operator notice while success sends none", async () => {
+  const h = harness();
+  try {
+    h.add("2026-11", 0, null, "ok", null, "orbio");
+    await dispatchFailureAlert(h.db, h.notify);
+    expect(h.mail).toHaveLength(0);
+    h.add("2026-11", 0, null, "failed", "provider returned HTTP 503", "orbio");
+    await Promise.all([
+      dispatchFailureAlert(h.db, h.notify),
+      dispatchFailureAlert(h.db, h.notify),
+    ]);
+    expect(h.mail).toHaveLength(1);
+    expect(h.mail[0]).toContain("provider returned HTTP 503");
+    expect(h.mail[0]).toContain("anthropic/claude-sonnet-5.5");
+    await dispatchFailureAlert(h.db, h.notify);
+    expect(h.mail).toHaveLength(1);
+    expect(
+      h.sqlite
+        .query("SELECT outcome FROM slopbot_provider_failure_receipts")
+        .all(),
+    ).toEqual([{ outcome: "accepted" }]);
   } finally {
     h.sqlite.close();
   }

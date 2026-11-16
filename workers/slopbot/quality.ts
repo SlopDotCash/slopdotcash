@@ -1,3 +1,4 @@
+import { decodeBase64 } from "../../src/lib/byte-encoding";
 // Operator receipts are evidence, not model output or contributor test claims.
 // The signing key and approved VM profile are configured outside repositories.
 
@@ -14,7 +15,7 @@ export type QualityTrust = {
   // Set only after a separate reviewed qualification. Never derived from a receipt.
   SLOPBOT_QUALITY_QUALIFIED_PROFILE_SHA256?: string;
 };
-export type QualitySubject = {
+type QualitySubject = {
   repositoryId: number;
   nodeId: string;
   headSha: string;
@@ -44,7 +45,7 @@ function requireFact(ok: unknown): asserts ok {
   if (!ok) throw new Error("Unverified quality evidence");
 }
 function bytes(value: string, length: number) {
-  const result = Uint8Array.from(atob(value), (c) => c.charCodeAt(0));
+  const result = decodeBase64(value);
   requireFact(result.length === length);
   return result;
 }
@@ -70,7 +71,7 @@ function scalar(v: unknown): v is string | number | boolean | null {
  * The approved collector must attest semantic facts and isolation outside the
  * guest. A signature from an arbitrary key or an incomplete VM run is not proof.
  */
-export async function verifyQualityReceipt(
+async function verifyQualityReceipt(
   envelope: string,
   trust: QualityTrust,
   subject: QualitySubject,

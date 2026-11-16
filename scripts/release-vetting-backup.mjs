@@ -1,4 +1,5 @@
 import { execFileSync } from "node:child_process";
+import { assertActiveVersionTagged } from "./worker-release.mjs";
 
 const target = process.argv[2];
 if (target !== "staging" && target !== "production")
@@ -45,17 +46,10 @@ const read = (args) =>
   JSON.parse(execFileSync(wrangler, args, { encoding: "utf8" }));
 const status = read(["deployments", "status", "--name", name, "--json"]);
 const versions = read(["versions", "list", "--name", name, "--json"]);
-const active = status?.versions;
-if (
-  !Array.isArray(active) ||
-  active.length !== 1 ||
-  active[0].percentage !== 100 ||
-  !Array.isArray(versions) ||
-  !versions.some(
-    (version) =>
-      version.id === active[0].version_id &&
-      version.annotations?.["workers/tag"] === sha,
-  )
-)
-  throw new Error("Scanner backup release is not bound to the workflow commit");
+assertActiveVersionTagged({
+  deployment: status,
+  versions,
+  sha: sha,
+  message: "Scanner backup release is not bound to the workflow commit",
+});
 console.log(`Verified ${name} at ${sha}`);

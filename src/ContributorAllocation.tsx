@@ -10,6 +10,7 @@ import {
 } from "./lib/contributor-allocation";
 import { type PaymentsAccount, transactionUrl } from "./lib/payments/contracts";
 import { NETWORK_NAMES } from "./lib/reward-asset.mjs";
+import { useTimeBoundary } from "./lib/use-time-boundary";
 import { PayoutAmount, PayoutRow } from "./PayoutRows";
 import { formatDateTime } from "./Presentation";
 
@@ -65,6 +66,9 @@ export function ContributorAllocationRow({
       });
     return () => controller.abort();
   }, [revision]);
+  useTimeBoundary(
+    allocation ? Date.parse(allocation.registrationClosesAt) : null,
+  );
   if (error)
     return (
       <div role="alert">

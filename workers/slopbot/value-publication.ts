@@ -8,26 +8,34 @@ import {
 import type { Job } from "./contracts";
 import { GitHubClient } from "./github";
 import { type D1Database, installationActive } from "./persistence";
-import { registeredProject, requireRegisteredRepository } from "./registry";
+import { requireRegisteredRepository } from "./registry";
 import { loadPolicy, type ReviewEnv } from "./review";
+import type { publicationCommitPages } from "./value-commit-pages";
 import { readValueDecision } from "./value-consumption";
 import { collectValueContext, valueContextSelections } from "./value-context";
-import {
-  collectValueEvidence,
-  type EvidenceClient,
-  findRepository,
-  type ValueEvidence,
-} from "./value-evidence";
+import { collectValueEvidence, findRepository } from "./value-evidence";
+import type { EvidenceClient, ValueEvidence } from "./value-evidence-types";
 import { appendValueRecord, prepareValueRecord } from "./value-journal";
 import {
   reuseMergeResolution,
   type ValueMergeRecipe,
 } from "./value-merge-profile";
 import {
+  NATIVE_MERGE_CONTEXT,
+  nativeMergeCarrierMatches,
+} from "./value-native-merge";
+import {
   NO_CHANGE_PROMOTION_CONTEXT,
   noChangePromotionMatches,
 } from "./value-no-change-promotion";
+import type { ValueClaim } from "./value-processing";
+import { isSubscriptionProvenance } from "./value-producer";
+import {
+  fenceValueClaim,
+  registeredValuePublication,
+} from "./value-publication-fence";
 import { type ValueAssessmentResult, valueSourceDigest } from "./value-review";
+import type { WorkUnitSource } from "./value-work-unit-types";
 
 export type ValueClient = EvidenceClient & Pick<GitHubClient, "fileText">;
 type ValueResult = ValueAssessmentResult;
@@ -49,7 +57,7 @@ export async function loadValuePolicy(
 
 /** Re-read full source after inference. Head equality alone misses edited
  * discussions, added reviews and changed accepted-range evidence.
- * A joint caller may defer only the verified promotion marker; its complete
+ * A joint caller may defer verified promotion or native-ancestor context; its complete
  * freshly collected group must still pass original-source verification.
  */
 export async function verifyCurrentValueSource(
@@ -59,6 +67,7 @@ export async function verifyCurrentValueSource(
   repositories: readonly TargetRepository[],
   mergeRecipe?: ValueMergeRecipe,
   verificationScope: "standalone" | "joint" = "standalone",
+  jointSources: readonly WorkUnitSource[] = [],
 ) {
   const repository = findRepository(repositories, evidence.repository);
   if (!repository)
@@ -101,11 +110,15 @@ export async function verifyCurrentValueSource(
     current.mergeResolutions = [];
   const deferredPromotion =
     verificationScope === "joint" && noChangePromotionMatches(current);
+  const deferredNative =
+    verificationScope === "joint" &&
+    (await nativeMergeCarrierMatches(current, jointSources));
   if (
     current.pull.state !== "closed" ||
     current.limitations.some(
       (limitation) =>
-        !deferredPromotion || limitation !== NO_CHANGE_PROMOTION_CONTEXT,
+        !(deferredPromotion && limitation === NO_CHANGE_PROMOTION_CONTEXT) &&
+        !(deferredNative && limitation === NATIVE_MERGE_CONTEXT),
     )
   )
     throw new Error(
@@ -139,7 +152,14 @@ export async function publishValueAssessment(
   producerRevision: string,
   supersedes: string | null,
   revisionReason: string | null = null,
+  claim?: ValueClaim,
+  commitPages?: ReturnType<typeof publicationCommitPages>,
 ) {
+  if (
+    !claim &&
+    !isSubscriptionProvenance("provenance" in result ? result.provenance : null)
+  )
+    throw new Error("API value publication requires its processing claim");
   if (
     job.itemKind !== "pull_request" ||
     job.repositoryId !== evidence.repositoryDatabaseId ||
@@ -148,9 +168,10 @@ export async function publishValueAssessment(
     job.number !== evidence.pull.number
   )
     throw new Error("Value publication job does not match its source");
-  const project = await registeredProject(env.SLOPBOT_DB, job);
-  if (!project)
+  const registration = await registeredValuePublication(env.SLOPBOT_DB, job);
+  if (!registration)
     throw new Error("Repository is not active in the Slop project registry");
+  const { project, fence } = registration;
   const repositories = collectTargetRepositories([project]);
   await assertValueInstallation(env.SLOPBOT_DB, job.installationId);
   // A public repository read alone does not prove installation membership.
@@ -162,7 +183,7 @@ export async function publishValueAssessment(
   );
   await assertValueInstallationRepositories(github, [evidence]);
   const current = await verifyCurrentValueSource(
-    github,
+    commitPages ? commitPages(github) : github,
     evidence,
     result,
     repositories,
@@ -197,7 +218,17 @@ export async function publishValueAssessment(
   // A removal or suspension received while inference/source reads ran wins.
   await requireRegisteredRepository(env.SLOPBOT_DB, job);
   await assertValueInstallation(env.SLOPBOT_DB, job.installationId);
-  return appendValueRecord(env.SLOPBOT_DB, prepared, job.installationId);
+  return appendValueRecord(
+    env.SLOPBOT_DB,
+    prepared,
+    job.installationId,
+    fenceValueClaim(fence, claim, [
+      {
+        repositoryDatabaseId: evidence.repositoryDatabaseId,
+        pullRequestNumber: evidence.pull.number,
+      },
+    ]),
+  );
 }
 
 export async function assertValueInstallation(

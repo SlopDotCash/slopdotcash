@@ -8,16 +8,19 @@ import {
   PROJECT_AFFECTED_CONTRIBUTORS,
   PROJECT_OWNERS,
 } from "../../backend/notifications/events";
-import type { SecurityD1Database } from "../../backend/security/handler";
+import type { SecurityD1Database } from "../../backend/security/case-store";
 import { retryableEmailRejection, SENDER_ADDRESS } from "./contracts";
 import {
   claimDueDeliveries,
   destinationDigest,
   inboxNoticeMime,
+  ownsDeliveryAttempt,
   parseMailPilotConfig,
   recordDelivery,
+  recordDeliveryDestination,
   retryWithoutProviderCall,
 } from "./security";
+import { activityDeliveryDecision, deliveryVersion } from "./verified-delivery";
 
 type VerifiedDestination = {
   email: string;
@@ -267,38 +270,56 @@ export async function dispatchActivityMail(
           security_enabled: number | null;
           destination_version: string | null;
         }>();
-      // An essential notice whose operator-verified record is not yet in effect
-      // made no provider call: retry it on the bounded schedule. Optional mail
-      // never retries here, because its consent names one effective destination.
-      if (
-        !destination.available &&
-        row.essential &&
-        deps.config.recipients[row.recipient_github_id]
-      ) {
+      const decision = activityDeliveryDecision(
+        {
+          essential: row.essential !== 0,
+          version: deliveryVersion(row.destination_version),
+        },
+        destination.available
+          ? {
+              kind: registered ? "registered" : "pilot",
+              destinationVersion: destination.destinationVersion,
+            }
+          : {
+              kind: "unavailable",
+              pilotConfigured: Boolean(
+                deps.config.recipients[row.recipient_github_id],
+              ),
+            },
+        preference && destination.available
+          ? {
+              kind: "stored",
+              activity: preference.enabled === 1 ? "enabled" : "disabled",
+              security:
+                preference.security_enabled === 1
+                  ? "enabled"
+                  : preference.security_enabled === 0
+                    ? "disabled"
+                    : "unset",
+              version: deliveryVersion(preference.destination_version),
+            }
+          : { kind: "missing" },
+      );
+      // Retry an essential notice whose configured pilot is not in effect.
+      // Optional mail requires consent for one currently effective destination.
+      if (decision === "retry") {
         await retryWithoutProviderCall(deps, row, "activity");
         continue;
       }
-      if (
-        !destination.available ||
-        (row.essential && preference?.security_enabled === 0) ||
-        (registered &&
-          (row.destination_version !== registered.destinationVersion ||
-            (row.essential && preference?.security_enabled !== 1))) ||
-        (!row.essential &&
-          (preference?.enabled !== 1 ||
-            preference.destination_version !== destination.destinationVersion ||
-            row.destination_version !== destination.destinationVersion))
-      ) {
+      if (!destination.available || decision === "suppress") {
         await recordDelivery(deps, row, "suppressed", null, "activity");
         continue;
       }
       // Recipient and consent are resolved on the server immediately before this one-recipient send.
-      await deps.db
-        .prepare(
-          "UPDATE activity_notification_outbox SET destination_digest=? WHERE id=?",
-        )
-        .bind(destination.destinationVersion, row.id)
-        .run();
+      if (
+        !(await recordDeliveryDestination(
+          deps.db,
+          row,
+          destination.destinationVersion,
+          "activity",
+        ))
+      )
+        continue;
     } catch {
       // Preparation failed before any provider call; retry within the existing bound.
       await retryWithoutProviderCall(deps, row, "activity");
@@ -316,6 +337,9 @@ export async function dispatchActivityMail(
           registered.destinationVersion,
           deps.now(),
         );
+      // This local check cannot recall a provider call once begun, or
+      // atomically fence its service.
+      if (!(await ownsDeliveryAttempt(deps.db, row, "activity"))) continue;
     } catch {
       // Preparation failed before any provider call; retry within the existing bound.
       await retryWithoutProviderCall(deps, row, "activity");

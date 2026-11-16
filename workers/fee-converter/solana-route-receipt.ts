@@ -11,12 +11,17 @@ import { ata } from "../../contracts/solana/transactions";
 import { decodeBase58Bytes } from "../../src/lib/base58";
 import type { ConversionRow } from "./core";
 import { assertJupiterRoute } from "./jupiter-route";
-import { parseTransaction } from "./solana";
 import {
   associatedAccountCreations,
   retainedRouteExpectation,
   type SolanaAccountProof,
 } from "./solana-accounts";
+import { parseTransaction } from "./solana-transaction";
+import {
+  firstDebitedHolding,
+  type RouteTokenBalance,
+  routeTokenCredit,
+} from "./verified-route-credit";
 
 interface Balance {
   accountIndex: number;
@@ -121,48 +126,56 @@ export function finalizedRouteCredit(
   const destinationIndex = proof.keys.indexOf(
     ata(expected.outputMint, expected.wallet, expected.outputProgram),
   );
-  const change = (
-    index: number,
-    mint: string,
-    program: string,
-    allowMissingBefore: boolean,
-  ) => {
-    const pre = before.get(index),
-      post = after.get(index);
-    for (const balance of [pre, post]) {
-      if (
-        balance &&
-        (balance.owner !== expected.wallet ||
-          balance.mint !== mint ||
-          balance.programId !== program)
-      )
-        throw new Error(
-          "Finalized swap token identity differs from its reviewed account",
-        );
+  // One identity table preserves strict equality for JSON primitives and object
+  // references, including malformed non-string identity fields.
+  const identities = new Map<unknown, number>();
+  let nextIdentity = 0;
+  const identity = (value: unknown) => {
+    // Strict equality differs from Map equality only for NaN.
+    if (typeof value === "number" && Number.isNaN(value)) return nextIdentity++;
+    let id = identities.get(value);
+    if (id === undefined) {
+      id = nextIdentity++;
+      identities.set(value, id);
     }
-    if (!post || (!pre && !allowMissingBefore))
-      throw new Error("Finalized swap token account evidence is incomplete");
-    return (
-      BigInt(post.uiTokenAmount.amount) -
-      BigInt(pre?.uiTokenAmount.amount ?? "0")
-    );
+    return id;
   };
-  const debit = -change(
+  const project = (values: Map<number, Balance>): RouteTokenBalance[] =>
+    [...values.values()].map((value) => ({
+      accountIndex: value.accountIndex,
+      owner: identity(value.owner),
+      mint: identity(value.mint),
+      programId: identity(value.programId),
+      amount: BigInt(value.uiTokenAmount.amount),
+    }));
+  const wallet = identity(expected.wallet),
+    inputMint = identity(expected.inputMint),
+    outputMint = identity(expected.outputMint),
+    inputProgram = identity(expected.inputProgram),
+    outputProgram = identity(expected.outputProgram),
+    tokenBefore = project(before),
+    tokenAfter = project(after);
+  const credit = routeTokenCredit(
+    tokenBefore,
+    tokenAfter,
     sourceIndex,
-    expected.inputMint,
-    expected.inputProgram,
-    Boolean(expected.nativeInput),
-  );
-  const credit = change(
     destinationIndex,
-    expected.outputMint,
-    expected.outputProgram,
-    true,
+    wallet,
+    inputMint,
+    outputMint,
+    inputProgram,
+    outputProgram,
+    Boolean(expected.nativeInput),
+    expected.amountIn,
+    expected.minimumOut,
   );
-  if (
-    debit !== (expected.nativeInput ? 0n : expected.amountIn) ||
-    credit < expected.minimumOut
-  )
+  if (credit.error === 1)
+    throw new Error(
+      "Finalized swap token identity differs from its reviewed account",
+    );
+  if (credit.error === 2)
+    throw new Error("Finalized swap token account evidence is incomplete");
+  if (credit.error === 3)
     throw new Error(
       "Finalized swap did not debit its exact input and credit its minimum output",
     );
@@ -181,22 +194,15 @@ export function finalizedRouteCredit(
         "Finalized native swap did not spend exactly its earned fee input",
       );
   }
-  for (const [index, pre] of before) {
-    if (
-      pre.owner !== expected.wallet ||
-      index === sourceIndex ||
-      index === destinationIndex
-    )
-      continue;
-    const post = after.get(index);
-    if (
-      !post ||
-      post.owner !== pre.owner ||
-      post.mint !== pre.mint ||
-      post.programId !== pre.programId ||
-      BigInt(post.uiTokenAmount.amount) < BigInt(pre.uiTokenAmount.amount)
-    )
-      throw new Error("Finalized swap debited an unrelated fee-wallet holding");
-  }
-  return credit;
+  if (
+    firstDebitedHolding(
+      tokenBefore,
+      tokenAfter,
+      wallet,
+      sourceIndex,
+      destinationIndex,
+    ) >= 0
+  )
+    throw new Error("Finalized swap debited an unrelated fee-wallet holding");
+  return credit.amount;
 }

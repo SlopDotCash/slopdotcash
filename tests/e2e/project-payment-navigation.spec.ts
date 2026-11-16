@@ -4,7 +4,14 @@ import type { Page } from "@playwright/test";
 import { deploymentOrigins, deploymentTier } from "../../src/lib/deployment";
 import type { DirectTransfer } from "../../src/lib/payments/contracts";
 import { cycleIndexFixture, snapshotFixture } from "../fixtures";
-import { expect, expectAccessible, test } from "./fixtures";
+import {
+  type Diagnostics,
+  expect,
+  expectAccessible,
+  failPoolFundingRead,
+  servePublicProjectReads,
+  test,
+} from "./fixtures";
 
 const site = deploymentOrigins(
   deploymentTier(process.env.VITE_SLOP_ENVIRONMENT),
@@ -38,7 +45,7 @@ function gate() {
   return { ready, release };
 }
 
-async function fixtures(page: Page) {
+async function fixtures(page: Page, diagnostics: Diagnostics) {
   await page.route(`${site}/**`, (route) =>
     // Money received falls back to the shared empty aggregate (fixtures.ts).
     new URL(route.request().url()).pathname === "/api/v1/payments/received"
@@ -53,6 +60,10 @@ async function fixtures(page: Page) {
           ),
         }),
   );
+  await servePublicProjectReads(page);
+  // The test follows Eliza's and Slop's home cards; their fixture pools have
+  // no vault, so keep them listed as a failed funding read does.
+  await failPoolFundingRead(page, diagnostics);
   await page.route("**/data/leaderboard.json?**", (route) =>
     route.fulfill({ json: snapshotFixture() }),
   );
@@ -77,9 +88,10 @@ async function fixtures(page: Page) {
 }
 
 test("project history previews recent payments and retains every older record", async ({
+  diagnostics,
   page,
 }, info) => {
-  await fixtures(page);
+  await fixtures(page, diagnostics);
   const transfers = ["02", "03", "04", "05", "06"].map((month, index) => ({
     ...payments(firstProject).transfers[0],
     contributionMonth: `2026-${month}`,
@@ -172,9 +184,10 @@ async function watchPaymentIdentity(page: Page) {
 for (const navigation of ["project links", "browser history"] as const) {
   test(`direct payments keep project identity through ${navigation}`, async ({
     context,
+    diagnostics,
     page,
   }, info) => {
-    await fixtures(page);
+    await fixtures(page, diagnostics);
     const nextResponse = gate();
     let nextRequests = 0;
     let holdNext = false;
@@ -302,7 +315,7 @@ test("a late previous payment request cannot overwrite a retried project", async
   const outageReport =
     /^console Failed to load resource: the server responded with a status of 503 \(Service Unavailable\) at https:\/\/[^ ]+\/api\/v1\/payments\/projects\/[^/ ]+\/direct-transfers$/u;
   diagnostics.allow(outageReport);
-  await fixtures(page);
+  await fixtures(page, diagnostics);
   const previousResponse = gate();
   const previousFulfilled = gate();
   let previousRequests = 0;
@@ -400,10 +413,43 @@ test("a late previous payment request cannot overwrite a retried project", async
   }
 });
 
-test("public project navigation does not load an agent-only flag form", async ({
+test("payment history shows loading, not an empty history, while direct payments load", async ({
+  diagnostics,
   page,
 }) => {
-  await fixtures(page);
+  await fixtures(page, diagnostics);
+  const response = gate();
+  await page.route(
+    "**/api/v1/payments/projects/*/direct-transfers",
+    async (route) => {
+      await response.ready;
+      await route.fulfill({
+        json: payments(new URL(route.request().url()).pathname.split("/")[5]),
+      });
+    },
+  );
+  try {
+    await page.goto(`${site}/projects/${nextProject}`);
+    const history = page.locator(".payment-history");
+    await expect(history.getByRole("status")).toHaveText(
+      "Loading direct payments…",
+    );
+    await expect(history.getByText("No cycles have closed yet.")).toHaveCount(
+      0,
+    );
+    response.release();
+    await expect(history.getByText(nextAmount, { exact: true })).toBeVisible();
+    await expect(history.getByRole("status")).toHaveCount(0);
+  } finally {
+    response.release();
+  }
+});
+
+test("public project navigation does not load an agent-only flag form", async ({
+  diagnostics,
+  page,
+}) => {
+  await fixtures(page, diagnostics);
   await page.route("**/api/v1/payments/projects/*/direct-transfers", (route) =>
     route.fulfill({ json: { transfers: [], totalMicro: "0" } }),
   );

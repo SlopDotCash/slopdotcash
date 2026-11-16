@@ -1,62 +1,26 @@
 import assert from "node:assert/strict";
-import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
-import { convertV4MiniflareOptions, Miniflare } from "miniflare";
-import { unstable_splitSqlQuery as splitSqlQuery } from "wrangler";
-import { childEnvironment } from "../../scripts/child-environment.mjs";
+import { resolve } from "node:path";
+import { startHandlerWorker } from "../../tests/miniflare-d1.mjs";
 
 // Real Pages payment handler, native D1, migrations and an actual session cookie.
 // All identities and disclosed payments are synthetic; no chain or provider call.
-const directory = await mkdtemp(join(tmpdir(), "slop-direct-history-"));
 const when = "2026-10-29T00:00:00.000Z";
 const token = "a".repeat(43);
 const hash = createHash("sha256").update(token).digest("hex");
-let runtime;
+let worker;
 let outbound = 0;
 try {
-  const entry = join(directory, "worker.ts");
-  const output = join(directory, "worker.mjs");
-  await writeFile(
-    entry,
-    `import {handlePaymentsApi} from ${JSON.stringify(resolve("backend/payments/handler.ts"))};
-export default {fetch(request,env){return handlePaymentsApi(request,{db:env.DB,now:()=>new Date(${JSON.stringify(when)})})}};`,
-  );
-  const build = spawnSync(
-    "bun",
-    ["--no-env-file", "build", entry, "--target=browser", "--outfile", output],
-    {
-      encoding: "utf8",
-      env: childEnvironment(),
-      timeout: 30_000,
+  worker = await startHandlerWorker({
+    d1: "direct-history",
+    outbound() {
+      outbound++;
+      return new Response(null, { status: 503 });
     },
-  );
-  assert.equal(build.status, 0, build.stderr);
-  runtime = new Miniflare(
-    convertV4MiniflareOptions({
-      host: "127.0.0.1",
-      port: 0,
-      modules: true,
-      compatibilityDate: "2026-09-14",
-      script: await readFile(output, "utf8"),
-      d1Databases: { DB: "direct-history" },
-      outboundService() {
-        outbound++;
-        return new Response(null, { status: 503 });
-      },
-    }),
-  );
-  const db = await runtime.getD1Database("DB");
-  for (const name of (await readdir("migrations"))
-    .filter((name) => name.endsWith(".sql"))
-    .sort())
-    await db.batch(
-      splitSqlQuery(await readFile(`migrations/${name}`, "utf8")).map((sql) =>
-        db.prepare(sql),
-      ),
-    );
+    entrySource: `import {handlePaymentsApi} from ${JSON.stringify(resolve("backend/payments/handler.ts"))};
+export default {fetch(request,env){return handlePaymentsApi(request,{db:env.DB,now:()=>new Date(${JSON.stringify(when)})})}};`,
+  });
+  const { runtime, db } = worker;
   await db.batch([
     db
       .prepare(
@@ -178,6 +142,5 @@ export default {fetch(request,env){return handlePaymentsApi(request,{db:env.DB,n
     }),
   );
 } finally {
-  await runtime?.dispose();
-  await rm(directory, { recursive: true, force: true });
+  await worker?.dispose();
 }

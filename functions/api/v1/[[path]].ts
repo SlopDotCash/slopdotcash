@@ -17,6 +17,7 @@ import {
   monthlyOwnerService,
   verifyProjectAuthority,
 } from "../../../backend/payments/monthly";
+import { FundingVaultNotFoundError } from "../../../backend/payments/solana-funding";
 import { POINTS_DISPUTE_URL } from "../../../backend/points/disputes";
 import {
   handlePointsApi,
@@ -31,6 +32,8 @@ import {
   type ProjectApiDependencies,
   refreshProjectSetup,
 } from "../../../backend/projects/handler";
+import { handleMergeActivityApi } from "../../../backend/projects/merge-activity";
+import { handlePoolFundingApi } from "../../../backend/projects/pool-funding";
 import { slopbotRepositoryAccess } from "../../../backend/projects/repository-access";
 import {
   flaggerAuthority,
@@ -40,6 +43,7 @@ import {
 import { rpcTokenMetadataReader } from "../../../backend/projects/token-metadata";
 import { ownerVaultSetupService } from "../../../backend/projects/vault-setup";
 import { handleReferralClaims } from "../../../backend/referrals/claims";
+import { handleReferralCode } from "../../../backend/referrals/codes";
 import { handleReferralsApi } from "../../../backend/referrals/handler";
 import { githubAdvisoryReader } from "../../../backend/security/advisories";
 import { surplusSecurityAnalyzer } from "../../../backend/security/analysis";
@@ -268,7 +272,8 @@ export async function onRequest(context: PagesContext): Promise<Response> {
         row.network === network &&
         row.vault === vault,
     );
-    if (matches.length !== 1) throw new Error("Funding vault unavailable");
+    if (matches.length !== 1)
+      throw new FundingVaultNotFoundError("Funding vault unavailable");
     return {
       ...matches[0],
       mint: matches[0].asset,
@@ -300,7 +305,7 @@ export async function onRequest(context: PagesContext): Promise<Response> {
         projectId,
         manifest,
         throughRevision,
-        () => livePin(manifest),
+        (repositoryId) => livePin(manifest, repositoryId),
         forReinstatement,
       ),
     adminGithubIds,
@@ -341,33 +346,36 @@ export async function onRequest(context: PagesContext): Promise<Response> {
     appId && appKey
       ? { fetch: send, apiOrigin, appId, privateKey: appKey, now }
       : null;
-  const directRpcUrls = JSON.parse(env.PAYMENT_RPC_URLS ?? "{}");
-  const directPaymentConfig = defaultDirectPaymentConfiguration(
-    directRpcUrls,
-    env.SOLANA_RECOVERY_RPC_URL
-      ? { "solana-mainnet": env.SOLANA_RECOVERY_RPC_URL }
-      : {},
-  );
-  // Local validators have their own genesis. This exception cannot change a
-  // public deployment's chain: both the request and the RPC must be loopback.
-  if (
-    env.SLOP_LOCAL_SOLANA_GENESIS &&
-    (!loopbackOrigin(new URL(request.url).origin, "") ||
-      typeof directRpcUrls["solana-mainnet"] !== "string" ||
-      !loopbackOrigin(new URL(directRpcUrls["solana-mainnet"]).origin, "") ||
-      !/^[1-9A-HJ-NP-Za-km-z]{32,44}$/u.test(env.SLOP_LOCAL_SOLANA_GENESIS))
-  )
-    throw new Error("Local Solana configuration requires loopback endpoints");
+  // Resolve payment configuration only when a payment operation needs it.
+  // A broken rail must not stop account reads, signout or private intake.
+  const directPaymentConfig = (network: string) => {
+    const directRpcUrls = JSON.parse(env.PAYMENT_RPC_URLS ?? "{}");
+    const resolve = defaultDirectPaymentConfiguration(
+      directRpcUrls,
+      env.SOLANA_RECOVERY_RPC_URL
+        ? { "solana-mainnet": env.SOLANA_RECOVERY_RPC_URL }
+        : {},
+    );
+    // Local validators have their own genesis. This exception cannot change a
+    // public deployment's chain: both the request and the RPC must be loopback.
+    if (
+      env.SLOP_LOCAL_SOLANA_GENESIS &&
+      (!loopbackOrigin(new URL(request.url).origin, "") ||
+        typeof directRpcUrls["solana-mainnet"] !== "string" ||
+        !loopbackOrigin(new URL(directRpcUrls["solana-mainnet"]).origin, "") ||
+        !/^[1-9A-HJ-NP-Za-km-z]{32,44}$/u.test(env.SLOP_LOCAL_SOLANA_GENESIS))
+    )
+      throw new Error("Local Solana configuration requires loopback endpoints");
+    const config = resolve(network);
+    return config &&
+      network === "solana-mainnet" &&
+      env.SLOP_LOCAL_SOLANA_GENESIS
+      ? { ...config, genesisHash: env.SLOP_LOCAL_SOLANA_GENESIS }
+      : config;
+  };
   const securityResponse = await handleSecurityApi(request, {
     db,
-    directPayments: (network) => {
-      const config = directPaymentConfig(network);
-      return config &&
-        network === "solana-mainnet" &&
-        env.SLOP_LOCAL_SOLANA_GENESIS
-        ? { ...config, genesisHash: env.SLOP_LOCAL_SOLANA_GENESIS }
-        : config;
-    },
+    directPayments: directPaymentConfig,
     // A separate key namespace; contributor trace APIs never read reports.
     reportStorage: env.PRIVATE_TRACES,
     reportIntakeEnabled: env.SLOP_PRIVATE_INTAKE_MODE === "on",
@@ -469,8 +477,20 @@ export async function onRequest(context: PagesContext): Promise<Response> {
     now,
   });
   if (referralClaims !== null) return referralClaims;
+  const referralCode = await handleReferralCode(request, {
+    db,
+    sessionActor,
+    teamGithubIds: new Set([...adminGithubIds, ...moderatorGithubIds]),
+    github: { fetch: send, token: env.SLOP_GITHUB_READ_TOKEN, apiOrigin },
+    now,
+  });
+  if (referralCode !== null) return referralCode;
   const referralsResponse = await handleReferralsApi(request, { db });
   if (referralsResponse !== null) return referralsResponse;
+  const mergeActivity = await handleMergeActivityApi(request, { db });
+  if (mergeActivity !== null) return mergeActivity;
+  const poolFunding = await handlePoolFundingApi(request, { db, tier });
+  if (poolFunding !== null) return poolFunding;
   const feeConversionsResponse = await handleFeeConversionsApi(request, {
     db,
     adminGithubIds,
@@ -523,11 +543,12 @@ export async function onRequest(context: PagesContext): Promise<Response> {
             return [];
           }
         },
-        verifyAuthority: (project, actor) =>
+        verifyAuthority: (project, actor, level) =>
           verifyProjectAuthority(
             project.manifest,
             actor,
-            env.SLOP_GITHUB_READ_TOKEN,
+            repositoryAccess,
+            level,
           ),
         // The cutoff display and the owner's cutoff lock. A malformed value
         // turns both off; the payments Worker then fails loudly and freezes
@@ -632,6 +653,7 @@ export async function onRequest(context: PagesContext): Promise<Response> {
       adminGithubIds,
       sessionActor,
       publisher: env.SLOPBOT_VALUE_IMPORT,
+      waitUntil,
     });
   if (pathname.startsWith("/api/v1/slopbot/"))
     return handleSlopbotApi(request, db);

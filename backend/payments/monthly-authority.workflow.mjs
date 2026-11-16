@@ -1,114 +1,205 @@
 import assert from "node:assert/strict";
-import { spawnSync } from "node:child_process";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
-import { convertV4MiniflareOptions, Miniflare } from "miniflare";
-import { applicationManifest } from "../../tests/project-application-manifest.ts";
+import { createHash } from "node:crypto";
+import { resolve } from "node:path";
+import { fixtureProject } from "../../tests/fixture-overlay.mjs";
+import { startHandlerWorker } from "../../tests/miniflare-d1.mjs";
 
-// Real Workers fetch and the monthly verifier; synthetic GitHub facts only.
-const directory = await mkdtemp(join(tmpdir(), "slop-monthly-authority-"));
-const project = applicationManifest("monthly-native", "example/monthly-native");
+// Real Pages entry, session, D1 and Slopbot binding. GitHub facts are synthetic.
+const project = {
+  ...fixtureProject("eliza"),
+  escrow: {
+    schemaVersion: "1",
+    effectiveCycle: "2026-11",
+    chain: "base",
+    feeBasisPoints: 200,
+    withdrawalFeeBasisPoints: 200,
+    feeMode: "deduct-from-gross",
+    deployments: [],
+  },
+};
 const actor = { githubId: "900000002", githubLogin: "fixture-maintainer" };
-const token = "ghs_synthetic_monthly_authority_fixture";
-const state = { permission: "write", repositoryId: 123456789, redirect: false };
+const token = "a".repeat(43);
+const hash = createHash("sha256").update(token).digest("hex");
+const state = {
+  permission: "write",
+  installation: "installed",
+  unavailable: false,
+  includeRepository: true,
+  repository: {
+    id: Number(project.authority.repositoryId),
+    node_id: project.authority.repositoryNodeId,
+    full_name: project.repositories[0].id,
+    private: false,
+    owner: {
+      id: Number(project.steward.github.actorId),
+      node_id: project.steward.github.nodeId,
+      login: project.steward.github.login,
+      type: project.steward.github.type,
+    },
+  },
+};
 const requests = [];
-let runtime;
+let worker;
 try {
-  const entry = join(directory, "worker.ts");
-  const output = join(directory, "worker.mjs");
-  await writeFile(
-    entry,
-    `
-import { verifyProjectAuthority } from ${JSON.stringify(resolve("backend/payments/monthly.ts"))};
-export default { async fetch() {
-  try {
-    await verifyProjectAuthority(${JSON.stringify(project)}, ${JSON.stringify(actor)}, ${JSON.stringify(token)});
-    return Response.json({authorized: true});
-  } catch (error) {
-    return Response.json({code: error.code, name: error.name, message: error.message}, {status: error.status ?? 503});
-  }
-}};`,
-  );
-  const build = spawnSync(
-    "bun",
-    ["--no-env-file", "build", entry, "--target=browser", "--outfile", output],
-    { encoding: "utf8" },
-  );
-  assert.equal(build.status, 0, build.stderr);
-  runtime = new Miniflare(
-    convertV4MiniflareOptions({
-      host: "127.0.0.1",
-      port: 0,
-      modules: true,
-      compatibilityDate: "2026-09-14",
-      script: await readFile(output, "utf8"),
-      outboundService(request) {
+  worker = await startHandlerWorker({
+    d1: "monthly-authority",
+    outbound() {
+      throw new Error("Monthly authority must use the Slopbot service binding");
+    },
+    serviceBindings: {
+      SLOPBOT(request) {
         const url = new URL(request.url);
-        assert.equal(url.origin, "https://api.github.com");
         assert.equal(request.method, "GET");
-        assert.equal(request.headers.get("authorization"), `Bearer ${token}`);
-        requests.push(url.pathname);
-        if (state.redirect)
-          return new Response(null, {
-            status: 302,
-            headers: { location: "https://redirect.invalid/elsewhere" },
-          });
-        if (url.pathname === "/repos/example/monthly-native")
-          return Response.json({
-            id: state.repositoryId,
-            node_id: "R_example",
-            owner: {
-              id: 987654321,
-              node_id: "O_example",
-              login: "example",
-              type: "Organization",
-            },
-          });
+        assert.equal(url.origin, "https://slopbot.internal");
+        assert.equal(url.pathname, "/v1/repository-access");
         assert.equal(
-          url.pathname,
-          "/repos/example/monthly-native/collaborators/fixture-maintainer/permission",
+          url.searchParams.get("repository"),
+          project.repositories[0].id,
         );
+        assert.equal(
+          url.searchParams.get("repositoryId"),
+          project.authority.repositoryId,
+        );
+        assert.equal(url.searchParams.get("login"), actor.githubLogin);
+        assert.equal(url.searchParams.get("githubId"), actor.githubId);
+        assert.equal(url.searchParams.get("includeRepository"), "1");
+        requests.push(url.pathname);
+        if (state.unavailable) return new Response(null, { status: 503 });
+        if (state.installation === "missing")
+          return Response.json({ installation: "missing" });
+        if (state.installation === "suspended")
+          return Response.json({
+            installation: "suspended",
+            installationId: 123,
+          });
         return Response.json({
+          installation: "installed",
+          installationId: 123,
           permission: state.permission,
-          user: { id: Number(actor.githubId) },
+          roleName: state.permission,
+          ...(state.includeRepository ? { repository: state.repository } : {}),
         });
       },
-    }),
-  );
-  const check = () =>
-    runtime.dispatchFetch("https://slop.cash/__fixture/monthly-authority");
-  const valid = await check();
-  assert.equal(valid.status, 200, await valid.clone().text());
-  assert.deepEqual(await valid.json(), { authorized: true });
-  assert.equal(requests.length, 2);
+    },
+    entrySource: `import { onRequest } from ${JSON.stringify(resolve("functions/api/v1/[[path]].ts"))};
+export default { fetch(request, env, ctx) {
+  return onRequest({request, env: {...env, SLOP_DB: env.DB, SLOP_ENVIRONMENT: "production", SLOP_GITHUB_READ_TOKEN: "public-read-credential-must-not-authorize"}, waitUntil: ctx.waitUntil.bind(ctx)});
+} };`,
+  });
+  const { runtime, db } = worker;
+  const text = JSON.stringify(project);
+  const digest = createHash("sha256").update(text).digest("hex");
+  const now = new Date().toISOString();
+  await db.batch([
+    db
+      .prepare(
+        "INSERT INTO project_revisions(project_id,revision,manifest,manifest_sha256,reason,created_at) VALUES(?,1,?,?,?,?)",
+      )
+      .bind(project.id, text, digest, "Fixture", now),
+    db
+      .prepare(
+        "INSERT INTO projects(id,status,revision,manifest,manifest_sha256,created_at,updated_at) VALUES(?,?,1,?,?,?,?)",
+      )
+      .bind(project.id, project.status, text, digest, now, now),
+    db
+      .prepare(
+        "INSERT INTO points_members(actor_id,github_id,login,joined_at,public) VALUES(?,?,?,?,1)",
+      )
+      .bind("U_fixtureMonthly", actor.githubId, actor.githubLogin, now),
+    db
+      .prepare(
+        "INSERT INTO points_sessions(token_hash,actor_id,expires_at) VALUES(?,?,'2099-01-01T00:00:00.000Z')",
+      )
+      .bind(hash, "U_fixtureMonthly"),
+  ]);
+  const check = (signedIn = true, method = "GET", suffix = "2026-10", body) =>
+    runtime.dispatchFetch(
+      `https://slop.cash/api/v1/payments/projects/${project.id}/monthly/${suffix}`,
+      {
+        method,
+        headers: {
+          ...(signedIn ? { cookie: `__Host-slop_points=${token}` } : {}),
+          ...(body
+            ? {
+                origin: "https://slop.cash",
+                "content-type": "application/json",
+              }
+            : {}),
+        },
+        ...(body ? { body: JSON.stringify(body) } : {}),
+      },
+    );
+  const refusal = async (status, code) => {
+    const response = await check();
+    assert.equal(response.status, status, await response.clone().text());
+    assert.equal((await response.json()).error, code);
+  };
+  assert.equal((await check(false)).status, 401);
+  assert.equal(requests.length, 0);
+  for (const period of ["2026-10", "2026-11"]) {
+    const valid = await check(true, "GET", period);
+    assert.equal(valid.status, 200, await valid.clone().text());
+    const view = await valid.json();
+    assert.equal(view.canManage, false);
+    assert.equal(view.period, period);
+  }
+  const refusedWrite = await check(true, "POST", "2026-11/allocations", {
+    githubUserId: "123",
+    grossBase: "1",
+    expectedSequence: 0,
+  });
+  assert.equal(refusedWrite.status, 403, await refusedWrite.clone().text());
+  state.permission = "admin";
+  const admin = await check();
+  assert.equal(admin.status, 200, await admin.clone().text());
+  assert.equal((await admin.json()).canManage, true);
   state.permission = "read";
-  const reader = await check();
-  assert.equal(reader.status, 403);
-  assert.equal((await reader.json()).code, "owner_required");
+  await refusal(403, "owner_required");
   state.permission = "write";
-  state.repositoryId++;
-  const changed = await check();
-  assert.equal(changed.status, 409);
-  assert.equal((await changed.json()).code, "repository_changed");
-  state.repositoryId--;
-  state.redirect = true;
-  const beforeRedirect = requests.length;
-  const redirected = await check();
-  assert.equal(redirected.status, 503);
-  assert.equal((await redirected.json()).code, "github_unavailable");
-  assert.equal(requests.length, beforeRedirect + 1);
+  state.repository.id++;
+  await refusal(409, "repository_changed");
+  state.repository.id--;
+  state.repository.private = true;
+  await refusal(409, "repository_changed");
+  state.repository.private = false;
+  const nodeId = state.repository.node_id;
+  state.repository.node_id = "R_different";
+  await refusal(409, "repository_changed");
+  state.repository.node_id = nodeId;
+  state.repository.full_name = "different/repository";
+  await refusal(409, "repository_changed");
+  state.repository.full_name = project.repositories[0].id;
+  state.repository.owner.id++;
+  await refusal(409, "repository_changed");
+  state.repository.owner.id--;
+  state.includeRepository = false;
+  await refusal(503, "github_unavailable");
+  state.includeRepository = true;
+  state.installation = "missing";
+  await refusal(403, "owner_required");
+  state.installation = "suspended";
+  await refusal(403, "owner_required");
+  state.installation = "installed";
+  state.unavailable = true;
+  await refusal(503, "github_unavailable");
+  assert.equal(
+    (
+      await db
+        .prepare("SELECT COUNT(*) n FROM monthly_allocation_changes")
+        .first()
+    ).n,
+    0,
+  );
   console.log(
     JSON.stringify({
-      nativeWorkersFetch: true,
-      authorized: true,
-      readerRefused: true,
-      changedIdentityRefused: true,
-      redirectNotFollowed: true,
-      realProviderRequests: 0,
+      nativePagesEntry: true,
+      nativeD1: true,
+      sessionChecked: true,
+      slopbotAuthorityReads: requests.length,
+      publicTokenRequests: 0,
+      financialWrites: 0,
     }),
   );
 } finally {
-  await runtime?.dispose();
-  await rm(directory, { recursive: true, force: true });
+  await worker?.dispose();
 }

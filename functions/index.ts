@@ -1,10 +1,13 @@
 import type { PagesMiddlewareContext } from "../backend/pages";
 import { readBoundedText } from "../src/lib/browser-json";
+import {
+  isWebAnalyticsHost,
+  renderWebAnalytics,
+} from "../src/lib/web-analytics.mjs";
 
 const CASH_DOMAIN = "slop.cash";
 const TECH_DOMAIN = "slop.tech";
 const MAX_TRANSFORMED_HTML_BYTES = 1024 * 1024;
-
 type PublicDomain = typeof CASH_DOMAIN | typeof TECH_DOMAIN;
 
 type SocialMetadata = {
@@ -96,6 +99,24 @@ export async function onRequest(
     headers.set(
       "cache-control",
       cacheControl === null ? "no-transform" : `${cacheControl}, no-transform`,
+    );
+  }
+
+  if (isWebAnalyticsHost(hostname)) {
+    return new Response(
+      renderWebAnalytics(
+        await readBoundedText(
+          response,
+          MAX_TRANSFORMED_HTML_BYTES,
+          "HTML response",
+        ),
+        hostname,
+      ),
+      {
+        status: response.status,
+        statusText: response.statusText,
+        headers,
+      },
     );
   }
 

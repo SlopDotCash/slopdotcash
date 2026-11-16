@@ -1,6 +1,5 @@
 import { Check, Copy } from "lucide-react";
-import { useState } from "react";
-import { copyText } from "./lib/copy-text";
+import { useCopyFeedback } from "./lib/use-copy-feedback";
 import "./operations-copy.css";
 
 /** A compact copy action with the same label for sighted and screen-reader users. */
@@ -13,7 +12,7 @@ export function CopyButton({
   text: string;
   successMessage?: string;
 }) {
-  const [feedback, setFeedback] = useState<"copied" | "failed" | null>(null);
+  const { feedback, copy } = useCopyFeedback(text);
   const action = `Copy ${label}`;
   return (
     <span className="operations-copy">
@@ -22,13 +21,7 @@ export function CopyButton({
         className="text-button operations-copy-button"
         aria-label={action}
         title={feedback === "copied" ? successMessage : action}
-        onClick={() => {
-          setFeedback(null);
-          void copyText(text).then(
-            () => setFeedback("copied"),
-            () => setFeedback("failed"),
-          );
-        }}
+        onClick={copy}
       >
         {feedback === "copied" ? (
           <Check aria-hidden="true" />
@@ -36,7 +29,7 @@ export function CopyButton({
           <Copy aria-hidden="true" />
         )}
       </button>
-      {feedback ? (
+      {feedback !== "idle" ? (
         <span
           role="status"
           className={

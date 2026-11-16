@@ -1,5 +1,5 @@
-import type { ValueEvidence } from "./value-evidence";
-import type { WorkUnitEvidence } from "./value-work-unit";
+import type { ValueEvidence } from "./value-evidence-types";
+import type { WorkUnitEvidence } from "./value-work-unit-types";
 
 const BINARY_SOURCE_NOTE = `
 

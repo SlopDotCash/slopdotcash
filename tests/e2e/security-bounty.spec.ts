@@ -9,18 +9,23 @@
  */
 import type { APIRequestContext, Locator, Page, Route } from "@playwright/test";
 import { HISTORICAL_PROJECTS } from "../../src/lib/projects.mjs";
-import type { SecurityBountyTerms } from "../../src/lib/security-bounty.mjs";
+import {
+  SECURITY_DEFAULT_EXCLUSIONS,
+  type SecurityBountyTerms,
+} from "../../src/lib/security-bounty.mjs";
 import {
   E2E_SECURITY_ACCOUNTS,
   fixtureRepository,
 } from "../github-api-fixture.mjs";
 import { applicationManifest } from "../project-application-manifest";
+import { enlargeText } from "../text-size";
 import {
   CANCELED,
   expect,
   expectAccessible,
   openProjectSecuritySettings,
   projectSuffix,
+  serveProjectCycleIndex,
   test,
 } from "./fixtures";
 
@@ -297,7 +302,7 @@ async function listProject(
   if (program && !creatorRole) throw new Error("Unknown fixture creator");
   const creator = creatorRole ? account(creatorRole) : undefined;
   const applied = await api(request, "POST", "projects", applicantToken, {
-    manifest: program?.settlement
+    manifest: program
       ? {
           ...manifest,
           securityBounty: {
@@ -308,14 +313,17 @@ async function listProject(
               financial: [creator],
               dispute: [creator],
             },
-            settlement: { ...program.settlement, deployments: [] },
+            ...(program.settlement
+              ? { settlement: { ...program.settlement, deployments: [] } }
+              : {}),
           },
         }
       : manifest,
   });
   expect(applied.status, JSON.stringify(applied.body)).toBe(201);
-  if (program?.settlement) {
-    // Fixture trust root only. An owner cannot self-attest a deployed vault.
+  if (program) {
+    // Fixture trust root only. Creation names its creator; reviewed later
+    // revisions set the case roles and any synthetic verified vault.
     const registered = await revise(request, id, (current) => ({
       ...current,
       securityBounty: program,
@@ -502,6 +510,348 @@ async function signIn(page: Page, token: string) {
   );
 }
 
+function settingsGate() {
+  let release!: () => void;
+  let started!: () => void;
+  let completed!: () => void;
+  return {
+    wait: new Promise<void>((resolve) => {
+      release = resolve;
+    }),
+    requested: new Promise<void>((resolve) => {
+      started = resolve;
+    }),
+    returned: new Promise<void>((resolve) => {
+      completed = resolve;
+    }),
+    release: () => release(),
+    started: () => started(),
+    completed: () => completed(),
+  };
+}
+
+async function settingsSession(page: Page, role: Role) {
+  await page.evaluate(
+    ([name, value]) => {
+      document.cookie = `${name}=${value}; Path=/; Secure; SameSite=Strict`;
+    },
+    [COOKIE, TOKENS[role]],
+  );
+}
+
+/** Existing real Pages/D1/GitHub fixture, with no vault or provider needed. */
+async function settingsProject(request: APIRequestContext) {
+  // Each test creates its own project: the registry refuses a second
+  // project with the same id.
+  const id = `settings-life-${projectSuffix()}-${test.info().testId.slice(-8)}`;
+  const repository = `e2e-security/${id}`;
+  await listProject(request, TOKENS.security, repository, id, {
+    securityBounty: bountyTerms(repository, {
+      status: "paused",
+      rewardMode: "separate",
+      fundingPolicy: "after-approval",
+      amount: {
+        currency: "USD",
+        decimals: 2,
+        network: null,
+        grossMinor: "10000",
+      },
+      settlement: undefined,
+    }),
+  });
+  const permissionPath = `${GITHUB_FIXTURE}/__fixture/slopbot/${repository}/permission/e2e-reporter-b`;
+  const permission = await fetch(`${permissionPath}/admin`, { method: "PUT" });
+  expect(permission.status).toBe(204);
+  return {
+    id,
+    async close() {
+      const reset = await fetch(`${permissionPath}/none`, { method: "PUT" });
+      expect(reset.status).toBe(204);
+    },
+  };
+}
+
+async function openSettings(page: Page, id: string) {
+  await signIn(page, TOKENS.security);
+  await page.goto(`/projects/${id}/security#security-settings`, {
+    waitUntil: "networkidle",
+  });
+  await openProjectSecuritySettings(page);
+  await expect(page.getByLabel("Published gross award (USD)")).toHaveValue(
+    "100",
+  );
+}
+
+async function reviewSettingsAmount(page: Page, amount: string) {
+  await page.getByLabel("Published gross award (USD)").fill(amount);
+  await page
+    .getByRole("button", { name: "Review bounty terms", exact: true })
+    .click();
+  await expect(
+    page.getByRole("region", { name: "Review bounty terms", exact: true }),
+  ).toBeVisible();
+}
+
+test("a captured management permission cannot grant access after the cookie changes @registry", async ({
+  page,
+  request,
+}) => {
+  const fixture = await settingsProject(request);
+  const held = settingsGate();
+  const permissionActors: (string | undefined)[] = [];
+  await page.route(
+    `**/api/v1/project-setup/${fixture.id}?attempt=0`,
+    async (route) => {
+      const expected = route.request().headers()["x-slop-expected-github-id"];
+      permissionActors.push(expected);
+      if (permissionActors.length > 1) return route.continue();
+      expect(expected).toBe(account("security").githubId);
+      const response = await route.fetch();
+      expect(response.status()).toBe(200);
+      held.started();
+      await held.wait;
+      await route.fulfill({ response });
+      held.completed();
+    },
+  );
+  try {
+    await signIn(page, TOKENS.security);
+    await page.goto(`/projects/${fixture.id}/security#security-settings`, {
+      waitUntil: "domcontentloaded",
+    });
+    await held.requested;
+    await settingsSession(page, "reporter-b");
+    held.release();
+    await held.returned;
+    await expect(page.getByLabel("Published gross award (USD)")).toHaveValue(
+      "100",
+    );
+    expect(permissionActors).toContain(account("reporter-b").githubId);
+  } finally {
+    held.release();
+    await fixture.close();
+  }
+});
+
+test("bounty publication refuses a different current actor before dispatch @registry", async ({
+  page,
+  request,
+}) => {
+  const fixture = await settingsProject(request);
+  let writes = 0;
+  await page.route(`**/api/v1/projects/${fixture.id}`, (route) => {
+    if (route.request().method() === "PUT") writes++;
+    return route.continue();
+  });
+  try {
+    await openSettings(page, fixture.id);
+    const before = await adminProject(request, fixture.id);
+    await reviewSettingsAmount(page, "200");
+    await settingsSession(page, "reporter-b");
+    await page
+      .getByRole("button", { name: "Publish bounty terms", exact: true })
+      .click();
+    // The confirmed change refreshes the parent without a synthetic focus.
+    await expect(page.getByLabel("Published gross award (USD)")).toHaveValue(
+      "100",
+    );
+    expect(writes).toBe(0);
+    expect((await adminProject(request, fixture.id)).revision).toBe(
+      before.revision,
+    );
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("a departed bounty publication cannot replace a later owner's revision @registry", async ({
+  page,
+  request,
+}) => {
+  const fixture = await settingsProject(request);
+  const held = settingsGate();
+  let writes = 0;
+  await page.route(`**/api/v1/projects/${fixture.id}`, async (route) => {
+    if (route.request().method() !== "PUT") return route.continue();
+    const attempt = ++writes;
+    const response = await route.fetch();
+    expect(response.status()).toBe(200);
+    if (attempt === 1) {
+      expect(route.request().headers()["x-slop-expected-github-id"]).toBe(
+        account("security").githubId,
+      );
+      held.started();
+      await held.wait;
+    } else {
+      expect(route.request().headers()["x-slop-expected-github-id"]).toBe(
+        account("reporter-b").githubId,
+      );
+    }
+    await route.fulfill({ response });
+    if (attempt === 2) return;
+    held.completed();
+  });
+  try {
+    await openSettings(page, fixture.id);
+    const before = await adminProject(request, fixture.id);
+    await reviewSettingsAmount(page, "200");
+    await page
+      .getByRole("button", { name: "Publish bounty terms", exact: true })
+      .click();
+    await held.requested;
+    expect((await adminProject(request, fixture.id)).revision).toBe(
+      before.revision + 1,
+    );
+    await settingsSession(page, "reporter-b");
+    await page.evaluate(() => window.dispatchEvent(new Event("focus")));
+    const amount = page.getByLabel("Published gross award (USD)");
+    await expect(amount).toBeEnabled();
+    await expect(amount).toHaveValue("200");
+    await reviewSettingsAmount(page, "300");
+    await page
+      .getByRole("button", { name: "Publish bounty terms", exact: true })
+      .click();
+    const result = `Published revision ${before.revision + 2}.`;
+    await expect(
+      page.getByRole("status").filter({ hasText: result }),
+    ).toBeVisible();
+    held.release();
+    await held.returned;
+    await expect(
+      page.getByRole("status").filter({ hasText: result }),
+    ).toBeVisible();
+    await expect(amount).toHaveValue("300");
+    const stored = await adminProject(request, fixture.id);
+    expect(stored.revision).toBe(before.revision + 2);
+    expect(
+      (stored.manifest.securityBounty as SecurityBountyTerms).amount.grossMinor,
+    ).toBe("30000");
+  } finally {
+    held.release();
+    await fixture.close();
+  }
+});
+
+test("leaving bounty settings during publication preflight sends no revision @registry", async ({
+  page,
+  request,
+}) => {
+  const fixture = await settingsProject(request);
+  const held = settingsGate();
+  let armed = false;
+  let writes = 0;
+  await page.route("**/api/v1/project-session", async (route) => {
+    if (!armed) return route.continue();
+    armed = false;
+    const response = await route.fetch();
+    held.started();
+    await held.wait;
+    await route.fulfill({ response });
+    held.completed();
+  });
+  await page.route(`**/api/v1/projects/${fixture.id}`, (route) => {
+    if (route.request().method() === "PUT") writes++;
+    return route.continue();
+  });
+  try {
+    await openSettings(page, fixture.id);
+    const before = await adminProject(request, fixture.id);
+    await reviewSettingsAmount(page, "200");
+    armed = true;
+    await page
+      .getByRole("button", { name: "Publish bounty terms", exact: true })
+      .click();
+    await held.requested;
+    await page.getByRole("link", { name: "Slop home", exact: true }).click();
+    held.release();
+    await held.returned;
+    await expect(page).toHaveURL(/\/$/u);
+    expect(writes).toBe(0);
+    expect((await adminProject(request, fixture.id)).revision).toBe(
+      before.revision,
+    );
+  } finally {
+    held.release();
+    await fixture.close();
+  }
+});
+
+for (const failure of ["access", "changed-actor", "same-actor"] as const) {
+  test(`bounty publication ${failure} error keeps only an authorized current editor @registry`, async ({
+    page,
+    request,
+    diagnostics,
+  }) => {
+    const fixture = await settingsProject(request);
+    const status = failure === "access" ? 403 : 503;
+    diagnostics.allowResponse(status, "PUT", `/api/v1/projects/${fixture.id}`);
+    let inject = true;
+    await page.route(`**/api/v1/projects/${fixture.id}`, async (route) => {
+      if (route.request().method() !== "PUT" || !inject)
+        return route.continue();
+      inject = false;
+      if (failure === "changed-actor")
+        await settingsSession(page, "reporter-b");
+      await route.fulfill({
+        status,
+        json: {
+          error: status === 403 ? "forbidden" : "unavailable",
+          message: "Injected publication failure.",
+        },
+      });
+    });
+    try {
+      await openSettings(page, fixture.id);
+      const before = await adminProject(request, fixture.id);
+      await reviewSettingsAmount(page, "200");
+      await page
+        .getByRole("button", { name: "Publish bounty terms", exact: true })
+        .click();
+      if (failure === "same-actor") {
+        await expect(
+          page
+            .getByRole("alert")
+            .filter({ hasText: "Injected publication failure." }),
+        ).toBeVisible();
+        await expect(
+          page.getByLabel("Published gross award (USD)"),
+        ).toHaveValue("200");
+        await reviewSettingsAmount(page, "200");
+        await page
+          .getByRole("button", { name: "Publish bounty terms", exact: true })
+          .click();
+        await expect(
+          page.getByRole("status").filter({
+            hasText: `Published revision ${before.revision + 1}.`,
+          }),
+        ).toBeVisible();
+      } else if (failure === "changed-actor") {
+        await expect(
+          page.getByLabel("Published gross award (USD)"),
+        ).toHaveValue("100");
+        expect((await adminProject(request, fixture.id)).revision).toBe(
+          before.revision,
+        );
+      } else {
+        await expect(
+          page.getByLabel("Published gross award (USD)"),
+        ).toHaveCount(0);
+        await expect(
+          page.getByRole("button", {
+            name: "Retry management access",
+            exact: true,
+          }),
+        ).toBeVisible();
+        expect((await adminProject(request, fixture.id)).revision).toBe(
+          before.revision,
+        );
+      }
+    } finally {
+      await fixture.close();
+    }
+  });
+}
+
 async function refreshReporting(request: APIRequestContext) {
   const endpoint = process.env.SLOP_E2E_REPORTING_REFRESH;
   expect(endpoint).toBeTruthy();
@@ -668,6 +1018,89 @@ test("maintainers can verify or reject a manually linked private report @registr
   });
 });
 
+test("a reporter confirms a legacy linked report with GitHub @registry", async ({
+  page,
+  request,
+}) => {
+  const id = `legacy-link-${projectSuffix()}`;
+  const repository = `e2e-security/${id}`;
+  const advisory = "GHSA-4c5f-6g7h-8j9m";
+  await listProject(request, TOKENS.security, repository, id, {});
+  const claimed = await api(
+    request,
+    "POST",
+    "security-cases",
+    TOKENS["reporter-a"],
+    { mode: "claim", projectId: id, advisory, idempotencyKey: key() },
+  );
+  expect(claimed.status, JSON.stringify(claimed.body)).toBe(201);
+  const claim = claimed.body.case as {
+    id: string;
+    revision: number;
+    submissionState: string;
+  };
+  expect(claim.submissionState).toBe("claimed");
+  // GitHub now holds the reporter's private report for that advisory.
+  const receivedAt = new Date(Date.now() - 120_000).toISOString();
+  await githubReport(request, repository, advisory, "reporter-a", receivedAt);
+
+  await signIn(page, TOKENS["reporter-a"]);
+  await page.goto("/security", { waitUntil: "networkidle" });
+  await page
+    .getByRole("button", { name: new RegExp(`${id} ${advisory}`) })
+    .click();
+  const detail = page.locator(`[aria-labelledby="case-${claim.id}"]`);
+  const confirm = detail.getByRole("button", {
+    name: "Confirm with GitHub",
+    exact: true,
+  });
+  await expect(confirm).toBeVisible();
+  const checks: Record<string, unknown>[] = [];
+  page.on("request", (sent) => {
+    if (
+      sent.method() === "POST" &&
+      new URL(sent.url()).pathname ===
+        `/api/v1/security-cases/${claim.id}/actions`
+    )
+      checks.push(sent.postDataJSON() as Record<string, unknown>);
+  });
+  const answered = page.waitForResponse(
+    (response) =>
+      response.request().method() === "POST" &&
+      new URL(response.url()).pathname ===
+        `/api/v1/security-cases/${claim.id}/actions`,
+  );
+  await confirm.click();
+  expect((await answered).status()).toBe(200);
+  // The reloaded, settled case no longer offers the legacy check.
+  await expect(
+    detail.getByRole("button", { name: /^(?:Confirm with|Checking) GitHub/u }),
+  ).toHaveCount(0);
+  await expect(detail.getByRole("alert")).toHaveCount(0);
+  expect(checks).toHaveLength(1);
+  expect(checks[0]).toMatchObject({
+    action: "check-receipt",
+    expectedRevision: claim.revision,
+  });
+  const settled = await api(
+    request,
+    "GET",
+    `security-cases/${claim.id}`,
+    TOKENS["reporter-a"],
+  );
+  expect(settled.body.case).toMatchObject({
+    submissionState: "verified",
+    receivedAt: new Date(receivedAt).toISOString(),
+    receivedAtSource: "github-verified",
+  });
+  await expectAccessible(page);
+});
+
+const OWNER_EXCLUSIONS = [
+  "Price feed staleness within the documented heartbeat",
+  "Rounding dust below one cent",
+];
+
 test("owners publish and control bounty programs with verified funding @registry", async ({
   browser,
   diagnostics,
@@ -703,6 +1136,7 @@ test("owners publish and control bounty programs with verified funding @registry
       Disclosure: "Contact the maintainer before disclosure.",
       "Researcher protection":
         "Good-faith testing within these rules is authorized.",
+      "Also does not qualify": `  ${OWNER_EXCLUSIONS.join("\n\n")}\n`,
     };
     for (const group of [
       "Scope and testing",
@@ -725,6 +1159,7 @@ test("owners publish and control bounty programs with verified funding @registry
     expect(stored.manifest.securityBounty).toMatchObject({
       status: "paused",
       fundingPolicy: "after-approval",
+      scope: { excludedFindings: OWNER_EXCLUSIONS },
     });
     // A historical prefunded offer still needs verified available funds.
     const unsupported = await api(
@@ -840,7 +1275,29 @@ test("owners publish and control bounty programs with verified funding @registry
     // The refusal is the same when the vault has available funds.
     await expectOutsiderRefused(request, id, repository);
     await page.reload({ waitUntil: "networkidle" });
+    // The published page lists Slop's lines, then the owner's.
+    const scope = page.getByRole("region", { name: "Scope", exact: true });
+    await expect(
+      scope
+        .getByRole("list", { name: "Does not qualify", exact: true })
+        .getByRole("listitem"),
+    ).toHaveText([...SECURITY_DEFAULT_EXCLUSIONS]);
+    await expect(
+      scope
+        .getByRole("list", {
+          name: "Also does not qualify for this program",
+          exact: true,
+        })
+        .getByRole("listitem"),
+    ).toHaveText(OWNER_EXCLUSIONS);
     await openProjectSecuritySettings(page);
+    await page
+      .locator("summary")
+      .filter({ hasText: "Scope and testing" })
+      .click();
+    await expect(
+      page.getByLabel("Also does not qualify", { exact: true }),
+    ).toHaveValue(OWNER_EXCLUSIONS.join("\n"));
     await page.getByLabel("Status", { exact: true }).selectOption("open");
     await expectAccessible(page);
     await page.screenshot({
@@ -1188,6 +1645,12 @@ test("private security bounty programs keep cases restricted from intake to awar
       path: test.info().outputPath("program-terms.png"),
       fullPage: true,
     });
+    const intakeRead = page.waitForResponse(
+      (response) =>
+        response.request().method() === "GET" &&
+        new URL(response.url()).pathname ===
+          `/api/v1/security-programs/${b.id}/intake`,
+    );
     await page.goto(`/projects/${b.id}/security`);
     await expect(page.locator(".route-page-header .route-lead")).toContainText(
       "100,000 USDC security bounty",
@@ -1199,8 +1662,12 @@ test("private security bounty programs keep cases restricted from intake to awar
     const split = page.getByRole("region", { name: "Award split" });
     await expect(split).toContainText("Researcher · 75%75,000 USDC");
     await expect(split).toContainText("Slop · 25%25,000 USDC");
-    // Finish the overview background reads before explicitly closing this context.
-    // Strict diagnostics must still catch unexpected request cancellations.
+    // Finish this program's intake and font reads before leaving its page.
+    // Waiting only on the destination would cancel these requests first.
+    expect(await (await intakeRead).finished()).toBeNull();
+    await page.evaluate(async () => {
+      await document.fonts.ready;
+    });
     await page.goto(`/projects/${a.id}`, { waitUntil: "networkidle" });
     await expect(
       page.getByText("Loading records…", { exact: true }),
@@ -1793,7 +2260,7 @@ test("private security bounty programs keep cases restricted from intake to awar
     expect(triaged.appealTriage).toMatchObject({
       state: "complete",
       provider: "surplus",
-      model: "claude-opus-5.5",
+      model: "claude-sonnet-5.5",
       promptRevision: "slop-security-appeal-triage-1",
       proposedOutcome: "return",
       confidence: 0.72,
@@ -1969,15 +2436,13 @@ test("private security bounty programs keep cases restricted from intake to awar
       path: test.info().outputPath("security-notice-acknowledged.png"),
       fullPage: true,
     });
-    await page.evaluate(() => {
-      document.documentElement.style.zoom = "2";
-    });
+    await enlargeText(page.locator("body"));
     await expect(
       page.getByText("Acknowledged", { exact: true }).first(),
     ).toBeVisible();
     await expectAccessible(page);
     await page.screenshot({
-      path: test.info().outputPath("security-notice-zoom.png"),
+      path: test.info().outputPath("security-notice-text-200.png"),
       fullPage: true,
     });
     await context.close();
@@ -2061,12 +2526,10 @@ test("private security bounty programs keep cases restricted from intake to awar
       path: test.info().outputPath("disclosure-approved.png"),
       fullPage: true,
     });
-    await page.evaluate(() => {
-      document.documentElement.style.zoom = "2";
-    });
+    await enlargeText(page.locator("body"));
     await expectAccessible(page);
     await page.screenshot({
-      path: test.info().outputPath("disclosure-zoom.png"),
+      path: test.info().outputPath("disclosure-text-200.png"),
       fullPage: true,
     });
     expect(diagnostics.count(CANCELED)).toBe(canceled);
@@ -2196,7 +2659,11 @@ test("private security bounty programs keep cases restricted from intake to awar
         "/.well-known/slop/projects.json",
         `/projects/${a.id}/security`,
         "/",
-      ].map(async (path) => (await request.get(path)).text()),
+      ].map(async (path) => {
+        const response = await request.get(path, { maxRetries: 1 });
+        expect(response.status(), path).toBe(200);
+        return response.text();
+      }),
     );
     for (const text of outputs) {
       expect(text).not.toContain("GHSA-");
@@ -2382,22 +2849,16 @@ test("private settlement requires visibility consent and produces an unsigned re
     path: test.info().outputPath("private-settlement.png"),
     fullPage: true,
   });
-  await page.evaluate(() => {
-    document.documentElement.style.zoom = "2";
-  });
+  await enlargeText(page.locator("body"));
   await expectAccessible(page, { everyRule: true });
   await page.screenshot({
-    path: test.info().outputPath("private-settlement-zoom.png"),
+    path: test.info().outputPath("private-settlement-text-200.png"),
     fullPage: true,
   });
-  // The existing site supports a minimum layout width of 320 CSS pixels.
-  // At 200% on a 320px viewport it scrolls to that minimum; the request
-  // must not expand the page beyond it.
+  // Enlarged text must preserve the current CSS viewport without page overflow.
   expect(
     await page.evaluate(
-      () =>
-        document.documentElement.scrollWidth <=
-        Math.max(window.innerWidth, 640) + 1,
+      () => document.documentElement.scrollWidth <= window.innerWidth + 1,
     ),
   ).toBe(true);
   await context.close();
@@ -2698,6 +3159,7 @@ test("admin placement and explicit bounty type drive generic project pages @regi
   page,
   request,
 }) => {
+  test.setTimeout(180_000);
   const id = `home-bounty-${projectSuffix()}`;
   const repository = `e2e-security/${id}`;
   await listProject(request, TOKENS.security, repository, id, {});
@@ -2726,6 +3188,7 @@ test("admin placement and explicit bounty type drive generic project pages @regi
     securityBounty: { ...project.securityBounty, status: "closed" },
   };
   let shown: Record<string, unknown> = project;
+  await serveProjectCycleIndex(page, [id]);
   // One public project at a time: first verify its published open state.
   await page.route("**/api/v1/projects", (route) =>
     route.fulfill({
@@ -2742,6 +3205,14 @@ test("admin placement and explicit bounty type drive generic project pages @regi
     exact: true,
   });
   await expect(section.locator(".project-card")).toHaveCount(1);
+  // Discovery keeps current security offers before project lists and rankings.
+  expect(
+    await page
+      .locator(
+        "main > #security-bounties, main > #projects, main > #leaderboard",
+      )
+      .evaluateAll((sections) => sections.map((section) => section.id)),
+  ).toEqual(["security-bounties", "projects", "leaderboard"]);
   const featured = page.locator('[aria-labelledby="featured-projects"]');
   await expect(featured.locator(".project-card")).toHaveCount(1);
   await expect(featured).toContainText("$10k");
@@ -2768,17 +3239,15 @@ test("admin placement and explicit bounty type drive generic project pages @regi
     path: test.info().outputPath("home-security-bounty.png"),
     fullPage: true,
   });
-  if ((page.viewportSize()?.width ?? 0) >= 640) {
-    await page.evaluate(() => {
-      document.documentElement.style.zoom = "2";
-    });
-    expect(
-      await page.evaluate(
-        () => document.documentElement.scrollWidth <= window.innerWidth,
-      ),
-    ).toBe(true);
-    await expectAccessible(page);
-  }
+
+  await enlargeText(page.locator("body"));
+  expect(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth <= window.innerWidth,
+    ),
+  ).toBe(true);
+  await expectAccessible(page);
+
   await link.click();
   await expect(
     page.getByRole("heading", {
@@ -2808,6 +3277,12 @@ test("admin placement and explicit bounty type drive generic project pages @regi
     page.getByRole("region", { name: "Published bounty offer" }),
   ).toHaveCount(0);
   await expectAccessible(page);
+  const intakeRead = page.waitForResponse(
+    (response) =>
+      response.request().method() === "GET" &&
+      new URL(response.url()).pathname ===
+        `/api/v1/security-programs/${id}/intake`,
+  );
   await page
     .getByRole("link", { name: "Report privately", exact: true })
     .click();
@@ -2819,6 +3294,7 @@ test("admin placement and explicit bounty type drive generic project pages @regi
   await expect(
     page.getByRole("heading", { name: "Private report", exact: true }),
   ).toBeVisible();
+  expect(await (await intakeRead).finished()).toBeNull();
 
   // Clearing Featured moves the same bounty to Community without changing its offer.
   shown = { ...project, listingTier: "community" };
@@ -2831,14 +3307,22 @@ test("admin placement and explicit bounty type drive generic project pages @regi
   await expect(row).toContainText("Pledged");
   await expect(row).not.toContainText("Points only");
 
-  // Zero ordinary cash does not silently convert a separate bounty into a bounty-only project.
+  // A separate open bounty names the existing offer while ordinary routing stays intact.
   shown = {
     ...project,
-    listingTier: "community",
+    listingTier: "featured",
     securityBounty: { ...project.securityBounty, rewardMode: "separate" },
   };
   await page.reload({ waitUntil: "networkidle" });
-  await expect(row).toContainText("Points only");
+  await expect(featured).toContainText("$10k");
+  await expect(featured).toContainText("/ Critical");
+  await expect(featured).toContainText("Pledged");
+  await expect(featured).not.toContainText("Points only");
+  shown = { ...shown, listingTier: "community" };
+  await page.reload({ waitUntil: "networkidle" });
+  await expect(row).toContainText("$10k / Critical");
+  await expect(row).toContainText("Pledged");
+  await expect(row).not.toContainText("Points only");
   await expect(section.locator(".project-card")).toHaveAttribute(
     "href",
     `/projects/${id}/security`,
@@ -2869,7 +3353,7 @@ test("admin placement and explicit bounty type drive generic project pages @regi
   );
   await expect
     .poll(() => dataPaths.filter((path) => !completedData.has(path)), {
-      timeout: 30_000,
+      timeout: 60_000,
     })
     .toEqual([]);
   await page.waitForLoadState("networkidle");
@@ -2900,9 +3384,7 @@ for (const slowPage of [false, true]) {
     test.setTimeout(120_000);
     const id = `late-report-${slowPage ? "loading" : "selected"}-${projectSuffix()}`;
     const repository = `e2e-security/${id}`;
-    const role = test.info().project.name.endsWith("-mobile")
-      ? "reporter-b"
-      : "reporter-a";
+    const role: Role = `late-report-${slowPage ? "loading" : "selected"}-${test.info().project.name.endsWith("-mobile") ? "mobile" : "desktop"}`;
     diagnostics.allowResponse(403, "GET", `/api/v1/project-setup/${id}`);
     await listProject(request, TOKENS.security, repository, id, {});
     await setIntake(request, repository, "disabled");
@@ -2990,9 +3472,19 @@ for (const slowPage of [false, true]) {
       await (await delivered).finished();
       // The accepted report remains available in Inbox; its old composer cannot
       // take over the page selected after it was unmounted.
-      await page.getByRole("link", { name: "Slop home", exact: true }).focus();
       expect(await unexpectedNavigation).toBe(false);
       await expect(page).toHaveURL(/\/how-it-works$/u);
+      if (slowPage) {
+        // Keep the next page loading through the late acceptance assertion,
+        // then deliver its chunk before focus and Back can cancel the request.
+        const loaded = page.waitForResponse((response) =>
+          new URL(response.url()).pathname.includes("/assets/PublicPages-"),
+        );
+        releasePage();
+        await (await loaded).finished();
+        await expect(page).toHaveURL(/\/how-it-works$/u);
+      }
+      await page.getByRole("link", { name: "Slop home", exact: true }).focus();
       await page.screenshot({
         path: test.info().outputPath("late-report-navigation.png"),
         fullPage: true,
@@ -3006,16 +3498,7 @@ for (const slowPage of [false, true]) {
       await expect(
         page.getByRole("button", { name: "Retry same report", exact: true }),
       ).toBeEnabled();
-      if (slowPage) {
-        const loaded = page.waitForResponse((response) =>
-          new URL(response.url()).pathname.includes("/assets/PublicPages-"),
-        );
-        releasePage();
-        await (await loaded).finished();
-      }
-      await page.evaluate(() => {
-        document.documentElement.style.zoom = "2";
-      });
+      await enlargeText(page.locator("body"));
       await expectAccessible(page);
       const retry = page.waitForResponse(
         (response) =>
@@ -3178,6 +3661,21 @@ test("Slop receives a private report before GitHub and keeps it in Inbox @regist
     const report = page.locator(
       `[aria-labelledby="submission-${submissionId}"]`,
     );
+    await expect
+      .poll(
+        () =>
+          privateReads.some((url) => {
+            const receipt = new URL(url);
+            return (
+              receipt.pathname ===
+                `/api/v1/security-submissions/${submissionId}` &&
+              receipt.searchParams.get("view") === "receipt"
+            );
+          }),
+        { timeout: 30_000 },
+      )
+      .toBe(true);
+    await expect(report).toBeVisible();
     await expect(page.locator(".security-report-text")).toHaveCount(0);
     await expect(page.getByText(description, { exact: true })).toHaveCount(0);
     await expect(
@@ -3194,7 +3692,11 @@ test("Slop receives a private report before GitHub and keeps it in Inbox @regist
       path: test.info().outputPath("slop-report-inbox-compact.png"),
       fullPage: true,
     });
-    expect(privateReads).toHaveLength(0);
+    expect(
+      privateReads.every(
+        (url) => new URL(url).searchParams.get("view") === "receipt",
+      ),
+    ).toBe(true);
     // Keep the real stored report and its authorization route. Hide just its
     // row from the recent projection, as the API does after 100 newer receipts.
     // The API regression separately creates all 101 receipts with real migrations.
@@ -3207,6 +3709,7 @@ test("Slop receives a private report before GitHub and keeps it in Inbox @regist
       );
       await route.fulfill({ response, json: body });
     };
+    privateReads.length = 0;
     await page.route("**/api/v1/security-submissions", withoutFocusedReceipt);
     await page.reload({ waitUntil: "networkidle" });
     await expect(report).toHaveClass(/is-focused/u);
@@ -3219,6 +3722,23 @@ test("Slop receives a private report before GitHub and keeps it in Inbox @regist
     await expect(page.locator(".security-report-text")).toHaveCount(0);
     await page.unroute("**/api/v1/security-submissions", withoutFocusedReceipt);
     const missingReceipt = "ss_missing_receipt_fixture";
+    const receiptPath = `**/api/v1/security-submissions/${missingReceipt}?view=receipt`;
+    const wrongReceipt = async (route: Route) => {
+      const url = new URL(route.request().url());
+      url.pathname = `/api/v1/security-submissions/${submissionId}`;
+      const response = await route.fetch({ url: url.href });
+      expect(response.status()).toBe(200);
+      await route.fulfill({ response });
+    };
+    await page.route(receiptPath, wrongReceipt);
+    await page.goto(`/inbox?view=reports&submission=${missingReceipt}`, {
+      waitUntil: "networkidle",
+    });
+    await expect(
+      page.getByText(/The private report receipt could not be verified/),
+    ).toBeVisible();
+    await expect(report).toHaveCount(1);
+    await page.unroute(receiptPath, wrongReceipt);
     diagnostics.allowResponse(
       404,
       "GET",
@@ -3294,16 +3814,55 @@ test("Slop receives a private report before GitHub and keeps it in Inbox @regist
         ],
         { stdio: "pipe" },
       );
-      await page.reload({ waitUntil: "networkidle" });
-      await report.getByText("Read private report", { exact: true }).click();
-      await expect(report.locator(".security-report-text")).toHaveText(
-        description,
-      );
+      let releaseList!: () => void;
+      let listCaptured = false;
+      let listSnapshot: Record<string, unknown> = {};
+      const listGate = new Promise<void>((resolve) => {
+        releaseList = resolve;
+      });
+      const heldList = async (route: Route) => {
+        const response = await route.fetch();
+        expect(response.status()).toBe(200);
+        listSnapshot = await response.json();
+        listCaptured = true;
+        await listGate;
+        if (state === "queued") {
+          // Mark the stale list so the test observes when it actually renders.
+          await route.fulfill({
+            response,
+            json: { ...listSnapshot, authorityUnavailable: true },
+          });
+        } else {
+          await route.fulfill({
+            status: 503,
+            json: { message: "Recent reports unavailable." },
+          });
+        }
+      };
+      if (state === "running")
+        diagnostics.allowResponse(503, "GET", "/api/v1/security-submissions");
+      await page.route("**/api/v1/security-submissions", heldList);
+      await page.reload({ waitUntil: "domcontentloaded" });
+      await expect.poll(() => listCaptured).toBe(true);
       const retry = report.getByRole("button", {
         name: "Retry screening",
         exact: true,
       });
       await expect(retry).toBeVisible();
+      await expect(report.locator(".security-report-text")).toHaveCount(0);
+      if (state === "running") {
+        releaseList();
+        await expect(
+          page
+            .getByRole("alert")
+            .filter({ hasText: "Recent reports unavailable." }),
+        ).toBeVisible();
+        await expect(retry).toBeVisible();
+      }
+      await report.getByText("Read private report", { exact: true }).click();
+      await expect(report.locator(".security-report-text")).toHaveText(
+        description,
+      );
       await page.screenshot({
         path: test.info().outputPath(`recovery-${state}.png`),
         fullPage: true,
@@ -3330,9 +3889,41 @@ test("Slop receives a private report before GitHub and keeps it in Inbox @regist
             .intake.state;
         })
         .toBe("legitimate");
-      await page
-        .getByRole("button", { name: "Refresh reports", exact: true })
-        .click();
+      const refresh = page.getByRole("button", {
+        name: "Refresh reports",
+        exact: true,
+      });
+      if (state === "queued") {
+        releaseList();
+        const authority = page.getByText(
+          "Some maintainer access could not be checked. Your own reports are shown.",
+        );
+        await expect(authority).toBeVisible();
+        await page.unroute("**/api/v1/security-submissions", heldList);
+
+        // The screening POST schedules work and can return the queued receipt.
+        // Refresh now reads its completed state while the stale list is pending.
+        let releaseStaleList!: () => void;
+        const staleGate = new Promise<void>((resolve) => {
+          releaseStaleList = resolve;
+        });
+        const staleList = async (route: Route) => {
+          await staleGate;
+          await route.fulfill({
+            json: { ...listSnapshot, authorityUnavailable: false },
+          });
+        };
+        await page.route("**/api/v1/security-submissions", staleList);
+        await refresh.click();
+        await expect(retry).not.toBeVisible();
+        releaseStaleList();
+        await expect(authority).not.toBeVisible();
+        await expect(retry).not.toBeVisible();
+        await page.unroute("**/api/v1/security-submissions", staleList);
+      } else {
+        await page.unroute("**/api/v1/security-submissions", heldList);
+        await refresh.click();
+      }
       await expect(retry).not.toBeVisible();
       await expect(report.locator(".security-report-text")).toHaveText(
         description,
@@ -3344,21 +3935,62 @@ test("Slop receives a private report before GitHub and keeps it in Inbox @regist
       path: test.info().outputPath("slop-report-inbox.png"),
       fullPage: true,
     });
-    if ((page.viewportSize()?.width ?? 0) >= 640) {
-      await page.evaluate(() => {
-        document.documentElement.style.zoom = "2";
-      });
-      expect(
-        await page.evaluate(
-          () => document.documentElement.scrollWidth <= window.innerWidth,
-        ),
-      ).toBe(true);
-      await expectAccessible(page);
-      await page.screenshot({
-        path: test.info().outputPath("slop-report-inbox-zoom.png"),
-        fullPage: true,
-      });
+
+    const textResizeLayout = () =>
+      page.evaluate(() => ({
+        viewport: window.innerWidth,
+        document: document.documentElement.scrollWidth,
+        overflow: [...document.querySelectorAll<HTMLElement>("body *")]
+          .map((element) => {
+            const rect = element.getBoundingClientRect();
+            const style = getComputedStyle(element);
+            return {
+              tag: element.tagName,
+              classes: element.className,
+              width: rect.width,
+              right: rect.right,
+              scrollWidth: element.scrollWidth,
+              whiteSpace: style.whiteSpace,
+              fontSize: style.fontSize,
+            };
+          })
+          .filter((element) => element.right > window.innerWidth + 1),
+      }));
+    const beforeTextResize = await textResizeLayout();
+    await enlargeText(page.locator("body"));
+    const afterTextResize = await textResizeLayout();
+    await test.info().attach("private-intake-text-resize-layout", {
+      body: JSON.stringify({
+        before: beforeTextResize,
+        after: afterTextResize,
+      }),
+      contentType: "application/json",
+    });
+    expect(afterTextResize.document).toBeLessThanOrEqual(
+      afterTextResize.viewport,
+    );
+    const reportText = report.getByRole("region", {
+      name: new RegExp(summary, "u"),
+    });
+    await reportText.focus();
+    await expect(reportText).toBeFocused();
+    if (
+      await reportText.evaluate(
+        (element) => element.scrollHeight > element.clientHeight,
+      )
+    ) {
+      await reportText.press("PageDown");
+      await expect
+        .poll(() => reportText.evaluate((element) => element.scrollTop))
+        .toBeGreaterThan(0);
+      await reportText.press("Home");
     }
+    await expectAccessible(page);
+    await page.screenshot({
+      path: test.info().outputPath("slop-report-inbox-text-200.png"),
+      fullPage: true,
+    });
+
     await page.reload({ waitUntil: "networkidle" });
     await report.getByText("Read private report", { exact: true }).click();
     await expect(report.locator(".security-report-text")).toHaveText(
@@ -3429,11 +4061,12 @@ test("Slop-first intake preserves private GitHub forwarding and reconciliation @
   test.setTimeout(240_000);
   // Independent viewport journeys use distinct seeded reporters. The real
   // same-actor workload cap remains covered by the API integration cases.
-  const reporterRole = test.info().project.name.endsWith("-mobile")
-    ? "reporter-b"
-    : "reporter-a";
-  const otherReporterRole =
-    reporterRole === "reporter-a" ? "reporter-b" : "reporter-a";
+  const reporterRole: Role = test.info().project.name.endsWith("-mobile")
+    ? "forwarding-mobile"
+    : "forwarding-desktop";
+  const otherReporterRole: Role = test.info().project.name.endsWith("-mobile")
+    ? "reporter-a"
+    : "reporter-b";
   const reporterToken = TOKENS[reporterRole];
   const otherReporterToken = TOKENS[otherReporterRole];
   const suffix = projectSuffix();
@@ -3822,7 +4455,7 @@ test("Slop-first intake preserves private GitHub forwarding and reconciliation @
       });
       await openPrivateDelivery(page);
       await expect(page.getByRole("alert")).toContainText("is out of date");
-      // The effective layout of the native desktop review at 200% zoom.
+      // Approximate the desktop zoom layout with an 864 CSS-pixel viewport.
       // Backward keyboard navigation must not hide focus under the header.
       const originalViewport = page.viewportSize();
       await page.setViewportSize({ width: 864, height: 498 });
@@ -4454,6 +5087,26 @@ test("a registered Slop bounty vault keeps its split while the owner publishes t
       .locator(".security-program-editor")
       .getByRole("group", { name: "Asset", exact: true }),
   ).toHaveCount(0);
+  const refreshFunds = page.getByRole("button", {
+    name: "Refresh bounty funds",
+    exact: true,
+  });
+  await expect(refreshFunds).toBeEnabled();
+  await expect(
+    page.getByText("Loading bounty funds…", { exact: true }),
+  ).toBeHidden();
+  // The enabled state can precede the end of the button's color transition.
+  // Wait only for this control's finite animations before checking contrast.
+  await refreshFunds.evaluate(async (button) => {
+    await Promise.all(
+      button
+        .getAnimations()
+        .filter((animation) =>
+          Number.isFinite(animation.effect?.getComputedTiming().endTime),
+        )
+        .map((animation) => animation.finished.catch(() => {})),
+    );
+  });
   await expectAccessible(page);
   await page.screenshot({
     path: test.info().outputPath("registered-vault-locked.png"),
@@ -4542,6 +5195,649 @@ test("an owner preserves admin-approved full-award terms on any project @registr
     fullPage: true,
   });
 });
+
+async function preparePrivateReceiptForm(
+  page: Page,
+  request: APIRequestContext,
+  id: string,
+  role: Role,
+  invalidCvss = false,
+) {
+  const repository = `e2e-security/${id}`;
+  await listProject(request, TOKENS.security, repository, id, {});
+  await setIntake(request, repository, "disabled");
+  await signIn(page, TOKENS[role]);
+  await page.goto(`/projects/${id}/security`, { waitUntil: "networkidle" });
+  await page
+    .getByRole("textbox", { name: "Summary", exact: true })
+    .fill(`Synthetic private receipt ${id}`);
+  await page
+    .getByRole("textbox", { name: /^Description/u })
+    .fill(
+      `Synthetic receipt lifecycle ${id}; this isolated report contains no production findings, credentials or funds.`,
+    );
+  if (invalidCvss) {
+    await page.getByText("Additional classification", { exact: false }).click();
+    await page
+      .getByRole("textbox", { name: /CVSS vector/u })
+      .fill("not-a-vector");
+  }
+  await page
+    .getByRole("button", { name: "Review report", exact: true })
+    .click();
+}
+
+async function replacePrivateReportActor(page: Page, role: Role) {
+  // Replace the same-origin cookie without a focus event or parent refresh.
+  await page.evaluate(
+    ([name, value]) => {
+      document.cookie = `${name}=${value}; Path=/; Secure; SameSite=Strict`;
+    },
+    [COOKIE, TOKENS[role]],
+  );
+}
+
+test("an accepted private report rechecks identity before navigation and preserves a replacement draft @registry @private-intake", async ({
+  page,
+  request,
+  diagnostics,
+}) => {
+  test.skip(process.env.SLOP_E2E_PRIVATE_INTAKE !== "1", "Private intake lane");
+  test.setTimeout(120_000);
+  const id = `receipt-swap-${projectSuffix()}`;
+  const first: Role = test.info().project.name.endsWith("-mobile")
+    ? "receipt-swap-mobile"
+    : "receipt-swap-desktop";
+  const second: Role = test.info().project.name.endsWith("-mobile")
+    ? "reporter-a"
+    : "reporter-b";
+  diagnostics.allowResponse(403, "GET", `/api/v1/project-setup/${id}`);
+  await preparePrivateReceiptForm(page, request, id, first);
+  let release!: () => void;
+  let received!: () => void;
+  const delivery = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const captured = new Promise<void>((resolve) => {
+    received = resolve;
+  });
+  let submissionId = "";
+  let posts = 0;
+  await page.route("**/api/v1/security-submissions", async (route) => {
+    if (route.request().method() !== "POST") return route.continue();
+    posts += 1;
+    expect(route.request().headers()["x-slop-expected-github-id"]).toBe(
+      account(first).githubId,
+    );
+    const response = await route.fetch();
+    expect(response.status()).toBe(201);
+    submissionId = (await response.json()).submission.id;
+    received();
+    await delivery;
+    await route.fulfill({ response });
+  });
+  try {
+    await page
+      .getByRole("button", { name: "Submit private report", exact: true })
+      .click();
+    await captured;
+    const storageKey = `slop-report-compose:${account(first).githubId}:${id}`;
+    const replacement = await page.evaluate((key) => {
+      const next = JSON.stringify({
+        key: crypto.randomUUID(),
+        attempted: false,
+        draft: {
+          summary: "A newer unsent draft in the same storage slot",
+          description:
+            "Synthetic replacement text must survive the old receipt.",
+          severity: "",
+          cvss: "",
+          cwe: "",
+        },
+      });
+      sessionStorage.setItem(key, next);
+      return next;
+    }, storageKey);
+    await replacePrivateReportActor(page, second);
+    release();
+    await expect(
+      page.getByRole("heading", { name: "Report received", exact: true }),
+    ).toBeVisible();
+    await expect(
+      page.getByText(/Your account changed or signed out/u),
+    ).toBeVisible();
+    await expect(page).toHaveURL(new RegExp(`/projects/${id}/security$`));
+    await expect(page.locator(".report-preview")).toHaveCount(0);
+    await expect(
+      page.getByText("Report not confirmed", { exact: true }),
+    ).toHaveCount(0);
+    await expect(
+      page.getByRole("button", { name: "Retry same report" }),
+    ).toHaveCount(0);
+    expect(
+      await page.evaluate((key) => sessionStorage.getItem(key), storageKey),
+    ).toBe(replacement);
+    const denied = await api(
+      request,
+      "GET",
+      `security-submissions/${submissionId}?view=receipt`,
+      TOKENS[second],
+    );
+    expect(denied.status).toBe(404);
+    const retained = await api(
+      request,
+      "GET",
+      `security-submissions/${submissionId}?view=receipt`,
+      TOKENS[first],
+    );
+    expect(retained.status).toBe(200);
+    await replacePrivateReportActor(page, first);
+    await page
+      .getByRole("button", {
+        name: "Check session and open receipt",
+        exact: true,
+      })
+      .click();
+    await expect(page).toHaveURL(
+      new RegExp(`/inbox\\?view=reports&submission=${submissionId}$`),
+    );
+    expect(posts).toBe(1);
+    expect(
+      await page.evaluate((key) => sessionStorage.getItem(key), storageKey),
+    ).toBe(replacement);
+  } finally {
+    release();
+  }
+});
+
+test("a received private report survives a session outage without being submitted twice @registry @private-intake", async ({
+  page,
+  request,
+  diagnostics,
+}) => {
+  test.skip(process.env.SLOP_E2E_PRIVATE_INTAKE !== "1", "Private intake lane");
+  test.setTimeout(120_000);
+  const id = `receipt-retry-${projectSuffix()}`;
+  const reporter: Role = test.info().project.name.endsWith("-mobile")
+    ? "receipt-outage-mobile"
+    : "receipt-outage-desktop";
+  diagnostics.allowResponse(403, "GET", `/api/v1/project-setup/${id}`);
+  diagnostics.allowResponse(503, "GET", "/api/v1/project-session");
+  await preparePrivateReceiptForm(page, request, id, reporter);
+  let receiptReceived = false;
+  let unavailable = true;
+  let posts = 0;
+  let submissionId = "";
+  await page.route("**/api/v1/project-session", (route) => {
+    if (!receiptReceived || !unavailable) return route.continue();
+    return route.fulfill({
+      status: 503,
+      json: { error: "session_unavailable", message: "Session unavailable" },
+    });
+  });
+  await page.route("**/api/v1/security-submissions", async (route) => {
+    if (route.request().method() !== "POST") return route.continue();
+    posts += 1;
+    const response = await route.fetch();
+    expect(response.status()).toBe(201);
+    submissionId = (await response.json()).submission.id;
+    receiptReceived = true;
+    await route.fulfill({ response });
+  });
+  await page
+    .getByRole("button", { name: "Submit private report", exact: true })
+    .click();
+  await expect(
+    page.getByText(/could not verify your current account/u),
+  ).toBeVisible();
+  await expect(
+    page.getByText("Report not confirmed", { exact: true }),
+  ).toHaveCount(0);
+  await expect(page.locator(".report-preview")).toHaveCount(0);
+  await expect(page).toHaveURL(new RegExp(`/projects/${id}/security$`));
+  unavailable = false;
+  await page
+    .getByRole("button", {
+      name: "Check session and open receipt",
+      exact: true,
+    })
+    .click();
+  await expect(page).toHaveURL(
+    new RegExp(`/inbox\\?view=reports&submission=${submissionId}$`),
+  );
+  expect(posts).toBe(1);
+  expect(
+    await page.evaluate(
+      (key) => sessionStorage.getItem(key),
+      `slop-report-compose:${account(reporter).githubId}:${id}`,
+    ),
+  ).toBeNull();
+});
+
+test("a departed private receipt check cannot clear a newer draft or navigate its replacement form @registry @private-intake", async ({
+  page,
+  request,
+  diagnostics,
+}) => {
+  test.skip(process.env.SLOP_E2E_PRIVATE_INTAKE !== "1", "Private intake lane");
+  test.setTimeout(120_000);
+  const id = `receipt-leave-${projectSuffix()}`;
+  const reporter: Role = test.info().project.name.endsWith("-mobile")
+    ? "receipt-leave-mobile"
+    : "receipt-leave-desktop";
+  diagnostics.allowResponse(403, "GET", `/api/v1/project-setup/${id}`);
+  await preparePrivateReceiptForm(page, request, id, reporter);
+  let receiptReceived = false;
+  let held = false;
+  let posts = 0;
+  let release!: () => void;
+  let observed!: () => void;
+  const delivery = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const captured = new Promise<void>((resolve) => {
+    observed = resolve;
+  });
+  await page.route("**/api/v1/security-submissions", async (route) => {
+    if (route.request().method() !== "POST") return route.continue();
+    posts += 1;
+    const response = await route.fetch();
+    expect(response.status()).toBe(201);
+    receiptReceived = true;
+    await route.fulfill({ response });
+  });
+  await page.route("**/api/v1/project-session", async (route) => {
+    if (!receiptReceived || held) return route.continue();
+    held = true;
+    const response = await route.fetch();
+    expect((await response.json()).session.githubId).toBe(
+      account(reporter).githubId,
+    );
+    observed();
+    await delivery;
+    await route.fulfill({ response });
+  });
+  try {
+    await page
+      .getByRole("button", { name: "Submit private report", exact: true })
+      .click();
+    await captured;
+    await page.getByRole("link", { name: "How it works", exact: true }).click();
+    await expect(page.locator("form.report-composer")).toHaveCount(0);
+    const storageKey = `slop-report-compose:${account(reporter).githubId}:${id}`;
+    const replacement = await page.evaluate((key) => {
+      const next = JSON.stringify({
+        key: crypto.randomUUID(),
+        attempted: false,
+        draft: {
+          summary: "A draft written after leaving the accepted report",
+          description:
+            "New synthetic text belongs to the replacement form only.",
+          severity: "",
+          cvss: "",
+          cwe: "",
+        },
+      });
+      sessionStorage.setItem(key, next);
+      return next;
+    }, storageKey);
+    await page.goBack();
+    await expect(
+      page.getByRole("textbox", { name: "Summary", exact: true }),
+    ).toHaveValue("A draft written after leaving the accepted report");
+    const delivered = page.waitForResponse(
+      (response) =>
+        new URL(response.url()).pathname === "/api/v1/project-session",
+    );
+    release();
+    await (await delivered).finished();
+    await page.evaluate(
+      () =>
+        new Promise<void>((resolve) =>
+          requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
+        ),
+    );
+    await expect(page).toHaveURL(new RegExp(`/projects/${id}/security$`));
+    expect(
+      await page.evaluate((key) => sessionStorage.getItem(key), storageKey),
+    ).toBe(replacement);
+    expect(posts).toBe(1);
+  } finally {
+    release();
+  }
+});
+
+test("an uncertain private submission checks identity before exposing a retry @registry @private-intake", async ({
+  page,
+  request,
+  diagnostics,
+}) => {
+  test.skip(process.env.SLOP_E2E_PRIVATE_INTAKE !== "1", "Private intake lane");
+  test.setTimeout(120_000);
+  const id = `receipt-unknown-${projectSuffix()}`;
+  const first: Role = test.info().project.name.endsWith("-mobile")
+    ? "receipt-unknown-mobile"
+    : "receipt-unknown-desktop";
+  const second: Role = test.info().project.name.endsWith("-mobile")
+    ? "reporter-a"
+    : "reporter-b";
+  diagnostics.allowResponse(403, "GET", `/api/v1/project-setup/${id}`);
+  diagnostics.allow(/net::ERR_FAILED.*security-submissions/u);
+  await preparePrivateReceiptForm(page, request, id, first);
+  const reviewedPreview = page.locator(
+    "form.report-composer > .report-preview",
+  );
+  const privateDescription = await reviewedPreview.innerText();
+  expect(privateDescription).not.toBe("");
+  expect(privateDescription).toContain(
+    `Synthetic receipt lifecycle ${id}; this isolated report contains no production findings, credentials or funds.`,
+  );
+  let posts = 0;
+  let submissionId = "";
+  await page.route("**/api/v1/security-submissions", async (route) => {
+    if (route.request().method() !== "POST") return route.continue();
+    posts += 1;
+    // The database accepts A, but the browser does not receive that receipt.
+    const response = await route.fetch();
+    expect(response.status()).toBe(201);
+    submissionId = (await response.json()).submission.id;
+    await replacePrivateReportActor(page, second);
+    await route.abort("failed");
+  });
+  await page
+    .getByRole("button", { name: "Submit private report", exact: true })
+    .click();
+  await expect(
+    page.getByText(/Your account changed or signed out/u),
+  ).toBeVisible();
+  await expect(reviewedPreview).toHaveCount(0);
+  await expect(page.locator("body")).not.toContainText(privateDescription);
+  await expect(
+    page.getByRole("textbox", { name: "Summary", exact: true }),
+  ).toHaveValue("");
+  await expect(
+    page.getByRole("textbox", { name: /^Description/u }),
+  ).toHaveValue("");
+  await expect(
+    page.getByRole("button", { name: "Retry same report" }),
+  ).toHaveCount(0);
+  expect(
+    await page.evaluate(
+      (key) => sessionStorage.getItem(key),
+      `slop-report-compose:${account(first).githubId}:${id}`,
+    ),
+  ).toBeNull();
+  const retained = await api(
+    request,
+    "GET",
+    `security-submissions/${submissionId}?view=receipt`,
+    TOKENS[first],
+  );
+  expect(retained.status).toBe(200);
+  expect(posts).toBe(1);
+});
+
+test("an unknown private session hides an uncertain report until a session-only recovery @registry @private-intake", async ({
+  page,
+  request,
+  diagnostics,
+}) => {
+  test.skip(process.env.SLOP_E2E_PRIVATE_INTAKE !== "1", "Private intake lane");
+  test.setTimeout(120_000);
+  const id = `receipt-session-${projectSuffix()}`;
+  const reporter: Role = test.info().project.name.endsWith("-mobile")
+    ? "receipt-session-mobile"
+    : "receipt-session-desktop";
+  diagnostics.allowResponse(403, "GET", `/api/v1/project-setup/${id}`);
+  diagnostics.allowResponse(503, "GET", "/api/v1/project-session");
+  diagnostics.allow(/net::ERR_FAILED.*security-submissions/u);
+  await preparePrivateReceiptForm(page, request, id, reporter);
+  const storageKey = `slop-report-compose:${account(reporter).githubId}:${id}`;
+  const readStored = () =>
+    page.evaluate((key) => sessionStorage.getItem(key), storageKey);
+  await expect.poll(readStored).not.toBeNull();
+  const original = JSON.parse((await readStored()) ?? "null");
+  let unavailable = false;
+  let posts = 0;
+  let firstPayload: unknown;
+  let submissionId = "";
+  await page.route("**/api/v1/project-session", (route) => {
+    if (!unavailable) return route.continue();
+    return route.fulfill({
+      status: 503,
+      json: { error: "session_unavailable", message: "Session unavailable" },
+    });
+  });
+  await page.route("**/api/v1/security-submissions", async (route) => {
+    if (route.request().method() !== "POST") return route.continue();
+    posts += 1;
+    const payload = route.request().postDataJSON();
+    const response = await route.fetch();
+    if (posts === 1) {
+      expect(response.status()).toBe(201);
+      firstPayload = payload;
+      submissionId = (await response.json()).submission.id;
+      unavailable = true;
+      await route.abort("failed");
+    } else {
+      expect(payload).toEqual(firstPayload);
+      expect(response.status()).toBe(200);
+      expect((await response.json()).submission.id).toBe(submissionId);
+      await route.fulfill({ response });
+    }
+  });
+  await page
+    .getByRole("button", { name: "Submit private report", exact: true })
+    .click();
+  await expect(
+    page.getByRole("heading", {
+      name: "Check your private session",
+      exact: true,
+    }),
+  ).toBeVisible();
+  await expect(page.locator(".report-preview")).toHaveCount(0);
+  await expect(
+    page.getByRole("button", { name: "Retry same report" }),
+  ).toHaveCount(0);
+  const pending = JSON.parse((await readStored()) ?? "null");
+  expect(pending).toEqual({ ...original, attempted: true });
+  unavailable = false;
+  await page
+    .getByRole("button", {
+      name: "Check session to recover report",
+      exact: true,
+    })
+    .click();
+  await expect(
+    page.getByRole("button", { name: "Retry same report", exact: true }),
+  ).toBeEnabled();
+  await expect(page.locator(".report-preview")).toHaveText(
+    original.draft.description,
+  );
+  expect(posts).toBe(1);
+  expect(JSON.parse((await readStored()) ?? "null")).toEqual(pending);
+  await page
+    .getByRole("button", { name: "Retry same report", exact: true })
+    .click();
+  await expect(page).toHaveURL(
+    new RegExp(`/inbox\\?view=reports&submission=${submissionId}$`),
+  );
+  expect(posts).toBe(2);
+});
+
+test("an incomplete private receipt response keeps the original idempotent report @registry @private-intake", async ({
+  page,
+  request,
+  diagnostics,
+}) => {
+  test.skip(process.env.SLOP_E2E_PRIVATE_INTAKE !== "1", "Private intake lane");
+  test.setTimeout(120_000);
+  const id = `receipt-shape-${projectSuffix()}`;
+  const reporter: Role = test.info().project.name.endsWith("-mobile")
+    ? "receipt-shape-mobile"
+    : "receipt-shape-desktop";
+  diagnostics.allowResponse(403, "GET", `/api/v1/project-setup/${id}`);
+  await preparePrivateReceiptForm(page, request, id, reporter);
+  let firstPayload: unknown;
+  let posts = 0;
+  let submissionId = "";
+  await page.route("**/api/v1/security-submissions", async (route) => {
+    if (route.request().method() !== "POST") return route.continue();
+    posts += 1;
+    const response = await route.fetch();
+    const body = await response.json();
+    if (posts === 1) {
+      expect(response.status()).toBe(201);
+      firstPayload = route.request().postDataJSON();
+      submissionId = body.submission.id;
+      await route.fulfill({ response, json: { submission: {} } });
+    } else {
+      expect(response.status()).toBe(200);
+      expect(route.request().postDataJSON()).toEqual(firstPayload);
+      expect(body.submission.id).toBe(submissionId);
+      await route.fulfill({ response });
+    }
+  });
+  await page
+    .getByRole("button", { name: "Submit private report", exact: true })
+    .click();
+  await expect(
+    page.getByText(
+      "The server did not return a usable report receipt. Retry the same report to reconcile it.",
+      { exact: true },
+    ),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: "Report received", exact: true }),
+  ).toHaveCount(0);
+  await expect(page).toHaveURL(new RegExp(`/projects/${id}/security$`));
+  await page
+    .getByRole("button", { name: "Retry same report", exact: true })
+    .click();
+  await expect(page).toHaveURL(
+    new RegExp(`/inbox\\?view=reports&submission=${submissionId}$`),
+  );
+  expect(posts).toBe(2);
+});
+
+for (const replaceStored of [false, true]) {
+  test(`a private-report validation refusal ${replaceStored ? "preserves a replacement draft" : "rotates its owned draft"} before explicit correction @registry @private-intake`, async ({
+    page,
+    request,
+    diagnostics,
+  }) => {
+    test.skip(
+      process.env.SLOP_E2E_PRIVATE_INTAKE !== "1",
+      "Private intake lane",
+    );
+    test.setTimeout(120_000);
+    const id = `report-400-${replaceStored ? "replacement" : "owned"}-${projectSuffix()}`;
+    const reporter: Role = `validation-${replaceStored ? "replacement" : "owned"}-${test.info().project.name.endsWith("-mobile") ? "mobile" : "desktop"}`;
+    diagnostics.allowResponse(403, "GET", `/api/v1/project-setup/${id}`);
+    diagnostics.allowResponse(400, "POST", "/api/v1/security-submissions");
+    await preparePrivateReceiptForm(page, request, id, reporter, true);
+    const storageKey = `slop-report-compose:${account(reporter).githubId}:${id}`;
+    let release!: () => void;
+    let observed!: () => void;
+    const delivery = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const captured = new Promise<void>((resolve) => {
+      observed = resolve;
+    });
+    let posts = 0;
+    let firstKey = "";
+    let submissionId = "";
+    await page.route("**/api/v1/security-submissions", async (route) => {
+      if (route.request().method() !== "POST") return route.continue();
+      posts += 1;
+      const payload = route.request().postDataJSON();
+      const response = await route.fetch();
+      if (posts === 1) {
+        expect(response.status()).toBe(400);
+        firstKey = payload.idempotencyKey;
+        observed();
+        await delivery;
+      } else {
+        expect(payload.idempotencyKey).not.toBe(firstKey);
+        expect(response.status()).toBe(201);
+        submissionId = (await response.json()).submission.id;
+      }
+      await route.fulfill({ response });
+    });
+    try {
+      await page
+        .getByRole("button", { name: "Submit private report", exact: true })
+        .click();
+      await captured;
+      const replacement = replaceStored
+        ? await page.evaluate((key) => {
+            const next = JSON.stringify({
+              key: crypto.randomUUID(),
+              attempted: false,
+              draft: {
+                summary: "A replacement while validation is pending",
+                description:
+                  "Synthetic replacement retained until an explicit new edit.",
+                severity: "",
+                cvss: "",
+                cwe: "",
+              },
+            });
+            sessionStorage.setItem(key, next);
+            return next;
+          }, storageKey)
+        : null;
+      release();
+      await expect(
+        page.getByRole("button", { name: "Edit report", exact: true }),
+      ).toBeEnabled();
+      const stored = await page.evaluate(
+        (key) => sessionStorage.getItem(key),
+        storageKey,
+      );
+      if (replaceStored) {
+        expect(stored).toBe(replacement);
+        await expect(
+          page.getByText(/This tab cannot save your draft/u),
+        ).toBeVisible();
+      } else {
+        const corrected = JSON.parse(stored ?? "null");
+        expect(corrected.key).not.toBe(firstKey);
+        expect(corrected.attempted).toBe(false);
+        expect(corrected.draft.cvss).toBe("not-a-vector");
+      }
+      await page
+        .getByRole("button", { name: "Edit report", exact: true })
+        .click();
+      await page.getByRole("textbox", { name: /CVSS vector/u }).fill("");
+      await expect
+        .poll(
+          async () =>
+            JSON.parse(
+              (await page.evaluate(
+                (key) => sessionStorage.getItem(key),
+                storageKey,
+              )) ?? "null",
+            )?.draft.cvss,
+        )
+        .toBe("");
+      await page
+        .getByRole("button", { name: "Review report", exact: true })
+        .click();
+      await page
+        .getByRole("button", { name: "Submit private report", exact: true })
+        .click();
+      await expect.poll(() => submissionId).not.toBe("");
+      await expect(page).toHaveURL(
+        new RegExp(`/inbox\\?view=reports&submission=${submissionId}$`),
+      );
+      expect(posts).toBe(2);
+    } finally {
+      release();
+    }
+  });
+}
 
 test("a late private session check preserves the restored actor's new draft @registry @private-intake", async ({
   page,
@@ -4668,14 +5964,23 @@ test("a departed Inbox read action preserves a new account's report draft @regis
   request,
   diagnostics,
 }) => {
+  // The test deliberately leaves Home while its public reads are in flight.
+  diagnostics.allow(
+    /^(?:net::ERR_ABORTED|NS_BINDING_ABORTED) GET http:\/\/127\.0\.0\.1:[0-9]+\/data\/points(?:-summary|\/[0-9a-f])?\.json$/u,
+  );
+  diagnostics.allow(
+    /^(?:net::ERR_ABORTED|NS_BINDING_ABORTED) GET http:\/\/127\.0\.0\.1:[0-9]+\/api\/v1\/(?:merge-activity|pool-funding)$/u,
+  );
   test.skip(process.env.SLOP_E2E_PRIVATE_INTAKE !== "1", "Private intake lane");
   test.setTimeout(120_000);
   const id = `inbox-draft-${projectSuffix()}`;
   const repository = `e2e-security/${id}`;
   const first: Role = test.info().project.name.endsWith("-mobile")
-    ? "reporter-b"
-    : "reporter-a";
-  const second: Role = first === "reporter-a" ? "reporter-b" : "reporter-a";
+    ? "inbox-leave-mobile"
+    : "inbox-leave-desktop";
+  const second: Role = test.info().project.name.endsWith("-mobile")
+    ? "reporter-a"
+    : "reporter-b";
   diagnostics.allowResponse(403, "GET", `/api/v1/project-setup/${id}`);
   await listProject(request, TOKENS.security, repository, id, {});
   await setIntake(request, repository, "disabled");
@@ -4870,4 +6175,128 @@ test("a departed Inbox read action preserves a new account's report draft @regis
   } finally {
     release();
   }
+});
+
+test("an Inbox focus recheck clears the account changed in another tab @registry @private-intake", async ({
+  page,
+  context,
+  request,
+  diagnostics,
+}) => {
+  test.skip(process.env.SLOP_E2E_PRIVATE_INTAKE !== "1", "Private intake lane");
+  test.setTimeout(120_000);
+  diagnostics.allow(
+    /^(?:net::ERR_ABORTED|NS_BINDING_ABORTED) GET http:\/\/127\.0\.0\.1:[0-9]+\/data\/points(?:-summary|\/[0-9a-f])?\.json$/u,
+  );
+  const id = `tab-account-${projectSuffix()}`;
+  const repository = `e2e-security/${id}`;
+  const mobile = test.info().project.name.endsWith("-mobile");
+  const first: Role = mobile ? "inbox-focus-mobile" : "inbox-focus-desktop";
+  const second: Role = mobile ? "reporter-a" : "reporter-b";
+  await listProject(request, TOKENS.security, repository, id, {});
+  await setIntake(request, repository, "disabled");
+  const summary = `Synthetic first-tab report ${id}`;
+  const description = `Synthetic confidential first-tab detail ${id}, created only in local test storage.`;
+  const companionSummary = `${summary} companion`;
+  const companionDescription = `${description} Distinct companion evidence.`;
+  const createReport = (reportSummary: string, reportDescription: string) =>
+    api(request, "POST", "security-submissions", TOKENS[first], {
+      projectId: id,
+      idempotencyKey: key(),
+      origin: "slop",
+      report: {
+        summary: reportSummary,
+        description: reportDescription,
+        cvssVectorString: "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H",
+      },
+    });
+  const received = await createReport(summary, description);
+  const companion = await createReport(companionSummary, companionDescription);
+  expect(received.status, JSON.stringify(received.body)).toBe(201);
+  expect(companion.status, JSON.stringify(companion.body)).toBe(201);
+  const submission = received.body.submission as { id: string };
+  const companionSubmission = companion.body.submission as { id: string };
+  await signIn(page, TOKENS[first]);
+  await page.goto(`/inbox?submission=${submission.id}`, {
+    waitUntil: "networkidle",
+  });
+  const report = page.locator(
+    `[aria-labelledby="submission-${submission.id}"]`,
+  );
+  await report.getByText("Read private report", { exact: true }).click();
+  await expect(report.getByText(description, { exact: true })).toBeVisible();
+  const companionReport = page.locator(
+    `[aria-labelledby="submission-${companionSubmission.id}"]`,
+  );
+  const companionDetails = companionReport.locator(":scope > details");
+  if (
+    !(await companionDetails.evaluate(
+      (element) => (element as HTMLDetailsElement).open,
+    ))
+  )
+    await companionDetails.locator(":scope > summary").click();
+  await companionReport
+    .getByText("Read private report", { exact: true })
+    .click();
+  await expect(
+    companionReport.getByText(companionDescription, { exact: true }),
+  ).toBeVisible();
+  await expect(
+    report.getByRole("region", { name: new RegExp(summary, "u") }),
+  ).toBeVisible();
+  await expect(
+    companionReport.getByRole("region", {
+      name: new RegExp(companionSummary, "u"),
+    }),
+  ).toBeVisible();
+  await expectAccessible(page, {
+    include: ".security-report-text",
+    everyRule: true,
+  });
+  await page.screenshot({
+    path: test.info().outputPath("two-private-report-regions.png"),
+    fullPage: true,
+  });
+  const secondPage = await context.newPage();
+  await secondPage.bringToFront();
+  await signIn(secondPage, TOKENS[second]);
+  await secondPage.getByRole("heading", { level: 1 }).click();
+  await test.info().attach("cross-tab-before-return", {
+    body: JSON.stringify({
+      firstFocused: await page.evaluate(() => document.hasFocus()),
+      secondFocused: await secondPage.evaluate(() => document.hasFocus()),
+    }),
+    contentType: "application/json",
+  });
+  await page.bringToFront();
+  await page.getByRole("heading", { name: "Inbox", exact: true }).click();
+  // Let the browser's automatic focus refresh finish before observing the
+  // explicit recheck below, so its canceled response cannot win the waiter.
+  await page.waitForLoadState("networkidle");
+  const rechecked = page.waitForResponse(async (response) => {
+    if (new URL(response.url()).pathname !== "/api/v1/notifications")
+      return false;
+    if (response.status() !== 200) return false;
+    return (
+      (await response.json()).recipientGithubId === account(second).githubId
+    );
+  });
+  // Automated Chromium marks both tabs focused, even in headed mode. The
+  // account change above uses a real shared cookie; deliver its return signal
+  // explicitly instead of claiming to test the operating system's tab focus.
+  await page.evaluate(() => window.dispatchEvent(new Event("focus")));
+  await rechecked;
+  await expect(page.getByText(description, { exact: true })).toHaveCount(0);
+  await expect(page.getByText(summary, { exact: true })).toHaveCount(0);
+  await expect(
+    page.getByText(companionDescription, { exact: true }),
+  ).toHaveCount(0);
+  await expect(page.getByText(companionSummary, { exact: true })).toHaveCount(
+    0,
+  );
+  await page.screenshot({
+    path: test.info().outputPath("inbox-after-cross-tab-account.png"),
+    fullPage: true,
+  });
+  await secondPage.close();
 });

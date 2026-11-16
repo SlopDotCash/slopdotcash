@@ -1,0 +1,264 @@
+{
+  "case": {
+    "id": "sc_direct_solana_2",
+    "projectId": "direct-solana",
+    "revision": 6,
+    "viewerRoles": ["financial", "security-maintainer"],
+    "allowedActions": [
+      "remediation",
+      "disclosure",
+      "assign-triager",
+      "revoke-triager",
+      "prepare-payment",
+      "verify-payment",
+      "recover-payment",
+      "analyze"
+    ],
+    "nextStep": "Send the remaining transfers with your external wallet, then verify the transaction IDs.",
+    "nextStepDueAt": "2026-11-09T16:50:45.103Z",
+    "submissionState": "verified",
+    "receivedAt": "2026-11-08T16:49:45.086Z",
+    "receivedAtSource": "maintainer-attested",
+    "policyRevision": 1,
+    "terms": {
+      "asset": {
+        "network": "solana",
+        "kind": "native",
+        "address": "11111111111111111111111111111111",
+        "symbol": "SOL",
+        "decimals": 9,
+        "chainId": null,
+        "cluster": "mainnet-beta",
+        "verifiedAt": "2026-11-08T16:50:44.351Z"
+      },
+      "currency": "SOL",
+      "network": "solana",
+      "decimals": 9,
+      "grossMinor": "40000000",
+      "researcherMinor": "40000000",
+      "slopMinor": "0",
+      "fundingPolicy": "after-approval",
+      "split": {
+        "researcherBasisPoints": 10000,
+        "slopBasisPoints": 0
+      },
+      "capacityAwards": null
+    },
+    "awardState": "approved",
+    "award": {
+      "grossMinor": "40000000",
+      "researcherMinor": "40000000",
+      "slopMinor": "0"
+    },
+    "relatedParty": "not-assessed",
+    "relatedPartyReview": "not-applicable",
+    "paymentState": "awaiting-external-payment",
+    "paymentRail": "direct",
+    "settlement": {
+      "rail": "direct",
+      "state": "awaiting-external-payment",
+      "network": "solana-mainnet",
+      "generation": 0,
+      "asset": "11111111111111111111111111111111",
+      "grossBase": "40000000",
+      "feeBase": "0",
+      "netBase": "40000000",
+      "transactionIds": [],
+      "confirmedTransactionIds": [],
+      "remainingTransfers": [
+        {
+          "recipient": "8pfSEkop8PEioB9tDkQNLvt2Z5gyBS2wPWZD3nS7qyxj",
+          "amountBase": "40000000",
+          "role": "researcher"
+        }
+      ],
+      "transactionId": null,
+      "submittedTransactionId": null,
+      "walletReviewRequired": false,
+      "privacyNotice": "The external wallet signs and sends these transfers. Chain records reveal the payer, recipients, asset and amounts. Slop verifies final receipts and never signs or broadcasts.",
+      "ownerRequest": {
+        "protocolVersion": 2,
+        "preparedAt": "2026-11-08T16:50:49.934Z",
+        "afterBlock": "94",
+        "rail": "direct",
+        "network": "solana-mainnet",
+        "chain": "solana",
+        "asset": {
+          "address": "11111111111111111111111111111111",
+          "decimals": 9,
+          "symbol": "SOL"
+        },
+        "payer": {
+          "id": "claim-710000001",
+          "address": "14Na39MkfyuuyXsXnB8szCNnTfncfn8ugUgMWb3bQTKB",
+          "digest": "27a0a099a882eca0411598a35db3eb437603ae0d2442b400cd6272b56b1218f0"
+        },
+        "recipient": {
+          "id": "claim-710000002",
+          "address": "8pfSEkop8PEioB9tDkQNLvt2Z5gyBS2wPWZD3nS7qyxj",
+          "digest": "1109db0b01ffb3110ae631e0552c6275b52ca626ac3428fdbab4a1c1221ac4a5"
+        },
+        "grossBase": "40000000",
+        "feeBase": "0",
+        "netBase": "40000000",
+        "transfers": [
+          {
+            "recipient": "8pfSEkop8PEioB9tDkQNLvt2Z5gyBS2wPWZD3nS7qyxj",
+            "amountBase": "40000000",
+            "role": "researcher"
+          }
+        ],
+        "solana": {
+          "transaction": "AQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABAAEDAN0hmezJqm2FW7YZj0hzspqZAMZJf8WK0A9xAV5IDb50N5CzznpbFfVrGwfAj0skjkjvSxSLq2s95oj/x+w9QAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAXjD6HXb2oWTHf2UCjk6DE3vxjMwQHKehhbE0y0slHnUBAgIAAQwCAAAAAFpiAgAAAAA=",
+          "blockhash": "7Lge4xWdehWQLX7jprjGUKr7wh6VH1DbEGiWgxhZduUg",
+          "lastValidBlockHeight": 214,
+          "afterSlot": "94",
+          "blockhashSlot": 64,
+          "messageId": "DGcuLRDmvFHyE2y31nuLvzX4H9TR6TpE91CqRJ86B1vn"
+        }
+      },
+      "recovery": {
+        "generation": 0,
+        "target": {
+          "id": "claim-710000002",
+          "address": "8pfSEkop8PEioB9tDkQNLvt2Z5gyBS2wPWZD3nS7qyxj",
+          "digest": "1109db0b01ffb3110ae631e0552c6275b52ca626ac3428fdbab4a1c1221ac4a5"
+        },
+        "payer": "14Na39MkfyuuyXsXnB8szCNnTfncfn8ugUgMWb3bQTKB",
+        "legIndex": 0,
+        "role": "researcher",
+        "consented": true,
+        "mode": "signature-required",
+        "messages": [
+          {
+            "messageId": "DGcuLRDmvFHyE2y31nuLvzX4H9TR6TpE91CqRJ86B1vn",
+            "message": "AQABAwDdIZnsyapthVu2GY9Ic7KamQDGSX/FitAPcQFeSA2+dDeQs856WxX1axsHwI9LJI5I70sUi6trPeaI/8fsPUAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAF4w+h129qFkx39lAo5OgxN78YzMEBynoYWxNMtLJR51AQICAAEMAgAAAABaYgIAAAAA"
+          }
+        ]
+      }
+    },
+    "paymentNetworks": ["solana-mainnet"],
+    "paymentDeadline": "2026-11-09T16:50:45.103Z",
+    "advisory": {
+      "repository": "example/direct-solana",
+      "ghsa": "GHSA-3456-789c-fghj",
+      "url": "https://github.com/example/direct-solana/security/advisories/GHSA-3456-789c-fghj"
+    },
+    "intake": null,
+    "receiptState": "confirmed",
+    "remediationState": "not-started",
+    "disclosureState": "embargoed",
+    "recognition": "private",
+    "severity": "critical",
+    "lossFinding": "verified-potential",
+    "appealState": "none",
+    "appealTriage": null,
+    "view": "restricted",
+    "reporter": {
+      "githubId": "710000002",
+      "githubLogin": "solana-reporter"
+    },
+    "analysis": null,
+    "awardFunds": null,
+    "verifiedAt": "2026-11-08T16:49:45.086Z",
+    "evidenceDigest": null,
+    "receiptEvidenceDigest": null,
+    "rootCauseKey": "root-two",
+    "duplicateOf": null,
+    "technicalDeciderGithubId": null,
+    "appealFromState": null,
+    "relatedPartyReviewerGithubId": null,
+    "ownerGithubId": null,
+    "reservation": null,
+    "triagers": [],
+    "events": [
+      {
+        "revision": 1,
+        "kind": "decide",
+        "actorGithubId": "710000001",
+        "actorRole": "security-maintainer",
+        "at": "2026-11-08T16:49:45.086Z",
+        "reason": null,
+        "evidenceReference": null,
+        "detail": {
+          "inScope": true
+        }
+      },
+      {
+        "revision": 2,
+        "kind": "award",
+        "actorGithubId": "710000001",
+        "actorRole": "security-maintainer",
+        "at": "2026-11-08T16:50:49.928Z",
+        "reason": "Approve this synthetic local payment.",
+        "evidenceReference": null,
+        "detail": {
+          "decision": "amount",
+          "grossMinor": "40000000",
+          "researcherMinor": "40000000",
+          "slopMinor": "0"
+        }
+      },
+      {
+        "revision": 3,
+        "kind": "consent-payment",
+        "actorGithubId": "710000002",
+        "actorRole": "reporter",
+        "at": "2026-11-08T16:50:49.931Z",
+        "reason": null,
+        "evidenceReference": null,
+        "detail": {
+          "network": "solana-mainnet",
+          "publicChainVisibilityAccepted": true
+        }
+      },
+      {
+        "revision": 4,
+        "kind": "prepare-payment",
+        "actorGithubId": "710000001",
+        "actorRole": "security-maintainer",
+        "at": "2026-11-08T16:50:50.331Z",
+        "reason": null,
+        "evidenceReference": null,
+        "detail": {
+          "network": "solana-mainnet",
+          "rail": "direct"
+        }
+      },
+      {
+        "revision": 5,
+        "kind": "recover-payment",
+        "actorGithubId": "710000001",
+        "actorRole": "security-maintainer",
+        "at": "2026-11-08T16:50:50.808Z",
+        "reason": null,
+        "evidenceReference": null,
+        "detail": {
+          "generation": 0,
+          "targetId": "claim-710000002",
+          "state": "expiry-required"
+        }
+      },
+      {
+        "revision": 6,
+        "kind": "recover-payment",
+        "actorGithubId": "710000001",
+        "actorRole": "security-maintainer",
+        "at": "2026-11-08T16:51:22.036Z",
+        "reason": null,
+        "evidenceReference": null,
+        "detail": {
+          "generation": 0,
+          "targetId": "claim-710000002",
+          "state": "signature-required",
+          "messages": [
+            {
+              "messageId": "DGcuLRDmvFHyE2y31nuLvzX4H9TR6TpE91CqRJ86B1vn",
+              "message": "AQABAwDdIZnsyapthVu2GY9Ic7KamQDGSX/FitAPcQFeSA2+dDeQs856WxX1axsHwI9LJI5I70sUi6trPeaI/8fsPUAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAF4w+h129qFkx39lAo5OgxN78YzMEBynoYWxNMtLJR51AQICAAEMAgAAAABaYgIAAAAA"
+            }
+          ]
+        }
+      }
+    ]
+  }
+}

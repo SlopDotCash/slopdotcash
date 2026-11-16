@@ -1,12 +1,12 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { mkdtemp, readdir, readFile, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { convertV4MiniflareOptions, Miniflare } from "miniflare";
-import { unstable_splitSqlQuery as splitSqlQuery } from "wrangler";
 import { childEnvironment } from "../../scripts/child-environment.mjs";
+import { applyRepositoryMigrations } from "../../tests/miniflare-d1.mjs";
 import { stagingPaymentProject } from "../../tests/staging-payment-fixture.mjs";
 import {
   STAGING_MONTHLY_RELEASES,
@@ -106,13 +106,7 @@ try {
   );
   await runtime.ready;
   const db = await runtime.getD1Database("SLOP_DB", "caller-0");
-  for (const file of (await readdir("migrations"))
-    .filter((f) => f.endsWith(".sql"))
-    .sort())
-    for (const sql of splitSqlQuery(
-      await readFile(join("migrations", file), "utf8"),
-    ))
-      await db.prepare(sql).run();
+  await applyRepositoryMigrations(db);
   const token = `staging-release-owner-${"a".repeat(43)}`,
     hash = createHash("sha256").update(token).digest("hex");
   await db

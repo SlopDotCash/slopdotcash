@@ -15,7 +15,7 @@ import {
   handleTraceApi,
   type TraceApiDependencies,
 } from "../backend/trace/handler";
-import { sha256Hex } from "../backend/trace/validation";
+import { sha256Hex } from "../src/lib/async-sha256.mjs";
 import {
   WALLET_POSSESSION_LIFETIME_MS,
   type WalletPossessionChallenge,

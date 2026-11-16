@@ -1,3 +1,5 @@
+import { normalizedNativeDelta } from "../../src/lib/verified-money";
+
 /** Native SOL uses the System Program ID as its asset identity, never the WSOL mint. */
 export { SOLANA_NATIVE_ASSET } from "../../src/lib/escrow-policy.mjs";
 export const SOLANA_NATIVE_DECIMALS = 9;
@@ -18,6 +20,7 @@ export function nativeLamportDeltas(
     Number(meta.fee) < 0
   )
     throw new Error("Finalized SOL balances are unavailable.");
+  const fee = BigInt(Number(meta.fee));
   return new Map(
     keys.map((key, index) => {
       if (
@@ -29,9 +32,12 @@ export function nativeLamportDeltas(
         throw new Error("Finalized SOL balances are outside the exact range.");
       return [
         key,
-        BigInt(after[index]) -
-          BigInt(before[index]) +
-          (index === 0 ? BigInt(Number(meta.fee)) : 0n),
+        normalizedNativeDelta(
+          BigInt(before[index]),
+          BigInt(after[index]),
+          fee,
+          index === 0,
+        ),
       ];
     }),
   );

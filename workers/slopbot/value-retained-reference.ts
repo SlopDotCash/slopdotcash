@@ -1,7 +1,11 @@
 import { sha256Hex } from "../../src/lib/async-sha256.mjs";
 import { GitHubError } from "./github";
 import { sameRepositoryCommitHints } from "./value-commit-hints";
-import type { EvidenceClient, ValueEvidence } from "./value-evidence";
+import type {
+  EvidenceClient,
+  RetainedMergeReference,
+  ValueEvidence,
+} from "./value-evidence-types";
 
 type Source = Pick<
   ValueEvidence,
@@ -10,21 +14,33 @@ type Source = Pick<
   | "repositoryDatabaseId"
   | "pull"
   | "comments"
+  | "reviews"
 >;
-type Comment = ValueEvidence["comments"][number];
-type Pull = ValueEvidence["pull"];
+type Acknowledgement =
+  | ValueEvidence["comments"][number]
+  | ValueEvidence["reviews"][number];
 
-export interface RetainedMergeReference {
-  commentNodeId: string;
-  acknowledgementSha256: string;
-  abbreviation: string;
-  commitSha: string;
+/** Keep the original GitHub record for hashing, including a review's head and state. */
+export function retainedAcknowledgements(
+  source: Pick<ValueEvidence, "comments" | "reviews">,
+): Acknowledgement[] {
+  return [
+    ...source.comments,
+    ...source.reviews.filter((review) => review.submitted_at !== null),
+  ];
 }
 
-/** Bind the provider resolution to the original authenticated comment, not
+export function acknowledgementTime(record: Acknowledgement): string {
+  return "created_at" in record
+    ? record.created_at
+    : (record.submitted_at ?? "");
+}
+type Pull = ValueEvidence["pull"];
+
+/** Bind the provider resolution to the original authenticated record, not
  * just its text or a mutable repository name. Collection time is not evidence.
  */
-function acknowledgementDigest(source: Source, comment: Comment) {
+function acknowledgementDigest(source: Source, comment: Acknowledgement) {
   return sha256Hex(
     JSON.stringify([
       source.repository,
@@ -36,7 +52,7 @@ function acknowledgementDigest(source: Source, comment: Comment) {
   );
 }
 
-function abbreviations(source: Source, comment: Comment): string[] {
+function abbreviations(source: Source, comment: Acknowledgement): string[] {
   if (
     !comment.user ||
     comment.user.type === "Bot" ||
@@ -86,7 +102,7 @@ export async function collectRetainedMergeReferences(
   const references: RetainedMergeReference[] = [];
   if (source.pull.merged_at !== null || source.pull.state !== "closed")
     return { references, limitations: [] };
-  const hints = source.comments.flatMap((comment) =>
+  const hints = retainedAcknowledgements(source).flatMap((comment) =>
     abbreviations(source, comment).map((abbreviation) => ({
       comment,
       abbreviation,
@@ -128,7 +144,9 @@ export async function collectRetainedMergeReferences(
     if (
       !accepted?.merged_at ||
       accepted.merged_by?.node_id !== comment.user?.node_id ||
-      Date.parse(comment.created_at) < Date.parse(accepted.merged_at) ||
+      !Number.isFinite(Date.parse(acknowledgementTime(comment))) ||
+      Date.parse(acknowledgementTime(comment)) <
+        Date.parse(accepted.merged_at) ||
       !(source.pull.number < accepted.number)
     )
       continue;
@@ -144,7 +162,7 @@ export async function collectRetainedMergeReferences(
 
 export async function hasRetainedMergeReference(
   source: ValueEvidence,
-  comment: Comment,
+  comment: Acknowledgement,
   accepted: ValueEvidence,
 ): Promise<boolean> {
   const sha = accepted.pull.merge_commit_sha;

@@ -2,6 +2,7 @@ import { readFile } from "node:fs/promises";
 import { pathToFileURL } from "node:url";
 import { surplusSecurityAnalyzer } from "../backend/security/analysis";
 import { priceUsage } from "../workers/slopbot/contracts";
+import { protectedMainRelease } from "./protected-main-release";
 import { qualificationResponse } from "./qualification-response";
 
 const ENDPOINT = "https://api.surplusintelligence.ai/anthropic/v1/messages";
@@ -105,12 +106,12 @@ async function attemptScreening(
       "request-bound",
     );
     const wire = JSON.parse(await request.text());
-    requireThat(wire.model === "claude-opus-5.5", "request-bound");
+    requireThat(wire.model === "claude-sonnet-5.5", "request-bound");
     wire.max_tokens = OUTPUT_TOKENS;
     const body = JSON.stringify(wire);
     const bytes = new TextEncoder().encode(body).length;
     requireThat(bytes <= 16_384, "request-bound", { bytes });
-    const bound = priceUsage("surplus/claude-opus-5.5", {
+    const bound = priceUsage("surplus/claude-sonnet-5.5", {
       input: bytes,
       cacheWrite: bytes,
       cacheRead: bytes,
@@ -333,15 +334,7 @@ if (
   process.argv[1] &&
   import.meta.url === pathToFileURL(process.argv[1]).href
 ) {
-  const dryRun = process.argv.slice(2).join() === "--dry-run";
-  const authorized =
-    process.argv.length === 2 &&
-    process.env.GITHUB_ACTIONS === "true" &&
-    process.env.GITHUB_REF === "refs/heads/main" &&
-    ["push", "workflow_dispatch"].includes(
-      process.env.GITHUB_EVENT_NAME ?? "",
-    ) &&
-    !!process.env.SURPLUS_API_KEY;
+  const { dryRun, authorized } = protectedMainRelease();
   if (!dryRun && !authorized) {
     process.stderr.write(
       "Private-screening qualification requires the protected main release.\n",

@@ -34,10 +34,8 @@ import {
 } from "../../src/lib/escrow-policy.mjs";
 import { isWalletChain } from "../../src/lib/wallets";
 import { PaymentSignerJournal } from "../../workers/payment-executor/index";
-import type {
-  PaymentDeployment,
-  PaymentsWorkerEnvironment,
-} from "../../workers/payments/index";
+import type { PaymentDeployment } from "../../workers/payments/deployment-types";
+import type { PaymentsWorkerEnvironment } from "../../workers/payments/index";
 import {
   type AcceptanceNetwork,
   AcceptanceRegistry,
@@ -333,7 +331,7 @@ export class EvmChain {
   }
 }
 
-export const codeSha256 = async (chain: EvmChain, address: string) =>
+const codeSha256 = async (chain: EvmChain, address: string) =>
   createHash("sha256")
     .update(
       Buffer.from(
@@ -526,7 +524,7 @@ export async function openEvmRun(
     persist,
   };
 }
-export type EvmRun = Awaited<ReturnType<typeof openEvmRun>>;
+type EvmRun = Awaited<ReturnType<typeof openEvmRun>>;
 
 /**
  * The local backend of one run: the projection, the project registry the

@@ -42,8 +42,11 @@ current behavior.
    yield free advisory results when closure is unavailable. A potentially
    closable result still goes through model triage and independent confirmation;
    model verdicts replace the hint.
-6. **Models.** `models.ts` triages with Surplus `claude-opus-5.5`, then Surplus
-   `gpt-6.1-sol` as fallback. Every call is written to `slopbot_costs` with its
+6. **Models.** `models.ts` starts with Surplus `claude-sonnet-5.5`, then
+   Surplus `gpt-6.1-terra`, then Orbio `anthropic/claude-sonnet-5.5` as the
+   backstop (operator decision, 16 November 2026). A Surplus spending denial
+   skips the remaining Surplus model and goes directly to Orbio. Missing
+   provider keys skip that provider without recording a paid attempt. Every call is written to `slopbot_costs` with its
    internal provider cost and a zero billed amount.
 7. **Close gates.** A close needs all of the following (`review.ts`,
    `closure-eligibility.ts`, `penalties.ts`, `contracts.ts`):
@@ -65,8 +68,25 @@ current behavior.
    - no reopen-rate breaker (`REOPEN_BREAKER_RATIO = 0.1` over 7 days of
      maintainer reopen or upheld appeal reversals) and no repository
      `dailyCloseCap` hit;
-   - a confirming second Surplus verdict; no unresolved limitations; unchanged
+   - a confirming second model verdict; no unresolved limitations; unchanged
      item just before acting.
+
+   The daily close slot is reserved in D1 before the GitHub request. Confirmed
+   closes in the rolling day and every unresolved close attempt consume
+   capacity. Confirmation records the action and settles its reservation in
+   one transaction, so they count once. The new-author review cap similarly
+   counts live review leases and unresolved closes, not only finished reviews.
+   A verified prior merge preserves the existing new-author cap exemption.
+
+   A timeout or lost response does not release a close slot. Replay the
+   original review job to reconcile GitHub's immutable actor, revision and
+   close-time evidence; replay does not send another close. If that evidence
+   remains unavailable, retain the pending attempt for operator investigation.
+   Do not delete it or expire it merely because the review lease ended.
+   A definitive GitHub 401, 403, 404, 410, 422 or 429 refusal records a rejected
+   attempt and releases its slot. A later retry creates a new attempt; it does
+   not rewrite that history. Expired ordinary reviews without a pending close
+   also release their author slot.
 
    Otherwise the bot only comments and labels. Eligible full reviews with no
    finding still update the bot's single review comment. An uncertain finding
@@ -114,14 +134,77 @@ decides. If it is present and valid, its `closure` flag and per-category
 `off` / `label` / `close` restrictions still apply (`contracts.ts`). If it is
 present but invalid, review falls back to label-only with no closure.
 
+## Ready label
+
+Operator decision, 16 November 2026 (PRD section 5). When a project owner
+turns on `slopbot.readyLabel` in project settings (absent means off),
+`ready-label.ts` adds the `slopbot:ready` label and one line to the review
+comment while all of these hold at the pull request's exact head commit:
+
+1. GitHub's `mergeable_state` is `clean` (or `has_hooks`): mergeable with every
+   check passing. Slopbot has no Checks permission, so it reads this from the
+   pull request itself.
+2. Slopbot's latest review of that head (`slopbot_reviews.revision`) completed
+   with category `none`, no coverage limitation and the comment action. A pull
+   request Slopbot did not review (an exempt maintainer, a draft, the monthly
+   cap) never gets the label.
+3. The required approvals (default 1) on that head commit come from distinct
+   `User` accounts other than the author whose repository permission is
+   `write` or `admin`, and no such account's latest review requests changes.
+4. Changed lines and files are within the owner's caps (defaults 400 and 20).
+5. No changed path (or previous path of a rename) is protected. The built-in
+   set in `ready-label.ts` covers `.github/` and CI configuration, dependency
+   manifests and lockfiles, contracts and payment code, skill, agent and
+   policy files, the Slop project manifest, `SECURITY.md`, binary files and
+   files without a text diff, deleted files, and more than 300 deleted lines.
+   Owner patterns add to it and never remove from it.
+
+The label comes off on a new push or when a condition stops holding. Pull
+request pushes, draft changes and review decisions queue a `ready_label` job,
+and so does every finished pull request review. Check results have no webhook
+here, so a pending result is checked again every 10 minutes for up to 14 days
+per head commit, and a labelled pull request every hour
+(`slopbot_ready_labels`, `dispatchReadyChecks`). A closed or merged pull request
+keeps its last label. Every write re-reads the head commit first. Slopbot never
+merges: a human does. Labels and comments are already within Issues and Pull
+requests write, and Points and scoring are unchanged.
+
 ## Free reviews, budget blocks, spend
 
-Provider budget blocks are durable in `budget-blocks.ts` and resume when the
-provider window opens. A provider spending denial is not a paid value attempt:
-the request waits as `budget` and does not use one of the three attempts per
-inference key (`value-inference.ts`). Free reviews still record provider cost
-rows with zero customer charge. Spend alerts live in `spend-alerts.ts`; failure
+Free advisory reviews are capped at 2,000 pull requests or issues per
+repository per UTC month; value assessment is not capped (operator decision,
+16 November 2026). `review-cap.ts` admits a review before any model call and
+records one row per item in `slopbot_review_month_starts`. Any later review of
+an item already admitted this month (new pushes, a moved base, retries) runs
+and adds nothing. A new item over the cap makes no model call, writes nothing
+to GitHub and is recorded as skipped with the reason `monthly-review-cap`.
+
+Surplus budget blocks are durable in `budget-blocks.ts` and resume when its
+provider window opens. A Surplus spending denial skips the other Surplus model
+and asks Orbio in the same attempt. If Orbio serves a valid result, it is used
+normally. If Orbio has no key or does not serve, the request waits as `budget`
+until the Surplus reset. An attempt whose only call was the Surplus denial is
+not a paid value attempt and does not use one of the three attempts per
+inference key (`value-inference.ts`). An attempt that also called Orbio is a
+paid attempt, even when it then waits as `budget`. Free reviews still record provider cost
+rows with zero customer charge. Whole-micro Orbio `usage.cost` receipts are
+retained as actual cost; fractional-micro or missing receipts keep actual cost
+unknown. Release qualification uses a rounded-up fractional receipt only as a
+spending bound, never as a reconciled ledger charge. Spend alerts live in `spend-alerts.ts`; failure
 alerts in `failure-alerts.ts`.
+
+Every reservation occupies that three-attempt limit until recorded calls prove
+the whole attempt was a free denial, or an immutable completion and a zero-call,
+zero-cost reconciliation prove that no provider request started. A missing
+response or unfinished result stays reserved. An immutable attempt-completion
+record is written only after
+call records and any valid retained result are stored; it does not assert that
+provider cost amounts are known or reconciled. A full limit with unfinished
+attempts returns `attempts-pending` and keeps the request on its existing
+retry schedule. Only three completed non-free attempts permit terminal
+`attempts-exhausted`, and a retained result is read again before that decision
+is returned. Completion, cost reconciliation and journal publication are
+separate facts; no reservation is refunded or expired by a timer.
 
 ## Value assessment
 
@@ -137,6 +220,8 @@ Value scoring is a separate pipeline from advisory/close review. Entry points:
 | Work units / joint groups | `value-work-unit*.ts`, `value-group-collection.ts` |
 | Live registry / authority checks | `value-consumer.ts`, `registry.ts` |
 | Historical / import intake | `value-import.ts`, `value-import-service.ts` |
+
+The authenticated Pages assessment import accepts `Accept: application/x-ndjson` for long-running publication. It sends pending heartbeat frames, then one `{status, body}` terminal frame containing the ordinary HTTP result. A pending frame or interrupted stream does not prove publication. Reconcile the exact record through public assessment history before retrying. Requests without this Accept type keep the ordinary JSON response.
 
 Trusted objective-quality evidence (dormant until a verifier host and
 qualification exist) is documented in [`QUALITY.md`](QUALITY.md) and
@@ -205,9 +290,18 @@ Do these in order. Each step names who does it and how to verify it.
    - `SLOPBOT_APP_PRIVATE_KEY` (the PKCS#8 PEM)
    - `SURPLUS_API_KEY`
 
-   Both models use the same Surplus key. The default Anthropic-compatible base
-   URL is `https://api.surplusintelligence.ai/anthropic`. Optionally set
-   `SURPLUS_BASE_URL` for another verified Surplus Anthropic endpoint.
+   Surplus is primary; Orbio is the backstop. Each provider uses its own
+   key. The default Anthropic-compatible bases are
+   `https://api.orbio.so/api` and
+   `https://api.surplusintelligence.ai/anthropic`. Optional `ORBIO_BASE_URL`
+   and `SURPLUS_BASE_URL` overrides must name verified endpoints for that
+   provider. See the [Orbio authentication guide](https://www.orbio.so/developers/authentication)
+   and [live model catalogue](https://api.orbio.so/api/v1/models).
+   The protected `slop-production` GitHub environment requires both provider
+   keys. Its release uploads `ORBIO_API_KEY` together with the tested Worker
+   source in one version, retaining the existing App and Surplus secrets. It
+   verifies that version's ID, release tag, and all six secret bindings before
+   promotion. Do not set the Orbio key separately on the old live version.
 5. **Create the queues** in the production Cloudflare account (the account in
    `CLOUDFLARE_ACCOUNT_ID`, which also holds `slop-private`):
    `bunx wrangler queues create slopbot-jobs` and

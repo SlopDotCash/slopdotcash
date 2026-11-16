@@ -19,7 +19,11 @@ Migrations `0019_project_registry.sql`,
   with applicant identity, referrer (PRJ-05, migration
   `0055_project_referrer.sql`), status, decision and admin email outcome.
   No route creates one now. A pending application is published by its own
-  applicant (see Migration below); decided ones stay as history.
+  applicant (see Migration below); decided ones stay as history. Migration
+  `0121_project_application_cancellation.sql` retains applicant withdrawals
+  with an immutable `applicant_cancelled_at` marker. The API exposes them as
+  `cancelled`. Their internal compatibility status is `rejected`, so existing
+  pending-only uniqueness indexes and publication guards remain effective.
 - `project_revisions`: the append-only manifest history. Triggers refuse
   update and delete.
 - `projects`: the current pointer to the newest revision, plus the referrer
@@ -45,18 +49,20 @@ points and profiles still validate.
 | `GET /api/v1/projects/:id` | public, edge cached | One current manifest, revision and digest |
 | `POST /api/v1/projects` | session, current authority | Creates a paused project at once (`manifest`, optional `referrer`), queues its first scan and returns the setup status |
 | `PUT /api/v1/projects/:id` | session, current authority | Publishes an owner revision (`manifest`, `expectedRevision`, optional `reason`) and returns the classified changes and setup status |
+| `POST /api/v1/projects/:id/remove` | session, current authority | Appends a paused, retired revision (`expectedRevision`); preserves history and existing obligations |
 | `GET /api/v1/project-setup` | session | The account's projects and its pending stored applications |
 | `POST /api/v1/project-setup/:id/check` | session | Runs every setup check, queues a needed scan, activates a project that passes (optional `requestScan` after an incomplete scan) |
 | `GET /api/v1/project-revisions` | public, edge cached | Full revision history with SHA-256 digests |
 | `GET /api/v1/project-account-bans` | public, edge cached | GitHub ID and earliest start time of each active account ban, for the score generator; no reason, evidence, project or login |
 | `GET /api/v1/project-github/owned-repositories` | session | The signed-in maintainer's public repositories |
 | `GET /api/v1/project-vaults/:id` | session, steward or repository admin | Lists served setup networks and the current revision |
-| `POST /api/v1/project-vaults/:id` | session, steward or repository admin, confirmed wallet | Reviews an unsigned ordinary-vault creation or registers its finalized transaction |
-| `GET /api/v1/project-github/repositories/:owner/:name` | session | Public repository facts for `/projects/new` |
+| `POST /api/v1/project-vaults/:id` | session, steward or repository admin, confirmed wallet | Reviews an unsigned ordinary-vault creation or registers its finalized transaction. Before finality, a verified ordinary EVM token creation in a canonical block answers `pending` with a `provisional` deployment; nothing is registered |
+| `GET /api/v1/project-github/repositories/:owner/:name` | session | Public repository facts for `/projects/new` and repositories added on the manage page |
 | `GET /api/v1/project-revisions/:id/:revision` | public, immutable | One revision's exact stored `manifestText` and digest, for generated-skill installers |
 | `GET /api/v1/project-session` | public | GitHub identity and admin flag, or `null` when signed out |
 | `GET /api/v1/project-applications/mine` | session | The account's stored applications, as history |
 | `POST /api/v1/project-applications/:id/publish` | session, its applicant | Publishes a pending stored application without entering it again |
+| `POST /api/v1/project-applications/:id/cancel` | session, its applicant | Cancels a pending application or update without GitHub access; retains the terminal record |
 | `GET /api/v1/admin/projects` | admin | Registry with revisions |
 | `PUT /api/v1/admin/projects/:id/manifest` | admin | Appends an exception revision (`manifest`, `expectedRevision`, `reason`) |
 | `POST /api/v1/admin/projects/:id/enforcement-preview` | moderator | Plans an enforcement action and writes nothing |
@@ -68,20 +74,40 @@ appeal state and start time of every quarantined or banned project, and
 treats those projects as paused and retired. `GET /api/v1/projects/:id`
 answers HTTP 410 for a restricted project.
 
-Deeper `/api/v1/projects/:id/...` paths belong to the private trace API.
+Deeper `/api/v1/projects/:id/...` paths, except `remove`, belong to the private trace API.
+
+Removal checks the current GitHub authority against the stored repository,
+including on retries. It uses the ordinary revision and enforcement fences,
+changes only status and listing tier, and never invokes setup activation.
+Retired projects publish no skills and cannot reactivate through setup checks.
+The registry API keeps their manifests for historical validation; discovery
+readers exclude the retired tier. Cancellation competes atomically with both
+first publication and update publication. A cancelled application cannot be
+rewritten or deleted. Repeating the applicant's cancellation succeeds without
+changing its original decision evidence. Setup retains stale pending updates
+with `publishable: false` so their applicants can still cancel them.
 
 The site catch-all Function (`functions/[[path]].ts`, `skill-publication.ts`)
 serves these public artifacts from the current D1 revision:
 
 | Path | Content |
 |---|---|
-| `/.well-known/slop/projects.json` | Repository-to-project routing for every project that publishes skills |
+| `/.well-known/slop/projects.json` | Repository-to-project routing for every active, cleared project that publishes skills, except an active monthly pool that is not funded this month (see below) |
 | `/projects/:id/terms.json` | Steward, authority and terms of the current revision |
 | `/projects/:id/skill.md` (alias `SKILL.md`) | Generated contributor skill |
 | `/projects/:id/review-skill.md` (alias `review/SKILL.md`) | Generated reviewer skill |
 | `/projects/:id/[review-]{mission,codex,claude,claude-code,manual}.md` | Workflow and per-client install guides |
 | `/projects/:id/[review-]skill-manifest.json` | Template revision, registry binding, guide renderer and archive routing |
 | `/projects/:id/downloads/<skill>.skill` and `.skill.sha256` | Deterministic skill archive and checksum |
+
+Discovery reads the cached vault rows behind `GET /api/v1/pool-funding`
+(`readPoolFundingIndex` in `pool-funding.ts`) and applies `listedThisMonth`
+from `src/lib/pool-funding.ts`, the same rule the home page and /sponsors use
+(PRD section 7, operator decision of 16 November 2026). An open security
+program or a non-monthly reward stays listed. When the funding read fails,
+discovery lists every cleared project as before; the response is `no-store`,
+so the next request reads again. The per-project artifacts above keep serving
+by direct link.
 
 ## Self-service setup
 
@@ -110,11 +136,11 @@ checks. Funding is reported separately; a project works without it.
   The current Pages client requests the repository's public identity fields
   with `includeRepository=1` and reuses that authenticated read. It does not
   make a second anonymous request for the primary repository. The
-  repository lookup on `/projects/new` and the vetting branch-head pin also
-  read through the repository's installation (`/v1/repository-read`), and
-  make the ordinary GitHub read only when Slopbot is not installed or does
-  not answer. Tokens never
-  leave the Worker. Deploy the Worker before Pages: requests without the flag
+  repository lookup on `/projects/new` and the vetting branch-head pin use
+  the separate public-only GitHub read token. They never borrow an
+  installation token: repository visibility can change between reads.
+  Installation tokens never leave the Worker. Deploy the Worker before Pages:
+  requests without the flag
   retain the old response, while a current Pages client refuses a response
   without the required identity fields. Without the binding the check reports
   `retry`.
@@ -137,10 +163,10 @@ and listing tier, then classifies the change (`src/lib/project-revision-changes.
 
 - presentation (`name`, `eyebrow`, `headline`, `description`, `links`)
   publishes as it is and keeps the scan clearance;
-- executable content (`contribution`; `repositories`, `skill` and
-  `reviewSkill` never change by owner revision) pauses an active project
-  and queues a new scan; a clean result reactivates it on the next setup
-  check;
+- executable content (`contribution`, or appended `repositories`; `skill`
+  and `reviewSkill` never change by owner revision) pauses an active
+  project and queues a new scan; a clean result reactivates it on the next
+  setup check;
 - financial policy applies from the next UTC calendar month: a new monthly
   amount pins every month from the reward start through the open UTC cycle
   that has no `reward.cycleCaps` entry to the previous amount, so a closed
@@ -174,6 +200,33 @@ browser never guesses a token's decimals.
 
 Steward, authority, terms, status, listing tier and other fields return
 `422 owner_field_restricted`; they stay with the admin exception path.
+
+An owner revision may append repositories after the listed ones; it never
+removes, reorders or edits a listed entry (`appendedRepositories` in
+`src/lib/project-repositories.mjs`, `assertRepositoryTransition` in
+`src/lib/project-policy.mjs`). Each appended entry carries its own
+`githubId`, `nodeId` and `countsFrom`, and its `displayName` equals its `id`.
+Before anything is written, `assertAppendedIdentitiesUnlisted` refuses an
+appended `githubId` that any project, this one included, already lists under
+any name (`409 registry_conflict`). `verifyAppendedRepositories`
+(`appended-repositories.ts`) then checks each entry in manifest order:
+`countsFrom` must be the first instant of the next UTC month by the server
+clock (`422 invalid_repository_start`); GitHub must report a public,
+non-fork, non-archived repository with the entry's numeric id, node id,
+current name and integration branch (`422 invalid_repository`, or `503
+github_unavailable` when GitHub cannot answer); and the owner needs write,
+maintain or admin access through a Slopbot installation on that repository
+(`409 slopbot_required`, `403 authority_required`). Name conflicts with other
+projects still return `409 registry_conflict`, including a name another
+project takes while the revision is written. A new project, created or
+published from a stored application, is refused the same way when another
+project appended its first repository under another name
+(`assertNewRepositoryIdentityUnlisted`). A restriction records a
+`github:<id>` key for every appended repository, so an appended repository
+renamed on GitHub stays restricted. The revision reason starts
+with `added repository <id>`, and the scan request queues only repositories
+that are not cleared. An appended repository's work counts from its
+`countsFrom` month.
 
 ### Migration of stored applications
 
@@ -241,9 +294,15 @@ disabled; the asset is display metadata until a reviewed payout path exists.
 
 `/projects/new` reads repository facts through the same-origin
 `project-github` routes, which need a site session. The server reads public
-GitHub data, with the optional `SLOP_GITHUB_READ_TOKEN` secret for a higher
-rate limit, and caches each answer for five minutes. The browser never calls
-`api.github.com` for setup.
+GitHub data, using `SLOP_GITHUB_READ_TOKEN` in production and staging, and
+caches each answer for five minutes. The credential must grant read-only
+public access, without private-repository or organization authority; its
+deployment scope is an external assumption, not inferred from its name.
+Local fixture transports may inject a synthetic token. No failed public read
+falls back to a Slopbot installation token. The browser never calls
+`api.github.com` for setup. A repository answer also reports `fork` and
+`archived`, which read as true unless GitHub says otherwise, and a private
+repository answers `404 not_found`.
 
 ## Trust rules
 
@@ -264,8 +323,9 @@ rate limit, and caches each answer for five minutes. The browser never calls
   identity from the authenticated Slopbot read. The repository id, node id,
   name, visibility and owner must match the manifest, or the request is
   refused. Every other repository and every alias of an older project still
-  requires a public lookup (`SLOP_GITHUB_READ_TOKEN` is optional). An alias
-  must name the repository it is listed under, with at most 5 names in all.
+  requires a public lookup (with `SLOP_GITHUB_READ_TOKEN` in production and
+  staging). An alias must name the repository it is listed under, with at
+  most 5 names in all.
 - `/projects/new` and `/admin` preview the exact generated contributor and
   reviewer skills.
 - A revision activates, or changes its skill inputs while active, and its
@@ -450,7 +510,12 @@ Slop verifies that factory's current code and compatibility. On Solana it
 verifies the program bytes, upgrade authority and pinned Config. Registration
 verifies the exact finalized transaction, project
 digest, owner, asset, purpose, code and monthly setting before appending one
-revision. Retry returns the registered vault. An unknown send stays pending
+revision. Retry returns the registered vault. Before finality, an ordinary
+EVM token creation that passes the same checks at its own canonical block is
+answered as `pending` with a `provisional` deployment, so the owner can fund
+the vault while it is confirmed; no revision, deployment or snapshot is
+written, and a replaced block answers plain `pending` again
+(`PROVISIONAL_VAULT_ANSWER` in `vault-setup.ts` turns this answer off). An unknown send stays pending
 until the owner recovers its transaction hash; it never sends again by itself.
 An owner with one current confirmed wallet on the selected network can review
 an existing vault and recover registration without a connected browser wallet.

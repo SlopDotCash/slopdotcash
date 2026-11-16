@@ -12,7 +12,7 @@ import type {
   LEADERBOARD_SCHEMA_VERSION,
   REVIEW_EXCLUSION_REASONS,
   SCORE_RULE_VERSION,
-} from "./leaderboard";
+} from "./leaderboard-constants";
 import type { RepositoryId, TargetRepository } from "./repositories.mjs";
 import type { ProjectRunReceipt } from "./run-receipts";
 /**
@@ -173,10 +173,18 @@ export interface MergedPullRequestOutcome {
   author: GitHubActor | null;
   additions: number;
   deletions: number;
-  /** Target branch; only integration-branch merges share commit credit. */
+  /** Target branch; commit ownership and allocation apply on every branch. */
   baseRefName: string;
   /** Complete commit SHAs and linked GitHub authors; null for legacy evidence or non-integration merges. */
-  commits: Array<{ oid: string; author: GitHubActor | null }> | null;
+  commits: Array<{
+    oid: string;
+    author: GitHubActor | null;
+    /** Live collection records parents so branch-sync merges do not confer authorship. */
+    parentCount?: number;
+    /** Complete immutable commit diff counts; absent only in retained old inputs. */
+    additions?: number;
+    deletions?: number;
+  }> | null;
 }
 
 export interface IssueRecord {
@@ -560,6 +568,8 @@ export interface WorkItem {
   priority: (typeof WORK_ITEM_PRIORITIES)[number];
   actionability: (typeof WORK_ITEM_ACTIONABILITIES)[number];
   isDraft: boolean | null;
+  /** Open PR diff availability; absent on historical snapshots and issues. */
+  filesAvailable?: boolean;
   reviewDecision: string | null;
   activeReviewRequestCount: number | null;
   commentCount: number;
@@ -675,6 +685,18 @@ export interface LeaderboardSnapshot {
     pullRequestNumber: number;
     status: string;
     recordDigest: string | null;
+    /** Complete current primary-commit attribution, independent of valuation. */
+    verifiedImplementationActorNodeIds?: string[];
+    /** Source-verified allocation; this never changes the PR's value tier. */
+    implementationAllocation?: {
+      rule: "changed-lines-v1";
+      totalScoreThirds: number;
+      weights: {
+        actorNodeId: string;
+        actorLogin: string;
+        changedLines: string;
+      }[];
+    };
   }[];
   reviewExclusions?: ReviewExclusion[];
   /** Unreversed debits; absent from snapshots published before penalties. */
@@ -722,6 +744,25 @@ export interface LeaderboardInput {
   valuePolicy?: ValueScoringPolicy;
   /** GitHub-resolved identities for assessment coauthors absent from ordinary hydration. */
   valueActors?: ReadonlyMap<string, GitHubActor>;
+  /** Complete retained-copy proofs resolve otherwise unlinked commit authors.
+   * Keys are accepted PR node ID, then accepted commit SHA. Never model output.
+   */
+  retainedCommitAuthors?: ReadonlyMap<
+    string,
+    ReadonlyMap<
+      string,
+      {
+        actor: GitHubActor;
+        originalPullRequestId: string;
+        originalPullRequestUrl: string;
+        originalCommitSha: string;
+      }
+    >
+  >;
+  /** Complete census, unresolved copied-work attribution. Preserve prior Points;
+   * these safe source limitations are internal collection evidence, not a value.
+   */
+  implementationAttributionHolds?: ReadonlyMap<string, readonly string[]>;
   /** Trusted journal decisions verified against fresh complete source evidence. */
   valueDecisions?: ReadonlyMap<
     string,

@@ -7,12 +7,8 @@ import {
   randomToken,
 } from "../../workers/identity/crypto";
 import { cookieValue, json as jsonResponse, readJsonObject } from "../http";
-import type { PointsDependencies } from "./handler";
+import type { PointsDependencies, XConfiguration } from "./dependencies";
 
-export interface XConfiguration {
-  clientId: string;
-  clientSecret: string;
-}
 const flowCookie = "__Host-slop_x_flow";
 function json(status: number, body: unknown) {
   return jsonResponse(status, body, {
@@ -20,20 +16,24 @@ function json(status: number, body: unknown) {
     headers: { "content-type": "application/json" },
   });
 }
-function flowHeader(value: string, seconds: number) {
-  return `${flowCookie}=${value}; Path=/; Secure; HttpOnly; SameSite=Lax; Max-Age=${seconds}`;
+function flowHeader(name: string, value: string, seconds: number) {
+  return `${name}=${value}; Path=/; Secure; HttpOnly; SameSite=Lax; Max-Age=${seconds}`;
 }
-function finish(status: "connected" | "cancelled" | "failed") {
-  return new Response(null, {
-    status: 303,
-    headers: {
-      location: `/points?x=${status}`,
-      "cache-control": "no-store",
-      "referrer-policy": "no-referrer",
-      "set-cookie": flowHeader("", 0),
-    },
+function finish(
+  status: "connected" | "cancelled" | "failed",
+  name: string | null,
+) {
+  const headers = new Headers({
+    location: `/points?x=${status}`,
+    "cache-control": "no-store",
+    "referrer-policy": "no-referrer",
   });
+  // A late response can only clear the cookie for its own flow. Concurrent
+  // starts and callbacks must not replace or clear another flow's capability.
+  if (name) headers.set("set-cookie", flowHeader(name, "", 0));
+  return new Response(null, { status: 303, headers });
 }
+
 async function session(
   request: Request,
   deps: PointsDependencies,
@@ -95,20 +95,27 @@ export async function handleX(
     return json(200, link);
   }
   if (route === "/callback" && request.method === "GET") {
-    const state = url.searchParams.get("state") ?? "",
-      cap = cookieValue(request, flowCookie) ?? "";
+    const state = url.searchParams.get("state") ?? "";
+    const validState = /^[A-Za-z0-9_-]{43}$/.test(state);
+    const name = validState ? `${flowCookie}_${state}` : null;
+    // An already-started pre-upgrade flow may still have the shared cookie.
+    // Never clear that fallback from a callback: another flow may own it.
+    const cap =
+      (name ? cookieValue(request, name) : undefined) ??
+      cookieValue(request, flowCookie) ??
+      "";
     // Every failed return names a fixed stage. Never log provider bodies,
     // OAuth codes, tokens, cookies, or identities.
     let stage = "callback";
     const fail = (status?: number) => {
       console.warn("[Slop X] Connection failed", { stage, status });
-      return finish("failed");
+      return finish("failed", name);
     };
     if (!config) {
       stage = "not_configured";
       return fail();
     }
-    if (!/^[A-Za-z0-9_-]{43}$/.test(state)) {
+    if (!validState) {
       stage = "state_parameter";
       return fail();
     }
@@ -129,7 +136,7 @@ export async function handleX(
     }
     let token: string | undefined;
     try {
-      if (url.searchParams.has("error")) return finish("cancelled");
+      if (url.searchParams.has("error")) return finish("cancelled", name);
       const code = url.searchParams.get("code");
       if (!code || code.length > 2048) {
         stage = "code_parameter";
@@ -223,30 +230,35 @@ export async function handleX(
       ]);
       if (result.some((r) => !r.success) || result[1].meta?.changes !== 1)
         return fail();
-      return finish("connected");
+      return finish("connected", name);
     } catch {
       return fail();
     } finally {
-      await deps.db
-        .prepare("DELETE FROM points_x_flows WHERE state_hash=?")
-        .bind(hash)
-        .run();
-      if (token) {
-        try {
-          const response = await provider(deps, "/2/oauth2/revoke", {
-            method: "POST",
-            headers: {
-              authorization: basic(config),
-              "content-type": "application/x-www-form-urlencoded",
-            },
-            body: new URLSearchParams({
-              token,
-              client_id: config.clientId,
-            }).toString(),
-          });
-          await response.body?.cancel();
-        } catch {
-          /* No token is retained. Provider revocation failure cannot undo a verified identity. */
+      try {
+        await deps.db
+          .prepare("DELETE FROM points_x_flows WHERE state_hash=?")
+          .bind(hash)
+          .run();
+      } finally {
+        // A storage failure must not skip the attempt to revoke this token.
+        // The original storage error still propagates after this cleanup.
+        if (token) {
+          try {
+            const response = await provider(deps, "/2/oauth2/revoke", {
+              method: "POST",
+              headers: {
+                authorization: basic(config),
+                "content-type": "application/x-www-form-urlencoded",
+              },
+              body: new URLSearchParams({
+                token,
+                client_id: config.clientId,
+              }).toString(),
+            });
+            await response.body?.cancel();
+          } catch {
+            /* No token is retained. Provider revocation failure cannot undo a verified identity. */
+          }
         }
       }
     }
@@ -311,7 +323,10 @@ export async function handleX(
       code_challenge_method: "S256",
     }).toString();
     const response = json(200, { authorizationUrl: authorize.href });
-    response.headers.set("set-cookie", flowHeader(cap, 600));
+    response.headers.set(
+      "set-cookie",
+      flowHeader(`${flowCookie}_${state}`, cap, 600),
+    );
     return response;
   }
   if (route === "/disconnect" && request.method === "POST") {

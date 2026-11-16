@@ -21,14 +21,28 @@ import {
   ShieldCheck,
   ShieldOff,
 } from "lucide-react";
-import { useCallback, useEffect, useRef, useState } from "react";
+import {
+  type ReactNode,
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from "react";
+import {
+  checkedAdminActionFailure,
+  isAdminActionAccessLoss,
+  requireAdminActionActor,
+} from "./lib/admin-request";
 import { projectApiRequest } from "./lib/project-api";
+import { scanClearanceView } from "./lib/scan-clearance";
 import type {
   AdmissionExemption,
   AssessmentState,
   AssessmentSummary,
   VettingClearance as Clearance,
 } from "./lib/vetting-contracts";
+import { ScanClearanceBadges } from "./ScanClearanceBadges";
 
 type AdminAssessment = AssessmentSummary & {
   projectId: string;
@@ -66,6 +80,8 @@ type Overview = {
     name: string;
     status: string;
     revision: number;
+    /** Present only for a project with more than one repository. */
+    repositories?: { id: string; githubId: string | null }[];
     clearance: Clearance;
   }[];
   assessments: AdminAssessment[];
@@ -115,48 +131,117 @@ const STATE_TEXT: Record<AssessmentState, string> = {
   malicious: "Confirmed malicious",
 };
 
+async function ownedVettingRequest<T>(
+  actorId: string,
+  method: "GET" | "POST",
+  path: string,
+  body: unknown,
+  owns: () => boolean,
+): Promise<{ value: T } | undefined> {
+  if (!owns()) return;
+  try {
+    await requireAdminActionActor(actorId);
+    if (!owns()) return;
+    const value = await projectApiRequest<T>(method, path, body, {
+      expectedActorGithubId: actorId,
+    });
+    if (!owns()) return;
+    await requireAdminActionActor(actorId);
+    if (owns()) return { value };
+  } catch (error) {
+    if (!owns()) return;
+    const failure = await checkedAdminActionFailure(error, actorId);
+    if (owns()) throw failure;
+  }
+}
+
+function useVettingMutation(actorId: string, onAccessLost: () => void) {
+  const mounted = useRef(true);
+  const inFlight = useRef(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  useLayoutEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+    };
+  }, []);
+  const run = async (path: string, body: unknown, onSaved: () => void) => {
+    if (!mounted.current || inFlight.current) return;
+    inFlight.current = true;
+    setBusy(true);
+    setError(null);
+    try {
+      const result = await ownedVettingRequest(
+        actorId,
+        "POST",
+        path,
+        body,
+        () => mounted.current,
+      );
+      if (mounted.current && result) onSaved();
+    } catch (failure) {
+      if (!mounted.current) return;
+      setError(message(failure));
+      if (isAdminActionAccessLoss(failure)) onAccessLost();
+    } finally {
+      inFlight.current = false;
+      if (mounted.current) setBusy(false);
+    }
+  };
+  return { busy, error, setError, run };
+}
+
 function AdmissionExemptionForm({
+  actorId,
   project,
   exemption,
+  repository,
+  repositoryField,
   onSaved,
+  onAccessLost,
 }: {
+  actorId: string;
   project: Overview["projects"][number];
   exemption?: AdmissionExemption;
+  /** The repository to exempt, for a project with more than one. */
+  repository?: string;
+  /** The repository choice, shown first in the form. */
+  repositoryField?: ReactNode;
   onSaved: () => void;
+  onAccessLost: () => void;
 }) {
   const [reason, setReason] = useState("");
   const [decisionReference, setDecisionReference] = useState("");
   const [confirmed, setConfirmed] = useState(false);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const { busy, error, setError, run } = useVettingMutation(
+    actorId,
+    onAccessLost,
+  );
   const revoke = exemption !== undefined;
   const save = async () => {
     if (!confirmed || reason.trim().length < 8 || !decisionReference.trim()) {
       setError("Record the reason, owner decision reference and confirmation.");
       return;
     }
-    setBusy(true);
-    setError(null);
-    try {
-      await projectApiRequest(
-        "POST",
-        revoke
-          ? `admin/vetting/exemptions/${encodeURIComponent(exemption.id)}/revoke`
-          : "admin/vetting/exemptions",
-        {
-          ...(revoke
-            ? {}
-            : { projectId: project.id, revision: project.revision }),
-          reason: reason.trim(),
-          decisionReference: decisionReference.trim(),
-          confirmation: true,
-        },
-      );
-      onSaved();
-    } catch (caught) {
-      setError(message(caught));
-      setBusy(false);
-    }
+    await run(
+      revoke
+        ? `admin/vetting/exemptions/${encodeURIComponent(exemption.id)}/revoke`
+        : "admin/vetting/exemptions",
+      {
+        ...(revoke
+          ? {}
+          : {
+              projectId: project.id,
+              revision: project.revision,
+              ...(repository === undefined ? {} : { repository }),
+            }),
+        reason: reason.trim(),
+        decisionReference: decisionReference.trim(),
+        confirmation: true,
+      },
+      onSaved,
+    );
   };
   return (
     <section className="admin-subsection">
@@ -170,6 +255,7 @@ function AdmissionExemptionForm({
           void save();
         }}
       >
+        {repositoryField}
         <label>
           {revoke ? "Reason for revocation" : "Reason for the exemption"}
           <textarea
@@ -225,6 +311,74 @@ function AdmissionExemptionForm({
         </button>
       </form>
     </section>
+  );
+}
+
+/** Chooses one repository of a project with more than one. */
+function RepositorySelect({
+  repositories,
+  value,
+  onChange,
+}: {
+  repositories: { id: string }[];
+  value: string;
+  onChange: (value: string) => void;
+}) {
+  return (
+    <label>
+      Repository
+      <select value={value} onChange={(event) => onChange(event.target.value)}>
+        {repositories.map((repository) => (
+          <option key={repository.id} value={repository.id}>
+            {repository.id}
+          </option>
+        ))}
+      </select>
+    </label>
+  );
+}
+
+/** The exemption form of one chosen repository of a multi-repository project. */
+function RepositoryExemptionForm({
+  actorId,
+  project,
+  repositories,
+  exemptions,
+  onSaved,
+  onAccessLost,
+}: {
+  actorId: string;
+  project: Overview["projects"][number];
+  repositories: { id: string; githubId: string | null }[];
+  exemptions: AdmissionExemption[];
+  onSaved: (revoked: boolean) => void;
+  onAccessLost: () => void;
+}) {
+  const [repository, setRepository] = useState(repositories[0].id);
+  const githubId = repositories.find(
+    (entry) => entry.id === repository,
+  )?.githubId;
+  const active = exemptions.find(
+    (exemption) =>
+      exemption.revokedAt === null && exemption.repositoryId === githubId,
+  );
+  return (
+    <AdmissionExemptionForm
+      key={`${project.revision}:${repository}:${active?.id ?? "grant"}`}
+      actorId={actorId}
+      onAccessLost={onAccessLost}
+      project={project}
+      exemption={active}
+      repository={repository}
+      repositoryField={
+        <RepositorySelect
+          repositories={repositories}
+          value={repository}
+          onChange={setRepository}
+        />
+      }
+      onSaved={() => onSaved(active !== undefined)}
+    />
   );
 }
 
@@ -311,30 +465,39 @@ function AdmissionExemptionHistory({
 }
 
 function QueueScan({
+  actorId,
   project,
   onQueued,
+  onAccessLost,
 }: {
+  actorId: string;
   project: Overview["projects"][number];
   onQueued: () => void;
+  onAccessLost: () => void;
 }) {
   const [reason, setReason] = useState("");
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [repository, setRepository] = useState(
+    project.repositories?.[0]?.id ?? "",
+  );
+  const { busy, error, setError, run } = useVettingMutation(
+    actorId,
+    onAccessLost,
+  );
   const queue = () => {
     if (reason.trim() === "") {
       setError("Write a reason for the scan.");
       return;
     }
-    setBusy(true);
-    setError(null);
-    projectApiRequest("POST", "admin/vetting/assessments", {
-      projectId: project.id,
-      revision: project.revision,
-      reason: reason.trim(),
-    }).then(onQueued, (caught: unknown) => {
-      setBusy(false);
-      setError(message(caught));
-    });
+    void run(
+      "admin/vetting/assessments",
+      {
+        projectId: project.id,
+        revision: project.revision,
+        reason: reason.trim(),
+        ...(project.repositories ? { repository } : {}),
+      },
+      onQueued,
+    );
   };
   return (
     <section className="admin-subsection">
@@ -348,6 +511,13 @@ function QueueScan({
           queue();
         }}
       >
+        {project.repositories ? (
+          <RepositorySelect
+            repositories={project.repositories}
+            value={repository}
+            onChange={setRepository}
+          />
+        ) : null}
         <label>
           Reason for the scan
           <textarea
@@ -637,7 +807,15 @@ function AssessmentDetails({ assessment }: { assessment: AdminAssessment }) {
   );
 }
 
-export function VettingSection({ projectId }: { projectId: string }) {
+export function VettingSection({
+  actorId,
+  projectId,
+  onAccessLost,
+}: {
+  actorId: string;
+  projectId: string;
+  onAccessLost: () => void;
+}) {
   const [state, setState] = useState<
     | { status: "loading" }
     | { status: "error"; message: string }
@@ -645,26 +823,42 @@ export function VettingSection({ projectId }: { projectId: string }) {
   >({ status: "loading" });
   const [note, setNote] = useState<string | null>(null);
   const generation = useRef(0);
+  const mounted = useRef(true);
   const load = useCallback(() => {
+    if (!mounted.current) return;
     const current = ++generation.current;
+    const owns = () => mounted.current && generation.current === current;
     setState({ status: "loading" });
-    projectApiRequest<Overview>("GET", "admin/vetting").then(
-      (value) => {
-        if (generation.current === current)
-          setState({ status: "ready", value });
+    void ownedVettingRequest<Overview>(
+      actorId,
+      "GET",
+      "admin/vetting",
+      undefined,
+      owns,
+    ).then(
+      (result) => {
+        if (owns() && result)
+          setState({ status: "ready", value: result.value });
       },
       (error: unknown) => {
-        if (generation.current === current)
-          setState({ status: "error", message: message(error) });
+        if (!owns()) return;
+        setState({ status: "error", message: message(error) });
+        if (isAdminActionAccessLoss(error)) {
+          setNote(null);
+          onAccessLost();
+        }
       },
     );
-  }, []);
-  useEffect(() => {
-    load();
+  }, [actorId, onAccessLost]);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: context changes retire pending work during layout cleanup.
+  useLayoutEffect(() => {
+    mounted.current = true;
     return () => {
+      mounted.current = false;
       generation.current += 1;
     };
   }, [load]);
+  useEffect(load, [load]);
   return (
     <section aria-labelledby="admin-vetting" className="admin-section">
       <div className="admin-section-heading">
@@ -778,6 +972,17 @@ export function VettingSection({ projectId }: { projectId: string }) {
                           </dd>
                         </div>
                       ) : null}
+                      {clearance.state === "quarantined" &&
+                      scanClearanceView(clearance.assessment) ? (
+                        <div className="admin-fact-wide">
+                          <dt>Owner sees</dt>
+                          <dd>
+                            <ScanClearanceBadges
+                              view={scanClearanceView(clearance.assessment)}
+                            />
+                          </dd>
+                        </div>
+                      ) : null}
                     </dl>
                     {clearance.state === "banned" ? (
                       <p className="form-error">
@@ -827,7 +1032,10 @@ export function VettingSection({ projectId }: { projectId: string }) {
                       {state.value.service.queueRegistrationAvailable &&
                       !queued ? (
                         <QueueScan
+                          actorId={actorId}
+                          onAccessLost={onAccessLost}
                           onQueued={() => {
+                            if (!mounted.current) return;
                             setNote(
                               `Queued a scan of ${project.id} revision ${project.revision}.`,
                             );
@@ -836,19 +1044,41 @@ export function VettingSection({ projectId }: { projectId: string }) {
                           project={project}
                         />
                       ) : null}
-                      <AdmissionExemptionForm
-                        key={`${project.revision}:${activeExemption?.id ?? "grant"}`}
-                        project={project}
-                        exemption={activeExemption}
-                        onSaved={() => {
-                          setNote(
-                            activeExemption
-                              ? `Revoked the owner-approved exemption for ${project.id}.`
-                              : `Recorded the owner-approved exemption for ${project.id}.`,
-                          );
-                          load();
-                        }}
-                      />
+                      {project.repositories ? (
+                        <RepositoryExemptionForm
+                          actorId={actorId}
+                          onAccessLost={onAccessLost}
+                          project={project}
+                          repositories={project.repositories}
+                          exemptions={exemptions}
+                          onSaved={(revoked) => {
+                            if (!mounted.current) return;
+                            setNote(
+                              revoked
+                                ? `Revoked the owner-approved exemption for ${project.id}.`
+                                : `Recorded the owner-approved exemption for ${project.id}.`,
+                            );
+                            load();
+                          }}
+                        />
+                      ) : (
+                        <AdmissionExemptionForm
+                          key={`${project.revision}:${activeExemption?.id ?? "grant"}`}
+                          actorId={actorId}
+                          onAccessLost={onAccessLost}
+                          project={project}
+                          exemption={activeExemption}
+                          onSaved={() => {
+                            if (!mounted.current) return;
+                            setNote(
+                              activeExemption
+                                ? `Revoked the owner-approved exemption for ${project.id}.`
+                                : `Recorded the owner-approved exemption for ${project.id}.`,
+                            );
+                            load();
+                          }}
+                        />
+                      )}
                     </div>
                     {history.length > 0 ? (
                       <>
@@ -876,21 +1106,43 @@ export function VettingSection({ projectId }: { projectId: string }) {
 
 /** The same revision-bound clearance used by the full security review panel. */
 export function ActivationClearance({
+  actorId,
   projectId,
   revision,
+  onAccessLost,
 }: {
+  actorId: string;
   projectId: string;
   revision: number;
+  onAccessLost: () => void;
 }) {
   const [clearance, setClearance] = useState<string>(
     "Checking security clearance…",
   );
   const [attempt, setAttempt] = useState(0);
+  const generation = useRef(0);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: context changes retire pending work during layout cleanup.
+  useLayoutEffect(
+    () => () => {
+      generation.current += 1;
+    },
+    [actorId, projectId, revision, attempt, onAccessLost],
+  );
   useEffect(() => {
     let active = true;
-    projectApiRequest<Overview>("GET", `admin/vetting?refresh=${attempt}`).then(
-      (body) => {
-        if (!active) return;
+    const current = generation.current;
+    const owns = () => active && generation.current === current;
+    setClearance("Checking security clearance…");
+    void ownedVettingRequest<Overview>(
+      actorId,
+      "GET",
+      `admin/vetting?refresh=${attempt}`,
+      undefined,
+      owns,
+    ).then(
+      (result) => {
+        if (!owns() || !result) return;
+        const body = result.value;
         const project = body.projects.find((entry) => entry.id === projectId);
         setClearance(
           !project || project.revision !== revision
@@ -899,13 +1151,15 @@ export function ActivationClearance({
         );
       },
       (error) => {
-        if (active) setClearance(message(error));
+        if (!owns()) return;
+        setClearance(message(error));
+        if (isAdminActionAccessLoss(error)) onAccessLost();
       },
     );
     return () => {
       active = false;
     };
-  }, [projectId, revision, attempt]);
+  }, [actorId, projectId, revision, attempt, onAccessLost]);
   return (
     <div className="admin-action-bar">
       <p role="status">{clearance}</p>

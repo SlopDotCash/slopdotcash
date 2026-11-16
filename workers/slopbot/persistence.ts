@@ -10,7 +10,7 @@ import {
   notifySlopbotInstallationLost,
   projectsServedByInstallation,
 } from "../../backend/notifications/events";
-import { PRICE_VERSION, priceUsage } from "./contracts";
+import { AUTHOR_DAILY_CAP, PRICE_VERSION, priceUsage } from "./contracts";
 import type { CallRecord } from "./models";
 
 export type {
@@ -239,7 +239,7 @@ export async function reviewExists(
   return row !== null;
 }
 
-export type ReviewRow = {
+type ReviewRow = {
   reviewKey: string;
   installationId: number;
   repositoryId: number;
@@ -267,7 +267,7 @@ export class ReviewLeaseLostError extends Error {
 }
 export type ReviewClaim = { reviewKey: string; token: string };
 
-export async function ownsReviewClaim(
+async function ownsReviewClaim(
   db: D1Database,
   claim: ReviewClaim,
 ): Promise<boolean> {
@@ -284,13 +284,28 @@ export async function assertReviewClaim(db: D1Database, claim: ReviewClaim) {
   if (!(await ownsReviewClaim(db, claim))) throw new ReviewLeaseLostError();
 }
 
+// An in-flight review owns its author slot until it finishes. An uncertain
+// external close also owns it after a review fails; elapsed time alone does
+// not prove that GitHub cannot still apply that close.
+function authorCapacity(repository: string, author: string, key: string) {
+  return `(SELECT COUNT(*) FROM slopbot_reviews capacity
+    WHERE capacity.repository_id = ${repository} AND capacity.author_id = ${author}
+      AND capacity.review_key != ${key} AND (
+        (capacity.status = 'running' AND capacity.lease_expires_at > strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+        OR (capacity.status = 'completed' AND capacity.completed_at > strftime('%Y-%m-%dT%H:%M:%fZ','now','-1 day'))
+        OR EXISTS (SELECT 1 FROM slopbot_close_attempts c WHERE c.review_key = capacity.review_key
+          AND (c.state = 'pending' OR c.closed_at > strftime('%Y-%m-%dT%H:%M:%fZ','now','-1 day')))
+      )) < ${AUTHOR_DAILY_CAP}`;
+}
+
 // A skipped item has never reached inference. A failed or interrupted attempt
 // resumes unbilled. Each transition atomically replaces the attempt token.
 export async function startReview(
   db: D1Database,
   row: ReviewRow,
   token: string,
-): Promise<"new" | "retry" | "exists"> {
+  limitNewAuthor = false,
+): Promise<"new" | "retry" | "exists" | "limited"> {
   const at = now();
   const expires = new Date(
     Date.parse(at) + REVIEW_LEASE_SECONDS * 1000,
@@ -305,6 +320,7 @@ export async function startReview(
         created_at = CASE WHEN EXISTS (SELECT 1 FROM slopbot_costs WHERE review_key = ?)
           THEN created_at ELSE ? END, skip_reason = NULL, completed_at = NULL, claim_token = ?, lease_expires_at = ?
        WHERE review_key = ? AND status = 'skipped'
+       ${limitNewAuthor ? `AND ${authorCapacity("slopbot_reviews.repository_id", "slopbot_reviews.author_id", "slopbot_reviews.review_key")}` : ""}
        RETURNING EXISTS (SELECT 1 FROM slopbot_costs WHERE review_key = ?) AS retry`,
     )
     .bind(
@@ -320,7 +336,8 @@ export async function startReview(
   if (resumed !== null) return resumed.retry === 1 ? "retry" : "new";
   const retried = await db
     .prepare(
-      "UPDATE slopbot_reviews SET status = 'running', skip_reason = NULL, completed_at = NULL, claim_token = ?, lease_expires_at = ? WHERE review_key = ? AND (status = 'failed' OR (status = 'running' AND lease_expires_at <= ?))",
+      `UPDATE slopbot_reviews SET status = 'running', skip_reason = NULL, completed_at = NULL, claim_token = ?, lease_expires_at = ? WHERE review_key = ? AND (status = 'failed' OR (status = 'running' AND lease_expires_at <= ?))
+       ${limitNewAuthor ? `AND ${authorCapacity("slopbot_reviews.repository_id", "slopbot_reviews.author_id", "slopbot_reviews.review_key")}` : ""}`,
     )
     .bind(token, expires, row.reviewKey, at)
     .run();
@@ -329,7 +346,8 @@ export async function startReview(
     .prepare(
       `INSERT OR IGNORE INTO slopbot_reviews (review_key, installation_id, repository_id, item_kind, item_number,
       item_node_id, author_id, revision, content_digest, policy_digest, status, created_at, claim_token, lease_expires_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'running', ?, ?, ?)`,
+     SELECT ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, 'running', ?11, ?12, ?13
+     ${limitNewAuthor ? `WHERE ${authorCapacity("?3", "?7", "?1")}` : ""}`,
     )
     .bind(
       row.reviewKey,
@@ -356,6 +374,8 @@ export async function startReview(
     .first<{ status: string; lease_expires_at: string | null }>();
   if (current?.status === "completed") return "exists";
   const until = Date.parse(current?.lease_expires_at ?? "");
+  if (limitNewAuthor && (current?.status !== "running" || until <= Date.now()))
+    return "limited";
   throw new ReviewBusyError(
     Number.isFinite(until)
       ? Math.max(
