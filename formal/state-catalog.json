@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "meaning": "Declared lifecycle candidates. This intentionally incomplete syntactic census cannot find every implicit state, establish reachability, or prove source/model correspondence. Review the open work listed in formal/README.md as well.",
-  "inventorySha256": "291c70036908390bc77a9f8532a4ef40e591ca8e756562474fd283547e2b28c5",
+  "inventorySha256": "ef2ef93f4da50252f3a8b53166981ea8dc8803567b6739052822d5477105922c",
   "states": [
     {
       "path": "backend/fee-conversions/handler.ts",
@@ -1970,6 +1970,16 @@
       "values": ["expired", "refused", "registered", "waiting"],
       "models": ["formal/models/api/api_saved_vault_creation.qnt"],
       "lexicallyUnmentionedValues": [],
+      "review": "candidate-only"
+    },
+    {
+      "path": "migrations/0133_slopbot_failure_notice_suppressions.sql",
+      "line": 7,
+      "name": "reason",
+      "kind": "sql-check",
+      "values": ["repeat-within-6h", "served-by-fallback"],
+      "models": ["formal/models/slopbot/bot_notice_delivery.qnt"],
+      "lexicallyUnmentionedValues": ["repeat-within-6h", "served-by-fallback"],
       "review": "candidate-only"
     },
     {
@@ -4132,7 +4142,7 @@
     },
     {
       "path": "workers/slopbot/failure-alerts.ts",
-      "line": 59,
+      "line": 105,
       "name": "outcome",
       "kind": "string-union",
       "values": ["accepted", "ambiguous"],
@@ -4145,7 +4155,7 @@
     },
     {
       "path": "workers/slopbot/failure-alerts.ts",
-      "line": 61,
+      "line": 107,
       "name": "outcome",
       "kind": "string-union",
       "values": ["accepted", "ambiguous"],
@@ -4199,7 +4209,7 @@
     },
     {
       "path": "workers/slopbot/models.ts",
-      "line": 48,
+      "line": 47,
       "name": "outcome",
       "kind": "string-union",
       "values": ["failed", "ok"],
