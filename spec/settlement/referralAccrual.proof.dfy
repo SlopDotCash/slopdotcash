@@ -507,8 +507,8 @@ lemma ValidPoolAndProjectCaps(a: Accrual)
   requires settlement__money_validAmount(a.tokenUnit)
   ensures settlement__money_validAmount(poolCap(a)) && settlement__money_validAmount(projectCap(a))
 {
-  var poolUnits := settlement__money_smallAmount(2000000);
-  var projectUnits := settlement__money_smallAmount(250000);
+  var poolUnits := settlement__money_smallAmount(settlement__referrals_referralPoolTokens);
+  var projectUnits := settlement__money_smallAmount(settlement__referrals_referralProjectTokens);
   assert poolUnits == [0, 0, 2, 0, 0, 0];
   assert projectUnits == [0, 250, 0, 0, 0, 0];
   settlement__money_lawMultiplyValid_ensures(a.tokenUnit, poolUnits);
@@ -703,7 +703,7 @@ lemma initialHolds_ensures()
   var a := initialHolds();
   FoldTotalEmpty(a);
   assert a.tokenUnit == settlement__money_zero;
-  var units := settlement__money_smallAmount(2000000);
+  var units := settlement__money_smallAmount(settlement__referrals_referralPoolTokens);
   assert units == [0, 0, 2, 0, 0, 0];
   settlement__money_lawMultiplyZero_ensures(units);
   assert settlement__money_equalAmounts(poolCap(a), settlement__money_zero);
