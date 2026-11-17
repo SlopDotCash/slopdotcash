@@ -36,8 +36,9 @@ for (const variant of [
   test(`subscription import ${variant === "changed" ? "refuses changed metadata" : variant === "repository activity" ? "ignores repository and milestone counters that move between reads" : "rechecks recovered files through normal journal publication"}`, async () => {
     const changed = variant === "changed";
     const source = fixture({ direct: true, textOnly: true });
+    const lineCount = variant === "later unclaimed context" ? 1000 : 100000;
     const bytes = new TextEncoder().encode(
-      "retained large text evidence\n".repeat(100000),
+      "retained large text evidence\n".repeat(lineCount),
     );
     const head = source.pull.head.sha;
     const merged = source.pull.merge_commit_sha;
@@ -47,7 +48,7 @@ for (const variant of [
       source.pull.base.sha,
       head,
     ]);
-    source.files[0].additions = 100000;
+    source.files[0].additions = lineCount;
     delete source.files[0].patch;
     const laterContext = variant === "later unclaimed context";
     let collections = 0;
@@ -86,9 +87,9 @@ for (const variant of [
           commitPages.set(path, (commitPages.get(path) ?? 0) + 1);
         if (value && path.includes("/commits/") && !path.includes("/git/"))
           (value as unknown as { stats: unknown }).stats = {
-            additions: 100000,
+            additions: lineCount,
             deletions: 0,
-            total: 100000,
+            total: lineCount,
           };
         if (changed && recoveryCompleted && path.endsWith("/pulls/1") && value)
           (value as unknown as { title: string }).title =

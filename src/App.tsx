@@ -29,11 +29,7 @@ import {
   homeProjectOrder,
   homeProjects,
 } from "./lib/home-projects";
-import {
-  loadMergeActivity,
-  mergeActivityCardLine,
-  mergeActivityLine,
-} from "./lib/merge-activity";
+import { loadMergeActivity, mergeActivityLine } from "./lib/merge-activity";
 import {
   asShown,
   listedThisMonth,
@@ -142,6 +138,21 @@ const HERO_ACTIONS = [
   "HACKING THE PLANET.",
   "BUILDING AGI.",
 ] as const;
+type HomeAudience = "contributor" | "maintainer";
+const HOME_AUDIENCES = {
+  contributor: {
+    heading: "MAKE MONEY",
+    accessibleHeading: "MAKE MONEY SHIPPING OPEN SOURCE.",
+    actions: HERO_ACTIONS,
+    skillPath: "/contribute/SKILL.md",
+  },
+  maintainer: {
+    heading: "SHIP FASTER.",
+    accessibleHeading: "SHIP FASTER. WITH CONTRIBUTORS.",
+    actions: ["WITH CONTRIBUTORS."],
+    skillPath: "/maintain/SKILL.md",
+  },
+} as const;
 const HERO_HOLD_MS = 2_400;
 const HERO_TYPE_MS = 55;
 const HERO_DELETE_MS = 30;
@@ -454,15 +465,16 @@ function Footer({ marketing }: { marketing: boolean }) {
   );
 }
 
-function HeroHeading() {
+function HeroHeading({ audience }: { audience: HomeAudience }) {
+  const campaign = HOME_AUDIENCES[audience];
   const [index, setIndex] = useState(0);
-  const [characters, setCharacters] = useState(HERO_ACTIONS[0].length);
+  const [characters, setCharacters] = useState(campaign.actions[0].length);
   const [phase, setPhase] = useState<"deleting" | "holding" | "typing">(
     "holding",
   );
   useEffect(() => {
     if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
-    const target = HERO_ACTIONS[index];
+    const target = campaign.actions[index];
     let delay = 1;
     let advance: () => void;
     if (phase === "holding") {
@@ -474,7 +486,7 @@ function HeroHeading() {
     } else if (phase === "deleting") {
       delay = HERO_GAP_MS;
       advance = () => {
-        setIndex((value) => (value + 1) % HERO_ACTIONS.length);
+        setIndex((value) => (value + 1) % campaign.actions.length);
         setPhase("typing");
       };
     } else if (characters < target.length) {
@@ -485,14 +497,14 @@ function HeroHeading() {
     }
     const timer = window.setTimeout(advance, delay);
     return () => window.clearTimeout(timer);
-  }, [characters, index, phase]);
-  const action = HERO_ACTIONS[index];
+  }, [campaign.actions, characters, index, phase]);
+  const action = campaign.actions[index];
   return (
-    <h1 aria-label="MAKE MONEY SHIPPING OPEN SOURCE.">
+    <h1 aria-label={campaign.accessibleHeading}>
       <span aria-hidden="true" className="hero-message">
-        <span>MAKE MONEY</span>
+        <span>{campaign.heading}</span>
         <span className="hero-action">
-          {HERO_ACTIONS.map((candidate) => (
+          {campaign.actions.map((candidate) => (
             <span className="hero-switch-sizer" key={candidate}>
               {candidate}
               <span className="hero-typewriter-caret" />
@@ -620,13 +632,7 @@ function bountyFundingLabel(terms: SecurityBountyTerms): string {
   return terms.funding.state === "pledged" ? "Pledged" : "Funding verified";
 }
 
-function ProjectCard({
-  project,
-  merge,
-}: {
-  project: ProjectDefinition;
-  merge?: string | null;
-}) {
+function ProjectCard({ project }: { project: ProjectDefinition }) {
   const bounty = hasProjectCardBounty(project)
     ? project.securityBounty
     : undefined;
@@ -663,11 +669,7 @@ function ProjectCard({
             <span>/mo</span>
           )}
         </p>
-        {bounty ? (
-          <small className="project-money-state">
-            {bountyFundingLabel(bounty)}
-          </small>
-        ) : monthlyPoolPointsOnly(project.reward) ? (
+        {!bounty && monthlyPoolPointsOnly(project.reward) ? (
           <small className="project-money-state">Points only</small>
         ) : null}
         {project.reward.reviewBudget ? (
@@ -675,19 +677,15 @@ function ProjectCard({
             + {reviewBudgetLabel(project.reward.reviewBudget)}
           </small>
         ) : null}
-        {merge ? (
-          <small className="project-money-state project-merge-activity">
-            {merge}
-          </small>
-        ) : null}
       </div>
     </Link>
   );
 }
 
-function bootstrapAgentPrompt(): string {
+function bootstrapAgentPrompt(audience?: HomeAudience): string {
   const origin = window.location.origin.replace(/\/$/u, "");
-  return `Read ${origin}/SKILL.md and follow it.`;
+  const path = audience ? HOME_AUDIENCES[audience].skillPath : "/SKILL.md";
+  return `Read ${origin}${path} and follow it.`;
 }
 
 /** Published bounty terms come from the same registry as project discovery. */
@@ -750,9 +748,6 @@ function SecurityBounties() {
                         : "/ Finding"}
                     </span>
                   </p>
-                  <small className="project-money-state">
-                    {bountyFundingLabel(terms)}
-                  </small>
                 </div>
               </Link>
             );
@@ -764,16 +759,19 @@ function SecurityBounties() {
 }
 
 function HomePage() {
-  // One shared read of the daily merge activity (#1993) for every card.
-  const [merge] = usePublicResource(
-    true,
-    loadMergeActivity,
-    "Merge activity unavailable",
-  );
-  // One shared read of vault balances: only money in a vault is shown, and
-  // an unfunded monthly pool is not listed this month. The list never waits
-  // for the read: until it loads, or when it fails, every project is listed
-  // as before.
+  const audience: HomeAudience =
+    new URLSearchParams(window.location.search).get("audience") === "maintainer"
+      ? "maintainer"
+      : "contributor";
+  const selectAudience = (next: HomeAudience) => {
+    if (next === audience) return;
+    const destination = new URL(window.location.href);
+    if (next === "maintainer") destination.searchParams.set("audience", next);
+    else destination.searchParams.delete("audience");
+    window.history.pushState(window.history.state, "", destination);
+    window.dispatchEvent(new PopStateEvent("popstate"));
+  };
+  // Funding changes the displayed reward, never homepage discovery.
   const [funding] = usePublicResource(
     true,
     loadPoolFunding,
@@ -781,22 +779,31 @@ function HomePage() {
   );
   const now = new Date();
   const fundingIndex = funding.status === "ready" ? funding.index : null;
-  const listed = (project: ProjectDefinition) =>
-    listedThisMonth(project, fundingIndex, now);
   const listedProjects = homeProjectOrder(
-    homeProjects()
-      .filter(listed)
-      .map((project) => asShown(project, fundingIndex, now)),
+    homeProjects().map((project) => asShown(project, fundingIndex, now)),
   );
-  const mergeLine = (project: ProjectDefinition) =>
-    project.status === "active" && merge.status === "ready"
-      ? mergeActivityCardLine(merge.index.get(project.id), now)
-      : null;
+
   return (
     <main>
       <section className="hero shell">
-        <HeroHeading />
-        <InstallPanel />
+        <fieldset
+          aria-label="Choose your Slop journey"
+          className="home-audience-switch"
+        >
+          {(["contributor", "maintainer"] as const).map((option) => (
+            <button
+              aria-pressed={audience === option}
+              className="button"
+              key={option}
+              onClick={() => selectAudience(option)}
+              type="button"
+            >
+              {option === "contributor" ? "Contributor" : "Maintainer"}
+            </button>
+          ))}
+        </fieldset>
+        <HeroHeading audience={audience} key={audience} />
+        <InstallPanel audience={audience} />
       </section>
 
       <SecurityBounties />
@@ -812,11 +819,7 @@ function HomePage() {
         ) : (
           <div className="project-grid">
             {listedProjects.map((project) => (
-              <ProjectCard
-                key={project.id}
-                project={project}
-                merge={mergeLine(project)}
-              />
+              <ProjectCard key={project.id} project={project} />
             ))}
           </div>
         )}
@@ -896,9 +899,11 @@ const AGENT_DEEP_LINKS: readonly {
 function AgentPromptBox({
   prompt,
   openIn = false,
+  skillUrl,
 }: {
   prompt: string;
   openIn?: boolean;
+  skillUrl?: string;
 }) {
   const { feedback: copy, copy: copyPrompt } = useCopyFeedback(prompt, 1_600);
   const box = (
@@ -952,7 +957,7 @@ function AgentPromptBox({
         <span>Open in</span>
         <ul>
           {AGENT_DEEP_LINKS.map((agent) => {
-            const href = agent.href(prompt, `${origin}/SKILL.md`);
+            const href = agent.href(prompt, skillUrl ?? `${origin}/SKILL.md`);
             const web = href.startsWith("https://");
             return (
               <li key={agent.name}>
@@ -1031,11 +1036,16 @@ function ProjectParticipation({ project }: { project: ProjectDefinition }) {
   return <ProjectInstallPanel key={project.id} project={project} />;
 }
 
-function InstallPanel() {
+function InstallPanel({ audience }: { audience: HomeAudience }) {
+  const origin = window.location.origin.replace(/\/$/u, "");
   return (
     <div className="home-agent-setup">
-      <p className="hero-copy">Paste this into your coding agent.</p>
-      <AgentPromptBox openIn prompt={bootstrapAgentPrompt()} />
+      <p className="hero-copy">Paste into your agent.</p>
+      <AgentPromptBox
+        openIn
+        prompt={bootstrapAgentPrompt(audience)}
+        skillUrl={`${origin}${HOME_AUDIENCES[audience].skillPath}`}
+      />
     </div>
   );
 }
@@ -1584,7 +1594,11 @@ export function App() {
 }
 
 function AppContent({ route }: { route: Route }) {
-  useHashScroll(window.location.href);
+  const scrollLocation = new URL(window.location.href);
+  // Switching the homepage journey keeps the reader at the hero, even when
+  // the shared URL has an anchor for the project list or leaderboard.
+  if (route.kind === "home") scrollLocation.searchParams.delete("audience");
+  useHashScroll(window.location.href, scrollLocation.href);
   useDocumentHead(route);
   const { registry, snapshot } = ROUTES[route.kind];
   const staleRegistry = globalThis.__SLOP_PROJECT_REGISTRY_STALE__;

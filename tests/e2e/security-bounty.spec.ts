@@ -3217,6 +3217,7 @@ test("admin placement and explicit bounty type drive generic project pages @regi
   const projects = page.locator("#projects");
   await expect(projects.locator(`a[href="/projects/${id}"]`)).toHaveCount(0);
   await expect(section).toContainText("$10k");
+  await expect(section).not.toContainText("Pledged");
   await expect(section).not.toContainText("7,500 USDC");
   await expect(
     page.getByRole("link", { name: "Your private reports", exact: true }),
@@ -3311,7 +3312,7 @@ test("admin placement and explicit bounty type drive generic project pages @regi
     shown = next;
     await page.goto("/", { waitUntil: "networkidle" });
     await expect(section).toContainText("$10k");
-    await expect(section).toContainText("Pledged");
+    await expect(section).not.toContainText("Pledged");
     await expect(projects.locator(`a[href="/projects/${id}"]`)).toHaveCount(0);
   }
   await expect(section.locator(".project-card")).toHaveAttribute(
