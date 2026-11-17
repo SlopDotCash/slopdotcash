@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "meaning": "Declared lifecycle candidates. This intentionally incomplete syntactic census cannot find every implicit state, establish reachability, or prove source/model correspondence. Review the open work listed in formal/README.md as well.",
-  "inventorySha256": "0e5d7c9a16d51160620e7cc759ff59955322ae3b52635dbfd87cafbc81ed4b9e",
+  "inventorySha256": "322f73db89042f7d275c2b514dffa923f92f63cec76e81392fc2b186d376397b",
   "states": [
     {
       "path": "backend/fee-conversions/handler.ts",
@@ -294,7 +294,7 @@
     },
     {
       "path": "backend/security/analysis.ts",
-      "line": 408,
+      "line": 523,
       "name": "state",
       "kind": "string-union",
       "values": ["complete", "failed", "running", "unavailable"],
@@ -308,7 +308,7 @@
     },
     {
       "path": "backend/security/analysis.ts",
-      "line": 640,
+      "line": 755,
       "name": "state",
       "kind": "string-union",
       "values": ["failed", "unavailable"],
@@ -322,7 +322,7 @@
     },
     {
       "path": "backend/security/analysis.ts",
-      "line": 763,
+      "line": 878,
       "name": "state",
       "kind": "string-union",
       "values": ["complete", "failed", "running", "unavailable"],
@@ -336,7 +336,7 @@
     },
     {
       "path": "backend/security/analysis.ts",
-      "line": 904,
+      "line": 1019,
       "name": "state",
       "kind": "string-union",
       "values": ["failed", "unavailable"],
@@ -350,7 +350,23 @@
     },
     {
       "path": "backend/security/case-store.ts",
-      "line": 109,
+      "line": 89,
+      "name": "mode",
+      "kind": "string-union",
+      "values": ["dry_run", "live", "off"],
+      "models": [
+        "formal/models/api/api_private_case.qnt",
+        "formal/models/api/api_private_case_roles.qnt",
+        "formal/models/api/api_private_case_transaction.qnt",
+        "formal/models/api/api_private_intake.qnt",
+        "formal/models/api/api_security_routine_decisions.qnt"
+      ],
+      "lexicallyUnmentionedValues": ["off"],
+      "review": "candidate-only"
+    },
+    {
+      "path": "backend/security/case-store.ts",
+      "line": 119,
       "name": "submission_state",
       "kind": "string-union",
       "values": ["claimed", "link-rejected", "verified"],
@@ -358,14 +374,15 @@
         "formal/models/api/api_private_case.qnt",
         "formal/models/api/api_private_case_roles.qnt",
         "formal/models/api/api_private_case_transaction.qnt",
-        "formal/models/api/api_private_intake.qnt"
+        "formal/models/api/api_private_intake.qnt",
+        "formal/models/api/api_security_routine_decisions.qnt"
       ],
       "lexicallyUnmentionedValues": ["claimed", "link-rejected", "verified"],
       "review": "candidate-only"
     },
     {
       "path": "backend/security/case-store.ts",
-      "line": 681,
+      "line": 695,
       "name": "PvrState",
       "kind": "string-union",
       "values": ["disabled", "forbidden", "ready", "unavailable"],
@@ -373,7 +390,8 @@
         "formal/models/api/api_private_case.qnt",
         "formal/models/api/api_private_case_roles.qnt",
         "formal/models/api/api_private_case_transaction.qnt",
-        "formal/models/api/api_private_intake.qnt"
+        "formal/models/api/api_private_intake.qnt",
+        "formal/models/api/api_security_routine_decisions.qnt"
       ],
       "lexicallyUnmentionedValues": ["disabled", "forbidden", "ready"],
       "review": "candidate-only"
@@ -418,6 +436,158 @@
         "formal/models/api/api_private_intake.qnt"
       ],
       "lexicallyUnmentionedValues": ["off", "on"],
+      "review": "candidate-only"
+    },
+    {
+      "path": "backend/security/routine-decisions.ts",
+      "line": 51,
+      "name": "RoutineMode",
+      "kind": "string-union",
+      "values": ["dry_run", "live", "off"],
+      "models": ["formal/models/api/api_security_routine_decisions.qnt"],
+      "lexicallyUnmentionedValues": ["off"],
+      "review": "candidate-only"
+    },
+    {
+      "path": "backend/security/routine-decisions.ts",
+      "line": 128,
+      "name": "Outcome",
+      "kind": "string-union",
+      "values": [
+        "acknowledged",
+        "does-not-qualify",
+        "duplicate",
+        "needs-proof",
+        "no-proof-received",
+        "unavailable"
+      ],
+      "models": ["formal/models/api/api_security_routine_decisions.qnt"],
+      "lexicallyUnmentionedValues": [
+        "acknowledged",
+        "does-not-qualify",
+        "needs-proof",
+        "no-proof-received",
+        "unavailable"
+      ],
+      "review": "candidate-only"
+    },
+    {
+      "path": "backend/security/routine-decisions.ts",
+      "line": 136,
+      "name": "HoldReason",
+      "kind": "string-union",
+      "values": [
+        "analysis-unavailable",
+        "calls-disagreed",
+        "github-advisory",
+        "loss-plausible",
+        "proof-still-missing",
+        "report-not-stored"
+      ],
+      "models": ["formal/models/api/api_security_routine_decisions.qnt"],
+      "lexicallyUnmentionedValues": [
+        "analysis-unavailable",
+        "calls-disagreed",
+        "github-advisory",
+        "loss-plausible",
+        "proof-still-missing",
+        "report-not-stored"
+      ],
+      "review": "candidate-only"
+    },
+    {
+      "path": "backend/security/routine-decisions.ts",
+      "line": 160,
+      "name": "state",
+      "kind": "string-union",
+      "values": ["answered", "failed"],
+      "models": ["formal/models/api/api_security_routine_decisions.qnt"],
+      "lexicallyUnmentionedValues": ["answered"],
+      "review": "candidate-only"
+    },
+    {
+      "path": "backend/security/routine-decisions.ts",
+      "line": 187,
+      "name": "decision",
+      "kind": "string-union",
+      "values": ["exclusionLine", "missing", "outcome", "proofDueAt"],
+      "models": ["formal/models/api/api_security_routine_decisions.qnt"],
+      "lexicallyUnmentionedValues": [
+        "exclusionLine",
+        "missing",
+        "outcome",
+        "proofDueAt"
+      ],
+      "review": "candidate-only"
+    },
+    {
+      "path": "backend/security/routine-decisions.ts",
+      "line": 318,
+      "name": "mode",
+      "kind": "string-union",
+      "values": ["dry_run", "live"],
+      "models": ["formal/models/api/api_security_routine_decisions.qnt"],
+      "lexicallyUnmentionedValues": [],
+      "review": "candidate-only"
+    },
+    {
+      "path": "backend/security/routine-decisions.ts",
+      "line": 474,
+      "name": "mode",
+      "kind": "string-union",
+      "values": ["dry_run", "live"],
+      "models": ["formal/models/api/api_security_routine_decisions.qnt"],
+      "lexicallyUnmentionedValues": [],
+      "review": "candidate-only"
+    },
+    {
+      "path": "backend/security/routine-decisions.ts",
+      "line": 575,
+      "name": "state",
+      "kind": "string-union",
+      "values": ["answered", "failed"],
+      "models": ["formal/models/api/api_security_routine_decisions.qnt"],
+      "lexicallyUnmentionedValues": ["answered"],
+      "review": "candidate-only"
+    },
+    {
+      "path": "backend/security/routine-decisions.ts",
+      "line": 663,
+      "name": "mode",
+      "kind": "string-union",
+      "values": ["dry_run", "live"],
+      "models": ["formal/models/api/api_security_routine_decisions.qnt"],
+      "lexicallyUnmentionedValues": [],
+      "review": "candidate-only"
+    },
+    {
+      "path": "backend/security/routine-decisions.ts",
+      "line": 796,
+      "name": "mode",
+      "kind": "string-union",
+      "values": ["dry_run", "live"],
+      "models": ["formal/models/api/api_security_routine_decisions.qnt"],
+      "lexicallyUnmentionedValues": [],
+      "review": "candidate-only"
+    },
+    {
+      "path": "backend/security/routine-decisions.ts",
+      "line": 893,
+      "name": "mode",
+      "kind": "string-union",
+      "values": ["dry_run", "live"],
+      "models": ["formal/models/api/api_security_routine_decisions.qnt"],
+      "lexicallyUnmentionedValues": [],
+      "review": "candidate-only"
+    },
+    {
+      "path": "backend/security/routine-decisions.ts",
+      "line": 906,
+      "name": "mode",
+      "kind": "string-union",
+      "values": ["dry_run", "live"],
+      "models": ["formal/models/api/api_security_routine_decisions.qnt"],
+      "lexicallyUnmentionedValues": [],
       "review": "candidate-only"
     },
     {
@@ -1971,6 +2141,49 @@
       "review": "candidate-only"
     },
     {
+      "path": "migrations/0133_security_routine_decisions.sql",
+      "line": 15,
+      "name": "mode",
+      "kind": "sql-check",
+      "values": ["dry_run", "live"],
+      "models": ["formal/models/api/api_security_routine_decisions.qnt"],
+      "lexicallyUnmentionedValues": [],
+      "review": "candidate-only"
+    },
+    {
+      "path": "migrations/0133_security_routine_decisions.sql",
+      "line": 51,
+      "name": "mode",
+      "kind": "sql-check",
+      "values": ["dry_run", "live"],
+      "models": ["formal/models/api/api_security_routine_decisions.qnt"],
+      "lexicallyUnmentionedValues": [],
+      "review": "candidate-only"
+    },
+    {
+      "path": "migrations/0133_security_routine_decisions.sql",
+      "line": 53,
+      "name": "outcome",
+      "kind": "sql-check",
+      "values": [
+        "acknowledged",
+        "does-not-qualify",
+        "duplicate",
+        "needs-proof",
+        "no-proof-received",
+        "unavailable"
+      ],
+      "models": ["formal/models/api/api_security_routine_decisions.qnt"],
+      "lexicallyUnmentionedValues": [
+        "acknowledged",
+        "does-not-qualify",
+        "needs-proof",
+        "no-proof-received",
+        "unavailable"
+      ],
+      "review": "candidate-only"
+    },
+    {
       "path": "migrations/0133_slopbot_failure_notice_suppressions.sql",
       "line": 7,
       "name": "reason",
@@ -2825,7 +3038,7 @@
     },
     {
       "path": "src/SecurityBounty.tsx",
-      "line": 265,
+      "line": 266,
       "name": "state",
       "kind": "string-union",
       "values": ["disabled", "forbidden", "ready", "unavailable"],
@@ -2853,35 +3066,7 @@
     },
     {
       "path": "src/SecurityBounty.tsx",
-      "line": 980,
-      "name": "state",
-      "kind": "string-union",
-      "values": ["complete", "failed", "running", "unavailable"],
-      "models": [
-        "formal/models/ui/ui_bounty_payment_parent.qnt",
-        "formal/models/ui/ui_inbox.qnt",
-        "formal/models/ui/ui_intake_handoff.qnt",
-        "formal/models/ui/ui_private_case_revisions.qnt",
-        "formal/models/ui/ui_private_intake.qnt",
-        "formal/models/ui/ui_private_report_identity.qnt",
-        "formal/models/ui/ui_private_report_projection.qnt",
-        "formal/models/ui/ui_private_report_scroll.qnt",
-        "formal/models/ui/ui_record_deadlines.qnt",
-        "formal/models/ui/ui_record_display.qnt",
-        "formal/models/ui/ui_security_case_selection.qnt",
-        "formal/models/ui/ui_security_settings_lifetime.qnt",
-        "formal/models/ui/ui_solana_history_recovery.qnt",
-        "formal/models/ui/ui_solana_payment_pending.qnt",
-        "formal/models/ui/ui_submission_controls.qnt",
-        "formal/models/ui/ui_submitted_payment_lifetime.qnt",
-        "formal/models/ui/ui_submitted_payment_recovery.qnt"
-      ],
-      "lexicallyUnmentionedValues": ["complete"],
-      "review": "candidate-only"
-    },
-    {
-      "path": "src/SecurityBounty.tsx",
-      "line": 995,
+      "line": 982,
       "name": "state",
       "kind": "string-union",
       "values": ["complete", "failed", "running", "unavailable"],
@@ -2910,6 +3095,34 @@
     {
       "path": "src/SecurityBounty.tsx",
       "line": 997,
+      "name": "state",
+      "kind": "string-union",
+      "values": ["complete", "failed", "running", "unavailable"],
+      "models": [
+        "formal/models/ui/ui_bounty_payment_parent.qnt",
+        "formal/models/ui/ui_inbox.qnt",
+        "formal/models/ui/ui_intake_handoff.qnt",
+        "formal/models/ui/ui_private_case_revisions.qnt",
+        "formal/models/ui/ui_private_intake.qnt",
+        "formal/models/ui/ui_private_report_identity.qnt",
+        "formal/models/ui/ui_private_report_projection.qnt",
+        "formal/models/ui/ui_private_report_scroll.qnt",
+        "formal/models/ui/ui_record_deadlines.qnt",
+        "formal/models/ui/ui_record_display.qnt",
+        "formal/models/ui/ui_security_case_selection.qnt",
+        "formal/models/ui/ui_security_settings_lifetime.qnt",
+        "formal/models/ui/ui_solana_history_recovery.qnt",
+        "formal/models/ui/ui_solana_payment_pending.qnt",
+        "formal/models/ui/ui_submission_controls.qnt",
+        "formal/models/ui/ui_submitted_payment_lifetime.qnt",
+        "formal/models/ui/ui_submitted_payment_recovery.qnt"
+      ],
+      "lexicallyUnmentionedValues": ["complete"],
+      "review": "candidate-only"
+    },
+    {
+      "path": "src/SecurityBounty.tsx",
+      "line": 999,
       "name": "proposedOutcome",
       "kind": "string-union",
       "values": ["return", "uphold"],
@@ -2937,7 +3150,7 @@
     },
     {
       "path": "src/SecurityBounty.tsx",
-      "line": 1013,
+      "line": 1015,
       "name": "submissionState",
       "kind": "string-union",
       "values": ["claimed", "link-rejected", "verified"],
@@ -2965,7 +3178,7 @@
     },
     {
       "path": "src/SecurityBounty.tsx",
-      "line": 1052,
+      "line": 1054,
       "name": "mode",
       "kind": "string-union",
       "values": [
@@ -3021,7 +3234,7 @@
     },
     {
       "path": "src/SecurityBounty.tsx",
-      "line": 1375,
+      "line": 1377,
       "name": "state",
       "kind": "string-union",
       "values": ["ok", "unavailable"],
@@ -3049,7 +3262,7 @@
     },
     {
       "path": "src/SecurityBounty.tsx",
-      "line": 1650,
+      "line": 1652,
       "name": "decision",
       "kind": "string-union",
       "values": ["forward", "request-information"],

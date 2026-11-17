@@ -1195,6 +1195,19 @@ jobs:
         # any publication on failure.
         run: bun --no-env-file scripts/qualify-security-screening.ts
 
+      - name: Qualify private report routine decisions with the real provider
+        if: steps.release-input.outputs.superseded != 'true' && (inputs.rotate_robinhood_rpc_from || '') == '' && (inputs.rotate_solana_rpc_from || '') == ''
+        timeout-minutes: 6
+        env:
+          SURPLUS_API_KEY: ${{ secrets.SURPLUS_API_KEY }}
+        # Three synthetic reports through the production routine-decision
+        # call (PRD section 8): at most five bounded calls (1 USD each,
+        # 5 USD total) that retry only transient failures; no private reports
+        # or delivery side effects. A wrong answer fails at once, and every
+        # failure logs only its category. This protected main-only job fails
+        # before any publication on failure.
+        run: bun --no-env-file scripts/qualify-security-routine.ts
+
       - name: Require reviewed Pages project
         if: steps.release-input.outputs.superseded != 'true' && (inputs.rotate_robinhood_rpc_from || '') == '' && (inputs.rotate_solana_rpc_from || '') == ''
         env:

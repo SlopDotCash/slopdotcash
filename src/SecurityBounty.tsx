@@ -84,6 +84,7 @@ import {
   isFullAwardSplit,
   programExclusions,
   SECURITY_DEFAULT_EXCLUSIONS,
+  SECURITY_ROUTINE_DECISION_NOTICE,
   type SecurityBountyTerms,
   securityBountySplit,
 } from "./lib/security-bounty.mjs";
@@ -889,6 +890,7 @@ export function SecurityProgramPage({
               </ul>
             </>
           ) : null}
+          <p>{SECURITY_ROUTINE_DECISION_NOTICE}</p>
           <p>
             Do not exploit a production system, move another person's funds,
             reveal keys or cause damage. A local fork or isolated test can show

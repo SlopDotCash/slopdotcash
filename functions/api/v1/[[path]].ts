@@ -62,6 +62,7 @@ import {
 import { securityPaymentDatabase } from "../../../backend/security/payment-database";
 import { readSecurityProgramFunds } from "../../../backend/security/program-funds";
 import { deterministicAnalyzer } from "../../../backend/security/report-analysis";
+import { routineMode } from "../../../backend/security/routine-decisions";
 import { handleSlopbotApi } from "../../../backend/slopbot/summary";
 import { handleHistoricalValueImport } from "../../../backend/slopbot/value-import";
 import {
@@ -402,6 +403,10 @@ export async function onRequest(context: PagesContext): Promise<Response> {
     waitUntil,
     intake: privateIntake(env),
     repositoryAccess,
+    routineDecisions: {
+      mode: routineMode(env.SECURITY_ROUTINE_DECISIONS),
+      adminGithubIds,
+    },
   });
   if (securityResponse !== null) return securityResponse;
   const evidenceResponse = await evidence.handle(request);
