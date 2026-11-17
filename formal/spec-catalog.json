@@ -24116,7 +24116,7 @@
     },
     {
       "path": "spec/settlement/escrow.md",
-      "sha256": "1ee06bdc433c6d206c347a9b5215fde5131a4d13cde9892e8af43a63b3985f8f",
+      "sha256": "2bddaa0c8f11bdaec3f0ff90176868944507f3b1db3541506d2972cca1d93c3d",
       "module": "settlement__escrow",
       "stories": [
         {
@@ -24137,11 +24137,11 @@
         },
         {
           "heading": "Story: Pay each award once to the binding the contract selects",
-          "line": 434
+          "line": 433
         },
         {
           "heading": "Story: Every base unit is accounted for",
-          "line": 489
+          "line": 488
         }
       ],
       "rules": [
@@ -24305,7 +24305,7 @@
         },
         {
           "heading": "Story: Pay each award once to the binding the contract selects / Anyone may pay a matured award; net goes to the destination and the fee accrues",
-          "line": 436,
+          "line": 435,
           "definitions": [
             "PayableBinding",
             "noAward",
@@ -24319,7 +24319,7 @@
         },
         {
           "heading": "Story: Pay each award once to the binding the contract selects / An identity-authority rotation observed at the factory changes only who signs next",
-          "line": 475,
+          "line": 474,
           "definitions": [
             "canObserveAuthority",
             "observeAuthority"
@@ -24327,7 +24327,7 @@
         },
         {
           "heading": "Story: Every base unit is accounted for / Gross buckets conserve every deposit and the fee buckets conserve every fee",
-          "line": 491,
+          "line": 490,
           "definitions": [
             "alwaysValidCounters",
             "alwaysGrossConserved",
@@ -24338,7 +24338,7 @@
         },
         {
           "heading": "Story: Every base unit is accounted for / Every award and withdrawal keeps its exact fee and immutable identity",
-          "line": 518,
+          "line": 517,
           "definitions": [
             "validAward",
             "alwaysAwards",
@@ -24350,7 +24350,7 @@
         },
         {
           "heading": "Story: Every base unit is accounted for / Identity, history and cumulative counters never go backwards",
-          "line": 545,
+          "line": 544,
           "definitions": [
             "stepIdentityFixed",
             "sameAwardTerms",
@@ -24370,7 +24370,7 @@
         },
         {
           "heading": "Story: Every base unit is accounted for / Pool deposits, withdrawals, leaves after opt-out, releases and fee claims are reachable",
-          "line": 592,
+          "line": 591,
           "definitions": [
             "sometimesDepositWhilePoolPending",
             "sometimesWithdrawWhilePoolPending",
@@ -24386,7 +24386,7 @@
         },
         {
           "heading": "Story: Every base unit is accounted for / Simulation samples reach the November 2026 window",
-          "line": 609,
+          "line": 608,
           "definitions": [
             "evValues",
             "solanaAsset",
@@ -24448,7 +24448,7 @@
         },
         {
           "target": "./bindingAuthority.md",
-          "line": 480
+          "line": 479
         }
       ]
     },
