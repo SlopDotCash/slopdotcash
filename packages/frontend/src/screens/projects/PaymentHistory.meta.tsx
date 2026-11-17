@@ -5,13 +5,18 @@ import type { PaymentHistoryProps } from "./PaymentHistory.tsx";
 
 const slop = { id: "slop", slug: "slop", name: "Slop", externalPrize: false };
 
+const listed: PaymentHistoryProps["cycles"] = { status: "Current", value: cycles };
+
+const noCycles: PaymentHistoryProps["cycles"] = { status: "Empty", value: [] };
+
 export const meta: ComponentMeta<PaymentHistoryProps> = {
-  args: { project: slop, cycles, direct: transfers, nowMs: Date.parse("2026-11-17T12:00:00.000Z") },
+  args: { project: slop, cycles: listed, direct: transfers, nowMs: Date.parse("2026-11-17T12:00:00.000Z") },
   examples: {
     DirectFailed: { direct: failedTransfers },
     Prize: { project: { ...slop, externalPrize: true }, direct: noTransfers },
-    Nothing: { cycles: [], direct: noTransfers },
-    DirectLoading: { cycles: [], direct: { status: "Loading", value: undefined } },
+    Nothing: { cycles: noCycles, direct: noTransfers },
+    CyclesFailed: { cycles: { status: "Unavailable", value: undefined }, direct: noTransfers },
+    DirectLoading: { cycles: noCycles, direct: { status: "Loading", value: undefined } },
   },
   play: {
     // spec/frontend/projections.md, "Ordinary public payment rows require finalized evidence and a public account"
@@ -28,6 +33,11 @@ export const meta: ComponentMeta<PaymentHistoryProps> = {
     // spec/frontend/projections.md, "Award, funding and settlement status are independent facts"
     Nothing: async () => {
       await expect(screen.queryByRole("heading", { name: "Payment history" })).toBeNull();
+    },
+    // spec/frontend/projections.md, "Award, funding and settlement status are independent facts"
+    CyclesFailed: async () => {
+      await expect([screen.getByText("Cycle history unavailable."), screen.queryByText("No cycles have closed yet.")]).toEqual([expect.anything(), null]);
+      await expect(screen.getByRole("button", { name: "Retry cycle history" })).toBeTruthy();
     },
     // spec/frontend/paymentHistory.md, "Rows publish only after the final page, and every inconsistency is an error"
     DirectLoading: async () => {

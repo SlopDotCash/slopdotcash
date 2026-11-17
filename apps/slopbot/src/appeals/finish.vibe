@@ -1,0 +1,74 @@
+// spec/slopbot/appeals.md, "A verified maintainer reopen of the revision resolves the appeal as upheld, even after escalation"; spec/slopbot/appeals.md, "Each stage comment is posted once and a resolution retry resumes its recorded writes"; spec/slopbot/closeAttempt.md, "Slopbot reopens its own close, read fresh, after a maintainer reopen or an upheld appeal"; spec/slopbot/closure.md, "An upheld appeal or a maintainer reopen removes the decision's finding label"; spec/slopbot/maintainerHold.md, "A confirmed maintainer reopen or an upheld appeal removes the uncertain label"; spec/points/penalties.md, "A reversal restores the debit once and covers only its own revision or an earlier debit"
+import { canReopenOwnClose } from "../../gen/slopbot__closeAttempt.effect.vibe"
+import { reopenItem } from "../closeAttempt/github.vibe"
+import { reversePenalty } from "../closeAttempt/penalty.vibe"
+import { type ReopenSubject, observeCurrent, observeDisputes } from "../closeAttempt/reopen.vibe"
+import { attemptState, confirmedAttempt, openAttempt, restoredAttempt, sendAttempt, storedOf } from "../closeAttempt/store.vibe"
+import { categoryLabel, removeLabel, uncertainLabel } from "../publish/labels.vibe"
+import { requireScope } from "../publish/scope.vibe"
+import { publishStage } from "./publication.vibe"
+import { type AppealSession, AppealFailed, hasLabel, itemOf, reversalOnly } from "./session.vibe"
+import { type Covered, appealedFinding, loadAppeal, revisionOfKey } from "./store.vibe"
+
+export function reopenSubjectOf(session: AppealSession, revision: string): ReopenSubject {
+  const { job } = session
+  return {
+    ref: session.ref,
+    projectId: session.projectId,
+    installationId: job.installationId,
+    item: { repositoryId: job.repositoryId, itemKind: job.itemKind, number: job.number },
+    itemNodeId: session.current.issue.node_id,
+    revision,
+    appUserId: session.settings.appUserId,
+  }
+}
+
+effect function reopenOwnClose(session: AppealSession, revision: string) {
+  if (session.current.issue.state !== "closed") return false
+  const subject = reopenSubjectOf(session, revision)
+  const row = try confirmedAttempt(subject.itemNodeId, revision)
+  const stored = row === undefined ? undefined : storedOf(row)
+  if (row === undefined || stored === undefined) return false
+  const record = try openAttempt((try restoredAttempt(row, stored, false)).state)
+  try observeDisputes(record)
+  try observeCurrent(record, subject, session.current)
+  if (!canReopenOwnClose(try attemptState(record))) return false
+  try requireScope(itemOf(session), "security")
+  try reopenItem(subject.item)
+  try sendAttempt(record, { type: "reopenOwnClose" })
+  return true
+}
+
+effect function undoFinding(session: AppealSession, covered: Covered) {
+  const item = itemOf(session)
+  const finding = try appealedFinding(item.itemNodeId, covered)
+  const currentRevision = covered.revision === session.current.revision && finding !== undefined
+  if (currentRevision) try reopenOwnClose(session, covered.revision)
+  if (finding !== undefined) {
+    for (const label of [categoryLabel(finding), uncertainLabel]) {
+      if (label !== uncertainLabel && !hasLabel(session, label)) continue
+      try removeLabel(item, label)
+    }
+  }
+  return currentRevision
+}
+
+export effect function finishAppeal(session: AppealSession, appealKey: string) {
+  const loaded = try loadAppeal(appealKey)
+  const { row } = loaded
+  if (row === undefined || row.resolution === null) throw new AppealFailed({ reason: "Appeal is missing" })
+  const covered: Covered = { revision: revisionOfKey(appealKey), occurredAt: row.opened_at }
+  const decided = `appeal ${row.resolution} by the ${row.resolved_by ?? "maintainer"}`
+  const itemNodeId = itemOf(session).itemNodeId
+  if (row.resolution === "upheld" && reversalOnly(session)) try reversePenalty(itemNodeId, "appeal_upheld", covered)
+  else if (row.resolution === "upheld") {
+    const currentRevision = try undoFinding(session, covered)
+    try reversePenalty(itemNodeId, "appeal_upheld", covered)
+    if (!currentRevision) {
+      try publishStage(session, appealKey, "resolution")
+      return `${decided}; newer item state kept`
+    }
+  }
+  try publishStage(session, appealKey, "resolution")
+  return decided
+}

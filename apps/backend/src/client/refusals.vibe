@@ -691,6 +691,13 @@ export const getReferralsProjects = {
   },
 } as const
 
+export const getMergeActivity = {
+  internalError: { status: 500, error: "internal_error", message: "Internal error", headers: jsonPrivateNoStore },
+  otherMethods: {
+    methodNotAllowed: { status: 405, error: "method_not_allowed", headers: jsonPublicMaxAge300 },
+  },
+} as const
+
 export const getNotificationsEmail = {
   ...withNotSignedIn,
   otherMethods: {

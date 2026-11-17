@@ -1,7 +1,6 @@
 // spec/points/disputes.md, "Only the recipient of the current revision files, and a repeated filing returns the first"
 
 const jsonPrivateNoStore = { "cache-control": "private, no-store", "content-type": "application/json; charset=utf-8", "referrer-policy": "no-referrer", "x-content-type-options": "nosniff" } as const
-const jsonPublicMaxAge300 = { "cache-control": "public, max-age=300", "content-type": "application/json; charset=utf-8", "referrer-policy": "no-referrer", "x-content-type-options": "nosniff" } as const
 const jsonNoStore = { "cache-control": "no-store", "content-type": "application/json; charset=utf-8", "referrer-policy": "no-referrer", "x-content-type-options": "nosniff" } as const
 
 const withOriginForbiddenV2 = {
@@ -35,13 +34,6 @@ const withRateLimited = {
 
 const withNotFoundPointsDisputeNotFound = {
   notFoundPointsDisputeNotFound: { status: 404, error: "not_found", message: "Points dispute not found.", headers: jsonPrivateNoStore },
-} as const
-
-export const getMergeActivity = {
-  ...withInternalError,
-  otherMethods: {
-    methodNotAllowed: { status: 405, error: "method_not_allowed", headers: jsonPublicMaxAge300 },
-  },
 } as const
 
 export const getPointsDisputes = {

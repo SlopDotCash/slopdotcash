@@ -1,56 +1,33 @@
 // spec/frontend/directBountyPrompt.md, "Storage keeps the other leg and never grants settlement authority"; spec/frontend/solanaBountyPrompt.md, "The wallet sends only a saved, unexpired plan"; spec/frontend/walletAttempt.md, "Recovery and settlement use the saved record of the signed-in account only"
-import { base58Decode, base64Decode, decodeTransaction, isSignature } from "@repo/platform/chain/solana";
+import { base58Decode, base64Decode, decodeTransaction } from "@repo/platform/chain/solana";
+import { Result, Schema } from "effect";
 import type { Attempt } from "../../../gen/frontend__walletAttempt.ts";
 import { webStorage } from "../../platform/webStorage.ts";
 import type { SlotStorage } from "../core/slots.ts";
+import { type Saved, directAttempt, savedOf, solanaAttempt as savedSolanaAttempt } from "./attempts.ts";
+import { DirectTransaction, EvmHash, HistorySignature, Journal, type JournalEntry, Nonce, Quantity, SolanaRecord, SolanaSignature } from "./records.schema.ts";
+
+export type { DirectTransaction, HistorySignature, Journal, JournalEntry, SolanaRecord } from "./records.schema.ts";
 
 export interface ListedStorage extends SlotStorage {
   readonly length: number;
   key(index: number): string | null;
 }
 
-export interface DirectTransaction {
-  readonly from: string;
-  readonly to: string;
-  readonly value: string;
-  readonly data: string;
-  readonly chainId: string;
-  readonly nonce: string;
-}
-
-export interface JournalEntry {
-  readonly transaction: DirectTransaction;
-  readonly hash: string | null;
-  readonly candidate?: string;
-  readonly requestId?: string;
-}
-
-export type Journal = Readonly<Record<string, JournalEntry>>;
-
 export type JournalRead = { readonly kind: "read"; readonly journal: Journal } | { readonly kind: "unreadable" };
-
-export interface SolanaRecord {
-  readonly attemptId?: string;
-  readonly transaction: string;
-  readonly signature: string | null;
-  readonly candidate?: string;
-}
 
 export type SolanaRead = { readonly kind: "empty" } | { readonly kind: "read"; readonly record: SolanaRecord } | { readonly kind: "unreadable" };
 
-export interface HistorySignature {
-  readonly message: string;
-  readonly signature: string;
-}
-
 export const preparedBytes = "prepared-transaction";
 
-const evmHash = /^0x[a-f0-9]{64}$/iu;
-const anyUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/iu;
-const uuidV4 = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu;
-const quantity = /^(0x[0-9a-f]+|0|[1-9][0-9]*)$/iu;
 const legacyPrefix = "legacy-";
 const empty: Attempt = { identity: "", bytesId: "", hash: "", candidate: "" };
+const decodeDirect = Schema.decodeUnknownResult(DirectTransaction);
+const decodeJournal = Schema.decodeUnknownResult(Journal);
+const decodeSolanaRecord = Schema.decodeUnknownResult(SolanaRecord);
+const decodeHistory = Schema.decodeUnknownResult(HistorySignature);
+const isQuantity = Schema.is(Quantity);
+const isNonce = Schema.is(Nonce);
 
 /** @throws {never} */
 export function bountyStorage(): ListedStorage | undefined {
@@ -77,44 +54,24 @@ export function sameAddress(left: string, right: string): boolean {
   return left.toLowerCase() === right.toLowerCase();
 }
 
-/** @throws {never} */
-export function isEvmHash(text: string): boolean {
-  return evmHash.test(text);
-}
+export const isEvmHash = Schema.is(EvmHash);
 
-/** @throws {never} */
-export function isSolanaSignature(text: string): boolean {
-  return text.length <= 88 && isSignature(text);
-}
+export const isSolanaSignature = Schema.is(SolanaSignature);
 
 /** @throws {never} */
 export function quantityOf(text: string): bigint | undefined {
-  if (!quantity.test(text)) return undefined;
-  try {
-    return BigInt(text);
-  } catch {
-    return undefined;
-  }
+  return isQuantity(text) ? BigInt(text) : undefined;
 }
 
 /** @throws {never} */
 export function nonceNumber(nonce: string): number | undefined {
-  const value = quantityOf(nonce);
-  return value === undefined || value > BigInt(Number.MAX_SAFE_INTEGER) ? undefined : Number(value);
-}
-
-function record(value: unknown): Readonly<Record<string, unknown>> | undefined {
-  return typeof value === "object" && value !== null && !Array.isArray(value) ? (value as Readonly<Record<string, unknown>>) : undefined;
+  return isNonce(nonce) ? Number(BigInt(nonce)) : undefined;
 }
 
 /** @throws {never} */
 export function transactionOf(value: unknown): DirectTransaction | undefined {
-  const found = record(value);
-  if (found === undefined) return undefined;
-  const { from, to, value: amount, data, chainId, nonce } = found;
-  if (typeof from !== "string" || typeof to !== "string" || typeof amount !== "string" || typeof data !== "string" || typeof chainId !== "string" || typeof nonce !== "string") return undefined;
-  if (quantityOf(chainId) === undefined || nonceNumber(nonce) === undefined) return undefined;
-  return { from, to, value: amount, data, chainId, nonce };
+  const decoded = decodeDirect(value);
+  return Result.isSuccess(decoded) ? decoded.success : undefined;
 }
 
 /** @throws {never} */
@@ -123,36 +80,23 @@ export function transactionBytes(transaction: DirectTransaction): string {
   return JSON.stringify({ from, to, value, data, chainId, nonce });
 }
 
-function journalEntryOf(nonce: string, value: unknown, payer: string): JournalEntry | undefined {
-  const found = record(value);
-  if (found === undefined) return undefined;
-  const transaction = transactionOf(found.transaction);
-  const { hash, candidate, requestId } = found;
-  if (transaction === undefined || transaction.nonce !== nonce || !sameAddress(transaction.from, payer)) return undefined;
-  if (hash !== null && (typeof hash !== "string" || !evmHash.test(hash))) return undefined;
-  if (candidate !== undefined && (typeof candidate !== "string" || !evmHash.test(candidate))) return undefined;
-  if (requestId !== undefined && (typeof requestId !== "string" || !anyUuid.test(requestId))) return undefined;
-  return { transaction, hash, ...(candidate === undefined ? {} : { candidate }), ...(requestId === undefined ? {} : { requestId }) };
+function parsed(text: string): unknown {
+  try {
+    return JSON.parse(text);
+  } catch {
+    return undefined;
+  }
+}
+
+function payersJournal(journal: Journal, payer: string): boolean {
+  return Object.entries(journal).every(([nonce, entry]) => entry.transaction.nonce === nonce && sameAddress(entry.transaction.from, payer));
 }
 
 /** @throws {never} */
 export function readJournal(text: string | null, payer: string): JournalRead {
   if (text === null) return { kind: "read", journal: {} };
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(text);
-  } catch {
-    return { kind: "unreadable" };
-  }
-  const found = record(parsed);
-  if (found === undefined) return { kind: "unreadable" };
-  const journal: Record<string, JournalEntry> = {};
-  for (const [nonce, value] of Object.entries(found)) {
-    const entry = journalEntryOf(nonce, value, payer);
-    if (entry === undefined) return { kind: "unreadable" };
-    journal[nonce] = entry;
-  }
-  return { kind: "read", journal };
+  const decoded = decodeJournal(parsed(text));
+  return Result.isSuccess(decoded) && payersJournal(decoded.success, payer) ? { kind: "read", journal: decoded.success } : { kind: "unreadable" };
 }
 
 /** @throws {never} */
@@ -165,82 +109,59 @@ export function legacyIdentity(slot: string): string {
   return `${legacyPrefix}${slot}`;
 }
 
-/** @throws {never} */
-export function storedIdentity(identity: string): string | undefined {
-  return identity === "" || identity.startsWith(legacyPrefix) ? undefined : identity;
+function savedEntry(entry: JournalEntry): Saved {
+  return { identity: entry.requestId ?? "", hash: entry.hash ?? "", candidate: entry.candidate ?? "" };
 }
 
 /** @throws {never} */
 export function entryAttempt(entry: JournalEntry | undefined): Attempt {
-  if (entry === undefined) return empty;
-  const bytesId = transactionBytes(entry.transaction);
-  if (entry.requestId !== undefined) return { identity: entry.requestId, bytesId, hash: entry.hash ?? "", candidate: entry.candidate ?? "" };
-  const legacy = entry.candidate ?? entry.hash ?? "";
-  if (legacy !== "") return { identity: "", bytesId, hash: entry.hash ?? "", candidate: legacy };
-  return { identity: legacyIdentity(entry.transaction.nonce), bytesId, hash: "", candidate: "" };
+  return entry === undefined ? empty : directAttempt(savedEntry(entry), transactionBytes(entry.transaction), legacyIdentity(entry.transaction.nonce));
 }
 
 /** @throws {never} */
 export function attemptEntry(attempt: Attempt, transaction: DirectTransaction): JournalEntry {
-  const requestId = storedIdentity(attempt.identity);
+  const saved = savedOf(attempt, legacyIdentity(transaction.nonce));
   return {
     transaction,
-    hash: attempt.hash === "" ? null : attempt.hash,
-    ...(attempt.candidate === "" ? {} : { candidate: attempt.candidate }),
-    ...(requestId === undefined ? {} : { requestId }),
+    hash: saved.hash === "" ? null : saved.hash,
+    ...(saved.candidate === "" ? {} : { candidate: saved.candidate }),
+    ...(saved.identity === "" ? {} : { requestId: saved.identity }),
   };
 }
 
 /** @throws {never} */
 export function readSolanaRecord(text: string | null, transaction: string): SolanaRead {
   if (text === null) return { kind: "empty" };
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(text);
-  } catch {
-    return { kind: "unreadable" };
-  }
-  const found = record(parsed);
-  if (found === undefined) return { kind: "unreadable" };
-  const { attemptId, transaction: saved, signature, candidate } = found;
-  if (attemptId !== undefined && (typeof attemptId !== "string" || !uuidV4.test(attemptId))) return { kind: "unreadable" };
-  if (saved !== transaction) return { kind: "unreadable" };
-  if (signature !== null && (typeof signature !== "string" || !isSolanaSignature(signature))) return { kind: "unreadable" };
-  if (candidate !== undefined && (typeof candidate !== "string" || !isSolanaSignature(candidate))) return { kind: "unreadable" };
-  return { kind: "read", record: { ...(attemptId === undefined ? {} : { attemptId }), transaction, signature, ...(candidate === undefined ? {} : { candidate }) } };
+  const decoded = decodeSolanaRecord(parsed(text));
+  return Result.isSuccess(decoded) && decoded.success.transaction === transaction ? { kind: "read", record: decoded.success } : { kind: "unreadable" };
 }
 
 /** @throws {never} */
 export function solanaAttempt(found: SolanaRecord, messageId: string): Attempt {
-  return { identity: found.attemptId ?? legacyIdentity(messageId), bytesId: preparedBytes, hash: found.signature ?? "", candidate: found.candidate ?? "" };
+  return savedSolanaAttempt({ identity: found.attemptId ?? "", hash: found.signature ?? "", candidate: found.candidate ?? "" }, preparedBytes, legacyIdentity(messageId));
 }
 
 /** @throws {never} */
-export function attemptSolanaRecord(attempt: Attempt, transaction: string): SolanaRecord {
-  const attemptId = storedIdentity(attempt.identity);
+export function attemptSolanaRecord(attempt: Attempt, transaction: string, messageId: string): SolanaRecord {
+  const saved = savedOf(attempt, legacyIdentity(messageId));
   return {
-    ...(attemptId === undefined ? {} : { attemptId }),
+    ...(saved.identity === "" ? {} : { attemptId: saved.identity }),
     transaction,
-    signature: attempt.hash === "" ? null : attempt.hash,
-    ...(attempt.candidate === "" ? {} : { candidate: attempt.candidate }),
+    signature: saved.hash === "" ? null : saved.hash,
+    ...(saved.candidate === "" ? {} : { candidate: saved.candidate }),
   };
 }
 
 /** @throws {never} */
 export function readHistory(text: string | null): Readonly<Record<string, HistorySignature>> {
-  if (text === null) return {};
-  try {
-    const found = record(JSON.parse(text));
-    if (found === undefined) return {};
-    const kept: Record<string, HistorySignature> = {};
-    for (const [messageId, value] of Object.entries(found)) {
-      const entry = record(value);
-      if (entry !== undefined && typeof entry.message === "string" && typeof entry.signature === "string") kept[messageId] = { message: entry.message, signature: entry.signature };
-    }
-    return kept;
-  } catch {
-    return {};
+  const found = parsedRecord(text);
+  if (found === undefined) return {};
+  const kept: Record<string, HistorySignature> = {};
+  for (const [messageId, value] of Object.entries(found)) {
+    const entry = decodeHistory(value);
+    if (Result.isSuccess(entry)) kept[messageId] = entry.success;
   }
+  return kept;
 }
 
 /** @throws {never} */
@@ -251,12 +172,8 @@ export function signatureBytes(text: string): Uint8Array | undefined {
 
 /** @throws {never} */
 export function transactionOfBytes(bytes: string): DirectTransaction | undefined {
-  try {
-    const parsed = transactionOf(JSON.parse(bytes));
-    return parsed !== undefined && transactionBytes(parsed) === bytes ? parsed : undefined;
-  } catch {
-    return undefined;
-  }
+  const found = transactionOf(parsed(bytes));
+  return found !== undefined && transactionBytes(found) === bytes ? found : undefined;
 }
 
 /** @throws {never} */
@@ -278,10 +195,6 @@ export function payerMessage(transaction: string, payer: string): { readonly wir
 
 /** @throws {never} */
 export function parsedRecord(text: string | null): Readonly<Record<string, unknown>> | undefined {
-  if (text === null) return undefined;
-  try {
-    return record(JSON.parse(text));
-  } catch {
-    return undefined;
-  }
+  const value = text === null ? undefined : parsed(text);
+  return typeof value === "object" && value !== null && !Array.isArray(value) ? (value as Readonly<Record<string, unknown>>) : undefined;
 }

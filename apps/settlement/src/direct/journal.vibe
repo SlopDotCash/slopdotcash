@@ -8,7 +8,7 @@ import type { Network } from "../../gen/fees__runtime.ts"
 import type { Amount } from "../../gen/settlement__money.ts"
 import { parseBaseUnits } from "../kernels/amounts.ts"
 import { DirectIntent, PaymentAsset, type PaymentTransaction, PaymentWallet } from "../client/direct.vibe"
-import type { DirectAsset, DirectTransfer, EvmDirectRail, EvmTransactionRequest } from "./evm.vibe"
+import { type DirectAsset, type DirectTransfer, type EvmDirectRail, type EvmTransactionRequest, evmModel } from "./evm.vibe"
 
 module limbs {
   import type { Amount } from "../../gen/settlement__money.ts"
@@ -235,6 +235,10 @@ function solana(stored: DirectIntent) {
   return stored.chain === "solana"
 }
 
+export function directModel(stored: DirectIntent): Network | undefined {
+  return solana(stored) ? "Solana" : evmModel(stored.network)
+}
+
 export function intentModel(stored: DirectIntent, generation: number, claims: Claims): Intent {
   const anchors = stored.afterBlocks ?? [stored.afterBlock, stored.afterBlock]
   return {
@@ -255,18 +259,17 @@ const laneOfLeg: ReadonlyArray<Lane> = ["Researcher", "Fee"]
 
 const retirementKinds: Readonly<Record<string, Retirement["kind"]>> = { "evm-nonce-retired": "EvmRetired", "consent-renewal": "SameRequest", "solana-expired": "SolanaRetired" }
 
-function retirementModel(revision: Revision): Retirement {
-  const { retirement } = revision
-  const kind = retirementKinds[retirement.kind] ?? "Unverified"
+export function retirementOf(stored: StoredRetirement, generation: number): Retirement {
+  const kind = retirementKinds[stored.kind] ?? "Unverified"
   return {
     kind,
-    generation: revision.generation - 1,
-    lane: kind === "SolanaRetired" ? "Both" : laneOfLeg[retirement.legIndex ?? 0] ?? "Researcher",
-    nonce: kind === "EvmRetired" ? wholeNumber(retirement.nonce) : -1,
-    message: retirement.message ?? "",
-    coveredMessages: [...(retirement.coveredMessages ?? [])],
-    height: wholeNumber(retirement.blockNumber ?? "0"),
-    observation: retirement.transactionId ?? "",
+    generation,
+    lane: kind === "SolanaRetired" ? "Both" : laneOfLeg[stored.legIndex ?? 0] ?? "Researcher",
+    nonce: kind === "EvmRetired" ? wholeNumber(stored.nonce) : -1,
+    message: stored.message ?? "",
+    coveredMessages: [...(stored.coveredMessages ?? [])],
+    height: wholeNumber(stored.blockNumber ?? "0"),
+    observation: stored.transactionId ?? "",
     certified: kind !== "Unverified",
     lowerSettled: true,
   }
@@ -307,7 +310,7 @@ export function stateOf(record: Journal, facts: Facts, claims: Claims) {
   const intents = [record.original, ...record.revisions.map((revision) => revision.intent)]
   const priorIntents: ArchivedIntent[] = record.revisions.flatMap((revision) => {
     const before = intents[revision.generation - 1]
-    return before === undefined ? [] : [{ intent: intentModel(before, revision.generation - 1, claims), retirement: retirementModel(revision) }]
+    return before === undefined ? [] : [{ intent: intentModel(before, revision.generation - 1, claims), retirement: retirementOf(revision.retirement, revision.generation - 1) }]
   })
   const intent = stored === undefined ? noIntent : intentModel(stored, generationOf(record), claims)
   const receipt = (legIndex: number) => {

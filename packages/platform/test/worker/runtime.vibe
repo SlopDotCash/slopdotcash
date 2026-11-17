@@ -1,4 +1,4 @@
-// spec/frontend/requests.md, "Story: Read current data without losing the last good result"; spec/operations/paymentRun.md, "Each step of a payments run fails alone and the run reports every failure at its end"; spec/security/enforcement.md, "Project restrictions, admission clearance and reinstatement"
+// spec/frontend/requests.md, "Story: Read current data without losing the last good result"; spec/operations/paymentRun.md, "Each step of a payments run fails alone and the run reports every failure at its end"; spec/security/enforcement.md, "A moderator quarantines a clear project or bans it, and decides a service ban"
 import type { D1Database, DurableObjectNamespace, DurableObjectState, Fetcher, ScheduledController } from "../../src/bindings.ts"
 import { isoAt } from "../../src/clock.vibe"
 import { sha256Hex, webCrypto } from "../../src/crypto.vibe"

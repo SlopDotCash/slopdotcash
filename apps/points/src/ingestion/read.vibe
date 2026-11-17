@@ -211,7 +211,7 @@ export function ingestion(options: TransportOptions = {}) {
         validator = attempt.validator
         const hints = rateLimitHints(answer.headers, try Clock.currentTimeMillis)
         try advanced(machine)
-        const state = try stepped(machine, { type: "respond", x: { status: answer.status, primaryDelay: hints.primaryDelay, retryAfter: hints.retryAfter } })
+        const state = try stepped(machine, { type: "respond", x: { status: answer.status, primaryDelay: hints.primaryDelay, retryAfter: hints.retryAfter, secondaryMessage: false } })
         if (state.phase === "Checkpointed") throw transportError(request, checkpointMessage)
         if (state.phase === "Returned") {
           try retain(key, identity, answer)

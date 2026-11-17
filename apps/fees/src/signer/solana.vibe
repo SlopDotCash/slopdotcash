@@ -6,6 +6,8 @@ import { type Runtime, conversionSigns, transactionCeilingOf } from "../../gen/f
 import type { Facts } from "../journal/store.vibe"
 import { type JupiterRefused, type JupiterSettings, type JupiterUnavailable, inputMintOf, jupiterQuote, signedMinimum, swapTransaction } from "../jupiter/quote.vibe"
 import { checkRouteSimulation, reviewRouteAccounts } from "../jupiter/review.vibe"
+import type { ClaimRefused } from "../claims/evm.vibe"
+import { solanaClaimPrepared } from "../claims/solana.vibe"
 import { wrapNativeRoute } from "../jupiter/nativeWrap.vibe"
 import type { NativeLimits } from "../runtime/config.vibe"
 import { jupiter } from "../runtime/pins.ts"
@@ -36,8 +38,6 @@ export interface SolanaWalletOptions {
 export interface SolanaReviewed extends SolanaPrepared {
   readonly unsigned: Uint8Array
   readonly messageOffset: number
-  readonly expiresAt: number
-  readonly minimumOutput: bigint
 }
 
 export interface SolanaSent extends SolanaSigned {
@@ -46,12 +46,13 @@ export interface SolanaSent extends SolanaSigned {
 
 const allowedPrograms: ReadonlySet<string> = new Set([computeBudgetProgram, ASSOCIATED_TOKEN_PROGRAM, jupiter.program])
 
-type Unprepared = SignRefused | SolanaRefused | RpcFailure | JupiterUnavailable | JupiterRefused
+type Unprepared = SignRefused | SolanaRefused | ClaimRefused | RpcFailure | JupiterUnavailable | JupiterRefused
 
 function refusalOf(error: Unprepared): SignRefused {
   switch (error._tag) {
     case "SignRefused": return error
     case "SolanaRefused": return new SignRefused({ step: "review", issue: error.issue })
+    case "ClaimRefused": return new SignRefused({ step: "facts", issue: error.issue })
     case "RpcUnavailable": return new SignRefused({ step: "chain", issue: errorText(error.message) })
     case "RpcMalformed": return new SignRefused({ step: "chain", issue: errorText(error.issue) })
     case "RpcRefused": return new SignRefused({ step: "chain", issue: errorText(error.message) })
@@ -154,7 +155,7 @@ effect function jupiterPrepared(options: SolanaWalletOptions, wallet: string, in
 effect function prepared(options: SolanaWalletOptions, wallet: string, intent: SolanaIntent) {
   switch (intent.kind) {
     case "JupiterSwap": return try jupiterPrepared(options, wallet, intent)
-    case "SolanaClaim":
+    case "SolanaClaim": return try solanaClaimPrepared(intent, options)
     case "SolanaDlnOrder": return try deny("activation", `${intent.kind} is not built by the Solana conversion signer`)
   }
 }
@@ -202,14 +203,9 @@ export function solanaFeeWallet(options: SolanaWalletOptions) {
   })
 }
 
-export function isReviewed(prepared: SolanaPrepared): prepared is SolanaReviewed {
-  return "unsigned" in prepared && prepared.unsigned instanceof Uint8Array && "expiresAt" in prepared && typeof prepared.expiresAt === "number"
-    && "minimumOutput" in prepared && typeof prepared.minimumOutput === "bigint" && "messageOffset" in prepared && typeof prepared.messageOffset === "number"
-}
-
 export function solanaModelSend(signed: SolanaSigned, tx: number, nonce: number): SignedSend | undefined {
   const ready = signed.prepared
-  if (!isReviewed(ready) || ready.intent.kind !== "JupiterSwap" || ready.minimumOutput > wideOf(maximumSafeValue)) return undefined
+  if (ready.intent.kind !== "JupiterSwap" || ready.minimumOutput > wideOf(maximumSafeValue)) return undefined
   return {
     kind: "Conversion",
     tx,
@@ -230,5 +226,5 @@ export function solanaReservationFacts(ready: SolanaPrepared): Facts {
 
 export function solanaSignedFacts(signed: SolanaSigned): Facts {
   const ready = signed.prepared
-  return { ...solanaReservationFacts(ready), txId: signed.txId, rawTx: signed.rawTx, ...isReviewed(ready) ? { expiresAt: ready.expiresAt } : {} }
+  return { ...solanaReservationFacts(ready), txId: signed.txId, rawTx: signed.rawTx, expiresAt: ready.expiresAt }
 }

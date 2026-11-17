@@ -240,7 +240,7 @@ const observed = async (w: World): Promise<MonthlySettlement> => {
   if (w.period === undefined) {
     return view({ month: { project: PROJECT, period: 0, phase: "Unopened", skip: "NoSkip", now: Math.floor(w.clock.now() / 1000), automatic: true, settingsSequence: 0, eligibility: w.facts.eligibility, revision: ZERO_REVISION,
       currentRevision: w.facts.current ?? ZERO_REVISION, cap: [0], snapshotDigest: "", exclusions: [], shares: [], proposedShares: [], total: [0], sequence: 0, changes: [], cuts: [], publicCuts: [], notices: [], latestCutAt: 0, frozenAt: 0,
-      trigger: "NoTrigger", frozenSequence: 0, frozenBy: 0, obligations: [], banned: [], underfundedNotice: false, coordinatorRetries: 0 }, escrow: w.chain.escrow, headTime: w.chain.headTime });
+      trigger: "NoTrigger", frozenSequence: 0, frozenBy: 0, obligations: [], banned: [], underfundedNotice: false, coordinatorRetries: 0, pledgedVault: "" }, escrow: w.chain.escrow, headTime: w.chain.headTime });
   }
   const settlement = await run(w, loadSettlement(keyOf(w)));
   const month = settlement.state.month;

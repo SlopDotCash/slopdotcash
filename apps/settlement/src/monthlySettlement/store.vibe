@@ -4,7 +4,7 @@ import { RowMismatch, first, rows, sql } from "@repo/platform/d1"
 import type { Award, Escrow, Network } from "../../gen/settlement__escrow.ts"
 import { initial as unopenedVault } from "../../gen/settlement__escrow.effect.vibe"
 import type { BanExclusion } from "../../gen/settlement__monthly.ts"
-import { type Event, type MonthlySettlement, apply, decodeState } from "../../gen/settlement__monthlySettlement.effect.vibe"
+import { type Event, type MonthlySettlement, apply, decodeState, observation } from "../../gen/settlement__monthlySettlement.effect.vibe"
 import { fromAmount, parseBaseUnits } from "../kernels/amounts.ts"
 import { formatPeriod } from "../kernels/calendar.ts"
 import { type Chain, NETWORKS, SOLANA_NATIVE_ASSET, EVM_NATIVE_ASSET, isNetworkKey } from "../kernels/networks.ts"
@@ -197,10 +197,9 @@ export effect function loadSettlement(key: MonthKey, chain?: ChainView) {
 export type Decided = Extract<Event, { readonly type: "createObligations" | "noteUnderfunded" | "autoFreeze" | "finalize" | "adjust" }>
 
 function monthEventOf(settlement: Settlement, event: Decided) {
-  const observation = { observedAt: settlement.state.headTime, free: settlement.state.escrow.free, earlierUnreserved: amountOf(settlement.earlierUnreserved) }
   switch (event.type) {
-    case "createObligations": return { type: "createObligations" as const, observation: { ...observation, earlierUnreserved: event.earlierUnreserved }, bans: event.bans }
-    case "noteUnderfunded": return { type: "noteUnderfunded" as const, observation: { ...observation, earlierUnreserved: event.earlierUnreserved }, bans: event.bans }
+    case "createObligations": return { type: "createObligations" as const, observation: observation(settlement.state, event.earlierUnreserved), bans: event.bans }
+    case "noteUnderfunded": return { type: "noteUnderfunded" as const, observation: observation(settlement.state, event.earlierUnreserved), bans: event.bans }
     case "autoFreeze": return event
     case "finalize": return event
     case "adjust": return event

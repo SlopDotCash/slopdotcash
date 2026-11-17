@@ -28,6 +28,7 @@ import {
   writable,
 } from "../../gen/settlement__vaultSnapshots.effect.vibe"
 import type { Amount } from "../../gen/settlement__money.ts"
+import { noStoredTotal } from "../../gen/settlement__monthPledges.effect.vibe"
 import { fromAmount, parseBaseUnits } from "../kernels/amounts.ts"
 import { NETWORKS, type NetworkKey, isNetworkKey } from "../kernels/networks.ts"
 import type { ReviewedDeployment } from "./policy.vibe"
@@ -187,6 +188,7 @@ effect function observationOf(row: SnapshotRow, purpose: Purpose, registration: 
       reserved: try balanceOf(row.reserved, "vault_snapshots.reserved"),
     },
     legacyServiceFees: try amountOf(row.total_service_fees, "vault_snapshots.total_service_fees"),
+    monthPledges: { tag: "PledgesNotRead" },
   } satisfies Observation
 }
 
@@ -221,6 +223,8 @@ export effect function stateOf(scope: SnapshotScope, registry: RegistryPart, req
     privateBounty: { registration: registry.privateBounty, observation: try observed(found, "PrivateBounty", registry.privateBounty) },
     requests,
     monthStarts,
+    pledges: [],
+    openPledged: noStoredTotal,
   })
 }
 

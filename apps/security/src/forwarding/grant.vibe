@@ -48,11 +48,15 @@ const flowAad = "slop-intake-flow:v1"
 schema Flow { v: number; s: string; g: string; h: string; n: string; p: string; e: number }
 schema Sealed { v: number; g: string; l: string; t: string; e: number }
 
+export function intakeAppConfigured(env: IntakeAppEnv) {
+  return env.SLOP_PRIVATE_INTAKE_MODE === "on" && (env.GITHUB_INTAKE_APP_CLIENT_ID ?? "") !== "" && (env.GITHUB_INTAKE_APP_CLIENT_SECRET ?? "") !== "" && grantKeyShape.test(env.SLOP_INTAKE_GRANT_KEY ?? "")
+}
+
 export function intakeApp(env: IntakeAppEnv) {
   const clientId = env.GITHUB_INTAKE_APP_CLIENT_ID ?? ""
   const clientSecret = env.GITHUB_INTAKE_APP_CLIENT_SECRET ?? ""
   const grantKey = env.SLOP_INTAKE_GRANT_KEY ?? ""
-  const configured = env.SLOP_PRIVATE_INTAKE_MODE === "on" && clientId !== "" && clientSecret !== "" && grantKeyShape.test(grantKey)
+  const configured = intakeAppConfigured(env)
   return Layer.succeed(IntakeApp, {
     app: configured ? { grantKey: Redacted.make(grantKey), clientId, clientSecret: Redacted.make(clientSecret), webOrigin: githubWeb, apiOrigin: githubApi } : undefined,
   })

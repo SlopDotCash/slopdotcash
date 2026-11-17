@@ -5,8 +5,6 @@ import { base58, base64 } from "@scure/base";
 import { type Hex, keccak256, parseTransaction, recoverTransactionAddress, serializeTransaction, type TransactionSerialized } from "viem";
 import { parseSolanaWire } from "../kernels/solanaWire.ts";
 
-export const jupiterProgram = "JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4";
-
 export interface EvmSend {
   readonly nonce: number;
   readonly gas: bigint;
@@ -58,7 +56,7 @@ export async function verifiedEvmSend(entry: ReservedSend): Promise<SendCheck<Ev
 }
 
 /** @throws {never} */
-export function verifiedSolanaSend(entry: ReservedSend, accountProof: string | null): SendCheck<null> {
+export function verifiedSolanaSend(entry: ReservedSend): SendCheck<null> {
   let raw: Uint8Array;
   try {
     raw = base64.decode(entry.rawTx);
@@ -69,8 +67,6 @@ export function verifiedSolanaSend(entry: ReservedSend, accountProof: string | n
   if (parsed.kind === "failure") return refused("the signed bytes are not a Solana transaction");
   const wire = parsed.value;
   const key = (index: number) => base58.encode(raw.slice(wire.staticStart + index * 32, wire.staticStart + (index + 1) * 32));
-  const programs = wire.instructions.map((instruction) => key(instruction.program));
-  if (!wire.legacy || programs.includes(jupiterProgram) || accountProof !== null) return refused("the send needs its retained Solana account review, which the journal cannot run");
   const message = raw.slice(wire.messageOffset);
   const signature = raw.slice(wire.messageOffset - 64, wire.messageOffset);
   if (wire.signatureCount !== 1 || wire.requiredSignatures !== 1 || key(0) !== entry.wallet) return refused("the send is not signed by the reserved fee wallet alone");

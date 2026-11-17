@@ -5,6 +5,7 @@ import { type Aggregate, type Rows, load, update } from "@repo/platform/stored"
 import { type Notice, Notices } from "@repo/ports/operations"
 import type { Claim, Event, Input, Observation, Phase, Review, RevisionEvidence, Screening } from "../../gen/security__screening.ts"
 import { apply, decodeState } from "../../gen/security__screening.effect.vibe"
+import { noExclusions } from "../../gen/security__terms.effect.vibe"
 import { type Revision, revisionStatements } from "../intake/revision.vibe"
 import { StoredIntake } from "../intake/rows.vibe"
 import { githubNumber } from "../privacy/reads.vibe"
@@ -82,6 +83,8 @@ effect function screeningOf(id: string, [intakeRows, ownerRows, digestRows, noti
     routed: row.routed_at !== null,
     noticeVersions: notices,
     reportDigests: digests,
+    exclusions: noExclusions,
+    matchedLine: 0,
   })
   return { screening, row, reporterGithubId: owner.reporter_github_id } satisfies Loaded
 }

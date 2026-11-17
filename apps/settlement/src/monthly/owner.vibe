@@ -90,16 +90,17 @@ export effect function authorize(projectId: string, actor: Actor, level: Level) 
   const read = try (try Authority).repository({ actorGithubId: actor.githubId, repositoryId })
   if (read.permission === "PermissionUnavailable" || read.installation === "InstallationUnavailable") throw refused(authorityRefusals.githubUnavailable)
   if (read.permission !== "PermissionVerified" || read.installation !== "Installed") throw refused(authorityRefusals.maintainerUnverified)
-  const owner = project.stewardGithubId === actor.githubId
+  const steward = project.stewardGithubId === actor.githubId
+  const owner = steward || read.repositoryAdmin === true
   if (level === "owner" && !owner) throw refused(authorityRefusals.ownerRequired)
   const standing = try (try Restrictions).account(actor.githubId)
-  const fact: AuthorityFact = { actor: Number(actor.githubId), role: owner ? "Steward" : "Writer", banned: standing.banned, revision: project.revision }
+  const fact: AuthorityFact = { actor: Number(actor.githubId), role: steward ? "Steward" : owner ? "RepositoryAdmin" : "Writer", banned: standing.banned, revision: project.revision }
   return { project, facts, manifest, fact, owner } satisfies Authorized
 }
 
 function settingsAuthority(authorized: Authorized): SettingsAuthority {
   const { fact } = authorized
-  return { actor: fact.actor, role: authorized.owner ? "SettingsSteward" : "SettingsWriter", banned: fact.banned, revision: fact.revision }
+  return { actor: fact.actor, role: fact.role === "Steward" ? "SettingsSteward" : fact.role === "RepositoryAdmin" ? "SettingsAdmin" : "SettingsWriter", banned: fact.banned, revision: fact.revision }
 }
 
 export effect function unchanged(project: ProjectView) {

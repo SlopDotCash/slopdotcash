@@ -38,3 +38,4 @@ test/__traces__/
 # Screenshots and traces Vitest keeps of a failed browser test.
 .vitest/
 .vibelang-sidecar-*
+apps/security/sandbox/.build/

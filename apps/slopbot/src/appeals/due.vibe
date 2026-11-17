@@ -1,0 +1,65 @@
+// spec/slopbot/appeals.md, "The scheduled dispatcher escalates an appeal still unresolved seven days after it opened"; spec/slopbot/jobQueue.md, "A due maintainer hold or appeal is sent when due and again after a day without resolution"
+import { canDispatchDue, due } from "../../gen/slopbot__appeals.effect.vibe"
+import { dueJobs, markDispatched } from "../jobs/due.vibe"
+import { type AppealDueJob, send } from "../jobs/job.vibe"
+import { publishStage } from "./publication.vibe"
+import { type AppealHooks, type AppealSettings, appealSession, unreadableItem, unregisteredRepository } from "./session.vibe"
+import { appealPrefix, commitAppeal, loadAppeal } from "./store.vibe"
+
+export function dueJobOf(appealKey: string, job: Omit<AppealDueJob, "kind" | "appealKey" | "deliveryId">): AppealDueJob {
+  return {
+    kind: "appeal_due",
+    appealKey,
+    deliveryId: `appeal-due:${appealKey}`,
+    installationId: job.installationId,
+    repositoryId: job.repositoryId,
+    owner: job.owner,
+    repo: job.repo,
+    itemKind: job.itemKind,
+    number: job.number,
+  }
+}
+
+export effect function dispatchDueAppeals() {
+  const { at, jobs } = try dueJobs("slopbot_appeals")
+  let dispatched = 0
+  for (const { key, job } of jobs) {
+    if (!key.startsWith(appealPrefix)) {
+      try send(job)
+      try markDispatched("slopbot_appeals", key, at)
+      dispatched++
+      continue
+    }
+    if (job.kind !== "appeal_due") continue
+    const loaded = Effect.map(loadAppeal(key), (each) => each.appeal) catch effect (error) => {
+      if (error._tag === "AppealClockBehind") return undefined
+      throw error
+    }
+    if (loaded === undefined || !canDispatchDue(loaded)) continue
+    try send(job)
+    const marked = try commitAppeal(key, {}, () => [{ event: { type: "dispatchDue" }, by: 0, optional: true }])
+    if (marked.applied.length > 0) dispatched++
+  }
+  return dispatched
+}
+
+effect function escalateOverdue(appealKey: string) {
+  const escalated = try commitAppeal(appealKey, {}, () => [{ event: { type: "dispatchDue" }, by: 0, optional: true }, { event: { type: "escalateOverdue" }, by: 0, optional: true }])
+  return escalated.applied.includes("escalateOverdue")
+}
+
+export effect function escalateDueAppeal<E, R>(job: AppealDueJob, settings: AppealSettings, hooks: AppealHooks<E, R>) {
+  if (!job.appealKey.startsWith(appealPrefix)) return try hooks.valueDue(job)
+  const loaded = try loadAppeal(job.appealKey)
+  if (!loaded.appeal.opened || loaded.appeal.resolution !== "Unresolved") return "appeal already resolved"
+  const escalated = loaded.appeal.escalation !== "NotEscalated"
+  if (!escalated && !due(loaded.appeal)) return "appeal not due"
+  const session = try appealSession(job, settings)
+  if (typeof session === "string") {
+    if (!escalated && (session === unregisteredRepository || session === unreadableItem) && (try escalateOverdue(job.appealKey))) return `appeal escalated; ${session}`
+    return escalated ? `appeal escalated; ${session}` : session
+  }
+  if (!escalated && !(try escalateOverdue(job.appealKey))) return "appeal not due"
+  try publishStage(session, job.appealKey, "escalation")
+  return `appeal escalated: ${(try loadAppeal(job.appealKey)).row?.escalation ?? ""}`
+}

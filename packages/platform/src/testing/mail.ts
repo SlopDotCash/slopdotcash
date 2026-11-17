@@ -1,12 +1,12 @@
 // spec/operations/notifications.md, "Only independent provider evidence for the exact attempt and destination settles a send"
-import { onlyTo, type MailSink, type SentMail } from "../testing.ts";
+import { onlyTo, type SentMail } from "../testing.ts";
 
 export interface CapturedMail extends SentMail {
   readonly headers: Readonly<Record<string, string>>;
 }
 
 export interface MailCapture {
-  readonly binding: MailSink;
+  readonly binding: (mail: SentMail) => string | undefined;
   /** @throws {never} */
   messages(): ReadonlyArray<CapturedMail>;
   /** @throws {never} */

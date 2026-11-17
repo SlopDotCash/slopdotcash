@@ -1,0 +1,269 @@
+// spec/slopbot/valueHistory.md, "Each page agrees with the first through sequence and total count"; spec/slopbot/valueHistory.md, "A successor consumes every affected predecessor and its complete source set"; spec/slopbot/valueHistory.md, "The requested source selects one live record in the complete captured lineage"; spec/slopbot/valueHistory.md, "Incomplete, stale and unresolved decisions remain distinct"
+import { sha256Hex } from "@repo/platform/crypto"
+import { isoNow } from "@repo/platform/clock"
+import { D1, type Statement, first, sql } from "@repo/platform/d1"
+import type { Event, History, Observation, Page, Row, Verdict } from "../../../gen/slopbot__valueHistory.ts"
+import { type Machine, apply, canAcceptPage, canAcceptRow, machineOver, rowOf, startHistory } from "../../../gen/slopbot__valueHistory.effect.vibe"
+import { type HistoryRepository, HistoryUnreadable, type JournalRow, type LegacySource, StoredRecord, parsedJson, valueAssessmentKey, verifiedLegacyHead, workUnitHistoryPage } from "./read.vibe"
+
+export interface HistoryTarget {
+  readonly projectId: string
+  readonly repository: HistoryRepository
+  readonly pullRequestNumber: number
+  readonly repositoryNodeId: string
+  readonly pullRequestNodeId: string
+}
+
+export interface CurrentEvidence {
+  readonly sourceDigest: string
+  readonly rubricVersion: string
+  readonly sources: ReadonlyArray<unknown>
+  readonly claims: ReadonlyArray<unknown>
+  readonly observedSources: ReadonlyArray<string>
+  readonly verifiedLegacySources: ReadonlyArray<string>
+  readonly legacy: ReadonlyArray<string>
+  readonly completeEvidence: boolean
+  readonly exactProducer: boolean
+  readonly validAssessment: boolean
+  readonly everyUnitAssessed: boolean
+}
+
+export interface HistoryRead {
+  readonly history: History
+  readonly names: ReadonlyMap<string, number>
+  readonly rows: ReadonlyArray<JournalRow>
+}
+
+export interface CurrentDecision {
+  readonly verdict: Verdict
+  readonly record: JournalRow | undefined
+}
+
+const Binding = Schema.Record(Schema.String, Schema.Unknown)
+
+const WorkUnitRecord = Schema.Struct({
+  schemaVersion: Schema.Literal("slop-work-unit-record:v1"),
+  projectId: Schema.String,
+  sourceDigest: Schema.String,
+  sources: Schema.Array(Binding),
+  claims: Schema.Array(Binding),
+  rubricVersion: Schema.String,
+  supersedes: Schema.Array(Schema.String),
+  legacyPredecessors: Schema.Array(Schema.String),
+  revisionReason: Schema.NullOr(Schema.String),
+})
+
+const digestPattern = /^[a-f0-9]{64}$/u
+
+export type Names = Map<string, number>
+
+function nameId(names: Names, kind: string, name: string) {
+  const key = `${kind}:${name}`
+  const found = names.get(key)
+  if (found !== undefined) return found
+  const next = names.size + 1
+  names.set(key, next)
+  return next
+}
+
+function nameIds(names: Names, kind: string, values: ReadonlyArray<string>) {
+  return [...new Set(values.map((value) => nameId(names, kind, value)))]
+}
+
+export function sourceKey(repositoryNodeId: string, pullRequestNodeId: string) {
+  return `${repositoryNodeId}/${pullRequestNodeId}`
+}
+
+function text(binding: Readonly<Record<string, unknown>>, field: string) {
+  const value = binding[field]
+  return typeof value === "string" && value !== "" ? value : undefined
+}
+
+function sourceKeysOf(sources: ReadonlyArray<Readonly<Record<string, unknown>>>) {
+  const keys = sources.map((source) => {
+    const repository = text(source, "repositoryNodeId")
+    const pull = text(source, "pullRequestNodeId")
+    return repository === undefined || pull === undefined ? undefined : sourceKey(repository, pull)
+  })
+  return keys.every((key) => key !== undefined) ? keys.filter((key) => key !== undefined) : undefined
+}
+
+function claimIdsOf(claims: ReadonlyArray<Readonly<Record<string, unknown>>>) {
+  const ids = claims.map((claim) => text(claim, "id"))
+  return ids.every((id) => id !== undefined) ? ids.filter((id) => id !== undefined) : undefined
+}
+
+const inexact: Row = { sequence: 0, digest: 0, project: 0, sources: [], claims: [], parents: [], legacy: [], sourceDigest: 0, membersDigest: 0, claimsDigest: 0, rubric: 0, revisionReason: false, exactRecord: false }
+
+effect function rowFrom(names: Names, row: JournalRow) {
+  const digest = nameId(names, "record", row.record_digest)
+  const unverified = { ...inexact, sequence: row.sequence, digest }
+  const bytesMatch = digestPattern.test(row.record_digest) && (try sha256Hex(row.record_json)) === row.record_digest && Number.isFinite(Date.parse(row.recorded_at))
+  if (!bytesMatch) return unverified
+  const parsed = parsedJson(row.record_json, "record is not JSON") catch () => undefined
+  const record = Schema.decodeUnknownEffect(WorkUnitRecord)(parsed) catch () => undefined
+  if (record === undefined) return unverified
+  const sources = sourceKeysOf(record.sources)
+  const claims = claimIdsOf(record.claims)
+  const digests = [record.sourceDigest, ...record.supersedes, ...record.legacyPredecessors].every((value) => digestPattern.test(value))
+  if (sources === undefined || claims === undefined || !digests || record.rubricVersion === "") return unverified
+  return {
+    sequence: row.sequence,
+    digest,
+    project: nameId(names, "project", record.projectId),
+    sources: nameIds(names, "source", sources),
+    claims: nameIds(names, "claim", claims),
+    parents: nameIds(names, "record", record.supersedes),
+    legacy: nameIds(names, "legacy", record.legacyPredecessors),
+    sourceDigest: nameId(names, "sourceDigest", record.sourceDigest),
+    membersDigest: nameId(names, "members", JSON.stringify(record.sources)),
+    claimsDigest: nameId(names, "claims", JSON.stringify(record.claims)),
+    rubric: nameId(names, "rubric", record.rubricVersion),
+    revisionReason: record.revisionReason !== null && record.revisionReason.trim() !== "",
+    exactRecord: true,
+  } satisfies Row
+}
+
+export effect function historyReader(project: number, target: number) {
+  const held = try Ref.make(startHistory(project, target))
+  return try machineOver(() => Ref.get(held), (next) => Ref.set(held, next))
+}
+
+export interface HistorySession {
+  readonly machine: Machine.Shape
+  readonly names: Names
+  readonly rows: JournalRow[]
+}
+
+export effect function openHistory(projectId: string, repositoryNodeId: string, pullRequestNodeId: string) {
+  const names: Names = new Map()
+  const machine = try historyReader(nameId(names, "project", projectId), nameId(names, "source", sourceKey(repositoryNodeId, pullRequestNodeId)))
+  return { machine, names, rows: [] } satisfies HistorySession
+}
+
+export function pageEvent(state: History, page: Page): Event {
+  return canAcceptPage(state, page) ? { type: "acceptPage", page } : { type: "rejectPage", page }
+}
+
+export effect function rowEvent(session: HistorySession, row: JournalRow) {
+  const record = try rowFrom(session.names, row)
+  const event: Event = canAcceptRow(try session.machine.get(), record) ? { type: "acceptRow", record } : { type: "rejectRow", record }
+  return event
+}
+
+export effect function readRow(session: HistorySession, row: JournalRow) {
+  const state = try session.machine.send(try rowEvent(session, row))
+  session.rows.push(row)
+  return state
+}
+
+export effect function readHistory(target: HistoryTarget) {
+  const session = try openHistory(target.projectId, target.repositoryNodeId, target.pullRequestNodeId)
+  let after = 0
+  let through: number | null = null
+  let state = try session.machine.get()
+  while (state.phase === "Opening" || state.phase === "BetweenPages") {
+    const found = try workUnitHistoryPage(target.repository, target.pullRequestNumber, after, through)
+    state = try session.machine.send(pageEvent(state, { through: found.throughSequence, total: found.totalRecords, rows: found.records.length, nextAfter: found.nextAfter ?? 0 }))
+    for (const row of found.records) {
+      if (state.phase !== "ReadingPage") break
+      state = try readRow(session, row)
+    }
+    if (state.phase === "ReadingPage") state = try session.machine.send({ type: "closePage" })
+    after = found.nextAfter ?? after
+    through = found.throughSequence
+  }
+  return { history: state, names: session.names, rows: session.rows } satisfies HistoryRead
+}
+
+export function observationOf(read: HistoryRead, evidence: CurrentEvidence): Observation {
+  const names: Names = new Map(read.names)
+  return {
+    sourceDigest: nameId(names, "sourceDigest", evidence.sourceDigest),
+    rubric: nameId(names, "rubric", evidence.rubricVersion),
+    membersDigest: nameId(names, "members", JSON.stringify(evidence.sources)),
+    claimsDigest: nameId(names, "claims", JSON.stringify(evidence.claims)),
+    observedSources: nameIds(names, "source", evidence.observedSources),
+    verifiedLegacySources: nameIds(names, "source", evidence.verifiedLegacySources),
+    legacy: nameIds(names, "legacy", evidence.legacy),
+    completeEvidence: evidence.completeEvidence,
+    exactProducer: evidence.exactProducer,
+    validAssessment: evidence.validAssessment,
+    everyUnitAssessed: evidence.everyUnitAssessed,
+  }
+}
+
+export effect function decideCurrent(read: HistoryRead, evidence: CurrentEvidence) {
+  if (read.history.phase !== "HistoryReady") return { verdict: read.history.outcome, record: undefined } satisfies CurrentDecision
+  const decided = try apply(read.history, { type: "consume", observation: observationOf(read, evidence) })
+  const selected = rowOf(decided, decided.selected)
+  const digest = [...read.names.entries()].find(([name, id]) => id === selected.digest && name.startsWith("record:"))?.[0].slice("record:".length)
+  return { verdict: decided.outcome, record: read.rows.find((row) => row.record_digest === digest) } satisfies CurrentDecision
+}
+
+export interface LegacyHeads {
+  readonly legacy: ReadonlyArray<string>
+  readonly verifiedLegacySources: ReadonlyArray<string>
+}
+
+export effect function legacyHeads(sources: ReadonlyArray<LegacySource>) {
+  const legacy: string[] = []
+  const verifiedLegacySources: string[] = []
+  for (const source of sources) {
+    const head = verifiedLegacyHead(source) catch effect (error) => match (error) { when HistoryUnreadable: null; default: throw error; }
+    if (head === null) continue
+    verifiedLegacySources.push(sourceKey(source.repositoryNodeId, source.pullRequestNodeId))
+    if (head !== undefined) legacy.push(head)
+  }
+  return { legacy, verifiedLegacySources } satisfies LegacyHeads
+}
+
+export error JournalBytesInvalid { issue: string }
+
+export error RecordNotAppended { assessmentKey: string }
+
+const SingleRecord = Schema.Struct({
+  schemaVersion: Schema.Literal("slop-value-record:v1"),
+  projectId: Schema.String,
+  repositoryNodeId: Schema.String,
+  pullRequestNodeId: Schema.String,
+  headSha: Schema.String,
+  sourceDigest: Schema.String,
+  supersedes: Schema.NullOr(Schema.String),
+  rubricVersion: Schema.String,
+  producerRevision: Schema.String,
+})
+
+export interface PublicationBinding {
+  readonly installationId: number
+  readonly projectId: string
+  readonly registryFence: Statement
+  readonly leaseFence?: Statement
+}
+
+export function activeInstallationGuard(installationId: number): Statement {
+  return sql`EXISTS (SELECT 1 FROM slopbot_installations WHERE installation_id = ${installationId} AND removed_at IS NULL AND suspended_at IS NULL)`
+}
+
+function publicationGuard(binding: PublicationBinding | null) {
+  if (binding === null) return sql`1`
+  return sql`${activeInstallationGuard(binding.installationId)} AND (${binding.registryFence}) AND (${binding.leaseFence ?? sql`1`})`
+}
+
+export effect function appendValueRecord(recordJson: string, binding: PublicationBinding | null) {
+  const parsed = parsedJson(recordJson, "record is not JSON") catch effect () => { throw new JournalBytesInvalid({ issue: "record is not JSON" }) }
+  if (JSON.stringify(parsed) !== recordJson) throw new JournalBytesInvalid({ issue: "record bytes are not canonical JSON" })
+  const record = Schema.decodeUnknownEffect(SingleRecord)(parsed) catch effect () => { throw new JournalBytesInvalid({ issue: "record is not a value record" }) }
+  if (binding !== null && binding.projectId !== record.projectId) throw new JournalBytesInvalid({ issue: "value publication requires its live registry fence" })
+  const digest = try sha256Hex(recordJson)
+  const assessmentKey = try valueAssessmentKey(record)
+  const now = try isoNow()
+  try (try D1).run(sql`INSERT INTO slopbot_value_journal
+    (record_digest, assessment_key, repository_node_id, pull_request_node_id, head_sha, source_digest, supersedes, record_json, recorded_at)
+    SELECT ${digest}, ${assessmentKey}, ${record.repositoryNodeId}, ${record.pullRequestNodeId}, ${record.headSha}, ${record.sourceDigest}, ${record.supersedes}, ${recordJson}, ${now}
+    WHERE NOT EXISTS (SELECT 1 FROM slopbot_value_journal WHERE assessment_key = ${assessmentKey}) AND ${publicationGuard(binding)}
+    ON CONFLICT(assessment_key) DO NOTHING`)
+  const stored = try first(StoredRecord, sql`SELECT sequence, record_digest, assessment_key, record_json, recorded_at FROM slopbot_value_journal WHERE assessment_key = ${assessmentKey}`)
+  if (stored === undefined) throw new RecordNotAppended({ assessmentKey })
+  return stored
+}

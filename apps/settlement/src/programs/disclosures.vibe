@@ -1,11 +1,13 @@
 // spec/settlement/directTransfers.md, "An identical import is a no-op and a contradicting one fails the whole import"
 import { isoNow } from "@repo/platform/clock"
+import { d1Http } from "@repo/platform/d1Http"
 import { checkedDisclosures, importRows, refuseReadmeObservations } from "../directTransfers/disclosures.vibe"
 import { importTransfers } from "../directTransfers/store.vibe"
 
 export error DisclosureArguments { message: string }
 
 const usage = "usage: disclosures [--check] [--root DIRECTORY]"
+const commandUsage = "usage: disclosures --check [--root DIRECTORY] | disclosures --database D1_DATABASE_ID [--check] [--root DIRECTORY]"
 
 effect function optionsOf(args: ReadonlyArray<string>) {
   let check = false
@@ -21,13 +23,19 @@ effect function optionsOf(args: ReadonlyArray<string>) {
   return { check, root }
 }
 
+effect function reproduced(root: string) {
+  const files = try checkedDisclosures(root)
+  try Console.log("[Slop] direct-payment disclosures reproduce")
+  return files
+}
+
 export effect function disclosures(args: ReadonlyArray<string>) {
   const { check, root } = try optionsOf(args)
-  const files = try checkedDisclosures(root)
   if (check) {
-    try Console.log("[Slop] direct-payment disclosures reproduce")
+    try reproduced(root)
     return
   }
+  const files = try checkedDisclosures(root)
   const rows = try importRows(files)
   try refuseReadmeObservations(root)
   if (rows.length === 0) {
@@ -36,4 +44,21 @@ export effect function disclosures(args: ReadonlyArray<string>) {
   }
   const outcome = try importTransfers(rows, try isoNow())
   try Console.log(`[Slop] imported ${outcome.imported} direct transfers; ${outcome.unchanged} already recorded`)
+}
+
+export effect function disclosuresCommand(args: ReadonlyArray<string>) {
+  const at = args.indexOf("--database")
+  if (at < 0) {
+    const { check, root } = try optionsOf(args)
+    if (!check) throw new DisclosureArguments({ message: commandUsage })
+    try reproduced(root)
+    return
+  }
+  const databaseId = args[at + 1]
+  if (databaseId === undefined || databaseId.startsWith("--")) throw new DisclosureArguments({ message: commandUsage })
+  const accountId = try Config.String("CLOUDFLARE_ACCOUNT_ID")
+  const token = try Config.Redacted("CLOUDFLARE_API_TOKEN")
+  provide d1Http({ accountId, databaseId, token }) {
+    try disclosures([...args.slice(0, at), ...args.slice(at + 2)])
+  }
 }

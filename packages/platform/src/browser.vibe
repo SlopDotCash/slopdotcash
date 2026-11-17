@@ -1,7 +1,7 @@
 // spec/frontend/navigation.md, "A private read belongs to the current account and navigation lifetime"; spec/frontend/requests.md, "Only the current request may publish its validated result"; spec/slopbot/webhookDelivery.md, "Bounded bytes and strict object decoding are required"
 import type { Access, Method, Route } from "./route.vibe"
 
-export error RequestFailed { status: number; error: string; message: string }
+export error RequestFailed { status: number; error: string; message: string; fields: Readonly<Record<string, unknown>> }
 
 export error DeadlineExceeded
 
@@ -15,6 +15,7 @@ export interface RequestOptions {
   readonly expectedActor?: string
   readonly limitBytes?: number
   readonly deadlineMs?: number
+  readonly headers?: Readonly<Record<string, string>>
 }
 
 export type Outcome =
@@ -25,6 +26,7 @@ export type Outcome =
 
 schema ErrorCode { error: string }
 schema ErrorMessage { message: string }
+const RefusalBody = Schema.Record(Schema.String, Schema.Unknown)
 
 export const defaultDeadlineMs = 15_000
 
@@ -34,7 +36,7 @@ const browserInit: globalThis.RequestInit = { credentials: "same-origin", redire
 
 const declaredLength = /^[0-9]+$/u
 
-const unreachable = { status: 0, error: "network_error", message: "The network request failed. Try again." }
+const unreachable = { status: 0, error: "network_error", message: "The network request failed. Try again.", fields: {} }
 
 export error BodyTooLarge { label: string; limitBytes: number }
 export error BodyUnreadable { label: string; reason: string }
@@ -92,13 +94,15 @@ effect function target(path: string, params: Readonly<Record<string, string>>, q
 }
 
 function unreadable(status: number) {
-  return new RequestFailed({ status, error: "invalid_response", message: "The server returned an unreadable response." })
+  return new RequestFailed({ status, error: "invalid_response", message: "The server returned an unreadable response.", fields: {} })
 }
 
 effect function refusal(status: number, value: unknown) {
   const code = Schema.decodeUnknownEffect(ErrorCode)(value) catch () => undefined
   const text = Schema.decodeUnknownEffect(ErrorMessage)(value) catch () => undefined
-  return new RequestFailed({ status, error: code?.error ?? "request_failed", message: text?.message ?? `The request failed with HTTP ${status}.` })
+  const body = Schema.decodeUnknownEffect(RefusalBody)(value) catch () => undefined
+  const fields = Object.fromEntries(Object.entries(body ?? {}).filter(([key]) => key !== "error" && key !== "message"))
+  return new RequestFailed({ status, error: code?.error ?? "request_failed", message: text?.message ?? `The request failed with HTTP ${status}.`, fields })
 }
 
 effect function answerOf<A>(answer: Schema.ConstraintCodec<A, unknown>, outcome: Outcome) {
@@ -113,7 +117,7 @@ export effect function request<B, A>(route: Route<B, A, Access>, input: RequestI
   let body: unknown = undefined
   if (route.request !== undefined) body = try orDie(Schema.encodeUnknownEffect(route.request)(input.body))
   else if (route.access === "sessionWrite") body = {}
-  const headers: Readonly<Record<string, string>> = options.expectedActor === undefined ? {} : { "x-slop-expected-github-id": options.expectedActor }
+  const headers: Readonly<Record<string, string>> = options.expectedActor === undefined ? { ...options.headers } : { ...options.headers, "x-slop-expected-github-id": options.expectedActor }
   const exchange = provideService(exchanged(outgoing(route.method, url, body, headers), options.limitBytes ?? defaultLimitBytes), FetchHttpClient.RequestInit, browserInit)
   const outcome = try Effect.timeoutOrElse(exchange, {
     duration: options.deadlineMs ?? defaultDeadlineMs,

@@ -1,4 +1,6 @@
 import type { AnyRoute } from "@repo/platform/route"
+import { api as disputes } from "./disputes.vibe"
+import { api as journal } from "./journal.vibe"
 
 export * from "./snapshot/schema.vibe"
 export * from "./snapshot/parts.vibe"
@@ -6,6 +8,15 @@ export { SnapshotInvalid, decodeSnapshot, validatePaymentSnapshot, validatePubli
 export { type ImplementationWeight, type PenaltyDeductions, eventThirds, implementationShares, penaltyDeductions } from "./snapshot/shares.vibe"
 export { type Registry, compareCodeUnits, pointsOf, registryOf } from "./snapshot/checks.vibe"
 export { leaderboardMethodology } from "./snapshot/methodology.vibe"
+export { JournalPage, PointsIndex, PointsSummary, ShardEntry, ShardRow, SummaryContributor, journalPageSize, maxShardBytes, pointsJournal, shardCount, shardPath } from "./journal.vibe"
+export { DisputeAnswer, DisputeDetail, DisputeFiling, DisputeView, DisputedAward, DisputedAwards, answerDispute, disputeKeyPattern, disputeListSize, fileDispute, pointsDispute, pointsDisputes } from "./disputes.vibe"
+export { CensusRepository, ProfileIndex, ProfileIssue, ProfileIssueEvent, ProfileIssueHistory, ProfileRecord, ProfilesInvalid, contributorPullSearchUrl, issueHistoryReconciles, profileCounts, profileIndexOf } from "../profiles/shape.vibe"
+export { assertProfiles, assertPublishedProfiles } from "../profiles/validate.vibe"
+export { type RepositoryIdentity, repositoryIdentity } from "../profiles/identity.vibe"
+export { ProjectionInvalid, assembleProjection } from "../publication/projections.vibe"
+export { pointRevisionId } from "../kernels/records/ids.vibe"
+export type { RevisionBody } from "../kernels/records/canonical.ts"
 export { isCreditEligibleCommitAuthor } from "../kernels/scoring/lines.ts"
+export { type ScoreTier, scoreTiers, scoreTierThirds } from "../kernels/scoring/tiers.ts"
 
-export const api: ReadonlyArray<AnyRoute> = []
+export const api: ReadonlyArray<AnyRoute> = [...journal, ...disputes]

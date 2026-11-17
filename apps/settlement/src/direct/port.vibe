@@ -1,8 +1,12 @@
-// spec/settlement/directBounty.md, "Paid legs and prior intent generations remain permanent"
+// spec/settlement/directBounty.md, "Paid legs and prior intent generations remain permanent"; spec/security/bounty.md, "Cases of one project share holds, funds and the route observation"
+import { isoNow } from "@repo/platform/clock"
 import { D1 } from "@repo/platform/d1"
 import type { Network } from "@repo/ports/backend"
-import { DirectBounty, type DirectLeg } from "@repo/ports/settlement"
+import { DirectBounty, type DirectLeg, DirectRoutes } from "@repo/ports/settlement"
+import { NETWORKS } from "../kernels/networks.ts"
+import { EvmDirectRails, evmModel } from "./evm.vibe"
 import { type Journal, currentIntent, journalFor } from "./journal.vibe"
+import { SolanaDirectRails, isSolanaNetwork } from "./solana.vibe"
 
 const networks: Readonly<Record<string, Network>> = { base: "Base", ethereum: "Ethereum", robinhood: "Robinhood", solana: "Solana" }
 
@@ -31,4 +35,23 @@ export const DirectBountyLive = Layer.effect(DirectBounty, effect {
       return legsOf(try Effect.provide(journalFor(caseId), services))
     },
   } satisfies DirectBounty.Shape
+})
+
+function railNetworks(network: Network) {
+  return Object.keys(NETWORKS).filter((key) => (isSolanaNetwork(key) ? "Solana" : evmModel(key)) === network)
+}
+
+export const DirectRoutesLive = Layer.effect(DirectRoutes, effect {
+  const evm = try EvmDirectRails
+  const solana = try SolanaDirectRails
+  return {
+    route: (asset) => effect {
+      let qualified = false
+      for (const key of railNetworks(asset.network)) {
+        const rail = try orDie(asset.network === "Solana" ? solana.rail(key) : evm.rail(key))
+        if (rail !== undefined) qualified = true
+      }
+      return { qualified, observedAt: try isoNow() }
+    },
+  } satisfies DirectRoutes.Shape
 })

@@ -25,7 +25,7 @@ export schema FiledFlag {
   projectId: string
   flag: ReporterFlag | null
   paused: boolean
-  freshScan: null
+  freshScan: "queued" | "already_queued" | "unavailable" | null
   restriction: PublicRestriction
   pausedByFlags: boolean
 }

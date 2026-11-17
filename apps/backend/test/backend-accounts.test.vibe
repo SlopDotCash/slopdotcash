@@ -147,6 +147,30 @@ effect function seededMembers(count: number) {
   }
 }
 
+effect function cutoffMember(name: string, githubId: string, joinedAt: string, awardedAt: string | undefined) {
+  const area = try Area
+  const actorId = `cutoff-${name}`
+  const token = `cutoff-session-${name}-`.padEnd(48, "x")
+  try area.sql("INSERT INTO points_members (actor_id, github_id, login, joined_at, public, welcome) VALUES (?, ?, ?, ?, 1, 5)", actorId, githubId, actorId, joinedAt)
+  try area.sql("INSERT INTO points_sessions (token_hash, actor_id, expires_at) VALUES (?, ?, ?)", try sha256Hex(token), actorId, "2099-01-01T00:00:00.000Z")
+  if (awardedAt !== undefined) {
+    try area.sql("INSERT INTO points_x_claims (x_id, actor_id, claimed_at) VALUES (?, ?, ?)", `x-${actorId}`, actorId, awardedAt)
+    try area.sql("INSERT INTO points_x_awards (actor_id, x_id, awarded_at, points) VALUES (?, ?, ?, 10)", actorId, `x-${actorId}`, awardedAt)
+  }
+  return { cookie: `__Host-slop_points=${token}`, actorId, githubId, login: actorId } satisfies Session
+}
+
+effect function cutoffTotals(member: Session) {
+  const me = fields(try get("/api/v1/points/me", member))
+  const lookup = fields(try get(`/api/v1/points/member?login=${member.login}`))
+  return [member.actorId, [me.welcome, me.socialPoints], [lookup.welcome, lookup.socialPoints]]
+}
+
+function personTotals(answer: Answer, prefix: string) {
+  const people = fields(answer).people
+  return Array.isArray(people) ? people.filter((person: { readonly actor: { readonly id: string } }) => person.actor.id.startsWith(prefix)).map((person: { readonly actor: { readonly id: string }; readonly welcome: unknown; readonly socialPoints: unknown }) => [person.actor.id, person.welcome, person.socialPoints]) : []
+}
+
 function personIds(answer: Answer) {
   const people = fields(answer).people
   return Array.isArray(people) ? people.map((person: { readonly actor: { readonly id: string } }) => person.actor.id) : []
@@ -167,7 +191,7 @@ effect function callback(state: string, capability: string, query: string) {
 const at = { account: "203.0.113.21", x: "203.0.113.22", email: "203.0.113.23", burst: "203.0.113.77" }
 
 layer(Layer.merge(Backend, webCrypto), { excludeTestServices: true, timeout: "300 seconds" })((it) => {
-  it.effect('Sign in, rename, sign out, revoke, browse the directory, close and reopen an account (spec/backend/accounts.md, "A web sign-in consumes one web assertion and opens a public membership"; spec/backend/accounts.md, "Members are keyed by an immutable actor and numeric GitHub ID, and sessions by server-issued IDs"; spec/backend/accounts.md, "Sign-out ends only the caller\'s session and revocation never reaches another account"; spec/backend/accounts.md, "Active memberships are public and a hide request is refused"; spec/backend/accounts.md, "Public reads show only public open members and never publish anything"; spec/backend/accounts.md, "Confirmed closure ends every session, hides the membership, disconnects X and withdraws both email consents"; spec/backend/accounts.md, "An ordinary sign-in cannot reopen a closed account; explicit reopening can")', () => effect {
+  it.effect('Sign in, rename, sign out, revoke, browse the directory, close and reopen an account (spec/backend/accounts.md, "A web sign-in consumes one web assertion and opens a public membership"; spec/backend/accounts.md, "Members are keyed by an immutable actor and numeric GitHub ID, and sessions by server-issued IDs"; spec/backend/accounts.md, "Sign-out ends only the caller\'s session and revocation never reaches another account"; spec/backend/accounts.md, "Active memberships are public and a hide request is refused"; spec/backend/accounts.md, "Public reads show only public open members and never publish anything"; spec/backend/accounts.md, "Confirmed closure ends every session, hides the membership, disconnects X and withdraws both email consents"; spec/backend/accounts.md, "An ordinary sign-in cannot reopen a closed account; explicit reopening can"; spec/points/participation.md, "Stored awards include rows recorded on the cutoff day, which never count")', () => effect {
     const area = try Area
     const octo = try area.signIn("7", "octo")
     const me = fields(try get("/api/v1/points/me", octo))
@@ -205,6 +229,13 @@ layer(Layer.merge(Backend, webCrypto), { excludeTestServices: true, timeout: "30
     const reopened = try post(at.account, "/api/v1/points/join", { assertion: try seededAssertion("7", "octo-renamed", "U_octo", "reopen"), public: true, reopen: true })
     const reopenedBody = fields(reopened)
     const rows = try area.sql("SELECT actor_id, github_id, login, public, closed_at FROM points_members WHERE github_id = ?", "7")
+    const cutoffMembers = [
+      try cutoffMember("before", "9101", "2026-10-01T00:00:00.000Z", "2026-10-23T23:59:59.999Z"),
+      try cutoffMember("day", "9102", "2026-10-01T00:00:00.000Z", "2026-10-24T08:00:00.000Z"),
+      try cutoffMember("late", "9103", "2026-10-25T00:00:00.000Z", undefined),
+    ]
+    const cutoff = { members: [] as unknown[], people: personTotals(try get("/api/v1/points/people"), "cutoff-") }
+    for (const member of cutoffMembers) cutoff.members.push(try cutoffTotals(member))
     try same({
       me: [me.actor, me.public, me.welcome, me.socialPoints, me.referralCode],
       forged,
@@ -231,6 +262,7 @@ layer(Layer.merge(Backend, webCrypto), { excludeTestServices: true, timeout: "30
       rejoin: [rejoin.error, rejoin.closedAt === closedAt],
       reopened: [reopened.status, reopenedBody.actor, reopenedBody.public, (reopened.headers["set-cookie"] ?? "").includes("__Host-slop_points=")],
       rows: rows.map((row) => [row.actor_id, row.login, row.public, row.closed_at]),
+      cutoff,
       unexpected: [net.unexpected, area.outboundErrors],
     }, {
       me: [{ id: "U_octo", login: "octo" }, true, 0, 0, null],
@@ -261,6 +293,14 @@ layer(Layer.merge(Backend, webCrypto), { excludeTestServices: true, timeout: "30
       rejoin: ["account_closed", true],
       reopened: [200, { id: "U_octo", login: "octo-renamed" }, true, true],
       rows: [["U_octo", "octo-renamed", 1, null]],
+      cutoff: {
+        members: [
+          ["cutoff-before", [5, 10], [5, 10]],
+          ["cutoff-day", [5, 0], [5, 0]],
+          ["cutoff-late", [0, 0], [0, 0]],
+        ],
+        people: [["cutoff-before", 5, 10], ["cutoff-day", 5, 0], ["cutoff-late", 0, 0]],
+      },
       unexpected: [[], []],
     })
   })

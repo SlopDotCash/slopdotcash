@@ -11,7 +11,7 @@ import { EvaluationRefused, type ManifestInput, admitManifests } from "./manifes
 export error EvaluationsUsage { message: string }
 
 const usage = "evaluations check <repository registry JSON> production|staging"
-const databases = {
+export const databases = {
   production: "1b453124-2709-45af-8389-151a8105c461",
   staging: "6fcddcc1-f3d7-4175-bdde-09afddd53a8a",
 } as const

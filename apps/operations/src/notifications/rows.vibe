@@ -111,6 +111,8 @@ export const deliveryStates: Readonly<Record<string, Exclude<DeliveryState, "Not
   ambiguous: "Ambiguous",
 }
 
+export const cancelledEvent = "cancelled"
+
 export const storedStates = {
   Queued: "queued",
   Retrying: "retrying",
@@ -188,11 +190,12 @@ effect function kindOf(row: NoticeRow) {
 
 const notQueued: DeliveryState = "NotQueued"
 
-effect function stateOf(row: NoticeRow) {
+effect function stateOf(row: NoticeRow, events: ReadonlyArray<EventRow>) {
   if (row.state === null) return notQueued
   const state = deliveryStates[row.state]
   if (state === undefined) throw new RowMismatch({ text: "notification outbox", issue: `unknown delivery state ${row.state}` })
-  return state
+  const cancelled: DeliveryState = "Cancelled"
+  return state === "Suppressed" && events.some((event) => event.state === cancelledEvent) ? cancelled : state
 }
 
 function deliveryOf(row: NoticeRow): Delivery | undefined {
@@ -232,7 +235,7 @@ export effect function projected(rows: Loaded, release: Release, now: number) {
     const events = eventsOf(delivery)
     const escalationOf = positionOf(row.escalation_of)
     const createdAt = millisOf(row.created_at)
-    const state = try stateOf(row)
+    const state = try stateOf(row, events)
     const kind = try kindOf(row)
     notices.push({
       id: index + 1,

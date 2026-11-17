@@ -148,6 +148,8 @@ layer(Layer.mergeAll(NodeServices.layer, webCrypto, FetchHttpClient.layer), { ex
     try written(files.join(root, "apps/operations/wrangler/notify.staging.jsonc"), `${JSON.stringify(notifyConfig("slop-notify-staging", "staging", productionDatabase), null, 2)}\n`)
     try written(files.join(root, "apps/operations/src/tables.ts"), "export const writes = [\"security_notification_outbox\"]\n")
     try written(files.join(bundle, "apps/operations/dist/notify.js"), "export default { fetch: () => new Response(\"notify\") }\n")
+    const disclosures = files.join(directory, "disclosures.jsonl")
+    try written(files.join(bundle, "apps/settlement/dist/programs/main.js"), `require("node:fs").appendFileSync(${JSON.stringify(disclosures)}, JSON.stringify({ args: process.argv.slice(2), account: process.env.CLOUDFLARE_ACCOUNT_ID, token: process.env.CLOUDFLARE_API_TOKEN !== undefined }) + "\\n")\n`)
     try written(files.join(bundle, "apps/app/dist/_worker.js"), "export default { fetch: (request, env) => env.ASSETS.fetch(request) }\n")
     try written(files.join(site, "index.html"), "<!doctype html><title>slop.cash</title>\n")
     try written(files.join(site, "skill-manifest.json"), "{}\n")
@@ -187,6 +189,8 @@ layer(Layer.mergeAll(NodeServices.layer, webCrypto, FetchHttpClient.layer), { ex
       try written(files.join(root, "apps/operations/wrangler/notify.staging.jsonc"), `${JSON.stringify(notifyConfig("slop-notify-staging", "staging", stagingDatabase), null, 2)}\n`)
       const prepared = try settled(publishing.prepare(target))
       const migrated = [...api.state.d1Migrations[productionDatabase] ?? []]
+      const recorded = try fs.readFileString(disclosures)
+      const imported = try Effect.try(() => recorded.trim().split("\n").map((line): unknown => JSON.parse(line)))
       const missingBefore = (api.state.versions["slop-notify"] ?? []).length
       const missing = try settled(publishing.publish("Notify", target))
       const missingUploads = (api.state.versions["slop-notify"] ?? []).length - missingBefore
@@ -214,6 +218,7 @@ layer(Layer.mergeAll(NodeServices.layer, webCrypto, FetchHttpClient.layer), { ex
         isolation,
         isolationAsked,
         prepared,
+        imported,
         migrated: migrated.length,
         missing,
         missingUploads,
@@ -236,6 +241,7 @@ layer(Layer.mergeAll(NodeServices.layer, webCrypto, FetchHttpClient.layer), { ex
       isolation: "isolation: apps/operations/wrangler/notify.staging.jsonc and apps/operations/wrangler/notify.production.jsonc both name d1:1b453124-2709-45af-8389-151a8105c461: staging and production must never share a resource",
       isolationAsked: 0,
       prepared: "ok",
+      imported: [{ args: ["disclosures", "--database", productionDatabase, "--root", root], account: accountId, token: true }],
       migrated: migrations,
       missing: "publish Notify: slop-notify lacks NOTIFY_UNSUBSCRIBE_KEY",
       missingUploads: 0,

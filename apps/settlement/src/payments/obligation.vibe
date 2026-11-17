@@ -6,7 +6,7 @@ import type { Aggregate, Rows } from "@repo/platform/stored"
 import { type Settlement, decodeState as decodeSettlement } from "../../gen/settlement__composition.effect.vibe"
 import { type Investigation, type PaidEvent, decodeState as decodeInvestigation, noEvent } from "../../gen/settlement__paymentInvestigation.effect.vibe"
 import { type Payment, initial as paymentInitial } from "../../gen/settlement__payment.effect.vibe"
-import { type Attempt, type AttemptState, type Binding, type Dispatch, type DispatchRequest, type Inspection, type Queue, type Receipt, type Target, initial as dispatchInitial, noBinding, noReceipt } from "../../gen/settlement__paymentDispatch.effect.vibe"
+import { type Attempt, type AttemptState, type Binding, type Dispatch, type DispatchRequest, type Inspection, type Queue, type Receipt, type Scope, type Target, initial as dispatchInitial, noBinding, noReceipt } from "../../gen/settlement__paymentDispatch.effect.vibe"
 import { type Vault, initial as vaultInitial } from "../../gen/settlement__vault.effect.vibe"
 import { zero } from "../../gen/settlement__money.effect.vibe"
 import { parseBaseUnits } from "../kernels/amounts.ts"
@@ -135,8 +135,7 @@ export effect function obligationTerms(projection: Projection, reservation: Rese
     chain: deployment.chain,
     projectId: deployment.projectId,
     vault: deployment.vault,
-    obligationId: reservation.obligationId,
-    githubUserId: reservation.githubUserId,
+    actor: try actorOf(reservation.githubUserId),
     asset,
     sourceDigest: reservation.sourceDigest,
     termsDigest: try termsDigest(reservation.gross, reservation.fee, deployment.feeRecipient),
@@ -251,15 +250,16 @@ export function dispatchOf(projection: Projection, rows: ObligationRows, target:
   }
 }
 
-function vaultOf(projection: Projection, reservation: Reservation, gross: ReadonlyArray<number>, paid: { readonly receipt: Receipt; readonly height: number } | undefined, reserved: boolean): Vault {
+function vaultOf(projection: Projection, target: Target, gross: ReadonlyArray<number>, paid: { readonly receipt: Receipt; readonly height: number } | undefined, reserved: boolean): Vault {
   const { deployment, asset } = projection
   const amount = [...gross]
+  const { obligation, actor } = target
   return {
     ...vaultInitial,
     id: canonicalAddress(deployment.chain, deployment.vault),
-    obligations: reserved || paid !== undefined ? [1] : [],
-    reservations: reserved ? [{ obligation: 1, actor: reservation.githubUserId, amount }] : [],
-    settled: paid === undefined ? [] : [{ obligation: 1, actor: reservation.githubUserId, recipient: paid.receipt.destination, amount, receipt: 1, height: paid.height, transaction: paid.receipt.tx }],
+    obligations: reserved || paid !== undefined ? [obligation] : [],
+    reservations: reserved ? [{ obligation, actor, amount }] : [],
+    settled: paid === undefined ? [] : [{ obligation, actor, recipient: paid.receipt.destination, amount, receipt: 1, height: paid.height, transaction: paid.receipt.tx }],
     receipts: paid === undefined ? [] : [1],
     asset: asset.address,
     refund: canonicalAddress(deployment.chain, deployment.owner),
@@ -272,6 +272,10 @@ function vaultOf(projection: Projection, reservation: Reservation, gross: Readon
   }
 }
 
+export function paymentTermsOf(scope: Scope) {
+  return scope === "PrivateBounty" ? { purpose: "PrivateStandard", rail: "StandardBountyVault" } as const : { purpose: "Ordinary", rail: "OrdinaryVault" } as const
+}
+
 effect function paymentOf(projection: Projection, reservation: Reservation, target: Target, paid: { readonly receipt: Receipt; readonly height: number } | undefined) {
   const { deployment, asset } = projection
   const gross = try limbs(reservation.gross)
@@ -281,10 +285,9 @@ effect function paymentOf(projection: Projection, reservation: Reservation, targ
     ...paymentInitial,
     configured: true,
     phase: paid === undefined ? "VaultReserved" : "Paid",
-    purpose: "Ordinary",
-    rail: "OrdinaryVault",
+    ...paymentTermsOf(deployment.scope),
     feeRecipient: "fees",
-    obligation: 1,
+    obligation: target.obligation,
     vault: canonicalAddress(deployment.chain, deployment.vault),
     asset: asset.address,
     target,
@@ -302,7 +305,7 @@ export effect function unreservedSettlement(projection: Projection, reservation:
   const target = targetOf(try obligationTerms(projection, reservation))
   const gross = try limbs(reservation.gross)
   return try decodeSettlement({
-    vault: vaultOf(projection, reservation, gross, undefined, false),
+    vault: vaultOf(projection, target, gross, undefined, false),
     payment: { ...paymentInitial, vault: target.vault, asset: target.asset, target },
     delivery: dispatchInitial,
   })
@@ -359,7 +362,7 @@ export effect function project(projection: Projection, rows: ObligationRows) {
   if (row.state === "paid" && settled === undefined) throw new RowMismatch({ text: `payment obligation ${row.id}`, issue: "paid without its finalized event" })
   const gross = try limbs(reservation.gross)
   const settlement = try decodeSettlement({
-    vault: vaultOf(projection, reservation, gross, settled, settled === undefined),
+    vault: vaultOf(projection, target, gross, settled, settled === undefined),
     payment: try paymentOf(projection, reservation, target, settled),
     delivery: dispatchOf(projection, rows, target, settled?.receipt),
   })

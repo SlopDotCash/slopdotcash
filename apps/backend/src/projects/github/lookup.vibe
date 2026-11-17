@@ -3,6 +3,7 @@ import { sha256Hex } from "@repo/platform/crypto"
 import { GitHub, type GitHubFailure } from "@repo/platform/github"
 import { Refused } from "@repo/platform/http"
 import * as Hex from "effect/encoding/Hex"
+import { type RepositoryLicense, type RepositoryLookup } from "../../client/projectSetup.vibe"
 import { getProjectGithubOwnedRepositories as ownedRows, postProjects, putProjectsById } from "../../client/refusals.vibe"
 import { type GitHubReadConfig, githubReads } from "../../referrals/name.vibe"
 import { validIntegrationBranch } from "../owner/definition.ts"
@@ -32,24 +33,6 @@ export interface Actor {
 export interface OwnedRepository {
   readonly repository: string
   readonly description: string | null
-}
-
-export type License =
-  | { readonly state: "unknown"; readonly reason: string }
-  | { readonly state: "verified"; readonly spdx: string; readonly commitSha: string; readonly fileSha256: string }
-
-export interface RepositoryLookup {
-  readonly repository: string
-  readonly description: string | null
-  readonly numericId: string
-  readonly nodeId: string
-  readonly defaultBranch: string
-  readonly branches: ReadonlyArray<string>
-  readonly branchCommits: Readonly<Record<string, string>>
-  readonly fork: boolean
-  readonly archived: boolean
-  readonly owner: { readonly login: string; readonly actorId: string; readonly nodeId: string; readonly kind: "individual" | "organization" }
-  readonly license: License
 }
 
 type Row = { readonly status: number; readonly error: string; readonly message: string }
@@ -220,7 +203,7 @@ function base64Bytes(text: string): Uint8Array | undefined {
   return Uint8Array.from(atob(clean), (character) => character.charCodeAt(0))
 }
 
-function unknownLicense(reason: string): License {
+function unknownLicense(reason: string): RepositoryLicense {
   return { state: "unknown", reason }
 }
 
@@ -240,7 +223,7 @@ effect function licenseAt(identity: Identity, path: string, defaultBranch: strin
   const bytes = license.encoding === "base64" && typeof license.content === "string" ? base64Bytes(license.content) : undefined
   if (bytes === undefined) return unknownLicense("GitHub did not return the license bytes.")
   if ((try gitBlobOid(bytes)) !== blob.oid) return unknownLicense("The license bytes do not match the captured repository commit.")
-  return { state: "verified", spdx, commitSha, fileSha256: try sha256Hex(bytes) } satisfies License
+  return { state: "verified", spdx, commitSha, fileSha256: try sha256Hex(bytes) } satisfies RepositoryLicense
 }
 
 export effect function lookupRepository(path: string) {

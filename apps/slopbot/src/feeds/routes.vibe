@@ -1,0 +1,177 @@
+// spec/slopbot/publicFeeds.md, "Feeds serve only registered history repositories with strictly validated cursors, 100 items per page and no-store"; spec/slopbot/publicFeeds.md, "Each feed keeps its published schema id: slop-penalties:v1, slop-penalty-history:v1, slop-value-history:v1, slop-work-unit-history:v1"; spec/slopbot/publicFeeds.md, "A joint work-unit page requires a through bound"; spec/slopbot/valueHistory.md, "Each page agrees with the first through sequence and total count"
+import { type D1, first, sql } from "@repo/platform/d1"
+import { handleRaw, json } from "@repo/platform/http"
+import { RegistryManifests } from "@repo/ports/backend"
+import { PenaltyRow } from "@repo/ports/slopbot"
+import type { FeedAnswer, FeedQuery, FeedRoute, HistoryFlag } from "../../gen/slopbot__publicFeeds.ts"
+import { feedAnswer, feedPageSize, hasNextPage, pageRecords } from "../../gen/slopbot__publicFeeds.effect.vibe"
+import { health, penalties, valueAssessments, workUnitAssessments } from "../client/feeds.vibe"
+import { slopbotGetV1Penalties, slopbotGetV1ValueAssessments } from "../client/refusals.vibe"
+import { type HistoryRepository, HistoryUnreadable, parsedJson, valueHistoryPage, workUnitHistoryPage } from "../value/history/read.vibe"
+
+interface RefusalRow {
+  readonly status: number
+  readonly error: string
+  readonly headers: Readonly<Record<string, string>>
+}
+
+interface FeedRefusals {
+  readonly invalid: RefusalRow
+  readonly unavailable: RefusalRow
+}
+
+const penaltyRefusals: FeedRefusals = { invalid: slopbotGetV1Penalties.invalidPenaltyQuery, unavailable: slopbotGetV1Penalties.penaltiesAreUnavailable }
+
+const historyRefusals: FeedRefusals = { invalid: slopbotGetV1ValueAssessments.invalidValueHistoryQuery, unavailable: slopbotGetV1ValueAssessments.valueHistoryIsUnavailable }
+
+const cursorPattern = /^[A-Za-z0-9_=-]{0,100}$/u
+const nodeIdPattern = /^[A-Za-z0-9_=-]{1,100}$/u
+const positivePattern = /^[1-9][0-9]*$/u
+const naturalPattern = /^(0|[1-9][0-9]*)$/u
+
+const asked: FeedQuery = {
+  route: "OtherPath",
+  isGet: true,
+  registered: true,
+  cursorWellFormed: true,
+  historyFlag: "FlagAbsent",
+  nodeIdConflict: false,
+  pullWellFormed: true,
+  pull: 1,
+  afterWellFormed: true,
+  after: 0,
+  throughPresent: false,
+  throughWellFormed: true,
+  through: 0,
+}
+
+schema ManifestRepository { id: string; aliases?: ReadonlyArray<string>; nodeId?: string }
+schema ManifestAuthority { repositoryNodeId: string }
+schema HistoryManifest { id: string; authority: ManifestAuthority; repositories: ReadonlyArray<ManifestRepository> }
+schema PenaltyJson { records_json: string }
+
+const PenaltyRows = Schema.Array(PenaltyRow)
+
+function integerOf(text: string, pattern: RegExp) {
+  return pattern.test(text) && Number.isSafeInteger(Number(text)) ? Number(text) : undefined
+}
+
+function historyFlagOf(value: string | null): HistoryFlag {
+  if (value === null) return "FlagAbsent"
+  return value === "1" ? "FlagOne" : "FlagOther"
+}
+
+export function refusalHeaders(headers: Readonly<Record<string, string>>) {
+  return Object.fromEntries(Object.entries(headers).filter(([name]) => name !== "content-type"))
+}
+
+function refused(row: RefusalRow) {
+  return json({ error: row.error }, row.status, refusalHeaders(row.headers))
+}
+
+function refusalFor(decided: FeedAnswer, refusals: FeedRefusals) {
+  return decided.httpStatus === 503 ? refused(refusals.unavailable) : refused(refusals.invalid)
+}
+
+effect function manifestOf(text: string) {
+  const parsed = try parsedJson(text, "manifest is not JSON")
+  return Schema.decodeUnknownEffect(HistoryManifest)(parsed) catch effect () => { throw new HistoryUnreadable({ issue: "manifest does not decode" }) }
+}
+
+effect function registeredProject(projectId: string) {
+  const found = try (try RegistryManifests).project(projectId)
+  if (found === undefined) return false
+  return (try manifestOf(found.manifest)).id === projectId
+}
+
+function repositoryIn(manifest: typeof HistoryManifest.Type, key: string, nodeId: string | null): HistoryRepository | undefined {
+  const index = nodeId === null
+    ? manifest.repositories.findIndex((repository) => [repository.id, ...repository.aliases ?? []].some((id) => id.toLowerCase() === key))
+    : manifest.authority.repositoryNodeId === nodeId ? 0 : manifest.repositories.findIndex((repository, position) => position > 0 && repository.nodeId === nodeId)
+  const repository = manifest.repositories[index]
+  if (repository === undefined) return undefined
+  return { id: repository.id, nodeId: index === 0 ? manifest.authority.repositoryNodeId : repository.nodeId ?? null }
+}
+
+effect function registeredRepository(repository: string, nodeId: string | null) {
+  const key = repository.toLowerCase()
+  for (const registered of try (try RegistryManifests).current()) {
+    const found = repositoryIn(try manifestOf(registered.manifest), key, nodeId)
+    if (found !== undefined) return found
+  }
+  return undefined
+}
+
+effect function penaltyPage(projectId: string, after: string, history: boolean) {
+  const reversal = history ? sql`, 'reversed_at', reversed_at, 'reversal', reversal` : sql``
+  const active = history ? sql`` : sql`AND reversed_at IS NULL`
+  const found = try first(PenaltyJson, sql`SELECT json_group_array(json_object(
+      'item_node_id', item_node_id, 'repository_id', repository_id, 'author_github_id', author_github_id, 'category', category,
+      'table_version', table_version, 'debit_thirds', debit_thirds, 'period', period, 'recorded_at', recorded_at${reversal})) AS records_json
+    FROM (SELECT * FROM slopbot_penalties WHERE project_id = ${projectId} ${active} AND item_node_id > ${after} ORDER BY item_node_id LIMIT ${feedPageSize + 1})`)
+  if (found === undefined) throw new HistoryUnreadable({ issue: "penalty read returned no row" })
+  const parsed = try parsedJson(found.records_json, "penalty rows are not JSON")
+  const records = Schema.decodeUnknownEffect(PenaltyRows)(parsed) catch effect () => { throw new HistoryUnreadable({ issue: "penalty rows do not decode" }) }
+  const page = records.slice(0, pageRecords(records.length))
+  return { records: page, nextAfter: hasNextPage(records.length) ? page[page.length - 1]?.item_node_id ?? null : null }
+}
+
+effect function served<T>(query: FeedQuery, refusals: FeedRefusals, lookup: (T | undefined)!unknown!(RegistryManifests | D1), read: (found: T, schemaId: string) => Readonly<Record<string, unknown>>!unknown!D1) {
+  const admitted = feedAnswer(query, false)
+  if (admitted.httpStatus !== 200) return refusalFor(admitted, refusals)
+  const found = lookup catch () => null
+  if (found === null) return refusalFor(feedAnswer(query, true), refusals)
+  const registered = { ...query, registered: found !== undefined }
+  const decided = feedAnswer(registered, false)
+  if (found === undefined || decided.httpStatus !== 200) return refusalFor(decided, refusals)
+  const body = read(found, decided.schemaId) catch () => null
+  if (body === null) return refusalFor(feedAnswer(registered, true), refusals)
+  return json(body)
+}
+
+effect function penaltyFeed(query: URLSearchParams) {
+  const project = query.get("project") ?? ""
+  const after = query.get("after") ?? ""
+  const history = historyFlagOf(query.get("history"))
+  const facts: FeedQuery = { ...asked, route: "PenaltiesFeed", cursorWellFormed: cursorPattern.test(after), historyFlag: history }
+  const lookup = effect { return (try registeredProject(project)) ? project : undefined }
+  return try served(facts, penaltyRefusals, lookup, (projectId, schemaId) => effect {
+    return { schemaVersion: schemaId, project: projectId, ...(try penaltyPage(projectId, after, history === "FlagOne")) }
+  })
+}
+
+effect function historyFeed(route: FeedRoute, query: URLSearchParams) {
+  const joint = route === "WorkUnitHistoryFeed"
+  const pullText = query.get("pull") ?? ""
+  const afterText = query.get("after") ?? "0"
+  const throughText = joint ? query.get("through") : null
+  const nodeId = query.get("repositoryNodeId")
+  const pull = integerOf(pullText, positivePattern)
+  const after = integerOf(afterText, naturalPattern)
+  const through = throughText === null ? undefined : integerOf(throughText, naturalPattern)
+  const facts: FeedQuery = {
+    ...asked,
+    route,
+    nodeIdConflict: nodeId !== null && (query.has("repository") || !nodeIdPattern.test(nodeId)),
+    pullWellFormed: pull !== undefined,
+    pull: pull ?? 0,
+    afterWellFormed: after !== undefined,
+    after: after ?? 0,
+    throughPresent: throughText !== null,
+    throughWellFormed: through !== undefined,
+    through: through ?? 0,
+  }
+  return try served(facts, historyRefusals, registeredRepository(query.get("repository") ?? "", nodeId), (repository, schemaId) => effect {
+    const number = pull ?? 0
+    const from = after ?? 0
+    const page = joint ? try workUnitHistoryPage(repository, number, from, through ?? null) : try valueHistoryPage(repository, number, from)
+    return { schemaVersion: schemaId, repository: repository.id, repositoryNodeId: repository.nodeId, pullRequestNumber: number, ...page }
+  })
+}
+
+export const feedRoutes = Layer.mergeAll(
+  handleRaw(health, () => effect { return json({ service: "slopbot", ok: true }) }),
+  handleRaw(penalties, (input) => penaltyFeed(input.query)),
+  handleRaw(valueAssessments, (input) => historyFeed("ValueHistoryFeed", input.query)),
+  handleRaw(workUnitAssessments, (input) => historyFeed("WorkUnitHistoryFeed", input.query)),
+)

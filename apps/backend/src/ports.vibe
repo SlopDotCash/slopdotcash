@@ -1,6 +1,7 @@
 // spec/backend/projects.md, "Authority is one read bound to the acting account and the stored repository"; spec/backend/listing.md, "A restricted project is closed on every public route and a paused one stays listed"; spec/backend/wallets.md, "The effective claim and held deliveries follow the authorized claim"; spec/settlement/referralAccrual.md, "A project captures an eligible signed-in referrer once"
+export { MembersLive } from "./accounts/members.vibe"
 export { AuthorityLive } from "./authority/live.vibe"
 export { EmailConsentLive, EmailEnrollmentLive } from "./email/live.vibe"
-export { RegistryLive, RegistryManifestsLive, RestrictionsLive } from "./projects/live.vibe"
+export { ProjectAudienceLive, RegistryLive, RegistryManifestsLive, RestrictionsLive } from "./projects/live.vibe"
 export { ReferralAttributionsLive } from "./referrals/attributions.vibe"
 export { WalletsLive } from "./wallets/live.vibe"

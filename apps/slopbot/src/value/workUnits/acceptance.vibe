@@ -1,0 +1,305 @@
+// spec/slopbot/workUnits.md, "A claim is one changed path in one commit and belongs to its first accepted carrier"; spec/points/workUnits.md, "A no-change promotion adds no unit and no value; missing trees stay unresolved"; spec/slopbot/valueEvidence.md, "Absence is proved only by a hash-verified tree, never by a 404"
+import { millisOf } from "@repo/platform/clock"
+import {
+  Acceptance,
+  type CommitReader,
+  type IndirectOutcome,
+  type IndirectSource,
+  type MergedSource,
+  type PromotionSource,
+  noChangePromotionContext,
+} from "../evidence/acceptance.vibe"
+import { sameRepositoryCommitHints } from "../evidence/hints.vibe"
+import { type AcceptedRange, type Evidence, EvidenceRefused, Head, type IndirectAcceptance, type NoChangePromotion, type RangeFile } from "../evidence/types.vibe"
+import { verifiedBlobSha } from "../proofs/blob.vibe"
+import { type FileChange, hasCompleteValuePatch, hasVerifiedFullComparison, valueAdditionCount, valueDeletionCount, valuePatch } from "../proofs/changes.vibe"
+import { isSafePath } from "../proofs/gitObject.ts"
+import type { Reads } from "../proofs/reads.vibe"
+import { verifiedRootTree, verifiedTree } from "../proofs/tree.vibe"
+import { collectNativeMerge } from "./native.vibe"
+import { collectIndirectRetention } from "./retention.vibe"
+import { answer, isOid } from "./source.vibe"
+
+const rangeFileLimit = 256
+const blobProofLimit = 16
+const statuses = ["added", "modified", "removed"]
+
+function provable(file: FileChange) {
+  return statuses.includes(file.status) && file.previous_filename === undefined && (hasCompleteValuePatch(file) || hasVerifiedFullComparison(file))
+}
+
+function rangeShapeAdmits(headSha: string, files: ReadonlyArray<FileChange>, merge: MergedSource["mergeCommitEvidence"]) {
+  return merge.parents.length === 1 && [headSha, merge.sha, merge.parents[0]?.sha].every(isOid) &&
+    files.length > 0 && files.length <= rangeFileLimit && merge.files.length > 0 && merge.files.length < files.length &&
+    new Set(files.map((file) => file.filename)).size === files.length &&
+    new Set(merge.files.map((file) => file.filename)).size === merge.files.length &&
+    files.every(provable) && files.every((file) => isSafePath(file.filename))
+}
+
+function submittedComparisonBase(headSha: string, files: ReadonlyArray<FileChange>) {
+  let base: string | undefined
+  for (const file of files) {
+    if (file.fullComparison === undefined) continue
+    if (file.fullComparison.headSha !== headSha || (base !== undefined && file.fullComparison.baseSha !== base)) return { valid: false, base }
+    base = file.fullComparison.baseSha
+  }
+  return { valid: true, base }
+}
+
+function byFilename(files: ReadonlyArray<FileChange>) {
+  return [...files].sort((a, b) => a.filename.localeCompare(b.filename))
+}
+
+effect function treeRange(source: MergedSource, changed: ReadonlyMap<string, FileChange>, comparisonBase: string | undefined) {
+  const { repository, pull, files, mergeCommitEvidence: merge } = source
+  const headSha = pull.head.sha
+  const parentSha = merge.parents[0]?.sha ?? ""
+  const reads: Reads = new Map()
+  const head = try verifiedTree(repository, headSha, reads)
+  const accepted = try verifiedTree(repository, merge.sha, reads)
+  const parent = try verifiedTree(repository, parentSha, reads)
+  if (head === undefined || accepted === undefined || parent === undefined) return undefined
+  const submittedBase = comparisonBase === undefined ? undefined : try verifiedTree(repository, comparisonBase, reads)
+  if (comparisonBase !== undefined && submittedBase === undefined) return undefined
+  const proven: RangeFile[] = []
+  for (const file of byFilename(files)) {
+    const path = file.filename
+    const before = head.entries.get(path)
+    const after = accepted.entries.get(path)
+    const prior = parent.entries.get(path)
+    const alreadyPresent = !changed.has(path)
+    const acceptedChange = changed.get(path)
+    if (file.fullComparison !== undefined && (file.fullComparison.before.blobSha !== submittedBase?.entries.get(path)?.sha || file.fullComparison.after.blobSha !== before?.sha)) return undefined
+    if (acceptedChange?.fullComparison !== undefined && (acceptedChange.fullComparison.before.blobSha !== prior?.sha || acceptedChange.fullComparison.after.blobSha !== after?.sha)) return undefined
+    if (acceptedChange !== undefined && (
+      (acceptedChange.status === "added" && (prior !== undefined || after === undefined)) ||
+      (acceptedChange.status === "modified" && (prior === undefined || after === undefined)) ||
+      (acceptedChange.status === "removed" && (prior === undefined || after !== undefined))
+    )) return undefined
+    if (file.status === "removed") {
+      if (before !== undefined || after !== undefined || (alreadyPresent && prior !== undefined)) return undefined
+      proven.push({ path, blobSha: null, alreadyPresent })
+      continue
+    }
+    if (
+      before === undefined || !["100644", "100755"].includes(before.mode) || after?.sha !== before.sha || after.mode !== before.mode ||
+      (alreadyPresent && (prior?.sha !== before.sha || prior.mode !== before.mode))
+    ) return undefined
+    proven.push({ path, blobSha: before.sha, mode: before.mode, alreadyPresent })
+  }
+  return { headSha, mergeSha: merge.sha, parentSha, files: proven } satisfies AcceptedRange
+}
+
+effect function blobRange(source: MergedSource, changed: ReadonlyMap<string, FileChange>) {
+  const { repository, pull, files, mergeCommitEvidence: merge } = source
+  const blob = verifiedBlobSha(repository)
+  const parentSha = merge.parents[0]?.sha ?? ""
+  const proven: RangeFile[] = []
+  for (const file of byFilename(files)) {
+    const path = file.filename
+    const head = try blob(path, pull.head.sha)
+    if (head === undefined || (try blob(path, merge.sha)) !== head) return undefined
+    const alreadyPresent = !changed.has(path)
+    if (alreadyPresent && (try blob(path, parentSha)) !== head) return undefined
+    proven.push({ path, blobSha: head, alreadyPresent })
+  }
+  return { headSha: pull.head.sha, mergeSha: merge.sha, parentSha, files: proven } satisfies AcceptedRange
+}
+
+export effect function collectAcceptedRange(source: MergedSource) {
+  const { pull, files, mergeCommitEvidence: merge } = source
+  const headSha = pull.head.sha
+  if (!rangeShapeAdmits(headSha, files, merge)) return undefined
+  const changed = new Map(merge.files.map((file) => [file.filename, file]))
+  const comparison = submittedComparisonBase(headSha, files)
+  if (!comparison.valid) return undefined
+  let overlappingDependency = false
+  let statusChanged = false
+  let fullComparison = files.some((file) => file.fullComparison !== undefined)
+  for (const accepted of merge.files) {
+    const submitted = files.find((file) => file.filename === accepted.filename)
+    if (submitted === undefined || !provable(accepted)) return undefined
+    if (accepted.fullComparison !== undefined && (accepted.fullComparison.baseSha !== merge.parents[0]?.sha || accepted.fullComparison.headSha !== merge.sha)) return undefined
+    statusChanged ||= accepted.status !== submitted.status
+    fullComparison ||= accepted.fullComparison !== undefined
+    overlappingDependency ||= valueAdditionCount(accepted) !== valueAdditionCount(submitted) ||
+      valueDeletionCount(accepted) !== valueDeletionCount(submitted) || valuePatch(accepted) !== valuePatch(submitted)
+  }
+  if (statusChanged || fullComparison || overlappingDependency || files.length > blobProofLimit || files.some((file) => file.status === "removed"))
+    return try treeRange(source, changed, comparison.base)
+  return try blobRange(source, changed)
+}
+
+function promotionParents(source: PromotionSource) {
+  const { pull, mergeCommitEvidence: merge } = source
+  return pull.merged_at !== null && merge !== null && merge.sha === pull.merge_commit_sha && pull.base.sha !== pull.head.sha &&
+    merge.parents.length === 2 && merge.parents.some(({ sha }) => sha === pull.base.sha) && merge.parents.some(({ sha }) => sha === pull.head.sha) &&
+    merge.files.length === 0 && merge.stats.additions === 0 && merge.stats.deletions === 0 && merge.stats.total === 0
+}
+
+export effect function collectNoChangePromotion(source: PromotionSource) {
+  const mergeSha = source.mergeCommitEvidence?.sha
+  if (!promotionParents(source) || mergeSha === undefined) return undefined
+  const refs = [source.pull.base.sha, source.pull.head.sha, mergeSha]
+  const reads: Reads = new Map()
+  const proofs = []
+  for (const ref of refs) proofs.push(try verifiedRootTree(source.repository, ref, reads))
+  const treeSha = proofs[0]?.treeSha
+  if (treeSha === undefined || proofs.some((proof) => proof?.treeSha !== treeSha)) return undefined
+  return { schemaVersion: "slop-no-change-promotion:v1", baseSha: source.pull.base.sha, headSha: source.pull.head.sha, mergeSha, treeSha } satisfies NoChangePromotion
+}
+
+export function noChangePromotionMatches(source: PromotionSource & { readonly noChangePromotion?: NoChangePromotion }) {
+  const proof = source.noChangePromotion
+  return proof !== undefined && Object.keys(proof).sort().join() === "baseSha,headSha,mergeSha,schemaVersion,treeSha" &&
+    proof.schemaVersion === "slop-no-change-promotion:v1" && [proof.baseSha, proof.headSha, proof.mergeSha, proof.treeSha].every(isOid) &&
+    promotionParents(source) && proof.baseSha === source.pull.base.sha && proof.headSha === source.pull.head.sha && proof.mergeSha === source.pull.merge_commit_sha
+}
+
+export function noChangePromotionDeferralOnly(source: Evidence) {
+  return noChangePromotionMatches(source) && source.limitations.every((limitation) => limitation === noChangePromotionContext)
+}
+
+schema HintCommit { readonly sha: string; readonly parents: ReadonlyArray<Head> }
+schema BranchCommit { readonly sha: string }
+schema Branch { readonly name: string; readonly commit: BranchCommit }
+schema MergeBaseCommit { readonly sha: string }
+schema Ancestry { readonly status: string; readonly merge_base_commit: MergeBaseCommit | null }
+schema RunRepository { readonly node_id: string }
+schema Run {
+  readonly id: number
+  readonly html_url: string
+  readonly event: string
+  readonly head_branch: string
+  readonly head_sha: string
+  readonly created_at: string
+  readonly repository: RunRepository | null
+}
+schema Runs { readonly total_count: number; readonly workflow_runs: ReadonlyArray<Run> }
+
+const hintLimit = 16
+const indirectCommitLimit = 100
+const integrationWords = /\b(?:merged?|integrat(?:ed|ion))\b/iu
+
+function unresolved(reason: string): IndirectOutcome {
+  return { acceptance: undefined, limitations: [`Indirect integration: ${reason}`] }
+}
+
+const none: IndirectOutcome = { acceptance: undefined, limitations: [] }
+
+interface Observation {
+  readonly tip: string
+  readonly run: Run
+}
+
+function commitHints(source: IndirectSource) {
+  const texts = source.comments.filter((comment) => integrationWords.test(comment.body)).map((comment) => comment.body)
+  return [...new Set(texts.flatMap((text) => sameRepositoryCommitHints(source.repository, text).filter((sha) => /[a-f]/u.test(sha))))]
+}
+
+function runMatches(source: IndirectSource, run: Run, branch: string, sha: string) {
+  return run.repository?.node_id === source.repositoryNodeId && run.event === "push" && run.head_branch === branch && run.head_sha === sha &&
+    Number.isSafeInteger(run.id) && run.id > 0 && run.html_url === `https://github.com/${source.repository}/actions/runs/${run.id}` &&
+    Number.isFinite(millisOf(run.created_at))
+}
+
+export effect function collectIndirectAcceptance(source: IndirectSource, changes: CommitReader) {
+  const policy = source.repositoryPolicy
+  const closedAt = source.pull.closed_at
+  if (source.pull.merged_at !== null || source.pull.state !== "closed" || policy === null || closedAt === null) return none
+  const hints = commitHints(source)
+  if (hints.length === 0) return none
+  if (hints.length > hintLimit || source.commits.length > indirectCommitLimit) return unresolved("discovery bounds reached; complete reconciliation required")
+  const root = `/repos/${source.repository}`
+  const branch = policy.integrationBranch
+  const candidates: HintCommit[] = []
+  for (const hint of hints) {
+    const found = answer(`${root}/commits/${hint}?per_page=100&page=1`, HintCommit) catch () => undefined
+    if (found === undefined) return unresolved(`commit hint ${hint} could not be resolved`)
+    if (!isOid(found.sha) || !found.sha.startsWith(hint)) return unresolved("commit identity is incomplete")
+    if (!candidates.some((candidate) => candidate.sha === found.sha)) candidates.push(found)
+  }
+  const known = new Set(source.commits.map((commit) => commit.sha))
+  const integrations = candidates.filter((candidate) => candidate.parents.length === 2 && known.has(candidate.parents[1]?.sha ?? ""))
+  if (integrations.length === 0) return none
+  const current = try answer(`${root}/branches/${encodeURIComponent(branch)}`, Branch)
+  if (current?.name !== branch || !isOid(current.commit.sha)) return unresolved("registered integration branch is unavailable")
+  const comparisons = new Map<string, boolean>()
+  effect function ancestor(a: string, b: string) {
+    const key = `${a}...${b}`
+    const cached = comparisons.get(key)
+    if (cached !== undefined) return cached
+    const comparison = try answer(`${root}/compare/${key}?per_page=1`, Ancestry)
+    const base = comparison?.merge_base_commit?.sha
+    if (comparison === undefined || base === undefined || base === "") throw new EvidenceRefused({ reason: "Indirect acceptance ancestry is unavailable" })
+    const result = ["ahead", "identical"].includes(comparison.status) && base === a
+    comparisons.set(key, result)
+    return result
+  }
+  const observations: Observation[] = []
+  for (const candidate of candidates) {
+    if (!(try ancestor(candidate.sha, current.commit.sha))) continue
+    const runs = try answer(`${root}/actions/runs?head_sha=${candidate.sha}&event=push&branch=${encodeURIComponent(branch)}&per_page=100&page=1`, Runs)
+    if (runs === undefined || !Number.isSafeInteger(runs.total_count) || runs.total_count !== runs.workflow_runs.length) return unresolved("branch observation inventory is incomplete")
+    for (const run of runs.workflow_runs) {
+      if (!runMatches(source, run, branch, candidate.sha)) return unresolved("branch observation identity is invalid")
+      if (millisOf(run.created_at) <= millisOf(closedAt)) observations.push({ tip: candidate.sha, run })
+    }
+  }
+  observations.sort((a, b) => a.run.created_at.localeCompare(b.run.created_at) || a.run.id - b.run.id)
+  const proofs: Array<Omit<IndirectAcceptance, "retainedFiles">> = []
+  for (const integration of integrations) {
+    let observed: Observation | undefined
+    for (const observation of observations) {
+      if (try ancestor(integration.sha, observation.tip)) {
+        observed = observation
+        break
+      }
+    }
+    if (observed === undefined) continue
+    const complete = try changes(integration.sha)
+    if (complete.commit === null || complete.limitations.length > 0) return unresolved("integration file scope is incomplete")
+    if (complete.commit.parents.length !== 2 || complete.commit.parents.some((parent, index) => parent.sha !== integration.parents[index]?.sha)) return unresolved("integration parents changed")
+    const historicalHead = integration.parents[1]?.sha ?? ""
+    const integrationParent = integration.parents[0]?.sha ?? ""
+    const acceptedCommitShas: string[] = []
+    const alreadyPresentCommitShas: string[] = []
+    const laterCommitShas: string[] = []
+    for (const commit of source.commits.filter((entry) => entry.parents.length <= 1)) {
+      if (!(try ancestor(commit.sha, historicalHead))) laterCommitShas.push(commit.sha)
+      else if (try ancestor(commit.sha, integrationParent)) alreadyPresentCommitShas.push(commit.sha)
+      else acceptedCommitShas.push(commit.sha)
+    }
+    if (acceptedCommitShas.length === 0) continue
+    proofs.push({
+      historicalHeadSha: historicalHead,
+      integrationSha: integration.sha,
+      integrationParentSha: integrationParent,
+      acceptedTipSha: observed.tip,
+      branch,
+      observedOnBranchAt: observed.run.created_at,
+      observationRunId: observed.run.id,
+      observationUrl: observed.run.html_url,
+      acceptedCommitShas: acceptedCommitShas.sort(),
+      alreadyPresentCommitShas: alreadyPresentCommitShas.sort(),
+      laterCommitShas: laterCommitShas.sort(),
+      integrationFiles: complete.commit.files,
+    })
+  }
+  const [proof] = proofs
+  if (proof === undefined || proofs.length !== 1)
+    return unresolved(proofs.length > 0 ? "multiple historical integrations require reconciliation" : "no complete branch observation proves the historical integration")
+  const retainedFiles = try collectIndirectRetention(source.repository, proof.historicalHeadSha, proof.acceptedTipSha, proof.integrationFiles)
+  if (retainedFiles === undefined) return unresolved("complete retained-content comparison is unavailable")
+  return { acceptance: { ...proof, retainedFiles }, limitations: [] } satisfies IndirectOutcome
+}
+
+export function acceptanceWith(retained: Acceptance.Shape["retained"]) {
+  return Layer.succeed(Acceptance, {
+    range: (source: MergedSource) => collectAcceptedRange(source),
+    native: (source: MergedSource) => collectNativeMerge(source.repository, source),
+    indirect: (source: IndirectSource, changes: CommitReader) => collectIndirectAcceptance(source, changes),
+    retained,
+    promotion: (source: PromotionSource) => collectNoChangePromotion(source),
+  })
+}

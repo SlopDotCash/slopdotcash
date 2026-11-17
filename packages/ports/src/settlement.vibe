@@ -1,4 +1,4 @@
-// spec/settlement/vaultSnapshots.md, "Story: Public vault totals show the last finalized value, never a fabricated zero"; spec/settlement/directBounty.md, "Story: Authorize and retain each exact transfer of an approved direct award"
+// spec/settlement/vaultSnapshots.md, "Story: Public vault totals show the last finalized value, never a fabricated zero"; spec/security/bounty.md, "Cases of one project share holds, funds and the route observation"; spec/settlement/directBounty.md, "Story: Authorize and retain each exact transfer of an approved direct award"
 import type { Statement } from "@repo/platform/d1"
 import { Network, type ReadFailure } from "./backend.vibe"
 
@@ -33,6 +33,15 @@ export schema DirectLeg {
 
 export service DirectBounty {
   legs(caseId: string): ReadonlyArray<DirectLeg>!ReadFailure
+}
+
+export interface DirectRoute {
+  readonly qualified: boolean
+  readonly observedAt: string
+}
+
+export service DirectRoutes {
+  route(asset: { readonly network: Network; readonly address: string }): (DirectRoute | undefined)!ReadFailure
 }
 
 export service PayeeAudience {

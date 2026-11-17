@@ -1,4 +1,5 @@
 import { area } from "@repo/platform/worker"
 import { api } from "./client/index.vibe"
+import { feeReportRoutes } from "./report/routes.vibe"
 
-export const fees = area({ name: "fees", api, routes: Layer.empty, provides: Layer.empty })
+export const fees = area({ name: "fees", api, routes: feeReportRoutes, provides: Layer.empty })

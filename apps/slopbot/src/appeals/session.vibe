@@ -1,0 +1,96 @@
+// spec/slopbot/appeals.md, "Only the author opens an appeal of a recorded finding, once per revision"; spec/slopbot/appeals.md, "Only the appellant or a current maintainer answers a draft; rejection escalates"; spec/slopbot/repositoryScope.md, "Scope follows registration, status, retirement and restriction in a fixed order"
+import { GitHub } from "@repo/platform/github"
+import type { ActorRole, ProjectScope } from "../../gen/slopbot__appeals.effect.vibe"
+import type { QualityTrust } from "../../gen/slopbot__closureActivation.effect.vibe"
+import type { Scope } from "../../gen/slopbot__repositoryScope.effect.vibe"
+import { type CurrentItem, currentItem } from "../closeAttempt/github.vibe"
+import { RepositoryRead, absentOn404 } from "../context/load.vibe"
+import { activeInstallation } from "../installation/store.vibe"
+import type { AppealCommandJob, AppealDueJob, AppealJob } from "../jobs/job.vibe"
+import { type ScopedItem, type WriteScope } from "../publish/scope.vibe"
+import { type Observed, type RepositoryRef, observe } from "../scope/facts.vibe"
+import { exemptionOf } from "../routing/facts.vibe"
+import { slopbotScope } from "../../gen/slopbot__repositoryScope.effect.vibe"
+
+export type AnyAppealJob = AppealJob | AppealCommandJob | AppealDueJob
+
+export interface AppealSettings {
+  readonly appUserId: string
+  readonly trust: QualityTrust
+}
+
+export interface AppealSession {
+  readonly job: AnyAppealJob
+  readonly ref: RepositoryRef
+  readonly projectId: string
+  readonly scope: Exclude<Scope, "Unregistered">
+  readonly observed: Observed
+  readonly repository: typeof RepositoryRead.Type
+  readonly current: CurrentItem
+  readonly settings: AppealSettings
+}
+
+export interface AppealHooks<E, R> {
+  readonly valueDispute: (job: AppealJob, session: AppealSession, hasFinding: boolean) => (string | undefined)!E!R
+  readonly valueCommand: (job: AppealCommandJob, session: AppealSession, appealKey: string) => string!E!R
+  readonly valueDue: (job: AppealDueJob) => string!E!R
+}
+
+export error AppealFailed { reason: string }
+
+export const unregisteredRepository = "repository is not registered in the Slop registry"
+export const unreadableItem = "ignored"
+
+schema SenderRead { readonly id: number; readonly login: string }
+
+const projectScopes: Readonly<Record<Exclude<Scope, "Unregistered">, ProjectScope>> = {
+  Contributor: "ScopeActive",
+  SecurityOnly: "ScopeSecurityOnly",
+  ReversalOnly: "ScopeRetired",
+}
+
+export function reversalOnly(session: AppealSession) {
+  return session.scope === "ReversalOnly"
+}
+
+export function projectScopeOf(session: AppealSession): ProjectScope {
+  return projectScopes[session.scope]
+}
+
+export function writeScopeOf(session: AppealSession): WriteScope {
+  return session.scope === "Contributor" ? "contributor" : "security"
+}
+
+export function itemOf(session: AppealSession): ScopedItem {
+  return { ref: session.ref, projectId: session.projectId, number: session.job.number, itemNodeId: session.current.issue.node_id }
+}
+
+export function appUserOf(session: AppealSession) {
+  const appUser = Number(session.settings.appUserId)
+  return Number.isSafeInteger(appUser) && appUser > 0 ? appUser : 0
+}
+
+export function hasLabel(session: AppealSession, label: string) {
+  return (session.current.issue.labels ?? []).some((entry) => entry.name === label)
+}
+
+export effect function appealSession(job: AnyAppealJob, settings: AppealSettings) {
+  const ref: RepositoryRef = { owner: job.owner, repo: job.repo, repositoryId: job.repositoryId }
+  const observed = try observe(ref)
+  const scope = slopbotScope(observed.observation)
+  if (observed.projectId === undefined || scope === "Unregistered") return unregisteredRepository
+  if (!(try activeInstallation(job.installationId))) return "installation removed or suspended"
+  const repository = try absentOn404((try GitHub).json(`/repositories/${job.repositoryId}`, RepositoryRead))
+  if (repository === undefined || repository.private || repository.id !== job.repositoryId) return unreadableItem
+  const current = try currentItem({ repositoryId: job.repositoryId, itemKind: job.itemKind, number: job.number })
+  if (current === undefined) return unreadableItem
+  return { job, ref, projectId: observed.projectId, scope, observed, repository, current, settings } satisfies AppealSession
+}
+
+export effect function maintainerRole(session: AppealSession, senderId: number) {
+  const sender = try absentOn404((try GitHub).json(`/user/${senderId}`, SenderRead))
+  if (sender === undefined || sender.id !== senderId) return "NotMaintainer" satisfies ActorRole
+  const exemption = try exemptionOf(session.repository.id, session.repository.owner, { id: sender.id, login: sender.login })
+  if (exemption === "ExemptionUnknown") throw new AppealFailed({ reason: "maintainer status is unknown; the command is retried" })
+  return (exemption === "Exempt" ? "CurrentMaintainer" : "NotMaintainer") satisfies ActorRole
+}

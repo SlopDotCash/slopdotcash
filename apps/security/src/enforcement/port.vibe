@@ -1,16 +1,17 @@
 // spec/security/enforcement.md, "Clearance and restrictions are separate dimensions with their own records"; spec/security/enforcement.md, "Each repository clears on its own admission, exemption or retained clean scan"; spec/backend/projectComposition.md, "Flags, restrictions and reinstatement change the registry only through their revisions"; spec/backend/access.md, "A banned account keeps its appeal, Slopbot triages it and a moderator decides it"; spec/backend/access.md, "One moderator decision reinstates selected accounts, each on its own appeal"
 import { randomId } from "@repo/platform/crypto"
-import { D1, type NonEmpty, RowMismatch, sql } from "@repo/platform/d1"
+import { D1, type NonEmpty, RowMismatch, type Statement, sql } from "@repo/platform/d1"
 import { Roles } from "@repo/platform/roles"
 import type { Conflict } from "@repo/platform/stored"
+import { type Action, type Recorded, send } from "@repo/backend/projects/store"
 import type { ReadFailure } from "@repo/ports/backend"
 import { Notices } from "@repo/ports/operations"
 import { ContributorAudience } from "@repo/ports/points"
-import { AccessJournal, type AccountRecord, type ActiveRestriction, Clearance, type ClearanceRead, Enforcement, EnforcementRows, PublicSecurity, type RestrictionFacts, type VettingState } from "@repo/ports/security"
+import { AccessJournal, type AccountRecord, type ActiveRestriction, Clearance, type ClearanceRead, Enforcement, EnforcementRecord, EnforcementRows, PublicSecurity, type RestrictionFacts, type VettingState } from "@repo/ports/security"
 import type { ClearanceState, Enforcement as EnforcementState } from "../../gen/security__enforcement.ts"
 import { basis, basisLabel, clearanceState, latestOf, mayContribute } from "../../gen/security__enforcement.effect.vibe"
 import { currentRestrictions, earliestRecorded, generation, journalColumns, journalFrom, keysOf, restrictionOf, scopeReads, scopeVersion } from "./rows.vibe"
-import { EnforcementRecord, changeWrites, owners } from "./statements.vibe"
+import { changeWrites, owners } from "./statements.vibe"
 import { EvidenceBucket } from "../evidence/objects.vibe"
 import { withRetainedEvidence } from "./retained.vibe"
 import { type Loaded, decodeEnforcement, loadEnforcement, rosterOf } from "./store.vibe"
@@ -19,13 +20,29 @@ export error ProjectRefused { reason: string }
 
 export interface ProjectEvent {
   readonly projectId: string
-  readonly event: unknown
+  readonly event: Action["event"]
   readonly by: number
+  readonly revision?: Recorded
+  readonly alongside?: ReadonlyArray<Statement>
 }
 
 export service ProjectEvents {
   send(action: ProjectEvent): void!(ProjectRefused | Conflict | ReadFailure)
 }
+
+export const ProjectEventsLive = Layer.effect(ProjectEvents, effect {
+  const services = try Effect.context<D1 | Roles | Notices | EnforcementRows | Experimental.Crypto.Crypto>()
+  return {
+    send: (action) => Effect.provide(effect {
+      send(action) catch effect (error) => {
+        if (error._tag === "Rejected") throw new ProjectRefused({ reason: error._tag })
+        if (error._tag === "NotAState") throw new RowMismatch({ text: "project composition", issue: `project ${action.projectId} does not decode` })
+        if (error._tag === "RevisionMissing" || error._tag === "RevisionMismatch" || error._tag === "ApplicationMissing" || error._tag === "FundingUnrecorded") return try die(error)
+        throw error
+      }
+    }, services),
+  } satisfies ProjectEvents.Shape
+})
 
 function isNonEmpty(ids: ReadonlyArray<string>): ids is NonEmpty<string> {
   return ids.length > 0

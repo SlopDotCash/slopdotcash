@@ -1,0 +1,277 @@
+// spec/slopbot/valueDisputes.md, "Only the author, a current maintainer, an affected implementation actor or a credited reviewer may dispute, once per record and actor"; spec/slopbot/valueDisputes.md, "Slopbot drafts once; incomplete evidence, a partial joint record, a ban or low confidence go to a moderator"; spec/slopbot/valueDisputes.md, "The disputer or a maintainer answers the draft; a moderator other than the disputer decides an escalated dispute"
+import { D1, type Statement, first, sql } from "@repo/platform/d1"
+import { isoNow } from "@repo/platform/clock"
+import { type Dispute, type DisputerCheck, type DisputerRole, affected, bindingVerified, due, slopModerators } from "../../gen/slopbot__valueDisputes.effect.vibe"
+import { dueJobOf } from "../appeals/due.vibe"
+import { publishAppealComment, labelOnce } from "../appeals/publication.vibe"
+import { type AppealSession, type AppealSettings, appealSession, appUserOf, itemOf, maintainerRole, reversalOnly, unreadableItem, unregisteredRepository } from "../appeals/session.vibe"
+import { publicationConfirmed } from "../appeals/store.vibe"
+import { moderatorLabel } from "../closeAttempt/moderators.vibe"
+import type { AppealCommandJob, AppealDueJob, AppealJob } from "../jobs/job.vibe"
+import { recordAction } from "../publish/actions.vibe"
+import { requireScope } from "../publish/scope.vibe"
+import { hundredths } from "../review/verdict.vibe"
+import { type Retained, ValueDisputeFailed, bindingOf, currentRetained, disputerRole, draftValueDispute, journalReadOf, retainedByKey, viewOf } from "./valueDraft.vibe"
+import { type LoadedDispute, type ValueKey, type ValueStage, commitDispute, loadDispute, parseValueKey, stageKeyOf, valueKeyOf } from "./valueStore.vibe"
+
+schema BoundRow { readonly detail: string }
+schema PostedRow { readonly n: number }
+
+interface Bound {
+  readonly key: string
+  readonly retained?: Retained
+  readonly role?: DisputerRole
+}
+
+export error ValueDisputeUnbound { appealKey: string; reason: string }
+
+const notAffected = "only an affected contributor, reviewer or maintainer can dispute this assessment"
+const moderatorDecides = "a Slop moderator decides this appeal"
+const settled = "This decision does not change Points, awards, payments, penalties or this pull request. Any correction must use the authorized assessment journal and retain its predecessor."
+
+function bindingKey(deliveryId: string) {
+  return `value-dispute:${deliveryId}`
+}
+
+effect function boundKey(deliveryId: string) {
+  return (try first(BoundRow, sql`SELECT detail FROM slopbot_actions WHERE review_key = ${bindingKey(deliveryId)} AND action = 'appeal'`))?.detail
+}
+
+effect function stagePosted(key: string, stage: ValueStage) {
+  return ((try first(PostedRow, sql`SELECT count(*) AS n FROM slopbot_actions WHERE review_key = ${stageKeyOf(key, stage)} AND action = 'comment'`))?.n ?? 0) > 0
+}
+
+function resolutionText(loaded: LoadedDispute) {
+  return loaded.row?.resolution === "upheld" ? "upheld" : "denied"
+}
+
+export function valueComment(key: string, loaded: LoadedDispute, stage: ValueStage) {
+  const row = loaded.row
+  const digest = key.split(":")[2] ?? ""
+  const escalated = row?.escalation !== null && row?.escalation !== undefined
+  const header = stage === "resolution"
+    ? `**Value dispute ${resolutionText(loaded)}** (decided by the ${row?.resolved_by ?? "moderator"}).`
+    : stage === "escalation"
+      ? "**Value dispute sent to a Slop moderator**"
+      : `**Slopbot value triage:** ${row?.draft === "uphold" ? "review the assessment for correction" : "retain the assessment"}. Confidence: ${(row?.draft_confidence ?? 0).toFixed(2)}.`
+  const next = escalated
+    ? `A Slop moderator decides with \`/slopbot uphold ${key}\` or \`/slopbot deny ${key}\`.`
+    : `The disputing contributor or a maintainer may \`/slopbot accept ${key}\` or \`/slopbot reject ${key}\` for moderator review. Unresolved disputes escalate after seven days.`
+  return ["<!-- slopbot:appeal -->", header, `Assessment: \`${digest}\`.`, settled, ...(stage === "resolution" ? [] : [next])].join("\n\n")
+}
+
+function fencedAction(fence: { readonly key: string; readonly token: string }, key: string, repositoryId: number, itemNodeId: string, stage: ValueStage, at: string): Statement {
+  return sql`INSERT OR IGNORE INTO slopbot_actions (review_key, repository_id, item_node_id, action, detail, created_at)
+    SELECT ${stageKeyOf(key, stage)}, ${repositoryId}, ${itemNodeId}, 'comment', ${stage}, ${at}
+    WHERE EXISTS (SELECT 1 FROM slopbot_appeal_publications WHERE publication_key = ${fence.key} AND claim_token = ${fence.token})`
+}
+
+effect function publishValueStage(session: AppealSession, key: string, stage: ValueStage) {
+  if (reversalOnly(session)) return
+  const loaded = try loadDispute(key)
+  const ready = stage === "resolution" ? loaded.dispute.resolution !== "Unresolved" && !loaded.dispute.postedResolution
+    : stage === "escalation" ? loaded.dispute.escalation !== "NotEscalated"
+    : loaded.dispute.draft !== "NoDraft"
+  if (ready && !(try stagePosted(key, stage))) {
+    const item = itemOf(session)
+    try publishAppealComment({ key: stageKeyOf(key, stage), item, appUser: appUserOf(session), body: valueComment(key, loaded, stage) }, {
+      posted: () => stagePosted(key, stage),
+      authorize: () => requireScope(item, "security"),
+      confirm: (fence, commentId) => stage === "resolution"
+        ? Effect.asVoid(commitDispute(key, { fence }, () => [{ event: { type: "postResolution" }, by: 0, optional: true, commentId }]))
+        : effect {
+          const at = try isoNow()
+          try (try D1).batch([publicationConfirmed(fence, commentId), fencedAction(fence, key, session.job.repositoryId, item.itemNodeId, stage, at)])
+        },
+    })
+  }
+  if (loaded.dispute.escalation !== "NotEscalated" && stage !== "resolution") try labelOnce(session, `${key}:moderator`, moderatorLabel)
+}
+
+function checkOf(dispute: Dispute, actor: number, maintainer: boolean): DisputerCheck {
+  return { actor, item: dispute.binding.item, role: maintainer ? "CurrentMaintainer" : "NotAffected" }
+}
+
+effect function verifiedRetained(session: AppealSession, parsed: ValueKey, dispute: Dispute) {
+  const retained = try retainedByKey(parsed, session.current.issue.node_id)
+  if (retained === undefined || !bindingVerified(dispute.binding, journalReadOf(retained, session.projectId)))
+    throw new ValueDisputeUnbound({ appealKey: parsed.key, reason: "The disputed value record no longer matches its binding" })
+  return retained
+}
+
+function escalationOf(loaded: LoadedDispute) {
+  return loaded.row?.escalation ?? ""
+}
+
+effect function opened(job: AppealJob, session: AppealSession, parsed: ValueKey, bound: Bound) {
+  const itemNodeId = session.current.issue.node_id
+  const found = bound.retained ?? try retainedByKey(parsed, itemNodeId)
+  if (found === undefined) throw new ValueDisputeUnbound({ appealKey: parsed.key, reason: "The disputed value record is unavailable" })
+  const role = bound.role ?? try disputerRole(session, found, job.senderId)
+  if (!affected(role)) return notAffected
+  const binding = bindingOf(parsed, found, itemNodeId)
+  const committed = try commitDispute(parsed.key, { opening: { job: dueJobOf(parsed.key, job) } }, () => [{
+    event: { type: "open", binding, read: journalReadOf(found, session.projectId), check: { actor: job.senderId, item: itemNodeId, role }, view: viewOf(session) },
+    by: job.senderId,
+    optional: true,
+  }])
+  if (!committed.dispute.opened) throw new ValueDisputeUnbound({ appealKey: parsed.key, reason: "Value dispute was not bound to its retained record" })
+  return committed.dispute
+}
+
+effect function bindDelivery(job: AppealJob, session: AppealSession, current: Retained | undefined) {
+  const bound = try boundKey(job.deliveryId)
+  if (bound !== undefined) return { key: bound } satisfies Bound
+  if (current === undefined) return "this pull request has no retained value assessment"
+  const key = valueKeyOf(current.kind, current.digest, job.senderId, job.repositoryId, job.number)
+  const role = try disputerRole(session, current, job.senderId)
+  if (!affected(role)) return notAffected
+  try recordAction({ reviewKey: bindingKey(job.deliveryId), repositoryId: job.repositoryId, itemNodeId: session.current.issue.node_id, action: "appeal", detail: key })
+  const first = try boundKey(job.deliveryId)
+  if (first === undefined) throw new ValueDisputeUnbound({ appealKey: key, reason: "Value dispute was not bound" })
+  return (first === key ? { key, retained: current, role } : { key: first }) satisfies Bound
+}
+
+effect function triaged(session: AppealSession, parsed: ValueKey, dispute: Dispute, retained: Retained) {
+  if (dispute.draft === "NoDraft") {
+    const drafted = try draftValueDispute(session, parsed, retained, dispute.binding)
+    if (typeof drafted === "string") return drafted
+    const stored = try commitDispute(parsed.key, {}, () => [{
+      event: { type: "draft", uphold: drafted.uphold, confidenceHundredths: hundredths(drafted.confidence), source: drafted.source },
+      by: 0,
+      optional: true,
+      confidence: drafted.confidence,
+    }])
+    if (stored.dispute.draft === "NoDraft") throw new ValueDisputeFailed({ reason: "Value dispute draft was not stored" })
+  }
+  try commitDispute(parsed.key, {}, (loaded) => [
+    { event: { type: "observeBan", status: loaded.banned ? "Banned" : "NotBanned" }, by: 0, optional: true },
+    { event: { type: "escalateDraft" }, by: 0, optional: true },
+  ])
+  try publishValueStage(session, parsed.key, "draft")
+  const current = try loadDispute(parsed.key)
+  return current.dispute.escalation === "NotEscalated" ? `value dispute drafted (${current.row?.draft ?? "none"})` : "value dispute escalated"
+}
+
+effect function recordValueDispute(job: AppealJob, session: AppealSession, current: Retained | undefined) {
+  if (job.itemKind !== "pull_request") return "this item has no PR value assessment"
+  const bound = try bindDelivery(job, session, current)
+  if (typeof bound === "string") return bound
+  const parsed = parseValueKey(bound.key)
+  if (parsed === undefined || parsed.actor !== job.senderId) throw new ValueDisputeUnbound({ appealKey: bound.key, reason: "Value dispute belongs to another source or actor" })
+  const loaded = try loadDispute(parsed.key)
+  const itemNodeId = session.current.issue.node_id
+  if (loaded.dispute.opened && (loaded.row?.item_node_id !== itemNodeId || loaded.dispute.disputer !== job.senderId))
+    throw new ValueDisputeUnbound({ appealKey: parsed.key, reason: "Value dispute belongs to another source or actor" })
+  const dispute = loaded.dispute.opened ? loaded.dispute : try opened(job, session, parsed, bound)
+  if (typeof dispute === "string") return dispute
+  const retained = try verifiedRetained(session, parsed, dispute)
+  if (dispute.resolution !== "Unresolved") return "value dispute already resolved"
+  if (dispute.scope !== "ScopeActive") {
+    try commitDispute(parsed.key, {}, () => [{ event: { type: "escalateRestricted" }, by: 0, optional: true }])
+    try publishValueStage(session, parsed.key, "escalation")
+    return "value dispute escalated"
+  }
+  return try triaged(session, parsed, dispute, retained)
+}
+
+effect function resolved(session: AppealSession, key: string) {
+  try publishValueStage(session, key, "resolution")
+  const loaded = try loadDispute(key)
+  return `value dispute ${resolutionText(loaded)}; assessment history unchanged`
+}
+
+effect function answerDraft(job: AppealCommandJob, session: AppealSession, key: string, dispute: Dispute) {
+  const sender = job.senderId
+  const disputer = sender === dispute.disputer
+  const maintainer = disputer ? false : (try maintainerRole(session, sender)) === "CurrentMaintainer"
+  if (!disputer && !maintainer) return "only the appellant or a maintainer can answer the draft"
+  const check = checkOf(dispute, sender, maintainer)
+  const banned = try commitDispute(key, {}, (loaded) => [
+    { event: { type: "observeBan", status: loaded.banned ? "Banned" : "NotBanned" }, by: 0, optional: true },
+    { event: { type: "escalateDraft" }, by: 0, optional: true },
+  ])
+  if (banned.applied.includes("escalateDraft")) try publishValueStage(session, key, "escalation")
+  if (banned.dispute.escalation !== "NotEscalated") {
+    if (job.command === "reject") try publishValueStage(session, key, "escalation")
+    return moderatorDecides
+  }
+  if (banned.dispute.draft === "NoDraft") return "no draft to answer yet"
+  if (job.command === "reject") {
+    const rejected = try commitDispute(key, {}, () => [{ event: { type: "reject", check }, by: sender, optional: true }])
+    if (!rejected.applied.includes("reject")) return rejected.dispute.resolution === "Unresolved" ? moderatorDecides : "appeal already resolved"
+    try publishValueStage(session, key, "escalation")
+    return `appeal escalated: ${escalationOf(try loadDispute(key))}`
+  }
+  const accepted = try commitDispute(key, {}, (loaded) => [
+    { event: { type: "observeBan", status: loaded.banned ? "Banned" : "NotBanned" }, by: 0, optional: true },
+    { event: { type: "accept", check }, by: sender, optional: true },
+    { event: { type: "escalateDraft" }, by: 0, optional: true },
+  ])
+  if (accepted.applied.includes("accept")) return try resolved(session, key)
+  if (accepted.applied.includes("escalateDraft")) try publishValueStage(session, key, "escalation")
+  return accepted.dispute.resolution === "Unresolved" ? moderatorDecides : "appeal already resolved"
+}
+
+effect function moderatorDecision(job: AppealCommandJob, session: AppealSession, key: string, dispute: Dispute) {
+  const sender = job.senderId
+  if (!slopModerators.includes(sender)) return "only a Slop moderator can decide an escalated appeal"
+  if (sender === dispute.disputer) return "a moderator cannot decide their own appeal"
+  if (dispute.escalation === "NotEscalated") return "this appeal is not escalated"
+  const decided = try commitDispute(key, {}, () => [{ event: { type: "moderatorDecide", uphold: job.command === "uphold" }, by: sender, optional: true }])
+  if (!decided.applied.includes("moderatorDecide") && decided.dispute.resolution === "Unresolved") return "this appeal is not escalated"
+  return try resolved(session, key)
+}
+
+effect function valueCommand(job: AppealCommandJob, session: AppealSession, key: string) {
+  const parsed = parseValueKey(key)
+  if (parsed === undefined) return "no open appeal"
+  const loaded = try loadDispute(key)
+  if (!loaded.dispute.opened) return "no open appeal"
+  if (loaded.row?.item_node_id !== session.current.issue.node_id) return "the appeal belongs to another item"
+  try verifiedRetained(session, parsed, loaded.dispute)
+  if (loaded.dispute.resolution !== "Unresolved") {
+    if (!loaded.dispute.postedResolution) try publishValueStage(session, key, "resolution")
+    return "appeal already resolved"
+  }
+  return job.command === "accept" || job.command === "reject"
+    ? try answerDraft(job, session, key, loaded.dispute)
+    : try moderatorDecision(job, session, key, loaded.dispute)
+}
+
+effect function escalateOverdue(key: string) {
+  const escalated = try commitDispute(key, {}, () => [{ event: { type: "dispatchDue" }, by: 0, optional: true }, { event: { type: "escalateOverdue" }, by: 0, optional: true }])
+  return escalated.applied.includes("escalateOverdue")
+}
+
+effect function valueDue(job: AppealDueJob, settings: AppealSettings) {
+  const loaded = try loadDispute(job.appealKey)
+  if (!loaded.dispute.opened || loaded.dispute.resolution !== "Unresolved") return "appeal already resolved"
+  const escalated = loaded.dispute.escalation !== "NotEscalated"
+  if (!escalated && !due(loaded.dispute)) return "appeal not due"
+  const session = try appealSession(job, settings)
+  if (typeof session === "string") {
+    if (!escalated && (session === unregisteredRepository || session === unreadableItem) && (try escalateOverdue(job.appealKey))) return `appeal escalated; ${session}`
+    return escalated ? `appeal escalated; ${session}` : session
+  }
+  if (!escalated && !(try escalateOverdue(job.appealKey))) return "appeal not due"
+  try publishValueStage(session, job.appealKey, "escalation")
+  return `appeal escalated: ${escalationOf(try loadDispute(job.appealKey))}`
+}
+
+effect function valueDispute(job: AppealJob, session: AppealSession, hasFinding: boolean) {
+  if (job.kind !== "appeal") return undefined
+  const bound = (try boundKey(job.deliveryId)) !== undefined
+  if (!bound && job.subject !== "value" && hasFinding) return undefined
+  const current = bound ? undefined : try currentRetained(session.projectId, session.current.issue.node_id)
+  if (!bound && current === undefined && job.subject !== "value") return undefined
+  return try recordValueDispute(job, session, current)
+}
+
+export function valueDisputeHooks(settings: AppealSettings) {
+  return {
+    valueDispute: (job: AppealJob, session: AppealSession, hasFinding: boolean) => valueDispute(job, session, hasFinding),
+    valueCommand: (job: AppealCommandJob, session: AppealSession, key: string) => valueCommand(job, session, key),
+    valueDue: (job: AppealDueJob) => valueDue(job, settings),
+  }
+}

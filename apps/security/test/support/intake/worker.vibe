@@ -3,13 +3,14 @@ import type { D1Database, R2Bucket } from "@repo/platform/bindings"
 import { noEdgeCache } from "@repo/platform/cache"
 import { webCrypto } from "@repo/platform/crypto"
 import { D1, d1, first, sql } from "@repo/platform/d1"
-import { handle } from "@repo/platform/http"
+import { handle, outbound } from "@repo/platform/http"
 import { rolesFrom } from "@repo/platform/roles"
 import { route } from "@repo/platform/route"
 import { worker } from "@repo/platform/worker"
 import { CallerLive } from "@repo/backend/caller"
 import { Authority, type ProjectView, Registry, Restrictions } from "@repo/ports/backend"
 import { ReportingReadiness } from "@repo/ports/slopbot"
+import { privateRoute } from "../../../src/analysis/route.vibe"
 import { intakeSettings } from "../../../src/intake/availability.vibe"
 import { intakeRoutes } from "../../../src/intake/routes.vibe"
 import { reportBucket } from "../../../src/privacy/reads.vibe"
@@ -130,6 +131,7 @@ export default worker({
     rolesFrom(env),
     reportBucket(faultyBucket(env.PRIVATE_TRACES, plan)),
     intakeSettings({ mode: env.SLOP_PRIVATE_INTAKE_MODE, automatic: false }),
+    Layer.provide(privateRoute({ apiKey: undefined }), Layer.merge(outbound, webCrypto)),
     Layer.provide(CallerLive, Layer.merge(d1(env.SLOP_DB), webCrypto)),
     Layer.provide(ports(env), d1(env.SLOP_DB)),
   ),

@@ -1,0 +1,168 @@
+// spec/slopbot/valueHistory.md, "Each page agrees with the first through sequence and total count"; spec/slopbot/valueHistory.md, "A successor consumes every affected predecessor and its complete source set"; spec/slopbot/publicFeeds.md, "A joint work-unit page requires a through bound"
+import { sha256Hex } from "@repo/platform/crypto"
+import { first, rows, sql } from "@repo/platform/d1"
+import { WorkUnitHistoryRow } from "@repo/ports/slopbot"
+import { feedPageSize, hasNextPage, pageRecords } from "../../../gen/slopbot__publicFeeds.effect.vibe"
+
+export interface HistoryRepository {
+  readonly id: string
+  readonly nodeId: string | null
+}
+
+export type JournalRow = typeof WorkUnitHistoryRow.Type
+
+export schema StoredRecord {
+  sequence: number
+  record_digest: string
+  assessment_key: string
+  record_json: string
+  recorded_at: string
+}
+
+export error HistoryUnreadable { issue: string }
+
+schema PageJson { records_json: string }
+
+schema JointJson { maximum: number; through_sequence: number; total_records: number; records_json: string }
+
+const JournalRows = Schema.Array(WorkUnitHistoryRow)
+
+export effect function parsedJson(text: string, issue: string) {
+  return try Effect.try({ try: () => JSON.parse(text) as unknown, catch: () => new HistoryUnreadable({ issue }) })
+}
+
+effect function journalRows(text: string) {
+  const parsed = try parsedJson(text, "history rows are not JSON")
+  return Schema.decodeUnknownEffect(JournalRows)(parsed) catch effect () => { throw new HistoryUnreadable({ issue: "history rows do not decode" }) }
+}
+
+function paged(found: ReadonlyArray<JournalRow>) {
+  const page = found.slice(0, pageRecords(found.length))
+  return { records: page, nextAfter: hasNextPage(found.length) ? page[page.length - 1]?.sequence ?? null : null }
+}
+
+export effect function valueHistoryPage(repository: HistoryRepository, pullRequestNumber: number, after: number) {
+  const identity = repository.nodeId === null ? sql`json_extract(record_json, '$.repository')` : sql`repository_node_id`
+  const found = try first(PageJson, sql`SELECT json_group_array(json_object('sequence', sequence, 'record_digest', record_digest, 'record_json', record_json, 'recorded_at', recorded_at)) AS records_json
+    FROM (SELECT sequence, record_digest, record_json, recorded_at FROM slopbot_value_journal
+      WHERE ${identity} = ${repository.nodeId ?? repository.id} AND json_extract(record_json, '$.pullRequestNumber') = ${pullRequestNumber} AND sequence > ${after}
+      ORDER BY sequence LIMIT ${feedPageSize + 1})`)
+  if (found === undefined) throw new HistoryUnreadable({ issue: "value history read returned no row" })
+  return paged(try journalRows(found.records_json))
+}
+
+export effect function workUnitHistoryPage(repository: HistoryRepository, pullRequestNumber: number, after: number, through: number | null) {
+  const path = repository.nodeId === null ? "$.repository" : "$.repositoryNodeId"
+  const found = try first(JointJson, sql`WITH RECURSIVE
+    bounds AS (SELECT COALESCE(MAX(sequence), 0) AS maximum, COALESCE(${through}, MAX(sequence), 0) AS through_sequence FROM slopbot_work_unit_journal),
+    lineage(record_digest) AS (
+      SELECT j.record_digest FROM slopbot_work_unit_journal j, bounds b
+      WHERE j.sequence <= b.through_sequence AND EXISTS (
+        SELECT 1 FROM json_each(j.record_json, '$.sources') s
+        WHERE json_extract(s.value, ${path}) = ${repository.nodeId ?? repository.id} AND json_extract(s.value, '$.pullRequestNumber') = ${pullRequestNumber})
+      UNION
+      SELECT p.predecessor_digest FROM slopbot_work_unit_predecessors p JOIN lineage l ON p.record_digest = l.record_digest
+    )
+    SELECT b.maximum, b.through_sequence, (SELECT COUNT(*) FROM lineage) AS total_records,
+      (SELECT json_group_array(json_object('sequence', sequence, 'record_digest', record_digest, 'record_json', record_json, 'recorded_at', recorded_at))
+       FROM (SELECT j.sequence, j.record_digest, j.record_json, j.recorded_at FROM slopbot_work_unit_journal j JOIN lineage l ON l.record_digest = j.record_digest
+         WHERE j.sequence > ${after} ORDER BY j.sequence LIMIT ${feedPageSize + 1})) AS records_json
+    FROM bounds b`)
+  if (found === undefined || found.through_sequence > found.maximum) throw new HistoryUnreadable({ issue: "joint history sequence boundary is unavailable" })
+  return { ...paged(try journalRows(found.records_json)), throughSequence: found.through_sequence, totalRecords: found.total_records }
+}
+
+export interface LegacySource {
+  readonly projectId: string
+  readonly repository: HistoryRepository
+  readonly repositoryNames: ReadonlyArray<string>
+  readonly repositoryNodeId: string
+  readonly repositoryDatabaseId: number
+  readonly pullRequestNodeId: string
+  readonly pullRequestNumber: number
+}
+
+const digestPattern = /^[a-f0-9]{64}$/u
+
+function isFields(value: unknown): value is Readonly<Record<string, unknown>> {
+  return value !== null && typeof value === "object" && !Array.isArray(value)
+}
+
+function continuesLegacy(record: unknown, source: LegacySource, previous: string | null) {
+  if (!isFields(record)) return false
+  const named = record["repository"]
+  const reason = record["revisionReason"]
+  const revision = previous === null ? reason === null : typeof reason === "string" && reason.trim() !== ""
+  return record["schemaVersion"] === "slop-value-record:v1" && record["projectId"] === source.projectId && typeof named === "string" && source.repositoryNames.includes(named)
+    && record["repositoryNodeId"] === source.repositoryNodeId && record["repositoryDatabaseId"] === source.repositoryDatabaseId
+    && record["pullRequestNodeId"] === source.pullRequestNodeId && record["pullRequestNumber"] === source.pullRequestNumber
+    && record["supersedes"] === previous && revision
+}
+
+effect function exactLegacyBytes(row: JournalRow, cursor: number) {
+  if (!Number.isSafeInteger(row.sequence) || row.sequence <= cursor || !digestPattern.test(row.record_digest) || !Number.isFinite(Date.parse(row.recorded_at))) return false
+  return (try sha256Hex(row.record_json)) === row.record_digest
+}
+
+export effect function verifiedLegacyHead(source: LegacySource) {
+  let cursor = 0
+  let head: string | null = null
+  for (;;) {
+    const page = try valueHistoryPage(source.repository, source.pullRequestNumber, cursor)
+    for (const row of page.records) {
+      if (!(try exactLegacyBytes(row, cursor))) throw new HistoryUnreadable({ issue: "value history has invalid bytes or sequence" })
+      const record = try parsedJson(row.record_json, "value history record is not JSON")
+      if (!continuesLegacy(record, source, head)) throw new HistoryUnreadable({ issue: "value history identity or predecessor is invalid" })
+      head = row.record_digest
+      cursor = row.sequence
+    }
+    if (page.nextAfter === null) return head ?? undefined
+    if (page.records.length === 0 || page.nextAfter !== cursor) throw new HistoryUnreadable({ issue: "value history cursor did not advance" })
+  }
+}
+
+const storedColumns = sql`sequence, record_digest, assessment_key, record_json, recorded_at`
+
+export effect function recordByDigest(digest: string) {
+  return try first(StoredRecord, sql`SELECT ${storedColumns} FROM slopbot_value_journal WHERE record_digest = ${digest}`)
+}
+
+export effect function predecessorsOf(digest: string) {
+  return try rows(StoredRecord, sql`WITH RECURSIVE chain(record_digest, supersedes) AS (
+      SELECT record_digest, supersedes FROM slopbot_value_journal WHERE record_digest = ${digest}
+      UNION ALL
+      SELECT j.record_digest, j.supersedes FROM slopbot_value_journal j JOIN chain c ON j.record_digest = c.supersedes)
+    SELECT ${storedColumns} FROM slopbot_value_journal WHERE record_digest IN (SELECT record_digest FROM chain) AND record_digest <> ${digest} ORDER BY sequence`)
+}
+
+export effect function recordDigest(recordJson: string) {
+  return try sha256Hex(recordJson)
+}
+
+export interface ValueKeyParts {
+  readonly repositoryNodeId: string
+  readonly pullRequestNodeId: string
+  readonly sourceDigest: string
+  readonly rubricVersion: string
+  readonly producerRevision: string
+}
+
+export effect function valueAssessmentKey(parts: ValueKeyParts) {
+  return try sha256Hex(JSON.stringify(["slop-value-assessment:v1", parts.repositoryNodeId, parts.pullRequestNodeId, parts.sourceDigest, parts.rubricVersion, parts.producerRevision]))
+}
+
+export effect function workUnitAssessmentKey(parts: Pick<ValueKeyParts, "sourceDigest" | "rubricVersion" | "producerRevision">) {
+  return try sha256Hex(JSON.stringify(["slop-work-unit-assessment:v1", parts.sourceDigest, parts.rubricVersion, parts.producerRevision]))
+}
+
+export effect function storedAssessmentKey(recordDigest: string) {
+  const found = try first(Schema.Struct({ assessment_key: Schema.String }), sql`SELECT assessment_key FROM slopbot_value_journal WHERE record_digest = ${recordDigest}
+    UNION ALL SELECT assessment_key FROM slopbot_work_unit_journal WHERE record_digest = ${recordDigest}`)
+  return found?.assessment_key
+}
+
+export effect function assessmentKeyStored(assessmentKey: string) {
+  const found = try first(Schema.Struct({ found: Schema.Number }), sql`SELECT 1 AS found WHERE EXISTS (SELECT 1 FROM slopbot_value_journal WHERE assessment_key = ${assessmentKey})
+    OR EXISTS (SELECT 1 FROM slopbot_work_unit_journal WHERE assessment_key = ${assessmentKey})`)
+  return found !== undefined
+}

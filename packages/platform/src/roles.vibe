@@ -1,4 +1,4 @@
-// spec/backend/projects.md, "Self-service project registry lifecycle"; spec/security/enforcement.md, "Project restrictions, admission clearance and reinstatement"
+// spec/backend/projects.md, "Administrators hold, delist, change the steward or place a project"; spec/security/enforcement.md, "A moderator quarantines a clear project or bans it, and decides a service ban"
 import { idList } from "./config.vibe"
 
 export type Role = "administrator" | "moderator" | "operator"

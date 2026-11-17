@@ -1,5 +1,6 @@
-// spec/points/recovery.md, "Recovery requires both verified public copies from the requested environment"; spec/points/recovery.md, "Bootstrap starts an empty journal only when no public copy exists"; spec/points/publication.md, "A publisher stages a candidate without changing what readers see"; spec/points/publication.md, "Refusal and interruption leave the public history untouched"
+// spec/points/recovery.md, "Recovery requires both verified public copies from the requested environment"; spec/points/recovery.md, "Bootstrap starts an empty journal only when no public copy exists"; spec/points/publication.md, "A publisher stages a candidate without changing what readers see"; spec/points/publication.md, "Refusal and interruption leave the public history untouched"; spec/points/historicalImport.md, "Each import has its own hold and published rules stay prior until a release"; spec/points/publication.md, "An admissible candidate preserves every public record in exact order"
 import { isoNow } from "@repo/platform/clock"
+import { d1Http } from "@repo/platform/d1Http"
 import { journalText } from "../kernels/records/canonical.ts"
 import { finish, openStore } from "../journal/ledger.vibe"
 import { repositoriesOf, readSnapshots } from "../journal/build.vibe"
@@ -7,14 +8,19 @@ import { reconcilePenalties } from "../journal/penalties.vibe"
 import { applyRetainedReviews } from "../journal/retained.vibe"
 import { applySnapshots } from "../journal/snapshot.vibe"
 import { recognizePayouts } from "../payoutRecognition/awards.vibe"
-import { evaluationInputs } from "../evaluations/check.vibe"
+import { admittedFrom, databases, evaluationInputs } from "../evaluations/check.vibe"
 import { applyEvaluations } from "../evaluations/journal.vibe"
-import { admitManifests, evaluationEvents } from "../evaluations/manifests.vibe"
+import { evaluationEvents } from "../evaluations/manifests.vibe"
 import { readRegistry } from "../snapshot/adaptPr.vibe"
+import { validatePublishable } from "../client/snapshot/validate.vibe"
+import type { CensusPhase } from "../../gen/points__census.ts"
+import { historicalHolds, publicationHeld } from "../historicalImport/hold.vibe"
+import { importJournal } from "../publication/import.vibe"
+import { publishable } from "../publication/publish.vibe"
 import { readSnapshotFile } from "../snapshot/files.vibe"
 import { instantOf } from "../kernels/records/instants.ts"
-import { projectionFiles, writeProjection } from "../publication/projections.vibe"
-import { recoverPublished } from "../recovery/published.vibe"
+import { projectionFiles, readProjection, writeProjection } from "../publication/projections.vibe"
+import { origins, recoverPublished } from "../recovery/published.vibe"
 import type { Environment } from "../../gen/points__recovery.ts"
 
 export error JournalUsage { message: string }
@@ -25,7 +31,7 @@ schema CapturedRepository { readonly id: string; readonly countsFrom?: string }
 schema CapturedProject { readonly repositories: ReadonlyArray<CapturedRepository> }
 schema CapturedRegistry { readonly schemaVersion: number; readonly projects: ReadonlyArray<CapturedProject> }
 
-const usage = "journal build <registry.json> <public data directory> <registry snapshot.json> [--online] [--bootstrap] [--environment production|staging]"
+const usage = "journal build <registry.json> <public data directory> <registry snapshot.json> [--online] [--bootstrap] [--environment production|staging] | journal import <public data directory> <registry.json> --current-origin https://slop.cash"
 const historyPath = "data/points/history.json"
 const reviewHistoryPath = "data/accepted-review-history.json"
 const cyclesDirectory = "cycles"
@@ -161,7 +167,7 @@ effect function build(args: ReadonlyArray<string>) {
   const repositories = repositoriesOf(registry, try countsFromOf(parsed.snapshot))
   try applySnapshots(store, repositories, try readSnapshots(try snapshotTexts(parsed.directory), registry), recordedAt)
   try recognizePayouts(store, try textFile(files.join(parsed.directory, "cycles", "index.json"), maxCycleIndexBytes), recordedAt)
-  const admitted = try admitManifests(try evaluationInputs(files.resolve(".")), { repositories, externalProjects: new Set() })
+  const admitted = try admittedFrom(try evaluationInputs(files.resolve(".")), repositories, parsed.environment === "Production" ? "production" : "staging")
   const reviewed: ReadonlyArray<unknown> = [...(try acceptedReviewEvents()), ...evaluationEvents(admitted)]
   const digest = try applyRetainedReviews(store, repositories, reviewed, recordedAt)
   try applyEvaluations(store, repositories, admitted, digest, recordedAt)
@@ -175,8 +181,40 @@ effect function build(args: ReadonlyArray<string>) {
   try Console.log(`[points] ${projection.members.length} contributors; ${finished.journal.revisions.length} historical revisions; ${finished.held.length} held for owner review`)
 }
 
+effect function censusPhaseOf(directory: string, registryPath: string) {
+  const files = try Path.Path
+  const registry = try readRegistry(registryPath)
+  const path = files.join(directory, "leaderboard.json")
+  const text = try snapshotText(path)
+  const value: unknown = Effect.try(() => JSON.parse(text) as unknown) catch effect () => {
+    throw new JournalInputInvalid({ path, message: `${path} is not JSON` })
+  }
+  const ready = validatePublishable(value, registry, try Clock.currentTimeMillis) catch effect (error) => {
+    try Console.error(`[points] ${path} is not ready for publication: ${error.message}`)
+    return undefined
+  }
+  return (ready === undefined ? "Collecting" : "ReadyForPublication") satisfies CensusPhase
+}
+
+effect function importInto(args: ReadonlyArray<string>) {
+  const [directory, registry, flag, origin, ...extra] = args
+  if (directory === undefined || registry === undefined || flag !== "--current-origin" || origin === undefined || extra.length > 0) throw refused(`Usage: ${usage}`)
+  if (origin !== origins.Production) throw refused("Only the production Points origin is supported")
+  const candidate = try readProjection(directory)
+  const current = try recoverPublished({ environment: "Production", bootstrap: false, wait: waitFor })
+  if (current === null) throw new JournalInputInvalid({ path: origin, message: "Production Points history is unavailable" })
+  try publishable(current, candidate, { censusPhase: try censusPhaseOf(directory, registry), historicalHold: publicationHeld(try historicalHolds(current)) })
+  const accountId = try Config.String("CLOUDFLARE_ACCOUNT_ID")
+  const token = try Config.Redacted("CLOUDFLARE_API_TOKEN")
+  provide d1Http({ accountId, databaseId: databases.production, token }) {
+    const imported = try importJournal(candidate, { wait: waitFor })
+    try Console.log(`[points] imported ${imported.revisions} revisions as batch ${imported.digest} on attempt ${imported.attempt}`)
+  }
+}
+
 export effect function journal(args: ReadonlyArray<string>) {
   const [subcommand, ...rest] = args
   if (subcommand === "build") return try build(rest)
+  if (subcommand === "import") return try importInto(rest)
   throw refused(`Usage: ${usage}`)
 }

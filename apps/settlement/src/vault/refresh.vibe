@@ -66,6 +66,7 @@ export function observationOf(totals: ChainTotals, identity: Identity, purpose: 
       reserved: balance(totals.reserved),
     },
     legacyServiceFees: [0],
+    monthPledges: { tag: "PledgesNotRead" },
   }
 }
 

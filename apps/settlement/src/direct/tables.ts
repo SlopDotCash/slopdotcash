@@ -8,4 +8,5 @@ export const writes = [
   "security_direct_payment_receipts",
   "security_direct_transaction_uses",
   "security_direct_payment_revisions",
+  "security_direct_recovery_scans",
 ] as const;

@@ -42,7 +42,7 @@ export declare const FiledFlag: Schema.Struct<{
         readonly state: Schema.mutableKey<Schema.Literals<readonly ["active", "withdrawn", "resolved", "expired"]>>;
     }>, Schema.Null]>>;
     readonly paused: Schema.mutableKey<Schema.Boolean>;
-    readonly freshScan: Schema.mutableKey<Schema.Null>;
+    readonly freshScan: Schema.mutableKey<Schema.Union<readonly [Schema.Literal<"queued">, Schema.Literal<"already_queued">, Schema.Literal<"unavailable">, Schema.Null]>>;
     readonly restriction: Schema.mutableKey<Schema.Literals<readonly ["clear", "quarantined", "banned"]>>;
     readonly pausedByFlags: Schema.mutableKey<Schema.Boolean>;
 }>;
@@ -189,7 +189,7 @@ export declare const fileFlag: import("@repo/platform/route").Route<undefined, {
         state: "active" | "expired" | "resolved" | "withdrawn";
     } | null;
     paused: boolean;
-    freshScan: null;
+    freshScan: "already_queued" | "queued" | "unavailable" | null;
     restriction: "banned" | "clear" | "quarantined";
     pausedByFlags: boolean;
 }, "sessionWrite">;

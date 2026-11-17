@@ -11,18 +11,19 @@ import { licenseRecorded } from "../../../gen/backend__projects.effect.vibe"
 import { type Exclusion, covers, validList } from "../../../gen/settlement__payoutExclusions.effect.vibe"
 import { type AccessActor, type Checked, type RepositoryIdentity, currentPath, decided, modelRead, readAccess } from "../../authority/live.vibe"
 import { checkedIn, editedConsent, fundingChoiceOf, newProjectManifest, savedConsentOf, withConsent } from "../../closureConsent/form.vibe"
-import { CheckRequest, CreateRequest, EmptyRequest, RemoveRequest, ReviseRequest, cancelApplication, checkSetup, createProject, listSetup, myApplications, ownedRepositories, publishApplication, removeProject, repositoryFacts, reviseProject, setupViewer } from "../../client/projectSetup.vibe"
+import { CheckRequest, CreateRequest, EmptyRequest, RemoveRequest, type RepositoryLicense, ReviseRequest, cancelApplication, checkSetup, createProject, listSetup, myApplications, ownedRepositories, publishApplication, removeProject, repositoryFacts, reviseProject, setupViewer } from "../../client/projectSetup.vibe"
 import { getProjectGithubOwnedRepositories, getProjectSetupById, postProjectApplicationsByIdCancel, postProjectApplicationsByIdPublish, postProjectSetupByIdCheck, postProjects, putProjectsById } from "../../client/refusals.vibe"
 import { listedById } from "../../projectRegistry/claims.vibe"
-import { type License as GithubLicense, factsByPath, githubLogin, lookupActor, lookupRepository, ownedRepositories as ownedOf, validRepositoryPath } from "../github/lookup.vibe"
+import { factsByPath, githubLogin, lookupActor, lookupRepository, ownedRepositories as ownedOf, validRepositoryPath } from "../github/lookup.vibe"
 import { idOf, nextMonth } from "../store/codec.vibe"
 import { accountStanding } from "../store/facts.vibe"
 import { manifestOf } from "../store/rows.vibe"
 import { isRepositoryConflict, loadProject, send } from "../store/store.vibe"
 import { verifiedAsset } from "../tokens/metadata.vibe"
-import { appendedRepositories, classified, fieldsComplete, newProjectRefusal, nextUtcMonthStart, prospectiveFinancialChange, refusal, same, withMonthlyAmount } from "./manifest.vibe"
+import { fieldsComplete, newProjectRefusal, nextUtcMonthStart, prospectiveFinancialChange, refusal, withMonthlyAmount } from "./manifest.vibe"
+import { type Json, appendedRepositories, classified, objectOf, same } from "./revisionChanges.ts"
 import { type Trusted, definitionProblem, registryProblem, transitionProblem } from "./definition.ts"
-import { type Json, type StoredApplication, applicantApplications, applicationStatus, hasSignedIn, listedManifests, objectOf, ownedProject, ownedProjects, parsedObject, projectRecord, publicApplication, storedApplication, storedProject } from "./records.vibe"
+import { type StoredApplication, applicantApplications, applicationStatus, hasSignedIn, listedManifests, ownedProject, ownedProjects, parsedObject, projectRecord, publicApplication, storedApplication, storedProject } from "./records.vibe"
 import { primaryAuthority, primaryOf, refreshSetup } from "./setup.vibe"
 
 const contract = { "x-slop-project-api-contract": "project-registry-v1" }
@@ -208,7 +209,7 @@ effect function resolveReferrer(value: string | null | undefined, manifest: Json
 
 const unrecordedLicense: Creation["license"] = { terms: "UnknownTerms", url: 0, commit: 0, digest: 0 }
 
-function licenseFacts(manifest: Json, observed: GithubLicense): Creation["license"] | Refused {
+function licenseFacts(manifest: Json, observed: RepositoryLicense): Creation["license"] | Refused {
   const submitted = objectOf(objectOf(manifest.terms)?.repositoryLicense) ?? {}
   if (observed.state !== "verified" || submitted.state !== "verified") return unrecordedLicense
   if (submitted.spdx !== observed.spdx || submitted.commitSha !== observed.commitSha || submitted.fileSha256 !== observed.fileSha256) return refusal(putProjectsById.invalidManifest, "The recorded license does not match the root LICENSE on the repository's default branch. Look the repository up again.")
@@ -252,10 +253,10 @@ function projectAnswer(row: { readonly id: string; readonly status: string; read
   return projectRecord({ ...row, manifest: "" }, manifest)
 }
 
-effect function created(projectId: string, actor: Actor, checked: Checked) {
+effect function created(projectId: string, actor: Actor, checked: Checked, scanReason: string) {
   const stored = try storedProject(projectId)
   if (stored === undefined) throw refusal(postProjects.registryConflictTheProjectIdRepository)
-  const setup = try refreshSetup({ projectId, actor: accessActor(actor), checked, allowActivation: true, scanRequest: "queue" })
+  const setup = try refreshSetup({ projectId, actor: accessActor(actor), checked, allowActivation: true, scanRequest: { kind: "queue", reason: scanReason } })
   return { project: projectAnswer(stored.row, stored.manifest), setup }
 }
 
@@ -283,7 +284,7 @@ effect function create(actor: Actor) {
     if (error._tag === "Rejected") throw creationRefusal(error.event, error.state, by, conflict)
     throw storeRefusal(error, conflict) ?? error
   }
-  return answer(try created(decoded.id, actor, checked), 201)
+  return answer(try created(decoded.id, actor, checked, "First scan after self-service setup"), 201)
 }
 
 function positiveInteger(value: unknown): number | undefined {
@@ -455,7 +456,7 @@ effect function revise(projectId: string, actor: Actor, request: Revision, store
   }
   const latest = try storedProject(projectId)
   if (latest === undefined) throw stale
-  const setup = try refreshSetup({ projectId, actor: accessActor(actor), checked, allowActivation: false, scanRequest: scanRequired ? "queue" : "none" })
+  const setup = try refreshSetup({ projectId, actor: accessActor(actor), checked, allowActivation: false, scanRequest: scanRequired ? { kind: "queue", reason: `Owner changed ${changes.executable.join(", ")}` } : { kind: "none" } })
   return { project: projectAnswer(latest.row, latest.manifest), changes: { presentation: changes.presentation, executable: changes.executable, financial: changes.financial }, setup }
 }
 
@@ -544,7 +545,7 @@ effect function publishStored(application: StoredApplication, actor: Actor) {
     if (error._tag === "Rejected") throw creationRefusal(error.event, error.state, by, conflict)
     throw storeRefusal(error, conflict) ?? error
   }
-  return answer(try created(application.project_id, actor, checked), 201)
+  return answer(try created(application.project_id, actor, checked, "First scan after publishing a stored application"), 201)
 }
 
 effect function publish(applicationId: string, actor: Actor) {
@@ -591,7 +592,7 @@ effect function check(projectId: string, actor: Actor) {
   const project = try storedProject(projectId)
   if (project === undefined) throw refusal(putProjectsById.notFoundProjectNotFound)
   const checked = try denyingAuthority(project.manifest, accessActor(actor))
-  const setup = try refreshSetup({ projectId, actor: accessActor(actor), checked, allowActivation: true, scanRequest: request.requestScan === true ? "rescan" : "check" })
+  const setup = try refreshSetup({ projectId, actor: accessActor(actor), checked, allowActivation: true, scanRequest: { kind: request.requestScan === true ? "rescan" : "check" } })
   if (setup === undefined) throw refusal(putProjectsById.notFoundProjectNotFound)
   return answer({ setup })
 }

@@ -1,0 +1,101 @@
+// spec/slopbot/publicFeeds.md, "The per-repository summary counts reviewed, blocked, labeled, closed, reopened and appealed items from D1 only"
+import { isoNow, millisOf } from "@repo/platform/clock"
+import { D1, decoded, sql } from "@repo/platform/d1"
+import { handleRaw, json } from "@repo/platform/http"
+import { cacheControl } from "@repo/platform/route"
+import type { ItemActivity } from "../../gen/slopbot__publicFeeds.ts"
+import { listedInSummary, summarize } from "../../gen/slopbot__publicFeeds.effect.vibe"
+import { otherSummaryMethods, summary } from "../client/feeds.vibe"
+import { getSlopbotSummary } from "../client/refusals.vibe"
+import { refusalHeaders } from "./routes.vibe"
+import { HistoryUnreadable, parsedJson } from "../value/history/read.vibe"
+
+schema ItemRow {
+  repository_id: number
+  completed: number
+  failed: number
+  latest_blocked: number
+  labeled: number
+  first_close: string | null
+  latest_reopen: string | null
+  latest_appeal: string | null
+}
+
+schema RepositoryRow { repository_id: number; installation_ids: string; last_activity_at: string | null }
+
+const InstallationIds = Schema.Array(Schema.Number)
+
+const itemActivity = sql`WITH listed AS (SELECT DISTINCT repository_id FROM slopbot_reviews WHERE status IN ('completed', 'failed')),
+  items AS (
+    SELECT repository_id, item_node_id FROM slopbot_reviews WHERE repository_id IN (SELECT repository_id FROM listed)
+    UNION SELECT repository_id, item_node_id FROM slopbot_actions WHERE repository_id IN (SELECT repository_id FROM listed))
+  SELECT i.repository_id,
+    EXISTS (SELECT 1 FROM slopbot_reviews v WHERE v.repository_id = i.repository_id AND v.item_node_id = i.item_node_id AND v.status = 'completed') AS completed,
+    EXISTS (SELECT 1 FROM slopbot_reviews v WHERE v.repository_id = i.repository_id AND v.item_node_id = i.item_node_id AND v.status = 'failed') AS failed,
+    EXISTS (SELECT 1 FROM slopbot_reviews v JOIN slopbot_budget_blocks b ON b.review_key = v.review_key AND b.claim_token = v.claim_token
+      WHERE v.repository_id = i.repository_id AND v.item_node_id = i.item_node_id AND v.status = 'failed'
+        AND NOT EXISTS (SELECT 1 FROM slopbot_reviews newer WHERE newer.repository_id = v.repository_id AND newer.item_node_id = v.item_node_id AND newer.rowid > v.rowid)) AS latest_blocked,
+    EXISTS (SELECT 1 FROM slopbot_actions a WHERE a.repository_id = i.repository_id AND a.item_node_id = i.item_node_id AND a.action = 'label') AS labeled,
+    (SELECT MIN(a.created_at) FROM slopbot_actions a WHERE a.repository_id = i.repository_id AND a.item_node_id = i.item_node_id AND a.action = 'close') AS first_close,
+    (SELECT MAX(a.created_at) FROM slopbot_actions a WHERE a.repository_id = i.repository_id AND a.item_node_id = i.item_node_id AND a.action = 'human_reopen') AS latest_reopen,
+    (SELECT MAX(a.created_at) FROM slopbot_actions a WHERE a.repository_id = i.repository_id AND a.item_node_id = i.item_node_id AND a.action = 'appeal') AS latest_appeal
+  FROM items i ORDER BY i.repository_id, i.item_node_id`
+
+const repositoryActivity = sql`WITH base AS (
+    SELECT installation_id, repository_id, COALESCE(completed_at, created_at) AS at FROM slopbot_reviews WHERE status IN ('completed', 'failed'))
+  SELECT r.repository_id,
+    (SELECT json_group_array(installation_id) FROM (SELECT DISTINCT installation_id FROM base b WHERE b.repository_id = r.repository_id ORDER BY installation_id)) AS installation_ids,
+    MAX(r.at, COALESCE((SELECT MAX(a.created_at) FROM slopbot_actions a WHERE a.repository_id = r.repository_id), '')) AS last_activity_at
+  FROM (SELECT repository_id, MAX(at) AS at FROM base GROUP BY repository_id) r ORDER BY r.repository_id`
+
+effect function instant(iso: string | null) {
+  if (iso === null) return 0
+  const millis = millisOf(iso)
+  if (!Number.isSafeInteger(millis) || millis <= 0) throw new HistoryUnreadable({ issue: "summary time is not an instant" })
+  return millis
+}
+
+effect function activityOf(row: typeof ItemRow.Type) {
+  return {
+    completedReview: row.completed === 1,
+    failedReview: row.failed === 1,
+    latestBudgetBlocked: row.latest_blocked === 1,
+    labeled: row.labeled === 1,
+    firstCloseAt: try instant(row.first_close),
+    latestReopenAt: try instant(row.latest_reopen),
+    latestAppealAt: try instant(row.latest_appeal),
+  } satisfies ItemActivity
+}
+
+effect function repositories() {
+  const [items, listed] = try (try D1).batch([itemActivity, repositoryActivity])
+  const activity = try decoded(ItemRow, items?.rows ?? [], "slopbot summary items")
+  const summaries: Array<Readonly<Record<string, unknown>>> = []
+  for (const repository of try decoded(RepositoryRow, listed?.rows ?? [], "slopbot summary repositories")) {
+    const own: ItemActivity[] = []
+    for (const row of activity) if (row.repository_id === repository.repository_id) own.push(try activityOf(row))
+    if (!listedInSummary(own)) continue
+    const installationIds = Schema.decodeUnknownEffect(InstallationIds)(try parsedJson(repository.installation_ids, "installation ids are not JSON")) catch effect () => {
+      throw new HistoryUnreadable({ issue: "installation ids do not decode" })
+    }
+    summaries.push({ installationIds, repositoryId: repository.repository_id, ...summarize(own), lastActivityAt: repository.last_activity_at || null })
+  }
+  return summaries
+}
+
+effect function summaryAnswer() {
+  const listed = repositories() catch () => undefined
+  const unavailable = getSlopbotSummary.unavailable
+  if (listed === undefined) return json({ error: unavailable.error }, unavailable.status, refusalHeaders(unavailable.headers))
+  return json({ generatedAt: try isoNow(), repositories: listed }, 200, { "cache-control": cacheControl(summary.cache) })
+}
+
+effect function methodRefused() {
+  const refusal = getSlopbotSummary.otherMethods.methodNotAllowedPublicMaxAge60
+  return json({ error: refusal.error }, refusal.status, refusalHeaders(refusal.headers))
+}
+
+export const summaryRoutes = Layer.mergeAll(
+  handleRaw(summary, () => summaryAnswer()),
+  ...otherSummaryMethods.map((descriptor) => handleRaw(descriptor, () => methodRefused())),
+)

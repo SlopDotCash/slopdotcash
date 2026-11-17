@@ -1,0 +1,378 @@
+// spec/slopbot/workUnits.md, "A claim is one changed path in one commit and belongs to its first accepted carrier"; spec/slopbot/workUnits.md, "A complete partition assigns every claim to exactly one outcome"
+import { sha256Of } from "@repo/platform/git/bytes"
+import { mergeResolutionMatches } from "@repo/platform/git/evidence"
+import { isCreditEligibleCommitAuthor } from "@repo/points/client"
+import { completePartition } from "../../../gen/slopbot__workUnits.effect.vibe"
+import { nativeMergeContext, noChangePromotionContext } from "../evidence/acceptance.vibe"
+import { matchesHistoricalIntegrationBranch } from "../evidence/branchPolicy.vibe"
+import { type Actor, type Commit, type Evidence, type RegisteredRepository, evidenceMatchesRepository, findRepository } from "../evidence/types.vibe"
+import { sourceKey } from "../history/store.vibe"
+import { binarySourceLimitations } from "../proofs/binary.vibe"
+import { jsonDigest } from "../proofs/jsonDigest.ts"
+import { noChangePromotionMatches } from "./acceptance.vibe"
+import { nativeMergeCarrierMatches } from "./native.vibe"
+import { selectAcceptedCommitIndices } from "./selection.ts"
+import { isOid, millis } from "./source.vibe"
+import {
+  type GroupFacts,
+  type Policy,
+  Retention,
+  type RetainedBinding,
+  type SourceDigest,
+  type WorkUnitClaim,
+  type WorkUnitEvidence,
+  WorkUnitRefused,
+  type WorkUnitSource,
+  claimKey,
+  occurredAt,
+  ordered,
+} from "./types.vibe"
+
+export const workUnitEvidenceVersion = "slop-work-unit-evidence:v1"
+
+function compare(a: string, b: string) {
+  return a < b ? -1 : a > b ? 1 : 0
+}
+
+export function acceptedWorkUnitCommits(evidence: Evidence) {
+  const indirect = evidence.indirectAcceptance
+  return selectAcceptedCommitIndices(
+    evidence.commits.map((commit) => ({ sha: commit.sha, parentCount: commit.parents.length })),
+    (evidence.mergeResolutions ?? []).map((resolution) => resolution.commitSha),
+    indirect !== undefined,
+    indirect?.acceptedCommitShas ?? [],
+  ).flatMap((index) => evidence.commits[index] ?? [])
+}
+
+export effect function sourceDigestOf(evidence: Evidence, policy: Policy) {
+  const { collectedAt, ...sourceEvidence } = evidence
+  return try orDie(Effect.try(() => jsonDigest({ policy: { sha: policy.sha, text: policy.text }, evidence: sourceEvidence })))
+}
+
+function creditEligible(author: Actor | null): author is Actor {
+  return author !== null && isCreditEligibleCommitAuthor({ id: author.node_id, kind: author.type })
+}
+
+interface Carrier {
+  readonly source: WorkUnitSource
+  readonly occurredAt: number
+  readonly actorNodeIds: ReadonlyArray<string>
+}
+
+interface Collected {
+  readonly repositoryNodeId: string
+  readonly commitSha: string
+  readonly path: string
+  readonly carriers: Carrier[]
+}
+
+interface ImportedPath {
+  readonly sourceId: string
+  readonly originId: string
+  readonly path: string
+}
+
+interface Group {
+  readonly sources: ReadonlyArray<WorkUnitSource>
+  readonly repositories: ReadonlyArray<RegisteredRepository>
+  readonly limitations: Set<string>
+  readonly commits: Map<string, string>
+  readonly claims: Map<string, Collected>
+  readonly imported: ImportedPath[]
+}
+
+function sourceAdmitted(source: WorkUnitSource, repository: RegisteredRepository | undefined, seen: ReadonlySet<string>) {
+  const { evidence, policy } = source
+  const { pull } = evidence
+  return repository !== undefined && evidenceMatchesRepository(evidence, repository) && !seen.has(pull.node_id) && pull.state === "closed" &&
+    Number.isFinite(millis(pull.merged_at ?? pull.closed_at)) && policy.sha === pull.base.sha && isOid(policy.sha) && policy.text.trim() !== ""
+}
+
+function relocations(group: Group, evidence: Evidence, changedPaths: ReadonlySet<string>) {
+  const { pull } = evidence
+  const relocated = new Map<string, Set<string>>()
+  for (const resolution of evidence.mergeResolutions ?? []) {
+    if (resolution.kind === "combined-parent-delta" || resolution.automaticRelocations === undefined || resolution.automaticRelocations.length === 0) continue
+    const merge = evidence.commits.find((entry) => entry.sha === resolution.commitSha)
+    if (merge === undefined || !mergeResolutionMatches(resolution, merge) || sha256Of(resolution.patch) !== resolution.patchSha256) {
+      group.limitations.add(`${pull.node_id}: invalid automatic relocation evidence`)
+      continue
+    }
+    for (const move of resolution.automaticRelocations) {
+      if (move.headSha !== pull.head.sha || !changedPaths.has(move.path)) {
+        group.limitations.add(`${pull.node_id}: automatic relocation head or path mismatch`)
+        continue
+      }
+      for (const sha of move.sourceCommitShas) {
+        const attribution = evidence.commitAttribution.find((entry) => entry.sha === sha)
+        if (attribution === undefined || attribution.limitations.length > 0 || attribution.changedPaths?.includes(move.sourcePath) !== true) {
+          group.limitations.add(`${pull.node_id}: automatic relocation source scope missing`)
+          continue
+        }
+        const key = JSON.stringify([sha, move.sourcePath])
+        relocated.set(key, new Set([...relocated.get(key) ?? [], move.path]))
+      }
+    }
+  }
+  return relocated
+}
+
+function ownSubmittedParent(evidence: Evidence, sha: string) {
+  const { pull, commits } = evidence
+  return evidence.acceptedRange?.parentSha === sha && pull.merge_commit_sha === pull.head.sha && commits.length === pull.commits &&
+    commits.at(-1)?.sha === pull.head.sha &&
+    commits.every((entry, index) => entry.parents.length === 1 && entry.parents[0]?.sha === (index === 0 ? pull.base.sha : commits[index - 1]?.sha))
+}
+
+function earlierOrigins(group: Group, evidence: Evidence, sha: string, mergedAt: number, promotion: boolean) {
+  return group.sources.filter(({ evidence: origin }) =>
+    origin.repositoryNodeId === evidence.repositoryNodeId && origin.pull.node_id !== evidence.pull.node_id &&
+    origin.pull.merge_commit_sha === sha && origin.mergeCommitEvidence?.sha === sha &&
+    (promotion || origin.mergeCommitEvidence.parents.length === 1) &&
+    origin.pull.merged_at !== null && millis(origin.pull.merged_at) < mergedAt)
+}
+
+function commitPaths(group: Group, evidence: Evidence, commit: Commit) {
+  const { pull } = evidence
+  if (commit.parents.length > 1) {
+    const resolutions = (evidence.mergeResolutions ?? []).filter((resolution) => resolution.commitSha === commit.sha)
+    const [resolution] = resolutions
+    if (resolutions.length !== 1 || resolution === undefined || !mergeResolutionMatches(resolution, commit) || sha256Of(resolution.patch) !== resolution.patchSha256) {
+      group.limitations.add(`${pull.node_id}: invalid merge-resolution evidence for ${commit.sha}`)
+      return undefined
+    }
+    return ordered(resolution.paths)
+  }
+  const attribution = evidence.commitAttribution.filter((entry) => entry.sha === commit.sha)
+  const [only] = attribution
+  if (attribution.length !== 1 || only === undefined || only.changedPaths === null || only.limitations.length > 0) {
+    group.limitations.add(`${pull.node_id}: complete commit scope is missing for ${commit.sha}`)
+    return undefined
+  }
+  return ordered(only.changedPaths)
+}
+
+function commitActors(evidence: Evidence, repository: RegisteredRepository, commit: Commit) {
+  const { pull } = evidence
+  const actors = new Set<string>()
+  if (pull.user.type !== "Bot") actors.add(pull.user.node_id)
+  const integration = pull.base.ref === repository.integrationBranch || matchesHistoricalIntegrationBranch(evidence.historicalBranchPolicy, pull.base)
+  if (integration && creditEligible(commit.author)) actors.add(commit.author.node_id)
+  return ordered(actors)
+}
+
+effect function collectSource(group: Group, source: WorkUnitSource, repository: RegisteredRepository) {
+  const { evidence } = source
+  const { pull } = evidence
+  const nativeMerge = try nativeMergeCarrierMatches(evidence, group.sources)
+  if (evidence.nativeMergeAcceptance !== undefined && !nativeMerge) group.limitations.add(`${pull.node_id}: invalid native ancestor acceptance`)
+  const promotion = noChangePromotionMatches(evidence)
+  if (evidence.noChangePromotion !== undefined && !promotion) group.limitations.add(`${pull.node_id}: invalid unchanged promotion proof`)
+  for (const limitation of evidence.limitations) {
+    if (!(promotion && limitation === noChangePromotionContext) && !(nativeMerge && limitation === nativeMergeContext)) group.limitations.add(`${pull.node_id}: ${limitation}`)
+  }
+  for (const limitation of binarySourceLimitations(evidence)) group.limitations.add(`${pull.node_id}: ${limitation}`)
+  const indirect = evidence.indirectAcceptance
+  const acceptedAt = pull.merged_at ?? indirect?.observedOnBranchAt
+  if (acceptedAt === undefined) return
+  const mergedAt = millis(acceptedAt)
+  if (promotion) {
+    for (const commit of evidence.commits) {
+      const originals = group.sources.filter(({ evidence: original }) =>
+        original.repositoryNodeId === evidence.repositoryNodeId && original.pull.node_id !== pull.node_id &&
+        original.pull.merge_commit_sha === commit.sha && original.mergeCommitEvidence?.sha === commit.sha &&
+        original.pull.merged_at !== null && millis(original.pull.merged_at) < mergedAt && original.limitations.length === 0)
+      if (originals.length !== 1) group.limitations.add(`${pull.node_id}: unchanged promotion needs one complete original PR for ${commit.sha}`)
+    }
+  }
+  const acceptedFiles = indirect?.integrationFiles ?? evidence.files
+  const changedPaths = new Set(acceptedFiles.flatMap((file) => [file.filename, ...(file.previous_filename === undefined ? [] : [file.previous_filename])]))
+  const covered = new Set<string>()
+  const relocated = relocations(group, evidence, changedPaths)
+  const retainedPaths = (sha: string, path: string) => [...(changedPaths.has(path) ? [path] : []), ...relocated.get(JSON.stringify([sha, path])) ?? []]
+  for (const commit of acceptedWorkUnitCommits(evidence)) {
+    const paths = commitPaths(group, evidence, commit)
+    if (paths === undefined) continue
+    const commitIdentity = JSON.stringify([evidence.repositoryNodeId, commit.sha])
+    const identity = JSON.stringify([paths, commit.author, commit.parents])
+    const known = group.commits.get(commitIdentity)
+    if (known !== undefined && known !== identity) throw new WorkUnitRefused({ reason: "Joint sources disagree about an immutable commit" })
+    group.commits.set(commitIdentity, identity)
+    const origins = earlierOrigins(group, evidence, commit.sha, mergedAt, promotion)
+    if (promotion && origins.length !== 1) {
+      group.limitations.add(`${pull.node_id}: unchanged promotion needs one complete original PR for ${commit.sha}`)
+      continue
+    }
+    const [origin] = origins
+    if (origins.length > 0 || (evidence.acceptedRange?.parentSha === commit.sha && !ownSubmittedParent(evidence, commit.sha))) {
+      for (const path of paths.filter((entry) => retainedPaths(commit.sha, entry).length > 0)) {
+        for (const accepted of retainedPaths(commit.sha, path)) covered.add(accepted)
+        if (origins.length !== 1 || origin === undefined || origin.evidence.limitations.length > 0)
+          group.limitations.add(`${pull.node_id}: imported squash ${commit.sha} needs one complete original PR source`)
+        else group.imported.push({ sourceId: pull.node_id, originId: origin.evidence.pull.node_id, path })
+      }
+      continue
+    }
+    const actorNodeIds = commitActors(evidence, repository, commit)
+    for (const path of paths) {
+      const retained = retainedPaths(commit.sha, path)
+      if (retained.length === 0) continue
+      for (const accepted of retained) covered.add(accepted)
+      const key = claimKey(evidence.repositoryNodeId, commit.sha, path)
+      const claim = group.claims.get(key) ?? { repositoryNodeId: evidence.repositoryNodeId, commitSha: commit.sha, path, carriers: [] }
+      claim.carriers.push({ source, occurredAt: mergedAt, actorNodeIds })
+      group.claims.set(key, claim)
+    }
+  }
+  for (const path of changedPaths) {
+    if (!covered.has(path)) group.limitations.add(`${pull.node_id}: accepted file has no complete non-merge commit scope: ${path}`)
+  }
+}
+
+function importsHead(candidate: Evidence, other: Evidence) {
+  return other.pull.head.sha !== candidate.pull.head.sha && candidate.commits.some((commit) => commit.sha === other.pull.head.sha) &&
+    !other.commits.some((commit) => commit.sha === candidate.pull.head.sha)
+}
+
+function sortedCarriers(carriers: ReadonlyArray<Carrier>) {
+  return [...carriers].sort((a, b) => a.occurredAt - b.occurredAt || compare(a.source.evidence.pull.node_id, b.source.evidence.pull.node_id))
+}
+
+effect function retainedClaim(group: Group, collected: Collected, carriers: ReadonlyArray<Carrier>, copied: RetainedBinding) {
+  const retention = try Retention
+  const origin = copied.original.evidence
+  const originCommit = origin.commits.find((commit) => commit.sha === copied.originalCommitSha)
+  const repository = group.repositories.find((entry) => evidenceMatchesRepository(origin, entry))
+  if (originCommit === undefined || repository === undefined) throw new WorkUnitRefused({ reason: "Retained original identity is missing" })
+  const actors = new Set<string>()
+  if (origin.pull.user.type !== "Bot") actors.add(origin.pull.user.node_id)
+  const acceptedAuthor = copied.integration.evidence.commits.find((commit) => commit.sha === copied.acceptedCommitSha)?.author
+  const authorsDiffer = (acceptedAuthor?.node_id ?? null) !== (originCommit.author?.node_id ?? null)
+  const repair = copied.mergeResolution !== true && authorsDiffer
+    ? try retention.repair({ original: copied.original, accepted: copied.integration, acceptedCommitSha: copied.acceptedCommitSha, originalCommitSha: copied.originalCommitSha, path: collected.path })
+    : undefined
+  if (copied.mergeResolution !== true && repair === undefined && authorsDiffer)
+    group.limitations.add(`${origin.pull.node_id}: retained primary author identity differs between commits`)
+  else if (creditEligible(originCommit.author)) actors.add(originCommit.author.node_id)
+  return {
+    id: sha256Of(JSON.stringify([collected.repositoryNodeId, copied.originalCommitSha, collected.path])),
+    repositoryNodeId: collected.repositoryNodeId,
+    commitSha: copied.originalCommitSha,
+    path: collected.path,
+    carrierPullRequestIds: ordered([...carriers.map(({ source }) => source.evidence.pull.node_id), origin.pull.node_id]),
+    creditPullRequestId: origin.pull.node_id,
+    implementationActorNodeIds: ordered(actors),
+    retainedCopy: {
+      acceptancePullRequestId: copied.integration.evidence.pull.node_id,
+      acceptedCommitSha: copied.acceptedCommitSha,
+      preexistingCommitShas: copied.preexistingCommitShas,
+      ...(repair === undefined ? {} : { repair }),
+    },
+  } satisfies WorkUnitClaim
+}
+
+export effect function prepareWorkUnitEvidence(input: ReadonlyArray<WorkUnitSource>, repositories: ReadonlyArray<RegisteredRepository>) {
+  if (input.length === 0) throw new WorkUnitRefused({ reason: "Joint value sources are missing" })
+  const retention = try Retention
+  const sources = [...input].sort((a, b) => compare(a.evidence.pull.node_id, b.evidence.pull.node_id))
+  const retained = try retention.bindings(sources, { acceptedSubset: true })
+  const group: Group = { sources, repositories, limitations: new Set(retained.limitations), commits: new Map(), claims: new Map(), imported: [] }
+  const seen = new Set<string>()
+  const projects = new Set<string>()
+  const sourceDigests: SourceDigest[] = []
+  for (const source of sources) {
+    const repository = findRepository(repositories, source.evidence.repository)
+    if (repository === undefined || !sourceAdmitted(source, repository, seen)) throw new WorkUnitRefused({ reason: "Joint value source identity, policy or occurrence is invalid" })
+    seen.add(source.evidence.pull.node_id)
+    projects.add(repository.projectId)
+    sourceDigests.push({ pullRequestNodeId: source.evidence.pull.node_id, digest: try sourceDigestOf(source.evidence, source.policy) })
+    try collectSource(group, source, repository)
+  }
+  const [projectId] = [...projects]
+  if (projects.size !== 1 || projectId === undefined) throw new WorkUnitRefused({ reason: "A joint value assessment must belong to one project" })
+  const prepared: WorkUnitClaim[] = []
+  for (const [key, collected] of group.claims) {
+    const carriers = sortedCarriers(collected.carriers)
+    const origins = carriers.filter((candidate) => !carriers.some((other) => importsHead(candidate.source.evidence, other.source.evidence)))
+    const [first] = origins
+    if (first === undefined) throw new WorkUnitRefused({ reason: "Joint carriers have inconsistent ancestry" })
+    const copied = retained.bindings.get(key)
+    if (copied !== undefined) {
+      prepared.push(try retainedClaim(group, collected, carriers, copied))
+      continue
+    }
+    prepared.push({
+      id: sha256Of(key),
+      repositoryNodeId: collected.repositoryNodeId,
+      commitSha: collected.commitSha,
+      path: collected.path,
+      carrierPullRequestIds: ordered(carriers.map(({ source }) => source.evidence.pull.node_id)),
+      creditPullRequestId: first.source.evidence.pull.node_id,
+      implementationActorNodeIds: first.actorNodeIds,
+    })
+  }
+  for (const imported of group.imported) {
+    if (!prepared.some((claim) => claim.path === imported.path && claim.carrierPullRequestIds.includes(imported.originId)))
+      group.limitations.add(`${imported.sourceId}: original squash source does not cover ${imported.path}`)
+  }
+  prepared.sort((a, b) => compare(a.id, b.id))
+  const limitations = ordered(group.limitations)
+  return {
+    projectId,
+    sources,
+    sourceDigests,
+    claims: prepared,
+    limitations,
+    sourceDigest: sha256Of(JSON.stringify({ version: workUnitEvidenceVersion, projectId, sourceDigests, claims: prepared, limitations })),
+  } satisfies WorkUnitEvidence
+}
+
+export interface PartitionUnit {
+  readonly claimIds: ReadonlyArray<string>
+}
+
+export function validateWorkUnitPartition(evidence: WorkUnitEvidence, units: ReadonlyArray<PartitionUnit>) {
+  if (evidence.limitations.length > 0) return false
+  const available = new Map<string, number>()
+  for (const claim of evidence.claims) if (!available.has(claim.id)) available.set(claim.id, available.size + 1)
+  if (units.some((unit) => new Set(unit.claimIds).size !== unit.claimIds.length)) return false
+  return completePartition(
+    { project: 1, accepted: [1], claims: [...available.values()].map((id) => ({ id, carriers: [1], credit: 1 })), limitations: false },
+    units.map((unit) => unit.claimIds.map((id) => available.get(id) ?? 0)),
+  )
+}
+
+function acceptanceOrder(evidence: WorkUnitEvidence) {
+  const time = (source: WorkUnitSource) => {
+    const at = millis(occurredAt(source.evidence))
+    return Number.isFinite(at) ? at : Number.MAX_SAFE_INTEGER
+  }
+  const byTime = [...evidence.sources].sort((a, b) => time(a) - time(b) || compare(a.evidence.pull.node_id, b.evidence.pull.node_id))
+  const preceding = new Map<string, Set<string>>()
+  for (const claim of evidence.claims) {
+    for (const carrier of claim.carrierPullRequestIds) {
+      if (carrier !== claim.creditPullRequestId) preceding.set(carrier, new Set([...preceding.get(carrier) ?? [], claim.creditPullRequestId]))
+    }
+  }
+  const placed: WorkUnitSource[] = []
+  const done = new Set<string>()
+  while (placed.length < byTime.length) {
+    const next = byTime.find((source) => !done.has(source.evidence.pull.node_id) &&
+      [...preceding.get(source.evidence.pull.node_id) ?? []].every((id) => done.has(id) || !byTime.some((other) => other.evidence.pull.node_id === id)))
+    if (next === undefined) return byTime
+    placed.push(next)
+    done.add(next.evidence.pull.node_id)
+  }
+  return placed
+}
+
+export function groupFacts(evidence: WorkUnitEvidence): GroupFacts {
+  const keys = new Map(evidence.sources.map(({ evidence: source }) => [source.pull.node_id, sourceKey(source.repositoryNodeId, source.pull.node_id)]))
+  const keyOf = (pullRequestNodeId: string) => keys.get(pullRequestNodeId) ?? `unlisted/${pullRequestNodeId}`
+  return {
+    projectId: evidence.projectId,
+    accepted: acceptanceOrder(evidence).map(({ evidence: source }) => keyOf(source.pull.node_id)),
+    claims: evidence.claims.map((claim) => ({ id: claim.id, carriers: claim.carrierPullRequestIds.map(keyOf), credit: keyOf(claim.creditPullRequestId) })),
+    limited: evidence.limitations.length > 0,
+  }
+}

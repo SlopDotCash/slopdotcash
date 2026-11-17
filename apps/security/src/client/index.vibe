@@ -1,6 +1,20 @@
-// spec/security/privacy.md, "Read authorization comes from the current case roles and is audited before delivery"; spec/security/intake.md, "A new attempt binds authenticated identity, passes admission and keeps its idempotency key"
+// spec/security/privacy.md, "Read authorization comes from the current case roles and is audited before delivery"; spec/security/intake.md, "A new attempt binds authenticated identity, passes admission and keeps its idempotency key"; spec/security/admission.md, "A signed service request binds method, path, timestamp and body digest and is refused outside a five-minute window"; spec/security/enforcement.md, "Clearance and restrictions are separate dimensions with their own records"
 import type { AnyRoute } from "@repo/platform/route"
+import { admissionApi } from "./admission.vibe"
+import { casesApi } from "./cases.vibe"
+import { enforcementApi } from "./enforcement.vibe"
 import { evidenceApi } from "./evidence.vibe"
+import { forwardingApi } from "./forwarding.vibe"
 import { intakeApi } from "./intake.vibe"
+import { screeningApi } from "./screening.vibe"
 
-export const api: ReadonlyArray<AnyRoute> = [...evidenceApi, ...intakeApi]
+export * from "./admission.vibe"
+export * from "./cases.vibe"
+export * from "./enforcement.vibe"
+export * from "./evidence.vibe"
+export * from "./forwarding.vibe"
+export * from "./intake.vibe"
+export * from "./program.vibe"
+export * from "./screening.vibe"
+
+export const api: ReadonlyArray<AnyRoute> = [...evidenceApi, ...intakeApi, ...admissionApi, ...enforcementApi, ...casesApi, ...forwardingApi, ...screeningApi]

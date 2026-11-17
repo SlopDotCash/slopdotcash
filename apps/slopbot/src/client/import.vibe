@@ -1,0 +1,22 @@
+// spec/slopbot/historicalImport.md, "The import needs an administrator, a deployed producer and registered accepted work before the API start"
+import { type AnyRoute, type Method, route } from "@repo/platform/route"
+import { postSlopbotValueImport } from "./refusals.vibe"
+
+export schema ImportReceipt {
+  readonly recordDigest: string
+  readonly sequence: number
+}
+
+export const importLimitBytes = 25 * 1024 * 1024
+
+export const importMediaTypes = ["application/json", "multipart/form-data"] as const
+
+export const valueImport = route({ method: "POST", path: "/api/v1/slopbot/value-import", access: "public", limitKib: importLimitBytes / 1024, request: undefined, answer: ImportReceipt, rejected: postSlopbotValueImport.assessmentNotPublished.error, cache: "private" })
+
+function refusedImportMethod(method: Method) {
+  return route({ method, path: valueImport.path, access: "public", limitKib: 1, request: undefined, answer: Schema.Unknown, rejected: postSlopbotValueImport.otherMethods.methodNotAllowedPrivateNoStore.error, cache: "private" })
+}
+
+export const otherImportMethods = (["GET", "PUT", "DELETE"] as const).map(refusedImportMethod)
+
+export const importApi: ReadonlyArray<AnyRoute> = [valueImport, ...otherImportMethods]

@@ -1,4 +1,4 @@
-// spec/settlement/paymentInvestigation.md, "A matching finalized payout is paid if its destination is authorized, otherwise held for investigation"; spec/settlement/paymentInvestigation.md, "A later authorization of the same destination clears the hold as paid"; spec/settlement/composition.md, "An exact finalized event records one receipt and consumes the matching reserve"; spec/settlement/composition.md, "A verified deposit can fund a walletless award"; spec/settlement/payment.md, "A reserved vault accepts an exact canonical scanner event"; spec/settlement/money.md, "The legacy floor fee is exactly one base unit below the ordinary fee when 50 does not divide the gross, and equal to it otherwise"
+// spec/settlement/paymentInvestigation.md, "A matching finalized payout is paid if its destination is authorized, otherwise held for investigation"; spec/settlement/paymentInvestigation.md, "A later authorization of the same destination clears the hold as paid"; spec/settlement/composition.md, "An exact finalized event records one receipt and consumes the matching reserve"; spec/settlement/composition.md, "A verified deposit can fund a walletless award"; spec/settlement/payment.md, "A reserved vault accepts an exact canonical scanner event"; spec/settlement/money.md, "The legacy floor fee is exactly one base unit below the ordinary fee when 50 does not divide the gross, and equal to it otherwise"; spec/settlement/privateAward.md, "A finalized vault payout records the obligation paid, settles its hold and notifies the case"
 import { isoNow, nowSeconds } from "@repo/platform/clock"
 import { sha256Hex } from "@repo/platform/crypto"
 import { ConstraintViolation, type Statement, first, rows, sql } from "@repo/platform/d1"
@@ -10,8 +10,9 @@ import { type Event as InvestigationEvent, type Investigation, type PaidEvent, a
 import { equalAmounts, legacyFloorFeeAmount, ordinaryFeeAmount } from "../../gen/settlement__money.effect.vibe"
 import { payoutAmountsAccepted } from "../kernels/fees.ts"
 import { maxBaseUnitsForChain } from "../kernels/networks.ts"
-import { type ObligationRows, type PaidRecord, type Projection, type Reservation, obligationAggregate, payoutOf, project, receiptOf, reservationOf, unreservedSettlement } from "./obligation.vibe"
+import { type ObligationRows, type PaidRecord, type Projection, type Reservation, obligationAggregate, paymentTermsOf, payoutOf, project, receiptOf, reservationOf, unreservedSettlement } from "./obligation.vibe"
 import { type EventReference, type FinalizedPaymentEvent, type PaymentDeployment, type VaultAsset, EvidenceRefused, bindingOf, limbs, networkOf, refused, sameAddress, sameEvidence, sameStoredAsset, storedEvidence } from "./terms.vibe"
+import { authorizeBounty, bountyNotices } from "../securityScope/authorization.vibe"
 import { verifyFinalized } from "./verify.vibe"
 
 export schema HoldReason = "UnauthorizedDestination" | "LegacyFloorFee"
@@ -78,6 +79,7 @@ effect function investigated(current: Investigation, event: InvestigationEvent) 
 }
 
 effect function notices(deployment: PaymentDeployment, kind: "AwardReserved" | "PaymentPaid", obligationId: string, githubUserId: string, sourceAt: string) {
+  if (deployment.scope === "PrivateBounty") return try bountyNotices(obligationId, kind === "AwardReserved" ? "reserved" : "paid", sourceAt)
   const eventKey = `${kind === "AwardReserved" ? "payment-reserved" : "payment-paid"}:${obligationId}`
   return try (try Notices).statements({ notices: [{ eventKey, recipientGithubId: githubUserId, kind, subject: deployment.projectId, actionPath: "/earnings", sourceAt }] })
 }
@@ -99,7 +101,8 @@ effect function decideReserved(deployment: PaymentDeployment, asset: VaultAsset,
   }
   const reservation = { obligationId: event.obligationId, githubUserId: event.githubUserId, gross: event.gross, fee: event.fee, sourceDigest: event.sourceDigest } satisfies Reservation
   const projection = try projectionFor(deployment, asset, event.githubUserId)
-  const configured = try settled(try unreservedSettlement(projection, reservation), { type: "configure", purpose: "Ordinary", rail: "OrdinaryVault", gross: try limbs(event.gross) })
+  const unreserved = try unreservedSettlement(projection, reservation)
+  const configured = try settled(unreserved, { type: "configure", ...paymentTermsOf(deployment.scope), gross: try limbs(event.gross), target: unreserved.payment.target })
   const reserved = try settled(configured, { type: "reserve" })
   const wallet = projection.effective
   const delivered = wallet === undefined ? reserved : try settled(reserved, { type: "updateDelivery", update: { tag: "SetWallet", ...bindingOf(deployment.chain, wallet) } })
@@ -176,7 +179,7 @@ effect function decidePaid(deployment: PaymentDeployment, asset: VaultAsset, inc
       type: "reconcile",
       evidence: {
         scanner: receiptOf(projected.target, record, deployment.chain),
-        amounts: { obligation: 1, gross: try limbs(record.gross), principal: try limbs(record.net), fee: try limbs(record.fee), feeRecipient: "fees", height: record.height },
+        amounts: { obligation: projected.target.obligation, gross: try limbs(record.gross), principal: try limbs(record.net), fee: try limbs(record.fee), feeRecipient: "fees", height: record.height },
         receipt: 1,
       },
     })
@@ -232,11 +235,12 @@ effect function legacyFloorFee(gross: bigint, fee: bigint) {
 }
 
 effect function recordFinalized(deployment: PaymentDeployment, event: FinalizedPaymentEvent) {
-  if (deployment.scope === "PrivateBounty") throw refused("Finalized bounty differs from the private approved settlement")
+  const bounty = deployment.scope === "PrivateBounty"
   if (!/^[1-9][0-9]*$/u.test(event.githubUserId) || !/^[a-f0-9]{64}$/u.test(event.sourceDigest)) throw refused("Chain event mismatch")
-  if (event.kind === "reserved" && event.gross > 0n && event.net === event.gross - event.fee && (try legacyFloorFee(event.gross, event.fee))) return held("LegacyFloorFee", Number(event.blockNumber))
-  if (event.kind === "reserved" && !payoutAmountsAccepted(event.gross, event.fee, event.net, false, maxBaseUnitsForChain(event.chain))) throw refused("Chain event mismatch")
+  if (!bounty && event.kind === "reserved" && event.gross > 0n && event.net === event.gross - event.fee && (try legacyFloorFee(event.gross, event.fee))) return held("LegacyFloorFee", Number(event.blockNumber))
+  if (event.kind === "reserved" && !payoutAmountsAccepted(event.gross, event.fee, event.net, bounty, maxBaseUnitsForChain(event.chain))) throw refused("Chain event mismatch")
   const asset = try vaultAsset(deployment)
+  if (bounty) try authorizeBounty(event, asset)
   return try settleObligation(deployment, asset, event.obligationId, { event, evidence: storedEvidence(event, asset) })
 }
 

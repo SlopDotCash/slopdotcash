@@ -47,10 +47,14 @@ const Started = Layer.effect(Escrow, effect {
 })
 
 const capture = { revision: 1, snapshotDigest: "" }
-const depositFacts: ReviewFacts = { steward: false, repositoryAuthority: false, revision: 1, restricted: false, networkServed: true, snapshotDigest: "", obligationFunded: false }
+const depositFacts: ReviewFacts = { steward: false, repositoryAuthority: false, revision: 1, restricted: false, networkServed: true, snapshotDigest: "", obligationFunded: false, monthLockPlanned: false, lockedFunds: false }
 const ownerFacts: ReviewFacts = { ...depositFacts, steward: true, repositoryAuthority: true }
 const COMPUTE_BUDGET = "ComputeBudget111111111111111111111111111111" as Address
 
+
+effect function listed(projectId: string, revision: number, manifest: string) {
+  return { projectId, active: true, revision, manifest, manifestSha256: try sha256Hex(manifest), updatedAt: "2026-11-01T00:00:00.000Z" } satisfies RegistryManifest
+}
 effect function same(actual: unknown, expected: unknown) {
   try Effect.try(() => assert.deepStrictEqual(actual, expected))
 }
@@ -346,8 +350,9 @@ effect function registered(projectId: string, vault: EvmAddress) {
   }
   const escrowPolicy = { schemaVersion: "1", effectiveCycle: "2026-11", chain: "base", feeBasisPoints: 200, withdrawalFeeBasisPoints: 200, feeMode: "deduct-from-gross", deployments: [deployment] }
   const manifest = JSON.stringify({ id: projectId, status: "active", escrow: escrowPolicy })
-  manifests.push({ projectId, revision: 3, manifest })
-  return try sha256Hex(manifest)
+  const entry = try listed(projectId, 3, manifest)
+  manifests.push(entry)
+  return entry.manifestSha256
 }
 
 effect function reservedMonth(projectId: string, first: bigint, fault: bigint) {

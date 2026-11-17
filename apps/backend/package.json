@@ -9,8 +9,12 @@
     "./legacy": "./src/projects/store/legacy.ts",
     "./live": "./src/live.vibe",
     "./nodeId": "./src/projects/nodeId.ts",
+    "./owner/classify": "./src/projects/owner/classify.ts",
     "./points": "./src/accounts/routes/index.vibe",
     "./ports": "./src/ports.vibe",
+    "./projects/definition": "./src/projects/owner/definition.ts",
+    "./projects/store": "./src/projects/store/store.vibe",
+    "./revisionChanges": "./src/projects/owner/revisionChanges.ts",
     "./tables": "./src/tables.ts"
   },
   "scripts": {

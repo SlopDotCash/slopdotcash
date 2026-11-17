@@ -1,5 +1,12 @@
 // spec/settlement/keeperScan.md, "A deployment progresses through preflight, authority, gas, scanning and local state checks"
+import { deploymentOrigins } from "@repo/platform/config"
+
 export error KeeperRefused { message: string }
+
+export function siteOrigin(apiOrigin: string) {
+  const production = deploymentOrigins("production")
+  return apiOrigin === production.api ? production.site : apiOrigin
+}
 
 const PUBLIC_TIMEOUT = Duration.seconds(20)
 const PUBLIC_BYTES = 16 * 1024 * 1024

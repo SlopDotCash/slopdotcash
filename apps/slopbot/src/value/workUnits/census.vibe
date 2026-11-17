@@ -1,0 +1,196 @@
+// spec/slopbot/valueEvidence.md, "Accepted-commit census pages past the GraphQL limit through compare and refuses an overflow"
+import { isoAt, millisOf } from "@repo/platform/clock"
+import { GitHub, type GitHubFailure } from "@repo/platform/github"
+import { type CensusPull, censusPageComplete, pullCommitRouteLimit, pullCommitsComplete, searchResultLimit, splitAgrees } from "../../../gen/slopbot__valueEvidence.effect.vibe"
+import type { Evidence } from "../evidence/types.vibe"
+import { answer, isOid } from "./source.vibe"
+
+export interface Selection {
+  readonly repository: string
+  readonly number: number
+  readonly nodeId: string
+}
+
+export interface AcceptedCommitCensus {
+  readonly ids: Set<string>
+  readonly carriers: Map<string, Selection[]>
+}
+
+interface MergeRange {
+  readonly start: number
+  readonly end: number
+}
+
+schema CommitOid { readonly oid: string }
+schema CommitNode { readonly commit: CommitOid }
+schema PageInfo { readonly hasNextPage: boolean; readonly endCursor: string | null }
+schema Commits { readonly totalCount: number; readonly nodes: ReadonlyArray<CommitNode>; readonly pageInfo: PageInfo }
+schema CensusRepository { readonly id: string; readonly databaseId: number; readonly nameWithOwner: string; readonly isPrivate: boolean }
+schema MergeCommitRef { readonly oid: string }
+schema CensusPullNode {
+  readonly id: string
+  readonly number: number
+  readonly url: string
+  readonly mergedAt: string
+  readonly baseRefOid: string | null
+  readonly headRefOid: string | null
+  readonly repository: CensusRepository
+  readonly mergeCommit: MergeCommitRef | null
+  readonly commits: Commits
+}
+schema Search { readonly issueCount: number; readonly nodes: ReadonlyArray<CensusPullNode>; readonly pageInfo: PageInfo }
+schema SearchAnswer { readonly search: Search }
+schema NextPull { readonly id: string; readonly commits: Commits }
+schema NextRepository { readonly id: string; readonly pullRequest: NextPull | null }
+schema NextAnswer { readonly repository: NextRepository | null }
+schema RangeCommit { readonly sha: string }
+schema RangePage { readonly total_commits: number; readonly commits: ReadonlyArray<RangeCommit> }
+
+const searchQuery = "query($q:String!,$cursor:String){search(query:$q,type:ISSUE,first:100,after:$cursor){issueCount nodes{... on PullRequest{id number url mergedAt baseRefOid headRefOid repository{id databaseId nameWithOwner isPrivate} mergeCommit{oid} commits(first:100){totalCount nodes{commit{oid}}pageInfo{hasNextPage endCursor}}}}pageInfo{hasNextPage endCursor}} rateLimit{cost limit remaining resetAt}}"
+const commitsQuery = "query($owner:String!,$name:String!,$number:Int!,$after:String!){repository(owner:$owner,name:$name){id pullRequest(number:$number){id commits(first:100,after:$after){totalCount nodes{commit{oid}}pageInfo{hasNextPage endCursor}}}} rateLimit{cost limit remaining resetAt}}"
+
+export effect function mergedTimeRangeQualifier(start: number, end: number) {
+  return `merged:${(try isoAt(start)).replace(".000Z", "Z")}..${(try isoAt(end)).replace(".000Z", "Z")}`
+}
+
+interface RangeCommits {
+  readonly total: number
+  readonly distinct: number
+  readonly coversListed: boolean
+  readonly shas: Set<string>
+}
+
+effect function compareRangeCommits(current: string, pull: CensusPullNode, total: number, listed: ReadonlySet<string>) {
+  const base = pull.baseRefOid
+  const head = pull.headRefOid
+  if (base === null || head === null || !isOid(base) || !isOid(head)) return undefined
+  const shas = new Set<string>()
+  for (let page = 1; page <= Math.ceil(total / 100); page += 1) {
+    const range = try answer(`/repos/${current}/compare/${base}...${head}?per_page=100&page=${page}`, RangePage)
+    if (range === undefined || range.total_commits !== total || range.commits.length !== Math.min(100, total - (page - 1) * 100)) return undefined
+    for (const { sha } of range.commits) {
+      if (!isOid(sha) || shas.has(sha)) return undefined
+      shas.add(sha)
+    }
+  }
+  return { total, distinct: shas.size, coversListed: [...listed].every((sha) => shas.has(sha)), shas } satisfies RangeCommits
+}
+
+function identityMatches(pull: CensusPullNode, evidence: Evidence, current: string, ids: ReadonlySet<string>, range: MergeRange | undefined) {
+  const merged = millisOf(pull.mergedAt)
+  const repo = pull.repository
+  return pull.id !== "" && !ids.has(pull.id) && Number.isSafeInteger(pull.number) && pull.number > 0 && Number.isFinite(merged) &&
+    (range === undefined || (merged >= range.start && merged <= range.end)) &&
+    !repo.isPrivate && repo.id === evidence.repositoryNodeId && repo.databaseId === evidence.repositoryDatabaseId &&
+    repo.nameWithOwner.toLowerCase() === current.toLowerCase() && pull.url === `https://github.com/${repo.nameWithOwner}/pull/${pull.number}`
+}
+
+effect function pulledCommits(evidence: Evidence, current: string, pull: CensusPullNode) {
+  const github = try GitHub
+  const [owner = "", name = ""] = current.split("/")
+  const shas = new Set<string>()
+  const cursors = new Set<string>()
+  let commits = pull.commits
+  const total = commits.totalCount
+  if (!Number.isSafeInteger(total) || total < 0) return undefined
+  for (;;) {
+    if (commits.totalCount !== total) return undefined
+    for (const { commit } of commits.nodes) {
+      if (!isOid(commit.oid) || shas.has(commit.oid)) return undefined
+      shas.add(commit.oid)
+    }
+    if (!commits.pageInfo.hasNextPage) break
+    const after = commits.pageInfo.endCursor
+    if (after === null || after === "" || cursors.has(after)) return undefined
+    cursors.add(after)
+    const next = try github.graphql(commitsQuery, { owner, name, number: pull.number, after }, NextAnswer)
+    const repository = next.repository
+    if (repository?.id !== evidence.repositoryNodeId || repository.pullRequest?.id !== pull.id) return undefined
+    commits = repository.pullRequest.commits
+  }
+  return { shas, total }
+}
+
+effect function acceptedCommitsOf(evidence: Evidence, current: string, pull: CensusPullNode) {
+  const listed = try pulledCommits(evidence, current, pull)
+  if (listed === undefined) return undefined
+  const needsCompare = listed.shas.size === pullCommitRouteLimit && listed.total > pullCommitRouteLimit
+  const compared = needsCompare ? try compareRangeCommits(current, pull, listed.total, listed.shas) : undefined
+  const counted: CensusPull = {
+    identityMatches: true,
+    listedCommits: listed.shas.size,
+    totalCommits: listed.total,
+    distinctCommits: true,
+    compareTotal: compared?.total ?? 0,
+    compareDistinct: compared?.distinct ?? 0,
+    compareCoversListed: compared?.coversListed ?? false,
+  }
+  if (!pullCommitsComplete(counted)) return undefined
+  const accepted = compared?.shas ?? listed.shas
+  if (pull.mergeCommit !== null) {
+    if (!isOid(pull.mergeCommit.oid)) return undefined
+    accepted.add(pull.mergeCommit.oid)
+  }
+  return { accepted, counted }
+}
+
+function merge(left: AcceptedCommitCensus, right: AcceptedCommitCensus) {
+  for (const id of right.ids) left.ids.add(id)
+  for (const [sha, matches] of right.carriers) left.carriers.set(sha, [...left.carriers.get(sha) ?? [], ...matches])
+  return left
+}
+
+effect function splitRange(evidence: Evidence, startAt: number, current: string, count: number, range: MergeRange | undefined): (AcceptedCommitCensus | undefined)!GitHubFailure!GitHub {
+  const start = range?.start ?? millisOf((try isoAt(startAt)).slice(0, 10))
+  const end = range?.end ?? Math.floor((try Clock.currentTimeMillis) / 1000) * 1000
+  if (start >= end) return undefined
+  const middle = Math.floor((start + end) / 2000) * 1000
+  const left = try collectRange(evidence, startAt, current, { start, end: middle })
+  if (left === undefined) return undefined
+  const right = try collectRange(evidence, startAt, current, { start: middle + 1000, end })
+  if (right === undefined) return undefined
+  const overlapping = [...right.ids].some((id) => left.ids.has(id))
+  if (!splitAgrees(count, left.ids.size, right.ids.size, overlapping)) return undefined
+  return merge(left, right)
+}
+
+effect function collectRange(evidence: Evidence, startAt: number, current: string, range?: MergeRange): (AcceptedCommitCensus | undefined)!GitHubFailure!GitHub {
+  const github = try GitHub
+  if (!Number.isFinite(startAt)) return undefined
+  const period = range === undefined ? `merged:>=${(try isoAt(startAt)).slice(0, 10)}` : try mergedTimeRangeQualifier(range.start, range.end)
+  const query = `repo:${current} is:pr is:merged ${period}`
+  const ids = new Set<string>()
+  const carriers = new Map<string, Selection[]>()
+  const cursors = new Set<string>()
+  const counted: CensusPull[] = []
+  let cursor: string | null = null
+  let count: number | undefined
+  for (;;) {
+    const found: SearchAnswer = try github.graphql(searchQuery, { q: query, cursor }, SearchAnswer)
+    const search = found.search
+    const issueCount = search.issueCount
+    if (!Number.isSafeInteger(issueCount) || issueCount < 0 || (count !== undefined && count !== issueCount)) return undefined
+    count = issueCount
+    if (issueCount > searchResultLimit) return try splitRange(evidence, startAt, current, issueCount, range)
+    for (const pull of search.nodes) {
+      if (!identityMatches(pull, evidence, current, ids, range)) return undefined
+      ids.add(pull.id)
+      const commits = try acceptedCommitsOf(evidence, current, pull)
+      if (commits === undefined) return undefined
+      counted.push(commits.counted)
+      const carrier = { repository: evidence.repository, number: pull.number, nodeId: pull.id }
+      for (const sha of commits.accepted) carriers.set(sha, [...carriers.get(sha) ?? [], carrier])
+    }
+    if (!search.pageInfo.hasNextPage) break
+    const after: string | null = search.pageInfo.endCursor
+    if (after === null || after === "" || cursors.has(after)) return undefined
+    cursors.add(after)
+    cursor = after
+  }
+  const complete = censusPageComplete({ issueCount: count ?? 0, countsStable: true, cursorsFresh: true, pulls: counted })
+  return complete && ids.size === count ? { ids, carriers } satisfies AcceptedCommitCensus : undefined
+}
+
+export effect function collectAcceptedCommitCensus(evidence: Evidence, startAt: number, current: string = evidence.repository) {
+  return try collectRange(evidence, startAt, current)
+}

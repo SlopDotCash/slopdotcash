@@ -1,0 +1,183 @@
+import { assert, layer } from "@effect/vitest"
+import type { D1Database } from "@repo/platform/bindings"
+import { webCrypto } from "@repo/platform/crypto"
+import { D1, type Statement, d1, sql } from "@repo/platform/d1"
+import { database, migrate, startWorker } from "@repo/platform/testing"
+import { migrationsDir } from "@repo/platform/testing/paths"
+import type { ProviderCall } from "@repo/platform/testing/providers"
+import { QualificationFailed, qualifyValueModels } from "../src/programs/qualify.vibe"
+import { consumePendingValueRequests } from "../src/value/inference/consumer.vibe"
+import { type World, installed, qualificationProviders, repository, requested, revised, runOn, scripted, seeded, services, unresolvedVerdict } from "./support/inferenceWorker.vibe"
+
+service Journey {
+  readonly world: World
+  readonly db: D1Database
+}
+
+const Started = Layer.unwrap(effect {
+  const world = try seeded()
+  const mf = try acquireRelease(sync(() => startWorker({ d1: { SLOPBOT_DB: "value-inference-journey" } })), (started) => promise(() => started.dispose()))
+  const applied = try promise(() => migrate(mf, "SLOPBOT_DB", migrationsDir))
+  const broken = applied.find((file) => file.error !== undefined)
+  if (broken !== undefined) return try die(new Error(`migration ${broken.file} failed: ${broken.error}`))
+  const db = try promise(() => database(mf, "SLOPBOT_DB"))
+  provide d1(db), webCrypto {
+    try (try D1).batch([...try revised("active", "Created"), installed()])
+  }
+  return Layer.mergeAll(Layer.provideMerge(services(world, db), webCrypto), Layer.succeed(Journey, { world, db }))
+})
+
+effect function same(actual: unknown, expected: unknown) {
+  try Effect.try(() => assert.deepStrictEqual(actual, expected))
+}
+
+effect function batch(statements: ReadonlyArray<Statement>) {
+  try (try D1).batch(statements)
+}
+
+const sonnet = (call: ProviderCall) => call.route === "surplus-anthropic" && call.model === "claude-sonnet-5.5"
+const terra = (call: ProviderCall) => call.route === "surplus-anthropic" && call.model === "gpt-6.1-terra"
+const orbio = (call: ProviderCall) => call.route === "orbio" && call.model === "anthropic/claude-sonnet-5.5"
+
+function about(number: number) {
+  return (call: ProviderCall) => call.messages.some((message) => message.content.includes(`Fix ${number}`))
+}
+
+effect function consumed(number: number) {
+  const { world } = try Journey
+  try scripted(world, number)
+  return try consumePendingValueRequests()
+}
+
+effect function journalOf(number: number) {
+  return try (try D1).all(sql`SELECT json_extract(record_json, '$.pullRequestNumber') AS pull, json_extract(record_json, '$.assessment.status') AS status,
+      json_extract(record_json, '$.model.provider') AS provider, json_extract(record_json, '$.model.reported') AS model, supersedes
+    FROM slopbot_value_journal WHERE json_extract(record_json, '$.repository') = ${repository} AND json_extract(record_json, '$.pullRequestNumber') = ${number}`)
+}
+
+effect function ledger() {
+  return try (try D1).all(sql`SELECT
+      (SELECT COUNT(*) FROM slopbot_value_inference_attempts) AS attempts,
+      (SELECT COUNT(*) FROM slopbot_value_budget_reservations) AS reservations,
+      (SELECT COUNT(*) FROM slopbot_value_budget_reservations WHERE reserved_micro_usd IS NULL AND approved_limit_micro_usd IS NULL) AS alertsOnly,
+      (SELECT COUNT(*) FROM slopbot_value_inference_results) AS results,
+      (SELECT COUNT(*) FROM slopbot_value_attempt_completions) AS completions,
+      (SELECT COUNT(*) FROM slopbot_value_budget_reconciliations) AS reconciliations,
+      (SELECT COUNT(*) FROM slopbot_costs WHERE review_key LIKE 'value:%') AS costs,
+      (SELECT COUNT(*) FROM slopbot_costs WHERE review_key LIKE 'value:%' AND billed_micro_usdc <> 0) AS billed`)
+}
+
+effect function callsAbout(number: number) {
+  const { world } = try Journey
+  return world.providers.calls.filter(about(number)).map((call) => `${call.route} ${call.model} ${call.maxTokens}`)
+}
+
+interface Keys {
+  readonly ORBIO_API_KEY?: string
+  readonly SURPLUS_API_KEY?: string
+}
+
+effect function refusedQualification(world: World, keys: Keys) {
+  provide qualificationProviders(world, keys) {
+    const refused = qualifyValueModels(false) catch effect (error) => match (error) {
+      when QualificationFailed: error.message;
+      default: throw error;
+    }
+    return typeof refused === "string" ? refused : "qualified"
+  }
+}
+
+effect function dryRunQualification(world: World) {
+  provide qualificationProviders(world, {}) {
+    return try qualifyValueModels(true)
+  }
+}
+
+layer(Started, { excludeTestServices: true, timeout: "240 seconds" })((it) => {
+  it.effect('A merged pull request is assessed once and published, then read as current (spec/slopbot/valueInference.md, "Take all source leases or none"; spec/slopbot/valueInference.md, "A remote membership lookup is followed by current local authority and lease checks"; spec/slopbot/valueInference.md, "Usage precedes retained output and explicit completion"; spec/slopbot/valueInference.md, "A proposal is retained only with an allowed band, review bands only for eligible reviews, and citations found in the collected evidence"; spec/slopbot/valueRequests.md, "The outcome follows the consumer\'s checks in order")', () => effect {
+    const { world } = try Journey
+    try batch(requested("inference-1a", 1, "2026-11-10T00:00:00.000Z"))
+    try Effect.try(() => world.providers.reply((call) => sonnet(call) && about(1)(call), { text: unresolvedVerdict(1), model: "claude-sonnet-5.5" }, { input: 120, output: 80, costMicro: 1500 }))
+    const first = try consumed(1)
+    const published = try journalOf(1)
+    const afterFirst = try ledger()
+    try batch(requested("inference-1b", 1, "2026-11-10T00:01:00.000Z"))
+    const second = try consumed(1)
+    try same({ first, second, published, afterFirst, calls: try callsAbout(1), afterSecond: try ledger() }, {
+      first: ["Published"],
+      second: ["Current"],
+      published: [{ pull: 1, status: "unresolved", provider: "surplus", model: "claude-sonnet-5.5", supersedes: null }],
+      afterFirst: [{ attempts: 1, reservations: 1, alertsOnly: 1, results: 1, completions: 1, reconciliations: 1, costs: 1, billed: 0 }],
+      calls: ["surplus-anthropic claude-sonnet-5.5 16000"],
+      afterSecond: [{ attempts: 1, reservations: 1, alertsOnly: 1, results: 1, completions: 1, reconciliations: 1, costs: 1, billed: 0 }],
+    })
+  })
+
+  it.effect('Three non-free attempts without a retained result exhaust the source key (spec/slopbot/valueInference.md, "Admit at most three unresolved or non-free attempts for the same key"; spec/slopbot/valueRequests.md, "Blocked outcomes back off, transient ones wait an hour, final ones stop")', () => effect {
+    const { world } = try Journey
+    const outcomes: ReadonlyArray<string>[] = []
+    for (const attempt of [1, 2, 3]) {
+      try batch(requested(`inference-2-${attempt}`, 2, `2026-11-10T00:1${attempt}:00.000Z`))
+      try Effect.try(() => {
+        world.providers.reply((call) => sonnet(call) && about(2)(call), { failure: "unavailable" })
+        world.providers.reply((call) => terra(call) && about(2)(call), { failure: "unavailable" })
+        world.providers.reply((call) => orbio(call) && about(2)(call), { failure: "unavailable" })
+      })
+      outcomes.push(try consumed(2))
+    }
+    try batch(requested("inference-2-4", 2, "2026-11-10T00:14:00.000Z"))
+    outcomes.push(try consumed(2))
+    const routes = try callsAbout(2)
+    try same({ outcomes, calls: routes.length, journal: try journalOf(2) }, {
+      outcomes: [["Retry"], ["Retry"], ["Retry"], ["AttemptsExhausted"]],
+      calls: 9,
+      journal: [],
+    })
+  })
+
+  it.effect('A pause between inference and append refuses publication, and the retained result is reused without a second charge (spec/slopbot/valueInference.md, "A retained inference survives stale publication without another charge"; spec/slopbot/valueInference.md, "A remote membership lookup is followed by current local authority and lease checks")', () => effect {
+    const { world, db } = try Journey
+    const pause = try revised("paused", "AdminHold")
+    try batch(requested("inference-3a", 3, "2026-11-10T00:20:00.000Z"))
+    try Effect.try(() => world.providers.reply((call) => sonnet(call) && about(3)(call), { text: unresolvedVerdict(3), model: "claude-sonnet-5.5" }, { input: 100, output: 60, costMicro: 1300 }))
+    world.hooks.push(runOn(db, pause))
+    const paused = try consumed(3)
+    const unpublished = try journalOf(3)
+    try batch(try revised("active", "Activated"))
+    try batch(requested("inference-3b", 3, "2026-11-10T00:21:00.000Z"))
+    const resumed = try consumed(3)
+    try same({ paused, unpublished, resumed, published: (try journalOf(3)).length, calls: try callsAbout(3) }, {
+      paused: ["AuthorityWait"],
+      unpublished: [],
+      resumed: ["Published"],
+      published: 1,
+      calls: ["surplus-anthropic claude-sonnet-5.5 16000"],
+    })
+  })
+
+  it.effect('The value-model qualification refuses without both keys and fails on a malformed or truncated answer (spec/slopbot/valueInference.md, "A proposal is retained only with an allowed band, review bands only for eligible reviews, and citations found in the collected evidence"; spec/slopbot/valueInference.md, "Usage precedes retained output and explicit completion")', () => effect {
+    const { world } = try Journey
+    const media = (call: ProviderCall) => call.messages.some((message) => message.content.includes("capture.webm"))
+    const failedWith = (keys: Keys) => refusedQualification(world, keys)
+    const before = world.providers.calls.filter(media).length
+    const missing = try failedWith({ SURPLUS_API_KEY: "surplus-test-credential" })
+    try Effect.try(() => {
+      world.providers.reply((call) => media(call) && sonnet(call), { text: "not json", model: "claude-sonnet-5.5" }, { costMicro: 900 })
+      world.providers.reply((call) => media(call) && terra(call), { text: "{}", model: "gpt-6.1-terra" }, { costMicro: 900 })
+    })
+    const malformed = try failedWith({ ORBIO_API_KEY: "orbio-test-credential", SURPLUS_API_KEY: "surplus-test-credential" })
+    try Effect.try(() => {
+      world.providers.reply((call) => media(call) && sonnet(call), { text: "{", model: "claude-sonnet-5.5", truncated: true }, { costMicro: 900 })
+      world.providers.reply((call) => media(call) && terra(call), { text: "{", model: "gpt-6.1-terra", truncated: true }, { costMicro: 900 })
+    })
+    const truncated = try failedWith({ ORBIO_API_KEY: "orbio-test-credential", SURPLUS_API_KEY: "surplus-test-credential" })
+    const dryRun = try dryRunQualification(world)
+    try same({ missing, malformed, truncated, dryRun: dryRun.map((summary) => [summary.path, summary.requests, summary.outcome]), calls: world.providers.calls.filter(media).length - before }, {
+      missing: "Slopbot model qualification requires the protected main release and both provider keys.",
+      malformed: "Slopbot model qualification failed; no publication is permitted.",
+      truncated: "Slopbot model qualification failed; no publication is permitted.",
+      dryRun: [["single", 0, "dry-run; no provider calls"], ["joint", 0, "dry-run; no provider calls"]],
+      calls: 4,
+    })
+  })
+})

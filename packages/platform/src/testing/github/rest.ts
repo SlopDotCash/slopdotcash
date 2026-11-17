@@ -1,7 +1,7 @@
 // spec/points/ingestion.md, "A read classifies each response and waits only for a rate limit"
 import { type Credential, type Credentials, granted } from "./oauth.ts";
 import {
-  type Access, type Account, type Advisory, type App, type Comment, type Commit, type GitHubWorld, type Installation, type Item, type Label,
+  type Access, type Account, type Advisory, type App, type Comment, type Commit, type Deployment, type GitHubWorld, type Installation, type Item, type Label,
   type Permission, type Pull, type Repository, type Review, type TimelineEvent, blobSha, permissionRank, sortedByTime, treeOf,
 } from "./world.ts";
 
@@ -151,6 +151,29 @@ function labelJson(authority: string, repo: Repository, label: Label) {
   return { id: label.id, node_id: label.nodeId, url: `${authority}/repos/${fullName(repo)}/labels/${encodeURIComponent(label.name)}`, name: label.name, color: label.color, description: label.description, default: false };
 }
 
+function deploymentJson(authority: string, repo: Repository, deployment: Deployment) {
+  return {
+    id: deployment.id,
+    node_id: deployment.nodeId,
+    sha: deployment.sha,
+    ref: deployment.ref,
+    task: "deploy",
+    environment: deployment.environment,
+    production_environment: deployment.productionEnvironment,
+    transient_environment: false,
+    created_at: deployment.createdAt,
+    updated_at: deployment.statuses.at(-1)?.createdAt ?? deployment.createdAt,
+    url: `${authority}/repos/${fullName(repo)}/deployments/${deployment.id}`,
+    statuses_url: `${authority}/repos/${fullName(repo)}/deployments/${deployment.id}/statuses`,
+  };
+}
+
+function closedBy(authority: string, item: Item) {
+  if (item.state !== "closed") return null;
+  const actor = item.timeline.findLast((entry) => entry.event === "closed")?.actor;
+  return actor === undefined ? null : userJson(authority, actor);
+}
+
 /** @throws {never} */
 export function issueJson(authority: string, world: GitHubWorld, item: Item) {
   const repo = item.repository;
@@ -175,6 +198,7 @@ export function issueJson(authority: string, world: GitHubWorld, item: Item) {
     created_at: item.createdAt,
     updated_at: item.updatedAt,
     closed_at: item.closedAt,
+    closed_by: closedBy(authority, item),
     author_association: association(world, repo, item.author),
     ...(item.kind === "pull"
       ? { draft: item.draft, pull_request: { url: `${authority}/repos/${fullName(repo)}/pulls/${item.number}`, html_url: `https://github.com/${path}`, merged_at: item.mergedAt } }
@@ -817,6 +841,47 @@ const repoRoutes: ReadonlyArray<RepoRoute> = [
       if (account === undefined || level === "none") return notFound();
       const legacy = level === "maintain" ? "write" : level === "triage" ? "read" : level;
       return reply(200, { permission: legacy, role_name: level, user: { ...userJson(ctx.authority, account), permissions: { admin: level === "admin", maintain: permissionRank[level] >= permissionRank.maintain, push: permissionRank[level] >= permissionRank.write, triage: permissionRank[level] >= permissionRank.triage, pull: true } } });
+    },
+  },
+  {
+    method: "GET", path: "/deployments", need: read("deployments"),
+    run: (ctx, repo) => {
+      const query = ctx.url.searchParams;
+      const matches = (deployment: Deployment) => (["sha", "ref", "environment"] as const).every((key) => query.get(key) === null || query.get(key) === deployment[key]);
+      return page(ctx, repo.deployments.filter(matches).reverse(), (deployment) => deploymentJson(ctx.authority, repo, deployment));
+    },
+  },
+  {
+    method: "GET", path: "/deployments/:id/statuses", need: read("deployments"),
+    run: (ctx, repo, { id = "" }) => {
+      const deployment = repo.deployments.find((candidate) => String(candidate.id) === id);
+      return deployment === undefined ? notFound() : page(ctx, [...deployment.statuses].reverse(), (status) => ({
+        id: status.id,
+        state: status.state,
+        log_url: status.logUrl,
+        target_url: status.logUrl ?? "",
+        environment: deployment.environment,
+        created_at: status.createdAt,
+        updated_at: status.createdAt,
+        deployment_url: `${ctx.authority}/repos/${fullName(repo)}/deployments/${deployment.id}`,
+      }));
+    },
+  },
+  {
+    method: "GET", path: "/actions/runs/:id", need: read("actions"),
+    run: (ctx, repo, { id = "" }) => {
+      const run = repo.runs.get(Number(id));
+      return run === undefined ? notFound() : reply(200, {
+        id: run.id,
+        node_id: run.nodeId,
+        head_sha: run.headSha,
+        head_branch: run.headBranch,
+        path: run.path,
+        status: run.status,
+        conclusion: run.conclusion,
+        created_at: run.createdAt,
+        html_url: `https://github.com/${fullName(repo)}/actions/runs/${run.id}`,
+      });
     },
   },
   { method: "GET", path: "/private-vulnerability-reporting", need: read("administration"), run: (_ctx, repo) => reply(200, { enabled: repo.privateReporting }) },

@@ -1,0 +1,217 @@
+// spec/slopbot/workUnits.md, "A claim is one changed path in one commit and belongs to its first accepted carrier"; spec/points/authorship.md, "A verified October carry goes to the original contributor; otherwise primary authorship precedes the fallbacks"; spec/slopbot/valueHistory.md, "Incomplete, stale and unresolved decisions remain distinct"
+import { sha256Of } from "@repo/platform/git/bytes"
+import { isCreditEligibleCommitAuthor } from "@repo/points/client"
+import { githubLinkDestinations, sameRepositoryCommitHints } from "../evidence/hints.vibe"
+import type { Commit, Evidence, Pull, RegisteredRepository, RepairBodyEdit } from "../evidence/types.vibe"
+import { prepareWorkUnitEvidence, sourceDigestOf } from "../workUnits/prepare.vibe"
+import { type WorkUnitRecord, workUnitSourceBindings } from "../workUnits/record.vibe"
+import { millis } from "../workUnits/source.vibe"
+import { type Policy, type RepairRequest, Retention, type WorkUnitEvidence, type WorkUnitSource } from "../workUnits/types.vibe"
+import { commitRanks, retainedAncestors } from "./binding.ts"
+import { parentGraph, retainedCopyBindings, retainedEditIdentity } from "./copy.vibe"
+
+export type RepairReference = {
+  readonly sourceDigests: { readonly [pullRequestNodeId: string]: string }
+  readonly pull: Pull
+  readonly acceptingPull: Pull
+  readonly headSha: string
+  readonly bodyEdit: RepairBodyEdit
+}
+
+export type OriginalContributorRepair = {
+  readonly sourceId: string
+  readonly commitSha: string
+  readonly authorNodeId: string
+  readonly reference: RepairReference & { readonly digest: string }
+}
+
+interface CorrectionSource {
+  readonly repository: string
+  readonly sourceId: string
+  readonly sourceUrl: string
+  readonly headSha: string
+  readonly occurredAt: string | null
+}
+
+interface RepairCommit {
+  readonly sha: string
+  readonly authorId: string
+  readonly authorKind: string
+}
+
+const commitPattern = /^[a-f0-9]{40}$/u
+const digestPattern = /^[a-f0-9]{64}$/u
+const actorPattern = /^[A-Za-z0-9_=-]{4,256}$/u
+const sourceReferencePattern = /(?:https:\/\/github\.com\/([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+)\/pull\/|(?<![\w/?.:=&-])([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+)?#)([1-9]\d*)\b/gu
+
+export function referencesOriginalContributorSource(body: string, repository: string, number: number) {
+  const text = githubLinkDestinations(body).replace(/\[[^[\]\n]*\](?:\[[^[\]\n]*\])?/gu, " ")
+  return [...text.matchAll(sourceReferencePattern)].some((match) =>
+    Number(match[3]) === number && (match[1] ?? match[2] ?? repository).toLowerCase() === repository.toLowerCase())
+}
+
+function correctionSource(evidence: Evidence): CorrectionSource {
+  return {
+    repository: evidence.repository,
+    sourceId: evidence.pull.node_id,
+    sourceUrl: evidence.pull.html_url,
+    headSha: evidence.pull.head.sha,
+    occurredAt: evidence.pull.merged_at,
+  }
+}
+
+function sameInstant(left: string | null, right: string | null) {
+  return left !== null && right !== null && millis(left) === millis(right)
+}
+
+function isOriginalContributorRepair(repair: OriginalContributorRepair, original: CorrectionSource, accepted: CorrectionSource, commit: RepairCommit) {
+  const { digest, ...reference } = repair.reference
+  const pull = reference.pull
+  const acceptingPull = reference.acceptingPull
+  const bodyEdit = reference.bodyEdit
+  const source = repair.sourceId === original.sourceId ? original : accepted
+  const text = pull.body ?? ""
+  const headHints = sameRepositoryCommitHints(source.repository, text)
+  const actor = bodyEdit.lastEditedAt === null ? bodyEdit.author : bodyEdit.editor
+  const occurredAt = bodyEdit.lastEditedAt ?? pull.updated_at
+  const at = millis(occurredAt)
+  const mergedBy = acceptingPull.merged_by
+  const linkedRepair = repair.authorNodeId === commit.authorId && commit.authorKind === "User" && actorPattern.test(commit.authorId) &&
+    isCreditEligibleCommitAuthor({ id: commit.authorId, kind: commit.authorKind })
+  return (repair.sourceId === original.sourceId || repair.sourceId === accepted.sourceId) && repair.commitSha === commit.sha && linkedRepair &&
+    Object.keys(reference.sourceDigests).length === 2 && digestPattern.test(reference.sourceDigests[original.sourceId] ?? "") &&
+    digestPattern.test(reference.sourceDigests[accepted.sourceId] ?? "") && pull.node_id === source.sourceId && Number.isSafeInteger(pull.number) &&
+    pull.number > 0 && source.sourceUrl.endsWith(`/pull/${pull.number}`) && pull.html_url === source.sourceUrl && pull.head.sha === source.headSha &&
+    pull.state === "closed" && (source.occurredAt === null ? pull.merged_at === null : sameInstant(pull.merged_at, source.occurredAt)) &&
+    accepted.occurredAt !== null && actor?.type === "User" && acceptingPull.node_id === accepted.sourceId && Number.isSafeInteger(acceptingPull.number) &&
+    accepted.sourceUrl.endsWith(`/pull/${acceptingPull.number}`) && acceptingPull.head.sha === accepted.headSha && acceptingPull.html_url === accepted.sourceUrl &&
+    sameInstant(acceptingPull.merged_at, accepted.occurredAt) && mergedBy !== null && mergedBy.type === "User" && actor.id === mergedBy.node_id &&
+    Number.isFinite(at) && at <= millis(pull.updated_at) && at <= millis(accepted.occurredAt) &&
+    bodyEdit.id === pull.node_id && bodyEdit.body === pull.body && bodyEdit.headRefOid === pull.head.sha && bodyEdit.mergedAt === pull.merged_at &&
+    bodyEdit.updatedAt === pull.updated_at && digestPattern.test(digest) && sha256Of(JSON.stringify(reference)) === digest && commitPattern.test(reference.headSha) &&
+    (repair.sourceId === original.sourceId || referencesOriginalContributorSource(text, original.repository, Number(original.sourceUrl.split("/").at(-1)))) &&
+    headHints.includes(reference.headSha) && (reference.headSha === original.headSha || reference.headSha === accepted.headSha)
+}
+
+function authenticGraph(commits: ReadonlyArray<Commit>) {
+  const known = new Map<string, Commit>()
+  for (const commit of commits) {
+    const prior = known.get(commit.sha)
+    if (prior !== undefined && JSON.stringify(prior) !== JSON.stringify(commit)) return undefined
+    if (!commit.parents.every(({ sha }) => commitPattern.test(sha)) || new Set(commit.parents.map(({ sha }) => sha)).size !== commit.parents.length) return undefined
+    known.set(commit.sha, commit)
+  }
+  const graph = parentGraph(known, [], [])
+  return commitRanks(graph.graph).acyclic ? graph : undefined
+}
+
+function descendants(graph: { readonly graph: number[][]; readonly indices: ReadonlyMap<string, number> }, head: string) {
+  const start = graph.indices.get(head)
+  const ancestry = start === undefined ? undefined : retainedAncestors(graph.graph, start)
+  return (target: string) => {
+    const vertex = graph.indices.get(target)
+    return ancestry === undefined || vertex === undefined ? head === target : ancestry.complete && ancestry.seen[vertex] === true
+  }
+}
+
+function attributedFile(evidence: Evidence, sha: string, path: string) {
+  const entries = evidence.commitAttribution.filter((entry) => entry.sha === sha)
+  const [entry] = entries
+  if (entries.length !== 1 || entry === undefined || entry.limitations.length > 0) return undefined
+  const files = (entry.files ?? []).filter((file) => file.filename === path)
+  const [file] = files
+  return files.length === 1 ? file : undefined
+}
+
+export effect function retainedRepair(request: RepairRequest) {
+  const source = request.original.evidence
+  const integration = request.accepted.evidence
+  const repair = integration.commits.find((commit) => commit.sha === request.acceptedCommitSha)
+  const author = repair?.author ?? null
+  const bodyEdit = integration.repairBodyEdit
+  if (
+    repair === undefined || author === null || author.type !== "User" || !isCreditEligibleCommitAuthor({ id: author.node_id, kind: author.type }) ||
+    source.limitations.length > 0 || integration.limitations.length > 0 || source.repositoryNodeId !== integration.repositoryNodeId ||
+    source.repositoryDatabaseId !== integration.repositoryDatabaseId || source.pull.number >= integration.pull.number ||
+    source.pull.user.node_id === integration.pull.user.node_id || bodyEdit === undefined || integration.pull.merged_at === null ||
+    integration.pull.merged_at === "" || source.commits.length !== source.pull.commits || integration.commits.length !== integration.pull.commits
+  ) return undefined
+  const before = attributedFile(source, request.originalCommitSha, request.path)
+  const after = attributedFile(integration, request.acceptedCommitSha, request.path)
+  const identity = before === undefined ? null : retainedEditIdentity(before)
+  if (after === undefined || identity === null || identity !== retainedEditIdentity(after)) return undefined
+  if (
+    source.commits.some((commit) => commit.parents.length !== 1 || commit.author?.node_id !== source.pull.user.node_id) ||
+    !integration.commits.some((commit) => commit.sha === integration.pull.head.sha) || !source.commits.some((commit) => commit.sha === source.pull.head.sha)
+  ) return undefined
+  const graph = authenticGraph([...source.commits, ...integration.commits])
+  if (graph === undefined) return undefined
+  const anchors = source.commits.filter((commit) =>
+    commit.parents.length === 1 && commit.author?.node_id === source.pull.user.node_id && integration.commits.some((copy) => copy.sha === commit.sha))
+  const fromRepair = descendants(graph, repair.sha)
+  const fromAcceptedHead = descendants(graph, integration.pull.head.sha)
+  const fromOriginalHead = descendants(graph, source.pull.head.sha)
+  if (
+    !anchors.some((anchor) => fromRepair(anchor.sha)) || !fromAcceptedHead(repair.sha) || !integration.commits.every((commit) => fromAcceptedHead(commit.sha)) ||
+    !source.commits.every((commit) => fromOriginalHead(commit.sha))
+  ) return undefined
+  const reference: RepairReference = {
+    sourceDigests: {
+      [source.pull.node_id]: try sourceDigestOf(source, request.original.policy),
+      [integration.pull.node_id]: try sourceDigestOf(integration, request.accepted.policy),
+    },
+    pull: integration.pull,
+    acceptingPull: integration.pull,
+    headSha: integration.pull.head.sha,
+    bodyEdit,
+  }
+  const result: OriginalContributorRepair = {
+    sourceId: integration.pull.node_id,
+    commitSha: repair.sha,
+    authorNodeId: author.node_id,
+    reference: { ...reference, digest: sha256Of(JSON.stringify(reference)) },
+  }
+  const commit: RepairCommit = { sha: repair.sha, authorId: author.node_id, authorKind: author.type }
+  return isOriginalContributorRepair(result, correctionSource(source), correctionSource(integration), commit) ? result : undefined
+}
+
+export const retention = Layer.succeed(Retention, {
+  bindings: (sources, options) => sync(() => retainedCopyBindings(sources, options)),
+  repair: (request) => retainedRepair(request),
+})
+
+function withoutRepairMetadata(evidence: Evidence): Evidence {
+  const { repairBodyEdit, ...historical } = evidence
+  return historical
+}
+
+export effect function metadataCompatibleDigest(evidence: Evidence, policy: Policy, recordedDigest: string) {
+  const current = try sourceDigestOf(evidence, policy)
+  if (current === recordedDigest || evidence.repairBodyEdit === undefined) return current
+  return (try sourceDigestOf(withoutRepairMetadata(evidence), policy)) === recordedDigest ? recordedDigest : current
+}
+
+effect function historicalSource(source: WorkUnitSource, record: WorkUnitRecord) {
+  const { evidence, policy } = source
+  const binding = record.sources.find((item) => item.repositoryNodeId === evidence.repositoryNodeId && item.pullRequestNodeId === evidence.pull.node_id)
+  if (binding === undefined || evidence.repairBodyEdit === undefined || (try sourceDigestOf(evidence, policy)) === binding.sourceDigest) return source
+  const historical = withoutRepairMetadata(evidence)
+  return (try sourceDigestOf(historical, policy)) === binding.sourceDigest ? { ...source, evidence: historical } : source
+}
+
+export effect function metadataCompatibleEvidence(
+  record: WorkUnitRecord,
+  evidence: WorkUnitEvidence,
+  sources: ReadonlyArray<WorkUnitSource>,
+  repositories: ReadonlyArray<RegisteredRepository>,
+) {
+  if (record.sourceDigest === evidence.sourceDigest || !sources.some((source) => source.evidence.repairBodyEdit !== undefined)) return evidence
+  const historicalSources: WorkUnitSource[] = []
+  for (const source of sources) historicalSources.push(try historicalSource(source, record))
+  const historical = try prepareWorkUnitEvidence(historicalSources, repositories)
+  return historical.sourceDigest === record.sourceDigest &&
+    JSON.stringify(record.sources) === JSON.stringify(try workUnitSourceBindings(historical, repositories)) &&
+    JSON.stringify(record.claims) === JSON.stringify(historical.claims)
+    ? historical
+    : evidence
+}

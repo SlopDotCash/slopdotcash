@@ -1,6 +1,7 @@
 // spec/backend/projects.md, "A project is one row of immutable revisions and separate application records"; spec/backend/projects.md, "An applicant cancels a pending application or update without GitHub access"
 import { first, rows, sql } from "@repo/platform/d1"
 import type { OwnedProject, ProjectRecord, PublicApplication } from "../../client/projectSetup.vibe"
+import { type Json, objectOf } from "./revisionChanges.ts"
 
 export schema StoredProject {
   id: string
@@ -39,7 +40,6 @@ export schema StoredApplication {
   applicant_cancelled_at: string | null
 }
 
-export type Json = { readonly [key: string]: unknown }
 
 export interface Loaded {
   readonly row: StoredProject
@@ -48,10 +48,6 @@ export interface Loaded {
 
 const projectColumns = sql`id, status, revision, manifest, manifest_sha256, created_at, updated_at, source_application_id, referrer_github_id, referrer_github_login`
 const applicationColumns = sql`id, project_id, manifest, manifest_sha256, acceptance_criteria, applicant_github_id, applicant_github_login, submitted_at, status, admin_notification, admin_notification_at, decided_at, decided_by_github_id, decided_by_github_login, decision_reason, github_check, expected_revision, change_reason, referrer_github_id, referrer_github_login, applicant_cancelled_at`
-
-export function objectOf(value: unknown): Json | undefined {
-  return typeof value === "object" && value !== null && !Array.isArray(value) ? value as Json : undefined
-}
 
 export effect function parsedObject(text: string) {
   const parsed = Effect.try(() => JSON.parse(text) as unknown) catch () => undefined

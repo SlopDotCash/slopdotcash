@@ -17,13 +17,14 @@ import { evmClaimEvidence, evmVault, failureText } from "../src/claims/evm.vibe"
 import { claimsIn, evmVaultClaims } from "../src/claims/run.vibe"
 import { ChainUnavailable, ConversionChain, type OpenSend } from "../src/conversion/chain.vibe"
 import { runNetwork } from "../src/conversion/run.vibe"
+import { ExpiryOperators } from "../src/expiry/operators.vibe"
 import { word } from "../src/evm/abi.ts"
 import { FeeChain, attemptStatus, broadcast, feeChain, nativeCost } from "../src/evm/client.vibe"
 import type { Instance } from "../src/journal/codec.vibe"
 import { evmTransfers } from "../src/receipts/discover.vibe"
 import type { EnabledNetwork } from "../src/runtime/config.vibe"
 import { definitions } from "../src/runtime/networks.vibe"
-import { circleUsdc, kyberswap } from "../src/runtime/pins.ts"
+import { circleUsdc, kyberswap, solanaGenesis } from "../src/runtime/pins.ts"
 import type { TokenFact, VaultFact } from "../src/runtime/reviewed.vibe"
 import { evmFeeWallet } from "../src/signer/feeWallet.vibe"
 import { generationInstance, journalDatabase } from "./support/journal.ts"
@@ -211,7 +212,7 @@ effect function onChain<A, E, R>(world: World, fact: VaultFact, program: A!E!R) 
   const chain = feeChain({ network: "Ethereum", wallet: escrow.wallet.address, urls: Redacted.make([escrow.chain.url]), timeoutMs: 10_000 })
   const signing = Layer.provideMerge(evmFeeWallet({ network: "Ethereum", wallet: escrow.wallet.address, key: Redacted.make(escrow.wallet.privateKey), runtime: world.runtime, limits: nativeLimits, gasMultiple: 10n, kyber }), chain)
   const deployments = Layer.provideMerge(reviewedDeployments, Layer.merge(chain, webCrypto))
-  const services = Layer.mergeAll(d1(db), webCrypto, Layer.provideMerge(claimChain(fact), Layer.merge(signing, deployments)))
+  const services = Layer.mergeAll(d1(db), webCrypto, Layer.succeed(ExpiryOperators, { genesis: solanaGenesis, providers: [] }), Layer.provideMerge(claimChain(fact), Layer.merge(signing, deployments)))
   return try Effect.provideService(Effect.provide(Effect.provide(program, services), FetchHttpClient.layer), FetchHttpClient.Fetch, fetch)
 }
 

@@ -1,4 +1,4 @@
-// spec/security/cases.md, "A case is received once, from a Slop receipt, a verified GitHub receipt or a confirmed legacy claim"; spec/security/cases.md, "Current technical approvers and triagers request information on the current report version"; spec/security/cases.md, "Slopbot drafts advice for each appeal and always escalates a private case"; spec/security/privacy.md, "Read authorization comes from the current case roles and is audited before delivery"; spec/security/cases.md, "Legacy GitHub-first record, import and receipt-check cases stay readable and accept no new write"
+// spec/security/cases.md, "A case is received once, from a Slop receipt, a verified GitHub receipt or a confirmed legacy claim"; spec/security/cases.md, "Current technical approvers and triagers request information on the current report version"; spec/security/cases.md, "Slopbot drafts advice for each appeal and always escalates a private case"; spec/security/privacy.md, "Read authorization comes from the current case roles and is audited before delivery"
 import { isoNow } from "@repo/platform/clock"
 import { randomId } from "@repo/platform/crypto"
 import { ConstraintViolation, D1, RowMismatch, first, rows as allRows, sql } from "@repo/platform/d1"
@@ -8,6 +8,7 @@ import { type AuthorityRead, Authority as RepositoryAuthority, Registry } from "
 import { NotAState, apply, initial } from "../../gen/security__cases.effect.vibe"
 import { ownerBudgetMs } from "../analysis/route.vibe"
 import { analyze } from "../assessment/routes.vibe"
+import { repositoryAuthority } from "../caseAuthority/snapshot.vibe"
 import { actOnCase, claimCase, listCases, readCase } from "../client/cases.vibe"
 import { postSecurityCases as createRows, getSecurityCasesById as readRows, postSecurityCasesByIdActions as actionRows } from "../client/refusals.vibe"
 import { projectId as projectPattern } from "../intake/availability.vibe"
@@ -81,15 +82,6 @@ effect function rememberedAuthority() {
   } satisfies RepositoryAuthority.Shape
 }
 
-effect function projectAuthority(projectId: string, viewerGithubId: string) {
-  const project = try (try Registry).project(projectId)
-  const repository = project?.repositories[0]
-  if (project === undefined || repository === undefined) return "denied" as const
-  const read = try (try RepositoryAuthority).repository({ actorGithubId: viewerGithubId, repositoryId: repository.id })
-  if (read.permission === "PermissionUnavailable" || read.installation === "InstallationUnavailable") return "unavailable" as const
-  return read.installation === "Installed" && (viewerGithubId === project.stewardGithubId || read.permission === "PermissionVerified") ? "granted" as const : "denied" as const
-}
-
 effect function visibleProjects(actor: Actor) {
   const programs = try allRows(ProgramRow, sql`SELECT id, json_type(manifest, '$.securityBounty') = 'object' AS bounty FROM projects WHERE json_type(manifest, '$.securityBounty') = 'object' OR id IN (SELECT project_id FROM security_cases)`)
   const reporting = try ReportingPrograms
@@ -103,7 +95,7 @@ effect function visibleProjects(actor: Actor) {
       if (approvers?.technical.includes(actor.githubId) === true) held.add("security-maintainer")
       if (approvers?.financial.includes(actor.githubId) === true) held.add("financial")
     } else {
-      const read = try projectAuthority(program.id, actor.githubId)
+      const read = try repositoryAuthority({ projectId: program.id, viewerGithubId: actor.githubId })
       if (read === "unavailable") authorityUnavailable = true
       if (read === "granted") held.add("security-maintainer")
     }

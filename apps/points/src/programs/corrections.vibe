@@ -1,5 +1,5 @@
 // spec/points/quotaRecovery.md, "Story: Preserve the same campaign while live quota recovers"; spec/points/quotaRecovery.md, "Only trusted production runs can restore the original campaign"; spec/points/quotaRecovery.md, "Resume requires progress or a bounded number of refusals before the deadline"
-import { type Command } from "@repo/platform/program"
+import { type Command, temporaryFailure } from "@repo/platform/program"
 import { GitHub, github } from "@repo/platform/github"
 import { gitBytes, systemGit } from "@repo/platform/git"
 import { productionBudget, productionDuration } from "../../gen/points__quotaRecovery.effect.vibe"
@@ -9,7 +9,7 @@ import { isCanonicalInstant, isCensusMonth } from "../corrections/collect/calend
 import { publishedJournal, publishedRegistry } from "../corrections/collect/published.vibe"
 import { graphqlClient } from "../ingestion/graphql.vibe"
 import { actionsToken } from "../ingestion/token.vibe"
-import { type RunLimits, quotaRun, resumeAcrossQuota } from "../quotaRecovery/run.vibe"
+import { CollectionDeferred, type RunLimits, quotaRun, resumeAcrossQuota } from "../quotaRecovery/run.vibe"
 
 export error CorrectionsUsage { message: string }
 
@@ -165,7 +165,12 @@ effect function collect<E, R>(args: ReadonlyArray<string>, prove: ProveCandidate
     limits: { started: inputs.collectedAt, budget: parsed.requestBudget, durationMs: parsed.resumeForSeconds === undefined ? productionDuration : parsed.resumeForSeconds * 1_000 },
   })
   provide services {
-    const result = try resumeAcrossQuota(() => collectCorrections(parsed.options, inputs, provenance, prove), (millis) => sleep(Duration.millis(millis)), parsed.resumeForSeconds !== undefined)
+    const result = resumeAcrossQuota(() => collectCorrections(parsed.options, inputs, provenance, prove), (millis) => sleep(Duration.millis(millis)), parsed.resumeForSeconds !== undefined) catch effect (error) => {
+      if (!(error instanceof CollectionDeferred) || parsed.resumeForSeconds === undefined) throw error
+      try Console.error(error.message)
+      return undefined
+    }
+    if (result === undefined) return temporaryFailure
     const { limitations, missingMonths, ...summary } = result.receipt
     try Console.log(JSON.stringify({ ...summary, missingMonthCount: missingMonths.length, limitationCount: limitations.length }))
   }

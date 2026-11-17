@@ -101,7 +101,7 @@ effect function prepareCommitment(projectId: string, periodText: string, actor: 
     award: { githubUserId: expected.githubUserId, login: obligation.github_login, sourceDigest: obligation.source_digest, gross: gross.toString(), fee: fee.toString(), net: (gross - fee).toString() },
   } satisfies CommitmentPlan
   const capture: Capture = { revision: project.revision, snapshotDigest: run.snapshot_sha256 }
-  const reviewFacts: ReviewFacts = { steward: authorized.owner, repositoryAuthority: true, revision: project.revision, restricted: eligibility.restricted, networkServed: eligibility.networkServed, snapshotDigest: run.snapshot_sha256, obligationFunded: true }
+  const reviewFacts: ReviewFacts = { steward: authorized.owner, repositoryAuthority: true, revision: project.revision, restricted: eligibility.restricted, networkServed: eligibility.networkServed, snapshotDigest: run.snapshot_sha256, obligationFunded: true, monthLockPlanned: false, lockedFunds: false }
   return { plan, vault: deployment.vault, capture, facts: reviewFacts, authorized } satisfies Prepared
 }
 
@@ -218,7 +218,7 @@ effect function checkFacts(projectId: string, periodText: string, actor: Actor, 
   const snapshot = run?.snapshot_sha256 ?? ""
   const eligibility = authorized.facts.eligibility
   const capture: Capture = { revision: authorized.project.revision, snapshotDigest: snapshot }
-  const facts: ReviewFacts = { steward: authorized.owner, repositoryAuthority: true, revision: authorized.project.revision, restricted: eligibility.restricted, networkServed: eligibility.networkServed, snapshotDigest: snapshot, obligationFunded: funded !== undefined }
+  const facts: ReviewFacts = { steward: authorized.owner, repositoryAuthority: true, revision: authorized.project.revision, restricted: eligibility.restricted, networkServed: eligibility.networkServed, snapshotDigest: snapshot, obligationFunded: funded !== undefined, monthLockPlanned: false, lockedFunds: false }
   return { capture, facts }
 }
 

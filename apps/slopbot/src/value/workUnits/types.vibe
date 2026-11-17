@@ -1,0 +1,107 @@
+// spec/slopbot/workUnits.md, "A claim is one changed path in one commit and belongs to its first accepted carrier"
+import type { MergeRecipe } from "@repo/platform/git/evidence"
+import type { Evidence } from "../evidence/types.vibe"
+
+export error WorkUnitRefused { reason: string }
+
+export interface Policy {
+  readonly sha: string
+  readonly text: string
+}
+
+export interface WorkUnitSource {
+  readonly evidence: Evidence
+  readonly policy: Policy
+  readonly mergeRecipe?: MergeRecipe
+}
+
+export type Repair = { readonly [key: string]: unknown }
+
+export interface RetainedCopy {
+  readonly acceptancePullRequestId: string
+  readonly acceptedCommitSha: string
+  readonly preexistingCommitShas: ReadonlyArray<string>
+  readonly repair?: Repair
+}
+
+export interface WorkUnitClaim {
+  readonly id: string
+  readonly repositoryNodeId: string
+  readonly commitSha: string
+  readonly path: string
+  readonly carrierPullRequestIds: ReadonlyArray<string>
+  readonly creditPullRequestId: string
+  readonly implementationActorNodeIds: ReadonlyArray<string>
+  readonly retainedCopy?: RetainedCopy
+}
+
+export interface SourceDigest {
+  readonly pullRequestNodeId: string
+  readonly digest: string
+}
+
+export interface WorkUnitEvidence {
+  readonly projectId: string
+  readonly sources: ReadonlyArray<WorkUnitSource>
+  readonly sourceDigests: ReadonlyArray<SourceDigest>
+  readonly claims: ReadonlyArray<WorkUnitClaim>
+  readonly limitations: ReadonlyArray<string>
+  readonly sourceDigest: string
+}
+
+export interface RetainedBinding {
+  readonly original: WorkUnitSource
+  readonly originalCommitSha: string
+  readonly integration: WorkUnitSource
+  readonly acceptedCommitSha: string
+  readonly path: string
+  readonly preexistingCommitShas: ReadonlyArray<string>
+  readonly mergeResolution?: true
+}
+
+export interface RetainedBindings {
+  readonly bindings: ReadonlyMap<string, RetainedBinding>
+  readonly limitations: ReadonlyArray<string>
+}
+
+export interface RepairRequest {
+  readonly original: WorkUnitSource
+  readonly accepted: WorkUnitSource
+  readonly acceptedCommitSha: string
+  readonly originalCommitSha: string
+  readonly path: string
+}
+
+export interface BindingOptions {
+  readonly acceptedSubset: true
+}
+
+export service Retention {
+  bindings(sources: ReadonlyArray<WorkUnitSource>, options: BindingOptions): RetainedBindings!!
+  repair(request: RepairRequest): (Repair | undefined)!!
+}
+
+export interface GroupClaim {
+  readonly id: string
+  readonly carriers: ReadonlyArray<string>
+  readonly credit: string
+}
+
+export interface GroupFacts {
+  readonly projectId: string
+  readonly accepted: ReadonlyArray<string>
+  readonly claims: ReadonlyArray<GroupClaim>
+  readonly limited: boolean
+}
+
+export function claimKey(repositoryNodeId: string, commitSha: string, path: string) {
+  return JSON.stringify([repositoryNodeId, commitSha, path])
+}
+
+export function occurredAt(evidence: Evidence) {
+  return evidence.pull.merged_at ?? evidence.indirectAcceptance?.observedOnBranchAt ?? evidence.pull.closed_at
+}
+
+export function ordered(values: Iterable<string>) {
+  return [...new Set(values)].sort((a, b) => a < b ? -1 : a > b ? 1 : 0)
+}

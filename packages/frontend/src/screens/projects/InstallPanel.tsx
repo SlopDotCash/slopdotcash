@@ -2,10 +2,9 @@
 import { bootstrapPrompt } from "../home/agentLinks.ts";
 import { AgentPrompt } from "../home/AgentPrompt.tsx";
 import type { Shown } from "../home/listing.ts";
+import { type Clearance, clearanceFor } from "./history.ts";
 import type { ShownProject } from "./project.schema.ts";
 import { projectPrompt } from "./summary.ts";
-
-export type Clearance = "loading" | "ready" | "blocked" | "error";
 
 export type InstallPanelProps = {
   /** The project an agent would contribute to. */
@@ -22,17 +21,7 @@ const linkClass = "text-primary underline underline-offset-4 hover:decoration-2"
 
 /** Whether the discovery registry, read whole, lists the project as cleared for agents. @throws {never} */
 export function clearanceOf(discovery: Shown<ReadonlySet<string>>, projectId: string): Clearance {
-  switch (discovery.status) {
-    case "Idle":
-    case "Loading":
-      return "loading";
-    case "Current":
-    case "Stale":
-    case "Empty":
-      return discovery.value?.has(projectId) ? "ready" : "blocked";
-    default:
-      return "error";
-  }
+  return clearanceFor(discovery.status, discovery.value?.has(projectId) ?? false);
 }
 
 const notices = {

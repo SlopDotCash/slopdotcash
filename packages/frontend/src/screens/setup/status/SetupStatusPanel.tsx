@@ -12,6 +12,7 @@ export type SetupStatusPanelProps = {
   projectId: string;
   /** The account the checks run for; a different signed-in account clears the status. */
   actorId: string;
+  generation?: string;
   /** A status the server already returned, shown without checking again. */
   initial?: SetupStatus;
   /** Hears each status shown, and null when private access is lost. */
@@ -24,7 +25,7 @@ interface Attempt {
   readonly requestScan: boolean;
 }
 
-function ActorSetup({ runtime, projectId, actorId, initial, onSetup, showProjectLink }: SetupStatusPanelProps) {
+function ActorSetup({ runtime, projectId, actorId, generation = "initial", initial, onSetup, showProjectLink }: SetupStatusPanelProps) {
   const [view, setView] = useState<SetupView>({ setup: initial ?? null, busy: initial === undefined, error: null });
   const [attempt, setAttempt] = useState<Attempt>({ count: 0, requestScan: false });
   const show = (next: SetupView) =>
@@ -34,7 +35,7 @@ function ActorSetup({ runtime, projectId, actorId, initial, onSetup, showProject
     });
   const run = useRun(
     runtime,
-    `setup:${projectId}:${actorId}:${attempt.count}`,
+    `setup:${projectId}:${actorId}:${generation}:${attempt.count}`,
     () => followSetup({ projectId, actorId, requestScan: attempt.requestScan, initial: view.setup, checkFirst: attempt.count > 0 || initial === undefined }, show),
     setupUnfinished,
   );
@@ -47,5 +48,5 @@ function ActorSetup({ runtime, projectId, actorId, initial, onSetup, showProject
 
 /** The project's setup status for one account, checked on arrival unless given, again on request, and again when the reader returns while it waits on them. */
 export function SetupStatusPanel(props: SetupStatusPanelProps) {
-  return <ActorSetup key={`${props.projectId}:${props.actorId}`} {...props} />;
+  return <ActorSetup key={`${props.projectId}:${props.actorId}:${props.generation ?? "initial"}`} {...props} />;
 }

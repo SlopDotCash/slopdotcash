@@ -14,10 +14,12 @@ import { apply, initial } from "../gen/fees__runtime.effect.vibe"
 import { ChainUnavailable, ConversionChain, FeeCapTooLow, type OpenSend, type QuoteRead, type SendStatus } from "../src/conversion/chain.vibe"
 import { type Claims, runNetwork } from "../src/conversion/run.vibe"
 import { triggerAt } from "../src/conversion/trigger.vibe"
+import { ExpiryOperators } from "../src/expiry/operators.vibe"
 import type { Instance } from "../src/journal/codec.vibe"
 import { type Income, type Transfer, evmTransfers } from "../src/receipts/discover.vibe"
 import type { EnabledNetwork } from "../src/runtime/config.vibe"
 import { definitions } from "../src/runtime/networks.vibe"
+import { solanaGenesis } from "../src/runtime/pins.ts"
 import type { TokenFact } from "../src/runtime/reviewed.vibe"
 import { factsFor, generationInstance, generationNames, journalDatabase } from "./support/journal.ts"
 
@@ -145,7 +147,7 @@ effect function opened(generation: number, mode: Mode, network: Network = "Base"
 }
 
 effect function run(world: World, trigger: "Receipts" | "Recovery", claims?: Claims) {
-  return try Effect.provide(runNetwork({ network: world.network, base: world.base, trigger, tokens: world.tokens, income: world.income }, claims), Layer.mergeAll(d1(world.db), webCrypto, world.clock.layer, chainStand(world.stand, world.base)))
+  return try Effect.provide(runNetwork({ network: world.network, base: world.base, trigger, tokens: world.tokens, income: world.income }, claims), Layer.mergeAll(d1(world.db), webCrypto, world.clock.layer, chainStand(world.stand, world.base), Layer.succeed(ExpiryOperators, { genesis: solanaGenesis, providers: [] })))
 }
 
 schema Recorded { token: string; state: string; mode: string; amount_in: string; reason: string | null }

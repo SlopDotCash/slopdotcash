@@ -3,7 +3,7 @@ import { isoNow } from "@repo/platform/clock"
 import { type Statement, sql } from "@repo/platform/d1"
 import type { MailCategory } from "@repo/ports/backend"
 import { type Notice, NoticeOutbox, type NoticeFanout, Notices, type Suppression } from "@repo/ports/operations"
-import { storedKind } from "./rows.vibe"
+import { cancelledEvent, storedKind } from "./rows.vibe"
 
 const always = sql`1`
 
@@ -47,7 +47,9 @@ function suppressWaiting(suppression: Suppression, at: string): ReadonlyArray<St
 function cancelWaiting(recipient: string, at: string): ReadonlyArray<Statement> {
   const ofRecipient = sql`recipient_github_id = ${recipient} AND ${waiting}`
   return [
+    sql`INSERT INTO security_notification_delivery_events (delivery_id, state, at) SELECT id, ${cancelledEvent}, ${at} FROM security_notification_outbox WHERE ${ofRecipient}`,
     sql`UPDATE security_notification_outbox SET state = 'suppressed', updated_at = ${at} WHERE ${ofRecipient}`,
+    sql`INSERT INTO activity_notification_delivery_events (delivery_id, state, at) SELECT id, ${cancelledEvent}, ${at} FROM activity_notification_outbox WHERE ${ofRecipient}`,
     sql`UPDATE activity_notification_outbox SET state = 'suppressed', updated_at = ${at} WHERE ${ofRecipient}`,
   ]
 }

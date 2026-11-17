@@ -1,5 +1,6 @@
 // spec/backend/projectComposition.md, "The setup status names one next state from the same checks"; spec/security/enforcement.md, "Each repository clears on its own admission, exemption or retained clean scan"; spec/backend/projectComposition.md, "A cleared, ready project is activated by the setup refresh"; spec/backend/projects.md, "The setup check activates a paused project that passes every check"
 import { isoNow } from "@repo/platform/clock"
+import { type ScanQueued, ScanRequests } from "@repo/ports/security"
 import type { Registry, SetupState } from "../../../gen/backend__projectComposition.effect.vibe"
 import type { InstallationRead, SetupCheck } from "../../../gen/backend__projects.effect.vibe"
 import { canActivate, observation, setupState } from "../../../gen/backend__projectComposition.effect.vibe"
@@ -9,7 +10,8 @@ import type { SetupStatus } from "../../client/projectSetup.vibe"
 import { idOf } from "../store/codec.vibe"
 import { accountStanding } from "../store/facts.vibe"
 import { loadProject, send } from "../store/store.vibe"
-import { type Json, type StoredProject, objectOf, storedProject } from "./records.vibe"
+import { type StoredProject, storedProject } from "./records.vibe"
+import { type Json, objectOf } from "./revisionChanges.ts"
 
 export interface ListedRead {
   readonly path: string
@@ -77,9 +79,13 @@ interface Scan extends Check {
   readonly guidance?: string
 }
 
-export type ScanRequest = "queue" | "check" | "rescan" | "none"
+export type ScanRequest = { readonly kind: "queue"; readonly reason: string } | { readonly kind: "check" } | { readonly kind: "rescan" } | { readonly kind: "none" }
 
+type Queued = ScanQueued | "failed"
+
+const scanQueuedMessage = "The security scan is queued. Nothing is needed from you."
 const scanUnavailable: Scan = { state: "unavailable", message: "The scan service is unavailable. Check again later." }
+const scanNotQueued: Scan = { state: "unavailable", message: "The scan could not be queued. Check again." }
 
 function installationCheck(manifest: Json, reads: Reads): Check & { readonly repository: string } {
   const primary = primaryOf(manifest)
@@ -101,7 +107,7 @@ function repositoryScan(security: Security, repository: number): Scan {
   if (cleared === "Scanned") return { state: "cleared", message: `Repository admission passed at revision ${latest.revision}.` }
   if (cleared === "FrozenExemption") return { state: "cleared", exempt: true, exemptionKind: "existing-project", message: "Existing project, permanently exempt from scan clearance." }
   if (cleared === "OwnerApprovedExemption") return { state: "cleared", exempt: true, exemptionKind: "owner-approved-admission", message: "Owner-approved admission exemption. No passed scan is claimed." }
-  if (latest.state === "APending") return { state: "queued", message: "The security scan is queued. Nothing is needed from you." }
+  if (latest.state === "APending") return { state: "queued", message: scanQueuedMessage }
   if (latest.state === "AClean") return { state: "unverified", message: "The clean assessment has no current complete authorized canonical assembly and retained evidence. Its assembly may be incomplete or absent, or evidence may be unavailable, corrupt or expired." }
   if (latest.state === "AIncomplete") return { state: "quarantined", message: "The last scan could not finish, so it did not clear the project.", guidance: "Fix the cause if you know it, then request a new scan." }
   if (latest.state === "AMalicious") return { state: "quarantined", message: "Findings block clearance.", guidance: "Review the scan result before requesting a new scan." }
@@ -123,15 +129,30 @@ function recordedScan(state: Registry, manifest: Json): Scan {
   return { ...unmet.scan, message: `${repositoryPaths(manifest).get(unmet.repository) ?? String(unmet.repository)}: ${unmet.scan.message}` }
 }
 
-function scanQueued(request: ScanRequest, setup: SetupState, authority: Checked["authority"], scan: Scan): boolean {
-  if (request === "queue") return true
-  if (request === "none" || setup === "SetupRestricted" || authority.state !== "verified") return false
-  return scan.state === "unscanned" || (request === "rescan" && scan.state === "quarantined")
+function scanDue(request: ScanRequest, setup: SetupState, authority: Checked["authority"], scan: Scan): boolean {
+  if (request.kind === "queue") return true
+  if (request.kind === "none" || setup === "SetupRestricted" || authority.state !== "verified") return false
+  return scan.state === "unscanned" || (request.kind === "rescan" && scan.state === "quarantined")
 }
 
-function scanCheck(state: Registry, manifest: Json, setup: SetupState, authority: Checked["authority"], request: ScanRequest): Scan {
+function scanCheck(state: Registry, manifest: Json, queued: Queued | undefined): Scan {
   const scan = recordedScan(state, manifest)
-  return scanQueued(request, setup, authority, scan) ? scanUnavailable : scan
+  if ((queued === "queued" || queued === "already_queued") && scan.state !== "cleared" && scan.state !== "banned") return { state: "queued", message: scanQueuedMessage }
+  if (queued === "unavailable") return scanUnavailable
+  if (queued === "failed") return scanNotQueued
+  return scan
+}
+
+effect function queuedScan(refresh: Refresh, state: Registry, manifest: Json, setup: SetupState, authority: Checked["authority"]) {
+  if (!scanDue(refresh.scanRequest, setup, authority, recordedScan(state, manifest))) return undefined
+  const ask = {
+    projectId: refresh.projectId,
+    origin: refresh.scanRequest.kind === "rescan" ? "OwnerRescan" as const : "SetupCheck" as const,
+    reason: refresh.scanRequest.kind === "queue" ? refresh.scanRequest.reason : `Setup check by @${refresh.actor.login}`,
+    requester: { githubId: refresh.actor.githubId, githubLogin: refresh.actor.login },
+  }
+  const queued: Queued = (try ScanRequests).queue(ask) catch () => "failed" as const
+  return queued
 }
 
 function admissionNote(state: Registry, manifest: Json): string {
@@ -187,10 +208,10 @@ function nextActionOf(setup: SetupState, state: Registry, installation: Check & 
   return action("retry_scan", scan.message)
 }
 
-export function setupStatusOf(row: StoredProject, manifest: Json, state: Registry, reads: Reads, check: SetupCheck, request: ScanRequest, activatedRevision: number | null, checkedAt: string): SetupStatus {
+export function setupStatusOf(row: StoredProject, manifest: Json, state: Registry, reads: Reads, check: SetupCheck, queued: Queued | undefined, activatedRevision: number | null, checkedAt: string): SetupStatus {
   const setup = setupState(state, check)
   const installation = installationCheck(manifest, reads)
-  const scan = scanCheck(state, manifest, setup, reads.checked.authority, request)
+  const scan = scanCheck(state, manifest, queued)
   const { guidance: _guidance, ...shown } = scan
   return {
     projectId: row.id,
@@ -225,7 +246,8 @@ export effect function refreshSetup(refresh: Refresh) {
   const state = (try loadProject(refresh.projectId)).state
   const account = try accountStanding({ actor: by, steward: state.project.steward })
   const observed = observation(state)
-  if (!refresh.allowActivation || !canActivate(state, by, check, account, observed)) return setupStatusOf(before.row, before.manifest, state, reads, check, refresh.scanRequest, null, try isoNow())
+  const queued = try queuedScan(refresh, state, before.manifest, setupState(state, check), checked.authority)
+  if (!refresh.allowActivation || !canActivate(state, by, check, account, observed)) return setupStatusOf(before.row, before.manifest, state, reads, check, queued, null, try isoNow())
   const access = checked.access
   const installation = access.state === "read" && access.access.installation === "installed" ? access.access.installationId : 0
   const committed = try send({
@@ -240,5 +262,5 @@ export effect function refreshSetup(refresh: Refresh) {
   })
   const after = try storedProject(refresh.projectId)
   if (after === undefined) return undefined
-  return setupStatusOf(after.row, after.manifest, committed.after, reads, check, "none", after.row.revision, try isoNow())
+  return setupStatusOf(after.row, after.manifest, committed.after, reads, check, queued, after.row.revision, try isoNow())
 }

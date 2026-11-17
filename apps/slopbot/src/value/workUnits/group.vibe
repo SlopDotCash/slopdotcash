@@ -1,0 +1,206 @@
+// spec/slopbot/workUnits.md, "A claim is one changed path in one commit and belongs to its first accepted carrier"; spec/slopbot/valueEvidence.md, "Accepted-commit census pages past the GraphQL limit through compare and refuses an overflow"
+import { parsedJson as parsedText } from "@repo/platform/git/bytes"
+import { GitHub } from "@repo/platform/github"
+import type { AcceptanceFailure } from "../evidence/acceptance.vibe"
+import { collectEvidence } from "../evidence/collect.vibe"
+import { type ContextSelection, collectContext, validContextSelections } from "../evidence/context.vibe"
+import { type Evidence, type RegisteredRepository, findRepository } from "../evidence/types.vibe"
+import { HistoryUnreadable, parsedJson, recordByDigest, verifiedLegacyHead } from "../history/read.vibe"
+import { noChangePromotionDeferralOnly } from "./acceptance.vibe"
+import { type AcceptedCommitCensus, type Selection, collectAcceptedCommitCensus } from "./census.vibe"
+import { nativeMergeDeferralOnly } from "./native.vibe"
+import { acceptedWorkUnitCommits } from "./prepare.vibe"
+import { answer, millis } from "./source.vibe"
+import { currentWorkUnitRecord } from "./store.vibe"
+import type { Policy, WorkUnitSource } from "./types.vibe"
+
+export const groupSourceLimit = 32
+
+export interface GroupRepository extends RegisteredRepository {
+  readonly current: string
+}
+
+export interface GroupIdentity {
+  readonly repository: string
+  readonly repositoryDatabaseId: number
+  readonly repositoryNodeId: string
+}
+
+export service GroupReads {
+  authorize(source: GroupIdentity): boolean!AcceptanceFailure!GitHub
+  policy(repository: string, baseSha: string): Policy!AcceptanceFailure!GitHub
+}
+
+schema BaseRepo { readonly id: number; readonly node_id: string; readonly full_name: string; readonly private: boolean }
+schema PullBase { readonly repo: BaseRepo | null }
+schema CommitPull {
+  readonly node_id: string
+  readonly number: number
+  readonly html_url: string
+  readonly state: string
+  readonly merged_at: string | null
+  readonly base: PullBase
+}
+schema RepositoryIdentity { readonly id: number; readonly node_id: string; readonly private: boolean }
+
+function carrierMatches(pull: CommitPull, evidence: Evidence, current: string) {
+  const repo = pull.base.repo
+  return pull.node_id !== "" && Number.isSafeInteger(pull.number) && pull.number > 0 && Number.isFinite(millis(pull.merged_at)) &&
+    repo !== null && !repo.private && repo.id === evidence.repositoryDatabaseId && repo.node_id === evidence.repositoryNodeId &&
+    repo.full_name.toLowerCase() === current.toLowerCase() && pull.html_url === `https://github.com/${repo.full_name}/pull/${pull.number}`
+}
+
+effect function commitCarriers(evidence: Evidence, current: string, sha: string) {
+  const matches: Selection[] = []
+  for (let page = 1; ; page += 1) {
+    const pulls = try answer(`/repos/${current}/commits/${sha}/pulls?per_page=100&page=${page}`, Schema.Array(CommitPull))
+    if (pulls === undefined) return undefined
+    for (const pull of pulls) {
+      if (pull.state !== "closed" || pull.merged_at === null) continue
+      if (!carrierMatches(pull, evidence, current)) return undefined
+      matches.push({ repository: evidence.repository, number: pull.number, nodeId: pull.node_id })
+    }
+    if (pulls.length < 100) return matches
+  }
+}
+
+export effect function acceptedCommitCarriers(evidence: Evidence, current: string, cache: Map<string, ReadonlyArray<Selection>>) {
+  if (evidence.pull.merged_at === null && evidence.indirectAcceptance === undefined) return []
+  const shas = new Set(acceptedWorkUnitCommits(evidence).map((commit) => commit.sha))
+  if (evidence.pull.merged_at !== null && evidence.mergeCommitEvidence !== null) shas.add(evidence.mergeCommitEvidence.sha)
+  const carriers = new Map<string, Selection>()
+  for (const sha of shas) {
+    const key = `${evidence.repositoryNodeId}:${sha}`
+    let matches = cache.get(key)
+    if (matches === undefined) {
+      matches = try commitCarriers(evidence, current, sha)
+      if (matches === undefined) return undefined
+      cache.set(key, matches)
+    }
+    for (const match of matches) carriers.set(match.nodeId, match)
+  }
+  return [...carriers.values()]
+}
+
+function deferredOnly(evidence: Evidence) {
+  return evidence.limitations.length === 0 || noChangePromotionDeferralOnly(evidence) || nativeMergeDeferralOnly(evidence)
+}
+
+function recordSources(recordJson: string | undefined): ReadonlyArray<unknown> {
+  const parsed = recordJson === undefined ? undefined : parsedText(recordJson)?.value
+  const sources: unknown = typeof parsed === "object" && parsed !== null ? Reflect.get(parsed, "sources") : undefined
+  return Array.isArray(sources) ? sources : []
+}
+
+function retainedSelections(recordJson: string | undefined, pullRequestNodeId: string): unknown {
+  const source = recordSources(recordJson).find((entry) => typeof entry === "object" && entry !== null && Reflect.get(entry, "pullRequestNodeId") === pullRequestNodeId)
+  return typeof source === "object" && source !== null ? Reflect.get(source, "contextPaths") : undefined
+}
+
+effect function legacySelections(repository: GroupRepository, evidence: Evidence) {
+  const head = verifiedLegacyHead({
+    projectId: repository.projectId,
+    repository: { id: repository.id, nodeId: evidence.repositoryNodeId },
+    repositoryNames: [repository.id, ...repository.aliases],
+    repositoryNodeId: evidence.repositoryNodeId,
+    repositoryDatabaseId: evidence.repositoryDatabaseId,
+    pullRequestNodeId: evidence.pull.node_id,
+    pullRequestNumber: evidence.pull.number,
+  }) catch effect (error) => match (error) { when HistoryUnreadable: null; default: throw error; }
+  if (head === null) return null
+  if (head === undefined) return undefined
+  const stored = try recordByDigest(head)
+  if (stored === undefined) return null
+  const record = parsedJson(stored.record_json, "value record is not JSON") catch effect (error) => match (error) { when HistoryUnreadable: null; default: throw error; }
+  return typeof record === "object" && record !== null ? Reflect.get(record, "contextPaths") as unknown : undefined
+}
+
+effect function contextOf(repository: GroupRepository, evidence: Evidence, retained: unknown) {
+  const legacy = retained === undefined ? try legacySelections(repository, evidence) : undefined
+  if (legacy === null) return undefined
+  const chosen = retained ?? legacy ?? []
+  return validContextSelections(chosen) ? chosen : undefined
+}
+
+interface Visit {
+  readonly selected: Selection
+  readonly repository: GroupRepository
+  readonly seed: WorkUnitSource | undefined
+}
+
+effect function visitSource(visit: Visit, startAt: number) {
+  const reads = try GroupReads
+  const { selected, repository } = visit
+  const identity = try answer(`/repos/${repository.id}`, RepositoryIdentity)
+  if (identity === undefined || identity.private) return undefined
+  if (!(try reads.authorize({ repository: repository.id, repositoryDatabaseId: identity.id, repositoryNodeId: identity.node_id }))) return undefined
+  let evidence = visit.seed?.evidence ?? try collectEvidence({ repository: repository.id, number: selected.number, policy: repository })
+  if (
+    evidence.pull.node_id !== selected.nodeId || evidence.repositoryDatabaseId !== identity.id ||
+    evidence.repositoryNodeId !== identity.node_id || evidence.pull.state !== "closed" || !deferredOnly(evidence)
+  ) return undefined
+  const occurred = millis(evidence.pull.merged_at ?? evidence.indirectAcceptance?.observedOnBranchAt ?? evidence.pull.closed_at)
+  if (!Number.isFinite(occurred) || occurred < startAt) return undefined
+  const previous = try currentWorkUnitRecord(evidence.repositoryNodeId, evidence.pull.node_id)
+  const retained = retainedSelections(previous?.record_json, evidence.pull.node_id)
+  const context: ReadonlyArray<ContextSelection> | undefined = try contextOf(repository, evidence, retained)
+  if (context === undefined) return undefined
+  if (context.length > 0) evidence = try collectContext(evidence, context)
+  if (!deferredOnly(evidence)) return undefined
+  const policy = visit.seed?.policy ?? try reads.policy(repository.id, evidence.pull.base.sha)
+  return { source: { evidence, policy } satisfies WorkUnitSource, previous: previous?.record_json }
+}
+
+function siblingsOf(recordJson: string | undefined) {
+  return recordSources(recordJson).flatMap((entry): Selection[] => {
+    if (typeof entry !== "object" || entry === null) return []
+    const repository: unknown = Reflect.get(entry, "repository")
+    const number: unknown = Reflect.get(entry, "pullRequestNumber")
+    const nodeId: unknown = Reflect.get(entry, "pullRequestNodeId")
+    return typeof repository === "string" && typeof number === "number" && typeof nodeId === "string" ? [{ repository, number, nodeId }] : []
+  })
+}
+
+export effect function collectValueGroup(seed: WorkUnitSource, startAt: number, repositories: ReadonlyArray<GroupRepository>) {
+  const root = repositories.find((repository) => repository.id === seed.evidence.repository)
+  if (root === undefined) return undefined
+  const queue: Selection[] = [{ repository: root.id, number: seed.evidence.pull.number, nodeId: seed.evidence.pull.node_id }]
+  const sources = new Map<string, WorkUnitSource>()
+  const commitCarrierCache = new Map<string, ReadonlyArray<Selection>>()
+  const censuses = new Map<string, AcceptedCommitCensus>()
+  for (let position = 0; position < queue.length; position += 1) {
+    const selected = queue[position]
+    if (selected === undefined) break
+    const key = `${selected.repository.toLowerCase()}#${selected.number}`
+    const prior = sources.get(key)
+    if (prior !== undefined) {
+      if (prior.evidence.pull.node_id !== selected.nodeId) return undefined
+      continue
+    }
+    if (sources.size >= groupSourceLimit) return undefined
+    const named = findRepository(repositories.filter((repository) => repository.projectId === root.projectId), selected.repository)
+    const repository = repositories.find((entry) => entry === named)
+    if (repository === undefined) return undefined
+    const visited = try visitSource({ selected, repository, seed: position === 0 ? seed : undefined }, startAt)
+    if (visited === undefined) return undefined
+    const { evidence } = visited.source
+    sources.set(key, visited.source)
+    const carriers = try acceptedCommitCarriers(evidence, repository.current, commitCarrierCache)
+    if (carriers === undefined) return undefined
+    queue.push(...carriers)
+    if (evidence.pull.merged_at !== null || evidence.indirectAcceptance !== undefined) {
+      let census = censuses.get(evidence.repositoryNodeId)
+      if (census === undefined) {
+        census = try collectAcceptedCommitCensus(evidence, startAt, repository.current)
+        if (census === undefined) return undefined
+        censuses.set(evidence.repositoryNodeId, census)
+      }
+      if (evidence.pull.merged_at !== null && !census.ids.has(evidence.pull.node_id)) return undefined
+      for (const commit of acceptedWorkUnitCommits(evidence)) queue.push(...census.carriers.get(commit.sha) ?? [])
+      if (evidence.mergeCommitEvidence !== null) queue.push(...census.carriers.get(evidence.mergeCommitEvidence.sha) ?? [])
+    }
+    for (const related of evidence.relatedPullRequests) queue.push({ repository: related.repository, number: related.number, nodeId: related.id })
+    queue.push(...siblingsOf(visited.previous))
+  }
+  return [...sources.values()]
+}

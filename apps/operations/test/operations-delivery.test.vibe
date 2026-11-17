@@ -448,4 +448,32 @@ layer(World, { excludeTestServices: true, timeout: "300 seconds" })((it) => {
       admins: [{ kind: "sent", sent: 2, recipients: 2 }, ["ops@slop.test", "lead@slop.test"]],
     })
   })
+
+  it.effect('A routed security report reaches each recipient as one generic mail per report version (spec/security/reportNotices.md, "Routing saves one private case notice per eligible technical recipient"; spec/operations/notifications.md, "A replay of the same source change and recipient adds nothing"; spec/operations/notifications.md, "Story: Deliver each attempt once and never resend an uncertain one")', () => effect {
+    const submission = "sub_delivery_routing"
+    const routed = (version: number, recipientGithubId: string): Notice => ({ eventKey: `security-route:${submission}:${version}`, recipientGithubId, kind: "SecurityCase", subject: caseId, actionPath: `/inbox?submission=${submission}`, sourceAt: seededAt })
+    plans.delete("first@slop.test")
+    plans.delete("second@slop.test")
+    try save([routed(1, first), routed(1, second)])
+    try save([routed(1, first), routed(1, second)])
+    try save([routed(2, first), routed(2, second)])
+    try dispatchSecurity()
+    try dispatchSecurity()
+    const deliveries = [[1, first], [1, second], [2, first], [2, second]] as const
+    const rows: OutboxState[] = []
+    for (const [version, recipient] of deliveries) rows.push(try outbox(`security-route:${submission}:${version}`, recipient))
+    const bodies = rows.flatMap((row) => mailsFor(row.id).map((mail) => bodyOf(mail.raw)))
+    try same({
+      mails: rows.map((row) => sentTo(row.id).map(([to, , subject]) => [to, subject])),
+      privateText: [caseId, projectId, submission].filter((secret) => bodies.some((body) => body.includes(secret))),
+    }, {
+      mails: [
+        [["first@slop.test", "Slop private inbox notice"]],
+        [["second@slop.test", "Slop private inbox notice"]],
+        [["first@slop.test", "Slop private inbox notice"]],
+        [["second@slop.test", "Slop private inbox notice"]],
+      ],
+      privateText: [],
+    })
+  })
 })

@@ -11,12 +11,14 @@ import type { Enforcement, FlagStanding, GrantRequest } from "../../gen/security
 import { activeFlag, canFlag, canGrantExemption, canRevokeExemption, flagView, latestOf, pausedByFlagsOnly } from "../../gen/security__enforcement.effect.vibe"
 import { type ReporterFlag, fileFlag, grantExemption, projectFlag, revokeExemption, withdrawFlag } from "../client/enforcement.vibe"
 import { getProjectFlagsById, postAdminVettingExemptions, postAdminVettingExemptionsByIdRevoke, postProjectFlagsById, postProjectFlagsByIdWithdraw } from "../client/refusals.vibe"
-import { ProjectEvents, ProjectRefused, projectClearance, repositoryClearances } from "./port.vibe"
+import { automaticScan, freshScanReason } from "../admission/refresh.vibe"
+import { type ProjectEvent, ProjectEvents, ProjectRefused, projectClearance, repositoryClearances } from "./port.vibe"
 import { ManifestAuthority, ManifestRepository, idOf } from "./replay.vibe"
 import { withRetainedEvidence } from "./retained.vibe"
 import { type FlagRow, jsonOf } from "./rows.vibe"
 import { flaggerStanding, maintainerOf } from "./standing.vibe"
-import { EnforcementRecord, type RecordDetails, flagLifetimeMillis } from "./statements.vibe"
+import { EnforcementRecord, type RecordDetails } from "@repo/ports/security"
+import { flagLifetimeMillis } from "./statements.vibe"
 import { type Loaded, loadEnforcement } from "./store.vibe"
 
 interface Row {
@@ -76,7 +78,7 @@ effect function shownFlag(loaded: Loaded, githubId: string) {
   return row === undefined ? null : try reporterFlag(row)
 }
 
-effect function send(projectId: string, event: unknown, by: number, details?: RecordDetails) {
+effect function send(projectId: string, event: ProjectEvent["event"], by: number, details?: RecordDetails) {
   const sent = (try ProjectEvents).send({ projectId, event, by })
   try (details === undefined ? sent : provideService(sent, EnforcementRecord, { details }))
 }
@@ -164,11 +166,12 @@ effect function file(actor: Actor, projectId: string) {
   }
   const settled = try loadEnforcement(projectId)
   const filed = settled.history.flags.find((row) => row.id === flagId)
+  const paused = settled.state.restriction === "FlagQuarantine" && loaded.state.restriction === "Clear"
   return json({
     projectId,
     flag: filed === undefined ? null : try reporterFlag(filed),
-    paused: settled.state.restriction === "FlagQuarantine" && loaded.state.restriction === "Clear",
-    freshScan: null,
+    paused,
+    freshScan: paused ? try automaticScan({ projectId, origin: "FlagRecovery", reason: freshScanReason }) : null,
     ...publicState(settled.state),
   }, 201)
 }
@@ -208,7 +211,7 @@ effect function decisionOf(body: Readonly<Record<string, unknown>>) {
 schema StewardGitHub { actorId: string; nodeId: string; type?: string }
 schema ExemptionManifest { listingTier?: string; steward: { github: StewardGitHub }; authority: ManifestAuthority; repositories: ReadonlyArray<ManifestRepository> }
 
-schema ExemptionRow {
+export schema ExemptionRow {
   sequence: number
   id: string
   project_id: string
@@ -230,9 +233,9 @@ schema ExemptionRow {
   revocation_decision_reference: string | null
 }
 
-const exemptionSelect = sql`SELECT g.sequence, g.id, g.project_id, g.revision, g.manifest_sha256, g.repository_id, g.repository_node_id, g.steward_id, g.steward_node_id, g.granted_by_github_id, g.granted_by_github_login, g.granted_at, g.reason, g.decision_reference, r.revoked_at, r.revoked_by_github_id, r.revoked_by_github_login, r.reason AS revocation_reason, r.decision_reference AS revocation_decision_reference FROM vetting_admission_exemptions g LEFT JOIN vetting_admission_exemption_revocations r ON r.exemption_id = g.id`
+export const exemptionSelect = sql`SELECT g.sequence, g.id, g.project_id, g.revision, g.manifest_sha256, g.repository_id, g.repository_node_id, g.steward_id, g.steward_node_id, g.granted_by_github_id, g.granted_by_github_login, g.granted_at, g.reason, g.decision_reference, r.revoked_at, r.revoked_by_github_id, r.revoked_by_github_login, r.reason AS revocation_reason, r.decision_reference AS revocation_decision_reference FROM vetting_admission_exemptions g LEFT JOIN vetting_admission_exemption_revocations r ON r.exemption_id = g.id`
 
-function exemptionView(row: ExemptionRow) {
+export function exemptionView(row: ExemptionRow) {
   return {
     id: row.id,
     kind: "owner-approved-admission" as const,

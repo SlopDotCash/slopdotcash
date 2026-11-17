@@ -1,24 +1,12 @@
 // spec/backend/projectComposition.md, "Scans are queued and recorded against the project's current repositories"; spec/security/admission.md, "A signed service request binds method, path, timestamp and body digest and is refused outside a five-minute window"
-import type { Statement } from "@repo/platform/d1"
 import { ServiceAuth, admission } from "@repo/platform/http"
 import { Registry, RegistryManifests } from "@repo/ports/backend"
 import { type ProjectEvent, ProjectEvents } from "../enforcement/port.vibe"
-import { EnforcementRecord, type RecordDetails } from "../enforcement/statements.vibe"
-
-export interface RecordedRevision {
-  readonly manifestText: string
-  readonly reason: string
-  readonly actor: undefined
-}
-
-export interface ComposedEvent extends ProjectEvent {
-  readonly revision?: RecordedRevision
-  readonly alongside?: ReadonlyArray<Statement>
-}
+import { EnforcementRecord, type RecordDetails } from "@repo/ports/security"
 
 export const vettingService = 0
 
-export effect function compose(action: ComposedEvent, details?: RecordDetails) {
+export effect function compose(action: ProjectEvent, details?: RecordDetails) {
   const sent = (try ProjectEvents).send(action)
   try (details === undefined ? sent : provideService(sent, EnforcementRecord, { details }))
 }

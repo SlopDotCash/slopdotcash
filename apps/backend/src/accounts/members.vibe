@@ -1,0 +1,18 @@
+// spec/backend/accounts.md, "Members are keyed by an immutable actor and numeric GitHub ID, and sessions by server-issued IDs"; spec/backend/accounts.md, "Confirmed closure ends every session, hides the membership, disconnects X and withdraws both email consents"
+import { D1, first, sql } from "@repo/platform/d1"
+import { Members, type MembershipStatus } from "@repo/ports/backend"
+
+schema Membership { closed_at: string | null }
+
+effect function statusOf(githubId: string) {
+  const found = try first(Membership, sql`SELECT closed_at FROM points_members WHERE github_id = ${githubId}`)
+  if (found === undefined) return "MemberAbsent" satisfies MembershipStatus
+  return (found.closed_at === null ? "MemberActive" : "MemberClosed") satisfies MembershipStatus
+}
+
+export const MembersLive = Layer.effect(Members, effect {
+  const db = try D1
+  return {
+    status: (githubId) => provideService(statusOf(githubId), D1, db),
+  } satisfies Members.Shape
+})

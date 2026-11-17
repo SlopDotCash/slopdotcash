@@ -11,7 +11,7 @@ import { BountyFunding, BountyIntroduction, bountyProjectOf } from "../funding/a
 import { reviewBudgetLabel } from "../home/listing.ts";
 import { copyText } from "../home/prompt.vibe";
 import type { NetworkPays } from "../public/funding.ts";
-import { type Settled, useOnce } from "../security/program/hooks.ts";
+import { type Settled, useMounted, useOnce } from "../security/program/hooks.ts";
 import { FundsAndAwards } from "./FundsAndAwards.tsx";
 import { useShownRead } from "./hooks.ts";
 import { clearanceOf, InstallPanel } from "./InstallPanel.tsx";
@@ -116,10 +116,14 @@ function workOf(read: Settled<Work>, project: ShownProject): WorkShown {
   return { status: "ready", items: suggestedWork(board.snapshot.workQueue, project), generatedAt: board.snapshot.generatedAt, stale, refreshFailed };
 }
 
-function SuggestedWork({ section, project, boot, repositoryRegistry }: Pick<Found, "project" | "boot" | "repositoryRegistry"> & { section: ProjectRuntime }) {
+function WorkRead({ section, project, boot, repositoryRegistry, force, onRetry }: Pick<Found, "project" | "boot" | "repositoryRegistry"> & { section: ProjectRuntime; force: boolean; onRetry: () => void }) {
+  const read = useMounted(section, () => loadWork(boot, repositoryRegistry, force));
+  return <ProjectWork work={workOf(read, project)} onRetry={onRetry} />;
+}
+
+function SuggestedWork(props: Pick<Found, "project" | "boot" | "repositoryRegistry"> & { section: ProjectRuntime }) {
   const [attempt, setAttempt] = useState(0);
-  const read = useOnce(section, `work:${attempt}`, () => loadWork(boot, repositoryRegistry, attempt > 0));
-  return <ProjectWork work={workOf(read, project)} onRetry={() => setAttempt((count) => count + 1)} />;
+  return <WorkRead key={attempt} {...props} force={attempt > 0} onRetry={() => setAttempt((count) => count + 1)} />;
 }
 
 function History({ runtime, project, reads, networkPays }: Pick<Found, "runtime" | "project" | "reads" | "networkPays">) {
@@ -132,7 +136,7 @@ function History({ runtime, project, reads, networkPays }: Pick<Found, "runtime"
       <FundsAndAwards runtime={runtime} project={project} awardMonths={awardMonths(listed, project.id)} networkPays={networkPays} />
       <PaymentHistory
         project={{ id: project.id, slug: project.slug, name: project.name, externalPrize }}
-        cycles={cycles.value === undefined ? undefined : projectCycles(listed, project.id)}
+        cycles={{ ...cycles, value: cycles.value === undefined ? undefined : projectCycles(listed, project.id) }}
         direct={direct}
         nowMs={Date.now()}
       />

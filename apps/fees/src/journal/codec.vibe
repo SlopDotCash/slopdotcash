@@ -510,6 +510,7 @@ export effect function decodeJournal(instance: Instance, names: Names, [locks, c
     overrun,
     scans,
     proofs,
+    rotation: { holder: 0, expiresAt: 0 },
   } satisfies Fee)
   return { state, sends, gas, tokens, runs, scans: latestScans, foreign, pending } satisfies Journal
 }

@@ -1,6 +1,6 @@
-// spec/contracts/evmEscrow.md, "Every credited unit stays in exactly one bucket and the asset balance covers them all"; spec/contracts/evmEscrow.md, "Reserved principal and fees are exactly the unpaid awards, and paid totals are exactly the paid awards"
+// spec/contracts/evmEscrow.md, "Every credited unit stays in exactly one bucket and the asset balance covers them all"; spec/contracts/evmEscrow.md, "Reserved principal and fees are exactly the unpaid awards, and paid totals are exactly the paid awards"; spec/contracts/evmEscrow.md, "Free funds always cover the open pledges, a pledged month is never admitted, and a pledge only rises until it closes"
 import { type Address, type Hex, getAddress, hexToBigInt, isAddressEqual, sliceHex, zeroAddress } from "viem";
-import type { Binding, Escrow, Month, Vault, VaultKey } from "../../gen/contracts__evmEscrow.ts";
+import type { Binding, Escrow, Month, Pledge, Vault, VaultKey } from "../../gen/contracts__evmEscrow.ts";
 import type { Award, Leaf, Purpose } from "../../gen/contracts__ledger.ts";
 import { type Fixture, count, factoryAbi, implementationSlot, roles, vaultAbi, wordName } from "./anvil.ts";
 
@@ -20,14 +20,17 @@ export const startOfWalk = 1_796_342_399;
 
 export const freshWalk = (): Walk => ({ now: startOfWalk, factory: undefined, roots: new Map(), leaves: new Map() });
 
+const byPeriod = (pledges: readonly Pledge[]): Pledge[] => [...pledges].sort((a, b) => a.period - b.period);
+
 export function view(escrow: Escrow): Observed {
-  const { now: _now, vault: { unsolicited: _unsolicited, bindings, months, ...vault }, ...factory } = escrow;
+  const { now: _now, vault: { unsolicited: _unsolicited, bindings, months, pledges, ...vault }, ...factory } = escrow;
   return {
     ...factory,
     vault: {
       ...vault,
       bindings: bindings.map(({ walletSigned: _walletSigned, ...binding }) => binding),
       months: months.map(({ leaves: _leaves, ...month }) => month),
+      pledges: byPeriod(pledges),
     },
   };
 }
@@ -37,7 +40,7 @@ const emptyVault: ObservedVault = {
   native: false, feeRecipient: "", bindingDelay: 0, implementation: 0,
   free: 0, pendingMonthly: 0, reservedPrincipal: 0, reservedFees: 0, deposited: 0, paid: 0, payoutFees: 0,
   grossWithdrawn: 0, withdrawalFees: 0, accruedFees: 0, claimedFees: 0, ownerRefunded: 0,
-  balance: 0, monthlyCap: 0, monthlyEnabled: false, sourceSequence: 0, awards: [], bindings: [], months: [],
+  balance: 0, monthlyCap: 0, monthlyEnabled: false, sourceSequence: 0, awards: [], bindings: [], months: [], pledges: [], pledged: 0,
 };
 
 const noFactory: Observed = {
@@ -126,7 +129,7 @@ async function observeVault(fixture: Fixture, walk: Walk, vault: Address, name: 
   const { client } = fixture;
   const at = { address: vault, abi: vaultAbi } as const;
   const events = { ...at, fromBlock: 0n, toBlock: "latest", strict: true } as const;
-  const [token, projectId, owner, purpose, feeRecipient, bindingDelay, totals, pendingMonthly, monthlyCap, monthlyEnabled, sourceSequence, implementation] = await Promise.all([
+  const [token, projectId, owner, purpose, feeRecipient, bindingDelay, totals, pendingMonthly, monthlyCap, monthlyEnabled, sourceSequence, pledged, implementation] = await Promise.all([
     client.readContract({ ...at, functionName: "token" }),
     client.readContract({ ...at, functionName: "projectId" }),
     client.readContract({ ...at, functionName: "owner" }),
@@ -138,9 +141,10 @@ async function observeVault(fixture: Fixture, walk: Walk, vault: Address, name: 
     client.readContract({ ...at, functionName: "monthlyCap" }),
     client.readContract({ ...at, functionName: "monthlyEnabled" }),
     client.readContract({ ...at, functionName: "ordinarySourceSequence" }),
+    client.readContract({ ...at, functionName: "openPledgedGross" }),
     implementationOf(fixture, vault),
   ]);
-  const [committed, paidLogs, bound, claimed, withdrawn, policies, legacy, reserved] = await Promise.all([
+  const [committed, paidLogs, bound, claimed, withdrawn, policies, legacy, reserved, pledgedLogs, closedPledges] = await Promise.all([
     client.getContractEvents({ ...events, eventName: "AwardCommitted" }),
     client.getContractEvents({ ...events, eventName: "Paid" }),
     client.getContractEvents({ ...events, eventName: "DestinationBound" }),
@@ -149,6 +153,8 @@ async function observeVault(fixture: Fixture, walk: Walk, vault: Address, name: 
     client.getContractEvents({ ...events, eventName: "MonthlyCommitmentSet" }),
     client.getContractEvents({ ...events, eventName: "MonthlyCommitted" }),
     client.getContractEvents({ ...events, eventName: "MonthlyReserved" }),
+    client.getContractEvents({ ...events, eventName: "MonthPledged" }),
+    client.getContractEvents({ ...events, eventName: "PledgeClosed" }),
   ]);
   const [deposited, paid, payoutFees, grossWithdrawn, withdrawalFees, free, reservedPrincipal, reservedFees, accruedFees, balance] = totals;
   const payments = new Map(paidLogs.map(({ args }) => [args.id, args]));
@@ -173,8 +179,12 @@ async function observeVault(fixture: Fixture, walk: Walk, vault: Address, name: 
       cancelled, attester: name(transaction.from), paidVersion: count(paidVersion), cancels,
     };
   }));
-  const capAt = (log: { readonly blockNumber: bigint; readonly logIndex: number }) =>
-    ordered(policies).filter((policy) => position(policy) < position(log)).at(-1)?.args.cap ?? 0n;
+  const capAt = (log: { readonly blockNumber: bigint; readonly logIndex: number; readonly period: number }) => {
+    const policy = ordered(policies).filter((entry) => position(entry) < position(log)).at(-1)?.args;
+    const cap = policy?.enabled === true ? policy.cap : 0n;
+    const pledge = closedPledges.find(({ args }) => args.period === log.period && args.reserved)?.args.amount ?? 0n;
+    return pledge > cap ? pledge : cap;
+  };
   const admissions = ordered<{ readonly blockNumber: bigint; readonly logIndex: number; readonly period: number; readonly version2: boolean; readonly wholeGross: bigint; readonly entries: bigint }>([
     ...legacy.map(({ blockNumber, logIndex, args }) => ({ blockNumber, logIndex, period: args.period, version2: false, wholeGross: args.gross, entries: args.awards })),
     ...reserved.map(({ blockNumber, logIndex, args }) => ({ blockNumber, logIndex, period: args.period, version2: true, wholeGross: args.wholeGross, entries: BigInt(args.count) })),
@@ -197,6 +207,10 @@ async function observeVault(fixture: Fixture, walk: Walk, vault: Address, name: 
       admittedAt: count(admission.version2 ? admittedAt : block.timestamp), cap: count(capAt(admission)),
     };
   }));
+  const pledges: Pledge[] = byPeriod(await Promise.all([...new Set(pledgedLogs.map(({ args }) => args.period))].map(async (period) => {
+    const [amount, open] = await client.readContract({ ...at, functionName: "monthPledges", args: [period] });
+    return { period, amount: count(amount), open };
+  })));
   return {
     key: { owner: name(owner), project: wordName(projectId), token: name(token), purpose: purposeOf(purpose) },
     native: isAddressEqual(token, zeroAddress),
@@ -209,6 +223,6 @@ async function observeVault(fixture: Fixture, walk: Walk, vault: Address, name: 
     claimedFees: count(claimed.reduce((sum, { args }) => sum + args.amount, 0n)),
     ownerRefunded: count(withdrawn.reduce((sum, { args }) => sum + args.net, 0n)),
     balance: count(balance), monthlyCap: count(monthlyCap), monthlyEnabled, sourceSequence: count(sourceSequence),
-    awards, bindings, months,
+    awards, bindings, months, pledges, pledged: count(pledged),
   };
 }

@@ -21,6 +21,19 @@ module limbs {
 }
 import { messageIdOf, sameBytes } from limbs
 
+module verified {
+  import { type RetainedExpiryCoverage, type TraversalBlock, type TraversalStep, expiryTraversalStep, matchingExpiryCoverage } from "../kernels/expiryCoverage.ts"
+  /** @throws {never} */
+  export function traversalStep(txId: string, anchorHash: string, anchorSlot: number, current: number, expectedHash: string, block: TraversalBlock): TraversalStep {
+    return expiryTraversalStep(txId, anchorHash, anchorSlot, current, expectedHash, block)
+  }
+  /** @throws {never} */
+  export function matchingCoverage(a: RetainedExpiryCoverage, b: RetainedExpiryCoverage): boolean {
+    return matchingExpiryCoverage(a, b)
+  }
+}
+import { matchingCoverage, traversalStep } from verified
+
 const MAINNET = "5eykt4UsFv8P8NJdTREpY1vzqKqZKvdpKuc147dw2N9d"
 const blocksPerRun = 32
 
@@ -200,24 +213,8 @@ effect function saveCoverage(owner: ScanOwner, previous: ExpiryCoverage | undefi
   if (changes !== 1) return try unproven()
 }
 
-type TraversalStep = { readonly kind: "refused" | "complete" | "advance"; readonly nextSlot: number; readonly expectedHash: string }
-type TraversalBlock = { readonly blockhash: string; readonly previousBlockhash: string; readonly parentSlot: number; readonly signatures: string[] }
-type RetainedExpiryCoverage = { readonly kind: "missing" } | { readonly kind: "present"; readonly history: ExpiryCoverage }
-
-function expiryTraversalStep(txId: string, anchorHash: string, anchorSlot: number, current: number, expectedHash: string, block: TraversalBlock): TraversalStep {
-  if (block.blockhash !== expectedHash || current < anchorSlot || block.signatures.includes(txId)) return { kind: "refused", nextSlot: current, expectedHash }
-  if (current === anchorSlot) return block.blockhash === anchorHash ? { kind: "complete", nextSlot: current, expectedHash } : { kind: "refused", nextSlot: current, expectedHash }
-  if (block.parentSlot >= current || block.parentSlot < anchorSlot) return { kind: "refused", nextSlot: current, expectedHash }
-  return { kind: "advance", nextSlot: block.parentSlot, expectedHash: block.previousBlockhash }
-}
-
-function matchingExpiryCoverage(a: RetainedExpiryCoverage, b: RetainedExpiryCoverage) {
-  return a.kind === "present" && b.kind === "present" && a.history.complete && b.history.complete && a.history.blocks > 0 && a.history.txId === b.history.txId && a.history.blockhash === b.history.blockhash
-    && a.history.blockhashSlot === b.history.blockhashSlot && a.history.tipSlot === b.history.tipSlot && a.history.tipHash === b.history.tipHash && a.history.blocks === b.history.blocks && a.history.digest === b.history.digest
-}
-
-function retained(coverage: ExpiryCoverage | undefined): RetainedExpiryCoverage {
-  return coverage === undefined ? { kind: "missing" } : { kind: "present", history: coverage }
+function retained(coverage: ExpiryCoverage | undefined) {
+  return coverage === undefined ? { kind: "missing" } as const : { kind: "present", history: coverage } as const
 }
 
 effect function proveExpiry(txId: string, plan: IssuedPlan, providers: ReadonlyArray<Provider>, owner: ScanOwner, genesis: string) {
@@ -267,7 +264,7 @@ effect function proveExpiry(txId: string, plan: IssuedPlan, providers: ReadonlyA
       const current = scan.nextSlot
       const block = try rpc.call("getBlock", [current, blockSignatures], HistoryBlock)
       if (block === null || block.blockhash === "" || block.previousBlockhash === "" || !slot(block.parentSlot)) return try unproven()
-      const step = expiryTraversalStep(txId, plan.blockhash, anchorSlot, current, scan.expectedHash, { ...block, signatures: [...block.signatures] })
+      const step = traversalStep(txId, plan.blockhash, anchorSlot, current, scan.expectedHash, { ...block, signatures: [...block.signatures] })
       if (step.kind === "refused") return try unproven()
       const evidence = { slot: current, blockhash: block.blockhash, previousBlockhash: block.previousBlockhash, parentSlot: block.parentSlot, signatureCount: block.signatures.length, signaturesSha256: try digestOf(block.signatures) } satisfies CoverageBlock
       page.push(evidence)
@@ -280,7 +277,7 @@ effect function proveExpiry(txId: string, plan: IssuedPlan, providers: ReadonlyA
     }
     observations.push({ operator, firstAvailableSlot: first, finalizedContextSlot: expired.context.slot, signatureContextSlot: status.context.slot, coverage: scan })
   }
-  if (!observations.every((observation) => observation.coverage.complete) || !matchingExpiryCoverage(retained(observations[0]?.coverage), retained(observations[1]?.coverage))) return try unproven()
+  if (!observations.every((observation) => observation.coverage.complete) || !matchingCoverage(retained(observations[0]?.coverage), retained(observations[1]?.coverage))) return try unproven()
   return { messageId: plan.messageId ?? "", txId, blockhash: plan.blockhash, blockhashSlot: anchorSlot, providers: observations } satisfies ExpiryProof
 }
 

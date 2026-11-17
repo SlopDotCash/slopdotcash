@@ -13,7 +13,8 @@ import type { Bounty, Event, HoldKind, RouteObservation } from "../../gen/securi
 import type { Authority, PrivateCase } from "../../gen/security__cases.ts";
 import type { ReceiptTerms } from "../../gen/security__terms.ts";
 import { privateRoute } from "../../src/analysis/route.vibe";
-import { type DirectRoute, DirectRoutes, SecurityProgramFunds } from "../../src/bounty/funds.vibe";
+import { type DirectRoute, DirectRoutes } from "@repo/ports/settlement";
+import { SecurityProgramFunds } from "../../src/bounty/funds.vibe";
 import { awardClearancesLive } from "../../src/bounty/store.vibe";
 import type { ProgramFundsView } from "../../src/program/manifest.ts";
 import { caseRecord } from "../../src/cases/rows.vibe";

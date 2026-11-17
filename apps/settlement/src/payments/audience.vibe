@@ -1,0 +1,9 @@
+// spec/operations/notifications.md, "Each notice kind names the role its recipient must still hold when the attempt is prepared"
+import { sql } from "@repo/platform/d1"
+import { PayeeAudience } from "@repo/ports/settlement"
+
+export const PayeeAudienceLive = Layer.succeed(PayeeAudience, {
+  affected: (project) => effect {
+    return sql`SELECT github_user_id AS recipient FROM payment_obligations WHERE project_id = ${project} UNION SELECT github_user_id FROM payment_direct_transfers WHERE project_id = ${project}`
+  },
+} satisfies PayeeAudience.Shape)

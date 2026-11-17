@@ -138,12 +138,12 @@ effect function viewedVersion(name: string, versionId: string, sha: string, expe
   try checkedVersion(text, versionId, sha, expected, step)
 }
 
-effect function readBack(name: string, versionId: string | undefined) {
+effect function readBack(name: string, versionId: string | undefined, message: (tag: string) => string = releaseMessage) {
   const cloudflare = try Cloudflare
   const step = `${name} read-back`
   const status = try cloudflare.wrangler(step, { args: ["deployments", "status", "--name", name, "--json"] })
   const versions = try cloudflare.wrangler(step, { args: ["versions", "list", "--name", name, "--json"] })
-  return try activeTag(status, versions, versionId, step)
+  return try activeTag(status, versions, versionId, step, message)
 }
 
 export effect function servingTag(name: string) {
@@ -186,6 +186,7 @@ export interface WorkerRelease {
   readonly overrides: Overrides
   readonly triggers: boolean
   readonly secrets: SecretValues
+  readonly message?: string
 }
 
 export const plainRelease: WorkerRelease = { overrides: noOverrides, triggers: true, secrets: {} }
@@ -198,7 +199,8 @@ export effect function publishWorker(reviewed: Reviewed, publication: Publicatio
   const listed = try checkedSecrets(reviewed, provided)
   const generated = try generatedConfig(reviewed, publication, release.overrides, {})
   const config = generated.path
-  const uploadArgs = ["versions", "upload", "--config", config, `--tag=${sha}`, `--message=${releaseMessage(sha)}`]
+  const uploaded = release.message ?? releaseMessage(sha)
+  const uploadArgs = ["versions", "upload", "--config", config, `--tag=${sha}`, `--message=${uploaded}`]
   const upload = provided.length === 0
     ? try cloudflare.wrangler(`${name} upload`, { args: uploadArgs, seconds: deploySeconds })
     : try withSecretsFile(publication.workspace, name, release.secrets, (path) => cloudflare.wrangler(`${name} upload`, { args: [...uploadArgs, `--secrets-file=${path}`], seconds: deploySeconds }))
@@ -210,7 +212,7 @@ export effect function publishWorker(reviewed: Reviewed, publication: Publicatio
     const crons = reviewed.file.triggers?.crons
     if (crons !== undefined) try checkedSchedules(name, crons)
   }
-  return { tag: try readBack(name, versionId), config }
+  return { tag: try readBack(name, versionId, () => uploaded), config }
 }
 
 export effect function publishContainerWorker(reviewed: Reviewed, publication: Publication) {

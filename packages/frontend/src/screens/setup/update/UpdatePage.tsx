@@ -185,7 +185,7 @@ function Editor({ runtime, base, actorId, onAccessLost, onReload, loadError, sto
         </a>
       </nav>
       <PageHeader icon={<Settings2 aria-hidden />} title="Manage project" />
-      <SetupStatusPanel key={published ? `revision-${published.revision}` : "initial"} runtime={runtime} projectId={base.projectId} actorId={actorId} initial={published?.setup} onSetup={setSetup} showProjectLink={false} />
+      <SetupStatusPanel generation={published ? `revision-${published.revision}` : "initial"} runtime={runtime} projectId={base.projectId} actorId={actorId} initial={published?.setup} onSetup={setSetup} showProjectLink={false} />
       <UpdateForm
         review={review}
         manifest={manifest}

@@ -3,6 +3,7 @@ import { classifyRevisionChanges, type RevisionChanges } from "@repo/backend/own
 import { formatBaseUnits } from "@repo/settlement/kernels/amounts";
 import { isChain } from "@repo/settlement/kernels/networks";
 import { Result, Schema } from "effect";
+import { checkedOnLoad, consents, type SavedConsent, savedEdit } from "../../../../gen/backend__closureConsent.ts";
 import type { RepositoryLookup } from "../../../flows/projects/github.vibe";
 import { boundedText, type FundingChoice, type MonthlyPoolValue, monthlyCapDisplay, monthlyPoolValue, type RewardAssetKind, rewardFields, validRepositoryPath } from "../../../flows/projects/proposal.ts";
 import { type AssetKind, assetSymbol, formatRewardCapDisplay } from "../../../kernels/assetText.ts";
@@ -207,6 +208,10 @@ export function isAssetFixed(manifest: ManagedManifest): boolean {
   return reward.kind === "monthly-pool" && (reward.fundingState === "committed" || reward.paymentMode === "enabled" || positive(reward.committedMinor) || (manifest.escrow?.deployments.length ?? 0) > 0);
 }
 
+function priorConsent(slopbot: unknown): SavedConsent {
+  return slopbot === undefined ? "Absent" : recordOf(slopbot).automaticClosure === true ? "Enabled" : "Disabled";
+}
+
 function assetKindOf(kind: string | undefined): RewardAssetKind {
   return kind === "token" ? "token" : kind === "native" ? "native" : "stablecoin";
 }
@@ -219,7 +224,7 @@ export function initialDraft(manifest: ManagedManifest): UpdateDraft {
   return {
     ...rules,
     image: manifest.image ?? "",
-    automaticClosure: String(manifest.slopbot?.automaticClosure === true),
+    automaticClosure: String(checkedOnLoad(priorConsent(manifest.slopbot))),
     headline: manifest.headline,
     goal: manifest.description,
     criteria: manifest.contribution?.approvedScope ?? "",
@@ -313,12 +318,12 @@ function fundingFields({ managed: { raw, manifest }, funding: { choice, amount, 
 
 function nextManifest(proposed: Proposed): Json {
   const { managed: { raw }, value, added, countsFrom } = proposed;
-  const closure = value.automaticClosure === "true";
+  const saved = savedEdit(priorConsent(raw.slopbot), value.automaticClosure === "true");
   return {
     ...raw,
     ...fundingFields(proposed),
     ...(added.length > 0 ? { repositories: [...listOf(raw.repositories), ...added.map(({ entry }) => ({ ...entry, description: entry.description.trim(), countsFrom }))] } : {}),
-    ...(raw.slopbot !== undefined || closure ? { slopbot: { automaticClosure: closure } } : {}),
+    ...(saved === "Absent" ? {} : { slopbot: { automaticClosure: consents(saved) } }),
     image: value.image || undefined,
     headline: value.headline.trim(),
     description: value.goal.trim(),

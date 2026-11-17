@@ -1,0 +1,351 @@
+// spec/slopbot/workUnits.md, "A claim is one changed path in one commit and belongs to its first accepted carrier"; spec/slopbot/valueEvidence.md, "A blob, tree or binary claim counts only when its git object hash matches the bytes read"
+import { gitObjectId, textBytes } from "@repo/platform/git/bytes"
+import { type MergedSource, nativeMergeContext } from "../evidence/acceptance.vibe"
+import { Commit, type CommitAttribution, type Evidence, type NativeMergeAcceptance, Pull, type RetainedFile, type TextVersion } from "../evidence/types.vibe"
+import { type FileChange, hasCompleteValuePatch, valuePatch } from "../proofs/changes.vibe"
+import type { Reads } from "../proofs/reads.vibe"
+import { verifiedTree } from "../proofs/tree.vibe"
+import { collectIndirectRetention } from "./retention.vibe"
+import { answer, isOid, millis } from "./source.vibe"
+import type { WorkUnitSource } from "./types.vibe"
+
+schema ListedPull { readonly number: number; readonly merged_at: string | null }
+schema ComparedHead { readonly sha: string }
+schema NativeComparison {
+  readonly status: string
+  readonly merge_base_commit: ComparedHead | null
+  readonly total_commits: number
+  readonly commits: ReadonlyArray<Commit>
+}
+
+type Parents = ReadonlyMap<string, ReadonlyArray<{ readonly sha: string }>>
+
+function acyclicParents(parents: Parents) {
+  const done = new Set<string>()
+  const active = new Set<string>()
+  function visit(sha: string): boolean {
+    if (active.has(sha)) return false
+    if (done.has(sha)) return true
+    const edges = parents.get(sha)
+    if (edges === undefined) return true
+    active.add(sha)
+    for (const parent of edges) if (!visit(parent.sha)) return false
+    active.delete(sha)
+    done.add(sha)
+    return true
+  }
+  return [...parents.keys()].every(visit)
+}
+
+function acyclic(commits: ReadonlyMap<string, Commit>) {
+  return acyclicParents(new Map([...commits].map(([sha, commit]) => [sha, commit.parents])))
+}
+
+function findPath(commits: ReadonlyMap<string, Commit>, tip: string, target: string) {
+  const visited = new Set<string>()
+  function walk(sha: string): Commit[] | undefined {
+    if (sha === target) return []
+    if (visited.has(sha)) return undefined
+    visited.add(sha)
+    const commit = commits.get(sha)
+    if (commit === undefined) return undefined
+    for (const parent of commit.parents) {
+      const rest = walk(parent.sha)
+      if (rest !== undefined) return [commit, ...rest]
+    }
+    return undefined
+  }
+  return walk(tip)
+}
+
+function joinPath(commits: ReadonlyMap<string, Commit>, tip: string, integration: string, head: string) {
+  const before = findPath(commits, tip, integration)
+  const after = findPath(commits, integration, head)
+  return before !== undefined && after !== undefined ? [...before, ...after] : undefined
+}
+
+function copied(commit: Commit): Commit {
+  const actor = (value: Commit["author"]) => value === null ? null : { node_id: value.node_id, login: value.login, type: value.type }
+  return {
+    sha: commit.sha,
+    html_url: commit.html_url,
+    author: actor(commit.author),
+    committer: actor(commit.committer),
+    parents: commit.parents.map(({ sha }) => ({ sha })),
+    commit: { message: commit.commit.message, author: { date: commit.commit.author.date }, committer: { date: commit.commit.committer.date } },
+  }
+}
+
+effect function nativeCarrier(repository: string, source: MergedSource, mergeSha: string, mergedAt: string) {
+  const listed = try answer(`/repos/${repository}/commits/${mergeSha}/pulls?per_page=100`, Schema.Array(ListedPull))
+  if (listed === undefined || listed.length >= 100) return undefined
+  const candidates: Pull[] = []
+  for (const entry of listed) {
+    if (entry.number === source.pull.number || entry.merged_at === null) continue
+    const candidate = try answer(`/repos/${repository}/pulls/${entry.number}`, Pull)
+    if (
+      candidate?.number === entry.number && candidate.node_id !== source.pull.node_id &&
+      candidate.html_url === `https://github.com/${repository}/pull/${entry.number}` &&
+      candidate.merged_at !== null && Number.isFinite(millis(candidate.merged_at)) && millis(candidate.merged_at) <= millis(mergedAt) &&
+      isOid(candidate.head.sha) && isOid(candidate.merge_commit_sha)
+    ) candidates.push(candidate)
+  }
+  const accepted = candidates.length === 1 ? candidates[0] : undefined
+  if (accepted === undefined || accepted.merge_commit_sha === null || accepted.merged_at === null) return undefined
+  return { pullRequestId: accepted.node_id, headSha: accepted.head.sha, mergeSha: accepted.merge_commit_sha, mergedAt: accepted.merged_at }
+}
+
+effect function comparedCommits(repository: string, headSha: string, tip: string) {
+  const commits = new Map<string, Commit>()
+  let expected: number | undefined
+  for (let page = 1; ; page += 1) {
+    const comparison = try answer(`/repos/${repository}/compare/${headSha}...${tip}?per_page=100&page=${page}`, NativeComparison)
+    if (
+      comparison?.status !== "ahead" || comparison.merge_base_commit?.sha !== headSha ||
+      !Number.isSafeInteger(comparison.total_commits) || comparison.total_commits < 1 || comparison.commits.length > 100 ||
+      (expected !== undefined && expected !== comparison.total_commits)
+    ) return undefined
+    expected = comparison.total_commits
+    for (const commit of comparison.commits) {
+      if (
+        !isOid(commit.sha) || commits.has(commit.sha) || commit.parents.length === 0 || !commit.parents.every((parent) => isOid(parent.sha)) ||
+        new Set(commit.parents.map((parent) => parent.sha)).size !== commit.parents.length
+      ) return undefined
+      commits.set(commit.sha, copied(commit))
+    }
+    if (commits.size >= expected) break
+    if (comparison.commits.length !== 100) return undefined
+  }
+  return commits.size === expected ? commits : undefined
+}
+
+export effect function collectNativeMerge(repository: string, source: MergedSource) {
+  const { pull, mergeCommitEvidence: merge } = source
+  if (
+    pull.merged_at === null || merge.sha !== pull.merge_commit_sha || merge.parents.length < 2 ||
+    new Set(merge.parents.map((parent) => parent.sha)).size !== merge.parents.length ||
+    (merge.parents.length === 2 && merge.parents.some((parent) => parent.sha === pull.head.sha)) ||
+    ![pull.head.sha, merge.sha, ...merge.parents.map((parent) => parent.sha)].every(isOid)
+  ) return undefined
+  const carrier = merge.parents.length > 2 ? try nativeCarrier(repository, source, merge.sha, pull.merged_at) : undefined
+  if (merge.parents.length > 2 && carrier === undefined) return undefined
+  const tip = carrier?.headSha ?? merge.parents[1]?.sha ?? ""
+  const acceptedSha = carrier?.mergeSha ?? merge.sha
+  const commits = try comparedCommits(repository, pull.head.sha, tip)
+  if (commits === undefined || !acyclic(commits)) return undefined
+  const path = carrier === undefined ? findPath(commits, tip, pull.head.sha) : joinPath(commits, tip, merge.sha, pull.head.sha)
+  if (path === undefined) return undefined
+  if (carrier !== undefined) {
+    const integration = commits.get(merge.sha)
+    if (
+      integration === undefined || JSON.stringify(integration.parents) !== JSON.stringify(merge.parents) ||
+      !Number.isFinite(millis(integration.commit.committer.date)) || millis(integration.commit.committer.date) > millis(carrier.mergedAt)
+    ) return undefined
+  }
+  const reads: Reads = new Map()
+  const headTree = try verifiedTree(repository, pull.head.sha, reads)
+  const mergeTree = try verifiedTree(repository, acceptedSha, reads)
+  if (headTree === undefined || mergeTree === undefined) return undefined
+  const retainedFiles: RetainedFile[] = []
+  for (let at = 0; at < source.files.length; at += 16) {
+    const files = try collectIndirectRetention(repository, pull.head.sha, acceptedSha, source.files.slice(at, at + 16), reads)
+    if (files === undefined) return undefined
+    retainedFiles.push(...files)
+  }
+  if (retainedFiles.length === 0) return undefined
+  return {
+    schemaVersion: 1,
+    headSha: pull.head.sha,
+    mergeSha: merge.sha,
+    parentSha: merge.parents[0]?.sha ?? "",
+    integratedHeadSha: tip,
+    ...(carrier === undefined ? {} : { carrier }),
+    ancestry: path,
+    trees: [
+      { commitSha: pull.head.sha, treeSha: headTree.treeSha, entries: [...headTree.entries.values()] },
+      { commitSha: acceptedSha, treeSha: mergeTree.treeSha, entries: [...mergeTree.entries.values()] },
+    ],
+    retainedFiles,
+  } satisfies NativeMergeAcceptance
+}
+
+export function nativeMergeDeferralOnly(evidence: Evidence) {
+  return evidence.nativeMergeAcceptance !== undefined && evidence.limitations.length === 1 && evidence.limitations[0] === nativeMergeContext
+}
+
+function submittedPostimageMatches(file: FileChange, version: TextVersion) {
+  if (file.fullComparison !== undefined) return file.fullComparison.after.blobSha === version.blobSha && file.fullComparison.after.text === version.text
+  if (file.addedComparison !== undefined) return file.addedComparison.after.blobSha === version.blobSha && file.addedComparison.after.text === version.text
+  if (!hasCompleteValuePatch(file)) return false
+  const patch = valuePatch(file)
+  if (patch === undefined || file.status === "removed") return false
+  const lines = version.text.match(/[^\n]*\n|[^\n]+$/gu) ?? []
+  const input = patch.split("\n")
+  let checked = false
+  for (let at = 0; at < input.length;) {
+    const header = /^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@/u.exec(input[at] ?? "")
+    at += 1
+    if (header === null) return false
+    const expected = Number(header[2] ?? "1")
+    const after: string[] = []
+    let previous = ""
+    while (at < input.length && !(input[at] ?? "").startsWith("@@")) {
+      const line = input[at] ?? ""
+      at += 1
+      if (line === "" && at === input.length) break
+      if (line === "\\ No newline at end of file") {
+        const last = after.length - 1
+        if (previous !== "-" && last >= 0) after[last] = (after[last] ?? "").slice(0, -1)
+        continue
+      }
+      previous = line.slice(0, 1)
+      if (previous === "+" || previous === " ") after.push(`${line.slice(1)}\n`)
+      else if (previous !== "-") return false
+    }
+    const start = Number(header[1]) - 1
+    if (after.length !== expected || lines.slice(start, start + expected).join("") !== after.join("")) return false
+    checked = true
+  }
+  return checked
+}
+
+function proofTreeReads(repository: string, proof: NativeMergeAcceptance): Reads {
+  const reads: Reads = new Map()
+  for (const tree of proof.trees) {
+    reads.set(`/repos/${repository}/git/commits/${tree.commitSha}`, { sha: tree.commitSha, tree: { sha: tree.treeSha } })
+    reads.set(`/repos/${repository}/git/trees/${tree.treeSha}?recursive=1`, { sha: tree.treeSha, truncated: false, tree: tree.entries })
+  }
+  return reads
+}
+
+function versionBytesMatch(version: TextVersion | null) {
+  return version === null || (["100644", "100755"].includes(version.mode) && !version.text.includes("\0") && gitObjectId("blob", textBytes(version.text)) === version.blobSha)
+}
+
+function qualifiedGraphSource(candidate: Evidence, source: Evidence) {
+  const merge = candidate.mergeCommitEvidence
+  return candidate === source || (
+    candidate.repositoryNodeId === source.repositoryNodeId && candidate.repositoryDatabaseId === source.repositoryDatabaseId &&
+    candidate.limitations.length === 0 && candidate.pull.merged_at !== null && merge !== null &&
+    merge.sha === candidate.pull.merge_commit_sha && merge.parents.length === 2 &&
+    merge.parents.some((parent) => parent.sha === candidate.pull.head.sha) &&
+    candidate.commits.length === candidate.pull.commits && candidate.commits.some((commit) => commit.sha === candidate.pull.head.sha)
+  )
+}
+
+function sameAttribution(original: ReadonlyArray<CommitAttribution>, copiedAttribution: ReadonlyArray<CommitAttribution>) {
+  const [first] = original
+  const [second] = copiedAttribution
+  return original.length === 1 && copiedAttribution.length === 1 && first !== undefined && second !== undefined &&
+    first.limitations.length === 0 && second.limitations.length === 0 && first.changedPaths !== null && second.changedPaths !== null &&
+    JSON.stringify(first) === JSON.stringify(second)
+}
+
+function carrierProves(source: Evidence, proof: NativeMergeAcceptance, carrier: Evidence, sources: ReadonlyArray<WorkUnitSource>) {
+  const merge = source.mergeCommitEvidence
+  if (merge === null) return false
+  const commits = new Map(carrier.commits.map((commit) => [commit.sha, commit]))
+  if (commits.size !== carrier.commits.length || !acyclic(commits)) return false
+  if (proof.carrier !== undefined) {
+    const integration = commits.get(merge.sha)
+    const acceptedAt = millis(proof.carrier.mergedAt)
+    if (
+      integration === undefined || JSON.stringify(integration.parents) !== JSON.stringify(merge.parents) ||
+      !proof.ancestry.some((commit) => commit.sha === merge.sha) ||
+      merge.parents.some((parent) => parent.sha !== carrier.pull.base.sha && !commits.has(parent.sha)) ||
+      !Number.isFinite(acceptedAt) ||
+      [...commits.values()].some((commit) => !Number.isFinite(millis(commit.commit.committer.date)) || millis(commit.commit.committer.date) > acceptedAt)
+    ) return false
+  }
+  for (const [index, commit] of proof.ancestry.entries()) {
+    const next = proof.ancestry[index + 1]?.sha ?? proof.headSha
+    if (!commit.parents.some((parent) => parent.sha === next) || JSON.stringify(commits.get(commit.sha)) !== JSON.stringify(commit)) return false
+  }
+  const originalGraph = new Map(source.commits.map((commit) => [commit.sha, commit]))
+  for (const sibling of sources) {
+    if (!qualifiedGraphSource(sibling.evidence, source)) continue
+    for (const entry of sibling.evidence.commits) {
+      const known = originalGraph.get(entry.sha)
+      if (known !== undefined && JSON.stringify(known) !== JSON.stringify(entry)) return false
+      originalGraph.set(entry.sha, entry)
+    }
+  }
+  if (new Set(source.commits.map((commit) => commit.sha)).size !== source.commits.length || !acyclic(originalGraph)) return false
+  const parentGraph = new Map<string, ReadonlyArray<{ readonly sha: string }>>([...originalGraph].map(([sha, entry]) => [sha, entry.parents]))
+  for (const sibling of sources) {
+    if (!qualifiedGraphSource(sibling.evidence, source)) continue
+    const merged = sibling.evidence.mergeCommitEvidence
+    if (merged === null) continue
+    const known = parentGraph.get(merged.sha)
+    if (known !== undefined && JSON.stringify(known) !== JSON.stringify(merged.parents)) return false
+    parentGraph.set(merged.sha, merged.parents)
+  }
+  if (!acyclicParents(parentGraph)) return false
+  const baseAncestors = new Set<string>()
+  const pending = [carrier.pull.base.sha]
+  for (let sha = pending.pop(); sha !== undefined; sha = pending.pop()) {
+    if (baseAncestors.has(sha)) continue
+    baseAncestors.add(sha)
+    pending.push(...(parentGraph.get(sha) ?? []).map((parent) => parent.sha))
+  }
+  return source.commits.every((commit) => {
+    const copiedCommit = commits.get(commit.sha)
+    if (copiedCommit === undefined) return baseAncestors.has(commit.sha)
+    if (JSON.stringify(copiedCommit) !== JSON.stringify(commit)) return false
+    if (commit.parents.length > 1) return true
+    return sameAttribution(source.commitAttribution.filter((entry) => entry.sha === commit.sha), carrier.commitAttribution.filter((entry) => entry.sha === commit.sha))
+  })
+}
+
+function carriersOf(source: Evidence, proof: NativeMergeAcceptance, sources: ReadonlyArray<WorkUnitSource>) {
+  const merge = source.mergeCommitEvidence
+  return sources.map(({ evidence }) => evidence).filter((evidence) => {
+    const accepted = evidence.mergeCommitEvidence
+    return evidence !== source && merge !== null && evidence.repositoryNodeId === source.repositoryNodeId &&
+      evidence.repositoryDatabaseId === source.repositoryDatabaseId && evidence.limitations.length === 0 &&
+      evidence.pull.merged_at !== null && millis(evidence.pull.merged_at) <= millis(source.pull.merged_at) &&
+      evidence.pull.head.sha === proof.integratedHeadSha &&
+      (proof.carrier !== undefined
+        ? evidence.pull.node_id === proof.carrier.pullRequestId && evidence.pull.merged_at === proof.carrier.mergedAt &&
+          evidence.pull.merge_commit_sha === proof.carrier.mergeSha && accepted?.sha === proof.carrier.mergeSha &&
+          accepted.parents.length === 2 && accepted.parents[0]?.sha === evidence.pull.base.sha && accepted.parents[1]?.sha === evidence.pull.head.sha
+        : evidence.pull.merge_commit_sha === proof.mergeSha && accepted?.sha === proof.mergeSha && JSON.stringify(accepted) === JSON.stringify(merge)) &&
+      evidence.commits.length === evidence.pull.commits && evidence.commits.some((commit) => commit.sha === evidence.pull.head.sha)
+  })
+}
+
+function proofShapeMatches(source: Evidence, proof: NativeMergeAcceptance) {
+  const merge = source.mergeCommitEvidence
+  return merge !== null && (proof.carrier !== undefined ? merge.parents.length > 2 : merge.parents.length === 2) &&
+    new Set(merge.parents.map((parent) => parent.sha)).size === merge.parents.length && merge.parents.every((parent) => isOid(parent.sha)) &&
+    source.pull.merged_at !== null && proof.headSha === source.pull.head.sha && proof.mergeSha === source.pull.merge_commit_sha &&
+    proof.mergeSha === merge.sha && proof.parentSha === merge.parents[0]?.sha &&
+    proof.integratedHeadSha === (proof.carrier?.headSha ?? merge.parents[1]?.sha) &&
+    proof.ancestry.length > 0 && proof.ancestry[0]?.sha === proof.integratedHeadSha &&
+    new Set(proof.ancestry.map((commit) => commit.sha)).size === proof.ancestry.length &&
+    proof.retainedFiles.length === source.files.length &&
+    new Set(proof.retainedFiles.map((file) => file.sourcePath)).size === source.files.length &&
+    source.files.every((file) => proof.retainedFiles.some((retained) => retained.sourcePath === file.filename)) &&
+    proof.trees.length === 2 && proof.trees[0]?.commitSha === proof.headSha && proof.trees[1]?.commitSha === (proof.carrier?.mergeSha ?? proof.mergeSha)
+}
+
+export effect function nativeMergeCarrierMatches(source: Evidence, sources: ReadonlyArray<WorkUnitSource>) {
+  const proof = source.nativeMergeAcceptance
+  if (proof === undefined || proof.schemaVersion !== 1 || !proofShapeMatches(source, proof)) return false
+  const reads = proofTreeReads(source.repository, proof)
+  const [headProof, mergeProof] = proof.trees
+  const head = headProof === undefined ? undefined : try verifiedTree(source.repository, headProof.commitSha, reads)
+  const accepted = mergeProof === undefined ? undefined : try verifiedTree(source.repository, mergeProof.commitSha, reads)
+  if (head === undefined || accepted === undefined) return false
+  for (const file of proof.retainedFiles) {
+    if (!versionBytesMatch(file.historical) || !versionBytesMatch(file.accepted)) return false
+    const submitted = source.files.find((item) => item.filename === file.sourcePath)
+    if (submitted === undefined || file.sourcePath !== file.acceptedPath || (file.historical === null && submitted.status !== "removed")) return false
+    if (file.historical !== null && !submittedPostimageMatches(submitted, file.historical)) return false
+    for (const [tree, version] of [[head, file.historical], [accepted, file.accepted]] as const) {
+      const entry = tree.entries.get(file.sourcePath)
+      if (version === null ? entry !== undefined : entry?.sha !== version.blobSha || entry.mode !== version.mode || entry.type !== "blob") return false
+    }
+  }
+  return carriersOf(source, proof, sources).some((carrier) => carrierProves(source, proof, carrier, sources))
+}

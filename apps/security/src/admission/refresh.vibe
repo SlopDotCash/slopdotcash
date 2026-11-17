@@ -1,5 +1,6 @@
 // spec/security/enforcement.md, "Assessments are queued by setup, owner rescan, administrator investigation or flag recovery"; spec/security/enforcement.md, "A fresh clean scan of every repository lifts a flag-only pause"; spec/security/admission.md, "A replaced template requeues the pending assessment with its original commit"; spec/security/vettingComposition.md, "A reused clean scan never lifts a flag pause"
 import { Registry, RegistryManifests } from "@repo/ports/backend"
+import { ScanRequests } from "@repo/ports/security"
 import type { Enforcement, RequestOrigin } from "../../gen/security__enforcement.ts"
 import { canRequestAssessment, clearanceState, latestOf } from "../../gen/security__enforcement.effect.vibe"
 import { withRetainedEvidence } from "../enforcement/retained.vibe"
@@ -12,7 +13,7 @@ import { reinstateFromScan } from "./record.vibe"
 import { type Assessment, nextAssessmentNumber, projectAssessments } from "./store.vibe"
 
 const maxAutomaticScans = 25
-const freshScanReason = "Automatic fresh scan after two contributor flags paused the project"
+export const freshScanReason = "Automatic fresh scan after two contributor flags paused the project"
 const setupScanReason = "Automatic scan of new project content"
 
 schema StewardManifest { steward: { github: { actorId: string; login: string } } }
@@ -23,7 +24,7 @@ interface Skipped {
 }
 
 effect function stewardOf(text: string) {
-  const parsed: unknown = try Effect.try({ try: () => JSON.parse(text) as unknown, catch: () => undefined })
+  const parsed: unknown = Effect.try(() => JSON.parse(text) as unknown) catch effect () => undefined
   const manifest = Schema.decodeUnknownEffect(StewardManifest)(parsed) catch effect () => undefined
   return manifest === undefined ? undefined : { githubId: manifest.steward.github.actorId, githubLogin: manifest.steward.github.login } satisfies Requester
 }
@@ -71,6 +72,15 @@ export effect function automaticScan(ask: ScanAsk) {
   if (created === undefined) return "unavailable" as const
   return created.length === 0 ? "already_queued" as const : "queued" as const
 }
+
+type ScanNeeds = Effect.Services<ReturnType<typeof automaticScan>>
+
+export const ScanRequestsLive = Layer.effect(ScanRequests, effect {
+  const services = try Effect.context<ScanNeeds>()
+  return {
+    queue: (ask) => Effect.provide(automaticScan(ask), services),
+  } satisfies ScanRequests.Shape
+})
 
 export effect function refreshQueue() {
   const queued: string[] = []

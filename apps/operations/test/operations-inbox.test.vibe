@@ -9,6 +9,7 @@ import { database, migrate, startWorker } from "@repo/platform/testing"
 import { migrationsDir } from "@repo/platform/testing/paths"
 import { area, pages } from "@repo/platform/worker"
 import { type Notice, type NoticeKind, Notices } from "@repo/ports/operations"
+import { AssessmentQueue } from "@repo/ports/slopbot"
 import { inboxApi } from "../src/client/inbox.vibe"
 import { inboxRoutes } from "../src/inbox/routes.vibe"
 import { noticePorts } from "../src/notifications/statements.vibe"
@@ -45,7 +46,10 @@ const assets: Fetcher = { fetch: () => Promise.resolve(new WebResponse("static a
 
 const site = pages({
   areas: [area({ name: "operations", api: inboxApi, routes: inboxRoutes, provides: Layer.empty })],
-  services: (env: Env) => Layer.provideMerge(CallerLive, Layer.mergeAll(d1(env.SLOP_DB), webCrypto, rolesFrom({ ADMIN_GITHUB_IDS: moderator, PROJECT_MODERATOR_GITHUB_IDS: `${moderator},${listedModerator}` }))),
+  services: (env: Env) => Layer.mergeAll(
+    Layer.provideMerge(CallerLive, Layer.mergeAll(d1(env.SLOP_DB), webCrypto, rolesFrom({ ADMIN_GITHUB_IDS: moderator, PROJECT_MODERATOR_GITHUB_IDS: `${moderator},${listedModerator}` }))),
+    Layer.succeed(AssessmentQueue, { bundled: (actor) => succeed(actor.githubId === member ? { recipientGithubId: member, items: [], next: null } : null) }),
+  ),
   assets: "ASSETS",
 })
 
@@ -82,7 +86,7 @@ effect function ask(path: string, options: Ask = {}) {
 
 effect function inbox(as: string, cursor?: string) {
   const answer = try ask(cursor === undefined ? "/api/v1/notifications" : `/api/v1/notifications?${new URLSearchParams({ cursor })}`, { as })
-  return answer.body as { recipientGithubId: string; nextCursor: string | null; unread: number; notifications: ReadonlyArray<Record<string, unknown>> }
+  return answer.body as { recipientGithubId: string; nextCursor: string | null; unread: number; notifications: ReadonlyArray<Record<string, unknown>>; incompleteAssessments: unknown }
 }
 
 function withoutCreatedAt(items: ReadonlyArray<Record<string, unknown>>) {
@@ -222,6 +226,7 @@ layer(Layer.mergeAll(Started, noticePorts, webCrypto), { excludeTestServices: tr
         recipientGithubId: member,
         nextCursor: null,
         unread: 12,
+        incompleteAssessments: { recipientGithubId: member, items: [], next: null },
         notifications: [
           { eventKey: "security-receipt:inbox-1", kind: "security_report_received", subject: caseId, detail: null, actionPath: `/security?case=${caseId}`, sourceAt: at(12), readAt: null, emailDelivery: "queued" },
           { eventKey: "security-case:inbox-1", kind: "security_case", subject: caseId, detail: null, actionPath: `/security?case=${caseId}`, sourceAt: at(11), readAt: null, acknowledgedAt: null, emailDelivery: "queued" },
@@ -294,13 +299,13 @@ layer(Layer.mergeAll(Started, noticePorts, webCrypto), { excludeTestServices: tr
     const listedAfter = try inbox(moderator)
     try same({
       listedBefore,
-      notAdministrator: [notAdministrator.notifications, notAdministrator.unread],
+      notAdministrator: [notAdministrator.notifications, notAdministrator.unread, notAdministrator.incompleteAssessments],
       opened,
       reversed: [reversed.status, reversed.body],
       listedAfter: [kinds(listedAfter.notifications), listedAfter.unread],
     }, {
       listedBefore: [["slopbot-appeal-inbox-1", "slopbot_appeal_review"], ["slopbot-scam-review:PR_inbox_scam", "slopbot_scam_review"]],
-      notAdministrator: [[], 0],
+      notAdministrator: [[], 0, null],
       opened: [
         [302, "https://github.com/acme/widgets/pull/7", null],
         [302, "https://github.com/acme/widgets/pull/8", null],

@@ -16,7 +16,9 @@ export const SOLANA_TEST_VERSION = "2.1.21";
 
 export interface ValidatorOptions {
   readonly programs?: ReadonlyArray<{ readonly id: string; readonly soPath: string }>;
+  readonly upgradeablePrograms?: ReadonlyArray<{ readonly id: string; readonly soPath: string; readonly upgradeAuthority: string }>;
   readonly accounts?: ReadonlyArray<{ readonly address: string; readonly jsonPath: string }>;
+  readonly rpcPort?: number;
 }
 
 export interface ProgramBuild extends AsyncDisposable {
@@ -102,10 +104,17 @@ async function dockerContext(): Promise<ReadonlyArray<string>> {
   return ["--context", current.Name];
 }
 
-async function reservePorts(): Promise<number> {
+const portRange = (base: number) => Array.from({ length: 42 }, (_, offset) => base + offset);
+
+async function reservePorts(fixed: number | undefined): Promise<number> {
+  if (fixed !== undefined) {
+    if (!Number.isSafeInteger(fixed) || fixed < 1024 || fixed + 41 > 65_535) throw new RangeError(`Validator RPC port ${fixed} leaves no room for its 42-port range`);
+    if (await portsFree(portRange(fixed))) return fixed;
+    throw new Error(`The validator ports ${fixed}-${fixed + 41} are not free`);
+  }
   for (let attempt = 0; attempt < 40; attempt++) {
     const base = 20_000 + Math.floor(Math.random() * 40_000);
-    if (await portsFree(Array.from({ length: 42 }, (_, offset) => base + offset))) return base;
+    if (await portsFree(portRange(base))) return base;
   }
   throw new Error("No free loopback port range for the validator");
 }
@@ -241,8 +250,10 @@ async function confirmed(url: string, signature: string): Promise<void> {
 
 export async function solanaValidator(options: ValidatorOptions = {}): Promise<Validator> {
   const programs = options.programs ?? [];
+  const upgradeable = options.upgradeablePrograms ?? [];
   const accounts = options.accounts ?? [];
-  for (const { id, soPath } of programs) {
+  for (const { upgradeAuthority } of upgradeable) if (!isPublicKey(upgradeAuthority)) throw new RangeError(`Upgrade authority ${upgradeAuthority} is not a base58 public key`);
+  for (const { id, soPath } of [...programs, ...upgradeable]) {
     if (!isPublicKey(id)) throw new RangeError(`Program id ${id} is not a base58 public key`);
     if (!isAbsolute(soPath)) throw new RangeError(`Program file ${soPath} must be an absolute path`);
   }
@@ -250,7 +261,7 @@ export async function solanaValidator(options: ValidatorOptions = {}): Promise<V
     if (!isPublicKey(address)) throw new RangeError(`Account ${address} is not a base58 public key`);
     if (!isAbsolute(jsonPath)) throw new RangeError(`Account file ${jsonPath} must be an absolute path`);
   }
-  const files = [...programs.map(({ soPath }) => soPath), ...accounts.map(({ jsonPath }) => jsonPath)];
+  const files = [...programs.map(({ soPath }) => soPath), ...upgradeable.map(({ soPath }) => soPath), ...accounts.map(({ jsonPath }) => jsonPath)];
   for (const path of files) await access(path).catch(() => {
     throw new Error(`Validator fixture file not found: ${path}`);
   });
@@ -262,7 +273,7 @@ export async function solanaValidator(options: ValidatorOptions = {}): Promise<V
   const directory = await mkdtemp(join(tmpdir(), "slop-validator-"));
   const payerFile = join(directory, "payer.json");
   await writeFile(payerFile, JSON.stringify({ pubkey: payer.address, account: { lamports: payerLamports, data: ["", "base64"], owner: systemProgram, executable: false, rentEpoch: 0, space: 0 } }));
-  const rpcPort = await reservePorts();
+  const rpcPort = await reservePorts(options.rpcPort);
   const ports = [rpcPort, rpcPort + 1];
   const version = await pathVersion();
   const runner = version?.startsWith(`solana-test-validator ${SOLANA_TEST_VERSION} `)
@@ -277,6 +288,7 @@ export async function solanaValidator(options: ValidatorOptions = {}): Promise<V
     "--dynamic-port-range", `${rpcPort + 2}-${rpcPort + 31}`, "--ticks-per-slot", "8", "--mint", mint,
     "--account", payer.address, payerFile,
     ...programs.flatMap(({ id, soPath }) => ["--bpf-program", id, soPath]),
+    ...upgradeable.flatMap(({ id, soPath, upgradeAuthority }) => ["--upgradeable-program", id, soPath, upgradeAuthority]),
     ...accounts.flatMap(({ address, jsonPath }) => ["--account", address, jsonPath]),
   ];
   const url = `http://127.0.0.1:${rpcPort}`;

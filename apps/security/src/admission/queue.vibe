@@ -65,7 +65,7 @@ effect function authorityOf(plan: Plan, repository: { readonly id: string }, git
 effect function inserted(queued: Queued, plan: Plan, repository: { readonly id: string }) {
   const githubId = idOf(repository.id)
   const authority = try authorityOf(plan, repository, githubId)
-  const event = { type: "requestAssessment", repository: githubId, requestOrigin: plan.origin, assessmentId: try nextAssessmentNumber(), authority }
+  const event = { type: "requestAssessment" as const, repository: githubId, requestOrigin: plan.origin, assessmentId: try nextAssessmentNumber(), authority }
   const outcome = compose({ projectId: queued.projectId, event, by: plan.by, alongside: [queueStatement(queued)] }) catch effect (error) => {
     if (error._tag === "ProjectRefused" || error._tag === "Conflict" || error._tag === "ConstraintViolation") return "conflict" as const
     throw error

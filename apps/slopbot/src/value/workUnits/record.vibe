@@ -1,0 +1,195 @@
+// spec/slopbot/workUnits.md, "One transaction checks predecessors, legacy records, sources, claims and the publication fence"; spec/slopbot/workUnits.md, "A complete partition assigns every claim to exactly one outcome"
+import { sha256Of } from "@repo/platform/git/bytes"
+import { type MergeRecipe, validMergeRecipe } from "@repo/platform/git/evidence"
+import { type ContextSelection, contextSelections } from "../evidence/context.vibe"
+import { type RegisteredRepository, findRepository } from "../evidence/types.vibe"
+import { workUnitAssessmentKey } from "../history/read.vibe"
+import { prepareWorkUnitEvidence, validateWorkUnitPartition } from "./prepare.vibe"
+import { WorkUnitRefused, type WorkUnitClaim, type WorkUnitEvidence, occurredAt } from "./types.vibe"
+
+export const workUnitRecordVersion = "slop-work-unit-record:v1"
+
+const digestPattern = /^[a-f0-9]{64}$/u
+const revisionPattern = /^[a-f0-9]{40}$/u
+
+export interface IndirectBinding {
+  readonly historicalHeadSha: string
+  readonly integrationSha: string
+  readonly acceptedTipSha: string
+  readonly branch: string
+  readonly observationRunId: number
+  readonly observedOnBranchAt: string
+}
+
+export interface SourceBinding {
+  readonly repository: string
+  readonly repositoryNodeId: string
+  readonly repositoryDatabaseId: number
+  readonly pullRequestNodeId: string
+  readonly pullRequestNumber: number
+  readonly headSha: string
+  readonly mergeSha: string | null
+  readonly indirectAcceptance?: IndirectBinding
+  readonly occurredAt: string
+  readonly policySha: string
+  readonly sourceDigest: string
+  readonly mergeRecipe?: MergeRecipe
+  readonly contextPaths?: ReadonlyArray<ContextSelection>
+}
+
+export interface ReviewReference {
+  readonly sourceId: string
+}
+
+export interface UnitAssessment {
+  readonly reviews: ReadonlyArray<ReviewReference>
+}
+
+export interface AssessedUnit {
+  readonly claimIds: ReadonlyArray<string>
+  readonly assessment: UnitAssessment
+}
+
+export interface RecordedUnit extends AssessedUnit {
+  readonly workUnitId: string
+}
+
+export type Producer = { readonly [key: string]: unknown }
+
+export interface WorkUnitRecord {
+  readonly schemaVersion: typeof workUnitRecordVersion
+  readonly projectId: string
+  readonly sourceDigest: string
+  readonly sources: ReadonlyArray<SourceBinding>
+  readonly claims: ReadonlyArray<WorkUnitClaim>
+  readonly units: ReadonlyArray<RecordedUnit>
+  readonly rubricVersion: string
+  readonly producerRevision: string
+  readonly assessedAt: string
+  readonly supersedes: ReadonlyArray<string>
+  readonly legacyPredecessors: ReadonlyArray<string>
+  readonly revisionReason: string | null
+  readonly model: Producer
+}
+
+export interface PreparedRecord {
+  readonly record: WorkUnitRecord
+  readonly recordJson: string
+  readonly recordDigest: string
+  readonly assessmentKey: string
+}
+
+export interface ProjectState {
+  readonly id: string
+  readonly active: boolean
+}
+
+export interface AssessmentResult {
+  readonly sourceDigest: string
+  readonly rubricVersion: string
+  readonly assessedAt: string
+}
+
+export interface RecordRequest {
+  readonly supplied: WorkUnitEvidence
+  readonly result: AssessmentResult
+  readonly rubricVersion: string
+  readonly units: ReadonlyArray<AssessedUnit>
+  readonly model: Producer
+  readonly producerRevision: string
+  readonly supersedes: ReadonlyArray<string>
+  readonly legacyPredecessors: ReadonlyArray<string>
+  readonly revisionReason: string | null
+  readonly project: ProjectState
+  readonly repositories: ReadonlyArray<RegisteredRepository>
+}
+
+export function workUnitIdentity(unit: AssessedUnit) {
+  const identity = unit.claimIds.length > 0
+    ? ["implementation", [...unit.claimIds].sort()]
+    : ["reviews", unit.assessment.reviews.map((review) => review.sourceId).sort()]
+  return `wu_${sha256Of(JSON.stringify(identity))}`
+}
+
+export effect function workUnitSourceBindings(evidence: WorkUnitEvidence, repositories: ReadonlyArray<RegisteredRepository>) {
+  const bindings: SourceBinding[] = []
+  for (const [index, { evidence: source, policy, mergeRecipe }] of evidence.sources.entries()) {
+    if (mergeRecipe !== undefined && !validMergeRecipe(mergeRecipe)) throw new WorkUnitRefused({ reason: "Invalid merge reconstruction recipe" })
+    const repository = findRepository(repositories, source.repository)
+    if (repository === undefined) throw new WorkUnitRefused({ reason: "Joint source repository is unregistered" })
+    const occurred = occurredAt(source)
+    if (occurred === null) throw new WorkUnitRefused({ reason: "Joint source lacks occurrence date" })
+    const digest = evidence.sourceDigests[index]?.digest
+    if (digest === undefined) throw new WorkUnitRefused({ reason: "Joint source digest is missing" })
+    const indirect = source.indirectAcceptance
+    bindings.push({
+      repository: repository.id,
+      repositoryNodeId: source.repositoryNodeId,
+      repositoryDatabaseId: source.repositoryDatabaseId,
+      pullRequestNodeId: source.pull.node_id,
+      pullRequestNumber: source.pull.number,
+      headSha: source.pull.head.sha,
+      mergeSha: source.pull.merge_commit_sha,
+      ...(indirect === undefined ? {} : {
+        indirectAcceptance: {
+          historicalHeadSha: indirect.historicalHeadSha,
+          integrationSha: indirect.integrationSha,
+          acceptedTipSha: indirect.acceptedTipSha,
+          branch: indirect.branch,
+          observationRunId: indirect.observationRunId,
+          observedOnBranchAt: indirect.observedOnBranchAt,
+        },
+      }),
+      occurredAt: occurred,
+      policySha: policy.sha,
+      sourceDigest: digest,
+      ...(mergeRecipe === undefined ? {} : { mergeRecipe }),
+      ...(source.contextFiles === undefined || source.contextFiles.length === 0 ? {} : { contextPaths: contextSelections(source) }),
+    })
+  }
+  return bindings
+}
+
+export effect function sealRecord(record: WorkUnitRecord) {
+  const recordJson = JSON.stringify(record)
+  return {
+    record,
+    recordJson,
+    recordDigest: sha256Of(recordJson),
+    assessmentKey: try workUnitAssessmentKey(record),
+  } satisfies PreparedRecord
+}
+
+function bindingValid(request: RecordRequest, evidence: WorkUnitEvidence) {
+  const { supersedes, legacyPredecessors, revisionReason } = request
+  return revisionPattern.test(request.producerRevision) && evidence.sourceDigest === request.supplied.sourceDigest &&
+    request.result.sourceDigest === evidence.sourceDigest && request.result.rubricVersion === request.rubricVersion &&
+    [...supersedes, ...legacyPredecessors].every((digest) => digestPattern.test(digest)) &&
+    new Set(supersedes).size === supersedes.length && new Set(legacyPredecessors).size === legacyPredecessors.length &&
+    (supersedes.length + legacyPredecessors.length === 0 ? revisionReason === null : revisionReason !== null && revisionReason.trim() !== "")
+}
+
+export effect function prepareWorkUnitRecord(request: RecordRequest) {
+  const evidence = try prepareWorkUnitEvidence(request.supplied.sources, request.repositories)
+  if (evidence.projectId !== request.project.id || !request.project.active) throw new WorkUnitRefused({ reason: "Joint value source must belong to an active project" })
+  if (!bindingValid(request, evidence)) throw new WorkUnitRefused({ reason: "Joint value revision binding or predecessor reason is invalid" })
+  if (!validateWorkUnitPartition(evidence, request.units.filter((unit) => unit.claimIds.length > 0))) throw new WorkUnitRefused({ reason: "Joint value assessment does not validate" })
+  const units = request.units
+    .map((unit) => ({ ...unit, claimIds: [...unit.claimIds].sort(), workUnitId: workUnitIdentity(unit) }))
+    .sort((a, b) => a.workUnitId < b.workUnitId ? -1 : a.workUnitId > b.workUnitId ? 1 : 0)
+  return try sealRecord({
+    schemaVersion: workUnitRecordVersion,
+    projectId: request.project.id,
+    sourceDigest: evidence.sourceDigest,
+    sources: try workUnitSourceBindings(evidence, request.repositories),
+    claims: evidence.claims,
+    units,
+    rubricVersion: request.result.rubricVersion,
+    producerRevision: request.producerRevision,
+    assessedAt: request.result.assessedAt,
+    supersedes: [...request.supersedes].sort(),
+    legacyPredecessors: [...request.legacyPredecessors].sort(),
+    revisionReason: request.revisionReason,
+    model: request.model,
+  })
+}

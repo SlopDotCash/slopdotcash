@@ -7,6 +7,7 @@ import { database, migrate, startWorker, storage } from "@repo/platform/testing"
 import { settableClock } from "@repo/platform/testing/clock";
 import { migrationsDir } from "@repo/platform/testing/paths";
 import { Restrictions } from "@repo/ports/backend";
+import { IntakeHealthLive } from "@repo/operations/live";
 import type { Driver, Options } from "../../gen/contributor__traceServer.conformance.ts";
 import type { ContentType, CreateRequest, Event, Put, Reply, TraceObject, TraceServer } from "../../gen/contributor__traceServer.ts";
 import { type RunRow, contentTypes, eventKinds, eventSources } from "../../src/traces/codec.vibe";
@@ -35,7 +36,7 @@ const restrictions = Layer.succeed(Restrictions, {
   fence: ({ githubId }) => Effect.succeed(bans.has(githubId) ? sql`SELECT json('account banned') AS unbanned` : sql`SELECT 1 AS unbanned`),
   unbanned: (githubId) => Effect.succeed(bans.has(githubId) ? sql`0` : sql`1`),
 });
-const runtime = ManagedRuntime.make(Layer.mergeAll(d1(db), webCrypto, clock.layer, objects, restrictions));
+const runtime = ManagedRuntime.make(Layer.mergeAll(d1(db), webCrypto, clock.layer, objects, restrictions, Layer.provide(IntakeHealthLive, d1(db))));
 
 const hex = (data: string | Uint8Array) => createHash("sha256").update(data).digest("hex");
 const iso = (seconds: number) => new Date(seconds * 1000).toISOString();

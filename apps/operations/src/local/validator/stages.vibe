@@ -11,6 +11,10 @@ export interface ProgramFixture {
   readonly soPath: string
 }
 
+export interface UpgradeableProgramFixture extends ProgramFixture {
+  readonly upgradeAuthority: string
+}
+
 export interface AccountFixture {
   readonly address: string
   readonly jsonPath: string
@@ -30,6 +34,8 @@ export interface StageRequest {
 export interface StagesRequest {
   readonly mode: ValidatorMode
   readonly programs: ReadonlyArray<ProgramFixture>
+  readonly upgradeablePrograms?: ReadonlyArray<UpgradeableProgramFixture>
+  readonly rpcPort?: number
   readonly stages: readonly [StageRequest, ...StageRequest[]]
 }
 
@@ -67,9 +73,10 @@ effect function guarded<A, E, R>(restore: <X, Y, Z>(effect: X!Y!Z) => X!Y!Z, wor
   return try Effect.failCause(outcome.cause)
 }
 
-effect function started(stage: number, programs: ReadonlyArray<ProgramFixture>, accounts: ReadonlyArray<AccountFixture>) {
+effect function started(stage: number, request: StagesRequest, accounts: ReadonlyArray<AccountFixture>) {
+  const { programs, upgradeablePrograms = [], rpcPort } = request
   return try tryPromise({
-    try: () => solanaValidator({ programs, accounts }),
+    try: () => solanaValidator({ programs, upgradeablePrograms, accounts, ...rpcPort === undefined ? {} : { rpcPort } }),
     catch: (cause) => new ValidatorUnavailable({ stage, reason: reasonOf(cause) }),
   })
 }
@@ -118,9 +125,9 @@ effect function stage(machine: ValidatorMachine, request: StagesRequest, fixture
     const number = (try machine.get()).stage + 1
     const receipt = (try machine.get()).receipt + 1
     const keypair = (try Path.Path).join(workspace, `payer-${number}.json`)
-    const mounts = [...request.programs.map((fixture) => fixture.soPath), ...fixtures.accounts.map((fixture) => fixture.jsonPath)]
+    const mounts = [...request.programs.map((fixture) => fixture.soPath), ...(request.upgradeablePrograms ?? []).map((fixture) => fixture.soPath), ...fixtures.accounts.map((fixture) => fixture.jsonPath)]
     if (!(try publicReadOnlyMounts(mounts, keypair))) throw new MountsRefused({ stage: number })
-    const booted = try guarded(restore, started(number, request.programs, fixtures.accounts))
+    const booted = try guarded(restore, started(number, request, fixtures.accounts))
     if (booted.kind === "interrupted") return try interrupt
     const validator = try acquireRelease(succeed(booted.value), (running) => closed(running))
     try keptPayer(keypair, validator)

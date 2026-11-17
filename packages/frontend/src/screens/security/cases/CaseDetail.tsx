@@ -75,9 +75,32 @@ function Receipt({ record }: { record: SecurityCase }) {
   );
 }
 
-function PaymentFacts({ record, controls }: { record: SecurityCase; controls?: ReactNode }) {
+type Send = CaseDetailViewProps["onSend"];
+
+function VerifyFoundPayment({ transactionIds, onSend }: { transactionIds: ReadonlyArray<string>; onSend: Send }) {
+  const [busy, setBusy] = useState(false);
+  const [sent, setSent] = useState<Sent>({ key: null, error: null });
+  const verify = () => {
+    setBusy(true);
+    void onSend("verify-payment", { confirmation: true, transactionIds }, sent.key).then((answer) => {
+      setBusy(false);
+      setSent(answer);
+    });
+  };
+  return (
+    <>
+      <Button variant="secondary" className="self-start" loading={busy} onClick={verify}>
+        Verify found payment
+      </Button>
+      {sent.error ? <Alert variant="destructive">{sent.error}</Alert> : null}
+    </>
+  );
+}
+
+function PaymentFacts({ record, controls, onSend }: { record: SecurityCase; controls?: ReactNode; onSend: Send }) {
   const settlement = record.settlement;
   if (settlement === null) return null;
+  const found = settlement.recovery?.mode === "payment-found" && canPay(record) ? (settlement.recovery.transactionIds ?? []) : [];
   const reporter = record.viewerRoles.includes("reporter");
   const finalized = settlement.transactionIds ?? (settlement.transactionId ? [settlement.transactionId] : []);
   return (
@@ -124,6 +147,7 @@ function PaymentFacts({ record, controls }: { record: SecurityCase; controls?: R
               Review payout wallet
             </a>
           ) : null}
+          {found.length > 0 ? <VerifyFoundPayment transactionIds={found} onSend={onSend} /> : null}
         </fieldset>
       ) : null}
       {controls}
@@ -256,7 +280,7 @@ export function CaseDetailView({ record, note, refreshError, onReload, retrying,
       ) : null}
       {owner ? <AnalysisPanel record={record} busy={retrying === "analyze"} error={retrying === null ? retryError : null} onRetry={() => onRetry("analyze")} /> : null}
       {owner && record.appealState === "open" ? <AppealTriage record={record} busy={retrying === "triage-appeal"} error={retrying === null ? retryError : null} onRetry={() => onRetry("triage-appeal")} /> : null}
-      <PaymentFacts record={record} controls={payment} />
+      <PaymentFacts key={record.revision} record={record} controls={payment} onSend={onSend} />
       <CaseActions record={record} onSend={onSend} />
       <History record={record} />
     </article>

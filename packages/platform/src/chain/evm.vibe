@@ -54,6 +54,7 @@ export interface Receipt {
   readonly contractAddress: Address | undefined
   readonly gasUsed: bigint
   readonly effectiveGasPrice: bigint | undefined
+  readonly l1Fee?: bigint
   readonly logs: ReadonlyArray<Log>
 }
 
@@ -173,6 +174,7 @@ schema WireReceipt {
   contractAddress?: string | null
   gasUsed: string
   effectiveGasPrice?: string
+  l1Fee?: string | null
   logs: ReadonlyArray<WireLog>
 }
 
@@ -274,6 +276,7 @@ effect function receiptOf(method: string, wire: WireReceipt) {
     contractAddress: try optionalAddress(method, "contractAddress", wire.contractAddress),
     gasUsed: try big(method, "gasUsed", wire.gasUsed),
     effectiveGasPrice: wire.effectiveGasPrice === undefined ? undefined : try big(method, "effectiveGasPrice", wire.effectiveGasPrice),
+    ...(wire.l1Fee === undefined || wire.l1Fee === null ? {} : { l1Fee: try big(method, "l1Fee", wire.l1Fee) }),
     logs,
   } satisfies Receipt
 }

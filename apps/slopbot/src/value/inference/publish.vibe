@@ -1,0 +1,425 @@
+// spec/slopbot/valueInference.md, "A retained inference survives stale publication without another charge"; spec/slopbot/valueInference.md, "A remote membership lookup is followed by current local authority and lease checks"; spec/slopbot/workUnits.md, "One transaction checks predecessors, legacy records, sources, claims and the publication fence"
+import { millisOf, nowSeconds, isoAt } from "@repo/platform/clock"
+import { sha256Hex } from "@repo/platform/crypto"
+import { D1, sql } from "@repo/platform/d1"
+import { GitHub } from "@repo/platform/github"
+import type { MergeRecipe } from "@repo/platform/git/evidence"
+import { type ProjectView, Registry, type RegistryPin } from "@repo/ports/backend"
+import { Enforcement } from "@repo/ports/security"
+import { absentOn404, loadPolicy } from "../../context/load.vibe"
+import { activeInstallation } from "../../installation/store.vibe"
+import { Acceptance, nativeMergeContext, noChangePromotionContext } from "../evidence/acceptance.vibe"
+import { collectEvidence } from "../evidence/collect.vibe"
+import { collectContext, contextSelections, validContextSelections } from "../evidence/context.vibe"
+import { type Evidence, EvidenceRefused, type RegisteredRepository, evidenceMatchesRepository, findRepository } from "../evidence/types.vibe"
+import { assessmentKeyStored, recordByDigest, valueAssessmentKey, verifiedLegacyHead } from "../history/read.vibe"
+import type { Recovered } from "../proofs/blob.vibe"
+import { type Claim, type ValueRequest, ownsRequest } from "../requests/store.vibe"
+import { scopeKeysOf } from "../requests/rows.vibe"
+import { noChangePromotionMatches } from "../workUnits/acceptance.vibe"
+import { GroupReads, type GroupRepository } from "../workUnits/group.vibe"
+import { reuseMergeResolution } from "../workUnits/merge.vibe"
+import { nativeMergeCarrierMatches } from "../workUnits/native.vibe"
+import { sourceDigestOf } from "../workUnits/prepare.vibe"
+import { PublicationChecks, type PublicationJob, type Registration } from "../workUnits/publish.vibe"
+import { appendSingleRecord, sourceKindOf } from "../workUnits/store.vibe"
+import type { Policy, WorkUnitSource } from "../workUnits/types.vibe"
+import type { Authority } from "../../../gen/slopbot__valueInference.effect.vibe"
+import { type ValueAssessment, validateEvidenceAssessment, valueRubricVersion } from "./assessment.vibe"
+import { type ProducerIdentity, producerIdentity } from "./run.vibe"
+
+export error ValueRefused { reason: string }
+
+schema RepositoryIdentity { id: number; node_id: string; private: boolean }
+schema ListedRepository { id: number; node_id: string; private: boolean }
+schema InstallationListing { repositories: ReadonlyArray<ListedRepository> }
+
+const shaPattern = /^[a-f0-9]{40}$/u
+const digestPattern = /^[a-f0-9]{64}$/u
+
+export interface Registered {
+  readonly view: ProjectView
+  readonly generation: number
+  readonly repositories: ReadonlyArray<GroupRepository>
+}
+
+export interface SourceIdentity {
+  readonly repositoryDatabaseId: number
+  readonly repositoryNodeId: string
+}
+
+function activeView(view: ProjectView) {
+  return view.rowStatus === "Active" && view.manifestStatus === "Active" && view.listingTier !== "Retired" && view.retirement === "NotRetired"
+}
+
+export function repositoriesOf(view: ProjectView): ReadonlyArray<GroupRepository> {
+  return view.repositories.map((repository) => ({
+    id: repository.fullName,
+    projectId: view.projectId,
+    integrationBranch: repository.integrationBranch,
+    expectedNodeId: repository.nodeId === "" ? null : repository.nodeId,
+    aliases: repository.aliases,
+    current: repository.fullName,
+  }))
+}
+
+export effect function registeredProject(owner: string, repo: string, repositoryId: number) {
+  const found = try (try Registry).byPath(`${owner}/${repo}`)
+  if (found === undefined || found.registeredRepositoryId !== String(repositoryId) || !activeView(found.project)) return undefined
+  const enforcement = try (try Enforcement).project(found.project.projectId)
+  if (enforcement.restriction !== "Clear") return undefined
+  return { view: found.project, generation: enforcement.enforcementGeneration, repositories: repositoriesOf(found.project) } satisfies Registered
+}
+
+export effect function registeredSource(repositories: ReadonlyArray<RegisteredRepository>, source: { readonly repository: string; readonly repositoryDatabaseId: number }) {
+  const target = findRepository(repositories, source.repository)
+  if (target === undefined) return false
+  const [owner = "", repo = ""] = target.id.split("/")
+  return (try registeredProject(owner, repo, source.repositoryDatabaseId)) !== undefined
+}
+
+export effect function localAuthority(owner: string, repo: string, repositoryId: number, installationId: number) {
+  const found = try (try Registry).byPath(`${owner}/${repo}`)
+  const installed = try activeInstallation(installationId)
+  if (found === undefined || found.registeredRepositoryId !== String(repositoryId)) return { revision: 0, generation: 0, manifest: "", installation: installationId, active: false } satisfies Authority
+  const enforcement = try (try Enforcement).project(found.project.projectId)
+  const active = installed && activeView(found.project) && enforcement.restriction === "Clear"
+  return { revision: found.project.revision, generation: enforcement.enforcementGeneration, manifest: found.project.manifestSha256, installation: installationId, active } satisfies Authority
+}
+
+export effect function assertInstallation(installationId: number) {
+  if (!(try activeInstallation(installationId))) throw new ValueRefused({ reason: "Value publication installation is inactive" })
+}
+
+export effect function listedSources(sources: ReadonlyArray<SourceIdentity>) {
+  const pending = new Map<number, string>()
+  for (const source of sources) {
+    const previous = pending.get(source.repositoryDatabaseId)
+    if (previous !== undefined && previous !== source.repositoryNodeId) throw new ValueRefused({ reason: "Value sources disagree about repository identity" })
+    pending.set(source.repositoryDatabaseId, source.repositoryNodeId)
+  }
+  if (pending.size === 0) throw new ValueRefused({ reason: "Value publication requires repository sources" })
+  const github = try GitHub
+  const seen = new Set<number>()
+  const listed = new Set<number>()
+  for (let page = 1; listed.size < pending.size; page += 1) {
+    const listing = try github.json(`/installation/repositories?per_page=100&page=${page}`, InstallationListing)
+    for (const repository of listing.repositories) {
+      if (seen.has(repository.id)) throw new ValueRefused({ reason: "Installation repository pagination repeated a source" })
+      seen.add(repository.id)
+      if (pending.get(repository.id) === repository.node_id && !repository.private) listed.add(repository.id)
+    }
+    if (listing.repositories.length < 100) break
+  }
+  return listed
+}
+
+export effect function assertListed(sources: ReadonlyArray<SourceIdentity>) {
+  const listed = try listedSources(sources)
+  if (sources.some((source) => !listed.has(source.repositoryDatabaseId))) throw new ValueRefused({ reason: "Repository is not selected for this installation" })
+}
+
+export effect function loadValuePolicy(repositoryId: number, sha: string) {
+  const { files } = try loadPolicy(repositoryId, sha)
+  if (files.length === 0 || files.some((file) => file.truncated)) throw new ValueRefused({ reason: "Complete pinned policy is required for value publication" })
+  return { sha, text: files.map((file) => `${file.path}\n${file.text}`).join("\n\n") } satisfies Policy
+}
+
+export function pinOf(registered: Registered, repositoryKeys: ReadonlyArray<string>): RegistryPin {
+  return { projectId: registered.view.projectId, revision: registered.view.revision, manifestSha256: registered.view.manifestSha256, repositoryKeys: [...new Set(repositoryKeys.map((key) => key.toLowerCase()))] }
+}
+
+export effect function registryFence(registered: Registered, repositoryKeys: ReadonlyArray<string>) {
+  const registry = try (try Registry).fence(pinOf(registered, repositoryKeys))
+  const enforcement = try (try Enforcement).fence({ enforcementGeneration: registered.generation })
+  return sql`(${registry}) AND (${enforcement})`
+}
+
+export effect function leaseFence(claim: Claim, sources: ReadonlyArray<{ readonly repositoryDatabaseId: number; readonly pullRequestNumber: number }>) {
+  const wanted = JSON.stringify(try scopeKeysOf(sources))
+  const now = try isoAt((try nowSeconds()) * 1000)
+  return sql`EXISTS (SELECT 1 FROM slopbot_value_processing owner
+    WHERE owner.delivery_id = ${claim.deliveryId} AND owner.claim_token = ${claim.token} AND owner.state = 'running' AND owner.lease_until > ${now}
+      AND NOT EXISTS (SELECT 1 FROM json_each(${wanted}) wanted WHERE NOT EXISTS (
+        SELECT 1 FROM slopbot_value_source_leases held WHERE held.scope_key = wanted.value AND held.delivery_id = owner.delivery_id
+          AND held.claim_token = owner.claim_token AND held.lease_until > ${now})))`
+}
+
+export interface Verified {
+  readonly evidence: Evidence
+  readonly policy: Policy
+}
+
+export interface CurrentCheck {
+  readonly policySha: string
+  readonly sourceDigest: string
+}
+
+export effect function verifyCurrentValueSource(evidence: Evidence, result: CurrentCheck, repositories: ReadonlyArray<RegisteredRepository>, joint: { readonly mergeRecipe?: MergeRecipe; readonly group: ReadonlyArray<WorkUnitSource>; readonly recovered?: Recovered } | undefined = undefined) {
+  const repository = findRepository(repositories, evidence.repository)
+  if (repository === undefined) throw new ValueRefused({ reason: "Value source is absent from the verified registry" })
+  const identity = try absentOn404((try GitHub).json(`/repos/${evidence.repository}`, RepositoryIdentity))
+  if (identity === undefined || identity.private || identity.id !== evidence.repositoryDatabaseId || identity.node_id !== evidence.repositoryNodeId)
+    throw new ValueRefused({ reason: "Value publication requires the same public repository identity" })
+  const collected = try collectEvidence({ repository: evidence.repository, number: evidence.pull.number, policy: repository, ...(joint?.recovered === undefined ? {} : { recovered: joint.recovered }) })
+  let current = try collectContext(collected, contextSelections(evidence))
+  if (joint?.mergeRecipe !== undefined) current = try reuseMergeResolution(current, evidence, joint.mergeRecipe)
+  if (evidence.mergeResolutions !== undefined && evidence.mergeResolutions.length === 0 && current.commits.every((commit) => commit.parents.length !== 2)) current = { ...current, mergeResolutions: [] }
+  const deferredPromotion = joint !== undefined && noChangePromotionMatches(current)
+  const deferredNative = joint !== undefined && (try nativeMergeCarrierMatches(current, joint.group))
+  if (current.pull.state !== "closed" || current.limitations.some((limitation) => !(deferredPromotion && limitation === noChangePromotionContext) && !(deferredNative && limitation === nativeMergeContext)))
+    throw new ValueRefused({ reason: "Value publication requires complete closed-pull-request evidence" })
+  if (result.policySha !== current.pull.base.sha) throw new ValueRefused({ reason: "Value publication policy is not bound to the current base revision" })
+  const policy = try loadValuePolicy(current.repositoryDatabaseId, current.pull.base.sha)
+  if ((try sourceDigestOf(current, policy)) !== result.sourceDigest) throw new ValueRefused({ reason: "Value source changed after assessment; a new assessment is required" })
+  return { evidence: current, policy } satisfies Verified
+}
+
+export interface SingleResult {
+  readonly verdict: ValueAssessment
+  readonly servedBy: { readonly gateway?: string; readonly provider?: string; readonly requestedModel: string; readonly servedModel: string | null; readonly outcome: string }
+  readonly assessedAt: string
+  readonly sourceDigest: string
+  readonly policySha: string
+  readonly headSha: string
+  readonly pullRequestNodeId: string
+}
+
+function canonicalAssessment(assessment: ValueAssessment): ValueAssessment {
+  return {
+    status: assessment.status,
+    tier: assessment.tier,
+    rationale: assessment.rationale,
+    dimensions: assessment.dimensions,
+    evidenceUrls: assessment.evidenceUrls,
+    relatedPullRequests: assessment.relatedPullRequests,
+    limitations: assessment.limitations,
+    reviews: assessment.reviews,
+  }
+}
+
+export effect function prepareValueRecord(result: SingleResult, evidence: Evidence, policy: Policy, producerRevision: string, supersedes: string | null, revisionReason: string | null, registered: Registered) {
+  const repository = findRepository(registered.repositories, evidence.repository)
+  if (repository === undefined || !activeView(registered.view)) throw new ValueRefused({ reason: "Value source must belong to an active registered project" })
+  if (!shaPattern.test(producerRevision) || !shaPattern.test(policy.sha) || policy.sha !== evidence.pull.base.sha || policy.text.trim() === "" || (supersedes !== null && !digestPattern.test(supersedes)))
+    throw new ValueRefused({ reason: "Value record revision binding is invalid" })
+  if (evidence.limitations.length > 0 || result.headSha !== evidence.pull.head.sha || result.pullRequestNodeId !== evidence.pull.node_id || result.policySha !== policy.sha || (try sourceDigestOf(evidence, policy)) !== result.sourceDigest)
+    throw new ValueRefused({ reason: "Value result does not bind complete supplied source evidence" })
+  if ((supersedes === null && revisionReason !== null) || (supersedes !== null && (revisionReason === null || revisionReason.trim() === "")))
+    throw new ValueRefused({ reason: "A value successor requires an explicit change reason" })
+  if (!evidenceMatchesRepository(evidence, repository)) throw new ValueRefused({ reason: "Value source does not match its registered repository policy" })
+  const assessment = validateEvidenceAssessment(result.verdict, evidence)
+  const occurredAt = evidence.pull.merged_at ?? evidence.pull.closed_at
+  if (evidence.pull.state !== "closed" || occurredAt === null || !Number.isFinite(millisOf(occurredAt))) throw new ValueRefused({ reason: "Value record requires a closed outcome with its occurrence date" })
+  if (assessment === undefined) throw new ValueRefused({ reason: "Value result lacks a validated assessment" })
+  const model = producerIdentity(result.servedBy, result.assessedAt)
+  if (model === undefined) throw new ValueRefused({ reason: "Value result lacks a validated model identity" })
+  const record = {
+    schemaVersion: "slop-value-record:v1",
+    projectId: registered.view.projectId,
+    repository: repository.id,
+    repositoryNodeId: evidence.repositoryNodeId,
+    repositoryDatabaseId: evidence.repositoryDatabaseId,
+    pullRequestNodeId: evidence.pull.node_id,
+    pullRequestNumber: evidence.pull.number,
+    headSha: evidence.pull.head.sha,
+    mergeSha: evidence.pull.merge_commit_sha,
+    occurredAt,
+    policySha: policy.sha,
+    sourceDigest: result.sourceDigest,
+    ...(evidence.contextFiles !== undefined && evidence.contextFiles.length > 0 ? { contextPaths: contextSelections(evidence) } : {}),
+    rubricVersion: valueRubricVersion,
+    producerRevision,
+    assessedAt: result.assessedAt,
+    supersedes,
+    revisionReason,
+    model,
+    assessment: canonicalAssessment(assessment),
+  }
+  const recordJson = try orDie(Effect.try(() => JSON.stringify(record)))
+  const assessmentKey = try valueAssessmentKey({ repositoryNodeId: record.repositoryNodeId, pullRequestNodeId: record.pullRequestNodeId, sourceDigest: record.sourceDigest, rubricVersion: valueRubricVersion, producerRevision })
+  return { recordJson, recordDigest: try sha256Hex(recordJson), assessmentKey }
+}
+
+export function legacySourceOf(evidence: Evidence, repository: RegisteredRepository) {
+  return {
+    projectId: repository.projectId,
+    repository: { id: repository.id, nodeId: evidence.repositoryNodeId },
+    repositoryNames: [repository.id, ...repository.aliases],
+    repositoryNodeId: evidence.repositoryNodeId,
+    repositoryDatabaseId: evidence.repositoryDatabaseId,
+    pullRequestNodeId: evidence.pull.node_id,
+    pullRequestNumber: evidence.pull.number,
+  }
+}
+
+export type SingleStatus = "missing" | "incomplete" | "stale" | "assessed" | "unresolved"
+
+export interface SingleDecision {
+  readonly status: SingleStatus
+  readonly latestDigest: string | null
+}
+
+schema LatestRecord {
+  headSha: string
+  mergeSha: string | null
+  occurredAt: string
+  policySha: string
+  sourceDigest: string
+  rubricVersion: string
+  producerRevision: string
+  assessedAt: string
+  model: { provider: string; requested: string; reported: string }
+}
+
+const LatestFields = Schema.Struct({ contextPaths: Schema.optionalKey(Schema.Unknown), assessment: Schema.Unknown })
+
+export effect function singleDecision(evidence: Evidence, policy: Policy, repository: RegisteredRepository) {
+  const head = try verifiedLegacyHead(legacySourceOf(evidence, repository))
+  if (head === undefined) return { status: "missing", latestDigest: null } satisfies SingleDecision
+  const stored = try recordByDigest(head)
+  if (stored === undefined) throw new ValueRefused({ reason: "Value history head is unavailable" })
+  const parsed = Effect.try(() => JSON.parse(stored.record_json) as unknown) catch () => undefined
+  const latest = Schema.decodeUnknownEffect(LatestRecord)(parsed) catch effect () => { throw new ValueRefused({ reason: "Current value record has invalid producer identity" }) }
+  const fields = Schema.decodeUnknownEffect(LatestFields)(parsed) catch effect () => { throw new ValueRefused({ reason: "Current value assessment does not validate against source" }) }
+  if (fields.contextPaths !== undefined && !validContextSelections(fields.contextPaths)) throw new ValueRefused({ reason: "Value history context selection is invalid" })
+  if (evidence.limitations.length > 0 || policy.text.trim() === "") return { status: "incomplete", latestDigest: head } satisfies SingleDecision
+  let sourceDigest = try sourceDigestOf(evidence, policy)
+  if (latest.sourceDigest !== sourceDigest && evidence.repairBodyEdit !== undefined) {
+    const { repairBodyEdit, ...historical } = evidence
+    if ((try sourceDigestOf(historical, policy)) === latest.sourceDigest) sourceDigest = latest.sourceDigest
+  }
+  if (!evidenceMatchesRepository(evidence, repository) || evidence.pull.state !== "closed" || latest.headSha !== evidence.pull.head.sha || latest.mergeSha !== evidence.pull.merge_commit_sha
+    || latest.occurredAt !== (evidence.pull.merged_at ?? evidence.pull.closed_at) || latest.policySha !== policy.sha || policy.sha !== evidence.pull.base.sha
+    || latest.sourceDigest !== sourceDigest || latest.rubricVersion !== valueRubricVersion)
+    return { status: "stale", latestDigest: head } satisfies SingleDecision
+  if (!shaPattern.test(latest.producerRevision) || !Number.isFinite(millisOf(latest.assessedAt)) || !producerRecognized(latest.model)) throw new ValueRefused({ reason: "Current value record has invalid producer identity" })
+  const assessment = validateEvidenceAssessment(fields.assessment, evidence)
+  if (assessment === undefined) throw new ValueRefused({ reason: "Current value assessment does not validate against source" })
+  return { status: assessment.status, latestDigest: head } satisfies SingleDecision
+}
+
+const historicalModels = ["claude-opus-5.5", "gpt-6.1-sol"]
+
+export function producerRecognized(model: ProducerIdentity) {
+  if (model.requested !== model.reported) return false
+  return producerIdentity({ gateway: model.provider, requestedModel: model.requested, servedModel: model.reported, outcome: "ok" }, "2026-11-01T00:00:00.000Z") !== undefined
+    || (model.provider === "surplus" && historicalModels.includes(model.requested))
+}
+
+export interface SinglePublication {
+  readonly job: ValueRequest
+  readonly result: SingleResult
+  readonly evidence: Evidence
+  readonly producerRevision: string
+  readonly supersedes: string | null
+  readonly revisionReason: string | null
+  readonly claim: Claim
+}
+
+export effect function publishValueAssessment(publication: SinglePublication) {
+  const { job, evidence, claim } = publication
+  if (job.repositoryId !== evidence.repositoryDatabaseId || `${job.owner}/${job.repo}`.toLowerCase() !== evidence.repository.toLowerCase() || job.number !== evidence.pull.number)
+    throw new ValueRefused({ reason: "Value publication job does not match its source" })
+  const registered = try registeredProject(job.owner, job.repo, job.repositoryId)
+  if (registered === undefined) throw new ValueRefused({ reason: "Repository is not active in the Slop project registry" })
+  try assertInstallation(job.installationId)
+  try assertListed([evidence])
+  const current = try verifyCurrentValueSource(evidence, publication.result, registered.repositories)
+  const prepared = try prepareValueRecord(publication.result, current.evidence, current.policy, publication.producerRevision, publication.supersedes, publication.revisionReason, registered)
+  const repository = findRepository(registered.repositories, current.evidence.repository)
+  if (repository === undefined) throw new ValueRefused({ reason: "Value source is absent from the verified registry" })
+  const decision = try singleDecision(current.evidence, current.policy, repository)
+  const replay = try assessmentKeyStored(prepared.assessmentKey)
+  if (!replay && publication.supersedes !== decision.latestDigest) throw new ValueRefused({ reason: "Value publication must supersede the current journal record" })
+  try assertListed([current.evidence])
+  if ((try registeredProject(job.owner, job.repo, job.repositoryId)) === undefined) throw new ValueRefused({ reason: "Repository is not active in the Slop project registry" })
+  try assertInstallation(job.installationId)
+  const sources = [{ repositoryDatabaseId: evidence.repositoryDatabaseId, pullRequestNumber: evidence.pull.number }]
+  return try appendSingleRecord(prepared.recordJson, {
+    installationId: job.installationId,
+    projectId: registered.view.projectId,
+    registryFence: try registryFence(registered, [`${job.owner}/${job.repo}`]),
+    leaseFence: try leaseFence(claim, sources),
+  }, sourceKindOf(evidence))
+}
+
+const subscriptionChannels: Readonly<Record<string, string>> = { "chatgpt-subscription": "openai", "claude-subscription": "anthropic" }
+
+function identityLabel(value: unknown) {
+  return typeof value === "string" && /^[A-Za-z0-9][A-Za-z0-9 ._-]{0,95}$/u.test(value)
+}
+
+export function isSubscriptionProvenance(value: unknown) {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) return false
+  const fields: Readonly<Record<string, unknown>> = { ...value }
+  const channel = fields["channel"]
+  return Object.keys(fields).sort().join() === "apiReceipt,channel,client,exactVariant,identityEvidence,model,provider"
+    && typeof channel === "string" && Object.hasOwn(subscriptionChannels, channel) && fields["provider"] === subscriptionChannels[channel]
+    && identityLabel(fields["model"]) && identityLabel(fields["client"]) && fields["exactVariant"] === null
+    && fields["identityEvidence"] === "self-reported" && fields["apiReceipt"] === null
+}
+
+function refusalOf(error: { readonly _tag: string }) {
+  if (error instanceof EvidenceRefused) return error
+  return new EvidenceRefused({ reason: error instanceof ValueRefused ? error.reason : `Value publication check failed: ${error._tag}` })
+}
+
+effect function registration(job: PublicationJob, sources: ReadonlyArray<Evidence>, claim: Claim | undefined) {
+  const registered = try registeredProject(job.owner, job.repo, job.repositoryId)
+  if (registered === undefined) return undefined
+  const keys = [`${job.owner}/${job.repo}`, ...sources.flatMap((source) => findRepository(registered.repositories, source.repository)?.id ?? [])]
+  const scopes = sources.map((source) => ({ repositoryDatabaseId: source.repositoryDatabaseId, pullRequestNumber: source.pull.number }))
+  return {
+    project: { id: registered.view.projectId, active: activeView(registered.view) },
+    repositories: registered.repositories,
+    registryFence: try registryFence(registered, keys),
+    ...(claim === undefined ? {} : { leaseFence: try leaseFence(claim, scopes) }),
+  } satisfies Registration
+}
+
+effect function admitted(job: PublicationJob, sources: ReadonlyArray<Evidence>) {
+  const registered = try registeredProject(job.owner, job.repo, job.repositoryId)
+  if (registered === undefined) throw new ValueRefused({ reason: "Repository is not active in the Slop project registry" })
+  for (const source of sources) {
+    if (!(try registeredSource(registered.repositories, source))) throw new ValueRefused({ reason: "Repository is not active in the Slop project registry" })
+  }
+  try assertInstallation(job.installationId)
+  try assertListed(sources)
+}
+
+export const publicationChecks = Layer.effect(PublicationChecks, effect {
+  const services = try Effect.context<Registry | Enforcement | D1 | Acceptance | Experimental.Crypto.Crypto>()
+  return {
+    subscribed: (provenance: unknown) => Effect.succeed(isSubscriptionProvenance(provenance)),
+    registration: (job, sources, claim) => Effect.mapError(Effect.provide(registration(job, sources, claim), services), refusalOf),
+    admitted: (job, sources) => Effect.mapError(Effect.provide(admitted(job, sources), services), refusalOf),
+    current: (check) => Effect.mapError(Effect.provide(Effect.asVoid(verifyCurrentValueSource(check.source.evidence, { policySha: check.source.policy.sha, sourceDigest: check.sourceDigest }, check.repositories, {
+      group: check.group,
+      ...(check.source.mergeRecipe === undefined ? {} : { mergeRecipe: check.source.mergeRecipe }),
+      ...(check.recovered === undefined ? {} : { recovered: check.recovered }),
+    })), services), refusalOf),
+  }
+})
+
+effect function authorized(claim: Claim, repositories: ReadonlyArray<RegisteredRepository>, installationId: number, source: SourceIdentity & { readonly repository: string }) {
+  if (!(try ownsRequest(claim)) || !(try registeredSource(repositories, source))) return false
+  try assertInstallation(installationId)
+  try assertListed([source])
+  return true
+}
+
+effect function repositoryPolicy(repository: string, baseSha: string) {
+  const identity = try (try GitHub).json(`/repos/${repository}`, RepositoryIdentity)
+  return try loadValuePolicy(identity.id, baseSha)
+}
+
+export function groupReadsFor(claim: Claim, repositories: ReadonlyArray<RegisteredRepository>, installationId: number) {
+  return Layer.effect(GroupReads, effect {
+    const services = try Effect.context<Registry | Enforcement | D1 | Experimental.Crypto.Crypto>()
+    return {
+      authorize: (source) => Effect.mapError(Effect.provide(authorized(claim, repositories, installationId, source), services), refusalOf),
+      policy: (repository, baseSha) => Effect.mapError(Effect.provide(repositoryPolicy(repository, baseSha), services), refusalOf),
+    }
+  })
+}

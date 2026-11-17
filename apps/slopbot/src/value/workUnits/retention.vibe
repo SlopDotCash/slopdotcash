@@ -1,0 +1,65 @@
+// spec/slopbot/valueEvidence.md, "Absence is proved only by a hash-verified tree, never by a 404"; spec/slopbot/workUnits.md, "A claim is one changed path in one commit and belongs to its first accepted carrier"
+import { utf8Text } from "@repo/platform/git/bytes"
+import type { RetainedFile, TextVersion } from "../evidence/types.vibe"
+import { verifiedBlob } from "../proofs/blob.vibe"
+import type { FileChange } from "../proofs/changes.vibe"
+import type { Reads } from "../proofs/reads.vibe"
+import { type TreeProof, verifiedTree } from "../proofs/tree.vibe"
+import { answer } from "./source.vibe"
+
+export const retentionFileLimit = 256
+const comparisonFileCap = 300
+
+schema ComparedFile { readonly filename: string; readonly previous_filename?: string; readonly status: string }
+schema BaseCommit { readonly sha: string }
+schema RetentionComparison { readonly status: string; readonly merge_base_commit: BaseCommit | null; readonly files: ReadonlyArray<ComparedFile> }
+
+function renamesOf(files: ReadonlyArray<ComparedFile>) {
+  const renames = new Map<string, string>()
+  for (const file of files) {
+    if (file.status !== "renamed") continue
+    if (file.previous_filename === undefined || file.previous_filename === "" || renames.has(file.previous_filename)) return undefined
+    renames.set(file.previous_filename, file.filename)
+  }
+  return renames
+}
+
+export effect function collectIndirectRetention(repository: string, historicalHeadSha: string, acceptedTipSha: string, files: ReadonlyArray<FileChange>, reads?: Reads) {
+  if (files.length === 0 || files.length > retentionFileLimit || new Set(files.map((file) => file.filename)).size !== files.length) return undefined
+  const comparison = try answer(`/repos/${repository}/compare/${historicalHeadSha}...${acceptedTipSha}?per_page=1`, RetentionComparison)
+  if (comparison === undefined || !["ahead", "identical"].includes(comparison.status) || comparison.merge_base_commit?.sha !== historicalHeadSha) return undefined
+  const saturated = comparison.files.length >= comparisonFileCap
+  const renames = renamesOf(comparison.files)
+  if (renames === undefined) return undefined
+  const historical = try verifiedTree(repository, historicalHeadSha, reads)
+  const accepted = try verifiedTree(repository, acceptedTipSha, reads)
+  if (historical === undefined || accepted === undefined) return undefined
+  const blob = verifiedBlob(repository)
+  const texts = new Map<string, string>()
+  effect function version(tree: TreeProof, path: string, ref: string) {
+    const entry = tree.entries.get(path)
+    if (entry === undefined) return null
+    if (entry.type !== "blob" || !["100644", "100755"].includes(entry.mode)) return undefined
+    let text = texts.get(entry.sha)
+    if (text === undefined) {
+      const file = try blob(path, ref)
+      if (file === undefined || file.sha !== entry.sha) return undefined
+      text = utf8Text(file.bytes)
+      if (text === undefined || text.includes("\0")) return undefined
+      texts.set(entry.sha, text)
+    }
+    return { blobSha: entry.sha, mode: entry.mode, text } satisfies TextVersion
+  }
+  const result: RetainedFile[] = []
+  for (const file of [...files].sort((a, b) => a.filename.localeCompare(b.filename))) {
+    const sourcePath = file.filename
+    const acceptedPath = renames.get(sourcePath) ?? sourcePath
+    if (saturated && (acceptedPath !== sourcePath || !historical.entries.has(sourcePath) || !accepted.entries.has(sourcePath))) return undefined
+    const before = try version(historical, sourcePath, historicalHeadSha)
+    const after = try version(accepted, acceptedPath, acceptedTipSha)
+    if (before === undefined || after === undefined || (before === null && file.status !== "removed")) return undefined
+    if (renames.has(sourcePath) && after === null) return undefined
+    result.push({ sourcePath, acceptedPath, historical: before, accepted: after })
+  }
+  return result
+}

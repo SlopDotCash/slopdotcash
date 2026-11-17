@@ -19,10 +19,10 @@ function unusable(reason: Skip, httpStatus?: number): Verdict {
   return { answer: { tag: "Unusable", reason }, ...httpStatus === undefined ? {} : { httpStatus } }
 }
 
-function verdictOf(error: GitHubFailure, answeredStatus: number | undefined): Verdict {
+function verdictOf(error: GitHubFailure): Verdict {
   switch (error._tag) {
     case "GitHubUnavailable": return error.status === undefined ? unusable("Unreachable") : unusable("Rejected", error.status)
-    case "RateLimited": return unusable("RateLimited", answeredStatus)
+    case "RateLimited": return unusable("RateLimited", error.status)
     case "GitHubRefused": return unusable(error.status === 401 || error.status === 403 ? "Unauthorized" : "Rejected", error.status)
     case "NotFound": return unusable("Rejected", 404)
     case "GitHubMalformed": return unusable("Malformed")
@@ -38,12 +38,8 @@ function verdictFor(status: IntakeStatus): Verdict {
 }
 
 export effect function intakeVerdict(token: Redacted.Redacted<string> | undefined, anonymousRetry: (refusal: TokenRefusal) => void!!) {
-  const answered: { status?: number } = {}
-  const client = HttpClient.tap(try HttpClient.HttpClient, (response) => sync(() => {
-    answered.status = response.status
-  }))
-  provide Layer.provide(github({ token, userAgent: intakeUserAgent, anonymousRetry }), Layer.succeed(HttpClient.HttpClient, client)) {
+  provide github({ token, userAgent: intakeUserAgent, anonymousRetry }) {
     const read = Effect.map((try GitHub).json(intakeStatusPath, IntakeStatus, { limitBytes: intakeLimitBytes, followRenamed: false }), verdictFor)
-    return read catch (error) => verdictOf(error, answered.status)
+    return read catch (error) => verdictOf(error)
   }
 }

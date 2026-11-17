@@ -9,7 +9,7 @@ import { postSecurityCasesByIdActions as actionRows } from "../client/refusals.v
 import { type CaseStanding, caseOf, caseStanding } from "../intake/rows.vibe"
 import { githubNumber } from "../privacy/reads.vibe"
 import { ReportingPrograms } from "../receipt/program.vibe"
-import { type CaseAssessment, NotAssessable, assessmentAt, attempted, authorityAfter, started } from "./store.vibe"
+import { type CaseAssessment, NotAssessable, assessmentAt, attempted, authorityAfter, caseExclusions, started } from "./store.vibe"
 
 export interface AssessmentView {
   readonly attempt: number
@@ -97,7 +97,7 @@ export effect function assessmentRead(read: CaseRead) {
   const nowMs = try Clock.currentTimeMillis
   return {
     analysis: viewOf(current, nowMs),
-    analyze: canStartOwnerRun(current.assessment, githubNumber(read.viewerGithubId), read.roles.authority.epoch, nowMs),
+    analyze: canStartOwnerRun(current.assessment, githubNumber(read.viewerGithubId), read.roles.authority.epoch, nowMs, current.exclusions),
   }
 }
 
@@ -114,7 +114,7 @@ export effect function analyze(input: { readonly caseId: string; readonly actor:
   if (!mayReadBody(caseOf(record, 0, roles), by, roles.authority.epoch)) throw refused(actionRows.notFoundCaseNotFound)
   if (record.submission_state !== "verified" || !roles.authority.technical.includes(by)) throw refused(actionRows.actionNotAllowedTheCaseDoesNotAllowAnalyzeIn)
   const nowMs = try Clock.currentTimeMillis
-  const run = Effect.flatMap(authorityAfter(record.id, initial.authority, roles.authority), (authority) => started(record.id, { type: "startOwnerRun", checkedEpoch: authority.epoch, nowMs }, by, authority)) catch effect (error) => {
+  const run = Effect.flatMap(Effect.zip(caseExclusions(record.id), authorityAfter(record.id, initial.authority, roles.authority)), ([exclusions, authority]) => started(record.id, { type: "startOwnerRun", checkedEpoch: authority.epoch, nowMs, exclusions }, by, authority)) catch effect (error) => {
     if (error instanceof Rejected || error instanceof NotAssessable) throw refused(actionRows.analysisRunningAnalysisIsNotAvailable)
     throw error
   }
@@ -124,7 +124,7 @@ export effect function analyze(input: { readonly caseId: string; readonly actor:
 
 export effect function assessQualified(input: { readonly caseId: string; readonly version: number; readonly timeoutMs?: number }) {
   const nowMs = try Clock.currentTimeMillis
-  const run = started(input.caseId, { type: "startAutomatic", nowMs }, 0, initial.authority, input.version) catch effect (error) => {
+  const run = Effect.flatMap(caseExclusions(input.caseId), (exclusions) => started(input.caseId, { type: "startAutomatic", nowMs, exclusions }, 0, initial.authority, input.version)) catch effect (error) => {
     if (error instanceof Rejected || error instanceof NotAssessable) return undefined
     throw error
   }

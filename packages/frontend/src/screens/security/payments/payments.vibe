@@ -1,0 +1,129 @@
+// spec/frontend/directBountyPrompt.md, "A wallet prompt starts only after an atomic storage write owns its nonce"; spec/frontend/directBountyPrompt.md, "A late wallet result updates only the prompt that still owns the stored entry"; spec/frontend/directBountyPrompt.md, "Storage keeps the other leg and never grants settlement authority"; spec/frontend/solanaBountyPrompt.md, "The wallet sends only a saved, unexpired plan"; spec/frontend/solanaBountyPrompt.md, "Verification and history recovery rechecks the account and never sends"; spec/frontend/walletAttempt.md, "Recovery and settlement use the saved record of the signed-in account only"; spec/settlement/directBounty.md, "A recovered request changes only an unpaid leg after exact retirement"
+import { Machine as DirectMachine, type Surface } from "../../../../gen/frontend__directBountyPrompt.effect.vibe"
+import { Machine as SolanaMachine } from "../../../../gen/frontend__solanaBountyPrompt.effect.vibe"
+import type { PageRuntime } from "../../../app/runtime.vibe"
+import { type DirectPaymentForm, type HashInputs, connectPayer, openCasePayment } from "../../../wallets/bounty/directPrompt.vibe"
+import { type Authority, PaymentCase, paymentMessages, refused, sessionActor } from "../../../wallets/bounty/paymentCase.vibe"
+import { bountyStorage } from "../../../wallets/bounty/records.ts"
+import { checkExpiredPayment, connectRecoveryPayer, openCancellation, recoveryMessages } from "../../../wallets/bounty/recovery.vibe"
+import { type SolanaPaymentForm, connectSolanaPayer, openCaseSolanaPayment } from "../../../wallets/bounty/solanaPayment.vibe"
+import { type Submitted, submittedPayments, verifySubmitted } from "../../../wallets/bounty/submitted.vibe"
+import { WalletChoice, type WalletOffer, walletChoiceServices } from "../../../wallets/core/discovery.vibe"
+import type { EvmConnection } from "../../../wallets/core/evm.vibe"
+import type { SolanaConnection } from "../../../wallets/core/solana.vibe"
+import type { SecurityCase } from "../cases/case.schema.ts"
+
+export type { DirectPaymentForm, HashInputs, SolanaPaymentForm, Submitted, Surface, WalletOffer }
+
+export function paymentServices(page: PageRuntime) {
+  return Layer.provideMerge(walletChoiceServices, Layer.effectContext(page.contextEffect))
+}
+
+export type PaymentsRuntime = ManagedRuntime.ManagedRuntime<Layer.Success<ReturnType<typeof paymentServices>>, Layer.Error<ReturnType<typeof paymentServices>>>
+
+const sections = new WeakMap<PageRuntime, PaymentsRuntime>()
+
+export function paymentsRuntime(page: PageRuntime): PaymentsRuntime {
+  const known = sections.get(page)
+  if (known !== undefined) return known
+  const made = ManagedRuntime.make(paymentServices(page))
+  sections.set(page, made)
+  return made
+}
+
+export effect function watchOffers(show: (offers: ReadonlyArray<WalletOffer>) => void!!) {
+  const choice = try WalletChoice
+  for try (const offers of choice.offers) try show(offers)
+}
+
+effect function seenOf(record: SecurityCase) {
+  return Schema.decodeUnknownEffect(PaymentCase)(record) catch effect () => { throw refused(paymentMessages.stateChanged) }
+}
+
+export interface DirectOpened<R> {
+  readonly form: DirectPaymentForm
+  readonly authority: Authority<R>
+  readonly surface: Surface
+  readonly runtime: ManagedRuntime.ManagedRuntime<DirectMachine, never>
+}
+
+effect function mounted<R>(opened: { readonly form: DirectPaymentForm; readonly authority: Authority<R> }) {
+  const surface = try opened.form.mount()
+  return { ...opened, surface, runtime: ManagedRuntime.make(Layer.succeed(DirectMachine, opened.form.machine)) } satisfies DirectOpened<R>
+}
+
+export effect function openEvmPayment(record: SecurityCase) {
+  return try mounted(try openCasePayment(bountyStorage(), try seenOf(record)))
+}
+
+export effect function openCancellationPayment(record: SecurityCase) {
+  return try mounted(try openCancellation(bountyStorage(), try seenOf(record)))
+}
+
+export effect function connectDirect<R>(opened: DirectOpened<R>, id: number) {
+  const legs = (try opened.form.shown(opened.surface)).legs
+  const from = legs[0]?.transaction.from
+  if (from === undefined) throw refused(paymentMessages.stateChanged)
+  return try connectPayer(id, from, opened.authority)
+}
+
+export effect function sendDirect<R>(opened: DirectOpened<R>, connection: EvmConnection) {
+  return try opened.form.send(opened.surface, connection, opened.authority)
+}
+
+export effect function checkDirect<R>(opened: DirectOpened<R>, inputs: HashInputs) {
+  return (try opened.form.check(opened.surface, inputs, opened.authority)).message
+}
+
+export effect function departDirect<R>(opened: DirectOpened<R>) {
+  try opened.form.depart(opened.surface)
+}
+
+export effect function shownDirect<R>(opened: DirectOpened<R>) {
+  return try opened.form.shown(opened.surface)
+}
+
+export effect function openSolanaPayment(record: SecurityCase) {
+  const seen = try seenOf(record)
+  const opened = try openCaseSolanaPayment(bountyStorage(), seen)
+  try opened.form.observe(seen)
+  return { ...opened, runtime: ManagedRuntime.make(Layer.succeed(SolanaMachine, opened.form.machine)) }
+}
+
+export type SolanaOpened = Effect.Success<ReturnType<typeof openSolanaPayment>>
+
+export effect function connectSolana(opened: SolanaOpened, id: number) {
+  return try connectSolanaPayer(id, opened.form.payer, opened.authority)
+}
+
+export effect function sendSolana(opened: SolanaOpened, connection: SolanaConnection) {
+  return try opened.form.send(connection, opened.authority)
+}
+
+export effect function verifySolana(opened: SolanaOpened, entered: string) {
+  return (try opened.form.verify(entered, opened.authority)).message
+}
+
+export interface RecoveryConnection {
+  readonly owner: string
+  readonly connection: SolanaConnection
+}
+
+export effect function connectRecovery(record: SecurityCase, id: number) {
+  const owner = try sessionActor()
+  if (owner === undefined) throw refused(recoveryMessages.signIn)
+  const connection = try connectRecoveryPayer(id, owner, try seenOf(record))
+  return { owner, connection } satisfies RecoveryConnection
+}
+
+export effect function checkHistory(record: SecurityCase, connected: RecoveryConnection, form: SolanaPaymentForm | undefined) {
+  try checkExpiredPayment(bountyStorage(), connected.owner, try seenOf(record), connected.connection, form)
+}
+
+export effect function readSubmitted(record: SecurityCase) {
+  return try submittedPayments(bountyStorage(), try seenOf(record))
+}
+
+export effect function verifySubmittedRows(record: SecurityCase, submitted: Submitted) {
+  try verifySubmitted(bountyStorage(), try seenOf(record), submitted)
+}

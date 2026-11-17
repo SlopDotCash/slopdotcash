@@ -5,7 +5,7 @@ import { json, refuse } from "@repo/platform/http"
 import { cacheControl } from "@repo/platform/route"
 import { type ProjectView, Registry } from "@repo/ports/backend"
 import { ReportingReadiness, type ReportingReadinessRead } from "@repo/ports/slopbot"
-import type { ProjectListing, ReadinessObservation, Target } from "../../gen/security__reportingReadiness.ts"
+import type { ProjectListing, Readiness, ReadinessObservation, Target } from "../../gen/security__reportingReadiness.ts"
 import { fresh, identityMatches, maxAgeMs, readyFor } from "../../gen/security__reportingReadiness.effect.vibe"
 import { intakeReadiness, readinessSeconds } from "../client/intake.vibe"
 import { getSecurityProgramsByIdIntake as readinessRows } from "../client/refusals.vibe"
@@ -68,6 +68,20 @@ function observationOf(read: ReportingReadinessRead | undefined, target: Target)
   }
 }
 
+export interface ReportingCache {
+  readonly cache: Readiness
+  readonly target: Target
+  readonly observation: ReadinessObservation | undefined
+  readonly read: ReportingReadinessRead | undefined
+}
+
+export effect function reportingCache(project: ProjectView) {
+  const read = try (try ReportingReadiness).current(project.projectId)
+  const target = targetOf(project, read)
+  const observation = observationOf(read, target)
+  return { cache: { observations: observation === undefined ? [] : [observation] }, target, observation, read } satisfies ReportingCache
+}
+
 export function handoffUrl(repository: string) {
   return `https://github.com/${repository}/security/advisories/new`
 }
@@ -79,14 +93,12 @@ export effect function readiness(id: string) {
   const program = try (try ReportingPrograms).current(id)
   if (program === undefined) throw programNotFound()
   const settings = try IntakeSettings
-  const read = try (try ReportingReadiness).current(id)
+  const { cache, target, observation, read } = try reportingCache(project)
   const nowMs = try Clock.currentTimeMillis
-  const target = targetOf(project, read)
-  const observation = observationOf(read, target)
   const known = observation !== undefined && identityMatches(observation, target) && observation.verifiedAt > 0 && nowMs >= observation.verifiedAt
   const state = !known ? "unavailable" as const : observation.enabled ? "ready" as const : "disabled" as const
   const stale = !known || !fresh(observation, nowMs)
-  const ready = readyFor({ observations: observation === undefined ? [] : [observation] }, target, nowMs)
+  const ready = readyFor(cache, target, nowMs)
   const remaining = stale || !known ? 0 : Math.max(0, Math.floor((maxAgeMs - (nowMs - observation.verifiedAt)) / 1000))
   const closed = program.closesAt !== undefined && millisOf(program.closesAt) <= nowMs
   return {

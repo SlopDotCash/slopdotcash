@@ -117,9 +117,10 @@ effect function followLink() {
 
 const otherCodeMethods = ["GET", "PUT", "PATCH", "DELETE", "OPTIONS"] as const
 
-export const ReferralRoutes = Layer.mergeAll(
+export const ReferralCodeRoutes = Layer.mergeAll(
   handle({ ...chooseCode, request: undefined }, (input) => chooseName(input.actor.githubId)),
   HttpRouter.addAll(otherCodeMethods.map((method) => HttpRouter.route(method, chooseCode.path, answered(effect { throw new Refused(refusals.OriginForbidden) })))),
   HttpRouter.add("*", `${linkPrefix}*`, answered(followLink())),
-  ReferredProjectRoutes,
 )
+
+export const ReferralRoutes = Layer.mergeAll(ReferralCodeRoutes, ReferredProjectRoutes)

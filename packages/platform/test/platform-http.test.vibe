@@ -78,7 +78,7 @@ function refusal(status: number, error: string, message: string, headers: Readon
 }
 
 layer(Started, { excludeTestServices: true, timeout: "180 seconds" })((it) => {
-  it.effect('Each access kind admits or refuses a request with its exact status and body (spec/backend/accounts.md, "Account identity, sessions and membership"; spec/frontend/navigation.md, "A private read belongs to the current account and navigation lifetime"; spec/backend/listing.md, "A restricted project is closed on every public route and a paused one stays listed")', () => effect {
+  it.effect('Each access kind admits or refuses a request with its exact status and body (spec/backend/accounts.md, "Members are keyed by an immutable actor and numeric GitHub ID, and sessions by server-issued IDs"; spec/frontend/navigation.md, "A private read belongs to the current account and navigation lifetime"; spec/backend/listing.md, "A restricted project is closed on every public route and a paused one stays listed")', () => effect {
     const http = try Http
     const note = (text: string, headers: Readonly<Record<string, string>> = write, path = "/api/v1/fixture/notes") => http.ask(path, { method: "POST", headers, body: JSON.stringify({ text }) })
     const answers = {
@@ -211,7 +211,7 @@ layer(Started, { excludeTestServices: true, timeout: "180 seconds" })((it) => {
     }))
   })
 
-  it.effect('A strict JSON body is bounded while it is read and answers the trace API refusals (spec/backend/accounts.md, "Account identity, sessions and membership"; spec/slopbot/webhookDelivery.md, "Bounded bytes and strict object decoding are required")', () => effect {
+  it.effect('A strict JSON body is bounded while it is read and answers the trace API refusals (spec/backend/accounts.md, "Members are keyed by an immutable actor and numeric GitHub ID, and sessions by server-issued IDs"; spec/slopbot/webhookDelivery.md, "Bounded bytes and strict object decoding are required")', () => effect {
     const http = try Http
     const strict = (body: string | Uint8Array) => http.ask("/api/v1/fixture/strict", { method: "POST", headers: { "content-type": "application/json" }, body })
     const answers = {

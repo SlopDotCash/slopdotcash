@@ -6,9 +6,9 @@ import { handle } from "@repo/platform/http"
 import { route } from "@repo/platform/route"
 import { worker } from "@repo/platform/worker"
 import { CallerLive } from "@repo/backend/caller"
+import { RegistryManifestsLive } from "@repo/backend/ports"
 import { Restrictions } from "@repo/ports/backend"
 import { Clearance, Enforcement } from "@repo/ports/security"
-import { PublishedProjectsLive } from "../../../src/publication/projects.vibe"
 import { publicationRoutes } from "../../../src/publication/routes.vibe"
 import { siteAssets } from "../../../src/publication/templates.vibe"
 
@@ -75,7 +75,7 @@ export default worker({
     webCrypto,
     siteAssets(env.ASSETS),
     security,
-    Layer.provide(PublishedProjectsLive, d1(env.SLOP_DB)),
+    Layer.provide(RegistryManifestsLive, d1(env.SLOP_DB)),
     Layer.provide(CallerLive, Layer.merge(d1(env.SLOP_DB), webCrypto)),
   ),
   routes: Layer.mergeAll(publicationRoutes, planned),

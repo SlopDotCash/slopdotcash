@@ -138,7 +138,8 @@ effect function loaded(projectId: string, rows: ReadonlyArray<Rows>, action: Act
   const project = projectState(backend, facts)
   const prospect = backend.project === undefined ? try prospectOf(backend, action) : undefined
   const prospective = prospect === undefined ? project : { ...project, repositories: [prospect.repository], starts: [{ repositoryId: prospect.repository, month: facts.month }], network: networkOf(prospect.manifest), asset: assetKeyIn([], assetOf(prospect.manifest).identity) }
-  const security = try (try EnforcementRows).decode(projectId, rows.slice(3), mirrorOf(backend))
+  const mirror = mirrorOf(backend)
+  const security = try (try EnforcementRows).decode(projectId, rows.slice(3), prospect === undefined ? mirror : { ...mirror, repositoryGithubIds: [String(prospect.repository)] })
   const state = try decodeState({ project: prospective, security, exclusions: exclusionsOf(backend.current) })
   return { rows: backend, state, event: action === undefined ? undefined : try trusted(backend, state, action, prospect) } satisfies Loaded
 }
@@ -209,6 +210,7 @@ effect function created(current: Loaded, after: Registry, action: Action, at: st
     stamped,
     writes: [
       sql`INSERT INTO project_revisions (project_id, revision, manifest, manifest_sha256, reason, actor_github_id, actor_github_login, created_at) VALUES (${projectId}, 1, ${stamped.text}, ${stamped.sha256}, ${reason}, ${actor?.githubId ?? null}, ${actor?.login ?? null}, ${at})`,
+      sql`INSERT INTO project_revision_kinds (project_id, revision, kind) VALUES (${projectId}, 1, 'Created')`,
       sql`INSERT INTO projects (id, status, revision, manifest, manifest_sha256, created_at, updated_at, source_application_id, referrer_github_id, referrer_github_login) VALUES (${projectId}, ${statusText(after.project.status)}, 1, ${stamped.text}, ${stamped.sha256}, ${at}, ${at}, NULL, ${action.referrer?.githubId ?? null}, ${action.referrer?.login ?? null})`,
       ...repositoryKeysOf(stamped.manifest).map((key) => sql`INSERT INTO project_repositories (repository_key, project_id) VALUES (${key}, ${projectId})`),
     ],
@@ -234,6 +236,7 @@ effect function published(current: Loaded, after: Registry, action: Action, at: 
     stamped: { text, sha256: application.manifest_sha256, manifest },
     writes: [
       sql`INSERT INTO project_revisions (project_id, revision, manifest, manifest_sha256, reason, actor_github_id, actor_github_login, created_at) SELECT ${projectId}, 1, ${text}, ${application.manifest_sha256}, ${reason}, ${application.applicant_github_id}, ${application.applicant_github_login}, ${at} WHERE ${pending}`,
+      sql`INSERT INTO project_revision_kinds (project_id, revision, kind) SELECT ${projectId}, 1, 'Created' WHERE ${pending}`,
       sql`INSERT INTO projects (id, status, revision, manifest, manifest_sha256, created_at, updated_at, source_application_id, referrer_github_id, referrer_github_login) SELECT ${projectId}, 'paused', 1, ${text}, ${application.manifest_sha256}, ${at}, ${at}, ${application.id}, ${application.referrer_github_id}, ${application.referrer_github_login} WHERE ${pending}`,
       ...repositoryKeysOf(manifest).map((key) => sql`INSERT INTO project_repositories (repository_key, project_id) SELECT ${key}, ${projectId} WHERE ${pending}`),
       sql`UPDATE project_applications SET status = 'approved', decided_at = ${at}, decided_by_github_id = ${application.applicant_github_id}, decided_by_github_login = ${application.applicant_github_login}, decision_reason = ${decision?.slice(0, 1000) ?? null} WHERE id = ${application.id} AND status = 'pending'`,

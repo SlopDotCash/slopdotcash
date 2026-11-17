@@ -208,7 +208,7 @@ effect function buy(running: Running, purchaseQuote: PurchaseQuote, slippageBps:
   if (sent.kind !== "Accepted") try step(running, { type: "loseSend", tx }, { detail: sent.detail })
 }
 
-function capReached(spent: number, balance: number): PurchaseQuote {
+function unquoted(spent: number, balance: number): PurchaseQuote {
   return { route: "RouteFound", tx: 0, spent, minimum: zero, gasValue: 0, slippageBps: 0, impactBps: 0, receiver: "fees", tokenPaused: false, balance }
 }
 
@@ -222,12 +222,14 @@ effect function purchaseLeg(running: Running) {
   const safe = try big(String(maximumSafeValue))
   const balanceNumber = Number(boundedSend(balance, safe, safe))
   const left = remaining(state)
-  if (left <= 0) return try decidedPurchase(running, capReached(try exact(held, "decidePurchase", "the purchase input"), balanceNumber), {})
+  if (left <= 0) return try decidedPurchase(running, unquoted(try exact(held, "decidePurchase", "the purchase input"), balanceNumber), {})
   const amount = boundedSend(credit, balance, try big(String(left)))
   const spent = try exact(amount, "decidePurchase", "the purchase input")
+  const unrouted = unquoted(spent, balanceNumber)
+  if (purchaseDecision(state, unrouted).state !== "Quoted") return try decidedPurchase(running, unrouted, {})
   const slippageBps = settings.limits.maxSlippageBps
   const found = try quote("Robinhood", usdg, amount, slop, slippageBps, settings.kyber)
-  if (found.kind === "NoRoute") return try decidedPurchase(running, { ...capReached(spent, balanceNumber), route: "NoRouteResult" }, { detail: found.detail })
+  if (found.kind === "NoRoute") return try decidedPurchase(running, { ...unrouted, route: "NoRouteResult" }, { detail: found.detail })
   const priced = found.quote
   const paused = (try readWord(slop, pausedCalldata, "latest")) !== 0n
   const purchaseQuote: PurchaseQuote = {

@@ -126,7 +126,7 @@ effect function settle<SE, S>(batch: MessageBatch, handle: (message: QueueMessag
   }
 }
 
-effect function forward(assets: Fetcher) {
+export effect function forward(assets: Fetcher) {
   const request = try HttpServerRequest.HttpServerRequest
   const web = try orDie(HttpServerRequest.toWeb(request))
   const response = try orDie(tryPromise(() => assets.fetch(web)))

@@ -1,0 +1,97 @@
+// spec/slopbot/valueInference.md, "Admit at most three unresolved or non-free attempts for the same key"; spec/slopbot/valueInference.md, "Usage precedes retained output and explicit completion"
+import { type Statement, first, sql } from "@repo/platform/d1"
+import { budgetExhausted } from "../../route/route.vibe"
+
+export const attemptLimit = 3
+
+function counted(key: string) {
+  return sql`(SELECT COUNT(*) FROM slopbot_value_inference_attempts a
+    JOIN slopbot_value_budget_reservations r ON r.attempt_id = a.attempt_id
+    WHERE a.inference_key = ${key}
+      AND NOT EXISTS (SELECT 1 FROM slopbot_value_attempt_completions done
+        JOIN slopbot_value_budget_reconciliations settled ON settled.attempt_id = done.attempt_id
+        WHERE done.attempt_id = a.attempt_id AND settled.call_count = 0 AND settled.recorded_micro_usd = 0
+          AND NOT EXISTS (SELECT 1 FROM slopbot_costs observed WHERE observed.review_key = a.attempt_id))
+      AND (NOT EXISTS (SELECT 1 FROM slopbot_costs c WHERE c.review_key = a.attempt_id AND c.failure = ${budgetExhausted})
+        OR EXISTS (SELECT 1 FROM slopbot_costs c WHERE c.review_key = a.attempt_id AND c.failure IS NOT ${budgetExhausted})))`
+}
+
+export function admitWrite(key: string, attemptId: string, startedAt: string): Statement {
+  return sql`INSERT INTO slopbot_value_inference_attempts (attempt_id, inference_key, started_at)
+    SELECT ${attemptId}, ${key}, ${startedAt} WHERE ${counted(key)} < ${attemptLimit}
+      AND NOT EXISTS (SELECT 1 FROM slopbot_value_inference_attempts WHERE attempt_id = ${attemptId})`
+}
+
+export interface Reservation {
+  readonly key: string
+  readonly attemptId: string
+  readonly month: string
+  readonly maximum: number | null
+  readonly monthly: number | null
+  readonly at: string
+}
+
+export function reserveWrite(reservation: Reservation): Statement {
+  const { key, attemptId, month, monthly, at } = reservation
+  const maximum = monthly === null ? null : reservation.maximum
+  return sql`WITH used AS (
+      SELECT COALESCE(SUM(COALESCE(provider_cost_micro_usd, cost_micro_usd)), 0) AS cost FROM slopbot_costs WHERE substr(created_at, 1, 7) = ${month}
+    ), held AS (
+      SELECT COALESCE(SUM(reserved_micro_usd), 0) AS cost, COUNT(*) - COUNT(approved_limit_micro_usd) AS unknown
+      FROM slopbot_value_budget_reservations r
+      WHERE NOT EXISTS (SELECT 1 FROM slopbot_value_budget_reconciliations c WHERE c.attempt_id = r.attempt_id)
+    ) INSERT INTO slopbot_value_budget_reservations (attempt_id, month, reserved_micro_usd, approved_limit_micro_usd, reserved_at)
+    SELECT ${attemptId}, ${month}, ${maximum}, ${monthly}, ${at} FROM used, held
+    WHERE (${monthly} IS NULL OR (held.unknown = 0 AND used.cost <= ${monthly} - ${maximum} AND held.cost <= ${monthly} - ${maximum} - used.cost))
+      AND NOT EXISTS (SELECT 1 FROM slopbot_value_budget_reservations WHERE attempt_id = ${attemptId})
+      AND EXISTS (SELECT 1 FROM slopbot_value_inference_attempts WHERE attempt_id = ${attemptId} AND inference_key = ${key})
+      AND ${counted(key)} < ${attemptLimit}`
+}
+
+export function resultWrite(key: string, attemptId: string, resultJson: string, resultDigest: string, at: string): Statement {
+  return sql`INSERT INTO slopbot_value_inference_results (inference_key, attempt_id, result_json, result_digest, recorded_at)
+    SELECT ${key}, ${attemptId}, ${resultJson}, ${resultDigest}, ${at}
+    WHERE NOT EXISTS (SELECT 1 FROM slopbot_value_inference_results WHERE inference_key = ${key})`
+}
+
+export function completeWrite(key: string, attemptId: string, expectedCalls: number, retained: boolean, at: string): Statement {
+  return sql`INSERT INTO slopbot_value_attempt_completions (attempt_id, completed_at)
+    SELECT a.attempt_id, ${at} FROM slopbot_value_inference_attempts a
+    JOIN slopbot_value_budget_reservations r ON r.attempt_id = a.attempt_id
+    WHERE a.attempt_id = ${attemptId} AND a.inference_key = ${key}
+      AND (SELECT COUNT(*) FROM slopbot_costs WHERE review_key = ${attemptId}) = ${expectedCalls}
+      AND (${retained ? 1 : 0} = 0 OR EXISTS (SELECT 1 FROM slopbot_value_inference_results WHERE inference_key = ${key}))
+      AND NOT EXISTS (SELECT 1 FROM slopbot_value_attempt_completions WHERE attempt_id = ${attemptId})`
+}
+
+export function reconcileWrite(attemptId: string, expectedCalls: number, at: string): Statement {
+  return sql`WITH costs AS (
+      SELECT COUNT(*) AS n, COUNT(provider_cost_micro_usd) AS known, COALESCE(SUM(provider_cost_micro_usd), 0) AS cost
+      FROM slopbot_costs WHERE review_key = ${attemptId}
+    ) INSERT INTO slopbot_value_budget_reconciliations (attempt_id, call_count, recorded_micro_usd, reconciled_at)
+    SELECT ${attemptId}, costs.n, costs.cost, ${at} FROM costs
+    JOIN slopbot_value_budget_reservations r ON r.attempt_id = ${attemptId}
+    WHERE costs.n = ${expectedCalls} AND costs.known = costs.n
+      AND (r.approved_limit_micro_usd IS NULL OR costs.cost <= r.reserved_micro_usd)
+      AND NOT EXISTS (SELECT 1 FROM slopbot_value_budget_reconciliations WHERE attempt_id = ${attemptId})`
+}
+
+schema OtherBudget { used: number; held: number; unknown: number }
+
+export interface ExternalBudget {
+  readonly otherUsed: number
+  readonly otherHeld: number
+  readonly otherUnbounded: boolean
+}
+
+export effect function externalBudget(key: string, month: string) {
+  const own = sql`SELECT attempt_id FROM slopbot_value_inference_attempts WHERE inference_key = ${key}`
+  const open = sql`FROM slopbot_value_budget_reservations r
+    WHERE NOT EXISTS (SELECT 1 FROM slopbot_value_budget_reconciliations c WHERE c.attempt_id = r.attempt_id) AND r.attempt_id NOT IN (${own})`
+  const found = try first(OtherBudget, sql`SELECT
+      (SELECT COALESCE(SUM(COALESCE(provider_cost_micro_usd, cost_micro_usd)), 0) FROM slopbot_costs
+        WHERE substr(created_at, 1, 7) = ${month} AND review_key NOT IN (${own})) AS used,
+      (SELECT COALESCE(SUM(reserved_micro_usd), 0) ${open}) AS held,
+      (SELECT COUNT(*) - COUNT(approved_limit_micro_usd) ${open}) AS unknown`)
+  return { otherUsed: found?.used ?? 0, otherHeld: found?.held ?? 0, otherUnbounded: (found?.unknown ?? 0) > 0 } satisfies ExternalBudget
+}

@@ -12,7 +12,7 @@ import { supervise } from "../src/local/command/supervisor.vibe"
 import { identityBridge, productionIdentity } from "../src/local/dev/identity.vibe"
 import { captureMail } from "../src/local/dev/mail.vibe"
 import { dataDirectory, privateDirectory } from "../src/local/dev/paths.vibe"
-import { type Local, answer, assertions, localVars, mailDesk, mailSink, migrated, tendMail } from "../src/local/dev/serve.vibe"
+import { type Local, answer, assertions, localVars, mailDesk, mailSink, migrated } from "../src/local/dev/serve.vibe"
 import { type Deployable, forward, startLocal, stopLocal } from "../src/local/dev/workers.ts"
 import { runStages } from "../src/local/validator/stages.vibe"
 import { startStage, validatorMachine } from "../src/local/validator/steps.vibe"
@@ -216,14 +216,14 @@ layer(Services, { excludeTestServices: true, timeout: "900 seconds" })((it) => {
     const identity: Deployable = { name: "identity", config: path.join(backend, "wrangler", "identity.staging.jsonc"), script: identityScript }
     const site: Deployable = { name: "site", config: try siteConfig(path.join(scratch, "site.jsonc"), "slop-staging"), script: siteScript }
     const stray: Deployable = { ...site, config: try siteConfig(path.join(scratch, "stray.jsonc"), "slop-other") }
-    const desk = mailDesk()
+    const desk = mailDesk(path.join(data, "mail-capture"))
     provide NodeHttpServer.layerTest {
       const address = (try HttpServer.HttpServer).address
       const origin = `http://127.0.0.1:${"port" in address ? address.port : 0}`
       const vars = try localVars(scratch, data, origin)
       const persistence = path.join(data, "state")
       const strayStart = tryPromise({
-        try: () => startLocal({ deployables: [stray, identity], vars, persistence, sink: mailSink(mailDesk()), assertions }),
+        try: () => startLocal({ deployables: [stray, identity], vars, persistence, sink: mailSink(mailDesk(path.join(scratch, "stray-mail"))), assertions }),
         catch: (cause) => cause instanceof Error ? cause.message : String(cause),
       }) catch (reason) => reason
       const workers = try acquireRelease(promise(() => startLocal({ deployables: [site, identity], vars, persistence, sink: mailSink(desk), assertions })), (started) => promise(() => stopLocal(started.mf)))
@@ -257,13 +257,12 @@ layer(Services, { excludeTestServices: true, timeout: "900 seconds" })((it) => {
           VALUES ('n1', '7', 'request-n1', 'seven@example.test', 'address-n1', ${"a".repeat(64)}, 1, 1, '2026-11-01T00:00:00.000Z', '2099-01-01T00:00:00.000Z')`)
         const mime = (id: string, to: string) => `From: notifications@slop.cash\r\nTo: ${to}\r\nMessage-ID: <slop-notice-${id}-1@slop.cash>\r\n\r\nOpen ${origin}/inbox or https://evil.example/inbox`
         const sink = mailSink(desk)
-        const early = try Effect.try(() => sink({ from: "notifications@slop.cash", to: "seven@example.test", raw: mime("n1", "seven@example.test") }))
-        try tendMail(desk, mail)
-        const unnamed = try Effect.try(() => sink({ from: "a@slop.cash", to: "b@example.test", raw: "Message-ID: <admin@slop.cash>\r\n\r\nhi" }))
-        const unowned = try Effect.try(() => sink({ from: "notifications@slop.cash", to: "b@example.test", raw: mime("n9", "b@example.test") }))
-        const owned = try Effect.try(() => sink({ from: "notifications@slop.cash", to: "seven@example.test", raw: mime("n1", "seven@example.test") }))
-        const queued = desk.pending.length
-        try tendMail(desk, mail)
+        const sent = (from: string, to: string, raw: string) => promise(async () => sink({ from, to, raw }))
+        const early = try sent("notifications@slop.cash", "seven@example.test", mime("n1", "seven@example.test"))
+        desk.services = try Effect.context<D1 | FileSystem.FileSystem | Path.Path | Experimental.Crypto.Crypto>()
+        const unnamed = try sent("a@slop.cash", "b@example.test", "Message-ID: <admin@slop.cash>\r\n\r\nhi")
+        const unowned = try sent("notifications@slop.cash", "b@example.test", mime("n9", "b@example.test"))
+        const owned = try sent("notifications@slop.cash", "seven@example.test", mime("n1", "seven@example.test"))
         try captureMail(mail, { githubId: "8", from: "notifications@slop.cash", to: "eight@example.test", mime: mime("n8", "eight@example.test") })
         const invalid = captureMail(mail, { githubId: "07", from: "notifications@slop.cash", to: "x@example.test", mime: mime("n7", "x@example.test") }) catch (error) => error._tag
         const captured = (try fs.readDirectory(mail)).filter((name) => name.endsWith(".json"))
@@ -296,7 +295,7 @@ layer(Services, { excludeTestServices: true, timeout: "900 seconds" })((it) => {
             [foreignReturn.status, try parsed(foreignReturn.text)],
             handoff.asked,
           ],
-          mail: [[early, unnamed, unowned, owned, queued], invalid, captured.length, [...fileModes], try modeOf(mail)],
+          mail: [[early, unnamed, unowned, owned], invalid, captured.length, [...fileModes], try modeOf(mail)],
           health: [health.status, try parsed(health.text), misdirected.status],
           view: [posted.status, anonymous.status, own.status, own.cache, own.robots, own.text.includes("seven@example.test"), own.text.includes("eight@example.test"), own.text.includes(`href="${origin}/inbox"`), own.text.includes("href=\"https://evil.example")],
           bridge: [[foreign.status, try parsed(foreign.text)], [wrongAudience.status, try parsed(wrongAudience.text)], [unknownFlow.status, try parsed(unknownFlow.text)], missing.status],
@@ -317,7 +316,7 @@ layer(Services, { excludeTestServices: true, timeout: "900 seconds" })((it) => {
             [502, { error: "invalid_identity_response" }],
             [`POST ${productionIdentity}/v1/local/start`, `POST ${productionIdentity}/v1/local/poll`, `POST ${productionIdentity}/v1/local/start`, `POST ${productionIdentity}/v1/local/poll`],
           ],
-          mail: [["Local capture message has ambiguous ownership", "Local capture message has no delivery identity", "Local capture message has ambiguous ownership", undefined, 1], "MailRefused", 2, [0o600], 0o700],
+          mail: [["Local mail capture is not ready", "Local capture message has no delivery identity", "Local capture message has ambiguous ownership", undefined], "MailRefused", 2, [0o600], 0o700],
           health: [200, { origin, privateIntake: true, email: "local-capture" }, 421],
           view: [405, 401, 200, "private, no-store", "noindex", true, false, true, false],
           bridge: [[403, { error: "origin_forbidden" }], [400, { error: "invalid_audience" }], [410, { error: "flow_expired" }], 404],

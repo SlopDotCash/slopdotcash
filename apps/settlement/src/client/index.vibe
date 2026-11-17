@@ -1,8 +1,17 @@
-// spec/settlement/referralFiles.md, "Story: Serve every filed month exactly as it was filed"; spec/settlement/referralPublication.md, "The claims read answers only the signed-in account's cached view of the active root and says when it is stale"; spec/settlement/ownerTransactions.md, "A request is reviewed against current authority and becomes a fixed plan"; spec/settlement/monthlyCommitment.md, "The first authorization, signed attempts and freeze time are immutable"; spec/settlement/signer.md, "An operator reconciles an externally recovered binding winner only through an audited request that cannot choose the outcome"
+// spec/settlement/referralFiles.md, "Story: Serve every filed month exactly as it was filed"; spec/settlement/referralPublication.md, "The claims read answers only the signed-in account's cached view of the active root and says when it is stale"; spec/settlement/ownerTransactions.md, "A request is reviewed against current authority and becomes a fixed plan"; spec/settlement/monthlyCommitment.md, "The first authorization, signed attempts and freeze time are immutable"; spec/settlement/signer.md, "An operator reconciles an externally recovered binding winner only through an audited request that cannot choose the outcome"; spec/settlement/publicRecords.md, "Public vault payments are paged at most 100 per page under a frozen upper bound"; spec/settlement/vaultSnapshots.md, "A failed refresh keeps the last totals marked stale"; spec/settlement/monthly.md, "The public cut list is exactly each contributor's latest change when that change is a cut"
 import type { AnyRoute } from "@repo/platform/route"
 import { monthlyCommitmentApi } from "../monthlyCommitment/client.vibe"
+import { monthlyApi } from "./monthly.vibe"
 import { operatorApi } from "./operator.vibe"
 import { ownerApi } from "./owner.vibe"
+import { publicApi } from "./public.vibe"
 import { referralApi } from "./referrals.vibe"
+import { vaultApi } from "./vault.vibe"
 
-export const api: ReadonlyArray<AnyRoute> = [...referralApi, ...ownerApi, ...monthlyCommitmentApi, ...operatorApi]
+export * from "./contributorAllocation.vibe"
+export * from "./monthly.vibe"
+export * from "./owner.vibe"
+export * from "./public.vibe"
+export * from "./vault.vibe"
+
+export const api: ReadonlyArray<AnyRoute> = [...referralApi, ...ownerApi, ...monthlyCommitmentApi, ...operatorApi, ...publicApi, ...vaultApi, ...monthlyApi]

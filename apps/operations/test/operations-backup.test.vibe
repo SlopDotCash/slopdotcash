@@ -32,7 +32,7 @@ effect function retention(binding: R2Bucket) {
 }
 
 const Started = Layer.effect(World, effect {
-  const script = try promise(() => bundle(new URL("..", import.meta.url).pathname, { config: "vite.backup.config.ts" }))
+  const script = try promise(() => bundle(new URL("..", import.meta.url).pathname, { entry: "backup" }))
   const mf = try acquireRelease(sync(() => startWorker({
     script,
     d1: { EVIDENCE_DATABASE: "backup-journey" },

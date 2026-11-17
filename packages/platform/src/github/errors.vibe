@@ -1,7 +1,7 @@
 // spec/points/ingestion.md, "A read classifies each response and waits only for a rate limit"
 export error NotFound { path: string }
 export error GitHubRefused { status: RefusalStatus; path: string; message: string }
-export error RateLimited { primaryDelay: number; retryAfter: number; retryAfterSeconds?: number; resetAt?: number; secondary: boolean }
+export error RateLimited { status: number; primaryDelay: number; retryAfter: number; retryAfterSeconds?: number; resetAt?: number; secondary: boolean }
 export error GitHubUnavailable { status?: number; path: string }
 export error GitHubMalformed { path: string; issue: string }
 
@@ -48,11 +48,12 @@ export function rateLimitHints(headers: ResponseHeaders, nowMillis: number): Rat
   return { primaryDelay: reset === undefined ? 0 : Math.max(0, reset - nowMillis + 1_000), retryAfter: usableRetryAfter(headers) ?? 0 }
 }
 
-export function rateLimited(headers: ResponseHeaders, nowMillis: number): RateLimited {
+export function rateLimited(status: number, headers: ResponseHeaders, nowMillis: number): RateLimited {
   const hints = rateLimitHints(headers, nowMillis)
   const hinted = usableReset(headers) !== undefined || usableRetryAfter(headers) !== undefined
   const reset = headers["x-ratelimit-reset"]?.trim() ?? ""
   return new RateLimited({
+    status,
     ...hints,
     ...(hinted ? { retryAfterSeconds: Math.min(maxReportedSeconds, Math.ceil(Math.max(hints.primaryDelay, hints.retryAfter) / 1_000)) } : {}),
     ...(digits.test(reset) ? { resetAt: Number(reset) * 1_000 } : {}),

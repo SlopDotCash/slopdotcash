@@ -1,4 +1,5 @@
-// spec/security/reportingReadiness.md, "A refresh writes only a newer attempt and keeps the repository identity"; spec/security/reportingReadiness.md, "Only a fresh, enabled, verified observation is ready"; spec/operations/notifications.md, "Each notice kind names the role its recipient must still hold when the attempt is prepared"; spec/slopbot/valueHistory.md, "Each page agrees with the first through sequence and total count"; spec/points/penalties.md, "A confirmed close records the published debit once per PR, never after a confirmed reopen of that revision"
+// spec/slopbot/assessmentInbox.md, "A read captures its actor, exact registry binding and response route"; spec/security/reportingReadiness.md, "A refresh writes only a newer attempt and keeps the repository identity"; spec/security/reportingReadiness.md, "Only a fresh, enabled, verified observation is ready"; spec/operations/notifications.md, "Each notice kind names the role its recipient must still hold when the attempt is prepared"; spec/slopbot/valueHistory.md, "Each page agrees with the first through sequence and total count"; spec/points/penalties.md, "A confirmed close records the published debit once per PR, never after a confirmed reopen of that revision"
+import type { Actor } from "@repo/platform/http"
 import type { ReadFailure } from "./backend.vibe"
 
 export schema ReadinessFailure = "NoFailure" | "ReadFailed" | "IdentityMismatch"
@@ -41,6 +42,26 @@ export schema ScamPenalty {
 export service SlopbotAudience {
   escalatedAppeal(appealKey: string): (EscalatedAppeal | undefined)!ReadFailure
   scamPenalty(itemNodeId: string): (ScamPenalty | undefined)!ReadFailure
+}
+
+export schema IncompleteAssessment {
+  readonly projectId: string
+  readonly projectName: string
+  readonly repository: string
+  readonly pullRequest: number
+  readonly since: string
+  readonly retryAt: string | null
+  readonly running: boolean
+}
+
+export schema IncompleteAssessments {
+  readonly recipientGithubId: string
+  readonly items: ReadonlyArray<IncompleteAssessment>
+  readonly next: string | null
+}
+
+export service AssessmentQueue {
+  bundled(actor: Actor, query: URLSearchParams): (IncompleteAssessments | null)!!
 }
 
 export const historyOrigin = "https://slopbot.slop.cash"

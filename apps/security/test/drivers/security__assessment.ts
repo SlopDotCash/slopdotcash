@@ -139,9 +139,9 @@ async function send(key: string, event: Event, by: unknown): Promise<"accepted" 
   const begun = (run: Run) => { entry.runs.set(run.attempt, run); };
   switch (event.type) {
     case "startAutomatic":
-      return outcome(started(entry.caseId, { type: "startAutomatic", nowMs: time(event.nowMs) }, sender, entry.authority), begun);
+      return outcome(started(entry.caseId, { type: "startAutomatic", nowMs: time(event.nowMs), exclusions: event.exclusions }, sender, entry.authority), begun);
     case "startOwnerRun":
-      return outcome(started(entry.caseId, { type: "startOwnerRun", checkedEpoch: event.checkedEpoch, nowMs: time(event.nowMs) }, sender, entry.authority), begun);
+      return outcome(started(entry.caseId, { type: "startOwnerRun", checkedEpoch: event.checkedEpoch, nowMs: time(event.nowMs), exclusions: event.exclusions }, sender, entry.authority), begun);
     case "finish": {
       const run = await runOf(entry, event.attempt);
       finishing();

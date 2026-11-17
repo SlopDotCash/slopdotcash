@@ -1,0 +1,438 @@
+// spec/slopbot/appeals.md, "Only the author opens an appeal of a recorded finding, once per revision"; spec/slopbot/appeals.md, "Slopbot stores one draft, and the published criteria escalate it to a moderator"; spec/slopbot/appeals.md, "Only the appellant or a current maintainer answers a draft; rejection escalates"; spec/slopbot/appeals.md, "Only a moderator other than the appellant decides an escalated appeal"; spec/slopbot/appeals.md, "A verified maintainer reopen of the revision resolves the appeal as upheld, even after escalation"; spec/slopbot/appeals.md, "The scheduled dispatcher escalates an appeal still unresolved seven days after it opened"; spec/slopbot/appeals.md, "Each stage comment is posted once and a resolution retry resumes its recorded writes"
+import { isoAt, millisOf } from "@repo/platform/clock"
+import { RowMismatch, type Statement, decoded, first, sql } from "@repo/platform/d1"
+import { type Aggregate, type Decision, type Rows, load, update } from "@repo/platform/stored"
+import { Restrictions } from "@repo/ports/backend"
+import { type Notice, Notices } from "@repo/ports/operations"
+import { closeConfidence, currentTableVersion, escalationDebit } from "../../gen/slopbot__categories.effect.vibe"
+import { type Appeal, type AppealSubject, type DraftChoice, type Entry, type Escalation, type Event, NotAState, type ProjectScope, type Resolution, type ResolvedVia, apply, decodeState, enabled, initial, noSubject, resolutionSeconds, slopModerators } from "../../gen/slopbot__appeals.effect.vibe"
+import { penaltyTableVersion, pointsPerThird } from "../closeAttempt/penalty.vibe"
+import type { AppealDueJob } from "../jobs/job.vibe"
+import { actionStatement } from "../publish/actions.vibe"
+import { type CategoryName, categories, findingOf, hundredths } from "../review/verdict.vibe"
+
+export schema AppealRow {
+  readonly appeal_key: string
+  readonly repository_id: number
+  readonly item_node_id: string
+  readonly appellant_github_id: string
+  readonly job_json: string
+  readonly opened_at: string
+  readonly due_at: string
+  readonly draft: "uphold" | "deny" | null
+  readonly draft_confidence: number | null
+  readonly escalated_at: string | null
+  readonly escalation: string | null
+  readonly queued_at: string | null
+  readonly resolved_at: string | null
+  readonly resolution: "upheld" | "denied" | null
+  readonly resolved_by: "appellant" | "maintainer" | "moderator" | null
+}
+schema PostedRow { readonly review_key: string; readonly created_at: string }
+schema FindingRow { readonly category: string | null; readonly revision: string | null; readonly at: string | null }
+schema PenaltyRow { readonly category: string; readonly table_version: string; readonly debit_thirds: number }
+schema BanRow { readonly banned: number }
+schema LeaseRow { readonly claim_token: string | null; readonly lease_expires_at: string | null }
+schema KeyRow { readonly appeal_key: string }
+
+export type Stage = "draft" | "escalation" | "resolution"
+export type ResolverRole = "appellant" | "maintainer" | "moderator"
+
+export interface Opening {
+  readonly author: number
+  readonly repositoryId: number
+  readonly scope: ProjectScope
+  readonly job: AppealDueJob
+}
+
+export interface PublicationFence {
+  readonly key: string
+  readonly token: string
+}
+
+export interface AppealOptions {
+  readonly opening?: Opening
+  readonly fence?: PublicationFence
+}
+
+export interface Loaded {
+  readonly appeal: Appeal
+  readonly row: typeof AppealRow.Type | undefined
+  readonly candidate: AppealSubject
+  readonly banned: boolean
+  readonly fenceHeld: boolean
+  readonly at: string
+  readonly millis: number
+}
+
+export interface Step {
+  readonly event: Event
+  readonly by: number
+  readonly optional?: boolean
+  readonly confidence?: number
+  readonly commentId?: number
+}
+
+export interface Covered {
+  readonly revision: string
+  readonly occurredAt: string
+}
+
+export error AppealClockBehind { appealKey: string }
+export error PublicationLeaseLost { key: string }
+
+export const resolutionDays = resolutionSeconds / 86400
+export const appealPrefix = "appeal:"
+const postEvents: Readonly<Record<Stage, Event>> = { draft: { type: "postDraft" }, escalation: { type: "postEscalation" }, resolution: { type: "postResolution" } }
+
+const escalationTexts: Readonly<Record<Exclude<Escalation, "NotEscalated" | "DraftRejected">, string>> = {
+  MaliciousFinding: "the finding is a confirmed-malicious result",
+  HighDebit: `the debit at stake is ${escalationDebit / pointsPerThird} thirds or more`,
+  LowConfidence: `Slopbot confidence is below ${closeConfidence / 100}`,
+  Overdue: `the appeal is unresolved ${resolutionDays} days after it opened`,
+  ParticipationBan: "the appellant has an active participation ban",
+  RetiredProject: "the project is retired, so Slopbot does not triage",
+}
+const rejectionTexts: Readonly<Record<"appellant" | "maintainer", string>> = {
+  appellant: "the appellant rejected the draft",
+  maintainer: "the maintainer rejected the draft",
+}
+const projectScopes: ReadonlyArray<ProjectScope> = ["ScopeActive", "ScopeSecurityOnly", "ScopeRetired"]
+const resolutions: Readonly<Record<"upheld" | "denied", Resolution>> = { upheld: "Upheld", denied: "Denied" }
+const drafts: Readonly<Record<"uphold" | "deny", DraftChoice>> = { uphold: "DraftUphold", deny: "DraftDeny" }
+
+export function appealKeyOf(itemNodeId: string, revision: string) {
+  return `${appealPrefix}${itemNodeId}:${revision}`
+}
+
+export function revisionOfKey(appealKey: string) {
+  return appealKey.slice(appealKey.lastIndexOf(":") + 1)
+}
+
+export function itemOfKey(appealKey: string) {
+  return appealKey.slice(appealPrefix.length, appealKey.lastIndexOf(":"))
+}
+
+export function stageKey(appealKey: string, stage: Stage) {
+  return `${appealKey}:${stage}`
+}
+
+export function categoryNameOf(category: AppealSubject["category"]): CategoryName {
+  return categories.find((name) => findingOf(name) === category) ?? "none"
+}
+
+export function escalationText(escalation: Escalation, rejectedBy: "appellant" | "maintainer" = "appellant") {
+  if (escalation === "NotEscalated") return ""
+  return escalation === "DraftRejected" ? rejectionTexts[rejectedBy] : escalationTexts[escalation]
+}
+
+function escalationOf(text: string | null): Escalation | undefined {
+  if (text === null) return "NotEscalated"
+  if (text === rejectionTexts.appellant || text === rejectionTexts.maintainer) return "DraftRejected"
+  return (Object.keys(escalationTexts) as ReadonlyArray<keyof typeof escalationTexts>).find((escalation) => escalationTexts[escalation] === text)
+}
+
+function seconds(iso: string) {
+  return Math.floor(millisOf(iso) / 1000)
+}
+
+function categoryOf(text: string | null): CategoryName | undefined {
+  return categories.find((category) => category === text)
+}
+
+export function findingRows(itemNodeId: string): Statement {
+  return sql`SELECT category, at, review_key, revision FROM (
+      SELECT json_extract(verdict, '$.category') AS category, completed_at AS at, review_key, revision FROM slopbot_reviews
+      WHERE item_node_id = ${itemNodeId} AND status = 'completed' AND verdict IS NOT NULL AND action IN ('close', 'label', 'hold')
+      UNION ALL
+      SELECT json_extract(a.detail, '$.category'), a.created_at, a.review_key, (SELECT r.revision FROM slopbot_reviews r WHERE r.review_key = a.review_key)
+      FROM slopbot_actions a WHERE a.item_node_id = ${itemNodeId} AND a.action = 'close')`
+}
+
+function coveredFinding(itemNodeId: string, covered: Covered): Statement {
+  return sql`SELECT category, revision, at FROM (${findingRows(itemNodeId)}) WHERE revision = ${covered.revision} OR at <= ${covered.occurredAt} ORDER BY at DESC, review_key DESC LIMIT 1`
+}
+
+effect function findingOfRow(row: typeof FindingRow.Type | undefined) {
+  if (row === undefined || row.category === null || row.category === "none") return undefined
+  const category = categoryOf(row.category)
+  if (category === undefined) throw new RowMismatch({ text: "slopbot finding", issue: `unknown category ${row.category}` })
+  return category
+}
+
+export effect function latestFinding(itemNodeId: string) {
+  const row = try first(FindingRow, sql`SELECT category, revision, at FROM (${findingRows(itemNodeId)}) ORDER BY at DESC, review_key DESC LIMIT 1`)
+  const category = try findingOfRow(row)
+  return category === undefined || row === undefined ? undefined : { category, revision: row.revision, at: row.at }
+}
+
+export effect function appealedFinding(itemNodeId: string, covered: Covered) {
+  const newest = try latestFinding(itemNodeId)
+  if (newest === undefined) return undefined
+  return newest.revision === covered.revision || (newest.at !== null && newest.at <= covered.occurredAt) ? newest.category : undefined
+}
+
+export effect function latestAppealKey(itemNodeId: string) {
+  const found: typeof KeyRow.Type | undefined = try first(KeyRow, sql`SELECT appeal_key FROM slopbot_appeals WHERE item_node_id = ${itemNodeId} AND appeal_key NOT LIKE 'value-appeal:%'
+    ORDER BY opened_at DESC, appeal_key DESC LIMIT 1`)
+  return found?.appeal_key
+}
+
+function appealRead(appealKey: string) {
+  return sql`SELECT appeal_key, repository_id, item_node_id, appellant_github_id, job_json, opened_at, due_at, draft, draft_confidence,
+      escalated_at, escalation, queued_at, resolved_at, resolution, resolved_by FROM slopbot_appeals WHERE appeal_key = ${appealKey}`
+}
+
+function postedRead(appealKey: string) {
+  return sql`SELECT review_key, created_at FROM slopbot_actions WHERE action = 'comment'
+    AND review_key IN (${stageKey(appealKey, "draft")}, ${stageKey(appealKey, "escalation")}, ${stageKey(appealKey, "resolution")}) ORDER BY id`
+}
+
+function openedAtOr(appealKey: string, at: string) {
+  return sql`coalesce((SELECT opened_at FROM slopbot_appeals WHERE appeal_key = ${appealKey}), ${at})`
+}
+
+function findingRead(appealKey: string, at: string) {
+  const itemNodeId = itemOfKey(appealKey)
+  return sql`SELECT category, revision, at FROM (${findingRows(itemNodeId)})
+    WHERE revision = ${revisionOfKey(appealKey)} OR at <= ${openedAtOr(appealKey, at)} ORDER BY at DESC, review_key DESC LIMIT 1`
+}
+
+function penaltyRead(appealKey: string, at: string) {
+  return sql`SELECT p.category, p.table_version, p.debit_thirds FROM slopbot_penalties p LEFT JOIN slopbot_reviews r ON r.review_key = p.review_key
+    WHERE p.item_node_id = ${itemOfKey(appealKey)} AND (r.revision = ${revisionOfKey(appealKey)} OR p.recorded_at <= ${openedAtOr(appealKey, at)})
+    ORDER BY p.recorded_at DESC LIMIT 1`
+}
+
+function leaseRead(fence: PublicationFence | undefined) {
+  return fence === undefined
+    ? sql`SELECT NULL AS claim_token, NULL AS lease_expires_at WHERE 0`
+    : sql`SELECT claim_token, lease_expires_at FROM slopbot_appeal_publications WHERE publication_key = ${fence.key}`
+}
+
+effect function storedScope(row: typeof AppealRow.Type) {
+  const parsed: unknown = Effect.try(() => JSON.parse(row.job_json) as unknown) catch () => undefined
+  const scope = typeof parsed === "object" && parsed !== null && "scope" in parsed ? parsed.scope : undefined
+  const named = projectScopes.find((each) => each === scope)
+  return named ?? (row.escalation === escalationTexts.RetiredProject ? "ScopeRetired" : "ScopeActive")
+}
+
+effect function subjectOf(appealKey: string, author: number, scope: ProjectScope, finding: typeof FindingRow.Type | undefined, penalty: typeof PenaltyRow.Type | undefined) {
+  const found = try findingOfRow(finding)
+  const debited = penalty === undefined ? undefined : categoryOf(penalty.category)
+  const category = debited ?? found
+  if (category === undefined) return { ...noSubject, item: itemOfKey(appealKey), revision: revisionOfKey(appealKey), author, scope } satisfies AppealSubject
+  return {
+    item: itemOfKey(appealKey),
+    revision: revisionOfKey(appealKey),
+    author,
+    category: findingOf(category),
+    tableVersion: penalty === undefined ? currentTableVersion : penalty.table_version === penaltyTableVersion ? currentTableVersion : 0,
+    debit: penalty === undefined ? 0 : penalty.debit_thirds * pointsPerThird,
+    scope,
+  } satisfies AppealSubject
+}
+
+function resolvedOf(row: typeof AppealRow.Type, escalated: boolean): { readonly via: ResolvedVia; readonly resolvedBy: number } {
+  const appellant = Number(row.appellant_github_id)
+  switch (row.resolved_by) {
+    case null:
+      return { via: "NotResolved", resolvedBy: 0 }
+    case "appellant":
+      return { via: "AcceptedDraft", resolvedBy: appellant }
+    case "moderator":
+      return { via: "ModeratorDecision", resolvedBy: slopModerators.find((moderator) => moderator !== appellant) ?? 0 }
+    case "maintainer":
+      return { via: escalated || row.resolution === "upheld" ? "MaintainerReopen" : "AcceptedDraft", resolvedBy: appellant }
+  }
+}
+
+function journalOf(row: typeof AppealRow.Type, posted: ReadonlyArray<typeof PostedRow.Type>, resolvedBy: number): Entry[] {
+  const timed: Array<{ readonly at: string; readonly order: number; readonly entry: Entry }> = []
+  if (row.escalated_at !== null) timed.push({ at: row.escalated_at, order: 0, entry: { stage: "EscalationStage", by: 0 } })
+  const draftPost = posted.find((each) => each.review_key === stageKey(row.appeal_key, "draft"))
+  if (draftPost !== undefined) timed.push({ at: draftPost.created_at, order: 1, entry: { stage: "DraftStage", by: 0 } })
+  if (row.resolved_at !== null) timed.push({ at: row.resolved_at, order: 2, entry: { stage: "ResolutionStage", by: resolvedBy } })
+  return timed.sort((left, right) => left.at < right.at ? -1 : left.at > right.at ? 1 : left.order - right.order).map((each) => each.entry)
+}
+
+effect function stateOf(appealKey: string, options: AppealOptions, rows: ReadonlyArray<Rows>) {
+  const [appealRows, postedRows, findingRows, penaltyRows, banRows, leaseRows] = rows
+  const [row] = try decoded(AppealRow, appealRows ?? [], "slopbot appeal")
+  const posted = try decoded(PostedRow, postedRows ?? [], "slopbot appeal comments")
+  const [finding] = try decoded(FindingRow, findingRows ?? [], "slopbot appealed finding")
+  const [penalty] = try decoded(PenaltyRow, penaltyRows ?? [], "slopbot appealed penalty")
+  const [ban] = try decoded(BanRow, banRows ?? [], "slopbot appellant ban")
+  const [lease] = try decoded(LeaseRow, leaseRows ?? [], "slopbot appeal publication")
+  const millis = try Clock.currentTimeMillis
+  const at = try isoAt(millis)
+  const now = Math.floor(millis / 1000)
+  const fenceHeld = options.fence !== undefined && lease?.claim_token === options.fence.token && (lease.lease_expires_at ?? "") > at
+  const author = row === undefined ? options.opening?.author ?? 0 : Number(row.appellant_github_id)
+  const scope: ProjectScope = row === undefined ? options.opening?.scope ?? "ScopeActive" : try storedScope(row)
+  const candidate = try subjectOf(appealKey, author, scope, finding, penalty)
+  const banned = (ban?.banned ?? 0) === 1
+  if (row === undefined) return { appeal: { ...initial, now }, row, candidate, banned, fenceHeld, at, millis } satisfies Loaded
+  const openedAt = seconds(row.opened_at)
+  const queuedAt = row.queued_at === null ? 0 : seconds(row.queued_at)
+  if (openedAt > now || queuedAt > now) throw new AppealClockBehind({ appealKey })
+  const escalation = escalationOf(row.escalation)
+  if (escalation === undefined) throw new RowMismatch({ text: "slopbot appeal", issue: "unknown escalation reason" })
+  const escalated = escalation !== "NotEscalated"
+  const { via, resolvedBy } = resolvedOf(row, escalated)
+  const postedStage = (stage: Stage) => posted.some((each) => each.review_key === stageKey(appealKey, stage))
+  const appeal = try decodeState({
+    opened: true,
+    subject: candidate,
+    appellant: author,
+    openedAt,
+    now,
+    queuedAt,
+    draft: row.draft === null ? "NoDraft" : drafts[row.draft],
+    draftConfidence: row.draft_confidence === null ? 0 : hundredths(row.draft_confidence),
+    escalation,
+    notices: escalated ? [...slopModerators] : [],
+    ban: "BanUnknown",
+    resolution: row.resolution === null ? "Unresolved" : resolutions[row.resolution],
+    via,
+    resolvedBy,
+    postedDraft: postedStage("draft"),
+    postedEscalation: postedStage("escalation"),
+    postedResolution: postedStage("resolution"),
+    journal: journalOf(row, posted, resolvedBy),
+  } satisfies Appeal)
+  return { appeal, row, candidate, banned, fenceHeld, at, millis } satisfies Loaded
+}
+
+effect function appellantOf(appealKey: string, options: AppealOptions) {
+  const found: typeof AppealRow.Type | undefined = try first(AppealRow, appealRead(appealKey))
+  return found?.appellant_github_id ?? (options.opening === undefined ? undefined : String(options.opening.author))
+}
+
+effect function aggregateOf(appealKey: string, options: AppealOptions) {
+  const appellant = try appellantOf(appealKey, options)
+  const banRead = appellant === undefined ? sql`SELECT 0 AS banned` : sql`SELECT CASE WHEN ${try (try Restrictions).unbanned(appellant)} THEN 0 ELSE 1 END AS banned`
+  const at = try isoAt(try Clock.currentTimeMillis)
+  const lease = leaseRead(options.fence)
+  const aggregate: Aggregate<Loaded, NotAState | RowMismatch | AppealClockBehind, never> = {
+    name: `slopbot appeal ${appealKey}`,
+    version: sql`SELECT coalesce((SELECT opened_at || ':' || coalesce(draft, '-') || ':' || coalesce(draft_confidence, '-') || ':' || coalesce(escalated_at, '-') || ':'
+        || coalesce(queued_at, '-') || ':' || coalesce(resolved_at, '-') || ':' || coalesce(resolved_by, '-') FROM slopbot_appeals WHERE appeal_key = ${appealKey}), 'none')
+      || '|' || (SELECT count(*) FROM (${postedRead(appealKey)})) || '|' || (SELECT banned FROM (${banRead}))
+      || '|' || coalesce((SELECT coalesce(claim_token, '-') || ':' || coalesce(lease_expires_at, '-') FROM (${lease})), 'none') AS version`,
+    reads: [appealRead(appealKey), postedRead(appealKey), findingRead(appealKey, at), penaltyRead(appealKey, at), banRead, lease],
+    decode: (rows) => stateOf(appealKey, options, rows),
+  }
+  return aggregate
+}
+
+export function noticesOf(appealKey: string, itemNodeId: string, recipients: ReadonlyArray<number>, at: string): ReadonlyArray<Notice> {
+  return recipients.map((recipient) => ({
+    eventKey: `slopbot-${appealKey}`,
+    recipientGithubId: String(recipient),
+    kind: "SlopbotAppealReview",
+    subject: itemNodeId,
+    actionPath: `/api/v1/notifications/appeals/${encodeURIComponent(appealKey)}`,
+    sourceAt: at,
+  }) satisfies Notice)
+}
+
+export effect function escalationStatements(appealKey: string, itemNodeId: string, reason: string, recipients: ReadonlyArray<number>, at: string) {
+  const notices = try (try Notices).statements({ notices: noticesOf(appealKey, itemNodeId, recipients, at) })
+  return [
+    sql`UPDATE slopbot_appeals SET escalated_at = ${at}, escalation = ${reason.slice(0, 200)} WHERE appeal_key = ${appealKey} AND escalated_at IS NULL AND resolved_at IS NULL`,
+    ...notices,
+  ]
+}
+
+function resolvedWrite(appealKey: string, resolution: Resolution, role: ResolverRole, at: string): Statement {
+  return sql`UPDATE slopbot_appeals SET resolved_at = ${at}, resolution = ${resolution === "Upheld" ? "upheld" : "denied"}, resolved_by = ${role}
+    WHERE appeal_key = ${appealKey} AND resolved_at IS NULL`
+}
+
+export function publicationConfirmed(fence: PublicationFence, commentId: number): Statement {
+  return sql`UPDATE slopbot_appeal_publications SET confirmed_comment_id = ${commentId} WHERE publication_key = ${fence.key} AND claim_token = ${fence.token}`
+}
+
+function answeredBy(before: Appeal, by: number): "appellant" | "maintainer" {
+  return by === before.appellant ? "appellant" : "maintainer"
+}
+
+effect function writesFor(appealKey: string, options: AppealOptions, loaded: Loaded, before: Appeal, next: Appeal, step: Step) {
+  const { at, millis } = loaded
+  const { event } = step
+  const itemNodeId = itemOfKey(appealKey)
+  switch (event.type) {
+    case "open": {
+      const opening = options.opening
+      if (opening === undefined) throw new RowMismatch({ text: "slopbot appeal", issue: "an appeal opens only with its opening" })
+      return [sql`INSERT OR IGNORE INTO slopbot_appeals (appeal_key, repository_id, item_node_id, appellant_github_id, job_json, opened_at, due_at)
+        VALUES (${appealKey}, ${opening.repositoryId}, ${itemNodeId}, ${String(next.appellant)}, ${JSON.stringify({ ...opening.job, scope: next.subject.scope })}, ${at}, ${try isoAt(millis + resolutionSeconds * 1000)})`]
+    }
+    case "draft":
+      return [sql`UPDATE slopbot_appeals SET draft = ${event.uphold ? "uphold" : "deny"}, draft_confidence = ${step.confidence ?? event.confidenceHundredths / 100}, drafted_at = ${at}
+        WHERE appeal_key = ${appealKey} AND draft IS NULL AND resolved_at IS NULL`]
+    case "escalateByCriteria":
+    case "escalateRetired":
+    case "escalateBanAtAnswer":
+    case "escalateOverdue":
+      return try escalationStatements(appealKey, itemNodeId, escalationText(next.escalation), next.notices, at)
+    case "reject":
+      return try escalationStatements(appealKey, itemNodeId, escalationText(next.escalation, answeredBy(before, step.by)), next.notices, at)
+    case "accept":
+      return [resolvedWrite(appealKey, next.resolution, answeredBy(before, step.by), at)]
+    case "moderatorDecide":
+      return [resolvedWrite(appealKey, next.resolution, "moderator", at)]
+    case "maintainerReopen":
+      return [resolvedWrite(appealKey, next.resolution, "maintainer", at)]
+    case "dispatchDue":
+      return [sql`UPDATE slopbot_appeals SET queued_at = ${at} WHERE appeal_key = ${appealKey} AND resolved_at IS NULL`]
+    case "postDraft":
+    case "postEscalation":
+    case "postResolution": {
+      const stage: Stage = event.type === "postDraft" ? "draft" : event.type === "postEscalation" ? "escalation" : "resolution"
+      const fence = options.fence
+      if (fence === undefined || step.commentId === undefined || !loaded.fenceHeld) throw new PublicationLeaseLost({ key: stageKey(appealKey, stage) })
+      return [
+        publicationConfirmed(fence, step.commentId),
+        actionStatement({ reviewKey: stageKey(appealKey, stage), repositoryId: loaded.row?.repository_id ?? options.opening?.repositoryId ?? 0, itemNodeId, action: "comment", detail: stage }, at),
+      ]
+    }
+    case "observeTime":
+    case "observeBan":
+      return []
+  }
+}
+
+export interface Committed {
+  readonly appeal: Appeal
+  readonly applied: ReadonlyArray<Event["type"]>
+}
+
+export effect function loadAppeal(appealKey: string, options: AppealOptions = {}) {
+  return (try load(try aggregateOf(appealKey, options))).state
+}
+
+export effect function commitAppeal(appealKey: string, options: AppealOptions, steps: (loaded: Loaded) => ReadonlyArray<Step>) {
+  return try update(try aggregateOf(appealKey, options), (loaded) => effect {
+    let appeal = loaded.appeal
+    const applied: Array<Event["type"]> = []
+    const writes: Statement[] = []
+    for (const step of steps(loaded)) {
+      if (step.optional === true && !enabled(appeal, step.event, step.by)) continue
+      const next = try apply(appeal, step.event, step.by)
+      writes.push(...(try writesFor(appealKey, options, loaded, appeal, next, step)))
+      applied.push(step.event.type)
+      appeal = next
+    }
+    return { value: { appeal, applied } satisfies Committed, writes } satisfies Decision<Committed>
+  })
+}
+
+export function postEventOf(stage: Stage): Event {
+  return postEvents[stage]
+}
+
+export function postedIn(appeal: Appeal, stage: Stage) {
+  return stage === "draft" ? appeal.postedDraft : stage === "escalation" ? appeal.postedEscalation : appeal.postedResolution
+}

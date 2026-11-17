@@ -1,0 +1,144 @@
+// spec/slopbot/appeals.md, "Only the author opens an appeal of a recorded finding, once per revision"; spec/slopbot/appeals.md, "A verified maintainer reopen of the revision resolves the appeal as upheld, even after escalation"; spec/slopbot/webhookDelivery.md, "A downstream reopen decision rechecks the exact retained source"; spec/slopbot/closure.md, "A maintainer reopen or an author appeal blocks further review actions on that revision"
+import { isoAt } from "@repo/platform/clock"
+import { type ItemState, type ReopenObservation, type ReopenSource, type Webhook, reopenDecision } from "../../gen/slopbot__webhookDelivery.effect.vibe"
+import { activePenalty, reversePenalty } from "../closeAttempt/penalty.vibe"
+import { reconcileConfirmedReopen } from "../closeAttempt/reopen.vibe"
+import { type Context, advance, delivery } from "../ingress/store.vibe"
+import type { AppealJob } from "../jobs/job.vibe"
+import { recordAction } from "../publish/actions.vibe"
+import { triageAppeal } from "./draft.vibe"
+import { dueJobOf } from "./due.vibe"
+import { reopenSubjectOf } from "./finish.vibe"
+import { labelOnce, publishStage } from "./publication.vibe"
+import { type AppealHooks, type AppealSession, type AppealSettings, AppealFailed, appealSession, maintainerRole, projectScopeOf, reversalOnly } from "./session.vibe"
+import { type Opening, appealKeyOf, commitAppeal, latestFinding, loadAppeal } from "./store.vibe"
+
+export const appealLabel = "slopbot: appeal"
+
+interface Retained {
+  readonly context: Context
+  readonly webhook: Webhook
+  readonly source: ReopenSource
+}
+
+function sameSource(left: ReopenSource, right: ReopenSource) {
+  return left.installation === right.installation && left.repository === right.repository && left.kind === right.kind && left.number === right.number &&
+    left.sender === right.sender && left.node === right.node && left.revision === right.revision && left.occurred === right.occurred
+}
+
+function jobSourceOf(job: AppealJob, retained: ReopenSource): ReopenSource {
+  return { ...retained, installation: job.installationId, repository: job.repositoryId, kind: job.itemKind === "issue" ? "IssueItem" : "PullItem", number: job.number, sender: job.senderId }
+}
+
+function itemStateOf(session: AppealSession): ItemState {
+  const { issue } = session.current
+  if (issue.state === "open") return "OpenItem"
+  if (issue.state !== "closed") return "ClosedByOther"
+  const closer = issue.closed_by?.id
+  if (closer === undefined || !Number.isSafeInteger(closer) || closer <= 0) return "ClosedUnknown"
+  return String(closer) === session.settings.appUserId ? "ClosedByBot" : "ClosedByOther"
+}
+
+effect function retainedSource(job: AppealJob) {
+  const context: Context = { deliveryId: job.deliveryId, eventName: job.itemKind === "pull_request" ? "pull_request" : "issues", reopen: undefined, installation: undefined }
+  const webhook = try delivery(context)
+  return { context, webhook, source: webhook.reopen } satisfies Retained
+}
+
+function openingOf(session: AppealSession, appealKey: string, job: AppealJob): Opening {
+  return { author: session.current.issue.user.id, repositoryId: job.repositoryId, scope: projectScopeOf(session), job: dueJobOf(appealKey, job) }
+}
+
+effect function confirmed(retained: Retained, evidence: ReopenObservation) {
+  if (retained.webhook.confirmed) return retained.webhook
+  const webhook = advance(retained.context, [], { type: "confirmReopen", evidence }) catch effect (error) => {
+    if (error._tag === "Rejected") return retained.webhook
+    throw error
+  }
+  return webhook
+}
+
+effect function maintainerDecision(session: AppealSession, job: AppealJob, retained: Retained, evidence: ReopenObservation) {
+  const itemNodeId = session.current.issue.node_id
+  const decided = retained.source.revision
+  try confirmed(retained, evidence)
+  const cleaned = reversalOnly(session) ? false : try reconcileConfirmedReopen(reopenSubjectOf(session, decided))
+  try reversePenalty(itemNodeId, "maintainer_reopen", { revision: decided, occurredAt: try isoAt(retained.source.occurred) })
+  const appealKey = appealKeyOf(itemNodeId, decided)
+  const reopened = try commitAppeal(appealKey, {}, () => [{
+    event: { type: "maintainerReopen", decision: { item: itemNodeId, revision: decided, actor: job.senderId, role: "CurrentMaintainer" } },
+    by: job.senderId,
+    optional: true,
+  }])
+  if (reopened.appeal.opened && reopened.appeal.via === "MaintainerReopen") try publishStage(session, appealKey, "resolution")
+  if (reversalOnly(session)) return "human_reopen; project is retired, penalty reversal only"
+  return cleaned ? "human_reopen" : "human_reopen; newer item state kept"
+}
+
+effect function retiredAppeal(session: AppealSession, appealKey: string, opening: Opening) {
+  const opened = try commitAppeal(appealKey, { opening }, (current) => [
+    { event: { type: "open", subject: current.candidate }, by: opening.author, optional: true },
+    { event: { type: "escalateRetired" }, by: 0, optional: true },
+  ])
+  if (!opened.appeal.opened) return "project is retired; no review"
+  if (opened.appeal.resolution !== "Unresolved") return "appeal already resolved"
+  if (opened.appeal.escalation === "NotEscalated") return "project is retired; no review"
+  return `appeal escalated: ${(try loadAppeal(appealKey)).row?.escalation ?? ""}`
+}
+
+effect function openedAppeal(session: AppealSession, appealKey: string, opening: Opening) {
+  const opened = try commitAppeal(appealKey, { opening }, (current) => [{ event: { type: "open", subject: current.candidate }, by: opening.author, optional: true }])
+  if (!opened.appeal.opened) throw new AppealFailed({ reason: "Appeal was not stored" })
+  if (opened.appeal.resolution !== "Unresolved") return "appeal already resolved"
+  return try triageAppeal(session, appealKey)
+}
+
+effect function reopenEvidence(session: AppealSession, job: AppealJob, retained: Retained | undefined, hasDebit: boolean) {
+  const { issue, revision } = session.current
+  if (retained === undefined || retained.source.node === "") return "reopen source unavailable; no decision"
+  const source = jobSourceOf(job, retained.source)
+  if (!sameSource(source, retained.source)) return "reopen source unavailable; no decision"
+  const itemState = itemStateOf(session)
+  if (retained.source.node !== issue.node_id || itemState === "ClosedByOther") return "reopen source changed; no decision"
+  if (reversalOnly(session) && !hasDebit) return "project is retired; no review"
+  const author = job.senderId === issue.user.id
+  if (author && retained.source.revision !== revision) return "reopen source changed; no decision"
+  const maintainer = author ? false : (try maintainerRole(session, job.senderId)) === "CurrentMaintainer"
+  if (!author && !maintainer) return "reopen by a non-maintainer recorded as no decision"
+  return { source, node: issue.node_id, currentRevision: revision, author: issue.user.id, itemState, maintainer, existingDebit: hasDebit, reversalOnly: reversalOnly(session) } satisfies ReopenObservation
+}
+
+export effect function recordHumanSignal<E, R>(job: AppealJob, settings: AppealSettings, hooks: AppealHooks<E, R>) {
+  if (String(job.senderId) === settings.appUserId) return "ignored"
+  const session = try appealSession(job, settings)
+  if (typeof session === "string") return session
+  const { issue, revision } = session.current
+  const itemNodeId = issue.node_id
+  if (job.kind === "appeal") {
+    const valued = try hooks.valueDispute(job, session, (try latestFinding(itemNodeId)) !== undefined)
+    if (valued !== undefined) return valued
+    if (job.senderId !== issue.user.id) return "only the author can appeal"
+  }
+  const hasDebit = (try activePenalty(itemNodeId)) !== undefined
+  if (job.kind === "human_reopen") {
+    const retained = try retainedSource(job)
+    const evidence = try reopenEvidence(session, job, retained, hasDebit)
+    if (typeof evidence === "string") return evidence
+    const decision = reopenDecision(evidence, retained.webhook)
+    if (decision === "NoDecision") return "reopen source changed; no decision"
+    if (decision === "MaintainerDecision") {
+      try recordAction({ reviewKey: `reopen:${itemNodeId}:${retained.source.revision}`, repositoryId: job.repositoryId, itemNodeId, action: "human_reopen", detail: String(job.senderId) })
+      return try maintainerDecision(session, job, retained, evidence)
+    }
+  } else if (reversalOnly(session) && !hasDebit) return "project is retired; no review"
+  const finding = try latestFinding(itemNodeId)
+  const beforeFinding = finding?.revision !== revision
+  const signalKey = `${beforeFinding ? "appeal-before-finding" : "reopen"}:${itemNodeId}:${revision}`
+  try recordAction({ reviewKey: signalKey, repositoryId: job.repositoryId, itemNodeId, action: "appeal", detail: String(job.senderId) })
+  const appealKey = appealKeyOf(itemNodeId, revision)
+  const opening = openingOf(session, appealKey, job)
+  if (reversalOnly(session)) return try retiredAppeal(session, appealKey, opening)
+  try labelOnce(session, signalKey, appealLabel)
+  if ((try latestFinding(itemNodeId)) === undefined) return "appeal"
+  return try openedAppeal(session, appealKey, opening)
+}

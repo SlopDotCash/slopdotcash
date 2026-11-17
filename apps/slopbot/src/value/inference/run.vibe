@@ -1,0 +1,310 @@
+// spec/slopbot/valueInference.md, "A remote membership lookup is followed by current local authority and lease checks"; spec/slopbot/valueInference.md, "Admit at most three unresolved or non-free attempts for the same key"; spec/slopbot/valueInference.md, "Usage precedes retained output and explicit completion"; spec/slopbot/valueInference.md, "A retained inference survives stale publication without another charge"
+import { isoNow, millisOf, nowSeconds } from "@repo/platform/clock"
+import { randomId, sha256Hex } from "@repo/platform/crypto"
+import { Provider as Gateways } from "@repo/platform/providers"
+import { priceUsage, recordCalls } from "../../route/calls.vibe"
+import { type CallRecord, type Output, type Prompt, type RouteStatus, runStructuredRoute, stepOf } from "../../route/route.vibe"
+import { monthNumber, monthOf } from "../../spend/store.vibe"
+import { type Authority, type Charge, type Decision, type Provider, type Source, type ValueInference, admission, attempt, canCaptureFence, canComplete, canEndWithoutCall, canPublish, canReconcile, canRetain, canSaveUsage, checkedCurrent, noRetained, providerFor, request } from "../../../gen/slopbot__valueInference.effect.vibe"
+import { externalBudget } from "./budget.vibe"
+import { releaseSettings, InferenceConfig } from "./settings.vibe"
+import { type InferenceSession, InferenceRaced, attemptText, callResultOf, callsOf, inferenceState, loadInference, nameAttempt, nextAttemptNumber, noteCall, noteResult, openInference, sendInference, verdictDigest } from "./store.vibe"
+
+export const valueRoute: ReadonlyArray<Provider> = ["SurplusSonnet", "SurplusTerra", "OrbioSonnet"]
+
+export const requestToken = 1
+
+export interface RemoteRead {
+  readonly observedSource: string
+  readonly members: ReadonlyArray<Source>
+}
+
+export interface InferenceChecks<E, R> {
+  readonly authority: () => Authority!E!R
+  readonly remote: (key: string, group: ReadonlyArray<Source>) => RemoteRead!E!R
+  readonly leased: () => boolean!E!R
+}
+
+export interface InferenceRequest {
+  readonly installationId: number
+  readonly group: ReadonlyArray<Source>
+  readonly deadline: number
+}
+
+export interface ValueOutput<T> extends Output<T> {
+  readonly sourceDigest: string
+  readonly name: string
+}
+
+export type InferenceOutcome<T> =
+  | { readonly kind: "answered"; readonly verdict: T; readonly calls: ReadonlyArray<CallRecord>; readonly servedBy: CallRecord; readonly inferredAt: string; readonly resultDigest: string; readonly session: InferenceSession }
+  | { readonly kind: "authority" | "pending" | "exhausted" | "budget" | "failed"; readonly session: InferenceSession }
+
+export error InferenceRefused { reason: string }
+
+export interface ProducerIdentity {
+  readonly provider: string
+  readonly requested: string
+  readonly reported: string
+}
+
+schema StoredCall {
+  routeStep: number
+  gateway?: string
+  provider?: string
+  requestedModel: string
+  servedModel: string | null
+  priceKey?: string
+  outcome: string
+  failure: string | null
+  providerCostMicroUsd: number | null
+  providerRequestId: string | null
+}
+
+const StoredResult = Schema.Struct({
+  verdict: Schema.Unknown,
+  calls: Schema.Array(StoredCall),
+  servedBy: StoredCall,
+  blocked: Schema.Literal(false),
+  inferredAt: Schema.String,
+})
+
+const digestPattern = /^[a-f0-9]{64}$/u
+
+function gatewayOf(call: typeof StoredCall.Type) {
+  return call.gateway ?? call.provider ?? ""
+}
+
+export function producerIdentity(call: { readonly gateway?: string; readonly provider?: string; readonly requestedModel: string; readonly servedModel: string | null; readonly outcome: string }, assessedAt: string): ProducerIdentity | undefined {
+  const gateway = call.gateway ?? call.provider ?? ""
+  if (call.outcome !== "ok" || call.servedModel !== call.requestedModel || !Number.isFinite(millisOf(assessedAt))) return undefined
+  if (!valueRoute.some((provider) => stepOf(provider).gateway === gateway && stepOf(provider).model === call.requestedModel)) return undefined
+  return { provider: gateway, requested: call.requestedModel, reported: call.servedModel }
+}
+
+function recordOf(call: typeof StoredCall.Type): CallRecord {
+  const gateway = gatewayOf(call) === "orbio" ? "orbio" as const : "surplus" as const
+  return {
+    routeStep: call.routeStep,
+    gateway,
+    requestedModel: call.requestedModel,
+    servedModel: call.servedModel,
+    priceKey: call.priceKey ?? `${gateway}/${call.requestedModel}`,
+    outcome: call.outcome === "ok" ? "ok" : "failed",
+    failure: call.outcome === "ok" ? null : "provider call failed",
+    usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+    providerCostMicroUsd: call.providerCostMicroUsd,
+    providerRequestId: call.providerRequestId,
+  }
+}
+
+effect function retainedAnswer<T>(session: InferenceSession, output: ValueOutput<T>) {
+  const loaded = try loadInference(session)
+  const stored = loaded.result
+  if (stored === undefined) return undefined
+  if ((try sha256Hex(stored.resultJson)) !== stored.resultDigest) throw new InferenceRefused({ reason: "Retained inference digest mismatch" })
+  const parsed = Effect.try(() => JSON.parse(stored.resultJson) as unknown) catch () => undefined
+  const value = Schema.decodeUnknownEffect(StoredResult)(parsed) catch () => undefined
+  const verdict = value === undefined ? undefined : output.validate(value.verdict)
+  if (value === undefined || verdict === undefined || !value.calls.some((call) => JSON.stringify(call) === JSON.stringify(value.servedBy)) || producerIdentity(value.servedBy, value.inferredAt) === undefined)
+    throw new InferenceRefused({ reason: "Retained inference does not validate against current source" })
+  const state = loaded.state
+  const retainedBy = state.retained.attempt
+  if (canReconcile(state, retainedBy)) try sendInference(session, { type: "reconcile", attemptId: retainedBy })
+  return { kind: "answered", verdict, calls: value.calls.map(recordOf), servedBy: recordOf(value.servedBy), inferredAt: value.inferredAt, resultDigest: state.retained.result, session } satisfies InferenceOutcome<T>
+}
+
+effect function observeNow(session: InferenceSession, read: Authority) {
+  const now = try nowSeconds()
+  const month = monthNumber(monthOf(try isoNow()))
+  const last = (try inferenceState(session)).authority
+  const authority = read.active ? read : { ...read, revision: Math.max(read.revision, last.revision), generation: Math.max(read.generation, last.generation) }
+  const sent = sendInference(session, { type: "observe", now, month, authority }) catch () => undefined
+  return sent !== undefined
+}
+
+export effect function checkCurrent<E, R>(session: InferenceSession, checks: InferenceChecks<E, R>) {
+  if (!(try observeNow(session, try checks.authority())) || !(try checks.leased())) return false
+  const begun = sendInference(session, { type: "beginCheck", token: requestToken }) catch () => undefined
+  if (begun === undefined) return false
+  const remote = try checks.remote(session.key, begun.group)
+  try sendInference(session, { type: "remoteReply", token: requestToken, observedSource: remote.observedSource, members: [...remote.members] })
+  const observed = try observeNow(session, try checks.authority())
+  const leased = try checks.leased()
+  const finished = try sendInference(session, { type: "finishCheck", token: requestToken })
+  return observed && leased && checkedCurrent(request(finished, requestToken), finished)
+}
+
+export effect function inferenceKey(installationId: number, prompt: Prompt, output: ValueOutput<unknown>) {
+  if (!digestPattern.test(output.sourceDigest)) throw new InferenceRefused({ reason: "Inference source digest is invalid" })
+  const text = try orDie(Effect.try(() => JSON.stringify({
+    installationId,
+    sourceDigest: output.sourceDigest,
+    system: prompt.system,
+    policy: prompt.policy,
+    name: output.name,
+    schema: output.schema,
+    route: valueRoute.map(stepOf),
+  })))
+  return try sha256Hex(text)
+}
+
+export effect function openRequest<E, R>(key: string, request: InferenceRequest, checks: InferenceChecks<E, R>) {
+  if (!Number.isSafeInteger(request.installationId) || request.installationId <= 0) throw new InferenceRefused({ reason: "Value inference installation identity is invalid" })
+  const session = try openInference(key, request.installationId)
+  const authority = try checks.authority()
+  const settings = (try InferenceConfig).settings
+  const group = [...request.group]
+  const opened = sendInference(session, { type: "setSource", key, group, authority }) catch () => undefined
+  if (opened === undefined) throw new InferenceRefused({ reason: "Value inference source group is invalid" })
+  try sendInference(session, { type: "configure", settings: releaseSettings(settings) })
+  try observeNow(session, authority)
+  const claimed = sendInference(session, { type: "claim", token: requestToken, deadline: request.deadline, inputDigest: key }) catch () => undefined
+  if (claimed === undefined) return { session, owned: false }
+  const owned = sendInference(session, { type: "ownGroup", token: requestToken, sources: group }) catch () => undefined
+  if (owned === undefined) return { session, owned: false }
+  if (canCaptureFence(owned, requestToken)) try sendInference(session, { type: "captureFence", token: requestToken })
+  return { session, owned: true }
+}
+
+function configuredRoute(provider: Provider) {
+  return stepOf(provider).gateway === "orbio" ? "orbio" as const : "surplus-anthropic" as const
+}
+
+function chargeOf(provider: Provider, call: CallRecord, output: string, sizeBand: number): Charge {
+  const result = callResultOf(call.gateway, call.outcome, call.failure)
+  return {
+    provider,
+    seenModel: call.servedModel ?? "",
+    result,
+    known: call.providerCostMicroUsd !== null,
+    actual: call.providerCostMicroUsd ?? 0,
+    estimate: priceUsage(call.priceKey, call.usage)?.costMicroUsd ?? 0,
+    output: result === "ValidResult" ? output : "",
+    sizeBand: result === "ValidResult" ? sizeBand : 0,
+    customerCharge: 0,
+  }
+}
+
+const admissions: Readonly<Record<Exclude<Decision, "Eligible" | "RetainedResult">, "pending" | "exhausted" | "budget">> = {
+  PendingCapacity: "pending",
+  AttemptsExhausted: "exhausted",
+  BudgetBlocked: "budget",
+}
+
+effect function admitted(session: InferenceSession, state: ValueInference) {
+  const external = try externalBudget(session.key, monthOf(try isoNow()))
+  const decision = admission(state, external.otherUsed, external.otherHeld, external.otherUnbounded)
+  if (decision === "Eligible") {
+    const id = try nextAttemptNumber(session)
+    try nameAttempt(session, id, `value:${try randomId()}`)
+    const admittedState = sendInference(session, { type: "admit", token: requestToken, attemptId: id }) catch effect (error) => match (error) {
+      when InferenceRaced: undefined;
+      default: throw error;
+    }
+    if (admittedState === undefined) return "pending" as const
+    const reserved = sendInference(session, { type: "reserve", attemptId: id, ...external }) catch effect (error) => match (error) {
+      when InferenceRaced: undefined;
+      default: throw error;
+    }
+    return reserved === undefined ? "pending" as const : id
+  }
+  return decision === "RetainedResult" ? "retained" as const : admissions[decision]
+}
+
+interface Answer<T> {
+  readonly verdict: T
+  readonly call: CallRecord
+}
+
+interface Routed<T> {
+  readonly answer: Answer<T> | undefined
+  readonly checkFailed: boolean
+}
+
+effect function routeAttempt<T, E, R>(session: InferenceSession, id: number, prompt: Prompt, output: ValueOutput<T> & { readonly sizeBand: (verdict: T) => number }, checks: InferenceChecks<E, R>) {
+  const gateways = try Gateways
+  const control = {
+    recheck: () => Effect.succeed<RouteStatus>("InFlight"),
+    skip: () => Effect.succeed<RouteStatus>("RetryableFailure"),
+    record: (call: CallRecord) => Effect.succeed<RouteStatus>(call.outcome === "ok" ? "Answered" : "InFlight"),
+  }
+  let answer: Answer<T> | undefined = undefined
+  let state = try inferenceState(session)
+  while (attempt(state, id).stage === "HeldBudget") {
+    const provider = providerFor(attempt(state, id).routeStep)
+    if (!gateways.configured.has(configuredRoute(provider))) {
+      state = try sendInference(session, { type: "skipUnavailable", attemptId: id, unavailableProvider: provider, credentialMissing: true })
+      continue
+    }
+    if (!(try checkCurrent(session, checks))) return { answer, checkFailed: true } satisfies Routed<T>
+    try sendInference(session, { type: "call", attemptId: id })
+    const routed = try runStructuredRoute([provider], prompt, "high", output, control)
+    const [first] = routed.calls
+    if (first === undefined) throw new InferenceRefused({ reason: "Provider step made no call" })
+    const call: CallRecord = { ...first, routeStep: valueRoute.indexOf(provider) + 1 }
+    try noteCall(session, id, call)
+    const verdict = routed.kind === "answered" ? routed.verdict : undefined
+    if (verdict !== undefined) answer = { verdict, call }
+    const digest = verdict === undefined ? "" : try verdictDigest(verdict)
+    state = try sendInference(session, { type: "recordCall", attemptId: id, charge: chargeOf(provider, call, digest, verdict === undefined ? 0 : output.sizeBand(verdict)) })
+  }
+  return { answer, checkFailed: false } satisfies Routed<T>
+}
+
+effect function settleAttempt<T>(session: InferenceSession, id: number, answer: Answer<T> | undefined) {
+  let state = try inferenceState(session)
+  if (canEndWithoutCall(state, id)) state = try sendInference(session, { type: "endWithoutCall", attemptId: id })
+  const calls = try callsOf(session, id)
+  if (!canSaveUsage(state, id)) {
+    if (!attempt(state, id).usageSaved) try recordStuckUsage(session, id, calls)
+    return state
+  }
+  state = try sendInference(session, { type: "saveUsage", attemptId: id })
+  if (answer !== undefined && canRetain(state, id)) {
+    const inferredAt = try isoNow()
+    try noteResult(session, id, try orDie(Effect.try(() => JSON.stringify({ verdict: answer.verdict, calls, servedBy: answer.call, blocked: false, inferredAt }))))
+    state = sendInference(session, { type: "retain", attemptId: id }) catch effect (error) => match (error) {
+      when InferenceRaced: try inferenceState(session);
+      default: throw error;
+    }
+  }
+  if (canComplete(state, id)) state = try sendInference(session, { type: "complete", attemptId: id })
+  if (canReconcile(state, id)) state = try sendInference(session, { type: "reconcile", attemptId: id })
+  return state
+}
+
+export effect function runValueInference<T, E, R>(prompt: Prompt, output: ValueOutput<T> & { readonly sizeBand: (verdict: T) => number }, request: InferenceRequest, checks: InferenceChecks<E, R>) {
+  const key = try inferenceKey(request.installationId, prompt, output)
+  const { session, owned } = try openRequest(key, request, checks)
+  const reused = try retainedAnswer(session, output)
+  if (reused !== undefined) return reused
+  if (!owned || !(try checkCurrent(session, checks))) return { kind: "authority", session } satisfies InferenceOutcome<T>
+  const outcome = try admitted(session, try inferenceState(session))
+  if (outcome === "retained") return (try retainedAnswer(session, output)) ?? { kind: "pending", session } satisfies InferenceOutcome<T>
+  if (typeof outcome === "string") return { kind: outcome, session } satisfies InferenceOutcome<T>
+  const id = outcome
+  const routed = routeAttempt(session, id, prompt, output, checks) catch effect (error) => {
+    settleAttempt(session, id, undefined) catch () => undefined
+    throw error
+  }
+  const state = try settleAttempt(session, id, routed.answer)
+  if (state.retained !== noRetained) return (try retainedAnswer(session, output)) ?? { kind: "failed", session } satisfies InferenceOutcome<T>
+  const settled = attempt(state, id)
+  const denied = settled.allCalls.some((charge) => charge.result === "BudgetDenial")
+  if (routed.checkFailed || settled.allCalls.length === 0 || settled.stage === "HeldBudget") return { kind: "authority", session } satisfies InferenceOutcome<T>
+  return { kind: denied ? "budget" : "failed", session } satisfies InferenceOutcome<T>
+}
+
+effect function recordStuckUsage(session: InferenceSession, id: number, calls: ReadonlyArray<CallRecord>) {
+  const text = try attemptText(session, id)
+  if (text !== undefined && calls.length > 0) try recordCalls(text, session.installationId, "triage", calls)
+}
+
+export effect function publishRetained<A, E, R, E2, R2>(session: InferenceSession, resultDigest: string, checks: InferenceChecks<E, R>, append: () => A!E2!R2) {
+  if (!(try checkCurrent(session, checks))) return undefined
+  if (!canPublish(try inferenceState(session), requestToken, resultDigest)) return undefined
+  const appended = try append()
+  try sendInference(session, { type: "publish", token: requestToken, resultDigest })
+  return appended
+}

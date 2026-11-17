@@ -32,6 +32,8 @@
     "apps/app/public/slop-mark-512.png": "88c972cb811bcb1def0265a7d1eb39b61825e9cc4349e217bf73c8d232875ebf",
     "apps/app/public/slop-mark.svg": "d3a8fc8f03c4bb7bfa0be45cb163a2bb8a142f8b300e9fd08b86b146c8973ac1",
     "apps/backend/src/projects/legacyProjects.json": "d1ee43b154ae60cde6157c403aeb3953aa0c5e96a06b0f8ac9d5fa23353bf5b0",
+    "apps/security/sandbox/Dockerfile": "5b0f142bcbb47d0b6795b173fe8173a42e050de8f7e0be779964657bb1137618",
+    "apps/security/sandbox/supervise.py": "9b3124d7764274189ae324cbe59d2d03b5a8f1b234db4230871189f22160a241",
     "cycles/README.md": "21cdc95f39996724ff13e504c32e83138e9fc78bbb437b6962dd5ddfa18671cc",
     "data/accepted-review-history.json": "2ea4a2d06d0f5fe3d4b6921c5dae80d1d1221206a242503a142c1790d74e6546",
     "data/evaluated-contributions.json": "24b625299e25ecf99e78bc8adae782932550e026fe0ca5b6a542c3a852903043",

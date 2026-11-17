@@ -112,6 +112,10 @@ export function permissionOf(checked: Checked): AuthorityRead["permission"] {
   return checked.access.access.installation === "installed" ? "PermissionDenied" : "PermissionUnavailable"
 }
 
+export function repositoryAdmin(checked: Checked): boolean {
+  return checked.authority.state === "verified" && checked.access.state === "read" && checked.access.access.installation === "installed" && checked.access.access.permission === "admin"
+}
+
 export function modelRead(checked: Checked, actor: number, repository: number): AuthorityRead {
   return { actor, repository, permission: permissionOf(checked), installation: installationOf(checked.access) }
 }
@@ -147,7 +151,7 @@ effect function portRead(read: { readonly actorGithubId: string; readonly reposi
   const path = registeredPath(read.repositoryId) catch () => undefined
   if (member === undefined || path === undefined) return unavailable(read)
   const checked = try checkAuthority({ path, githubId: read.repositoryId }, { githubId: read.actorGithubId, login: member.login })
-  return { ...read, permission: permissionOf(checked), installation: installationOf(checked.access) } satisfies PortRead
+  return { ...read, permission: permissionOf(checked), installation: installationOf(checked.access), repositoryAdmin: repositoryAdmin(checked) } satisfies PortRead
 }
 
 export const AuthorityLive = Layer.effect(Authority, effect {

@@ -1,6 +1,7 @@
 // spec/app/index.md, "Story: Open a page by its address"
 export { FundsAndAwards, type FundsAndAwardsProps } from "./FundsAndAwards.tsx";
-export { type Clearance, clearanceOf, InstallPanel, type InstallPanelProps } from "./InstallPanel.tsx";
+export type { Clearance } from "./history.ts";
+export { clearanceOf, InstallPanel, type InstallPanelProps } from "./InstallPanel.tsx";
 export { MergeActivity, type MergeActivityProps } from "./MergeActivity.tsx";
 export { Participation, type ParticipationProps } from "./Participation.tsx";
 export { PaymentHistory, type PaymentHistoryProps } from "./PaymentHistory.tsx";

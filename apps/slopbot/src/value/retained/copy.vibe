@@ -1,0 +1,737 @@
+// spec/slopbot/workUnits.md, "A claim is one changed path in one commit and belongs to its first accepted carrier"; spec/points/authorship.md, "A verified October carry goes to the original contributor; otherwise primary authorship precedes the fallbacks"
+import { sha256Of } from "@repo/platform/git/bytes"
+import { MERGE_GIT_VERSION, type MergeResolution, mergeResolutionMatches } from "@repo/platform/git/evidence"
+import { githubLinkDestinations, sameRepositoryCommitHints } from "../evidence/hints.vibe"
+import type { Commit, CommitAttribution, Evidence } from "../evidence/types.vibe"
+import type { FileChange } from "../proofs/changes.vibe"
+import { hasCompleteValuePatch, valueAdditionCount, valueDeletionCount, valuePatch } from "../proofs/changes.vibe"
+import { manifestIdentity } from "../proofs/manifest.ts"
+import { millis } from "../workUnits/source.vibe"
+import type { RetainedBinding, RetainedBindings, WorkUnitSource } from "../workUnits/types.vibe"
+import { type CandidateHunkFile, type HunkCandidate, orderedHunkDifference, retainedAncestors, uniqueHunkBindings } from "./binding.ts"
+import { type PriorBinding, admission, fileBinding, sameSourceCarrier } from "./copyRules.ts"
+import { acknowledgementTime, hasRetainedMergeReference, retainedAcknowledgements } from "./reference.vibe"
+
+export interface CopyOptions {
+  readonly ordinaryCommitsOnly?: boolean
+  readonly octoberOriginalCredit?: boolean
+  readonly acceptedSubset?: boolean
+}
+
+interface Integration {
+  readonly source: WorkUnitSource
+  readonly linkedOnly: boolean
+}
+
+const editStatuses = ["added", "modified", "removed"]
+const mergeWords = /\b(?:merged?|integrat(?:ed|ion))\b/iu
+const editLine = /^[+-]/u
+
+function serialized(value: unknown) {
+  return JSON.stringify(value)
+}
+
+function duplicateFree(values: ReadonlyArray<unknown>) {
+  return new Set(values).size === values.length
+}
+
+function lower(text: string) {
+  return text.toLowerCase()
+}
+
+export function retainedEditIdentity(file: FileChange): string | null {
+  if (
+    !hasCompleteValuePatch(file) || file.previous_filename !== undefined || !editStatuses.includes(file.status) ||
+    valueAdditionCount(file) + valueDeletionCount(file) === 0
+  ) return null
+  return JSON.stringify([file.filename, file.status, valuePatch(file)?.split("\n").filter((line) => editLine.test(line))])
+}
+
+export function retainedManifestIdentity(file: FileChange, commit: { readonly sha: string; readonly parents: ReadonlyArray<{ readonly sha: string }> }) {
+  return manifestIdentity(file, commit)
+}
+
+function linkedTo(holder: Evidence, target: Evidence, repository: string) {
+  return holder.relatedPullRequests.some((reference) =>
+    reference.id === target.pull.node_id && reference.number === target.pull.number && reference.url === target.pull.html_url &&
+    lower(reference.repository) === lower(repository))
+}
+
+function relatedEitherWay(original: Evidence, accepted: Evidence) {
+  return original.relatedPullRequests.some((reference) => reference.id === accepted.pull.node_id) ||
+    accepted.relatedPullRequests.some((reference) => reference.id === original.pull.node_id)
+}
+
+function netFiles(evidence: Evidence) {
+  return evidence.files
+    .map((file) => [file.filename, file.previous_filename ?? null, file.status, valueAdditionCount(file), valueDeletionCount(file), valuePatch(file)])
+    .sort((a, b) => String(a[0]).localeCompare(String(b[0])))
+}
+
+function reopenHistory(evidence: Evidence) {
+  if (evidence.commits.length === 0 || evidence.commits.at(-1)?.sha !== evidence.pull.head.sha || evidence.commitAttribution.length !== evidence.commits.length)
+    return null
+  const result: unknown[] = []
+  for (const [index, commit] of evidence.commits.entries()) {
+    const attribution = evidence.commitAttribution.find((item) => item.sha === commit.sha)
+    const author = commit.author
+    const changedPaths = attribution?.changedPaths ?? null
+    const files = attribution?.files
+    if (
+      commit.parents.length !== 1 ||
+      commit.parents[0]?.sha !== (index === 0 ? evidence.pull.base.sha : evidence.commits[index - 1]?.sha) ||
+      author === null || author.type !== "User" || attribution === undefined || files === undefined || files.length === 0 ||
+      attribution.limitations.length > 0 || !attribution.actorNodeIds.includes(author.node_id) ||
+      changedPaths === null || changedPaths.length !== files.length || new Set(changedPaths).size !== files.length ||
+      new Set(files.map((file) => file.filename)).size !== files.length || !files.every((file) => changedPaths.includes(file.filename))
+    ) return null
+    const edits = files.map(retainedEditIdentity)
+    if (edits.includes(null)) return null
+    result.push([author.node_id, commit.commit.author.date, commit.commit.message, [...attribution.actorNodeIds].sort(), [...changedPaths].sort(), edits.sort()])
+  }
+  return JSON.stringify(result)
+}
+
+function sameAuthorReopen(original: Evidence, accepted: Evidence) {
+  const closedAt = original.pull.closed_at
+  const mergedAt = accepted.pull.merged_at
+  if (
+    original.pull.state !== "closed" || closedAt === null || closedAt === "" || mergedAt === null || mergedAt === "" ||
+    !(millis(closedAt) <= millis(mergedAt)) || original.pull.user.type !== "User" || accepted.pull.user.type !== "User" ||
+    original.pull.user.node_id !== accepted.pull.user.node_id || original.limitations.length > 0 || accepted.limitations.length > 0 ||
+    !relatedEitherWay(original, accepted)
+  ) return false
+  if (
+    original.files.length === 0 || !original.files.every(hasCompleteValuePatch) || !accepted.files.every(hasCompleteValuePatch) ||
+    serialized(netFiles(original)) !== serialized(netFiles(accepted))
+  ) return false
+  const before = reopenHistory(original)
+  return before !== null && before === reopenHistory(accepted)
+}
+
+function completeOrdinaryCapture(evidence: Evidence) {
+  if (
+    evidence.commits.length === 0 || evidence.commits.length !== evidence.pull.commits || evidence.commits.at(-1)?.sha !== evidence.pull.head.sha ||
+    evidence.commitAttribution.length !== evidence.commits.length || !duplicateFree(evidence.commits.map((commit) => commit.sha)) ||
+    !evidence.files.every(hasCompleteValuePatch)
+  ) return false
+  return evidence.commits.every((commit) => {
+    const entries = evidence.commitAttribution.filter((entry) => entry.sha === commit.sha)
+    const [entry] = entries
+    const files = entry?.files
+    const changedPaths = entry?.changedPaths ?? null
+    return commit.parents.length === 1 && entries.length === 1 && entry !== undefined && entry.limitations.length === 0 && files !== undefined &&
+      changedPaths !== null && files.length === changedPaths.length && new Set(changedPaths).size === files.length &&
+      files.every((file) => changedPaths.includes(file.filename) && hasCompleteValuePatch(file))
+  })
+}
+
+function sameAuthorRetainedSubset(original: Evidence, accepted: Evidence) {
+  const closedAt = original.pull.closed_at
+  const mergedAt = accepted.pull.merged_at
+  if (
+    original.pull.user.type !== "User" || accepted.pull.user.type !== "User" || original.pull.user.node_id !== accepted.pull.user.node_id ||
+    original.pull.number >= accepted.pull.number || original.pull.state !== "closed" || original.pull.merged_at !== null ||
+    closedAt === null || closedAt === "" || mergedAt === null || mergedAt === "" || !(millis(closedAt) <= millis(mergedAt)) ||
+    original.limitations.length > 0 || accepted.limitations.length > 0 || !relatedEitherWay(original, accepted)
+  ) return false
+  if (!completeOrdinaryCapture(original) || !completeOrdinaryCapture(accepted)) return false
+  return original.commitAttribution.some((entry) => {
+    const commit = original.commits.find((item) => item.sha === entry.sha)
+    if (commit === undefined) return false
+    return (entry.files ?? []).some((file) => {
+      const identity = retainedEditIdentity(file)
+      if (identity === null) return false
+      return accepted.commitAttribution.some((copy) => {
+        const retained = accepted.commits.find((item) => item.sha === copy.sha)
+        return (commit.author === null || commit.author.type === "User") && retained !== undefined &&
+          (retained.author?.node_id ?? null) === (commit.author?.node_id ?? null) && (retained.author?.type ?? null) === (commit.author?.type ?? null) &&
+          (copy.files ?? []).some((candidate) => retainedEditIdentity(candidate) === identity)
+      })
+    })
+  })
+}
+
+const urlPattern = /[a-z][a-z0-9+.-]*:\/\/[^\s<>"')\]]+/giu
+const pullPathPattern = /^\/([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+)\/(?:pull|issues)\/([1-9][0-9]*)(?:\/|$)/u
+const localReferencePattern = /(?<![\w/])(?:(?<![.-])([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+)[ \t]*)?#([1-9][0-9]*)\b/gu
+
+function parsedUrl(text: string) {
+  try {
+    return new URL(text.replace(/[.,;!?]+$/u, ""))
+  } catch {
+    return undefined
+  }
+}
+
+function hasRetainedPullReference(original: Evidence, body: string, accepted: Evidence, rebase = false) {
+  const pull = accepted.pull
+  if (!linkedTo(original, accepted, original.repository)) return false
+  const local = (repository: string, number: number) => lower(repository) === lower(original.repository) && number === pull.number
+  const text = githubLinkDestinations(body).replace(/\[[^[\]\n]*\](?:\[[^[\]\n]*\])?/gu, " ")
+  return text.split(/(?<=[.!?])(?:\s+|$)|[\r\n]+/u).some((sentence) => {
+    const incorporated = /^\s*incorporated\s+into\s+merged\b/iu.test(sentence) &&
+      !/\b(?:will|would|could|should|may|might|must|if|unless|but)\b/iu.test(sentence)
+    const includedFix = /\b(?:fix|fixes|correction|corrections)\b[^.!?\r\n]*\b(?:is|are|was|were)\s+included\s+in\b/iu.test(sentence) &&
+      !/\b(?:will|would|could|should|may|might|must|if|unless)\b/iu.test(sentence) && !/\bbut\b/iu.test(sentence)
+    if (
+      (!/\b(?:commits?|changes?|work)\b/iu.test(sentence) && !includedFix && !incorporated) ||
+      !(rebase
+        ? /\brebased\b/iu.test(sentence) && /\bauthorship\b/iu.test(sentence)
+        : includedFix || incorporated || /\b(?:retained|cherry[ -]picked|carried[ -]over)\b/iu.test(sentence)) ||
+      /\b(?:not|never|no|neither|without|cannot)\b|\b\p{L}+n['’]t\b/iu.test(sentence)
+    ) return false
+    for (const [found] of sentence.matchAll(urlPattern)) {
+      const url = parsedUrl(found)
+      if (url === undefined) continue
+      const path = pullPathPattern.exec(url.pathname)
+      if (
+        url.protocol === "https:" && url.hostname === "github.com" && url.port === "" && url.username === "" && url.password === "" &&
+        path !== null && local(path[1] ?? "", Number(path[2]))
+      ) return true
+    }
+    const references = sentence.replace(urlPattern, " ")
+    for (const match of references.matchAll(localReferencePattern)) {
+      if (local(match[1] ?? original.repository, Number(match[2]))) return true
+    }
+    return false
+  })
+}
+
+function acknowledgedByMerger(evidence: Evidence, integration: Evidence) {
+  const accepted = integration.pull
+  const mergedBy = accepted.merged_by
+  const mergedAt = millis(accepted.merged_at)
+  return retainedAcknowledgements(evidence).some((comment) =>
+    comment.user?.type !== "Bot" && comment.user?.node_id === mergedBy?.node_id && millis(acknowledgementTime(comment)) >= mergedAt &&
+    evidence.pull.number < accepted.number &&
+    ((mergeWords.test(comment.body) &&
+      (sameRepositoryCommitHints(evidence.repository, comment.body).some((sha) => sha.length === 40 && sha === accepted.merge_commit_sha) ||
+        hasRetainedMergeReference(evidence, comment, integration))) ||
+      hasRetainedPullReference(evidence, comment.body, integration)))
+}
+
+function octoberRebaseAcknowledged(evidence: Evidence, integration: Evidence) {
+  const accepted = integration.pull
+  return evidence.comments.some((comment) =>
+    comment.user?.type !== "Bot" && comment.user?.node_id === accepted.merged_by?.node_id && comment.updated_at === comment.created_at &&
+    millis(comment.created_at) <= millis(evidence.pull.closed_at) && millis(comment.created_at) < millis(accepted.merged_at) &&
+    hasRetainedPullReference(evidence, comment.body, integration, true))
+}
+
+function linkedOnlyCopy(evidence: Evidence, source: WorkUnitSource) {
+  const integration = source.evidence
+  const closedAt = evidence.pull.closed_at
+  return evidence.pull.state === "closed" && evidence.pull.number < integration.pull.number && evidence.pull.user.type === "User" &&
+    closedAt !== null && millis(closedAt) <= millis(integration.pull.merged_at) && evidence.limitations.length === 0 &&
+    integration.limitations.length === 0 && linkedTo(integration, evidence, evidence.repository) &&
+    evidence.commitAttribution.some((entry) => {
+      const commit = evidence.commits.find((item) => item.sha === entry.sha)
+      const author = commit?.author ?? null
+      if (commit === undefined || commit.parents.length !== 1 || author === null || author.type !== "User" || author.node_id !== evidence.pull.user.node_id || entry.limitations.length > 0)
+        return false
+      return (entry.files ?? []).some((file) => {
+        const identity = retainedEditIdentity(file)
+        if (identity === null) return false
+        return integration.commitAttribution.some((copied) => {
+          const copy = integration.commits.find((item) => item.sha === copied.sha)
+          if (copy === undefined || copy.parents.length !== 1 || copy.author === null || copy.author.type !== "User" || copy.author.node_id !== author.node_id || copied.limitations.length > 0)
+            return false
+          return (copied.files ?? []).some((candidate) => {
+            const manifest = retainedManifestIdentity(file, commit)
+            return retainedEditIdentity(candidate) === identity || (manifest !== null && manifest === retainedManifestIdentity(candidate, copy)) ||
+              preexistingHunks(file, candidate, source, copied.sha) !== null
+          })
+        })
+      })
+    })
+}
+
+function retainedCopySources(original: WorkUnitSource, sources: ReadonlyArray<WorkUnitSource>, octoberOriginalCredit: boolean, acceptedSubset: boolean) {
+  const evidence = original.evidence
+  const retained: Integration[] = []
+  if (evidence.pull.merged_at !== null || evidence.indirectAcceptance !== undefined) return retained
+  for (const source of sources) {
+    const integration = source.evidence
+    const accepted = integration.pull
+    const mergedBy = accepted.merged_by
+    const mergedAt = accepted.merged_at
+    const carrier = {
+      sameRepository: integration.repositoryNodeId === evidence.repositoryNodeId,
+      samePull: accepted.node_id === evidence.pull.node_id,
+      merged: mergedAt !== null && mergedAt !== "",
+      mergeCommit: accepted.merge_commit_sha !== null && accepted.merge_commit_sha !== "",
+      humanMerger: mergedBy !== null && mergedBy.type !== "Bot",
+      sharedPath: evidence.files.some((file) => integration.files.some((copied) => copied.filename === file.filename)),
+    }
+    if (!sameSourceCarrier(carrier) || mergedAt === null || mergedBy === null) continue
+    const octoberReplacement = octoberOriginalCredit && mergedAt.startsWith("2026-10-") && evidence.pull.state === "closed" &&
+      evidence.pull.number < accepted.number && evidence.pull.user.type === "User" && mergedBy.type === "User" &&
+      evidence.pull.user.node_id !== accepted.user.node_id
+    const admitted = admission({
+      reopen: sameAuthorReopen(evidence, integration),
+      retainedSubset: acceptedSubset && sameAuthorRetainedSubset(evidence, integration),
+      mergerAcknowledged: acknowledgedByMerger(evidence, integration),
+      octoberRebase: octoberReplacement && octoberRebaseAcknowledged(evidence, integration),
+      linkedCopy: linkedOnlyCopy(evidence, source),
+    })
+    if (admitted.kind !== "excluded") retained.push({ source, linkedOnly: admitted.kind === "linkedOnly" })
+  }
+  return retained
+}
+
+function changedHunks(file: FileChange) {
+  if (retainedEditIdentity(file) === null) return null
+  const hunks = (valuePatch(file) ?? "")
+    .split(/^@@.*@@.*$/mu)
+    .map((hunk) => hunk.split("\n").filter((line) => editLine.test(line)))
+    .filter((lines) => lines.length > 0)
+    .map((lines) => JSON.stringify(lines))
+  return duplicateFree(hunks) ? hunks : null
+}
+
+export function parentGraph(commits: ReadonlyMap<string, Commit>, first: ReadonlyArray<string>, last: ReadonlyArray<string>) {
+  const indices = new Map<string, number>()
+  const include = (sha: string) => {
+    if (sha !== "" && !indices.has(sha)) indices.set(sha, indices.size)
+  }
+  for (const sha of first) include(sha)
+  for (const [sha, commit] of commits) {
+    include(sha)
+    for (const parent of commit.parents) include(parent.sha)
+  }
+  for (const sha of last) include(sha)
+  const graph: number[][] = Array.from({ length: indices.size }, () => [])
+  for (const [sha, commit] of commits) {
+    const index = indices.get(sha)
+    if (index === undefined) continue
+    for (const parent of commit.parents) {
+      const next = indices.get(parent.sha)
+      if (next !== undefined) graph[index]?.push(next)
+    }
+  }
+  return { graph, indices }
+}
+
+function capturedParentGraph(integration: WorkUnitSource, acceptedSha: string) {
+  const commits = new Map(integration.evidence.commits.map((commit) => [commit.sha, commit]))
+  const { graph, indices } = parentGraph(commits, [acceptedSha], integration.evidence.commitAttribution.map((candidate) => candidate.sha))
+  return { graph, indices, start: indices.get(acceptedSha) ?? -1 }
+}
+
+function preexistingHunks(original: FileChange, copied: FileChange, integration: WorkUnitSource, acceptedSha: string) {
+  if (original.filename !== copied.filename || original.status !== copied.status) return null
+  const before = changedHunks(original)
+  const after = changedHunks(copied)
+  if (before === null || after === null) return null
+  const difference = orderedHunkDifference(before, after)
+  if (difference.kind === "invalid") return null
+  const { graph, indices, start } = capturedParentGraph(integration, acceptedSha)
+  const ancestry = retainedAncestors(graph, start)
+  if (!ancestry.complete) return null
+  const ancestors = ancestry.seen
+  const candidates: HunkCandidate[] = integration.evidence.commitAttribution.map((candidate: CommitAttribution) => {
+    const vertex = indices.get(candidate.sha) ?? -1
+    const files: CandidateHunkFile[] = []
+    if (candidate.sha !== acceptedSha && candidate.limitations.length === 0 && vertex >= 0 && ancestors[vertex] === true) {
+      for (const file of candidate.files ?? []) {
+        if (file.filename !== original.filename) continue
+        const hunks = changedHunks(file)
+        files.push({ path: file.filename, hunks: hunks === null ? { kind: "unavailable" } : { kind: "parsed", values: hunks } })
+      }
+    }
+    return { sha: candidate.sha, vertex, limitations: candidate.limitations.length, files }
+  })
+  const bindings = uniqueHunkBindings(ancestors, acceptedSha, original.filename, before, difference.missing, candidates)
+  if (bindings.kind === "ambiguous") return null
+  return [...new Set(bindings.candidates.map((index) => candidates[index]?.sha ?? ""))].sort()
+}
+
+function hasEarlierNativeOriginal(source: WorkUnitSource, commit: Commit, file: FileChange, sources: ReadonlyArray<WorkUnitSource>) {
+  const evidence = source.evidence
+  const author = commit.author
+  if (author === null || author.type !== "User" || author.node_id === evidence.pull.user.node_id || commit.parents.length !== 1 || evidence.limitations.length > 0 || retainedEditIdentity(file) === null)
+    return false
+  return sources.some(({ evidence: original }) => {
+    const copies = original.commits.filter((item) => item.sha === commit.sha)
+    const attribution = original.commitAttribution.filter((item) => item.sha === commit.sha)
+    return original.repositoryNodeId === evidence.repositoryNodeId && original.pull.number < evidence.pull.number && original.pull.state === "closed" &&
+      original.pull.merged_at === null && original.pull.user.type === "User" && original.pull.user.node_id === author.node_id &&
+      original.limitations.length === 0 && copies.length === 1 && serialized(copies[0]?.author) === serialized(commit.author) &&
+      serialized(copies[0]?.parents) === serialized(commit.parents) && attribution.length === 1 && attribution[0]?.limitations.length === 0 &&
+      (attribution[0]?.files ?? []).some((candidate) => retainedEditIdentity(candidate) === retainedEditIdentity(file)) &&
+      linkedTo(evidence, original, original.repository)
+  })
+}
+
+function editsOf(files: ReadonlyArray<FileChange>) {
+  if (files.length === 0 || !duplicateFree(files.map((file) => file.filename))) return null
+  const identities = files.map(retainedEditIdentity)
+  return identities.includes(null) ? null : JSON.stringify(identities.sort())
+}
+
+function alreadyAcceptedPromotion(original: WorkUnitSource, sources: ReadonlyArray<WorkUnitSource>) {
+  const evidence = original.evidence
+  const closedAt = millis(evidence.pull.closed_at)
+  if (
+    evidence.pull.merged_at !== null || evidence.indirectAcceptance !== undefined || evidence.pull.user.type !== "User" || evidence.limitations.length > 0 ||
+    !Number.isFinite(closedAt) || evidence.commits.length === 0 || !duplicateFree(evidence.commits.map((commit) => commit.sha)) ||
+    evidence.commits.length !== evidence.pull.commits || evidence.commitAttribution.length !== evidence.commits.length ||
+    evidence.commits.at(-1)?.sha !== evidence.pull.head.sha
+  ) return false
+  return evidence.commits.every((commit) => {
+    const attribution = evidence.commitAttribution.filter((entry) => entry.sha === commit.sha)
+    const [only] = attribution
+    const files = only?.files
+    const changedPaths = only?.changedPaths ?? null
+    if (
+      commit.parents.length !== 1 || attribution.length !== 1 || only === undefined || only.limitations.length > 0 || files === undefined ||
+      changedPaths === null || changedPaths.length !== files.length || !files.every((file) => changedPaths.includes(file.filename))
+    ) return false
+    const identity = editsOf(files)
+    if (identity === null) return false
+    const accepted = sources.filter(({ evidence: prior }) => {
+      const mergedAt = millis(prior.pull.merged_at)
+      const merge = prior.mergeCommitEvidence
+      return prior.pull.node_id !== evidence.pull.node_id && prior.repositoryNodeId === evidence.repositoryNodeId && prior.pull.user.type === "User" &&
+        prior.pull.user.node_id === evidence.pull.user.node_id && prior.limitations.length === 0 && Number.isFinite(mergedAt) && mergedAt < closedAt &&
+        prior.pull.merge_commit_sha === commit.sha && merge !== null && merge.sha === commit.sha && merge.parents.length === 1 &&
+        editsOf(merge.files) === identity && editsOf(prior.files) === identity
+    })
+    return accepted.length === 1
+  })
+}
+
+function alreadyAcceptedNative(original: WorkUnitSource, sources: ReadonlyArray<WorkUnitSource>) {
+  const evidence = original.evidence
+  if (
+    evidence.pull.state !== "closed" || evidence.pull.merged_at !== null || evidence.indirectAcceptance !== undefined || evidence.limitations.length > 0 ||
+    evidence.commits.length === 0 || !duplicateFree(evidence.commits.map((commit) => commit.sha)) || evidence.commits.length !== evidence.pull.commits ||
+    evidence.commitAttribution.length !== evidence.commits.length || evidence.commits.at(-1)?.sha !== evidence.pull.head.sha ||
+    evidence.commits.some((commit) => commit.parents.length !== 1)
+  ) return false
+  return sources.some(({ evidence: accepted }) => {
+    if (
+      accepted.repositoryNodeId !== evidence.repositoryNodeId || accepted.pull.number <= evidence.pull.number || accepted.pull.merged_at === null ||
+      accepted.pull.merged_at === "" || accepted.limitations.length > 0 || !Number.isFinite(millis(accepted.pull.merged_at))
+    ) return false
+    return evidence.commits.every((commit) => {
+      const originalPaths = evidence.commitAttribution.filter((entry) => entry.sha === commit.sha)
+      const copies = accepted.commits.filter((entry) => entry.sha === commit.sha)
+      const acceptedPaths = accepted.commitAttribution.filter((entry) => entry.sha === commit.sha)
+      const [paths] = originalPaths
+      const changedPaths = paths?.changedPaths ?? null
+      return copies.length === 1 && serialized(copies[0]?.parents) === serialized(commit.parents) && serialized(copies[0]?.author) === serialized(commit.author) &&
+        commit.author?.type === "User" && originalPaths.length === 1 && acceptedPaths.length === 1 && paths !== undefined &&
+        paths.limitations.length === 0 && acceptedPaths[0]?.limitations.length === 0 && changedPaths !== null &&
+        paths.files?.length === changedPaths.length && (paths.files ?? []).every((file) => changedPaths.includes(file.filename)) &&
+        serialized(paths) === serialized(acceptedPaths[0])
+    })
+  })
+}
+
+const duplicateStatement = /^closing as a duplicate of #([1-9][0-9]*), incorporated in #([1-9][0-9]*)\.(?:\s|$)/iu
+
+function carrierAncestors(carrier: Evidence) {
+  const commits = new Map(carrier.commits.map((commit) => [commit.sha, commit]))
+  const ancestors = new Set<string>()
+  const pending = [carrier.pull.head.sha]
+  while (pending.length > 0) {
+    const sha = pending.pop()
+    if (sha === undefined || ancestors.has(sha)) continue
+    ancestors.add(sha)
+    for (const parent of commits.get(sha)?.parents ?? []) pending.push(parent.sha)
+  }
+  return ancestors
+}
+
+function originalEditsIn(original: Evidence, carrier: Evidence, firstChangedAt: number) {
+  const ancestors = carrierAncestors(carrier)
+  return original.commitAttribution.flatMap((entry) => {
+    const commit = original.commits.find((item) => item.sha === entry.sha)
+    const copies = carrier.commits.filter((item) => item.sha === entry.sha)
+    const accepted = carrier.commitAttribution.filter((item) => item.sha === entry.sha)
+    const files = entry.files
+    const changedPaths = entry.changedPaths
+    if (
+      commit === undefined || commit.parents.length !== 1 || commit.author === null || commit.author.type !== "User" ||
+      commit.author.node_id !== original.pull.user.node_id || !(millis(commit.commit.author.date) < firstChangedAt) || !ancestors.has(commit.sha) ||
+      copies.length !== 1 || serialized(copies[0]) !== serialized(commit) || accepted.length !== 1 || serialized(accepted[0]) !== serialized(entry) ||
+      entry.limitations.length > 0 || files === undefined || files.length === 0 || changedPaths === null || changedPaths.length !== files.length ||
+      !files.every((file) => changedPaths.includes(file.filename))
+    ) return []
+    return files.map(retainedEditIdentity)
+  })
+}
+
+function rejectedDuplicateContext(duplicate: WorkUnitSource, sources: ReadonlyArray<WorkUnitSource>) {
+  const evidence = duplicate.evidence
+  const closedAt = millis(evidence.pull.closed_at)
+  if (
+    evidence.pull.state !== "closed" || evidence.pull.merged_at !== null || evidence.indirectAcceptance !== undefined || evidence.limitations.length > 0 ||
+    !Number.isFinite(closedAt) || evidence.pull.user.type !== "User" || evidence.commits.length === 0 || evidence.commits.length !== evidence.pull.commits ||
+    evidence.commitAttribution.length !== evidence.commits.length || !duplicateFree(evidence.commits.map((commit) => commit.sha)) ||
+    evidence.commits.at(-1)?.sha !== evidence.pull.head.sha || evidence.files.length === 0
+  ) return false
+  const edits = evidence.files.map(retainedEditIdentity)
+  if (edits.includes(null) || !duplicateFree(edits)) return false
+  const complete = evidence.commits.every((commit, index) => {
+    const entries = evidence.commitAttribution.filter((entry) => entry.sha === commit.sha)
+    const [entry] = entries
+    const files = entry?.files
+    const changedPaths = entry?.changedPaths ?? null
+    return commit.parents.length === 1 && (index === 0 || commit.parents[0]?.sha === evidence.commits[index - 1]?.sha) && entries.length === 1 &&
+      entry !== undefined && entry.limitations.length === 0 && files !== undefined && files.length > 0 && changedPaths !== null &&
+      files.length === changedPaths.length && files.every((file) => changedPaths.includes(file.filename) && edits.includes(retainedEditIdentity(file)))
+  })
+  const commitEdits = evidence.commitAttribution.flatMap((entry) => (entry.files ?? []).map(retainedEditIdentity))
+  const firstChangedAt = Math.min(...evidence.commits.map((commit) => millis(commit.commit.author.date)))
+  if (!complete || !Number.isFinite(firstChangedAt) || firstChangedAt > closedAt || !edits.every((edit) => commitEdits.filter((value) => value === edit).length === 1))
+    return false
+  const related = (number: number) => sources.filter(({ evidence: candidate }) =>
+    candidate.repositoryNodeId === evidence.repositoryNodeId && candidate.pull.number === number && candidate.limitations.length === 0 &&
+    evidence.relatedPullRequests.some((reference) =>
+      reference.number === number && reference.id === candidate.pull.node_id && reference.url === candidate.pull.html_url &&
+      lower(reference.repository) === lower(evidence.repository)))
+  for (const comment of evidence.comments) {
+    const time = millis(comment.created_at)
+    const statement = duplicateStatement.exec(comment.body)
+    const user = comment.user
+    if (statement === null || user === null || user.type !== "User" || comment.updated_at !== comment.created_at || !Number.isFinite(time) || time > closedAt) continue
+    const originals = related(Number(statement[1]))
+    const carriers = related(Number(statement[2]))
+    const [originalSource] = originals
+    const [carrierSource] = carriers
+    if (originals.length !== 1 || carriers.length !== 1 || originalSource === undefined || carrierSource === undefined) continue
+    const original = originalSource.evidence
+    const carrier = carrierSource.evidence
+    const merge = carrier.mergeCommitEvidence
+    if (
+      original.pull.number >= evidence.pull.number || original.pull.user.type !== "User" || original.pull.user.node_id === evidence.pull.user.node_id ||
+      original.commits.length !== original.pull.commits || original.commits.at(-1)?.sha !== original.pull.head.sha ||
+      !duplicateFree(original.commits.map((commit) => commit.sha)) || original.commitAttribution.length !== original.commits.length ||
+      !edits.every((edit) => original.files.some((file) => retainedEditIdentity(file) === edit)) ||
+      !edits.every((edit) => carrier.files.some((file) => retainedEditIdentity(file) === edit)) ||
+      carrier.pull.number >= evidence.pull.number || carrier.pull.state !== "closed" || carrier.acceptedRange !== undefined ||
+      carrier.indirectAcceptance !== undefined || carrier.pull.merged_by?.node_id !== user.node_id || carrier.pull.merged_by.type !== "User" ||
+      !Number.isFinite(millis(carrier.pull.merged_at)) || merge === null || merge.sha !== carrier.pull.merge_commit_sha ||
+      !merge.parents.some((parent) => parent.sha === carrier.pull.head.sha) || carrier.commits.length !== carrier.pull.commits ||
+      carrier.commits.at(-1)?.sha !== carrier.pull.head.sha
+    ) continue
+    const order = new Map(carrier.commits.map((commit, index) => [commit.sha, index]))
+    if (order.size !== carrier.commits.length || carrier.commits.some((commit, index) => commit.parents.some((parent) => (order.get(parent.sha) ?? -1) >= index)))
+      continue
+    const originalEdits = originalEditsIn(original, carrier, firstChangedAt)
+    if (edits.every((edit) => originalEdits.filter((value) => value === edit).length === 1)) return true
+  }
+  return false
+}
+
+const resolutionHeader = /^a\/(.+) b\/\1\nindex [a-f0-9]{40}\.\.([a-f0-9]{40}) (100644|100755)\n--- a\/\1\n\+\+\+ b\/\1\n/u
+
+function canonicalResolution(resolution: MergeResolution, commit: Commit) {
+  return mergeResolutionMatches(resolution, commit) && resolution.gitVersion === MERGE_GIT_VERSION && sha256Of(resolution.patch) === resolution.patchSha256
+}
+
+function retainedResolutionSignature(source: WorkUnitSource, resolution: MergeResolution) {
+  const commit = source.evidence.commits.find((entry) => entry.sha === resolution.commitSha)
+  if (
+    commit === undefined || !canonicalResolution(resolution, commit) || resolution.kind === "combined-parent-delta" || !resolution.hadConflicts ||
+    !source.evidence.commits.some((entry) => entry.sha === commit.parents[0]?.sha) || resolution.paths.length === 0
+  ) return null
+  const files = resolution.patch.split(/^diff --git /mu).slice(1)
+  if (files.length !== resolution.paths.length) return null
+  const identities: string[] = []
+  const paths = new Set<string>()
+  for (const file of files) {
+    const match = resolutionHeader.exec(file)
+    const path = match?.[1]
+    if (match === null || path === undefined || !resolution.paths.includes(path) || paths.has(path)) return null
+    paths.add(path)
+    identities.push(JSON.stringify([path, match[2], match[3]]))
+  }
+  if (new Set(identities).size !== resolution.paths.length) return null
+  return JSON.stringify([commit.parents[0]?.sha, identities.sort()])
+}
+
+function editSets(evidence: Evidence) {
+  const edits = new Set<string>()
+  const manifests = new Set<string>()
+  for (const attribution of evidence.commitAttribution) {
+    const commit = evidence.commits.find((item) => item.sha === attribution.sha)
+    for (const file of attribution.files ?? []) {
+      const edit = retainedEditIdentity(file)
+      if (edit !== null) edits.add(edit)
+      const manifest = commit === undefined ? null : retainedManifestIdentity(file, commit)
+      if (manifest !== null) manifests.add(manifest)
+    }
+  }
+  return { edits, manifests }
+}
+
+function carriedByIntegration(integrations: ReadonlyArray<Integration>, sha: string, edit: string | null, manifest: string | null) {
+  return integrations.some(({ source: { evidence: accepted } }) =>
+    accepted.commitAttribution.some((retained) => {
+      if (retained.sha !== sha || retained.limitations.length > 0) return false
+      const retainedCommit = accepted.commits.find((commit) => commit.sha === retained.sha)
+      return (retained.files ?? []).some((retainedFile) =>
+        (edit !== null && retainedEditIdentity(retainedFile) === edit) ||
+        (manifest !== null && retainedCommit !== undefined && retainedManifestIdentity(retainedFile, retainedCommit) === manifest))
+    }))
+}
+
+function unacknowledgedCopies(original: WorkUnitSource, sources: ReadonlyArray<WorkUnitSource>, integrations: ReadonlyArray<Integration>, limitations: Set<string>) {
+  const evidence = original.evidence
+  const { edits, manifests } = editSets(evidence)
+  for (const candidate of sources) {
+    const other = candidate.evidence
+    if (
+      integrations.some(({ source }) => source === candidate) || other.pull.merged_at === null || other.pull.merged_at === "" ||
+      other.repositoryNodeId !== evidence.repositoryNodeId || !relatedEitherWay(evidence, other)
+    ) continue
+    const copied = other.commitAttribution.some((commit) =>
+      (commit.files ?? []).some((file) => {
+        const edit = retainedEditIdentity(file)
+        const known = other.commits.find((item) => item.sha === commit.sha)
+        const manifest = known === undefined ? null : retainedManifestIdentity(file, known)
+        if ((edit === null || !edits.has(edit)) && (manifest === null || !manifests.has(manifest))) return false
+        return !carriedByIntegration(integrations, commit.sha, edit, manifest)
+      }))
+    if (copied) limitations.add(`${evidence.pull.node_id}: matching copied edits require authenticated retention acknowledgement`)
+  }
+}
+
+function bindMergeResolution(
+  original: WorkUnitSource,
+  commit: Commit,
+  integrations: ReadonlyArray<Integration>,
+  bindings: Map<string, RetainedBinding>,
+  limitations: Set<string>,
+) {
+  const evidence = original.evidence
+  const resolutions = (evidence.mergeResolutions ?? []).filter((resolution) => resolution.commitSha === commit.sha)
+  const [resolution] = resolutions
+  if (resolutions.length !== 1 || resolution === undefined || !canonicalResolution(resolution, commit)) {
+    limitations.add(`${evidence.pull.node_id}: retained merge ${commit.sha} needs complete canonical resolution evidence`)
+    return
+  }
+  if (!((resolution.kind !== "combined-parent-delta" && resolution.hadConflicts) || resolution.paths.length > 0)) return
+  const signature = retainedResolutionSignature(original, resolution)
+  const matches: Array<{ readonly integration: WorkUnitSource; readonly candidate: MergeResolution }> = []
+  for (const { source: integration } of integrations) {
+    for (const candidate of integration.evidence.mergeResolutions ?? []) {
+      const acceptedCommit = integration.evidence.commits.find((entry) => entry.sha === candidate.commitSha)
+      if (
+        signature !== null && acceptedCommit !== undefined && millis(commit.commit.author.date) <= millis(acceptedCommit.commit.author.date) &&
+        millis(acceptedCommit.commit.author.date) <= millis(integration.evidence.pull.merged_at) && signature === retainedResolutionSignature(integration, candidate)
+      ) matches.push({ integration, candidate })
+    }
+  }
+  const [only] = matches
+  if (fileBinding({ matches: matches.length, octoberOriginalCredit: false, acceptedSubset: false, prior: { kind: "free" } }).kind !== "bind" || only === undefined) {
+    limitations.add(`${evidence.pull.node_id}: retained merge ${commit.sha} has ${matches.length} exact resolution bindings`)
+    return
+  }
+  for (const path of resolution.paths) {
+    const key = JSON.stringify([evidence.repositoryNodeId, only.candidate.commitSha, path])
+    const prior: PriorBinding = bindings.has(key) ? { kind: "contested" } : { kind: "free" }
+    if (fileBinding({ matches: 1, octoberOriginalCredit: false, acceptedSubset: false, prior }).kind !== "bind") limitations.add(`${evidence.pull.node_id}: retained copy has competing original sources`)
+    else bindings.set(key, { original, originalCommitSha: commit.sha, integration: only.integration, acceptedCommitSha: only.candidate.commitSha, path, preexistingCommitShas: [], mergeResolution: true })
+  }
+}
+
+function copyMatches(original: WorkUnitSource, commit: Commit, file: FileChange, integrations: ReadonlyArray<Integration>) {
+  const evidence = original.evidence
+  const identity = retainedEditIdentity(file)
+  if (identity === null) return []
+  return integrations.flatMap(({ source: integration, linkedOnly }) =>
+    integration.evidence.commitAttribution.flatMap((accepted) => {
+      const known = integration.evidence.commits.find((item) => item.sha === accepted.sha)
+      if (
+        known === undefined || known.parents.length > 1 || accepted.limitations.length > 0 ||
+        (linkedOnly && (commit.author?.type !== "User" || known.author?.type !== "User" || commit.author.node_id !== evidence.pull.user.node_id || known.author.node_id !== evidence.pull.user.node_id))
+      ) return []
+      return (accepted.files ?? []).flatMap((candidate) => {
+        const manifest = retainedManifestIdentity(file, commit)
+        const prior = retainedEditIdentity(candidate) === identity || (manifest !== null && manifest === retainedManifestIdentity(candidate, known))
+          ? []
+          : preexistingHunks(file, candidate, integration, accepted.sha)
+        return prior === null
+          ? []
+          : [{ original, originalCommitSha: commit.sha, integration, acceptedCommitSha: accepted.sha, path: file.filename, preexistingCommitShas: prior } satisfies RetainedBinding]
+      })
+    }))
+}
+
+function preferNative(matches: ReadonlyArray<RetainedBinding>, commit: Commit, attribution: CommitAttribution) {
+  const native = matches.filter((match) => match.acceptedCommitSha === commit.sha)
+  const [only] = native
+  if (
+    native.length === 1 && only !== undefined &&
+    serialized(only.integration.evidence.commits.find((entry) => entry.sha === commit.sha)) === serialized(commit) &&
+    serialized(only.integration.evidence.commitAttribution.find((entry) => entry.sha === commit.sha)) === serialized(attribution)
+  ) return native
+  return matches
+}
+
+function priorBinding(previous: RetainedBinding | undefined, match: RetainedBinding, original: WorkUnitSource, commit: Commit, file: FileChange): PriorBinding {
+  if (previous === undefined) return { kind: "free" }
+  if (previous.originalCommitSha !== match.originalCommitSha || serialized(previous.preexistingCommitShas) !== serialized(match.preexistingCommitShas))
+    return { kind: "contested" }
+  if (hasEarlierNativeOriginal(original, commit, file, [previous.original])) return { kind: "kept" }
+  const previousCommit = previous.original.evidence.commits.find((item) => item.sha === previous.originalCommitSha)
+  const previousFile = previous.original.evidence.commitAttribution.find((item) => item.sha === previous.originalCommitSha)?.files?.find((item) => item.filename === previous.path)
+  if (previousCommit !== undefined && previousFile !== undefined && hasEarlierNativeOriginal(previous.original, previousCommit, previousFile, [original]))
+    return { kind: "replaced" }
+  return { kind: "contested" }
+}
+
+export function retainedCopyBindings(sources: ReadonlyArray<WorkUnitSource>, options: CopyOptions = {}): RetainedBindings {
+  const bindings = new Map<string, RetainedBinding>()
+  const limitations = new Set<string>()
+  const acceptedSubset = options.acceptedSubset === true
+  for (const original of sources) {
+    if (acceptedSubset && (alreadyAcceptedNative(original, sources) || rejectedDuplicateContext(original, sources))) continue
+    const integrations = retainedCopySources(original, sources, options.octoberOriginalCredit === true, acceptedSubset)
+    if (integrations.length === 0 && alreadyAcceptedPromotion(original, sources)) continue
+    const evidence = original.evidence
+    if (evidence.pull.merged_at === null && evidence.indirectAcceptance === undefined) unacknowledgedCopies(original, sources, integrations, limitations)
+    if (integrations.length === 0) continue
+    let exactPaths = 0
+    const unmatched: string[] = []
+    for (const commit of evidence.commits) {
+      if (options.ordinaryCommitsOnly === true && commit.parents.length > 1) continue
+      if (commit.parents.length > 1) {
+        bindMergeResolution(original, commit, integrations, bindings, limitations)
+        continue
+      }
+      const attribution = evidence.commitAttribution.find((entry) => entry.sha === commit.sha)
+      const files = attribution?.files
+      const changedPaths = attribution?.changedPaths ?? null
+      if (
+        attribution === undefined || files === undefined || attribution.limitations.length > 0 || changedPaths === null ||
+        files.length !== changedPaths.length || !files.every((file) => changedPaths.includes(file.filename))
+      ) {
+        limitations.add(`${evidence.pull.node_id}: retained commit ${commit.sha} lacks complete file evidence`)
+        continue
+      }
+      for (const file of files) {
+        const found = copyMatches(original, commit, file, integrations)
+        const matches = acceptedSubset && found.length > 1 ? preferNative(found, commit, attribution) : found
+        const [match] = matches
+        const key = match === undefined ? "" : JSON.stringify([evidence.repositoryNodeId, match.acceptedCommitSha, file.filename])
+        const prior: PriorBinding = matches.length === 1 && match !== undefined ? priorBinding(bindings.get(key), match, original, commit, file) : { kind: "free" }
+        const outcome = fileBinding({ matches: matches.length, octoberOriginalCredit: options.octoberOriginalCredit === true, acceptedSubset, prior })
+        if (outcome.kind === "unmatched") unmatched.push(`${evidence.pull.node_id}: retained ${commit.sha}:${file.filename} has 0 exact copy bindings`)
+        if (outcome.kind === "ambiguous") limitations.add(`${evidence.pull.node_id}: retained ${commit.sha}:${file.filename} has ${matches.length} exact copy bindings`)
+        if (outcome.kind === "competing") limitations.add(`${evidence.pull.node_id}: retained copy has competing original sources`)
+        if (outcome.kind === "bind" && match !== undefined) {
+          bindings.set(key, match)
+          exactPaths += 1
+        }
+      }
+    }
+    if (acceptedSubset && exactPaths === 0) for (const limitation of unmatched) limitations.add(limitation)
+  }
+  return { bindings, limitations: [...limitations].sort() }
+}

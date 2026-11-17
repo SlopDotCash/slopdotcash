@@ -1,13 +1,13 @@
 // spec/frontend/projections.md, "Pool funding is Funded, Withdrawn or points only"; spec/frontend/projections.md, "Ordinary public payment rows require finalized evidence and a public account"; spec/frontend/projections.md, "Project visibility, collection and installation have separate predicates"
 import type { WorkItem, WorkQueue } from "@repo/points/client";
-import type { CycleIndexEntry, DirectTransfer } from "@repo/settlement/client";
+import type { CycleIndex, CycleIndexEntry, DirectTransfer } from "@repo/settlement/client";
 import { parseBaseUnits } from "@repo/settlement/kernels/amounts";
 import { formatPeriod, type Period } from "@repo/settlement/kernels/calendar";
-import type { PoolRead } from "../../../gen/frontend__projections.ts";
 import type { ReadStatus } from "../../../gen/frontend__requests.ts";
 import { type PoolFunding, poolFunding, zeroedPoolCap } from "../../kernels/poolFunding.ts";
 import type { NetworkPays } from "../public/funding.ts";
 import { bootstrapPrompt, siteOrigin } from "../home/agentLinks.ts";
+import { poolReadOf, rowsValid, totalOf } from "./history.ts";
 import type { ShownProject } from "./project.schema.ts";
 
 export interface FundingVaults {
@@ -47,30 +47,6 @@ export function formatDate(iso: string): string {
 /** "December 2026" for "2026-12". @throws {RangeError} */
 export function formatMonth(month: string): string {
   return monthFormat.format(new Date(`${month}-01T00:00:00.000Z`));
-}
-
-/** @throws {never} */
-export function poolReadOf(status: ReadStatus): PoolRead {
-  switch (status) {
-    case "Current":
-    case "Empty":
-      return "PoolCurrent";
-    case "Stale":
-      return "PoolStale";
-    case "Idle":
-    case "Loading":
-      return "PoolLoading";
-    case "Denied":
-    case "Invalid":
-    case "Unavailable":
-    case "Failed":
-    case "Cancelled":
-      return "PoolFailed";
-    default: {
-      const _exhaustive: never = status;
-      return _exhaustive;
-    }
-  }
 }
 
 /** @throws {never} */
@@ -119,18 +95,37 @@ export function suggestedWork(queue: WorkQueue, project: Pick<ShownProject, "rep
 
 /** Direct payments by contribution month, newest month first. @throws {never} */
 export function directMonths(transfers: ReadonlyArray<DirectTransfer>): ReadonlyArray<DirectMonth> {
-  const months = new Map<string, DirectMonth>();
-  for (const transfer of transfers) {
-    const known = months.get(transfer.contributionMonth);
-    const amount = parseBaseUnits(transfer.amountMicro) ?? 0n;
-    months.set(transfer.contributionMonth, {
-      month: transfer.contributionMonth,
-      amountMicro: (known?.amountMicro ?? 0n) + amount,
-      count: (known?.count ?? 0) + 1,
-      paidOn: known === undefined || transfer.blockTime > known.paidOn ? transfer.blockTime : known.paidOn,
-    });
-  }
-  return [...months.values()].sort((left, right) => right.month.localeCompare(left.month));
+  const months = new Map<string, ReadonlyArray<DirectTransfer>>();
+  for (const transfer of transfers) months.set(transfer.contributionMonth, [...(months.get(transfer.contributionMonth) ?? []), transfer]);
+  return [...months]
+    .map(([month, paid]) => ({
+      month,
+      amountMicro: totalOf(paid.map((transfer) => parseBaseUnits(transfer.amountMicro) ?? 0n)),
+      count: paid.length,
+      paidOn: paid.reduce((latest, transfer) => (transfer.blockTime > latest ? transfer.blockTime : latest), ""),
+    }))
+    .sort((left, right) => right.month.localeCompare(left.month));
+}
+
+/** Whether the cycle index is canonical: newest cycle first, each project cycle once, base-unit amounts, and no entry generated after the index. @throws {never} */
+export function indexValid(index: CycleIndex): boolean {
+  const seen = new Set<string>();
+  const rows = index.cycles.map((current, position) => {
+    const previous = index.cycles[position - 1];
+    const key = `${current.projectId}\0${current.cycleId}`;
+    const firstSeen = !seen.has(key);
+    seen.add(key);
+    const generatedMs = Date.parse(current.generatedAt);
+    return {
+      follows: previous === undefined || previous.cycleId > current.cycleId || (previous.cycleId === current.cycleId && previous.projectId.localeCompare(current.projectId) <= 0),
+      firstSeen,
+      amounts: [current.reward.approvedMinor, current.reward.feeMinor, current.reward.paidMinor].every((minor) => parseBaseUnits(minor) !== undefined),
+      dated: Number.isFinite(generatedMs),
+      generatedMs: Number.isFinite(generatedMs) ? generatedMs : 0,
+    };
+  });
+  const generatedMs = Date.parse(index.generatedAt);
+  return Number.isFinite(generatedMs) && rowsValid(rows, generatedMs);
 }
 
 /** The project's published cycles, newest first. @throws {never} */

@@ -1,0 +1,138 @@
+// spec/frontend/requests.md, "Only the current request may publish its validated result"; spec/backend/accounts.md, "Public reads show only public open members and never publish anything"; spec/backend/xConnection.md, "The verified X ID is reserved forever to the first GitHub identity that links it"; spec/frontend/projections.md, "Ordinary public payment rows require finalized evidence and a public account"
+import { type PublicMember, type WalletClaimView, type XProfile, actorWalletClaim, pointsMe, xProfile } from "@repo/backend/client"
+import { millisOf } from "@repo/platform/clock"
+import type { MonthlyCut, PublicVaultPayment } from "@repo/settlement/client"
+import { Machine as ReadMachine } from "../../../gen/frontend__requests.effect.vibe"
+import type { PageRuntime } from "../../app/runtime.vibe"
+import { call } from "../../platform/api.vibe"
+import { Deployment } from "../../platform/config.vibe"
+import { monthlyCutReads, vaultPaymentReads } from "../../reads/payments.vibe"
+import { type MemberLookup, memberLimitBytes, memberReads, peopleReads, pointsJournalReads, profileReads } from "../../reads/points.vibe"
+import { Registry, type RegistryBoot } from "../../reads/registry.vibe"
+import { type Resource, Unreadable, resource } from "../../reads/resource.vibe"
+import type { ShownRead } from "../projects/reads.vibe"
+
+export const walletLimitBytes = 16_384
+export const walletTimeoutMs = 12_000
+
+export const contributorMessages = {
+  xInvalid: "Invalid X identity",
+  walletInvalid: "Wallet claim has invalid actor-bound metadata",
+  meInvalid: "Invalid points membership",
+} as const
+
+const claimId = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u
+const solanaAddress = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/u
+const login = /^[A-Za-z0-9][A-Za-z0-9-]{0,38}$/u
+const xId = /^[0-9]{1,30}$/u
+const xUsername = /^[A-Za-z0-9_]{1,15}$/u
+
+export interface CurrentWallet {
+  readonly address: string
+  readonly sourceUrl: string
+}
+
+type Journal = Effect.Success<ReturnType<typeof pointsJournalReads>> extends Resource<infer T> ? T : never
+type People = Effect.Success<ReturnType<typeof peopleReads>> extends Resource<infer T> ? T : never
+type Profiles = Effect.Success<ReturnType<typeof profileReads>> extends Resource<infer T> ? T : never
+
+function shown<T>(read: Resource<T>): ShownRead<T> {
+  return { read, runtime: ManagedRuntime.make(Layer.succeed(ReadMachine, read.machine)) }
+}
+
+function xValid(x: XProfile): boolean {
+  return xId.test(x.id) && xUsername.test(x.username) && Number.isFinite(millisOf(x.verifiedAt))
+}
+
+effect function loadX(actorId: string) {
+  const found = try call(xProfile, { query: { actor: actorId } }, { limitBytes: memberLimitBytes })
+  if (found !== null && !xValid(found)) throw new Unreadable({ message: contributorMessages.xInvalid })
+  return found
+}
+
+function meValid(member: PublicMember): boolean {
+  return login.test(member.actor.login) && [0, 5].includes(member.welcome) && [0, 10].includes(member.socialPoints) && Number.isFinite(millisOf(member.joinedAt))
+}
+
+effect function loadMe() {
+  const deployment = try Deployment
+  if (!deployment.origins.browserOrigins.has(deployment.pageOrigin)) return null
+  const found = call(pointsMe, {}, { limitBytes: memberLimitBytes }) catch effect (failure) => {
+    if (failure._tag === "Refused" && failure.status === 401) return null
+    throw failure
+  }
+  if (found !== null && !meValid(found)) throw new Unreadable({ message: contributorMessages.meInvalid })
+  return found
+}
+
+function claimValid(claim: WalletClaimView, githubId: string): boolean {
+  return claimId.test(claim.claimId) && claim.githubActorId === githubId && solanaAddress.test(claim.address)
+}
+
+effect function loadWallet(githubId: string) {
+  const claim = try call(actorWalletClaim, { params: { githubId } }, { limitBytes: walletLimitBytes, deadlineMs: walletTimeoutMs })
+  if (claim === null) return null
+  if (!claimValid(claim, githubId)) throw new Unreadable({ message: contributorMessages.walletInvalid })
+  return { address: claim.address, sourceUrl: `/api/v1/wallet-claims/${encodeURIComponent(claim.claimId)}` } satisfies CurrentWallet
+}
+
+effect function productOrigin() {
+  const deployment = try Deployment
+  return { product: deployment.origins.browserOrigins.has(deployment.pageOrigin), site: deployment.origins.site, tier: deployment.tier }
+}
+
+export service ContributorReads {
+  readonly journal: ShownRead<Journal>
+  readonly people: ShownRead<People>
+  readonly profiles: ShownRead<Profiles>
+  readonly member: ShownRead<MemberLookup>
+  readonly me: ShownRead<PublicMember | null>
+  readonly x: ShownRead<XProfile | null>
+  readonly wallet: ShownRead<CurrentWallet | null>
+  readonly vault: ShownRead<ReadonlyArray<PublicVaultPayment>>
+  readonly cuts: ShownRead<ReadonlyArray<MonthlyCut>>
+}
+
+const readsLayer = Layer.effect(ContributorReads, effect {
+  return {
+    journal: shown(try pointsJournalReads()),
+    people: shown(try peopleReads()),
+    profiles: shown(try profileReads()),
+    member: shown(try memberReads()),
+    me: shown(try resource((_key: string) => loadMe(), (member: PublicMember | null) => member === null ? 0 : 1)),
+    x: shown(try resource((actorId: string) => loadX(actorId), (x: XProfile | null) => x === null ? 0 : 1)),
+    wallet: shown(try resource((githubId: string) => loadWallet(githubId), (wallet: CurrentWallet | null) => wallet === null ? 0 : 1)),
+    vault: shown(try vaultPaymentReads()),
+    cuts: shown(try monthlyCutReads()),
+  }
+})
+
+function makeContributorRuntime(page: PageRuntime) {
+  return ManagedRuntime.make(Layer.provideMerge(readsLayer, Layer.effectContext(page.contextEffect)))
+}
+
+export type ContributorRuntime = ReturnType<typeof makeContributorRuntime>
+
+const sections = new WeakMap<PageRuntime, ContributorRuntime>()
+
+export function contributorRuntime(page: PageRuntime): ContributorRuntime {
+  const known = sections.get(page)
+  if (known !== undefined) return known
+  const made = makeContributorRuntime(page)
+  sections.set(page, made)
+  return made
+}
+
+export effect function contributorReads() {
+  return try ContributorReads
+}
+
+export effect function origin() {
+  return try productOrigin()
+}
+
+export effect function registryBoot() {
+  return try (try Registry).load()
+}
+
+export type { Journal, People, Profiles, RegistryBoot }

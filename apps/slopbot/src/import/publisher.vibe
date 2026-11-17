@@ -1,0 +1,319 @@
+// spec/slopbot/historicalImport.md, "The import needs an administrator, a deployed producer and registered accepted work before the API start"; spec/slopbot/repositoryScope.md, "Installed, public and registered are separate conditions"
+import { first, sql } from "@repo/platform/d1"
+import { GitHub } from "@repo/platform/github"
+import { GitHubApp } from "@repo/platform/github/app"
+import { Roles } from "@repo/platform/roles"
+import type { ImportMode, ImportRequest, ImportSource, Imports, Producer } from "../../gen/slopbot__historicalImport.ts"
+import { apply, decodeState, initial, machineOver, sourceIds } from "../../gen/slopbot__historicalImport.effect.vibe"
+import type { Installation } from "../../gen/slopbot__installation.ts"
+import { active } from "../../gen/slopbot__installation.effect.vibe"
+import { ImportReceipt } from "../client/import.vibe"
+import { InstallationRow, installationOf } from "../installation/store.vibe"
+import { observe, unregistered } from "../scope/facts.vibe"
+import { type ContextSelection, validContextSelections } from "../value/evidence/context.vibe"
+import { assessmentKeyStored, storedAssessmentKey, valueAssessmentKey, workUnitAssessmentKey } from "../value/history/read.vibe"
+
+export interface ImportVars {
+  readonly SLOPBOT_PRODUCER_REVISION?: string
+  readonly SLOPBOT_PLATFORM_PROJECT_ID?: string
+}
+
+export service ImportSettings {
+  readonly producerRevision: string
+  readonly platformProjectId: string | undefined
+}
+
+export function importSettings(vars: ImportVars) {
+  const revision = vars.SLOPBOT_PRODUCER_REVISION ?? ""
+  const platform = vars.SLOPBOT_PLATFORM_PROJECT_ID ?? ""
+  return Layer.succeed(ImportSettings, {
+    producerRevision: /^[a-f0-9]{40}$/u.test(revision) ? revision : "",
+    platformProjectId: platform === "" ? undefined : platform,
+  })
+}
+
+export interface AdmittedSource {
+  readonly repository: string
+  readonly number: number
+  readonly contextPaths: ReadonlyArray<ContextSelection>
+  readonly emptyMergeResolutions: boolean
+  readonly repositoryDatabaseId: number
+  readonly repositoryNodeId: string
+  readonly pullRequestNodeId: string
+  readonly projectId: string
+}
+
+export interface AdmittedImport {
+  readonly mode: "single" | "work-unit"
+  readonly installationId: number
+  readonly producerRevision: string
+  readonly assessmentKey: string
+  readonly result: Readonly<Record<string, unknown>>
+  readonly sources: ReadonlyArray<AdmittedSource>
+  readonly supersedes: ReadonlyArray<string>
+  readonly legacyPredecessors: ReadonlyArray<string>
+  readonly revisionReason: string | null
+  readonly bundle: Uint8Array | undefined
+}
+
+export error PublicationFailed
+
+export service HistoricalPublication {
+  publish(admitted: AdmittedImport): typeof ImportReceipt.Type!PublicationFailed
+}
+
+export error ImportRefused { reason: string }
+
+interface Selection {
+  readonly repository: string
+  readonly number: number
+  readonly contextPaths: ReadonlyArray<ContextSelection>
+  readonly emptyMergeResolutions: boolean
+}
+
+interface Envelope {
+  readonly mode: "single" | "work-unit"
+  readonly installationId: number
+  readonly result: Readonly<Record<string, unknown>>
+  readonly producer: Producer
+  readonly sourceDigest: string
+  readonly rubricVersion: string
+  readonly sources: ReadonlyArray<Selection>
+  readonly supersedes: ReadonlyArray<string>
+  readonly legacyPredecessors: ReadonlyArray<string>
+  readonly revisionReason: string | null
+}
+
+interface SourceFacts {
+  readonly source: ImportSource
+  readonly admitted: AdmittedSource
+}
+
+const channels = {
+  "chatgpt-subscription": { channel: "ChatgptSubscription", provider: "openai" },
+  "claude-subscription": { channel: "ClaudeSubscription", provider: "anthropic" },
+  "codex-subscription": { channel: "CodexSubscription", provider: "openai" },
+} as const
+
+const digestPattern = /^[a-f0-9]{64}$/u
+const labelPattern = /^[A-Za-z0-9][A-Za-z0-9 ._-]{0,95}$/u
+const repositoryPathPattern = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/u
+const githubIdPattern = /^[1-9][0-9]{0,19}$/u
+const githubLimitBytes = 256 * 1024
+const listingLimitBytes = 2 * 1024 * 1024
+
+schema RepositoryFacts { id: number; node_id: string; private: boolean }
+schema PullFacts { node_id: string; state: string; merged_at: string | null; closed_at: string | null }
+schema InstalledRepositories { repositories: ReadonlyArray<RepositoryFacts> }
+
+type Fields = Readonly<Record<string, unknown>>
+
+function isObject(value: unknown): value is Fields {
+  return value !== null && typeof value === "object" && !Array.isArray(value)
+}
+
+function keysOf(value: Fields) {
+  return Object.keys(value).sort().join()
+}
+
+function isDigests(value: unknown): value is ReadonlyArray<string> {
+  return Array.isArray(value) && value.every((entry) => typeof entry === "string" && digestPattern.test(entry)) && new Set(value).size === value.length
+}
+
+function producerOf(provenance: unknown): Producer | undefined {
+  if (!isObject(provenance) || keysOf(provenance) !== "apiReceipt,channel,client,exactVariant,identityEvidence,model,provider") return undefined
+  const named = typeof provenance["channel"] === "string" && Object.hasOwn(channels, provenance["channel"]) ? channels[provenance["channel"] as keyof typeof channels] : undefined
+  const model = provenance["model"]
+  const client = provenance["client"]
+  if (named === undefined || provenance["provider"] !== named.provider || typeof model !== "string" || !labelPattern.test(model) || typeof client !== "string" || !labelPattern.test(client)) return undefined
+  if (provenance["exactVariant"] !== null || provenance["identityEvidence"] !== "self-reported" || provenance["apiReceipt"] !== null) return undefined
+  return { tag: "SubscriptionProducer", channel: named.channel, model, client }
+}
+
+function selectionOf(value: unknown): Selection | undefined {
+  if (!isObject(value)) return undefined
+  const keys = keysOf(value)
+  if (keys !== "contextPaths,pullRequestNumber,repository" && keys !== "contextPaths,emptyMergeResolutions,pullRequestNumber,repository") return undefined
+  if ("emptyMergeResolutions" in value && value["emptyMergeResolutions"] !== true) return undefined
+  const repository = value["repository"]
+  const number = value["pullRequestNumber"]
+  const contextPaths = value["contextPaths"]
+  if (typeof repository !== "string" || repository.length > 201 || !repositoryPathPattern.test(repository)) return undefined
+  if (typeof number !== "number" || !Number.isSafeInteger(number) || number <= 0 || !validContextSelections(contextPaths)) return undefined
+  return { repository, number, contextPaths, emptyMergeResolutions: value["emptyMergeResolutions"] === true }
+}
+
+function envelopePredecessors(input: Fields, joint: boolean) {
+  const supersedes = input["supersedes"]
+  if (joint) {
+    const legacy = input["legacyPredecessors"]
+    return isDigests(supersedes) && isDigests(legacy) ? { supersedes, legacyPredecessors: legacy } : undefined
+  }
+  if (supersedes === null) return { supersedes: [], legacyPredecessors: [] }
+  return typeof supersedes === "string" && digestPattern.test(supersedes) ? { supersedes: [supersedes], legacyPredecessors: [] } : undefined
+}
+
+export function envelopeOf(input: unknown): Envelope | undefined {
+  if (!isObject(input)) return undefined
+  const mode = input["mode"]
+  const installationId = input["installationId"]
+  const result = input["result"]
+  const sources = input["sources"]
+  const reason = input["revisionReason"]
+  if (mode !== "single" && mode !== "work-unit") return undefined
+  if (typeof installationId !== "number" || !Number.isSafeInteger(installationId) || installationId <= 0 || !isObject(result) || !Array.isArray(sources) || sources.length === 0) return undefined
+  if (!(reason === null || (typeof reason === "string" && reason.trim().length > 0))) return undefined
+  const joint = mode === "work-unit"
+  const expected = joint ? "installationId,legacyPredecessors,mode,result,revisionReason,sources,supersedes" : "installationId,mode,result,revisionReason,sources,supersedes"
+  if (keysOf(input) !== expected) return undefined
+  const producer = producerOf(result["provenance"])
+  const assessedAt = result["assessedAt"]
+  const sourceDigest = result["sourceDigest"]
+  const rubricVersion = result["rubricVersion"]
+  if (producer === undefined || typeof assessedAt !== "string" || !Number.isFinite(Date.parse(assessedAt)) || "servedBy" in result || "calls" in result || "budgetResetAt" in result) return undefined
+  if (typeof sourceDigest !== "string" || !digestPattern.test(sourceDigest) || typeof rubricVersion !== "string" || rubricVersion === "") return undefined
+  const selections = sources.map(selectionOf)
+  const predecessors = envelopePredecessors(input, joint)
+  if (predecessors === undefined || selections.some((selection) => selection === undefined)) return undefined
+  return {
+    mode,
+    installationId,
+    result,
+    producer,
+    sourceDigest,
+    rubricVersion,
+    sources: selections.filter((selection) => selection !== undefined),
+    revisionReason: reason,
+    ...predecessors,
+  }
+}
+
+function secondsOf(iso: string | null) {
+  const millis = iso === null ? Number.NaN : Date.parse(iso)
+  return Number.isFinite(millis) && millis > 0 ? Math.floor(millis / 1000) : 0
+}
+
+function projectNumber(projects: Map<string, number>, projectId: string | undefined) {
+  if (projectId === undefined) return 0
+  const found = projects.get(projectId)
+  if (found !== undefined) return found
+  projects.set(projectId, projects.size + 1)
+  return projects.size
+}
+
+function unread(selection: Selection): SourceFacts {
+  return {
+    source: { repository: 0, project: 0, pull: selection.number, registry: unregistered, visibility: "VisibilityUnknown", read: "PullUnreadable", occurredAt: 0 },
+    admitted: { ...selection, repositoryDatabaseId: 0, repositoryNodeId: "", pullRequestNodeId: "", projectId: "" },
+  }
+}
+
+export error InstallationListingInvalid
+
+effect function installationCovers(repositoryId: number, repositoryNodeId: string) {
+  const github = try GitHub
+  const seen = new Set<number>()
+  for (let page = 1; ; page += 1) {
+    const listing = try github.json(`/installation/repositories?per_page=100&page=${page}`, InstalledRepositories, { limitBytes: listingLimitBytes })
+    for (const repository of listing.repositories) {
+      if (seen.has(repository.id)) throw new InstallationListingInvalid()
+      seen.add(repository.id)
+      if (repository.id === repositoryId && repository.node_id === repositoryNodeId && repository.private === false) return true
+    }
+    if (listing.repositories.length < 100) return false
+  }
+}
+
+effect function sourceFacts(selection: Selection, projects: Map<string, number>) {
+  const github = try GitHub
+  const repository = try github.json(`/repos/${selection.repository}`, RepositoryFacts, { limitBytes: githubLimitBytes })
+  const [owner = "", repo = ""] = selection.repository.split("/")
+  const registered = repository.private ? { observation: unregistered, projectId: undefined } : try observe({ owner, repo, repositoryId: repository.id })
+  const known = {
+    repository: repository.id,
+    project: projectNumber(projects, registered.projectId),
+    pull: selection.number,
+    registry: registered.observation,
+    visibility: repository.private ? "PrivateRepo" as const : "PublicRepo" as const,
+  }
+  const identity = { ...selection, repositoryDatabaseId: repository.id, repositoryNodeId: repository.node_id, projectId: registered.projectId ?? "" }
+  if (!(try installationCovers(repository.id, repository.node_id))) {
+    return { source: { ...known, read: "PullUnreadable", occurredAt: 0 }, admitted: { ...identity, pullRequestNodeId: "" } } satisfies SourceFacts
+  }
+  const pull = try github.json(`/repos/${selection.repository}/pulls/${selection.number}`, PullFacts, { limitBytes: githubLimitBytes })
+  return {
+    source: { ...known, read: pull.state === "closed" ? "PullClosed" : "PullOpen", occurredAt: secondsOf(pull.merged_at ?? pull.closed_at) },
+    admitted: { ...identity, pullRequestNodeId: pull.node_id },
+  } satisfies SourceFacts
+}
+
+effect function installedFacts(installationId: number, selection: Selection, projects: Map<string, number>) {
+  const scoped = (try GitHubApp).asInstallation(String(installationId))
+  provide scoped {
+    return try sourceFacts(selection, projects)
+  }
+}
+
+effect function installationState(installationId: number) {
+  const row = try first(InstallationRow, sql`SELECT installation_id, account_id, account_login, account_type, created_at, suspended_at, removed_at, source_updated_at FROM slopbot_installations WHERE installation_id = ${installationId}`)
+  return try installationOf([row === undefined ? [] : [row]], [])
+}
+
+effect function assessmentKeyOf(envelope: Envelope, revision: string, facts: ReadonlyArray<SourceFacts>) {
+  if (envelope.mode === "work-unit") return try workUnitAssessmentKey({ sourceDigest: envelope.sourceDigest, rubricVersion: envelope.rubricVersion, producerRevision: revision })
+  const [only] = facts
+  return try valueAssessmentKey({ repositoryNodeId: only?.admitted.repositoryNodeId ?? "", pullRequestNodeId: only?.admitted.pullRequestNodeId ?? "", sourceDigest: envelope.sourceDigest, rubricVersion: envelope.rubricVersion, producerRevision: revision })
+}
+
+export effect function importsMachine(start: Imports) {
+  const held = try Ref.make(start)
+  return try machineOver(() => Ref.get(held), (next) => Ref.set(held, next))
+}
+
+effect function admissionState(install: Installation, platformProject: number, keyStored: boolean, request: ImportRequest) {
+  const recorded = platformProject > 0 ? try apply({ ...initial, install }, { type: "recordPlatformProject", project: platformProject }) : { ...initial, install }
+  if (!keyStored) return recorded
+  return try decodeState({ ...recorded, records: [{ key: request.assessmentKey, producer: request.producer, sources: sourceIds(request.sources) }], keys: [request.assessmentKey] })
+}
+
+export effect function publishSubscription(administratorGithubId: string, input: unknown, bundle: Uint8Array | undefined) {
+  const envelope = envelopeOf(input)
+  if (envelope === undefined) throw new ImportRefused({ reason: "Invalid historical assessment envelope" })
+  const joint = envelope.mode === "work-unit"
+  if (bundle !== undefined && !joint) throw new ImportRefused({ reason: "Joint merge reconstruction is unavailable" })
+  const settings = try ImportSettings
+  const projects = new Map<string, number>()
+  const platformProject = projectNumber(projects, settings.platformProjectId)
+  const install = try installationState(envelope.installationId)
+  const facts: SourceFacts[] = []
+  for (const selection of envelope.sources) facts.push(active(install) ? try installedFacts(envelope.installationId, selection, projects) : unread(selection))
+  if (bundle !== undefined && new Set(facts.map((fact) => fact.admitted.repositoryNodeId)).size !== 1) throw new ImportRefused({ reason: "A Git bundle must bind one public repository" })
+  const assessmentKey = try assessmentKeyOf(envelope, settings.producerRevision, facts)
+  const verified = githubIdPattern.test(administratorGithubId) && (try (try Roles).has(administratorGithubId, "administrator"))
+  const mode: ImportMode = joint ? "Joint" : "Single"
+  const request: ImportRequest = {
+    admin: { actor: githubIdPattern.test(administratorGithubId) ? 1 : 0, verifiedAdministrator: verified },
+    producerRevision: settings.producerRevision,
+    mode,
+    sources: facts.map((fact) => fact.source),
+    producer: envelope.producer,
+    assessmentKey: 1,
+  }
+  const machine = try importsMachine(try admissionState(install, platformProject, try assessmentKeyStored(assessmentKey), request))
+  const decided = try machine.send({ type: "submit", request })
+  if (decided.last !== "Imported") throw new ImportRefused({ reason: "Historical assessment was refused" })
+  const receipt = try (try HistoricalPublication).publish({
+    mode: envelope.mode,
+    installationId: envelope.installationId,
+    producerRevision: settings.producerRevision,
+    assessmentKey,
+    result: envelope.result,
+    sources: facts.map((fact) => fact.admitted),
+    supersedes: envelope.supersedes,
+    legacyPredecessors: envelope.legacyPredecessors,
+    revisionReason: envelope.revisionReason,
+    bundle,
+  })
+  if ((try storedAssessmentKey(receipt.recordDigest)) !== assessmentKey) throw new ImportRefused({ reason: "Published record does not match the admitted assessment" })
+  return receipt
+}

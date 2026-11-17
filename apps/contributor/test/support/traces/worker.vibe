@@ -2,13 +2,13 @@
 import type { D1Database, Fetcher, R2Bucket } from "@repo/platform/bindings"
 import { deploymentTier } from "@repo/platform/config"
 import { webCrypto } from "@repo/platform/crypto"
-import { D1, d1, first, sql } from "@repo/platform/d1"
+import { d1 } from "@repo/platform/d1"
 import { preflight } from "@repo/platform/http"
 import { rolesFrom } from "@repo/platform/roles"
 import { worker } from "@repo/platform/worker"
 import { CallerLive } from "@repo/backend/caller"
 import { RestrictionsLive } from "@repo/backend/ports"
-import { IntakeHealth } from "@repo/ports/operations"
+import { IntakeHealthLive } from "@repo/operations/live"
 import { EnforcementRows } from "@repo/ports/security"
 import { traceApi } from "../../../src/client/traces.vibe"
 import { runRoutes } from "../../../src/runs/routes.vibe"
@@ -26,19 +26,6 @@ interface Env {
   readonly PROJECT_MODERATOR_GITHUB_IDS: string
   readonly OPERATOR_GITHUB_IDS: string
 }
-
-schema IntakeRow { readonly enabled: number; readonly verified_at: string }
-
-const intakeHealth = Layer.effect(IntakeHealth, effect {
-  const db = try D1
-  return {
-    status: () => provideService(effect {
-      const row = try first(IntakeRow, sql`SELECT enabled, verified_at FROM private_intake_status WHERE singleton = 1`)
-      return row === undefined ? undefined : { enabled: row.enabled === 1, verifiedAt: row.verified_at }
-    }, D1, db),
-    version: () => succeed(sql`coalesce((SELECT enabled || ':' || verified_at FROM private_intake_status WHERE singleton = 1), '-')`),
-  } satisfies IntakeHealth.Shape
-})
 
 const unread = (method: string) => die(new Error(`the trace routes read no enforcement ${method}`))
 
@@ -59,7 +46,7 @@ export default worker({
     Layer.provide(traceServices(env), Layer.merge(rolesFrom(env), webCrypto)),
     Layer.provide(traceObjects(env.PRIVATE_TRACES), webCrypto),
     Layer.provide(RestrictionsLive, Layer.merge(d1(env.SLOP_DB), unrecorded)),
-    Layer.provide(intakeHealth, d1(env.SLOP_DB)),
+    Layer.provide(IntakeHealthLive, d1(env.SLOP_DB)),
     Layer.provide(CallerLive, Layer.merge(d1(env.SLOP_DB), webCrypto)),
   ),
   routes: Layer.mergeAll(sessionRoutes, runRoutes, preflight(traceApi)),

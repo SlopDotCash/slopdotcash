@@ -1,5 +1,6 @@
 // spec/fees/runtime.md, "The release variable gates production publication, never a running Worker"; spec/fees/runtime.md, "The preflight refuses an incomplete live configuration"
 import { Cloudflare } from "../wrangler/cloudflare.vibe"
+import { releaseMessage } from "../wrangler/outputs.vibe"
 import { RotationRefused } from "./qualify.vibe"
 
 schema Labelled {
@@ -85,10 +86,6 @@ function refused(message: string) {
   return new RotationRefused({ message })
 }
 
-export function releaseDescription(sha: string) {
-  return `slop.cash release ${sha}`
-}
-
 export effect function lineage(annotations: Readonly<Record<string, string>> | undefined, kind: RotationKind) {
   const label = labels[kind]
   const message = annotations?.["workers/message"] ?? ""
@@ -110,7 +107,7 @@ export effect function inheritedSuffix(annotations: Readonly<Record<string, stri
 export effect function rotationMessage(sha: string, before: Version, kind: RotationKind) {
   const retained: RotationKind = kind === "solana" ? "robinhood" : "solana"
   const kept = try lineage(before.annotations, retained)
-  return `${releaseDescription(sha)}${kept === "" ? "" : `${labels[retained]}${kept}`}${labels[kind]}${before.id}`
+  return `${releaseMessage(sha)}${kept === "" ? "" : `${labels[retained]}${kept}`}${labels[kind]}${before.id}`
 }
 
 effect function readWorker<S extends Schema.Top>(schema: S, path: string) {

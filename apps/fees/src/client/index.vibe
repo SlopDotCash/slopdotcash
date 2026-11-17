@@ -1,3 +1,6 @@
 import type { AnyRoute } from "@repo/platform/route"
+import { reportApi } from "./report.vibe"
 
-export const api: ReadonlyArray<AnyRoute> = []
+export * from "./report.vibe"
+
+export const api: ReadonlyArray<AnyRoute> = [...reportApi]

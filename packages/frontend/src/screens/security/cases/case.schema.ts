@@ -37,8 +37,15 @@ const AppealTriage = Schema.Struct({
 const Recovery = Schema.Struct({
   generation: Schema.Number,
   mode: Schema.String,
-  target: Schema.optional(Schema.NullOr(Schema.Struct({ address: Schema.String }))),
+  target: Schema.optional(Schema.NullOr(Schema.Struct({ id: Schema.optional(Schema.String), address: Schema.String, digest: Schema.optional(Schema.String) }))),
+  consented: Schema.optional(Schema.Boolean),
+  cancellationRequest: Schema.optional(Schema.Unknown),
+  payer: Schema.optional(Schema.String),
+  messages: Schema.optional(Schema.Array(Schema.Struct({ messageId: Schema.String, message: Schema.String }))),
+  transactionIds: Schema.optional(Schema.Array(Schema.String)),
+  retirementNonce: Schema.optional(Schema.String),
   role: Schema.optional(Schema.String),
+  legIndex: Schema.optional(Schema.Number),
 });
 
 const Settlement = Schema.Struct({
@@ -51,6 +58,7 @@ const Settlement = Schema.Struct({
   remainingTransfers: Schema.optional(Schema.Array(Schema.Struct({ recipient: Schema.String, amountBase: Schema.String, role: Schema.String }))),
   recovery: Schema.optional(Schema.NullOr(Recovery)),
   privacyNotice: Schema.optional(Schema.String),
+  ownerRequest: Schema.optional(Schema.NullOr(Schema.Unknown)),
 });
 
 const CaseEvent = Schema.Struct({

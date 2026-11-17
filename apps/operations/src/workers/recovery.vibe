@@ -4,9 +4,9 @@ import { webCrypto } from "@repo/platform/crypto"
 import { d1 } from "@repo/platform/d1"
 import type { RetentionR2Bucket } from "@repo/platform/r2"
 import { worker } from "@repo/platform/worker"
-import { backupQueue, backupSettings, evidenceBuckets } from "../../backup/store.vibe"
-import type { Env as BackupEnv } from "../../workers/backup.vibe"
-import { RecoveryFixture, recoveryMessage } from "./fixture.vibe"
+import { backupQueue, backupSettings, evidenceBuckets } from "../backup/store.vibe"
+import { RecoveryFixture, recoveryMessage } from "../qualification/recovery/fixture.vibe"
+import type { Env as BackupEnv } from "./backup.vibe"
 
 export interface Env extends BackupEnv {
   readonly RESTORED: RetentionR2Bucket

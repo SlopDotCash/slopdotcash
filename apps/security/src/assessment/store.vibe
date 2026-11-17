@@ -9,12 +9,15 @@ import type { Assessment, Attempt, AttemptState, Event, Mode } from "../../gen/s
 import { type NotAState, apply, decodeState, initial } from "../../gen/security__assessment.effect.vibe"
 import type { Authority } from "../../gen/security__cases.ts"
 import { qualified } from "../../gen/security__screening.effect.vibe"
+import type { ExclusionContext } from "../../gen/security__terms.ts"
+import { receiptExclusions } from "../../gen/security__terms.effect.vibe"
 import { type AnalysisProposal, analysisProposal } from "../analysis/proposals.vibe"
 import { type AnalysisReport, type PriorCase, type ProgramScope, analysisMessage, analysisPrompt, analysisPromptRevision, digestInput, jsonValue, priorCaseLimit } from "../analysis/prompts.ts"
 import { backgroundBudgetMs, ownerBudgetMs, privateCall, privateModel, privateProvider, privateRouteReady } from "../analysis/route.vibe"
 import { parseReport } from "../intake/report.vibe"
 import { StoredIntake, screeningOf } from "../intake/rows.vibe"
 import { reportBytes } from "../privacy/reads.vibe"
+import { caseTerms } from "../terms/receipt.vibe"
 
 export schema AttemptRow {
   attempt: number
@@ -34,7 +37,7 @@ export schema AttemptRow {
   finished_at: string | null
 }
 
-schema CaseRow { project_id: string; submission_state: string; advisory_ghsa: string | null; policy_revision: number | null }
+schema CaseRow { project_id: string; submission_state: string; advisory_ghsa: string | null; policy_revision: number | null; terms: string | null; received_at: string | null }
 schema PriorRow { id: string; root_cause_key: string | null; summary: string | null }
 schema Manifest { manifest: string }
 schema Scope { includedAssets: ReadonlyArray<string>; severityRubric: string; lossDefinition: string }
@@ -47,6 +50,7 @@ export interface CaseAssessment {
   readonly submissionId: string
   readonly advisoryGhsa: string | null
   readonly policyRevision: number | null
+  readonly exclusions: ExclusionContext
   readonly assessment: Assessment
   readonly rows: ReadonlyArray<AttemptRow>
 }
@@ -66,9 +70,19 @@ function budgetOf(mode: Mode) {
   return mode === "Automatic" ? backgroundBudgetMs : ownerBudgetMs
 }
 
-function attemptOf(row: AttemptRow, found: ReadonlyArray<AttemptRow>): Attempt {
+function attemptOf(row: AttemptRow, found: ReadonlyArray<AttemptRow>, exclusions: ExclusionContext): Attempt {
   const mode: Mode = found.some((other) => other.attempt < row.attempt && other.report_version === row.report_version) ? "OwnerRun" : "Automatic"
-  return { version: row.report_version ?? 0, mode, state: states[row.state], startedAt: millisOf(row.started_at), budgetMs: budgetOf(mode) }
+  return { version: row.report_version ?? 0, mode, state: states[row.state], startedAt: millisOf(row.started_at), budgetMs: budgetOf(mode), exclusions }
+}
+
+effect function exclusionsOf(row: Pick<CaseRow, "terms" | "policy_revision" | "received_at">) {
+  return receiptExclusions(try caseTerms({ terms: row.terms, policyRevision: row.policy_revision, receivedAt: row.received_at, publishedAt: null }))
+}
+
+export effect function caseExclusions(caseId: string) {
+  const row = try first(CaseRow, sql`SELECT project_id, submission_state, advisory_ghsa, policy_revision, terms, received_at FROM security_cases WHERE id=${caseId}`)
+  if (row === undefined) throw new NotAssessable({ caseId })
+  return try exclusionsOf(row)
 }
 
 function lastFinished(left: AttemptRow, right: AttemptRow) {
@@ -80,12 +94,12 @@ function shownOf(found: ReadonlyArray<AttemptRow>, reportVersion: number) {
   return found.filter((row) => row.state === "complete" && row.report_version === reportVersion).sort(lastFinished).at(-1)?.attempt ?? 0
 }
 
-function assessmentOf(intake: StoredIntake, found: ReadonlyArray<AttemptRow>, authority: Authority) {
+function assessmentOf(intake: StoredIntake, found: ReadonlyArray<AttemptRow>, authority: Authority, exclusions: ExclusionContext) {
   return {
     reportVersion: intake.report_version,
     qualifiedVersion: qualified(screeningOf(intake, 1, [])) ? intake.report_version : 0,
     authority,
-    attempts: Object.fromEntries(found.map((row) => [String(row.attempt), attemptOf(row, found)])),
+    attempts: Object.fromEntries(found.map((row) => [String(row.attempt), attemptOf(row, found, exclusions)])),
     count: found.reduce((count, row) => Math.max(count, row.attempt), 0),
     shown: shownOf(found, intake.report_version),
   }
@@ -96,7 +110,7 @@ function aggregate(caseId: string, authority: Authority): Aggregate<CaseAssessme
     name: `assessment of ${caseId}`,
     version: sql`SELECT coalesce((SELECT group_concat(attempt || ':' || state, ',') FROM (SELECT attempt, state FROM security_case_analyses WHERE case_id=${caseId} ORDER BY attempt)), '') || '|' || coalesce((SELECT report_version || ':' || revision FROM security_submission_intake WHERE case_id=${caseId}), '-') AS version`,
     reads: [
-      sql`SELECT project_id, submission_state, advisory_ghsa, policy_revision FROM security_cases WHERE id=${caseId}`,
+      sql`SELECT project_id, submission_state, advisory_ghsa, policy_revision, terms, received_at FROM security_cases WHERE id=${caseId}`,
       sql`SELECT submission_id, case_id, received_at, report_version, screening_state, screening_started_at, screening_reason, routed_at, reviewed_at, review_decision, review_reason, revision FROM security_submission_intake WHERE case_id=${caseId}`,
       sql`SELECT ${attemptColumns} FROM security_case_analyses WHERE case_id=${caseId} ORDER BY attempt`,
     ],
@@ -105,13 +119,15 @@ function aggregate(caseId: string, authority: Authority): Aggregate<CaseAssessme
       const [intake] = try decoded(StoredIntake, intakes ?? [], "security intake")
       const found = try decoded(AttemptRow, attempts ?? [], "security case analyses")
       if (record === undefined || intake === undefined || record.submission_state !== "verified") throw new NotAssessable({ caseId })
+      const exclusions = try exclusionsOf(record)
       return {
         caseId,
         projectId: record.project_id,
         submissionId: intake.submission_id,
         advisoryGhsa: record.advisory_ghsa,
         policyRevision: record.policy_revision,
-        assessment: try decodeState(assessmentOf(intake, found, authority)),
+        exclusions,
+        assessment: try decodeState(assessmentOf(intake, found, authority, exclusions)),
         rows: found,
       } satisfies CaseAssessment
     },
@@ -181,7 +197,7 @@ effect function unavailable(run: Run, digest: string | null) {
   return try concluded(run, { kind: "unavailable", digest })
 }
 
-effect function storedReport(submissionId: string, version: number) {
+export effect function exactReport(submissionId: string, version: number) {
   const bytes = reportBytes(submissionId, version) catch effect (error) => {
     if (error instanceof Refused || error instanceof StorageFailure) return undefined
     throw error
@@ -201,7 +217,7 @@ effect function storedReport(submissionId: string, version: number) {
   } satisfies AnalysisReport
 }
 
-effect function programScope(projectId: string, policyRevision: number | null) {
+export effect function scopeAt(projectId: string, policyRevision: number | null) {
   if (policyRevision === null) return { kind: "scope", scope: null } as const
   const found = try first(Manifest, sql`SELECT manifest FROM project_revisions WHERE project_id=${projectId} AND revision=${policyRevision}`)
   if (found === undefined) return { kind: "scope", scope: null } as const
@@ -232,10 +248,10 @@ effect function stillCurrent(run: Run) {
 export effect function attempted(run: Run, timeoutMs: number) {
   const { current, attempt } = run
   if (!(try privateRouteReady())) return try unavailable(run, null)
-  const report = try storedReport(current.submissionId, current.assessment.reportVersion)
+  const report = try exactReport(current.submissionId, current.assessment.reportVersion)
   if (report === undefined) return try unavailable(run, null)
   const digest = try sha256Hex(digestInput(current.advisoryGhsa, report))
-  const scope = try programScope(current.projectId, current.policyRevision)
+  const scope = try scopeAt(current.projectId, current.policyRevision)
   if (scope.kind === "unreadable") return try unavailable(run, digest)
   const prior = try priorCases(current.projectId, current.caseId)
   if (!(try stillCurrent(run))) return try unavailable(run, digest)

@@ -1,9 +1,20 @@
 // spec/contributor/traceServer.md, "The author's own pull_request_opened event is the only closure run evidence"
 import { area } from "@repo/platform/worker"
 import { api } from "./client/index.vibe"
+import { publicationRoutes } from "./publication/routes.vibe"
+import { runRoutes } from "./runs/routes.vibe"
+import { sessionRoutes } from "./session/routes.vibe"
 import { RunEvidenceLive } from "./traces/runEvidence.vibe"
 
 export { evidenceArtifacts } from "./artifacts/live.vibe"
+export { siteAssets } from "./publication/templates.vibe"
+export { traceServices } from "./session/tokens.vibe"
 export { traceObjects } from "./traces/objects.vibe"
+export { RunEvidenceLive }
 
-export const contributor = area({ name: "contributor", api, routes: Layer.empty, provides: RunEvidenceLive })
+export const contributor = area({
+  name: "contributor",
+  api,
+  routes: Layer.mergeAll(publicationRoutes, sessionRoutes, runRoutes),
+  provides: RunEvidenceLive,
+})

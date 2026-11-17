@@ -12,7 +12,7 @@ import { canonicalJson } from "./canonical.ts"
 import { monthlyCutoff } from "./config.vibe"
 import type { KeeperResult } from "./diagnostics.vibe"
 import { submitSigned } from "./pay.vibe"
-import { KeeperRefused, publicJson } from "./registry.vibe"
+import { KeeperRefused, publicJson, siteOrigin } from "./registry.vibe"
 import { RecordInvalid, inTransaction, keep, record, recordOf } from "./store.vibe"
 import { decimal, widen } from "./units.ts"
 
@@ -350,8 +350,9 @@ export effect function submitEvmMonthly(context: SendContext, authorization: Aut
 
 effect function published(context: MonthContext, period: string, key: string) {
   const { config, deployment } = context.send
-  const url = `${config.apiOrigin}/api/v1/payments/projects/${deployment.projectId}/monthly/${period}/authorization/${config.network}`
-  const answer = try publicJson(url, config.apiOrigin, () => new KeeperRefused({ message: "Monthly authorization publication unavailable" }))
+  const origin = siteOrigin(config.apiOrigin)
+  const url = `${origin}/api/v1/payments/projects/${deployment.projectId}/monthly/${period}/authorization/${config.network}`
+  const answer = try publicJson(url, origin, () => new KeeperRefused({ message: "Monthly authorization publication unavailable" }))
   if (answer === null) return undefined
   const publication = Schema.decodeUnknownEffect(Publication)(answer) catch effect () => { throw refused("Published authorization is invalid") }
   const value = Schema.decodeUnknownEffect(Authorization)(publication.authorization) catch effect () => { throw refused("Published authorization is invalid") }

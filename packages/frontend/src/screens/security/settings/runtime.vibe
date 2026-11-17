@@ -1,0 +1,99 @@
+// spec/security/program.md, "A program revision needs current owner authority and exact split rules"; spec/frontend/navigation.md, "A private read belongs to the current account and navigation lifetime"
+import { publicProject, setupViewer } from "@repo/backend/client"
+import { publishRevision } from "../../../flows/projects/api.vibe"
+import { type CallFailure, call } from "../../../platform/api.vibe"
+import { BrowserSession } from "../../../session/browserSession.vibe"
+import { Session } from "../../../session/session.vibe"
+
+export const settingsLimitBytes = 2_097_152
+
+export const settingsMessages = {
+  unchecked: "Your private session could not be checked.",
+  accountChanged: "Your account changed.",
+  notSteward: "Only the current project steward or a repository administrator can manage this bounty.",
+  accessUnchecked: "Current project access could not be checked.",
+  unreadable: "Cannot read the current revision.",
+  unpublished: "Cannot publish the bounty terms. Retry.",
+} as const
+
+export const revisionNote = "Update security bounty terms"
+
+export type Checked<A> =
+  | { readonly kind: "done"; readonly value: A }
+  | { readonly kind: "lost"; readonly message: string; readonly identityChanged: boolean }
+  | { readonly kind: "failed"; readonly message: string }
+
+export interface CurrentSettings {
+  readonly revision: number
+  readonly manifest: unknown
+}
+
+export interface ProgramPublication {
+  readonly projectId: string
+  readonly manifest: unknown
+  readonly expectedRevision: number
+  readonly actorId: string
+}
+
+function lost(message: string, identityChanged: boolean): Checked<never> {
+  return { kind: "lost", message, identityChanged }
+}
+
+effect function actorCheck(actorId: string) {
+  const current = (try Session).current() catch () => undefined
+  if (current === undefined) return lost(settingsMessages.unchecked, false)
+  if (current?.githubId !== actorId) return lost(settingsMessages.accountChanged, true)
+  return undefined
+}
+
+function accessLost(failure: CallFailure): Checked<never> | undefined {
+  if (failure._tag === "ActorChanged") return lost(failure.message, true)
+  if (failure._tag === "Refused" && [401, 403, 404, 410].includes(failure.status)) return lost(failure.message, failure.status === 401 || failure.error === "actor_changed")
+  return undefined
+}
+
+effect function settledCheck<A, R>(actorId: string, work: A!CallFailure!R, fallback: string) {
+  const before = try actorCheck(actorId)
+  if (before !== undefined) return before
+  const answer = Effect.map(work, (value) => ({ ok: true, value }) as const) catch (failure) => ({ ok: false, failure }) as const
+  if (!answer.ok) {
+    const access = accessLost(answer.failure)
+    if (access !== undefined) return access
+    const recheck = try actorCheck(actorId)
+    if (recheck !== undefined) return recheck
+    return { kind: "failed", message: answer.failure.message === "" ? fallback : answer.failure.message } satisfies Checked<A>
+  }
+  const after = try actorCheck(actorId)
+  if (after !== undefined) return after
+  return { kind: "done", value: answer.value } satisfies Checked<A>
+}
+
+effect function checked<A, R>(actorId: string, work: A!CallFailure!R, fallback: string) {
+  const result: Checked<A> = try settledCheck(actorId, work, fallback)
+  if (result.kind === "lost" && result.identityChanged) try (try BrowserSession).observe("changed")
+  return result
+}
+
+export effect function managementAccess(projectId: string, actorId: string) {
+  const read = try checked(actorId, call(setupViewer, { params: { id: projectId } }, { limitBytes: settingsLimitBytes, expectedActor: actorId }), settingsMessages.accessUnchecked)
+  if (read.kind !== "done") return read
+  if (read.value.viewer.githubId !== actorId) {
+    try (try BrowserSession).observe("changed")
+    return lost(settingsMessages.accountChanged, true)
+  }
+  if (!read.value.canManageBounty) return lost(settingsMessages.notSteward, false)
+  return { kind: "done", value: true } satisfies Checked<true>
+}
+
+export effect function currentSettings(projectId: string, actorId: string) {
+  const read = try checked(actorId, call(publicProject, { params: { id: projectId } }, { limitBytes: settingsLimitBytes, expectedActor: actorId }), settingsMessages.unreadable)
+  if (read.kind !== "done") return read
+  return { kind: "done", value: { revision: read.value.revision, manifest: read.value.project } } satisfies Checked<CurrentSettings>
+}
+
+export effect function publishProgram(publication: ProgramPublication) {
+  const revision = { projectId: publication.projectId, manifest: publication.manifest, expectedRevision: publication.expectedRevision, note: revisionNote, monthlyAmount: null, expectedActor: publication.actorId }
+  const read = try checked(publication.actorId, publishRevision(revision), settingsMessages.unpublished)
+  if (read.kind !== "done") return read
+  return { kind: "done", value: { revision: read.value.project.revision, manifest: read.value.project.manifest } } satisfies Checked<CurrentSettings>
+}

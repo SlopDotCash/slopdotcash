@@ -1,0 +1,102 @@
+// spec/slopbot/historicalImport.md, "The import needs an administrator, a deployed producer and registered accepted work before the API start"
+import { Caller, bytesBody, handleRaw, json } from "@repo/platform/http"
+import { Roles } from "@repo/platform/roles"
+import { ImportReceipt, importLimitBytes, importMediaTypes, otherImportMethods, valueImport } from "../client/import.vibe"
+import { postSlopbotValueImport } from "../client/refusals.vibe"
+import { historicalParts, utf8Text } from "./parts.ts"
+
+export interface HistoricalValueBinding {
+  publishSubscription(administratorGithubId: string, input: unknown, bundle?: Uint8Array): Promise<unknown>
+}
+
+export error NotPublished
+
+export service HistoricalValueImport {
+  readonly configured: boolean
+  publish(administratorGithubId: string, input: unknown, bundle: Uint8Array | undefined): typeof ImportReceipt.Type!NotPublished
+}
+
+export function historicalValueImport(binding: HistoricalValueBinding | undefined) {
+  return Layer.succeed(HistoricalValueImport, {
+    configured: binding !== undefined,
+    publish: (administratorGithubId, input, bundle) => effect {
+      if (binding === undefined) throw new NotPublished()
+      const receipt = try tryPromise({ try: () => binding.publishSubscription(administratorGithubId, input, bundle), catch: () => new NotPublished() })
+      return Schema.decodeUnknownEffect(ImportReceipt)(receipt) catch effect () => { throw new NotPublished() }
+    },
+  })
+}
+
+interface RefusalRow {
+  readonly status: number
+  readonly error: string
+  readonly headers: Readonly<Record<string, string>>
+}
+
+const privateNoStore = { "cache-control": "private, no-store" }
+
+function respond(status: number, body: unknown) {
+  return json(body, status, privateNoStore)
+}
+
+function refused(row: RefusalRow) {
+  return respond(row.status, { error: row.error })
+}
+
+interface Submission {
+  readonly input: unknown
+  readonly bundle: Uint8Array | undefined
+}
+
+function mediaTypeOf(request: HttpServerRequest.HttpServerRequest) {
+  return (request.headers["content-type"] ?? "").split(";")[0] ?? ""
+}
+
+effect function submission(mediaType: string, contentType: string) {
+  const bytes = bytesBody(importLimitBytes, importMediaTypes) catch () => undefined
+  if (bytes === undefined) return undefined
+  if (mediaType === "multipart/form-data") {
+    const parts = tryPromise(() => historicalParts(bytes, contentType)) catch () => undefined
+    if (parts === undefined) return undefined
+    const input = Effect.try(() => JSON.parse(parts.envelope) as unknown) catch () => undefined
+    return input === undefined ? undefined : { input, bundle: parts.bundle } satisfies Submission
+  }
+  const text = utf8Text(bytes)
+  if (text === undefined) return undefined
+  const input = Effect.try(() => JSON.parse(text) as unknown) catch () => undefined
+  return input === undefined ? undefined : { input, bundle: undefined } satisfies Submission
+}
+
+effect function signedIn() {
+  return (try Caller).current() catch effect (error) => {
+    if (error._tag === "Unauthenticated" || error._tag === "SessionExpired") return undefined
+    if (error._tag === "DatabaseFailure" || error._tag === "ConstraintViolation") return null
+    throw error
+  }
+}
+
+effect function importAnswer() {
+  const request = try HttpServerRequest.HttpServerRequest
+  const mediaType = mediaTypeOf(request)
+  const sameOrigin = request.headers.origin === new URL(request.originalUrl).origin
+  if (!sameOrigin || !importMediaTypes.some((accepted) => accepted === mediaType)) return refused(postSlopbotValueImport.originForbidden)
+  const actor = try signedIn()
+  if (actor === null) return refused(postSlopbotValueImport.intakeUnavailable)
+  if (actor === undefined) return refused(postSlopbotValueImport.unauthorized)
+  if (!(try (try Roles).has(actor.githubId, "administrator"))) return refused(postSlopbotValueImport.forbidden)
+  const publisher = try HistoricalValueImport
+  if (!publisher.configured) return refused(postSlopbotValueImport.intakeUnavailable)
+  const submitted = try submission(mediaType, request.headers["content-type"] ?? "")
+  if (submitted === undefined) return refused(postSlopbotValueImport.invalidRequest)
+  const receipt = publisher.publish(actor.githubId, submitted.input, submitted.bundle) catch effect () => {
+    try Effect.logError("historical value import failure")
+    return undefined
+  }
+  if (receipt === undefined) return refused(postSlopbotValueImport.assessmentNotPublished)
+  return respond(200, receipt)
+}
+
+export const importRoutes = Layer.mergeAll(
+  handleRaw(valueImport, () => importAnswer()),
+  ...otherImportMethods.map((descriptor) => handleRaw(descriptor, () => effect { return refused(postSlopbotValueImport.otherMethods.methodNotAllowedPrivateNoStore) })),
+)

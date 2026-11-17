@@ -11,8 +11,8 @@ import { cycleLabel, directMonths, formatDate, formatMonth, historyShown } from 
 export type PaymentHistoryProps = {
   /** The project whose cycles and direct payments these are. */
   project: { readonly id: string; readonly slug: string; readonly name: string; readonly externalPrize: boolean };
-  /** The project's published cycles, newest first; the section waits for them. */
-  cycles: ReadonlyArray<CycleIndexEntry> | undefined;
+  /** The project's published cycles, newest first, as the cycle index read shows them; the section waits for them. */
+  cycles: Shown<ReadonlyArray<CycleIndexEntry>>;
   /** The project's direct transfers, read whole. */
   direct: Shown<ReadonlyArray<DirectTransfer>>;
   /** Now, in milliseconds, against which a cycle's review window is judged. */
@@ -33,16 +33,31 @@ function usdc(minor: string): string {
 /** The project's closed cycles and the direct payments made for each month's work; loading never reads as an empty history. */
 export function PaymentHistory({ project, cycles, direct, nowMs }: PaymentHistoryProps) {
   const [showHistory, setShowHistory] = useState(false);
-  if (cycles === undefined) return null;
+  if (pending.has(cycles.status)) return null;
   const { externalPrize } = project;
+  const cyclesFailed = !settled.has(cycles.status);
+  const listed = cyclesFailed ? [] : (cycles.value ?? []);
   const months = directMonths(direct.value ?? []);
   const directLoading = !externalPrize && pending.has(direct.status);
   const directFailed = !externalPrize && !settled.has(direct.status) && !pending.has(direct.status);
-  if (cycles.length === 0 && months.length === 0 && (externalPrize || settled.has(direct.status))) return null;
-  const limited = months.length > historyShown || cycles.length > historyShown;
+  if (!cyclesFailed && listed.length === 0 && months.length === 0 && (externalPrize || settled.has(direct.status))) return null;
+  const limited = months.length > historyShown || listed.length > historyShown;
   return (
     <section aria-label={externalPrize ? "Cycle history" : "Payment history"} className="flex flex-col gap-4">
       <h2 className="text-xl font-semibold text-foreground">{externalPrize ? "Cycle history" : "Payment history"}</h2>
+      {cyclesFailed ? (
+        <Alert
+          variant="warn"
+          announcement="Polite"
+          action={
+            <Button variant="outline" size="sm" onClick={cycles.onRetry}>
+              Retry cycle history
+            </Button>
+          }
+        >
+          Cycle history unavailable.
+        </Alert>
+      ) : null}
       {directFailed ? (
         <Alert
           variant="warn"
@@ -68,7 +83,7 @@ export function PaymentHistory({ project, cycles, direct, nowMs }: PaymentHistor
           </span>
         </p>
       ))}
-      {cycles.length === 0 ? (
+      {cyclesFailed ? null : listed.length === 0 ? (
         directLoading ? null : <p className="text-muted-foreground">No cycles have closed yet.</p>
       ) : (
         <Table label={`${project.name} cycles`}>
@@ -87,7 +102,7 @@ export function PaymentHistory({ project, cycles, direct, nowMs }: PaymentHistor
             </TableRow>
           </TableHeader>
           <TableBody>
-            {(showHistory ? cycles : cycles.slice(0, historyShown)).map((cycle) => (
+            {(showHistory ? listed : listed.slice(0, historyShown)).map((cycle) => (
               <TableRow key={cycle.cycleId}>
                 <TableHead scope="row">
                   <a href={`/cycles/${project.slug}/${cycle.cycleId}`} className={linkClass}>

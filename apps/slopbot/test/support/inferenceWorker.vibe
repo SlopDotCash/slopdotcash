@@ -1,0 +1,236 @@
+// spec/slopbot/valueInference.md, "Story: Claim a complete immutable source group"; spec/slopbot/valueInference.md, "Story: Publish under the current exact authority"
+import type { D1Database, Fetcher } from "@repo/platform/bindings"
+import { sha256Hex } from "@repo/platform/crypto"
+import { type Statement, sql } from "@repo/platform/d1"
+import { githubApp } from "@repo/platform/github/app"
+import { outboundVia } from "@repo/platform/http"
+import type { Handler } from "@repo/platform/testing"
+import { type GitHubFake, githubFake } from "@repo/platform/testing/github"
+import { type ProviderFake, providerFake } from "@repo/platform/testing/providers"
+import { routeProviders } from "../../src/route/route.vibe"
+import { publicationChecks } from "../../src/value/inference/publish.vibe"
+import { inferenceConfig } from "../../src/value/inference/settings.vibe"
+import { registryOver } from "./requestsWorker.vibe"
+import { rewriteNext } from "./proofsWorker.vibe"
+import { acceptance, answerNext, noRetainedCopies } from "./workUnitsWorker.vibe"
+
+export const repository = "ada/alpha"
+export const repositoryId = 7001
+export const installationId = 501
+export const policyText = "# Contributing\n\nValue only retained, observed outcomes.\n"
+export const producerRevision = "e".repeat(40)
+export const pulls = [1, 2, 3] as const
+
+export interface World {
+  readonly github: GitHubFake
+  readonly providers: ProviderFake
+  readonly base: string
+  readonly heads: ReadonlyMap<number, string>
+  readonly merges: ReadonlyMap<number, string>
+  readonly pullIds: ReadonlyMap<number, string>
+  readonly hooks: Array<() => Promise<void>>
+}
+
+export function mergedAt(number: number) {
+  return `2026-11-0${number + 2}T12:00:00Z`
+}
+
+export function fileOf(number: number) {
+  return `src/fix${number}.ts`
+}
+
+export function textOf(number: number) {
+  return `export const fixed${number} = true;\n`
+}
+
+export function patchOf(number: number) {
+  return `@@ -0,0 +1 @@\n+${textOf(number).trimEnd()}`
+}
+
+export effect function seeded() {
+  const github = try orDie(Effect.try(() => githubFake()))
+  const world = github.world
+  const heads = new Map<number, string>()
+  const merges = new Map<number, string>()
+  const pullIds = new Map<number, string>()
+  const base = try orDie(Effect.try(() => {
+    world.addUser({ id: 101, login: "ada", nodeId: "U_ada" })
+    world.addRepo({ id: repositoryId, owner: "ada", name: "alpha", nodeId: "R_alpha01", files: { "README.md": "alpha\n" } })
+    return world.addCommit(repository, { message: "Base", author: "ada", date: "2026-11-01T00:00:00Z", files: { "CONTRIBUTING.md": policyText } })
+  }))
+  let tip = base
+  for (const number of pulls) {
+    const files = { [fileOf(number)]: textOf(number) }
+    const made = try orDie(Effect.try(() => {
+      const head = world.addCommit(repository, { branch: `fix-${number}`, parents: [base], message: `Fix ${number}`, author: "ada", date: `2026-11-0${number + 1}T00:00:00Z`, files })
+      const merge = world.addCommit(repository, { branch: `merged-${number}`, parents: [tip, head], message: `Merge pull request #${number}`, author: "ada", date: mergedAt(number), files })
+      world.addPull({
+        repo: repository,
+        number,
+        author: "ada",
+        title: `Fix ${number}`,
+        body: `Repairs case ${number}.`,
+        createdAt: `2026-11-0${number + 1}T01:00:00Z`,
+        headSha: head,
+        commits: [head],
+        mergedAt: mergedAt(number),
+        mergeCommit: merge,
+        files: [{ path: fileOf(number), status: "added" as const, additions: 1, deletions: 0, patch: patchOf(number) }],
+      })
+      world.setBranch(repository, "main", merge)
+      return { head, merge }
+    }))
+    heads.set(number, made.head)
+    merges.set(number, made.merge)
+    tip = made.merge
+  }
+  try orDie(Effect.try(() => world.addInstallation({ id: installationId, account: "ada", repositories: ["alpha"], permissions: { metadata: "read", contents: "read", pull_requests: "read" } })))
+  for (const number of pulls) {
+    const pull: unknown = try orDie(Effect.try(() => github.represent.pull(repository, number)))
+    const nodeId = typeof pull === "object" && pull !== null && "node_id" in pull && typeof pull.node_id === "string" ? pull.node_id : ""
+    pullIds.set(number, nodeId)
+  }
+  return { github, providers: providerFake(), base, heads, merges, pullIds, hooks: [] } satisfies World
+}
+
+function patched(number: number) {
+  return (body: Readonly<Record<string, unknown>>) => {
+    const files = body["files"]
+    if (!Array.isArray(files)) return body
+    const listed: ReadonlyArray<Readonly<Record<string, unknown>>> = files
+    return { ...body, files: listed.map((file) => file["filename"] === fileOf(number) ? { ...file, patch: patchOf(number) } : file) }
+  }
+}
+
+function census(world: World) {
+  return () => ({
+    data: {
+      search: {
+        issueCount: pulls.length,
+        nodes: pulls.map((number) => ({
+          id: world.pullIds.get(number) ?? "",
+          number,
+          url: `https://github.com/${repository}/pull/${number}`,
+          mergedAt: mergedAt(number),
+          baseRefOid: world.base,
+          headRefOid: world.heads.get(number) ?? "",
+          repository: { id: "R_alpha01", databaseId: repositoryId, nameWithOwner: repository, isPrivate: false },
+          mergeCommit: { oid: world.merges.get(number) ?? "" },
+          commits: { totalCount: 1, nodes: [{ commit: { oid: world.heads.get(number) ?? "" } }], pageInfo: { hasNextPage: false, endCursor: null } },
+        })),
+        pageInfo: { hasNextPage: false, endCursor: null },
+      },
+      rateLimit: { cost: 1, limit: 5000, remaining: 4999, resetAt: "2026-11-30T01:00:00Z" },
+    },
+  })
+}
+
+export effect function scripted(world: World, number: number, rounds = 4) {
+  const pull: unknown = try orDie(Effect.try(() => world.github.represent.pull(repository, number)))
+  for (let round = 0; round < rounds; round++) {
+    for (const sha of [world.heads.get(number) ?? "", world.merges.get(number) ?? ""]) {
+      try rewriteNext(world.github, `GET /repos/${repository}/commits/${sha}?per_page=100&page=1`, patched(number))
+      try answerNext(world.github, `/commits/${sha}/pulls`, [pull])
+    }
+    try rewriteNext(world.github, "POST /graphql", census(world))
+  }
+}
+
+export function unresolvedVerdict(number: number) {
+  return JSON.stringify({
+    status: "unresolved",
+    tier: null,
+    rationale: `Fix ${number} is merged, but its effect is not demonstrated by the collected evidence.`,
+    dimensions: {
+      alignment: "The pull request names a defect without a linked requirement.",
+      impact: "No observed outcome is supplied.",
+      complexity: "One added line.",
+      verification: "No test or execution result is supplied.",
+      maintenance: "No maintenance effect is visible.",
+      overlap: "No overlapping pull request is in the evidence.",
+    },
+    evidenceUrls: [],
+    relatedPullRequests: [],
+    limitations: ["The collected evidence does not show the repaired behaviour."],
+    reviews: [],
+  })
+}
+
+const providerHosts = new Set(["api.surplusintelligence.ai", "api.orbio.so"])
+
+function answered(world: World, request: globalThis.Request) {
+  return Effect.runPromise(effect {
+    const response = try promise(() => Promise.resolve(world.providers.handler(request as unknown as Parameters<Handler>[0])))
+    const hook = world.hooks.shift()
+    if (hook !== undefined) try promise(hook)
+    return response as unknown as globalThis.Response
+  })
+}
+
+function networkOf(world: World): Fetcher {
+  return { fetch: (request) => providerHosts.has(new URL(request.url).host) ? answered(world, request) : world.github.fetch(request) }
+}
+
+export function qualificationProviders(world: World, keys: { readonly ORBIO_API_KEY?: string; readonly SURPLUS_API_KEY?: string }) {
+  return Layer.provide(routeProviders(keys), outboundVia(networkOf(world)))
+}
+
+export function services(world: World, db: D1Database) {
+  const http = outboundVia(networkOf(world))
+  const app = Layer.provide(githubApp({ appId: world.github.app.id, privateKey: Redacted.make(world.github.app.privateKeyPem), userAgent: "slopbot" }), http)
+  const models = Layer.provide(routeProviders({ ORBIO_API_KEY: "orbio-test-credential", SURPLUS_API_KEY: "surplus-test-credential" }), http)
+  const config = inferenceConfig({ SLOPBOT_VALUE_MONTHLY_BUDGET_MICRO_USD: "alerts-only", SLOPBOT_PRODUCER_REVISION: producerRevision })
+  return Layer.provideMerge(publicationChecks, Layer.mergeAll(registryOver(db), http, app, models, config, acceptance, noRetainedCopies))
+}
+
+export type ProjectStatus = "active" | "paused"
+
+function manifestOf(status: ProjectStatus) {
+  return JSON.stringify({
+    id: "alpha",
+    name: "Alpha",
+    status,
+    listingTier: "community",
+    steward: { github: { actorId: "101", nodeId: "U_ada", login: "ada" } },
+    authority: { repositoryId: String(repositoryId), repositoryNodeId: "R_alpha01" },
+    terms: { repositoryLicense: { state: "unknown", spdx: null, url: null, commitSha: null, fileSha256: null } },
+    repositories: [{ id: repository, githubUrl: `https://github.com/${repository}` }],
+    reward: { chain: null, fundingState: "unfunded", committedMinor: "0", paymentMode: "points" },
+    funding: {},
+  })
+}
+
+export effect function revised(status: ProjectStatus, kind: "Created" | "AdminHold" | "Activated") {
+  const manifest = manifestOf(status)
+  const digest = try sha256Hex(manifest)
+  const at = "2026-11-01T00:00:00.000Z"
+  const next = sql`coalesce((SELECT revision FROM projects WHERE id = 'alpha'), 0) + 1`
+  const pointer: ReadonlyArray<Statement> = kind === "Created"
+    ? [
+      sql`INSERT INTO projects (id, status, revision, manifest, manifest_sha256, created_at, updated_at) VALUES ('alpha', ${status}, 1, ${manifest}, ${digest}, ${at}, ${at})`,
+      sql`INSERT INTO project_repositories (repository_key, project_id) VALUES (${repository}, 'alpha')`,
+    ]
+    : [sql`UPDATE projects SET status = ${status}, revision = revision + 1, manifest = ${manifest}, manifest_sha256 = ${digest}, updated_at = ${at} WHERE id = 'alpha'`]
+  return [
+    sql`INSERT INTO project_revisions (project_id, revision, manifest, manifest_sha256, reason, created_at) VALUES ('alpha', ${next}, ${manifest}, ${digest}, ${kind}, ${at})`,
+    sql`INSERT INTO project_revision_kinds (project_id, revision, kind) VALUES ('alpha', ${next}, ${kind})`,
+    ...pointer,
+  ]
+}
+
+export function requested(deliveryId: string, number: number, receivedAt: string): ReadonlyArray<Statement> {
+  return [
+    sql`INSERT INTO slopbot_deliveries (delivery_id, event, received_at) VALUES (${deliveryId}, 'pull_request', ${receivedAt})`,
+    sql`INSERT INTO slopbot_value_requests (delivery_id, installation_id, repository_id, owner, repo, pull_request_number, received_at)
+      VALUES (${deliveryId}, ${installationId}, ${repositoryId}, 'ada', 'alpha', ${number}, ${receivedAt})`,
+  ]
+}
+
+export function installed(): Statement {
+  return sql`INSERT INTO slopbot_installations (installation_id, account_id, account_login, account_type, created_at, source_updated_at)
+    VALUES (${installationId}, 101, 'ada', 'User', '2026-11-01T00:00:00.000Z', 1)`
+}
+
+export function runOn(db: D1Database, statements: ReadonlyArray<Statement>) {
+  return () => db.batch(statements.map((statement) => db.prepare(statement.text).bind(...statement.params))).then(() => undefined)
+}

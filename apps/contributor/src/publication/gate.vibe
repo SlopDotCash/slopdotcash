@@ -1,18 +1,17 @@
 // spec/contributor/publication.md, "A restricted project's artifacts answer gone and an unlisted or retired project's answer not found"; spec/contributor/publication.md, "Skill artifacts need published skill fields and current clearance, and an unverified clearance answers retry"; spec/contributor/publication.md, "Discovery lists one row per repository of each installable project with published generated skills"; spec/backend/listing.md, "A restricted project is closed on every public route and a paused one stays listed"; spec/frontend/projections.md, "Project visibility, collection and installation have separate predicates"
 import { RowMismatch } from "@repo/platform/d1"
-import { Restrictions } from "@repo/ports/backend"
+import { type RegistryManifest, Restrictions } from "@repo/ports/backend"
 import { Clearance, Enforcement } from "@repo/ports/security"
 import { type PublicRead, publicRead } from "../../gen/backend__listing.effect.vibe"
 import { type Tier, initial as unregistered } from "../../gen/backend__projects.effect.vibe"
-import type { ArtifactFacts, ClearanceRead } from "../../gen/contributor__publication.effect.vibe"
+import type { ArtifactFacts, ClearanceRead, MonthListing } from "../../gen/contributor__publication.effect.vibe"
 import { initial as unrestricted } from "../../gen/security__enforcement.effect.vibe"
 import { publishesGeneratedSkills } from "../render/publication.ts"
-import type { PublishedProject } from "./projects.vibe"
 
 export type RestrictionState = "quarantined" | "banned"
 
 export interface ProjectGate {
-  readonly project: PublishedProject
+  readonly project: RegistryManifest
   readonly manifest: unknown
   readonly facts: ArtifactFacts
 }
@@ -25,11 +24,11 @@ function tierOf(listingTier: unknown): Tier {
   return listingTier === "featured" ? "Featured" : listingTier === "retired" ? "Retired" : "Community"
 }
 
-export effect function manifestOf(project: PublishedProject) {
+export effect function manifestOf(project: RegistryManifest) {
   return try Effect.try({ try: (): unknown => JSON.parse(project.manifest), catch: () => new RowMismatch({ text: `project ${project.projectId}`, issue: "the manifest is not JSON" }) })
 }
 
-export function optimistic(project: PublishedProject, manifest: unknown, read: PublicRead): ArtifactFacts {
+export function optimistic(project: RegistryManifest, manifest: unknown, read: PublicRead, monthListing: MonthListing): ArtifactFacts {
   return {
     read,
     active: project.active,
@@ -39,10 +38,11 @@ export function optimistic(project: PublishedProject, manifest: unknown, read: P
     templateVerified: true,
     artifactExists: true,
     readFailed: false,
+    monthListing,
   }
 }
 
-export effect function publicReadOf(project: PublishedProject, manifest: unknown) {
+export effect function publicReadOf(project: RegistryManifest, manifest: unknown) {
   const closure = try (try Restrictions).project(project.projectId)
   const source = !closure.restricted ? 0 : closure.sourceProjectId === project.projectId ? 1 : 2
   return publicRead(
@@ -52,10 +52,10 @@ export effect function publicReadOf(project: PublishedProject, manifest: unknown
   )
 }
 
-export effect function gateOf(project: PublishedProject) {
+export effect function gateOf(project: RegistryManifest) {
   const manifest = try manifestOf(project)
   const read = try publicReadOf(project, manifest)
-  return { project, manifest, facts: optimistic(project, manifest, read) } satisfies ProjectGate
+  return { project, manifest, facts: optimistic(project, manifest, read, "ListedThisMonth") } satisfies ProjectGate
 }
 
 export effect function restrictionStateOf(projectId: string) {
@@ -66,6 +66,6 @@ export effect function restrictionStateOf(projectId: string) {
   return (restriction === "ServiceBan" || restriction === "ModeratorBan" ? "banned" : "quarantined") satisfies RestrictionState
 }
 
-export effect function clearanceOf(project: PublishedProject, templateSha256: string) {
+export effect function clearanceOf(project: RegistryManifest, templateSha256: string) {
   return (try (try Clearance).of({ projectId: project.projectId, revision: project.revision, templateSha256 })) satisfies ClearanceRead
 }

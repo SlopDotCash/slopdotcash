@@ -20,22 +20,27 @@ export interface PrivateRouteKey {
   readonly baseUrl?: string
 }
 
+export service PrivateRoute {
+  readonly provider: Provider.Shape
+}
+
 export function privateRoute(key: PrivateRouteKey) {
   const apiKey = key.apiKey?.trim() ?? ""
   const { baseUrl } = key
-  return providers({
+  const configured = providers({
     ...apiKey === "" ? {} : { surplus: { apiKey: Redacted.make(apiKey), ...baseUrl !== undefined && loopbackOrigin(baseUrl) ? { baseUrl } : {} } },
     timeoutMs: ownerBudgetMs,
     maxReplyBytes,
   })
+  return Layer.provide(Layer.effect(PrivateRoute, effect { return { provider: try Provider } }), configured)
 }
 
 export effect function privateRouteReady() {
-  return (try Provider).configured.has("surplus-anthropic")
+  return (try PrivateRoute).provider.configured.has("surplus-anthropic")
 }
 
 export effect function privateCall(system: string, content: string, timeoutMs: number) {
-  const provider = try Provider
+  const { provider } = try PrivateRoute
   if (!provider.configured.has("surplus-anthropic")) return { kind: "failed", failure: "NotConfigured" } satisfies RouteOutcome
   const reply = provider.complete({
     route: "surplus-anthropic",

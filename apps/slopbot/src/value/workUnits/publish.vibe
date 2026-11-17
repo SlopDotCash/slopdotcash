@@ -1,0 +1,121 @@
+// spec/slopbot/workUnits.md, "One transaction checks predecessors, legacy records, sources, claims and the publication fence"; spec/slopbot/valueHistory.md, "A successor consumes every affected predecessor and its complete source set"
+import type { Statement } from "@repo/platform/d1"
+import { GitHub } from "@repo/platform/github"
+import type { AcceptanceFailure } from "../evidence/acceptance.vibe"
+import type { Evidence, RegisteredRepository } from "../evidence/types.vibe"
+import type { Recovered } from "../proofs/blob.vibe"
+import type { Claim } from "../requests/store.vibe"
+import { groupFacts, prepareWorkUnitEvidence } from "./prepare.vibe"
+import { type AssessedUnit, type AssessmentResult, type Producer, type ProjectState, prepareWorkUnitRecord } from "./record.vibe"
+import { appendWorkUnitRecord, expectedPredecessors, storedJointRecord } from "./store.vibe"
+import { WorkUnitRefused, type WorkUnitEvidence, type WorkUnitSource } from "./types.vibe"
+
+export interface PublicationJob {
+  readonly installationId: number
+  readonly repositoryId: number
+  readonly owner: string
+  readonly repo: string
+  readonly number: number
+  readonly itemKind: string
+}
+
+export interface Registration {
+  readonly project: ProjectState
+  readonly repositories: ReadonlyArray<RegisteredRepository>
+  readonly registryFence: Statement
+  readonly leaseFence?: Statement
+}
+
+export interface CurrentSource {
+  readonly source: WorkUnitSource
+  readonly sourceDigest: string
+  readonly group: ReadonlyArray<WorkUnitSource>
+  readonly repositories: ReadonlyArray<RegisteredRepository>
+  readonly recovered?: Recovered
+}
+
+export service PublicationChecks {
+  subscribed(provenance: unknown): boolean!!
+  registration(job: PublicationJob, sources: ReadonlyArray<Evidence>, claim: Claim | undefined): (Registration | undefined)!AcceptanceFailure!GitHub
+  admitted(job: PublicationJob, sources: ReadonlyArray<Evidence>): void!AcceptanceFailure!GitHub
+  current(check: CurrentSource): void!AcceptanceFailure!GitHub
+}
+
+export interface JointPublication {
+  readonly job: PublicationJob
+  readonly result: AssessmentResult
+  readonly provenance: unknown
+  readonly units: ReadonlyArray<AssessedUnit>
+  readonly model: Producer
+  readonly evidence: WorkUnitEvidence
+  readonly producerRevision: string
+  readonly supersedes: ReadonlyArray<string>
+  readonly legacyPredecessors: ReadonlyArray<string>
+  readonly revisionReason: string | null
+  readonly claim?: Claim
+  readonly recovered?: Recovered
+}
+
+function sameDigests(left: ReadonlyArray<string>, right: ReadonlyArray<string>) {
+  return JSON.stringify([...left].sort()) === JSON.stringify([...right].sort())
+}
+
+function evidenceOf(sources: ReadonlyArray<WorkUnitSource>) {
+  return sources.map(({ evidence }) => evidence)
+}
+
+export effect function verifyCurrentWorkUnitSource(supplied: WorkUnitEvidence, sourceDigest: string, repositories: ReadonlyArray<RegisteredRepository>, recovered?: Recovered) {
+  const checks = try PublicationChecks
+  const original = try prepareWorkUnitEvidence(supplied.sources, repositories)
+  if (original.limitations.length > 0 || original.sourceDigest !== supplied.sourceDigest || original.sourceDigest !== sourceDigest)
+    throw new WorkUnitRefused({ reason: "Joint assessment does not bind the supplied source group" })
+  for (const [index, source] of original.sources.entries()) {
+    const digest = original.sourceDigests[index]?.digest
+    if (digest === undefined) throw new WorkUnitRefused({ reason: "Joint assessment does not bind the supplied source group" })
+    try checks.current({ source, sourceDigest: digest, group: original.sources, repositories, ...(recovered === undefined ? {} : { recovered }) })
+  }
+  const current = try prepareWorkUnitEvidence(original.sources, repositories)
+  if (current.limitations.length > 0 || current.sourceDigest !== sourceDigest)
+    throw new WorkUnitRefused({ reason: "Joint source changed after assessment; a new assessment is required" })
+  return current
+}
+
+export effect function publishWorkUnitAssessment(publication: JointPublication) {
+  const checks = try PublicationChecks
+  const { job, evidence, claim } = publication
+  if (claim === undefined && !(try checks.subscribed(publication.provenance)))
+    throw new WorkUnitRefused({ reason: "API joint publication requires its processing claim" })
+  const sources = evidenceOf(evidence.sources)
+  if (job.itemKind !== "pull_request" || !sources.some((source) =>
+    source.repositoryDatabaseId === job.repositoryId && source.repository.toLowerCase() === `${job.owner}/${job.repo}`.toLowerCase() && source.pull.number === job.number))
+    throw new WorkUnitRefused({ reason: "Joint publication job does not match a source member" })
+  const registration = try checks.registration(job, sources, claim)
+  if (registration === undefined) throw new WorkUnitRefused({ reason: "Repository is not active in the Slop project registry" })
+  try checks.admitted(job, sources)
+  const current = try verifyCurrentWorkUnitSource(evidence, publication.result.sourceDigest, registration.repositories, publication.recovered)
+  const prepared = try prepareWorkUnitRecord({
+    supplied: current,
+    result: publication.result,
+    rubricVersion: publication.result.rubricVersion,
+    units: publication.units,
+    model: publication.model,
+    producerRevision: publication.producerRevision,
+    supersedes: publication.supersedes,
+    legacyPredecessors: publication.legacyPredecessors,
+    revisionReason: publication.revisionReason,
+    project: registration.project,
+    repositories: registration.repositories,
+  })
+  if ((try storedJointRecord(prepared.assessmentKey)) === undefined) {
+    const expected = try expectedPredecessors(current.sources.map(({ evidence: source }) => [source.repositoryNodeId, source.pull.node_id] as const))
+    if (!sameDigests(expected.supersedes, publication.supersedes) || !sameDigests(expected.legacyPredecessors, publication.legacyPredecessors))
+      throw new WorkUnitRefused({ reason: "Joint publication must supersede every current source record" })
+  }
+  try checks.admitted(job, evidenceOf(current.sources))
+  return try appendWorkUnitRecord(prepared, groupFacts(current), {
+    installationId: job.installationId,
+    projectId: registration.project.id,
+    registryFence: registration.registryFence,
+    ...(registration.leaseFence === undefined ? {} : { leaseFence: registration.leaseFence }),
+  })
+}

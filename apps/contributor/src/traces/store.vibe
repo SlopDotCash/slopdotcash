@@ -4,9 +4,10 @@ import { randomId } from "@repo/platform/crypto"
 import { type NonEmpty, type RowMismatch, type Statement, decoded, first, list, sql } from "@repo/platform/d1"
 import { type Aggregate, type Decision, type Rows, load, update } from "@repo/platform/stored"
 import { type ReadFailure, Restrictions } from "@repo/ports/backend"
+import { IntakeHealth } from "@repo/ports/operations"
 import { type Event, type NotAState, type Put, type TraceServer, Rejected, apply, enabled, serverRuntime } from "../../gen/contributor__traceServer.effect.vibe"
 import { EventRow, IntentRow, KeyRow, ObjectRow, ReservationRow, RunRow, type RunRows, type StoredEventKind, type StoredSource, type TraceContentType, contentTypeOf, contentTypes, eventKindOf, modelOf, runStates, sameBlob, sourceOf } from "./codec.vibe"
-import { IntakeRow, bannedOf, intakeRead, intakeVersion, secondsAt } from "./facts.vibe"
+import { bannedOf, secondsAt } from "./facts.vibe"
 import { TraceObjects, objectKey } from "./objects.vibe"
 
 export type RunLocator = { readonly runId: string } | { readonly owner: string; readonly createKey: string }
@@ -133,7 +134,9 @@ function senderText(by: number): string {
   return by > 0 ? String(by) : ""
 }
 
-function aggregate(scope: Scope): Aggregate<Loaded, RowMismatch | NotAState | ReadFailure, Restrictions> {
+effect function aggregate(scope: Scope) {
+  const intake = try IntakeHealth
+  const intakeVersion = try intake.version()
   const where = located(scope.run)
   const id = sql`(SELECT id FROM trace_runs WHERE ${where})`
   const owner = sql`coalesce((SELECT github_user_id FROM trace_runs WHERE ${where}), ${scope.owner})`
@@ -161,19 +164,18 @@ function aggregate(scope: Scope): Aggregate<Loaded, RowMismatch | NotAState | Re
       sql`SELECT id, idempotency_key, kind, source, occurred_at, github_object_id, github_url, head_sha, created_at FROM run_progress_events WHERE run_id = ${id} ORDER BY rowid`,
       otherIntents,
       otherEvents,
-      intakeRead,
     ],
     decode: (found) => effect {
-      const rows = try rowsOf(found)
+      const rows = { ...(try rowsOf(found)), intake: try intake.status() }
       const runOwner = rows.run?.github_user_id ?? scope.owner
       const model = try modelOf(rows, { owner: runOwner, clock: try nowSeconds(), banned: try bannedOf(runOwner), puts: scope.puts })
       return { rows, owner: runOwner, model } satisfies Loaded
     },
-  }
+  } satisfies Aggregate<Loaded, RowMismatch | NotAState | ReadFailure, Restrictions>
 }
 
 effect function rowsOf(found: ReadonlyArray<Rows>) {
-  const [run, intents, reservation, objects, events, otherIntents, otherEvents, intake] = found
+  const [run, intents, reservation, objects, events, otherIntents, otherEvents] = found
   return {
     run: (try decoded(RunRow, run ?? [], "trace run"))[0],
     intents: try decoded(IntentRow, intents ?? [], "trace upload intents"),
@@ -182,8 +184,7 @@ effect function rowsOf(found: ReadonlyArray<Rows>) {
     events: try decoded(EventRow, events ?? [], "run progress events"),
     otherIntentKeys: (try decoded(KeyRow, otherIntents ?? [], "other run intent keys")).map((row) => row.idempotency_key),
     otherEventKeys: (try decoded(KeyRow, otherEvents ?? [], "other run event keys")).map((row) => row.idempotency_key),
-    intake: (try decoded(IntakeRow, intake ?? [], "private intake status"))[0],
-  } satisfies RunRows
+  } satisfies Omit<RunRows, "intake">
 }
 
 function scopeOf(run: RunLocator, owner: string, keys: Focus = {}, digests: ReadonlyArray<string> = [], puts: ReadonlyArray<Put> = []): Scope {
@@ -211,7 +212,7 @@ function unchanged(loaded: Loaded, next: TraceServer, extra: Partial<Settled> = 
 }
 
 effect function settle<DE, DR>(scope: Scope, decide: (loaded: Loaded) => Decision<Settled>!DE!DR) {
-  return try update(aggregate(scope), (loaded) => effect {
+  return try update(try aggregate(scope), (loaded) => effect {
     const decision = try decide(loaded)
     if (decision.writes.length === 0) return decision
     return { ...decision, writes: [...decision.writes, try (try Restrictions).fence({ githubId: loaded.owner })] } satisfies Decision<Settled>
@@ -219,7 +220,7 @@ effect function settle<DE, DR>(scope: Scope, decide: (loaded: Loaded) => Decisio
 }
 
 export effect function inspect(input: Inspect) {
-  return (try load(aggregate(scopeOf(input.run, input.owner, "every", input.digests, input.puts)))).state
+  return (try load(try aggregate(scopeOf(input.run, input.owner, "every", input.digests, input.puts)))).state
 }
 
 export effect function capability(tokenHash: string) {
@@ -315,7 +316,7 @@ export effect function beginPut(input: BeginPut) {
 export effect function writeBytes(input: WriteBytes) {
   const scope = scopeOf(input.run, fallbackOwner(input.run, ""), {}, [], input.puts)
   const attempt: Event = { type: "writeBytes", key: input.key, succeeds: true }
-  const current = (try load(aggregate(scope))).state
+  const current = (try load(try aggregate(scope))).state
   const reserved = current.model.puts.find((put) => put.key === input.key && put.stage === "PutReserved")
   if (reserved === undefined || !enabled(current.model, attempt, input.by)) throw new Rejected({ event: attempt, state: current.model, by: input.by })
   const conflicting = current.model.objects.some((object) => object.digest === reserved.blob.digest && !sameBlob(object, reserved.blob))

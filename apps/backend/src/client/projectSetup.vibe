@@ -100,7 +100,24 @@ export schema MyApplications { readonly applications: ReadonlyArray<PublicApplic
 export schema Cancelled { readonly application: PublicApplication }
 export schema OwnedRepository { readonly repository: string; readonly description: string | null }
 export schema OwnedRepositories { readonly repositories: ReadonlyArray<OwnedRepository> }
-export schema RepositoryFacts { readonly repository: Schema.Unknown }
+export schema RepositoryOwner { readonly login: string; readonly actorId: string; readonly nodeId: string; readonly kind: "individual" | "organization" }
+export schema VerifiedLicense { readonly state: "verified"; readonly spdx: string; readonly commitSha: string; readonly fileSha256: string }
+export schema UnknownLicense { readonly state: "unknown"; readonly reason: string }
+export schema RepositoryLicense = VerifiedLicense | UnknownLicense
+export schema RepositoryLookup {
+  readonly repository: string
+  readonly description: string | null
+  readonly numericId: string
+  readonly nodeId: string
+  readonly defaultBranch: string
+  readonly branches: ReadonlyArray<string>
+  readonly branchCommits: Record<string, string>
+  readonly fork: boolean
+  readonly archived: boolean
+  readonly owner: RepositoryOwner
+  readonly license: RepositoryLicense
+}
+export schema RepositoryFacts { readonly repository: RepositoryLookup }
 
 export const createProject = route({ method: "POST", path: "/api/v1/projects", access: "sessionWrite", limitKib: 128, request: CreateRequest, answer: Created, rejected: "registry_conflict", cache: "no-store", status: 201 })
 export const reviseProject = route({ method: "PUT", path: "/api/v1/projects/:id", access: "sessionWrite", limitKib: 128, request: ReviseRequest, answer: Revised, rejected: "stale_revision", cache: "no-store" })

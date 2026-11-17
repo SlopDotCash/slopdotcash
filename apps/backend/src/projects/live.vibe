@@ -1,6 +1,6 @@
-// spec/backend/projectRegistry.md, "A restriction binds every claim of its project and closes any project sharing them"; spec/backend/projects.md, "A project is one row of immutable revisions and separate application records"; spec/backend/listing.md, "A restricted project is closed on every public route and a paused one stays listed"; spec/slopbot/repositoryScope.md, "A current path lookup must also match the permanent repository ID"
+// spec/backend/projectRegistry.md, "A restriction binds every claim of its project and closes any project sharing them"; spec/operations/notifications.md, "Each notice kind names the role its recipient must still hold when the attempt is prepared"; spec/backend/projects.md, "A project is one row of immutable revisions and separate application records"; spec/backend/listing.md, "A restricted project is closed on every public route and a paused one stays listed"; spec/slopbot/repositoryScope.md, "A current path lookup must also match the permanent repository ID"
 import { D1, type Statement, first, list, rows, sql } from "@repo/platform/d1"
-import { type Network, type ProjectView, type RegistryManifest, RegistryManifests, type RegistryPin, Registry, Restrictions } from "@repo/ports/backend"
+import { type Network, ProjectAudience, type ProjectView, type RegistryManifest, RegistryManifests, type RegistryPin, Registry, Restrictions } from "@repo/ports/backend"
 import { EnforcementRows } from "@repo/ports/security"
 import { currentPath } from "../authority/live.vibe"
 import { closureOf, listedById } from "../projectRegistry/claims.vibe"
@@ -11,7 +11,7 @@ import { type Manifest, ProjectRow, manifestOf, revisionRead, revisionsOf } from
 schema ListedBy { github_id: string | null }
 schema KeyHolder { project_id: string }
 schema ProjectId { id: string }
-schema ManifestRow { id: string; revision: number; manifest: string }
+schema ManifestRow { id: string; status: "active" | "paused"; revision: number; manifest: string; manifest_sha256: string; updated_at: string }
 
 const networks: Readonly<Record<string, Network>> = { base: "Base", ethereum: "Ethereum", robinhood: "Robinhood", solana: "Solana" }
 
@@ -127,18 +127,30 @@ export const RestrictionsLive = Layer.effect(Restrictions, effect {
 })
 
 function registered(row: ManifestRow): RegistryManifest {
-  return { projectId: row.id, revision: row.revision, manifest: row.manifest }
+  return { projectId: row.id, active: row.status === "active", revision: row.revision, manifest: row.manifest, manifestSha256: row.manifest_sha256, updatedAt: row.updated_at }
 }
+
+const manifestColumns = sql`id, status, revision, manifest, manifest_sha256, updated_at`
 
 export const RegistryManifestsLive = Layer.effect(RegistryManifests, effect {
   const db = try D1
   return {
     current: () => provideService(effect {
-      return (try rows(ManifestRow, sql`SELECT id, revision, manifest FROM projects ORDER BY id`)).map(registered)
+      return (try rows(ManifestRow, sql`SELECT ${manifestColumns} FROM projects ORDER BY id`)).map(registered)
     }, D1, db),
     project: (projectId) => provideService(effect {
-      const row = try first(ManifestRow, sql`SELECT id, revision, manifest FROM projects WHERE id = ${projectId}`)
+      const row = try first(ManifestRow, sql`SELECT ${manifestColumns} FROM projects WHERE id = ${projectId}`)
       return row === undefined ? undefined : registered(row)
     }, D1, db),
   } satisfies RegistryManifests.Shape
+})
+
+function listedBy(project: Statement): Statement {
+  return sql`SELECT a.applicant_github_id AS recipient FROM projects p JOIN project_applications a ON a.id = p.source_application_id WHERE p.id = ${project}
+    UNION SELECT first.actor_github_id FROM projects p JOIN project_revisions first ON first.project_id = p.id AND first.revision = 1 WHERE p.id = ${project} AND p.source_application_id IS NULL AND first.actor_github_id IS NOT NULL`
+}
+
+export const ProjectAudienceLive = Layer.succeed(ProjectAudience, {
+  listedBy: (project) => effect { return listedBy(project) },
+  owners: (project) => effect { return sql`${listedBy(project)} UNION SELECT json_extract(manifest, '$.steward.github.actorId') FROM projects WHERE id = ${project}` },
 })

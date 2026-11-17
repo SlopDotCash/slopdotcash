@@ -6,6 +6,7 @@ import type { EnvironmentOptions, UserConfig } from "vite";
 export interface Deployables {
   readonly workers?: Readonly<Record<string, string>>;
   readonly programs?: Readonly<Record<string, string>>;
+  readonly nodeCompat?: ReadonlyArray<string>;
   readonly outDir?: string;
   readonly emptyOutDir?: boolean;
 }
@@ -20,7 +21,8 @@ interface Target {
 const workerConditions = ["workerd", "worker", "import", "default"];
 const nodeConditions = ["node", "import", "default"];
 const workerExternal = [/^cloudflare:/];
-const nodeExternal = [/^node:/, ...builtinModules];
+const nodeCompatExternal = [/^cloudflare:/, /^node:/];
+const nodeExternal = [/^node:/, /^miniflare(?:\/|$)/u, /^wrangler(?:\/|$)/u, ...builtinModules];
 
 function single(entry: string): UserConfig {
   return {
@@ -58,9 +60,9 @@ function environment(target: Target, outDir: string, emptyOutDir: boolean): Envi
 /** @throws {never} */
 export function workerBuild(entry: string | Deployables): UserConfig {
   if (typeof entry === "string") return single(entry);
-  const { workers = {}, programs = {}, outDir = "dist", emptyOutDir = true } = entry;
+  const { workers = {}, programs = {}, nodeCompat = [], outDir = "dist", emptyOutDir = true } = entry;
   const targets: ReadonlyArray<readonly [string, Target]> = [
-    ...Object.entries(workers).map(([name, input]) => [`worker_${name}`, { input, file: `${name}.js`, conditions: workerConditions, external: workerExternal }] as const),
+    ...Object.entries(workers).map(([name, input]) => [`worker_${name}`, { input, file: `${name}.js`, conditions: workerConditions, external: nodeCompat.includes(name) ? nodeCompatExternal : workerExternal }] as const),
     ...Object.entries(programs).map(([name, input]) => [`program_${name}`, { input, file: `programs/${name}.js`, conditions: nodeConditions, external: nodeExternal }] as const),
   ];
   const environments = Object.fromEntries(targets.map(([name, target], index) => [name, environment(target, outDir, emptyOutDir && index === 0)]));

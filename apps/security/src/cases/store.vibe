@@ -7,7 +7,7 @@ import { Roles } from "@repo/platform/roles"
 import type { Json } from "@repo/ports/backend"
 import { Notices } from "@repo/ports/operations"
 import type { Event, PrivateCase } from "../../gen/security__cases.ts"
-import { apply, moderatorNow, technicalNow, triagerNow } from "../../gen/security__cases.effect.vibe"
+import { moderatorNow, technicalNow, triagerNow } from "../../gen/security__cases.effect.vibe"
 import { AuthorityUnavailable, type CaseAuthority, caseAuthority } from "../caseAuthority/snapshot.vibe"
 import { postSecurityCasesByIdActions as actionRows } from "../client/refusals.vibe"
 import { githubNumber } from "../privacy/reads.vibe"
@@ -83,7 +83,7 @@ export effect function observedAs(record: CaseRecord, viewerGithubId: string, un
     when AuthorityUnavailable: throw refused(unavailable);
     default: throw error;
   }
-  const model = try orDie(apply(record.model, { type: "observeAuthority", snapshot: snapshot.authority }, 0))
+  const model: PrivateCase = { ...record.model, authority: snapshot.authority, triagerEpoch: snapshot.authority.epoch }
   const epoch = model.authority.epoch
   return { record, model, epoch, roles: rolesOf(model, githubNumber(viewerGithubId), epoch), program, snapshot } satisfies Observed
 }

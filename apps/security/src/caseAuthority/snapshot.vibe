@@ -42,7 +42,7 @@ export effect function activeTriagers(caseId: string) {
   return numbers(found.map((member) => member.github_id))
 }
 
-effect function repositoryAuthority(scope: CaseScope) {
+export effect function repositoryAuthority(scope: Pick<CaseScope, "projectId" | "viewerGithubId">) {
   const project = try (try Registry).project(scope.projectId)
   const first = project?.repositories[0]
   if (project === undefined || first === undefined) return "denied" as const

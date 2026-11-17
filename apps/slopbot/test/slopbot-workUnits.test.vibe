@@ -1,0 +1,445 @@
+import { assert, layer } from "@effect/vitest"
+import { millisOf } from "@repo/platform/clock"
+import { webCrypto } from "@repo/platform/crypto"
+import { D1, type Statement, d1, sql } from "@repo/platform/d1"
+import { gitObjectId, textBytes } from "@repo/platform/git/bytes"
+import { mergeRecipe } from "@repo/platform/git/evidence"
+import { database, migrate, startWorker } from "@repo/platform/testing"
+import { migrationsDir } from "@repo/platform/testing/paths"
+import { MergeUnavailable } from "@repo/ports/security"
+import { Rejected } from "../gen/slopbot__workUnits.effect.vibe"
+import { type MergedSource, type PromotionSource, nativeMergeContext } from "../src/value/evidence/acceptance.vibe"
+import { collectEvidence } from "../src/value/evidence/collect.vibe"
+import type { Evidence } from "../src/value/evidence/types.vibe"
+import { collectAcceptedRange, collectNoChangePromotion, noChangePromotionMatches } from "../src/value/workUnits/acceptance.vibe"
+import { collectAcceptedCommitCensus } from "../src/value/workUnits/census.vibe"
+import { collectValueGroup } from "../src/value/workUnits/group.vibe"
+import { mergeInputOf, mergeVerifierVia, reconstructSources } from "../src/value/workUnits/merge.vibe"
+import { collectNativeMerge, nativeMergeCarrierMatches } from "../src/value/workUnits/native.vibe"
+import { groupFacts, prepareWorkUnitEvidence, validateWorkUnitPartition } from "../src/value/workUnits/prepare.vibe"
+import { type JointPublication, publishWorkUnitAssessment } from "../src/value/workUnits/publish.vibe"
+import { type AssessedUnit, prepareWorkUnitRecord } from "../src/value/workUnits/record.vibe"
+import { type Predecessors, appendSingleRecord, appendWorkUnitRecord, currentWorkUnitRecord, expectedPredecessors } from "../src/value/workUnits/store.vibe"
+import { WorkUnitRefused, type WorkUnitEvidence, type WorkUnitSource } from "../src/value/workUnits/types.vibe"
+import type { MergeVerifierBinding } from "../src/value/workUnits/verifierBinding.ts"
+import { rewriteNext } from "./support/proofsWorker.vibe"
+import {
+  type PullShape,
+  type VerifierCalls,
+  type World,
+  acceptance,
+  answerNext,
+  censusAnswer,
+  emptyBundle,
+  evidenceOf,
+  fileOf,
+  githubOver,
+  groupReadsOver,
+  groupRepository,
+  mergeVerifierFake,
+  noRetainedCopies,
+  policyText,
+  projectId,
+  publicationChecksOver,
+  pullNodeId,
+  registered,
+  repository,
+  seeded,
+  sourceOf,
+  texts,
+} from "./support/workUnitsWorker.vibe"
+
+const installationId = 501
+const rubricVersion = "slop-value-2026-10-09"
+const producerRevision = "f".repeat(40)
+const startAt = millisOf("2026-11-01T00:00:00Z")
+
+service Journey {
+  readonly world: World
+}
+
+const Started = Layer.unwrap(effect {
+  const world = try seeded()
+  const mf = try acquireRelease(sync(() => startWorker({ d1: { SLOPBOT_DB: "work-units-journey" } })), (started) => promise(() => started.dispose()))
+  const applied = try promise(() => migrate(mf, "SLOPBOT_DB", migrationsDir))
+  const broken = applied.find((file) => file.error !== undefined)
+  if (broken !== undefined) return try die(new Error(`migration ${broken.file} failed: ${broken.error}`))
+  const db = try promise(() => database(mf, "SLOPBOT_DB"))
+  provide d1(db) {
+    try (try D1).run(sql`INSERT INTO slopbot_installations (installation_id, account_id, account_login, account_type, created_at, source_updated_at)
+      VALUES (${installationId}, 101, 'ada', 'User', '2026-11-01T00:00:00.000Z', 1)`)
+  }
+  return Layer.mergeAll(d1(db), webCrypto, githubOver(world), noRetainedCopies, acceptance, Layer.succeed(Journey, { world }))
+})
+
+effect function same(actual: unknown, expected: unknown) {
+  try Effect.try(() => assert.deepStrictEqual(actual, expected))
+}
+
+function shapes(world: World) {
+  const first: PullShape = {
+    number: 1,
+    author: world.ada,
+    headSha: world.first,
+    mergedAt: "2026-11-05T00:00:00Z",
+    changes: [{ sha: world.first, author: world.ada, parent: world.base, paths: ["a.ts"] }],
+  }
+  const second: PullShape = {
+    number: 2,
+    author: world.grace,
+    headSha: world.second,
+    mergedAt: "2026-11-06T00:00:00Z",
+    changes: [...first.changes, { sha: world.second, author: world.grace, parent: world.first, paths: ["b.ts"] }],
+  }
+  const third: PullShape = {
+    number: 3,
+    author: world.ada,
+    headSha: world.third,
+    mergedAt: "2026-11-07T00:00:00Z",
+    changes: [{ sha: world.third, author: world.ada, parent: world.base, paths: ["c.ts"] }],
+  }
+  return { first, second, third }
+}
+
+function binding(fence: Statement = sql`1`) {
+  return { installationId, projectId, registryFence: fence }
+}
+
+function wholeUnit(evidence: WorkUnitEvidence): AssessedUnit {
+  return { claimIds: evidence.claims.map((claim) => claim.id), assessment: { reviews: [] } }
+}
+
+function sourcesOf(evidence: WorkUnitEvidence) {
+  return evidence.sources.map(({ evidence: source }) => [source.repositoryNodeId, source.pull.node_id] as const)
+}
+
+effect function preparedOf(sources: ReadonlyArray<WorkUnitSource>, reason: string | null) {
+  const { world } = try Journey
+  const evidence = try prepareWorkUnitEvidence(sources, [registered(world)])
+  const predecessors = try expectedPredecessors(sourcesOf(evidence))
+  const record = try prepareWorkUnitRecord({
+    supplied: evidence,
+    result: { sourceDigest: evidence.sourceDigest, rubricVersion, assessedAt: "2026-11-12T00:00:00.000Z" },
+    rubricVersion,
+    units: [wholeUnit(evidence)],
+    model: { provider: "orbio" },
+    producerRevision,
+    supersedes: predecessors.supersedes,
+    legacyPredecessors: predecessors.legacyPredecessors,
+    revisionReason: predecessors.supersedes.length + predecessors.legacyPredecessors.length === 0 ? null : reason,
+    project: { id: projectId, active: true },
+    repositories: [registered(world)],
+  })
+  return { evidence, predecessors, record }
+}
+
+effect function published(sources: ReadonlyArray<WorkUnitSource>, reason: string | null, fence?: Statement) {
+  const { evidence, record } = try preparedOf(sources, reason)
+  return try appendWorkUnitRecord(record, groupFacts(evidence), binding(fence))
+}
+
+function publication(world: World, evidence: WorkUnitEvidence, predecessors: Predecessors, reason: string | null): JointPublication {
+  return {
+    job: { installationId, repositoryId: world.repositoryDatabaseId, owner: "ada", repo: "stack", number: 1, itemKind: "pull_request" },
+    result: { sourceDigest: evidence.sourceDigest, rubricVersion, assessedAt: "2026-11-12T00:00:00.000Z" },
+    provenance: null,
+    units: [wholeUnit(evidence)],
+    model: { provider: "orbio" },
+    evidence,
+    producerRevision,
+    supersedes: predecessors.supersedes,
+    legacyPredecessors: predecessors.legacyPredecessors,
+    revisionReason: predecessors.supersedes.length + predecessors.legacyPredecessors.length === 0 ? null : reason,
+    claim: { deliveryId: "work-units-delivery", token: "work-units-token" },
+  }
+}
+
+effect function publishedThrough(world: World, request: JointPublication) {
+  provide publicationChecksOver(world) {
+    return try publishWorkUnitAssessment(request)
+  }
+}
+
+effect function discovered(world: World) {
+  const [firstId, secondId] = world.pullIds
+  const seed = try collectEvidence({ repository, number: 1, policy: registered(world) })
+  const [one, two] = try Effect.try(() => [world.fake.represent.pull(repository, 1), world.fake.represent.pull(repository, 2)])
+  try answerNext(world.fake, `/commits/${world.first}/pulls`, [one, two])
+  try answerNext(world.fake, `/commits/${world.merged1}/pulls`, [one])
+  try answerNext(world.fake, `/commits/${world.second}/pulls`, [two])
+  try answerNext(world.fake, `/commits/${world.merged2}/pulls`, [two])
+  try rewriteNext(world.fake, "POST /graphql", censusAnswer(world, [
+    { id: firstId, number: 1, mergedAt: "2026-11-05T00:00:00Z", baseRefOid: world.base, headRefOid: world.first, mergeCommit: world.merged1, listed: [world.first], total: 1 },
+    { id: secondId, number: 2, mergedAt: "2026-11-06T00:00:00Z", baseRefOid: world.base, headRefOid: world.second, mergeCommit: world.merged2, listed: [world.first, world.second], total: 2 },
+  ]))
+  provide groupReadsOver() {
+    return try collectValueGroup({ evidence: seed, policy: { sha: world.base, text: policyText } }, startAt, [groupRepository(world)])
+  }
+}
+
+function claimsOf(evidence: WorkUnitEvidence) {
+  return evidence.claims
+    .map((claim) => ({ path: claim.path, carriers: claim.carrierPullRequestIds, credit: claim.creditPullRequestId, actors: claim.implementationActorNodeIds }))
+    .sort((a, b) => a.path.localeCompare(b.path))
+}
+
+function blobOf(path: string) {
+  return gitObjectId("blob", textBytes(texts[path] ?? ""))
+}
+
+effect function refusal<A, E, R>(appended: A!E!R) {
+  return appended catch effect (error) => match (error) {
+    when Rejected: "refused";
+    when WorkUnitRefused: error.reason;
+    default: throw error;
+  }
+}
+
+effect function journal() {
+  return try (try D1).all(sql`SELECT j.sequence, j.assessment_key IS NOT NULL AS keyed,
+      (SELECT group_concat(pull_request_node_id, ',') FROM (SELECT pull_request_node_id FROM slopbot_work_unit_sources s WHERE s.record_digest = j.record_digest ORDER BY pull_request_node_id)) AS sources,
+      (SELECT COUNT(*) FROM slopbot_work_unit_claims c WHERE c.record_digest = j.record_digest) AS claims,
+      EXISTS (SELECT 1 FROM slopbot_work_unit_predecessors p WHERE p.predecessor_digest = j.record_digest) AS retired
+    FROM slopbot_work_unit_journal j WHERE j.project_id = ${projectId} ORDER BY j.sequence`)
+}
+
+effect function reconstructedBy(binding: MergeVerifierBinding, sources: ReadonlyArray<WorkUnitSource>) {
+  provide mergeVerifierVia(binding) {
+    return try reconstructSources(sources, emptyBundle())
+  }
+}
+
+function legacyRecord(world: World, number: number, supersedes: string | null) {
+  return JSON.stringify({
+    schemaVersion: "slop-value-record:v1",
+    projectId,
+    repository,
+    repositoryNodeId: world.repositoryNodeId,
+    repositoryDatabaseId: world.repositoryDatabaseId,
+    pullRequestNodeId: pullNodeId(number),
+    pullRequestNumber: number,
+    headSha: "e".repeat(40),
+    sourceDigest: String(number).repeat(64).slice(0, 64),
+    supersedes,
+    revisionReason: supersedes === null ? null : "revision",
+    rubricVersion,
+    producerRevision,
+  })
+}
+
+layer(Started, { excludeTestServices: true, timeout: "180 seconds" })((it) => {
+  it.effect('Stacked pull requests form one unit whose every claim is credited once, the successor consumes every predecessor and a fork is refused (spec/slopbot/workUnits.md, "A claim is one changed path in one commit and belongs to its first accepted carrier"; spec/slopbot/workUnits.md, "A complete partition assigns every claim to exactly one outcome"; spec/slopbot/workUnits.md, "One transaction checks predecessors, legacy records, sources, claims and the publication fence"; spec/slopbot/valueHistory.md, "A successor consumes every affected predecessor and its complete source set")', () => effect {
+    const { world } = try Journey
+    const { first, second, third } = shapes(world)
+    const [firstId, secondId] = world.pullIds
+    const group = try discovered(world)
+    const found = try prepareWorkUnitEvidence(group ?? [], [registered(world)])
+    try same({
+      group: group?.map(({ evidence }) => [evidence.pull.number, evidence.pull.node_id, evidence.limitations]),
+      limitations: found.limitations,
+      claims: claimsOf(found),
+    }, {
+      group: [[1, firstId, []], [2, secondId, []]],
+      limitations: [],
+      claims: [
+        { path: "a.ts", carriers: [firstId, secondId].sort(), credit: firstId, actors: [world.ada.node_id] },
+        { path: "b.ts", carriers: [secondId], credit: secondId, actors: [world.grace.node_id] },
+      ],
+    })
+
+    const stacked = try prepareWorkUnitEvidence([sourceOf(world, second), sourceOf(world, first)], [registered(world)])
+    try same({
+      limitations: stacked.limitations,
+      claims: claimsOf(stacked),
+      accepted: groupFacts(stacked).accepted,
+    }, {
+      limitations: [],
+      claims: [
+        { path: "a.ts", carriers: [pullNodeId(1), pullNodeId(2)], credit: pullNodeId(1), actors: [world.ada.node_id] },
+        { path: "b.ts", carriers: [pullNodeId(2)], credit: pullNodeId(2), actors: [world.grace.node_id] },
+      ],
+      accepted: [`${world.repositoryNodeId}/${pullNodeId(1)}`, `${world.repositoryNodeId}/${pullNodeId(2)}`],
+    })
+    const [claimA, claimB] = stacked.claims.map((claim) => claim.id)
+    try same([
+      validateWorkUnitPartition(stacked, [{ claimIds: [claimA ?? ""] }, { claimIds: [claimB ?? ""] }]),
+      validateWorkUnitPartition(stacked, [{ claimIds: [claimA ?? ""] }]),
+      validateWorkUnitPartition(stacked, [{ claimIds: [claimA ?? "", claimB ?? ""] }, { claimIds: [claimB ?? ""] }]),
+    ], [true, false, false])
+
+    const root = try published([sourceOf(world, first)], null)
+    const joined = try preparedOf([sourceOf(world, first), sourceOf(world, second)], "stacked successor joins its parent")
+    const merged = try appendWorkUnitRecord(joined.record, groupFacts(joined.evidence), binding())
+    const current = try currentWorkUnitRecord(world.repositoryNodeId, pullNodeId(1))
+    try same({ current: current?.record_digest, parentRetired: current?.record_digest !== root.record_digest }, { current: merged.record_digest, parentRetired: true })
+    const replayed = try appendWorkUnitRecord(joined.record, groupFacts(joined.evidence), binding())
+    const republished = try publishedThrough(world, publication(world, joined.evidence, joined.predecessors, "stacked successor joins its parent"))
+    const grown = try prepareWorkUnitEvidence([sourceOf(world, first), sourceOf(world, second), sourceOf(world, third)], [registered(world)])
+    const unsuperseded = try refusal(publishedThrough(world, publication(world, grown, { supersedes: [], legacyPredecessors: [] }, null)))
+    try same({
+      replayed: [replayed.sequence, replayed.record_digest],
+      republished: [republished.sequence, republished.record_digest],
+      unsuperseded,
+    }, {
+      replayed: [merged.sequence, merged.record_digest],
+      republished: [merged.sequence, merged.record_digest],
+      unsuperseded: "Joint publication must supersede every current source record",
+    })
+
+    const split = try refusal(published([sourceOf(world, second)], "split the stacked unit"))
+    const stale = try refusal(published([sourceOf(world, first), sourceOf(world, second), sourceOf(world, third)], "grow after a registry change", sql`0`))
+    try same({ split, stale }, { split: "refused", stale: "refused" })
+    try same(try journal(), [
+      { sequence: root.sequence, keyed: 1, sources: pullNodeId(1), claims: 1, retired: 1 },
+      { sequence: merged.sequence, keyed: 1, sources: `${pullNodeId(1)},${pullNodeId(2)}`, claims: 2, retired: 0 },
+    ])
+  })
+
+  it.effect('A single-source record is consumed once by the joint record of its source, which then refuses the single route (spec/slopbot/workUnits.md, "One transaction checks predecessors, legacy records, sources, claims and the publication fence")', () => effect {
+    const { world } = try Journey
+    const { third } = shapes(world)
+    const kind = { indirect: false, noChangePromotion: false }
+    const single = try appendSingleRecord(legacyRecord(world, 3, null), binding(), kind)
+    const replayedSingle = try appendSingleRecord(legacyRecord(world, 3, null), binding(), kind)
+    const indirect = try refusal(appendSingleRecord(legacyRecord(world, 4, null), binding(), { indirect: true, noChangePromotion: false }))
+    const consumed = try published([sourceOf(world, third)], "single-source history joins the journal")
+    const stored = try currentWorkUnitRecord(world.repositoryNodeId, pullNodeId(3))
+    const parsed: unknown = stored === undefined ? undefined : try orDie(Effect.try(() => JSON.parse(stored.record_json) as unknown))
+    const legacy = typeof parsed === "object" && parsed !== null ? Reflect.get(parsed, "legacyPredecessors") : undefined
+    const again = try refusal(appendSingleRecord(legacyRecord(world, 3, single.record_digest), binding(), kind))
+    try same({ replayed: [replayedSingle.sequence, replayedSingle.record_digest], indirect, legacy, current: stored?.record_digest, again }, {
+      replayed: [single.sequence, single.record_digest],
+      indirect: "refused",
+      legacy: [single.record_digest],
+      current: consumed.record_digest,
+      again: "refused",
+    })
+  })
+
+  it.effect('Merge reconstruction is bound to each source\'s exact inputs through the merge verifier (spec/slopbot/workUnits.md, "A claim is one changed path in one commit and belongs to its first accepted carrier")', () => effect {
+    const { world } = try Journey
+    const { first, second } = shapes(world)
+    const sources = [sourceOf(world, first), sourceOf(world, second)]
+    const calls: VerifierCalls = { reconstructed: [] }
+    const exact = mergeVerifierFake((request) => request.inputs.map((input) => ({ inputSha256: mergeRecipe(input).inputSha256, mergeResolutions: [] })), calls)
+    const shifted = mergeVerifierFake((request) => request.inputs.map(() => ({ inputSha256: "0".repeat(64), mergeResolutions: [] })), calls)
+    const down = mergeVerifierFake(() => [], calls, "Merge reconstruction unavailable: setup")
+    const bound = try reconstructedBy(exact, sources)
+    const mismatch = try refusal(reconstructedBy(shifted, sources))
+    const unavailable = reconstructedBy(down, sources) catch effect (error) => match (error) { when MergeUnavailable: error.stage; default: throw error; }
+    try same({
+      recipes: bound.map((source) => source.mergeRecipe?.inputSha256),
+      resolutions: bound.map((source) => source.evidence.mergeResolutions),
+      mismatch,
+      unavailable,
+      calls: calls.reconstructed,
+    }, {
+      recipes: sources.map(({ evidence }) => mergeRecipe(mergeInputOf(evidence)).inputSha256),
+      resolutions: [[], []],
+      mismatch: "Merge reconstruction identity mismatch",
+      unavailable: "setup",
+      calls: [[world.first, world.second], [world.first, world.second], [world.first, world.second]],
+    })
+  })
+
+  it.effect('An accepted-commit census past the listing limit pages through compare, and an overflowing one stays unresolved (spec/slopbot/valueEvidence.md, "Accepted-commit census pages past the GraphQL limit through compare and refuses an overflow")', () => effect {
+    const { world } = try Journey
+    const { second } = shapes(world)
+    const evidence: Evidence = sourceOf(world, second).evidence
+    const answer = (listed: ReadonlyArray<string>, total: number) => censusAnswer(world, [
+      { id: pullNodeId(2), number: 2, mergedAt: "2026-11-06T00:00:00Z", baseRefOid: world.base, headRefOid: world.second, mergeCommit: "2".repeat(40), listed, total },
+    ])
+    try rewriteNext(world.fake, "POST /graphql", answer([world.first, world.second], 2))
+    const complete = try collectAcceptedCommitCensus(evidence, startAt)
+    const listed = Array.from({ length: 250 }, (_, index) => index.toString(16).padStart(40, "a"))
+    try rewriteNext(world.fake, "POST /graphql", answer(listed, 300))
+    try rewriteNext(world.fake, `/repos/${repository}/compare/${world.base}...${world.second}`, (body) => ({ ...body, total_commits: 299, commits: listed.slice(0, 100).map((sha) => ({ sha })) }))
+    const overflow = try collectAcceptedCommitCensus(evidence, startAt)
+    try same({
+      ids: complete === undefined ? undefined : [...complete.ids],
+      carriers: complete === undefined ? undefined : [...complete.carriers.keys()].sort(),
+      overflow,
+    }, {
+      ids: [pullNodeId(2)],
+      carriers: [world.first, world.second, "2".repeat(40)].sort(),
+      overflow: undefined,
+    })
+  })
+
+  it.effect('Stacked squashes, unchanged promotions and native merges are accepted only from hash-verified trees, and an unverified tree stays unresolved (spec/points/workUnits.md, "A no-change promotion adds no unit and no value; missing trees stay unresolved"; spec/slopbot/valueEvidence.md, "Absence is proved only by a hash-verified tree, never by a 404"; spec/slopbot/workUnits.md, "A claim is one changed path in one commit and belongs to its first accepted carrier")', () => effect {
+    const { world } = try Journey
+    const { second, third } = shapes(world)
+    const stacked = evidenceOf(world, second)
+    const squashed: MergedSource = {
+      repository,
+      pull: { ...stacked.pull, merge_commit_sha: world.squash2 },
+      files: stacked.files,
+      mergeCommitEvidence: {
+        sha: world.squash2,
+        html_url: `https://github.com/${repository}/commit/${world.squash2}`,
+        parents: [{ sha: world.squash1 }],
+        stats: { total: 1, additions: 1, deletions: 0 },
+        files: [fileOf("b.ts")],
+      },
+    }
+    const range = try collectAcceptedRange(squashed)
+
+    const promotionPull = { ...evidenceOf(world, third).pull, head: { sha: world.promoted }, merge_commit_sha: world.promotion }
+    const promoted: PromotionSource = {
+      repository,
+      pull: promotionPull,
+      mergeCommitEvidence: {
+        sha: world.promotion,
+        html_url: `https://github.com/${repository}/commit/${world.promotion}`,
+        parents: [{ sha: world.base }, { sha: world.promoted }],
+        stats: { total: 0, additions: 0, deletions: 0 },
+        files: [],
+      },
+    }
+    const promotion = try collectNoChangePromotion(promoted)
+    const baseTree = try Effect.try(() => world.fake.world.repo(repository).commits.get(world.base)?.tree)
+    try rewriteNext(world.fake, `GET /repos/${repository}/git/trees/${baseTree ?? ""}`, (body) => ({ ...body, truncated: true }))
+    const unverified = try collectNoChangePromotion(promoted)
+
+    const original = try collectEvidence({ repository, number: 1, policy: registered(world) })
+    const carrier = try collectEvidence({ repository, number: 2, policy: registered(world) })
+    const carried = carrier.mergeCommitEvidence
+    if (carried === null) return try die(new Error("the carrier pull request has no merge evidence"))
+    const nativePull = { ...original.pull, merge_commit_sha: carried.sha, merged_at: carrier.pull.merged_at }
+    const proof = try collectNativeMerge(repository, { repository, pull: nativePull, files: original.files, mergeCommitEvidence: carried })
+    const policy = { sha: world.base, text: policyText }
+    const native: Evidence | undefined = proof === undefined ? undefined : {
+      ...original,
+      pull: nativePull,
+      mergeCommitEvidence: carried,
+      nativeMergeAcceptance: proof,
+      limitations: [nativeMergeContext],
+    }
+    const withCarrier = native === undefined ? false : try nativeMergeCarrierMatches(native, [{ evidence: native, policy }, { evidence: carrier, policy }])
+    const alone = native === undefined ? false : try nativeMergeCarrierMatches(native, [{ evidence: native, policy }])
+
+    const version = (path: string) => ({ blobSha: blobOf(path), mode: "100644", text: texts[path] ?? "" })
+    try same({
+      range,
+      promotion,
+      promotionMatches: promotion === undefined ? false : noChangePromotionMatches({ ...promoted, noChangePromotion: promotion }),
+      unverified,
+      native: proof === undefined ? undefined : { integrated: proof.integratedHeadSha, ancestry: proof.ancestry.map((commit) => commit.sha), retained: proof.retainedFiles },
+      withCarrier,
+      alone,
+    }, {
+      range: {
+        headSha: world.second,
+        mergeSha: world.squash2,
+        parentSha: world.squash1,
+        files: [{ path: "a.ts", blobSha: blobOf("a.ts"), alreadyPresent: true }, { path: "b.ts", blobSha: blobOf("b.ts"), alreadyPresent: false }],
+      },
+      promotion: { schemaVersion: "slop-no-change-promotion:v1", baseSha: world.base, headSha: world.promoted, mergeSha: world.promotion, treeSha: baseTree },
+      promotionMatches: true,
+      unverified: undefined,
+      native: { integrated: world.second, ancestry: [world.second], retained: [{ sourcePath: "a.ts", acceptedPath: "a.ts", historical: version("a.ts"), accepted: version("a.ts") }] },
+      withCarrier: true,
+      alone: false,
+    })
+  })
+})

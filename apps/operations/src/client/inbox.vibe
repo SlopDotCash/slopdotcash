@@ -1,5 +1,6 @@
 // spec/operations/notifications.md, "Only the current recipient reads or acknowledges, and only case notices ask for acknowledgment"; spec/operations/notifications.md, "The Inbox shows one delivery word and never the address, digest, provider reference or attempt count"
 import { type AnyRoute, type Method, route } from "@repo/platform/route"
+import { IncompleteAssessments } from "@repo/ports/slopbot"
 
 export schema NotificationKind = "application_approved" | "application_rejected" | "project_ready" | "project_scan_failed"
   | "project_installation_lost" | "project_revision" | "award_reserved" | "payment_paid" | "payout_held" | "wallet_changed"
@@ -27,6 +28,7 @@ export schema NotificationsPage {
   readonly nextCursor: string | null
   readonly notifications: ReadonlyArray<InboxNotice>
   readonly unread: number
+  readonly incompleteAssessments?: IncompleteAssessments | null
 }
 
 export schema MarkRequest { readonly eventKeys: ReadonlyArray<string> }

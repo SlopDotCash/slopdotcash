@@ -1,17 +1,14 @@
 // spec/security/screening.md, "The fixed private route treats missing and partial provider evidence as unavailable"; spec/security/screening.md, "Claim queued, unavailable or expired work for the current revision"; spec/security/journey.md, "Screening, human routing review and owner notification use the live records"
 import { first, sql } from "@repo/platform/d1"
-import { Refused } from "@repo/platform/http"
-import { StorageFailure } from "@repo/platform/r2"
 import { later } from "@repo/platform/worker"
 import type { Claim, Input, Observation, Phase, Screening } from "../../gen/security__screening.ts"
+import type { ExclusionContext } from "../../gen/security__terms.ts"
 import { Rejected, canClaim, mayCall, observedPhase, privateReasonMayUseProposal, qualified } from "../../gen/security__screening.effect.vibe"
-import { type AnalysisReport, type ProgramScope, analysisMessage, jsonValue, screeningPrompt } from "../analysis/prompts.ts"
+import { analysisMessage, screeningPrompt } from "../analysis/prompts.ts"
 import { type ScreeningDecision, screeningProposal } from "../analysis/proposals.vibe"
 import { backgroundBudgetMs, privateCall, privateModel, privateProvider, privateRouteReady } from "../analysis/route.vibe"
 import { assessQualified } from "../assessment/routes.vibe"
-import { priorCases } from "../assessment/store.vibe"
-import { parseReport } from "../intake/report.vibe"
-import { reportBytes } from "../privacy/reads.vibe"
+import { caseExclusions, exactReport, priorCases, scopeAt } from "../assessment/store.vibe"
 import { routeQualified } from "./notify.vibe"
 import { claimOf, claimed, finished, screeningAt } from "./store.vibe"
 
@@ -28,10 +25,6 @@ export interface Observed {
 
 schema Facts { project_id: string; created_at: string; case_id: string; policy_revision: number | null }
 schema Matched { matched: number }
-schema Manifest { manifest: string }
-schema Scope { includedAssets: ReadonlyArray<string>; severityRubric: string; lossDefinition: string }
-schema Bounty { scope?: Scope }
-schema ManifestScope { securityBounty?: Bounty }
 
 const duplicateReason = "This submission matches an earlier report's evidence digest for the same project. Provide distinct evidence, or wait for private maintainer review of the earlier report."
 const unavailableReason = "Automatic screening is unavailable. Your report is saved for retry or private human review."
@@ -77,36 +70,13 @@ effect function earlierEvidence(submissionId: string, facts: Facts, digest: stri
   return reportMatch !== undefined
 }
 
-export effect function exactReport(submissionId: string, version: number) {
-  const bytes = reportBytes(submissionId, version) catch effect (error) => {
-    if (error instanceof Refused || error instanceof StorageFailure) return undefined
-    throw error
-  }
-  if (bytes === undefined) return undefined
-  const text = Effect.try(() => new TextDecoder("utf-8", { fatal: true }).decode(bytes)) catch () => undefined
-  const parsed = text === undefined ? undefined : parseReport(jsonValue(text))
-  if (parsed === undefined || parsed.kind === "refused") return undefined
-  const { report } = parsed
-  return { summary: report.summary, description: report.description, severity: report.severity ?? null, cvss: report.cvssVectorString ?? null, cweIds: [...report.cweIds ?? []], packages: [] } satisfies AnalysisReport
-}
-
-export effect function scopeAt(projectId: string, policyRevision: number | null) {
-  if (policyRevision === null) return { kind: "scope", scope: null } as const
-  const found = try first(Manifest, sql`SELECT manifest FROM project_revisions WHERE project_id=${projectId} AND revision=${policyRevision}`)
-  if (found === undefined) return { kind: "scope", scope: null } as const
-  const parsed = Schema.decodeUnknownEffect(ManifestScope)(jsonValue(found.manifest)) catch () => undefined
-  if (parsed === undefined) return { kind: "unreadable" } as const
-  const scope = parsed.securityBounty?.scope
-  return { kind: "scope", scope: scope === undefined ? null : { includedAssets: [...scope.includedAssets], severityRubric: scope.severityRubric, lossDefinition: scope.lossDefinition } satisfies ProgramScope } as const
-}
-
-export effect function observe(submissionId: string, facts: Facts, claim: { readonly screening: Screening; readonly token: Claim }, budgetMs: number) {
+export effect function observe(submissionId: string, facts: Facts, claim: { readonly screening: Screening; readonly token: Claim }, budgetMs: number, exclusions: ExclusionContext) {
   const route = (try privateRouteReady()) ? "Surplus" as const : "Absent" as const
   if (try earlierEvidence(submissionId, facts, claim.screening.digest)) {
-    return { input: { exactVersionLoaded: false, duplicateEvidence: true, route }, observation: { tag: "DuplicateEvidence" } } satisfies Observed
+    return { input: { exactVersionLoaded: false, duplicateEvidence: true, route, exclusions }, observation: { tag: "DuplicateEvidence" } } satisfies Observed
   }
   const report = try exactReport(submissionId, claim.screening.version)
-  const input: Input = { exactVersionLoaded: report !== undefined, duplicateEvidence: false, route }
+  const input: Input = { exactVersionLoaded: report !== undefined, duplicateEvidence: false, route, exclusions }
   if (report === undefined || !mayCall(claim.screening, claim.token, input)) return { input, observation: { tag: "Unready" } } satisfies Observed
   const scope = try scopeAt(facts.project_id, facts.policy_revision)
   if (scope.kind === "unreadable") return { input, observation: { tag: "Incomplete" } } satisfies Observed
@@ -115,10 +85,10 @@ export effect function observe(submissionId: string, facts: Facts, claim: { read
   if (answer.kind === "failed") return { input, observation: { tag: "Incomplete" } } satisfies Observed
   const proposal = screeningProposal(answer.text, new Set(prior.map((entry) => entry.id)))
   const supplied = prior.length > 0
-  if (proposal === undefined) return { input, observation: { tag: "Proposal", phase: "Unavailable", validResponse: false, matchesPriorCase: false, suppliedPriorCases: supplied } } satisfies Observed
+  if (proposal === undefined) return { input, observation: { tag: "Proposal", phase: "Unavailable", validResponse: false, matchesPriorCase: false, suppliedPriorCases: supplied, matchedLine: 0 } } satisfies Observed
   return {
     input,
-    observation: { tag: "Proposal", phase: decisions[proposal.decision], validResponse: true, matchesPriorCase: proposal.duplicateCaseIds.length > 0, suppliedPriorCases: supplied },
+    observation: { tag: "Proposal", phase: decisions[proposal.decision], validResponse: true, matchesPriorCase: proposal.duplicateCaseIds.length > 0, suppliedPriorCases: supplied, matchedLine: 0 },
     proposedReason: proposal.reason,
   } satisfies Observed
 }
@@ -141,13 +111,14 @@ export effect function screenSubmission(submissionId: string, run: ScreeningRun)
   }
   const nowMs = try Clock.currentTimeMillis
   if (!canClaim(screening, screening.revision, nowMs, run.admitted)) return
+  const exclusions = try caseExclusions(facts.case_id)
   const ready = try privateRouteReady()
   const running = try rejectedAsUndefined(claimed(submissionId, { seenRevision: screening.revision, nowMs, admitted: run.admitted }, ready ? { provider: privateProvider, model: privateModel } : undefined))
   if (running === undefined) return
   const token = claimOf(running)
-  const attempt = try exit(observe(submissionId, facts, { screening: running, token }, run.budgetMs))
+  const attempt = try exit(observe(submissionId, facts, { screening: running, token }, run.budgetMs, exclusions))
   if (Exit.isFailure(attempt)) try Effect.logError("security screening evidence failed", { submissionId })
-  const observed: Observed = Exit.isSuccess(attempt) ? attempt.value : { input: { exactVersionLoaded: false, duplicateEvidence: false, route: ready ? "Surplus" : "Absent" }, observation: { tag: "Unready" } }
+  const observed: Observed = Exit.isSuccess(attempt) ? attempt.value : { input: { exactVersionLoaded: false, duplicateEvidence: false, route: ready ? "Surplus" : "Absent", exclusions }, observation: { tag: "Unready" } }
   const done = try rejectedAsUndefined(finished(submissionId, token, observed.input, observed.observation, screeningReason(observed)))
   if (done === undefined || !qualified(done)) return
   try routeQualified(submissionId, facts.project_id)

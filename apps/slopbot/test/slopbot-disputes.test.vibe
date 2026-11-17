@@ -1,0 +1,413 @@
+// spec/slopbot/valueDisputes.md, "Story: An affected participant disputes the retained assessment of a PR"; spec/slopbot/pointsDisputes.md, "Triage runs under an expiring lease and every outcome escalates to a moderator"
+import { assert, layer } from "@effect/vitest"
+import { isoAt, isoNow, millisOf } from "@repo/platform/clock"
+import { sha256Hex, webCrypto } from "@repo/platform/crypto"
+import { Area, type AreaShape, areaLayer } from "@repo/platform/testing/area"
+import { githubFake } from "@repo/platform/testing/github"
+import { internet } from "@repo/platform/testing/internet"
+import { type ProviderCall, providerFake } from "@repo/platform/testing/providers"
+import { type RevisionBody, pointRevisionId } from "@repo/points/client"
+
+type Fake = ReturnType<typeof githubFake>
+
+const installationId = 9800
+const values = { projectId: "values", path: "ada/values", repositoryId: 8501 }
+const locked = { projectId: "locked", path: "ada/locked", repositoryId: 8502 }
+const moderators = [18633264, 202660855]
+const people = ["val", "rev", "out", "gil", "lok", "kim", "ned"] as const
+const recipient = 42
+const recipientNode = "MDQ6VXNlcjQy"
+const day = 86_400_000
+const week = 7 * day
+const moderatorLabel = "slopbot: moderator"
+
+type Person = (typeof people)[number]
+
+const idOf = (login: Person) => 801 + people.indexOf(login)
+
+async function seed() {
+  const fake = githubFake()
+  const world = fake.world
+  world.addUser({ id: 100, login: "ada", nodeId: "U_ada" })
+  world.addUser({ id: recipient, login: "recipient", nodeId: recipientNode })
+  people.forEach((login) => world.addUser({ id: idOf(login), login, nodeId: `U_${login}` }))
+  moderators.forEach((id, index) => world.addUser({ id, login: `moderator${index}`, nodeId: `U_moderator${index}` }))
+  world.addRepo({ id: values.repositoryId, owner: "ada", name: "values", files: { "README.md": "Keep changes small.\n" } })
+  world.addRepo({ id: locked.repositoryId, owner: "ada", name: "locked", files: { "README.md": "Security fixes only.\n" } })
+  world.setPermission(values.path, "kim", "write")
+  const bases = { [values.path]: world.addCommit(values.path, { message: "Target tip" }), [locked.path]: world.addCommit(locked.path, { message: "Target tip" }) }
+  const pulls: Record<string, { readonly repo: string; readonly number: number; readonly head: string; readonly base: string }> = {}
+  for (const login of ["val", "gil", "ned", "lok"] as const) {
+    const repo = login === "lok" ? locked.path : values.path
+    const base = bases[repo] ?? ""
+    const head = world.addCommit(repo, { branch: `contribution-${login}`, parents: [base], author: login, files: { [`notes/${login}.txt`]: `${login}\n` } })
+    const number = world.addPull({ repo, author: login, title: `${login.toUpperCase()}-TOKEN change`, body: "A small change.", headRef: `contribution-${login}`, headSha: head })
+    pulls[login] = { repo, number, head, base }
+  }
+  const review = world.addReview(values.path, pulls.val?.number ?? 0, { author: "rev", state: "APPROVED", body: "Looks right." })
+  world.addInstallation({ id: installationId, account: "ada", repositories: "all", permissions: { metadata: "read", contents: "read", issues: "write", pull_requests: "write" } })
+  const providers = providerFake()
+  const net = internet({ github: fake.handler, providers: providers.handler })
+  return { fake, providers, pulls, net, reviewNode: `PRR_kwDO${review.toString(36)}`, token: fake.tokens.installation(installationId) }
+}
+
+type Seeded = Awaited<ReturnType<typeof seed>>
+
+service World {
+  readonly fake: Fake
+  readonly providers: Seeded["providers"]
+  readonly pulls: Seeded["pulls"]
+  readonly net: Seeded["net"]
+  readonly reviewNode: string
+}
+
+const Disputing = Layer.unwrap(effect {
+  const seeded = try promise(() => seed())
+  return Layer.mergeAll(
+    areaLayer({
+      root: new URL("..", import.meta.url).pathname,
+      entry: "disputes",
+      origin: "https://slopbot.internal",
+      d1: { SLOPBOT_DB: "slop-private" },
+      vars: {
+        GITHUB_API: seeded.fake.authority,
+        GITHUB_TOKEN: seeded.token,
+        ORBIO_API_KEY: "orbio-test-credential",
+        SURPLUS_API_KEY: "surplus-test-credential",
+        SLOPBOT_APP_USER_ID: String(seeded.fake.app.bot.id),
+        SLOPBOT_APP_ID: seeded.fake.app.id,
+        SLOPBOT_APP_PRIVATE_KEY: seeded.fake.app.privateKeyPem,
+        TEST_PROJECTS: JSON.stringify([
+          { projectId: values.projectId, path: values.path, repositoryId: String(values.repositoryId), quarantined: false },
+          { projectId: locked.projectId, path: locked.path, repositoryId: String(locked.repositoryId), quarantined: true },
+        ]),
+      },
+      internet: seeded.net,
+    }),
+    Layer.succeed(World, seeded),
+    webCrypto,
+  )
+})
+
+effect function same(actual: unknown, expected: unknown) {
+  try Effect.try(() => assert.deepStrictEqual(actual, expected))
+}
+
+effect function prepared(area: AreaShape) {
+  try area.sql("INSERT INTO slopbot_installations (installation_id, account_id, account_login, account_type, created_at, source_updated_at) VALUES (?, 100, 'ada', 'User', ?, 1) ON CONFLICT (installation_id) DO NOTHING", installationId, try isoNow())
+  try area.sql("CREATE TABLE IF NOT EXISTS dispute_jobs (kind TEXT NOT NULL, body TEXT NOT NULL)")
+  try area.sql("CREATE TABLE IF NOT EXISTS dispute_bans (github_id TEXT PRIMARY KEY)")
+}
+
+effect function pullOf(login: Person) {
+  const { pulls } = try World
+  const pull = pulls[login]
+  if (pull === undefined) return try die(new Error(`no pull for ${login}`))
+  return pull
+}
+
+effect function nodeOf(login: Person) {
+  const { fake } = try World
+  const pull = try pullOf(login)
+  return (try Effect.try(() => fake.world.item(pull.repo, pull.number))).nodeId
+}
+
+effect function retained(area: AreaShape, login: Person, headSha: string, reviews: ReadonlyArray<string>) {
+  const pull = try pullOf(login)
+  const repositoryId = pull.repo === locked.path ? locked.repositoryId : values.repositoryId
+  const record = JSON.stringify({
+    schemaVersion: "slop-value-record:v1",
+    projectId: pull.repo === locked.path ? locked.projectId : values.projectId,
+    repository: pull.repo,
+    repositoryNodeId: `R_${repositoryId}`,
+    repositoryDatabaseId: repositoryId,
+    pullRequestNodeId: try nodeOf(login),
+    pullRequestNumber: pull.number,
+    headSha,
+    policySha: pull.base,
+    sourceDigest: "b".repeat(64),
+    rubricVersion: "slop-value-v1",
+    producerRevision: "c".repeat(40),
+    assessedAt: "2026-11-02T00:00:00.000Z",
+    supersedes: null,
+    revisionReason: null,
+    assessment: { reviews: reviews.map((sourceId) => ({ sourceId })) },
+  })
+  const digest = try sha256Hex(record)
+  try area.sql(`INSERT INTO slopbot_value_journal (record_digest, assessment_key, repository_node_id, pull_request_node_id, head_sha, source_digest, supersedes, record_json, recorded_at)
+    VALUES (?, ?, ?, ?, ?, ?, NULL, ?, ?)`, digest, try sha256Hex(`key:${login}`), `R_${repositoryId}`, try nodeOf(login), headSha, "b".repeat(64), record, try isoNow())
+  return digest
+}
+
+effect function disputeComment(login: Person, author: Person, claim: string) {
+  const { fake } = try World
+  const pull = try pullOf(login)
+  return try Effect.try(() => fake.world.addComment(pull.repo, pull.number, { author, body: `/slopbot dispute ${claim} the assessment misses my work` }))
+}
+
+effect function answers(claim: string, text: string) {
+  const { providers } = try World
+  providers.reply((call: ProviderCall) => call.messages.some((message) => message.content.includes(claim)), { text })
+}
+
+effect function jobBase(login: Person) {
+  const pull = try pullOf(login)
+  const repositoryId = pull.repo === locked.path ? locked.repositoryId : values.repositoryId
+  return { installationId, repositoryId, owner: "ada", repo: pull.repo.split("/")[1] ?? "", itemKind: "pull_request", number: pull.number }
+}
+
+effect function disputed(area: AreaShape, login: Person, sender: Person, commentId: number) {
+  const job = { kind: "appeal", deliveryId: `dispute-${login}-${sender}`, ...(try jobBase(login)), senderId: idOf(sender), subject: "value", appealCommentId: commentId }
+  return (try area.post("/test/disputes/signal", job)).body
+}
+
+effect function commanded(area: AreaShape, login: Person, appealKey: string, verb: "accept" | "reject" | "uphold" | "deny", sender: number) {
+  const job = { kind: "appeal_command", appealKey, command: verb, deliveryId: `command-${appealKey}-${verb}-${sender}`, ...(try jobBase(login)), senderId: sender }
+  return (try area.post("/test/disputes/command", job)).body
+}
+
+effect function keyOf(login: Person, digest: string, sender: Person) {
+  const pull = try pullOf(login)
+  const repositoryId = pull.repo === locked.path ? locked.repositoryId : values.repositoryId
+  return `value-appeal:single:${digest}:${idOf(sender)}:${repositoryId}:${pull.number}`
+}
+
+effect function rowOf(area: AreaShape, appealKey: string) {
+  const [row] = try area.sql("SELECT draft, draft_confidence, escalation, resolution, resolved_by FROM slopbot_appeals WHERE appeal_key = ?", appealKey)
+  return row
+}
+
+effect function noticeCount(area: AreaShape, appealKey: string) {
+  const [row] = try area.sql("SELECT count(*) AS n FROM notifications WHERE event_key = ?", `slopbot-${appealKey}`)
+  return row?.n ?? 0
+}
+
+effect function headers(login: Person) {
+  const { fake } = try World
+  const pull = try pullOf(login)
+  const item = try Effect.try(() => fake.world.item(pull.repo, pull.number))
+  return {
+    stages: item.comments.filter((comment) => comment.author.id === fake.app.bot.id).map((comment) => comment.body.split("\n")[3] ?? ""),
+    labels: item.labels.map((label) => label.name).sort(),
+    state: item.state,
+  }
+}
+
+function award(projectId: string, sourceId: string) {
+  return {
+    key: sourceId.slice(-1).repeat(64),
+    actor: { id: recipientNode, login: "recipient" },
+    projectId,
+    category: "evaluated-contribution",
+    amount: 30,
+    occurredAt: "2026-10-30T14:00:00.000Z",
+    sourceId,
+    sourceUrl: "https://example.com/accepted-work",
+    workUnitId: sourceId,
+    provisional: false,
+  }
+}
+
+interface PointsDispute {
+  readonly projectId: string
+  readonly sourceId: string
+  readonly statement: string
+  readonly openedAt: number
+  readonly lease?: { readonly token: string; readonly until: number }
+}
+
+effect function filed(area: AreaShape, dispute: PointsDispute) {
+  const body = { previous: null, recordedAt: "2026-10-30T14:00:00.000Z", sourceDigest: "a".repeat(64), sourceRule: "slop-score-v2", award: award(dispute.projectId, dispute.sourceId) } satisfies RevisionBody
+  const id = try pointRevisionId(body)
+  try area.sql("INSERT INTO points_revisions (id, source_key, previous, recorded_at, payload) VALUES (?, ?, NULL, ?, ?)", id, body.award.key, body.recordedAt, JSON.stringify({ id, ...body }))
+  const appealKey = `points-dispute:${try sha256Hex(`${id}:${recipient}`)}`
+  try area.sql(`INSERT INTO points_disputes (appeal_key, revision_id, item_node_id, appellant_github_id, statement, opened_at, due_at, claim_token, claim_until)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`, appealKey, id, id, String(recipient), dispute.statement, try isoAt(dispute.openedAt), try isoAt(dispute.openedAt + week),
+    dispute.lease?.token ?? null, dispute.lease === undefined ? null : try isoAt(dispute.lease.until))
+  return appealKey
+}
+
+effect function pointsRow(area: AreaShape, appealKey: string) {
+  const [row] = try area.sql("SELECT draft, draft_confidence, escalation, claim_token FROM points_disputes WHERE appeal_key = ?", appealKey)
+  return row
+}
+
+effect function costRows(area: AreaShape, appealKey: string) {
+  const [row] = try area.sql("SELECT count(*) AS n FROM slopbot_costs WHERE review_key = ?", appealKey)
+  return row?.n ?? 0
+}
+
+const draftHeader = (verb: string, confidence: string) => `**Slopbot value triage:** ${verb}. Confidence: ${confidence}.`
+const notChanged = "value dispute upheld; assessment history unchanged"
+
+layer(Disputing, { excludeTestServices: true, timeout: "300 seconds" })((it) => {
+  it.effect('A value dispute binds the retained record for an affected participant only, drafts once, escalates a gapped source, a restricted project, a rejection or seven days to a moderator, and an upheld decision changes no Points (spec/slopbot/valueDisputes.md, "Only the author, a current maintainer, an affected implementation actor or a credited reviewer may dispute, once per record and actor"; spec/slopbot/valueDisputes.md, "Slopbot drafts once; incomplete evidence, a partial joint record, a ban or low confidence go to a moderator"; spec/slopbot/valueDisputes.md, "The disputer or a maintainer answers the draft; a moderator other than the disputer decides an escalated dispute")', () => effect {
+    const area = try Area
+    const { fake, net, providers, reviewNode } = try World
+    try prepared(area)
+    const digests = {
+      val: try retained(area, "val", (try pullOf("val")).head, [reviewNode]),
+      gil: try retained(area, "gil", (try pullOf("gil")).base, []),
+      ned: try retained(area, "ned", (try pullOf("ned")).head, []),
+      lok: try retained(area, "lok", (try pullOf("lok")).head, []),
+    }
+    const keys = {
+      val: try keyOf("val", digests.val, "val"),
+      rev: try keyOf("val", digests.val, "rev"),
+      gil: try keyOf("gil", digests.gil, "gil"),
+      ned: try keyOf("ned", digests.ned, "ned"),
+      lok: try keyOf("lok", digests.lok, "lok"),
+    }
+    try answers("VAL-CLAIM", JSON.stringify({ draft: "deny", confidence: 0.95 }))
+    try answers("REV-CLAIM", JSON.stringify({ draft: "uphold", confidence: 0.97 }))
+    try answers("GIL-CLAIM", JSON.stringify({ draft: "uphold", confidence: 0.97 }))
+    try answers("NED-CLAIM", JSON.stringify({ draft: "deny", confidence: 0.93 }))
+    const signals = {
+      out: try disputed(area, "val", "out", try disputeComment("val", "out", "OUT-CLAIM")),
+      val: try disputed(area, "val", "val", try disputeComment("val", "val", "VAL-CLAIM")),
+      valReplay: try disputed(area, "val", "val", try disputeComment("val", "val", "VAL-CLAIM again")),
+      rev: try disputed(area, "val", "rev", try disputeComment("val", "rev", "REV-CLAIM")),
+      gil: try disputed(area, "gil", "gil", try disputeComment("gil", "gil", "GIL-CLAIM")),
+      ned: try disputed(area, "ned", "ned", try disputeComment("ned", "ned", "NED-CLAIM")),
+      lok: try disputed(area, "lok", "lok", try disputeComment("lok", "lok", "LOK-CLAIM")),
+    }
+    const commands = {
+      revReject: try commanded(area, "val", keys.rev, "reject", idOf("rev")),
+      revByDisputer: try commanded(area, "val", keys.rev, "uphold", idOf("rev")),
+      revModerator: try commanded(area, "val", keys.rev, "uphold", moderators[0] ?? 0),
+      revReplay: try commanded(area, "val", keys.rev, "deny", moderators[1] ?? 0),
+      valByStranger: try commanded(area, "val", keys.val, "accept", idOf("out")),
+      valAccept: try commanded(area, "val", keys.val, "accept", idOf("val")),
+    }
+    const [opened] = try area.sql("SELECT opened_at FROM slopbot_appeals WHERE appeal_key = ?", keys.ned)
+    const nedOpened = millisOf(String(opened?.opened_at ?? ""))
+    const dispatched = (try area.post("/test/disputes/dispatch", { now: nedOpened + week })).body
+    const queued = try area.sql("SELECT body FROM dispute_jobs WHERE kind = 'appeal_due'")
+    const dueJob = try Effect.try(() => JSON.parse(String(queued.find((row) => String(row.body).includes(keys.ned))?.body)) as unknown)
+    const overdue = (try area.post("/test/disputes/due", { job: dueJob, now: nedOpened + week + 1000 })).body
+    const journal = try area.sql("SELECT count(*) AS n FROM slopbot_value_journal")
+    const penalties = try area.sql("SELECT count(*) AS n FROM slopbot_penalties")
+    try same({
+      signals,
+      commands,
+      rows: { val: try rowOf(area, keys.val), rev: try rowOf(area, keys.rev), gil: try rowOf(area, keys.gil), ned: try rowOf(area, keys.ned), lok: try rowOf(area, keys.lok) },
+      notices: { val: try noticeCount(area, keys.val), rev: try noticeCount(area, keys.rev), gil: try noticeCount(area, keys.gil), ned: try noticeCount(area, keys.ned), lok: try noticeCount(area, keys.lok) },
+      overdue,
+      dispatched: (dispatched as { readonly dispatched?: number }).dispatched !== undefined,
+      written: try headers("val"),
+      unchanged: { journal, penalties },
+      providerCalls: providers.calls.length,
+      unanswered: providers.unanswered.length,
+      unexpected: [net.unexpected.length, area.outboundErrors.length],
+    }, {
+      signals: {
+        out: { result: "only an affected contributor, reviewer or maintainer can dispute this assessment" },
+        val: { result: "value dispute drafted (deny)" },
+        valReplay: { result: "value dispute drafted (deny)" },
+        rev: { result: "value dispute drafted (uphold)" },
+        gil: { result: "value dispute escalated" },
+        ned: { result: "value dispute drafted (deny)" },
+        lok: { result: "value dispute escalated" },
+      },
+      commands: {
+        revReject: { result: "appeal escalated: the appellant rejected the draft" },
+        revByDisputer: { result: "only a Slop moderator can decide an escalated appeal" },
+        revModerator: { result: notChanged },
+        revReplay: { result: "appeal already resolved" },
+        valByStranger: { result: "only the appellant or a maintainer can answer the draft" },
+        valAccept: { result: "value dispute denied; assessment history unchanged" },
+      },
+      rows: {
+        val: { draft: "deny", draft_confidence: 0.95, escalation: null, resolution: "denied", resolved_by: "appellant" },
+        rev: { draft: "uphold", draft_confidence: 0.97, escalation: "the appellant rejected the draft", resolution: "upheld", resolved_by: "moderator" },
+        gil: { draft: "uphold", draft_confidence: 0.89, escalation: "the value dispute needs independent review of incomplete or uncertain evidence", resolution: null, resolved_by: null },
+        ned: { draft: "deny", draft_confidence: 0.93, escalation: "the appeal is unresolved 7 days after it opened", resolution: null, resolved_by: null },
+        lok: { draft: null, draft_confidence: null, escalation: "the project is restricted, so Slopbot cannot reassess ordinary work", resolution: null, resolved_by: null },
+      },
+      notices: { val: 0, rev: 2, gil: 2, ned: 2, lok: 2 },
+      overdue: { result: "appeal escalated: the appeal is unresolved 7 days after it opened" },
+      dispatched: true,
+      written: {
+        stages: [
+          draftHeader("retain the assessment", "0.95"),
+          draftHeader("review the assessment for correction", "0.97"),
+          "**Value dispute sent to a Slop moderator**",
+          "**Value dispute upheld** (decided by the moderator).",
+          "**Value dispute denied** (decided by the appellant).",
+        ],
+        labels: [moderatorLabel],
+        state: "open",
+      },
+      unchanged: { journal: [{ n: 4 }], penalties: [{ n: 0 }] },
+      providerCalls: 4,
+      unanswered: 0,
+      unexpected: [0, 0],
+    })
+    try same(fake.requests.filter((request) => request.method === "PATCH").length, 0)
+  })
+
+  it.effect('Points-dispute triage takes over an expired lease, leaves a held one alone, and every outcome reaches a moderator (spec/slopbot/pointsDisputes.md, "Triage runs under an expiring lease and every outcome escalates to a moderator"; spec/points/disputes.md, "Triage runs under an expiring lease, a saved draft is reused, and every outcome escalates"; spec/points/disputes.md, "A dispute still unresolved seven days after filing escalates without a lease")', () => effect {
+    const area = try Area
+    const { providers, net } = try World
+    try prepared(area)
+    const now = try Clock.currentTimeMillis
+    const hour = 3_600_000
+    const keys = {
+      overdue: try filed(area, { projectId: values.projectId, sourceId: "points-award-6", statement: "P6-CLAIM overdue", openedAt: now - 8 * day }),
+      stale: try filed(area, { projectId: values.projectId, sourceId: "points-award-1", statement: "P1-CLAIM the amount is low", openedAt: now - 5 * hour, lease: { token: "expired-worker", until: now - hour } }),
+      gone: try filed(area, { projectId: "gone", sourceId: "points-award-2", statement: "P2-CLAIM", openedAt: now - 4 * hour }),
+      restricted: try filed(area, { projectId: locked.projectId, sourceId: "points-award-3", statement: "P3-CLAIM", openedAt: now - 3 * hour }),
+      held: try filed(area, { projectId: values.projectId, sourceId: "points-award-5", statement: "P5-CLAIM", openedAt: now - 2 * hour, lease: { token: "busy-worker", until: now + hour } }),
+      intake: try filed(area, { projectId: values.projectId, sourceId: "points-award-4", statement: "P4-CLAIM wrong category", openedAt: now - hour }),
+    }
+    const calls = providers.calls.length
+    try answers("P1-CLAIM", JSON.stringify({ draft: "uphold", confidence: 0.95 }))
+    try answers("P4-CLAIM", JSON.stringify({ draft: "deny", confidence: 0.4 }))
+    const refused = try area.request("/v1/points-disputes", { method: "POST", body: "{\"key\":\"not-a-dispute\"}", headers: { "content-type": "application/json" } })
+    const intake = try area.request("/v1/points-disputes", { method: "POST", json: { key: keys.intake } })
+    const pending = (try area.post("/test/points-disputes/pending", {})).body
+    const moderatorReview = "Original work evidence needs independent moderator review"
+    try same({
+      refused: [refused.status, refused.body],
+      intake: [intake.status, intake.body],
+      pending,
+      rows: {
+        overdue: try pointsRow(area, keys.overdue),
+        stale: try pointsRow(area, keys.stale),
+        gone: try pointsRow(area, keys.gone),
+        restricted: try pointsRow(area, keys.restricted),
+        held: try pointsRow(area, keys.held),
+        intake: try pointsRow(area, keys.intake),
+      },
+      notices: {
+        overdue: try noticeCount(area, keys.overdue),
+        stale: try noticeCount(area, keys.stale),
+        gone: try noticeCount(area, keys.gone),
+        restricted: try noticeCount(area, keys.restricted),
+        held: try noticeCount(area, keys.held),
+        intake: try noticeCount(area, keys.intake),
+      },
+      costs: { stale: try costRows(area, keys.stale), intake: try costRows(area, keys.intake), gone: try costRows(area, keys.gone) },
+      providerCalls: providers.calls.length - calls,
+      unanswered: providers.unanswered.length,
+      unexpected: [net.unexpected.length, area.outboundErrors.length],
+    }, {
+      refused: [400, { error: "invalid_request" }],
+      intake: [200, { accepted: true }],
+      pending: { processed: [keys.overdue, keys.stale, keys.gone, keys.restricted, keys.held], failed: [] },
+      rows: {
+        overdue: { draft: null, draft_confidence: null, escalation: "The dispute is still unresolved after seven days; independent review is required", claim_token: null },
+        stale: { draft: "uphold", draft_confidence: 0.89, escalation: moderatorReview, claim_token: null },
+        gone: { draft: null, draft_confidence: null, escalation: "The project is no longer registered; independent review is required", claim_token: null },
+        restricted: { draft: null, draft_confidence: null, escalation: "The project is restricted; Slopbot cannot reassess ordinary work", claim_token: null },
+        held: { draft: null, draft_confidence: null, escalation: null, claim_token: "busy-worker" },
+        intake: { draft: "deny", draft_confidence: 0.4, escalation: moderatorReview, claim_token: null },
+      },
+      notices: { overdue: 2, stale: 2, gone: 2, restricted: 2, held: 0, intake: 2 },
+      costs: { stale: 1, intake: 1, gone: 0 },
+      providerCalls: 2,
+      unanswered: 0,
+      unexpected: [0, 0],
+    })
+  })
+})

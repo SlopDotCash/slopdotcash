@@ -155,7 +155,7 @@ function replayed(name: string, cycle: Published) {
   }
 }
 
-it.effect('Scoring replay: the old builder\'s input gives its ledger, leaders, review exclusions and payment basis byte for byte, and published ledgers give their published leaders (spec/frontend/projections.md, "Monthly and lifetime standings sum the same accepted-work history"; spec/points/journal.md, "One current accepted unit is credited once with its whole value"; spec/points/penalties.md, "Standing is the month\'s accepted-work credits minus active debits, never below zero, whatever the order")', () => effect {
+it.effect(`Scoring replay: the old builder's input gives its ledger, leaders, review exclusions and payment basis byte for byte, and published ledgers give their published leaders (spec/frontend/projections.md, "Monthly and lifetime standings sum the same accepted-work history"; spec/points/journal.md, "One current accepted unit is credited once with its whole value"; spec/points/penalties.md, "Standing is the month's accepted-work credits minus active debits, never below zero, whatever the order")`, () => effect {
   const replay = try promise(() => oldBuilderReplay())
   const scoring = try scoreSnapshot(replay.facts)
   const bytes = (value: object) => JSON.stringify(plain(value))

@@ -65,6 +65,10 @@ function textBytes(hex: string): Uint8Array {
   return bytes
 }
 
+
+effect function registered(projectId: string, revision: number, manifest: string) {
+  return { projectId, active: true, revision, manifest, manifestSha256: try sha256Hex(manifest), updatedAt: "2026-11-01T00:00:00.000Z" } satisfies RegistryManifest
+}
 effect function migrated(name: string) {
   const mf = try acquireRelease(sync(() => startWorker({ d1: { SLOP_DB: name } })), (started) => promise(() => started.dispose()))
   const applied = try promise(() => migrate(mf, "SLOP_DB", migrationsDir))
@@ -107,7 +111,7 @@ const Started = Layer.effect(World, effect {
   const chain = try acquireRelease(promise(() => anvil({ chainId: 8453, timestamp: windowOpen })), (started) => promise(() => started.close()))
   const escrow = try acquireRelease(promise(() => escrowStack(chain)), (built) => promise(() => built.close()))
   const db = try migrated("settlement-vault")
-  const manifests: RegistryManifest[] = [{ projectId: "broken-manifest", revision: 1, manifest: JSON.stringify({ id: "broken-manifest", status: "active", escrow: { schemaVersion: "1", effectiveCycle: "2026-11", chain: "base", feeBasisPoints: 100, withdrawalFeeBasisPoints: 200, feeMode: "deduct-from-gross", deployments: [] } }) }]
+  const manifests: RegistryManifest[] = [try registered("broken-manifest", 1, JSON.stringify({ id: "broken-manifest", status: "active", escrow: { schemaVersion: "1", effectiveCycle: "2026-11", chain: "base", feeBasisPoints: 100, withdrawalFeeBasisPoints: 200, feeMode: "deduct-from-gross", deployments: [] } }))]
   const proxies = try acquireRelease(sync((): Array<{ close(): Promise<void> }> => []), (opened) => promise(() => Promise.all(opened.map((proxy) => proxy.close()))))
   return {
     escrow,
@@ -175,7 +179,7 @@ effect function opened(project: string, chainProject: bigint) {
   const { escrow, manifests } = try World
   const owner = try address(escrow.roles.owner.address)
   const vault = try promise(() => escrow.createVault({ owner, projectId: word(chainProject), asset: escrow.dollar, purpose: "OrdinaryPurpose", monthlyCap: 50_000_000n, monthlyEnabled: false }))
-  manifests.push({ projectId: project, revision: 3, manifest: try reviewed(project, vault) })
+  manifests.push(try registered(project, 3, try reviewed(project, vault)))
   try promise(() => escrow.fund(vault, 40_000_000n, escrow.roles.donor.address))
   escrow.chain.setFinalized(try promise(() => escrow.head()))
   return vault
@@ -252,7 +256,7 @@ function release(overrides: Partial<ReleaseEnvironment>): ReleaseEnvironment {
   }
 }
 
-layer(Started, { excludeTestServices: true, timeout: "600 seconds" })((it) => {
+layer(Layer.provide(Started, webCrypto), { excludeTestServices: true, timeout: "600 seconds" })((it) => {
   it.effect('A reviewed deployment loads from the registry while an invalid manifest, a shared vault or an unserved network fails, and each finalized write keeps its asset, counters and first read of the month (spec/settlement/vaultSnapshots.md, "Only a reviewed registry binding can obtain totals"; spec/settlement/vaultSnapshots.md, "The write compares the latest row atomically"; spec/settlement/vaultSnapshots.md, "The first finalized read of each UTC month is recorded once per vault and never changes")', () => effect {
     const world = try World
     provide world.clock.layer, try evmShell(world.escrow.chain.url) {
@@ -260,7 +264,7 @@ layer(Started, { excludeTestServices: true, timeout: "600 seconds" })((it) => {
       const vault = try opened(project, 0x7001n)
       const { deployment, failures } = try ours(project)
       const unserved = (try registryDeployments(["base-mainnet", "ethereum"], "ordinary")).failures.map((failure) => failure.message)
-      world.manifests.push({ projectId: "vault-journey-shared", revision: 1, manifest: (world.manifests.find((manifest) => manifest.projectId === project)?.manifest ?? "").replace(`"id":"${project}"`, `"id":"vault-journey-shared"`) })
+      world.manifests.push(try registered("vault-journey-shared", 1, (world.manifests.find((manifest) => manifest.projectId === project)?.manifest ?? "").replace(`"id":"${project}"`, `"id":"vault-journey-shared"`)))
       const shared = registryDeployments(["base-mainnet"], "ordinary") catch (error) => error._tag
       world.manifests.pop()
       try refreshVaultSnapshots([deployment])

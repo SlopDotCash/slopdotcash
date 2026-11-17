@@ -24,6 +24,10 @@
       "binding": "REPORTING_READINESS",
       "service": "slop-slopbot",
       "entrypoint": "ReportingReadinessRefresher"
+    },
+    {
+      "binding": "SLOP_NOTIFY",
+      "service": "slop-notify"
     }
   ],
   "ratelimits": [

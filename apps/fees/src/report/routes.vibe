@@ -83,6 +83,9 @@ effect function recordOf(row: Row) {
     createdAt: millisOf(row.created_at),
     order: 0,
     outcome: row.outcome === null ? "NoOutcome" : outcomes[row.outcome],
+    feeWallet: "",
+    projectId: "",
+    vault: "",
     signedBytes: "",
   } satisfies JournalRecord
 }

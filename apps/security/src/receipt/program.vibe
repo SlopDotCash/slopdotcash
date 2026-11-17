@@ -189,5 +189,6 @@ export function receiptTermsOf(program: ProgramAtReceipt, publishedAtMs: number,
     offeredGross: limbs(text(terms, "grossMinor") ?? ""),
     split: terms.split === undefined ? "StandardSplit" : "FullAward",
     asset: assetOf(terms),
+    excludedFindings: [],
   }
 }

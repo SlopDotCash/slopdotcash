@@ -2,6 +2,7 @@
 import type { Fetcher } from "@repo/platform/bindings"
 import { boundedBytes } from "@repo/platform/browser"
 import { outboundVia } from "@repo/platform/http"
+import { forward } from "@repo/platform/worker"
 import { type TemplateIndex, decodeTemplateIndex, maxTemplateFileBytes, templateFilePath } from "../render/templateIndex.ts"
 
 export service SiteAssets {
@@ -46,8 +47,5 @@ export effect function templateBytes(origin: string, index: TemplateIndex) {
 }
 
 export effect function passThrough() {
-  const { fetcher } = try SiteAssets
-  const web = try orDie(HttpServerRequest.toWeb(try HttpServerRequest.HttpServerRequest))
-  const response = try orDie(tryPromise(() => fetcher.fetch(web)))
-  return HttpServerResponse.fromWeb(response)
+  return try forward((try SiteAssets).fetcher)
 }

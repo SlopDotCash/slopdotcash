@@ -154,6 +154,7 @@ function seen(answer: Answer) {
 effect function revision(projectId: string, number: number, text: string) {
   const digest = try sha256Hex(text)
   try (try Area).sql("INSERT INTO project_revisions (project_id, revision, manifest, manifest_sha256, reason, actor_github_id, actor_github_login, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)", projectId, number, text, digest, `Revision ${number}`, String(stewardId), `member-${stewardId}`, `2026-11-0${number}T00:00:00.000Z`)
+  if (number > 1) try (try Area).sql("INSERT INTO project_revision_kinds (project_id, revision, kind) VALUES (?, ?, 'OwnerUpdate')", projectId, number)
   return digest
 }
 

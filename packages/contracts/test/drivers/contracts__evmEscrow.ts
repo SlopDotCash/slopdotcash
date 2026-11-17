@@ -1,4 +1,4 @@
-// spec/contracts/evmEscrow.md, "Simulation samples cover distinct and colliding keys, windows, allocations and signatures"; spec/contracts/evmEscrow.md, "Every credited unit stays in exactly one bucket and the asset balance covers them all"; spec/contracts/evmEscrow.md, "Reserved principal and fees are exactly the unpaid awards, and paid totals are exactly the paid awards"; spec/contracts/ledger.md, "An ordinary award or withdrawal pays ceil(gross / 50) and a bounty award pays a quarter"
+// spec/contracts/evmEscrow.md, "Simulation samples cover distinct and colliding keys, windows, allocations and signatures"; spec/contracts/evmEscrow.md, "Every credited unit stays in exactly one bucket and the asset balance covers them all"; spec/contracts/evmEscrow.md, "Reserved principal and fees are exactly the unpaid awards, and paid totals are exactly the paid awards"; spec/contracts/evmEscrow.md, "Free funds always cover the open pledges, a pledged month is never admitted, and a pledge only rises until it closes"; spec/contracts/ledger.md, "An ordinary award or withdrawal pays ceil(gross / 50) and a bounty award pays a quarter"
 import { type Address, type Hex, concat, encodeFunctionData, isAddressEqual, zeroAddress, zeroHash } from "viem";
 import type { Driver, Options } from "../../gen/contracts__evmEscrow.conformance.ts";
 import type { Event } from "../../gen/contracts__evmEscrow.ts";
@@ -267,6 +267,14 @@ async function accepted(event: Event, from: Address): Promise<boolean> {
       return commitMonthlyLeaf(event, from);
     case "releaseMonthlyReserve":
       return releaseMonthlyReserve(event, from);
+    case "pledgeMonths":
+      return toVault(from, () => encodeFunctionData({
+        abi: vaultAbi,
+        functionName: "pledgeMonths",
+        args: [small(event.fromPeriod, 32), small(event.count, 8), uint(event.amount, 128)],
+      }));
+    case "expirePledge":
+      return toVault(from, () => encodeFunctionData({ abi: vaultAbi, functionName: "expirePledge", args: [small(event.period, 32)] }));
     case "bindDestination":
       return bindDestination(event, from);
     case "cancelBinding":

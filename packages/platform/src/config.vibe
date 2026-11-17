@@ -45,6 +45,34 @@ export function deploymentTier(text: string | undefined) {
   })
 }
 
+export type PublicTier = Exclude<Tier, "local">
+
+export interface Origins {
+  readonly branch: "main" | "development"
+  readonly site: string
+  readonly api: string
+  readonly identity: string
+  readonly browserOrigins: ReadonlySet<string>
+  readonly traceBrowserOrigins: ReadonlySet<string>
+}
+
+export function deploymentOrigins(tier: PublicTier): Origins {
+  if (tier === "staging") {
+    const site = "https://staging.slop.cash"
+    return { branch: "development", site, api: site, identity: "https://identity-staging.slop.cash", browserOrigins: new Set([site]), traceBrowserOrigins: new Set([site]) }
+  }
+  const site = "https://slop.cash"
+  const browserOrigins = [site, "https://slop.tech", "https://eliza.army"]
+  return {
+    branch: "main",
+    site,
+    api: "https://api.slop.cash",
+    identity: "https://identity.slop.cash",
+    browserOrigins: new Set(browserOrigins),
+    traceBrowserOrigins: new Set([...browserOrigins, "https://www.slop.cash", "https://www.slop.tech"]),
+  }
+}
+
 export function loopbackOrigin(origin: string | undefined) {
   return origin !== undefined && loopback.test(origin)
 }

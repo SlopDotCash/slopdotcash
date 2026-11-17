@@ -1,0 +1,166 @@
+// spec/slopbot/appeals.md, "Story: The author appeals and Slopbot triages first"; spec/slopbot/appeals.md, "Story: The draft is accepted or rejected, and escalated appeals go to a moderator"; spec/slopbot/appeals.md, "Story: Unresolved appeals reach a moderator after seven days and stages are posted once"
+import type { D1Database } from "@repo/platform/bindings"
+import { jsonVar } from "@repo/platform/config"
+import { webCrypto } from "@repo/platform/crypto"
+import { D1, d1, sql } from "@repo/platform/d1"
+import { github } from "@repo/platform/github"
+import { answered, body, json, outbound } from "@repo/platform/http"
+import { settableClock } from "@repo/platform/testing/clock"
+import { worker } from "@repo/platform/worker"
+import { noticePorts } from "@repo/operations/live"
+import { ProjectAudience, type ProjectView, Registry, Restrictions } from "@repo/ports/backend"
+import { Enforcement } from "@repo/ports/security"
+import { applyAppealCommand } from "../../src/appeals/commands.vibe"
+import { dispatchDueAppeals, escalateDueAppeal } from "../../src/appeals/due.vibe"
+import type { AppealHooks, AppealSettings } from "../../src/appeals/session.vibe"
+import { recordHumanSignal } from "../../src/appeals/signals.vibe"
+import { AppealCommandJob, AppealDueJob, AppealJob, JobQueue } from "../../src/jobs/job.vibe"
+import { routeProviders } from "../../src/route/route.vibe"
+
+export interface Env {
+  readonly SLOPBOT_DB: D1Database
+  readonly GITHUB_API: string
+  readonly GITHUB_TOKEN: string
+  readonly ORBIO_API_KEY: string
+  readonly SURPLUS_API_KEY: string
+  readonly SLOPBOT_APP_USER_ID: string
+  readonly TEST_PROJECTS: string
+}
+
+schema TestProject {
+  readonly projectId: string
+  readonly path: string
+  readonly repositoryId: string
+}
+schema AtTime { readonly now: number }
+schema DueAt { readonly job: AppealDueJob; readonly now: number }
+
+const TestProjects = Schema.Array(TestProject)
+const valueDisputesAbsent = "value disputes are not served by this test Worker"
+
+function viewOf(project: typeof TestProject.Type): ProjectView {
+  return {
+    projectId: project.projectId,
+    revision: 3,
+    manifestSha256: "0".repeat(64),
+    rowStatus: "Active",
+    manifestStatus: "Active",
+    listingTier: "Community",
+    retirement: "NotRetired",
+    stewardGithubId: "100",
+    repositories: [{ id: project.repositoryId, nodeId: `R_${project.repositoryId}`, fullName: project.path, integrationBranch: "main", aliases: [] }],
+    closureConsent: false,
+  }
+}
+
+function registryOver(text: string) {
+  return Layer.unwrap(effect {
+    const projects = try jsonVar("TEST_PROJECTS", text, TestProjects)
+    const byId = (projectId: string) => projects.find((project) => project.projectId === projectId)
+    return Layer.mergeAll(
+      Layer.succeed(Registry, {
+        project: (projectId) => effect { const found = byId(projectId); return found === undefined ? undefined : viewOf(found) },
+        byRepository: (repositoryId) => effect { const found = projects.find((project) => project.repositoryId === repositoryId); return found === undefined ? undefined : viewOf(found) },
+        byPath: (fullName) => effect {
+          const found = projects.find((project) => project.path === fullName.toLowerCase())
+          return found === undefined ? undefined : { match: "CurrentPath" as const, registeredRepositoryId: found.repositoryId, project: viewOf(found) }
+        },
+        active: () => effect { return projects.map(viewOf) },
+        fence: () => effect { return sql`1` },
+      }),
+      Layer.succeed(Restrictions, {
+        account: () => effect { return { banned: false } },
+        project: () => effect { return { restricted: false } },
+        fence: () => effect { return sql`1` },
+        unbanned: (githubId) => effect { return sql`NOT EXISTS (SELECT 1 FROM appeal_bans WHERE github_id = ${githubId})` },
+      }),
+      Layer.succeed(Enforcement, {
+        project: () => effect { return { restriction: "Clear" as const, enforcementGeneration: 0, clearanceGeneration: "0" } },
+        fence: () => effect { return sql`1` },
+      }),
+      Layer.succeed(ProjectAudience, {
+        listedBy: () => effect { return sql`SELECT NULL AS recipient WHERE 0` },
+        owners: () => effect { return sql`SELECT NULL AS recipient WHERE 0` },
+      }),
+    )
+  })
+}
+
+const recordedJobs = Layer.effect(JobQueue, effect {
+  const db = try D1
+  return {
+    send: (job) => effect {
+      try orDie(db.run(sql`INSERT INTO appeal_jobs (kind, body) VALUES (${job.kind}, ${JSON.stringify(job)})`))
+    },
+  }
+})
+
+service Settings { readonly current: AppealSettings }
+
+const hooks: AppealHooks<never, never> = {
+  valueDispute: () => Effect.succeed(undefined),
+  valueCommand: () => Effect.succeed(valueDisputesAbsent),
+  valueDue: () => Effect.succeed(valueDisputesAbsent),
+}
+
+effect function at<A, E, R>(now: number, program: A!E!R) {
+  const clock = settableClock(now).layer
+  provide clock {
+    return try program
+  }
+}
+
+effect function signalled() {
+  return try answered(effect {
+    const job = try body(AppealJob, 4)
+    const { current } = try Settings
+    const answer = Effect.map(recordHumanSignal(job, current, hooks), (result) => ({ result })) catch (error) => ({ failed: error._tag })
+    return json(answer)
+  })
+}
+
+effect function commanded() {
+  return try answered(effect {
+    const job = try body(AppealCommandJob, 4)
+    const { current } = try Settings
+    const answer = Effect.map(applyAppealCommand(job, current, hooks), (result) => ({ result })) catch (error) => ({ failed: error._tag })
+    return json(answer)
+  })
+}
+
+effect function dispatched() {
+  return try answered(effect {
+    const { now } = try body(AtTime, 1)
+    return json({ dispatched: try at(now, dispatchDueAppeals()) })
+  })
+}
+
+effect function escalated() {
+  return try answered(effect {
+    const { job, now } = try body(DueAt, 4)
+    const { current } = try Settings
+    const answer = Effect.map(at(now, escalateDueAppeal(job, current, hooks)), (result) => ({ result })) catch (error) => ({ failed: error._tag })
+    return json(answer)
+  })
+}
+
+function services(env: Env) {
+  const base = Layer.mergeAll(d1(env.SLOPBOT_DB), webCrypto, registryOver(env.TEST_PROJECTS))
+  return Layer.mergeAll(
+    base,
+    Layer.provide(github({ authority: env.GITHUB_API, token: Redacted.make(env.GITHUB_TOKEN), userAgent: "slopbot-appeals-test" }), outbound),
+    Layer.provide(routeProviders(env), Layer.merge(outbound, webCrypto)),
+    Layer.provide(recordedJobs, base),
+    noticePorts,
+    Layer.succeed(Settings, { current: { appUserId: env.SLOPBOT_APP_USER_ID, trust: { verifierKey: "", profile: "" } } }),
+  )
+}
+
+const routes = Layer.mergeAll(
+  HttpRouter.add("POST", "/test/appeals/signal", signalled()),
+  HttpRouter.add("POST", "/test/appeals/command", commanded()),
+  HttpRouter.add("POST", "/test/appeals/dispatch", dispatched()),
+  HttpRouter.add("POST", "/test/appeals/due", escalated()),
+)
+
+export default worker({ services, routes })

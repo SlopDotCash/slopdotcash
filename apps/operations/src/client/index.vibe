@@ -1,3 +1,4 @@
+// spec/operations/notifications.md, "Story: Read, acknowledge and escalate private case notices"
 import type { AnyRoute } from "@repo/platform/route"
 import { inboxApi } from "./inbox.vibe"
 

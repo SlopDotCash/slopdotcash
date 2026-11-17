@@ -5,6 +5,7 @@ import type { Award, AppealState, PrivateCase, Receipt, RelatedReview, Submissio
 import { initial as noCase } from "../../gen/security__cases.effect.vibe"
 import type { Phase, Review, Screening } from "../../gen/security__screening.ts"
 import { qualified, recoverable, revisionPermitted } from "../../gen/security__screening.effect.vibe"
+import { noExclusions } from "../../gen/security__terms.effect.vibe"
 import { type CaseAuthority } from "../caseAuthority/snapshot.vibe"
 import { githubNumber } from "../privacy/reads.vibe"
 import { revisionEvidence } from "./revision.vibe"
@@ -78,7 +79,7 @@ export function caseOf(record: CaseStanding, reportVersion: number, roles?: Case
     award: awards[record.award_state],
     appeal: appeals[record.appeal_state],
     relatedReview: reviews[record.related_party_review],
-    ...roles === undefined ? {} : { authority: roles.authority, triagers: [...roles.triagers] },
+    ...roles === undefined ? {} : { authority: roles.authority, triagers: [...roles.triagers], triagerEpoch: roles.authority.epoch },
   }
 }
 
@@ -134,6 +135,8 @@ export function screeningOf(stored: StoredIntake, reporter: number, digests: Rea
     routed: stored.routed_at !== null,
     noticeVersions: [],
     reportDigests: [...digests],
+    exclusions: noExclusions,
+    matchedLine: 0,
   }
 }
 

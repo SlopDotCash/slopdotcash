@@ -1,0 +1,13 @@
+// spec/frontend/requests.md, "Only the current request may publish its validated result"; spec/frontend/rankedSnapshot.md, "A candidate check records score and payment results separately"
+import type { RegistryBoot } from "../../reads/registry.vibe"
+import { Unreadable } from "../../reads/resource.vibe"
+import { type RepositoryRegistryOf, loadRead, loadWork, projectMessages, projectReads } from "../projects/reads.vibe"
+
+export effect function loadLiveCycle(boot: RegistryBoot, registryOf: RepositoryRegistryOf, force: boolean) {
+  const work = try loadWork(boot, registryOf, force)
+  const { cycles } = try projectReads()
+  const state = try loadRead(cycles, "index")
+  const index = cycles.read.value()
+  if (index === undefined || (state.status !== "Current" && state.status !== "Empty")) throw cycles.read.failure() ?? new Unreadable({ message: projectMessages.cyclesInvalid })
+  return { work, index }
+}

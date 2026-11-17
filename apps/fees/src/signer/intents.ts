@@ -82,6 +82,8 @@ export type EvmIntent = FirstEvmIntent | EvmReplacement;
 export interface SolanaClaim {
   readonly kind: "SolanaClaim";
   readonly network: "Solana";
+  readonly program: string;
+  readonly project: string;
   readonly vault: string;
   readonly mint: string;
   readonly amount: bigint;

@@ -1,0 +1,214 @@
+// spec/slopbot/valueInference.md, "A proposal is retained only with an allowed band, review bands only for eligible reviews, and citations found in the collected evidence"; spec/slopbot/valueInference.md, "Usage precedes retained output and explicit completion"
+import { type ModelCall, type ModelReply, Provider, ProviderFailure, providers } from "@repo/platform/providers"
+import { priceUsage } from "../route/calls.vibe"
+import { type RouteControl, freeRoute, runStructuredRoute, stepOf } from "../route/route.vibe"
+import type { Evidence } from "../value/evidence/types.vibe"
+import { type ValueAssessment, type ValueCall, jointValueCall, singleValueCall } from "../value/inference/assessment.vibe"
+import { valueRoute } from "../value/inference/run.vibe"
+import type { WorkUnitEvidence } from "../value/workUnits/types.vibe"
+import type { Provider as Step } from "../../gen/slopbot__valueInference.effect.vibe"
+
+export error QualificationFailed { message: string }
+
+export const qualificationBudgetMicroUsd = 1_000_000
+export const qualificationOutputTokens = 2048
+export const qualificationRequestLimit = 2
+export const qualificationPayloadBytes = 32_768
+
+const failure = "Slopbot model qualification failed; no publication is permitted."
+const refusal = "Slopbot model qualification requires the protected main release and both provider keys."
+const usage = "usage: qualify-value-models [--dry-run]"
+
+export interface QualificationSummary {
+  readonly path: "single" | "joint"
+  readonly provider: string | null
+  readonly requestedModel: string | null
+  readonly servedModel: string | null
+  readonly requestId: string | null
+  readonly requests: number
+  readonly outcome: string
+}
+
+const sha = (digit: string) => digit.repeat(40)
+const pullUrl = "https://github.com/qualification/media/pull/1"
+
+const binary = {
+  schemaVersion: 1 as const,
+  path: "docs/capture.webm",
+  baseSha: sha("1"),
+  headSha: sha("2"),
+  baseTreeSha: sha("3"),
+  headTreeSha: sha("4"),
+  mode: "100644" as const,
+  blobSha: sha("5"),
+  size: 4096,
+  sha256: "6".repeat(64),
+  contentBase64: "AAAAHGZ0eXBpc29t",
+  contentReview: "unviewed" as const,
+}
+
+export const qualificationEvidence: Evidence = {
+  repository: "qualification/media",
+  repositoryNodeId: "R_qualification",
+  repositoryDatabaseId: 1,
+  repositoryPolicy: null,
+  collectedAt: "2026-11-02T00:00:00.000Z",
+  pull: {
+    node_id: "PR_qualification",
+    number: 1,
+    html_url: pullUrl,
+    title: "Fix a form clearing entered text",
+    body: "The attached capture.webm is the only before/after evidence for the claimed form fix. The source collector has not viewed it. No implementation diff or independent execution result is supplied.",
+    user: { node_id: "U_author", login: "author", type: "User" },
+    merged_by: { node_id: "U_maintainer", login: "maintainer", type: "User" },
+    state: "closed",
+    merged_at: "2026-11-02T00:00:00Z",
+    closed_at: "2026-11-02T00:00:00Z",
+    merge_commit_sha: sha("7"),
+    updated_at: "2026-11-02T00:00:00Z",
+    head: { sha: sha("2") },
+    base: { sha: sha("1"), ref: "main" },
+    changed_files: 1,
+    comments: 0,
+    review_comments: 0,
+    commits: 1,
+  },
+  files: [{ filename: binary.path, status: "added", additions: 0, deletions: 0, blob_url: null, addedBinary: binary }],
+  mergeCommitEvidence: null,
+  commits: [],
+  reviews: [],
+  comments: [],
+  reviewComments: [],
+  limitations: [],
+  evidenceUrls: [pullUrl],
+  eligibleReviewIds: [],
+  implementationActorNodeIds: ["U_author"],
+  commitAttribution: [],
+  relatedPullRequests: [],
+}
+
+export const qualificationGroup: WorkUnitEvidence = {
+  projectId: "qualification",
+  sources: [{ evidence: qualificationEvidence, policy: { sha: sha("1"), text: "CONTRIBUTING.md\nValue only retained, observed outcomes." } }],
+  sourceDigests: [{ pullRequestNodeId: "PR_qualification", digest: "8".repeat(64) }],
+  claims: [{ id: "claim-capture", repositoryNodeId: "R_qualification", commitSha: sha("2"), path: binary.path, carrierPullRequestIds: ["PR_qualification"], creditPullRequestId: "PR_qualification", implementationActorNodeIds: ["U_author"] }],
+  limitations: [],
+  sourceDigest: "9".repeat(64),
+}
+
+interface QualificationPath<T> {
+  readonly path: "single" | "joint"
+  readonly call: ValueCall<T>
+  readonly assessments: (verdict: T) => ReadonlyArray<ValueAssessment>
+}
+
+interface Meter {
+  readonly micro: number
+  readonly requests: number
+  readonly uncertain: boolean
+  readonly violated: boolean
+}
+
+const noReceipt = { model: null, usage: null, costMicroUsd: null, requestId: null, responseId: null, responseSha256: null }
+
+function routeOf(provider: Step) {
+  return stepOf(provider).gateway === "orbio" ? "orbio" as const : "surplus-anthropic" as const
+}
+
+function unresolvedMedia(assessments: ReadonlyArray<ValueAssessment>) {
+  return assessments.length > 0 && assessments.every((assessment) => assessment.status === "unresolved" && assessment.tier === null && assessment.limitations.length > 0)
+}
+
+function boundOf(call: ModelCall, bytes: number) {
+  const provider = valueRoute.find((candidate) => routeOf(candidate) === call.route && stepOf(candidate).model === call.model)
+  return provider === undefined ? undefined : priceUsage(stepOf(provider).priceKey, { input: bytes, cacheWrite: bytes, cacheRead: bytes, output: qualificationOutputTokens })
+}
+
+effect function meteredComplete(complete: (call: ModelCall) => ModelReply!ProviderFailure, meter: Ref.Ref<Meter>, call: ModelCall) {
+  const bounded: ModelCall = { ...call, maxTokens: qualificationOutputTokens }
+  const wire = try orDie(Effect.try(() => JSON.stringify(bounded)))
+  const bytes = new TextEncoder().encode(wire).length
+  const bound = boundOf(call, bytes)
+  const before = try Ref.get(meter)
+  if (bytes > qualificationPayloadBytes || wire.includes("contentBase64") || !wire.includes("contentOmittedFromModel") || bound === undefined || before.uncertain || before.requests >= qualificationRequestLimit || before.micro + bound.costMicroUsd > qualificationBudgetMicroUsd) {
+    try Ref.set(meter, { ...before, violated: true })
+    throw new ProviderFailure({ route: call.route, category: "Unavailable", reason: "qualification bound", receipt: noReceipt })
+  }
+  try Ref.set(meter, { ...before, requests: before.requests + 1, uncertain: true })
+  const reply = complete(bounded) catch effect (failure) => {
+    const cost = failure.receipt.costMicroUsd
+    if (cost !== null) try Ref.update(meter, (current) => ({ ...current, micro: current.micro + cost, uncertain: false, violated: current.violated || current.micro + cost > qualificationBudgetMicroUsd }))
+    throw failure
+  }
+  const cost = reply.costMicroUsd
+  if (cost !== null) try Ref.update(meter, (current) => ({ ...current, micro: current.micro + cost, uncertain: false, violated: current.violated || current.micro + cost > qualificationBudgetMicroUsd }))
+  return reply
+}
+
+effect function meteredRoute<T, E, R>(metered: Layer.Layer<Provider>, call: ValueCall<T>, control: RouteControl<E, R>) {
+  provide metered {
+    return try runStructuredRoute(valueRoute, call.prompt, "high", call.output, control)
+  }
+}
+
+effect function qualifyPath<T>(path: QualificationPath<T>, dryRun: boolean) {
+  const { item } = path.call.prompt
+  if (item.includes("contentBase64") || !item.includes("\"contentOmittedFromModel\":true")) throw new QualificationFailed({ message: failure })
+  const inner = try Provider
+  const meter = try Ref.make<Meter>({ micro: 0, requests: 0, uncertain: false, violated: false })
+  const mayCall = () => effect {
+    const current = try Ref.get(meter)
+    return !dryRun && !current.uncertain && !current.violated && current.requests < qualificationRequestLimit && current.micro < qualificationBudgetMicroUsd
+  }
+  const routed = try meteredRoute(Layer.succeed(Provider, { configured: inner.configured, complete: (call: ModelCall) => meteredComplete(inner.complete, meter, call) }), path.call, freeRoute(mayCall))
+  const spent = try Ref.get(meter)
+  if (dryRun) {
+    if (routed.calls.length > 0) throw new QualificationFailed({ message: failure })
+    return { path: path.path, provider: null, requestedModel: null, servedModel: null, requestId: null, requests: 0, outcome: "dry-run; no provider calls" } satisfies QualificationSummary
+  }
+  if (routed.kind !== "answered" || spent.violated || spent.uncertain || routed.calls.length !== spent.requests || !unresolvedMedia(path.assessments(routed.verdict))) throw new QualificationFailed({ message: failure })
+  const served = routed.servedBy
+  return { path: path.path, provider: served.gateway, requestedModel: served.requestedModel, servedModel: served.servedModel, requestId: served.providerRequestId, requests: spent.requests, outcome: "unviewed media unresolved" } satisfies QualificationSummary
+}
+
+export effect function qualifyValueModels(dryRun: boolean) {
+  const gateways = try Provider
+  if (!dryRun && (!gateways.configured.has("orbio") || !gateways.configured.has("surplus-anthropic"))) throw new QualificationFailed({ message: refusal })
+  const [source] = qualificationGroup.sources
+  if (source === undefined) throw new QualificationFailed({ message: failure })
+  return [
+    try qualifyPath({ path: "single", call: try singleValueCall(qualificationEvidence, source.policy), assessments: (verdict) => [verdict] }, dryRun),
+    try qualifyPath({ path: "joint", call: try jointValueCall(qualificationGroup), assessments: (verdict) => verdict.units.map((unit) => unit.assessment) }, dryRun),
+  ]
+}
+
+effect function variable(name: string) {
+  return Option.getOrUndefined(try Config.option(Config.String(name)))
+}
+
+effect function secret(name: string) {
+  const value = Option.getOrUndefined(try Config.option(Config.Redacted(name)))
+  return value !== undefined && Redacted.value(value).trim() !== "" ? value : undefined
+}
+
+effect function protectedRelease() {
+  return (try variable("GITHUB_ACTIONS")) === "true" && (try variable("GITHUB_REF")) === "refs/heads/main" && ["push", "workflow_dispatch"].includes((try variable("GITHUB_EVENT_NAME")) ?? "")
+}
+
+export effect function qualifyValueModelsCommand(args: ReadonlyArray<string>) {
+  const dryRun = args.join() === "--dry-run"
+  if (args.length > 0 && !dryRun) throw new QualificationFailed({ message: usage })
+  const orbio = try secret("ORBIO_API_KEY")
+  const surplus = try secret("SURPLUS_API_KEY")
+  if (!dryRun && (!(try protectedRelease()) || orbio === undefined || surplus === undefined)) throw new QualificationFailed({ message: refusal })
+  const configured = providers({
+    ...(orbio === undefined ? {} : { orbio: { apiKey: orbio } }),
+    ...(surplus === undefined ? {} : { surplus: { apiKey: surplus } }),
+    timeoutMs: 120_000,
+    maxReplyBytes: 1024 * 1024,
+  })
+  const summaries = Effect.provide(qualifyValueModels(dryRun), configured) catch effect () => {
+    throw new QualificationFailed({ message: failure })
+  }
+  for (const summary of summaries) try Console.log(JSON.stringify(summary))
+}

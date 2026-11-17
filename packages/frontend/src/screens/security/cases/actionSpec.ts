@@ -23,7 +23,7 @@ export type FieldValues = Readonly<Record<string, string | boolean>>;
 
 export type ActionFields = { readonly ok: true; readonly fields: Readonly<Record<string, unknown>> } | { readonly ok: false; readonly message: string };
 
-const reason: FieldSpec = { name: "reason", label: "Private reason", kind: "textarea", hint: "Do not name another reporter or quote another report." };
+const reason = { name: "reason", label: "Private reason", kind: "textarea", hint: "Do not name another reporter or quote another report." } as const satisfies FieldSpec;
 
 const severityOptions: ReadonlyArray<readonly [string, string]> = [
   ["critical", "Critical"],

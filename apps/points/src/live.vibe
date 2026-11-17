@@ -1,4 +1,18 @@
+// spec/points/publication.md, "A publisher stages a candidate without changing what readers see"; spec/points/disputes.md, "Only the recipient of the current revision files, and a repeated filing returns the first"; spec/points/rewardWeights.md, "One month's weights follow the journal until settlement freezes them"
 import { area } from "@repo/platform/worker"
 import { api } from "./client/index.vibe"
+import { disputeAudience } from "./disputes/port.vibe"
+import { disputeRoutes } from "./disputes/routes.vibe"
+import { contributorAudience } from "./journal/audience.vibe"
+import { journalRoutes } from "./publication/routes.vibe"
+import { ClosedMonthLive } from "./rewardWeights/live.vibe"
 
-export const points = area({ name: "points", api, routes: Layer.empty, provides: Layer.empty })
+export { DisputeTriage, SourceUnverified, type Lease, type Triage, type TriageOutcome, disputeSource, disputeTriage, pendingDisputes, triageDispute } from "./disputes/port.vibe"
+export { ClosedMonthLive, contributorAudience, disputeAudience }
+
+export const points = area({
+  name: "points",
+  api,
+  routes: Layer.mergeAll(journalRoutes, disputeRoutes),
+  provides: Layer.mergeAll(ClosedMonthLive, disputeAudience, contributorAudience),
+})

@@ -140,16 +140,9 @@ function evmMismatch(plan: EscrowPlan, step: PlanStep, signed: SignedEvmTransact
   return undefined
 }
 
-effect function evmSpend(rpc: EvmRpc.Shape, receipt: Receipt, sender: string) {
-  const execution = receipt.gasUsed * (receipt.effectiveGasPrice ?? 0n)
-  const before = rpc.balance(sender as Hex, receipt.blockNumber - 1n) catch effect (error) => {
-    throw refusedBy(error)
-  }
-  const after = rpc.balance(sender as Hex, receipt.blockNumber) catch effect (error) => {
-    throw refusedBy(error)
-  }
-  if (before - after < execution) throw new ChainRefused({ message: `the authority received native money in block ${receipt.blockNumber}, so the fee including the L1 data fee cannot be measured` })
-  return before - after
+effect function evmFee(receipt: Receipt) {
+  if (receipt.effectiveGasPrice === undefined) throw new ChainRefused({ message: `the receipt of ${receipt.transactionHash} carries no effective gas price` })
+  return receipt.gasUsed * receipt.effectiveGasPrice + (receipt.l1Fee ?? 0n)
 }
 
 effect function evmChain(registry: Registry) {
@@ -219,7 +212,7 @@ effect function evmChain(registry: Registry) {
         finalized: true,
         exactOperation,
         succeeded,
-        actualGas: gweiCeiling(try evmSpend(rpc, receipt, sent.from.toLowerCase())),
+        actualGas: gweiCeiling(try evmFee(receipt)),
       } satisfies Result
     },
     executed: (call, transaction, signer) => effect {

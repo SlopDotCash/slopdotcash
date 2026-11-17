@@ -1,6 +1,6 @@
 // spec/points/quotaRecovery.md, "Only trusted production runs can restore the original campaign"
+import { registryProblem } from "@repo/backend/projects/definition"
 import { sha256Hex } from "@repo/platform/crypto"
-import { RegistryProject } from "../../census/projects.vibe"
 import { isCanonicalInstant } from "./calendar.vibe"
 import { digestOf, encoded } from "./inventory.vibe"
 
@@ -10,12 +10,10 @@ type JsonObject = Readonly<Record<string, unknown>>
 
 const sha256Pattern = /^[a-f0-9]{64}$/u
 const revisionKeys = "createdAt,manifest,manifestSha256,projectId,reason,revision"
-const maximumProjects = 100
 const maximumRevisions = 10_000
 schema HistoricalRepository { readonly id: string; readonly githubUrl: string; readonly aliases?: ReadonlyArray<string> }
 schema HistoricalProject { readonly id: string; readonly status: string; readonly listingTier?: string; readonly repositories: ReadonlyArray<HistoricalRepository> }
 
-const decodeProjects = Schema.decodeUnknownEffect(Schema.Array(RegistryProject))
 const decodeHistorical = Schema.decodeUnknownEffect(HistoricalProject)
 
 function objectOf(value: unknown): JsonObject | undefined {
@@ -31,21 +29,11 @@ effect function instantOf(value: unknown) {
   return Date.parse(value)
 }
 
-function duplicated(values: ReadonlyArray<string>) {
-  return new Set(values).size !== values.length
-}
-
 effect function projectRegistry(value: unknown) {
-  if (!Array.isArray(value) || value.length > maximumProjects) throw refuse("project registry must contain 0 to 100 projects")
+  if (!Array.isArray(value)) throw refuse("project registry must contain 0 to 100 projects")
   const raw: ReadonlyArray<unknown> = value
-  const projects = decodeProjects(raw) catch effect () => {
-    throw refuse("Correction registry history is malformed")
-  }
-  if (projects.filter((project) => project.skill.publishAtRoot === true).length > 1) throw refuse("project registry must declare at most one root-published contributor skill")
-  if (duplicated(projects.map((project) => project.id))) throw refuse("project registry contains duplicate ids")
-  if (duplicated(projects.flatMap((project) => project.repositories.flatMap((repository) => [repository.id, ...(repository.aliases ?? [])].map((id) => id.toLowerCase()))))) {
-    throw refuse("project registry contains duplicate repositories")
-  }
+  const problem = registryProblem(raw)
+  if (problem !== undefined) throw refuse(problem)
   return raw.map((project) => objectOf(project) ?? {})
 }
 

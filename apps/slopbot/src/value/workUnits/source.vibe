@@ -1,0 +1,24 @@
+// spec/slopbot/valueEvidence.md, "Evidence is complete only when every listed page was read; a page cap never implies coverage"
+import { millisOf } from "@repo/platform/clock"
+import { GitHubMalformed } from "@repo/platform/github"
+import { read } from "../evidence/collect.vibe"
+
+export const listingLimitBytes = 16 * 1024 * 1024
+
+const objectIdPattern = /^[a-f0-9]{40}$/u
+
+export function isOid(value: unknown): value is string {
+  return typeof value === "string" && objectIdPattern.test(value)
+}
+
+export function millis(iso: string | null | undefined) {
+  return iso === null || iso === undefined ? Number.NaN : millisOf(iso)
+}
+
+export effect function answer<S extends Schema.ConstraintDecoder<unknown>>(path: string, schema: S, limitBytes = listingLimitBytes) {
+  const found: S["Type"] | undefined = read(path, schema, limitBytes) catch effect (error) => match (error) {
+    when GitHubMalformed: undefined;
+    default: throw error;
+  }
+  return found
+}

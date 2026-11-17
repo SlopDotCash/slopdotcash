@@ -1,9 +1,12 @@
-// spec/points/ingestion.md, "A multi-part leaderboard is read as one content-addressed generation"; spec/points/publication.md, "A publisher stages a candidate without changing what readers see"; spec/slopbot/workUnits.md, "A claim is one changed path in one commit and belongs to its first accepted carrier"
+// spec/points/ingestion.md, "A multi-part leaderboard is read as one content-addressed generation"; spec/points/publication.md, "A publisher stages a candidate without changing what readers see"; spec/slopbot/workUnits.md, "A claim is one changed path in one commit and belongs to its first accepted carrier"; spec/points/corrections.md, "Chunks are verified by digest, assembled only when complete, and applied only under the owner-reviewed digest"; spec/points/quotaRecovery.md, "Story: Preserve the same campaign while live quota recovers"; spec/points/evaluations.md, "A manifest is admitted only with a review, a bounded award and evidence in time order"
 import { webCrypto } from "@repo/platform/crypto"
 import { createMergeBundleFromFile, installPinnedGit, systemGit } from "@repo/platform/git"
 import { outbound } from "@repo/platform/http"
 import { type Command, program } from "@repo/platform/program"
+import { applyCorrections } from "../corrections/apply/command.vibe"
+import { proveCandidates } from "../corrections/apply/prove.vibe"
 import { evaluations } from "../evaluations/check.vibe"
+import { corrections } from "./corrections.vibe"
 import { journal } from "./journal.vibe"
 import { profiles } from "./profiles.vibe"
 import { snapshot } from "./snapshot.vibe"
@@ -39,5 +42,6 @@ program({
     git: command(git),
     journal: command(journal),
     evaluations: command(evaluations),
+    corrections: command(corrections({ prove: proveCandidates, apply: applyCorrections })),
   },
 }).runMain()

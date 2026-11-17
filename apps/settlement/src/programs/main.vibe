@@ -1,0 +1,22 @@
+// spec/settlement/referralWatch.md, "The watcher holds no key, runs apart from the poster, and an unavailable or oversized source fails the run explicitly"; spec/settlement/directTransfers.md, "An identical import is a no-op and a contradicting one fails the whole import"; spec/points/payoutRecognition.md, "Only a paid recipient of a paid, settled monthly-pool cycle is recognized"; spec/settlement/keeperLifecycle.md, "Native fee liability and nonce become durable with the exact signed bytes"
+import { webCrypto } from "@repo/platform/crypto"
+import { outbound } from "@repo/platform/http"
+import { type Command, program } from "@repo/platform/program"
+import { cycleIndex } from "./cycleIndex.vibe"
+import { disclosuresCommand } from "./disclosures.vibe"
+import { keeperCommand } from "./keeper.vibe"
+import { referralRoots } from "./referralRoots.vibe"
+
+function command<E, R>(run: Command<E, R>): Command<unknown, R> {
+  return run
+}
+
+program({
+  services: Layer.mergeAll(webCrypto, outbound),
+  commands: {
+    "referral-roots": command(referralRoots),
+    "cycle-index": command(cycleIndex),
+    disclosures: command(disclosuresCommand),
+    keeper: command(keeperCommand),
+  },
+}).runMain()

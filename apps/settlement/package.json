@@ -4,9 +4,14 @@
   "private": true,
   "type": "module",
   "exports": {
+    "./chain/*": "./src/chain/*.ts",
     "./client": "./src/client/index.vibe",
+    "./kernels/*": "./src/kernels/*.ts",
     "./live": "./src/live.vibe",
-    "./kernels/*": "./src/kernels/*.ts"
+    "./owner/ownerInstructions": "./src/owner/ownerInstructions.ts",
+    "./owner/solanaDeployment": "./src/owner/solanaDeployment.vibe",
+    "./vault/evmTotals": "./src/vault/evmTotals.vibe",
+    "./vault/policy": "./src/vault/policy.vibe"
   },
   "scripts": {
     "build": "vite build",
@@ -14,6 +19,7 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@effect/platform-node": "4.1.1",
     "@noble/curves": "catalog:",
     "@noble/hashes": "catalog:",
     "@repo/backend": "workspace:*",

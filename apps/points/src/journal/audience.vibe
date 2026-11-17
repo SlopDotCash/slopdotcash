@@ -1,0 +1,10 @@
+// spec/operations/notifications.md, "Each notice kind names the role its recipient must still hold when the attempt is prepared"
+import { sql } from "@repo/platform/d1"
+import { ContributorAudience } from "@repo/ports/points"
+import { awardRecipientGithubId } from "../disputes/records.vibe"
+
+export const contributorAudience = Layer.succeed(ContributorAudience, {
+  affected: (project) => effect {
+    return sql`SELECT m.github_id AS recipient FROM points_revisions r JOIN points_members m ON m.github_id = ${awardRecipientGithubId} WHERE json_extract(r.payload, '$.award.projectId') = ${project} AND json_extract(r.payload, '$.award.amount') > 0 AND NOT EXISTS (SELECT 1 FROM points_revisions successor WHERE successor.previous = r.id)`
+  },
+} satisfies ContributorAudience.Shape)

@@ -1,8 +1,9 @@
-// spec/operations/release.md, "Workers publish before the static site, each only when its own release variable is enabled"; spec/operations/release.md, "The static site publishes last and a lost response is reconciled from the provider"; spec/operations/release.md, "Served bytes are verified against the deployment's own source"; spec/fees/runtime.md, "The release variable gates production publication, never a running Worker"
+// spec/operations/release.md, "Workers publish before the static site, each only when its own release variable is enabled"; spec/operations/release.md, "The static site publishes last and a lost response is reconciled from the provider"; spec/operations/release.md, "Served bytes are verified against the deployment's own source"; spec/fees/runtime.md, "The release variable gates production publication, never a running Worker"; spec/settlement/directTransfers.md, "Story: Import each disclosed transaction once and never change it"
 import { ed25519KeyPair, sha256Hex } from "@repo/platform/crypto"
 import type { Environment, Service } from "../../../gen/operations__release.effect.vibe"
 import { bundleSite, pagesManifestName, verifyPagesManifest } from "../manifest/pages.vibe"
 import { retiredScripts } from "../retired.ts"
+import { inheritedMessage } from "../rpc/rotate.vibe"
 import { type ListedSite, PublicationFailed, Publisher, type ServedSite, type Target } from "../run/publisher.vibe"
 import { identityApp, identityClientId, identityProbes, slopbotHealth, traceApiOrigin, traceBoundary, tracePatience, verifySchedules } from "../verify/probes.vibe"
 import { type Patience, propagation, providerChecks, servedMismatches } from "../verify/served.vibe"
@@ -90,6 +91,7 @@ const branches = { Production: "main", Staging: "development" } as const
 const listingPageSize = 25
 const listingPages = 8
 const migrationSeconds = 900
+const settlementProgram = "apps/settlement/dist/programs/main.js"
 const siteSeconds = 600
 const deploymentIdPattern = /^[0-9a-f-]{20,}$/iu
 const retentionValues: ReadonlySet<string> = new Set(["", "off", "enabled"])
@@ -253,6 +255,12 @@ effect function migrated(store: Store, config: string, root: string) {
   try cloudflare.wrangler("migrations", { args: ["d1", "migrations", "apply", store.database.database_name, "--remote", "--config", config], seconds: migrationSeconds })
 }
 
+effect function disclosed(store: Store, root: string, bundle: string) {
+  const cloudflare = try Cloudflare
+  const files = try Path.Path
+  try cloudflare.node("disclosures", { args: [files.join(bundle, settlementProgram), "disclosures", "--database", store.database.database_id, "--root", root], seconds: migrationSeconds })
+}
+
 effect function tablesOwned(store: Store, config: string, root: string) {
   const cloudflare = try Cloudflare
   const text = try cloudflare.wrangler("tables", { args: ["d1", "execute", store.database.database_name, "--remote", "--json", "--config", config, "--command", "SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name"] })
@@ -315,6 +323,7 @@ export function publisher(options: PublisherOptions) {
       const config = try staged("migrations", storeConfig(store, options.root, workspace))
       try staged("migrations", migrated(store, config, options.root))
       try staged("tables", tablesOwned(store, config, options.root))
+      try staged("disclosures", disclosed(store, options.root, target.bundle))
       const variables = try staged("variables", releaseVariables())
       try Ref.set(published, { stacks: [], notify: undefined, clientId: undefined })
       try Ref.set(prepared, { target, reviewed, site, store, storeConfig: config, scannerKey, ...variables })
@@ -375,7 +384,8 @@ export function publisher(options: PublisherOptions) {
         try Ref.update(published, (current) => ({ ...current, notify: reviewed.file.name }))
         return notify.tag
       }
-      return (try publishWorker(reviewed, publication, { ...plainRelease, secrets })).tag
+      const message = service === "FeeConverter" && target.environment === "Production" ? try inheritedMessage() : undefined
+      return (try publishWorker(reviewed, publication, { ...plainRelease, secrets, message })).tag
     }
 
     effect function feeSettings(target: Target) {

@@ -101,7 +101,7 @@ export effect function checkedVersion(text: string, versionId: string, sha: stri
   if (!sameList(ofType("send_email").map(emailKey), expected.emails.map(emailKey))) throw failed("the uploaded email bindings differ from the generated configuration")
 }
 
-export effect function activeTag(statusText: string, versionsText: string, versionId: string | undefined, step: string) {
+export effect function activeTag(statusText: string, versionsText: string, versionId: string | undefined, step: string, message: (tag: string) => string = releaseMessage) {
   const failed = (message: string) => new ToolFailed({ tool: "wrangler", step, message })
   const status = try parsed(DeploymentStatus, statusText, step, "the deployment status")
   const versions = try parsed(Schema.Array(VersionEntry), versionsText, step, "the version list")
@@ -111,7 +111,7 @@ export effect function activeTag(statusText: string, versionsText: string, versi
   const version = versions.find((candidate) => candidate.id === active.version_id)
   const tag = version?.annotations?.["workers/tag"]
   if (tag === undefined) throw failed("the version serving all traffic carries no source tag")
-  if (version?.annotations?.["workers/message"] !== releaseMessage(tag)) throw failed("the version serving all traffic does not carry its release message")
+  if (version?.annotations?.["workers/message"] !== message(tag)) throw failed("the version serving all traffic does not carry its release message")
   return tag
 }
 

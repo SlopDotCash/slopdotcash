@@ -38,6 +38,7 @@ import { boundedSend, entitlement, fromAmount, remainingBudget, roundedDivision 
 const orderCeilingMicro = 1_000_000_000n
 const windowCeilingMicro = 5_000_000_000n
 const shareCeilingBps = 5_000n
+const maximumModelBalance = 9_007_199_254_740_991n
 
 export interface LegSettings {
   readonly runId: string
@@ -109,10 +110,10 @@ effect function termsOrder(record: SendRecord) {
   return { terms, order: orderTerms(terms, try big(record.amountIn), try big(terms.takeAmount), try big(terms.salt), try big(terms.nativeFee)) }
 }
 
-effect function bridgeRequest(running: Running, settings: LegSettings, proposal: EvmOrderProposal, tx: number, quote: BridgeQuote) {
+effect function bridgeRequest(running: Running, settings: LegSettings, proposal: EvmOrderProposal, tx: number, quote: BridgeQuote, balance: bigint) {
   const parties = try present(orderParties(proposal.data, { source: running.wallet, receiver: settings.receiver }), "order", "the bridge calldata is not a salted DLN order")
   const { affiliateFeeBytes, ...named } = parties
-  return { ...named, orderId: running.leg.names.number("hash", proposal.order.orderId.toLowerCase()), tx, amount: quote.amount, takeAmount: quote.takeAmount, costBps: quote.costBps, affiliateFee: affiliateFeeBytes, solana: false, nativeFee: quote.nativeFee } satisfies BridgeOrder
+  return { ...named, orderId: running.leg.names.number("hash", proposal.order.orderId.toLowerCase()), tx, amount: quote.amount, takeAmount: quote.takeAmount, costBps: quote.costBps, affiliateFee: affiliateFeeBytes, solana: false, nativeFee: quote.nativeFee, balance: Number(smaller(balance, maximumModelBalance)) } satisfies BridgeOrder
 }
 
 function costBps(amount: bigint, cost: bigint) {
@@ -178,17 +179,17 @@ effect function broadcastEvmSend(running: Running, tx: number, rawTx: Hex, what:
   try step(running, { type: "loseSend", tx }, { detail: sent.detail })
 }
 
-effect function approve(running: Running, settings: LegSettings, proposal: EvmOrderProposal, quote: BridgeQuote, summary: string) {
+effect function approve(running: Running, settings: LegSettings, proposal: EvmOrderProposal, quote: BridgeQuote, summary: string, balance: bigint) {
   const network = running.leg.network
   if (network === "Solana" || network === "Robinhood") return
   const { order } = proposal
-  if (!(try admissible(running, try bridgeRequest(running, settings, proposal, 1, quote)))) return
+  if (!(try admissible(running, try bridgeRequest(running, settings, proposal, 1, quote, balance)))) return
   const floors = try floorOf(running)
   const wallet = try FeeWallet
   const signed = try wallet.sign({ kind: "DlnApprove", network, nonceFloor: try big(String(floors.evm)), valueMicro: order.giveAmount, amount: order.giveAmount, takeAmount: order.takeAmount, nativeFee: order.nativeFee, preparation: try preparation(floors.ledger) }, () => Effect.void)
   if (signed.family !== "evm") return try refuse("approveOrder", "a bridge approval is an EVM send")
   const tx = running.leg.names.number("tx", signed.txId)
-  try step(running, { type: "approveOrder", request: try bridgeRequest(running, settings, proposal, tx, quote) }, { summary, takeAmount: order.takeAmount.toString(), signed: signedFacts(settings, signed) })
+  try step(running, { type: "approveOrder", request: try bridgeRequest(running, settings, proposal, tx, quote, balance) }, { summary, takeAmount: order.takeAmount.toString(), signed: signedFacts(settings, signed) })
   try broadcastEvmSend(running, tx, signed.rawTx, "fee_approval_submitted", signed.txId)
 }
 
@@ -196,18 +197,19 @@ effect function orderEvm(running: Running, settings: LegSettings) {
   const network = running.leg.network
   if (network === "Solana" || network === "Robinhood") return
   const amount = try big(String(running.state.approval.amount))
-  if ((try tokenBalance(usdcOf(running.leg) as Address, "finalized")) < amount) return try Effect.logInfo("fee_bridge_waiting", { network, reason: "the finalized balance no longer covers the approved order" })
+  const balance = try tokenBalance(usdcOf(running.leg) as Address, "finalized")
+  if (balance < amount) return try Effect.logInfo("fee_bridge_waiting", { network, reason: "the finalized balance no longer covers the approved order" })
   const proposed = try proposeEvmOrder(amount, settings.receiver)
   if (proposed.kind === "NoRoute") return try Effect.logInfo("fee_bridge_waiting", { network, reason: proposed.detail })
   const { proposal } = proposed
   const { quote } = try evmPriced(running, settings, proposal)
   const order = try recheckedEvmOrder(proposal)
-  if (!(try admissible(running, try bridgeRequest(running, settings, proposal, 1, quote)))) return
+  if (!(try admissible(running, try bridgeRequest(running, settings, proposal, 1, quote, balance)))) return
   const floors = try floorOf(running)
   const signed = try (try FeeWallet).sign({ kind: "DlnCreateOrder", network, nonceFloor: try big(String(floors.evm)), valueMicro: amount, order, preparation: try preparation(floors.ledger) }, () => Effect.void)
   if (signed.family !== "evm") return try refuse("order", "an EVM bridge order is an EVM send")
   const tx = running.leg.names.number("tx", signed.txId)
-  try step(running, { type: "order", request: try bridgeRequest(running, settings, proposal, tx, quote) }, { terms: termsJson(order), signed: signedFacts(settings, signed) })
+  try step(running, { type: "order", request: try bridgeRequest(running, settings, proposal, tx, quote, balance) }, { terms: termsJson(order), signed: signedFacts(settings, signed) })
   try broadcastEvmSend(running, tx, signed.rawTx, "fee_bridge_submitted", signed.txId)
 }
 
@@ -230,7 +232,7 @@ effect function evaluate(running: Running, settings: LegSettings) {
   const { quote, summary } = try evmPriced(running, settings, proposed.proposal)
   const verdict = decisionOf(running.state, quote)
   if (verdict.state !== "Quoted" || running.state.runtime.buybackMode === "DryRun" || !signs(running.state)) return try decided(running, quote, { ...facts, summary, takeAmount: proposed.proposal.order.takeAmount.toString() })
-  try approve(running, settings, proposed.proposal, quote, summary)
+  try approve(running, settings, proposed.proposal, quote, summary, balance)
 }
 
 effect function settleEvm(running: Running, record: SendRecord, tx: number) {

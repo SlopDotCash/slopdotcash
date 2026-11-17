@@ -4,10 +4,10 @@ import { type Statement, rows, sql } from "@repo/platform/d1"
 import { type EffectiveWallet, Wallets } from "@repo/ports/backend"
 import { type ApprovedAward, ApprovedAwards } from "@repo/ports/security"
 import type { Network } from "../../gen/fees__runtime.ts"
-import { type Intent, type Retirement, Rejected } from "../../gen/settlement__directBounty.effect.vibe"
+import { type Intent, Rejected } from "../../gen/settlement__directBounty.effect.vibe"
 import type { ConsentPaymentBody, DirectIntent, PaymentTransaction, PaymentWallet, PreparePaymentBody, VerifyPaymentBody } from "../client/direct.vibe"
-import { EvmDirectRails, type EvmDirectRail, evmModel, evmRecoveryState, evmTransactions, payerChain, verifyEvmCancellation } from "./evm.vibe"
-import { type Claims, type Facts, type Journal, type StoredRetirement, commit, currentIntent, decided, generationOf, highestReservedNonce, intentModel, journalFor, storedWallet, walletModel } from "./journal.vibe"
+import { EvmDirectRails, type EvmDirectRail, evmRecoveryState, evmTransactions, payerChain, verifyEvmCancellation } from "./evm.vibe"
+import { type Claims, type Facts, type Journal, type StoredRetirement, commit, currentIntent, decided, directModel, generationOf, highestReservedNonce, intentModel, journalFor, retirementOf, storedWallet, walletModel } from "./journal.vibe"
 import { type CaseContext, consentPayment, preparePayment, verifyPayment } from "./routes.vibe"
 import { type IssuedPlan, type RecoveryRefusal, type SolanaDirectRail, RecoveryRefused, SolanaDirectRails, consentSolanaPayment, isSolanaNetwork, issuedPlans, prepareSolanaPayment, prepareSolanaPlan, verifySolanaPayment, walletFence, walletOfIntent } from "./solana.vibe"
 import { RecoverySignature, RecoverySignatureInvalid, retireSolanaPlans } from "./solanaRecovery.vibe"
@@ -21,14 +21,8 @@ module limbs {
   export function blockValue(text: string | undefined): bigint {
     return text !== undefined && /^(?:0|[1-9]\d{0,19})$/u.test(text) ? BigInt(text) : -1n
   }
-  /** @throws {never} */
-  export function wholeNumber(text: string | undefined): number {
-    if (text === undefined) return -1
-    const value = /^0x[\da-f]{1,13}$/iu.test(text) || /^(?:0|[1-9]\d{0,15})$/u.test(text) ? Number(text) : -1
-    return Number.isSafeInteger(value) ? value : -1
-  }
 }
-import { blockValue, nonceValue, wholeNumber } from limbs
+import { blockValue, nonceValue } from limbs
 
 export schema RecoverPaymentBody {
   readonly confirmation: boolean
@@ -96,9 +90,6 @@ function solana(intent: DirectIntent) {
   return intent.chain === "solana"
 }
 
-function modelOf(intent: DirectIntent): Network | undefined {
-  return solana(intent) ? "Solana" : evmModel(intent.network)
-}
 
 function sameAddress(intent: DirectIntent, left: string, right: string) {
   return solana(intent) ? left === right : left.toLowerCase() === right.toLowerCase()
@@ -139,7 +130,7 @@ effect function contextOf(caseId: string, reporterGithubId: string) {
   const journal = try journalFor(caseId)
   const intent = currentIntent(journal)
   if (intent === undefined) return try refuse("paymentNotPreparedPrepareTheExactPayment")
-  const model = modelOf(intent)
+  const model = directModel(intent)
   if (model === undefined) return try refuse("railUnavailablePaymentRecoveryIsUnavailable")
   const paid = intent.transfers.map((_, index) => journal.legs.some((leg) => leg.legIndex === index))
   const researcherPaid = paid[0] ?? false
@@ -238,24 +229,6 @@ export effect function recoveryView(context: CaseContext) {
   return view
 }
 
-const laneOfLeg: ReadonlyArray<Retirement["lane"]> = ["Researcher", "Fee"]
-const retirementKinds: Readonly<Record<string, Retirement["kind"]>> = { "evm-nonce-retired": "EvmRetired", "consent-renewal": "SameRequest", "solana-expired": "SolanaRetired" }
-
-function retirementOf(stored: StoredRetirement, generation: number): Retirement {
-  const kind = retirementKinds[stored.kind] ?? "Unverified"
-  return {
-    kind,
-    generation,
-    lane: kind === "SolanaRetired" ? "Both" : laneOfLeg[stored.legIndex ?? 0] ?? "Researcher",
-    nonce: kind === "EvmRetired" ? wholeNumber(stored.nonce) : -1,
-    message: stored.message ?? "",
-    coveredMessages: [...(stored.coveredMessages ?? [])],
-    height: wholeNumber(stored.blockNumber ?? "0"),
-    observation: stored.transactionId ?? "",
-    certified: kind !== "Unverified",
-    lowerSettled: true,
-  }
-}
 
 interface Successor {
   readonly intent: DirectIntent

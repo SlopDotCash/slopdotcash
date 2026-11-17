@@ -1,0 +1,62 @@
+// spec/backend/projects.md, "Administrators hold, delist, change the steward or place a project"; spec/fees/feeReport.md, "Only an administrator reads the fee report, and it never contains a signed transaction or secret"; spec/frontend/navigation.md, "A private read belongs to the current account and navigation lifetime"; spec/security/enforcement.md, "Assessments are queued by setup, owner rescan, administrator investigation or flag recovery"; spec/security/privacy.md, "Read authorization comes from the current case roles and is audited before delivery"
+import { feeConversions } from "@repo/fees/client"
+import { adminListLimitBytes, adminProjectList, adminRead } from "../../flows/projects/admin.vibe"
+import { type EvidenceObject, type EvidenceRun, evidenceRunsFor, readEvidenceObject, vettingOverviewFor } from "../../flows/projects/vetting.vibe"
+import { call } from "../../platform/api.vibe"
+import { isAdminActionAccessLoss } from "../../session/adminAccess.vibe"
+import { refreshSession } from "../setup/proposal/create.vibe"
+import { wellFormedReport } from "./feeReport.ts"
+import { adminProjectsOf } from "./projects.ts"
+
+export const adminReadMessages = {
+  projects: "Projects could not load.",
+  invalidProjects: "The project list is invalid.",
+  fees: "Fee conversions could not load.",
+  invalidReport: "The fee conversion report is invalid.",
+  vetting: "Security vetting could not load.",
+} as const
+
+export error InvalidAdminRead { message: string }
+
+export effect function adminProjectsRead(actorGithubId: string) {
+  const listed = adminProjectList(actorGithubId) catch effect (failure) => {
+    if (failure._tag !== "RecheckedAdminReadFailure") throw failure
+    return { kind: "unrefreshed" as const, message: failure.message }
+  }
+  if ("kind" in listed) return listed
+  const projects = adminProjectsOf(listed)
+  if (projects === undefined) throw new InvalidAdminRead({ message: adminReadMessages.invalidProjects })
+  return { kind: "current" as const, projects }
+}
+
+export effect function feeConversionReport(actorGithubId: string) {
+  const report = adminRead(actorGithubId, call(feeConversions, {}, { limitBytes: adminListLimitBytes, expectedActor: actorGithubId })) catch effect (failure) => {
+    if (failure._tag === "InvalidResponse" && failure.status < 300) throw new InvalidAdminRead({ message: adminReadMessages.invalidReport })
+    throw failure
+  }
+  if (!wellFormedReport(report)) throw new InvalidAdminRead({ message: adminReadMessages.invalidReport })
+  return report
+}
+
+export effect function vettingRead(actorGithubId: string) {
+  const overview = vettingOverviewFor(actorGithubId) catch effect (failure) => {
+    if (!isAdminActionAccessLoss(failure)) throw failure
+    return { kind: "lost" as const, message: failure.message }
+  }
+  if ("kind" in overview) return overview
+  return { kind: "read" as const, overview }
+}
+
+export effect function evidenceInventory(actorGithubId: string, run: EvidenceRun) {
+  return evidenceRunsFor(actorGithubId, run) catch effect (failure) => {
+    if (failure.identityChanged) try refreshSession()
+    throw failure
+  }
+}
+
+export effect function inspectEvidence(actorGithubId: string, run: EvidenceRun, object: EvidenceObject, reason: string) {
+  return readEvidenceObject(actorGithubId, run, object, reason) catch effect (failure) => {
+    if (failure._tag === "EvidenceReadFailed" && failure.identityChanged) try refreshSession()
+    throw failure
+  }
+}

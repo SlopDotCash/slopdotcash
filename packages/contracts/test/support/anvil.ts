@@ -65,6 +65,8 @@ export const vaultAbi = parseAbi([
   "function reserveMonthly(uint32 period, MonthlyReservation reservation, bytes attestation)",
   "function commitMonthlyLeaf(uint32 period, MonthlyAward entry, uint32 index, AllocationNode[] proof)",
   "function releaseMonthlyReserve(uint32 period, uint128 expectedRemaining, uint128 releasedGross, bytes attestation)",
+  "function pledgeMonths(uint32 fromPeriod, uint8 count, uint128 amount)",
+  "function expirePledge(uint32 period)",
   "function bindDestination(uint64 actorId, address destination, uint64 expectedVersion, bytes32 claimDigest, uint64 expiresAt, bytes walletSignature)",
   "function cancelBinding(uint64 actorId, uint64 expectedVersion)",
   "function pay(bytes32 id, uint64 expectedBindingVersion)",
@@ -90,6 +92,8 @@ export const vaultAbi = parseAbi([
   "function monthlyRoots(uint32 period) view returns (bytes32)",
   "function monthlyReserves(uint32 period) view returns (bytes32 allocationDigest, uint128 total, uint128 remaining, uint32 count, uint64 admittedAt)",
   "function monthlyReleased(uint32 period) view returns (uint128)",
+  "function monthPledges(uint32 period) view returns (uint128 amount, bool open)",
+  "function openPledgedGross() view returns (uint128)",
   "event AwardCommitted(bytes32 indexed id, uint64 indexed actorId, uint128 gross, uint128 fee, bytes32 sourceDigest)",
   "event DestinationBound(uint64 indexed actorId, address indexed destination, uint64 version, bytes32 claimDigest, uint64 activatesAt)",
   "event FeesClaimed(address indexed feeRecipient, uint128 amount)",
@@ -98,6 +102,8 @@ export const vaultAbi = parseAbi([
   "event MonthlyCommitmentSet(uint128 cap, bool enabled)",
   "event MonthlyCommitted(uint32 indexed period, bytes32 allocationRoot, uint128 gross, uint256 awards)",
   "event MonthlyReserved(uint32 indexed period, bytes32 allocationDigest, bytes32 allocationRoot, uint128 wholeGross, uint128 remainingGross, uint32 count, uint256 sourceSequence)",
+  "event MonthPledged(uint32 indexed period, uint128 amount)",
+  "event PledgeClosed(uint32 indexed period, uint128 amount, bool reserved)",
 ]);
 
 export const tokenAbi = parseAbi([

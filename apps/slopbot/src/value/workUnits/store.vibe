@@ -1,0 +1,316 @@
+// spec/slopbot/workUnits.md, "One transaction checks predecessors, legacy records, sources, claims and the publication fence"; spec/slopbot/valueHistory.md, "A successor consumes every affected predecessor and its complete source set"
+import { isoNow } from "@repo/platform/clock"
+import { RowMismatch, type Statement, decoded, first, sql } from "@repo/platform/d1"
+import { parsedJson as parsedText, sha256Of } from "@repo/platform/git/bytes"
+import { type Aggregate, type Decision, type Rows, load, update } from "@repo/platform/stored"
+import type { Evidence as GroupEvidence, JointRecord, Journal, SourceKind } from "../../../gen/slopbot__workUnits.effect.vibe"
+import { NotAState, apply, decodeState } from "../../../gen/slopbot__workUnits.effect.vibe"
+import { InstallationRow, installationOf } from "../../installation/store.vibe"
+import { StoredRecord, valueAssessmentKey, workUnitAssessmentKey } from "../history/read.vibe"
+import { JournalBytesInvalid, type PublicationBinding, RecordNotAppended, activeInstallationGuard, appendValueRecord, sourceKey } from "../history/store.vibe"
+import { type PreparedRecord, workUnitRecordVersion } from "./record.vibe"
+import type { GroupFacts } from "./types.vibe"
+
+schema StoredSource { readonly repositoryNodeId: string; readonly pullRequestNodeId: string }
+schema StoredClaim { readonly id: string }
+schema StoredUnit { readonly claimIds: ReadonlyArray<string> }
+schema JournalRecord {
+  readonly schemaVersion: "slop-work-unit-record:v1"
+  readonly projectId: string
+  readonly sourceDigest: string
+  readonly sources: ReadonlyArray<StoredSource>
+  readonly claims: ReadonlyArray<StoredClaim>
+  readonly units: ReadonlyArray<StoredUnit>
+  readonly supersedes: ReadonlyArray<string>
+  readonly legacyPredecessors: ReadonlyArray<string>
+  readonly revisionReason: string | null
+}
+schema SingleSource {
+  readonly repositoryNodeId: string
+  readonly pullRequestNodeId: string
+  readonly sourceDigest: string
+  readonly rubricVersion: string
+  readonly producerRevision: string
+}
+schema StoredDigest { readonly record_digest: string }
+schema JointRow { readonly sequence: number; readonly record_digest: string; readonly assessment_key: string; readonly record_json: string; readonly retired: number }
+schema LegacyRow { readonly record_digest: string; readonly repository_node_id: string; readonly pull_request_node_id: string; readonly superseded: number }
+schema Counter { readonly last: number }
+schema Fresh { readonly fresh: number }
+
+export type Names = Map<string, number>
+
+export interface JournalScope {
+  readonly sources: ReadonlyArray<readonly [string, string]>
+  readonly claims: ReadonlyArray<string>
+  readonly digests: ReadonlyArray<string>
+  readonly keys: ReadonlyArray<string>
+  readonly installationId: number
+  readonly fence: Statement
+}
+
+export interface LoadedJournal {
+  readonly journal: Journal
+  readonly names: Names
+  readonly consumed: ReadonlySet<string>
+}
+
+export function nameOf(names: Names, kind: string, value: string) {
+  const name = `${kind}:${value}`
+  const found = names.get(name)
+  if (found !== undefined) return found
+  const made = names.size + 1
+  names.set(name, made)
+  return made
+}
+
+function distinct(values: ReadonlyArray<number>) {
+  return [...new Set(values)]
+}
+
+function reasonOf(reason: string | null) {
+  return reason === null || reason.trim() === "" ? "" : reason
+}
+
+function lineage(scope: JournalScope) {
+  return sql`WITH RECURSIVE
+    wanted(repository_node_id, pull_request_node_id) AS (
+      SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(${JSON.stringify(scope.sources)})),
+    seed(record_digest) AS (
+      SELECT s.record_digest FROM slopbot_work_unit_sources s JOIN wanted w ON w.repository_node_id = s.repository_node_id AND w.pull_request_node_id = s.pull_request_node_id
+      UNION SELECT c.record_digest FROM slopbot_work_unit_claims c WHERE c.claim_id IN (SELECT value FROM json_each(${JSON.stringify(scope.claims)}))
+      UNION SELECT j.record_digest FROM slopbot_work_unit_journal j WHERE j.record_digest IN (SELECT value FROM json_each(${JSON.stringify(scope.digests)}))
+      UNION SELECT j.record_digest FROM slopbot_work_unit_journal j WHERE j.assessment_key IN (SELECT value FROM json_each(${JSON.stringify(scope.keys)}))),
+    lineage(record_digest) AS (
+      SELECT record_digest FROM seed
+      UNION SELECT p.predecessor_digest FROM slopbot_work_unit_predecessors p JOIN lineage l ON p.record_digest = l.record_digest),
+    touched(repository_node_id, pull_request_node_id) AS (
+      SELECT repository_node_id, pull_request_node_id FROM wanted
+      UNION SELECT s.repository_node_id, s.pull_request_node_id FROM slopbot_work_unit_sources s WHERE s.record_digest IN (SELECT record_digest FROM lineage))`
+}
+
+function journalReads(scope: JournalScope): ReadonlyArray<Statement> {
+  return [
+    sql`${lineage(scope)}
+      SELECT j.sequence, j.record_digest, j.assessment_key, j.record_json,
+        EXISTS (SELECT 1 FROM slopbot_work_unit_predecessors p WHERE p.predecessor_digest = j.record_digest) AS retired
+      FROM slopbot_work_unit_journal j WHERE j.record_digest IN (SELECT record_digest FROM lineage) ORDER BY j.sequence`,
+    sql`${lineage(scope)}
+      SELECT v.record_digest, v.repository_node_id, v.pull_request_node_id,
+        EXISTS (SELECT 1 FROM slopbot_value_journal c WHERE c.supersedes = v.record_digest) AS superseded
+      FROM slopbot_value_journal v JOIN touched t ON t.repository_node_id = v.repository_node_id AND t.pull_request_node_id = v.pull_request_node_id
+      ORDER BY v.sequence`,
+    sql`SELECT installation_id, account_id, account_login, account_type, created_at, suspended_at, removed_at, source_updated_at FROM slopbot_installations WHERE installation_id = ${scope.installationId}`,
+    sql`SELECT COALESCE(MAX(sequence), 0) AS last FROM slopbot_work_unit_journal`,
+    sql`SELECT CASE WHEN (${scope.fence}) THEN 1 ELSE 0 END AS fresh`,
+  ]
+}
+
+function journalVersion(scope: JournalScope) {
+  return sql`SELECT (SELECT COALESCE(MAX(sequence), 0) FROM slopbot_work_unit_journal) || ':' || (SELECT COALESCE(MAX(sequence), 0) FROM slopbot_value_journal)
+    || ':' || coalesce((SELECT coalesce(suspended_at, '-') || ':' || coalesce(removed_at, '-') || ':' || coalesce(source_updated_at, '-') FROM slopbot_installations WHERE installation_id = ${scope.installationId}), '')
+    || ':' || (CASE WHEN (${scope.fence}) THEN 1 ELSE 0 END) AS version`
+}
+
+effect function recordOf(json: string) {
+  const parsed = parsedText(json)
+  if (parsed === undefined) throw new RowMismatch({ text: "work unit journal", issue: "record is not JSON" })
+  const record = Schema.decodeUnknownEffect(JournalRecord)(parsed.value) catch effect () => { throw new RowMismatch({ text: "work unit journal", issue: "record is not a work unit record" }) }
+  return record
+}
+
+function jointRecordOf(names: Names, record: JournalRecord, digest: string, key: string, sequence: number, legacyParents: ReadonlyArray<string>): JointRecord {
+  return {
+    digest: nameOf(names, "digest", digest),
+    assessmentKey: nameOf(names, "key", key),
+    project: nameOf(names, "project", record.projectId),
+    sources: distinct(record.sources.map((source) => nameOf(names, "source", sourceKey(source.repositoryNodeId, source.pullRequestNodeId)))),
+    claims: distinct(record.claims.map((claim) => nameOf(names, "claim", claim.id))),
+    units: record.units.filter((unit) => unit.claimIds.length > 0).map((unit) => distinct(unit.claimIds.map((id) => nameOf(names, "claim", id)))),
+    parents: distinct(record.supersedes.map((parent) => nameOf(names, "digest", parent))),
+    legacyParents: distinct(legacyParents.map((parent) => nameOf(names, "digest", parent))),
+    revisionReason: reasonOf(record.revisionReason),
+    sequence,
+  }
+}
+
+function unconsumed(record: JournalRecord, consumed: ReadonlySet<string>) {
+  return record.legacyPredecessors.filter((digest) => !consumed.has(digest))
+}
+
+effect function journalOf(rows: ReadonlyArray<Rows>) {
+  const names: Names = new Map()
+  const joint = try decoded(JointRow, rows[0] ?? [], "work unit journal")
+  const legacyRows = try decoded(LegacyRow, rows[1] ?? [], "value journal")
+  const [installation] = try decoded(InstallationRow, rows[2] ?? [], "slopbot installation")
+  const [counter] = try decoded(Counter, rows[3] ?? [], "work unit journal sequence")
+  const consumed = new Set<string>()
+  const records: JointRecord[] = []
+  for (const row of joint) {
+    const record = try recordOf(row.record_json)
+    const fresh = unconsumed(record, consumed)
+    for (const digest of record.legacyPredecessors) consumed.add(digest)
+    records.push(jointRecordOf(names, record, row.record_digest, row.assessment_key, row.sequence, fresh))
+  }
+  const legacy = legacyRows.map((row) => ({ digest: nameOf(names, "digest", row.record_digest), source: nameOf(names, "source", sourceKey(row.repository_node_id, row.pull_request_node_id)) }))
+  const journal = try decodeState({
+    records,
+    retired: distinct(joint.filter((row) => row.retired !== 0).map((row) => nameOf(names, "digest", row.record_digest))),
+    legacy,
+    legacyRetired: distinct(legacyRows.filter((row) => row.superseded !== 0 || consumed.has(row.record_digest)).map((row) => nameOf(names, "digest", row.record_digest))),
+    lastSequence: counter?.last ?? 0,
+    fence: 1,
+    install: try installationOf([installation === undefined ? [] : [installation]], []),
+  } satisfies Journal)
+  return { journal, names, consumed } satisfies LoadedJournal
+}
+
+effect function freshness(rows: ReadonlyArray<Rows>) {
+  const [fresh] = try decoded(Fresh, rows[4] ?? [], "publication fence")
+  return fresh?.fresh === 1
+}
+
+interface Loaded extends LoadedJournal {
+  readonly fresh: boolean
+}
+
+function aggregate(name: string, scope: JournalScope): Aggregate<Loaded, NotAState | RowMismatch, never> {
+  return {
+    name,
+    version: journalVersion(scope),
+    reads: journalReads(scope),
+    decode: (rows) => effect {
+      const loaded = try journalOf(rows)
+      return { ...loaded, fresh: try freshness(rows) }
+    },
+  }
+}
+
+export function groupEvidence(names: Names, facts: GroupFacts): GroupEvidence {
+  return {
+    project: nameOf(names, "project", facts.projectId),
+    accepted: facts.accepted.map((source) => nameOf(names, "source", source)),
+    claims: facts.claims.map((claim) => ({
+      id: nameOf(names, "claim", claim.id),
+      carriers: distinct(claim.carriers.map((source) => nameOf(names, "source", source))),
+      credit: nameOf(names, "source", claim.credit),
+    })),
+    limitations: facts.limited,
+  }
+}
+
+function fenceOf(binding: PublicationBinding) {
+  return sql`(${binding.registryFence}) AND (${binding.leaseFence ?? sql`1`})`
+}
+
+function jointScope(prepared: PreparedRecord, binding: PublicationBinding): JournalScope {
+  const { record } = prepared
+  return {
+    sources: record.sources.map((source) => [source.repositoryNodeId, source.pullRequestNodeId] as const),
+    claims: record.claims.map((claim) => claim.id),
+    digests: [prepared.recordDigest, ...record.supersedes],
+    keys: [prepared.assessmentKey],
+    installationId: binding.installationId,
+    fence: fenceOf(binding),
+  }
+}
+
+effect function sealed(prepared: PreparedRecord, binding: PublicationBinding) {
+  const { record, recordJson } = prepared
+  if (
+    JSON.stringify(record) !== recordJson || sha256Of(recordJson) !== prepared.recordDigest || record.schemaVersion !== workUnitRecordVersion ||
+    (try workUnitAssessmentKey(record)) !== prepared.assessmentKey
+  )
+    throw new JournalBytesInvalid({ issue: "Joint value journal bytes do not match their digest" })
+  if (binding.projectId !== record.projectId) throw new JournalBytesInvalid({ issue: "Joint value publication requires its live registry fence" })
+  return try recordOf(recordJson)
+}
+
+export effect function storedJointRecord(assessmentKey: string) {
+  return try first(StoredRecord, sql`SELECT sequence, record_digest, assessment_key, record_json, recorded_at FROM slopbot_work_unit_journal WHERE assessment_key = ${assessmentKey}`)
+}
+
+export effect function appendWorkUnitRecord(prepared: PreparedRecord, facts: GroupFacts, binding: PublicationBinding) {
+  const parsed = try sealed(prepared, binding)
+  const replayed = try storedJointRecord(prepared.assessmentKey)
+  if (replayed !== undefined) return replayed
+  const scope = jointScope(prepared, binding)
+  try update(aggregate(`work unit journal ${prepared.assessmentKey}`, scope), (loaded) => effect {
+    const names = new Map(loaded.names)
+    const r = jointRecordOf(names, parsed, prepared.recordDigest, prepared.assessmentKey, 0, unconsumed(parsed, loaded.consumed))
+    const next = try apply(loaded.journal, { type: "appendJoint", r, e: groupEvidence(names, facts), captured: loaded.fresh ? 1 : 0 })
+    const now = try isoNow()
+    return {
+      value: next,
+      writes: [sql`INSERT INTO slopbot_work_unit_journal (record_digest, assessment_key, project_id, source_digest, record_json, recorded_at)
+        SELECT ${prepared.recordDigest}, ${prepared.assessmentKey}, ${prepared.record.projectId}, ${prepared.record.sourceDigest}, ${prepared.recordJson}, ${now}
+        WHERE NOT EXISTS (SELECT 1 FROM slopbot_work_unit_journal WHERE assessment_key = ${prepared.assessmentKey})
+          AND ${activeInstallationGuard(binding.installationId)} AND ${scope.fence}`],
+    } satisfies Decision<Journal>
+  })
+  const stored = try storedJointRecord(prepared.assessmentKey)
+  if (stored === undefined || stored.record_digest !== prepared.recordDigest) throw new RecordNotAppended({ assessmentKey: prepared.assessmentKey })
+  return stored
+}
+
+export function sourceKindOf(evidence: { readonly indirectAcceptance?: unknown; readonly noChangePromotion?: unknown }): SourceKind {
+  return { indirect: evidence.indirectAcceptance !== undefined, noChangePromotion: evidence.noChangePromotion !== undefined }
+}
+
+export effect function appendSingleRecord(recordJson: string, binding: PublicationBinding | null, kind: SourceKind) {
+  const parsed = parsedText(recordJson)
+  const source = parsed === undefined ? undefined : Schema.decodeUnknownEffect(SingleSource)(parsed.value) catch () => undefined
+  if (source === undefined) throw new JournalBytesInvalid({ issue: "record is not a value record" })
+  const digest = sha256Of(recordJson)
+  const assessmentKey = try valueAssessmentKey(source)
+  const replayed = try first(StoredDigest, sql`SELECT record_digest FROM slopbot_value_journal WHERE assessment_key = ${assessmentKey} OR record_digest = ${digest}`)
+  if (replayed !== undefined) return try appendValueRecord(recordJson, binding)
+  const scope: JournalScope = {
+    sources: [[source.repositoryNodeId, source.pullRequestNodeId]],
+    claims: [],
+    digests: [],
+    keys: [],
+    installationId: binding?.installationId ?? 0,
+    fence: binding === null ? sql`1` : fenceOf(binding),
+  }
+  const loaded = (try load(aggregate(`value journal ${digest}`, scope))).state
+  const names = new Map(loaded.names)
+  try apply(loaded.journal, {
+    type: "appendLegacy",
+    l: { digest: nameOf(names, "digest", digest), source: nameOf(names, "source", sourceKey(source.repositoryNodeId, source.pullRequestNodeId)) },
+    kind,
+  })
+  return try appendValueRecord(recordJson, binding)
+}
+
+export effect function loadJournal(scope: JournalScope) {
+  return (try load(aggregate("work unit journal", scope))).state
+}
+
+export effect function currentWorkUnitRecord(repositoryNodeId: string, pullRequestNodeId: string) {
+  return try first(StoredRecord, sql`SELECT j.sequence, j.record_digest, j.assessment_key, j.record_json, j.recorded_at
+    FROM slopbot_work_unit_journal j JOIN slopbot_work_unit_sources s ON s.record_digest = j.record_digest
+    WHERE s.repository_node_id = ${repositoryNodeId} AND s.pull_request_node_id = ${pullRequestNodeId}
+      AND NOT EXISTS (SELECT 1 FROM slopbot_work_unit_predecessors p WHERE p.predecessor_digest = j.record_digest)`)
+}
+
+schema HeadRow { readonly record_digest: string }
+
+export interface Predecessors {
+  readonly supersedes: ReadonlyArray<string>
+  readonly legacyPredecessors: ReadonlyArray<string>
+}
+
+export effect function expectedPredecessors(sources: ReadonlyArray<readonly [string, string]>) {
+  const supersedes = new Set<string>()
+  const legacy = new Set<string>()
+  for (const [repositoryNodeId, pullRequestNodeId] of sources) {
+    const previous = try currentWorkUnitRecord(repositoryNodeId, pullRequestNodeId)
+    if (previous !== undefined) supersedes.add(previous.record_digest)
+    const head = try first(HeadRow, sql`SELECT v.record_digest FROM slopbot_value_journal v
+      WHERE v.repository_node_id = ${repositoryNodeId} AND v.pull_request_node_id = ${pullRequestNodeId}
+        AND NOT EXISTS (SELECT 1 FROM slopbot_value_journal c WHERE c.supersedes = v.record_digest)`)
+    if (head !== undefined) legacy.add(head.record_digest)
+  }
+  return { supersedes: [...supersedes].sort(), legacyPredecessors: [...legacy].sort() } satisfies Predecessors
+}

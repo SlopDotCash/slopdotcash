@@ -48,6 +48,8 @@ export interface SolanaPrepared {
   readonly maximumUnits: number
   readonly blockhashSlot: number
   readonly accountProof: string | undefined
+  readonly expiresAt: number
+  readonly minimumOutput: bigint
 }
 
 export type Prepared = EvmPrepared | SolanaPrepared

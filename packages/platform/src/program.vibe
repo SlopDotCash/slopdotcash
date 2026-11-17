@@ -5,7 +5,9 @@ import { exitWithCode, failureLine } from "./programExit.ts"
 
 type Platform = NodeServices.NodeServices
 
-export type Command<E, R> = (args: ReadonlyArray<string>) => void!E!R
+export const temporaryFailure: 75 = 75
+
+export type Command<E, R> = (args: ReadonlyArray<string>) => (void | typeof temporaryFailure)!E!R
 
 export interface Program<S, LE, E> {
   readonly services: Layer.Layer<S, LE, Platform>
@@ -20,7 +22,7 @@ export effect function run<S, LE, E>(spec: Program<S, LE, E>, argv: ReadonlyArra
     return 2
   }
   const outcome = try exit(Effect.provide(command(args), spec.services))
-  if (Exit.isSuccess(outcome)) return 0
+  if (Exit.isSuccess(outcome)) return outcome.value ?? 0
   try Console.error(failureLine(outcome.cause))
   return 1
 }

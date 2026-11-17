@@ -80,7 +80,9 @@ function fenceOf(e: Enforcement): Fence {
 }
 
 function matched(e: Enforcement): PinRead[] {
-  return e.repositories.map((repository) => ({ repository, pin: "PinMatches" as const }))
+  return e.repositories.flatMap((repository) => e.recorded
+    .filter((assessment) => assessment.repository === repository && assessment.identity === identityOf(e, repository))
+    .map((assessment) => ({ repository, assessment: assessment.id, pin: "PinMatches" as const })))
 }
 
 function unproducible(row: JournalRow, issue: string) {

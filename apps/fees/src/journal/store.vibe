@@ -8,6 +8,7 @@ import { type Network, type Sender, dailyCeilingOf, transactionCeilingOf } from 
 import { type Instance, type Intent, type Journal, type NameKind, type Names, amountOf, decodeJournal, networkNames, reasonText, revertedText, runText, stateName, unitsOf, weiAmount, weiOf } from "./codec.vibe"
 import { type EvmSend, type ReservedSend, verifiedEvmSend, verifiedSolanaSend } from "./signedSend.ts"
 import * as W from "./writes.vibe"
+import { type RecordedSwap, retainedSendReview } from "../solana/receipt.vibe"
 
 module verified {
   import { errorText as sanitized } from "../kernels/errorText.ts"
@@ -102,10 +103,11 @@ effect function matchesNative(wei: string, units: number, network: Network, even
   if ((try unitsOf(wei, network, what)).toString() !== String(units)) throw new JournalRefused({ event: event.type, issue: `${what} differs from the event's native amount` })
 }
 
-effect function verifiedSend(network: Network, entry: ReservedSend, accountProof: string | null, event: Event) {
+effect function verifiedSend(network: Network, entry: ReservedSend, accountProof: string | null, event: Event, recorded?: RecordedSwap) {
   if (network === "Solana") {
-    const checked = verifiedSolanaSend(entry, accountProof)
+    const checked = verifiedSolanaSend(entry)
     if (checked.kind === "refused") throw new JournalRefused({ event: event.type, issue: checked.issue })
+    retainedSendReview(entry.rawTx, accountProof ?? undefined, entry.wallet, recorded) catch effect (error) => { throw new JournalRefused({ event: event.type, issue: error.issue }) }
     return undefined
   }
   const checked = try tryPromise({ try: () => verifiedEvmSend(entry), catch: () => new JournalRefused({ event: event.type, issue: "the signed bytes cannot be checked" }) })
@@ -261,7 +263,8 @@ effect function writesFor(journal: Journal, instance: Instance, names: Names, ev
       const txId = try sameTx(names, facts.txId, event.send.tx, event)
       if (solana && held.slot !== event.send.blockhashSlot) throw new JournalRefused({ event: event.type, issue: "the signed blockhash slot differs from the reserved one" })
       const rawTx = try need(facts.rawTx, event, "the signed bytes are missing")
-      const checked = try verifiedSend(current.network, { txId, rawTx, intentHash: held.intent, wallet: held.wallet }, held.accountProof, event)
+      const recorded = solana ? { token: pending.token, targetToken: pending.targetToken, amountIn: try amountOf(pending.amountIn, `fee conversion ${pending.id}`), minimumOutput: try amountOf(pending.minAmountOut, `fee conversion ${pending.id}`) } : undefined
+      const checked = try verifiedSend(current.network, { txId, rawTx, intentHash: held.intent, wallet: held.wallet }, held.accountProof, event, recorded)
       try boundEvm(checked, event.send.nonce, try amountOf(held.maximumWei, `fee native gas ${held.id}`), event)
       const signed = try need(next.rows[intent.id - 1], event, "the signed row is missing")
       const kind = event.send.kind === "Approval" ? "approval" : "conversion"
@@ -420,6 +423,10 @@ effect function writesFor(journal: Journal, instance: Instance, names: Names, ev
         }),
       ]
     }
+    case "acquireRotationLease":
+    case "renewRotationLease":
+    case "releaseRotationLease":
+      throw new JournalRefused({ event: event.type, issue: "the operator rotation lease is not stored by this journal" })
     default: {
       const _exhaustive: never = event
       return _exhaustive

@@ -2,6 +2,7 @@
 import { type Actor, Refused, admission, handleRaw, json, sameOriginWrite, strictBody } from "@repo/platform/http"
 import { Roles } from "@repo/platform/roles"
 import { Conflict } from "@repo/platform/stored"
+import { type DecisionRole, EnforcementRecord, type RecordDetails } from "@repo/ports/security"
 import type { Event as AccessEvent } from "../../../gen/backend__access.effect.vibe"
 import { type Event, type Registry, apply } from "../../../gen/backend__projectComposition.effect.vibe"
 import { AccessRoutes, projectContract } from "../../access/routes.vibe"
@@ -32,7 +33,7 @@ interface Request {
 }
 
 type Plan =
-  | { readonly kind: "composition"; readonly preview: Preview; readonly action: Parameters<typeof send>[0] }
+  | { readonly kind: "composition"; readonly preview: Preview; readonly action: Parameters<typeof send>[0]; readonly record: RecordDetails }
   | { readonly kind: "access"; readonly preview: Preview; readonly event: AccessEvent; readonly by: number; readonly context: Context }
 
 interface Preview {
@@ -193,18 +194,27 @@ function openAccountAppealId(access: Loaded, project: number): number {
   return state.appeals.find((appeal) => appeal.status === "AppealOpen" && state.bans.some((ban) => ban.project === project && ban.enforcement === appeal.enforcement && ban.target === appeal.target))?.id ?? 0
 }
 
+function decisionRole(request: Request, registry: Registry): DecisionRole {
+  const by = Number(request.actor.githubId)
+  if (request.expected !== undefined) return "project-moderator"
+  return by === registry.project.steward ? "project-steward" : by === registry.project.creator ? "project-applicant" : "project-moderator"
+}
+
 effect function compositionPlan(request: Request, row: ProjectRow, registry: Registry, access: Loaded, event: Event, pendingReason: string | null, malice: ReadonlyArray<GithubActor>) {
   const by = Number(request.actor.githubId)
   const after = try apply(registry, event, by)
   const alongside = event.type === "decideMalice" ? (try maliceDecision(access, by, request.projectId, registry.security.journal.length + 1, malice)).writes : []
   const preview = compositionPreview(request, try projectName(row), registry, after, pendingReason, malice)
   const revision = { manifestText: row.manifest, reason: revisionReason(request.action), actor: { githubId: request.actor.githubId, login: request.actor.login } }
-  return { kind: "composition", preview, action: { projectId: request.projectId, event, by, revision, alongside } } satisfies Plan
+  const record: RecordDetails = { kind: "decision", reason: request.reason, evidenceReference: request.evidenceReference, actor: { githubId: request.actor.githubId, login: request.actor.login }, role: decisionRole(request, registry) }
+  return { kind: "composition", preview, action: { projectId: request.projectId, event, by, revision, alongside }, record } satisfies Plan
 }
 
 effect function commit(plan: Plan) {
   if (plan.kind === "access") return (try sendAccess(plan.event, plan.by, plan.context)).recordId
-  try send(plan.action)
+  provide EnforcementRecord = { details: plan.record } {
+    try send(plan.action)
+  }
   return undefined
 }
 

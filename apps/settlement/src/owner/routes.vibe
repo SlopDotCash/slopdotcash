@@ -95,11 +95,13 @@ effect function withdrawalFacts(project: ProjectView) {
     networkServed: true,
     snapshotDigest: "",
     obligationFunded: false,
+    monthLockPlanned: false,
+    lockedFunds: false,
   } satisfies ReviewFacts
 }
 
 function depositFacts(capture: Capture): ReviewFacts {
-  return { steward: false, repositoryAuthority: false, revision: capture.revision, restricted: false, networkServed: true, snapshotDigest: capture.snapshotDigest, obligationFunded: false }
+  return { steward: false, repositoryAuthority: false, revision: capture.revision, restricted: false, networkServed: true, snapshotDigest: capture.snapshotDigest, obligationFunded: false, monthLockPlanned: false, lockedFunds: false }
 }
 
 effect function factsFor(operation: FundingOperation, project: ProjectView, capture: Capture) {

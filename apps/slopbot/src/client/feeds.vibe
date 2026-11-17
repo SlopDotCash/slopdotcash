@@ -1,0 +1,46 @@
+// spec/slopbot/publicFeeds.md, "Feeds serve only registered history repositories with strictly validated cursors, 100 items per page and no-store"; spec/slopbot/publicFeeds.md, "Each feed keeps its published schema id: slop-penalties:v1, slop-penalty-history:v1, slop-value-history:v1, slop-work-unit-history:v1"; spec/slopbot/publicFeeds.md, "The per-repository summary counts reviewed, blocked, labeled, closed, reopened and appealed items from D1 only"
+import { type AnyRoute, type Method, route } from "@repo/platform/route"
+import { PenaltyPage, ValueHistoryPage, WorkUnitHistoryPage, penaltiesPath, valueHistoryPath, workUnitHistoryPath } from "@repo/ports/slopbot"
+import { getSlopbotSummary, slopbotGetV1Penalties, slopbotGetV1ValueAssessments, slopbotGetV1WorkUnitAssessments } from "./refusals.vibe"
+
+export schema Health {
+  readonly service: "slopbot"
+  readonly ok: true
+}
+
+export schema RepositorySummary {
+  readonly installationIds: ReadonlyArray<number>
+  readonly repositoryId: number
+  readonly itemsReviewed: number
+  readonly itemsBlocked: number
+  readonly itemsLabeled: number
+  readonly itemsClosed: number
+  readonly closuresReopened: number
+  readonly closuresAppealed: number
+  readonly lastActivityAt: string | null
+}
+
+export schema SlopbotSummary {
+  readonly generatedAt: string
+  readonly repositories: ReadonlyArray<RepositorySummary>
+}
+
+export const health = route({ method: "GET", path: "/health", access: "public", limitKib: 1, request: undefined, answer: Health, rejected: "unavailable", cache: "no-store" })
+
+export const penalties = route({ method: "GET", path: penaltiesPath, access: "public", limitKib: 1, request: undefined, answer: PenaltyPage, rejected: slopbotGetV1Penalties.penaltiesAreUnavailable.error, cache: "no-store" })
+
+export const valueAssessments = route({ method: "GET", path: valueHistoryPath, access: "public", limitKib: 1, request: undefined, answer: ValueHistoryPage, rejected: slopbotGetV1ValueAssessments.valueHistoryIsUnavailable.error, cache: "no-store" })
+
+export const workUnitAssessments = route({ method: "GET", path: workUnitHistoryPath, access: "public", limitKib: 1, request: undefined, answer: WorkUnitHistoryPage, rejected: slopbotGetV1WorkUnitAssessments.valueHistoryIsUnavailable.error, cache: "no-store" })
+
+export const summary = route({ method: "GET", path: "/api/v1/slopbot/summary", access: "public", limitKib: 1, request: undefined, answer: SlopbotSummary, rejected: getSlopbotSummary.unavailable.error, cache: { browserSeconds: 60 } })
+
+function refusedSummaryMethod(method: Method) {
+  return route({ method, path: summary.path, access: "public", limitKib: 1, request: undefined, answer: Schema.Unknown, rejected: getSlopbotSummary.otherMethods.methodNotAllowedPublicMaxAge60.error, cache: { browserSeconds: 60 } })
+}
+
+export const otherSummaryMethods = (["POST", "PUT", "DELETE"] as const).map(refusedSummaryMethod)
+
+export const feedApi: ReadonlyArray<AnyRoute> = [health, penalties, valueAssessments, workUnitAssessments]
+
+export const summaryApi: ReadonlyArray<AnyRoute> = [summary, ...otherSummaryMethods]

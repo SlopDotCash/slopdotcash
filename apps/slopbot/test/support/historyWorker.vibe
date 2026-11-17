@@ -1,0 +1,162 @@
+// spec/slopbot/publicFeeds.md, "Story: Serve published history from stored records only"; spec/slopbot/historicalImport.md, "Story: An administrator imports a pre-November subscription assessment once"; spec/slopbot/valueHistory.md, "Story: Recover complete history at a fixed sequence boundary"
+import type { D1Database } from "@repo/platform/bindings"
+import { webCrypto } from "@repo/platform/crypto"
+import { type D1, d1, sql } from "@repo/platform/d1"
+import { githubApp } from "@repo/platform/github/app"
+import { Caller, Unauthenticated, answered, json, outbound } from "@repo/platform/http"
+import { rolesFrom } from "@repo/platform/roles"
+import { worker } from "@repo/platform/worker"
+import { RegistryManifestsLive } from "@repo/backend/ports"
+import { type ProjectView, Registry, Restrictions } from "@repo/ports/backend"
+import { Enforcement } from "@repo/ports/security"
+import { feedRoutes } from "../../src/feeds/routes.vibe"
+import { summaryRoutes } from "../../src/feeds/summary.vibe"
+import { HistoricalPublication, PublicationFailed, importSettings, publishSubscription } from "../../src/import/publisher.vibe"
+import { HistoricalValueImport, NotPublished, importRoutes } from "../../src/import/routes.vibe"
+import { appendValueRecord, legacyHeads, readHistory } from "../../src/value/history/store.vibe"
+
+export interface Env {
+  readonly SLOPBOT_DB: D1Database
+  readonly SLOPBOT_APP_ID: string
+  readonly SLOPBOT_APP_PRIVATE_KEY: string
+  readonly SLOPBOT_PRODUCER_REVISION: string
+  readonly ADMIN_GITHUB_IDS: string
+  readonly PROJECT_MODERATOR_GITHUB_IDS: string
+}
+
+export const recordedHeadSha = "c".repeat(40)
+
+const registered: ReadonlyArray<{ readonly projectId: string; readonly path: string; readonly repositoryId: string }> = [
+  { projectId: "alpha", path: "ada/alpha", repositoryId: "7001" },
+  { projectId: "bravo", path: "ada/bravo", repositoryId: "7002" },
+]
+
+function viewOf(project: (typeof registered)[number]): ProjectView {
+  return {
+    projectId: project.projectId,
+    revision: 1,
+    manifestSha256: "0".repeat(64),
+    rowStatus: "Active",
+    manifestStatus: "Active",
+    listingTier: "Community",
+    retirement: "NotRetired",
+    stewardGithubId: "101",
+    repositories: [{ id: project.repositoryId, nodeId: `R_${project.projectId}`, fullName: project.path, integrationBranch: "main", aliases: [] }],
+    closureConsent: false,
+  }
+}
+
+const registryPorts = Layer.mergeAll(
+  Layer.succeed(Registry, {
+    project: (projectId) => effect { const found = registered.find((project) => project.projectId === projectId); return found === undefined ? undefined : viewOf(found) },
+    byRepository: (repositoryId) => effect { const found = registered.find((project) => project.repositoryId === repositoryId); return found === undefined ? undefined : viewOf(found) },
+    byPath: (fullName) => effect {
+      const found = registered.find((project) => project.path === fullName.toLowerCase())
+      return found === undefined ? undefined : { match: "CurrentPath" as const, registeredRepositoryId: found.repositoryId, project: viewOf(found) }
+    },
+    active: () => effect { return registered.map(viewOf) },
+    fence: () => effect { return sql`1` },
+  }),
+  Layer.succeed(Restrictions, {
+    account: () => effect { return { banned: false } },
+    project: () => effect { return { restricted: false } },
+    fence: () => effect { return sql`1` },
+    unbanned: () => effect { return sql`1` },
+  }),
+  Layer.succeed(Enforcement, {
+    project: () => effect { return { restriction: "Clear" as const, enforcementGeneration: 0, clearanceGeneration: "0" } },
+    fence: () => effect { return sql`1` },
+  }),
+)
+
+const cookieCaller = Layer.succeed(Caller, {
+  current: () => effect {
+    const request = try HttpServerRequest.HttpServerRequest
+    const githubId = request.cookies["__Host-slop_points"] ?? ""
+    if (!/^[1-9][0-9]{0,19}$/u.test(githubId)) throw new Unauthenticated()
+    return { githubId, login: `member-${githubId}`, actorId: `actor-${githubId}` }
+  },
+})
+
+type PublisherServices = Effect.Services<ReturnType<typeof publishSubscription>>
+
+const singleJournalPublication = Layer.effect(HistoricalPublication, effect {
+  const context = try Effect.context<D1 | Experimental.Crypto.Crypto>()
+  const registry = try Registry
+  return {
+    publish: (admitted) => effect {
+      const [source] = admitted.sources
+      if (admitted.mode !== "single" || source === undefined) throw new PublicationFailed()
+      const project = registry.project(source.projectId) catch effect () => { throw new PublicationFailed() }
+      if (project === undefined) throw new PublicationFailed()
+      const registryFence = try registry.fence({ projectId: project.projectId, revision: project.revision, manifestSha256: project.manifestSha256, repositoryKeys: [source.repository.toLowerCase()] })
+      const record = JSON.stringify({
+        schemaVersion: "slop-value-record:v1",
+        projectId: source.projectId,
+        repository: source.repository,
+        repositoryNodeId: source.repositoryNodeId,
+        repositoryDatabaseId: source.repositoryDatabaseId,
+        pullRequestNodeId: source.pullRequestNodeId,
+        pullRequestNumber: source.number,
+        headSha: recordedHeadSha,
+        mergeSha: null,
+        sourceDigest: admitted.result["sourceDigest"],
+        rubricVersion: admitted.result["rubricVersion"],
+        producerRevision: admitted.producerRevision,
+        assessedAt: admitted.result["assessedAt"],
+        supersedes: null,
+        revisionReason: null,
+        model: admitted.result["provenance"],
+      })
+      const stored = Effect.provide(appendValueRecord(record, { installationId: admitted.installationId, projectId: source.projectId, registryFence }), context) catch effect () => { throw new PublicationFailed() }
+      return { recordDigest: stored.record_digest, sequence: stored.sequence }
+    },
+  }
+})
+
+const inProcessImport = Layer.effect(HistoricalValueImport, effect {
+  const context = try Effect.context<PublisherServices>()
+  return {
+    configured: true,
+    publish: (administratorGithubId, input, bundle) => effect {
+      return Effect.provide(publishSubscription(administratorGithubId, input, bundle), context) catch effect () => { throw new NotPublished() }
+    },
+  }
+})
+
+function services(env: Env) {
+  const base = Layer.mergeAll(d1(env.SLOPBOT_DB), rolesFrom(env), webCrypto, outbound)
+  const app = Layer.provide(githubApp({ appId: env.SLOPBOT_APP_ID, privateKey: Redacted.make(env.SLOPBOT_APP_PRIVATE_KEY), userAgent: "slopbot" }), outbound)
+  const publisher = Layer.mergeAll(base, app, registryPorts, importSettings(env), Layer.provide(singleJournalPublication, Layer.merge(base, registryPorts)))
+  return Layer.mergeAll(base, cookieCaller, Layer.provide(RegistryManifestsLive, base), Layer.provide(inProcessImport, publisher))
+}
+
+const historyDecision = HttpRouter.add("GET", "/__test/history", answered(effect {
+  const query = new URL((try HttpServerRequest.HttpServerRequest).originalUrl).searchParams
+  const read = try readHistory({
+    projectId: query.get("project") ?? "",
+    repository: { id: query.get("repository") ?? "", nodeId: query.get("repositoryNodeId") },
+    pullRequestNumber: Number(query.get("pull") ?? "0"),
+    repositoryNodeId: query.get("repositoryNodeId") ?? "",
+    pullRequestNodeId: query.get("pullRequestNodeId") ?? "",
+  })
+  const selected = [...read.names.entries()].find(([name, id]) => id === read.history.selected && name.startsWith("record:"))?.[0].slice("record:".length) ?? null
+  return json({ phase: read.history.phase, outcome: read.history.outcome, total: read.history.total, through: read.history.through, rows: read.rows.length, selected })
+}))
+
+const legacyDecision = HttpRouter.add("GET", "/__test/legacy", answered(effect {
+  const query = new URL((try HttpServerRequest.HttpServerRequest).originalUrl).searchParams
+  const repository = query.get("repository") ?? ""
+  const repositoryNodeId = query.get("repositoryNodeId") ?? ""
+  return json(try legacyHeads([{
+    projectId: query.get("project") ?? "",
+    repository: { id: repository, nodeId: repositoryNodeId },
+    repositoryNames: [repository],
+    repositoryNodeId,
+    repositoryDatabaseId: Number(query.get("repositoryDatabaseId") ?? "0"),
+    pullRequestNodeId: query.get("pullRequestNodeId") ?? "",
+    pullRequestNumber: Number(query.get("pull") ?? "0"),
+  }]))
+}))
+
+export default worker({ services, routes: Layer.mergeAll(feedRoutes, summaryRoutes, importRoutes, historyDecision, legacyDecision) })

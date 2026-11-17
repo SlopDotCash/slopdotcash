@@ -1,0 +1,64 @@
+// spec/slopbot/valueInference.md, "Admit at most three unresolved or non-free attempts for the same key"
+import { isoAt, millisOf } from "@repo/platform/clock"
+import { type ReleaseSettings, validBudget } from "../../../gen/slopbot__valueInference.effect.vibe"
+
+export const valueApiStartAt = "2026-11-01T00:00:00.000Z"
+
+export interface ValueSettingsVars {
+  readonly SLOPBOT_VALUE_MONTHLY_BUDGET_MICRO_USD?: string
+  readonly SLOPBOT_VALUE_ATTEMPT_RESERVE_MICRO_USD?: string
+  readonly SLOPBOT_VALUE_START_AT?: string
+  readonly SLOPBOT_PRODUCER_REVISION?: string
+}
+
+export interface ValueSettings {
+  readonly monthly: number | null
+  readonly maximum: number | null
+  readonly start: number
+}
+
+export service InferenceConfig {
+  readonly settings: ValueSettings | undefined
+  readonly producerRevision: string | undefined
+}
+
+const revisionPattern = /^[a-f0-9]{40}$/u
+
+function amount(text: string) {
+  return /^[1-9][0-9]*$/u.test(text) && Number.isSafeInteger(Number(text)) ? Number(text) : null
+}
+
+export effect function valueSettings(vars: ValueSettingsVars) {
+  const mode = vars.SLOPBOT_VALUE_MONTHLY_BUDGET_MICRO_USD ?? ""
+  const reserve = vars.SLOPBOT_VALUE_ATTEMPT_RESERVE_MICRO_USD ?? ""
+  const alertsOnly = mode === "alerts-only"
+  const monthly = alertsOnly ? null : amount(mode)
+  const maximum = alertsOnly ? null : amount(reserve)
+  const startText = vars.SLOPBOT_VALUE_START_AT === undefined || vars.SLOPBOT_VALUE_START_AT === "" ? (alertsOnly ? valueApiStartAt : "") : vars.SLOPBOT_VALUE_START_AT
+  const start = millisOf(startText)
+  if ((!alertsOnly && (monthly === null || maximum === null)) || (reserve !== "" && amount(reserve) === null) || (monthly !== null && maximum !== null && maximum > monthly)) return undefined
+  if (!Number.isFinite(start) || (try isoAt(start)) !== startText || start < millisOf(valueApiStartAt)) return undefined
+  return { monthly, maximum, start } satisfies ValueSettings
+}
+
+export function releaseSettings(settings: ValueSettings | undefined): ReleaseSettings {
+  if (settings === undefined) return { mode: "MissingConfig", cap: 0, maximum: 0 }
+  if (settings.monthly === null || settings.maximum === null) return { mode: "AlertsOnly", cap: 0, maximum: 0 }
+  return { mode: "Capped", cap: settings.monthly, maximum: settings.maximum }
+}
+
+export function budgetConfigured(settings: ValueSettings | undefined) {
+  const release = releaseSettings(settings)
+  return validBudget(release.mode, release.cap, release.maximum)
+}
+
+export function producerRevisionOf(vars: ValueSettingsVars) {
+  const revision = vars.SLOPBOT_PRODUCER_REVISION ?? ""
+  return revisionPattern.test(revision) ? revision : undefined
+}
+
+export function inferenceConfig(vars: ValueSettingsVars) {
+  return Layer.effect(InferenceConfig, effect {
+    return { settings: try valueSettings(vars), producerRevision: producerRevisionOf(vars) }
+  })
+}

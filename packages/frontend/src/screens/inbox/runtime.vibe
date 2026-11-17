@@ -1,0 +1,136 @@
+// spec/operations/notifications.md, "Only the current recipient reads or acknowledges, and only case notices ask for acknowledgment"; spec/frontend/composition.md, "Account changes erase drafts and preserve every child invariant"; spec/frontend/navigation.md, "A private read belongs to the current account and navigation lifetime"; spec/frontend/navigation.md, "An identity refresh applies only within the navigation lifetime that requested it"; spec/frontend/emailAction.md, "An email verify or unsubscribe token survives sign-in and is applied once to the signed-in account"; spec/slopbot/assessmentInbox.md, "A departed page or changed actor cannot display a late queue response"; spec/points/disputes.md, "Only the recipient of the current revision files, and a repeated filing returns the first"; spec/points/disputes.md, "Only a moderator other than the recipient reads and decides an escalated dispute, once, with a reason"
+import type { DisputeAnswer } from "@repo/points/client"
+import type { InboxNotice } from "@repo/operations/client"
+import type { PageRuntime } from "../../app/runtime.vibe"
+import { loadAssessmentQueue } from "../../flows/account/assessments.vibe"
+import { type DisputeOutcome, decideDispute, listDisputes, openDispute, readDispute } from "../../flows/account/disputes.vibe"
+import { Inbox, type InboxView, inboxLayer } from "../../flows/account/inbox.vibe"
+import { currentAddress, replaceAddress } from "../../session/address.ts"
+import { BrowserSession } from "../../session/browserSession.vibe"
+import { EmailLink, emailActionLayer } from "../../session/emailAction.vibe"
+import { nextRevalidation } from "../../session/signals.ts"
+import { nextAddressChange, withoutPrivateQuery } from "./linkSignal.ts"
+
+effect function refreshedOnFocus(inbox: Inbox.Shape) {
+  const browser = try BrowserSession
+  while (true) {
+    try promise((signal) => nextRevalidation(signal))
+    const shown = try inbox.view()
+    if (!shown.busy && (try browser.lifetime()).actorId !== 0) try inbox.load()
+  }
+}
+
+effect function capturedLinks(link: EmailLink.Shape) {
+  while (true) {
+    try promise((signal) => nextAddressChange(signal))
+    try link.capture(currentAddress().hash)
+  }
+}
+
+function forgetPrivateQuery() {
+  const address = currentAddress()
+  replaceAddress(`${address.pathname}${withoutPrivateQuery(address.search)}${address.hash}`, true)
+}
+
+effect function forgottenOnRecipientChange(inbox: Inbox.Shape) {
+  let held: string | null = null
+  for try (const view of inbox.changes) {
+    const settled = view.recipient !== null || view.status === "signedOut"
+    if (settled && held !== null && view.recipient !== held) forgetPrivateQuery()
+    if (settled) held = view.recipient
+  }
+}
+
+const inboxWatch = Layer.effectDiscard(effect {
+  const inbox = try Inbox
+  const link = try EmailLink
+  const browser = try BrowserSession
+  let held = (try browser.lifetime()).actorId
+
+  try browser.onAccountChange((actorId) => effect {
+    if (actorId === 0 || held !== 0) forgetPrivateQuery()
+    held = actorId
+  })
+  fork.scoped forgottenOnRecipientChange(inbox)
+  fork.scoped refreshedOnFocus(inbox)
+  fork.scoped capturedLinks(link)
+})
+
+export const inboxSections = Layer.provideMerge(inboxWatch, Layer.mergeAll(inboxLayer, emailActionLayer))
+
+export type InboxRuntime = ReturnType<typeof makeInboxRuntime>
+
+function makeInboxRuntime(page: PageRuntime) {
+  return ManagedRuntime.make(Layer.provideMerge(inboxSections, Layer.effectContext(page.contextEffect)))
+}
+
+const sections = new WeakMap<PageRuntime, InboxRuntime>()
+
+export function inboxRuntime(page: PageRuntime): InboxRuntime {
+  const known = sections.get(page)
+  if (known !== undefined) return known
+  const made = makeInboxRuntime(page)
+  sections.set(page, made)
+  return made
+}
+
+export effect function watchInbox(show: (view: InboxView) => void!!) {
+  for try (const view of (try Inbox).changes) try show(view)
+}
+
+export effect function loadInbox() {
+  try (try Inbox).load()
+}
+
+export effect function olderNotices() {
+  try (try Inbox).older()
+}
+
+export effect function newerNotices() {
+  try (try Inbox).newer()
+}
+
+export effect function markNotices(eventKeys: ReadonlyArray<string>) {
+  try (try Inbox).markRead(eventKeys)
+}
+
+export effect function acknowledgeNotice(notice: InboxNotice) {
+  try (try Inbox).acknowledge(notice)
+}
+
+export effect function checkEmailLink() {
+  return try (try EmailLink).checkSession()
+}
+
+export effect function confirmEmailLink() {
+  return try (try EmailLink).confirm()
+}
+
+export effect function dismissEmailLink() {
+  try (try EmailLink).dismiss()
+}
+
+export effect function assessmentPage(actor: string, cursor: string | null, reloadOnRefusal: boolean) {
+  const queue = try loadAssessmentQueue(actor, cursor)
+  if (reloadOnRefusal && (queue.kind === "refresh" || queue.kind === "suppressed")) try (try Inbox).load()
+  return queue
+}
+
+effect function reconciled<A>(outcome: DisputeOutcome<A>, wrote: boolean) {
+  const refused = outcome.kind === "accountChanged" || (outcome.kind === "failed" && outcome.accessRefused)
+  if (refused || (wrote && outcome.kind === "done")) try (try Inbox).load()
+  return outcome
+}
+
+export effect function pointsReview(actor: string, selected: string | null, before: string | null) {
+  if (selected !== null) return try reconciled(try readDispute(actor, selected), false)
+  return try reconciled(try listDisputes(actor, before), false)
+}
+
+export effect function requestReview(actor: string, revisionId: string, reason: string) {
+  return try reconciled(try openDispute(actor, revisionId, reason), true)
+}
+
+export effect function answerReview(actor: string, key: string, answer: DisputeAnswer) {
+  return try reconciled(try decideDispute(actor, key, answer), true)
+}

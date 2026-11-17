@@ -11,7 +11,7 @@ import { Authority, type ProjectView, Registry, Restrictions } from "@repo/ports
 import { analysisPrompt, analysisPromptRevision, jsonValue } from "../src/analysis/prompts.ts"
 import { privateRoute } from "../src/analysis/route.vibe"
 import { type AssessmentView, analyze, assessQualified, assessmentRead } from "../src/assessment/routes.vibe"
-import { assessmentAt, attempted, started } from "../src/assessment/store.vibe"
+import { assessmentAt, attempted, caseExclusions, started } from "../src/assessment/store.vibe"
 import { caseAuthority } from "../src/caseAuthority/snapshot.vibe"
 import { caseStanding } from "../src/intake/rows.vibe"
 import { reportBucket } from "../src/privacy/reads.vibe"
@@ -181,7 +181,7 @@ effect function onceAtATime(assessed: Assessed.Shape) {
 
   const b = try submit(world, "assessment-case-b-01", reportB)
   try qualify(world, b.id)
-  const lateRun = try started(b.caseId, { type: "startAutomatic", nowMs: clock.now() }, 0, (try rolesOf(b.caseId, maintainer)).authority, 1)
+  const lateRun = try started(b.caseId, { type: "startAutomatic", nowMs: clock.now(), exclusions: try caseExclusions(b.caseId) }, 0, (try rolesOf(b.caseId, maintainer)).authority, 1)
   try promise(() => rows(world, "UPDATE security_submission_intake SET review_decision='request-information', review_reason='Show the affected amount.', reviewed_at=?, reviewed_by=?, revision=revision+1 WHERE submission_id=?", new Date().toISOString(), maintainer, b.id))
   const [intakeB] = try promise(() => rows(world, "SELECT revision FROM security_submission_intake WHERE submission_id=?", b.id))
   const revised = try promise(() => request(world, `/api/v1/security-submissions/${b.id}/report`, { as: reporter, json: { expectedRevision: intakeB?.revision, report: revisedB } }))
@@ -198,7 +198,7 @@ effect function onceAtATime(assessed: Assessed.Shape) {
   try qualify(world, c.id)
   fake.reply(about(reportC.summary), { failure: "unavailable" })
   const failed = try assessQualified({ caseId: c.caseId, version: 1 })
-  const lost = try started(c.caseId, { type: "startOwnerRun", checkedEpoch: 1, nowMs: clock.now() }, Number(maintainer), (try rolesOf(c.caseId, maintainer)).authority)
+  const lost = try started(c.caseId, { type: "startOwnerRun", checkedEpoch: 1, nowMs: clock.now(), exclusions: try caseExclusions(c.caseId) }, Number(maintainer), (try rolesOf(c.caseId, maintainer)).authority)
   const whileRunning = try outcome(analyze({ caseId: c.caseId, actor: actor(maintainer) }))
   clock.advance(900001)
   fake.reply((call) => {

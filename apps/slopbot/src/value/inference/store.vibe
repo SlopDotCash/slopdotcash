@@ -1,0 +1,316 @@
+// spec/slopbot/valueInference.md, "Take all source leases or none"; spec/slopbot/valueInference.md, "Admit at most three unresolved or non-free attempts for the same key"; spec/slopbot/valueInference.md, "Usage precedes retained output and explicit completion"; spec/slopbot/valueInference.md, "A retained inference survives stale publication without another charge"
+import { isoNow } from "@repo/platform/clock"
+import { sha256Hex } from "@repo/platform/crypto"
+import { D1, type Statement, decoded, sql } from "@repo/platform/d1"
+import { recordCalls } from "../../route/calls.vibe"
+import { type CallRecord, budgetExhausted, stepOf } from "../../route/route.vibe"
+import { monthNumber, monthOf } from "../../spend/store.vibe"
+import { type Attempt, type AttemptPhase, type Charge, type Event, type Provider, type ValueInference, apply, decodeState, initial, noRetained } from "../../../gen/slopbot__valueInference.effect.vibe"
+import { sizeBandOfValue } from "./assessment.vibe"
+import { admitWrite, completeWrite, reconcileWrite, reserveWrite, resultWrite } from "./budget.vibe"
+
+export error InferenceRaced { step: string }
+
+export interface Overlay {
+  readonly token: number
+  readonly stage: AttemptPhase
+  readonly routeStep: number
+  readonly usageSaved: boolean
+  readonly allCalls: ReadonlyArray<Charge>
+}
+
+type Local = Pick<ValueInference, "now" | "month" | "key" | "group" | "authority" | "config" | "monthlyCap" | "maximum" | "requests" | "published">
+
+export interface Retaining {
+  readonly resultJson: string
+}
+
+interface Kept {
+  readonly local: Local
+  readonly ids: ReadonlyMap<string, number>
+  readonly overlays: ReadonlyMap<string, Overlay>
+  readonly calls: ReadonlyMap<string, ReadonlyArray<CallRecord>>
+  readonly retaining: ReadonlyMap<string, Retaining>
+}
+
+export interface InferenceSession {
+  readonly key: string
+  readonly installationId: number
+  readonly kept: Ref.Ref<Kept>
+}
+
+schema AttemptRow {
+  attempt_id: string
+  month: string | null
+  reserved_micro_usd: number | null
+  approved_limit_micro_usd: number | null
+  completed: number
+  reconciled: number
+}
+
+schema CostRow {
+  review_key: string
+  provider: string
+  requested_model: string
+  served_model: string | null
+  outcome: string
+  failure: string | null
+  provider_cost_micro_usd: number | null
+  cost_micro_usd: number
+  billed_micro_usdc: number
+}
+
+schema ResultRow { attempt_id: string; result_json: string; result_digest: string }
+
+const RetainedJson = Schema.Struct({ verdict: Schema.Unknown })
+
+export interface StoredResult {
+  readonly attemptId: string
+  readonly resultJson: string
+  readonly resultDigest: string
+}
+
+export interface Loaded {
+  readonly state: ValueInference
+  readonly result: StoredResult | undefined
+}
+
+const providers: ReadonlyArray<Provider> = ["SurplusSonnet", "SurplusTerra", "OrbioSonnet"]
+
+export function providerOfCall(gateway: string, requestedModel: string): Provider {
+  return providers.find((provider) => stepOf(provider).gateway === gateway && stepOf(provider).model === requestedModel) ?? "OrbioSonnet"
+}
+
+export function callResultOf(gateway: string, outcome: string, failure: string | null) {
+  if (outcome === "ok") return "ValidResult" as const
+  return failure === budgetExhausted && gateway === "surplus" ? "BudgetDenial" as const : "FailedCall" as const
+}
+
+export effect function verdictDigest(verdict: unknown) {
+  return try sha256Hex(try orDie(Effect.try(() => JSON.stringify(verdict))))
+}
+
+export effect function openInference(key: string, installationId: number) {
+  const kept = try Ref.make<Kept>({
+    local: { ...initial },
+    ids: new Map(),
+    overlays: new Map(),
+    calls: new Map(),
+    retaining: new Map(),
+  })
+  return { key, installationId, kept } satisfies InferenceSession
+}
+
+function textOf(kept: Kept, id: number) {
+  return [...kept.ids.entries()].find(([, number]) => number === id)?.[0]
+}
+
+effect function rowsOf(key: string) {
+  const own = sql`SELECT attempt_id FROM slopbot_value_inference_attempts WHERE inference_key = ${key}`
+  const [attempts, costs, results] = try (try D1).batch([
+    sql`SELECT a.attempt_id, r.month, r.reserved_micro_usd, r.approved_limit_micro_usd,
+        EXISTS (SELECT 1 FROM slopbot_value_attempt_completions done WHERE done.attempt_id = a.attempt_id) AS completed,
+        EXISTS (SELECT 1 FROM slopbot_value_budget_reconciliations c WHERE c.attempt_id = a.attempt_id) AS reconciled
+      FROM slopbot_value_inference_attempts a LEFT JOIN slopbot_value_budget_reservations r ON r.attempt_id = a.attempt_id
+      WHERE a.inference_key = ${key} ORDER BY a.rowid`,
+    sql`SELECT review_key, provider, requested_model, served_model, outcome, failure, provider_cost_micro_usd, cost_micro_usd, billed_micro_usdc
+      FROM slopbot_costs WHERE review_key IN (${own}) ORDER BY rowid`,
+    sql`SELECT attempt_id, result_json, result_digest FROM slopbot_value_inference_results WHERE inference_key = ${key}`,
+  ])
+  return {
+    attempts: try decoded(AttemptRow, attempts?.rows ?? [], "value inference attempts"),
+    costs: try decoded(CostRow, costs?.rows ?? [], "value inference costs"),
+    results: try decoded(ResultRow, results?.rows ?? [], "value inference results"),
+  }
+}
+
+effect function retainedOf(row: ResultRow | undefined) {
+  if (row === undefined) return undefined
+  const parsed = Effect.try(() => JSON.parse(row.result_json) as unknown) catch () => undefined
+  const stored = Schema.decodeUnknownEffect(RetainedJson)(parsed) catch () => undefined
+  if (stored === undefined) return undefined
+  return { digest: try verdictDigest(stored.verdict), sizeBand: sizeBandOfValue(stored.verdict) }
+}
+
+function chargeOf(row: CostRow, output: string, sizeBand: number): Charge {
+  const result = callResultOf(row.provider, row.outcome, row.failure)
+  return {
+    provider: providerOfCall(row.provider, row.requested_model),
+    seenModel: row.served_model ?? "",
+    result,
+    known: row.provider_cost_micro_usd !== null,
+    actual: row.provider_cost_micro_usd ?? 0,
+    estimate: row.cost_micro_usd,
+    output: result === "ValidResult" ? output : "",
+    sizeBand: result === "ValidResult" ? sizeBand : 0,
+    customerCharge: row.billed_micro_usdc,
+  }
+}
+
+function freeAttempt(calls: ReadonlyArray<Charge>) {
+  return calls.length > 0 && calls.every((call) => call.result === "BudgetDenial")
+}
+
+export effect function loadInference(session: InferenceSession) {
+  const kept = try Ref.get(session.kept)
+  const found = try rowsOf(session.key)
+  const [resultRow] = found.results
+  const retained = try retainedOf(resultRow)
+  const ids = new Map(kept.ids)
+  for (const row of found.attempts) if (!ids.has(row.attempt_id)) ids.set(row.attempt_id, Math.max(0, ...ids.values()) + 1)
+  const attempts: Attempt[] = []
+  const occupied: number[] = []
+  for (const row of found.attempts) {
+    const id = ids.get(row.attempt_id) ?? 0
+    const overlay = kept.overlays.get(row.attempt_id)
+    const own = resultRow?.attempt_id === row.attempt_id
+    const calls = overlay !== undefined ? [...overlay.allCalls] : found.costs.filter((cost) => cost.review_key === row.attempt_id)
+      .map((cost) => chargeOf(cost, own && retained !== undefined ? retained.digest : `unretained:${row.attempt_id}`, own ? retained?.sizeBand ?? 0 : 0))
+    const reserved = row.month !== null
+    const completed = row.completed === 1
+    const usageSaved = overlay?.usageSaved ?? (calls.length > 0 || completed)
+    const durable: AttemptPhase = completed ? "Completed" : usageSaved ? "RouteDone" : reserved ? "HeldBudget" : "Admitted"
+    const reconciled = row.reconciled === 1
+    attempts.push({
+      id,
+      token: overlay?.token ?? 0,
+      month: row.month === null ? kept.local.month : monthNumber(row.month),
+      stage: completed ? "Completed" : overlay?.stage ?? durable,
+      limited: row.approved_limit_micro_usd !== null,
+      maximum: row.approved_limit_micro_usd !== null ? row.reserved_micro_usd ?? 0 : 0,
+      routeStep: overlay?.routeStep ?? 0,
+      allCalls: calls,
+      usageSaved,
+      resultStored: own,
+      reconciled,
+    })
+    if (reserved && !(usageSaved && freeAttempt(calls)) && !(reconciled && calls.length === 0)) occupied.push(id)
+  }
+  try Ref.update(session.kept, (current) => ({ ...current, ids }))
+  const retainedId = resultRow === undefined ? 0 : ids.get(resultRow.attempt_id) ?? 0
+  const state = try decodeState({
+    ...kept.local,
+    attempts,
+    occupied,
+    retained: resultRow === undefined || retained === undefined ? noRetained : { attempt: retainedId, key: session.key, result: retained.digest, sizeBand: retained.sizeBand },
+  })
+  return {
+    state,
+    result: resultRow === undefined ? undefined : { attemptId: resultRow.attempt_id, resultJson: resultRow.result_json, resultDigest: resultRow.result_digest },
+  } satisfies Loaded
+}
+
+export effect function inferenceState(session: InferenceSession) {
+  return (try loadInference(session)).state
+}
+
+function attemptOf(event: Event) {
+  return "attemptId" in event ? event.attemptId : undefined
+}
+
+effect function changed(statement: Statement, step: string) {
+  const changes = try (try D1).run(statement)
+  if (changes !== 1) throw new InferenceRaced({ step })
+}
+
+effect function writesFor(session: InferenceSession, current: ValueInference, next: ValueInference, event: Event) {
+  const kept = try Ref.get(session.kept)
+  const id = attemptOf(event)
+  const text = id === undefined ? undefined : textOf(kept, id)
+  const at = try isoNow()
+  if (event.type === "admit") {
+    if (text === undefined) throw new InferenceRaced({ step: "admit" })
+    try changed(admitWrite(session.key, text, at), "admit")
+    return
+  }
+  if (text === undefined) return
+  const calls = kept.calls.get(text) ?? []
+  const attempt = next.attempts.find((candidate) => candidate.id === id)
+  if (event.type === "reserve") {
+    const capped = current.config === "Capped"
+    try changed(reserveWrite({ key: session.key, attemptId: text, month: monthOf(at), maximum: capped ? current.maximum : null, monthly: capped ? current.monthlyCap : null, at }), "reserve")
+    return
+  }
+  if (event.type === "saveUsage") {
+    try recordCalls(text, session.installationId, "triage", calls)
+    return
+  }
+  if (event.type === "retain") {
+    const retaining = kept.retaining.get(text)
+    if (retaining === undefined) throw new InferenceRaced({ step: "retain" })
+    try changed(resultWrite(session.key, text, retaining.resultJson, try sha256Hex(retaining.resultJson), at), "retain")
+    return
+  }
+  if (event.type === "complete") {
+    try changed(completeWrite(session.key, text, calls.length, attempt?.resultStored ?? false, at), "complete")
+    return
+  }
+  if (event.type === "reconcile") {
+    try changed(reconcileWrite(text, current.attempts.find((candidate) => candidate.id === id)?.allCalls.length ?? 0, at), "reconcile")
+  }
+}
+
+function localOf(state: ValueInference): Local {
+  return {
+    now: state.now,
+    month: state.month,
+    key: state.key,
+    group: state.group,
+    authority: state.authority,
+    config: state.config,
+    monthlyCap: state.monthlyCap,
+    maximum: state.maximum,
+    requests: state.requests,
+    published: state.published,
+  }
+}
+
+export effect function nameAttempt(session: InferenceSession, id: number, text: string) {
+  try Ref.update(session.kept, (kept) => ({ ...kept, ids: new Map([...kept.ids, [text, id]]) }))
+}
+
+export effect function nextAttemptNumber(session: InferenceSession) {
+  const kept = try Ref.get(session.kept)
+  return Math.max(0, ...kept.ids.values()) + 1
+}
+
+export effect function noteCall(session: InferenceSession, id: number, call: CallRecord) {
+  try Ref.update(session.kept, (kept) => {
+    const text = textOf(kept, id)
+    if (text === undefined) return kept
+    return { ...kept, calls: new Map([...kept.calls, [text, [...kept.calls.get(text) ?? [], call]]]) }
+  })
+}
+
+export effect function noteResult(session: InferenceSession, id: number, resultJson: string) {
+  try Ref.update(session.kept, (kept) => {
+    const text = textOf(kept, id)
+    if (text === undefined) return kept
+    return { ...kept, retaining: new Map([...kept.retaining, [text, { resultJson }]]) }
+  })
+}
+
+export effect function callsOf(session: InferenceSession, id: number) {
+  const kept = try Ref.get(session.kept)
+  const text = textOf(kept, id)
+  return text === undefined ? [] : kept.calls.get(text) ?? []
+}
+
+export effect function attemptText(session: InferenceSession, id: number) {
+  return textOf(try Ref.get(session.kept), id)
+}
+
+export effect function sendInference(session: InferenceSession, event: Event) {
+  const { state: current } = try loadInference(session)
+  const next = try apply(current, event)
+  try writesFor(session, current, next, event)
+  const id = attemptOf(event)
+  try Ref.update(session.kept, (kept) => {
+    const text = id === undefined ? undefined : textOf(kept, id)
+    const attempt = next.attempts.find((candidate) => candidate.id === id)
+    const overlays = text === undefined || attempt === undefined ? kept.overlays
+      : new Map([...kept.overlays, [text, { token: attempt.token, stage: attempt.stage, routeStep: attempt.routeStep, usageSaved: attempt.usageSaved, allCalls: attempt.allCalls } satisfies Overlay]])
+    return { ...kept, local: localOf(next), overlays }
+  })
+  return try inferenceState(session)
+}

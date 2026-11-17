@@ -1,9 +1,10 @@
-// spec/operations/notifications.md, "Story: Read, acknowledge and escalate private case notices"; spec/operations/notifications.md, "Only the current recipient reads or acknowledges, and only case notices ask for acknowledgment"; spec/operations/notifications.md, "The Inbox shows one delivery word and never the address, digest, provider reference or attempt count"; spec/operations/moderation.md, "Every open rechecks the current roster and refuses a stale or unavailable check"
+// spec/operations/notifications.md, "Story: Read, acknowledge and escalate private case notices"; spec/operations/notifications.md, "Only the current recipient reads or acknowledges, and only case notices ask for acknowledgment"; spec/operations/notifications.md, "The Inbox shows one delivery word and never the address, digest, provider reference or attempt count"; spec/operations/moderation.md, "Every open rechecks the current roster and refuses a stale or unavailable check"; spec/slopbot/assessmentInbox.md, "A read captures its actor, exact registry binding and response route"
 import { first, rows, sql } from "@repo/platform/d1"
 import { Caller, handle, handleRaw, jsonBody, sameOriginWrite, strictBody } from "@repo/platform/http"
 import { Roles } from "@repo/platform/roles"
 import type { Access, Route } from "@repo/platform/route"
 import { SecurityNoticeAccess } from "@repo/ports/security"
+import { AssessmentQueue } from "@repo/ports/slopbot"
 import { AcknowledgeFields, acknowledgeCaseNotice, appealPrefix, isNotificationEventKey, listNotices, markNoticesRead, maxNotificationMark, openAppealReview, openScamReview, otherInboxMethods, scamReviewPrefix } from "../client/inbox.vibe"
 import type { Release } from "../notifications/rows.vibe"
 import { deliveryScope, noticeIdOf, observe, readMany, send } from "../notifications/store.vibe"
@@ -68,7 +69,8 @@ effect function listed(query: URLSearchParams) {
   const text = query.get("cursor")
   const cursor = text === null ? undefined : try cursorOf(text)
   if (text !== null && cursor === undefined) throw refused(refusals.invalidCursor)
-  return try inboxPage(actor.githubId, try moderator(actor.githubId), cursor)
+  const page = try inboxPage(actor.githubId, try moderator(actor.githubId), cursor)
+  return { ...page, incompleteAssessments: try (try AssessmentQueue).bundled(actor, query) }
 }
 
 function markedKeys(input: unknown): ReadonlyArray<string> | undefined {

@@ -152,7 +152,7 @@ effect function recordedDecision(row: Send, offset: number) {
 }
 
 function request(orderId: number, tx: number, amount: number, takeAmount: number, solana: boolean, nativeFee: number): BridgeOrder {
-  return { orderId, tx, amount, takeAmount, costBps: 0, receiver: "fees", authority: "fees", beneficiary: "fees", externalCall: false, affiliateFee: 0, reservedTaker: "", solana, nativeFee }
+  return { orderId, tx, amount, takeAmount, costBps: 0, receiver: "fees", authority: "fees", beneficiary: "fees", externalCall: false, affiliateFee: 0, reservedTaker: "", solana, nativeFee, balance: 0 }
 }
 
 export function incomeKey(leg: Leg, entry: IncomeEntry): IncomeKey {

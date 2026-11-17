@@ -85,6 +85,7 @@ export function readinessOf(ledger: Ledger, actor: string, obligationId: string,
     attemptClaim: claim,
     attemptOpen: attempt !== undefined,
     privateCase: ledger.kind === "private" ? modelCase : 0,
+    outboxReady: false,
   }
   const payment = attempt === undefined || wallet === undefined ? undefined : {
     obligationId,

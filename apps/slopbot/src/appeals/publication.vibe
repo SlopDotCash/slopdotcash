@@ -1,0 +1,225 @@
+// spec/slopbot/appeals.md, "Each stage comment is posted once and a resolution retry resumes its recorded writes"; spec/slopbot/appeals.md, "Slopbot stores one draft, and the published criteria escalate it to a moderator"
+import { isoAt } from "@repo/platform/clock"
+import { randomId, sha256Hex } from "@repo/platform/crypto"
+import { D1, first, sql } from "@repo/platform/d1"
+import { GitHub, type GitHubFailure } from "@repo/platform/github"
+import { canPostDraft, canPostEscalation, canPostResolution, type Appeal } from "../../gen/slopbot__appeals.effect.vibe"
+import { definitiveRefusal } from "../../gen/slopbot__closeAttempt.effect.vibe"
+import { type CommentHistory, type IssueComment, commentHistoryPageLimit, lookupOutcome } from "../../gen/slopbot__review.effect.vibe"
+import { leaseSeconds } from "../../gen/slopbot__reviewLease.effect.vibe"
+import { moderatorLabel } from "../closeAttempt/moderators.vibe"
+import { ReviewBusy } from "../jobs/retry.vibe"
+import { recordAction } from "../publish/actions.vibe"
+import { addLabels } from "../publish/labels.vibe"
+import { type ScopedItem, requireScope, scopeAllows } from "../publish/scope.vibe"
+import { observe } from "../scope/facts.vibe"
+import { type AppealSession, appUserOf, hasLabel, itemOf, reversalOnly } from "./session.vibe"
+import { type Loaded, type PublicationFence, type Stage, commitAppeal, loadAppeal, postEventOf, postedIn, resolutionDays, stageKey } from "./store.vibe"
+
+module verified {
+  import { neutralize as neutralized } from "../publish/text.ts"
+  /** @throws {never} */
+  export function neutralize(text: string): string { return neutralized(text) }
+}
+import { neutralize } from verified
+
+schema ClaimRow { readonly post_started_at: string | null; readonly confirmed_comment_id: number | null }
+schema CommentAuthor { readonly id: number; readonly type: string }
+schema CommentRead { readonly id: number; readonly body: string | null; readonly user: CommentAuthor | null }
+schema CommentWritten { readonly id: number }
+schema Recorded { readonly n: number }
+
+export interface AppealPublication {
+  readonly key: string
+  readonly item: ScopedItem
+  readonly appUser: number
+  readonly body: string
+}
+
+export interface Publishing<PE, PR, AE, AR, CE, CR> {
+  readonly posted: () => boolean!PE!PR
+  readonly authorize: () => void!AE!AR
+  readonly confirm: (fence: PublicationFence, commentId: number) => void!CE!CR
+}
+
+export interface Claimed {
+  readonly fence: PublicationFence
+  readonly postStarted: boolean
+  readonly confirmed: number | undefined
+}
+
+export error AppealCommentUncertain { key: string }
+export error AppealCommentUnconfirmed { key: string; status: number }
+export error AppealCommentRefused { key: string; lookup: string }
+
+const commentPage = Schema.Array(CommentRead)
+const pageSize = 100
+const posts: Readonly<Record<Stage, (appeal: Appeal) => boolean>> = { draft: canPostDraft, escalation: canPostEscalation, resolution: canPostResolution }
+
+function held(fence: PublicationFence, at: string) {
+  return sql`publication_key = ${fence.key} AND claim_token = ${fence.token} AND lease_expires_at > ${at}`
+}
+
+export effect function claimPublication(key: string) {
+  const token = try randomId()
+  const millis = try Clock.currentTimeMillis
+  const at = try isoAt(millis)
+  const claimed: typeof ClaimRow.Type | undefined = try first(ClaimRow, sql`INSERT INTO slopbot_appeal_publications (publication_key, claim_token, lease_expires_at)
+    VALUES (${key}, ${token}, ${try isoAt(millis + leaseSeconds * 1000)})
+    ON CONFLICT (publication_key) DO UPDATE SET claim_token = excluded.claim_token, lease_expires_at = excluded.lease_expires_at
+    WHERE lease_expires_at IS NULL OR lease_expires_at <= ${at}
+    RETURNING post_started_at, confirmed_comment_id`)
+  if (claimed === undefined) throw new ReviewBusy({ remainingSeconds: leaseSeconds })
+  return { fence: { key, token }, postStarted: claimed.post_started_at !== null, confirmed: claimed.confirmed_comment_id ?? undefined } satisfies Claimed
+}
+
+export effect function releasePublication(fence: PublicationFence) {
+  try (try D1).run(sql`UPDATE slopbot_appeal_publications SET claim_token = NULL, lease_expires_at = NULL WHERE publication_key = ${fence.key} AND claim_token = ${fence.token}`)
+}
+
+export effect function markPostStarted(fence: PublicationFence) {
+  const at = try isoAt(try Clock.currentTimeMillis)
+  return (try (try D1).run(sql`UPDATE slopbot_appeal_publications SET post_started_at = ${at} WHERE ${held(fence, at)} AND post_started_at IS NULL`)) === 1
+}
+
+effect function clearPostStarted(fence: PublicationFence) {
+  const at = try isoAt(try Clock.currentTimeMillis)
+  try (try D1).run(sql`UPDATE slopbot_appeal_publications SET post_started_at = NULL WHERE ${held(fence, at)} AND confirmed_comment_id IS NULL`)
+}
+
+export effect function markerOf(key: string) {
+  return `<!-- slopbot:appeal:${try sha256Hex(key)} -->`
+}
+
+function ownsMarker(body: string | null, marker: string) {
+  return body !== null && (body === marker || body.startsWith(`${marker}\n`))
+}
+
+function issueCommentOf(comment: typeof CommentRead.Type, marker: string): IssueComment {
+  return {
+    commentId: Number.isSafeInteger(comment.id) && comment.id > 0 ? comment.id : 0,
+    botAuthor: comment.user?.type === "Bot",
+    authorId: comment.user?.id ?? 0,
+    startsWithMarker: ownsMarker(comment.body, marker),
+  }
+}
+
+effect function appealComments(item: ScopedItem, marker: string) {
+  const github = try GitHub
+  const comments: IssueComment[] = []
+  for (let page = 1; page <= commentHistoryPageLimit; page++) {
+    const read = try github.json(`/repositories/${item.ref.repositoryId}/issues/${item.number}/comments?per_page=${pageSize}&page=${page}`, commentPage)
+    if (read.length > pageSize) return { comments, pagesRead: page, historyComplete: false } satisfies CommentHistory
+    comments.push(...read.map((comment) => issueCommentOf(comment, marker)))
+    if (read.length < pageSize) return { comments, pagesRead: page, historyComplete: true } satisfies CommentHistory
+  }
+  return { comments, pagesRead: commentHistoryPageLimit + 1, historyComplete: false } satisfies CommentHistory
+}
+
+export effect function findAppealComment(publication: AppealPublication, marker: string) {
+  const history = try appealComments(publication.item, marker)
+  const lookup = lookupOutcome(history, publication.appUser)
+  if (lookup === "CommentNotFound") return undefined
+  if (lookup !== "CommentFound") throw new AppealCommentRefused({ key: publication.key, lookup })
+  return history.comments.find((comment) => comment.commentId > 0 && comment.botAuthor && comment.authorId === publication.appUser && comment.startsWithMarker)?.commentId
+}
+
+function refusedStatus(error: GitHubFailure) {
+  if (error._tag === "NotFound") return 404
+  if (error._tag === "GitHubRefused") return error.status
+  if (error._tag === "RateLimited") return 429
+  return 0
+}
+
+effect function created<PE, PR, AE, AR, CE, CR>(publication: AppealPublication, fence: PublicationFence, marker: string, publishing: Publishing<PE, PR, AE, AR, CE, CR>) {
+  try publishing.authorize()
+  if (!(try markPostStarted(fence))) throw new AppealCommentUncertain({ key: publication.key })
+  const sent = (try GitHub).send("POST", `/repositories/${publication.item.ref.repositoryId}/issues/${publication.item.number}/comments`, { body: `${marker}\n${publication.body}` }, CommentWritten) catch effect (error) => {
+    if (definitiveRefusal(refusedStatus(error))) try clearPostStarted(fence)
+    throw error
+  }
+  const id = sent.value?.id ?? 0
+  if (sent.status !== 201 || !Number.isSafeInteger(id) || id <= 0) throw new AppealCommentUnconfirmed({ key: publication.key, status: sent.status })
+  return id
+}
+
+effect function published<PE, PR, AE, AR, CE, CR>(publication: AppealPublication, claimed: Claimed, publishing: Publishing<PE, PR, AE, AR, CE, CR>) {
+  if (try publishing.posted()) return
+  try publishing.authorize()
+  const marker = try markerOf(publication.key)
+  const found = claimed.confirmed ?? try findAppealComment(publication, marker)
+  if (found === undefined && claimed.postStarted) throw new AppealCommentUncertain({ key: publication.key })
+  const commentId = found ?? try created(publication, claimed.fence, marker, publishing)
+  try publishing.confirm(claimed.fence, commentId)
+}
+
+export effect function publishAppealComment<PE, PR, AE, AR, CE, CR>(publication: AppealPublication, publishing: Publishing<PE, PR, AE, AR, CE, CR>) {
+  if (try publishing.posted()) return
+  const claimed = try claimPublication(publication.key)
+  try ensuring(published(publication, claimed, publishing), effect { releasePublication(claimed.fence) catch () => undefined })
+}
+
+function confidenceText(loaded: Loaded) {
+  return (loaded.row?.draft_confidence ?? 0).toFixed(2)
+}
+
+export function appealComment(loaded: Loaded, stage: Stage) {
+  const row = loaded.row
+  const moderator = "A Slop moderator decides it with `/slopbot uphold` or `/slopbot deny`."
+  if (stage === "resolution")
+    return [
+      "<!-- slopbot:appeal -->",
+      `**Appeal ${row?.resolution === "upheld" ? "upheld" : "denied"}** (decided by the ${row?.resolved_by ?? "maintainer"}).`,
+      "",
+      row?.resolution === "upheld"
+        ? "Slopbot reverses its finding on this item and any penalty from it. A penalty reverses only once."
+        : "Slopbot's finding stands. A maintainer can still reopen this item; a maintainer's decision always wins.",
+    ].join("\n")
+  if (stage === "escalation")
+    return [
+      "<!-- slopbot:appeal -->",
+      `**Appeal sent to a Slop moderator:** ${neutralize(row?.escalation ?? "escalated")}.`,
+      "",
+      moderator,
+    ].join("\n")
+  const draft = row?.draft === "uphold"
+    ? "uphold the appeal. Slopbot would reopen this item only if Slopbot made its current close, and reverse any penalty from this finding. If another account closed it later, it stays closed."
+    : "deny the appeal. Slopbot's finding stands."
+  return [
+    "<!-- slopbot:appeal -->",
+    "**Slopbot appeal triage**",
+    "",
+    `Slopbot drafted this resolution: ${draft} Confidence: ${confidenceText(loaded)}.`,
+    "",
+    row?.escalation == null
+      ? `The author or a maintainer can comment \`/slopbot accept\` to apply this draft, or \`/slopbot reject\` to send the appeal to a Slop moderator. If the appeal is not resolved within ${resolutionDays} days, a moderator decides. A maintainer's reopen always wins.`
+      : `This appeal goes to a Slop moderator because ${neutralize(row.escalation)}. ${moderator}`,
+  ].join("\n")
+}
+
+effect function recordedLabel(key: string) {
+  const found = try first(Recorded, sql`SELECT count(*) AS n FROM slopbot_actions WHERE review_key = ${key} AND action = 'label'`)
+  return (found?.n ?? 0) > 0
+}
+
+export effect function labelOnce(session: AppealSession, key: string, label: string) {
+  if (try recordedLabel(key)) return
+  const item = itemOf(session)
+  if (!scopeAllows(try observe(item.ref), item.projectId, "contributor")) return
+  if (!hasLabel(session, label)) try addLabels(item, [label])
+  try recordAction({ reviewKey: key, repositoryId: session.job.repositoryId, itemNodeId: item.itemNodeId, action: "label", detail: label })
+}
+
+export effect function publishStage(session: AppealSession, appealKey: string, stage: Stage) {
+  if (reversalOnly(session)) return
+  const loaded = try loadAppeal(appealKey)
+  if (!postedIn(loaded.appeal, stage) && posts[stage](loaded.appeal)) {
+    const item = itemOf(session)
+    try publishAppealComment({ key: stageKey(appealKey, stage), item, appUser: appUserOf(session), body: appealComment(loaded, stage) }, {
+      posted: () => effect { return postedIn((try loadAppeal(appealKey)).appeal, stage) },
+      authorize: () => requireScope(item, "security"),
+      confirm: (fence, commentId) => Effect.asVoid(commitAppeal(appealKey, { fence }, () => [{ event: postEventOf(stage), by: 0, optional: true, commentId }])),
+    })
+  }
+  if (loaded.appeal.escalation !== "NotEscalated" && stage !== "resolution") try labelOnce(session, `${appealKey}:moderator`, moderatorLabel)
+}

@@ -1,6 +1,7 @@
 // spec/contributor/traceServer.md, "The run, its intents, reservation, objects and events are separate records"; spec/contributor/traceServer.md, "The clock, private-intake observation and ban state come from their owning services"
 import { type ContentType, type EventKind, type EventSource, type Put, type RunState, type TraceObject, intentLifetime, noRequest, decodeState } from "../../gen/contributor__traceServer.effect.vibe"
-import { type IntakeRow, intakeOf, secondsAt } from "./facts.vibe"
+import type { IntakeObservation } from "@repo/ports/operations"
+import { intakeOf, secondsAt } from "./facts.vibe"
 
 export schema TraceContentType = "text/plain" | "application/x-ndjson"
 
@@ -122,7 +123,7 @@ export interface RunRows {
   readonly events: ReadonlyArray<EventRow>
   readonly otherIntentKeys: ReadonlyArray<string>
   readonly otherEventKeys: ReadonlyArray<string>
-  readonly intake: IntakeRow | undefined
+  readonly intake: IntakeObservation | undefined
 }
 
 export interface Observations {

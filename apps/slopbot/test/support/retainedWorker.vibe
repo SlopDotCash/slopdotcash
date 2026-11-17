@@ -1,0 +1,285 @@
+// spec/slopbot/workUnits.md, "A claim is one changed path in one commit and belongs to its first accepted carrier"; spec/points/authorship.md, "A verified October carry goes to the original contributor; otherwise primary authorship precedes the fallbacks"
+import type { Fetcher } from "@repo/platform/bindings"
+import { github } from "@repo/platform/github"
+import { outboundVia } from "@repo/platform/http"
+import { type GitHubFake, githubFake } from "@repo/platform/testing/github"
+import type { RetainedSource } from "../../src/value/evidence/acceptance.vibe"
+import type { Actor, Comment, Commit, CommitAttribution, Evidence, RegisteredRepository, RepairBodyEdit } from "../../src/value/evidence/types.vibe"
+import type { FileChange } from "../../src/value/proofs/changes.vibe"
+import type { WorkUnitSource } from "../../src/value/workUnits/types.vibe"
+
+export const repository = "ada/kept"
+export const projectId = "kept"
+export const policyText = "# Contributing\n\nPull requests target `main`.\n"
+export const lines: Readonly<Record<string, string>> = {
+  "a.ts": "export const a = 1;",
+  "z.ts": "export const z = 26;",
+  "format.ts": "export const format = (value: number) => value.toFixed(2);",
+}
+
+export interface Kept {
+  readonly fake: GitHubFake
+  readonly token: string
+  readonly repositoryNodeId: string
+  readonly repositoryDatabaseId: number
+  readonly base: string
+  readonly original: string
+  readonly copy: string
+  readonly merge: string
+  readonly sharedBase: string
+  readonly originalFollowUp: string
+  readonly repair: string
+  readonly repairMerge: string
+  readonly ada: Actor
+  readonly grace: Actor
+  readonly linus: Actor
+  readonly pullIds: Readonly<Record<number, string>>
+}
+
+function text(path: string) {
+  return `${lines[path] ?? ""}\n`
+}
+
+export effect function seededKept() {
+  const fake = try Effect.try(() => githubFake())
+  const world = fake.world
+  const ada = try Effect.try(() => world.addUser({ id: 201, login: "ada", nodeId: "U_kgDOada0201" }))
+  const grace = try Effect.try(() => world.addUser({ id: 202, login: "grace", nodeId: "U_kgDOgrace202" }))
+  const linus = try Effect.try(() => world.addUser({ id: 203, login: "linus", nodeId: "U_kgDOlinus203" }))
+  const created = try Effect.try(() => world.addRepo({ id: 7413, owner: "ada", name: "kept", files: { "README.md": "kept\n" } }))
+  const base = try Effect.try(() => world.addCommit(repository, { message: "Base", author: "ada", date: "2026-11-01T00:00:00Z", files: { "notes.md": "notes\n" } }))
+  const original = try Effect.try(() => world.addCommit(repository, { branch: "original", parents: [base], message: "Add a", author: "ada", date: "2026-11-02T00:00:00Z", files: { "a.ts": text("a.ts") } }))
+  const copy = try Effect.try(() => world.addCommit(repository, { branch: "copy", parents: [base], message: "Add a (carried from #1)", author: "ada", date: "2026-11-03T00:00:00Z", files: { "a.ts": text("a.ts") } }))
+  const merge = try Effect.try(() => world.addCommit(repository, { branch: "merge", parents: [base, copy], message: "Merge pull request #2", author: "grace", date: "2026-11-05T00:00:00Z", files: { "a.ts": text("a.ts") } }))
+  const sharedBase = try Effect.try(() => world.addCommit(repository, { branch: "repairable", parents: [base], message: "Add z", author: "ada", date: "2026-11-06T00:00:00Z", files: { "z.ts": text("z.ts") } }))
+  const originalFollowUp = try Effect.try(() => world.addCommit(repository, { branch: "repairable", parents: [sharedBase], message: "Add format", author: "ada", date: "2026-11-07T00:00:00Z", files: { "format.ts": text("format.ts") } }))
+  const repair = try Effect.try(() => world.addCommit(repository, { branch: "repair", parents: [sharedBase], message: "Repair format", author: "linus", date: "2026-11-08T00:00:00Z", files: { "format.ts": text("format.ts") } }))
+  const repairMerge = try Effect.try(() => world.addCommit(repository, { branch: "repair-merge", parents: [base, repair], message: "Merge pull request #12", author: "grace", date: "2026-11-10T10:00:00Z", files: { "z.ts": text("z.ts"), "format.ts": text("format.ts") } }))
+  try Effect.try(() => world.addPull({ repo: repository, number: 1, author: "ada", title: "Add a", state: "closed", createdAt: "2026-11-02T00:00:00Z", closedAt: "2026-11-04T00:00:00Z", headSha: original, commits: [original] }))
+  try Effect.try(() => world.addPull({ repo: repository, number: 2, author: "grace", title: "Carry a", createdAt: "2026-11-03T00:00:00Z", headSha: copy, commits: [copy], mergedAt: "2026-11-05T00:00:00Z", mergeCommit: merge, mergedBy: "grace" }))
+  try Effect.try(() => world.addPull({ repo: repository, number: 11, author: "ada", title: "Add format", state: "closed", createdAt: "2026-11-06T00:00:00Z", closedAt: "2026-11-09T00:00:00Z", headSha: originalFollowUp, commits: [sharedBase, originalFollowUp] }))
+  try Effect.try(() => world.addPull({ repo: repository, number: 12, author: "grace", title: "Repair format", createdAt: "2026-11-08T00:00:00Z", headSha: repair, commits: [sharedBase, repair], mergedAt: "2026-11-10T10:00:00Z", mergeCommit: repairMerge, mergedBy: "grace" }))
+  const pullIds: Record<number, string> = {}
+  for (const number of [1, 2, 11, 12]) pullIds[number] = (try Effect.try(() => world.pull(repository, number))).nodeId
+  const token = try Effect.try(() => fake.tokens.user("ada"))
+  const actor = (account: { readonly nodeId: string }, login: string): Actor => ({ node_id: account.nodeId, login, type: "User" })
+  return {
+    fake,
+    token,
+    repositoryNodeId: created.nodeId,
+    repositoryDatabaseId: created.id,
+    base,
+    original,
+    copy,
+    merge,
+    sharedBase,
+    originalFollowUp,
+    repair,
+    repairMerge,
+    ada: actor(ada, "ada"),
+    grace: actor(grace, "grace"),
+    linus: actor(linus, "linus"),
+    pullIds,
+  } satisfies Kept
+}
+
+export function githubOverKept(kept: Kept) {
+  const fetcher: Fetcher = { fetch: (request) => kept.fake.fetch(request) }
+  return Layer.provide(github({ token: Redacted.make(kept.token), userAgent: "slopbot-retained" }), outboundVia(fetcher))
+}
+
+export function registeredKept(kept: Kept): RegisteredRepository {
+  return { id: repository, projectId, integrationBranch: "main", expectedNodeId: kept.repositoryNodeId, aliases: [] }
+}
+
+export function addedFile(path: string): FileChange {
+  return { filename: path, status: "added", additions: 1, deletions: 0, patch: `@@ -0,0 +1 @@\n+${lines[path] ?? ""}`, blob_url: `https://github.com/${repository}/blob/main/${path}` }
+}
+
+export interface Change {
+  readonly sha: string
+  readonly author: Actor
+  readonly parents: ReadonlyArray<string>
+  readonly date: string
+  readonly paths: ReadonlyArray<string>
+}
+
+export interface Shape {
+  readonly number: number
+  readonly author: Actor
+  readonly mergedBy: Actor | null
+  readonly mergedAt: string | null
+  readonly closedAt: string
+  readonly mergeSha: string | null
+  readonly headSha: string
+  readonly body: string | null
+  readonly changes: ReadonlyArray<Change>
+  readonly comments: ReadonlyArray<Comment>
+  readonly related: ReadonlyArray<number>
+  readonly repairBodyEdit?: RepairBodyEdit
+}
+
+export function commitOf(change: Change): Commit {
+  return {
+    sha: change.sha,
+    html_url: `https://github.com/${repository}/commit/${change.sha}`,
+    author: change.author,
+    committer: change.author,
+    parents: change.parents.map((sha) => ({ sha })),
+    commit: { message: `Change ${change.sha.slice(0, 7)}`, author: { date: change.date }, committer: { date: change.date } },
+  }
+}
+
+function attributionOf(change: Change): CommitAttribution {
+  return { sha: change.sha, actorNodeIds: [change.author.node_id], changedPaths: [...change.paths], files: change.paths.map(addedFile), limitations: [] }
+}
+
+export function pullUrl(number: number) {
+  return `https://github.com/${repository}/pull/${number}`
+}
+
+export function commentOn(number: number, id: number, author: Actor, body: string, at: string): Comment {
+  return { node_id: `IC_kwDOkept${id}`, html_url: `${pullUrl(number)}#issuecomment-${id}`, body, user: author, created_at: at, updated_at: at }
+}
+
+export function keptEvidence(kept: Kept, shape: Shape): Evidence {
+  const paths = [...new Set(shape.changes.flatMap((change) => change.paths))].sort()
+  const registered = registeredKept(kept)
+  const updatedAt = shape.mergedAt ?? shape.closedAt
+  return {
+    repository,
+    repositoryNodeId: kept.repositoryNodeId,
+    repositoryDatabaseId: kept.repositoryDatabaseId,
+    repositoryPolicy: { id: registered.id, projectId: registered.projectId, integrationBranch: registered.integrationBranch, expectedNodeId: registered.expectedNodeId },
+    collectedAt: "2026-11-12T00:00:00.000Z",
+    pull: {
+      node_id: kept.pullIds[shape.number] ?? "",
+      number: shape.number,
+      html_url: pullUrl(shape.number),
+      title: `Pull ${shape.number}`,
+      body: shape.body,
+      user: shape.author,
+      merged_by: shape.mergedBy,
+      state: "closed",
+      merged_at: shape.mergedAt,
+      closed_at: shape.closedAt,
+      merge_commit_sha: shape.mergeSha,
+      updated_at: updatedAt,
+      head: { sha: shape.headSha },
+      base: { sha: kept.base, ref: "main" },
+      changed_files: paths.length,
+      comments: shape.comments.length,
+      review_comments: 0,
+      commits: shape.changes.length,
+    },
+    files: paths.map(addedFile),
+    mergeCommitEvidence: shape.mergeSha === null ? null : {
+      sha: shape.mergeSha,
+      html_url: `https://github.com/${repository}/commit/${shape.mergeSha}`,
+      parents: [{ sha: kept.base }, { sha: shape.headSha }],
+      stats: { total: paths.length, additions: paths.length, deletions: 0 },
+      files: paths.map(addedFile),
+    },
+    commits: shape.changes.map(commitOf),
+    reviews: [],
+    comments: shape.comments,
+    reviewComments: [],
+    limitations: [],
+    evidenceUrls: [pullUrl(shape.number)],
+    eligibleReviewIds: [],
+    implementationActorNodeIds: [shape.author.node_id],
+    commitAttribution: shape.changes.map(attributionOf),
+    relatedPullRequests: shape.related.map((number) => ({ id: kept.pullIds[number] ?? "", number, url: pullUrl(number), repository })),
+    ...(shape.repairBodyEdit === undefined ? {} : { repairBodyEdit: shape.repairBodyEdit }),
+  }
+}
+
+export function keptSource(kept: Kept, evidence: Evidence): WorkUnitSource {
+  return { evidence, policy: { sha: kept.base, text: policyText } }
+}
+
+export function retainedSourceOf(evidence: Evidence): RetainedSource {
+  return {
+    repository: evidence.repository,
+    repositoryNodeId: evidence.repositoryNodeId,
+    repositoryDatabaseId: evidence.repositoryDatabaseId,
+    pull: evidence.pull,
+    comments: evidence.comments,
+    reviews: evidence.reviews,
+  }
+}
+
+export function carriedShapes(kept: Kept) {
+  const acknowledgement = commentOn(1, 9001, kept.grace, `Merged in ${kept.merge.slice(0, 10)}, thanks for the fix.`, "2026-11-05T01:00:00Z")
+  const lookalike = commentOn(1, 9002, kept.ada, `Merged in ${kept.merge.slice(0, 10)} as well.`, "2026-11-05T02:00:00Z")
+  const unknown = commentOn(1, 9003, kept.grace, "Merged in deadbee0, I think.", "2026-11-05T03:00:00Z")
+  const original: Shape = {
+    number: 1,
+    author: kept.ada,
+    mergedBy: null,
+    mergedAt: null,
+    closedAt: "2026-11-04T00:00:00Z",
+    mergeSha: null,
+    headSha: kept.original,
+    body: "Add a.",
+    changes: [{ sha: kept.original, author: kept.ada, parents: [kept.base], date: "2026-11-02T00:00:00Z", paths: ["a.ts"] }],
+    comments: [lookalike, acknowledgement, unknown],
+    related: [2],
+  }
+  const carrier: Shape = {
+    number: 2,
+    author: kept.grace,
+    mergedBy: kept.grace,
+    mergedAt: "2026-11-05T00:00:00Z",
+    closedAt: "2026-11-05T00:00:00Z",
+    mergeSha: kept.merge,
+    headSha: kept.copy,
+    body: "Carry a.",
+    changes: [{ sha: kept.copy, author: kept.ada, parents: [kept.base], date: "2026-11-03T00:00:00Z", paths: ["a.ts"] }],
+    comments: [],
+    related: [],
+  }
+  return { original, carrier, acknowledgement }
+}
+
+export function repairShapes(kept: Kept) {
+  const body = `Repair #11 at ${kept.repair}.`
+  const shared: Change = { sha: kept.sharedBase, author: kept.ada, parents: [kept.base], date: "2026-11-06T00:00:00Z", paths: ["z.ts"] }
+  const original: Shape = {
+    number: 11,
+    author: kept.ada,
+    mergedBy: null,
+    mergedAt: null,
+    closedAt: "2026-11-09T00:00:00Z",
+    mergeSha: null,
+    headSha: kept.originalFollowUp,
+    body: "Add format.",
+    changes: [shared, { sha: kept.originalFollowUp, author: kept.ada, parents: [kept.sharedBase], date: "2026-11-07T00:00:00Z", paths: ["format.ts"] }],
+    comments: [commentOn(11, 9101, kept.grace, "Your commits are carried over unchanged, with authorship, in #12.", "2026-11-10T11:00:00Z")],
+    related: [12],
+  }
+  const accepted: Shape = {
+    number: 12,
+    author: kept.grace,
+    mergedBy: kept.grace,
+    mergedAt: "2026-11-10T10:00:00Z",
+    closedAt: "2026-11-10T10:00:00Z",
+    mergeSha: kept.repairMerge,
+    headSha: kept.repair,
+    body,
+    changes: [shared, { sha: kept.repair, author: kept.linus, parents: [kept.sharedBase], date: "2026-11-08T00:00:00Z", paths: ["format.ts"] }],
+    comments: [],
+    related: [],
+    repairBodyEdit: {
+      id: kept.pullIds[12] ?? "",
+      body,
+      headRefOid: kept.repair,
+      mergedAt: "2026-11-10T10:00:00Z",
+      updatedAt: "2026-11-10T10:00:00Z",
+      lastEditedAt: "2026-11-10T09:00:00Z",
+      editor: { id: kept.grace.node_id, type: "User" },
+      author: { id: kept.grace.node_id, type: "User" },
+    },
+  }
+  return { original, accepted }
+}

@@ -137,7 +137,7 @@ layer(Layer.mergeAll(Layer.provide(Started, NodeServices.layer), NodeServices.la
     )
   })
 
-  it.effect('Roles are the configured snapshot and a malformed id refuses the isolate (spec/backend/projects.md, "Self-service project registry lifecycle"; spec/security/enforcement.md, "Project restrictions, admission clearance and reinstatement")', () => effect {
+  it.effect('Roles are the configured snapshot and a malformed id refuses the isolate (spec/backend/projects.md, "Administrators hold, delist, change the steward or place a project"; spec/security/enforcement.md, "A moderator quarantines a clear project or bans it, and decides a service ban")', () => effect {
     const cards = [try ask("/api/alpha/roles/7"), try ask("/api/alpha/roles/8"), try ask("/api/alpha/roles/9"), try ask("/api/alpha/roles/10")]
     const card = (administrator: boolean, moderator: boolean, team: boolean) => ({ status: 200, body: JSON.stringify({ administrator, moderator, team, moderators: ["8"] }) })
     const refused = [try askRefused("/api/alpha/roles/7"), try askRefused("/about.txt")]
@@ -159,18 +159,20 @@ layer(Layer.mergeAll(Layer.provide(Started, NodeServices.layer), NodeServices.la
     )
   })
 
-  it.effect('A Node program runs one named command and exits 0 on success, 1 on a failure and 2 for an unknown command (spec/operations/paymentRun.md, "Each step of a payments run fails alone and the run reports every failure at its end")', () => effect {
+  it.effect('A Node program runs one named command and exits 0 on success, 75 on a deferral, 1 on a failure and 2 for an unknown command (spec/operations/paymentRun.md, "Each step of a payments run fails alone and the run reports every failure at its end")', () => effect {
     const digested = try runProgram(["digest", "hello", "world"])
     const refused = try runProgram(["refuse"])
+    const deferred = try runProgram(["defer"])
     const unknown = try runProgram(["publish"])
     const empty = try runProgram([])
     try same(
-      { digested, refused, unknown: unknown.code, listed: unknown.stderr, empty: empty.code },
+      { digested, refused, deferred, unknown: unknown.code, listed: unknown.stderr, empty: empty.code },
       {
         digested: { code: 0, stdout: `${try sha256Hex("hello world")}\n`, stderr: "" },
+        deferred: { code: 75, stdout: "", stderr: "quota exhausted; rerun later\n" },
         refused: { code: 1, stdout: "", stderr: "ConfigInvalid: name=SLOP_ENVIRONMENT, issue=not production, staging or local\n" },
         unknown: 2,
-        listed: "unknown command: publish\ncommands: digest, refuse\n",
+        listed: "unknown command: publish\ncommands: defer, digest, refuse\n",
         empty: 2,
       },
     )

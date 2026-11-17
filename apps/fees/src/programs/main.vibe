@@ -1,20 +1,38 @@
-// spec/fees/buybackRpc.md, "Operator qualification checks the expected Worker and an independent finalized block"; spec/fees/conversion.md, "An unknown send is rebroadcast unchanged; only proven expiry retires it"; spec/fees/runtime.md, "The preflight refuses an incomplete live configuration"
+// spec/fees/buybackRpc.md, "Operator qualification checks the expected Worker and an independent finalized block"; spec/fees/conversion.md, "An unknown send is rebroadcast unchanged; only proven expiry retires it"; spec/fees/runtime.md, "The preflight refuses an incomplete live configuration"; spec/fees/runtime.md, "The release variable gates production publication, never a running Worker"
 import { webCrypto } from "@repo/platform/crypto"
+import { systemGit } from "@repo/platform/git"
 import { outbound } from "@repo/platform/http"
 import { type Command, program } from "@repo/platform/program"
+import { RpcUsage, rotateRobinhoodRpc, rpcRotation } from "@repo/operations/rpc"
+import { zeroOrderProbe } from "../rpcProbe/probe.vibe"
 import { inspectFeeWorker } from "./inspectFeeWorker.vibe"
 import { qualifyRobinhoodRpc } from "./robinhoodRpc.vibe"
-import { qualifySolanaRpcPair } from "./solanaRpcPair.vibe"
+import { qualifySolanaRpcPair, solanaPublicPair } from "./solanaRpcPair.vibe"
 
 function command<E, R>(run: Command<E, R>): Command<unknown, R> {
   return run
 }
 
+effect function rotateRobinhood(args: ReadonlyArray<string>) {
+  const [root = ".", ...rest] = args
+  if (rest.length > 0) throw new RpcUsage({ message: "usage: rotate-robinhood-rpc [root]" })
+  try rotateRobinhoodRpc(root, zeroOrderProbe)
+}
+
+effect function rotateSolana(args: ReadonlyArray<string>) {
+  const [runnerTemp = "", root = ".", ...rest] = args
+  if (runnerTemp === "" || rest.length > 0) throw new RpcUsage({ message: "usage: rotate-solana-rpc <runner-temp> [root]" })
+  const [primary, recovery] = solanaPublicPair
+  try rpcRotation({ root, kind: "solana", secrets: { RPC_URL_SOLANA: Redacted.make(primary), SOLANA_RECOVERY_RPC_URL: Redacted.make(recovery) }, qualify: qualifySolanaRpcPair([runnerTemp]) })
+}
+
 program({
-  services: Layer.mergeAll(outbound, webCrypto),
+  services: Layer.mergeAll(outbound, webCrypto, systemGit),
   commands: {
     "qualify-robinhood-rpc": command(qualifyRobinhoodRpc),
     "qualify-solana-rpc-pair": command(qualifySolanaRpcPair),
     "inspect-fee-worker": command((args) => Effect.asVoid(inspectFeeWorker(args))),
+    "rotate-robinhood-rpc": command(rotateRobinhood),
+    "rotate-solana-rpc": command(rotateSolana),
   },
 }).runMain()

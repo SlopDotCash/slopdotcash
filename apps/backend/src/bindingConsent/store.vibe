@@ -161,6 +161,7 @@ effect function writesOf<X>(loaded: Loaded<X>, before: Binding, step: Step) {
     case "observePayment":
     case "observeHeight":
     case "solanaExpire":
+    case "solanaAdmitAttempt":
       return []
     case "observeTime":
     case "register":

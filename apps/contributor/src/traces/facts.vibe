@@ -1,17 +1,8 @@
 // spec/contributor/traceServer.md, "The clock, private-intake observation and ban state come from their owning services"; spec/operations/intakeHealth.md, "Optional trace collection needs an enabled observation no older than 24 hours"
 import { millisOf } from "@repo/platform/clock"
-import { sql } from "@repo/platform/d1"
 import { Restrictions } from "@repo/ports/backend"
+import type { IntakeObservation } from "@repo/ports/operations"
 import { type Intake, intakeClockSkew } from "../../gen/contributor__traceServer.effect.vibe"
-
-export schema IntakeRow {
-  readonly enabled: number
-  readonly verified_at: string
-}
-
-export const intakeRead = sql`SELECT enabled, verified_at FROM private_intake_status WHERE singleton = 1`
-
-export const intakeVersion = sql`coalesce((SELECT enabled || ':' || verified_at FROM private_intake_status WHERE singleton = 1), '-')`
 
 const unobserved: Intake = { observed: false, enabled: false, verifiedAt: 0 }
 
@@ -19,11 +10,11 @@ export function secondsAt(iso: string): number {
   return Math.floor(millisOf(iso) / 1000)
 }
 
-export function intakeOf(row: IntakeRow | undefined, now: number): Intake {
-  if (row === undefined || (row.enabled !== 0 && row.enabled !== 1)) return unobserved
-  const verifiedAt = secondsAt(row.verified_at)
+export function intakeOf(observation: IntakeObservation | undefined, now: number): Intake {
+  if (observation === undefined) return unobserved
+  const verifiedAt = secondsAt(observation.verifiedAt)
   if (!Number.isSafeInteger(verifiedAt) || verifiedAt < 0 || verifiedAt > now + intakeClockSkew) return unobserved
-  return { observed: true, enabled: row.enabled === 1, verifiedAt }
+  return { observed: true, enabled: observation.enabled, verifiedAt }
 }
 
 export effect function bannedOf(githubId: string) {

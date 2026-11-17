@@ -1,0 +1,274 @@
+import { assert, layer } from "@effect/vitest"
+import { webCrypto } from "@repo/platform/crypto"
+import { D1, d1, sql } from "@repo/platform/d1"
+import { parsedJson } from "@repo/platform/git/bytes"
+import { database, migrate, startWorker } from "@repo/platform/testing"
+import { migrationsDir } from "@repo/platform/testing/paths"
+import type { Evidence } from "../src/value/evidence/types.vibe"
+import { retainedCopyBindings } from "../src/value/retained/copy.vibe"
+import { collectRetainedMergeReferences } from "../src/value/retained/reference.vibe"
+import { metadataCompatibleDigest, metadataCompatibleEvidence, retainedRepair, retention } from "../src/value/retained/repair.vibe"
+import { groupFacts, prepareWorkUnitEvidence, sourceDigestOf } from "../src/value/workUnits/prepare.vibe"
+import { type WorkUnitRecord, prepareWorkUnitRecord } from "../src/value/workUnits/record.vibe"
+import { appendWorkUnitRecord, currentWorkUnitRecord, expectedPredecessors } from "../src/value/workUnits/store.vibe"
+import { WorkUnitRefused, type WorkUnitEvidence, type WorkUnitSource } from "../src/value/workUnits/types.vibe"
+import {
+  type Kept,
+  type Shape,
+  carriedShapes,
+  githubOverKept,
+  keptEvidence,
+  keptSource,
+  projectId,
+  registeredKept,
+  repairShapes,
+  repository,
+  retainedSourceOf,
+  seededKept,
+} from "./support/retainedWorker.vibe"
+import { answerNext } from "./support/workUnitsWorker.vibe"
+
+const installationId = 502
+const rubricVersion = "slop-value-2026-10-09"
+const producerRevision = "e".repeat(40)
+
+service Journey {
+  readonly kept: Kept
+}
+
+const Started = Layer.unwrap(effect {
+  const kept = try seededKept()
+  const mf = try acquireRelease(sync(() => startWorker({ d1: { SLOPBOT_DB: "retained-journey" } })), (started) => promise(() => started.dispose()))
+  const applied = try promise(() => migrate(mf, "SLOPBOT_DB", migrationsDir))
+  const broken = applied.find((file) => file.error !== undefined)
+  if (broken !== undefined) return try die(new Error(`migration ${broken.file} failed: ${broken.error}`))
+  const db = try promise(() => database(mf, "SLOPBOT_DB"))
+  provide d1(db) {
+    try (try D1).run(sql`INSERT INTO slopbot_installations (installation_id, account_id, account_login, account_type, created_at, source_updated_at)
+      VALUES (${installationId}, 201, 'ada', 'User', '2026-11-01T00:00:00.000Z', 1)`)
+  }
+  return Layer.mergeAll(d1(db), webCrypto, githubOverKept(kept), retention, Layer.succeed(Journey, { kept }))
+})
+
+effect function same(actual: unknown, expected: unknown) {
+  try Effect.try(() => assert.deepStrictEqual(actual, expected))
+}
+
+function sourcesOf(kept: Kept, shapes: ReadonlyArray<Shape>, edit: (evidence: Evidence) => Evidence = (evidence) => evidence) {
+  return shapes.map((shape) => keptSource(kept, edit(keptEvidence(kept, shape))))
+}
+
+function claimsOf(evidence: WorkUnitEvidence) {
+  return evidence.claims
+    .map((claim) => ({
+      path: claim.path,
+      commitSha: claim.commitSha,
+      carriers: claim.carrierPullRequestIds,
+      credit: claim.creditPullRequestId,
+      actors: claim.implementationActorNodeIds,
+      retained: claim.retainedCopy === undefined ? null : { acceptance: claim.retainedCopy.acceptancePullRequestId, accepted: claim.retainedCopy.acceptedCommitSha, preexisting: claim.retainedCopy.preexistingCommitShas },
+    }))
+    .sort((a, b) => a.path.localeCompare(b.path))
+}
+
+effect function preparedRecord(kept: Kept, sources: ReadonlyArray<WorkUnitSource>) {
+  const evidence = try prepareWorkUnitEvidence(sources, [registeredKept(kept)])
+  const predecessors = try expectedPredecessors(evidence.sources.map(({ evidence: source }) => [source.repositoryNodeId, source.pull.node_id] as const))
+  const record = try prepareWorkUnitRecord({
+    supplied: evidence,
+    result: { sourceDigest: evidence.sourceDigest, rubricVersion, assessedAt: "2026-11-12T00:00:00.000Z" },
+    rubricVersion,
+    units: [{ claimIds: evidence.claims.map((claim) => claim.id), assessment: { reviews: [] } }],
+    model: { provider: "orbio" },
+    producerRevision,
+    supersedes: predecessors.supersedes,
+    legacyPredecessors: predecessors.legacyPredecessors,
+    revisionReason: predecessors.supersedes.length + predecessors.legacyPredecessors.length === 0 ? null : "Recollected",
+    project: { id: projectId, active: true },
+    repositories: [registeredKept(kept)],
+  })
+  return { evidence, record }
+}
+
+effect function published(kept: Kept, sources: ReadonlyArray<WorkUnitSource>) {
+  const { evidence, record } = try preparedRecord(kept, sources)
+  return try appendWorkUnitRecord(record, groupFacts(evidence), { installationId, projectId, registryFence: sql`1` })
+}
+
+effect function storedRecord(kept: Kept, pullRequestNodeId: string) {
+  const row = try currentWorkUnitRecord(kept.repositoryNodeId, pullRequestNodeId)
+  const parsed = row === undefined ? undefined : parsedJson(row.record_json)
+  return { digest: row?.record_digest, record: parsed?.value as WorkUnitRecord | undefined }
+}
+
+effect function refusedReason<A, E, R>(attempt: A!E!R) {
+  return attempt catch effect (error) => match (error) {
+    when WorkUnitRefused: error.reason;
+    default: throw error;
+  }
+}
+
+function forgedAcknowledgement(evidence: Evidence): Evidence {
+  return { ...evidence, comments: evidence.comments.map((comment) => comment.node_id === "IC_kwDOkept9001" ? { ...comment, body: `${comment.body} Edited.` } : comment) }
+}
+
+layer(Started, { excludeTestServices: true, timeout: "180 seconds" })((it) => {
+  it.effect('A retained copy acknowledged by its merger credits the original contributor once, and an unacknowledged copy refuses the group (spec/slopbot/workUnits.md, "A claim is one changed path in one commit and belongs to its first accepted carrier"; spec/points/authorship.md, "A verified October carry goes to the original contributor; otherwise primary authorship precedes the fallbacks")', () => effect {
+    const { kept } = try Journey
+    const { original, carrier, acknowledgement } = carriedShapes(kept)
+    const pulled = try Effect.try(() => kept.fake.represent.pull(repository, 2))
+    try answerNext(kept.fake, `/commits/${kept.merge}/pulls`, [pulled])
+    try answerNext(kept.fake, `/commits/${kept.merge}/pulls`, [pulled])
+    const collected = try collectRetainedMergeReferences(retainedSourceOf(keptEvidence(kept, original)))
+    const [reference] = collected.references
+    try same(
+      { limitations: collected.limitations, references: collected.references.map(({ commentNodeId, abbreviation, commitSha }) => ({ commentNodeId, abbreviation, commitSha })), digest: /^[a-f0-9]{64}$/u.test(reference?.acknowledgementSha256 ?? "") },
+      { limitations: [], references: [{ commentNodeId: acknowledgement.node_id, abbreviation: kept.merge.slice(0, 10), commitSha: kept.merge }], digest: true },
+    )
+    const withReferences = (evidence: Evidence) => evidence.pull.number === 1 ? { ...evidence, retainedMergeReferences: collected.references } : evidence
+    const sources = sourcesOf(kept, [original, carrier], withReferences)
+    const bound = retainedCopyBindings(sources, { acceptedSubset: true })
+    try same(
+      { limitations: bound.limitations, bindings: [...bound.bindings].map(([key, binding]) => [key, binding.original.evidence.pull.number, binding.originalCommitSha, binding.integration.evidence.pull.number, binding.acceptedCommitSha, binding.preexistingCommitShas]) },
+      { limitations: [], bindings: [[JSON.stringify([kept.repositoryNodeId, kept.copy, "a.ts"]), 1, kept.original, 2, kept.copy, []]] },
+    )
+    const [originalId = "", carrierId = ""] = [kept.pullIds[1], kept.pullIds[2]]
+    const { evidence } = try preparedRecord(kept, sources)
+    try same({ limitations: evidence.limitations, claims: claimsOf(evidence) }, {
+      limitations: [],
+      claims: [{ path: "a.ts", commitSha: kept.original, carriers: [originalId, carrierId].sort(), credit: originalId, actors: [kept.ada.node_id], retained: { acceptance: carrierId, accepted: kept.copy, preexisting: [] } }],
+    })
+    const appended = try published(kept, sources)
+    const viaOriginal = try storedRecord(kept, originalId)
+    const viaCarrier = try storedRecord(kept, carrierId)
+    try same(
+      { original: viaOriginal.digest, carrier: viaCarrier.digest, claims: (viaCarrier.record?.claims ?? []).map((claim) => [claim.path, claim.commitSha, claim.creditPullRequestId]) },
+      { original: appended.record_digest, carrier: appended.record_digest, claims: [["a.ts", kept.original, originalId]] },
+    )
+    const forged = sourcesOf(kept, [original, carrier], (evidence) => forgedAcknowledgement(withReferences(evidence)))
+    const unacknowledged = retainedCopyBindings(forged, { acceptedSubset: true })
+    const refused = try refusedReason(preparedRecord(kept, forged))
+    try same(
+      { limitations: unacknowledged.limitations, bindings: unacknowledged.bindings.size, refused },
+      { limitations: [`${originalId}: matching copied edits require authenticated retention acknowledgement`], bindings: 0, refused: "Joint value assessment does not validate" },
+    )
+    const carrierEdited = (edit: (evidence: Evidence) => Evidence) =>
+      retainedCopyBindings(sourcesOf(kept, [original, carrier], (evidence) => evidence.pull.number === 2 ? edit(withReferences(evidence)) : withReferences(evidence)), { acceptedSubset: true })
+    const botMerged = carrierEdited((evidence) => ({ ...evidence, pull: { ...evidence.pull, merged_by: evidence.pull.merged_by === null ? null : { ...evidence.pull.merged_by, type: "Bot" } } }))
+    const foreign = carrierEdited((evidence) => ({ ...evidence, repositoryNodeId: "R_kgDOforeign" }))
+    try same(
+      { bot: { limitations: botMerged.limitations, bindings: botMerged.bindings.size }, foreign: { limitations: foreign.limitations, bindings: foreign.bindings.size } },
+      { bot: { limitations: [`${originalId}: matching copied edits require authenticated retention acknowledgement`], bindings: 0 }, foreign: { limitations: [], bindings: 0 } },
+    )
+  })
+
+  it.effect('A copied follow-up repaired by its merger keeps the claim with the original contributor, and every unauthenticated repair is refused (spec/points/authorship.md, "A verified October carry goes to the original contributor; otherwise primary authorship precedes the fallbacks"; spec/slopbot/workUnits.md, "A claim is one changed path in one commit and belongs to its first accepted carrier")', () => effect {
+    const { kept } = try Journey
+    const { original, accepted } = repairShapes(kept)
+    const [originalId = "", acceptedId = ""] = [kept.pullIds[11], kept.pullIds[12]]
+    const request = (sources: ReadonlyArray<WorkUnitSource>) => ({
+      original: sources[0] as WorkUnitSource,
+      accepted: sources[1] as WorkUnitSource,
+      acceptedCommitSha: kept.repair,
+      originalCommitSha: kept.originalFollowUp,
+      path: "format.ts",
+    })
+    const sources = sourcesOf(kept, [original, accepted])
+    const proof = try retainedRepair(request(sources))
+    const [first, second] = sources
+    const digests = { [originalId]: try sourceDigestOf(first?.evidence as Evidence, first?.policy ?? { sha: "", text: "" }), [acceptedId]: try sourceDigestOf(second?.evidence as Evidence, second?.policy ?? { sha: "", text: "" }) }
+    try same(
+      { sourceId: proof?.sourceId, commitSha: proof?.commitSha, author: proof?.authorNodeId, digests: proof?.reference.sourceDigests, head: proof?.reference.headSha },
+      { sourceId: acceptedId, commitSha: kept.repair, author: kept.linus.node_id, digests, head: kept.repair },
+    )
+    const { evidence } = try preparedRecord(kept, sources)
+    const format = evidence.claims.find((claim) => claim.path === "format.ts")
+    try same({ limitations: evidence.limitations, claims: claimsOf(evidence), repair: format?.retainedCopy?.repair }, {
+      limitations: [],
+      claims: [
+        { path: "format.ts", commitSha: kept.originalFollowUp, carriers: [originalId, acceptedId].sort(), credit: originalId, actors: [kept.ada.node_id], retained: { acceptance: acceptedId, accepted: kept.repair, preexisting: [] } },
+        { path: "z.ts", commitSha: kept.sharedBase, carriers: [originalId, acceptedId].sort(), credit: originalId, actors: [kept.ada.node_id], retained: { acceptance: acceptedId, accepted: kept.sharedBase, preexisting: [] } },
+      ],
+      repair: proof,
+    })
+    const forgedEditor = (evidence: Evidence): Evidence => evidence.repairBodyEdit === undefined ? evidence : { ...evidence, repairBodyEdit: { ...evidence.repairBodyEdit, editor: { id: kept.ada.node_id, type: "User" } } }
+    const variants: ReadonlyArray<readonly [string, (evidence: Evidence) => Evidence]> = [
+      ["editor", forgedEditor],
+      ["head", (evidence) => evidence.repairBodyEdit === undefined ? evidence : { ...evidence, repairBodyEdit: { ...evidence.repairBodyEdit, headRefOid: "9".repeat(40) } }],
+      ["body", (evidence) => evidence.repairBodyEdit === undefined ? evidence : { ...evidence, repairBodyEdit: { ...evidence.repairBodyEdit, body: "Changed" } }],
+      ["post-merge", (evidence) => evidence.repairBodyEdit === undefined ? evidence : { ...evidence, repairBodyEdit: { ...evidence.repairBodyEdit, lastEditedAt: "2026-11-10T10:00:01Z" } }],
+      ["missing", (evidence) => { const { repairBodyEdit, ...rest } = evidence; return rest }],
+      ["author", (evidence) => evidence.pull.number !== 11 ? evidence : { ...evidence, commits: evidence.commits.map((commit) => commit.sha === kept.originalFollowUp ? { ...commit, author: kept.linus } : commit) }],
+      ["cycle", (evidence) => evidence.pull.number !== 12 ? evidence : { ...evidence, commits: evidence.commits.map((commit) => commit.sha === kept.repair ? { ...commit, parents: [{ sha: kept.repair }] } : commit) }],
+      ["copy-bytes", (evidence) => evidence.pull.number !== 12 ? evidence : { ...evidence, commitAttribution: evidence.commitAttribution.map((entry) => entry.sha === kept.repair ? { ...entry, files: (entry.files ?? []).map((file) => ({ ...file, patch: "@@ -0,0 +1 @@\n+export const format = 0;" })) } : entry) }],
+    ]
+    const refusals: Array<readonly [string, boolean]> = []
+    for (const [name, edit] of variants) refusals.push([name, (try retainedRepair(request(sourcesOf(kept, [original, accepted], edit)))) === undefined])
+    try same(refusals, variants.map(([name]) => [name, true]))
+    const forged = try prepareWorkUnitEvidence(sourcesOf(kept, [original, accepted], forgedEditor), [registeredKept(kept)])
+    try same(forged.limitations, [`${originalId}: retained primary author identity differs between commits`])
+  })
+
+  it.effect('A joint record written before repair metadata was collected stays current, and a changed source or metadata-bound record goes stale (spec/slopbot/valueHistory.md, "Incomplete, stale and unresolved decisions remain distinct"; spec/slopbot/workUnits.md, "A claim is one changed path in one commit and belongs to its first accepted carrier")', () => effect {
+    const { kept } = try Journey
+    const { original, carrier } = carriedShapes(kept)
+    const pulled = try Effect.try(() => kept.fake.represent.pull(repository, 2))
+    try answerNext(kept.fake, `/commits/${kept.merge}/pulls`, [pulled])
+    try answerNext(kept.fake, `/commits/${kept.merge}/pulls`, [pulled])
+    const collected = try collectRetainedMergeReferences(retainedSourceOf(keptEvidence(kept, original)))
+    const withReferences = (evidence: Evidence) => evidence.pull.number === 1 ? { ...evidence, retainedMergeReferences: collected.references } : evidence
+    const recorded = sourcesOf(kept, [original, carrier], withReferences)
+    try published(kept, recorded)
+    const carrierId = kept.pullIds[2] ?? ""
+    const { record } = try storedRecord(kept, carrierId)
+    if (record === undefined) return try die(new Error("the joint record was not stored"))
+    const metadata = (evidence: Evidence): Evidence => evidence.pull.number !== 2 ? evidence : {
+      ...evidence,
+      repairBodyEdit: {
+        id: evidence.pull.node_id,
+        body: evidence.pull.body ?? "",
+        headRefOid: evidence.pull.head.sha,
+        mergedAt: evidence.pull.merged_at ?? "",
+        updatedAt: evidence.pull.updated_at,
+        lastEditedAt: null,
+        editor: null,
+        author: { id: kept.grace.node_id, type: "User" },
+      },
+    }
+    const repositories = [registeredKept(kept)]
+    const current = sourcesOf(kept, [original, carrier], (evidence) => metadata(withReferences(evidence)))
+    const currentEvidence = try prepareWorkUnitEvidence(current, repositories)
+    const compatible = try metadataCompatibleEvidence(record, currentEvidence, current, repositories)
+    const changed = sourcesOf(kept, [original, carrier], (evidence) => {
+      const edited = metadata(withReferences(evidence))
+      return edited.pull.number !== 2 ? edited : { ...edited, pull: { ...edited.pull, body: "Changed after acceptance" } }
+    })
+    const changedEvidence = try prepareWorkUnitEvidence(changed, repositories)
+    const stale = try metadataCompatibleEvidence(record, changedEvidence, changed, repositories)
+    const [, currentCarrier] = current
+    const binding = record.sources.find((source) => source.pullRequestNodeId === carrierId)?.sourceDigest ?? ""
+    const singleCurrent = try metadataCompatibleDigest(currentCarrier?.evidence as Evidence, currentCarrier?.policy ?? { sha: "", text: "" }, binding)
+    const [, changedCarrier] = changed
+    const singleStale = try metadataCompatibleDigest(changedCarrier?.evidence as Evidence, changedCarrier?.policy ?? { sha: "", text: "" }, binding)
+    const bound = sourcesOf(kept, [original, carrier], (evidence) => metadata(withReferences(evidence)))
+    const boundRecord = (try preparedRecord(kept, bound)).record.record
+    const rebound = sourcesOf(kept, [original, carrier], (evidence) => {
+      const edited = metadata(withReferences(evidence))
+      return edited.repairBodyEdit === undefined ? edited : { ...edited, repairBodyEdit: { ...edited.repairBodyEdit, lastEditedAt: "2026-11-05T00:30:00Z", editor: { id: kept.ada.node_id, type: "User" } } }
+    })
+    const reboundEvidence = try prepareWorkUnitEvidence(rebound, repositories)
+    const boundStale = try metadataCompatibleEvidence(boundRecord, reboundEvidence, rebound, repositories)
+    try same(
+      {
+        differs: currentEvidence.sourceDigest !== record.sourceDigest,
+        current: compatible.sourceDigest === record.sourceDigest,
+        stripped: compatible.sources.map(({ evidence }) => evidence.repairBodyEdit === undefined),
+        stale: stale.sourceDigest === record.sourceDigest,
+        singleCurrent: singleCurrent === binding,
+        singleStale: singleStale === binding,
+        boundStale: boundStale.sourceDigest === boundRecord.sourceDigest,
+      },
+      { differs: true, current: true, stripped: [true, true], stale: false, singleCurrent: true, singleStale: false, boundStale: false },
+    )
+  })
+})

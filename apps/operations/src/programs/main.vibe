@@ -1,0 +1,15 @@
+// spec/operations/release.md, "A release starts from a push or manual dispatch of the environment's branch in the canonical repository"; spec/operations/intakeHealth.md, "The hourly watch only reads and alerts after three hours"; spec/operations/escrowQualification.md, "Story: Qualify escrow one network at a time with an explicitly approved scope"
+import { webCrypto } from "@repo/platform/crypto"
+import { outbound } from "@repo/platform/http"
+import { program } from "@repo/platform/program"
+import { evidence } from "../release/evidence/command.vibe"
+import { rpc } from "../release/rpc/command.vibe"
+import { staging } from "../release/staging/command.vibe"
+import { health } from "./health.vibe"
+import { qualify } from "./qualify.vibe"
+import { release } from "./release.vibe"
+import { watch } from "./watch.vibe"
+
+const services = Layer.mergeAll(webCrypto, outbound)
+
+program<Layer.Success<typeof services>, never, unknown>({ services, commands: { evidence, health, qualify, release, rpc, staging, watch } }).runMain()

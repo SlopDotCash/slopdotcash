@@ -14,6 +14,7 @@ export service Cloudflare {
   readonly accountId: string
   wrangler(step: string, call: Call): string!ToolFailed
   docker(step: string, call: Call): string!ToolFailed
+  node(step: string, call: Call): string!ToolFailed
   read(step: string, path: string): unknown!ToolFailed
   write(step: string, method: "PUT" | "POST", path: string, body: unknown): unknown!ToolFailed
 }
@@ -137,6 +138,7 @@ export function cloudflare(options: CloudflareOptions) {
       accountId,
       wrangler: (step: string, call: Call) => execute("wrangler", options.wrangler, step, call),
       docker: (step: string, call: Call) => execute("docker", "docker", step, call),
+      node: (step: string, call: Call) => execute("node", "node", step, call),
       read: (step: string, path: string) => exchange(step, HttpClientRequest.get(`${api}/accounts/${accountId}${path}`)),
       write: (step: string, method: "PUT" | "POST", path: string, body: unknown) => exchange(step, HttpClientRequest.bodyJsonUnsafe(HttpClientRequest.make(method)(`${api}/accounts/${accountId}${path}`), body)),
     } satisfies Cloudflare.Shape

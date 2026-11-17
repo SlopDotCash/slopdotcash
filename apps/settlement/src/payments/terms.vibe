@@ -101,13 +101,14 @@ export effect function termsDigest(gross: bigint, fee: bigint, feeRecipient: str
   return try sha256Hex(JSON.stringify(["slop-payment-terms:v1", gross.toString(), (gross - fee).toString(), fee.toString(), feeRecipient]))
 }
 
+const modelObligation = 1
+
 export interface ObligationTerms {
   readonly scope: Scope
   readonly chain: Chain
   readonly projectId: string
   readonly vault: string
-  readonly obligationId: string
-  readonly githubUserId: string
+  readonly actor: number
   readonly asset: VaultAsset
   readonly sourceDigest: string
   readonly termsDigest: string
@@ -119,8 +120,8 @@ export function targetOf(terms: ObligationTerms): Target {
     network: networkOf(terms.chain),
     project: terms.projectId,
     vault: canonicalAddress(terms.chain, terms.vault),
-    obligation: terms.obligationId,
-    actor: terms.githubUserId,
+    obligation: modelObligation,
+    actor: terms.actor,
     asset: terms.asset.address,
     decimals: terms.asset.decimals,
     sourceDigest: terms.sourceDigest,

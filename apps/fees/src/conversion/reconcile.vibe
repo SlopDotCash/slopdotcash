@@ -4,6 +4,7 @@ import { replacementSigns } from "../../gen/fees__runtime.effect.vibe"
 import { type Journal, networkNames, unitsOf } from "../journal/codec.vibe"
 import { type JournaledAttempt, journaledAttempts } from "../journal/queries.vibe"
 import { journal } from "../journal/store.vibe"
+import { expireUnlanded } from "../expiry/prove.vibe"
 import { ChainUnavailable, ConversionChain, FeeCapTooLow, type Landed, type OpenSend, SendRefused, chainFailure, detailOf, rawTxLimit, safeNumber, wideNumber } from "./chain.vibe"
 import { type Session, renewed, step } from "./session.vibe"
 
@@ -127,6 +128,7 @@ effect function settled(session: Session, book: Journal, bytes: ReadonlyMap<stri
     case "expired":
       return settling((try step(session, { type: "expireEvm", runId: session.runId, id: row.id, deadline: { finalizedTime: status.finalizedTime, included: false } })) !== undefined)
     case "pending":
+      if (!status.mined && session.state.network === "Solana") return (try expireUnlanded(session, row.id)) === "expired" ? "settled" : "open"
       if (!status.mined) try replaced(session, row.id, send)
       return "open" satisfies Settling
     case "unseen":

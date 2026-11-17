@@ -1,4 +1,4 @@
-// spec/settlement/privateAward.md, "A finalized vault payout records the obligation paid and notifies the case"; spec/settlement/payment.md, "A reserved vault accepts an exact canonical scanner event"
+// spec/settlement/privateAward.md, "A finalized vault payout records the obligation paid, settles its hold and notifies the case"; spec/settlement/payment.md, "A reserved vault accepts an exact canonical scanner event"
 import { type Statement, first, sql } from "@repo/platform/d1"
 import { Notices } from "@repo/ports/operations"
 import { type FinalizedPaymentEvent, type VaultAsset, refused } from "../payments/terms.vibe"

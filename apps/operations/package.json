@@ -5,7 +5,8 @@
   "type": "module",
   "exports": {
     "./client": "./src/client/index.vibe",
-    "./live": "./src/live.vibe"
+    "./live": "./src/live.vibe",
+    "./rpc": "./src/release/rpc/command.vibe"
   },
   "scripts": {
     "build": "vite build",
@@ -13,21 +14,22 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@effect/platform-node": "4.1.1",
     "@repo/backend": "workspace:*",
     "@repo/platform": "workspace:*",
     "@repo/ports": "workspace:*",
     "effect": "4.1.1",
-    "vibelang-runtime": "0.0.13"
+    "miniflare": "5.20261113.0-beta",
+    "vibelang-runtime": "0.0.13",
+    "wrangler": "catalog:"
   },
   "devDependencies": {
     "@effect/vitest": "4.1.1",
     "@types/node": "catalog:",
-    "miniflare": "5.20261113.0-beta",
     "typescript": "catalog:",
     "vibelang": "0.0.13",
     "vibestack": "workspace:*",
     "vite": "catalog:",
-    "vitest": "catalog:",
-    "wrangler": "catalog:"
+    "vitest": "catalog:"
   }
 }

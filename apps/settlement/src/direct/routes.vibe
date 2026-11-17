@@ -10,7 +10,7 @@ import { type ConsentDetail, type ConsentPaymentBody, type DirectIntent, type Di
 import { bountyFeeBase, bountyResearcherBase } from "../kernels/fees.ts"
 import { EVM_NATIVE_ASSET, NETWORKS } from "../kernels/networks.ts"
 import { EvmDirectRails, type EvmDirectRail, ProofUnavailable, evmModel, evmTransactions, payerChain, proofAvailable, verifyEvmLegs } from "./evm.vibe"
-import { type Facts, type Journal, asAmount, commit, currentIntent, decided, generationOf, grossOf, highestReservedNonce, intentModel, journalFor, legPaid, snapshotOf, storedIntent, storedWallet, transferModel, usedElsewhere, walletModel } from "./journal.vibe"
+import { type Facts, type Journal, asAmount, commit, currentIntent, decided, directModel, generationOf, grossOf, highestReservedNonce, intentModel, journalFor, legPaid, snapshotOf, storedIntent, storedWallet, transferModel, usedElsewhere, walletModel } from "./journal.vibe"
 
 export interface CaseContext {
   readonly caseId: string
@@ -287,7 +287,7 @@ export effect function settlementView(context: CaseContext) {
   const current = try journalFor(context.caseId)
   const intent = currentIntent(current)
   if (intent === undefined) return undefined
-  const model = evmModel(intent.network)
+  const model = directModel(intent)
   const found = model === undefined ? undefined : try effectiveWallet(context.reporterGithubId, model)
   const recipientCurrent = found !== undefined && found.claimId === intent.recipient.id && found.digest === intent.recipient.digest
   const confirmed = current.legs.map((leg) => leg.evidence.transactionId)

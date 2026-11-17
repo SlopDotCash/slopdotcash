@@ -5,15 +5,17 @@
   "type": "module",
   "exports": {
     "./client": "./src/client/index.vibe",
-    "./live": "./src/live.vibe"
+    "./live": "./src/live.vibe",
+    "./program": "./src/client/program.vibe"
   },
   "scripts": {
-    "build": "vite build",
+    "build": "vite build && vite build -c vite.sandbox.config.ts",
     "typecheck": "vibelang --noEmit -p .",
     "test": "vitest run"
   },
   "dependencies": {
     "@cloudflare/sandbox": "catalog:",
+    "@effect/platform-node": "4.1.1",
     "@repo/backend": "workspace:*",
     "@repo/operations": "workspace:*",
     "@repo/platform": "workspace:*",

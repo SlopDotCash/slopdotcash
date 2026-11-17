@@ -8,6 +8,7 @@ import { github } from "@repo/platform/github"
 import { type Journal, journalText } from "../../kernels/records/canonical.ts"
 import { batchDigest } from "../../kernels/records/ids.vibe"
 import { participationBans } from "../../collect/feeds/bans.vibe"
+import { databases } from "../../evaluations/check.vibe"
 import { actionsToken } from "../../ingestion/token.vibe"
 import { protectionEvidence } from "../../publication/protection.vibe"
 import { publishedJournal, publishedRegistry } from "../collect/published.vibe"
@@ -35,7 +36,6 @@ interface ApplyArguments {
 }
 
 const usage = "Usage: corrections apply MANIFEST OUTPUT_DIRECTORY preview|apply [--reviewed-sha256 <manifest digest reviewed by the repository owner>]"
-const productionDatabase = "1b453124-2709-45af-8389-151a8105c461"
 const headPattern = /^[a-f0-9]{40}$/u
 const statuses: ReadonlyArray<string> = ["applied", "unchanged", "held", "retained", "already-applied"]
 
@@ -155,7 +155,7 @@ export effect function applyCorrections(args: ReadonlyArray<string>) {
   const journal = try during("public Points read", publishedJournal())
   const accountId = try during("private financial protection read", Config.String("CLOUDFLARE_ACCOUNT_ID"))
   const apiToken = try during("private financial protection read", Config.Redacted("CLOUDFLARE_API_TOKEN"))
-  const database = d1Http({ accountId, databaseId: productionDatabase, token: apiToken })
+  const database = d1Http({ accountId, databaseId: databases.production, token: apiToken })
   const protection = try during("private financial protection read", protectionRead(database, collection))
   const actors = retainedActors(collection)
   const token = try during("participation restrictions read", actionsToken())

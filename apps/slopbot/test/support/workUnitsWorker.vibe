@@ -1,0 +1,288 @@
+// spec/slopbot/workUnits.md, "Story: Prepare a group whose every claim is credited once"; spec/slopbot/workUnits.md, "Story: Append a joint record that consumes every affected predecessor"
+import { Response as WorkerResponse } from "miniflare"
+import type { Fetcher } from "@repo/platform/bindings"
+import { sql } from "@repo/platform/d1"
+import { github } from "@repo/platform/github"
+import { outboundVia } from "@repo/platform/http"
+import { type GitHubFake, githubFake } from "@repo/platform/testing/github"
+import type { Actor, Commit, CommitAttribution, Evidence, RegisteredRepository } from "../../src/value/evidence/types.vibe"
+import type { FileChange } from "../../src/value/proofs/changes.vibe"
+import { acceptanceWith } from "../../src/value/workUnits/acceptance.vibe"
+import { GroupReads, type GroupRepository } from "../../src/value/workUnits/group.vibe"
+import { PublicationChecks } from "../../src/value/workUnits/publish.vibe"
+import { Retention, type WorkUnitSource } from "../../src/value/workUnits/types.vibe"
+
+export const repository = "ada/stack"
+export const projectId = "stack"
+export const policyText = "# Contributing\n\nPull requests target `main`.\n"
+export const texts: Readonly<Record<string, string>> = { "a.ts": "export const a = 1;\n", "b.ts": "export const b = 2;\n", "c.ts": "export const c = 3;\n" }
+
+export function patchOf(path: string) {
+  return `@@ -0,0 +1 @@\n+${(texts[path] ?? "").replace(/\n$/u, "")}`
+}
+
+export interface World {
+  readonly fake: GitHubFake
+  readonly token: string
+  readonly repositoryNodeId: string
+  readonly repositoryDatabaseId: number
+  readonly base: string
+  readonly first: string
+  readonly second: string
+  readonly third: string
+  readonly merged1: string
+  readonly merged2: string
+  readonly squash1: string
+  readonly squash2: string
+  readonly promoted: string
+  readonly promotion: string
+  readonly pullIds: readonly [string, string]
+  readonly ada: Actor
+  readonly grace: Actor
+}
+
+export effect function seeded() {
+  const fake = try Effect.try(() => githubFake())
+  const world = fake.world
+  const ada = try Effect.try(() => world.addUser({ id: 101, login: "ada" }))
+  const grace = try Effect.try(() => world.addUser({ id: 102, login: "grace" }))
+  const created = try Effect.try(() => world.addRepo({ id: 7411, owner: "ada", name: "stack", files: { "README.md": "stack\n" } }))
+  const base = try Effect.try(() => world.addCommit(repository, { message: "Base", author: "ada", date: "2026-11-01T00:00:00Z", files: { "notes.md": "notes\n" } }))
+  const a = { "a.ts": texts["a.ts"] ?? "" }
+  const b = { "b.ts": texts["b.ts"] ?? "" }
+  const first = try Effect.try(() => world.addCommit(repository, { branch: "first", parents: [base], message: "Add a", author: "ada", date: "2026-11-02T00:00:00Z", files: a }))
+  const second = try Effect.try(() => world.addCommit(repository, { branch: "second", parents: [first], message: "Add b", author: "grace", date: "2026-11-03T00:00:00Z", files: b }))
+  const third = try Effect.try(() => world.addCommit(repository, { branch: "third", parents: [base], message: "Add c", author: "ada", date: "2026-11-04T00:00:00Z", files: { "c.ts": texts["c.ts"] ?? "" } }))
+  const merged1 = try Effect.try(() => world.addCommit(repository, { branch: "merge-1", parents: [base, first], message: "Merge pull request #1", author: "ada", date: "2026-11-05T00:00:00Z", files: a }))
+  const revised = try Effect.try(() => world.addCommit(repository, { branch: "mainline", parents: [base], message: "Revise notes", author: "ada", date: "2026-11-05T12:00:00Z", files: { "notes.md": "notes, revised\n" } }))
+  const mainline = try Effect.try(() => world.addCommit(repository, { branch: "mainline", parents: [revised], message: "Finish notes", author: "ada", date: "2026-11-05T18:00:00Z", files: { "notes.md": "notes, final\n" } }))
+  const merged2 = try Effect.try(() => world.addCommit(repository, { branch: "merge-2", parents: [mainline, second], message: "Merge pull request #2", author: "ada", date: "2026-11-06T00:00:00Z", files: { ...a, ...b } }))
+  const squash1 = try Effect.try(() => world.addCommit(repository, { branch: "squash", parents: [base], message: "Add a (#1)", author: "ada", date: "2026-11-05T00:00:00Z", files: a }))
+  const squash2 = try Effect.try(() => world.addCommit(repository, { branch: "squash", parents: [squash1], message: "Add b (#2)", author: "grace", date: "2026-11-06T00:00:00Z", files: b }))
+  const promoted = try Effect.try(() => world.addCommit(repository, { branch: "promoted", parents: [base], message: "Promote", author: "ada", date: "2026-11-07T00:00:00Z", files: {} }))
+  const promotion = try Effect.try(() => world.addCommit(repository, { branch: "promotion", parents: [base, promoted], message: "Merge promotion", author: "ada", date: "2026-11-08T00:00:00Z", files: {} }))
+  const pulled = (path: string) => ({ path, status: "added" as const, additions: 1, deletions: 0, patch: patchOf(path) })
+  try Effect.try(() => world.addPull({ repo: repository, number: 1, author: "ada", title: "Add a", createdAt: "2026-11-02T00:00:00Z", headSha: first, commits: [first], mergedAt: "2026-11-05T00:00:00Z", mergeCommit: merged1, files: [pulled("a.ts")] }))
+  try Effect.try(() => world.addPull({ repo: repository, number: 2, author: "grace", title: "Add b", createdAt: "2026-11-03T00:00:00Z", headSha: second, commits: [first, second], mergedAt: "2026-11-06T00:00:00Z", mergeCommit: merged2, files: [pulled("a.ts"), pulled("b.ts")] }))
+  const firstPull = try Effect.try(() => world.pull(repository, 1))
+  const secondPull = try Effect.try(() => world.pull(repository, 2))
+  const token = try Effect.try(() => fake.tokens.user("ada"))
+  return {
+    fake,
+    token,
+    repositoryNodeId: created.nodeId,
+    repositoryDatabaseId: created.id,
+    base,
+    first,
+    second,
+    third,
+    merged1,
+    merged2,
+    squash1,
+    squash2,
+    promoted,
+    promotion,
+    pullIds: [firstPull.nodeId, secondPull.nodeId],
+    ada: { node_id: ada.nodeId, login: "ada", type: "User" },
+    grace: { node_id: grace.nodeId, login: "grace", type: "User" },
+  } satisfies World
+}
+
+export function githubOver(world: World) {
+  const fetcher: Fetcher = { fetch: (request) => world.fake.fetch(request) }
+  return Layer.provide(github({ token: Redacted.make(world.token), userAgent: "slopbot-work-units" }), outboundVia(fetcher))
+}
+
+export function registered(world: World): RegisteredRepository {
+  return { id: repository, projectId, integrationBranch: "main", expectedNodeId: world.repositoryNodeId, aliases: [] }
+}
+
+export interface Change {
+  readonly sha: string
+  readonly author: Actor
+  readonly parent: string
+  readonly paths: ReadonlyArray<string>
+}
+
+export interface PullShape {
+  readonly number: number
+  readonly author: Actor
+  readonly headSha: string
+  readonly mergedAt: string
+  readonly changes: ReadonlyArray<Change>
+}
+
+export function fileOf(path: string): FileChange {
+  return { filename: path, status: "added", additions: 1, deletions: 0, patch: patchOf(path), blob_url: `https://github.com/${repository}/blob/main/${path}` }
+}
+
+function commitOf(change: Change): Commit {
+  return {
+    sha: change.sha,
+    html_url: `https://github.com/${repository}/commit/${change.sha}`,
+    author: change.author,
+    committer: change.author,
+    parents: [{ sha: change.parent }],
+    commit: { message: `Change ${change.sha.slice(0, 7)}`, author: { date: "2026-11-02T00:00:00Z" }, committer: { date: "2026-11-02T00:00:00Z" } },
+  }
+}
+
+function attributionOf(change: Change): CommitAttribution {
+  return { sha: change.sha, actorNodeIds: [change.author.node_id], changedPaths: [...change.paths], files: change.paths.map(fileOf), limitations: [] }
+}
+
+export function pullNodeId(number: number) {
+  return `PR_kwDOstack${number}`
+}
+
+export function mergeShaOf(number: number) {
+  return String(number).repeat(40).slice(0, 40).replace(/[^0-9a-f]/gu, "f")
+}
+
+export function evidenceOf(world: World, shape: PullShape): Evidence {
+  const paths = [...new Set(shape.changes.flatMap((change) => change.paths))].sort()
+  const mergeSha = mergeShaOf(shape.number)
+  const policy = registered(world)
+  return {
+    repository,
+    repositoryNodeId: world.repositoryNodeId,
+    repositoryDatabaseId: world.repositoryDatabaseId,
+    repositoryPolicy: { id: policy.id, projectId: policy.projectId, integrationBranch: policy.integrationBranch, expectedNodeId: policy.expectedNodeId },
+    collectedAt: "2026-11-12T00:00:00.000Z",
+    pull: {
+      node_id: pullNodeId(shape.number),
+      number: shape.number,
+      html_url: `https://github.com/${repository}/pull/${shape.number}`,
+      title: `Pull ${shape.number}`,
+      body: null,
+      user: shape.author,
+      merged_by: world.ada,
+      state: "closed",
+      merged_at: shape.mergedAt,
+      closed_at: shape.mergedAt,
+      merge_commit_sha: mergeSha,
+      updated_at: shape.mergedAt,
+      head: { sha: shape.headSha },
+      base: { sha: world.base, ref: "main" },
+      changed_files: paths.length,
+      comments: 0,
+      review_comments: 0,
+      commits: shape.changes.length,
+    },
+    files: paths.map(fileOf),
+    mergeCommitEvidence: {
+      sha: mergeSha,
+      html_url: `https://github.com/${repository}/commit/${mergeSha}`,
+      parents: [{ sha: world.base }, { sha: shape.headSha }],
+      stats: { total: paths.length, additions: paths.length, deletions: 0 },
+      files: paths.map(fileOf),
+    },
+    commits: shape.changes.map(commitOf),
+    reviews: [],
+    comments: [],
+    reviewComments: [],
+    limitations: [],
+    evidenceUrls: [`https://github.com/${repository}/pull/${shape.number}`],
+    eligibleReviewIds: [],
+    implementationActorNodeIds: [shape.author.node_id],
+    commitAttribution: shape.changes.map(attributionOf),
+    relatedPullRequests: [],
+  }
+}
+
+export function sourceOf(world: World, shape: PullShape): WorkUnitSource {
+  return { evidence: evidenceOf(world, shape), policy: { sha: world.base, text: policyText } }
+}
+
+export const noRetainedCopies = Layer.succeed(Retention, {
+  bindings: () => Effect.succeed({ bindings: new Map(), limitations: [] }),
+  repair: () => Effect.succeed(undefined),
+})
+
+export const acceptance = acceptanceWith(() => Effect.succeed({ references: [], limitations: [] }))
+
+export function groupRepository(world: World): GroupRepository {
+  return { ...registered(world), current: repository }
+}
+
+export function groupReadsOver() {
+  return Layer.succeed(GroupReads, {
+    authorize: () => Effect.succeed(true),
+    policy: (_repository: string, baseSha: string) => Effect.succeed({ sha: baseSha, text: policyText }),
+  })
+}
+
+export function publicationChecksOver(world: World) {
+  return Layer.succeed(PublicationChecks, {
+    subscribed: () => Effect.succeed(false),
+    registration: () => Effect.succeed({ project: { id: projectId, active: true }, repositories: [registered(world)], registryFence: sql`1` }),
+    admitted: () => Effect.void,
+    current: () => Effect.void,
+  })
+}
+
+type Alter = Parameters<GitHubFake["alterNext"]>[1]
+type Answer = Awaited<ReturnType<Alter>>
+
+export effect function answerNext(fake: GitHubFake, match: string, body: unknown) {
+  const alter: Alter = async () => new WorkerResponse(JSON.stringify(body), { status: 200, headers: { "content-type": "application/json; charset=utf-8" } }) as unknown as Answer
+  try Effect.try(() => fake.alterNext(match, alter))
+}
+
+export interface CensusPull {
+  readonly id: string
+  readonly number: number
+  readonly mergedAt: string
+  readonly baseRefOid: string
+  readonly headRefOid: string
+  readonly mergeCommit: string
+  readonly listed: ReadonlyArray<string>
+  readonly total: number
+}
+
+export function censusAnswer(world: World, pulls: ReadonlyArray<CensusPull>) {
+  return () => ({
+    data: {
+      search: {
+        issueCount: pulls.length,
+        nodes: pulls.map((pull) => ({
+          id: pull.id,
+          number: pull.number,
+          url: `https://github.com/${repository}/pull/${pull.number}`,
+          mergedAt: pull.mergedAt,
+          baseRefOid: pull.baseRefOid,
+          headRefOid: pull.headRefOid,
+          repository: { id: world.repositoryNodeId, databaseId: world.repositoryDatabaseId, nameWithOwner: repository, isPrivate: false },
+          mergeCommit: { oid: pull.mergeCommit },
+          commits: { totalCount: pull.total, nodes: pull.listed.map((oid) => ({ commit: { oid } })), pageInfo: { hasNextPage: false, endCursor: null } },
+        })),
+        pageInfo: { hasNextPage: false, endCursor: null },
+      },
+      rateLimit: { cost: 1, limit: 5000, remaining: 4999, resetAt: "2026-11-12T01:00:00Z" },
+    },
+  })
+}
+
+module host {
+  import type { MergeVerifierBinding, ReconstructionCall } from "../../src/value/workUnits/verifierBinding.ts"
+  export interface VerifierCalls {
+    readonly reconstructed: Array<ReadonlyArray<string>>
+  }
+  /** @throws {never} */
+  export function mergeVerifierFake(answer: (call: ReconstructionCall) => unknown, calls: VerifierCalls, rejection?: string): MergeVerifierBinding {
+    return {
+      reconstruct: async (request) => {
+        calls.reconstructed.push(request.inputs.map((input) => input.pull.head.sha))
+        if (rejection !== undefined) throw new Error(rejection)
+        return answer(request)
+      },
+      recover: async () => ({ inputSha256: "", entries: [], blobs: [] }),
+    }
+  }
+  /** @throws {never} */
+  export function emptyBundle(): ReadableStream<Uint8Array> {
+    return new ReadableStream<Uint8Array>({ start: (controller) => controller.close() })
+  }
+}
+import { type VerifierCalls, emptyBundle, mergeVerifierFake } from host
+export { type VerifierCalls, emptyBundle, mergeVerifierFake }

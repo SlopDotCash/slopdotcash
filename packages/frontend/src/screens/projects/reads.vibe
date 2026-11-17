@@ -12,6 +12,7 @@ import { type Resource, Unreadable, resource } from "../../reads/resource.vibe"
 import { type Leaderboard, leaderboard } from "../../reads/snapshot.vibe"
 import { stale } from "../../reads/snapshotCache.vibe"
 import { type ShownProject, projectOf } from "./project.schema.ts"
+import { indexValid } from "./summary.ts"
 
 export const discoveryPath = "/.well-known/slop/projects.json"
 export const discoveryLimitBytes = 4 * 1024 * 1024
@@ -53,16 +54,6 @@ function shownRead<T>(read: Resource<T>): ShownRead<T> {
   return { read, runtime: ManagedRuntime.make(Layer.succeed(ReadMachine, read.machine)) }
 }
 
-const baseUnits = /^(?:0|[1-9][0-9]*)$/u
-
-function indexValid(index: CycleIndex): boolean {
-  return index.cycles.every((current, position) => {
-    const previous = index.cycles[position - 1]
-    const ordered = previous === undefined || previous.cycleId > current.cycleId || (previous.cycleId === current.cycleId && previous.projectId.localeCompare(current.projectId) <= 0)
-    return ordered && [current.reward.approvedMinor, current.reward.feeMinor, current.reward.paidMinor].every((minor) => baseUnits.test(minor))
-  })
-}
-
 effect function loadDiscovery() {
   const body = try fetchBounded(discoveryPath, discoveryLimitBytes, "Agent setup")
   const read = Schema.decodeUnknownEffect(Discovery)(body) catch effect () => { throw new Unreadable({ message: projectMessages.discoveryInvalid }) }
@@ -73,7 +64,7 @@ effect function loadDiscovery() {
 effect function loadCycleIndex(attempt: number) {
   provide FetchHttpClient.RequestInit = uncached {
     const body = try fetchBounded(`${cycleIndexUrl}?attempt=${attempt}`, cycleIndexLimitBytes, "cycle index")
-    const index: CycleIndex = Schema.decodeUnknownEffect(CycleIndex)(body) catch effect () => { throw new Unreadable({ message: projectMessages.cyclesInvalid }) }
+    const index: CycleIndex = Schema.decodeUnknownEffect(CycleIndex)(body, { onExcessProperty: "error" }) catch effect () => { throw new Unreadable({ message: projectMessages.cyclesInvalid }) }
     if (!indexValid(index)) throw new Unreadable({ message: projectMessages.cyclesInvalid })
     return index
   }

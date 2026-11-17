@@ -12,7 +12,7 @@ const Sent = Schema.Struct({ from: Schema.String, to: Schema.String, raw: Schema
 
 export type SentMail = typeof Sent.Type;
 
-export type MailSink = (mail: SentMail) => string | undefined;
+export type MailSink = (mail: SentMail) => string | undefined | Promise<string | undefined>;
 
 export interface MailBinding {
   readonly allowedDestinationAddresses?: ReadonlyArray<string>;
@@ -21,7 +21,7 @@ export interface MailBinding {
 }
 
 /** @throws {never} */
-export function onlyTo(allowed: ReadonlyArray<string> | undefined, sink: MailSink): MailSink {
+export function onlyTo<R extends ReturnType<MailSink>>(allowed: ReadonlyArray<string> | undefined, sink: (mail: SentMail) => R): (mail: SentMail) => R | string {
   return allowed === undefined ? sink : (mail) => allowed.includes(mail.to) ? sink(mail) : `email to ${mail.to} is not an allowed destination`;
 }
 
@@ -261,7 +261,7 @@ function sinkHandler(sink: MailSink): Handler {
   let sent = 0;
   return async (request) => {
     const mail = Schema.decodeUnknownSync(Sent)(await request.json());
-    const refusal = sink(mail);
+    const refusal = await sink(mail);
     sent += 1;
     return refusal === undefined
       ? new Response(null, { status: 200, headers: { "x-message-id": `captured-${sent}` } })

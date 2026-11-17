@@ -4,12 +4,12 @@ import { ConstraintViolation, first, rows, sql } from "@repo/platform/d1"
 import { type Actor, Caller, handleRaw, json, jsonBody, refuse } from "@repo/platform/http"
 import { Authority, Registry, Restrictions } from "@repo/ports/backend"
 import type { AdvisoryRead, Copy, Listing, Request, SendClaim, SendGate } from "../../gen/security__forwarding.ts"
-import { canClaimSend, canReadReceipt, canReconcile, readReceipt } from "../../gen/security__forwarding.effect.vibe"
+import { canClaimSend, canReadReceipt, canReconcile, readReceipt, withReadiness } from "../../gen/security__forwarding.effect.vibe"
 import { qualified } from "../../gen/security__screening.effect.vibe"
 import { jsonDocument } from "../admission/binding.ts"
 import { authorizeForwarding, forwardingCallback, reconcileForwarding, sendForwarding } from "../client/forwarding.vibe"
 import { getSecuritySubmissionsAuthorizeCallback as callbackRows, postSecuritySubmissionsByIdAuthorize as authorizeRows, postSecuritySubmissionsByIdReconcile as reconcileRows, postSecuritySubmissionsByIdSend as sendRows } from "../client/refusals.vibe"
-import { readiness } from "../intake/availability.vibe"
+import { type ReportingCache, reportingCache } from "../intake/availability.vibe"
 import { parseReport } from "../intake/report.vibe"
 import { type StoredIntake, type SubmissionRow, decorated, reportVersions, screeningOf, storedIntake, submission } from "../intake/rows.vibe"
 import { githubNumber, reportBytes } from "../privacy/reads.vibe"
@@ -317,12 +317,14 @@ effect function sendSubmission(actor: Actor, id: string) {
   const nowMs = try Clock.currentTimeMillis
   const nowSeconds = Math.floor(nowMs / 1000)
   const grant = try grantFor(app, row, nowSeconds)
-  const observed = readiness(row.project_id) catch () => undefined
-  const reportingReady = observed !== undefined && observed.state === "ready" && !observed.stale
-  if (!reportingReady) throw refused(sendRows.intakeUnavailablePrivateReportingCouldNot)
+  const project = try (try Registry).project(row.project_id)
+  let reporting: ReportingCache | undefined = undefined
+  if (project !== undefined && project.listingTier !== "Retired") reporting = reportingCache(project) catch () => undefined
+  const unready: SendGate = { seenScreeningRevision: stored.revision, reportVersion: stored.report_version, digest: digests[stored.report_version - 1] ?? "", screening, bytesVerified: true, intakeCurrent: true, reportingReady: false, allowedToParticipate: true, wonClaim: true }
+  const gate = reporting === undefined ? unready : withReadiness(unready, reporting.cache, reporting.target, nowMs)
+  if (!gate.reportingReady) throw refused(sendRows.intakeUnavailablePrivateReportingCouldNot)
   const report = try storedReport(row, stored)
   const request = requestOf(row, grant, nowSeconds)
-  const gate: SendGate = { seenScreeningRevision: stored.revision, reportVersion: stored.report_version, digest: digests[stored.report_version - 1] ?? "", screening, bytesVerified: true, intakeCurrent: true, reportingReady, allowedToParticipate: true, wonClaim: true }
   if (!canClaimSend(forwarding.state, request, gate, nowMs)) throw refused(stale)
   const unbanned = try (try ReportingPrograms).unbanned(actor.githubId)
   const claimedState = claimed(forwarding, { type: "claimSend", request, gate, startedAtMs: nowMs }, sql`(${unbanned}) AND ${qualifiedAt(row.id, stored)}`, actor.githubId, ledger) catch effect (error) => {

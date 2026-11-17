@@ -1,0 +1,102 @@
+// spec/slopbot/workUnits.md, "A claim is one changed path in one commit and belongs to its first accepted carrier"; spec/slopbot/valueEvidence.md, "Evidence is complete only when every listed page was read; a page cap never implies coverage"
+import { sha256Of } from "@repo/platform/git/bytes"
+import type { RetainedOutcome, RetainedSource } from "../evidence/acceptance.vibe"
+import { sameRepositoryCommitHints } from "../evidence/hints.vibe"
+import type { Comment, Evidence, RetainedMergeReference, Review } from "../evidence/types.vibe"
+import { count, fetched, fields, text } from "../proofs/reads.vibe"
+import { listingLimitBytes, millis } from "../workUnits/source.vibe"
+
+export type Acknowledgement = Comment | Review
+
+export const discoveryLimit = 16
+export const discoveryBoundsReached = "Retained merge reference: discovery bounds reached; complete reconciliation required"
+
+const commitPattern = /^[a-f0-9]{40}$/u
+const mergeWords = /\b(?:merged?|integrat(?:ed|ion))\b/iu
+
+interface Hinted {
+  readonly repository: string
+  readonly repositoryNodeId: string
+  readonly repositoryDatabaseId: number
+  readonly pull: { readonly node_id: string }
+}
+
+export function retainedAcknowledgements(source: { readonly comments: ReadonlyArray<Comment>; readonly reviews: ReadonlyArray<Review> }): Acknowledgement[] {
+  return [...source.comments, ...source.reviews.filter((review) => review.submitted_at !== null)]
+}
+
+export function acknowledgementTime(record: Acknowledgement) {
+  return "created_at" in record ? record.created_at : record.submitted_at ?? ""
+}
+
+function acknowledgementDigest(source: Hinted, comment: Acknowledgement) {
+  return sha256Of(JSON.stringify([source.repository, source.repositoryNodeId, source.repositoryDatabaseId, source.pull.node_id, comment]))
+}
+
+function abbreviations(repository: string, comment: Acknowledgement) {
+  if (comment.user === null || comment.user.type === "Bot" || !mergeWords.test(comment.body)) return []
+  return sameRepositoryCommitHints(repository, comment.body).filter((reference) => reference.length < 40)
+}
+
+effect function resolvedCommit(repository: string, abbreviation: string) {
+  const found: unknown = fetched(`/repos/${repository}/commits/${abbreviation}`, listingLimitBytes) catch effect (error) => {
+    if (error._tag === "GitHubRefused" && error.status === 422) return undefined
+    throw error
+  }
+  return fields(found)
+}
+
+interface AcceptingPull {
+  readonly number: number
+  readonly mergedAt: string
+  readonly mergedBy: string | undefined
+}
+
+effect function acceptingPull(repository: string, sha: string) {
+  const listed = try fetched(`/repos/${repository}/commits/${sha}/pulls?per_page=100`, listingLimitBytes)
+  const merged = (Array.isArray(listed) ? listed : []).map(fields).filter((pull) => pull !== undefined && pull["merged_at"] !== null && pull["merge_commit_sha"] === sha)
+  const [only] = merged
+  if (merged.length !== 1 || only === undefined) return undefined
+  const number = count(only, "number")
+  if (number === undefined) return undefined
+  const pull = fields(try fetched(`/repos/${repository}/pulls/${number}`, listingLimitBytes))
+  const mergedAt = text(pull, "merged_at")
+  if (pull === undefined || mergedAt === undefined || mergedAt === "" || pull["merge_commit_sha"] !== sha) return undefined
+  const pulled = count(pull, "number")
+  if (pulled === undefined) return undefined
+  return { number: pulled, mergedAt, mergedBy: text(fields(pull["merged_by"]), "node_id") } satisfies AcceptingPull
+}
+
+export effect function collectRetainedMergeReferences(source: RetainedSource) {
+  const references: RetainedMergeReference[] = []
+  if (source.pull.merged_at !== null || source.pull.state !== "closed") return { references, limitations: [] } satisfies RetainedOutcome
+  const hints = retainedAcknowledgements(source).flatMap((comment) => abbreviations(source.repository, comment).map((abbreviation) => ({ comment, abbreviation })))
+  if (hints.length > discoveryLimit) return { references, limitations: [discoveryBoundsReached] } satisfies RetainedOutcome
+  for (const { comment, abbreviation } of hints) {
+    const resolved = try resolvedCommit(source.repository, abbreviation)
+    const sha = text(resolved, "sha")
+    if (
+      sha === undefined || !commitPattern.test(sha) || !sha.startsWith(abbreviation) ||
+      text(resolved, "html_url") !== `https://github.com/${source.repository}/commit/${sha}`
+    ) continue
+    const accepted = try acceptingPull(source.repository, sha)
+    const at = millis(acknowledgementTime(comment))
+    if (
+      accepted === undefined || accepted.mergedBy !== comment.user?.node_id || !Number.isFinite(at) ||
+      at < millis(accepted.mergedAt) || !(source.pull.number < accepted.number)
+    ) continue
+    references.push({ commentNodeId: comment.node_id, acknowledgementSha256: acknowledgementDigest(source, comment), abbreviation, commitSha: sha })
+  }
+  return { references, limitations: [] } satisfies RetainedOutcome
+}
+
+export function hasRetainedMergeReference(source: Evidence, comment: Acknowledgement, accepted: Evidence) {
+  const sha = accepted.pull.merge_commit_sha
+  if (sha === null || sha === "" || accepted.mergeCommitEvidence?.sha !== sha) return false
+  const digest = acknowledgementDigest(source, comment)
+  return abbreviations(source.repository, comment).some((abbreviation) => {
+    const references = (source.retainedMergeReferences ?? []).filter((reference) => reference.commentNodeId === comment.node_id && reference.abbreviation === abbreviation)
+    const [only] = references
+    return references.length === 1 && only !== undefined && only.acknowledgementSha256 === digest && only.commitSha === sha && sha.startsWith(abbreviation)
+  })
+}

@@ -1,0 +1,50 @@
+// spec/slopbot/pointsDisputes.md, "Triage runs under an expiring lease and every outcome escalates to a moderator"; spec/points/disputes.md, "Triage runs under an expiring lease, a saved draft is reused, and every outcome escalates"
+import { handleRaw, json } from "@repo/platform/http"
+import { route } from "@repo/platform/route"
+import { disputeKeyPattern } from "@repo/points/client"
+import { repositoryAccessOrigin } from "../access/route.vibe"
+import { slopbotPostGithubWebhook, slopbotPostV1PointsDisputes } from "../client/refusals.vibe"
+import { processPointsDispute } from "./pointsTriage.vibe"
+
+schema TriageRequest { readonly key: string }
+schema TriageAccepted { readonly accepted: boolean }
+
+const requestLimitKib = 4
+
+export const pointsDisputeTriage = route({
+  method: "POST",
+  path: "/v1/points-disputes",
+  access: "public",
+  limitKib: requestLimitKib,
+  request: undefined,
+  answer: TriageAccepted,
+  rejected: slopbotPostV1PointsDisputes.invalidRequestS400.error,
+  cache: "no-store",
+})
+
+function invalid() {
+  const row = slopbotPostV1PointsDisputes.invalidRequestS400
+  return json({ error: row.error }, row.status, row.headers)
+}
+
+effect function requestedKey() {
+  const request = try HttpServerRequest.HttpServerRequest
+  const text = provideService(request.text, HttpServerRequest.MaxBodySize, ByteSize.kibibytes(requestLimitKib)) catch () => ""
+  const value: unknown = Effect.try(() => JSON.parse(text) as unknown) catch () => undefined
+  const key = Schema.is(TriageRequest)(value) ? value.key : undefined
+  return key !== undefined && disputeKeyPattern.test(key) ? key : undefined
+}
+
+effect function triageAnswer() {
+  const url = new URL((try HttpServerRequest.HttpServerRequest).originalUrl)
+  if (url.origin !== repositoryAccessOrigin) {
+    const notFound = slopbotPostGithubWebhook.otherMethods.notFound
+    return HttpServerResponse.text(notFound.text, { status: notFound.status, contentType: notFound.headers["content-type"] })
+  }
+  const key = try requestedKey()
+  if (key === undefined) return invalid()
+  try processPointsDispute(key)
+  return json({ accepted: true } satisfies typeof TriageAccepted.Type)
+}
+
+export const pointsDisputeRoutes = handleRaw(pointsDisputeTriage, () => triageAnswer())

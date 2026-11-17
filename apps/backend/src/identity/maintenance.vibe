@@ -1,8 +1,12 @@
-// spec/backend/identity.md, "Time advances and the hourly job removes only expired rows"; spec/backend/accounts.md, "Sign-out ends only the caller's session and revocation never reaches another account"
+// spec/backend/identity.md, "Time advances and the hourly job removes only expired rows"; spec/backend/accounts.md, "Sign-out ends only the caller's session and revocation never reaches another account"; spec/operations/intakeHealth.md, "Story: Renew the observation only from a usable GitHub answer"
+import type { Fetcher } from "@repo/platform/bindings"
+import { type ServiceClient, serviceClient } from "@repo/platform/binding"
 import { isoAt, nowSeconds } from "@repo/platform/clock"
 import { D1, sql } from "@repo/platform/d1"
 import type { CronJobs } from "@repo/platform/worker"
 import { Rejected, identityCron } from "../../gen/backend__identity.effect.vibe"
+import { deploymentOrigins } from "../client/identity.vibe"
+import { IdentitySettings } from "./config.vibe"
 import { purge } from "./store.vibe"
 
 export interface ReadinessRefresh {
@@ -19,7 +23,16 @@ export service ReportingRefresh {
   readonly binding: ReadinessRefresher | undefined
 }
 
+export service IntakeRenewal {
+  readonly client: ServiceClient | undefined
+}
+
+export function intakeRenewal(fetcher: Fetcher | undefined) {
+  return Layer.succeed(IntakeRenewal, { client: fetcher === undefined ? undefined : serviceClient(fetcher, { binding: "SLOP_NOTIFY", origin: "https://notify.internal" }) })
+}
+
 export error RefreshUnavailable
+export error IntakeRenewalFailed
 export error RefreshIncomplete { failed: number }
 
 export const identityCleanupCron = "17 * * * *"
@@ -52,9 +65,21 @@ export effect function refreshMergeActivity() {
   if (refreshed === false) try Effect.logError("slop merge activity refresh failed")
 }
 
-export const identityJobs: CronJobs<D1 | ReportingRefresh> = {
+schema IntakeRenewed { result: string }
+
+export effect function renewIntake() {
+  if ((try IdentitySettings).publicOrigin !== deploymentOrigins.production.identity) return
+  const { client } = try IntakeRenewal
+  const renewed = client === undefined ? undefined : client.call("POST", "/v1/intake/renew", undefined, IntakeRenewed, 4 * 1024) catch () => undefined
+  if (renewed !== undefined) return
+  try Effect.logError("slop identity scheduled maintenance failed")
+  throw new IntakeRenewalFailed()
+}
+
+export const identityJobs: CronJobs<D1 | ReportingRefresh | IdentitySettings | IntakeRenewal> = {
   [identityCleanupCron]: [
     { name: "identity cleanup", run: () => purgeExpired() },
+    { name: "intake renewal", run: () => renewIntake() },
     { name: "reporting readiness", run: () => refreshReporting() },
     { name: "merge activity", run: () => refreshMergeActivity() },
   ],

@@ -186,7 +186,7 @@ export effect function answered(response: HttpClientResponse.HttpClientResponse,
   const headers = response.headers
   const kind = classify(status, headers)
   if (kind === "notFound") throw new NotFound({ path })
-  if (kind === "rateLimited") throw rateLimited(headers, try Clock.currentTimeMillis)
+  if (kind === "rateLimited") throw rateLimited(status, headers, try Clock.currentTimeMillis)
   if (kind === "refused" && isRefusal(status)) throw new GitHubRefused({ status, path, message: try refusalMessage(response, path) })
   if (kind !== "ok") throw new GitHubUnavailable({ status, path })
   return { status, headers, bytes: try bounded(response, limitBytes, path) } satisfies Answer
@@ -292,7 +292,7 @@ export function githubWith(settings: Settings): Layer.Layer<GitHub, never, HttpC
         const answer = try read({ method: "POST", url, accept: githubJson, json: { query, variables } }, options?.limitBytes ?? defaultLimitBytes)
         const envelope = try decoded(GraphQLEnvelope, try parsed(answer.bytes, "/graphql"), "/graphql")
         const problems = envelope.errors ?? []
-        if (problems.some((problem) => problem.type === "RATE_LIMITED")) throw rateLimited(answer.headers, try Clock.currentTimeMillis)
+        if (problems.some((problem) => problem.type === "RATE_LIMITED")) throw rateLimited(answer.status, answer.headers, try Clock.currentTimeMillis)
         const absent = (options?.absent ?? []).map((where) => JSON.stringify(where))
         const tolerated = problems.every((problem) => problem.type === "NOT_FOUND" && absent.includes(JSON.stringify(problem.path ?? [])))
         if (!tolerated) throw new GitHubMalformed({ path: "/graphql", issue: (problems[0]?.message ?? "GraphQL answered an error").slice(0, 300) })

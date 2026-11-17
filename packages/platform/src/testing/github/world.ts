@@ -131,6 +131,35 @@ export interface Advisory {
   readonly createdAt: string;
 }
 
+export interface DeploymentStatus {
+  readonly id: number;
+  readonly state: string;
+  readonly logUrl: string | null;
+  readonly createdAt: string;
+}
+
+export interface Deployment {
+  readonly id: number;
+  readonly nodeId: string;
+  readonly sha: string;
+  readonly ref: string;
+  readonly environment: string;
+  readonly productionEnvironment: boolean;
+  readonly createdAt: string;
+  readonly statuses: DeploymentStatus[];
+}
+
+export interface WorkflowRun {
+  readonly id: number;
+  readonly nodeId: string;
+  readonly headSha: string;
+  readonly headBranch: string | null;
+  readonly path: string;
+  readonly status: string;
+  readonly conclusion: string | null;
+  readonly createdAt: string;
+}
+
 export interface Repository {
   readonly id: number;
   readonly nodeId: string;
@@ -151,6 +180,8 @@ export interface Repository {
   readonly items: Map<number, Item>;
   privateReporting: boolean;
   readonly advisories: Advisory[];
+  readonly deployments: Deployment[];
+  readonly runs: Map<number, WorkflowRun>;
 }
 
 export interface App {
@@ -306,6 +337,29 @@ export interface AppInput {
   readonly clientSecret?: string;
   readonly webhookSecret?: string;
 }
+export interface DeploymentInput {
+  readonly sha: string;
+  readonly ref: string;
+  readonly environment: string;
+  readonly productionEnvironment?: boolean;
+  readonly createdAt?: string;
+}
+
+export interface DeploymentStatusInput {
+  readonly state: string;
+  readonly logUrl?: string;
+  readonly createdAt?: string;
+}
+
+export interface WorkflowRunInput {
+  readonly headSha: string;
+  readonly path: string;
+  readonly headBranch?: string;
+  readonly status?: string;
+  readonly conclusion?: string;
+  readonly createdAt?: string;
+}
+
 export interface AdvisoryInput {
   readonly author: string;
   readonly summary: string;
@@ -504,6 +558,8 @@ export class GitHubWorld {
       items: new Map(),
       privateReporting: true,
       advisories: [],
+      deployments: [],
+      runs: new Map(),
     };
     if (owner.kind !== "Organization") repo.permissions.set(owner.id, "admin");
     this.#repos.set(repo.id, repo);
@@ -788,6 +844,51 @@ export class GitHubWorld {
       return out;
     };
     return `GHSA-${part()}-${part()}-${part()}`;
+  }
+
+  /** @throws {Error} */
+  addDeployment(fullName: string, input: DeploymentInput): Deployment {
+    const repo = this.repo(fullName);
+    const id = this.#next();
+    const deployment: Deployment = {
+      id,
+      nodeId: `DE_kwDO${id.toString(36)}`,
+      sha: input.sha,
+      ref: input.ref,
+      environment: input.environment,
+      productionEnvironment: input.productionEnvironment ?? false,
+      createdAt: this.#at(input.createdAt),
+      statuses: [],
+    };
+    repo.deployments.push(deployment);
+    return deployment;
+  }
+
+  /** @throws {Error} */
+  addDeploymentStatus(fullName: string, deploymentId: number, input: DeploymentStatusInput): DeploymentStatus {
+    const deployment = this.repo(fullName).deployments.find((candidate) => candidate.id === deploymentId);
+    if (deployment === undefined) throw new Error(`no deployment ${deploymentId} in ${fullName}`);
+    const status: DeploymentStatus = { id: this.#next(), state: input.state, logUrl: input.logUrl ?? null, createdAt: this.#at(input.createdAt) };
+    deployment.statuses.push(status);
+    return status;
+  }
+
+  /** @throws {Error} */
+  addWorkflowRun(fullName: string, input: WorkflowRunInput): WorkflowRun {
+    const repo = this.repo(fullName);
+    const id = this.#next();
+    const run: WorkflowRun = {
+      id,
+      nodeId: `WFR_kwDO${id.toString(36)}`,
+      headSha: input.headSha,
+      headBranch: input.headBranch ?? null,
+      path: input.path,
+      status: input.status ?? "completed",
+      conclusion: input.conclusion ?? "success",
+      createdAt: this.#at(input.createdAt),
+    };
+    repo.runs.set(id, run);
+    return run;
   }
 
   /** @throws {Error} */

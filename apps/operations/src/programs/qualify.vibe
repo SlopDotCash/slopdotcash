@@ -1,11 +1,12 @@
-// spec/operations/escrowQualification.md, "Story: Qualify escrow one network at a time with an explicitly approved scope"; spec/operations/escrowQualification.md, "Qualification requires launch, exact network and vault evidence, a reviewed plan, and current owner authorization"
+// spec/operations/escrowQualification.md, "Story: Qualify escrow one network at a time with an explicitly approved scope"; spec/operations/escrowQualification.md, "Qualification requires launch, exact network and vault evidence, a reviewed plan, and current owner authorization"; spec/operations/backup.md, "Restoration verifies the whole chain and reads back the exact bytes, never over live evidence"
 import { escrow } from "../qualification/escrow/escrow.vibe"
 import { type Registry, reviewedRegistry } from "../qualification/escrow/registry.ts"
 import { checkTestFunding } from "../qualification/escrow/testFunding.vibe"
+import { recovery } from "../qualification/recovery/recovery.vibe"
 
 export error QualifyUsage { message: string }
 
-const usage = "usage: qualify escrow <command> … | qualify funding <network> <address> [https-rpc-url]"
+const usage = "usage: qualify escrow <command> … | qualify funding <network> <address> [https-rpc-url] | qualify recovery [--mode plan|execute]"
 
 export effect function qualify(args: ReadonlyArray<string>, registry: Registry = reviewedRegistry) {
   const [scope, ...rest] = args
@@ -18,6 +19,10 @@ export effect function qualify(args: ReadonlyArray<string>, registry: Registry =
     const endpoints = Redacted.value(try Config.withDefault(Config.Redacted("QUALIFICATION_RPC_URLS"), Redacted.make("")))
     const urls = Redacted.make(endpoints.split(",").map((url) => url.trim()).filter((url) => url !== "") as ReadonlyArray<string>)
     try escrow(rest, { urls, registry })
+    return
+  }
+  if (scope === "recovery") {
+    try recovery(rest)
     return
   }
   throw new QualifyUsage({ message: usage })

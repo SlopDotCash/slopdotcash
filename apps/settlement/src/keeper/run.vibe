@@ -20,7 +20,7 @@ import { DEPLOYMENT_MISSING, type KeeperResult, PROJECT_MISSING, causeLabel, cla
 import type { KeeperCore } from "./lifecycle.vibe"
 import { serveMonths } from "./monthly.vibe"
 import { readPermissionlessPayment, submitPermissionlessPayment } from "./pay.vibe"
-import { KeeperRefused, publicJson } from "./registry.vibe"
+import { KeeperRefused, publicJson, siteOrigin } from "./registry.vibe"
 import { rpcSession, scanSession } from "./sessions.vibe"
 import { bindIdentity, indexPaid, indexReserved, keeperD1, markChecked, unpaidAwards } from "./store.vibe"
 import { quantityOf } from "./units.ts"
@@ -51,7 +51,7 @@ const RUN_FAILED = "Operator keeper run failed; durable attempts are retained"
 
 effect function registry(config: KeeperConfig) {
   const unavailable = () => new KeeperRefused({ message: "Current project registry with restrictions is required" })
-  const answered = try publicJson(`${config.apiOrigin}/api/v1/projects`, config.apiOrigin, unavailable)
+  const answered = try publicJson(`${config.apiOrigin}/api/v1/projects`, siteOrigin(config.apiOrigin), unavailable)
   if (answered === null) throw unavailable()
   const body = Schema.decodeUnknownEffect(RegistryBody)(answered) catch effect () => { throw unavailable() }
   if (body.schemaVersion !== "1") throw unavailable()

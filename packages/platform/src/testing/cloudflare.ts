@@ -4,19 +4,48 @@ import { Schema } from "effect";
 import { type Request, Response } from "miniflare";
 import { Disconnect, type Handler, statements } from "../testing.ts";
 
+export interface VersionBinding {
+  readonly name: string;
+  readonly type: string;
+  readonly [field: string]: unknown;
+}
+
 export interface WorkerVersion {
   readonly id: string;
+  readonly createdOn: string;
+  readonly number: number;
   readonly tag: string | undefined;
+  readonly annotations: Readonly<Record<string, string>>;
   readonly modules: Readonly<Record<string, string>>;
+  readonly bindings: ReadonlyArray<VersionBinding>;
 }
 
 export interface WorkerDeployment {
   readonly id: string;
   readonly versions: ReadonlyArray<{ readonly versionId: string; readonly percentage: number }>;
+  readonly annotations: Readonly<Record<string, string>>;
+}
+
+export interface EnvVar {
+  readonly type: "plain_text" | "secret_text";
+  readonly value?: string;
+}
+
+export interface Exposure {
+  readonly enabled: boolean;
+  readonly previews_enabled: boolean;
+}
+
+export interface PagesProject {
+  readonly productionBranch: string;
+  readonly production: Readonly<Record<string, EnvVar>>;
+  readonly preview: Readonly<Record<string, EnvVar>>;
 }
 
 export interface PagesDeployment {
   readonly id: string;
+  readonly createdOn: string;
+  readonly environment: "production" | "preview";
   readonly branch: string;
   readonly commitHash: string;
   readonly commitDirty: boolean;
@@ -32,7 +61,10 @@ export interface CloudflareState {
   readonly schedules: Readonly<Record<string, ReadonlyArray<string>>>;
   readonly d1Migrations: Readonly<Record<string, ReadonlyArray<string>>>;
   readonly pagesDeployments: Readonly<Record<string, ReadonlyArray<PagesDeployment>>>;
+  readonly pagesProjects: Readonly<Record<string, PagesProject>>;
   readonly pagesAssets: ReadonlySet<string>;
+  readonly subdomains: Readonly<Record<string, Exposure>>;
+  readonly scriptSettings: Readonly<Record<string, Readonly<Record<string, unknown>>>>;
 }
 
 export interface CloudflareCall {
@@ -53,9 +85,15 @@ export interface CloudflareApi {
   readonly state: CloudflareState;
   /** @throws {never} */
   loseNext(match: LostResponse): void;
+  /** @throws {never} */
+  configurePages(project: string, configuration: Partial<PagesProject>): void;
 }
 
 export class ResponseLost extends Disconnect {}
+
+const createdBase = Date.parse("2026-11-16T00:00:00.000Z");
+const defaultProject: PagesProject = { productionBranch: "main", production: {}, preview: {} };
+const closed: Exposure = { enabled: false, previews_enabled: false };
 
 const SecretBody = Schema.Struct({ name: Schema.String, text: Schema.String, type: Schema.String });
 const DeploymentBody = Schema.Struct({
@@ -67,7 +105,24 @@ const SchedulesBody = Schema.Array(Schema.Struct({ cron: Schema.String }));
 const QueryBody = Schema.Struct({ sql: Schema.String, params: Schema.optionalKey(Schema.Array(Schema.Unknown)) });
 const HashesBody = Schema.Struct({ hashes: Schema.Array(Schema.String) });
 const AssetsBody = Schema.Array(Schema.Struct({ key: Schema.String, value: Schema.String, base64: Schema.Boolean, metadata: Schema.optionalKey(Schema.Unknown) }));
-const VersionMetadata = Schema.Struct({ annotations: Schema.optionalKey(Schema.Record(Schema.String, Schema.String)) });
+const Binding = Schema.StructWithRest(Schema.Struct({ name: Schema.String, type: Schema.String }), [Schema.Record(Schema.String, Schema.Unknown)]);
+const VersionMetadata = Schema.Struct({
+  annotations: Schema.optionalKey(Schema.Record(Schema.String, Schema.String)),
+  bindings: Schema.optionalKey(Schema.Array(Binding)),
+  keep_bindings: Schema.optionalKey(Schema.Array(Schema.String)),
+});
+const EnvBinding = Schema.StructWithRest(Schema.Struct({ type: Schema.String }), [Schema.Record(Schema.String, Schema.Unknown)]);
+const LatestPatch = Schema.Struct({
+  env: Schema.optionalKey(Schema.Record(Schema.String, Schema.NullOr(EnvBinding))),
+  annotations: Schema.optionalKey(Schema.Record(Schema.String, Schema.NullOr(Schema.String))),
+});
+const ExposureBody = Schema.Struct({ enabled: Schema.Boolean, previews_enabled: Schema.optionalKey(Schema.Boolean) });
+const SettingsBody = Schema.Record(Schema.String, Schema.Unknown);
+const PagesVar = Schema.Struct({ type: Schema.Literals(["plain_text", "secret_text"]), value: Schema.optionalKey(Schema.String) });
+const PagesConfig = Schema.Struct({ env_vars: Schema.optionalKey(Schema.Record(Schema.String, Schema.NullOr(PagesVar))) });
+const PagesPatch = Schema.Struct({
+  deployment_configs: Schema.optionalKey(Schema.Struct({ production: Schema.optionalKey(PagesConfig), preview: Schema.optionalKey(PagesConfig) })),
+});
 const Manifest = Schema.Record(Schema.String, Schema.String);
 
 class Refusal extends Error {
@@ -80,8 +135,16 @@ function envelope(result: unknown, status = 200): Response {
   return Response.json({ success: true, errors: [], messages: [], result }, { status });
 }
 
+function pagedEnvelope(result: unknown, resultInfo: Readonly<Record<string, number>>): Response {
+  return Response.json({ success: true, errors: [], messages: [], result, result_info: resultInfo });
+}
+
 function failure(refusal: Refusal): Response {
   return Response.json({ success: false, errors: [{ code: refusal.code, message: refusal.message }], messages: [], result: null }, { status: refusal.status });
+}
+
+function hidden(binding: VersionBinding): VersionBinding {
+  return binding.type === "secret_text" ? { name: binding.name, type: binding.type } : binding;
 }
 
 function sha256(bytes: Uint8Array | string): string {
@@ -127,26 +190,122 @@ export function cloudflareApi({ accountId = "account-test" }: { readonly account
   const schedules: Record<string, string[]> = {};
   const d1Migrations: Record<string, string[]> = {};
   const pagesDeployments: Record<string, PagesDeployment[]> = {};
+  const pagesProjects: Record<string, PagesProject> = {};
   const pagesAssets = new Set<string>();
+  const subdomains: Record<string, Exposure> = {};
+  const scriptSettings: Record<string, Record<string, unknown>> = {};
   const calls: CloudflareCall[] = [];
   const lost: LostResponse[] = [];
   let sequence = 0;
-  const next = (kind: string) => `${kind}-${String(++sequence).padStart(6, "0")}`;
+  const next = () => `00000000-0000-4000-8000-${(++sequence).toString(16).padStart(12, "0")}`;
+  const createdOn = () => new Date(createdBase + sequence * 1_000).toISOString();
 
-  function addVersion(script: string, modules: Record<string, string>, tag: string | undefined): WorkerVersion {
-    const version = { id: next("version"), tag, modules };
+  function known(script: string): void {
+    if (versions[script] === undefined) throw new Refusal(404, 10007, `workers.api.error.script_not_found: ${script}`);
+  }
+
+  function record(script: string, annotations: Readonly<Record<string, string>>, modules: Readonly<Record<string, string>>, bindings: ReadonlyArray<VersionBinding>, added: ReadonlyArray<VersionBinding>): WorkerVersion {
+    const names = secrets[script] ??= [];
+    for (const binding of added) if (binding.type === "secret_text" && !names.includes(binding.name)) names.push(binding.name);
+    const version: WorkerVersion = { id: next(), createdOn: createdOn(), number: (versions[script]?.length ?? 0) + 1, tag: annotations["workers/tag"], annotations, modules, bindings };
     (versions[script] ??= []).push(version);
     return version;
   }
 
-  function deploy(script: string, chosen: ReadonlyArray<{ readonly versionId: string; readonly percentage: number }>): WorkerDeployment {
-    const known = new Set((versions[script] ?? []).map((version) => version.id));
-    const unknown = chosen.find((version) => !known.has(version.versionId));
+  function addVersion(script: string, modules: Record<string, string>, metadata: typeof VersionMetadata.Type): WorkerVersion {
+    const previous = versions[script]?.at(-1);
+    const kept = new Set(metadata.keep_bindings ?? []);
+    const inherited = (previous?.bindings ?? []).filter((binding) => kept.has(binding.type));
+    const given = (metadata.bindings ?? []).map(hidden);
+    const named = new Set(given.map((binding) => binding.name));
+    const uploaded = Object.keys(modules).length === 0 ? previous?.modules ?? {} : modules;
+    return record(script, metadata.annotations ?? {}, uploaded, [...inherited.filter((binding) => !named.has(binding.name)), ...given], given);
+  }
+
+  function patchLatest(script: string, patch: typeof LatestPatch.Type): WorkerVersion {
+    const latest = versions[script]?.at(-1);
+    if (latest === undefined) throw new Refusal(400, 10222, "There are currently no uploaded versions of this Worker.");
+    const env = Object.entries(patch.env ?? {});
+    const replaced = new Set(env.map(([name]) => name));
+    const given = env.flatMap(([name, binding]) => binding === null ? [] : [hidden({ ...binding, name })]);
+    const annotations = Object.fromEntries(Object.entries({ ...latest.annotations, ...patch.annotations }).filter((entry): entry is [string, string] => entry[1] !== null));
+    return record(script, annotations, latest.modules, [...latest.bindings.filter((binding) => !replaced.has(binding.name)), ...given], given);
+  }
+
+  function versionView(script: string, version: WorkerVersion) {
+    return {
+      id: version.id,
+      number: version.number,
+      annotations: version.annotations,
+      metadata: { created_on: version.createdOn, modified_on: version.createdOn, source: "wrangler", author_email: "release@slop.test" },
+      resources: {
+        bindings: version.bindings,
+        script: { etag: sha256(JSON.stringify(version.modules)), handlers: ["fetch"] },
+        script_runtime: { compatibility_date: "2026-11-13", compatibility_flags: [], usage_model: "standard" },
+      },
+      script,
+    };
+  }
+
+  function deploy(script: string, chosen: ReadonlyArray<{ readonly versionId: string; readonly percentage: number }>, annotations: Readonly<Record<string, string>>): WorkerDeployment {
+    const existing = new Set((versions[script] ?? []).map((version) => version.id));
+    const unknown = chosen.find((version) => !existing.has(version.versionId));
     if (unknown !== undefined) throw new Refusal(400, 10200, `version ${unknown.versionId} does not exist for ${script}`);
     if (chosen.reduce((sum, version) => sum + version.percentage, 0) !== 100) throw new Refusal(400, 10201, "deployment percentages must total 100");
-    const deployment = { id: next("deployment"), versions: chosen };
+    const deployment = { id: next(), versions: chosen, annotations };
     (deployments[script] ??= []).push(deployment);
     return deployment;
+  }
+
+  function projectOf(project: string): PagesProject {
+    return pagesProjects[project] ?? defaultProject;
+  }
+
+  function pagesView(project: string, deployment: PagesDeployment) {
+    return {
+      id: deployment.id,
+      url: `https://${deployment.id.slice(0, 8)}.${project}.pages.dev`,
+      created_on: deployment.createdOn,
+      environment: deployment.environment,
+      project_name: project,
+      is_skipped: false,
+      latest_stage: { name: "deploy", status: "success" },
+      deployment_trigger: { type: "ad_hoc", metadata: { branch: deployment.branch, commit_hash: deployment.commitHash, commit_dirty: deployment.commitDirty } },
+    };
+  }
+
+  function serviceView(name: string) {
+    known(name);
+    const created = versions[name]?.[0]?.createdOn;
+    return { id: name, created_on: created, modified_on: versions[name]?.at(-1)?.createdOn, default_environment: { environment: "production", script: { id: name, tag: sha256(name).slice(0, 32), tags: [], last_deployed_from: "wrangler", handlers: ["fetch"] } } };
+  }
+
+  function service(request: Request, name: string, rest: ReadonlyArray<string>): Response {
+    const [resource, environment, item] = rest;
+    if (request.method !== "GET") throw new Refusal(404, 7003, `Could not route to ${request.url}`);
+    if (resource === undefined) return envelope(serviceView(name));
+    known(name);
+    if (resource !== "environments" || environment !== "production") throw new Refusal(404, 10090, `workers.api.error.environment_not_found: ${name}/${environment ?? ""}`);
+    if (item === "subdomain") return envelope(subdomains[name] ?? closed);
+    if (item === "routes") return envelope([]);
+    throw new Refusal(404, 7003, `Could not route to ${request.url}`);
+  }
+
+  function patchProject(project: string, patch: typeof PagesPatch.Type): void {
+    const current = projectOf(project);
+    const merged = (vars: Readonly<Record<string, EnvVar>>, changes: Readonly<Record<string, EnvVar | null>> | undefined) =>
+      Object.fromEntries(Object.entries({ ...vars, ...changes }).filter((entry): entry is [string, EnvVar] => entry[1] !== null));
+    const configs = patch.deployment_configs;
+    pagesProjects[project] = { ...current, production: merged(current.production, configs?.production?.env_vars), preview: merged(current.preview, configs?.preview?.env_vars) };
+  }
+
+  function envVars(vars: Readonly<Record<string, EnvVar>>) {
+    return Object.fromEntries(Object.entries(vars).map(([name, value]) => [name, value.type === "secret_text" ? { type: value.type } : value]));
+  }
+
+  function projectView(project: string) {
+    const configured = projectOf(project);
+    return { name: project, production_branch: configured.productionBranch, deployment_configs: { production: { env_vars: envVars(configured.production) }, preview: { env_vars: envVars(configured.preview) } } };
   }
 
   function query(databaseId: string, sql: string) {
@@ -171,10 +330,10 @@ export function cloudflareApi({ accountId = "account-test" }: { readonly account
       if (method === "PUT") {
         const form = await request.formData();
         const modules = await modulesOf(form);
-        const tag = (await metadataOf(form)).annotations?.["workers/tag"];
+        const metadata = await metadataOf(form);
         scripts[script] = modules;
-        const version = addVersion(script, modules, tag);
-        deploy(script, [{ versionId: version.id, percentage: 100 }]);
+        const version = addVersion(script, modules, metadata);
+        deploy(script, [{ versionId: version.id, percentage: 100 }], {});
         return envelope({ id: script, etag: sha256(JSON.stringify(modules)) });
       }
       if (method === "GET" && scripts[script] !== undefined) return envelope({ id: script, modules: scripts[script] });
@@ -182,19 +341,23 @@ export function cloudflareApi({ accountId = "account-test" }: { readonly account
     }
     if (resource === "versions" && method === "POST") {
       const form = await request.formData();
-      const tag = (await metadataOf(form)).annotations?.["workers/tag"];
-      const version = addVersion(script, await modulesOf(form), tag);
-      return envelope({ id: version.id, number: (versions[script] ?? []).length, metadata: { annotations: tag === undefined ? {} : { "workers/tag": tag } } });
+      const version = addVersion(script, await modulesOf(form), await metadataOf(form));
+      return envelope(versionView(script, version));
     }
-    if (resource === "versions" && method === "GET")
-      return envelope({ items: (versions[script] ?? []).map((version) => ({ id: version.id, annotations: version.tag === undefined ? {} : { "workers/tag": version.tag } })) });
+    if (resource === "versions" && method === "GET" && item === undefined)
+      return envelope({ items: (versions[script] ?? []).map((version) => versionView(script, version)) });
+    if (resource === "versions" && method === "GET") {
+      const version = (versions[script] ?? []).find((candidate) => candidate.id === item);
+      if (version === undefined) throw new Refusal(404, 10221, `version ${item} does not exist for ${script}`);
+      return envelope(versionView(script, version));
+    }
     if (resource === "deployments" && method === "POST") {
       const body = await decoded(DeploymentBody, request);
-      const deployment = deploy(script, body.versions.map((version) => ({ versionId: version.version_id, percentage: version.percentage })));
-      return envelope({ id: deployment.id, versions: body.versions });
+      const deployment = deploy(script, body.versions.map((version) => ({ versionId: version.version_id, percentage: version.percentage })), body.annotations ?? {});
+      return envelope({ id: deployment.id, versions: body.versions, annotations: deployment.annotations, strategy: "percentage" });
     }
     if (resource === "deployments" && method === "GET")
-      return envelope({ deployments: [...deployments[script] ?? []].reverse().map((deployment) => ({ id: deployment.id, versions: deployment.versions.map((version) => ({ version_id: version.versionId, percentage: version.percentage })) })) });
+      return envelope({ deployments: [...deployments[script] ?? []].reverse().map((deployment) => ({ id: deployment.id, strategy: "percentage", annotations: deployment.annotations, versions: deployment.versions.map((version) => ({ version_id: version.versionId, percentage: version.percentage })) })) });
     if (resource === "secrets" && method === "PUT" && item === undefined) {
       const body = await decoded(SecretBody, request);
       const names = secrets[script] ??= [];
@@ -211,19 +374,46 @@ export function cloudflareApi({ accountId = "account-test" }: { readonly account
       return envelope({ schedules: schedules[script].map((cron) => ({ cron })) });
     }
     if (resource === "schedules" && method === "GET") return envelope({ schedules: (schedules[script] ?? []).map((cron) => ({ cron })) });
+    if (resource === "subdomain" && method === "GET") {
+      known(script);
+      return envelope(subdomains[script] ?? closed);
+    }
+    if (resource === "subdomain" && method === "POST") {
+      known(script);
+      const body = await decoded(ExposureBody, request);
+      subdomains[script] = { enabled: body.enabled, previews_enabled: body.previews_enabled ?? body.enabled };
+      return envelope(subdomains[script]);
+    }
+    if (resource === "script-settings" && method === "PATCH") {
+      known(script);
+      scriptSettings[script] = { ...scriptSettings[script], ...await decoded(SettingsBody, request) };
+      return envelope(scriptSettings[script]);
+    }
+    if (resource === "script-settings" && method === "GET") {
+      known(script);
+      return envelope(scriptSettings[script] ?? {});
+    }
     throw new Refusal(404, 7003, `Could not route to ${request.url}`);
   }
 
   async function pages(request: Request, project: string, rest: ReadonlyArray<string>): Promise<Response> {
-    const [resource] = rest;
-    if (resource === undefined && request.method === "GET") return envelope({ name: project, production_branch: "main" });
+    const [resource, item] = rest;
+    const configured = projectOf(project);
+    if (resource === undefined && request.method === "PATCH") {
+      patchProject(project, await decoded(PagesPatch, request));
+      return envelope(projectView(project));
+    }
+    if (resource === undefined && request.method === "GET") return envelope(projectView(project));
+    if (resource === "domains" && item !== undefined && request.method === "GET") return envelope({ name: item, status: "active" });
     if (resource === "upload-token" && request.method === "GET") return envelope({ jwt: `upload-token-${project}` });
     if (resource === "deployments" && request.method === "POST") {
       const form = await request.formData();
       const branch = text(form.get("branch")) ?? "main";
       const worker = form.get("_worker.js");
       const deployment: PagesDeployment = {
-        id: next("pages"),
+        id: next(),
+        createdOn: createdOn(),
+        environment: branch === configured.productionBranch ? "production" : "preview",
         branch,
         commitHash: text(form.get("commit_hash")) ?? "",
         commitDirty: text(form.get("commit_dirty")) === "true",
@@ -231,10 +421,21 @@ export function cloudflareApi({ accountId = "account-test" }: { readonly account
         worker: worker === null || typeof worker === "string" ? undefined : sha256(new Uint8Array(await worker.arrayBuffer())),
       };
       (pagesDeployments[project] ??= []).push(deployment);
-      return envelope({ id: deployment.id, url: `https://${deployment.id}.${project}.pages.dev`, environment: branch === "main" ? "production" : "preview", deployment_trigger: { metadata: { branch, commit_hash: deployment.commitHash, commit_dirty: deployment.commitDirty } } });
+      return envelope(pagesView(project, deployment));
     }
-    if (resource === "deployments" && request.method === "GET")
-      return envelope([...pagesDeployments[project] ?? []].reverse().map((deployment) => ({ id: deployment.id, url: `https://${deployment.id}.${project}.pages.dev`, deployment_trigger: { metadata: { branch: deployment.branch, commit_hash: deployment.commitHash, commit_dirty: deployment.commitDirty } } })));
+    if (resource === "deployments" && item !== undefined && request.method === "GET") {
+      const deployment = (pagesDeployments[project] ?? []).find((candidate) => candidate.id === item);
+      if (deployment === undefined) throw new Refusal(404, 8000007, `deployment ${item} does not exist for ${project}`);
+      return envelope(pagesView(project, deployment));
+    }
+    if (resource === "deployments" && request.method === "GET") {
+      const query = new URL(request.url).searchParams;
+      const environment = query.get("env");
+      const perPage = Math.min(Math.max(Number(query.get("per_page") ?? 25) || 25, 1), 100);
+      const page = Math.max(Number(query.get("page") ?? 1) || 1, 1);
+      const listed = [...pagesDeployments[project] ?? []].reverse().filter((deployment) => environment === null || deployment.environment === environment);
+      return pagedEnvelope(listed.slice((page - 1) * perPage, page * perPage).map((deployment) => pagesView(project, deployment)), { page, per_page: perPage, count: Math.min(perPage, Math.max(listed.length - (page - 1) * perPage, 0)), total_count: listed.length, total_pages: Math.ceil(listed.length / perPage) });
+    }
     throw new Refusal(404, 7003, `Could not route to ${request.url}`);
   }
 
@@ -261,6 +462,10 @@ export function cloudflareApi({ accountId = "account-test" }: { readonly account
     if (third === "workers" && fourth === "scripts" && fifth === undefined && request.method === "GET")
       return envelope(Object.keys(scripts).map((id) => ({ id })));
     if (third === "workers" && fourth === "scripts" && fifth !== undefined) return workers(request, fifth, rest);
+    if (third === "workers" && fourth === "workers" && fifth !== undefined && rest[0] === "versions" && rest[1] === "latest" && rest.length === 2 && request.method === "PATCH")
+      return envelope(versionView(fifth, patchLatest(fifth, await decoded(LatestPatch, request))));
+    if (third === "workers" && fourth === "services" && fifth !== undefined) return service(request, fifth, rest);
+    if (third === "workers" && fourth === "domains" && fifth === "records" && rest.length === 0 && request.method === "GET") return envelope([]);
     if (third === "pages" && fourth === "projects" && fifth !== undefined) return pages(request, fifth, rest);
     if (third === "d1" && fourth === "database" && fifth !== undefined && rest[0] === "query" && request.method === "POST")
       return envelope(query(fifth, (await decoded(QueryBody, request)).sql));
@@ -276,8 +481,9 @@ export function cloudflareApi({ accountId = "account-test" }: { readonly account
 
   return {
     calls,
-    state: { scripts, versions, deployments, secrets, schedules, d1Migrations, pagesDeployments, pagesAssets },
+    state: { scripts, versions, deployments, secrets, schedules, d1Migrations, pagesDeployments, pagesProjects, pagesAssets, subdomains, scriptSettings },
     loseNext: (match) => { lost.push(match); },
+    configurePages: (project, configuration) => { pagesProjects[project] = { ...projectOf(project), ...configuration }; },
     handler: async (request) => {
       const url = new URL(request.url);
       const path = url.pathname.replace(/^\/client\/v4/u, "");

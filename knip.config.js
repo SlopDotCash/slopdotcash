@@ -12,10 +12,41 @@
 //   ignore frozen.json `ignore`             records copied byte for byte from development, never imported or rewritten
 //   apps/* anvil, solana-test-validator, docker, python3  local chains, the scan container and the install-guide authority,
 //                                           run as programs by journeys and programs, not from npm
+//   entry security src/sandbox/job.vibe     the scan container's program, named only as a string in vite.sandbox.config.ts
+//   entry contracts test/**                 the conformance driver, loaded by path by the traces stage; evm/ and solana/ are Foundry and Cargo projects
+//   ignoreIssues fees dln exports           the buyback leg's order checks, kept for the fee Worker entry (fees:U14)
 import { readFileSync } from "node:fs"
 import vibelang from "vibelang/knip"
 
 const frozen = JSON.parse(readFileSync(new URL("frozen.json", import.meta.url), "utf8")).ignore
+
+const app = {
+  "entry": [
+    "src/worker.vibe",
+    "src/workers/*.vibe",
+    "src/workers/*.classes.ts",
+    "src/programs/*.vibe",
+    "src/worker/*.vibe",
+    "src/main.tsx",
+    "vite.*.config.ts",
+    "test/**/*.test.{ts,tsx,vibe}",
+    "test/drivers/*.ts",
+    "src/**/*.{schema,contract}.{ts,vibe}"
+  ],
+  "project": [
+    "src/**/*.{ts,tsx,vibe,vibex,css}",
+    "test/**/*.{ts,tsx,vibe,vibex}"
+  ],
+  "ignoreDependencies": [
+    "tailwindcss"
+  ],
+  "ignoreBinaries": [
+    "anvil",
+    "solana-test-validator",
+    "docker",
+    "python3"
+  ]
+}
 
 export default {
   compilers: { vibe: vibelang, vibex: vibelang },
@@ -26,7 +57,10 @@ export default {
   ],
   "ignoreExportsUsedInFile": true,
   "ignoreIssues": {
-    "vibestack/studio/src/server.vibe": ["exports"]
+    "vibestack/studio/src/server.vibe": ["exports"],
+    "apps/fees/src/dln/evidence.vibe": ["exports"],
+    "apps/fees/src/dln/evmOrder.vibe": ["exports"],
+    "apps/fees/src/dln/solanaOrder.vibe": ["exports"]
   },
   "workspaces": {
     ".": {
@@ -67,6 +101,12 @@ export default {
       ]
     },
     "packages/contracts": {
+      "entry": [
+        "test/drivers/*.ts"
+      ],
+      "project": [
+        "test/**/*.ts"
+      ],
       "ignoreBinaries": [
         "forge"
       ]
@@ -101,32 +141,10 @@ export default {
         "src/**/*.{ts,vibe}"
       ]
     },
-    "apps/*": {
-      "entry": [
-        "src/worker.vibe",
-        "src/workers/*.vibe",
-        "src/workers/*.classes.ts",
-        "src/programs/*.vibe",
-        "src/worker/*.vibe",
-        "src/main.tsx",
-        "vite.worker.config.ts",
-        "test/**/*.test.{ts,tsx,vibe}",
-        "test/drivers/*.ts",
-        "src/**/*.{schema,contract}.{ts,vibe}"
-      ],
-      "project": [
-        "src/**/*.{ts,tsx,vibe,vibex,css}",
-        "test/**/*.{ts,tsx,vibe,vibex}"
-      ],
-      "ignoreDependencies": [
-        "tailwindcss"
-      ],
-      "ignoreBinaries": [
-        "anvil",
-        "solana-test-validator",
-        "docker",
-        "python3"
-      ]
-    }
+    "apps/security": {
+      ...app,
+      "entry": [...app.entry, "src/sandbox/job.vibe"]
+    },
+    "apps/*": app
   }
 }

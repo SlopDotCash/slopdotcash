@@ -1,0 +1,55 @@
+// spec/slopbot/workUnits.md, "A claim is one changed path in one commit and belongs to its first accepted carrier"
+import { FileRecovery, canonicalMergeInput, mergeInputSha256, mergeRecipe, validMergeRecipe, type MergeRecipe } from "@repo/platform/git/evidence"
+import { MergeResult, MergeUnavailable, MergeVerifier } from "@repo/ports/security"
+import type { Evidence } from "../evidence/types.vibe"
+import { WorkUnitRefused, type WorkUnitSource } from "./types.vibe"
+import { type MergeVerifierBinding, type ReconstructionCall, type RecoveryCall, rejectedStage } from "./verifierBinding.ts"
+
+const MergeResults = Schema.Array(MergeResult)
+
+effect function called(run: () => Promise<unknown>) {
+  return try tryPromise({ try: run, catch: (cause) => new MergeUnavailable({ stage: rejectedStage(cause) }) })
+}
+
+effect function shaped<S extends Schema.ConstraintDecoder<unknown>>(schema: S, raw: unknown) {
+  const decoded: S["Type"] = Schema.decodeUnknownEffect(schema)(raw) catch effect () => { throw new MergeUnavailable({ stage: "output-shape" }) }
+  return decoded
+}
+
+export function mergeVerifierVia(binding: MergeVerifierBinding) {
+  return Layer.succeed(MergeVerifier, {
+    reconstruct: (request: ReconstructionCall) => effect {
+      return try shaped(MergeResults, try called(() => binding.reconstruct(request)))
+    },
+    recover: (request: RecoveryCall) => effect {
+      return try shaped(FileRecovery, try called(() => binding.recover(request)))
+    },
+  })
+}
+
+export function mergeInputOf(evidence: Evidence) {
+  return canonicalMergeInput(evidence)
+}
+
+export effect function reconstructSources(sources: ReadonlyArray<WorkUnitSource>, bundle: ReadableStream<Uint8Array>) {
+  if (new Set(sources.map(({ evidence }) => evidence.repositoryNodeId)).size !== 1) throw new WorkUnitRefused({ reason: "A Git bundle must bind one public repository" })
+  const verifier = try MergeVerifier
+  const inputs = sources.map(({ evidence }) => mergeInputOf(evidence))
+  const reconstructed = try verifier.reconstruct({ inputs, bundle })
+  if (reconstructed.length !== sources.length) throw new WorkUnitRefused({ reason: "Incomplete merge reconstruction" })
+  const bound: WorkUnitSource[] = []
+  for (const [index, source] of sources.entries()) {
+    const input = inputs[index]
+    const resolved = reconstructed[index]
+    const recipe = input === undefined ? undefined : mergeRecipe(input)
+    if (recipe === undefined || resolved === undefined || resolved.inputSha256 !== recipe.inputSha256) throw new WorkUnitRefused({ reason: "Merge reconstruction identity mismatch" })
+    bound.push({ ...source, evidence: { ...source.evidence, mergeResolutions: resolved.mergeResolutions }, mergeRecipe: recipe })
+  }
+  return bound
+}
+
+export effect function reuseMergeResolution(current: Evidence, original: Evidence, recipe: MergeRecipe) {
+  if (!validMergeRecipe(recipe) || mergeInputSha256(current) !== recipe.inputSha256 || mergeInputSha256(original) !== recipe.inputSha256 || original.mergeResolutions === undefined)
+    throw new WorkUnitRefused({ reason: "Merge reconstruction inputs changed after assessment" })
+  return { ...current, mergeResolutions: original.mergeResolutions } satisfies Evidence
+}

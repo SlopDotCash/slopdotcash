@@ -1,0 +1,318 @@
+// spec/slopbot/publicFeeds.md, "Story: Serve published history from stored records only"; spec/slopbot/historicalImport.md, "Story: An administrator imports a pre-November subscription assessment once"; spec/slopbot/valueHistory.md, "Story: Recover complete history at a fixed sequence boundary"
+import { assert, layer } from "@effect/vitest"
+import type { D1Database } from "@repo/platform/bindings"
+import { sha256Hex, webCrypto } from "@repo/platform/crypto"
+import { bundle, database, migrate, startWorker } from "@repo/platform/testing"
+import { type GitHubFake, githubFake } from "@repo/platform/testing/github"
+import { migrationsDir } from "@repo/platform/testing/paths"
+
+const worker = "https://slopbot.test"
+const site = "https://slop.test"
+const revision = "a".repeat(40)
+const seededAt = "2026-10-01T00:00:00.000Z"
+const sha = "0".repeat(64)
+
+interface Answer {
+  readonly status: number
+  readonly headers: Readonly<Record<string, string>>
+  readonly text: string
+  readonly body: unknown
+}
+
+interface Ask {
+  readonly method?: string
+  readonly cookie?: string
+  readonly origin?: string
+  readonly json?: unknown
+}
+
+service History {
+  readonly db: D1Database
+  readonly github: GitHubFake
+  fetch(url: string, ask?: Ask): Answer!!
+}
+
+error MigrationFailed { file: string }
+
+function manifestOf(id: string, path: string, nodeId: string) {
+  return JSON.stringify({ id, status: "active", listingTier: "community", authority: { repositoryId: "1", repositoryNodeId: nodeId }, repositories: [{ id: path }] })
+}
+
+function penaltyRow(db: D1Database, project: string, item: string, reversed: boolean) {
+  return db.prepare(`INSERT INTO slopbot_penalties (item_node_id, repository_id, project_id, author_github_id, category, table_version, debit_thirds, period, moderator_review, review_key, recorded_at, reversed_at, reversal)
+    VALUES (?, 7001, ?, '201', 'spam', 'slopbot-penalties-v1', 3, '2026-10', 0, ?, ?, ?, ?)`).bind(item, project, `review-${item}`, seededAt, reversed ? seededAt : null, reversed ? "appeal_upheld" : null)
+}
+
+function source(pull: number) {
+  return { repository: "ada/alpha", repositoryNodeId: "R_alpha01", repositoryDatabaseId: 7001, pullRequestNodeId: `PR_${pull}`, pullRequestNumber: pull }
+}
+
+function jointRecord(sources: ReadonlyArray<number>, claims: ReadonlyArray<string>, supersedes: ReadonlyArray<string>, digit: string) {
+  return JSON.stringify({
+    schemaVersion: "slop-work-unit-record:v1",
+    projectId: "alpha",
+    sourceDigest: digit.repeat(64),
+    sources: sources.map(source),
+    claims: claims.map((claim) => ({ id: claim.repeat(64) })),
+    units: [],
+    rubricVersion: "slop-value-rubric:v1",
+    producerRevision: revision,
+    assessedAt: seededAt,
+    supersedes,
+    legacyPredecessors: [],
+    revisionReason: supersedes.length === 0 ? null : "Source group changed; automatic provisional reassessment",
+  })
+}
+
+effect function appendJoint(db: D1Database, sources: ReadonlyArray<number>, claims: ReadonlyArray<string>, supersedes: ReadonlyArray<string>, digit: string) {
+  const recordJson = jointRecord(sources, claims, supersedes, digit)
+  const digest = try sha256Hex(recordJson)
+  try promise(() => db.prepare("INSERT INTO slopbot_work_unit_journal (record_digest, assessment_key, project_id, source_digest, record_json, recorded_at) VALUES (?, ?, 'alpha', ?, ?, ?)").bind(digest, digit.repeat(63) + "e", digit.repeat(64), recordJson, seededAt).run())
+  return digest
+}
+
+effect function seeded(db: D1Database) {
+  const projects = [["alpha", "ada/alpha", "R_alpha01"], ["bravo", "ada/bravo", "R_bravo02"]] as const
+  try promise(() => db.batch([
+    ...projects.flatMap(([id, path, nodeId]) => [
+      db.prepare("INSERT INTO project_revisions (project_id, revision, manifest, manifest_sha256, reason, created_at) VALUES (?, 1, ?, ?, 'seed', ?)").bind(id, manifestOf(id, path, nodeId), sha, seededAt),
+      db.prepare("INSERT INTO projects (id, status, revision, manifest, manifest_sha256, created_at, updated_at) VALUES (?, 'active', 1, ?, ?, ?, ?)").bind(id, manifestOf(id, path, nodeId), sha, seededAt, seededAt),
+    ]),
+    db.prepare("INSERT INTO slopbot_installations (installation_id, account_id, account_login, account_type, created_at, source_updated_at) VALUES (501, 101, 'ada', 'User', ?, 1)").bind(seededAt),
+    db.prepare("INSERT INTO slopbot_installations (installation_id, account_id, account_login, account_type, created_at, source_updated_at) VALUES (502, 101, 'ada', 'User', ?, 1)").bind(seededAt),
+    ...Array.from({ length: 101 }, (_, index) => penaltyRow(db, "alpha", `PR_item${String(index).padStart(3, "0")}`, false)),
+    penaltyRow(db, "alpha", "PR_item050r", true),
+    db.prepare("INSERT INTO slopbot_reviews (review_key, installation_id, repository_id, item_kind, item_number, item_node_id, author_id, revision, content_digest, policy_digest, status, created_at, completed_at) VALUES ('r1', 501, 7001, 'pull_request', 5, 'PR_5', 201, 'h1', 'c', 'p', 'completed', ?, ?)").bind(seededAt, "2026-10-02T00:00:00.000Z"),
+    db.prepare("INSERT INTO slopbot_reviews (review_key, installation_id, repository_id, item_kind, item_number, item_node_id, author_id, revision, content_digest, policy_digest, status, created_at) VALUES ('r2', 501, 7003, 'pull_request', 9, 'PR_9', 202, 'h9', 'c', 'p', 'skipped', ?)").bind(seededAt),
+    db.prepare("INSERT INTO slopbot_actions (review_key, repository_id, item_node_id, action, detail, created_at) VALUES ('r1', 7001, 'PR_5', 'close', 'spam', '2026-10-03T00:00:00.000Z')"),
+    db.prepare("INSERT INTO slopbot_actions (review_key, repository_id, item_node_id, action, detail, created_at) VALUES ('r1', 7001, 'PR_5', 'human_reopen', 'maintainer', '2026-10-04T00:00:00.000Z')"),
+  ]))
+}
+
+effect function world(github: GitHubFake) {
+  try orDie(Effect.try(() => {
+    const world = github.world
+    world.addUser({ id: 101, login: "ada", nodeId: "U_ada" })
+    world.addUser({ id: 202, login: "bo", nodeId: "U_bo" })
+    world.addRepo({ id: 7001, owner: "ada", name: "alpha", nodeId: "R_alpha01" })
+    world.addRepo({ id: 7002, owner: "ada", name: "bravo", nodeId: "R_bravo02" })
+    world.addPull({ repo: "ada/bravo", number: 7, author: "bo", state: "closed", mergedAt: "2026-10-15T00:00:00Z" })
+    world.addPull({ repo: "ada/bravo", number: 8, author: "bo", state: "closed", mergedAt: "2026-11-05T00:00:00Z" })
+    world.addInstallation({ id: 501, account: "ada", repositories: ["alpha", "bravo"], permissions: { metadata: "read", pull_requests: "read" } })
+    world.addInstallation({ id: 502, account: "ada", repositories: ["alpha"], permissions: { metadata: "read", pull_requests: "read" } })
+  }))
+}
+
+const Started = Layer.effect(History, effect {
+  const github = try orDie(Effect.try(() => githubFake()))
+  try world(github)
+  const script = try promise(() => bundle(new URL("..", import.meta.url).pathname, { entry: "history" }))
+  const mf = try acquireRelease(sync(() => startWorker({
+    script,
+    d1: { SLOPBOT_DB: "slop-private" },
+    vars: { SLOPBOT_APP_ID: github.app.id, SLOPBOT_APP_PRIVATE_KEY: github.app.privateKeyPem, SLOPBOT_PRODUCER_REVISION: revision, ADMIN_GITHUB_IDS: "7", PROJECT_MODERATOR_GITHUB_IDS: "" },
+    outbound: github.handler,
+  })), (started) => promise(() => started.dispose()))
+  const applied = try promise(() => migrate(mf, "SLOPBOT_DB", migrationsDir))
+  const failed = applied.find((file) => file.error !== undefined)
+  if (failed !== undefined) return try die(new MigrationFailed({ file: failed.file }))
+  const db = try promise(() => database(mf, "SLOPBOT_DB"))
+  try seeded(db)
+  return {
+    db,
+    github,
+    fetch: (url, ask = {}) => promise(async () => {
+      const headers: Record<string, string> = {
+        ...ask.cookie === undefined ? {} : { cookie: `__Host-slop_points=${ask.cookie}` },
+        ...ask.origin === undefined ? {} : { origin: ask.origin },
+        ...ask.json === undefined ? {} : { "content-type": "application/json" },
+      }
+      const response = await mf.dispatchFetch(url, { method: ask.method ?? (ask.json === undefined ? "GET" : "POST"), headers, body: ask.json === undefined ? undefined : JSON.stringify(ask.json) })
+      const text = await response.text()
+      const json = (response.headers.get("content-type") ?? "").includes("json") && text !== ""
+      return { status: response.status, headers: Object.fromEntries(response.headers), text, body: json ? JSON.parse(text) as unknown : text }
+    }),
+  }
+})
+
+effect function same(actual: unknown, expected: unknown) {
+  try Effect.try(() => assert.deepStrictEqual(actual, expected))
+}
+
+effect function call(url: string, ask: Ask = {}) {
+  return try (try History).fetch(url, ask)
+}
+
+effect function count(sql: string) {
+  const db = (try History).db
+  const found = try promise(() => db.prepare(sql).all())
+  const [row] = found.results
+  return typeof row?.["n"] === "number" ? row["n"] : 0
+}
+
+function shape(answer: Answer) {
+  const body = answer.body as { readonly records?: ReadonlyArray<Readonly<Record<string, unknown>>>; readonly nextAfter?: unknown; readonly schemaVersion?: unknown; readonly throughSequence?: unknown; readonly totalRecords?: unknown }
+  return { status: answer.status, schema: body.schemaVersion, records: body.records?.length, nextAfter: body.nextAfter, through: body.throughSequence, total: body.totalRecords }
+}
+
+const envelope = (pull: number) => ({
+  installationId: 501,
+  mode: "single",
+  result: {
+    provenance: { channel: "chatgpt-subscription", provider: "openai", model: "subagent", client: "chatgpt", exactVariant: null, identityEvidence: "self-reported", apiReceipt: null },
+    assessedAt: "2026-10-20T00:00:00.000Z",
+    sourceDigest: "d".repeat(64),
+    rubricVersion: "slop-value-rubric:v1",
+  },
+  revisionReason: null,
+  sources: [{ repository: "ada/bravo", pullRequestNumber: pull, contextPaths: [] }],
+  supersedes: null,
+})
+
+const importUrl = `${site}/api/v1/slopbot/value-import`
+
+layer(Layer.merge(Started, webCrypto), { excludeTestServices: true, timeout: "180 seconds" })((it) => {
+  it.effect('Feeds answer stored penalties and history pages through a fixed sequence (spec/slopbot/publicFeeds.md, "Feeds serve only registered history repositories with strictly validated cursors, 100 items per page and no-store"; spec/slopbot/publicFeeds.md, "Each feed keeps its published schema id: slop-penalties:v1, slop-penalty-history:v1, slop-value-history:v1, slop-work-unit-history:v1"; spec/slopbot/publicFeeds.md, "A joint work-unit page requires a through bound"; spec/slopbot/valueHistory.md, "Each page agrees with the first through sequence and total count"; spec/slopbot/valueHistory.md, "The requested source selects one live record in the complete captured lineage")', () => effect {
+    const db = (try History).db
+    const health = try call(`${worker}/health`)
+    try same([health.status, health.body], [200, { service: "slopbot", ok: true }])
+
+    const first = try call(`${worker}/v1/penalties?project=alpha`)
+    const firstBody = first.body as { readonly records: ReadonlyArray<{ readonly item_node_id: string }> }
+    const second = try call(`${worker}/v1/penalties?project=alpha&after=${firstBody.records[99]?.item_node_id ?? ""}`)
+    const history = try call(`${worker}/v1/penalties?project=alpha&history=1`)
+    const historyBody = history.body as { readonly records: ReadonlyArray<Readonly<Record<string, unknown>>> }
+    try same({
+      first: shape(first),
+      firstBytes: first.text.startsWith('{"schemaVersion":"slop-penalties:v1","project":"alpha","records":[{"item_node_id":"PR_item000","repository_id":7001,"author_github_id":"201","category":"spam","table_version":"slopbot-penalties-v1","debit_thirds":3,"period":"2026-10","recorded_at":"2026-10-01T00:00:00.000Z"}'),
+      cache: first.headers["cache-control"],
+      second: shape(second),
+      history: shape(history),
+      reversed: historyBody.records.find((record) => record["item_node_id"] === "PR_item050r"),
+    }, {
+      first: { status: 200, schema: "slop-penalties:v1", records: 100, nextAfter: "PR_item099", through: undefined, total: undefined },
+      firstBytes: true,
+      cache: "no-store",
+      second: { status: 200, schema: "slop-penalties:v1", records: 1, nextAfter: null, through: undefined, total: undefined },
+      history: { status: 200, schema: "slop-penalty-history:v1", records: 100, nextAfter: "PR_item098", through: undefined, total: undefined },
+      reversed: { item_node_id: "PR_item050r", repository_id: 7001, author_github_id: "201", category: "spam", table_version: "slopbot-penalties-v1", debit_thirds: 3, period: "2026-10", recorded_at: seededAt, reversed_at: seededAt, reversal: "appeal_upheld" },
+    })
+
+    const refusals = [
+      try call(`${worker}/v1/penalties?project=alpha&after=bad!`),
+      try call(`${worker}/v1/penalties?project=alpha&history=2`),
+      try call(`${worker}/v1/penalties?project=nobody`),
+      try call(`${worker}/v1/value-assessments?repository=ada/alpha&pull=0`),
+      try call(`${worker}/v1/value-assessments?repository=ada/alpha&repositoryNodeId=R_alpha01&pull=5`),
+      try call(`${worker}/v1/value-assessments?repository=ada/nowhere&pull=5`),
+      try call(`${worker}/v1/work-unit-assessments?repository=ada/alpha&pull=5&after=1`),
+      try call(`${worker}/v1/work-unit-assessments?repository=ada/alpha&pull=5&after=2&through=1`),
+      try call(`${worker}/v1/work-unit-assessments?repository=ada/alpha&pull=5&through=99`),
+    ]
+    try same(refusals.map((answer) => [answer.status, answer.text]), [
+      [400, '{"error":"Invalid penalty query"}'],
+      [400, '{"error":"Invalid penalty query"}'],
+      [400, '{"error":"Invalid penalty query"}'],
+      [400, '{"error":"Invalid value-history query"}'],
+      [400, '{"error":"Invalid value-history query"}'],
+      [400, '{"error":"Invalid value-history query"}'],
+      [400, '{"error":"Invalid value-history query"}'],
+      [400, '{"error":"Invalid value-history query"}'],
+      [503, '{"error":"Value history is unavailable"}'],
+    ])
+
+    const rootA = try appendJoint(db, [5], ["1"], [], "1")
+    const rootB = try appendJoint(db, [6], ["2"], [], "2")
+    const joined = try appendJoint(db, [5, 6], ["1", "2"], [rootA, rootB], "3")
+    const decision = `${worker}/__test/history?project=alpha&repository=ada/alpha&repositoryNodeId=R_alpha01&pull=5&pullRequestNodeId=PR_5`
+    const captured = try call(`${worker}/v1/work-unit-assessments?repository=ada/alpha&pull=5`)
+    const selectedBefore = try call(decision)
+    const later = try appendJoint(db, [5, 6], ["1", "2"], [joined], "4")
+    const pinned = try call(`${worker}/v1/work-unit-assessments?repository=ada/alpha&pull=5&through=3`)
+    const current = try call(`${worker}/v1/work-unit-assessments?repositoryNodeId=R_alpha01&pull=5`)
+    const selectedAfter = try call(decision)
+    try same({
+      captured: shape(captured),
+      pinned: shape(pinned),
+      current: shape(current),
+      sameBoundary: captured.text === pinned.text,
+      before: selectedBefore.body,
+      after: selectedAfter.body,
+    }, {
+      captured: { status: 200, schema: "slop-work-unit-history:v1", records: 3, nextAfter: null, through: 3, total: 3 },
+      pinned: { status: 200, schema: "slop-work-unit-history:v1", records: 3, nextAfter: null, through: 3, total: 3 },
+      current: { status: 200, schema: "slop-work-unit-history:v1", records: 4, nextAfter: null, through: 4, total: 4 },
+      sameBoundary: true,
+      before: { phase: "HistoryReady", outcome: "Pending", total: 3, through: 3, rows: 3, selected: joined },
+      after: { phase: "HistoryReady", outcome: "Pending", total: 4, through: 4, rows: 4, selected: later },
+    })
+  })
+
+  it.effect('The public summary counts stored reviews and actions only (spec/slopbot/publicFeeds.md, "The per-repository summary counts reviewed, blocked, labeled, closed, reopened and appealed items from D1 only")', () => effect {
+    const before = try count("SELECT COUNT(*) AS n FROM slopbot_actions")
+    const summary = try call(`${site}/api/v1/slopbot/summary`)
+    const body = summary.body as { readonly repositories: unknown }
+    const refused = try call(`${site}/api/v1/slopbot/summary`, { method: "POST" })
+    try same({
+      status: summary.status,
+      cache: summary.headers["cache-control"],
+      repositories: body.repositories,
+      refused: [refused.status, refused.headers["allow"], refused.text],
+      unchanged: (try count("SELECT COUNT(*) AS n FROM slopbot_actions")) === before,
+    }, {
+      status: 200,
+      cache: "public, max-age=60",
+      repositories: [{ installationIds: [501], repositoryId: 7001, itemsReviewed: 1, itemsBlocked: 0, itemsLabeled: 0, itemsClosed: 1, closuresReopened: 1, closuresAppealed: 0, lastActivityAt: "2026-10-04T00:00:00.000Z" }],
+      refused: [405, "GET", '{"error":"method_not_allowed"}'],
+      unchanged: true,
+    })
+  })
+
+  it.effect('An administrator imports a pre-November subscription assessment once (spec/slopbot/historicalImport.md, "The import needs an administrator, a deployed producer and registered accepted work before the API start"; spec/slopbot/repositoryScope.md, "Installed, public and registered are separate conditions"; spec/slopbot/valueHistory.md, "Incomplete, stale and unresolved decisions remain distinct")', () => effect {
+    const journal = "SELECT COUNT(*) AS n FROM slopbot_value_journal"
+    const steps = [
+      try call(importUrl, { origin: "https://elsewhere.test", cookie: "7", json: envelope(7) }),
+      try call(importUrl, { origin: site, json: envelope(7) }),
+      try call(importUrl, { origin: site, cookie: "8", json: envelope(7) }),
+      try call(importUrl, { origin: site, cookie: "7", json: { ...envelope(7), extra: true } }),
+      try call(importUrl, { origin: site, cookie: "7", json: envelope(8) }),
+      try call(importUrl, { origin: site, cookie: "7", json: { ...envelope(7), installationId: 502 } }),
+    ]
+    const refusedRows = try count(journal)
+    const imported = try call(importUrl, { origin: site, cookie: "7", json: envelope(7) })
+    const repeated = try call(importUrl, { origin: site, cookie: "7", json: envelope(7) })
+    const feed = try call(`${worker}/v1/value-assessments?repository=ada/bravo&pull=7`)
+    const receipt = imported.body as { readonly recordDigest: string; readonly sequence: number }
+    const page = feed.body as { readonly records: ReadonlyArray<{ readonly record_digest: string; readonly record_json: string }>; readonly repositoryNodeId: unknown; readonly schemaVersion: unknown }
+    const stored = try Effect.try(() => JSON.parse(page.records[0]?.record_json ?? "{}") as { readonly pullRequestNodeId?: string })
+    const legacyQuery = (project: string) => `${worker}/__test/legacy?project=${project}&repository=ada/bravo&repositoryNodeId=R_bravo02&repositoryDatabaseId=7002&pull=7&pullRequestNodeId=${stored.pullRequestNodeId ?? ""}`
+    const legacy = try call(legacyQuery("bravo"))
+    const foreign = try call(legacyQuery("alpha"))
+    try same({
+      steps: steps.map((answer) => [answer.status, answer.text]),
+      refusedRows,
+      imported: [imported.status, imported.headers["cache-control"], typeof receipt.recordDigest, receipt.sequence],
+      repeated: [repeated.status, repeated.text],
+      rows: try count(journal),
+      feed: [page.schemaVersion, page.repositoryNodeId, page.records.map((record) => record.record_digest)],
+      legacy: legacy.body,
+      foreign: foreign.body,
+    }, {
+      steps: [
+        [403, '{"error":"origin_forbidden"}'],
+        [401, '{"error":"unauthorized"}'],
+        [403, '{"error":"forbidden"}'],
+        [409, '{"error":"assessment_not_published"}'],
+        [409, '{"error":"assessment_not_published"}'],
+        [409, '{"error":"assessment_not_published"}'],
+      ],
+      refusedRows: 0,
+      imported: [200, "private, no-store", "string", 1],
+      repeated: [409, '{"error":"assessment_not_published"}'],
+      rows: 1,
+      feed: ["slop-value-history:v1", "R_bravo02", [receipt.recordDigest]],
+      legacy: { legacy: [receipt.recordDigest], verifiedLegacySources: [`R_bravo02/${stored.pullRequestNodeId ?? ""}`] },
+      foreign: { legacy: [], verifiedLegacySources: [] },
+    })
+  })
+})

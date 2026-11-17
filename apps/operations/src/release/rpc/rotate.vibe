@@ -4,6 +4,7 @@ import { preflightPasses } from "../../../gen/fees__runtime.effect.vibe"
 import { readReviewed } from "../publish/config.vibe"
 import { type SecretValues, configsFor, feeSettingsOf, withSecretsFile } from "../publish/order.vibe"
 import { Cloudflare } from "../wrangler/cloudflare.vibe"
+import { releaseMessage } from "../wrangler/outputs.vibe"
 import { RotationRefused } from "./qualify.vibe"
 import {
   type RotationKind,
@@ -13,7 +14,6 @@ import {
   inspectVersion,
   normalizedBindings,
   onRotationBase,
-  releaseDescription,
   requireQuietJournal,
   requireRotationBase,
   requireSameWorker,
@@ -73,7 +73,7 @@ export effect function inheritedMessage() {
   }
   const [suffix, ...others] = [...suffixes]
   if (suffix === undefined || others.length > 0) throw refused("Active fee-converter versions have different RPC rotations.")
-  return `${releaseDescription(sha)}${suffix}`
+  return `${releaseMessage(sha)}${suffix}`
 }
 
 effect function reviewedConverter(root: string, before: WorkerVersion, kind: RotationKind) {
@@ -112,7 +112,7 @@ export effect function rotateFeeConverterRpc<A, E, R>(rotation: Rotation<A, E, R
   const { kind, root } = rotation
   const inputs = try rotationInputs(kind)
   const { sha, expected } = inputs
-  const description = releaseDescription(sha)
+  const description = releaseMessage(sha)
   try rotation.qualify
   const state = try workerState()
   try requireRotationBase(state, expected)

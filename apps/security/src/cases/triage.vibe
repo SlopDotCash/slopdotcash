@@ -4,6 +4,8 @@ import { first, sql } from "@repo/platform/d1"
 import { update } from "@repo/platform/stored"
 import { Execution, later } from "@repo/platform/worker"
 import type { PrivateCase, TriageOutcome } from "../../gen/security__cases.ts"
+import type { ExclusionContext } from "../../gen/security__terms.ts"
+import { receiptExclusions } from "../../gen/security__terms.effect.vibe"
 import { Rejected, apply, canRetryTriage } from "../../gen/security__cases.effect.vibe"
 import { appealDraft } from "../analysis/proposals.vibe"
 import { appealMessage, appealPrompt, appealTriagePromptRevision, jsonValue } from "../analysis/prompts.ts"
@@ -14,6 +16,10 @@ export interface TriageRun {
   readonly caseId: string
   readonly appealRevision: number
   readonly attempt: number
+}
+
+export interface StartedTriage extends TriageRun {
+  readonly exclusions: ExclusionContext
 }
 
 export interface TriageView {
@@ -98,7 +104,7 @@ export effect function triageStarted(caseId: string, starter: Starter) {
     if (record === undefined) throw new TriageClosed({ caseId })
     const current = starter.kind === "moderator" ? { ...record.model, authority: starter.model.authority } : record.model
     const next = try apply(try queued(current, starter, nowMs), { type: "startTriage", nowMs }, 0)
-    const run = { caseId, appealRevision: next.triage.appealRevision, attempt: next.triage.attempt } satisfies TriageRun
+    const run = { caseId, appealRevision: next.triage.appealRevision, attempt: next.triage.attempt, exclusions: receiptExclusions(next.terms) } satisfies StartedTriage
     return {
       value: run,
       writes: [sql`INSERT INTO security_appeal_triages (case_id, appeal_revision, attempt, state, prompt_revision, provider, model, started_at) VALUES (${caseId}, ${run.appealRevision}, ${run.attempt}, 'running', ${appealTriagePromptRevision}, ${ready ? privateProvider : null}, ${ready ? privateModel : null}, ${at})`],
@@ -163,7 +169,7 @@ export effect function triaged(caseId: string, starter: Starter, budgetMs: numbe
   if (answer.kind === "failed") return try triageFinished(run, answer.failure === "NotConfigured" ? { tag: "TriageUnavailableResult" } : { tag: "TriageFailedResult" })
   const draft = appealDraft(answer.text)
   if (draft === undefined) return try triageFinished(run, { tag: "TriageFailedResult" })
-  return try triageFinished(run, { tag: "Drafted", returnCase: draft.proposedOutcome === "return", confidencePercent: Math.floor(draft.confidence * 100) }, draft)
+  return try triageFinished(run, { tag: "Drafted", returnCase: draft.proposedOutcome === "return", confidencePercent: Math.floor(draft.confidence * 100), exclusions: run.exclusions, matchedLine: 0 }, draft)
 }
 
 export effect function scheduledTriage(caseId: string) {

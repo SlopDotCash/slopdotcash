@@ -1,0 +1,74 @@
+// spec/slopbot/appeals.md, "Only the appellant or a current maintainer answers a draft; rejection escalates"; spec/slopbot/appeals.md, "Only a moderator other than the appellant decides an escalated appeal"; spec/slopbot/appeals.md, "Each stage comment is posted once and a resolution retry resumes its recorded writes"
+import { type AuthorityCheck, slopModerators } from "../../gen/slopbot__appeals.effect.vibe"
+import type { AppealCommandJob } from "../jobs/job.vibe"
+import { finishAppeal } from "./finish.vibe"
+import { publishStage } from "./publication.vibe"
+import { type AppealHooks, type AppealSession, type AppealSettings, appealSession, maintainerRole } from "./session.vibe"
+import { type Loaded, appealPrefix, commitAppeal, itemOfKey, latestAppealKey, loadAppeal } from "./store.vibe"
+
+const moderatorDecides = "a Slop moderator decides this appeal"
+
+effect function answerDraft(session: AppealSession, appealKey: string, loaded: Loaded) {
+  const job = session.job
+  if (job.kind !== "appeal_command") return "no open appeal"
+  const sender = job.senderId
+  const appellant = sender === loaded.appeal.appellant
+  const role = appellant ? "NotMaintainer" : try maintainerRole(session, sender)
+  if (!appellant && role !== "CurrentMaintainer") return "only the appellant or a maintainer can answer the draft"
+  const authority: AuthorityCheck = { actor: sender, item: loaded.appeal.subject.item, role }
+  const banned = try commitAppeal(appealKey, {}, (current) => [
+    { event: { type: "observeBan", status: current.banned ? "Banned" : "NotBanned" }, by: 0, optional: true },
+    { event: { type: "escalateBanAtAnswer" }, by: 0, optional: true },
+  ])
+  if (banned.applied.includes("escalateBanAtAnswer")) try publishStage(session, appealKey, "escalation")
+  if (banned.appeal.escalation !== "NotEscalated") {
+    if (job.command === "reject") try publishStage(session, appealKey, "escalation")
+    return moderatorDecides
+  }
+  if (banned.appeal.draft === "NoDraft") return "no draft to answer yet"
+  if (job.command === "reject") {
+    const rejected = try commitAppeal(appealKey, {}, () => [{ event: { type: "reject", authority }, by: sender, optional: true }])
+    if (!rejected.applied.includes("reject")) return rejected.appeal.resolution === "Unresolved" ? moderatorDecides : "appeal already resolved"
+    try publishStage(session, appealKey, "escalation")
+    return `appeal escalated: ${(try loadAppeal(appealKey)).row?.escalation ?? ""}`
+  }
+  const accepted = try commitAppeal(appealKey, {}, (current) => [
+    { event: { type: "observeBan", status: current.banned ? "Banned" : "NotBanned" }, by: 0, optional: true },
+    { event: { type: "escalateByCriteria" }, by: 0, optional: true },
+    { event: { type: "accept", authority }, by: sender, optional: true },
+    { event: { type: "escalateBanAtAnswer" }, by: 0, optional: true },
+  ])
+  if (accepted.applied.includes("accept")) return try finishAppeal(session, appealKey)
+  if (accepted.applied.includes("escalateByCriteria") || accepted.applied.includes("escalateBanAtAnswer")) try publishStage(session, appealKey, "escalation")
+  return accepted.appeal.resolution === "Unresolved" ? moderatorDecides : "appeal already resolved"
+}
+
+effect function moderatorDecision(session: AppealSession, appealKey: string, loaded: Loaded) {
+  const job = session.job
+  if (job.kind !== "appeal_command") return "no open appeal"
+  const sender = job.senderId
+  if (!slopModerators.includes(sender)) return "only a Slop moderator can decide an escalated appeal"
+  if (sender === loaded.appeal.appellant) return "a moderator cannot decide their own appeal"
+  if (loaded.appeal.escalation === "NotEscalated") return "this appeal is not escalated"
+  const decided = try commitAppeal(appealKey, {}, () => [{ event: { type: "moderatorDecide", uphold: job.command === "uphold" }, by: sender, optional: true }])
+  if (!decided.applied.includes("moderatorDecide") && decided.appeal.resolution === "Unresolved") return "this appeal is not escalated"
+  return try finishAppeal(session, appealKey)
+}
+
+export effect function applyAppealCommand<E, R>(job: AppealCommandJob, settings: AppealSettings, hooks: AppealHooks<E, R>) {
+  if (String(job.senderId) === settings.appUserId) return "ignored"
+  const session = try appealSession(job, settings)
+  if (typeof session === "string") return session
+  const itemNodeId = session.current.issue.node_id
+  const appealKey = job.appealKey ?? try latestAppealKey(itemNodeId)
+  if (appealKey === undefined) return "no open appeal"
+  if (!appealKey.startsWith(appealPrefix)) return try hooks.valueCommand(job, session, appealKey)
+  const loaded = try loadAppeal(appealKey)
+  if (!loaded.appeal.opened) return "no open appeal"
+  if (itemOfKey(appealKey) !== itemNodeId || loaded.row?.item_node_id !== itemNodeId) return "the appeal belongs to another item"
+  if (loaded.appeal.resolution !== "Unresolved") {
+    if (!loaded.appeal.postedResolution) try finishAppeal(session, appealKey)
+    return "appeal already resolved"
+  }
+  return job.command === "accept" || job.command === "reject" ? try answerDraft(session, appealKey, loaded) : try moderatorDecision(session, appealKey, loaded)
+}

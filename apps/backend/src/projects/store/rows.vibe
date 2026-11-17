@@ -2,7 +2,6 @@
 import { RowMismatch, type Statement, decoded, sql } from "@repo/platform/d1"
 import type { Rows } from "@repo/platform/stored"
 import type { Kind } from "./codec.vibe"
-import { recordedKind } from "./legacyKinds.vibe"
 
 export schema ProjectRow {
   id: string
@@ -112,6 +111,13 @@ export effect function manifestOf(text: string, label: string) {
   return Schema.decodeUnknownEffect(Manifest)(parsed) catch effect (error) => { throw new RowMismatch({ text: label, issue: String(error) }) }
 }
 
+const kinds: ReadonlyArray<Kind> = ["Created", "Activated", "OwnerUpdate", "RepositoryAppended", "Removed", "AdminHold", "AdminDelist", "AdminException", "RestrictionRetirement", "CommunityRestored", "Placement", "ConsentChanged"]
+
+function recordedKind(row: { readonly revision: number; readonly kind: string | null }): Kind | undefined {
+  const stored = kinds.find((kind) => kind === row.kind)
+  return stored ?? (row.revision === 1 ? "Created" : undefined)
+}
+
 export function projectReads(projectId: string): ReadonlyArray<Statement> {
   return [
     sql`SELECT id, status, revision, manifest, manifest_sha256, created_at, updated_at, source_application_id, referrer_github_id, referrer_github_login FROM projects WHERE id = ${projectId}`,
@@ -127,7 +133,7 @@ export function revisionRead(projectId: string): Statement {
 export effect function revisionsOf(projectId: string, rows: Rows) {
   const revisioned: Revisioned[] = []
   for (const row of try decoded(RevisionRow, rows, "project revisions")) {
-    const kind = recordedKind(projectId, row)
+    const kind = recordedKind(row)
     if (kind === undefined) throw new RowMismatch({ text: "project revisions", issue: `revision ${row.revision} of ${projectId} has no recorded kind` })
     revisioned.push({ row, manifest: try manifestOf(row.manifest, `project ${projectId} revision ${row.revision}`), kind })
   }

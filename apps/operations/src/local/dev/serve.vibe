@@ -5,9 +5,9 @@ import { localDevelopmentOrigin } from "@repo/platform/config"
 import { base64url, randomBytes } from "@repo/platform/crypto"
 import { D1, d1, rows, sql } from "@repo/platform/d1"
 import { Caller, json } from "@repo/platform/http"
-import { type MailSink, statements } from "@repo/platform/testing"
+import { type MailSink, type SentMail, statements } from "@repo/platform/testing"
 import { type Bridge, bridged, identityBridge } from "./identity.vibe"
-import { type CapturedMail, type MailOwners, captureMail, mailOwners, mailPage, ownerOf } from "./mail.vibe"
+import { captureMail, mailOwners, mailPage, ownerOf } from "./mail.vibe"
 import { dataDirectory, privateDirectory } from "./paths.vibe"
 import { type AssertionStore, type Deployable, forward, startLocal, stopLocal } from "./workers.ts"
 
@@ -29,7 +29,6 @@ const localSecrets: Readonly<Record<string, "hex" | "base64url">> = {
 }
 
 const varLine = /^\s*([A-Z0-9_]+)\s*=\s*(.*?)\s*$/u
-const mailPollMs = 250
 
 export interface ServeSettings {
   readonly root: string
@@ -38,9 +37,11 @@ export interface ServeSettings {
   readonly data: string
 }
 
+type MailServices = D1 | FileSystem.FileSystem | Path.Path | Experimental.Crypto.Crypto
+
 export interface MailDesk {
-  owners: MailOwners
-  readonly pending: CapturedMail[]
+  readonly directory: string
+  services?: Context.Context<MailServices>
 }
 
 export interface Local {
@@ -127,16 +128,27 @@ effect function built(root: string) {
   return sources
 }
 
-export function mailDesk(): MailDesk {
-  return { owners: new Map(), pending: [] }
+export function mailDesk(directory: string): MailDesk {
+  return { directory }
+}
+
+effect function captured(directory: string, mail: SentMail) {
+  const owner = ownerOf(try mailOwners(), mail.raw)
+  if (owner.kind === "refused") return owner.reason
+  try captureMail(directory, { githubId: owner.githubId, from: mail.from, to: mail.to, mime: mail.raw })
+  return undefined
+}
+
+effect function refusalOf(directory: string, mail: SentMail) {
+  const refusal: string | undefined = captured(directory, mail) catch (error) => error._tag === "MailRefused" ? error.reason : `Local mail capture failed: ${String(error)}`
+  return refusal
 }
 
 export function mailSink(desk: MailDesk): MailSink {
   return (mail) => {
-    const owner = ownerOf(desk.owners, mail.raw)
-    if (owner.kind === "refused") return owner.reason
-    desk.pending.push({ githubId: owner.githubId, from: mail.from, to: mail.to, mime: mail.raw })
-    return undefined
+    const services = desk.services
+    if (services === undefined) return "Local mail capture is not ready"
+    return Effect.runPromiseWith(services)(refusalOf(desk.directory, mail))
   }
 }
 
@@ -153,23 +165,6 @@ export effect function migrated(directory: string) {
     try db.batch([...parts.map((text) => ({ text, params: [] })), sql`INSERT INTO dev_migrations (name) VALUES (${file})`])
   }
   return files
-}
-
-export effect function tendMail(desk: MailDesk, directory: string) {
-  const owners = mailOwners() catch (error) => String(error)
-  if (typeof owners === "string") try Console.error(`Local mail ownership could not be read: ${owners}`)
-  else desk.owners = owners
-  for (const mail of desk.pending.splice(0)) {
-    const failure = captureMail(directory, mail) catch (error) => error._tag === "MailRefused" ? error.reason : String(error)
-    if (failure !== undefined) try Console.error(`Local mail capture failed: ${failure}`)
-  }
-}
-
-effect function deskLoop(desk: MailDesk, directory: string) {
-  while (true) {
-    try tendMail(desk, directory)
-    try sleep(Duration.millis(mailPollMs))
-  }
 }
 
 effect function signedIn() {
@@ -206,7 +201,7 @@ export effect function serve() {
     const directory = try privateDirectory(settings.data)
     const vars = try localVars(settings.root, directory, settings.origin)
     const sources = try built(settings.root)
-    const desk = mailDesk()
+    const desk = mailDesk(path.join(directory, "mail-capture"))
     const workers = try acquireRelease(
       tryPromise({
         try: () => startLocal({ deployables: sources, vars, persistence: path.join(directory, "state"), sink: mailSink(desk), assertions }),
@@ -215,10 +210,10 @@ export effect function serve() {
       (started) => Effect.ignore(tryPromise(() => stopLocal(started.mf))),
     )
     try privateDirectory(directory)
-    const local: Local = { origin: settings.origin, mail: path.join(directory, "mail-capture"), bridge: try identityBridge(settings.origin), send: (web) => forward(workers.mf, web) }
+    const local: Local = { origin: settings.origin, mail: desk.directory, bridge: try identityBridge(settings.origin), send: (web) => forward(workers.mf, web) }
     provide Layer.provideMerge(CallerLive, d1(workers.database)) {
       const applied = try migrated(path.join(settings.root, "migrations"))
-      fork.scoped deskLoop(desk, local.mail)
+      desk.services = try Effect.context<MailServices>()
       const handler = Effect.provide(answer(local), try Effect.context<D1 | Caller | FileSystem.FileSystem | Path.Path | HttpClient.HttpClient | Experimental.Crypto.Crypto>())
       try Console.log(`local serve ready on http://127.0.0.1:${settings.port}\n  serves ${settings.origin}\n  sign-in: Slop production identity handoff\n  migrations applied: ${applied.length}\n  data: ${directory}`)
       try Layer.launch(Layer.provide(HttpRouter.serve(HttpRouter.add("*", "*", handler), { disableListenLog: true, disableLogger: true }), ExperimentalNodeHttpServer.layer({ port: settings.port, host: "127.0.0.1" })))

@@ -1,4 +1,4 @@
-// spec/backend/projects.md, "Authority is one read bound to the acting account and the stored repository"; spec/backend/listing.md, "A restricted project is closed on every public route and a paused one stays listed"; spec/backend/access.md, "Story: Ban an account from new participation while preserving funded awards and appeals"; spec/backend/wallets.md, "Story: Replace a payout wallet without losing the current destination"; spec/backend/email.md, "Story: Verify a notification address and choose consent"; spec/slopbot/repositoryScope.md, "A current path lookup must also match the permanent repository ID"; spec/backend/email.md, "Delivery of the verification mail has its own state"; spec/settlement/referralAccrual.md, "A project captures an eligible signed-in referrer once"; spec/settlement/vaultSnapshots.md, "Only a reviewed registry binding can obtain totals"
+// spec/backend/projects.md, "Authority is one read bound to the acting account and the stored repository"; spec/backend/accounts.md, "Confirmed closure ends every session, hides the membership, disconnects X and withdraws both email consents"; spec/backend/listing.md, "A restricted project is closed on every public route and a paused one stays listed"; spec/backend/access.md, "Story: Ban an account from new participation while preserving funded awards and appeals"; spec/backend/wallets.md, "Story: Replace a payout wallet without losing the current destination"; spec/backend/email.md, "Story: Verify a notification address and choose consent"; spec/slopbot/repositoryScope.md, "A current path lookup must also match the permanent repository ID"; spec/backend/email.md, "Delivery of the verification mail has its own state"; spec/settlement/referralAccrual.md, "A project captures an eligible signed-in referrer once"; spec/settlement/vaultSnapshots.md, "Only a reviewed registry binding can obtain totals"
 import type { D1Error, RowMismatch, Statement } from "@repo/platform/d1"
 
 export type ReadFailure = D1Error | RowMismatch
@@ -18,6 +18,7 @@ export schema AuthorityRead {
   readonly repositoryId: string
   readonly permission: Permission
   readonly installation: Installation
+  readonly repositoryAdmin?: boolean
 }
 
 export service Authority {
@@ -71,8 +72,11 @@ export interface RegistryPin {
 
 export schema RegistryManifest {
   readonly projectId: string
+  readonly active: boolean
   readonly revision: number
   readonly manifest: string
+  readonly manifestSha256: string
+  readonly updatedAt: string
 }
 
 export service RegistryManifests {
@@ -108,6 +112,12 @@ export service Restrictions {
   project(projectId: string): ProjectClosure!ReadFailure
   fence(account: { readonly githubId: string }): Statement!!
   unbanned(githubId: string): Statement!!
+}
+
+export schema MembershipStatus = "MemberAbsent" | "MemberActive" | "MemberClosed"
+
+export service Members {
+  status(githubId: string): MembershipStatus!ReadFailure
 }
 
 export schema EffectiveWallet {

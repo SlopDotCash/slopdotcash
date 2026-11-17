@@ -4,6 +4,8 @@ import { RowMismatch, decoded, sql } from "@repo/platform/d1"
 import { type Aggregate, type Rows, load } from "@repo/platform/stored"
 import type { AppealRecord, AppealState, Award, Commitment, PrivateCase, Receipt, ReceiptSource, Related, RelatedReview, Submission, Triage, TriageState } from "../../gen/security__cases.ts"
 import { type NotAState, decodeState, initial, noTriage } from "../../gen/security__cases.effect.vibe"
+import type { ReceiptTerms } from "../../gen/security__terms.ts"
+import { receiptExclusions } from "../../gen/security__terms.effect.vibe"
 import { zero } from "../../gen/settlement__money.effect.vibe"
 import { jsonValue } from "../analysis/prompts.ts"
 import { githubNumber } from "../privacy/reads.vibe"
@@ -155,7 +157,7 @@ export function appealRevisionOf(events: ReadonlyArray<EventRow>) {
   return events.filter((event) => event.kind === "appeal").at(-1)?.case_revision ?? 0
 }
 
-function triageOf(events: ReadonlyArray<EventRow>, triages: ReadonlyArray<TriageRow>): Triage {
+function triageOf(events: ReadonlyArray<EventRow>, triages: ReadonlyArray<TriageRow>, terms: ReceiptTerms): Triage {
   const appealRevision = appealRevisionOf(events)
   if (appealRevision === 0) return noTriage
   const latest = triages.filter((row) => row.appeal_revision === appealRevision).at(-1)
@@ -169,6 +171,8 @@ function triageOf(events: ReadonlyArray<EventRow>, triages: ReadonlyArray<Triage
     escalated: latest.state === "complete",
     belowFloor: reasons.includes("confidence-below-floor"),
     returnDraft: latest.proposed_outcome === "return",
+    exclusions: latest.state === "complete" ? receiptExclusions(terms) : noTriage.exclusions,
+    matchedLine: 0,
   }
 }
 
@@ -186,12 +190,13 @@ effect function modelOf(row: CaseRow, frozen: FrozenTerms | undefined, events: R
   const reporter = githubNumber(row.reporter_github_id)
   const deciders = numbers([...events.filter((event) => deciding.has(event.kind)).map((event) => event.actor_github_id), row.technical_decider_github_id, row.related_party_reviewer_github_id])
   const committed = row.award_state === "approved" || row.award_state === "reserved"
+  const terms = verified ? try caseTerms({ terms: row.terms, policyRevision: row.policy_revision, receivedAt: row.received_at, publishedAt: row.published_at }) : initial.terms
   return try decodeState({
     ...initial,
     reporter,
     submission: submissions[row.submission_state],
     source: sourceOf(row),
-    terms: verified ? try caseTerms({ terms: row.terms, policyRevision: row.policy_revision, receivedAt: row.received_at, publishedAt: row.published_at }) : initial.terms,
+    terms,
     revision: row.revision,
     reportVersion: verified ? row.report_version ?? 1 : 0,
     triagers: numbers(members.filter((member) => member.revoked_at === null).map((member) => member.github_id)).filter((id) => id !== reporter),
@@ -213,7 +218,7 @@ effect function modelOf(row: CaseRow, frozen: FrozenTerms | undefined, events: R
     appeal: appeals[row.appeal_state],
     appealFrom: receiptOf(row.appeal_from_state),
     appealHistory: [...appealHistoryOf(events)],
-    triage: triageOf(events, triages),
+    triage: triageOf(events, triages, terms),
   } satisfies PrivateCase)
 }
 

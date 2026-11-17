@@ -190,8 +190,8 @@ async function trackOf(key: string): Promise<Track> {
   track.outside = {
     ...track.outside,
     payments: [
-      { obligation: 1, owner: actor, network: "solana", vault: "vault-s", reserved: true, attemptClaim: 1, attemptOpen: true, privateCase: 0 },
-      { obligation: 2, owner: actor, network: "solana", vault: "vault-s", reserved: true, attemptClaim: 1, attemptOpen: true, privateCase: 5 },
+      { obligation: 1, owner: actor, network: "solana", vault: "vault-s", reserved: true, attemptClaim: 1, attemptOpen: true, privateCase: 0, outboxReady: true },
+      { obligation: 2, owner: actor, network: "solana", vault: "vault-s", reserved: true, attemptClaim: 1, attemptOpen: true, privateCase: 5, outboxReady: true },
     ],
   };
   return track;
