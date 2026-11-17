@@ -54,7 +54,7 @@ for (const pendingDestination of [false, true]) {
     // A plain anchor creates a fresh native history entry, unlike Link's
     // synthetic popstate. It must still land on the requested section.
     await page
-      .getByRole("link", { name: "4. Automatic payment", exact: true })
+      .getByRole("link", { name: "monthly cutoff", exact: true })
       .click();
     await expect(page).toHaveURL(/\/how-it-works#payments$/u);
     await expect

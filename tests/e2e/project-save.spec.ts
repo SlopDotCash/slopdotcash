@@ -515,6 +515,9 @@ for (const boundary of ["departure", "actor-change"] as const) {
             ...(request.method() === "GET" ? {} : { body: request.postData() }),
           }),
         );
+        // Retain the completed API bytes before the deliberately held browser
+        // response is cancelled by departure or an account change.
+        const responseBody = await response.text();
         if (request.method() === "PUT") {
           expect(request.headers()["x-slop-expected-github-id"]).toBe("4242");
           expect(response.status).toBe(200);
@@ -526,7 +529,7 @@ for (const boundary of ["departure", "actor-change"] as const) {
         await route.fulfill({
           status: response.status,
           headers: Object.fromEntries(response.headers),
-          body: await response.text(),
+          body: responseBody,
         });
       },
     );

@@ -512,14 +512,14 @@ test("depositor funds a real vault, recovers a submitted transaction and owner w
       exact: true,
     }),
   ).toHaveCount(0);
-  await actions.getByLabel("Transaction hash from your wallet").fill(sends[0]);
+  await actions.getByLabel("Transaction hash", { exact: true }).fill(sends[0]);
   await actions
     .getByRole("button", { name: "Check transaction", exact: true })
     .click();
   await expect(actions.getByRole("alert")).toContainText(
     "does not match the pending wallet action",
   );
-  await actions.getByLabel("Transaction hash from your wallet").fill(sends[1]);
+  await actions.getByLabel("Transaction hash", { exact: true }).fill(sends[1]);
   await actions
     .getByRole("button", { name: "Check transaction", exact: true })
     .click();
