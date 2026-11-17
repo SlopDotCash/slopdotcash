@@ -679,6 +679,7 @@ test("community pagination keeps every project reachable and bounds discovery de
       id,
       slug: id,
       name: `Community fixture ${number}`,
+      listingTier: "community",
       description: number === 11 ? description : communityProject.description,
       authority: {
         ...communityProject.authority,
@@ -714,7 +715,10 @@ test("community pagination keeps every project reachable and bounds discovery de
       route.fulfill({
         json: {
           schemaVersion: "1",
-          projects: [{ ...featuredProject, description }, ...communityProjects],
+          projects: [
+            { ...featuredProject, listingTier: "featured", description },
+            ...communityProjects,
+          ],
         },
       }),
   );

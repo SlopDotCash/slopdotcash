@@ -24,6 +24,8 @@ test("monthly targets remain distinct from verified payment records", async ({
   const project = {
     ...original,
     status: "active",
+    listingTier: "featured",
+    escrow: undefined,
     reward: { ...original.reward, paymentMode: "disabled" },
   };
   await page.route(

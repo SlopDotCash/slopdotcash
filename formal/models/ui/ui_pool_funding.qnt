@@ -11,16 +11,19 @@
 // An explicit owner promise can show a positive amount with a warning, but
 // missing evidence never shows either verified backing or a definitive shortfall.
 // Home also shows a configured positive amount without inferring a promise;
-// the project details keep the explicit opt-in rule. This finite model uses a
-// positive current-month cap; the zero override is covered by the unit evidence.
+// the project details keep the explicit opt-in rule. The two pure projections
+// are observed together: configuredWarning belongs only to home, promiseWarning
+// to explicit promises on either surface. No route state changes funding facts.
+// This finite model uses a positive current-month cap; the zero override is
+// covered by the unit evidence.
 // A vault whose contract supports month pledges is judged only by the amount
 // the owner pledged on chain for this month; its free funds and the first
 // read of the 1st do not count, and it is never shown as withdrawn, because
 // the contract refuses a withdrawal of pledged funds.
 module ui_pool_funding {
-  type S = {owed: int, cap: int, free: int, startFree: int, startOwed: int, fromDecember: bool, withdrew: bool, supported: bool, pledged: int, loaded: bool, optedIn: bool, unreadVault: bool, shownMoney: bool, shownWithdrawn: bool, shownLocked: bool, promiseWarning: str, showConfigured: bool, configuredWarning: str}
+  type S = {owed: int, cap: int, free: int, startFree: int, startOwed: int, fromDecember: bool, withdrew: bool, supported: bool, pledged: int, loaded: bool, optedIn: bool, unreadVault: bool, shownMoney: bool, shownWithdrawn: bool, shownLocked: bool, promiseWarning: str, configuredWarning: str}
   var s: S
-  action init = s' = {owed: 2, cap: 2, free: 0, startFree: 0, startOwed: 4, fromDecember: false, withdrew: false, supported: false, pledged: 0, loaded: false, optedIn: false, unreadVault: true, shownMoney: false, shownWithdrawn: false, shownLocked: false, promiseWarning: "none", showConfigured: false, configuredWarning: "none"}
+  action init = s' = {owed: 2, cap: 2, free: 0, startFree: 0, startOwed: 4, fromDecember: false, withdrew: false, supported: false, pledged: 0, loaded: false, optedIn: false, unreadVault: true, shownMoney: false, shownWithdrawn: false, shownLocked: false, promiseWarning: "none", configuredWarning: "unverified"}
   pure def startOk(t: S): bool = not(t.fromDecember) or t.startFree >= t.startOwed
   pure def locked(t: S): bool = t.loaded and t.supported and t.pledged >= t.cap
   pure def legacyFunded(t: S): bool = t.loaded and not(t.supported) and t.free >= t.owed and startOk(t)
@@ -30,13 +33,12 @@ module ui_pool_funding {
     if (not(visible) or t.cap <= 0 or funded(t)) "none"
     else if (t.unreadVault) "unverified"
     else "not-vaulted"
-  pure def shown(t: S): S = t.with("shownMoney", funded(t)).with("shownWithdrawn", withdrawn(t)).with("shownLocked", locked(t)).with("promiseWarning", warning(t, t.optedIn)).with("configuredWarning", warning(t, t.showConfigured and not(t.optedIn)))
+  pure def shown(t: S): S = t.with("shownMoney", funded(t)).with("shownWithdrawn", withdrawn(t)).with("shownLocked", locked(t)).with("promiseWarning", warning(t, t.optedIn)).with("configuredWarning", warning(t, not(t.optedIn)))
   // React re-renders on every change of the read, so what is shown follows it.
   action load(f: int, sf: int, dec: bool, w: bool, sup: bool, p: int): bool =
     s' = shown(s.with("free", f).with("startFree", sf).with("fromDecember", dec).with("withdrew", w).with("supported", sup).with("pledged", p).with("loaded", true).with("unreadVault", false))
   action readFailed = s' = shown(s.with("loaded", false).with("unreadVault", true))
   action choosePromise(choice: bool): bool = s' = shown(s.with("optedIn", choice))
-  action chooseHome(home: bool): bool = s' = shown(s.with("showConfigured", home))
   action step = any {
     nondet f = 0.to(5).oneOf()
     nondet sf = 0.to(5).oneOf()
@@ -48,8 +50,6 @@ module ui_pool_funding {
     readFailed,
     nondet choice = Bool.oneOf()
     choosePromise(choice),
-    nondet home = Bool.oneOf()
-    chooseHome(home),
   }
   val invariant = all {
     s.shownMoney implies s.loaded,
@@ -62,7 +62,7 @@ module ui_pool_funding {
     (s.promiseWarning != "none") == (s.optedIn and s.cap > 0 and not(s.shownMoney)),
     (s.promiseWarning == "not-vaulted") implies not(s.unreadVault),
     (s.promiseWarning == "unverified") implies s.unreadVault,
-    (s.configuredWarning != "none") == (s.showConfigured and not(s.optedIn) and s.cap > 0 and not(s.shownMoney)),
+    (s.configuredWarning != "none") == (not(s.optedIn) and s.cap > 0 and not(s.shownMoney)),
     (s.configuredWarning == "not-vaulted") implies not(s.unreadVault),
     (s.configuredWarning == "unverified") implies s.unreadVault,
     not(s.configuredWarning != "none" and s.promiseWarning != "none"),
@@ -80,9 +80,9 @@ module ui_pool_funding {
   run shortReadShowsPromiseWarningTest = init.then(choosePromise(true)).then(load(1, 0, false, false, false, 0)).expect(s.promiseWarning == "not-vaulted" and invariant)
   run fundedReadReplacesPromiseWarningTest = init.then(choosePromise(true)).then(load(2, 0, false, false, false, 0)).expect(s.promiseWarning == "none" and s.shownMoney and invariant)
   run optOutRemovesPromiseTest = init.then(choosePromise(true)).then(choosePromise(false)).expect(s.promiseWarning == "none" and invariant)
-  run homeConfiguredAmountIsNotVerifiedMoneyTest = init.then(chooseHome(true)).expect(s.configuredWarning == "unverified" and s.promiseWarning == "none" and not(s.shownMoney) and invariant)
-  run homeShortReadShowsConfiguredWarningTest = init.then(chooseHome(true)).then(load(1, 0, false, false, false, 0)).expect(s.configuredWarning == "not-vaulted" and s.promiseWarning == "none" and invariant)
-  run homeFundedReadRemovesConfiguredWarningTest = init.then(chooseHome(true)).then(load(2, 0, false, false, false, 0)).expect(s.configuredWarning == "none" and s.shownMoney and invariant)
-  run homeOptOutKeepsConfiguredAmountTest = init.then(chooseHome(true)).then(choosePromise(true)).then(choosePromise(false)).expect(s.configuredWarning == "unverified" and s.promiseWarning == "none" and not(s.shownMoney) and invariant)
-  run detailsWithoutOptInShowNoAmountTest = init.then(chooseHome(true)).then(chooseHome(false)).expect(s.configuredWarning == "none" and s.promiseWarning == "none" and not(s.shownMoney) and invariant)
+  run homeConfiguredAmountIsNotVerifiedMoneyTest = init.expect(s.configuredWarning == "unverified" and s.promiseWarning == "none" and not(s.shownMoney) and invariant)
+  run homeShortReadShowsConfiguredWarningTest = init.then(load(1, 0, false, false, false, 0)).expect(s.configuredWarning == "not-vaulted" and s.promiseWarning == "none" and invariant)
+  run homeFundedReadRemovesConfiguredWarningTest = init.then(load(2, 0, false, false, false, 0)).expect(s.configuredWarning == "none" and s.shownMoney and invariant)
+  run homeOptOutKeepsConfiguredAmountTest = init.then(choosePromise(true)).then(choosePromise(false)).expect(s.configuredWarning == "unverified" and s.promiseWarning == "none" and not(s.shownMoney) and invariant)
+  run detailsWithoutOptInShowNoAmountTest = init.expect(s.promiseWarning == "none" and not(s.shownMoney) and invariant)
 }

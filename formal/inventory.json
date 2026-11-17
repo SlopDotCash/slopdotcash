@@ -18644,7 +18644,7 @@
     },
     {
       "path": "formal/models/ui/ui_pool_funding.qnt",
-      "sha256": "10bc54d1f779314f1956054561e96ba755718b9f2c9abc81c58bd5531b23c7d2",
+      "sha256": "8738fd5ed6b0c5b3155f9a1cdd4c976e8a848dbc9e7d77f92bb79cecf19e4844",
       "sources": [
         "backend/projects/pool-funding.ts",
         "migrations/0127_vault_month_starts.sql",
