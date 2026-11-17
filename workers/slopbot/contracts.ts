@@ -237,6 +237,25 @@ export const VERDICT_SCHEMA = {
   },
 } as const;
 
+/** The verdict checks a JSON Schema cannot express, named for a refused
+ * reply that matches the schema. Never returns reply text. */
+export function explainVerdict(raw: unknown): string | null {
+  if (typeof raw !== "object" || raw === null) return null;
+  const value = raw as Record<string, unknown>;
+  if (
+    typeof value.confidence === "number" &&
+    !(value.confidence >= 0 && value.confidence <= 1)
+  )
+    return "field confidence is outside 0 to 1";
+  if (value.summary === "") return "field summary is empty";
+  if (
+    typeof value.objective_defect === "string" &&
+    !/^[a-f0-9]{64}$/u.test(value.objective_defect)
+  )
+    return "field objective_defect is not a 64-character hex digest";
+  return null;
+}
+
 export function validateVerdict(raw: unknown): Verdict | null {
   if (typeof raw !== "object" || raw === null) return null;
   const value = raw as Record<string, unknown>;

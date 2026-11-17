@@ -3569,6 +3569,13 @@
       "review": "mapped-abstraction"
     },
     {
+      "path": "migrations/0135_slopbot_call_failure_details.sql",
+      "sha256": "677aea66e7d504e4ceddbe7ce67e28e2a98daef85046a83971bef0ed380b0749",
+      "models": ["formal/models/slopbot/bot_notice_delivery.qnt"],
+      "candidateLines": [],
+      "review": "mapped-abstraction"
+    },
+    {
       "path": "package.json",
       "sha256": "cf9927f26d487b688d157a03c6d8278c55d21d98e44e1d37c7dbfbb898ad1ac7",
       "models": ["formal/models/tooling/formal_toolchain.qnt"],
@@ -8740,13 +8747,13 @@
     },
     {
       "path": "workers/slopbot/contracts.ts",
-      "sha256": "047914eebef46d18c1716a2cd7a46ec45eeb36ca63ff9a9bf2cd92c3b570d3f3",
+      "sha256": "7be4926a664d9e8632fe44331ec0e68b7fafb693f52cb2a187faf90727354b5a",
       "models": [
         "formal/models/slopbot/bot_author_admission.qnt",
         "formal/models/slopbot/bot_close_capacity.qnt",
         "formal/models/slopbot/bot_review_admission.qnt"
       ],
-      "candidateLines": [388],
+      "candidateLines": [407],
       "review": "mapped-abstraction"
     },
     {
@@ -8821,7 +8828,7 @@
     },
     {
       "path": "workers/slopbot/models.ts",
-      "sha256": "e443be718189710f6996f086b03d9f472ab1fbf34fefc1f9dff19cb03b2247fa",
+      "sha256": "ab9454acd3cad4363aac704d682f9076c8b49694de96b9f7108f262e711d5229",
       "models": [
         "formal/models/slopbot/bot_inference_reservations.qnt",
         "formal/models/slopbot/bot_producer_provenance.qnt",
@@ -8829,7 +8836,7 @@
         "formal/models/slopbot/bot_value_dispute_draft.qnt",
         "formal/models/slopbot/bot_value_precall_authority.qnt"
       ],
-      "candidateLines": [88, 92, 97, 191, 211, 212, 364, 366],
+      "candidateLines": [97, 101, 106, 206, 226, 227, 381, 383],
       "review": "mapped-abstraction"
     },
     {
@@ -8844,7 +8851,7 @@
     },
     {
       "path": "workers/slopbot/persistence.ts",
-      "sha256": "c614fa593a195345e9711a134ff0f8065405ed487e858ec415d586c19eb0af90",
+      "sha256": "622e1f77c7ee30073750522535585f7dfb569d1874294e735a1e8fe6c0d66c3b",
       "models": [
         "formal/models/slopbot/bot_author_admission.qnt",
         "formal/models/slopbot/bot_close_recorded_key.qnt",
@@ -8861,7 +8868,7 @@
         134, 135, 136, 138, 140, 146, 149, 159, 160, 161, 162, 164, 165, 166,
         173, 177, 186, 211, 213, 235, 256, 265, 277, 294, 295, 297, 308, 314,
         319, 322, 324, 335, 336, 339, 344, 347, 348, 371, 374, 375, 377, 396,
-        402, 405, 436, 494, 523, 524
+        402, 405, 436, 469, 501, 530, 531
       ],
       "review": "mapped-abstraction"
     },
@@ -8985,6 +8992,13 @@
         "formal/models/slopbot/bot_closure_membership.qnt",
         "formal/models/slopbot/bot_review_admission.qnt"
       ],
+      "candidateLines": [],
+      "review": "mapped-abstraction"
+    },
+    {
+      "path": "workers/slopbot/schema-mismatch.ts",
+      "sha256": "eea664e264ffa4b3e41b1e7b23d3f4168ff564515d48a65128743e232e89ddf1",
+      "models": ["formal/models/slopbot/bot_notice_delivery.qnt"],
       "candidateLines": [],
       "review": "mapped-abstraction"
     },
@@ -15981,14 +15995,16 @@
     },
     {
       "path": "formal/models/slopbot/bot_notice_delivery.qnt",
-      "sha256": "3df978fb8de6252aa8c9aba76120f533e30b3698b9d35ccfd533bcfbf7710c84",
+      "sha256": "9fa96824f15d4653f6ed4ff56fd978db9ed3f134a94397017d1041531488e5b8",
       "sources": [
         "migrations/0049_slopbot_spend_alerts.sql",
         "migrations/0085_slopbot_provider_failure_notices.sql",
         "migrations/0122_orbio_provider_failure_notices.sql",
         "migrations/0133_slopbot_failure_notice_suppressions.sql",
+        "migrations/0135_slopbot_call_failure_details.sql",
         "workers/notify/contracts.ts",
         "workers/slopbot/failure-alerts.ts",
+        "workers/slopbot/schema-mismatch.ts",
         "workers/slopbot/spend-alerts.ts"
       ],
       "scenarios": [
