@@ -1,7 +1,9 @@
 // @source workers/slopbot/value-commit-pages.ts
+// @source scripts/value-ingestion.ts
 // @evidence workers/slopbot/value-commit-pages.test.ts
 // @evidence workers/slopbot/value-commit-pages-intern.test.ts
 // @evidence workers/slopbot/value-import-recovery.test.ts
+// @evidence scripts/value-native-file-recovery.test.ts
 // Invocation-local immutable evidence reuse requires this client's current
 // public repository identity. Failed/truncated data never creates an entry.
 // Text 0 represents a short value, and 1/2/3 distinct long UTF-16 values. These

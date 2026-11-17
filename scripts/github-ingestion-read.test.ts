@@ -4,26 +4,34 @@ import { GitHubClient } from "../workers/slopbot/github";
 import { GitHubGraphqlClient } from "./generate-leaderboard";
 import { githubIngestionReadTransport } from "./github-ingestion-read";
 
-function fixture(responses: (() => Response)[]) {
+function fixture(
+  responses: (() => Response)[],
+  options: { quotaDeadlineMs?: number; wait?: () => Promise<void> } = {},
+) {
   let calls = 0;
   const waits: number[] = [];
+  const urls: string[] = [];
   const transport = Object.assign(
-    async () => responses[Math.min(calls++, responses.length - 1)](),
+    async (input: Parameters<typeof fetch>[0]) => {
+      urls.push(input instanceof Request ? input.url : String(input));
+      return responses[Math.min(calls++, responses.length - 1)]();
+    },
     {
       preconnect: fetch.preconnect,
     },
   );
-  const client = GitHubClient.forToken(
-    "test-token",
-    githubIngestionReadTransport(
-      transport,
-      () => 1_000_000,
-      async (milliseconds) => {
-        waits.push(milliseconds);
-      },
-    ),
+  const read = githubIngestionReadTransport(
+    transport,
+    () => 1_000_000,
+    async (milliseconds) => {
+      waits.push(milliseconds);
+      await options.wait?.();
+    },
+    undefined,
+    { quotaDeadlineMs: options.quotaDeadlineMs },
   );
-  return { client, waits, calls: () => calls };
+  const client = GitHubClient.forToken("test-token", read);
+  return { client, read, urls, waits, calls: () => calls };
 }
 
 test("source reads wait for the reported exhausted REST window and retain the complete answer", async () => {
@@ -93,6 +101,317 @@ test("read retries honor Retry-After and remain bounded", async () => {
   });
   expect(f.calls()).toBe(5);
   expect(f.waits).toEqual([2_000, 2_000, 2_000, 2_000]);
+});
+
+const pullFilesPath = "/repos/owner/repo/pulls/7/files?per_page=100&page=1";
+const fileReadError = () => new Response("internal error", { status: 500 });
+
+for (const path of [
+  pullFilesPath,
+  "/repositories/42/pulls/7/files?per_page=100&page=2",
+]) {
+  test(`PR file reads recover from two HTTP 500 responses at ${path}`, async () => {
+    const files = [
+      { filename: "source.ts", additions: 9, deletions: 2 },
+      { filename: "tests.ts", additions: 5, deletions: 0 },
+    ];
+    const f = fixture([
+      fileReadError,
+      fileReadError,
+      () => Response.json(files),
+    ]);
+    expect(await f.client.get<typeof files>(path)).toEqual(files);
+    expect(f.calls()).toBe(3);
+    expect(f.waits).toEqual([1_000, 2_000]);
+  });
+}
+
+test("persistent PR file failures return the complete third HTTP 500 response", async () => {
+  const finalBody = { message: "still unavailable", documentation_url: "help" };
+  const f = fixture([
+    fileReadError,
+    fileReadError,
+    () => Response.json(finalBody, { status: 500 }),
+  ]);
+  const response = await f.read(`https://api.github.com${pullFilesPath}`);
+  expect(response.status).toBe(500);
+  expect(await response.json()).toEqual(finalBody);
+  expect(f.calls()).toBe(3);
+  expect(f.waits).toEqual([1_000, 2_000]);
+});
+
+const commitSha = "a".repeat(40);
+const commitPath = `/repos/owner/repo/commits/${commitSha}`;
+const commitFilesPath = `${commitPath}?per_page=100&page=1`;
+const commitReadError = () =>
+  Response.json({ message: "Validation Failed" }, { status: 422 });
+
+for (const path of [
+  commitFilesPath,
+  `/repositories/42/commits/${commitSha}?per_page=100&page=2`,
+]) {
+  test(`commit file reads retry HTTP 422 on the same page at ${path}`, async () => {
+    const commit = { sha: commitSha, files: [{ filename: "source.ts" }] };
+    const f = fixture([commitReadError, () => Response.json(commit)]);
+    expect(await f.client.get<typeof commit>(path)).toEqual(commit);
+    expect(f.urls).toEqual(Array(2).fill(`https://api.github.com${path}`));
+    expect(f.waits).toEqual([1_000]);
+  });
+}
+
+test("persistent commit file failures return the complete second HTTP 422 response", async () => {
+  const finalBody = { message: "Still unavailable", errors: ["commit"] };
+  const f = fixture([
+    commitReadError,
+    () => Response.json(finalBody, { status: 422 }),
+  ]);
+  const response = await f.read(`https://api.github.com${commitFilesPath}`);
+  expect(response.status).toBe(422);
+  expect(await response.json()).toEqual(finalBody);
+  expect(f.calls()).toBe(2);
+  expect(f.waits).toEqual([1_000]);
+});
+
+for (const path of [
+  commitPath,
+  "/repos/owner/repo/commits/abcdef0?per_page=100&page=1",
+  pullFilesPath,
+]) {
+  test(`other HTTP 422 responses return immediately at ${path}`, async () => {
+    const f = fixture([commitReadError]);
+    await expect(f.client.get(path)).rejects.toMatchObject({ status: 422 });
+    expect(f.calls()).toBe(1);
+    expect(f.waits).toEqual([]);
+  });
+}
+
+const commitPullsPath = `${commitPath}/pulls?per_page=100`;
+for (const path of [
+  commitPullsPath,
+  `${commitPullsPath}&page=2`,
+  `/repositories/42/commits/${commitSha}/pulls?per_page=100`,
+  `/repositories/42/commits/${commitSha}/pulls?per_page=100&page=3`,
+]) {
+  test(`commit-associated PR reads recover HTTP 500 on the exact URL at ${path}`, async () => {
+    const pulls = [
+      { node_id: "PR_accepted", number: 7, merged_at: "2026-10-01" },
+    ];
+    const f = fixture([
+      fileReadError,
+      fileReadError,
+      () => Response.json(pulls),
+    ]);
+    expect(await f.client.get<typeof pulls>(path)).toEqual(pulls);
+    expect(f.urls).toEqual(Array(3).fill(`https://api.github.com${path}`));
+    expect(f.waits).toEqual([1_000, 2_000]);
+  });
+}
+
+test("persistent commit-associated PR failures retain the complete last response", async () => {
+  const body = "{incomplete upstream failure";
+  const f = fixture([
+    fileReadError,
+    fileReadError,
+    () => new Response(body, { status: 500, statusText: "Still unavailable" }),
+  ]);
+  const response = await f.read(`https://api.github.com${commitPullsPath}`);
+  expect(response.status).toBe(500);
+  expect(response.statusText).toBe("Still unavailable");
+  expect(await response.text()).toBe(body);
+  expect(f.calls()).toBe(3);
+  expect(f.waits).toEqual([1_000, 2_000]);
+});
+
+test("commit-associated PR retry scope excludes mutable refs and noncanonical queries", async () => {
+  const paths = [
+    commitPullsPath.replace(commitSha, "main"),
+    commitPullsPath.replace(commitSha, commitSha.slice(1)),
+    commitPullsPath.replace(commitSha, commitSha.toUpperCase()),
+    `${commitPullsPath}&page=0`,
+    `${commitPullsPath}&page=01`,
+    `${commitPullsPath}&page=1&extra=1`,
+    commitPullsPath.replace("per_page=100", "per_page=99"),
+    commitPullsPath.replace("?per_page=100", "?page=1&per_page=100"),
+    `/repositories/0/commits/${commitSha}/pulls?per_page=100`,
+    commitFilesPath,
+  ];
+  for (const path of paths) {
+    const f = fixture([fileReadError]);
+    await expect(f.client.get(path)).rejects.toMatchObject({ status: 500 });
+    expect(f.calls()).toBe(1);
+    expect(f.waits).toEqual([]);
+  }
+  for (const [url, init] of [
+    [`https://example.com${commitPullsPath}`, undefined],
+    [`http://api.github.com${commitPullsPath}`, undefined],
+    [`https://api.github.com${commitPullsPath}#fragment`, undefined],
+    [`https://user:pass@api.github.com${commitPullsPath}`, undefined],
+    [`https://api.github.com${commitPullsPath}`, { method: "POST" }],
+    [`https://api.github.com${commitPullsPath}`, { method: "PUT" }],
+  ] as const) {
+    const f = fixture([fileReadError]);
+    const response = await f.read(url, init);
+    expect(response.status).toBe(500);
+    expect(f.calls()).toBe(1);
+    expect(f.waits).toEqual([]);
+  }
+  for (const status of [403, 404, 422, 502]) {
+    const f = fixture([
+      () => Response.json({ message: "unavailable" }, { status }),
+    ]);
+    expect(
+      (await f.read(`https://api.github.com${commitPullsPath}`)).status,
+    ).toBe(status);
+    expect(f.calls()).toBe(1);
+    expect(f.waits).toEqual([]);
+  }
+});
+
+test("commit-associated PR pages and later independent reads stay live", async () => {
+  const first = Array.from({ length: 100 }, (_, i) => ({ number: i + 1 }));
+  const second = [{ number: 101 }];
+  const updated = [{ number: 102 }];
+  const f = fixture([
+    fileReadError,
+    () => Response.json(first),
+    fileReadError,
+    () => Response.json(second),
+    () => Response.json(updated),
+  ]);
+  const page1 = `${commitPullsPath}&page=1`,
+    page2 = `${commitPullsPath}&page=2`;
+  expect(await f.client.get<{ number: number }[]>(page1)).toEqual(first);
+  expect(await f.client.get<{ number: number }[]>(page2)).toEqual(second);
+  expect(await f.client.get<{ number: number }[]>(page1)).toEqual(updated);
+  expect(f.urls).toEqual(
+    [page1, page1, page2, page2, page1].map(
+      (path) => `https://api.github.com${path}`,
+    ),
+  );
+  expect(f.waits).toEqual([1_000, 1_000]);
+});
+
+test("commit-associated PR server retries do not reset the quota retry budget", async () => {
+  const limited = () =>
+    new Response("limited", { status: 429, headers: { "retry-after": "3" } });
+  const f = fixture([fileReadError, limited, fileReadError, limited]);
+  await expect(f.client.get(commitPullsPath)).rejects.toMatchObject({
+    status: 429,
+  });
+  expect(f.calls()).toBe(7);
+  expect(f.waits).toEqual([1_000, 3_000, 2_000, 3_000, 3_000, 3_000]);
+  expect(f.urls).toEqual(
+    Array(7).fill(`https://api.github.com${commitPullsPath}`),
+  );
+});
+
+test("commit-associated PR backoff respects the collection deadline on either wait", async () => {
+  for (const [deadline, calls, waits] of [
+    [1_001_000, 1, []],
+    [1_002_000, 2, [1_000]],
+  ] as const) {
+    const f = fixture([fileReadError], { quotaDeadlineMs: deadline });
+    await expect(f.client.get(commitPullsPath)).rejects.toMatchObject({
+      name: "GitHubIngestionCheckpointError",
+    });
+    expect(f.calls()).toBe(calls);
+    expect(f.waits).toEqual([...waits]);
+    expect(f.read.assertNoCheckpoint).toThrow("checkpoint deadline");
+  }
+});
+
+test("caller cancellation during commit-associated PR backoff stops the exact read", async () => {
+  const controller = new AbortController();
+  const reason = new Error("caller stopped association collection");
+  const f = fixture([fileReadError], {
+    wait: () => {
+      queueMicrotask(() => controller.abort(reason));
+      return new Promise(() => {});
+    },
+  });
+  await expect(
+    f.read(`https://api.github.com${commitPullsPath}`, {
+      signal: controller.signal,
+    }),
+  ).rejects.toBe(reason);
+  expect(f.calls()).toBe(1);
+  expect(f.waits).toEqual([1_000]);
+});
+
+test("an incomplete commit-associated PR error body times out without another attempt", async () => {
+  let calls = 0,
+    waits = 0;
+  const read = githubIngestionReadTransport(
+    Object.assign(
+      async () => {
+        calls++;
+        return new Response(
+          new ReadableStream({
+            start(controller) {
+              controller.enqueue(new TextEncoder().encode("partial"));
+            },
+          }),
+          { status: 500 },
+        );
+      },
+      { preconnect: fetch.preconnect },
+    ),
+    Date.now,
+    async () => {
+      waits++;
+    },
+    10,
+  );
+  await expect(
+    read(`https://api.github.com${commitPullsPath}`),
+  ).rejects.toMatchObject({ name: "TimeoutError" });
+  expect(calls).toBe(1);
+  expect(waits).toBe(0);
+});
+
+test("PR file backoff checkpoints when its first wait would reach the collection deadline", async () => {
+  const f = fixture([fileReadError], { quotaDeadlineMs: 1_001_000 });
+  await expect(f.client.get(pullFilesPath)).rejects.toMatchObject({
+    name: "GitHubIngestionCheckpointError",
+  });
+  expect(f.calls()).toBe(1);
+  expect(f.waits).toEqual([]);
+});
+
+test("caller cancellation during PR file backoff prevents another read", async () => {
+  const controller = new AbortController();
+  const reason = new Error("caller stopped file collection");
+  const f = fixture([fileReadError], {
+    wait: () => {
+      queueMicrotask(() => controller.abort(reason));
+      return new Promise(() => {});
+    },
+  });
+  await expect(
+    f.read(`https://api.github.com${pullFilesPath}`, {
+      signal: controller.signal,
+    }),
+  ).rejects.toBe(reason);
+  expect(f.calls()).toBe(1);
+  expect(f.waits).toEqual([1_000]);
+});
+
+test("a missing PR file listing returns null without backoff", async () => {
+  const f = fixture([() => new Response("missing", { status: 404 })]);
+  expect(await f.client.get(pullFilesPath)).toBeNull();
+  expect(f.calls()).toBe(1);
+  expect(f.waits).toEqual([]);
+});
+
+test("GitHub GraphQL POST failures bypass the REST file retry", async () => {
+  const f = fixture([fileReadError]);
+  await expect(
+    f.client.graphql("query { viewer { id } }", {}),
+  ).rejects.toMatchObject({
+    status: 500,
+  });
+  expect(f.calls()).toBe(1);
+  expect(f.waits).toEqual([]);
 });
 
 const forbiddenHeaders: Record<string, string>[] = [
