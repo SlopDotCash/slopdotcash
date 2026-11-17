@@ -3520,6 +3520,13 @@
       "review": "mapped-abstraction"
     },
     {
+      "path": "migrations/0133_slopbot_failure_notice_suppressions.sql",
+      "sha256": "cccfefe22c0b0d964f6feee80044b910207a4be0a46e7d71e4681717654daa36",
+      "models": ["formal/models/slopbot/bot_notice_delivery.qnt"],
+      "candidateLines": [],
+      "review": "mapped-abstraction"
+    },
+    {
       "path": "package.json",
       "sha256": "d4829e85818eb386ab656a7e785502d2df48c97ee6ea159c28718561d032c86a",
       "models": ["formal/models/tooling/formal_toolchain.qnt"],
@@ -8664,12 +8671,12 @@
     },
     {
       "path": "workers/slopbot/failure-alerts.ts",
-      "sha256": "283d8eb97585ccfbd44c602114b72a4ad7f7c9dd6f3537205d8841dd5fb1133d",
+      "sha256": "cc2ca6ef66f74e5c3e69d7edefad5fa909878e1058e1413799b745020237cc1c",
       "models": [
         "formal/models/api/notification_admin_fanout.qnt",
         "formal/models/slopbot/bot_notice_delivery.qnt"
       ],
-      "candidateLines": [31, 43, 70],
+      "candidateLines": [63, 71, 87, 116],
       "review": "mapped-abstraction"
     },
     {
@@ -8719,7 +8726,7 @@
     },
     {
       "path": "workers/slopbot/models.ts",
-      "sha256": "e443be718189710f6996f086b03d9f472ab1fbf34fefc1f9dff19cb03b2247fa",
+      "sha256": "87497c5ccca6eaf79743564461656940eb56624e7791b07a5b422ff7982f1d5d",
       "models": [
         "formal/models/slopbot/bot_inference_reservations.qnt",
         "formal/models/slopbot/bot_producer_provenance.qnt",
@@ -8727,7 +8734,7 @@
         "formal/models/slopbot/bot_value_dispute_draft.qnt",
         "formal/models/slopbot/bot_value_precall_authority.qnt"
       ],
-      "candidateLines": [88, 92, 97, 191, 211, 212, 364, 366],
+      "candidateLines": [87, 91, 96, 190, 210, 211, 363, 365],
       "review": "mapped-abstraction"
     },
     {
@@ -15711,11 +15718,12 @@
     },
     {
       "path": "formal/models/slopbot/bot_notice_delivery.qnt",
-      "sha256": "8e185cf5f1ca572ffc37552b2eb6a2e115dba23bcd76b125a96c8882229ca9d8",
+      "sha256": "3df978fb8de6252aa8c9aba76120f533e30b3698b9d35ccfd533bcfbf7710c84",
       "sources": [
         "migrations/0049_slopbot_spend_alerts.sql",
         "migrations/0085_slopbot_provider_failure_notices.sql",
         "migrations/0122_orbio_provider_failure_notices.sql",
+        "migrations/0133_slopbot_failure_notice_suppressions.sql",
         "workers/notify/contracts.ts",
         "workers/slopbot/failure-alerts.ts",
         "workers/slopbot/spend-alerts.ts"
